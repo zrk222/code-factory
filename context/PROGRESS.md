@@ -891,3 +891,14 @@ Durable SpecLine gate receipts for focused feature work.
 - [2026-10-16 10:28] DONE h1-phase-telemetry T1 verify_pass=true receipt_seal=dfd55a9323ff60ced0e54b995057f8d8a6ef48a1340d38919ca9f335b80e2376
 - [2026-10-16 10:30] DONE h1-phase-telemetry T1 verify_pass=true receipt_seal=ffdc4291001f22236f7a4e8a9f7fe1c1435a1fa9ad4e59cea488fe80c13e61f7
 - [2026-10-16 10:31] DONE h1-phase-telemetry T2 verify_pass=true receipt_seal=bafd3fd00feb6312ba08fb0a8fb1640a70f16fc4c4982fe9d5448d56a7a27ff6
+- [2026-10-16 11:43] GATE spec h1-source-attribution approver=root strict=True sha=f029584544c75d20
+- [2026-10-16 11:43] GATE plan h1-source-attribution approver=root tasks=2 sha=f029584544c75d20
+- [2026-10-16 11:50] GATE spec h1-source-attribution approver=root strict=True sha=89e2f5a32ffb86a7
+- [2026-10-16 11:50] GATE plan h1-source-attribution approver=root tasks=2 sha=89e2f5a32ffb86a7
+- [2026-10-16 11:51] PACKET h1-source-attribution T1 tokens=1029 sha=00c52dc5fa3cb4b5
+- [2026-10-16 11:51] DONE h1-source-attribution T1 verify_pass=true receipt_seal=b4c190bd894f0e53685ec3f6edbb0e505e6a732b8117c327673beebbbcb144b5
+- [2026-10-16 11:51] GATE plan h1-source-attribution approver=root tasks=2 sha=89e2f5a32ffb86a7
+- [2026-10-16 11:51] DONE h1-source-attribution T1 verify_pass=true receipt_seal=5bf1fac9211f55d131404fc087bfc7975a358c0fc29bdec7e2946d126fc99eb9
+- [2026-10-16 11:52] PACKET h1-source-attribution T2 tokens=1296 sha=792b42e96c36cc4b
+- [2026-10-16 11:52] DONE h1-source-attribution T2 verify_pass=true receipt_seal=81a41bc164996f25317e0c52278a5bdf01a9b182bfa56917e608fbdbd0095934
+- [2026-10-16 11:52] GATE plan h1-source-attribution approver=root tasks=2 sha=89e2f5a32ffb86a7

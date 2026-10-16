@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Measure selected static source reads, hashing, parsing and import indexing in
+  lifecycle telemetry. Aggregate short calls before rounding and report failed,
+  missing or dropped measurements explicitly. Timing remains separate from scan
+  identity; these spans do not establish complete workflow coverage or speedup.
+
 - Treat the exact test fixture secret value `config` as test data, while keeping
   the same production value and credentials merely containing `test` detectable.
 - Honor the nearest explicit project ty configuration instead of rejecting it

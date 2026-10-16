@@ -19,7 +19,7 @@ from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from contextvars import ContextVar
-from functools import lru_cache
+from functools import lru_cache, wraps
 from threading import RLock
 from typing import Any, Iterable
 
@@ -51,7 +51,14 @@ _PHASE_NAMES = frozenset(
         "child_wait",
         "child_cleanup",
         "receipt_payload",
+        "source_read",
+        "source_hash",
+        "source_parse",
+        "source_index",
     }
+)
+_SOURCE_PHASE_NAMES = frozenset(
+    {"source_read", "source_hash", "source_parse", "source_index"}
 )
 _ACTIVE_PHASE_TELEMETRY: ContextVar["_PhaseTelemetry | None"] = ContextVar(
     "factory_lifecycle_phase_telemetry", default=None
@@ -64,6 +71,8 @@ class _PhaseTelemetry:
     def __init__(self, started_monotonic: float) -> None:
         self.started_monotonic = started_monotonic
         self._phases: dict[str, dict[str, Any]] = {}
+        self._dropped_calls = 0
+        self._dropped_phase_names: set[str] = set()
 
     def record(self, name: str, elapsed_ns: int, *, completed: bool) -> None:
         """Accumulate one recognized phase without retaining operation inputs."""
@@ -72,28 +81,107 @@ class _PhaseTelemetry:
         phase = self._phases.get(name)
         if phase is None:
             if len(self._phases) >= _PHASE_RECORD_LIMIT:
+                self._dropped_calls = min(self._dropped_calls + 1, 2**31 - 1)
+                self._dropped_phase_names.add(name)
                 return
             phase = {
                 "phase": name,
-                "elapsed_ms": 0,
+                "elapsed_ns": 0,
                 "calls": 0,
                 "completed": 0,
                 "incomplete": 0,
             }
             self._phases[name] = phase
-        phase["elapsed_ms"] += round(elapsed_ns / 1_000_000)
+        phase["elapsed_ns"] += elapsed_ns
         phase["calls"] += 1
         phase["completed" if completed else "incomplete"] += 1
 
     def snapshot(self) -> dict[str, Any]:
         """Copy observed phase totals and report whether any measured call failed."""
-        phases = [self._phases[name].copy() for name in sorted(self._phases)]
+        phases = []
+        for name in sorted(self._phases):
+            phase = self._phases[name].copy()
+            phase["elapsed_ms"] = round(phase.pop("elapsed_ns") / 1_000_000)
+            phases.append(phase)
+        observed = {item["phase"] for item in phases}
+        source_observed = observed & _SOURCE_PHASE_NAMES
+        missing = sorted(_SOURCE_PHASE_NAMES - source_observed)
+        source_failed = any(
+            item["phase"] in _SOURCE_PHASE_NAMES and item["incomplete"]
+            for item in phases
+        )
+        if source_failed or self._dropped_calls:
+            source_status = "incomplete"
+        elif not source_observed:
+            source_status = "not_observed"
+        elif missing:
+            source_status = "incomplete"
+        else:
+            source_status = "complete"
         return {
             "phases": phases,
             "status": "incomplete"
-            if any(item["incomplete"] for item in phases)
+            if self._dropped_calls or any(item["incomplete"] for item in phases)
             else "complete",
+            "dropped_calls": self._dropped_calls,
+            "dropped_phase_names": sorted(self._dropped_phase_names),
+            "source_attribution": {
+                "status": source_status,
+                "coverage_scope": "selected_static_scan_operations",
+                "covered_operations": [
+                    "review_audits Python source byte reads",
+                    "review_audits SHA-256 bindings and freshness rechecks",
+                    "review_audits oracle and per-file AST parsing",
+                    "implementation_audit stable import-index construction",
+                ],
+                "excluded_operations": [
+                    "configuration and runtime-input reads, parsing, and hashing",
+                    "AST parsing outside the selected static-scan boundaries",
+                    "BoundSourceBytes fallback byte-identity hashing",
+                ],
+                "expected_phases": sorted(_SOURCE_PHASE_NAMES),
+                "observed_phases": sorted(source_observed),
+                "missing_phases": missing,
+            },
         }
+
+
+def _measure_call(name: str, operation, *args, **kwargs):
+    with _measure_phase(name):
+        return operation(*args, **kwargs)
+
+
+def _measure_hash(name: str, hasher, data: bytes) -> str:
+    return _measure_call(name, lambda: hasher(data).hexdigest())
+
+
+def _measure_parse(parser, data: bytes, root: Path, path: Path):
+    return _measure_call(
+        "source_parse", parser, data, filename=path.relative_to(root).as_posix()
+    )
+
+
+def _measured_phase(name: str):
+    def decorate(operation):
+        @wraps(operation)
+        def measured(*args, **kwargs):
+            return _measure_call(name, operation, *args, **kwargs)
+
+        return measured
+
+    return decorate
+
+
+def _measured_source_read(operation):
+    @wraps(operation)
+    def measured(workspace, relative, *args, **kwargs):
+        if not str(relative).casefold().endswith(".py"):
+            return operation(workspace, relative, *args, **kwargs)
+        return _measure_call(
+            "source_read", operation, workspace, relative, *args, **kwargs
+        )
+
+    return measured
 
 
 @contextmanager

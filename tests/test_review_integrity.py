@@ -3533,3 +3533,22 @@ def test_unshadowed_outer_sqlalchemy_engine_provenance_still_flags(tmp_path):
     report = security_scan(tmp_path, cache_enabled=False)
 
     assert report["finding_counts"].get("SECURITY_SQL_INJECTION") == 1
+
+
+def test_import_index_failure_is_measured_without_error_text(monkeypatch):
+    import ast
+    import factoryline.implementation_audit as audit
+    from factoryline.ops_telemetry import _phase_telemetry
+
+    def fail(*args, **kwargs):
+        raise RuntimeError("PRIVATE INDEX DETAIL")
+
+    monkeypatch.setattr(audit, "_track_import_binding", fail)
+    with _phase_telemetry(0) as telemetry:
+        with pytest.raises(RuntimeError, match="PRIVATE INDEX DETAIL"):
+            audit._stable_import_index(ast.parse("import base"))
+    snapshot = telemetry.snapshot()
+    phase = next(item for item in snapshot["phases"] if item["phase"] == "source_index")
+    assert phase["incomplete"] == 1
+    assert snapshot["source_attribution"]["status"] == "incomplete"
+    assert "PRIVATE INDEX DETAIL" not in str(snapshot)
