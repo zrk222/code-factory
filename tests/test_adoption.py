@@ -9,6 +9,8 @@ import pytest
 
 from factoryline.adoption import (
     AdoptionError,
+    _sha,
+    _scan_identity_projection,
     adoption_status,
     export_adoption_status,
     proof_card_from_receipt,
@@ -159,6 +161,137 @@ def test_repo_scan_is_zero_config_without_inventing_tenant_contract_advice(
     assert not any(
         "tenant-read-contract" in action for action in result["next_actions"]
     )
+
+
+def test_repo_scan_identity_is_stable_and_run_receipt_binds_telemetry(tmp_path):
+    (tmp_path / "app.py").write_text("value = 1\n", encoding="utf-8")
+
+    first = run_repo_scan(tmp_path)
+    second = run_repo_scan(tmp_path)
+
+    assert first["scan_sha256"] == second["scan_sha256"]
+    assert first["run_receipt_sha256"] != second["run_receipt_sha256"]
+    for result in (first, second):
+        receipt = {
+            key: value for key, value in result.items() if key != "run_receipt_sha256"
+        }
+        assert result["run_receipt_sha256"] == _sha(receipt)
+        assert result["deep_audit"]["telemetry"]["trace_id"]
+        assert result["deep_audit"]["audit_sha256"]
+
+
+def test_repo_scan_identity_changes_when_source_finding_changes(tmp_path):
+    source = tmp_path / "app.py"
+    source.write_text("value = 1\n", encoding="utf-8")
+    clean = run_repo_scan(tmp_path, deep=False)
+
+    source.write_text("def execute(value):\n    return eval(value)\n", encoding="utf-8")
+    finding = run_repo_scan(tmp_path, deep=False)
+
+    assert clean["scan_sha256"] != finding["scan_sha256"]
+    assert (
+        clean["static_security"]["findings"] != finding["static_security"]["findings"]
+    )
+    assert finding["run_receipt_sha256"] == _sha(
+        {key: value for key, value in finding.items() if key != "run_receipt_sha256"}
+    )
+
+
+def test_scan_identity_projection_drops_run_envelopes_but_keeps_semantic_fields():
+    def run_result(run_id, event_hash, action_id):
+        return {
+            "run_id": run_id,
+            "parent_run": "parent-" + run_id,
+            "sequence": 12,
+            "event_sha256": event_hash,
+            "updated_at": "2026-10-15T10:00:00Z",
+            "review_evidence": {
+                "packet_sha256": "stable-packet-hash",
+                "evidence": [{"id": "evidence-1", "provenance": {"sha256": "1" * 64}}],
+                "claims": [{"id": "claim-1", "text": "observed"}],
+            },
+            "review_evidence_path": ".factory/analysis-evidence/" + run_id,
+            "action_enrollment": {
+                "actions_sha256": event_hash,
+                "actions": [{"run_id": run_id, "action_id": action_id}],
+            },
+            "lanes": [{"action_id": action_id}],
+            "findings": [{"run_id": "source-finding-id", "code": "RULE_X"}],
+        }
+
+    def report(run_id, event_hash, action_id):
+        return {
+            "deep_audit": {
+                "audit_sha256": event_hash,
+                "telemetry": {"trace_id": run_id},
+                "lanes": [
+                    {
+                        "measurement_id": "native_worker_execution",
+                        "result": run_result(run_id, event_hash, action_id),
+                    },
+                    {
+                        "measurement_id": "other_lane",
+                        "result": {
+                            "candidate_sha256": "c" * 64,
+                            "config_sha256": "f" * 64,
+                            "findings": [
+                                {
+                                    "code": "RULE_X",
+                                    "severity": "HIGH",
+                                    "duration_ms": 12,
+                                    "timestamp": "2026-10-15T10:00:00Z",
+                                    "sha256": "1" * 64,
+                                }
+                            ],
+                        },
+                    },
+                ],
+                "native_domains": {
+                    "domains": [{"result": {"run_id": run_id}}],
+                    "findings": [{"run_id": run_id, "code": "RULE_X"}],
+                },
+            }
+        }
+
+    first = report("run-one", "a" * 64, "action-one")
+    second = report("run-two", "b" * 64, "action-two")
+    assert _scan_identity_projection(first) == _scan_identity_projection(second)
+
+    result_finding = second["deep_audit"]["lanes"][0]["result"]["findings"][0]
+    result_finding["run_id"] = "different-source-value"
+    assert _scan_identity_projection(first) != _scan_identity_projection(second)
+    result_finding["run_id"] = "source-finding-id"
+
+    review_evidence = second["deep_audit"]["lanes"][0]["result"]["review_evidence"]
+    for key, changed in (
+        ("claims", [{"id": "claim-2", "text": "changed"}]),
+        ("evidence", [{"id": "evidence-2", "provenance": {"sha256": "2" * 64}}]),
+        ("packet_sha256", "changed-packet-hash"),
+    ):
+        original = review_evidence[key]
+        review_evidence[key] = changed
+        assert _scan_identity_projection(first) != _scan_identity_projection(second)
+        review_evidence[key] = original
+
+    deterministic = second["deep_audit"]["lanes"][1]["result"]
+    deterministic["config_sha256"] = "0" * 64
+    assert _scan_identity_projection(first) != _scan_identity_projection(second)
+    deterministic["config_sha256"] = "f" * 64
+    finding = deterministic["findings"][0]
+    for key, value in (
+        ("severity", "CRITICAL"),
+        ("duration_ms", 13),
+        ("timestamp", "2026-10-15T10:00:01Z"),
+        ("sha256", "2" * 64),
+    ):
+        finding[key] = value
+        assert _scan_identity_projection(first) != _scan_identity_projection(second)
+        finding[key] = {
+            "severity": "HIGH",
+            "duration_ms": 12,
+            "timestamp": "2026-10-15T10:00:00Z",
+            "sha256": "1" * 64,
+        }[key]
 
 
 def test_repo_scan_native_trace_covers_every_reported_lane(tmp_path):
