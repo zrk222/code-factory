@@ -3651,6 +3651,7 @@ def _declared_typecheck_sources(
 def _oracle_context_cache_key(root: Path, manifest: list, config_identity: dict) -> str:
     from .context_efficiency import (
         _consume_security_snapshots,
+        _populate_oracle_database_context,
         _read_bounded_workspace_source,
         _scan_missing_security_snapshot,
     )
@@ -3662,6 +3663,7 @@ def _oracle_context_cache_key(root: Path, manifest: list, config_identity: dict)
         _security_source_bytes,
         _read_bounded_workspace_source,
         _consume_security_snapshots,
+        _populate_oracle_database_context,
         _scan_missing_security_snapshot,
         local_file,
         _measure_parse,
@@ -3936,14 +3938,16 @@ def _project_oracle_context(
     snapshot_fingerprints = {
         path: _oracle_tree_fingerprint(tree) for path, tree in snapshots.items()
     }
-    if database_context_out is not None:
-        from .context_efficiency import _database_workspace_context_from_oracle
+    from .context_efficiency import _populate_oracle_database_context
 
-        database_context_out.update(
-            _database_workspace_context_from_oracle(
-                root, source_bytes, _security_source_bytes, python_inventory, snapshots
-            )
-        )
+    _populate_oracle_database_context(
+        database_context_out,
+        root,
+        source_bytes,
+        _security_source_bytes,
+        python_inventory,
+        snapshots,
+    )
     ty_identity = config_identity["typecheck"].get("ty", {})
     ty_sources = {root / item for item in ty_identity.get("selected", [])}
     import_views = {"resolved": {}, "bindings": 0, "characters": 0}

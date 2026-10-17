@@ -9529,8 +9529,10 @@ def test_reported_command_canary_file_is_unchanged_and_scans_without_finding(
     import hashlib
 
     original = Path(__file__).with_name("test_evidence_supply_line.py").read_bytes()
-    assert hashlib.sha256(original).hexdigest() == (
-        "f90ab29366d81dc31df4d87e6646ada9ba2fcee2142dc4115171ecbf092766eb"
+    assert hashlib.sha256(
+        _canary_lf_text(original.decode("utf-8")).encode("utf-8")
+    ).hexdigest() == (
+        "d01fc1dd78021cb68893db24e1bc3e2d11f6c5818381058c071099c01c30d44f"
     )
     _write_reported_command_canary(tmp_path, original=original)
     result = security_scan(tmp_path, cache_enabled=False)
@@ -9585,6 +9587,11 @@ def _reported_canary_findings(result):
         and item["path"] == "tests/test_evidence_supply_line.py"
         and item["line"] == 222
     ]
+
+
+def _canary_lf_text(value):
+    """Normalize fixture text to the canary tests' explicit LF contract."""
+    return value.replace("\r\n", "\n").replace("\r", "\n")
 
 
 @pytest.mark.parametrize(
@@ -9856,6 +9863,8 @@ def test_reported_canary_test_mutations_keep_finding_after_admission(
     _write_reported_command_canary(baseline, original, recorder)
     assert not _reported_canary_findings(security_scan(baseline, cache_enabled=False))
     source = original.decode("utf-8")
+    source = _canary_lf_text(source)
+    old, new = _canary_lf_text(old), _canary_lf_text(new)
     assert old in source
     changed = source.replace(old, new, 1).encode("utf-8")
     assert changed != original
@@ -9877,6 +9886,38 @@ def test_reported_canary_test_mutations_keep_finding_after_admission(
             encoding="utf-8",
         )
     assert _reported_canary_findings(security_scan(root, cache_enabled=False))
+
+
+@pytest.mark.parametrize("newline", ["\n", "\r\n"], ids=["lf", "crlf"])
+def test_reported_canary_fixture_and_mutation_are_newline_portable(tmp_path, newline):
+    """Keep raw fixture bytes while checking equivalent LF/CRLF source forms."""
+    import ast
+
+    original = Path(__file__).with_name("test_evidence_supply_line.py").read_bytes()
+    recorder = (
+        Path(__file__).parents[1]
+        / "plugins"
+        / "code-factory-session-recorder"
+        / "scripts"
+        / "record_hook.py"
+    ).read_bytes()
+    canonical = _canary_lf_text(original.decode("utf-8"))
+    fixture = canonical.replace("\n", newline).encode("utf-8")
+    suffix = "crlf" if "\r" in newline else "lf"
+    baseline = tmp_path / f"baseline-{suffix}"
+    _write_reported_command_canary(baseline, fixture, recorder)
+    assert not _reported_canary_findings(security_scan(baseline, cache_enabled=False))
+
+    old = _canary_lf_text("    completed = subprocess.run(\r\n")
+    new = _canary_lf_text("    sys = object()\r\n    completed = subprocess.run(\r\n")
+    assert old in canonical
+    changed = canonical.replace(old, new, 1)
+    assert changed != canonical
+    ast.parse(changed, filename="mutated-test_evidence_supply_line.py")
+    mutated = tmp_path / f"mutated-{suffix}"
+    changed_fixture = changed.replace("\n", newline).encode("utf-8")
+    _write_reported_command_canary(mutated, changed_fixture, recorder)
+    assert _reported_canary_findings(security_scan(mutated, cache_enabled=False))
 
 
 def test_canary_ast_index_reuses_one_capped_parent_type_inventory():

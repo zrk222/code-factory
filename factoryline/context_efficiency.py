@@ -356,6 +356,18 @@ def _database_workspace_context_from_oracle(
     )
 
 
+def _populate_oracle_database_context(
+    output, root, python_sources, read_source, python_inventory, oracle_snapshots
+):
+    """Populate the optional output with a database projection from fresh trees."""
+    if output is not None:
+        output.update(
+            _database_workspace_context_from_oracle(
+                root, python_sources, read_source, python_inventory, oracle_snapshots
+            )
+        )
+
+
 def _database_sql_sources(root, paths, read_source, selected, gaps):
     from .runtime_audit_common import RuntimeAuditError
 
