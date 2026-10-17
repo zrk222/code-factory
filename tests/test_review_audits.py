@@ -2937,7 +2937,7 @@ def test_mock_provenance_rejects_shadowed_constructors_and_assertion_methods(
             "proxies = {'one': Mock()}\n",
             "with patch.dict(target):\n",
             "proxies['one'].clear",
-            True,
+            "UNKNOWN",
         ),
         (
             "proxies = {'one': Mock(), 'one': Fake()}\n",
@@ -2992,9 +2992,19 @@ def test_mock_patch_dict_slot_requires_literal_mock_value_and_default_context(
         + ".assert_called_once_with()\n",
         encoding="utf-8",
     )
-    hollow_count = security_scan(tmp_path)["finding_counts"].get(
-        "QUALITY_HOLLOW_TEST", 0
-    )
+    report = security_scan(tmp_path)
+    hollow_count = report["finding_counts"].get("QUALITY_HOLLOW_TEST", 0)
+    if expected_hollow == "UNKNOWN":
+        assert hollow_count == 0
+        unresolved = [
+            f for f in report["findings"] if f["code"] == "QUALITY_UNKNOWN_TEST_ORACLE"
+        ]
+        assert len(unresolved) == 1
+        assert unresolved[0]["severity"] == "INFO"
+        assert unresolved[0]["facts"]["state"] == "INCOMPLETE"
+        assert unresolved[0]["facts"]["evidence_state"] == "UNKNOWN"
+        assert unresolved[0]["facts"]["candidate_rule"] == "QUALITY_HOLLOW_TEST"
+        return
     assert hollow_count == int(expected_hollow)
 
 
