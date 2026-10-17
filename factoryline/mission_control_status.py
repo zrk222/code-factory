@@ -807,7 +807,15 @@ def _security_finding_projection(finding: Any) -> dict[str, Any]:
     facts = finding.get("facts", {})
     if not isinstance(facts, dict):
         facts = {}
-    for key in ("code", "severity", "path", "symbol", "message"):
+    for key in (
+        "code",
+        "severity",
+        "path",
+        "symbol",
+        "message",
+        "state",
+        "evidence_state",
+    ):
         value = finding.get(key)
         if value is None:
             value = facts.get(key)
@@ -865,14 +873,16 @@ def _security_scan_projection(
     )
     report_state = report.get("state")
     state = report_state
+    unknown_oracles = report["finding_counts"].get("QUALITY_UNKNOWN_TEST_ORACLE", 0)
     incomplete = (
-        not coverage_complete
+        unknown_oracles > 0
+        or not coverage_complete
         or freshness != "CURRENT_SOURCE_HASHES_VERIFIED"
         or tenant_config_state != "loaded"
         or report_state in {"INCOMPLETE", "NO_SOURCES"}
         or report.get("output_truncated") is True
     )
-    if incomplete:
+    if incomplete and not (report_state == "BLOCKED" and unknown_oracles):
         state = "INCOMPLETE"
     return {
         "schema": SECURITY_SCAN_STATUS_SCHEMA,
@@ -887,11 +897,13 @@ def _security_scan_projection(
         "source_count": coverage["files_audited"],
         "finding_count": len(report["findings"]),
         "finding_counts": counts,
+        "unknown_oracle_count": unknown_oracles,
+        "reported_oracle_unknowns_absent": unknown_oracles == 0,
         "findings": findings,
         "findings_truncated": display_truncated,
         "display_truncated": display_truncated,
         "output_truncated": report.get("output_truncated") is True,
-        "incomplete": state == "INCOMPLETE",
+        "incomplete": incomplete or state == "INCOMPLETE",
         "audit_coverage": coverage,
         "tenant_read_configuration": tenant_config_state,
         "verification": "local_self_hash_only_not_signature_or_approval",

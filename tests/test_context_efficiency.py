@@ -874,7 +874,7 @@ def test_database_oracle_missing_or_corrupt_snapshot_falls_back_to_source(
     import ast
 
     from factoryline import intent_quality, review_audits
-    from factoryline.context_efficiency import _database_workspace_context_from_oracle
+    from factoryline.context_efficiency import _database_workspace_context
 
     source = (
         b"from sqlalchemy import Column, Integer\n"
@@ -897,7 +897,7 @@ def test_database_oracle_missing_or_corrupt_snapshot_falls_back_to_source(
     monkeypatch.setattr(ast, "parse", counted_parse)
     monkeypatch.setattr(intent_quality, "_DB_CACHE", {})
     monkeypatch.setattr(intent_quality, "_DB_CACHE_BYTES", 0)
-    result = _database_workspace_context_from_oracle(
+    result = _database_workspace_context(
         tmp_path,
         {path: source},
         review_audits._security_source_bytes,
@@ -1038,11 +1038,12 @@ def test_security_scan_reuses_oracle_tree_for_database_projection(
     review_audits._oracle_context_cache_clear()
     private_calls = []
     public_calls = []
-    private_projection = context_efficiency._database_workspace_context_from_oracle
+    private_projection = context_efficiency._database_workspace_context
     public_projection = context_efficiency.database_workspace_context
 
     def counted_private(*args, **kwargs):
-        private_calls.append(True)
+        if len(args) > 4 or "oracle_snapshots" in kwargs:
+            private_calls.append(True)
         return private_projection(*args, **kwargs)
 
     def counted_public(*args, **kwargs):
@@ -1050,7 +1051,7 @@ def test_security_scan_reuses_oracle_tree_for_database_projection(
         return public_projection(*args, **kwargs)
 
     monkeypatch.setattr(
-        context_efficiency, "_database_workspace_context_from_oracle", counted_private
+        context_efficiency, "_database_workspace_context", counted_private
     )
     monkeypatch.setattr(
         context_efficiency, "database_workspace_context", counted_public
@@ -1183,7 +1184,7 @@ def test_security_scan_reparses_a_tree_changed_by_an_intermediate_consumer(
 
     parse_calls = len(calls)
     review_audits._oracle_context_cache_clear()
-    project = context_efficiency._database_workspace_context_from_oracle
+    project = context_efficiency._database_workspace_context
     mutated_trees = []
 
     def mutate_after_database_projection(root, sources, reader, inventory, snapshots):
@@ -1195,7 +1196,7 @@ def test_security_scan_reparses_a_tree_changed_by_an_intermediate_consumer(
 
     monkeypatch.setattr(
         context_efficiency,
-        "_database_workspace_context_from_oracle",
+        "_database_workspace_context",
         mutate_after_database_projection,
     )
     actual = review_audits.security_scan(tmp_path, cache_enabled=False)
@@ -1562,3 +1563,1717 @@ def test_select_context_request_returns_only_explicit_bound_sources(tmp_path):
     assert [item["path"] for item in request["sources"]] == ["README.md"]
     assert selection["candidate_count"] == 1
     assert not (tmp_path / ".factory").exists()
+
+
+def _fixture_snapshot(path, source, digest="a" * 64):
+    import ast
+
+    tree = ast.parse(source, filename=str(path))
+    tree._oracle_source_sha256 = digest
+    return tree
+
+
+def _async_runner_sources():
+    return (
+        "import asyncio\n"
+        "import pytest\n"
+        "import trio\n"
+        "def _asyncio_run(async_fn, *args):\n"
+        "    return asyncio.run(async_fn(*args))\n"
+        "@pytest.fixture(params=[_asyncio_run, trio.run], ids=['asyncio', 'trio'])\n"
+        "def run_async_fn(request):\n"
+        "    return request.param\n"
+    )
+
+
+def _fixture_capability(api, binding):
+    return {
+        "status": "CLOSED",
+        "api": api,
+        "binding": binding,
+        "source": "conftest.py",
+        "sha256": "a" * 64,
+        "origin": {"line": 1, "column": 0},
+        "uses": [{"line": 2, "column": 4}],
+    }
+
+
+def test_async_runner_context_resolves_every_inherited_runner_alternative(tmp_path):
+    import ast
+
+    from factoryline.context_efficiency import async_runner_fixture_context
+
+    conftest = tmp_path / "conftest.py"
+    test_file = tmp_path / "tests" / "test_async.py"
+    test_file.parent.mkdir()
+    snapshots = {
+        conftest: _fixture_snapshot(conftest, _async_runner_sources()),
+        test_file: _fixture_snapshot(
+            test_file, "def test_async(run_async_fn):\n    pass\n", "b" * 64
+        ),
+    }
+
+    result = async_runner_fixture_context(tmp_path, list(snapshots), snapshots)
+    summary = result["tests/test_async.py"]
+    fixture = summary["fixtures"]["run_async_fn"]
+
+    assert summary["schema"] == "factory.async-runner-fixture-context.v3"
+    assert summary["module_sha256"] == "b" * 64
+    assert fixture["trusted"] is True
+    assert fixture["source"] == "conftest.py"
+    assert fixture["sha256"] == "a" * 64
+    assert {item["api"] for item in fixture["alternatives"]} == {
+        "asyncio.run",
+        "trio.run",
+    }
+    assert all(
+        item["capability"]["status"] == "CLOSED"
+        and item["capability"]["source"] == "conftest.py"
+        and item["capability"]["sha256"] == "a" * 64
+        and item["capability"]["origin"]
+        and item["capability"]["uses"]
+        for item in fixture["alternatives"]
+    )
+    assert ast.parse(_async_runner_sources())
+
+
+def test_async_runner_context_nearest_conftest_replaces_parent_runner(tmp_path):
+    from factoryline.context_efficiency import async_runner_fixture_context
+
+    root_fixture = tmp_path / "conftest.py"
+    suite = tmp_path / "suite"
+    suite.mkdir()
+    nearest_fixture = suite / "conftest.py"
+    test_file = suite / "test_async.py"
+    snapshots = {
+        root_fixture: _fixture_snapshot(root_fixture, _async_runner_sources()),
+        nearest_fixture: _fixture_snapshot(
+            nearest_fixture, _async_runner_sources(), "c" * 64
+        ),
+        test_file: _fixture_snapshot(
+            test_file, "def test_async(run_async_fn):\n    pass\n", "b" * 64
+        ),
+    }
+
+    result = async_runner_fixture_context(tmp_path, list(snapshots), snapshots)
+
+    fixture = result["suite/test_async.py"]["fixtures"]["run_async_fn"]
+    assert fixture["trusted"] is True
+    assert fixture["source"] == "suite/conftest.py"
+    assert fixture["sha256"] == "c" * 64
+
+
+@pytest.mark.parametrize(
+    "override",
+    [
+        "@pytest.fixture(params=[_asyncio_run, anyio.run])\ndef run_async_fn(request):\n    return request.param\n",
+        "@pytest.fixture(params=[_asyncio_run, trio.run])\ndef run_async_fn(request):\n    return request.param\n\ndef _asyncio_run(async_fn, *args):\n    return asyncio.run(async_fn(*args))\n",
+        "trio.run = replacement\n@pytest.fixture(params=[_asyncio_run, trio.run])\ndef run_async_fn(request):\n    return request.param\n",
+        "import trio as other\nother.run = replacement\n@pytest.fixture(params=[_asyncio_run, trio.run])\ndef run_async_fn(request):\n    return request.param\n",
+        "import trio as other\nsaved_runner = other.run\n@pytest.fixture(params=[_asyncio_run, trio.run])\ndef run_async_fn(request):\n    return request.param\n",
+        "import trio as other\nconsume(other.run)\n@pytest.fixture(params=[_asyncio_run, trio.run])\ndef run_async_fn(request):\n    return request.param\n",
+        "from trio import run as other_run\nsaved_runner = other_run\n@pytest.fixture(params=[_asyncio_run, trio.run])\ndef run_async_fn(request):\n    return request.param\n",
+        "import trio as other\ndel other.run\n@pytest.fixture(params=[_asyncio_run, trio.run])\ndef run_async_fn(request):\n    return request.param\n",
+        "import trio as other\nother.__setattr__('run', noop)\n@pytest.fixture(params=[_asyncio_run, trio.run])\ndef run_async_fn(request):\n    return request.param\n",
+        "import sys\nsys.modules['trio'].run = noop\n@pytest.fixture(params=[_asyncio_run, trio.run])\ndef run_async_fn(request):\n    return request.param\n",
+        "import importlib\nimportlib.import_module('trio').run = noop\n@pytest.fixture(params=[_asyncio_run, trio.run])\ndef run_async_fn(request):\n    return request.param\n",
+        "__import__('trio').run = noop\n@pytest.fixture(params=[_asyncio_run, trio.run])\ndef run_async_fn(request):\n    return request.param\n",
+        "import trio as other\nrunner_module = other\n@pytest.fixture(params=[_asyncio_run, trio.run])\ndef run_async_fn(request):\n    return request.param\n",
+        "asyncio.run = replacement\n@pytest.fixture(params=[_asyncio_run, trio.run])\ndef run_async_fn(request):\n    return request.param\n",
+        "trio.__setattr__('run', noop)\n@pytest.fixture(params=[_asyncio_run, trio.run])\ndef run_async_fn(request):\n    return request.param\n",
+        "from builtins import setattr as change\nchange(trio, 'run', noop)\n@pytest.fixture(params=[_asyncio_run, trio.run])\ndef run_async_fn(request):\n    return request.param\n",
+        "from builtins import *\n@pytest.fixture(params=[_asyncio_run, trio.run])\ndef run_async_fn(request):\n    return request.param\n",
+        "setattr(trio, 'run', noop)\n@pytest.fixture(params=[_asyncio_run, trio.run])\ndef run_async_fn(request):\n    return request.param\n",
+        "getattr(trio, 'run')\n@pytest.fixture(params=[_asyncio_run, trio.run])\ndef run_async_fn(request):\n    return request.param\n",
+        "runner_alias = trio.run\n@pytest.fixture(params=[_asyncio_run, trio.run])\ndef run_async_fn(request):\n    return request.param\n",
+        "exec('trio.run = noop')\n@pytest.fixture(params=[_asyncio_run, trio.run])\ndef run_async_fn(request):\n    return request.param\n",
+        "asyncio.__setattr__('run', noop)\n@pytest.fixture(params=[_asyncio_run, trio.run])\ndef run_async_fn(request):\n    return request.param\n",
+        "asyncio.run.__code__ = replacement\n@pytest.fixture(params=[_asyncio_run, trio.run])\ndef run_async_fn(request):\n    return request.param\n",
+        "@pytest.fixture(name='run_async_fn', params=[_asyncio_run, trio.run])\ndef other(request):\n    return request.param\n",
+        "@pytest.fixture(name=fixture_name, params=[_asyncio_run, trio.run])\ndef other(request):\n    return request.param\n",
+        "@pytest.fixture(params=[_asyncio_run, trio.run])\ndef run_async_fn(request):\n    if request.param:\n        return request.param\n    return None\n",
+        "@pytest.fixture(params=[_asyncio_run, trio.run])\ndef run_async_fn(request):\n    return request.param(*args)\n",
+        "@pytest.fixture(params=[_asyncio_run, trio.run])\nasync def run_async_fn(request):\n    return request.param\n",
+        "@fixture(params=[_asyncio_run, trio.run])\ndef run_async_fn(request):\n    return request.param\n",
+        "from pytest import fixture as fx\n@fx\ndef run_async_fn(request):\n    return request.param\n",
+        "from pytest import fixture as fx\nfx = fake_fixture\n"
+        "@fx(params=[_asyncio_run, trio.run])\n"
+        "def run_async_fn(request):\n    return request.param\n",
+    ],
+)
+def test_async_runner_context_rejects_incomplete_or_unresolved_alternatives(
+    tmp_path, override
+):
+    from factoryline.context_efficiency import async_runner_fixture_context
+
+    conftest = tmp_path / "conftest.py"
+    suite = tmp_path / "suite"
+    test_file = suite / "test_async.py"
+    suite.mkdir()
+    snapshots = {
+        conftest: _fixture_snapshot(conftest, _async_runner_sources()),
+        suite / "conftest.py": _fixture_snapshot(
+            suite / "conftest.py",
+            "import asyncio\nimport pytest\nimport trio\n"
+            "def _asyncio_run(async_fn, *args):\n"
+            "    return asyncio.run(async_fn(*args))\n" + override,
+            "c" * 64,
+        ),
+        test_file: _fixture_snapshot(
+            test_file, "def test_async(run_async_fn):\n    pass\n", "b" * 64
+        ),
+    }
+
+    result = async_runner_fixture_context(tmp_path, list(snapshots), snapshots)
+
+    assert result["suite/test_async.py"]["fixtures"]["run_async_fn"]["trusted"] is False
+
+
+@pytest.mark.parametrize(
+    "fixture_source",
+    [
+        "import asyncio as event_loop\n"
+        "import pytest\n"
+        "from trio import run as trio_run\n"
+        "def _asyncio_run(async_fn, *args):\n"
+        "    return event_loop.run(async_fn(*args))\n"
+        "@pytest.fixture(params=[_asyncio_run, trio_run])\n"
+        "def run_async_fn(request):\n"
+        "    return request.param\n",
+        "import asyncio as loop\n"
+        "import pytest\n"
+        "import trio as task_group\n"
+        "def _asyncio_run(async_fn, *args):\n"
+        "    return loop.run(async_fn(*args))\n"
+        "@pytest.fixture(params=[_asyncio_run, task_group.run])\n"
+        "def run_async_fn(request):\n"
+        "    return request.param\n",
+        "import asyncio as event_loop\n"
+        "import pytest\n"
+        "import trio as provider\n"
+        "import trio as second_provider\n"
+        "@pytest.fixture(params=[_asyncio_run, provider.run])\n"
+        "def run_async_fn(request):\n"
+        "    return request.param\n"
+        "def _asyncio_run(async_fn, *args):\n"
+        "    return event_loop.run(async_fn(*args))\n",
+    ],
+    ids=[
+        "direct-run-import",
+        "renamed-imports",
+        "fixture-before-wrapper-with-equivalent-module-alias",
+    ],
+)
+def test_async_runner_capability_proof_accepts_alias_and_placement_variants(
+    tmp_path, fixture_source
+):
+    from factoryline.context_efficiency import async_runner_fixture_context
+
+    conftest = tmp_path / "conftest.py"
+    test_file = tmp_path / "test_async.py"
+    snapshots = {
+        conftest: _fixture_snapshot(conftest, fixture_source),
+        test_file: _fixture_snapshot(
+            test_file, "def test_async(run_async_fn):\n    pass\n", "b" * 64
+        ),
+    }
+
+    result = async_runner_fixture_context(tmp_path, list(snapshots), snapshots)
+
+    fixture = result["test_async.py"]["fixtures"]["run_async_fn"]
+    assert fixture["trusted"] is True
+    assert {item["api"] for item in fixture["alternatives"]} == {
+        "asyncio.run",
+        "trio.run",
+    }
+    assert all(
+        item["capability"]["status"] == "CLOSED" for item in fixture["alternatives"]
+    )
+
+
+def test_nested_async_callback_uses_source_bound_fixture_context():
+    import ast
+
+    from factoryline.context_efficiency import _nested_async_runner_invocations
+
+    module = ast.parse(
+        "def test_async(run_async_fn):\n"
+        "    async def callback():\n"
+        "        assert 1 == 1\n"
+        "    run_async_fn(callback)\n"
+    )
+    module._oracle_source_sha256 = "b" * 64
+    test = module.body[0]
+    test._oracle_module = module
+    module._oracle_async_runner_fixtures = {
+        "schema": "factory.async-runner-fixture-context.v3",
+        "module_sha256": "b" * 64,
+        "fixtures": {
+            "run_async_fn": {
+                "trusted": True,
+                "source": "conftest.py",
+                "sha256": "a" * 64,
+                "alternatives": [
+                    {
+                        "api": "asyncio.run",
+                        "binding": "_asyncio_run",
+                        "capability": _fixture_capability("asyncio.run", "asyncio"),
+                    },
+                    {
+                        "api": "trio.run",
+                        "binding": "trio",
+                        "capability": _fixture_capability("trio.run", "trio"),
+                    },
+                ],
+            }
+        },
+    }
+    callback = test.body[0]
+
+    accepted = _nested_async_runner_invocations(
+        test, {callback.name: callback}, {callback.name}, {}
+    )
+
+    assert callback.name in accepted
+    assert "run_async_fn" in accepted
+
+    module._oracle_async_runner_fixtures["fixtures"]["run_async_fn"]["alternatives"][0][
+        "capability"
+    ]["sha256"] = "c" * 64
+    stale_witness = _nested_async_runner_invocations(
+        test, {callback.name: callback}, {callback.name}, {}
+    )
+    assert callback.name not in stale_witness
+
+
+def test_async_runner_wrapper_rejects_parameter_shadowing_asyncio():
+    import ast
+
+    from factoryline import review_audits
+    from factoryline.context_efficiency import _async_runner_wrapper_receiver
+
+    baseline = ast.parse(
+        "import asyncio as loop\n"
+        "def runner(async_fn, *args):\n"
+        "    return loop.run(async_fn(*args))\n"
+    )
+    aliases = review_audits._scope_security_aliases(
+        review_audits._module_security_aliases(baseline), baseline
+    )
+    assert (
+        _async_runner_wrapper_receiver(
+            baseline.body[1], baseline, aliases, review_audits
+        )
+        is not None
+    )
+
+    shadowed = ast.parse(
+        "import asyncio\n"
+        "def runner(asyncio, *args):\n"
+        "    return asyncio.run(asyncio(*args))\n"
+    )
+    aliases = review_audits._scope_security_aliases(
+        review_audits._module_security_aliases(shadowed), shadowed
+    )
+    assert (
+        _async_runner_wrapper_receiver(
+            shadowed.body[1], shadowed, aliases, review_audits
+        )
+        is None
+    )
+
+
+@pytest.mark.parametrize(
+    "body, trusted, module_sha, expected",
+    [
+        ("    run_async_fn(callback)\n", True, "b" * 64, True),
+        ("    if enabled:\n        run_async_fn(callback)\n", True, "b" * 64, False),
+        (
+            "    try:\n        run_async_fn(callback)\n    except Exception:\n        pass\n",
+            True,
+            "b" * 64,
+            False,
+        ),
+        (
+            "    run_async_fn = fake\n    run_async_fn(callback)\n",
+            True,
+            "b" * 64,
+            False,
+        ),
+        (
+            "    run_async_fn.__code__ = (lambda *args: None).__code__\n"
+            "    run_async_fn(callback)\n",
+            True,
+            "b" * 64,
+            False,
+        ),
+        (
+            "    setattr(run_async_fn, '__code__', (lambda *args: None).__code__)\n"
+            "    run_async_fn(callback)\n",
+            True,
+            "b" * 64,
+            False,
+        ),
+        (
+            "    delegate(run_async_fn)\n    run_async_fn(callback)\n",
+            True,
+            "b" * 64,
+            False,
+        ),
+        (
+            "    runner_alias = run_async_fn\n    run_async_fn(callback)\n",
+            True,
+            "b" * 64,
+            False,
+        ),
+        ("    run_async_fn(callback)\n", False, "b" * 64, False),
+        ("    run_async_fn(callback)\n", True, "c" * 64, False),
+    ],
+)
+def test_nested_async_fixture_call_fails_closed_on_control_or_shadow(
+    body, trusted, module_sha, expected
+):
+    import ast
+
+    from factoryline.context_efficiency import _nested_async_runner_invocations
+
+    module = ast.parse(
+        "def test_async(run_async_fn):\n"
+        "    async def callback():\n"
+        "        assert 1 == 1\n" + body
+    )
+    module._oracle_source_sha256 = "b" * 64
+    test = module.body[0]
+    test._oracle_module = module
+    module._oracle_async_runner_fixtures = {
+        "schema": "factory.async-runner-fixture-context.v3",
+        "module_sha256": module_sha,
+        "fixtures": {
+            "run_async_fn": {
+                "trusted": trusted,
+                "source": "conftest.py",
+                "sha256": "a" * 64,
+                "alternatives": [
+                    {
+                        "api": "trio.run",
+                        "binding": "trio",
+                        "capability": _fixture_capability("trio.run", "trio"),
+                    }
+                ],
+            }
+        },
+    }
+    callback = test.body[0]
+    actual = _nested_async_runner_invocations(
+        test, {callback.name: callback}, {callback.name}, {}
+    )
+
+    assert (callback.name in actual) is expected
+
+
+def test_async_runner_fixture_source_digest_is_required(tmp_path):
+    from factoryline.context_efficiency import async_runner_fixture_context
+
+    conftest = tmp_path / "conftest.py"
+    test_file = tmp_path / "test_async.py"
+    snapshots = {
+        conftest: _fixture_snapshot(conftest, _async_runner_sources(), "invalid"),
+        test_file: _fixture_snapshot(
+            test_file, "def test_async(run_async_fn):\n    pass\n", "b" * 64
+        ),
+    }
+
+    assert async_runner_fixture_context(tmp_path, list(snapshots), snapshots) == {}
+
+
+def _large_async_runner_test_source(name):
+    return f"def {name}():\n" + "    assert left == right\n" * 5500
+
+
+def test_async_runner_context_node_limit_is_per_module(tmp_path):
+    from factoryline.context_efficiency import async_runner_fixture_context
+
+    fixture_path = tmp_path / "conftest.py"
+    target_path = tmp_path / "tests" / "test_async.py"
+    unrelated_path = tmp_path / "tests" / "test_unrelated.py"
+    target_path.parent.mkdir()
+    snapshots = {
+        fixture_path: _fixture_snapshot(fixture_path, _async_runner_sources()),
+        target_path: _fixture_snapshot(
+            target_path,
+            "def test_async(run_async_fn):\n    pass\n",
+            "b" * 64,
+        ),
+        unrelated_path: _fixture_snapshot(
+            unrelated_path, _large_async_runner_test_source("test_noise"), "c" * 64
+        ),
+    }
+
+    result = async_runner_fixture_context(tmp_path, list(snapshots), snapshots)
+
+    assert result["tests/test_async.py"]["fixtures"]["run_async_fn"]["trusted"]
+    assert result["tests/test_unrelated.py"]["gaps"] == ["TEST_MODULE_NODE_LIMIT"]
+
+
+@pytest.mark.parametrize("oversized_scope", ["test", "conftest"])
+def test_async_runner_context_oversized_scope_is_uncredited_with_gap(
+    tmp_path, oversized_scope
+):
+    from factoryline.context_efficiency import async_runner_fixture_context
+
+    fixture_path = tmp_path / "conftest.py"
+    test_path = tmp_path / "tests" / "test_async.py"
+    test_path.parent.mkdir()
+    fixture_source = _async_runner_sources()
+    test_source = "def test_async(run_async_fn):\n    pass\n"
+    if oversized_scope == "conftest":
+        fixture_source += _large_async_runner_test_source("large_helper")
+    else:
+        test_source = (
+            "def test_async(run_async_fn):\n"
+            "    async def callback():\n"
+            "        assert await fetch_value() == expected_value\n"
+            "    run_async_fn(callback)\n" + "    assert left == right\n" * 5500
+        )
+    snapshots = {
+        fixture_path: _fixture_snapshot(fixture_path, fixture_source),
+        test_path: _fixture_snapshot(test_path, test_source, "b" * 64),
+    }
+
+    summary = async_runner_fixture_context(tmp_path, list(snapshots), snapshots)[
+        "tests/test_async.py"
+    ]
+
+    expected_gap = (
+        "TEST_MODULE_NODE_LIMIT"
+        if oversized_scope == "test"
+        else "ANCESTOR_FIXTURE_SOURCE_NODE_LIMIT"
+    )
+    assert expected_gap in summary["gaps"]
+    assert not summary["fixtures"].get("run_async_fn", {}).get("trusted", False)
+
+
+def test_security_scan_uses_async_runner_fixture_cold_warm_and_stale_context(
+    tmp_path,
+):
+    from factoryline import review_audits
+
+    conftest = tmp_path / "conftest.py"
+    tests = tmp_path / "tests"
+    tests.mkdir()
+    test_file = tests / "test_async.py"
+    conftest.write_text(_async_runner_sources(), encoding="utf-8")
+    test_file.write_text(
+        "def test_async(run_async_fn):\n"
+        "    async def callback():\n"
+        "        assert await fetch_value() == expected_value\n"
+        "    run_async_fn(callback)\n",
+        encoding="utf-8",
+    )
+    review_audits._oracle_context_cache_clear()
+
+    cold = review_audits.security_scan(tmp_path, cache_enabled=True)
+    cold_hits = review_audits._oracle_context_cache_info()["hits"]
+    cold_target = [
+        row
+        for row in cold["findings"]
+        if row.get("code") == "QUALITY_HOLLOW_TEST"
+        and row.get("path") == "tests/test_async.py"
+        and row.get("facts", {}).get("symbol") == "test_async"
+    ]
+    assert not cold_target
+
+    warm = review_audits.security_scan(tmp_path, cache_enabled=True)
+    warm_info = review_audits._oracle_context_cache_info()
+    assert warm_info["hits"] == cold_hits + 1
+    assert warm["audit_sha256"] == cold["audit_sha256"]
+    assert [
+        row
+        for row in warm["findings"]
+        if row.get("code") == "QUALITY_HOLLOW_TEST"
+        and row.get("path") == "tests/test_async.py"
+        and row.get("facts", {}).get("symbol") == "test_async"
+    ] == cold_target
+
+    conftest.write_text(
+        "import asyncio\nimport pytest\nimport trio\n"
+        "@pytest.fixture(params=[asyncio.run, trio.run], ids=['asyncio', 'trio'])\n"
+        "def run_async_fn(request):\n"
+        "    return request.param if request.config.option.asyncio else None\n",
+        encoding="utf-8",
+    )
+    before_stale = review_audits._oracle_context_cache_info()
+    stale = review_audits.security_scan(tmp_path, cache_enabled=True)
+    after_stale = review_audits._oracle_context_cache_info()
+    stale_target = [
+        row
+        for row in stale["findings"]
+        if row.get("code") == "QUALITY_HOLLOW_TEST"
+        and row.get("path") == "tests/test_async.py"
+        and row.get("facts", {}).get("symbol") == "test_async"
+    ]
+    assert len(stale_target) == 1
+    assert after_stale["hits"] == before_stale["hits"]
+    assert after_stale["misses"] == before_stale["misses"] + 1
+
+
+@pytest.mark.parametrize(
+    "runner_call, bad_backend",
+    [
+        ("", False),
+        ("    return\n    run_async_fn(callback)\n", False),
+        ("    run_async_fn(callback)\n", True),
+    ],
+    ids=["uninvoked-fixture", "unreachable-runner", "one-unrecognized-backend"],
+)
+def test_security_scan_does_not_credit_unproven_async_runner_calls(
+    tmp_path, runner_call, bad_backend
+):
+    from factoryline import review_audits
+
+    conftest = tmp_path / "conftest.py"
+    tests = tmp_path / "tests"
+    tests.mkdir()
+    test_file = tests / "test_async.py"
+    fixture_source = _async_runner_sources()
+    if bad_backend:
+        fixture_source = fixture_source.replace("trio.run", "anyio.run")
+    conftest.write_text(fixture_source, encoding="utf-8")
+    test_file.write_text(
+        "def test_async(run_async_fn):\n"
+        "    async def callback():\n"
+        "        assert await fetch_value() == expected_value\n" + runner_call,
+        encoding="utf-8",
+    )
+
+    result = review_audits.security_scan(tmp_path, cache_enabled=False)
+
+    target = [
+        row
+        for row in result["findings"]
+        if row.get("code") == "QUALITY_HOLLOW_TEST"
+        and row.get("path") == "tests/test_async.py"
+        and row.get("facts", {}).get("symbol") == "test_async"
+    ]
+    assert len(target) == 1
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "run_async_fn.__code__ = (lambda *args: None).__code__\n",
+        "setattr(run_async_fn, '__code__', (lambda *args: None).__code__)\n",
+        "delegate(run_async_fn)\n",
+        "runner_alias = run_async_fn\n",
+    ],
+)
+def test_security_scan_keeps_mutated_async_runner_hollow(tmp_path, mutation):
+    from factoryline import review_audits
+
+    conftest = tmp_path / "conftest.py"
+    tests = tmp_path / "tests"
+    tests.mkdir()
+    (tests / "test_async.py").write_text(
+        "def test_async(run_async_fn):\n"
+        "    async def callback():\n"
+        "        assert await fetch_value() == expected_value\n"
+        f"    {mutation}"
+        "    run_async_fn(callback)\n",
+        encoding="utf-8",
+    )
+    conftest.write_text(_async_runner_sources(), encoding="utf-8")
+
+    result = review_audits.security_scan(tmp_path, cache_enabled=False)
+
+    target = [
+        row
+        for row in result["findings"]
+        if row.get("code") == "QUALITY_HOLLOW_TEST"
+        and row.get("path") == "tests/test_async.py"
+        and row.get("facts", {}).get("symbol") == "test_async"
+    ]
+    assert len(target) == 1
+
+
+@pytest.mark.parametrize(
+    "parameters, body",
+    [
+        ("[disable(other.run)]", "return request.param"),
+        ("choose([other.run])", "return request.param"),
+        (
+            "[other.run]",
+            "request.param.__code__ = replacement\n    return request.param",
+        ),
+        ("[other.run]", "consume(request.param)\n    return request.param"),
+        ("[other.run, disable()]", "return request.param"),
+    ],
+    ids=[
+        "nested-call",
+        "dynamic-params",
+        "consumer-mutation",
+        "consumer-escape",
+        "effectful-alternative",
+    ],
+)
+def test_async_runner_context_rejects_impure_secondary_fixture_consumer(
+    tmp_path, parameters, body
+):
+    from factoryline.context_efficiency import async_runner_fixture_context
+
+    conftest = tmp_path / "conftest.py"
+    source = (
+        _async_runner_sources() + "import trio as other\n"
+        f"@pytest.fixture(params={parameters})\ndef secondary(request):\n    {body}\n"
+    )
+    tree = _fixture_snapshot(conftest, source)
+    test_file = tmp_path / "test_async.py"
+    snapshots = {
+        conftest: tree,
+        test_file: _fixture_snapshot(
+            test_file, "def test_async(run_async_fn):\n    pass\n"
+        ),
+    }
+    context = async_runner_fixture_context(tmp_path, list(snapshots), snapshots)
+    assert context["test_async.py"]["fixtures"]["run_async_fn"]["trusted"] is False
+
+
+def test_async_runner_context_accepts_pure_secondary_fixture_consumer(tmp_path):
+    from factoryline.context_efficiency import async_runner_fixture_context
+
+    conftest = tmp_path / "conftest.py"
+    source = (
+        _async_runner_sources() + "import trio as other\n"
+        "@pytest.fixture(params=(other.run,))\ndef secondary(request):\n"
+        "    return request.param\n"
+    )
+    tree = _fixture_snapshot(conftest, source)
+    test_file = tmp_path / "test_async.py"
+    snapshots = {
+        conftest: tree,
+        test_file: _fixture_snapshot(
+            test_file, "def test_async(run_async_fn):\n    pass\n"
+        ),
+    }
+    context = async_runner_fixture_context(tmp_path, list(snapshots), snapshots)
+    assert context["test_async.py"]["fixtures"]["run_async_fn"]["trusted"] is True
+    assert context["test_async.py"]["fixtures"]["secondary"]["trusted"] is True
+
+
+def _protocol_source_case(
+    tmp_path, test_source, product=None, *, additional=None, **options
+):
+    import ast
+    import hashlib
+
+    from factoryline.context_efficiency import protocol_call_context
+
+    sources = {
+        "pkg/__init__.py": product
+        or (
+            "from abc import ABC\n"
+            "class Base(ABC):\n"
+            "    def __init__(self):\n        self.value = 3\n"
+            "    def __repr__(self):\n        return f'<value={self.value}>'\n"
+        ),
+        "test_protocol.py": test_source,
+        **(additional or {}),
+    }
+    snapshots = {}
+    for relative, source in sources.items():
+        path = tmp_path / relative
+        tree = ast.parse(source, filename=str(path))
+        tree._oracle_source_sha256 = hashlib.sha256(source.encode()).hexdigest()
+        snapshots[path] = tree
+    context = protocol_call_context(tmp_path, list(snapshots), snapshots, **options)
+    return context.get("test_protocol.py", {"summaries": [], "gaps": []})
+
+
+def test_protocol_context_source_resolves_three_repr_dispatch_shapes(tmp_path):
+    source = (
+        "import pkg as library\n"
+        "from pkg import asyncio as async_backend, tornado as tornado_backend\n"
+        "def test_sync():\n"
+        "    class Concrete(library.Base):\n"
+        "        def __call__(self):\n            pass\n"
+        "    repr(Concrete())\n"
+        "def test_async_backend():\n    repr(async_backend.Async())\n"
+        "def test_tornado_backend():\n    repr(tornado_backend.Tornado())\n"
+    )
+    result = _protocol_source_case(
+        tmp_path,
+        source,
+        additional={
+            "pkg/asyncio/__init__.py": "from pkg import Base\nclass Async(Base):\n    def __init__(self):\n        super().__init__()\n",
+            "pkg/tornado.py": "from pkg import Base\nclass Tornado(Base):\n    def __init__(self):\n        super().__init__()\n",
+        },
+    )
+    assert len(result["summaries"]) == 3
+    for summary in result["summaries"]:
+        assert summary["status"] == "WEAK_PROTOCOL"
+        assert summary["output_checked"] is False
+        assert summary["runtime_observed"] is False
+        assert summary["conditional_on_successful_construction"] is True
+        assert (
+            summary["assumptions"][0]["contract"]
+            == "stdlib.abc-transparent-method-lookup.cpython-3.11.9.v1"
+        )
+        assert {item["role"] for item in summary["dependencies"]} >= {
+            "test",
+            "receiver_class",
+            "protocol_method",
+        }
+        assert all(
+            len(item["sha256"]) == len(item["ast_sha256"]) == 64
+            for item in summary["dependencies"]
+        )
+
+
+@pytest.mark.parametrize(
+    "imports, receiver",
+    [
+        ("from pkg import Base as ChangedName", "ChangedName"),
+        ("import pkg as renamed", "renamed.Base"),
+        ("from pkg import Base\nclass Middle(Base):\n    pass", "Middle"),
+    ],
+)
+def test_protocol_context_resolves_renamed_and_inherited_receivers(
+    tmp_path, imports, receiver
+):
+    result = _protocol_source_case(
+        tmp_path, imports + f"\ndef test_protocol():\n    repr({receiver}())\n"
+    )
+    assert result["summaries"][0]["status"] == "WEAK_PROTOCOL"
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "from pkg import Base\ndef test_protocol():\n    Base.__repr__ = replacement\n    repr(Base())\n",
+        "import pkg as p\nimport pkg as other\nother.Base.__repr__ = replacement\ndef test_protocol():\n    repr(p.Base())\n",
+        "from pkg import Base\nfrom pkg import Base as other\nother.__repr__ = replacement\ndef test_protocol():\n    repr(Base())\n",
+        "import pkg as p\nimport pkg as other\nconsume(other.Base)\ndef test_protocol():\n    repr(p.Base())\n",
+        "from pkg import Base\ndef test_protocol():\n    saved = Base\n    repr(Base())\n",
+        "from pkg import Base\ndef test_protocol():\n    Base = fake\n    repr(Base())\n",
+        "from pkg import Base\ndef test_protocol(repr):\n    repr(Base())\n",
+        "from pkg import Base\nrepr = fake\ndef test_protocol():\n    repr(Base())\n",
+        "from pkg import Base\nimport builtins\nbuiltins.repr = fake\ndef test_protocol():\n    repr(Base())\n",
+        "from pkg import Base\ndef test_protocol():\n    if False:\n        repr(Base())\n",
+        "from pkg import Base\ndef test_protocol():\n    def unused():\n        repr(Base())\n",
+        "from pkg import Base\ndef test_protocol():\n    try:\n        repr(Base())\n    except Exception:\n        pass\n",
+        "from pkg import Base\ndef test_protocol():\n    with suppress(Exception):\n        repr(Base())\n",
+        "from pkg import Base\nasync def test_protocol():\n    repr(Base())\n",
+        "from pkg import Base\ndef test_protocol():\n    repr(Base())\n    yield 1\n",
+        "from pkg import Base\n@xfail\ndef test_protocol():\n    repr(Base())\n",
+        "from pkg import Base\ndef test_protocol():\n    return\n    repr(Base())\n",
+        "from pkg import Base\ndef test_protocol():\n    class Child(Base):\n        Base.__repr__ = replacement\n    repr(Child())\n",
+        "from pkg import Base\ndef test_protocol():\n    class Child(Base, metaclass=Meta):\n        pass\n    repr(Child())\n",
+    ],
+)
+def test_protocol_context_rejects_mutation_escape_shadow_or_nonexecution(
+    tmp_path, source
+):
+    summary = _protocol_source_case(tmp_path, source)["summaries"][0]
+    assert summary["status"] == "UNKNOWN"
+    assert summary["unknown_reasons"]
+    assert summary["output_checked"] is False
+
+
+@pytest.mark.parametrize(
+    "product",
+    [
+        "class Base:\n    pass\n",
+        "class Base:\n    def __repr__(self):\n        return 'constant'\n",
+        "class Base(external.Unknown):\n    def __repr__(self):\n        return f'{self.value}'\n",
+        "class Base(factory()):\n    def __repr__(self):\n        return f'{self.value}'\n",
+        "class Base:\n    def __new__(cls):\n        return other\n    def __repr__(self):\n        return f'{self.value}'\n",
+        "class Base:\n    def __init__(self):\n        self.__class__ = Other\n    def __repr__(self):\n        return f'{self.value}'\n",
+        "class Base:\n    def __init__(self):\n        consume(self)\n    def __repr__(self):\n        return f'{self.value}'\n",
+    ],
+)
+def test_protocol_context_rejects_unresolved_or_constant_protocols(tmp_path, product):
+    summary = _protocol_source_case(
+        tmp_path,
+        "from pkg import Base\ndef test_protocol():\n    repr(Base())\n",
+        product,
+    )["summaries"][0]
+    assert summary["status"] == "UNKNOWN"
+    assert summary["unknown_reasons"]
+
+
+def test_protocol_context_keeps_constant_compute_without_protocol_credit(tmp_path):
+    result = _protocol_source_case(
+        tmp_path,
+        "def compute():\n    return 3\ndef test_never_asserts_anything():\n    compute()\n",
+    )
+    assert result["summaries"] == []
+
+
+def test_protocol_context_rejects_source_drift_budget_and_unknown_abc_profile(tmp_path):
+    source = "from pkg import Base\ndef test_protocol():\n    repr(Base())\n"
+    result = _protocol_source_case(tmp_path, source, source_hashes={})
+    assert result["gaps"] == ["SOURCE_IDENTITY_DRIFT"]
+    result = _protocol_source_case(tmp_path, source, max_nodes=3)
+    assert result["gaps"] == ["AST_NODE_LIMIT"]
+    result = _protocol_source_case(
+        tmp_path,
+        source,
+        python_profile={"implementation": "cpython", "version": "3.14.0"},
+    )
+    assert result["summaries"][0]["unknown_reasons"] == ["ABC_PROFILE_UNSUPPORTED"]
+
+
+@pytest.mark.parametrize(
+    "product",
+    [
+        "from abc import ABC\nimport abc as other\nother.ABCMeta.__call__ = replacement\nclass Base(ABC):\n    def __repr__(self):\n        return f'{self.value}'\n",
+        "class Base:\n    def __init__(self):\n        consume(Base)\n        self.value = 3\n    def __repr__(self):\n        return f'{self.value}'\n",
+        "class Base:\n    def __init__(self):\n        from pkg import Base as alias\n        consume(alias)\n    def __repr__(self):\n        return f'{self.value}'\n",
+        "super = replacement\nclass Parent:\n    pass\nclass Base(Parent):\n    def __init__(self):\n        super().__init__()\n    def __repr__(self):\n        return f'{self.value}'\n",
+        "class Base:\n    def __repr__(self):\n        return 'constant' if True else self.value\n",
+        "class Base:\n    def __repr__(self):\n        return f'{True or self.value}'\n",
+    ],
+)
+def test_protocol_context_transfer_rejects_abc_constructor_and_dead_dependency_controls(
+    tmp_path, product
+):
+    source = "from pkg import Base\ndef test_protocol():\n    repr(Base())\n"
+    summary = _protocol_source_case(tmp_path, source, product)["summaries"][0]
+    assert summary["status"] == "UNKNOWN"
+    assert summary["unknown_reasons"]
+
+
+def test_protocol_context_transfer_records_decorated_method_as_partial_unknown(
+    tmp_path,
+):
+    product = "class Base:\n    @metadata_decorator\n    def __repr__(self):\n        return f'{self.value}'\n"
+    source = "from pkg import Base\ndef test_protocol():\n    repr(Base())\n"
+    summary = _protocol_source_case(tmp_path, source, product)["summaries"][0]
+    assert summary["status"] == "UNKNOWN"
+    assert summary["unknown_reasons"] == ["PROFILE_BINDING_AMBIGUOUS"]
+    assert summary["receiver"]["class"] == "Base"
+    assert summary["method_decorators"] == ["metadata_decorator"]
+    assert any(row["role"] == "protocol_method" for row in summary["dependencies"])
+
+
+def test_protocol_context_transfer_rejects_local_constructor_before_declaration(
+    tmp_path,
+):
+    source = "from pkg import Base\ndef test_protocol():\n    repr(Local())\n    class Local(Base):\n        pass\n"
+    summary = _protocol_source_case(tmp_path, source)["summaries"][0]
+    assert summary["unknown_reasons"] == ["LOCAL_CLASS_NOT_YET_DECLARED"]
+
+
+def test_protocol_context_transfer_unrelated_oversized_source_cannot_poison_valid_summary(
+    tmp_path,
+):
+    source = "from pkg import Base\ndef test_protocol():\n    repr(Base())\n"
+    result = _protocol_source_case(
+        tmp_path,
+        source,
+        additional={"unrelated.py": "unrelated = 3\n" * 500},
+        max_nodes=300,
+    )
+    assert result["summaries"][0]["status"] == "WEAK_PROTOCOL"
+
+
+def test_protocol_context_transfer_has_no_assertion_or_finding_suppression_side_effect(
+    tmp_path,
+):
+    from factoryline.review_audits import _hollow_test_finding
+    import ast
+
+    source = "from pkg import Base\ndef test_protocol():\n    repr(Base())\n"
+    context = _protocol_source_case(tmp_path, source)
+    test = ast.parse(source).body[1]
+    finding = _hollow_test_finding(
+        "test_protocol.py",
+        test,
+        {"Base": "pkg.Base"},
+        oracle_context={"protocol_call_context": context},
+    )
+    assert context["summaries"][0]["status"] == "WEAK_PROTOCOL"
+    assert finding["code"] == "QUALITY_HOLLOW_TEST"
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "other.Base = replacement",
+        "del other.Base",
+        "other.Base.__bases__ = (replacement,)",
+    ],
+)
+def test_protocol_context_constructor_replacement_through_equivalent_alias_is_unknown(
+    tmp_path, mutation
+):
+    source = (
+        "import pkg as selected\nimport pkg as other\n"
+        + mutation
+        + "\ndef test_protocol():\n    repr(selected.Base())\n"
+    )
+    summary = _protocol_source_case(tmp_path, source)["summaries"][0]
+    assert summary["status"] == "UNKNOWN"
+    assert summary["unknown_reasons"]
+
+
+def test_protocol_context_dependency_source_drift_invalidates_selected_receiver(
+    tmp_path,
+):
+    import hashlib
+
+    source = "from pkg import Base\ndef test_protocol():\n    repr(Base())\n"
+    hashes = {
+        "test_protocol.py": hashlib.sha256(source.encode()).hexdigest(),
+        "pkg/__init__.py": "b" * 64,
+    }
+    summary = _protocol_source_case(tmp_path, source, source_hashes=hashes)[
+        "summaries"
+    ][0]
+    assert summary["unknown_reasons"] == ["SOURCE_IDENTITY_DRIFT"]
+
+
+def test_protocol_context_dependency_hashes_change_and_helpers_are_exported(tmp_path):
+    from factoryline.context_efficiency import (
+        protocol_call_context,
+        protocol_call_helpers,
+    )
+
+    source = "from pkg import Base\ndef test_protocol():\n    repr(Base())\n"
+    first = _protocol_source_case(tmp_path, source)["summaries"][0]
+    product = "class Base:\n    def __init__(self):\n        self.other = 3\n    def __repr__(self):\n        return f'{self.other}'\n"
+    second = _protocol_source_case(tmp_path, source, product)["summaries"][0]
+    original = next(
+        row for row in first["dependencies"] if row["role"] == "protocol_method"
+    )
+    changed = next(
+        row for row in second["dependencies"] if row["role"] == "protocol_method"
+    )
+    assert first["status"] == second["status"] == "WEAK_PROTOCOL"
+    assert original["sha256"] != changed["sha256"]
+    assert original["ast_sha256"] != changed["ast_sha256"]
+    assert protocol_call_context in protocol_call_helpers()
+
+
+@pytest.mark.parametrize(
+    "name, flag", [("renamed", "__override__"), ("keep_identity", "__final__")]
+)
+def test_protocol_context_metadata_identity_transfer_is_source_bound_and_renamable(
+    tmp_path, name, flag
+):
+    product = f"from .metadata import {name} as annotation\nclass Base:\n    @annotation\n    def __repr__(self):\n        return f'{{self.value}}'\n"
+    decorator = (
+        f"def {name}(function):\n    function.{flag} = True\n    return function\n"
+    )
+    source = "from pkg import Base\ndef test_protocol():\n    repr(Base())\n"
+    summary = _protocol_source_case(
+        tmp_path, source, product, additional={"pkg/metadata.py": decorator}
+    )["summaries"][0]
+    assert summary["status"] == "WEAK_PROTOCOL"
+    assert summary["output_checked"] is False
+    assert any(
+        row["role"] == "identity_decorator" and row["source"] == "pkg/metadata.py"
+        for row in summary["dependencies"]
+    )
+
+
+def _protocol_profile_metadata_source():
+    return (
+        "import typing as types\nimport sys as runtime\nimport contextlib as contexts\n"
+        "if types.TYPE_CHECKING:\n    from missing import identity\n"
+        "elif runtime.version_info >= (3, 12):\n    from typing import override as identity\n"
+        "else:\n    def identity(function):\n"
+        "        with contexts.suppress(AttributeError, TypeError):\n"
+        "            function.__override__ = True\n        return function\n"
+    )
+
+
+def test_protocol_context_metadata_identity_selects_the_declared_runtime_branch(
+    tmp_path,
+):
+    product = "from .metadata import identity\nclass Base:\n    @identity\n    def __repr__(self):\n        return f'{self.value}'\n"
+    source = "from pkg import Base\ndef test_protocol():\n    repr(Base())\n"
+    summary = _protocol_source_case(
+        tmp_path,
+        source,
+        product,
+        additional={"pkg/metadata.py": _protocol_profile_metadata_source()},
+    )["summaries"][0]
+    assert summary["status"] == "WEAK_PROTOCOL"
+    assert any(row["role"] == "identity_decorator" for row in summary["dependencies"])
+
+    assert summary["python_profile"] == {
+        "implementation": "cpython",
+        "version": "3.11.9",
+    }
+    assert any(
+        item["contract"] == "source.metadata-identity-transfer.v1"
+        for item in summary["assumptions"]
+    )
+
+
+@pytest.mark.parametrize(
+    "decorator",
+    [
+        "def identity(function):\n    function.__code__ = True\n    return function\n",
+        "def identity(function):\n    function.__globals__ = True\n    return function\n",
+        "def identity(function):\n    function.__class__ = True\n    return function\n",
+        "def identity(function):\n    return wrapper\n",
+        "def identity(function):\n    consume(function)\n    return function\n",
+        "if unknown_flag:\n    def identity(function):\n        return function\n",
+        "import sys as runtime\nimport sys as other\nother.version_info = (3, 12)\nif runtime.version_info >= (3, 12):\n    def identity(function):\n        return function\nelse:\n    def identity(function):\n        return function\n",
+    ],
+)
+def test_protocol_context_metadata_identity_rejects_execution_replacement_and_unknown_branches(
+    tmp_path, decorator
+):
+    product = "from .metadata import identity\nclass Base:\n    @identity\n    def __repr__(self):\n        return f'{self.value}'\n"
+    source = "from pkg import Base\ndef test_protocol():\n    repr(Base())\n"
+    summary = _protocol_source_case(
+        tmp_path, source, product, additional={"pkg/metadata.py": decorator}
+    )["summaries"][0]
+    assert summary["status"] == "UNKNOWN"
+    assert summary["unknown_reasons"]
+
+
+def test_protocol_context_metadata_identity_rejects_mutation_through_other_import_alias(
+    tmp_path,
+):
+    product = "from .metadata import identity\nfrom .metadata import identity as other\nother.__code__ = replacement\nclass Base:\n    @identity\n    def __repr__(self):\n        return f'{self.value}'\n"
+    source = "from pkg import Base\ndef test_protocol():\n    repr(Base())\n"
+    summary = _protocol_source_case(
+        tmp_path,
+        source,
+        product,
+        additional={
+            "pkg/metadata.py": "def identity(function):\n    return function\n"
+        },
+    )["summaries"][0]
+    assert summary["status"] == "UNKNOWN"
+    assert summary["unknown_reasons"]
+
+
+@pytest.mark.parametrize(
+    "operation", ["saved = helper.__annotations__", "saved = helper.__dict__"]
+)
+def test_protocol_context_metadata_annotation_reflection_cannot_escape_class_identity(
+    tmp_path, operation
+):
+    source = (
+        "from pkg import Base\ndef helper(argument: Base):\n    pass\ndef test_protocol():\n    "
+        + operation
+        + "\n    repr(Base())\n"
+    )
+    summary = _protocol_source_case(tmp_path, source)["summaries"][0]
+    assert summary["status"] == "UNKNOWN"
+
+
+def test_protocol_context_metadata_allows_direct_type_metadata_and_async_identity_decorators(
+    tmp_path,
+):
+    product = "from .metadata import identity\nclass Base:\n    @identity\n    def __repr__(self):\n        return f'{self.value}'\n    @identity\n    async def unrelated(self):\n        pass\n"
+    source = "from pkg import Base\ndef helper(argument: Base) -> Base:\n    pass\nclass Holder:\n    annotation: Base\ndef test_protocol():\n    repr(Base())\n"
+    summary = _protocol_source_case(
+        tmp_path,
+        source,
+        product,
+        additional={
+            "pkg/metadata.py": "def identity(function):\n    function.__override__ = True\n    return function\n"
+        },
+    )["summaries"][0]
+    assert summary["status"] == "WEAK_PROTOCOL"
+
+
+def test_protocol_context_metadata_callable_object_is_not_a_proven_base_class(tmp_path):
+    product = "def factory():\n    return object\nclass Base(factory):\n    def __repr__(self):\n        return f'{self.value}'\n"
+    source = "from pkg import Base\ndef test_protocol():\n    repr(Base())\n"
+    summary = _protocol_source_case(tmp_path, source, product)["summaries"][0]
+    assert summary["status"] == "UNKNOWN"
+
+
+@pytest.mark.parametrize(
+    "product",
+    [
+        "def alter():\n    Base.__repr__ = lambda self: 'constant'\nclass Base:\n    def __init__(self):\n        alter()\n    def __repr__(self):\n        return self.value\n",
+        "def alter():\n    Base.__repr__ = lambda self: 'constant'\ndef intermediate():\n    alter()\nclass Base:\n    def __init__(self):\n        intermediate()\n    def __repr__(self):\n        return self.value\n",
+        "def alter():\n    Base.__repr__ = lambda self: 'constant'\nalias = alter\nclass Base:\n    def __init__(self):\n        alias()\n    def __repr__(self):\n        return self.value\n",
+        "def initialize(self):\n    Base.__repr__ = lambda self: 'constant'\nclass Base:\n    __init__ = initialize\n    def __repr__(self):\n        return self.value\n",
+        "class Base:\n    def __init__(self):\n        self.value = 3\n    def __setattr__(self, name, value):\n        Base.__repr__ = lambda self: 'constant'\n    def __repr__(self):\n        return self.value\n",
+    ],
+)
+def test_protocol_context_constructor_effect_closure_rejects_dispatch_changes(
+    tmp_path, product
+):
+    source = "from pkg import Base\ndef test_protocol():\n    repr(Base())\n"
+    summary = _protocol_source_case(tmp_path, source, product)["summaries"][0]
+    assert summary["status"] == "UNKNOWN"
+    assert summary["unknown_reasons"]
+
+
+def test_protocol_context_constructor_effect_closure_retains_nonmutating_source_helper(
+    tmp_path,
+):
+    product = "def harmless():\n    return 3\nclass Base:\n    def __init__(self):\n        harmless()\n        self.value = 3\n    def __repr__(self):\n        return self.value\n"
+    source = "from pkg import Base\ndef test_protocol():\n    repr(Base())\n"
+    summary = _protocol_source_case(tmp_path, source, product)["summaries"][0]
+    assert summary["status"] == "WEAK_PROTOCOL"
+    assert summary["conditional_on_unchanged_dispatch"] is True
+    assert "conditional" in summary["dispatch"]
+    assert any(
+        d["role"] == "constructor_effect" and d["symbol"] == "harmless"
+        for d in summary["dependencies"]
+    )
+
+
+def test_protocol_context_constructor_unavailable_import_is_conditional_not_dispatch_proof(
+    tmp_path,
+):
+    product = "from opaque_external import operation\nclass Base:\n    def __init__(self):\n        operation()\n        self.value = 3\n    def __repr__(self):\n        return self.value\n"
+    source = "from pkg import Base\ndef test_protocol():\n    repr(Base())\n"
+    summary = _protocol_source_case(tmp_path, source, product)["summaries"][0]
+    assert summary["status"] == "WEAK_PROTOCOL"
+    assert summary["conditional_on_unchanged_dispatch"] is True
+    assert summary["runtime_observed"] is False
+    assert (
+        "CONSTRUCTOR_SUCCESS_AND_EFFECTS_NOT_VERIFIED" in summary["unresolved_effects"]
+    )
+
+
+@pytest.mark.parametrize(
+    "document",
+    [
+        None,
+        {},
+        {"summaries": None},
+        {"summaries": 7},
+        {"summaries": "bad"},
+        {"summaries": [None, 0, "bad", {}]},
+        {"summaries": [{"test": "test_protocol", "dependencies": None}]},
+        {"summaries": [{"test": "test_protocol", "dependencies": 7}]},
+        {
+            "summaries": [
+                {
+                    "test": "test_protocol",
+                    "dependencies": [{"role": "test", "line": True}],
+                }
+            ]
+        },
+    ],
+)
+def test_protocol_context_annotation_consumer_rejects_malformed_documents(
+    tmp_path, document
+):
+    import ast
+    from copy import deepcopy
+    from factoryline.context_efficiency import _protocol_annotate_finding
+
+    node = ast.parse("def test_protocol():\n    pass\n").body[0]
+    finding = {
+        "code": "QUALITY_HOLLOW_TEST",
+        "severity": "MEDIUM",
+        "facts": {"original": True},
+    }
+    before = deepcopy(finding)
+    assert (
+        _protocol_annotate_finding(finding, node, {"protocol_observations": document})
+        == before
+    )
+
+
+def test_protocol_context_annotation_consumer_matches_exact_test_identity_and_preserves_status(
+    tmp_path,
+):
+    import ast
+    from copy import deepcopy
+    from factoryline.context_efficiency import (
+        _protocol_annotate_finding,
+        protocol_call_helpers,
+    )
+
+    node = ast.parse("def test_protocol():\n    pass\n").body[0]
+    selected = {
+        "test": node.name,
+        "status": "UNKNOWN",
+        "dependencies": [{"role": "test", "line": node.lineno}],
+    }
+    second = {**selected, "line": 8}
+    wrong_name = {**selected, "test": "other"}
+    wrong_line = {**selected, "dependencies": [{"role": "test", "line": 99}]}
+    context = {
+        "protocol_observations": {
+            "summaries": [selected, wrong_name, second, wrong_line]
+        }
+    }
+    before = deepcopy(context)
+    finding = {"code": "QUALITY_HOLLOW_TEST", "severity": "MEDIUM"}
+    result = _protocol_annotate_finding(finding, node, context)
+    assert result["code"] == "QUALITY_HOLLOW_TEST" and result["severity"] == "MEDIUM"
+    assert result["facts"]["protocol_observations"]["summaries"] == [selected, second]
+    result["facts"]["protocol_observations"]["summaries"][0]["status"] = "changed"
+    assert context == before
+    assert _protocol_annotate_finding in protocol_call_helpers()
+    assert protocol_call_helpers in protocol_call_helpers()
+
+
+def test_protocol_context_constructor_effect_dependency_drift_is_not_treated_as_opaque_import(
+    tmp_path,
+):
+    import hashlib
+
+    product = "from .effects import operation\nclass Base:\n    def __init__(self):\n        operation()\n        self.value = 3\n    def __repr__(self):\n        return self.value\n"
+    source = "from pkg import Base\ndef test_protocol():\n    repr(Base())\n"
+    hashes = {
+        "test_protocol.py": hashlib.sha256(source.encode()).hexdigest(),
+        "pkg/__init__.py": hashlib.sha256(product.encode()).hexdigest(),
+        "pkg/effects.py": "b" * 64,
+    }
+    summary = _protocol_source_case(
+        tmp_path,
+        source,
+        product,
+        additional={"pkg/effects.py": "def operation():\n    return 3\n"},
+        source_hashes=hashes,
+    )["summaries"][0]
+    assert summary["status"] == "UNKNOWN"
+    assert summary["unknown_reasons"] == ["SOURCE_IDENTITY_DRIFT"]
+
+
+def test_protocol_context_constructor_effect_records_consulted_helper_classes(tmp_path):
+    product = "class Helper:\n    pass\nclass Base:\n    def __init__(self):\n        Helper()\n        self.value = 3\n    def __repr__(self):\n        return self.value\n"
+    source = "from pkg import Base\ndef test_protocol():\n    repr(Base())\n"
+    summary = _protocol_source_case(tmp_path, source, product)["summaries"][0]
+    assert summary["status"] == "WEAK_PROTOCOL"
+    assert any(
+        d["role"] == "constructor_effect_class" and d["symbol"] == "Helper"
+        for d in summary["dependencies"]
+    )
+
+
+_DEMAND_PRODUCT = """class Pipeline:
+    def __init__(self):
+        self.enabled = False
+    def enable(self):
+        self.enabled = True
+    def run(self, text):
+        for item in text:
+            yield item
+def stream(text):
+    stack = Pipeline()
+    stack.enable()
+    return stack.run(text)
+def parse(text):
+    return tuple(stream(text))
+def format(text):
+    stack = Pipeline()
+    return ''.join(stack.run(text))
+"""
+
+
+@pytest.mark.parametrize("consumer", ["tuple", "list", "''.join"])
+def test_protocol_context_demand_consumed_unconsumed_twin(tmp_path, consumer):
+    source = (
+        "import pkg\n"
+        f"def test_consumed():\n    {consumer}(pkg.stream('data'))\n"
+        "def test_created():\n    pkg.stream('data')\n"
+    )
+    rows = _protocol_source_case(tmp_path, source, _DEMAND_PRODUCT)["summaries"]
+    by_test = {row["test"]: row for row in rows}
+    consumed, created = by_test["test_consumed"], by_test["test_created"]
+    assert consumed["status"] == "WEAK_PROTOCOL", consumed
+    assert created["status"] == "CREATED_ONLY", created
+    assert any(s["phase"] == "body_entered" for s in consumed["demand_chain"])
+    assert not any(s["phase"] == "body_entered" for s in created["demand_chain"])
+    assert consumed["output_checked"] is consumed["runtime_observed"] is False
+    assert consumed["item_produced"] is consumed["exhausted"] is None
+    assert consumed["conditional_on_path"] is True
+
+
+@pytest.mark.parametrize("operation", ["parse", "format"])
+def test_protocol_context_demand_source_return_and_local_receiver(tmp_path, operation):
+    source = f"import pkg as renamed\ndef test_operation():\n    renamed.{operation}('data')\n"
+    row = _protocol_source_case(tmp_path, source, _DEMAND_PRODUCT)["summaries"][0]
+    assert row["status"] == "WEAK_PROTOCOL", row
+    assert any(s["phase"] == "forces" for s in row["demand_chain"])
+    assert any(
+        s["phase"] == "body_entered" and s["symbol"] == "run"
+        for s in row["demand_chain"]
+    )
+    assert any(
+        d["role"] == "demand_allocation" and d["symbol"] == "Pipeline"
+        for d in row["dependencies"]
+    )
+
+
+@pytest.mark.parametrize(
+    "body", ["yield 3", "yield from ()", "if False:\n        yield None"]
+)
+def test_protocol_context_demand_constant_empty_keep_body_entry_separate(
+    tmp_path, body
+):
+    product = "def stream(text):\n    " + body + "\n"
+    source = "import pkg\ndef test_operation():\n    tuple(pkg.stream('data'))\n"
+    row = _protocol_source_case(tmp_path, source, product)["summaries"][0]
+    assert row["status"] == "UNKNOWN"
+    assert "CONSTANT_OR_EMPTY_GENERATOR" in row["unknown_reasons"]
+    assert any(s["phase"] == "body_entered" for s in row["demand_chain"])
+    assert row["item_produced"] is row["exhausted"] is None
+
+
+@pytest.mark.parametrize(
+    "prefix", ["tuple = lambda x: x\n", "from pkg import parse as tuple\n"]
+)
+def test_protocol_context_demand_shadowed_consumer_not_credited(tmp_path, prefix):
+    source = (
+        "import pkg\n"
+        + prefix
+        + "def test_operation():\n    tuple(pkg.stream('data'))\n"
+    )
+    rows = _protocol_source_case(tmp_path, source, _DEMAND_PRODUCT)["summaries"]
+    assert not any(r["status"] == "WEAK_PROTOCOL" for r in rows)
+
+
+@pytest.mark.parametrize(
+    "statement", ["next(pkg.stream('data'))", "pkg.stream('data')"]
+)
+def test_protocol_context_demand_partial_or_unconsumed_not_exhaustion(
+    tmp_path, statement
+):
+    source = f"import pkg\ndef test_operation():\n    {statement}\n"
+    rows = _protocol_source_case(tmp_path, source, _DEMAND_PRODUCT)["summaries"]
+    assert not any(r["status"] == "WEAK_PROTOCOL" for r in rows)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "try:\n        yield text\n    except Exception:\n        pass",
+        "try:\n        yield text\n    finally:\n        return",
+    ],
+)
+def test_protocol_context_demand_swallowed_generator_failure_unknown(tmp_path, body):
+    product = "def stream(text):\n    " + body + "\n"
+    source = "import pkg\ndef test_operation():\n    tuple(pkg.stream('data'))\n"
+    row = _protocol_source_case(tmp_path, source, product)["summaries"][0]
+    assert row["status"] == "UNKNOWN"
+    assert "GENERATOR_FAILURE_MAY_BE_SWALLOWED" in row["unknown_reasons"]
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "pkg.Pipeline.run = lambda self, text: iter(())",
+        "alias = pkg.Pipeline\n    alias.run = lambda self, text: iter(())",
+    ],
+)
+def test_protocol_context_demand_mutated_dispatch_unknown(tmp_path, mutation):
+    source = (
+        "import pkg\ndef test_operation():\n    "
+        + mutation
+        + "\n    pkg.parse('data')\n"
+    )
+    rows = _protocol_source_case(tmp_path, source, _DEMAND_PRODUCT)["summaries"]
+    assert not any(r["status"] == "WEAK_PROTOCOL" for r in rows)
+
+
+def test_protocol_context_demand_constant_compute_has_no_body_entry(tmp_path):
+    source = "import pkg\ndef test_operation():\n    pkg.compute()\n"
+    rows = _protocol_source_case(tmp_path, source, "def compute():\n    return 3\n")[
+        "summaries"
+    ]
+    assert not any(r["status"] == "WEAK_PROTOCOL" for r in rows)
+    assert not any(
+        s["phase"] == "body_entered" for r in rows for s in r["demand_chain"]
+    )
+
+
+@pytest.mark.parametrize("prefix", ["return\n    ", "if True:\n        return\n    "])
+def test_protocol_context_demand_unreachable_test_call_has_no_credit(tmp_path, prefix):
+    source = (
+        "import pkg\ndef test_operation():\n    "
+        + prefix
+        + "tuple(pkg.stream('data'))\n"
+    )
+    rows = _protocol_source_case(tmp_path, source, _DEMAND_PRODUCT)["summaries"]
+    assert not any(r["status"] == "WEAK_PROTOCOL" for r in rows)
+
+
+def test_protocol_context_demand_skipped_test_has_no_credit(tmp_path):
+    source = "import pytest\nimport pkg\n@pytest.mark.skip\ndef test_operation():\n    tuple(pkg.stream('data'))\n"
+    rows = _protocol_source_case(tmp_path, source, _DEMAND_PRODUCT)["summaries"]
+    assert not any(r["status"] == "WEAK_PROTOCOL" for r in rows)
+
+
+def test_protocol_context_demand_earlier_wrapper_return_unknown(tmp_path):
+    product = _DEMAND_PRODUCT.replace(
+        "def parse(text):\n", "def parse(text):\n    if True:\n        return ()\n"
+    )
+    rows = _protocol_source_case(
+        tmp_path, "import pkg\ndef test_operation():\n    pkg.parse('data')\n", product
+    )["summaries"]
+    assert not any(r["status"] == "WEAK_PROTOCOL" for r in rows)
+    assert not any(
+        s["phase"] == "body_entered" for r in rows for s in r["demand_chain"]
+    )
+
+
+def test_protocol_context_demand_later_receiver_allocation_not_resolved(tmp_path):
+    product = _DEMAND_PRODUCT.replace(
+        "    stack = Pipeline()\n    stack.enable()\n    return stack.run(text)",
+        "    return stack.run(text)\n    stack = Pipeline()",
+    )
+    rows = _protocol_source_case(
+        tmp_path, "import pkg\ndef test_operation():\n    pkg.parse('data')\n", product
+    )["summaries"]
+    assert not any(r["status"] == "WEAK_PROTOCOL" for r in rows)
+
+
+def test_protocol_context_demand_generator_context_suppression_unknown(tmp_path):
+    product = "import contextlib\ndef stream(text):\n    with contextlib.suppress(Exception):\n        yield text\n"
+    row = _protocol_source_case(
+        tmp_path,
+        "import pkg\ndef test_operation():\n    tuple(pkg.stream('data'))\n",
+        product,
+    )["summaries"][0]
+    assert row["status"] == "UNKNOWN"
+    assert row["unknown_reasons"] == ["GENERATOR_CONTEXT_MANAGER_UNKNOWN"]
+
+
+@pytest.mark.parametrize(
+    "effect",
+    [
+        "stack.run = lambda *_: iter(())",
+        "mutate(stack)",
+        "alias = stack\n    alias.run = replacement",
+    ],
+)
+def test_protocol_context_demand_identity_builder_effects_unknown(tmp_path, effect):
+    product = _DEMAND_PRODUCT.replace(
+        "    return ''.join(stack.run(text))",
+        "    stack = builder(stack, text)\n    return ''.join(stack.run(text))",
+    )
+    product += "\ndef builder(stack, options):\n    " + effect + "\n    return stack\n"
+    rows = _protocol_source_case(
+        tmp_path, "import pkg\ndef test_operation():\n    pkg.format('data')\n", product
+    )["summaries"]
+    assert not any(r["status"] == "WEAK_PROTOCOL" for r in rows)
+
+
+def test_protocol_context_demand_ordered_identity_builder_preserves_input(tmp_path):
+    product = _DEMAND_PRODUCT.replace(
+        "    return ''.join(stack.run(text))",
+        "    stack = renamed(stack, text)\n    return ''.join(stack.run(text))",
+    )
+    product += "\ndef renamed(receiver, options):\n    return receiver\n"
+    row = _protocol_source_case(
+        tmp_path, "import pkg\ndef test_operation():\n    pkg.format('data')\n", product
+    )["summaries"][0]
+    assert row["status"] == "WEAK_PROTOCOL", row
+    assert any(s["phase"] == "body_entered" for s in row["demand_chain"])
+
+
+@pytest.mark.parametrize("star", [False, True])
+def test_protocol_context_demand_parametrize_binding_closure_is_execution_scoped(
+    tmp_path, star
+):
+    source = (
+        "import pytest\nimport pkg\n"
+        + ("from pytest import *\n" if star else "")
+        + "def unrelated(value, name):\n    return getattr(value, name)\n"
+        + "@pytest.mark.parametrize('text', ['data'])\ndef test_operation(text):\n    tuple(pkg.stream(text))\n"
+    )
+    rows = _protocol_source_case(tmp_path, source, _DEMAND_PRODUCT)["summaries"]
+    assert any(r["status"] == "WEAK_PROTOCOL" for r in rows) is not star
+
+
+def test_protocol_context_demand_builder_preserves_checked_data_receiver(tmp_path):
+    product = _DEMAND_PRODUCT.replace(
+        "        self.enabled = False",
+        "        self.enabled = False\n        self.items = []",
+    )
+    product = product.replace(
+        "    return ''.join(stack.run(text))",
+        "    stack = builder(stack, text)\n    return ''.join(stack.run(text))",
+    )
+    product += "\ndef builder(stack, options):\n    stack.enable()\n    stack.items.append(3)\n    return stack\n"
+    row = _protocol_source_case(
+        tmp_path, "import pkg\ndef test_operation():\n    pkg.format('data')\n", product
+    )["summaries"][0]
+    assert row["status"] == "WEAK_PROTOCOL", row
+    assert any(
+        d["role"] == "receiver_effect" and d["symbol"] == "enable"
+        for d in row["dependencies"]
+    )
+
+
+@pytest.mark.parametrize("effect", ["self.run = 'constant'", "self.__class__ = 3"])
+def test_protocol_context_demand_builder_receiver_method_cannot_change_dispatch(
+    tmp_path, effect
+):
+    product = _DEMAND_PRODUCT.replace(
+        "        self.enabled = True", "        " + effect
+    )
+    product = product.replace(
+        "    return ''.join(stack.run(text))",
+        "    stack = builder(stack, text)\n    return ''.join(stack.run(text))",
+    )
+    product += "\ndef builder(stack, options):\n    stack.enable()\n    return stack\n"
+    rows = _protocol_source_case(
+        tmp_path, "import pkg\ndef test_operation():\n    pkg.format('data')\n", product
+    )["summaries"]
+    assert not any(r["status"] == "WEAK_PROTOCOL" for r in rows)
+
+
+def test_protocol_context_demand_builder_early_return_cannot_prove_identity(tmp_path):
+    product = _DEMAND_PRODUCT.replace(
+        "    return ''.join(stack.run(text))",
+        "    stack = builder(stack, text)\n    return ''.join(stack.run(text))",
+    )
+    product += "\ndef builder(stack, options):\n    if options:\n        return object()\n    return stack\n"
+    rows = _protocol_source_case(
+        tmp_path, "import pkg\ndef test_operation():\n    pkg.format('data')\n", product
+    )["summaries"]
+    assert not any(r["status"] == "WEAK_PROTOCOL" for r in rows)
+
+
+def test_protocol_context_demand_builder_append_argument_cannot_escape_receiver(
+    tmp_path,
+):
+    product = _DEMAND_PRODUCT.replace(
+        "        self.enabled = False",
+        "        self.enabled = False\n        self.items = []",
+    )
+    product = product.replace(
+        "    return ''.join(stack.run(text))",
+        "    stack = builder(stack, text)\n    return ''.join(stack.run(text))",
+    )
+    product += "\ndef builder(stack, options):\n    stack.items.append(mutate(stack))\n    return stack\n"
+    rows = _protocol_source_case(
+        tmp_path, "import pkg\ndef test_operation():\n    pkg.format('data')\n", product
+    )["summaries"]
+    assert not any(r["status"] == "WEAK_PROTOCOL" for r in rows)
+
+
+def test_protocol_context_demand_builder_duplicate_receiver_argument_unknown(tmp_path):
+    product = _DEMAND_PRODUCT.replace(
+        "    return ''.join(stack.run(text))",
+        "    stack = builder(stack, stack)\n    return ''.join(stack.run(text))",
+    )
+    product += "\ndef builder(primary, other):\n    other.run = replacement\n    return primary\n"
+    rows = _protocol_source_case(
+        tmp_path, "import pkg\ndef test_operation():\n    pkg.format('data')\n", product
+    )["summaries"]
+    assert not any(r["status"] == "WEAK_PROTOCOL" for r in rows), rows
+
+
+def test_protocol_context_demand_unconditional_raise_prevents_return_demand(tmp_path):
+    product = _DEMAND_PRODUCT.replace(
+        "def parse(text):\n", "def parse(text):\n    raise RuntimeError('stop')\n"
+    )
+    rows = _protocol_source_case(
+        tmp_path, "import pkg\ndef test_operation():\n    pkg.parse('data')\n", product
+    )["summaries"]
+    assert not any(r["status"] == "WEAK_PROTOCOL" for r in rows), rows
+
+
+def test_protocol_context_demand_wrapper_receiver_cannot_replace_selected_method(
+    tmp_path,
+):
+    product = _DEMAND_PRODUCT.replace(
+        "        self.enabled = True", "        self.run = lambda *_: iter(())"
+    )
+    rows = _protocol_source_case(
+        tmp_path, "import pkg\ndef test_operation():\n    pkg.parse('data')\n", product
+    )["summaries"]
+    assert not any(r["status"] == "WEAK_PROTOCOL" for r in rows), rows
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        "pkg.stream()",
+        "pkg.stream('data', text='other')",
+        "pkg.stream(*values)",
+        "pkg.stream(**values)",
+    ],
+)
+def test_protocol_context_demand_invalid_source_binding_never_enters_body(
+    tmp_path, call
+):
+    source = "import pkg\ndef test_operation():\n    tuple(" + call + ")\n"
+    rows = _protocol_source_case(
+        tmp_path, source, "def stream(text):\n    yield text\n"
+    )["summaries"]
+    assert not any(r["status"] == "WEAK_PROTOCOL" for r in rows), rows
+    assert not any(
+        s["phase"] == "body_entered" for r in rows for s in r["demand_chain"]
+    ), rows
+
+
+@pytest.mark.parametrize(
+    "product,call",
+    [
+        ("def stream(text='data'):\n    yield text\n", "pkg.stream()"),
+        ("def stream(*, text):\n    yield text\n", "pkg.stream(text='data')"),
+        ("def stream(text, /):\n    yield text\n", "pkg.stream('data')"),
+    ],
+)
+def test_protocol_context_demand_valid_source_binding_preserves_entry(
+    tmp_path, product, call
+):
+    source = "import pkg\ndef test_operation():\n    tuple(" + call + ")\n"
+    row = _protocol_source_case(tmp_path, source, product)["summaries"][0]
+    assert row["status"] == "WEAK_PROTOCOL", row
+    assert any(s["phase"] == "body_entered" for s in row["demand_chain"])
+
+
+@pytest.mark.parametrize("rebind", [False, True])
+def test_protocol_context_source_kwargs_identity_propagates_until_rebound(
+    tmp_path, monkeypatch, rebind
+):
+    from factoryline import review_integrity
+
+    actual = review_integrity.bind_source_call
+    seen = []
+
+    def capture(call, function, *args, **kwargs):
+        bound = actual(call, function, *args, **kwargs)
+        if function.name == "stream":
+            seen.append(bound["options"])
+        return bound
+
+    monkeypatch.setattr(review_integrity, "bind_source_call", capture)
+    product = (
+        "def stream(options):\n    yield options\ndef format(**options):\n    "
+        + ("options = replacement\n    " if rebind else "")
+        + "return tuple(stream(options))\n"
+    )
+    rows = _protocol_source_case(
+        tmp_path,
+        "import pkg\ndef test_operation():\n    pkg.format(enabled=True)\n",
+        product,
+    )["summaries"]
+    assert rows and seen
+    assert (type(seen[0]) is dict) is not rebind
+    if not rebind:
+        assert seen[0]["enabled"].value is True
+
+
+@pytest.mark.parametrize(
+    "signature,returned,arguments,expected",
+    [
+        ("prefix, /, result", "result", "stack, None", False),
+        ("primary, /, secondary", "primary", "stack, None", True),
+        ("primary, /", "primary", "stack", True),
+    ],
+)
+def test_protocol_context_identity_return_tracks_actual_positional_parameter(
+    tmp_path, signature, returned, arguments, expected
+):
+    product = _DEMAND_PRODUCT.replace(
+        "    return ''.join(stack.run(text))",
+        "    stack = builder(" + arguments + ")\n    return ''.join(stack.run(text))",
+    )
+    product += "\ndef builder(" + signature + "):\n    return " + returned + "\n"
+    rows = _protocol_source_case(
+        tmp_path, "import pkg\ndef test_operation():\n    pkg.format('data')\n", product
+    )["summaries"]
+    assert any(row["status"] == "WEAK_PROTOCOL" for row in rows) is expected, rows

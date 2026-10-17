@@ -14,6 +14,30 @@ from . import __version__
 from ._build_provenance import SOURCE_COMMIT
 
 
+class NativeOraclePayload(str):
+    """Native in-memory cache checksum; not signing or invocation authority."""
+
+    __slots__ = ("_seal",)
+
+    def __new__(cls, text, key):
+        value = super().__new__(cls, text)
+        object.__setattr__(
+            value, "_seal", (key, hashlib.sha256(text.encode("utf-8")).digest())
+        )
+        return value
+
+    def __setattr__(self, *args):
+        raise AttributeError("native cache metadata is immutable")
+
+    __delattr__ = __setattr__
+
+    def valid(self, key):
+        return type(self) is NativeOraclePayload and getattr(self, "_seal", None) == (
+            key,
+            hashlib.sha256(self.encode("utf-8")).digest(),
+        )
+
+
 def _source_commit(module_dir: Path) -> str | None:
     source_root = module_dir.parent
     manifest = source_root / "pyproject.toml"

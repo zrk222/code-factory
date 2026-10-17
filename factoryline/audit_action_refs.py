@@ -362,6 +362,8 @@ def _security_scan_state(
 ) -> str:
     if any(item["severity"] in {"CRITICAL", "HIGH"} for item in findings):
         return "BLOCKED"
+    if any(item.get("code") == "QUALITY_UNKNOWN_TEST_ORACLE" for item in findings):
+        return "INCOMPLETE"
     if database_context and database_context.get("status") not in {
         "COMPLETE",
         "NOT_APPLICABLE",

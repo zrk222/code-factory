@@ -2909,6 +2909,7 @@ def sql_injection_finding(make_finding, relative, call, driver):
 def project_contract_helpers():
     """Include every contract resolver in process-local cache identity."""
     return (
+        literal_exec_rejected,
         bind_project_contracts,
         _capture_project_imports,
         _project_import_views,
@@ -5940,3 +5941,56 @@ def _db_query(statement, exp, dialect, loc, queries, gaps):
             "source": loc,
         }
     )
+def literal_exec_rejected(node):
+    """Prove only compilation failure for one source-bound builtin exec literal."""
+    from . import review_integrity as integrity
+    from .context_efficiency import (
+        _bounded_ast_nodes,
+        _module_has_dynamic_capability_access,
+    )
+
+    match node:
+        case ast.Call(
+            func=ast.Name(id="exec"),
+            args=[ast.Constant(value=str()) as literal],
+            keywords=[],
+        ):
+            pass
+        case _:
+            return {}
+    if not hasattr(node, "_security_shadowed_names"):
+        return {}
+    module = integrity._security_module_scope(
+        getattr(node, "_security_lexical_scope", None)
+    )
+    if module is None or integrity._builtin_repr_names_shadowed(node, {"exec"}):
+        return {}
+    nodes = _bounded_ast_nodes(module)
+    if nodes is None or _module_has_dynamic_capability_access(
+        [n for n in nodes if n is not node.func]
+    ):
+        return {}
+    if any(
+        isinstance(n, ast.Attribute)
+        and n.attr == "__dict__"
+        or isinstance(n, (ast.Import, ast.ImportFrom))
+        and any(a.name in {"builtins", "*"} for a in n.names)
+        or isinstance(n, ast.ImportFrom)
+        and n.module == "builtins"
+        for n in nodes
+    ):
+        return {}
+    try:
+        if len(literal.value.encode("utf-8")) > 4096:
+            return {}
+        ast.parse(literal.value, mode="exec")
+    except SyntaxError:
+        return dict(
+            primitive_present=True,
+            source_compilation="REJECTED_SYNTAX",
+            execution_of_literal_source=False,
+            evidence_scope="exact_builtin_call_literal",
+        )
+    except (MemoryError, RecursionError, UnicodeError, ValueError):
+        pass
+    return {}

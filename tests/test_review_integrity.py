@@ -732,7 +732,12 @@ def test_request_alias_memo_copies_results_tracks_alias_mutation_and_bounds(
         try:
             before_unicode_overflow = len(applications)
             for _ in range(2):
-                review_integrity._security_scope_request_aliases(tree, {"x": "é"})
+                review_integrity._security_scope_request_aliases(
+                    tree,
+                    {
+                        "x": "ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©"
+                    },
+                )
             assert len(applications) >= before_unicode_overflow + 2
         finally:
             intent_quality_module._SECURITY_REQUEST_ALIAS_MEMO.reset(token)
@@ -1890,6 +1895,21 @@ def test_runtime_callback_coverage_rejects_swallowed_or_vacuous_assertions(
     )
 
     assert coverage["eligible"] is False
+
+
+@pytest.mark.parametrize(
+    "schema",
+    ["factory.test-oracle-verification.v1", "factory.test-oracle-verification.v2"],
+)
+def test_unknown_runtime_oracle_rejects_legacy_eligibility(tmp_path, schema):
+    from factoryline.review_integrity import runtime_finding_coverage
+
+    workspace, row = _runtime_finding_coverage_fixture(tmp_path)
+    finding = {
+        "code": "QUALITY_UNKNOWN_TEST_ORACLE",
+        "facts": {"runtime_oracle_eligible": True},
+    }
+    assert runtime_finding_coverage(workspace, finding, row, schema, []) is False
 
 
 def _runtime_finding_coverage_fixture(tmp_path):
@@ -5416,3 +5436,461 @@ def test_oracle_snapshot_enables_fresh_bound_name_cache(monkeypatch, tmp_path):
     assert not hasattr(raw_statement, "_scan_bound_names")
     raw_statement.targets.append(ast.Name(id="changed", ctx=ast.Store()))
     assert module._bound_names(raw_statement) == {"values", "changed"}
+
+
+@pytest.mark.parametrize(
+    "definition,expression,valid",
+    [
+        ("def f(x): pass", "f()", False),
+        ("def f(x): pass", "f(1)", True),
+        ("def f(x): pass", "f(x=1)", True),
+        ("def f(x, /): pass", "f(x=1)", False),
+        ("def f(x=sentinel()): pass", "f()", True),
+        ("def f(*, x): pass", "f(1)", False),
+        ("def f(*, x): pass", "f(x=1)", True),
+        ("def f(x): pass", "f(1, x=2)", False),
+        ("def f(x): pass", "f(x=1, x=2)", False),
+        ("def f(*args): pass", "f(*items)", False),
+        ("def f(**kwargs): pass", "f(**items)", False),
+        ("def f(**options): pass", "f(enabled=True)", True),
+        ("def f(x, /, **options): pass", "f(1, x=2)", True),
+        ("def f(x): pass", "f(1, unexpected=2)", False),
+    ],
+)
+def test_shared_source_binding_validates_complete_call(definition, expression, valid):
+    from factoryline.review_integrity import bind_source_call
+
+    function = ast.parse(definition).body[0]
+    call = ast.parse(expression).body[0].value
+    if valid:
+        assert isinstance(bind_source_call(call, function), dict)
+    else:
+        with pytest.raises(ValueError, match="SOURCE_ARGUMENT"):
+            bind_source_call(call, function)
+
+
+def test_shared_source_binding_preserves_tokens_and_fresh_variadics():
+    from factoryline.review_integrity import bind_source_call, source_signature
+
+    function = ast.parse(
+        "def f(self, x: dangerous() = sentinel(), *args, flag=other(), **options): pass"
+    ).body[0]
+    receiver, actual = object(), object()
+    call = ast.parse("f(alias, enabled=True)").body[0].value
+    bound = bind_source_call(call, function, receiver, {"alias": actual})
+    assert bound["self"] is receiver
+    assert bound["x"] is actual
+    assert bound["args"] == ()
+    assert bound["flag"] is function.args.kw_defaults[0]
+    assert type(bound["options"]) is dict
+    assert bound["options"]["enabled"] is call.keywords[0].value
+    again = bind_source_call(call, function, receiver, {"alias": actual})
+    assert again["options"] is not bound["options"]
+    signature = source_signature(function)
+    assert signature.parameters["x"].annotation is function.args.args[1].annotation
+    assert signature.parameters["x"].default is function.args.defaults[0]
+    empty = ast.parse("f()").body[0].value
+    assert bind_source_call(empty, function, receiver)["x"] is function.args.defaults[0]
+    assert bind_source_call(empty, function, receiver, apply_defaults=False) == {
+        "self": receiver
+    }
+
+
+@pytest.mark.parametrize(
+    "definition,expression,expected",
+    [
+        ("def f(callback=check): pass", "f()", None),
+        ("def f(callback, required): pass", "f(check)", None),
+        ("def f(callback, /): pass", "f(callback=check)", None),
+        ("def f(callback): pass", "f(check, callback=other)", None),
+        ("def f(callback, required=1): pass", "f(check)", "check"),
+    ],
+)
+def test_shared_source_binding_callback_keeps_explicit_policy(
+    definition, expression, expected
+):
+    from factoryline.review_integrity import callback_argument
+
+    assert (
+        callback_argument(
+            ast.parse(expression).body[0].value,
+            ast.parse(definition).body[0],
+            "callback",
+        )
+        == expected
+    )
+
+
+def test_shared_source_binding_inventory_tracks_alias_and_package_changes(monkeypatch):
+    import factoryline
+    from factoryline import review_integrity as integrity
+
+    original = integrity.bind_source_call
+    signature = integrity.source_signature
+    assert {original, signature} <= set(integrity.source_binding_helpers())
+
+    def replacement(*args, **kwargs):
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(factoryline, "_bind_source_call", replacement)
+    helpers = integrity.source_binding_helpers()
+    assert replacement in helpers and original in helpers and signature in helpers
+
+
+@pytest.mark.parametrize("name", ["_source_call_signature", "_bind_source_call"])
+def test_shared_source_binding_changes_invalidate_oracle_cache(
+    tmp_path, monkeypatch, name
+):
+    import factoryline
+    from factoryline import review_audits as scanner
+
+    (tmp_path / "app.py").write_text("value = 1\n", encoding="utf-8")
+    scanner._oracle_context_cache_clear()
+    files = scanner._security_source_files(tmp_path)
+    scanner._project_oracle_context(tmp_path, files, cache_enabled=True)
+    misses = scanner._oracle_context_cache_info()["misses"]
+    original = getattr(factoryline, name)
+
+    def replacement(*args, **kwargs):
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(factoryline, name, replacement)
+    scanner._project_oracle_context(tmp_path, files, cache_enabled=True)
+    assert scanner._oracle_context_cache_info()["misses"] > misses
+
+
+@pytest.mark.parametrize(
+    "expression,expected",
+    [
+        ("f(tainted)", True),
+        ("f(value=tainted)", True),
+        ("f()", False),
+        ("f(tainted, value=other)", False),
+        ("f(*items)", False),
+    ],
+)
+def test_shared_source_binding_taint_keeps_explicit_defaults_policy(
+    expression, expected
+):
+    from factoryline.review_integrity import _security_helper_return_tainted
+
+    function = ast.parse("def f(value=tainted): return value").body[0]
+    assert (
+        _security_helper_return_tainted(
+            ast.parse(expression).body[0].value, function, set(), {"tainted"}, {}
+        )
+        is expected
+    )
+    assert not getattr(function, "_security_helper_active", False)
+
+
+@pytest.mark.parametrize("body", ["pass", "external_operation()"])
+def test_unknown_policy_generic_local_absence_is_not_deficiency(tmp_path, body):
+    from factoryline.review_audits import security_scan
+
+    (tmp_path / "test_case.py").write_text(f"def test_case():\n    {body}\n")
+    report = security_scan(tmp_path)
+    findings = report["findings"]
+    unknown = [f for f in findings if f["code"] == "QUALITY_UNKNOWN_TEST_ORACLE"]
+    assert len(unknown) == 1
+    assert unknown[0]["severity"] == "INFO"
+    assert unknown[0]["facts"]["state"] == "INCOMPLETE"
+    assert unknown[0]["facts"]["evidence_state"] == "UNKNOWN"
+    assert unknown[0]["facts"]["candidate_rule"] == "QUALITY_HOLLOW_TEST"
+    assert "fixture/lifecycle" in unknown[0]["facts"]["missing_evidence"]
+    assert "runtime_oracle_eligible" not in unknown[0]["facts"]
+    assert not any(f["code"] == "QUALITY_HOLLOW_TEST" for f in findings)
+    assert report["state"] == "INCOMPLETE"
+
+
+def test_unknown_policy_autouse_lifecycle_is_not_inferred_absent(tmp_path):
+    from factoryline.review_audits import security_scan
+
+    (tmp_path / "conftest.py").write_text(
+        "import pytest\n@pytest.fixture(autouse=True)\n"
+        "def validate_lifecycle():\n    yield\n    assert actual_state() == expected_state()\n"
+    )
+    (tmp_path / "test_case.py").write_text("def test_case():\n    pass\n")
+    report = security_scan(tmp_path)
+    findings = [f for f in report["findings"] if f["path"] == "test_case.py"]
+    assert [f["code"] for f in findings] == ["QUALITY_UNKNOWN_TEST_ORACLE"]
+    assert report["state"] == "INCOMPLETE"
+
+
+def test_unknown_policy_real_scan_mission_control_preserves_unknown_facts(tmp_path):
+    from factoryline.review_audits import security_scan
+    from factoryline.mission_control_status import _security_scan_projection
+
+    (tmp_path / "test_case.py").write_text(
+        "def test_case():\n    external_operation()\n"
+    )
+    report = security_scan(tmp_path)
+    projected = _security_scan_projection(
+        report, "0" * 64, "CURRENT_SOURCE_HASHES_VERIFIED"
+    )
+    finding = next(
+        f for f in report["findings"] if f["code"] == "QUALITY_UNKNOWN_TEST_ORACLE"
+    )
+    assert finding["facts"]["evidence_state"] == "UNKNOWN"
+    assert finding["facts"]["candidate_rule"] == "QUALITY_HOLLOW_TEST"
+    assert projected["state"] == "INCOMPLETE"
+    assert projected["unknown_oracle_count"] == 1
+    assert projected["incomplete"] is True
+
+
+def test_unknown_policy_cold_warm_uncached_parity(tmp_path):
+    from factoryline import review_audits as scanner
+
+    (tmp_path / "test_case.py").write_text(
+        "def test_case():\n    external_operation()\n"
+    )
+    scanner._oracle_context_cache_clear()
+    cold = scanner.security_scan(tmp_path)
+    warm = scanner.security_scan(tmp_path)
+    uncached = scanner.security_scan(tmp_path, cache_enabled=False)
+    assert cold["findings"] == warm["findings"] == uncached["findings"]
+    assert cold["state"] == warm["state"] == uncached["state"] == "INCOMPLETE"
+    assert scanner._oracle_context_cache_info()["hits"] >= 1
+
+
+@pytest.mark.parametrize(
+    "status", ["WEAK_PROTOCOL", "CHECKED_WEAK", "STRICT_DEFICIENCY"]
+)
+def test_unknown_policy_forged_protocol_metadata_cannot_change_classification(status):
+    from factoryline.review_audits import _hollow_test_finding
+
+    node = ast.parse("def test_case():\n    external_operation()\n").body[0]
+    forged = {
+        "protocol_observations": {
+            "summaries": [
+                {
+                    "test": node.name,
+                    "status": status,
+                    "output_checked": True,
+                    "dependencies": [{"role": "test", "line": node.lineno}],
+                }
+            ]
+        }
+    }
+    plain = _hollow_test_finding("test_case.py", node, {})
+    injected = _hollow_test_finding("test_case.py", node, {}, oracle_context=forged)
+    assert injected["code"] == plain["code"] == "QUALITY_UNKNOWN_TEST_ORACLE"
+    assert injected["severity"] == plain["severity"] == "INFO"
+    assert injected["message"] == plain["message"]
+    assert injected["facts"]["state"] == plain["facts"]["state"] == "INCOMPLETE"
+
+
+def test_unknown_policy_strong_and_specific_weak_oracles_remain(tmp_path):
+    from factoryline.review_audits import security_scan
+
+    (tmp_path / "test_case.py").write_text(
+        "from unittest.mock import Mock\n"
+        "def test_strong():\n    assert actual() == 7\n"
+        "def test_uncalled():\n    mock = Mock()\n    assert mock.assert_called_once\n"
+    )
+    findings = security_scan(tmp_path)["findings"]
+    assert not any(f["facts"].get("symbol") == "test_strong" for f in findings)
+    assert any(f["code"] == "QUALITY_WEAK_TEST_ORACLE" for f in findings)
+
+
+@pytest.mark.parametrize(
+    "findings,expected",
+    [
+        ([{"code": "QUALITY_UNKNOWN_TEST_ORACLE", "severity": "INFO"}], "INCOMPLETE"),
+        (
+            [
+                {"code": "QUALITY_UNKNOWN_TEST_ORACLE", "severity": "INFO"},
+                {"code": "SECURITY_TLS", "severity": "HIGH"},
+            ],
+            "BLOCKED",
+        ),
+        ([{"code": "QUALITY_BENCHMARK_NOT_VERIFIED", "severity": "INFO"}], "FINDINGS"),
+        ([], "CLEAN"),
+    ],
+)
+def test_unknown_oracle_status_preserves_uncertainty_and_severity(findings, expected):
+    from factoryline.audit_action_refs import _security_scan_state
+
+    assert (
+        _security_scan_state(
+            [Path("test_case.py")], findings, {"status": "COMPLETE"}, {"complete": True}
+        )
+        == expected
+    )
+
+
+def test_unknown_oracle_status_survives_mission_control_projection():
+    from factoryline.audit_action_refs import _security_scan_state
+    from factoryline.mission_control_status import _security_scan_projection
+
+    finding = {
+        "code": "QUALITY_UNKNOWN_TEST_ORACLE",
+        "severity": "INFO",
+        "path": "test_case.py",
+        "line": 1,
+        "column": 0,
+        "message": "Oracle dispatch remains unresolved.",
+        "facts": {"state": "INCOMPLETE", "evidence_state": "UNKNOWN"},
+    }
+    coverage = {
+        "language": "Python",
+        "files_discovered": 1,
+        "files_attempted": 1,
+        "files_audited": 1,
+        "inventory_complete": True,
+        "measurement_state": "complete",
+        "complete": True,
+        "limit": 460,
+    }
+    findings = [finding]
+    report = {
+        "state": _security_scan_state([Path("test_case.py")], findings, None, coverage),
+        "findings": findings,
+        "files_scanned": 1,
+        "audit_coverage": coverage,
+        "finding_counts": {finding["code"]: 1},
+        "tenant_read_contract": {"configuration": {"state": "loaded"}},
+    }
+    projected = _security_scan_projection(
+        report, "0" * 64, "CURRENT_SOURCE_HASHES_VERIFIED"
+    )
+    assert projected["state"] == "INCOMPLETE"
+    assert projected["incomplete"] is True
+    assert projected["audit_coverage"]["complete"] is True
+    assert projected["finding_counts"][finding["code"]] == 1
+    assert projected["unknown_oracle_count"] == 1
+    assert projected["reported_oracle_unknowns_absent"] is False
+    assert projected["findings"][0]["state"] == "INCOMPLETE"
+    assert projected["findings"][0]["evidence_state"] == "UNKNOWN"
+    assert projected["findings"][0]["code"] == finding["code"]
+    assert projected["authority"] == {
+        "execution": False,
+        "approval": False,
+        "repair": False,
+    }
+    report["state"] = "BLOCKED"
+    report["findings"].append({**finding, "code": "SECURITY_TLS", "severity": "HIGH"})
+    report["finding_counts"]["SECURITY_TLS"] = 1
+    mixed = _security_scan_projection(
+        report, "0" * 64, "CURRENT_SOURCE_HASHES_VERIFIED"
+    )
+    assert mixed["state"] == "BLOCKED"
+    assert mixed["report_state"] == "BLOCKED"
+    assert mixed["incomplete"] is True
+    assert mixed["unknown_oracle_count"] == 1
+    for index in range(64):
+        code = f"A_DISPLAY_ONLY_{index:02d}"
+        report["findings"].append({**finding, "code": code})
+        report["finding_counts"][code] = 1
+    truncated = _security_scan_projection(
+        report, "0" * 64, "CURRENT_SOURCE_HASHES_VERIFIED"
+    )
+    assert len(truncated["finding_counts"]) == 64
+    assert "QUALITY_UNKNOWN_TEST_ORACLE" not in truncated["finding_counts"]
+    assert truncated["state"] == "BLOCKED"
+    assert truncated["incomplete"] is True
+    assert truncated["unknown_oracle_count"] == 1
+    assert truncated["reported_oracle_unknowns_absent"] is False
+
+
+@pytest.mark.parametrize("corruption", ["plain", "text", "missing", "digest", "key"])
+def test_native_oracle_payload_rejects_corruption(corruption):
+    from factoryline.review_integrity import NativeOraclePayload
+
+    payload = NativeOraclePayload('{"contexts":[]}', "key")
+    assert NativeOraclePayload.valid(payload, "key") is True
+    with pytest.raises(AttributeError):
+        payload._seal = ("key", b"forged")
+    with pytest.raises(AttributeError):
+        del payload._seal
+    if corruption == "plain":
+        payload = str(payload)
+    elif corruption == "text":
+        changed = str.__new__(NativeOraclePayload, '{"contexts":[{}]}')
+        object.__setattr__(changed, "_seal", payload._seal)
+        payload = changed
+    elif corruption == "missing":
+        payload = str.__new__(NativeOraclePayload, str(payload))
+    elif corruption == "digest":
+        object.__setattr__(payload, "_seal", ("key", b"wrong"))
+    else:
+        assert NativeOraclePayload.valid(payload, "other-key") is False
+        return
+    assert NativeOraclePayload.valid(payload, "key") is False
+
+
+def test_native_oracle_payload_well_shaped_cache_tamper_recomputes(tmp_path):
+    from factoryline import review_audits as scanner
+
+    (tmp_path / "test_case.py").write_text("def test_case():\n    operation()\n")
+    scanner._oracle_context_cache_clear()
+    expected = scanner.security_scan(tmp_path, cache_enabled=True)
+    key = next(iter(scanner._ORACLE_CONTEXT_CACHE))
+    payload, size, created = scanner._ORACLE_CONTEXT_CACHE[key]
+    data = json.loads(payload)
+    for context in data["contexts"]:
+        context["helpers"] = ["operation"]
+    scanner._ORACLE_CONTEXT_CACHE[key] = (json.dumps(data), size, created)
+    misses = scanner._oracle_context_cache_info()["misses"]
+    hits = scanner._oracle_context_cache_info()["hits"]
+    actual = scanner.security_scan(tmp_path, cache_enabled=True)
+    assert actual == expected
+    assert scanner._oracle_context_cache_info()["misses"] > misses
+    assert scanner._oracle_context_cache_info()["hits"] == hits
+    assert scanner.security_scan(tmp_path, cache_enabled=True) == expected
+    assert scanner._oracle_context_cache_info()["hits"] == hits + 1
+    assert scanner.integrity.NativeOraclePayload.valid(
+        scanner._ORACLE_CONTEXT_CACHE[key][0], key
+    )
+
+
+def test_native_oracle_payload_helper_change_invalidates_key(tmp_path, monkeypatch):
+    from factoryline import review_audits as scanner
+
+    first = scanner._oracle_context_cache_key(tmp_path, [], {})
+    original = scanner.integrity.NativeOraclePayload.valid
+
+    def replaced(self, key):
+        return original(self, key)
+
+    monkeypatch.setattr(scanner.integrity.NativeOraclePayload, "valid", replaced)
+    assert scanner._oracle_context_cache_key(tmp_path, [], {}) != first
+
+
+def test_native_oracle_payload_preserves_lru_and_metadata_budget(tmp_path, monkeypatch):
+    from factoryline import review_audits as scanner
+
+    scanner._oracle_context_cache_clear()
+    monkeypatch.setattr(scanner, "MAX_ORACLE_CONTEXT_CACHE_ENTRIES", 2)
+    keys = []
+    for index in range(3):
+        source = tmp_path / "test_case.py"
+        source.write_text(f"def test_case():\n    operation({index})\n")
+        scanner.security_scan(tmp_path, cache_enabled=True)
+        keys.append(next(reversed(scanner._ORACLE_CONTEXT_CACHE)))
+    assert keys[0] not in scanner._ORACLE_CONTEXT_CACHE
+    assert list(scanner._ORACLE_CONTEXT_CACHE) == keys[1:]
+    assert scanner._oracle_context_cache_info()["serialized_bytes"] == sum(
+        len(payload.encode("utf-8")) + len(key) + 32
+        for key, (payload, _, _) in scanner._ORACLE_CONTEXT_CACHE.items()
+    )
+    assert all(
+        scanner.integrity.NativeOraclePayload.valid(payload, key)
+        for key, (payload, _, _) in scanner._ORACLE_CONTEXT_CACHE.items()
+    )
+
+
+def test_native_oracle_payload_missing_edges_is_miss_not_hit():
+    import time
+    from factoryline import review_audits as scanner
+
+    scanner._oracle_context_cache_clear()
+    key = "missing-edges"
+    payload = scanner.integrity.NativeOraclePayload('{"contexts":[]}', key)
+    size = len(payload.encode("utf-8")) + len(key) + 32
+    scanner._ORACLE_CONTEXT_CACHE[key] = (payload, size, time.monotonic())
+    scanner._ORACLE_CONTEXT_CACHE_BYTES = size
+    assert scanner._oracle_context_cache_read(key) is None
+    assert scanner._oracle_context_cache_info()["hits"] == 0
+    assert scanner._oracle_context_cache_info()["misses"] == 1
+    assert scanner._oracle_context_cache_info()["serialized_bytes"] == 0

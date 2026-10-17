@@ -3702,6 +3702,151 @@ def test_security_scan_classifies_test_roundtrip_as_nonblocking(tmp_path, librar
 
 
 @pytest.mark.parametrize(
+    "source",
+    [
+        "import unittest\n"
+        "class TestRetryException(unittest.TestCase):\n"
+        "    def test_retry_error_is_pickleable(self):\n"
+        "        import pickle\n"
+        "        expected = RetryError(last_attempt=123)\n"
+        "        pickled = pickle.dumps(expected)\n"
+        "        actual = pickle.loads(pickled)\n"
+        "        self.assertEqual(expected.last_attempt, actual.last_attempt)\n",
+        "import pickle\n"
+        "class TestPickle:\n"
+        "    def test_retrying_picklable(self):\n"
+        "        retrying = Retrying(stop=stop_after_attempt(3))\n"
+        "        pickled = pickle.dumps(retrying)\n"
+        "        restored = pickle.loads(pickled)\n"
+        "        assert isinstance(restored, Retrying)\n"
+        "        assert isinstance(restored.stop, StopBase)\n",
+        "import pickle\n"
+        "class TestPickle:\n"
+        "    def test_retrying_picklable_after_run(self):\n"
+        "        retrying = Retrying(stop=stop_after_attempt(3))\n"
+        "        _ = retrying.statistics\n"
+        "        pickled = pickle.dumps(retrying)\n"
+        "        restored = pickle.loads(pickled)\n"
+        "        assert isinstance(restored, Retrying)\n"
+        "        assert restored.statistics == {}\n",
+        "import pickle\n"
+        "class CustomReducer:\n"
+        "    def __reduce__(self):\n"
+        "        return (rebuild_value, ())\n"
+        "def test_custom_reducer_remains_uncertain():\n"
+        "    local_value = CustomReducer()\n"
+        "    pickled = pickle.dumps(local_value)\n"
+        "    restored = pickle.loads(pickled)\n"
+        "    assert isinstance(restored, CustomReducer)\n",
+    ],
+    ids=["tenacity-error", "tenacity-retrying", "tenacity-after-run", "custom-reducer"],
+)
+def test_security_scan_accepts_same_scope_local_pickle_roundtrip(tmp_path, source):
+    (tmp_path / "test_pickle.py").write_text(source, encoding="utf-8")
+    findings = security_scan(tmp_path)["findings"]
+    unsafe = [
+        finding
+        for finding in findings
+        if finding["code"] == "SECURITY_UNSAFE_DESERIALIZATION"
+    ]
+    assert len(unsafe) == 1
+    assert unsafe[0]["severity"] == "INFO"
+    assert unsafe[0]["facts"]["input_provenance"] == "direct_local_serialization"
+    assert "custom object reducers still execute code" in unsafe[0]["message"]
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "def test_external(payload):\n"
+        "    pickled = pickle.dumps(payload)\n"
+        "    restored = pickle.loads(pickled)\n"
+        "    assert restored\n",
+        "def test_alias_escape():\n"
+        "    local_value = Factory()\n"
+        "    pickled = pickle.dumps(local_value)\n"
+        "    escaped = pickled\n"
+        "    restored = pickle.loads(pickled)\n"
+        "    assert restored\n",
+        "def test_reassigned_bytes():\n"
+        "    local_value = Factory()\n"
+        "    pickled = pickle.dumps(local_value)\n"
+        "    pickled = external_bytes()\n"
+        "    restored = pickle.loads(pickled)\n"
+        "    assert restored\n",
+        "def test_conditional_write(condition):\n"
+        "    local_value = Factory()\n"
+        "    if condition:\n        pickled = pickle.dumps(local_value)\n"
+        "    restored = pickle.loads(pickled)\n"
+        "    assert restored\n",
+        "def test_mismatched_serializer():\n"
+        "    local_value = Factory()\n"
+        "    pickled = dill.dumps(local_value)\n"
+        "    restored = pickle.loads(pickled)\n"
+        "    assert restored\n",
+        "def test_conditional_load(condition):\n"
+        "    local_value = Factory()\n"
+        "    pickled = pickle.dumps(local_value)\n"
+        "    if condition:\n        restored = pickle.loads(pickled)\n"
+        "    assert restored\n",
+        "def test_serializer_replaced():\n"
+        "    pickle.dumps = external_dumps\n"
+        "    local_value = Factory()\n"
+        "    pickled = pickle.dumps(local_value)\n"
+        "    restored = pickle.loads(pickled)\n"
+        "    assert restored\n",
+    ],
+)
+def test_security_scan_keeps_uncertain_local_pickle_bytes_blocked(tmp_path, body):
+    (tmp_path / "test_pickle.py").write_text(
+        "import pickle\nimport dill\n" + body, encoding="utf-8"
+    )
+    unsafe = [
+        finding
+        for finding in security_scan(tmp_path)["findings"]
+        if finding["code"] == "SECURITY_UNSAFE_DESERIALIZATION"
+    ]
+    assert unsafe
+    assert all(finding["severity"] == "HIGH" for finding in unsafe)
+
+
+def test_security_scan_does_not_credit_pickle_import_after_use(tmp_path):
+    (tmp_path / "test_pickle.py").write_text(
+        "def test_import_after_use():\n"
+        "    local_value = Factory()\n"
+        "    pickled = pickle.dumps(local_value)\n"
+        "    restored = pickle.loads(pickled)\n"
+        "    import pickle\n"
+        "    assert restored\n",
+        encoding="utf-8",
+    )
+    assert not any(
+        finding["severity"] == "INFO" for finding in security_scan(tmp_path)["findings"]
+    )
+
+
+def test_security_scan_keeps_local_pickle_outside_test_source_unverified(tmp_path):
+    source_dir = tmp_path / "src"
+    source_dir.mkdir()
+    (source_dir / "pickle_flow.py").write_text(
+        "import pickle\n"
+        "def restore_local_value():\n"
+        "    local_value = Factory()\n"
+        "    pickled = pickle.dumps(local_value)\n"
+        "    restored = pickle.loads(pickled)\n"
+        "    return restored\n",
+        encoding="utf-8",
+    )
+    unsafe = [
+        finding
+        for finding in security_scan(tmp_path)["findings"]
+        if finding["code"] == "SECURITY_UNSAFE_DESERIALIZATION"
+    ]
+    assert unsafe
+    assert all(finding["severity"] == "HIGH" for finding in unsafe)
+
+
+@pytest.mark.parametrize(
     ("source", "expected"),
     [
         (
@@ -5907,6 +6052,367 @@ def test_security_scan_accepts_assertion_reraised_from_handler(tmp_path):
     assert security_scan(tmp_path)["findings"] == []
 
 
+def test_security_scan_accepts_tenacity_expected_exception_else_branch(tmp_path):
+    (tmp_path / "test_asyncio.py").write_text(
+        "import tenacity.asyncio as tasyncio\n"
+        "from tenacity import stop_after_attempt\n"
+        "@asynctest\n"
+        "async def test_reraise() -> None:\n"
+        "    class CustomError(Exception):\n        pass\n"
+        "    try:\n"
+        "        async for attempt in tasyncio.AsyncRetrying(\n"
+        "            stop=stop_after_attempt(1), reraise=True\n"
+        "        ):\n"
+        "            with attempt:\n                raise CustomError\n"
+        "    except CustomError:\n        pass\n"
+        "    else:\n        raise Exception\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["findings"] == []
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "tasyncio.AsyncRetrying = noop",
+        "setattr(tasyncio, 'AsyncRetrying', noop)",
+        "tasyncio.__setattr__('AsyncRetrying', noop)",
+        "retry_module = tasyncio",
+    ],
+)
+def test_security_scan_rejects_mutated_retry_iteration_protocol(tmp_path, mutation):
+    (tmp_path / "test_asyncio.py").write_text(
+        "import tenacity.asyncio as tasyncio\n"
+        "from tenacity import stop_after_attempt\n"
+        "class CustomError(Exception):\n    pass\n"
+        "def noop(*args, **kwargs):\n    return []\n"
+        "async def test_reraise():\n"
+        f"    {mutation}\n"
+        "    try:\n"
+        "        async for attempt in tasyncio.AsyncRetrying(\n"
+        "            stop=stop_after_attempt(1), reraise=True\n"
+        "        ):\n"
+        "            with attempt:\n                raise CustomError\n"
+        "    except CustomError:\n        pass\n"
+        "    else:\n        raise Exception\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+
+
+@pytest.mark.parametrize(
+    "imports,mutation,runner,loop",
+    [
+        (
+            "import tenacity as t\nimport tenacity as other\n",
+            "other.Retrying = noop",
+            "t.Retrying",
+            "        for attempt in {runner}(stop=stop_after_attempt(1), reraise=True):\n"
+            "            with attempt:\n                raise CustomError\n",
+        ),
+        (
+            "import tenacity as t\nimport tenacity\n",
+            "tenacity.Retrying = noop",
+            "t.Retrying",
+            "        for attempt in {runner}(stop=stop_after_attempt(1), reraise=True):\n"
+            "            with attempt:\n                raise CustomError\n",
+        ),
+        (
+            "import tenacity.asyncio as tasyncio\nimport tenacity as other\n",
+            "other.asyncio.AsyncRetrying = noop",
+            "tasyncio.AsyncRetrying",
+            "        async for attempt in {runner}(stop=stop_after_attempt(1), reraise=True):\n"
+            "            with attempt:\n                raise CustomError\n",
+        ),
+        (
+            "import tenacity as t\nimport tenacity as other\n",
+            "del other.Retrying",
+            "t.Retrying",
+            "        for attempt in {runner}(stop=stop_after_attempt(1), reraise=True):\n"
+            "            with attempt:\n                raise CustomError\n",
+        ),
+        (
+            "import tenacity as t\nimport tenacity as other\n",
+            "other.__setattr__('Retrying', noop)",
+            "t.Retrying",
+            "        for attempt in {runner}(stop=stop_after_attempt(1), reraise=True):\n"
+            "            with attempt:\n                raise CustomError\n",
+        ),
+        (
+            "import tenacity as t\nimport tenacity as other\nimport sys\n",
+            "sys.modules['tenacity'].Retrying = noop",
+            "t.Retrying",
+            "        for attempt in {runner}(stop=stop_after_attempt(1), reraise=True):\n"
+            "            with attempt:\n                raise CustomError\n",
+        ),
+        (
+            "import tenacity as t\nimport tenacity as other\nimport importlib\n",
+            "importlib.import_module('tenacity').Retrying = noop",
+            "t.Retrying",
+            "        for attempt in {runner}(stop=stop_after_attempt(1), reraise=True):\n"
+            "            with attempt:\n                raise CustomError\n",
+        ),
+        (
+            "import tenacity as t\nimport tenacity as other\n",
+            "__import__('tenacity').Retrying = noop",
+            "t.Retrying",
+            "        for attempt in {runner}(stop=stop_after_attempt(1), reraise=True):\n"
+            "            with attempt:\n                raise CustomError\n",
+        ),
+        (
+            "import tenacity as t\nfrom tenacity import Retrying as direct_retry\n",
+            "saved_retry = direct_retry",
+            "t.Retrying",
+            "        for attempt in {runner}(stop=stop_after_attempt(1), reraise=True):\n"
+            "            with attempt:\n                raise CustomError\n",
+        ),
+        (
+            "import tenacity as t\nfrom tenacity import Retrying as direct_retry\n",
+            "consume(direct_retry)",
+            "t.Retrying",
+            "        for attempt in {runner}(stop=stop_after_attempt(1), reraise=True):\n"
+            "            with attempt:\n                raise CustomError\n",
+        ),
+    ],
+    ids=[
+        "aliased-module-write",
+        "unaliased-root-write",
+        "parent-module-write",
+        "aliased-module-delete",
+        "reflective-module-write",
+        "sys-module-write",
+        "importlib-module-write",
+        "dynamic-import-module-write",
+        "direct-api-import-assignment-escape",
+        "direct-api-import-call-argument-escape",
+    ],
+)
+def test_security_scan_rejects_retry_module_mutation_through_equivalent_imports(
+    tmp_path, imports, mutation, runner, loop
+):
+    (tmp_path / "test_retry.py").write_text(
+        imports
+        + "from tenacity import stop_after_attempt\n"
+        + "class CustomError(Exception):\n    pass\n"
+        + "def noop(*args, **kwargs):\n    pass\n"
+        + mutation
+        + "\nasync def test_reraise():\n"
+        + "    try:\n"
+        + loop.format(runner=runner)
+        + "    except CustomError:\n        pass\n"
+        + "    else:\n        raise Exception\n",
+        encoding="utf-8",
+    )
+
+    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+
+
+def test_security_scan_accepts_unmutated_equivalent_retry_module_imports(tmp_path):
+    (tmp_path / "test_retry.py").write_text(
+        "import tenacity as t\n"
+        "import tenacity as other\n"
+        "from tenacity import stop_after_attempt\n"
+        "class CustomError(Exception):\n    pass\n"
+        "async def test_reraise():\n"
+        "    try:\n"
+        "        for attempt in t.Retrying(\n"
+        "            stop=stop_after_attempt(1), reraise=True\n"
+        "        ):\n"
+        "            with attempt:\n                raise CustomError\n"
+        "    except CustomError:\n        pass\n"
+        "    else:\n        raise Exception\n",
+        encoding="utf-8",
+    )
+
+    assert security_scan(tmp_path)["findings"] == []
+
+
+def test_security_scan_accepts_closed_direct_retry_factory_import(tmp_path):
+    (tmp_path / "test_retry.py").write_text(
+        "from tenacity import Retrying as retry_factory\n"
+        "from tenacity import stop_after_attempt\n"
+        "class CustomError(Exception):\n    pass\n"
+        "async def test_reraise():\n"
+        "    try:\n"
+        "        for attempt in retry_factory(\n"
+        "            stop=stop_after_attempt(1), reraise=True\n"
+        "        ):\n"
+        "            with attempt:\n                raise CustomError\n"
+        "    except CustomError:\n        pass\n"
+        "    else:\n        raise Exception\n",
+        encoding="utf-8",
+    )
+
+    assert security_scan(tmp_path)["findings"] == []
+
+
+@pytest.mark.parametrize(
+    "target,context,mutation",
+    [
+        ("attempt", "attempt", "attempt = nullcontext()"),
+        ("retry_context", "retry_context", "retry_context = nullcontext()"),
+        ("attempt", "attempt", "attempt_alias = attempt"),
+        ("attempt", "attempt", "locals()['attempt'] = nullcontext()"),
+        (
+            "attempt",
+            "attempt",
+            "from builtins import globals as get_scope; get_scope()['attempt'] = nullcontext()",
+        ),
+        ("attempt", "attempt", "attempt.__setattr__('__enter__', noop)"),
+    ],
+    ids=[
+        "attempt-rebound",
+        "renamed-attempt-rebound",
+        "attempt-escaped",
+        "reflective-local-rebind",
+        "aliased-reflective-local-rebind",
+        "attempt-method-mutation",
+    ],
+)
+def test_security_scan_rejects_retry_attempt_without_closed_capability_use(
+    tmp_path, target, context, mutation
+):
+    (tmp_path / "test_asyncio.py").write_text(
+        "import tenacity.asyncio as tasyncio\n"
+        "from tenacity import stop_after_attempt\n"
+        "from contextlib import nullcontext\n"
+        "class CustomError(Exception):\n    pass\n"
+        "def noop(*args, **kwargs):\n    pass\n"
+        "async def test_reraise():\n"
+        "    try:\n"
+        f"        async for {target} in tasyncio.AsyncRetrying(\n"
+        "            stop=stop_after_attempt(1), reraise=True\n"
+        "        ):\n"
+        f"            {mutation}\n"
+        f"            with ({context}):\n"
+        "                raise CustomError\n"
+        "    except CustomError:\n"
+        "        pass\n"
+        "    else:\n"
+        "        raise Exception\n",
+        encoding="utf-8",
+    )
+
+    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+
+
+@pytest.mark.parametrize(
+    "target,context",
+    [("attempt", "attempt"), ("retry_context", "(retry_context)")],
+    ids=["baseline-name", "renamed-parenthesized-context"],
+)
+def test_security_scan_accepts_closed_retry_attempt_name_variants(
+    tmp_path, target, context
+):
+    (tmp_path / "test_asyncio.py").write_text(
+        "import tenacity.asyncio as tasyncio\n"
+        "from tenacity import stop_after_attempt\n"
+        "class CustomError(Exception):\n    pass\n"
+        "async def test_reraise():\n"
+        "    try:\n"
+        f"        async for {target} in tasyncio.AsyncRetrying(\n"
+        "            stop=stop_after_attempt(1), reraise=True\n"
+        "        ):\n"
+        f"            with {context}:\n"
+        "                raise CustomError\n"
+        "    except CustomError:\n"
+        "        pass\n"
+        "    else:\n"
+        "        raise Exception\n",
+        encoding="utf-8",
+    )
+
+    assert security_scan(tmp_path)["findings"] == []
+
+
+def test_security_scan_keeps_unexpected_exception_propagation_effective(tmp_path):
+    (tmp_path / "test_case.py").write_text(
+        "class ExpectedError(Exception):\n    pass\n"
+        "class OtherError(Exception):\n    pass\n"
+        "def operation():\n    raise OtherError\n"
+        "def test_behavior():\n"
+        "    try:\n        operation()\n"
+        "    except ExpectedError:\n        pass\n"
+        "    else:\n        raise RuntimeError\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["findings"] == []
+
+
+def test_security_scan_rejects_unrelated_call_before_expected_exception_raise(tmp_path):
+    (tmp_path / "test_case.py").write_text(
+        "def noop():\n    pass\n"
+        "def test_behavior():\n"
+        "    try:\n        noop()\n        raise ValueError()\n"
+        "    except ValueError:\n        pass\n"
+        "    else:\n        raise RuntimeError\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "    try:\n        operation()\n    except CustomError:\n        pass\n",
+        "    try:\n        operation()\n"
+        "    except Exception:\n        pass\n"
+        "    else:\n        raise RuntimeError\n",
+        "    try:\n        operation()\n"
+        "    except (CustomError, Exception):\n        pass\n"
+        "    else:\n        raise RuntimeError\n",
+        "    with suppress(Exception):\n"
+        "        try:\n            operation()\n"
+        "        except CustomError:\n            pass\n"
+        "        else:\n            raise RuntimeError\n",
+        "    try:\n        operation()\n"
+        "    except CustomError:\n        pass\n"
+        "    else:\n        raise RuntimeError\n"
+        "    finally:\n        return None\n",
+        "    try:\n        operation()\n"
+        "    except CustomError:\n        pass\n"
+        "    else:\n        if False:\n            raise RuntimeError\n",
+        "    raise RuntimeError\n",
+        "    RuntimeError()\n",
+        "    try:\n"
+        "        raise CustomError()\n"
+        "    except CustomError:\n"
+        "        pass\n"
+        "    else:\n"
+        "        raise RuntimeError\n",
+        "    try:\n"
+        "        def nested():\n"
+        "            operation()\n"
+        "    except CustomError:\n"
+        "        pass\n"
+        "    else:\n"
+        "        raise RuntimeError\n",
+        "    try:\n        operation()\n"
+        "        if True:\n            raise CustomError()\n"
+        "    except CustomError:\n        pass\n"
+        "    else:\n        raise RuntimeError\n",
+        "    try:\n        operation()\n"
+        "        with nullcontext():\n            raise CustomError()\n"
+        "    except CustomError:\n        pass\n"
+        "    else:\n        raise RuntimeError\n",
+        "    try:\n        operation()\n"
+        "        try:\n            raise CustomError()\n"
+        "        except CustomError:\n            pass\n"
+        "    except CustomError:\n        pass\n"
+        "    else:\n        raise RuntimeError\n",
+    ],
+)
+def test_security_scan_rejects_unbounded_expected_exception_shapes(tmp_path, body):
+    (tmp_path / "test_case.py").write_text(
+        "from contextlib import nullcontext, suppress\n"
+        "class CustomError(Exception):\n    pass\n"
+        "def operation():\n    pass\n"
+        "def test_behavior():\n" + body,
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+
+
 @pytest.mark.parametrize(
     "imports,handler",
     [
@@ -8079,15 +8585,18 @@ def test_runtime_oracle_eligibility_does_not_weaken_static_scan(
     )
     result = security_scan(tmp_path)
     finding = next(
-        item for item in result["findings"] if item["code"] == "QUALITY_HOLLOW_TEST"
+        item
+        for item in result["findings"]
+        if item["code"] == "QUALITY_UNKNOWN_TEST_ORACLE"
     )
     import ast
     from factoryline.review_audits import _completion_only_oracle
 
     node = ast.parse("def test_validate():\n    " + body + "\n").body[0]
     assert _completion_only_oracle(node) is eligible
-    assert finding["facts"]["runtime_oracle_eligible"] is eligible
-    assert result["state"] == "FINDINGS"
+    assert "runtime_oracle_eligible" not in finding["facts"]
+    assert finding["facts"]["candidate_rule"] == "QUALITY_HOLLOW_TEST"
+    assert result["state"] == "INCOMPLETE"
 
 
 def _runtime_oracle_scan_fixture(tmp_path):
@@ -8135,9 +8644,7 @@ def _runtime_oracle_scan_fixture(tmp_path):
     return module, row, kwargs
 
 
-def test_scan_reconciles_bound_completion_oracle_and_retains_static_history(
-    tmp_path, monkeypatch
-):
+def test_scan_retains_unknown_for_legacy_completion_oracle(tmp_path, monkeypatch):
     import factoryline.runtime_attestation as attestation
 
     module, row, kwargs = _runtime_oracle_scan_fixture(tmp_path)
@@ -8162,12 +8669,9 @@ def test_scan_reconciles_bound_completion_oracle_and_retains_static_history(
         tmp_path, initial.copy(), tuple(kwargs.values())
     )
     assert replay == result
-    assert result["state"] == "CLEAN" and result["findings"] == []
-    assert (
-        result["runtime_oracles"]["reconciled"][0]["static_finding"]
-        == initial["findings"][0]
-    )
-    assert result["runtime_oracles"]["reconciled_count"] == 1
+    assert result["state"] == "INCOMPLETE"
+    assert result["findings"] == initial["findings"]
+    assert result["runtime_oracles"]["reconciled_count"] == 0
     assert result["candidate_sha256"] == initial["candidate_sha256"]
     assert (
         result["audit_sha256"]
@@ -8325,7 +8829,13 @@ def test_scan_applies_v3_callback_coverage_without_clearing_partial_cases(
     )
     result = security_scan(tmp_path, **kwargs)
     assert result["runtime_oracles"]["reconciled_count"] == int(complete)
-    assert ("QUALITY_HOLLOW_TEST" in result["finding_counts"]) is not complete
+    assert ("QUALITY_UNKNOWN_TEST_ORACLE" in result["finding_counts"]) is not complete
+    assert "QUALITY_HOLLOW_TEST" not in result["finding_counts"]
+    if complete:
+        original = result["runtime_oracles"]["reconciled"][0]["static_finding"]
+        assert original["code"] == "QUALITY_UNKNOWN_TEST_ORACLE"
+    else:
+        assert result["state"] == "INCOMPLETE"
     if not complete:
         coverage = result["findings"][0]["facts"]["runtime_case_coverage"]
         assert coverage["remaining_case_ids"] == ["test_app.py::test_validate[b]"]
@@ -8368,7 +8878,8 @@ def test_scan_v3_oracle_cannot_bypass_callback_check_for_unparameterized_smoke(
 
     result = security_scan(tmp_path, **kwargs)
 
-    assert result["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+    assert result["finding_counts"] == {"QUALITY_UNKNOWN_TEST_ORACLE": 1}
+    assert result["state"] == "INCOMPLETE"
     assert result["runtime_oracles"]["reconciled_count"] == 0
     assert result["findings"][0]["facts"]["runtime_case_coverage"]["eligible"] is False
 
@@ -10562,3 +11073,236 @@ def test_security_scan_source_read_failure_preserves_finding_and_marks_incomplet
     assert "SECURITY_SOURCE_UNREADABLE" in result["finding_counts"]
     assert telemetry.snapshot()["source_attribution"]["status"] == "incomplete"
     assert "PRIVATE SOURCE READ DETAIL" not in str(telemetry.snapshot())
+
+
+def _protocol_integration_workspace(tmp_path):
+    tests = tmp_path / "tests"
+    tests.mkdir()
+    (tests / "test_protocol.py").write_text(
+        "from models import Widget\ndef test_representation():\n    repr(Widget())\n",
+        encoding="utf-8",
+    )
+    model = tmp_path / "models.py"
+    model.write_text(
+        "class Widget:\n"
+        "    def __init__(self):\n        self.value = 7\n"
+        "    def __repr__(self):\n        return f'{self.value}'\n",
+        encoding="utf-8",
+    )
+    return model
+
+
+def _protocol_integration_finding(report):
+    matches = [
+        row
+        for row in report["findings"]
+        if row["code"] == "QUALITY_UNKNOWN_TEST_ORACLE"
+    ]
+    assert len(matches) == 1
+    assert report["state"] == "INCOMPLETE"
+    assert matches[0]["facts"]["evidence_state"] == "UNKNOWN"
+    return matches[0]
+
+
+def test_protocol_observation_scanner_cold_warm_parity_without_oracle_credit(tmp_path):
+    import factoryline.review_audits as module
+
+    _protocol_integration_workspace(tmp_path)
+    module._oracle_context_cache_clear()
+    uncached = security_scan(tmp_path, cache_enabled=False)
+    cold = security_scan(tmp_path, cache_enabled=True)
+    warm = security_scan(tmp_path, cache_enabled=True)
+    assert uncached == cold == warm
+    assert module._oracle_context_cache_info()["hits"] >= 1
+    finding = _protocol_integration_finding(warm)
+    summary = finding["facts"]["protocol_observations"]["summaries"][0]
+    assert summary["status"] == "WEAK_PROTOCOL"
+    assert summary["output_checked"] is False
+    assert summary["runtime_observed"] is False
+    assert {item["source"] for item in summary["dependencies"]} == {
+        "models.py",
+        "tests/test_protocol.py",
+    }
+
+
+def test_protocol_observation_scanner_dependency_change_invalidates_cache(tmp_path):
+    import factoryline.review_audits as module
+
+    model = _protocol_integration_workspace(tmp_path)
+    module._oracle_context_cache_clear()
+    before = security_scan(tmp_path, cache_enabled=True)
+    prior_misses = module._oracle_context_cache_info()["misses"]
+    model.write_text(
+        model.read_text().replace("f'{self.value}'", "'constant'"), encoding="utf-8"
+    )
+    after = security_scan(tmp_path, cache_enabled=True)
+    assert module._oracle_context_cache_info()["misses"] > prior_misses
+    original = _protocol_integration_finding(before)["facts"]["protocol_observations"][
+        "summaries"
+    ][0]
+    changed = _protocol_integration_finding(after)["facts"]["protocol_observations"][
+        "summaries"
+    ][0]
+    assert original["status"] == "WEAK_PROTOCOL"
+    assert changed["status"] == "UNKNOWN"
+    assert original["dependencies"] != changed["dependencies"]
+
+
+def test_protocol_observation_scanner_producer_change_invalidates_cache(
+    tmp_path, monkeypatch
+):
+    import factoryline.context_efficiency as context
+    import factoryline.review_audits as module
+
+    _protocol_integration_workspace(tmp_path)
+    module._oracle_context_cache_clear()
+    before = security_scan(tmp_path, cache_enabled=True)
+    prior_misses = module._oracle_context_cache_info()["misses"]
+    original = context.protocol_call_context
+
+    def replacement(*args, **kwargs):
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(context, "protocol_call_context", replacement)
+    after = security_scan(tmp_path, cache_enabled=True)
+    assert module._oracle_context_cache_info()["misses"] > prior_misses
+    assert before == after
+
+
+def test_protocol_observation_scanner_does_not_credit_constant_computation(tmp_path):
+    tests = tmp_path / "tests"
+    tests.mkdir()
+    (tests / "test_constant.py").write_text(
+        "def compute():\n    return 3\ndef test_unchecked():\n    compute()\n",
+        encoding="utf-8",
+    )
+    finding = _protocol_integration_finding(
+        security_scan(tmp_path, cache_enabled=False)
+    )
+    assert "protocol_observations" not in finding["facts"]
+
+
+def test_protocol_observation_scanner_malformed_cache_cannot_clear_unknown(tmp_path):
+    import json
+    import factoryline.review_audits as module
+
+    _protocol_integration_workspace(tmp_path)
+    module._oracle_context_cache_clear()
+    security_scan(tmp_path, cache_enabled=True)
+    key = next(iter(module._ORACLE_CONTEXT_CACHE))
+    payload, size, created = module._ORACLE_CONTEXT_CACHE[key]
+    document = json.loads(payload)
+    for row in document["contexts"]:
+        row["protocol_observations"] = {
+            "schema": "factory.protocol-context.v1",
+            "summaries": [None, {"test": "test_representation", "dependencies": None}],
+        }
+    module._ORACLE_CONTEXT_CACHE[key] = (json.dumps(document), size, created)
+    misses = module._oracle_context_cache_info()["misses"]
+    finding = _protocol_integration_finding(security_scan(tmp_path, cache_enabled=True))
+    assert finding["code"] == "QUALITY_UNKNOWN_TEST_ORACLE"
+    assert module._oracle_context_cache_info()["misses"] > misses
+    summaries = finding["facts"]["protocol_observations"]["summaries"]
+    assert summaries and all(isinstance(row, dict) for row in summaries)
+    assert summaries[0]["dependencies"]
+    assert module.integrity.NativeOraclePayload.valid(
+        module._ORACLE_CONTEXT_CACHE[key][0], key
+    )
+
+
+@pytest.mark.parametrize("literal", ["//serser", "if:", "def broken("])
+def test_literal_exec_rejected_syntax_retains_primitive_info(tmp_path, literal):
+    (tmp_path / "app.py").write_text(f"def parse_case():\n    exec({literal!r})\n")
+    findings = security_scan(tmp_path)["findings"]
+    finding = next(f for f in findings if f["code"] == "SECURITY_DYNAMIC_EXECUTION")
+    assert finding["severity"] == "INFO"
+    assert finding["facts"]["primitive_present"] is True
+    assert finding["facts"]["source_compilation"] == "REJECTED_SYNTAX"
+    assert finding["facts"]["execution_of_literal_source"] is False
+    assert finding["facts"]["evidence_scope"] == "exact_builtin_call_literal"
+    assert "harmless" not in finding["message"]
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "def f():\n    exec(\"import os; os.system('danger')\")\n",
+        "def f():\n    exec(payload)\n",
+        "def f():\n    exec('//bad', {})\n",
+        "def f():\n    exec('//bad', globals={})\n",
+        "import builtins\ndef f():\n    builtins.exec('//bad')\n",
+        "from builtins import exec as invoke\ndef f():\n    invoke('//bad')\n",
+        "import builtins as b\nb.exec = replacement\ndef f():\n    exec('//bad')\n",
+        "import builtins as b\nalias = b\nalias.exec = replacement\ndef f():\n    exec('//bad')\n",
+        "def f():\n    setattr(target, 'exec', replacement)\n    exec('//bad')\n",
+        "def f():\n    mutate = getattr\n    exec('//bad')\n",
+        "def f():\n    __builtins__['exec'] = replacement\n    exec('//bad')\n",
+        "from unknown import *\ndef f():\n    exec('//bad')\n",
+        "import sys\ndef f():\n    sys.modules['builtins'].exec = replacement\n    exec('//bad')\n",
+        "def f():\n    exec('//other')\n    exec('//bad')\n",
+        "def f():\n    exec(" + repr("//" + "x" * 4096) + ")\n",
+    ],
+)
+def test_literal_exec_unsupported_does_not_receive_syntax_credit(tmp_path, source):
+    (tmp_path / "app.py").write_text(source)
+    findings = [
+        f
+        for f in security_scan(tmp_path)["findings"]
+        if f["code"] == "SECURITY_DYNAMIC_EXECUTION"
+    ]
+    assert findings
+    assert all(f["severity"] == "HIGH" for f in findings)
+    assert all("source_compilation" not in f["facts"] for f in findings)
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "def f(exec):\n    exec('//bad')\n",
+        "exec = custom\ndef f():\n    exec('//bad')\n",
+        "def f():\n    exec('//bad')\n    exec = custom\n",
+        "def outer(exec):\n    def inner():\n        exec('//bad')\n",
+    ],
+)
+def test_literal_exec_shadowed_binding_never_receives_credit(source):
+    import ast
+    from factoryline import intent_quality, review_integrity
+
+    tree = ast.parse(source)
+    review_integrity.bind_security_call_scopes(tree)
+    call = next(n for n in ast.walk(tree) if isinstance(n, ast.Call))
+    assert intent_quality.literal_exec_rejected(call) == {}
+
+
+def test_literal_exec_requires_native_scope_and_handles_parser_resource_failure(
+    monkeypatch,
+):
+    import ast
+    from factoryline import intent_quality, review_integrity
+
+    tree = ast.parse("def f():\n    exec('//bad')\n")
+    call = next(n for n in ast.walk(tree) if isinstance(n, ast.Call))
+    assert intent_quality.literal_exec_rejected(call) == {}
+    review_integrity.bind_security_call_scopes(tree)
+
+    def exhausted(*args, **kwargs):
+        raise MemoryError("bounded parser failure")
+
+    monkeypatch.setattr(ast, "parse", exhausted)
+    assert intent_quality.literal_exec_rejected(call) == {}
+
+
+def test_literal_exec_cold_warm_and_source_change_invalidate_credit(tmp_path):
+    from factoryline import review_audits as scanner
+
+    source = tmp_path / "app.py"
+    source.write_text("def f():\n    exec('//bad')\n")
+    scanner._oracle_context_cache_clear()
+    cold = scanner.security_scan(tmp_path)
+    warm = scanner.security_scan(tmp_path)
+    assert cold["findings"] == warm["findings"]
+    assert cold["findings"][0]["severity"] == "INFO"
+    source.write_text("def f():\n    exec('import os; os.system(command)')\n")
+    changed = scanner.security_scan(tmp_path)
+    assert changed["findings"][0]["severity"] == "HIGH"
+    assert "source_compilation" not in changed["findings"][0]["facts"]

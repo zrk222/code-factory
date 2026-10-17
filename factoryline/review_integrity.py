@@ -12,6 +12,18 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 from .runtime_audit_common import RuntimeAuditError
+from .provenance import NativeOraclePayload as NativeOraclePayload
+from . import _source_binding_helpers as _package_source_binding_helpers
+
+source_signature, bind_source_call = _package_source_binding_helpers()
+
+
+def source_binding_helpers():
+    return tuple(
+        dict.fromkeys(
+            (*_package_source_binding_helpers(), source_signature, bind_source_call)
+        )
+    )
 
 
 def _name(node: ast.AST | None) -> str:
@@ -831,21 +843,12 @@ def native_test_probe(relative: str, node: ast.AST) -> dict[str, Any]:
 
 
 def callback_argument(call: ast.Call, function: ast.AST, parameter: str) -> str | None:
-    """Return a plainly bound callback name for a positional or keyword argument."""
-    positional = [*function.args.posonlyargs, *function.args.args]
-    names = [argument.arg for argument in positional]
-    if parameter in names:
-        index = names.index(parameter)
-        if index < len(call.args) and isinstance(call.args[index], ast.Name):
-            return call.args[index].id
-    return next(
-        (
-            keyword.value.id
-            for keyword in call.keywords
-            if keyword.arg == parameter and isinstance(keyword.value, ast.Name)
-        ),
-        None,
-    )
+    """Return an explicitly supplied name from a valid source call binding."""
+    try:
+        value = bind_source_call(call, function, apply_defaults=False).get(parameter)
+    except ValueError:
+        return None
+    return value.id if isinstance(value, ast.Name) else None
 
 
 def _callback_registry_store(node: ast.AST, name: str) -> bool:
@@ -3172,29 +3175,12 @@ def _redirect_sink_parameters(function, api):
 
 
 def _redirect_scope_sink_names(scope, api):
-    positional = [*scope.args.posonlyargs, *scope.args.args]
-    defaults = (
-        dict(
-            zip(
-                [item.arg for item in positional[-len(scope.args.defaults) :]],
-                scope.args.defaults,
-            )
-        )
-        if scope.args.defaults
-        else {}
-    )
-    defaults.update(
-        {
-            item.arg: default
-            for item, default in zip(scope.args.kwonlyargs, scope.args.kw_defaults)
-            if default is not None
-        }
-    )
-    parameters = [*positional, *scope.args.kwonlyargs]
+    try:
+        parameters = source_signature(scope).parameters.values()
+    except ValueError:
+        return set()
     return {
-        parameter.arg
-        for parameter in parameters
-        if _redirect_is_sink_parameter(parameter, defaults.get(parameter.arg), api)
+        p.name for p in parameters if _redirect_is_sink_parameter(p, p.default, api)
     }
 
 
@@ -4686,20 +4672,11 @@ def _security_helper_return_tainted(call, function, requests, parameters, aliase
         or len(function.body) != 1
     ):
         return False
-    positional = [*function.args.posonlyargs, *function.args.args]
-    names = {arg.arg for arg in [*positional, *function.args.kwonlyargs]}
-    if len(call.args) > len(positional):
+    try:
+        actuals = bind_source_call(call, function, apply_defaults=False)
+    except ValueError:
         return False
-    actuals = dict(zip((arg.arg for arg in positional), call.args))
-    for keyword in call.keywords:
-        if keyword.arg not in names or keyword.arg in {
-            arg.arg for arg in function.args.posonlyargs
-        }:
-            return False
-        if keyword.arg in actuals:
-            return False
-        actuals[keyword.arg] = keyword.value
-    if set(actuals) != names:
+    if set(actuals) != set(source_signature(function).parameters):
         return False
     returned = function.body[0]
     if not isinstance(returned, ast.Return) or returned.value is None:
@@ -4847,7 +4824,10 @@ def runtime_finding_coverage(workspace, finding, row, schema, config_sources):
     """Keep incomplete callback and parameter-case evidence visible in findings."""
     from . import review_audits as audit
 
-    if finding["code"] != "QUALITY_HOLLOW_TEST" or row is None:
+    unknown = finding["code"] == "QUALITY_UNKNOWN_TEST_ORACLE"
+    if row is None or (unknown and schema != "factory.test-oracle-verification.v3"):
+        return False
+    if finding["code"] != "QUALITY_HOLLOW_TEST" and not unknown:
         return False
     loaded = _runtime_finding_node(workspace, row)
     if loaded is None:
@@ -4860,7 +4840,7 @@ def runtime_finding_coverage(workspace, finding, row, schema, config_sources):
         TEST_ORACLE_VERIFICATION_SCHEMA_V2,
     )
 
-    if _runtime_completion_only_eligible(
+    if not unknown and _runtime_completion_only_eligible(
         schema,
         finding.get("facts", {}).get("runtime_oracle_eligible"),
         parameterized,
@@ -4998,3 +4978,23 @@ def _builtin_repr_names_shadowed(node, names=None):
         return True
     module = _security_module_scope(scope) or getattr(node, "_oracle_module", None)
     return bool(module and builtin_names & _security_scope_local_names(module))
+
+
+def _completion_only_oracle(node: ast.AST) -> bool:
+    """Runtime mutation evidence may credit calls, never ineffective assertions."""
+    children = list(ast.walk(node))[1:]
+    disallowed = (
+        ast.Assert,
+        ast.Raise,
+        ast.FunctionDef,
+        ast.AsyncFunctionDef,
+        ast.Lambda,
+    )
+    if any(isinstance(child, disallowed) for child in children):
+        return False
+    calls = [child for child in children if isinstance(child, ast.Call)]
+    return bool(calls) and not any(
+        "assert" in ast.unparse(call.func).lower()
+        or "fail" in ast.unparse(call.func).lower()
+        for call in calls
+    )

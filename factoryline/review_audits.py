@@ -39,6 +39,8 @@ from .runtime_audit_common import RuntimeAuditError, runtime_config_sources
 from . import review_integrity as integrity, intent_quality as contracts
 from .review_integrity import security_call_name as security_call_name
 
+_completion_only_oracle = integrity._completion_only_oracle
+
 SCHEMA = "factory.review-audit-policy.v1"
 FINGERPRINT_SCHEMA = "factory.code-review-fingerprint.v1"
 SECURITY_SCHEMA = "factory.security-audit.v1"
@@ -86,8 +88,7 @@ def _oracle_context_cache_read(key: str) -> tuple[dict, list] | None:
     global _ORACLE_CONTEXT_CACHE_BYTES, _ORACLE_CONTEXT_CACHE_HITS
     global _ORACLE_CONTEXT_CACHE_MISSES
     with _ORACLE_CONTEXT_CACHE_LOCK:
-        cached = _ORACLE_CONTEXT_CACHE.get(key)
-        if cached is None:
+        if (cached := _ORACLE_CONTEXT_CACHE.get(key)) is None:
             _ORACLE_CONTEXT_CACHE_MISSES += 1
             return None
         payload, size, created = cached
@@ -97,8 +98,9 @@ def _oracle_context_cache_read(key: str) -> tuple[dict, list] | None:
             _ORACLE_CONTEXT_CACHE_MISSES += 1
             return None
         _ORACLE_CONTEXT_CACHE.move_to_end(key)
-        _ORACLE_CONTEXT_CACHE_HITS += 1
     try:
+        if not integrity.NativeOraclePayload.valid(payload, key):
+            raise ValueError("oracle cache payload is not native or current")
         document = json.loads(payload)
         contexts = {
             Path(item["path"]): {
@@ -111,11 +113,16 @@ def _oracle_context_cache_read(key: str) -> tuple[dict, list] | None:
                 "flask_apps": set(item.get("flask_apps", [])),
                 "callback_invokers": item.get("callback_invokers", {}),
                 "codspeed_benchmark": item.get("codspeed_benchmark", False),
+                "async_runner_fixtures": item.get("async_runner_fixtures", {}),
+                "protocol_observations": item.get("protocol_observations", {}),
                 **decode_structural_context(item.get("structural_context", {})),
             }
             for item in document["contexts"]
         }
-        return contexts, document["edges"]
+        edges = document["edges"]
+        with _ORACLE_CONTEXT_CACHE_LOCK:
+            _ORACLE_CONTEXT_CACHE_HITS += 1
+        return contexts, edges
     except (KeyError, TypeError, ValueError, json.JSONDecodeError):
         with _ORACLE_CONTEXT_CACHE_LOCK:
             removed = _ORACLE_CONTEXT_CACHE.pop(key, None)
@@ -143,13 +150,16 @@ def _oracle_context_cache_write(key: str, contexts: dict, edges: list) -> None:
                 "flask_apps": sorted(context.get("flask_apps", set())),
                 "callback_invokers": context.get("callback_invokers", {}),
                 "codspeed_benchmark": context.get("codspeed_benchmark", False),
+                "async_runner_fixtures": context.get("async_runner_fixtures", {}),
+                "protocol_observations": context.get("protocol_observations", {}),
                 "structural_context": encode_structural_context(context),
             }
         )
-    payload = json.dumps(
-        {"contexts": rows, "edges": edges}, sort_keys=True, separators=(",", ":")
+    document = {"contexts": rows, "edges": edges}
+    payload = integrity.NativeOraclePayload(
+        json.dumps(document, sort_keys=True, separators=(",", ":")), key
     )
-    size = len(payload.encode("utf-8")) + len(key)
+    size = len(payload.encode("utf-8")) + len(key) + 32
     with _ORACLE_CONTEXT_CACHE_LOCK:
         if size > MAX_ORACLE_CONTEXT_CACHE_BYTES:
             return
@@ -849,7 +859,11 @@ def _security_aliases(nodes: list[ast.AST]) -> dict[str, str]:
     for node in nodes:
         if isinstance(node, ast.Import):
             for item in node.names:
-                aliases[item.asname or item.name.split(".")[0]] = item.name
+                if item.asname:
+                    aliases[item.asname] = item.name
+                else:
+                    name = item.name.split(".")[0]
+                    aliases[name] = name
         elif isinstance(node, ast.ImportFrom):
             for item in node.names:
                 if item.name == "*":
@@ -1242,23 +1256,24 @@ def _suppresses_assertion(
 
 def _assertion_nodes(node: ast.AST, aliases: dict[str, str]) -> list[ast.AST]:
     """Collect explicit assertions, raises, and effective warnings-as-errors checks."""
+    from .context_efficiency import _expected_exception_else_failure
+
     nodes = _test_oracle_body_nodes(node, aliases)
-    result = [
+    return [
         child
         for child in nodes
-        if isinstance(child, ast.Assert) and _effective_assertion(child, aliases)
-    ]
-    result.extend(
-        child
-        for child in nodes
-        if isinstance(child, ast.Raise)
+        if isinstance(child, ast.Assert)
+        and _effective_assertion(child, aliases)
+        or isinstance(child, ast.Raise)
         and _effective_assertion(child, aliases)
         and isinstance(child.exc, (ast.Call, ast.Name))
-        and _name(child.exc.func if isinstance(child.exc, ast.Call) else child.exc)
-        in {"AssertionError", "builtins.AssertionError"}
-    )
-    result.extend(child for child in nodes if _warnings_as_errors(child, aliases))
-    return result
+        and (
+            _name(child.exc.func if isinstance(child.exc, ast.Call) else child.exc)
+            in {"AssertionError", "builtins.AssertionError"}
+            or _expected_exception_else_failure(child, aliases)
+        )
+        or _warnings_as_errors(child, aliases)
+    ]
 
 
 def _warnings_as_errors(node: ast.AST, aliases: dict[str, str]) -> bool:
@@ -1391,13 +1406,17 @@ def _dynamic_execution_finding(
 ) -> dict[str, Any] | None:
     if call not in {"eval", "exec", "builtins.eval", "builtins.exec"}:
         return None
+    rejected = contracts.literal_exec_rejected(node)
     return _security_finding(
         "SECURITY_DYNAMIC_EXECUTION",
         relative,
         node,
-        "Dynamic code execution is reachable from source.",
-        "HIGH",
+        "Literal source is rejected by Python syntax compilation; builtin execution primitive remains present."
+        if rejected
+        else "Dynamic code execution is reachable from source.",
+        "INFO" if rejected else "HIGH",
         call=call,
+        **rejected,
     )
 
 
@@ -3660,11 +3679,18 @@ def _oracle_context_cache_key(root: Path, manifest: list, config_identity: dict)
         _populate_oracle_database_context,
         _read_bounded_workspace_source,
         _scan_missing_security_snapshot,
+        async_runner_fixture_helpers,
+        protocol_call_helpers,
     )
 
     helpers = (
         ast.parse,
         _build_oracle_context,
+        _completion_only_oracle,
+        integrity._completion_only_oracle,
+        integrity._builtin_repr_names_shadowed,
+        integrity._security_module_scope,
+        integrity._security_scope_local_names,
         contracts._static_type_edges,
         _security_source_bytes,
         _read_bounded_workspace_source,
@@ -3726,7 +3752,11 @@ def _oracle_context_cache_key(root: Path, manifest: list, config_identity: dict)
         _is_oracle_helper_name,
         _oracle_context_cache_eligible,
         _project_oracle_context,
+        integrity.NativeOraclePayload.__new__,
+        integrity.NativeOraclePayload.valid,
     )
+    helpers += async_runner_fixture_helpers() + protocol_call_helpers()
+    helpers += (integrity.source_binding_helpers, *integrity.source_binding_helpers())
     helpers += contracts.project_contract_helpers() + tuple(
         getattr(integrity, name)
         for name in (
@@ -3736,7 +3766,7 @@ def _oracle_context_cache_key(root: Path, manifest: list, config_identity: dict)
         )
     )
     identity = {
-        "schema": "factory.security-oracle-context-cache.v3",
+        "schema": "factory.security-oracle-context-cache.v5",
         "root": root.resolve().as_posix(),
         "sources": manifest,
         "config": config_identity,
@@ -3988,6 +4018,10 @@ def _build_oracle_context(
     ty_sources: set | None = None,
     import_views: dict | None = None,
 ) -> tuple[dict, list]:
+    from .context_efficiency import async_runner_fixture_context, protocol_call_context
+
+    async_fixtures = async_runner_fixture_context(root, files, snapshots)
+    protocols = protocol_call_context(root, files, snapshots)
     fixture_sources = [
         (
             path,
@@ -4013,7 +4047,12 @@ def _build_oracle_context(
     helper_summaries = {}
     eligible = {path.resolve(): path for path in files}
     for path, tree in snapshots.items():
+        caller = path.relative_to(root).as_posix()
+        contexts[path]["protocol_observations"] = protocols.get(caller, {})
         aliases = _scope_security_aliases(_module_security_aliases(tree), tree)
+        contexts[path]["async_runner_fixtures"] = async_fixtures.get(
+            path.relative_to(root).as_posix(), {}
+        )
         fixtures = {}
         for source, declared in fixture_sources:
             if path.parent.is_relative_to(source.parent):
@@ -4037,7 +4076,6 @@ def _build_oracle_context(
         contexts[path]["helpers"], contexts[path]["weak_helpers"] = (
             _imported_oracle_helper_sets(imports, snapshots, aliases, helper_summaries)
         )
-        caller = path.relative_to(root).as_posix()
         edges.update(
             (
                 caller,
@@ -4172,9 +4210,7 @@ def _weak_test_oracle_finding(
     unittest_context: bool = False,
     weak_helper_names: set[str] | None = None,
 ) -> dict[str, Any] | None:
-    if not isinstance(node, _FUNCTION_NODES):
-        return None
-    if not node.name.startswith("test_"):
+    if not isinstance(node, _FUNCTION_NODES) or not node.name.startswith("test_"):
         return None
     if _test_oracle_exempt(node, aliases):
         return None
@@ -4243,11 +4279,10 @@ def _hollow_test_finding(
     unittest_context: bool = False,
     oracle_context: dict | None = None,
 ) -> dict[str, Any] | None:
-    if not isinstance(node, _FUNCTION_NODES):
-        return None
-    if not node.name.startswith("test_"):
+    if not isinstance(node, _FUNCTION_NODES) or not node.name.startswith("test_"):
         return None
     from .review_integrity import structural_oracle_finding
+    from .context_efficiency import _protocol_annotate_finding
 
     oracle = structural_oracle_finding(node, relative, oracle_context or {})
     if _test_oracle_exempt(node, aliases) or oracle is True:
@@ -4264,42 +4299,19 @@ def _hollow_test_finding(
         for child in _test_oracle_body_nodes(node, aliases)
     ):
         return None
-    return _security_finding(
-        "QUALITY_HOLLOW_TEST",
+    finding = _security_finding(
+        "QUALITY_UNKNOWN_TEST_ORACLE",
         relative,
         node,
-        "Test has no local non-vacuous assertion. Add an independent expected outcome and a negative control; delegated helper checks need separate evidence.",
-        "MEDIUM",
+        "No recognized local oracle; delegated behavior and fixture lifecycle remain unverified.",
+        "INFO",
         symbol=node.name,
-        runtime_oracle_eligible=_completion_only_oracle(node),
-        native_assertion_probe=_native_assertion_probe(relative, node),
+        state="INCOMPLETE",
+        evidence_state="UNKNOWN",
+        candidate_rule="QUALITY_HOLLOW_TEST",
+        missing_evidence="meaningful oracle and fixture/lifecycle closure",
     )
-
-
-def _native_assertion_probe(relative, node):
-    from .review_integrity import native_test_probe
-
-    return native_test_probe(relative, node)
-
-
-def _completion_only_oracle(node: ast.AST) -> bool:
-    """Runtime mutation evidence may credit calls, never ineffective assertions."""
-    children = list(ast.walk(node))[1:]
-    disallowed = (
-        ast.Assert,
-        ast.Raise,
-        ast.FunctionDef,
-        ast.AsyncFunctionDef,
-        ast.Lambda,
-    )
-    if any(isinstance(child, disallowed) for child in children):
-        return False
-    calls = [child for child in children if isinstance(child, ast.Call)]
-    return bool(calls) and not any(
-        "assert" in ast.unparse(call.func).lower()
-        or "fail" in ast.unparse(call.func).lower()
-        for call in calls
-    )
+    return _protocol_annotate_finding(finding, node, oracle_context or {})
 
 
 def _has_manual_failure(node: ast.AST, aliases: dict[str, str]) -> bool:
@@ -5177,25 +5189,9 @@ def _security_node_findings(
 
 
 def _test_serialization_roundtrip(relative: str, node: ast.Call, aliases: dict) -> bool:
-    path = Path(relative)
-    if not (
-        "tests" in path.parts
-        or path.name.startswith("test_")
-        or path.name.endswith("_test.py")
-    ):
-        return False
-    if len(node.args) != 1 or node.keywords or not isinstance(node.args[0], ast.Call):
-        return False
-    serialized = node.args[0]
-    loaded_name = _normalized_call_name(node, aliases)
-    return (
-        len(serialized.args) == 1
-        and not isinstance(serialized.args[0], ast.Starred)
-        and _normalized_call_name(serialized, aliases)
-        == loaded_name.removesuffix("loads") + "dumps"
-        and _call_name(serialized).split(".", 1)[0] in aliases
-        and not any(keyword.arg is None for keyword in serialized.keywords)
-    )
+    from .context_efficiency import _test_serialization_roundtrip as check
+
+    return check(relative, node, aliases)
 
 
 def _unmodified_serialization_aliases(nodes: list[ast.AST], aliases: dict) -> dict:
@@ -5257,6 +5253,7 @@ def _security_scan_tree(
     )
     oracle_aliases = _scope_security_aliases(_module_security_aliases(tree), tree)
     context = oracle_context or {}
+    tree._oracle_async_runner_fixtures = context.get("async_runner_fixtures", {})
     helper_names = _local_assertion_helpers(tree, oracle_aliases) | set(
         context.get("helpers", ())
     )

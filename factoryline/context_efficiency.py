@@ -22,9 +22,10 @@ from datetime import datetime, timezone
 from math import ceil
 from pathlib import Path
 from statistics import median
-from typing import Any
+from typing import Any, NoReturn
 
 from .ops_telemetry import _measured_source_read
+from .runtime_audit_common import RuntimeAuditError, canonical_bytes
 
 REQUEST_SCHEMA = "factory.context-efficiency-request.v1"
 PACKET_SCHEMA = "factory.context-efficiency-packet.v1"
@@ -266,6 +267,7 @@ def _scan_security_source(
         tree = _verified_security_tree(
             audit, workspace, path, data, binding, tree, fingerprint
         )
+        tree._oracle_source_sha256 = binding["sha256"]
         tree._oracle_source_lines = data.decode("utf-8").splitlines()
     except SyntaxError as exc:
         return _security_source_failure(
@@ -307,8 +309,1256 @@ def _scan_security_source(
     return binding, findings, "audited"
 
 
+def _expected_exception_else_failure(node, aliases):
+    """Recognize a specific expected exception with a failure when absent."""
+    from . import review_audits as audit
+
+    return any(
+        isinstance(parent, ast.Try)
+        and child in parent.orelse
+        and parent.handlers
+        and all(
+            handler.type is not None
+            and not audit._exception_type_catches_assertion(
+                handler.type, handler, aliases
+            )
+            for handler in parent.handlers
+        )
+        and not _try_body_has_unmediated_raise(
+            parent, getattr(node, "_oracle_scope", None), aliases, audit
+        )
+        and any(
+            isinstance(call, ast.Call)
+            and not any(
+                isinstance(ancestor, ast.Raise)
+                for ancestor, _ in getattr(call, "_oracle_ancestors", ())
+            )
+            for statement in parent.body
+            for call in audit._body_nodes(statement)
+        )
+        and not any(
+            audit._finally_suppresses_exception(statement)
+            for statement in parent.finalbody
+        )
+        for parent, child in getattr(node, "_oracle_ancestors", ())
+    )
+
+
+def _try_body_has_unmediated_raise(parent, scope, aliases, audit):
+    """Reject test-owned raises unless a context-managed iteration mediates them."""
+    module = getattr(scope, "_oracle_module", None)
+    return any(
+        isinstance(child, ast.Raise)
+        and not _raise_is_iteration_mediated(child, scope, module, aliases, audit)
+        for statement in parent.body
+        for child in audit._body_nodes(statement)
+    )
+
+
+def _raise_is_iteration_mediated(node, scope, module, aliases, audit):
+    """Recognize a raise inside an imported retry iterator's attempt context."""
+    ancestors = getattr(node, "_oracle_ancestors", ())
+    for index, (parent, _child) in enumerate(ancestors):
+        if not isinstance(
+            parent, (ast.For, ast.AsyncFor)
+        ) or not _retry_factory_is_imported(parent.iter, scope, module, aliases, audit):
+            continue
+        target = parent.target
+        if not isinstance(target, ast.Name) or not isinstance(target.ctx, ast.Store):
+            continue
+        for context, _context_child in ancestors[index + 1 :]:
+            if not isinstance(context, (ast.With, ast.AsyncWith)):
+                continue
+            for item in context.items:
+                use = item.context_expr
+                if (
+                    isinstance(use, ast.Name)
+                    and use.id == target.id
+                    and isinstance(use.ctx, ast.Load)
+                    and _closed_capability_use_proof(
+                        scope,
+                        target.id,
+                        target,
+                        [target, use],
+                        audit=audit,
+                    )
+                ):
+                    return True
+    return False
+
+
+def _retry_factory_is_imported(expression, scope, module, aliases, audit):
+    """Require an intact Tenacity retry factory import for attempt mediation."""
+    if not isinstance(expression, ast.Call):
+        return False
+    api = audit._normalized_call_name(expression, aliases)
+    if api not in {
+        "tenacity.AsyncRetrying",
+        "tenacity.Retrying",
+        "tenacity.asyncio.AsyncRetrying",
+    }:
+        return False
+    root = _leftmost_name(expression.func)
+    head = root.id if root is not None else ""
+    origin = _module_import_binding_origin(module, head, api)
+    capability_module = _module_import_origin_module_path(
+        module, origin[0] if origin is not None else None, api
+    )
+    capability_module = capability_module or api.rpartition(".")[0]
+    return (
+        origin is not None
+        and isinstance(module, ast.Module)
+        and isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and head not in audit._scope_parameters(scope)
+        and not audit._scope_binds_name(scope, head)
+        and not audit._module_has_rebinding(module, head, origin[1])
+        and not audit._click_receiver_mutated(scope, head)
+        and not audit._click_receiver_mutated(module, head)
+        and _module_import_aliases_are_closed(module, capability_module, audit, api=api)
+        and _closed_capability_use_proof(
+            scope, head, origin[0], [root], origin_scope=module, audit=audit
+        )
+    )
+
+
+def _leftmost_name(node):
+    """Return the root Name in a dotted expression, if one exists."""
+    while isinstance(node, ast.Attribute):
+        node = node.value
+    return node if isinstance(node, ast.Name) else None
+
+
+def _module_import_binding_origin(module, binding, api):
+    """Return one imported origin using the shared API binding enumeration."""
+    if not isinstance(module, ast.Module) or not binding or not isinstance(api, str):
+        return None
+    candidates = [
+        (item, statement)
+        for statement in module.body
+        for local, _path, item in (
+            _module_import_alias_candidates(statement, api, api) or ()
+        )
+        if local == binding
+    ]
+    return candidates[0] if len(candidates) == 1 else None
+
+
+def _module_import_origin_module_path(module, origin, api):
+    """Reuse import candidates to resolve the module exposing this exact API."""
+    if not isinstance(module, ast.Module) or origin is None or not isinstance(api, str):
+        return None
+    return next(
+        (
+            path
+            for statement in module.body
+            for _local, path, item in (
+                _module_import_alias_candidates(statement, api, api) or ()
+            )
+            if item is origin and api.startswith(path + ".")
+        ),
+        None,
+    )
+
+
+def _module_import_aliases_are_closed(
+    module, target_module, audit, *, api=None, effect_nodes=None
+):
+    """Fail closed on equivalent imported modules that can mutate this API."""
+    if not isinstance(module, ast.Module) or not isinstance(target_module, str):
+        return False
+    nodes = _bounded_ast_nodes(module)
+    if nodes is None:
+        return False
+    parents = _ast_parent_map(nodes)
+    candidates = []
+    for statement in nodes:
+        bindings = _module_import_alias_candidates(statement, target_module, api)
+        if bindings is None:
+            return False
+        candidates.extend(
+            (statement, binding, imported_path, origin)
+            for binding, imported_path, origin in bindings
+        )
+    return (
+        bool(candidates)
+        and not _module_has_dynamic_capability_access(
+            nodes if effect_nodes is None else effect_nodes
+        )
+        and all(
+            _module_import_alias_is_closed(
+                module, candidate, target_module, parents, audit, api
+            )
+            for candidate in candidates
+        )
+    )
+
+
+def _ast_parent_map(nodes):
+    """Build a bounded child-to-parent index for one AST walk."""
+    parents = {}
+    for parent in nodes:
+        for child in ast.iter_child_nodes(parent):
+            parents[id(child)] = parent
+    return parents
+
+
+def _module_import_alias_candidates(statement, target_module, api=None):
+    """List imported names that bind the target module or one of its parents."""
+    if isinstance(statement, ast.Import):
+        bindings = [
+            (
+                item.asname or item.name.split(".", 1)[0],
+                item.name if item.asname else item.name.split(".", 1)[0],
+                item,
+            )
+            for item in statement.names
+        ]
+    elif isinstance(statement, ast.ImportFrom) and statement.level == 0:
+        module_name = statement.module or ""
+        has_relevant_star = any(item.name == "*" for item in statement.names) and (
+            _module_path_controls_target(module_name, target_module)
+        )
+        if has_relevant_star:
+            return None
+        bindings = [
+            (
+                item.asname or item.name,
+                f"{module_name}.{item.name}" if module_name else item.name,
+                item,
+            )
+            for item in statement.names
+            if item.name != "*"
+        ]
+    else:
+        return []
+    return [
+        item
+        for item in bindings
+        if _module_path_controls_target(item[1], target_module) or item[1] == api
+    ]
+
+
+def _module_import_alias_is_closed(
+    module, candidate, target_module, parents, audit, api=None
+):
+    """Validate one equivalent module import and every use in its scope."""
+    statement, binding, imported_path, _origin = candidate
+    scope = _module_import_lexical_scope(statement, parents, module)
+    if scope is None or _module_import_binding_reassigned(
+        scope, statement, binding, audit
+    ):
+        return False
+    if (
+        api is not None
+        and imported_path == api
+        and not _module_path_controls_target(imported_path, target_module)
+    ):
+        return _module_api_alias_uses_are_closed(
+            scope, binding, api, module, parents, audit
+        )
+    return _module_alias_uses_are_closed(
+        scope, binding, imported_path, target_module, parents, api, module, audit
+    )
+
+
+def _module_has_dynamic_capability_access(nodes):
+    """Fail closed on reflective calls that can reacquire imported modules."""
+    dynamic_names = _capability_reflection_names()
+    dynamic_aliases = set(dynamic_names)
+    for node in nodes:
+        if isinstance(node, ast.ImportFrom) and node.module in {
+            "builtins",
+            "importlib",
+        }:
+            dynamic_aliases.update(
+                item.asname or item.name
+                for item in node.names
+                if item.name in dynamic_names or item.name == "import_module"
+            )
+    return any(
+        isinstance(node, ast.Name)
+        and node.id in dynamic_aliases
+        or isinstance(node, ast.Attribute)
+        and node.attr in dynamic_names | {"import_module", "modules"}
+        for node in nodes
+    )
+
+
+def _module_path_controls_target(imported_path, target_module):
+    """Whether a nonempty imported module controls this target path."""
+    if not isinstance(imported_path, str) or not isinstance(target_module, str):
+        return False
+    return bool(imported_path and target_module) and (
+        imported_path == target_module or target_module.startswith(imported_path + ".")
+    )
+
+
+def _module_import_lexical_scope(statement, parents, module):
+    """Find the nearest scope owning one import statement."""
+    current = statement
+    while current is not module:
+        if isinstance(
+            current,
+            (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda),
+        ):
+            return current
+        current = parents.get(id(current))
+        if current is None:
+            return None
+    return module
+
+
+def _module_import_binding_reassigned(scope, origin_statement, binding, audit):
+    """Reject rebinding or a second import of the same local alias."""
+    if isinstance(
+        scope, (ast.FunctionDef, ast.AsyncFunctionDef)
+    ) and binding in audit._scope_parameters(scope):
+        return True
+    return any(
+        statement is not origin_statement and binding in audit._bound_names(statement)
+        for statement in getattr(scope, "body", ())
+    )
+
+
+def _module_alias_uses_are_closed(
+    scope,
+    binding,
+    imported_path,
+    target_module,
+    parents,
+    api=None,
+    module=None,
+    audit=None,
+):
+    """Allow only read-only dotted API access through a module import alias."""
+    reflective_attributes = {
+        "__class__",
+        "__dict__",
+        "__delattr__",
+        "__getattribute__",
+        "__setattr__",
+        "__subclasses__",
+    }
+    nodes = _bounded_ast_nodes(scope)
+    if nodes is None:
+        return False
+    occurrences = [
+        node for node in nodes if isinstance(node, ast.Name) and node.id == binding
+    ]
+    for occurrence in occurrences:
+        if not isinstance(occurrence.ctx, ast.Load):
+            return False
+        current = occurrence
+        current_path = imported_path
+        parent = parents.get(id(current))
+        if _module_path_controls_target(current_path, target_module) and not (
+            isinstance(parent, ast.Attribute) and parent.value is current
+        ):
+            return False
+        while isinstance(parent, ast.Attribute) and parent.value is current:
+            if (
+                not isinstance(parent.ctx, ast.Load)
+                or parent.attr in reflective_attributes
+            ):
+                return False
+            current_path = f"{current_path}.{parent.attr}"
+            current = parent
+            parent = parents.get(id(current))
+            if (
+                api is not None
+                and current_path == api
+                and not _module_api_use_is_closed(
+                    current, parent, parents, module, audit
+                )
+            ):
+                return False
+            if _module_path_controls_target(current_path, target_module) and not (
+                isinstance(parent, ast.Attribute) and parent.value is current
+            ):
+                return False
+    return True
+
+
+def _module_api_alias_uses_are_closed(scope, binding, api, module, parents, audit):
+    """Permit imported API objects only as direct calls or fixture alternatives."""
+    nodes = _bounded_ast_nodes(scope)
+    if nodes is None:
+        return False
+    return all(
+        _module_api_use_is_closed(
+            occurrence, parents.get(id(occurrence)), parents, module, audit
+        )
+        for occurrence in nodes
+        if isinstance(occurrence, ast.Name) and occurrence.id == binding
+    )
+
+
+def _module_api_use_is_closed(node, parent, parents, module, audit):
+    """Require a callable API reference to be invoked or consumed by a fixture."""
+    return bool(
+        isinstance(node, (ast.Name, ast.Attribute))
+        and isinstance(parent, ast.Call)
+        and parent.func is node
+        or _module_api_use_is_fixture_parameter(node, parents, module, audit)
+    )
+
+
+def _module_api_use_is_fixture_parameter(node, parents, module, audit):
+    """Allow an API value only in a recognized pytest fixture parameter list."""
+    current = node
+    function = None
+    while current is not module:
+        current = parents.get(id(current))
+        if current is None:
+            return False
+        if isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            function = current
+            break
+    if function is None or len(function.decorator_list) != 1:
+        return False
+    aliases = audit._scope_security_aliases(
+        audit._module_security_aliases(module), module
+    )
+    parameters = _async_runner_fixture_consumer_shape(function, module, aliases, audit)
+    return parameters is not None and any(node is item for item in parameters.elts)
+
+
+def _closed_capability_use_proof(
+    scope,
+    binding,
+    origin,
+    uses,
+    *,
+    origin_scope=None,
+    audit=None,
+    source=None,
+    source_sha256=None,
+    api=None,
+):
+    """Prove a bounded binding has one source origin and only exact named uses."""
+    origin_scope = scope if origin_scope is None else origin_scope
+    if not isinstance(scope, ast.AST) or not isinstance(origin_scope, ast.AST):
+        return None
+    scope_nodes = _bounded_ast_nodes(scope)
+    if scope_nodes is None:
+        return None
+    origin_nodes = (
+        scope_nodes if origin_scope is scope else _bounded_ast_nodes(origin_scope)
+    )
+    if origin_nodes is None or origin not in origin_nodes:
+        return None
+    if not _capability_uses_match(scope_nodes, binding, uses):
+        return None
+    if _scope_has_reflective_capability_access(scope_nodes):
+        return None
+    origin_position = _ast_position(origin)
+    use_positions = sorted(
+        (_ast_position(item) for item in uses),
+        key=lambda position: (position["line"], position["column"]),
+    )
+    proof = {
+        "status": "CLOSED",
+        "binding": binding,
+        "origin": origin_position,
+        "uses": use_positions,
+    }
+    if api is not None:
+        proof["api"] = api
+    if source is not None:
+        proof["source"] = source
+    if source_sha256 is not None:
+        if not _is_sha256(source_sha256):
+            return None
+        proof["sha256"] = source_sha256
+    return proof
+
+
+def _bounded_ast_nodes(scope):
+    """Walk an AST only up to the shared proof node limit."""
+    nodes = []
+    for node in ast.walk(scope):
+        if len(nodes) >= MAX_AST_NODES:
+            return None
+        nodes.append(node)
+    return nodes
+
+
+def _capability_uses_match(scope_nodes, binding, uses):
+    """Match every binding occurrence to the exact source-origin uses."""
+    if not isinstance(binding, str) or not binding or not uses:
+        return False
+    if any(
+        not isinstance(use, ast.Name)
+        or use.id != binding
+        or use not in scope_nodes
+        or not isinstance(use.ctx, (ast.Load, ast.Store))
+        for use in uses
+    ):
+        return False
+    occurrences = [
+        item
+        for item in scope_nodes
+        if isinstance(item, ast.Name) and item.id == binding
+    ]
+    return len(occurrences) == len(uses) and {id(item) for item in occurrences} == {
+        id(item) for item in uses
+    }
+
+
+def _ast_position(node):
+    """Serialize a stable source coordinate for a static capability witness."""
+    return {
+        "line": int(getattr(node, "lineno", 0)),
+        "column": int(getattr(node, "col_offset", 0)),
+    }
+
+
+def _scope_has_reflective_capability_access(nodes):
+    """Fail closed on reflective or dynamic binding access within the proof scope."""
+    reflective_modules = {"builtins", "importlib", "inspect", "runpy", "sys"}
+    reflective_names = _capability_reflection_names() | {"compile"}
+    reflective_attributes = {
+        "__code__",
+        "__closure__",
+        "__delattr__",
+        "__globals__",
+        "__setattr__",
+        "__import__",
+        "compile",
+        "delattr",
+        "eval",
+        "exec",
+        "getattr",
+        "import_module",
+        "setattr",
+    }
+    return any(
+        isinstance(node, ast.Name)
+        and node.id in reflective_names | {"builtins", "importlib", "sys"}
+        or isinstance(node, ast.alias)
+        and node.name in reflective_names | {"builtins", "importlib", "runpy", "sys"}
+        or isinstance(node, ast.ImportFrom)
+        and (
+            node.module in reflective_modules
+            or any(
+                item.name == "*" or item.name in reflective_names for item in node.names
+            )
+        )
+        or isinstance(node, ast.Import)
+        and any(item.name.split(".", 1)[0] in reflective_modules for item in node.names)
+        or isinstance(node, ast.Attribute)
+        and node.attr in reflective_attributes
+        or isinstance(node, ast.Attribute)
+        and node.attr == "modules"
+        for node in nodes
+    )
+
+
+def _test_serialization_roundtrip(relative, node, aliases):
+    """Classify direct or same-scope local serializer bytes in test sources."""
+    from . import review_audits as audit
+
+    path = Path(relative)
+    if not (
+        "tests" in path.parts
+        or path.name.startswith("test_")
+        or path.name.endswith("_test.py")
+    ):
+        return False
+    if len(node.args) != 1 or node.keywords:
+        return False
+    loaded_name = audit._normalized_call_name(node, aliases)
+    serialized = node.args[0]
+    if isinstance(serialized, ast.Call):
+        return (
+            len(serialized.args) == 1
+            and not isinstance(serialized.args[0], ast.Starred)
+            and audit._normalized_call_name(serialized, aliases)
+            == loaded_name.removesuffix("loads") + "dumps"
+            and audit._call_name(serialized).split(".", 1)[0] in aliases
+            and not any(keyword.arg is None for keyword in serialized.keywords)
+        )
+    return _local_pickle_roundtrip(node, loaded_name, aliases, audit)
+
+
+def _local_pickle_roundtrip(node, loaded_name, aliases, audit):
+    """Prove an unaliased serialized local value and load in one test scope."""
+    if not isinstance(node.args[0], ast.Name) or not loaded_name.endswith(".loads"):
+        return False
+    scope = getattr(node, "_oracle_scope", None)
+    if not isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return False
+    load_index = _plain_scope_statement_index(node, scope)
+    if load_index is None:
+        return False
+    bytes_name = node.args[0].id
+    dump = _prior_pickle_dump(
+        scope, bytes_name, load_index, loaded_name, aliases, audit
+    )
+    if dump is None:
+        return False
+    dump_index, dump_statement, dump_call, value_name = dump
+    if not _local_pickle_value(scope, value_name, dump_index, audit):
+        return False
+    module = getattr(scope, "_oracle_module", None)
+    return (
+        isinstance(module, ast.Module)
+        and _pickle_call_imported(module, scope, dump_call, dump_index, aliases, audit)
+        and _pickle_call_imported(module, scope, node, load_index, aliases, audit)
+        and _single_local_pickle_bytes_flow(scope, bytes_name, dump_statement, node)
+    )
+
+
+def _plain_scope_statement_index(node, scope):
+    """Return a direct function-body position outside uncertain control flow."""
+    ancestors = getattr(node, "_oracle_ancestors", ())
+    statement = next((child for parent, child in ancestors if parent is scope), None)
+    if statement not in scope.body:
+        return None
+    controls = (
+        ast.If,
+        ast.For,
+        ast.AsyncFor,
+        ast.While,
+        ast.Try,
+        ast.With,
+        ast.AsyncWith,
+        ast.Match,
+        ast.IfExp,
+        ast.BoolOp,
+        ast.ListComp,
+        ast.SetComp,
+        ast.DictComp,
+        ast.GeneratorExp,
+    )
+    if any(
+        parent is not scope and isinstance(parent, controls) for parent, _ in ancestors
+    ):
+        return None
+    return scope.body.index(statement)
+
+
+def _simple_scope_assignment(statement, name):
+    """Return a value only for one plain-name assignment in this scope."""
+    if isinstance(statement, ast.Assign):
+        if len(statement.targets) == 1 and isinstance(statement.targets[0], ast.Name):
+            return statement.value if statement.targets[0].id == name else None
+    if isinstance(statement, ast.AnnAssign) and isinstance(statement.target, ast.Name):
+        return statement.value if statement.target.id == name else None
+    return None
+
+
+def _prior_pickle_dump(scope, bytes_name, load_index, loaded_name, aliases, audit):
+    """Find one earlier direct dump assignment with a same-library loader."""
+    candidates = [
+        (index, statement, _simple_scope_assignment(statement, bytes_name))
+        for index, statement in enumerate(scope.body[:load_index])
+        if _simple_scope_assignment(statement, bytes_name) is not None
+    ]
+    if len(candidates) != 1:
+        return None
+    index, statement, call = candidates[0]
+    if (
+        not isinstance(call, ast.Call)
+        or _plain_scope_statement_index(call, scope) != index
+        or len(call.args) != 1
+        or not isinstance(call.args[0], ast.Name)
+        or call.keywords
+        or audit._normalized_call_name(call, aliases)
+        != loaded_name.removesuffix("loads") + "dumps"
+        or any(isinstance(argument, ast.Starred) for argument in call.args)
+        or any(keyword.arg is None for keyword in call.keywords)
+    ):
+        return None
+    return index, statement, call, call.args[0].id
+
+
+def _local_pickle_value(scope, name, dump_index, audit):
+    """Require a prior local construction, not a parameter or branch write."""
+    if name in audit._scope_parameters(scope):
+        return False
+    candidates = [
+        (index, statement, _simple_scope_assignment(statement, name))
+        for index, statement in enumerate(scope.body[:dump_index])
+        if _simple_scope_assignment(statement, name) is not None
+    ]
+    if len(candidates) != 1:
+        return False
+    index, statement, value = candidates[0]
+    if index >= dump_index or not isinstance(
+        value, (ast.Call, ast.Constant, ast.Dict, ast.List, ast.Tuple, ast.Set)
+    ):
+        return False
+    parameters = audit._scope_parameters(scope)
+    if any(
+        isinstance(item, ast.Name)
+        and item.id in parameters
+        and isinstance(item.ctx, ast.Load)
+        for item in ast.walk(value)
+    ):
+        return False
+    stores = [
+        item
+        for item in ast.walk(scope)
+        if isinstance(item, ast.Name)
+        and item.id == name
+        and isinstance(item.ctx, (ast.Store, ast.Del))
+    ]
+    target = (
+        statement.targets[0] if isinstance(statement, ast.Assign) else statement.target
+    )
+    return len(stores) == 1 and stores[0] is target
+
+
+def _pickle_call_imported(module, scope, call, call_index, aliases, audit):
+    """Require the exact serializer import to precede the call without rebinding."""
+    raw_name = audit._call_name(call)
+    head = raw_name.split(".", 1)[0]
+    resolved = aliases.get(head)
+    if not raw_name or not isinstance(resolved, str):
+        return False
+    module_aliases = audit._module_security_aliases(module)
+    local_bindings = [
+        (index, statement)
+        for index, statement in enumerate(scope.body)
+        if head in audit._bound_names(statement)
+    ]
+    if not local_bindings:
+        return module_aliases.get(head) == resolved
+    if len(local_bindings) != 1:
+        return False
+    index, statement = local_bindings[0]
+    if index >= call_index or not isinstance(statement, (ast.Import, ast.ImportFrom)):
+        return False
+    return audit._security_aliases([statement]).get(head) == resolved
+
+
+def _single_local_pickle_bytes_flow(scope, name, dump_statement, load_call):
+    """Reuse exact source-origin occurrence matching for local serializer bytes."""
+    target = (
+        dump_statement.targets[0]
+        if isinstance(dump_statement, ast.Assign)
+        else dump_statement.target
+    )
+    uses = [target, load_call.args[0]]
+    return (
+        isinstance(target.ctx, ast.Store)
+        and isinstance(uses[1].ctx, ast.Load)
+        and _capability_uses_match(list(ast.walk(scope)), name, uses)
+    )
+
+
+_ASYNC_RUNNER_CONTEXT_SCHEMA = "factory.async-runner-fixture-context.v3"
+_ASYNC_RUNNER_MAX_FIXTURES = 16
+
+
+def async_runner_fixture_context(root, files, snapshots):
+    """Build bounded, JSON-safe provenance for inherited async runner fixtures."""
+    from . import review_audits as audit
+
+    if len(snapshots) > 460:
+        return {}
+    rows, candidates = _async_runner_snapshot_records(
+        root, set(files), snapshots, audit
+    )
+    if rows is None:
+        return {}
+    result = {}
+    for path, (source_sha, local, gap) in rows.items():
+        fixtures = {}
+        gaps = set()
+        for source, digest, declarations, source_gap in sorted(
+            candidates, key=lambda row: len(row[0].parts)
+        ):
+            if path.parent.is_relative_to(source.parent):
+                if source_gap:
+                    fixtures = {name: {"trusted": False} for name in fixtures}
+                    gaps.add(source_gap)
+                else:
+                    fixtures.update(declarations)
+        if gap:
+            fixtures = {name: {"trusted": False} for name in fixtures}
+            gaps.add(gap)
+        else:
+            fixtures.update(local)
+        if "*" in fixtures:
+            fixtures = {name: {"trusted": False} for name in fixtures}
+        if fixtures or gaps:
+            result[path.relative_to(root).as_posix()] = {
+                "schema": _ASYNC_RUNNER_CONTEXT_SCHEMA,
+                "module_sha256": source_sha,
+                "fixtures": fixtures,
+                "gaps": sorted(gaps),
+            }
+    return result
+
+
+def _async_runner_snapshot_records(root, eligible, snapshots, audit):
+    """Index bounded test and conftest trees with their source identities."""
+    rows = {}
+    candidates = []
+    for path, tree in snapshots.items():
+        if path not in eligible or not _async_runner_snapshot_candidate(path, tree):
+            continue
+        oversized = False
+        for count, _node in enumerate(ast.walk(tree), start=1):
+            if count > MAX_AST_NODES:
+                oversized = True
+                break
+        source_sha = getattr(tree, "_oracle_source_sha256", None)
+        if not _is_sha256(source_sha):
+            continue
+        if oversized:
+            if path.name == "conftest.py":
+                candidates.append(
+                    (path, source_sha, {}, "ANCESTOR_FIXTURE_SOURCE_NODE_LIMIT")
+                )
+            else:
+                rows[path] = (source_sha, {}, "TEST_MODULE_NODE_LIMIT")
+            continue
+        declared = _async_runner_fixture_declarations(
+            path.relative_to(root).as_posix(), tree, audit
+        )
+        if path.name == "conftest.py":
+            candidates.append((path, source_sha, declared, None))
+        else:
+            rows[path] = (source_sha, declared, None)
+    return rows, candidates
+
+
+def _async_runner_snapshot_candidate(path, tree):
+    """Limit analysis to fixture sources and modules declaring tests."""
+    return isinstance(tree, ast.Module) and (
+        path.name == "conftest.py"
+        or any(
+            isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and item.name.startswith("test_")
+            for item in tree.body
+        )
+    )
+
+
+def _async_runner_fixture_declarations(relative, tree, audit):
+    """Record local fixture definitions, retaining invalid overrides as blockers."""
+    aliases = audit._scope_security_aliases(audit._module_security_aliases(tree), tree)
+    declarations = {}
+    functions = [item for item in tree.body if isinstance(item, ast.FunctionDef)]
+    fixtures = [
+        item
+        for item in tree.body
+        if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and _async_runner_fixture_like(item, tree, aliases, audit)
+    ]
+    duplicates = set()
+    for function in fixtures:
+        name = _async_runner_declared_fixture_name(function)
+        if name in declarations:
+            duplicates.add(name)
+            declarations[name] = {"trusted": False}
+            continue
+        if name in duplicates:
+            continue
+        if not _async_runner_fixture_decorator(function, tree, aliases, audit):
+            declarations[name] = {"trusted": False}
+            continue
+        alternatives = _async_runner_fixture_contract(
+            function, tree, functions, aliases, audit
+        )
+        source_sha = getattr(tree, "_oracle_source_sha256", None)
+        if not alternatives:
+            declarations[name] = {
+                "trusted": False,
+                "source": relative,
+                "sha256": source_sha,
+            }
+            continue
+        declarations[name] = {
+            "trusted": True,
+            "source": relative,
+            "sha256": source_sha,
+            "alternatives": alternatives,
+        }
+    proof_groups = _async_runner_capability_groups(declarations)
+    proofs = {
+        key: (
+            None
+            if group["invalid"]
+            else _closed_capability_use_proof(
+                tree,
+                group["binding"],
+                group["origin"],
+                group["uses"],
+                origin_scope=tree,
+                audit=audit,
+                source=relative,
+                source_sha256=getattr(tree, "_oracle_source_sha256", None),
+                api=group["api"],
+            )
+        )
+        for key, group in proof_groups.items()
+    }
+    _async_runner_seal_declarations(declarations, proofs)
+    return declarations
+
+
+def _async_runner_capability_groups(declarations):
+    """Aggregate exact provider uses across all valid fixture declarations."""
+    groups = {}
+    for declaration in declarations.values():
+        if declaration.get("trusted") is not True:
+            continue
+        for item in declaration["alternatives"]:
+            key = id(item["_cap_origin"])
+            group = groups.setdefault(
+                key,
+                {
+                    "origin": item["_cap_origin"],
+                    "binding": item["_cap_binding"],
+                    "api": item["api"],
+                    "uses": [],
+                    "invalid": False,
+                },
+            )
+            if group["binding"] != item["_cap_binding"] or group["api"] != item["api"]:
+                group["invalid"] = True
+            else:
+                group["uses"].extend(item["_cap_uses"])
+    return groups
+
+
+def _async_runner_seal_declarations(declarations, proofs):
+    """Serialize only alternatives carrying the complete closed-use witness."""
+    for declaration in declarations.values():
+        if declaration.get("trusted") is not True:
+            continue
+        sealed = []
+        for item in declaration["alternatives"]:
+            capability = proofs.get(id(item["_cap_origin"]))
+            if capability is None:
+                declaration.clear()
+                declaration["trusted"] = False
+                break
+            sealed.append(
+                {
+                    key: value
+                    for key, value in item.items()
+                    if not key.startswith("_cap_")
+                }
+                | {"capability": capability}
+            )
+        else:
+            declaration["alternatives"] = sealed
+
+
+def _async_runner_declared_fixture_name(function):
+    """Resolve an explicit fixture rename or block on a dynamic name."""
+    names = [
+        keyword.value
+        for decorator in function.decorator_list
+        if isinstance(decorator, ast.Call)
+        for keyword in decorator.keywords
+        if keyword.arg == "name"
+    ]
+    if not names:
+        return function.name
+    if (
+        len(names) == 1
+        and isinstance(names[0], ast.Constant)
+        and isinstance(names[0].value, str)
+    ):
+        return names[0].value
+    return "*"
+
+
+def _async_runner_fixture_like(function, tree, aliases, audit):
+    """Treat an unresolved fixture-looking decorator as an overriding blocker."""
+    for decorator in function.decorator_list:
+        value = decorator.func if isinstance(decorator, ast.Call) else decorator
+        if audit._resolved_ast_name(
+            value, aliases
+        ) == "pytest.fixture" or _async_runner_fixture_imports(tree, value):
+            return True
+        if (
+            isinstance(value, ast.Attribute)
+            and value.attr == "fixture"
+            or isinstance(value, ast.Name)
+            and value.id == "fixture"
+        ):
+            return True
+    return False
+
+
+def _async_runner_fixture_decorator(function, tree, aliases, audit):
+    """Recognize only a directly imported pytest fixture decorator."""
+    return any(
+        audit._resolved_ast_name(value, aliases) == "pytest.fixture"
+        and len(imports := _async_runner_fixture_imports(tree, value)) == 1
+        and not audit._module_has_rebinding(
+            tree, _async_runner_fixture_import_name(imports[0], value), imports[0]
+        )
+        for item in function.decorator_list
+        for value in [item.func if isinstance(item, ast.Call) else item]
+    )
+
+
+def _async_runner_fixture_imports(tree, value):
+    """Reuse exact imported origins for pytest module/fixture bindings."""
+    root = _async_runner_fixture_import_name(None, value)
+    return [
+        statement
+        for statement in tree.body
+        if root
+        and any(
+            local == root and path in {"pytest", "pytest.fixture"}
+            for local, path, _item in (
+                _module_import_alias_candidates(statement, "pytest", "pytest.fixture")
+                or ()
+            )
+        )
+    ]
+
+
+def _async_runner_fixture_import_name(statement, value):
+    """Return the root name of a supported pytest fixture expression."""
+    if isinstance(value, ast.Name):
+        return value.id
+    return getattr(value.value, "id", "") if isinstance(value, ast.Attribute) else ""
+
+
+def _async_runner_fixture_consumer_shape(function, tree, aliases, audit):
+    """Prove pure literal parameter transfer without assuming provider trust."""
+    if (
+        not isinstance(function, ast.FunctionDef)
+        or len(function.decorator_list) != 1
+        or not isinstance(function.decorator_list[0], ast.Call)
+        or len(function.args.args) != 1
+        or function.args.args[0].arg != "request"
+        or function.args.posonlyargs
+        or function.args.kwonlyargs
+        or function.args.vararg
+        or function.args.kwarg
+        or function.args.defaults
+        or function.args.kw_defaults
+    ):
+        return None
+    decorator = function.decorator_list[0]
+    parameters = [item.value for item in decorator.keywords if item.arg == "params"]
+    if (
+        len(parameters) != 1
+        or decorator.args
+        or any(item.arg not in {"params", "ids"} for item in decorator.keywords)
+        or not isinstance(parameters[0], (ast.List, ast.Tuple))
+        or not 1 <= len(parameters[0].elts) <= _ASYNC_RUNNER_MAX_FIXTURES
+        or not _async_runner_fixture_ids(decorator, len(parameters[0].elts))
+        or not all(
+            isinstance(item, (ast.Name, ast.Attribute)) for item in parameters[0].elts
+        )
+        or not _async_runner_fixture_decorator(function, tree, aliases, audit)
+    ):
+        return None
+    body = (
+        function.body[1:] if _async_runner_docstring(function.body) else function.body
+    )
+    if (
+        len(body) != 1
+        or not isinstance(body[0], ast.Return)
+        or not isinstance(body[0].value, ast.Attribute)
+        or not isinstance(body[0].value.value, ast.Name)
+        or body[0].value.value.id != "request"
+        or body[0].value.attr != "param"
+        or any("request" in audit._bound_names(item) for item in function.body)
+    ):
+        return None
+    return parameters[0]
+
+
+def _async_runner_fixture_contract(function, tree, functions, aliases, audit):
+    """Resolve providers only after the independent consumer shape is proven."""
+    parameters = _async_runner_fixture_consumer_shape(function, tree, aliases, audit)
+    if parameters is None:
+        return None
+    alternatives = [
+        _async_runner_alternative(item, tree, functions, aliases, audit)
+        for item in parameters.elts
+    ]
+    if any(item is None for item in alternatives):
+        return None
+    if len({(item["api"], item["binding"]) for item in alternatives}) != len(
+        alternatives
+    ):
+        return None
+    return alternatives
+
+
+def _async_runner_fixture_ids(decorator, count):
+    """Accept only a literal id list aligned with every declared alternative."""
+    ids = [item.value for item in decorator.keywords if item.arg == "ids"]
+    return not ids or (
+        len(ids) == 1
+        and isinstance(ids[0], (ast.List, ast.Tuple))
+        and len(ids[0].elts) == count
+        and all(
+            isinstance(item, ast.Constant) and isinstance(item.value, str)
+            for item in ids[0].elts
+        )
+    )
+
+
+def _async_runner_docstring(body):
+    """Return whether a function begins with a string docstring."""
+    return bool(
+        body
+        and isinstance(body[0], ast.Expr)
+        and isinstance(body[0].value, ast.Constant)
+        and isinstance(body[0].value.value, str)
+    )
+
+
+def _async_runner_alternative(expression, tree, functions, aliases, audit):
+    """Resolve one fixture parameter to a local wrapper or imported trio.run."""
+    if isinstance(expression, ast.Name):
+        alternative = _async_runner_named_alternative(
+            expression, tree, functions, aliases, audit
+        )
+    elif isinstance(expression, ast.Attribute):
+        alternative = _async_runner_attribute_alternative(
+            expression, tree, aliases, audit
+        )
+    else:
+        return None
+    if alternative is None or audit._click_receiver_mutated(
+        tree, alternative["binding"]
+    ):
+        return None
+    return alternative
+
+
+def _async_runner_named_alternative(expression, tree, functions, aliases, audit):
+    """Resolve a local asyncio wrapper or a direct imported trio.run alias."""
+    matches = [item for item in functions if item.name == expression.id]
+    if not matches:
+        origin = _async_runner_import_origin(tree, expression.id, "trio", audit)
+        if origin is None or not isinstance(origin[1], ast.ImportFrom):
+            return None
+        return {
+            "api": "trio.run",
+            "binding": expression.id,
+            "_cap_origin": origin[0],
+            "_cap_binding": expression.id,
+            "_cap_uses": [expression],
+        }
+    if len(matches) != 1 or audit._module_has_rebinding(
+        tree, expression.id, matches[0]
+    ):
+        return None
+    receiver = _async_runner_wrapper_receiver(matches[0], tree, aliases, audit)
+    if receiver is None:
+        return None
+    origin = _async_runner_import_origin(tree, receiver.id, "asyncio", audit)
+    if origin is None:
+        return None
+    return {
+        "api": "asyncio.run",
+        "binding": expression.id,
+        "_cap_origin": origin[0],
+        "_cap_binding": receiver.id,
+        "_cap_uses": [receiver],
+    }
+
+
+def _async_runner_attribute_alternative(expression, tree, aliases, audit):
+    """Resolve a trio.run module attribute as a fixture alternative."""
+    binding = expression.value.id if isinstance(expression.value, ast.Name) else ""
+    if audit._resolved_ast_name(expression, aliases) != "trio.run":
+        return None
+    origin = _async_runner_import_origin(tree, binding, "trio", audit)
+    if origin is None:
+        return None
+    return {
+        "api": "trio.run",
+        "binding": binding,
+        "_cap_origin": origin[0],
+        "_cap_binding": binding,
+        "_cap_uses": [expression.value],
+    }
+
+
+def _async_runner_import_origin(tree, binding, module, audit):
+    """Require an unchanged runner origin and the shared API closure proof."""
+    api = f"{module}.run"
+    origin = _module_import_binding_origin(tree, binding, api)
+    if origin is None or audit._module_has_rebinding(tree, binding, origin[1]):
+        return None
+    item, statement = origin
+    if isinstance(statement, ast.ImportFrom) and (
+        statement.module != module or item.name != "run"
+    ):
+        return None
+    return (
+        origin
+        if _module_import_aliases_are_closed(tree, module, audit, api=api)
+        else None
+    )
+
+
+def _async_runner_wrapper_receiver(function, tree, aliases, audit):
+    """Return the imported asyncio binding used by the exact callback wrapper."""
+    parameters = [*function.args.posonlyargs, *function.args.args]
+    body = (
+        function.body[1:] if _async_runner_docstring(function.body) else function.body
+    )
+    if (
+        function.decorator_list
+        or len(parameters) != 1
+        or function.args.posonlyargs
+        or not function.args.vararg
+        or function.args.kwarg
+        or function.args.kwonlyargs
+        or function.args.defaults
+        or function.args.kw_defaults
+        or len(body) != 1
+        or not isinstance(body[0], ast.Return)
+        or not isinstance(body[0].value, ast.Call)
+    ):
+        return None
+    outer = body[0].value
+    inner = outer.args[0] if len(outer.args) == 1 else None
+    receiver = outer.func.value if isinstance(outer.func, ast.Attribute) else None
+    if (
+        not isinstance(receiver, ast.Name)
+        or receiver.id
+        in {
+            item.arg
+            for item in [
+                *function.args.posonlyargs,
+                *function.args.args,
+                *function.args.kwonlyargs,
+            ]
+        }
+        or audit._scope_binds_name(function, receiver.id)
+    ):
+        return None
+    valid = bool(
+        audit._resolved_ast_name(outer.func, aliases) == "asyncio.run"
+        and (
+            _async_runner_import_origin(tree, receiver.id, "asyncio", audit) is not None
+        )
+        and not audit._click_receiver_mutated(tree, receiver.id)
+        and not outer.keywords
+        and isinstance(inner, ast.Call)
+        and isinstance(inner.func, ast.Name)
+        and inner.func.id == parameters[0].arg
+        and len(inner.args) == 1
+        and isinstance(inner.args[0], ast.Starred)
+        and isinstance(inner.args[0].value, ast.Name)
+        and inner.args[0].value.id == function.args.vararg.arg
+        and not inner.keywords
+    )
+    return receiver if valid else None
+
+
 def _nested_async_runner_invocations(test, definitions, targets, aliases):
-    """Return nested assertions consumed by an imported, unchanged asyncio API."""
+    """Return nested assertions consumed by a proven event-loop runner."""
     from . import review_audits as audit
 
     module = getattr(test, "_oracle_module", None)
@@ -324,10 +1574,8 @@ def _nested_async_runner_invocations(test, definitions, targets, aliases):
         for item in node.names
         if item.name == "asyncio"
     }
-    if not roots:
-        return set()
     parents = audit._oracle_ancestor_map(module.body, module)
-    if any(
+    if roots and any(
         isinstance(node, ast.Name)
         and node.id in roots
         and not (
@@ -347,22 +1595,123 @@ def _nested_async_runner_invocations(test, definitions, targets, aliases):
     for name in targets:
         function = definitions.get(name)
         if isinstance(function, ast.AsyncFunctionDef) and not function.decorator_list:
-            calls = [
+            parameters = audit._scope_parameters(test)
+            candidates = [
                 call
                 for call in nodes
                 if isinstance(call, ast.Call)
                 and call.lineno > function.lineno
                 and audit._effective_assertion(call, aliases)
-                and _nested_async_runner_call(
+            ]
+            for call in candidates:
+                ordinary = _nested_async_runner_call(
                     call, name, test, module, aliases, nodes, audit
                 )
-            ]
-            if calls:
-                invoked.add(name)
-                invoked.update(
-                    call.func.id for call in calls if isinstance(call.func, ast.Name)
+                fixture = _nested_fixture_runner_call(
+                    call, name, test, module, targets, parents, audit
                 )
+                if ordinary or fixture:
+                    invoked.add(name)
+                    if isinstance(call.func, ast.Name) and (
+                        call.func.id not in parameters or fixture
+                    ):
+                        invoked.add(call.func.id)
     return invoked
+
+
+def _nested_fixture_runner_call(call, name, test, module, targets, parents, audit):
+    """Accept direct callback use only through a source-bound runner fixture."""
+    context = getattr(module, "_oracle_async_runner_fixtures", {})
+    if (
+        not isinstance(context, dict)
+        or context.get("schema") != _ASYNC_RUNNER_CONTEXT_SCHEMA
+        or not _is_sha256(context.get("module_sha256"))
+        or context.get("module_sha256")
+        != getattr(module, "_oracle_source_sha256", None)
+        or name not in targets
+        or not isinstance(call.func, ast.Name)
+        or call.func.id not in audit._scope_parameters(test)
+        or len(call.args) != 1
+        or not isinstance(call.args[0], ast.Name)
+        or call.args[0].id != name
+        or call.keywords
+        or not _capability_uses_match(list(ast.walk(test)), call.func.id, [call.func])
+    ):
+        return False
+    fixture_map = context.get("fixtures", {})
+    fixture = fixture_map.get(call.func.id) if isinstance(fixture_map, dict) else None
+    alternatives = fixture.get("alternatives", ()) if isinstance(fixture, dict) else ()
+    if (
+        not isinstance(fixture, dict)
+        or fixture.get("trusted") is not True
+        or not fixture.get("source")
+        or not _is_sha256(fixture.get("sha256"))
+        or not alternatives
+        or any(
+            not isinstance(item, dict)
+            or item.get("api") not in {"asyncio.run", "trio.run"}
+            or not item.get("binding")
+            or not _serialized_capability_is_closed(item, fixture)
+            for item in alternatives
+        )
+    ):
+        return False
+    ancestors = parents.get(id(call), ())
+    if not ancestors or not isinstance(ancestors[-1][0], (ast.Expr, ast.Assert)):
+        return False
+    return not any(
+        isinstance(
+            parent,
+            (
+                ast.If,
+                ast.For,
+                ast.AsyncFor,
+                ast.While,
+                ast.Try,
+                ast.With,
+                ast.AsyncWith,
+                ast.Match,
+                ast.Lambda,
+            ),
+        )
+        for parent, _child in ancestors[:-1]
+    )
+
+
+def _serialized_capability_is_closed(alternative, fixture):
+    """Require the inherited runner witness to match its fixture source identity."""
+    capability = alternative.get("capability")
+    if (
+        not isinstance(capability, dict)
+        or capability.get("status") != "CLOSED"
+        or capability.get("api") != alternative.get("api")
+        or capability.get("source") != fixture.get("source")
+        or capability.get("sha256") != fixture.get("sha256")
+        or not _is_sha256(capability.get("sha256"))
+        or not isinstance(capability.get("binding"), str)
+        or not capability.get("binding")
+    ):
+        return False
+    origin = capability.get("origin")
+    uses = capability.get("uses")
+    return bool(
+        _serialized_source_position(origin)
+        and isinstance(uses, list)
+        and uses
+        and all(_serialized_source_position(position) for position in uses)
+    )
+
+
+def _serialized_source_position(value):
+    """Validate integer coordinates; exact int rejects bool."""
+    return isinstance(value, dict) and all(
+        type(value.get(key)) is int and value[key] >= minimum
+        for key, minimum in (("line", 1), ("column", 0))
+    )
+
+
+def _is_sha256(value):
+    return isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value) is not None
 
 
 def _nested_async_runner_call(call, name, test, module, aliases, nodes, audit):
@@ -466,6 +1815,61 @@ def _nested_async_runner_call(call, name, test, module, aliases, nodes, audit):
     )
 
 
+def async_runner_fixture_helpers():
+    """Return all local helpers that define async fixture provenance behavior."""
+    return (
+        _expected_exception_else_failure,
+        _try_body_has_unmediated_raise,
+        _raise_is_iteration_mediated,
+        _retry_factory_is_imported,
+        _module_import_binding_origin,
+        _module_import_origin_module_path,
+        _module_import_aliases_are_closed,
+        _ast_parent_map,
+        _module_import_alias_candidates,
+        _module_import_alias_is_closed,
+        _module_api_alias_uses_are_closed,
+        _module_api_use_is_closed,
+        _module_api_use_is_fixture_parameter,
+        _module_has_dynamic_capability_access,
+        _module_path_controls_target,
+        _module_import_lexical_scope,
+        _module_import_binding_reassigned,
+        _module_alias_uses_are_closed,
+        _leftmost_name,
+        _closed_capability_use_proof,
+        _bounded_ast_nodes,
+        _capability_uses_match,
+        _scope_has_reflective_capability_access,
+        _capability_reflection_names,
+        async_runner_fixture_context,
+        _async_runner_snapshot_records,
+        _async_runner_snapshot_candidate,
+        _async_runner_fixture_declarations,
+        _async_runner_capability_groups,
+        _async_runner_seal_declarations,
+        _async_runner_declared_fixture_name,
+        _async_runner_fixture_like,
+        _async_runner_fixture_decorator,
+        _async_runner_fixture_contract,
+        _async_runner_fixture_consumer_shape,
+        _async_runner_fixture_ids,
+        _async_runner_docstring,
+        _async_runner_alternative,
+        _async_runner_named_alternative,
+        _async_runner_attribute_alternative,
+        _async_runner_import_origin,
+        _async_runner_wrapper_receiver,
+        _ast_position,
+        _serialized_capability_is_closed,
+        _serialized_source_position,
+        _nested_async_runner_invocations,
+        _nested_fixture_runner_call,
+        _nested_async_runner_call,
+        _is_sha256,
+    )
+
+
 def database_workspace_context(
     root: Path, python_sources: dict, read_source, python_inventory: list | None = None
 ) -> dict:
@@ -543,30 +1947,19 @@ def _database_workspace_context(
     return result
 
 
-def _database_workspace_context_from_oracle(
-    root, python_sources, read_source, python_inventory, oracle_snapshots
-):
-    """Use fresh scanner trees only during their owning synchronous invocation."""
-    return _database_workspace_context(
-        root, python_sources, read_source, python_inventory, oracle_snapshots
-    )
-
-
 def _populate_oracle_database_context(
     output, root, python_sources, read_source, python_inventory, oracle_snapshots
 ):
     """Populate the optional output with a database projection from fresh trees."""
     if output is not None:
         output.update(
-            _database_workspace_context_from_oracle(
+            _database_workspace_context(
                 root, python_sources, read_source, python_inventory, oracle_snapshots
             )
         )
 
 
 def _database_sql_sources(root, paths, read_source, selected, gaps):
-    from .runtime_audit_common import RuntimeAuditError
-
     bindings, sql_bytes = [], 0
     for relative in paths:
         try:
@@ -700,8 +2093,6 @@ def verify_database_context(root: Path, context: dict, error_type):
 def _database_configuration(
     root: Path, read_source, gaps: list
 ) -> tuple[dict, dict | None]:
-    from .runtime_audit_common import RuntimeAuditError
-
     name = "factory.database.json"
     path = root / name
     if not path.exists() and not path.is_symlink():
@@ -800,13 +2191,7 @@ class ContextEfficiencyError(ValueError):
 
 def _canonical(value: Any) -> bytes:
     try:
-        return json.dumps(
-            value,
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
-            allow_nan=False,
-        ).encode("utf-8")
+        return canonical_bytes(value)
     except (TypeError, ValueError, UnicodeEncodeError) as exc:
         raise ContextEfficiencyError(
             "E_CANONICAL", "value is not canonical JSON"
@@ -824,7 +2209,7 @@ def _safe_text(value: Any, field: str, maximum: int) -> str:
         or len(value) > maximum
         or any(ord(char) < 32 for char in value)
     ):
-        raise ContextEfficiencyError(
+        _invalid(
             "E_FIELD",
             f"{field} must be a non-empty printable string of at most {maximum} characters",
         )
@@ -833,9 +2218,7 @@ def _safe_text(value: Any, field: str, maximum: int) -> str:
 
 def _digest(value: Any, field: str) -> str:
     if not isinstance(value, str) or re.fullmatch(r"[0-9a-f]{64}", value) is None:
-        raise ContextEfficiencyError(
-            "E_DIGEST", f"{field} must be a lowercase SHA-256 digest"
-        )
+        _invalid("E_DIGEST", f"{field} must be a lowercase SHA-256 digest")
     return value
 
 
@@ -845,21 +2228,17 @@ def _bounded_int(value: Any, field: str, minimum: int, maximum: int) -> int:
         or not isinstance(value, int)
         or not minimum <= value <= maximum
     ):
-        raise ContextEfficiencyError(
-            "E_FIELD", f"{field} must be an integer in {minimum}..{maximum}"
-        )
+        _invalid("E_FIELD", f"{field} must be an integer in {minimum}..{maximum}")
     return value
 
 
 def _reject_secret_keys(value: Any, path: str = "request", depth: int = 0) -> None:
     if depth > 16:
-        raise ContextEfficiencyError("E_DEPTH", "request nesting exceeds 16")
+        _invalid("E_DEPTH", "request nesting exceeds 16")
     if isinstance(value, dict):
         for key, child in value.items():
             if _SECRET_NAME.search(str(key)):
-                raise ContextEfficiencyError(
-                    "E_SECRET_MATERIAL", f"secret-shaped field at {path}.{key}"
-                )
+                _invalid("E_SECRET_MATERIAL", f"secret-shaped field at {path}.{key}")
             _reject_secret_keys(child, f"{path}.{key}", depth + 1)
     elif isinstance(value, list):
         for index, child in enumerate(value):
@@ -870,22 +2249,16 @@ def _relative_path(root: Path, raw: Any, field: str) -> tuple[Path, str]:
     value = _safe_text(raw, field, 512).replace("\\", "/")
     candidate_raw = Path(value)
     if candidate_raw.is_absolute() or re.match(r"^[A-Za-z]:/", value):
-        raise ContextEfficiencyError(
-            "E_PATH_BOUNDARY", f"{field} must be relative to the workspace"
-        )
+        _invalid("E_PATH_BOUNDARY", f"{field} must be relative to the workspace")
     if any(part in {"", ".", ".."} for part in candidate_raw.parts):
-        raise ContextEfficiencyError(
-            "E_PATH_BOUNDARY", f"{field} contains traversal or empty components"
-        )
+        _invalid("E_PATH_BOUNDARY", f"{field} contains traversal or empty components")
     workspace = _validated_root(root)
     candidate = workspace.joinpath(candidate_raw)
     ancestor = workspace
     for part in candidate_raw.parts:
         ancestor = ancestor / part
         if ancestor.is_symlink():
-            raise ContextEfficiencyError(
-                "E_PATH_LINK", f"{field} may not traverse a symlink"
-            )
+            _invalid("E_PATH_LINK", f"{field} may not traverse a symlink")
     try:
         resolved = candidate.resolve(strict=False)
         resolved.relative_to(workspace)
@@ -894,7 +2267,7 @@ def _relative_path(root: Path, raw: Any, field: str) -> tuple[Path, str]:
             "E_PATH_BOUNDARY", f"{field} escapes the workspace"
         ) from exc
     if candidate.is_symlink() or resolved.is_symlink():
-        raise ContextEfficiencyError("E_PATH_LINK", f"{field} may not be a symlink")
+        _invalid("E_PATH_LINK", f"{field} may not be a symlink")
     return resolved, resolved.relative_to(workspace).as_posix()
 
 
@@ -902,7 +2275,7 @@ def _stable_file(path: Path) -> tuple[bytes, str, dict[str, int]]:
     try:
         before = path.stat()
         if not path.is_file() or path.is_symlink() or before.st_size > MAX_SOURCE_BYTES:
-            raise ContextEfficiencyError(
+            _invalid(
                 "E_SOURCE_BOUNDARY",
                 f"source is missing, a symlink, or exceeds {MAX_SOURCE_BYTES} bytes",
             )
@@ -916,7 +2289,7 @@ def _stable_file(path: Path) -> tuple[bytes, str, dict[str, int]]:
                     break
                 total += len(chunk)
                 if total > MAX_SOURCE_BYTES:
-                    raise ContextEfficiencyError(
+                    _invalid(
                         "E_SOURCE_BOUNDARY",
                         f"source exceeds {MAX_SOURCE_BYTES} bytes while reading",
                     )
@@ -940,18 +2313,14 @@ def _stable_file(path: Path) -> tuple[bytes, str, dict[str, int]]:
         "ino": int(getattr(after, "st_ino", 0)),
     }
     if identity_before != identity_after:
-        raise ContextEfficiencyError(
-            "E_SOURCE_CHANGED", f"source changed while reading: {path}"
-        )
+        _invalid("E_SOURCE_CHANGED", f"source changed while reading: {path}")
     raw = b"".join(chunks)
     return raw, digest.hexdigest(), identity_before
 
 
 def _validate_request_fields(request: Any) -> None:
     if not isinstance(request, dict):
-        raise ContextEfficiencyError(
-            "E_REQUEST_FIELDS", "request has missing or unknown fields"
-        )
+        _invalid("E_REQUEST_FIELDS", "request has missing or unknown fields")
     _reject_secret_keys(request)
     if set(request) != {
         "schema",
@@ -962,46 +2331,36 @@ def _validate_request_fields(request: Any) -> None:
         "max_tokens",
         "per_file_tokens",
     }:
-        raise ContextEfficiencyError(
-            "E_REQUEST_FIELDS", "request has missing or unknown fields"
-        )
+        _invalid("E_REQUEST_FIELDS", "request has missing or unknown fields")
     if request["schema"] != REQUEST_SCHEMA:
-        raise ContextEfficiencyError("E_SCHEMA", "unsupported request schema")
+        _invalid("E_SCHEMA", "unsupported request schema")
 
 
 def _normalize_changed_paths(root: Path, raw_paths: Any) -> list[str]:
     changed: list[str] = []
     if not isinstance(raw_paths, list) or not 1 <= len(raw_paths) <= MAX_CHANGED_PATHS:
-        raise ContextEfficiencyError(
-            "E_FIELD", f"changed_paths must contain 1..{MAX_CHANGED_PATHS} paths"
-        )
+        _invalid("E_FIELD", f"changed_paths must contain 1..{MAX_CHANGED_PATHS} paths")
     for index, item in enumerate(raw_paths):
         _, relative = _relative_path(root, item, f"changed_paths[{index}]")
         if relative in changed:
-            raise ContextEfficiencyError(
-                "E_DUPLICATE_PATH", f"duplicate changed path: {relative}"
-            )
+            _invalid("E_DUPLICATE_PATH", f"duplicate changed path: {relative}")
         changed.append(relative)
     return changed
 
 
 def _normalize_request_sources(root: Path, raw_sources: Any) -> list[dict[str, Any]]:
     if not isinstance(raw_sources, list) or not 1 <= len(raw_sources) <= MAX_SOURCES:
-        raise ContextEfficiencyError(
-            "E_FIELD", f"sources must contain 1..{MAX_SOURCES} entries"
-        )
+        _invalid("E_FIELD", f"sources must contain 1..{MAX_SOURCES} entries")
     sources: list[dict[str, Any]] = []
     seen: set[str] = set()
     for index, entry in enumerate(raw_sources):
         if not isinstance(entry, dict) or set(entry) != {"path", "role", "priority"}:
-            raise ContextEfficiencyError(
+            _invalid(
                 "E_SOURCE_FIELDS", f"sources[{index}] has missing or unknown fields"
             )
         _, relative = _relative_path(root, entry["path"], f"sources[{index}].path")
         if relative in seen:
-            raise ContextEfficiencyError(
-                "E_DUPLICATE_PATH", f"duplicate source path: {relative}"
-            )
+            _invalid("E_DUPLICATE_PATH", f"duplicate source path: {relative}")
         seen.add(relative)
         sources.append(
             {
@@ -1036,20 +2395,16 @@ def _select_context_request(
         for index, item in enumerate(candidates)
     ]
     if len({row["path"] for row in rows}) != len(rows):
-        raise ContextEfficiencyError("E_DUPLICATE_PATH", "duplicate candidate path")
+        _invalid("E_DUPLICATE_PATH", "duplicate candidate path")
     if not required.issubset({row["path"] for row in rows}):
-        raise ContextEfficiencyError(
-            "E_REQUIRED_EVIDENCE", "required path is absent from candidates"
-        )
+        _invalid("E_REQUIRED_EVIDENCE", "required path is absent from candidates")
     rows.sort(key=lambda row: (-row["score"], row["path"]))
     role_required = _required_role_paths(rows, required_roles)
     required.update(role_required)
     _order_selection_rows(rows, changed, required)
     selected = rows[:max_sources]
     if any(row["required"] for row in rows[len(selected) :]):
-        raise ContextEfficiencyError(
-            "E_REQUIRED_EVIDENCE", "max_sources would omit required evidence"
-        )
+        _invalid("E_REQUIRED_EVIDENCE", "max_sources would omit required evidence")
     request, selection = _selection_outputs(
         root, manifest, task, changed, rows, selected, required, required_roles
     )
@@ -1077,30 +2432,26 @@ def _selection_inputs(
         or set(manifest) != fields
         or manifest.get("schema") != SELECTION_SCHEMA
     ):
-        raise ContextEfficiencyError(
+        _invalid(
             "E_SELECTION_FIELDS", "selection manifest has missing or unknown fields"
         )
     task = _safe_text(manifest["task"], "task", 2000)
     changed = _normalize_changed_paths(root, manifest["changed_paths"])
     candidates = manifest["candidates"]
     if not isinstance(candidates, list) or not 1 <= len(candidates) <= MAX_CANDIDATES:
-        raise ContextEfficiencyError(
-            "E_FIELD", f"candidates must contain 1..{MAX_CANDIDATES} entries"
-        )
+        _invalid("E_FIELD", f"candidates must contain 1..{MAX_CANDIDATES} entries")
     max_sources = _bounded_int(
         manifest["max_sources"], "max_sources", 1, MAX_SELECTED_SOURCES
     )
     required_raw = manifest["required_paths"]
     if not isinstance(required_raw, list) or len(required_raw) > MAX_CANDIDATES:
-        raise ContextEfficiencyError("E_FIELD", "required_paths must be a bounded list")
+        _invalid("E_FIELD", "required_paths must be a bounded list")
     required = {
         _relative_path(root, item, "required_paths[]")[1] for item in required_raw
     }
     required_roles = manifest["required_evidence_roles"]
     if not isinstance(required_roles, list) or len(required_roles) > 16:
-        raise ContextEfficiencyError(
-            "E_FIELD", "required_evidence_roles must be a bounded list"
-        )
+        _invalid("E_FIELD", "required_evidence_roles must be a bounded list")
     required_roles = sorted(
         {
             _safe_text(role, "required_evidence_roles[]", 80).lower()
@@ -1119,7 +2470,7 @@ def _score_candidate(
     required: set[str],
 ) -> dict[str, Any]:
     if not isinstance(item, dict) or set(item) != {"path", "role"}:
-        raise ContextEfficiencyError(
+        _invalid(
             "E_CANDIDATE_FIELDS", f"candidates[{index}] must contain path and role"
         )
     _, path = _relative_path(root, item["path"], f"candidates[{index}].path")
@@ -1326,7 +2677,7 @@ def _required_role_paths(
     available = {row["role"].lower() for row in rows}
     missing = sorted(set(required_roles) - available)
     if missing:
-        raise ContextEfficiencyError(
+        _invalid(
             "E_REQUIRED_EVIDENCE",
             "missing candidate evidence roles: " + ", ".join(missing),
         )
@@ -1399,34 +2750,21 @@ def _selection_outputs(
         "candidate_count": len(rows),
         "candidates": [
             {
-                "path": row["path"],
-                "role": row["role"],
-                "sha256": row["sha256"],
-                "identity": row["identity"],
-                "score": row["score"],
-                "matched_terms": row["matched_terms"],
-                "structure": row["structure"],
+                **_context_project_fields(
+                    row, "path role sha256 identity score matched_terms structure"
+                ),
                 "related_paths": _related_candidate_paths(row, rows),
             }
             for row in rows
         ],
         "selected": [
-            {
-                "path": row["path"],
-                "score": row["score"],
-                "stage": row["stage"],
-                "required": row["required"],
-                "why_selected": row["why_selected"],
-            }
+            {**_context_project_fields(row, "path score stage required why_selected")}
             for row in selected
         ],
         "omitted": [
             {
-                "path": row["path"],
-                "role": row["role"],
-                "sha256": row["sha256"],
+                **_context_project_fields(row, "path role sha256 score"),
                 "reason": "lower_task_relevance",
-                "score": row["score"],
             }
             for row in rows[len(selected) :]
         ],
@@ -1518,7 +2856,7 @@ def _selection(
     half = max(1, budget // 2)
     head = raw[:half].decode("utf-8", "ignore")
     tail = raw[-half:].decode("utf-8", "ignore")
-    selected = _redact(head) + "\n…[context omitted]…\n" + _redact(tail)
+    selected = _redact(head) + "\nÃ¢â‚¬Â¦[context omitted]Ã¢â‚¬Â¦\n" + _redact(tail)
     selected_bytes = len(selected.encode("utf-8"))
     if selected_bytes > budget:
         selected = selected.encode("utf-8")[:budget].decode("utf-8", "ignore")
@@ -1538,9 +2876,7 @@ def _cache_dir(root: Path) -> Path:
 def _validated_root(root: Path) -> Path:
     lexical = Path(root).absolute()
     if _has_reparse_ancestor(lexical):
-        raise ContextEfficiencyError(
-            "E_PATH_LINK", "workspace path traverses a reparse point"
-        )
+        _invalid("E_PATH_LINK", "workspace path traverses a reparse point")
     return lexical.resolve()
 
 
@@ -1685,7 +3021,7 @@ def _read_bounded(path: Path, limit: int = 1_000_000) -> bytes:
     with path.open("rb") as stream:
         raw = stream.read(limit + 1)
     if len(raw) > limit:
-        raise ContextEfficiencyError("E_INPUT_BOUNDARY", f"input exceeds {limit} bytes")
+        _invalid("E_INPUT_BOUNDARY", f"input exceeds {limit} bytes")
     return raw
 
 
@@ -1810,7 +3146,7 @@ def _assemble_packet(
             if row["path"] in required and row["inclusion"] != "full"
         ]
         if missing:
-            raise ContextEfficiencyError(
+            _invalid(
                 "E_REQUIRED_EVIDENCE",
                 "required sources must be fully included: " + ", ".join(missing),
             )
@@ -1846,14 +3182,11 @@ def _assemble_packet(
                         if row.get("stage") == stage
                     ),
                     "meaning": (
-                        "required"
-                        if stage == 0
-                        else "changed"
-                        if stage == 1
-                        else "task_relevant"
-                        if stage == 2
-                        else "bounded_fallback"
-                    ),
+                        "required",
+                        "changed",
+                        "task_relevant",
+                        "bounded_fallback",
+                    )[stage],
                 }
                 for stage in range(4)
             ]
@@ -1865,13 +3198,7 @@ def _assemble_packet(
             "hit": False,
             "path": cache_path.relative_to(cache_path.parents[2]).as_posix(),
         },
-        "authority": {
-            "execution": False,
-            "approval": False,
-            "repair": False,
-            "publication": False,
-            "credential": False,
-        },
+        "authority": _context_read_only_authority(),
         "claim_boundary": "Read-only bounded context selection. Token counts are estimates; this packet does not authorize execution, approval, repair, merge, publication, deployment, or credential access.",
     }
     packet["packet_sha256"] = _packet_digest(packet)
@@ -1949,16 +3276,14 @@ def _rows_from_selection_snapshot(
     candidates: list[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     if selection is None:
-        raise ContextEfficiencyError("E_SELECTION_FIELDS", "selection is required")
+        _invalid("E_SELECTION_FIELDS", "selection is required")
     candidates_by_path = {row["path"]: row for row in candidates}
     rows = []
     digests = []
     for source in request["sources"]:
         candidate = candidates_by_path.get(source["path"])
         if candidate is None or candidate["role"] != source["role"]:
-            raise ContextEfficiencyError(
-                "E_SELECTION_FIELDS", "selected source is not in snapshot"
-            )
+            _invalid("E_SELECTION_FIELDS", "selected source is not in snapshot")
         raw = candidate["raw"]
         rows.append(
             {
@@ -1980,12 +3305,10 @@ def _rows_from_selection_snapshot(
 
 def _metric(value: Any, field: str, *, maximum: float = 1_000_000) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise ContextEfficiencyError("E_EXPERIMENT_METRIC", f"{field} must be numeric")
+        _invalid("E_EXPERIMENT_METRIC", f"{field} must be numeric")
     result = float(value)
     if not 0 <= result <= maximum:
-        raise ContextEfficiencyError(
-            "E_EXPERIMENT_METRIC", f"{field} is outside bounds"
-        )
+        _invalid("E_EXPERIMENT_METRIC", f"{field} is outside bounds")
     return result
 
 
@@ -2003,20 +3326,18 @@ def _experiment_header(observation: Any) -> tuple[str, list[Any]]:
         "samples",
     }
     if not isinstance(observation, dict) or set(observation) != fields:
-        raise ContextEfficiencyError(
+        _invalid(
             "E_EXPERIMENT_FIELDS", "paired observation has missing or unknown fields"
         )
     if (
         observation["schema"] != EXPERIMENT_SCHEMA
         or observation["evidence_level"] != "operator_supplied_unverified"
     ):
-        raise ContextEfficiencyError(
+        _invalid(
             "E_EXPERIMENT_SCHEMA", "unsupported experiment schema or evidence level"
         )
     if observation["cost_unit"] not in {"USD", "not_recorded"}:
-        raise ContextEfficiencyError(
-            "E_EXPERIMENT_METRIC", "cost_unit must be USD or not_recorded"
-        )
+        _invalid("E_EXPERIMENT_METRIC", "cost_unit must be USD or not_recorded")
     for key in (
         "task_sha256",
         "revision_sha256",
@@ -2027,7 +3348,7 @@ def _experiment_header(observation: Any) -> tuple[str, list[Any]]:
         _digest(observation[key], key)
     samples = observation["samples"]
     if not isinstance(samples, list) or not 1 <= len(samples) <= MAX_EXPERIMENT_SAMPLES:
-        raise ContextEfficiencyError(
+        _invalid(
             "E_EXPERIMENT_SAMPLES", "samples must contain 1..100 paired observations"
         )
     return _safe_text(observation["model_id"], "model_id", 160), samples
@@ -2042,13 +3363,13 @@ def _arm_measurement(
         or set(row) - optional
         or not {"phases_seconds", "quality"}.issubset(row)
     ):
-        raise ContextEfficiencyError(
+        _invalid(
             "E_EXPERIMENT_SAMPLE", f"{arm} sample requires phase timings and quality"
         )
     phases = row["phases_seconds"]
     names = {"context_gathering", "coding", "repair"}
     if not isinstance(phases, dict) or set(phases) != names:
-        raise ContextEfficiencyError(
+        _invalid(
             "E_EXPERIMENT_PHASES",
             "all context_gathering, coding, and repair timings are required",
         )
@@ -2069,14 +3390,10 @@ def _collect_experiment_metrics(
     seen: set[str] = set()
     for index, sample in enumerate(samples):
         if not isinstance(sample, dict) or set(sample) != {"id", "baseline", "context"}:
-            raise ContextEfficiencyError(
-                "E_EXPERIMENT_SAMPLE", f"samples[{index}] is malformed"
-            )
+            _invalid("E_EXPERIMENT_SAMPLE", f"samples[{index}] is malformed")
         sample_id = _safe_text(sample["id"], f"samples[{index}].id", 120)
         if sample_id in seen:
-            raise ContextEfficiencyError(
-                "E_EXPERIMENT_SAMPLE", "sample ids must be unique"
-            )
+            _invalid("E_EXPERIMENT_SAMPLE", "sample ids must be unique")
         seen.add(sample_id)
         for arm in ("baseline", "context"):
             seconds, quality, cost, tokens = _arm_measurement(sample[arm], arm)
@@ -2090,7 +3407,7 @@ def _collect_experiment_metrics(
                     metrics[key][arm].append(value)
         for key in ("cost", "tokens"):
             if (key in sample["baseline"]) != (key in sample["context"]):
-                raise ContextEfficiencyError(
+                _invalid(
                     "E_EXPERIMENT_METRIC",
                     f"{key} must be measured for both arms or neither",
                 )
@@ -2107,21 +3424,17 @@ def _experiment_projection(
         median(metrics["seconds"]["baseline"]) <= 0
         or median(metrics["seconds"]["context"]) <= 0
     ):
-        raise ContextEfficiencyError(
-            "E_EXPERIMENT_METRIC", "median elapsed time must be positive"
-        )
+        _invalid("E_EXPERIMENT_METRIC", "median elapsed time must be positive")
     count = len(samples)
     for key in ("cost", "tokens"):
         values = metrics[key]["baseline"]
         if values and len(values) != count:
-            raise ContextEfficiencyError(
+            _invalid(
                 "E_EXPERIMENT_METRIC", f"{key} must be present in every pair or omitted"
             )
     has_cost = bool(metrics["cost"]["baseline"])
     if has_cost != (observation["cost_unit"] == "USD"):
-        raise ContextEfficiencyError(
-            "E_EXPERIMENT_METRIC", "cost_unit does not match cost observations"
-        )
+        _invalid("E_EXPERIMENT_METRIC", "cost_unit does not match cost observations")
     baseline_time = median(metrics["seconds"]["baseline"])
     context_time = median(metrics["seconds"]["context"])
     baseline_quality = median(metrics["quality"]["baseline"])
@@ -2180,14 +3493,10 @@ def _read_experiment_history(path: Path) -> list[dict[str, Any]]:
         not isinstance(stored, dict)
         or stored.get("schema") != "factory.context-efficiency-experiments.v1"
     ):
-        raise ContextEfficiencyError(
-            "E_EXPERIMENT_STORE", "stored experiment history is malformed"
-        )
+        _invalid("E_EXPERIMENT_STORE", "stored experiment history is malformed")
     entries = stored.get("results")
     if not isinstance(entries, list) or len(entries) > MAX_EXPERIMENT_HISTORY:
-        raise ContextEfficiencyError(
-            "E_EXPERIMENT_STORE", "stored experiment history is malformed"
-        )
+        _invalid("E_EXPERIMENT_STORE", "stored experiment history is malformed")
     history = []
     for entry in entries:
         if not isinstance(entry, dict) or set(entry) != {
@@ -2195,16 +3504,12 @@ def _read_experiment_history(path: Path) -> list[dict[str, Any]]:
             "observation_sha256",
             "result",
         }:
-            raise ContextEfficiencyError(
-                "E_EXPERIMENT_STORE", "stored experiment record is malformed"
-            )
+            _invalid("E_EXPERIMENT_STORE", "stored experiment record is malformed")
         if _sha(entry["observation"]) != entry["observation_sha256"]:
-            raise ContextEfficiencyError(
-                "E_EXPERIMENT_STORE", "stored observation hash does not match"
-            )
+            _invalid("E_EXPERIMENT_STORE", "stored observation hash does not match")
         result = evaluate_context_experiment(entry["observation"])
         if entry["result"] != result:
-            raise ContextEfficiencyError(
+            _invalid(
                 "E_EXPERIMENT_STORE", "stored aggregate does not match observations"
             )
         history.append(result)
@@ -2248,29 +3553,21 @@ def _validate_source_row_binding(
         or row.get("role") != expected["role"]
         or row.get("priority") != expected["priority"]
     ):
-        raise ContextEfficiencyError(
-            "E_SOURCE_ROWS", "packet source row is not bound to the request"
-        )
+        _invalid("E_SOURCE_ROWS", "packet source row is not bound to the request")
 
 
 def _validate_source_row_accounting(row: dict[str, Any]) -> None:
     if row.get("inclusion") not in {"full", "head_tail", "digest_only"}:
-        raise ContextEfficiencyError(
-            "E_SOURCE_ROWS", "packet source inclusion is invalid"
-        )
+        _invalid("E_SOURCE_ROWS", "packet source inclusion is invalid")
     sizes = ("source_bytes", "selected_bytes", "omitted_bytes")
     if any(not isinstance(row.get(field), int) for field in sizes):
-        raise ContextEfficiencyError(
-            "E_SOURCE_ROWS", "packet source byte accounting is invalid"
-        )
+        _invalid("E_SOURCE_ROWS", "packet source byte accounting is invalid")
     if (
         row["selected_bytes"] < 0
         or row["selected_bytes"] > row["source_bytes"]
         or row["omitted_bytes"] != row["source_bytes"] - row["selected_bytes"]
     ):
-        raise ContextEfficiencyError(
-            "E_SOURCE_ROWS", "packet source byte accounting is invalid"
-        )
+        _invalid("E_SOURCE_ROWS", "packet source byte accounting is invalid")
 
 
 def _validate_source_rows(
@@ -2279,9 +3576,7 @@ def _validate_source_rows(
     if not isinstance(packet_sources, list) or len(packet_sources) != len(
         expected_sources
     ):
-        raise ContextEfficiencyError(
-            "E_SOURCE_ROWS", "packet source rows do not match the request"
-        )
+        _invalid("E_SOURCE_ROWS", "packet source rows do not match the request")
     allowed = {
         "path",
         "role",
@@ -2310,9 +3605,7 @@ def _validate_packet_snapshot(
     packet_sources: list[dict[str, Any]],
 ) -> None:
     if packet.get("request") != request:
-        raise ContextEfficiencyError(
-            "E_REQUEST_MISMATCH", "packet request is not normalized"
-        )
+        _invalid("E_REQUEST_MISMATCH", "packet request is not normalized")
     expected_sources = []
     by_path = {row["source"]["path"]: row for row in rows}
     for source in request["sources"]:
@@ -2325,9 +3618,7 @@ def _validate_packet_snapshot(
             }
         )
     if _source_identity_rows(packet_sources) != expected_sources:
-        raise ContextEfficiencyError(
-            "E_SOURCE_ROWS", "cached source identity does not match snapshot"
-        )
+        _invalid("E_SOURCE_ROWS", "cached source identity does not match snapshot")
     remaining = request["max_tokens"] * 4
     for source, item in zip(request["sources"], packet_sources):
         raw = by_path[source["path"]]["raw"]
@@ -2346,7 +3637,7 @@ def _validate_packet_snapshot(
             or ("excerpt" in item) != (excerpt is not None)
             or item.get("excerpt") != excerpt
         ):
-            raise ContextEfficiencyError(
+            _invalid(
                 "E_EXCERPT_MISMATCH",
                 f"cached excerpt does not match source: {source['path']}",
             )
@@ -2381,7 +3672,7 @@ def _validate_packet_cache(
         }
     )
     if not isinstance(cache, dict) or cache.get("key") != expected_key:
-        raise ContextEfficiencyError(
+        _invalid(
             "E_CACHE_KEY", "cache key does not match request and source identities"
         )
 
@@ -2405,7 +3696,7 @@ def _verify_selection_evidence(
         "ranking",
     }
     if not isinstance(selection, dict) or set(selection) != expected_keys:
-        raise ContextEfficiencyError(
+        _invalid(
             "E_SELECTION_FIELDS", "selection metadata has missing or unknown fields"
         )
     candidates, selected, omitted = _selection_rows(selection)
@@ -2428,13 +3719,9 @@ def _selection_rows(
         or not isinstance(omitted, list)
         or len(candidates) != len(selected) + len(omitted)
     ):
-        raise ContextEfficiencyError(
-            "E_SELECTION_FIELDS", "candidate evidence rows are malformed"
-        )
+        _invalid("E_SELECTION_FIELDS", "candidate evidence rows are malformed")
     if selection.get("candidate_count") != len(candidates):
-        raise ContextEfficiencyError(
-            "E_SELECTION_FIELDS", "candidate count does not match rows"
-        )
+        _invalid("E_SELECTION_FIELDS", "candidate count does not match rows")
     return candidates, selected, omitted
 
 
@@ -2451,9 +3738,7 @@ def _verify_candidates(workspace: Path, candidates: list[Any]) -> set[str]:
             "structure",
             "related_paths",
         }:
-            raise ContextEfficiencyError(
-                "E_SELECTION_FIELDS", "candidate evidence row is malformed"
-            )
+            _invalid("E_SELECTION_FIELDS", "candidate evidence row is malformed")
         path, relative = _relative_path(
             workspace, row["path"], "selection.candidates.path"
         )
@@ -2461,15 +3746,11 @@ def _verify_candidates(workspace: Path, candidates: list[Any]) -> set[str]:
             relative in candidate_paths
             or _digest(row["sha256"], "selection.candidates.sha256") != row["sha256"]
         ):
-            raise ContextEfficiencyError(
-                "E_SELECTION_FIELDS", "candidate evidence identity is invalid"
-            )
+            _invalid("E_SELECTION_FIELDS", "candidate evidence identity is invalid")
         candidate_paths.add(relative)
         _validate_structure(row["structure"])
         if not isinstance(row["related_paths"], list) or len(row["related_paths"]) > 16:
-            raise ContextEfficiencyError(
-                "E_SELECTION_FIELDS", "related candidate list is malformed"
-            )
+            _invalid("E_SELECTION_FIELDS", "related candidate list is malformed")
         raw, digest, identity = _stable_file(path)
         structural = _structural_evidence(relative, raw)
         if (
@@ -2477,9 +3758,7 @@ def _verify_candidates(workspace: Path, candidates: list[Any]) -> set[str]:
             or identity != row["identity"]
             or structural != row["structure"]
         ):
-            raise ContextEfficiencyError(
-                "E_SELECTION_DRIFT", f"candidate changed: {relative}"
-            )
+            _invalid("E_SELECTION_DRIFT", f"candidate changed: {relative}")
     return candidate_paths
 
 
@@ -2499,7 +3778,7 @@ def _verify_selection_partition(
         or selected_paths & omitted_paths
         or selected_paths | omitted_paths != candidate_paths
     ):
-        raise ContextEfficiencyError(
+        _invalid(
             "E_SELECTION_FIELDS", "selected, omitted, and candidate paths do not match"
         )
     _validate_selection_rows(selected, omitted)
@@ -2512,16 +3791,14 @@ def _verify_selection_partition(
             path not in candidate_by_path
             or row.get("sha256") != candidate_by_path[path]["sha256"]
         ):
-            raise ContextEfficiencyError(
+            _invalid(
                 "E_SELECTION_FIELDS",
                 "omitted source is not bound to candidate evidence",
             )
     candidate_rows = list(candidate_by_path.values())
     for row in candidates:
         if row["related_paths"] != _related_candidate_paths(row, candidate_rows):
-            raise ContextEfficiencyError(
-                "E_SELECTION_FIELDS", "related candidate references do not match"
-            )
+            _invalid("E_SELECTION_FIELDS", "related candidate references do not match")
     _verify_required_selection(selection, packet_sources, selected_paths)
 
 
@@ -2532,17 +3809,13 @@ def _validate_selection_rows(selected: list[Any], omitted: list[Any]) -> None:
         or not isinstance(row.get("why_selected"), str)
         for row in selected
     ):
-        raise ContextEfficiencyError(
-            "E_SELECTION_FIELDS", "selection rationale is malformed"
-        )
+        _invalid("E_SELECTION_FIELDS", "selection rationale is malformed")
     if any(
         not isinstance(row, dict)
         or set(row) != {"path", "role", "sha256", "reason", "score"}
         for row in omitted
     ):
-        raise ContextEfficiencyError(
-            "E_SELECTION_FIELDS", "omitted candidate evidence is malformed"
-        )
+        _invalid("E_SELECTION_FIELDS", "omitted candidate evidence is malformed")
 
 
 def _validate_selected_bindings(
@@ -2557,7 +3830,7 @@ def _validate_selected_bindings(
             candidate["sha256"] != source["source_sha256"]
             or candidate["role"] != source["role"]
         ):
-            raise ContextEfficiencyError(
+            _invalid(
                 "E_SELECTION_FIELDS",
                 "selected source is not bound to candidate evidence",
             )
@@ -2584,9 +3857,7 @@ def _verify_required_selection(
         or selection.get("present_evidence_roles")
         != sorted({row["role"].lower() for row in packet_sources})
     ):
-        raise ContextEfficiencyError(
-            "E_REQUIRED_EVIDENCE", "required paths or evidence roles are missing"
-        )
+        _invalid("E_REQUIRED_EVIDENCE", "required paths or evidence roles are missing")
 
 
 def _validate_structure(value: Any) -> None:
@@ -2597,24 +3868,18 @@ def _validate_structure(value: Any) -> None:
         "PARSE_LIMIT_OR_ERROR",
         "DATABASE_STATIC_ONLY",
     }:
-        raise ContextEfficiencyError(
-            "E_SELECTION_FIELDS", "structural evidence is malformed"
-        )
+        _invalid("E_SELECTION_FIELDS", "structural evidence is malformed")
     common = {"status", "definitions", "imports", "calls", "identifiers"}
     expected = (
         common | {"node_count"} if value["status"] == "SYNTACTIC_ONLY" else common
     )
     if set(value) != expected:
-        raise ContextEfficiencyError(
-            "E_SELECTION_FIELDS", "structural evidence fields are malformed"
-        )
+        _invalid("E_SELECTION_FIELDS", "structural evidence fields are malformed")
     if value["status"] == "SYNTACTIC_ONLY" and (
         type(value["node_count"]) is not int
         or not 1 <= value["node_count"] <= MAX_AST_NODES
     ):
-        raise ContextEfficiencyError(
-            "E_SELECTION_FIELDS", "structural node count is invalid"
-        )
+        _invalid("E_SELECTION_FIELDS", "structural node count is invalid")
 
 
 def _verify_packet_header(
@@ -2623,9 +3888,7 @@ def _verify_packet_header(
     if packet.get("schema") != PACKET_SCHEMA or packet.get(
         "packet_sha256"
     ) != _packet_digest(packet):
-        raise ContextEfficiencyError(
-            "E_PACKET_DIGEST", "packet schema or digest is invalid"
-        )
+        _invalid("E_PACKET_DIGEST", "packet schema or digest is invalid")
     request = _validate_request(workspace, packet.get("request"))
     packet_sources = _validate_source_rows(packet.get("sources"), request["sources"])
     selection = packet.get("selection")
@@ -2657,7 +3920,7 @@ def _verify_packet_header(
                 for row in packet_sources
             )
         ):
-            raise ContextEfficiencyError(
+            _invalid(
                 "E_REQUIRED_EVIDENCE",
                 "required context evidence is missing or truncated",
             )
@@ -2682,9 +3945,7 @@ def _verify_packet_sources(
             or identity != item.get("identity")
             or len(raw) != item.get("source_bytes")
         ):
-            raise ContextEfficiencyError(
-                "E_SOURCE_DRIFT", f"source changed: {relative}"
-            )
+            _invalid("E_SOURCE_DRIFT", f"source changed: {relative}")
         rows.append(
             {
                 "source": {
@@ -2707,7 +3968,7 @@ def _verify_packet_budget(packet: dict[str, Any]) -> None:
         or budget.get("selected_bytes", -1) > budget.get("max_bytes", -2)
         or budget.get("token_quality") != "estimated_from_utf8_bytes_not_provider_usage"
     ):
-        raise ContextEfficiencyError("E_BUDGET", "packet budget is invalid")
+        _invalid("E_BUDGET", "packet budget is invalid")
 
 
 def verify_context_packet(root: Path, packet_path: Path) -> dict[str, Any]:
@@ -2721,7 +3982,7 @@ def verify_context_packet(root: Path, packet_path: Path) -> dict[str, Any]:
     try:
         packet = json.loads(_read_bounded(path).decode("utf-8"))
         if not isinstance(packet, dict):
-            raise ContextEfficiencyError("E_SCHEMA", "packet must be an object")
+            _invalid("E_SCHEMA", "packet must be an object")
         request, packet_sources = _verify_packet_header(workspace, packet)
         source_rows = _verify_packet_sources(workspace, packet_sources)
         _validate_packet_snapshot(
@@ -2772,9 +4033,7 @@ def _shard_artifact_path(root: Path, kind: str, digest: str) -> tuple[Path, str]
 def _shard_relative_path(root: Path, raw: Any, field: str) -> tuple[Path, str]:
     lexical_root = Path(root).absolute()
     if _has_reparse_ancestor(lexical_root):
-        raise ContextEfficiencyError(
-            "E_PATH_LINK", "workspace path traverses a reparse point"
-        )
+        _invalid("E_PATH_LINK", "workspace path traverses a reparse point")
     value = _safe_text(raw, field, 512).replace("\\", "/")
     candidate = Path(value)
     if (
@@ -2782,33 +4041,23 @@ def _shard_relative_path(root: Path, raw: Any, field: str) -> tuple[Path, str]:
         or re.match(r"^[A-Za-z]:/", value)
         or any(part in {"", ".", ".."} for part in candidate.parts)
     ):
-        raise ContextEfficiencyError(
-            "E_PATH_BOUNDARY", f"{field} must stay within workspace"
-        )
+        _invalid("E_PATH_BOUNDARY", f"{field} must stay within workspace")
     lexical = lexical_root.joinpath(candidate)
     if _has_reparse_ancestor(lexical):
-        raise ContextEfficiencyError(
-            "E_PATH_LINK", f"{field} may not traverse a reparse point"
-        )
+        _invalid("E_PATH_LINK", f"{field} may not traverse a reparse point")
     return _relative_path(lexical_root, value, field)
 
 
 def _write_immutable_shard(path: Path, artifact: dict[str, Any]) -> None:
     raw = _canonical(artifact) + b"\n"
     if len(raw) > MAX_SHARD_ARTIFACT_BYTES:
-        raise ContextEfficiencyError(
-            "E_SHARD_BOUNDARY", "shard artifact exceeds size limit"
-        )
+        _invalid("E_SHARD_BOUNDARY", "shard artifact exceeds size limit")
     try:
         if _has_reparse_ancestor(path):
-            raise ContextEfficiencyError(
-                "E_PATH_LINK", "shard artifact path traverses a reparse point"
-            )
+            _invalid("E_PATH_LINK", "shard artifact path traverses a reparse point")
         path.parent.mkdir(parents=True, exist_ok=True)
         if _has_reparse_ancestor(path):
-            raise ContextEfficiencyError(
-                "E_PATH_LINK", "shard artifact path traverses a reparse point"
-            )
+            _invalid("E_PATH_LINK", "shard artifact path traverses a reparse point")
         flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
         if hasattr(os, "O_BINARY"):
             flags |= os.O_BINARY
@@ -2819,7 +4068,7 @@ def _write_immutable_shard(path: Path, artifact: dict[str, Any]) -> None:
             os.fsync(stream.fileno())
     except FileExistsError:
         if _read_bounded(path, MAX_SHARD_ARTIFACT_BYTES) != raw:
-            raise ContextEfficiencyError(
+            _invalid(
                 "E_SHARD_COLLISION", "immutable shard path contains different bytes"
             )
     except OSError as exc:
@@ -2830,9 +4079,7 @@ def _write_immutable_shard(path: Path, artifact: dict[str, Any]) -> None:
 
 def _shard_datetime(value: Any, field: str) -> datetime:
     if not isinstance(value, str) or len(value) > 40:
-        raise ContextEfficiencyError(
-            "E_SHARD_EXPIRY", f"{field} must be a UTC timestamp"
-        )
+        _invalid("E_SHARD_EXPIRY", f"{field} must be a UTC timestamp")
     try:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError as exc:
@@ -2840,9 +4087,7 @@ def _shard_datetime(value: Any, field: str) -> datetime:
             "E_SHARD_EXPIRY", f"{field} must be a UTC timestamp"
         ) from exc
     if parsed.tzinfo is None or parsed.utcoffset() != timezone.utc.utcoffset(parsed):
-        raise ContextEfficiencyError(
-            "E_SHARD_EXPIRY", f"{field} must include UTC timezone"
-        )
+        _invalid("E_SHARD_EXPIRY", f"{field} must include UTC timezone")
     return parsed.astimezone(timezone.utc)
 
 
@@ -2851,7 +4096,7 @@ def _shard_now(now: Any = None) -> datetime:
         return datetime.now(timezone.utc)
     if isinstance(now, datetime) and now.tzinfo is not None:
         return now.astimezone(timezone.utc)
-    raise ContextEfficiencyError("E_SHARD_TIME", "now must be timezone-aware")
+    _invalid("E_SHARD_TIME", "now must be timezone-aware")
 
 
 def _shard_source_rows(
@@ -2878,23 +4123,17 @@ def _shard_locator(
 ) -> dict[str, Any]:
     fields = {"path", "start_byte", "end_byte"}
     if not isinstance(raw_locator, dict) or set(raw_locator) != fields:
-        raise ContextEfficiencyError(
-            "E_SHARD_LOCATOR", "locator must contain path and byte bounds"
-        )
+        _invalid("E_SHARD_LOCATOR", "locator must contain path and byte bounds")
     path, relative = _shard_relative_path(root, raw_locator["path"], "locator.path")
     del path
     source = sources.get(relative)
     if source is None:
-        raise ContextEfficiencyError(
-            "E_SHARD_LOCATOR", "locator must refer to a full, safe packet source"
-        )
+        _invalid("E_SHARD_LOCATOR", "locator must refer to a full, safe packet source")
     raw, digest = source
     start = _bounded_int(raw_locator["start_byte"], "locator.start_byte", 0, len(raw))
     end = _bounded_int(raw_locator["end_byte"], "locator.end_byte", 1, len(raw))
     if end <= start or end - start > MAX_SHARD_LOCATOR_BYTES:
-        raise ContextEfficiencyError(
-            "E_SHARD_LOCATOR", "locator span is empty or exceeds limit"
-        )
+        _invalid("E_SHARD_LOCATOR", "locator span is empty or exceeds limit")
     span = raw[start:end]
     try:
         span.decode("utf-8")
@@ -2946,37 +4185,27 @@ def _normalize_shard_claims(
     root: Path, claims: Any, sources: dict[str, tuple[bytes, str]]
 ) -> list[dict[str, Any]]:
     if not isinstance(claims, list) or not 1 <= len(claims) <= MAX_SHARD_CLAIMS:
-        raise ContextEfficiencyError(
-            "E_SHARD_FIELDS", "claims must contain 1..64 entries"
-        )
+        _invalid("E_SHARD_FIELDS", "claims must contain 1..64 entries")
     normalized = []
     for index, claim in enumerate(claims):
         if not isinstance(claim, dict) or set(claim) != {"key", "value", "locators"}:
-            raise ContextEfficiencyError(
-                "E_SHARD_FIELDS", f"claims[{index}] has invalid fields"
-            )
+            _invalid("E_SHARD_FIELDS", f"claims[{index}] has invalid fields")
         key = _safe_text(claim["key"], f"claims[{index}].key", 160).strip()
         value = claim["value"]
         if not isinstance(value, (str, int, float, bool, list, dict)) or value is None:
-            raise ContextEfficiencyError(
-                "E_SHARD_FIELDS", f"claims[{index}].value must be bounded JSON"
-            )
+            _invalid("E_SHARD_FIELDS", f"claims[{index}].value must be bounded JSON")
         _reject_secret_keys({"value": value}, f"claims[{index}]")
         value_bytes = _canonical(value)
         if len(value_bytes) > MAX_SHARD_LOCATOR_BYTES or any(
             pattern.search(value_bytes) for pattern in _SECRET_BYTES
         ):
-            raise ContextEfficiencyError(
-                "E_SHARD_BOUNDARY", f"claims[{index}].value exceeds limit"
-            )
+            _invalid("E_SHARD_BOUNDARY", f"claims[{index}].value exceeds limit")
         locators = claim["locators"]
         if (
             not isinstance(locators, list)
             or not 1 <= len(locators) <= MAX_SHARD_RECORDS
         ):
-            raise ContextEfficiencyError(
-                "E_SHARD_LOCATOR", f"claims[{index}] requires source locators"
-            )
+            _invalid("E_SHARD_LOCATOR", f"claims[{index}] requires source locators")
         normalized.append(
             {
                 "key": key,
@@ -2994,7 +4223,7 @@ def _normalize_shard_retention(
 ) -> dict[str, list[dict[str, Any]]]:
     categories = {"correction", "failure", "approval", "unresolved_action"}
     if not isinstance(retained_records, dict) or set(retained_records) != categories:
-        raise ContextEfficiencyError(
+        _invalid(
             "E_SHARD_RETENTION", "all four retained-record categories are required"
         )
     retained = {}
@@ -3002,17 +4231,13 @@ def _normalize_shard_retention(
     for category in sorted(categories):
         records = retained_records[category]
         if not isinstance(records, list):
-            raise ContextEfficiencyError(
-                "E_SHARD_RETENTION", f"{category} must be a locator list"
-            )
+            _invalid("E_SHARD_RETENTION", f"{category} must be a locator list")
         count += len(records)
         retained[category] = [
             _shard_locator(root, locator, sources) for locator in records
         ]
     if count > MAX_SHARD_RECORDS:
-        raise ContextEfficiencyError(
-            "E_SHARD_BOUNDARY", "retained records exceed limit"
-        )
+        _invalid("E_SHARD_BOUNDARY", "retained records exceed limit")
     return retained
 
 
@@ -3159,9 +4384,7 @@ def build_context_shard_candidate(
 ) -> dict[str, Any]:
     """Persist a source-bound candidate shard; this never accepts or activates it."""
     if shard_type not in {"rule", "fact", "code_map"}:
-        raise ContextEfficiencyError(
-            "E_SHARD_TYPE", "shard_type must be rule, fact, or code_map"
-        )
+        _invalid("E_SHARD_TYPE", "shard_type must be rule, fact, or code_map")
     workspace = _validated_root(root)
     packet_path_value, packet_relative = _shard_relative_path(
         workspace,
@@ -3172,9 +4395,7 @@ def build_context_shard_candidate(
     )
     verified = verify_context_packet(workspace, packet_path_value)
     if not verified.get("valid"):
-        raise ContextEfficiencyError(
-            "E_SHARD_PACKET", "source packet failed verification"
-        )
+        _invalid("E_SHARD_PACKET", "source packet failed verification")
     packet = json.loads(_read_bounded(packet_path_value).decode("utf-8"))
     sources = _shard_source_rows(workspace, packet)
     normalized_claims = _normalize_shard_claims(workspace, claims, sources)
@@ -3182,9 +4403,7 @@ def build_context_shard_candidate(
     current = _shard_now(now)
     expiry = _shard_datetime(expires_at, "expires_at")
     if not current < expiry <= current.replace(year=current.year + 1):
-        raise ContextEfficiencyError(
-            "E_SHARD_EXPIRY", "expiry must be within the next year"
-        )
+        _invalid("E_SHARD_EXPIRY", "expiry must be within the next year")
     artifact = {
         "schema": SHARD_CANDIDATE_SCHEMA,
         "state": "CANDIDATE",
@@ -3226,37 +4445,29 @@ def _load_shard_candidate(
         }
         relative = artifact.get("artifact_path")
     else:
-        raise ContextEfficiencyError(
-            "E_SHARD_FIELDS", "candidate must be an artifact or relative path"
-        )
+        _invalid("E_SHARD_FIELDS", "candidate must be an artifact or relative path")
     if not isinstance(artifact, dict):
-        raise ContextEfficiencyError("E_SHARD_FIELDS", "candidate must be an object")
+        _invalid("E_SHARD_FIELDS", "candidate must be an object")
     return artifact, relative
 
 
 def _validate_shard_claim_structure(claim: Any) -> None:
     if not isinstance(claim, dict) or set(claim) != {"key", "value", "locators"}:
-        raise ContextEfficiencyError("E_SHARD_FIELDS", "candidate claim is invalid")
+        _invalid("E_SHARD_FIELDS", "candidate claim is invalid")
     _safe_text(claim["key"], "claim.key", 160)
     if (
         not isinstance(claim["value"], (str, int, float, bool, list, dict))
         or claim["value"] is None
     ):
-        raise ContextEfficiencyError(
-            "E_SHARD_FIELDS", "candidate claim value is invalid"
-        )
+        _invalid("E_SHARD_FIELDS", "candidate claim value is invalid")
     _reject_secret_keys({"value": claim["value"]}, "candidate.claim")
     value_bytes = _canonical(claim["value"])
     if len(value_bytes) > MAX_SHARD_LOCATOR_BYTES or any(
         pattern.search(value_bytes) for pattern in _SECRET_BYTES
     ):
-        raise ContextEfficiencyError(
-            "E_SHARD_BOUNDARY", "candidate claim value exceeds limit"
-        )
+        _invalid("E_SHARD_BOUNDARY", "candidate claim value exceeds limit")
     if not isinstance(claim["locators"], list) or not claim["locators"]:
-        raise ContextEfficiencyError(
-            "E_SHARD_LOCATOR", "candidate claim requires locators"
-        )
+        _invalid("E_SHARD_LOCATOR", "candidate claim requires locators")
 
 
 def _validate_shard_structure(artifact: dict[str, Any]) -> None:
@@ -3278,35 +4489,25 @@ def _validate_shard_structure(artifact: dict[str, Any]) -> None:
         "fact",
         "code_map",
     }:
-        raise ContextEfficiencyError(
-            "E_SHARD_FIELDS", "candidate has invalid fields or type"
-        )
+        _invalid("E_SHARD_FIELDS", "candidate has invalid fields or type")
     if (
         artifact.get("review_status") != "UNREVIEWED"
         or artifact.get("retention_inventory_status") != "CALLER_DECLARED"
     ):
-        raise ContextEfficiencyError(
-            "E_SHARD_FIELDS", "candidate review or retention state is invalid"
-        )
+        _invalid("E_SHARD_FIELDS", "candidate review or retention state is invalid")
     claims = artifact.get("claims")
     if not isinstance(claims, list) or not 1 <= len(claims) <= MAX_SHARD_CLAIMS:
-        raise ContextEfficiencyError("E_SHARD_FIELDS", "candidate claims are invalid")
+        _invalid("E_SHARD_FIELDS", "candidate claims are invalid")
     for claim in claims:
         _validate_shard_claim_structure(claim)
     categories = {"correction", "failure", "approval", "unresolved_action"}
     retained = artifact.get("retained_records")
     if not isinstance(retained, dict) or set(retained) != categories:
-        raise ContextEfficiencyError(
-            "E_SHARD_RETENTION", "candidate retention categories are invalid"
-        )
+        _invalid("E_SHARD_RETENTION", "candidate retention categories are invalid")
     if any(not isinstance(records, list) for records in retained.values()):
-        raise ContextEfficiencyError(
-            "E_SHARD_RETENTION", "candidate retained records are invalid"
-        )
+        _invalid("E_SHARD_RETENTION", "candidate retained records are invalid")
     if sum(len(records) for records in retained.values()) > MAX_SHARD_RECORDS:
-        raise ContextEfficiencyError(
-            "E_SHARD_BOUNDARY", "candidate retained records exceed limit"
-        )
+        _invalid("E_SHARD_BOUNDARY", "candidate retained records exceed limit")
 
 
 def _validated_shard_reference(
@@ -3316,20 +4517,16 @@ def _validated_shard_reference(
         artifact.get("schema") != SHARD_CANDIDATE_SCHEMA
         or artifact.get("state") != "CANDIDATE"
     ):
-        raise ContextEfficiencyError(
-            "E_SHARD_FIELDS", "candidate schema or state is invalid"
-        )
+        _invalid("E_SHARD_FIELDS", "candidate schema or state is invalid")
     _validate_shard_structure(artifact)
     digest = artifact.get("candidate_sha256")
     if not isinstance(digest, str) or digest != _shard_digest(
         artifact, "candidate_sha256"
     ):
-        raise ContextEfficiencyError("E_SHARD_DIGEST", "candidate digest is invalid")
+        _invalid("E_SHARD_DIGEST", "candidate digest is invalid")
     packet = artifact.get("packet")
     if not isinstance(packet, dict) or set(packet) != {"path", "packet_sha256"}:
-        raise ContextEfficiencyError(
-            "E_SHARD_FIELDS", "candidate packet reference is invalid"
-        )
+        _invalid("E_SHARD_FIELDS", "candidate packet reference is invalid")
     path, relative = _shard_relative_path(workspace, packet["path"], "packet.path")
     return digest, path, relative
 
@@ -3391,13 +4588,9 @@ def review_context_shard_candidate(
     """Write a separate explicit caller-review event; reviewer identity is unauthenticated."""
     validation = validate_context_shard_candidate(root, candidate, now=now)
     if not validation["valid"]:
-        raise ContextEfficiencyError(
-            "E_SHARD_NOT_REVIEWABLE", f"candidate state is {validation['state']}"
-        )
+        _invalid("E_SHARD_NOT_REVIEWABLE", f"candidate state is {validation['state']}")
     if decision not in {"accept", "reject", "defer"}:
-        raise ContextEfficiencyError(
-            "E_SHARD_REVIEW", "decision must be accept, reject, or defer"
-        )
+        _invalid("E_SHARD_REVIEW", "decision must be accept, reject, or defer")
     reviewer = _safe_text(reviewer_id, "reviewer_id", 160)
     basis = _safe_text(review_basis, "review_basis", 1000)
     artifact = {
@@ -3521,15 +4714,18 @@ def _load_latest_experiment(directory: Path) -> tuple[dict[str, Any] | None, boo
         return None, True
 
 
-def _status_projection(
-    stats: dict[str, Any],
-    experiment: dict[str, Any] | None,
-    experiment_blocked: bool,
-    state: str,
-    invalid: int,
-) -> dict[str, Any]:
+def _status_projection(stats, experiment, experiment_blocked, state, invalid):
     selection_count = stats["selection_count"]
     missing_roles = stats["missing_selection_evidence"]
+    values = experiment or {}
+    measurements = (
+        "quality_nonregression",
+        "observed_latency_reduction",
+        "observed_cost_delta",
+        "observed_cost_delta_unit",
+        "observed_token_delta",
+        "observed_token_delta_unit",
+    )
     return {
         "schema": STATUS_SCHEMA,
         "state": state,
@@ -3556,45 +4752,1248 @@ def _status_projection(
         "missing_evidence_count": invalid + missing_roles + int(experiment is None),
         "experiment_status": "BLOCKED"
         if experiment_blocked
-        else experiment.get("state", "MISSING_EVIDENCE")
-        if experiment
-        else "MISSING_EVIDENCE",
+        else values.get("state", "MISSING_EVIDENCE"),
         "experiment_quality_status": "NONREGRESSED"
-        if experiment and experiment.get("quality_nonregression") is True
+        if experiment and values.get("quality_nonregression") is True
         else "REGRESSED"
         if experiment
         else "UNKNOWN",
         "experiment_freshness": "UNVERIFIED" if experiment else "MISSING",
-        "quality_nonregression": experiment.get("quality_nonregression")
-        if experiment
-        else None,
-        "paired_sample_count": experiment.get("paired_sample_count", 0)
-        if experiment
-        else 0,
-        "observed_latency_reduction": experiment.get("observed_latency_reduction")
-        if experiment
-        else None,
-        "observed_cost_delta": experiment.get("observed_cost_delta")
-        if experiment
-        else None,
-        "observed_cost_delta_unit": experiment.get("observed_cost_delta_unit")
-        if experiment
-        else None,
-        "observed_token_delta": experiment.get("observed_token_delta")
-        if experiment
-        else None,
-        "observed_token_delta_unit": experiment.get("observed_token_delta_unit")
-        if experiment
-        else None,
-        "experiment_evidence_level": experiment.get("evidence_level")
-        if experiment
-        else None,
+        **{key: values.get(key) for key in measurements},
+        "paired_sample_count": values.get("paired_sample_count", 0),
+        "experiment_evidence_level": values.get("evidence_level"),
         "claim_boundary": "Bounded cache metadata only; estimated token counts are not provider usage or guaranteed savings, and no source is executed or approved.",
-        "authority": {
-            "execution": False,
-            "approval": False,
-            "repair": False,
-            "publication": False,
-            "credential": False,
-        },
+        "authority": _context_read_only_authority(),
     }
+
+
+_PROTOCOL_EXTERNAL_BINDINGS = frozenset(
+    "abc abc.ABC abc.ABCMeta contextlib contextlib.suppress typing typing.TYPE_CHECKING sys sys.version_info".split()
+)
+
+
+def protocol_call_context(
+    root, files, snapshots, *, source_hashes=None, max_nodes=None, python_profile=None
+):
+    """Describe captured repr dispatch; never grant an assertion or suppress a finding."""
+    from . import review_audits as audit
+    import sys
+
+    limit = MAX_AST_NODES if max_nodes is None else max_nodes
+    if (
+        not isinstance(limit, int)
+        or not 1 <= limit <= MAX_AST_NODES
+        or len(snapshots) > 460
+    ):
+        return {}
+    profile = (
+        python_profile
+        if python_profile is not None
+        else {
+            "implementation": sys.implementation.name,
+            "version": ".".join(map(str, sys.version_info[:3])),
+        }
+    )
+    state = {
+        "root": root,
+        "snapshots": snapshots,
+        "eligible": {p.resolve(): p for p in files},
+        "records": {},
+        "limit": limit,
+        "hashes": source_hashes,
+        "profile": profile,
+        "audit": audit,
+    }
+    result = {}
+    for path, tree in snapshots.items():
+        relative = path.relative_to(root).as_posix()
+        try:
+            record = _protocol_source_record(path, state)
+        except ValueError as exc:
+            result[relative] = {
+                "schema": "factory.protocol-context.v1",
+                "summaries": [],
+                "gaps": [str(exc)],
+            }
+            continue
+        tests = [
+            n
+            for n in record["nodes"]
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and n.name.startswith("test_")
+        ]
+        summaries = [
+            summary
+            for test in tests
+            for call in ast.walk(test)
+            if isinstance(call, ast.Call)
+            if (
+                summary := (
+                    _protocol_call_summary
+                    if isinstance(call.func, ast.Name) and call.func.id == "repr"
+                    else _protocol_demand_summary
+                )(path, test, call, state)
+            )
+            is not None
+        ]
+        if summaries:
+            result[relative] = {
+                "schema": "factory.protocol-context.v1",
+                "summaries": summaries,
+                "gaps": [],
+            }
+    return result
+
+
+def _protocol_source_record(path, state):
+    """Reuse producer trees and the established import resolver without another parser."""
+    if path in state["records"]:
+        return state["records"][path]
+    tree = state["snapshots"].get(path)
+    _require(isinstance(tree, ast.Module), "SOURCE_UNAVAILABLE")
+    nodes = _bounded_ast_nodes(tree)
+    _require(not (nodes is None or len(nodes) > state["limit"]), "AST_NODE_LIMIT")
+    source_sha = getattr(tree, "_oracle_source_sha256", None)
+    _require(_is_sha256(source_sha), "SOURCE_IDENTITY_MISSING")
+    expected = state["hashes"]
+    if (
+        expected is not None
+        and expected.get(path, expected.get(path.relative_to(state["root"]).as_posix()))
+        != source_sha
+    ):
+        raise ValueError("SOURCE_IDENTITY_DRIFT")
+    record = {
+        "tree": tree,
+        "nodes": nodes,
+        "parents": _ast_parent_map(nodes),
+        "sha256": source_sha,
+        "imports": state["audit"]._oracle_imports(
+            state["root"], path, tree, state["eligible"]
+        ),
+    }
+    state["records"][path] = record
+    return record
+
+
+def _protocol_dependency(path, node, role, state):
+    record = _protocol_source_record(path, state)
+    return {
+        "source": path.relative_to(state["root"]).as_posix(),
+        "sha256": record["sha256"],
+        "ast_sha256": hashlib.sha256(
+            ast.dump(node, include_attributes=True).encode()
+        ).hexdigest(),
+        "symbol": getattr(node, "name", "<module>"),
+        "line": getattr(node, "lineno", 1),
+        "end_line": getattr(node, "end_lineno", None),
+        "role": role,
+    }
+
+
+def _protocol_call_summary(path, test, call, state):
+    summary = {
+        "status": "UNKNOWN",
+        "python_profile": deepcopy(state["profile"]),
+        "protocol": "builtins.repr",
+        "test": test.name,
+        "line": call.lineno,
+        "column": call.col_offset,
+        "output_checked": False,
+        "runtime_observed": False,
+        "conditional_on_successful_construction": True,
+        "conditional_on_unchanged_dispatch": True,
+        "dependencies": [],
+        "assumptions": [],
+        "unresolved_effects": [
+            "CONSTRUCTOR_SUCCESS_AND_EFFECTS_NOT_VERIFIED",
+            "CLASS_BODY_EFFECTS_NOT_VERIFIED",
+            "NESTED_FORMAT_PROTOCOLS_NOT_VERIFIED",
+        ],
+        "unknown_reasons": [],
+    }
+    state["constructor_effect_dependencies"] = []
+    state["receiver_safe_calls"] = set()
+    try:
+        summary["dependencies"].append(_protocol_dependency(path, test, "test", state))
+        _protocol_reachable_repr(path, test, call, state)
+        receiver = call.args[0]
+        target = _protocol_class_reference(receiver.func, path, test, state)
+        if (
+            not isinstance(target, tuple)
+            or len(target) != 2
+            or not isinstance(target[1], ast.ClassDef)
+        ):
+            raise ValueError("RECEIVER_CLASS_UNRESOLVED")
+        declaration_parent = _protocol_source_record(target[0], state)["parents"].get(
+            id(target[1])
+        )
+        if declaration_parent is test and target[1].lineno >= call.lineno:
+            raise ValueError("LOCAL_CLASS_NOT_YET_DECLARED")
+        chain, assumptions = _protocol_class_chain(target, state)
+        summary["assumptions"].extend(assumptions)
+        summary["dependencies"].extend(
+            _protocol_dependency(p, cls, "receiver_class", state) for p, cls in chain
+        )
+        method_path, method = _protocol_repr_method(chain)
+        summary["dependencies"].append(
+            _protocol_dependency(method_path, method, "protocol_method", state)
+        )
+        summary["receiver"] = {
+            "source": target[0].relative_to(state["root"]).as_posix(),
+            "class": target[1].name,
+            "allocation_line": receiver.lineno,
+        }
+        summary["method_decorators"] = [
+            ast.unparse(item) for item in method.decorator_list
+        ]
+        decorators = _protocol_validate_repr_method(method_path, method, state)
+        summary["dependencies"].extend(
+            _protocol_dependency(p, fn, "identity_decorator", state)
+            for p, fn in decorators
+        )
+        if decorators:
+            summary["assumptions"].append(
+                {
+                    "contract": "source.metadata-identity-transfer.v1",
+                    "profile": deepcopy(state["profile"]),
+                    "boundary": "Supported source shape returns the exact input with only boolean __override__/__final__ writes; typing.TYPE_CHECKING is false at runtime; standard contextlib.suppress handles only AttributeError/TypeError. No runtime purity is proved.",
+                }
+            )
+        _protocol_dependencies_closed(path, test, [*chain, *decorators], state)
+        summary.update(
+            status="WEAK_PROTOCOL",
+            builtin_identity="unshadowed builtins.repr",
+            dispatch="source lookup conditional on unchanged bindings across construction",
+            exception_edge="propagates from direct statement if construction and dispatch execute",
+        )
+    except ValueError as exc:
+        summary["unknown_reasons"].append(str(exc.args[0]))
+        if len(exc.args) > 1:
+            summary["blocking_evidence"] = exc.args[1]
+    summary["dependencies"].extend(state["constructor_effect_dependencies"])
+    return summary
+
+
+def _protocol_reachable_repr(path, test, call, state):
+    preceding = _protocol_reachable_call(path, test, call, state)
+    _protocol_builtin_unshadowed(path, test, state)
+    if len(call.args) != 1 or call.keywords or not isinstance(call.args[0], ast.Call):
+        raise ValueError("RECEIVER_NOT_DIRECT_ALLOCATION")
+    for statement in preceding:
+        if not _protocol_preceding_statement(statement):
+            raise ValueError("PRECEDING_CONTROL_OR_EFFECT_UNKNOWN")
+    if call.args[0].args or call.args[0].keywords:
+        raise ValueError("DYNAMIC_CONSTRUCTOR_ARGUMENTS")
+
+
+def _protocol_preceding_statement(statement):
+    if isinstance(statement, (ast.ClassDef, ast.Import, ast.ImportFrom)):
+        return True
+    if isinstance(statement, ast.Expr) and isinstance(statement.value, ast.Constant):
+        return True
+    return isinstance(statement, (ast.Assign, ast.AnnAssign)) and isinstance(
+        statement.value, ast.Constant
+    )
+
+
+def _protocol_class_reference(expression, path, scope, state, depth=0):
+    """Resolve only direct captured imports, class declarations and dotted members."""
+    _require(not depth >= 16, "REFERENCE_DEPTH_LIMIT")
+    if isinstance(expression, ast.Attribute):
+        parent = _protocol_class_reference(
+            expression.value, path, scope, state, depth + 1
+        )
+        if (
+            parent in {"abc", "contextlib", "typing", "sys"}
+            if isinstance(parent, str)
+            else False
+        ):
+            return parent + "." + expression.attr
+        if isinstance(parent, tuple) and parent[1] is None:
+            return _protocol_class_name(expression.attr, parent[0], None, state)
+        if isinstance(parent, tuple):
+            return (*parent, expression.attr)
+        raise ValueError("DYNAMIC_MEMBER_REFERENCE")
+    _require(isinstance(expression, ast.Name), "DYNAMIC_CLASS_REFERENCE")
+    return _protocol_class_name(expression.id, path, scope, state)
+
+
+def _protocol_class_name(name, path, scope, state, visited=()):
+    if (path, name) in visited or len(visited) >= 16:
+        raise ValueError("IMPORT_REFERENCE_CYCLE_OR_DEPTH_LIMIT")
+    visited = (*visited, (path, name))
+    audit = state["audit"]
+    record = _protocol_source_record(path, state)
+    local = _protocol_local_class(name, scope, state)
+    if local is not None:
+        return path, local
+    bound = [n for n in record["tree"].body if name in audit._bound_names(n)]
+    if not bound and name == "object":
+        return "builtins.object"
+    if len(bound) != 1 or isinstance(bound[0], ast.If):
+        bound = [_protocol_active_binding(name, path, state)]
+    if isinstance(bound[0], (ast.ClassDef, ast.FunctionDef)):
+        return path, bound[0]
+    resolved = audit._module_security_aliases(record["tree"]).get(name)
+    if resolved in _PROTOCOL_EXTERNAL_BINDINGS:
+        return resolved
+    imported = record["imports"].get(name)
+    _require(imported is not None, "IMPORT_SOURCE_UNAVAILABLE")
+    source, symbol = imported
+    if (
+        symbol is None
+        or symbol == source.stem
+        or (source.name == "__init__.py" and symbol == source.parent.name)
+    ):
+        return source, None
+    return _protocol_class_name(symbol, source, None, state, visited)
+
+
+def _protocol_class_chain(target, state):
+    chain, assumptions, visited = [], [], set()
+    while (
+        isinstance(target, tuple)
+        and len(target) == 2
+        and isinstance(target[1], ast.ClassDef)
+    ):
+        path, cls = target
+        key = path, id(cls)
+        if key in visited or len(chain) >= 16:
+            raise ValueError("INHERITANCE_CYCLE_OR_DEPTH_LIMIT")
+        visited.add(key)
+        _protocol_class_shape(cls)
+        chain.append(target)
+        if not cls.bases:
+            return chain, assumptions
+        _require(not len(cls.bases) != 1, "MULTIPLE_OR_DYNAMIC_BASES")
+        parent = _protocol_source_record(path, state)["parents"].get(id(cls))
+        scope = parent if isinstance(parent, ast.FunctionDef) else None
+        target = _protocol_class_reference(cls.bases[0], path, scope, state)
+    if target == "builtins.object":
+        return chain, assumptions
+    if target == "abc.ABC":
+        if state["profile"] != {"implementation": "cpython", "version": "3.11.9"}:
+            raise ValueError("ABC_PROFILE_UNSUPPORTED")
+        assumptions.append(
+            {
+                "contract": "stdlib.abc-transparent-method-lookup.cpython-3.11.9.v1",
+                "profile": state["profile"],
+                "boundary": "Unmodified imported abc.ABC and inherited ABCMeta are transparent only for method lookup; constructor success, hooks, purity and runtime execution are not proved.",
+            }
+        )
+        return chain, assumptions
+    raise ValueError("EXTERNAL_OR_DYNAMIC_BASE")
+
+
+def _protocol_class_shape(cls):
+    constructors = [n for n in cls.body if "__init__" in _protocol_class_bound_names(n)]
+    if any(not isinstance(n, ast.FunctionDef) for n in constructors):
+        raise ValueError("CONSTRUCTOR_BINDING_UNRESOLVED")
+    if any(isinstance(n, (ast.If, ast.Try, ast.For, ast.With)) for n in cls.body):
+        raise ValueError("DYNAMIC_CLASS_BODY")
+    _require(not (cls.decorator_list or cls.keywords), "CLASS_DECORATOR_OR_METACLASS")
+    hooks = set(
+        "__new__ __getattr__ __getattribute__ __init_subclass__ __mro_entries__ __setattr__ __delattr__".split()
+    )
+    if any(hooks.intersection(_protocol_class_bound_names(n)) for n in cls.body):
+        raise ValueError("DYNAMIC_CLASS_HOOK")
+    for method in constructors:
+        _require(not method.decorator_list, "DYNAMIC_CONSTRUCTOR_DECORATOR")
+        _protocol_constructor_receiver_safe(method)
+        nodes = list(ast.walk(method))
+        if isinstance(
+            method, ast.AsyncFunctionDef
+        ) or _scope_has_reflective_capability_access(nodes):
+            raise ValueError("DYNAMIC_CONSTRUCTOR_EFFECTS")
+        if any(
+            isinstance(n, ast.Attribute)
+            and isinstance(n.ctx, (ast.Store, ast.Del))
+            and n.attr in {"__class__", "__repr__", "__dict__", "__bases__"}
+            for n in nodes
+        ):
+            raise ValueError("CONSTRUCTOR_TYPE_OR_METHOD_MUTATION")
+
+
+def _protocol_repr_method(chain, name="__repr__"):
+    for path, cls in chain:
+        bound = [n for n in cls.body if name in _protocol_class_bound_names(n)]
+        if not bound:
+            continue
+        if len(bound) != 1 or not isinstance(bound[0], ast.FunctionDef):
+            raise ValueError("PROTOCOL_METHOD_BINDING_AMBIGUOUS")
+        return path, bound[0]
+    raise ValueError("CONSTANT_OR_DEFAULT_REPRESENTATION")
+
+
+def _protocol_validate_repr_method(path, method, state):
+    decorators = [
+        _protocol_identity_decorator(item, path, state)
+        for item in method.decorator_list
+    ]
+    body = method.body[1:] if _async_runner_docstring(method.body) else method.body
+    if len(body) != 1 or not isinstance(body[0], ast.Return) or not method.args.args:
+        raise ValueError("PROTOCOL_BODY_UNSUPPORTED")
+    receiver = method.args.args[0].arg
+    nodes = list(ast.walk(body[0].value))
+    if not any(
+        isinstance(n, ast.Attribute)
+        and isinstance(n.value, ast.Name)
+        and n.value.id == receiver
+        and isinstance(n.ctx, ast.Load)
+        for n in nodes
+    ):
+        raise ValueError("CONSTANT_OR_DEFAULT_REPRESENTATION")
+    deferred = tuple(
+        getattr(ast, kind)
+        for kind in "Yield YieldFrom Await Lambda IfExp BoolOp GeneratorExp".split()
+    )
+    if any(isinstance(n, deferred) for n in nodes):
+        raise ValueError("DEFERRED_OR_CONDITIONAL_PROTOCOL_BODY")
+    return decorators
+
+
+def _protocol_class_bound_names(node):
+    from . import review_audits as audit
+
+    return audit._bound_names(node)
+
+
+def _protocol_executed_nodes(tree, test, state):
+    """Walk definition-time effects and this test, excluding deferred bodies."""
+    pending, nodes = [*tree.body, *(test.body if test is not None else ())], []
+    while pending:
+        node = pending.pop()
+        nodes.append(node)
+        children = ast.iter_child_nodes(node)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            body = node.body if isinstance(node.body, list) else [node.body]
+            children = (child for child in children if child not in body)
+        pending.extend(children)
+    return nodes
+
+
+def _protocol_dependencies_closed(path, test, chain, state):
+    targets = {(p, id(cls)) for p, cls in chain}
+    paths = {p for p, _ in chain} | {path}
+    for source in sorted(paths):
+        record = _protocol_source_record(source, state)
+        scope = test if source == path else None
+        nodes = _protocol_executed_nodes(record["tree"], scope, state)
+        if _module_has_dynamic_capability_access(nodes) or any(
+            isinstance(n, ast.Attribute) and n.attr in {"__annotations__", "__dict__"}
+            for n in nodes
+        ):
+            raise ValueError("REFLECTIVE_DEPENDENCY_EFFECTS")
+        _protocol_builtin_repr_closed(source, nodes, state)
+        _protocol_closed_nodes(source, scope, nodes, targets, paths, state)
+        for owner, cls in chain:
+            if owner == source:
+                _protocol_constructor_bindings_closed(
+                    source, cls, targets, paths, state
+                )
+
+
+def _protocol_closed_nodes(path, scope, nodes, targets, paths, state):
+    record = _protocol_source_record(path, state)
+    parents = record["parents"]
+    for node in nodes:
+        if not isinstance(node, (ast.Name, ast.Attribute)):
+            continue
+        try:
+            target = _protocol_class_reference(node, path, scope, state)
+        except ValueError:
+            continue
+        if not _protocol_target_relevant(target, targets, paths):
+            continue
+        parent = parents.get(id(node))
+        if (
+            target == "typing.TYPE_CHECKING"
+            and isinstance(parent, ast.If)
+            and parent.test is node
+        ):
+            continue
+        if target == "sys.version_info" and isinstance(parent, ast.Compare):
+            _protocol_profile_truth(parent, record, state)
+            continue
+        if not isinstance(node.ctx, ast.Load) or not _protocol_reference_use_closed(
+            node, parent
+        ):
+            raise ValueError(
+                "DEPENDENCY_MUTATION_OR_ALIAS_ESCAPE",
+                {
+                    "source": path.relative_to(state["root"]).as_posix(),
+                    "line": getattr(node, "lineno", None),
+                    "reference": ast.unparse(node),
+                    "parent": type(parent).__name__,
+                },
+            )
+        if isinstance(parent, ast.Attribute) and parent.attr in {
+            "__dict__",
+            "__class__",
+            "__mro__",
+            "__bases__",
+            "__subclasses__",
+            "__setattr__",
+            "__delattr__",
+        }:
+            raise ValueError("REFLECTIVE_DEPENDENCY_ACCESS")
+
+
+def _protocol_target_relevant(target, targets, paths):
+    if isinstance(target, str):
+        return target in _PROTOCOL_EXTERNAL_BINDINGS
+    if not isinstance(target, tuple):
+        return False
+    return (
+        target[0] in paths
+        if target[1] is None
+        else (target[0], id(target[1])) in targets
+    )
+
+
+def _protocol_reference_use_closed(node, parent):
+    match parent:
+        case ast.arg(annotation=annotation) | ast.AnnAssign(annotation=annotation):
+            return annotation is node
+        case (
+            ast.FunctionDef(returns=returns, decorator_list=decorators)
+            | ast.AsyncFunctionDef(returns=returns, decorator_list=decorators)
+        ):
+            return returns is node or node in decorators
+        case ast.Attribute(value=value, ctx=ctx):
+            return value is node and isinstance(ctx, ast.Load)
+        case ast.Call(func=func):
+            return func is node
+        case ast.ClassDef(bases=bases, keywords=[], decorator_list=[]):
+            return node in bases
+    return False
+
+
+def _protocol_constructor_receiver_safe(method):
+    _require(method.args.args, "CONSTRUCTOR_RECEIVER_UNKNOWN")
+    receiver = method.args.args[0].arg
+    nodes = list(ast.walk(method))
+    parents = _ast_parent_map(nodes)
+    safe = {
+        n.func.value.value
+        for n in nodes
+        if isinstance(n, ast.Call) and _protocol_fresh_list_append(n, method)
+    }
+    for node in nodes:
+        if node in safe:
+            continue
+        if isinstance(node, (ast.Yield, ast.YieldFrom, ast.Raise)):
+            raise ValueError("CONSTRUCTOR_COMPLETION_UNKNOWN")
+        if isinstance(node, ast.Name) and node.id == receiver:
+            parent = parents.get(id(node))
+            if not isinstance(parent, ast.Attribute) or not isinstance(
+                parent.ctx, ast.Store
+            ):
+                raise ValueError("CONSTRUCTOR_RECEIVER_ESCAPE_OR_DYNAMIC_CALL")
+
+
+def _protocol_builtin_repr_closed(path, nodes, state):
+    audit = state["audit"]
+    record = _protocol_source_record(path, state)
+    aliases = audit._module_security_aliases(record["tree"])
+    for node in nodes:
+        if (
+            isinstance(node, (ast.Name, ast.Attribute))
+            and audit._resolved_ast_name(node, aliases) == "builtins.repr"
+        ):
+            parent = record["parents"].get(id(node))
+            if not isinstance(parent, ast.Call) or parent.func is not node:
+                raise ValueError("BUILTIN_REPR_MUTATED_OR_ESCAPED")
+
+
+def _protocol_builtin_unshadowed(path, test, state, name="repr"):
+    audit = state["audit"]
+    if audit._scope_binds_name(test, name) or name in audit._scope_parameters(test):
+        raise ValueError("BUILTIN_SHADOWED")
+    record = _protocol_source_record(path, state)
+    if any(name in audit._bound_names(s) for s in record["tree"].body):
+        raise ValueError("BUILTIN_SHADOWED")
+    if _scope_has_reflective_capability_access(list(ast.walk(test))):
+        raise ValueError("REFLECTIVE_TEST_EFFECTS")
+
+
+def _protocol_local_class(name, scope, state):
+    if scope is None:
+        return None
+    audit = state["audit"]
+    local = [n for n in scope.body if isinstance(n, ast.ClassDef) and n.name == name]
+    bound = [n for n in scope.body if name in audit._bound_names(n)]
+    _require(name not in audit._scope_parameters(scope), "CONSTRUCTOR_PARAMETER_SHADOW")
+    if not bound:
+        return None
+    if len(bound) == len(local) == 1:
+        return local[0]
+    raise ValueError("CONSTRUCTOR_LOCAL_REBINDING")
+
+
+def _protocol_constructor_bindings_closed(
+    path, cls, targets, paths, state, functions=()
+):
+    pending = [
+        (path, n)
+        for n in cls.body
+        if isinstance(n, ast.FunctionDef) and n.name == "__init__"
+    ]
+    pending.extend(functions)
+    visited = set()
+    while pending:
+        source, function = pending.pop()
+        key = source, id(function)
+        if key in visited or len(visited) >= 16:
+            raise ValueError("CONSTRUCTOR_EFFECT_GRAPH_LIMIT_OR_CYCLE")
+        visited.add(key)
+        nodes = [n for stmt in function.body for n in ast.walk(stmt)]
+        state["constructor_effect_dependencies"].append(
+            _protocol_dependency(source, function, "constructor_effect", state)
+        )
+        if any(
+            isinstance(n, (ast.Import, ast.ImportFrom, ast.Yield, ast.YieldFrom))
+            for n in nodes
+        ) or _scope_has_reflective_capability_access(nodes):
+            raise ValueError("CONSTRUCTOR_EFFECT_UNRESOLVED")
+        _protocol_closed_nodes(source, function, nodes, targets, paths, state)
+        for call in (n for n in nodes if isinstance(n, ast.Call)):
+            pending.extend(_protocol_constructor_callee(call, source, function, state))
+
+
+def _protocol_constructor_callee(call, path, scope, state):
+    audit = state["audit"]
+    module = _protocol_source_record(path, state)["tree"]
+    if isinstance(call.func, ast.Name) and call.func.id == "super":
+        if (
+            "super" in audit._scope_parameters(scope)
+            or audit._scope_binds_name(scope, "super")
+            or any("super" in audit._bound_names(n) for n in module.body)
+        ):
+            raise ValueError("CONSTRUCTOR_SUPER_SHADOWED")
+        return ()
+    if (
+        call in state.get("receiver_safe_calls", ())
+        or _protocol_fresh_list_append(call, scope)
+        or (
+            isinstance(call.func, ast.Attribute)
+            and isinstance(call.func.value, ast.Call)
+            and isinstance(call.func.value.func, ast.Name)
+            and call.func.value.func.id == "super"
+        )
+    ):
+        return ()
+    try:
+        target = _protocol_class_reference(call.func, path, scope, state)
+    except ValueError as exc:
+        if str(exc) != "IMPORT_SOURCE_UNAVAILABLE":
+            raise
+        root = _leftmost_name(call.func)
+        origin = _protocol_active_binding(root.id, path, state)
+        if isinstance(origin, (ast.Import, ast.ImportFrom)):
+            return ()  # Unresolved imports require the unchanged-dispatch condition.
+        raise ValueError("CONSTRUCTOR_CALLEE_EFFECT_UNKNOWN") from None
+    if isinstance(target, tuple) and len(target) == 2:
+        source, node = target
+        if isinstance(node, ast.FunctionDef):
+            return [target]
+        if isinstance(node, ast.ClassDef):
+            chain, _ = _protocol_class_chain(target, state)
+            state["constructor_effect_dependencies"].extend(
+                _protocol_dependency(p, cls, "constructor_effect_class", state)
+                for p, cls in chain
+            )
+            return [
+                (p, fn)
+                for p, cls in chain
+                for fn in cls.body
+                if isinstance(fn, ast.FunctionDef) and fn.name == "__init__"
+            ]
+
+    raise ValueError("CONSTRUCTOR_CALLEE_EFFECT_UNKNOWN")
+
+
+def protocol_call_helpers():
+    """Bind the producer, deterministic local helper inventory, and inventory code."""
+    from .review_integrity import source_binding_helpers
+
+    helpers = tuple(
+        fn
+        for name, fn in sorted(globals().items())
+        if name.startswith("_protocol_") and callable(fn)
+    )
+    return (
+        protocol_call_context,
+        protocol_call_helpers,
+        _capability_reflection_names,
+        _require,
+        *helpers,
+        *source_binding_helpers(),
+    )
+
+
+def _protocol_active_binding(name, path, state):
+    record = _protocol_source_record(path, state)
+    pending, matches = list(record["tree"].body), []
+    while pending:
+        node = pending.pop()
+        if isinstance(node, ast.If):
+            relevant = any(
+                name in _protocol_class_bound_names(n)
+                for n in (*node.body, *node.orelse)
+            )
+            if relevant:
+                selected = _protocol_profile_truth(node.test, record, state)
+                pending.extend(node.body if selected else node.orelse)
+        elif name in _protocol_class_bound_names(node):
+            matches.append(node)
+    _require(not len(matches) != 1, "PROFILE_BINDING_AMBIGUOUS")
+    return matches[0]
+
+
+def _protocol_profile_truth(test, record, state):
+    audit = state["audit"]
+    aliases = audit._module_security_aliases(record["tree"])
+    if audit._resolved_ast_name(test, aliases) == "typing.TYPE_CHECKING":
+        return False
+    if (
+        isinstance(test, ast.Compare)
+        and len(test.ops) == len(test.comparators) == 1
+        and audit._resolved_ast_name(test.left, aliases) == "sys.version_info"
+    ):
+        comparator = test.comparators[0]
+        if isinstance(comparator, ast.Tuple) and all(
+            isinstance(n, ast.Constant) and type(n.value) is int
+            for n in comparator.elts
+        ):
+            if state["profile"] != {"implementation": "cpython", "version": "3.11.9"}:
+                raise ValueError("DECORATOR_PROFILE_UNSUPPORTED")
+            version, bound = (3, 11, 9), tuple(n.value for n in comparator.elts)
+            operations = {ast.GtE: version >= bound, ast.Lt: version < bound}
+            if type(test.ops[0]) in operations:
+                return operations[type(test.ops[0])]
+    raise ValueError("DECORATOR_BRANCH_UNKNOWN")
+
+
+def _protocol_identity_decorator(expression, path, state, transfer=False, call=None):
+    target = _protocol_class_reference(expression, path, None, state)
+    if (
+        not isinstance(target, tuple)
+        or len(target) != 2
+        or not isinstance(target[1], ast.FunctionDef)
+    ):
+        raise ValueError("DECORATOR_SOURCE_UNRESOLVED")
+    source, function = target
+    args = function.args
+    if not transfer and (
+        len(args.args) != 1
+        or args.posonlyargs
+        or args.kwonlyargs
+        or args.defaults
+        or args.vararg
+        or args.kwarg
+    ):
+        raise ValueError("DECORATOR_IDENTITY_SIGNATURE_UNKNOWN")
+    _require(not function.decorator_list, "DECORATOR_IDENTITY_SIGNATURE_UNKNOWN")
+    body = (
+        function.body[1:] if _async_runner_docstring(function.body) else function.body
+    )
+    _require(
+        body
+        and isinstance(body[-1], ast.Return)
+        and isinstance(body[-1].value, ast.Name),
+        "DECORATOR_RETURN_NOT_IDENTITY",
+    )
+    parameter = body[-1].value.id
+    _require(transfer or parameter == args.args[0].arg, "DECORATOR_RETURN_NOT_IDENTITY")
+    if transfer:
+        returns = [
+            n
+            for s in body
+            for n in state["audit"]._body_nodes(s)
+            if isinstance(n, ast.Return)
+        ]
+        _require(len(returns) == 1, "IDENTITY_RETURN_CONTROL_UNKNOWN")
+        arguments = state["audit"].integrity.bind_source_call(call, function)
+        _require(
+            arguments.get(parameter) is call.args[0], "IDENTITY_RETURN_ARGUMENT_UNKNOWN"
+        )
+        state["transfer_receiver"] = parameter
+        state["transfer_source"] = source
+        _protocol_receiver_transfer(function, transfer, state)
+    else:
+        for statement in body[:-1]:
+            _protocol_metadata_statement(statement, parameter, source, state)
+    return target
+
+
+def _protocol_metadata_statement(statement, parameter, path, state):
+    match statement:
+        case ast.With(
+            items=[
+                ast.withitem(context_expr=ast.Call() as context, optional_vars=None)
+            ],
+            body=body,
+        ):
+            record = _protocol_source_record(path, state)
+            aliases = state["audit"]._module_security_aliases(record["tree"])
+            if (
+                state["audit"]._resolved_ast_name(context.func, aliases)
+                != "contextlib.suppress"
+                or context.keywords
+                or not context.args
+            ):
+                raise ValueError("DECORATOR_CONTEXT_UNKNOWN")
+            if any(
+                not isinstance(arg, ast.Name)
+                or arg.id not in {"AttributeError", "TypeError"}
+                or any(
+                    arg.id in _protocol_class_bound_names(n)
+                    for n in record["tree"].body
+                )
+                for arg in context.args
+            ):
+                raise ValueError("DECORATOR_EXCEPTION_BINDING_UNKNOWN")
+            if any(isinstance(child, ast.With) for child in body):
+                raise ValueError("DECORATOR_CONTEXT_NESTING_UNSUPPORTED")
+            for child in body:
+                _protocol_metadata_statement(child, parameter, path, state)
+        case ast.Assign(
+            targets=[ast.Attribute(value=ast.Name(id=name), attr=attr)],
+            value=ast.Constant(value=value),
+        ) if (
+            name == parameter
+            and attr in {"__override__", "__final__"}
+            and type(value) is bool
+        ):
+            return
+        case _:
+            raise ValueError("DECORATOR_EFFECT_NOT_METADATA")
+
+
+def _protocol_annotate_finding(finding, node, context):
+    observations = context.get("protocol_observations", {})
+    if not isinstance(observations, dict):
+        return finding
+    summaries = observations.get("summaries")
+    if not isinstance(summaries, list):
+        return finding
+    matched = []
+    for summary in summaries:
+        if isinstance(summary, dict) and summary.get("test") == node.name:
+            dependencies = summary.get("dependencies")
+            if not isinstance(dependencies, list):
+                continue
+            positions = [
+                d.get("line")
+                for d in dependencies
+                if isinstance(d, dict)
+                and d.get("role") == "test"
+                and type(d.get("line")) is int
+            ]
+            if node.lineno in positions:
+                matched.append(summary)
+    if matched:
+        finding.setdefault("facts", {})["protocol_observations"] = dict(
+            schema="factory.protocol-observations.v1", summaries=deepcopy(matched)
+        )
+    return finding
+
+
+def _context_read_only_authority():
+    return dict.fromkeys(
+        ("execution", "approval", "repair", "publication", "credential"), False
+    )
+
+
+def _capability_reflection_names():
+    return {
+        "__builtins__",
+        "__import__",
+        "delattr",
+        "eval",
+        "exec",
+        "getattr",
+        "globals",
+        "locals",
+        "setattr",
+        "vars",
+    }
+
+
+def _context_project_fields(row, fields):
+    return {key: row[key] for key in fields.split()}
+
+
+def _protocol_demand_summary(path, test, call, state):
+    summary = dict(
+        protocol="python.iteration",
+        test=test.name,
+        line=call.lineno,
+        output_checked=False,
+        runtime_observed=False,
+        status="UNKNOWN",
+        demand_chain=[],
+        dependencies=[],
+        unknown_reasons=[],
+    )
+    summary["unresolved_effects"] = [
+        "PATH_CONSTRUCTOR_AND_GENERATOR_EFFECTS_NOT_VERIFIED"
+    ]
+    summary.update(item_produced=None, exhausted=None, conditional_on_path=True)
+    state["demand_targets"] = []
+    state["receiver_safe_calls"] = set()
+    state["source_arguments"] = {}
+    state["constructor_effect_dependencies"] = summary["dependencies"]
+    try:
+        preceding = _protocol_reachable_call(path, test, call, state, parameters=True)
+        _require(
+            all(
+                _protocol_preceding_statement(s)
+                or isinstance(s, ast.Expr)
+                and isinstance(s.value, ast.Call)
+                for s in preceding
+            ),
+            "PRECEDING_CONTROL_OR_EFFECT_UNKNOWN",
+        )
+        summary["dependencies"].append(_protocol_dependency(path, test, "test", state))
+        _protocol_demand_visit(call, path, test, summary, state)
+        phases = {step["phase"] for step in summary["demand_chain"]}
+        if not phases.intersection({"created", "body_entered"}):
+            return None
+        summary["status"] = (
+            "WEAK_PROTOCOL" if "body_entered" in phases else "CREATED_ONLY"
+        )
+        summary["exception_channels"] = ["may_propagate", "opaque_effects_unresolved"]
+    except ValueError as exc:
+        summary["unknown_reasons"].append(str(exc))
+        if not any(s["phase"] != "returns" for s in summary["demand_chain"]):
+            return None
+    summary["dependencies"].extend(
+        _protocol_dependency(p, cls, "demand_allocation", state)
+        for p, cls in state["demand_targets"]
+    )
+    return summary
+
+
+def _protocol_demand_visit(call, path, scope, summary, state):
+    forced, visiting, origin = False, set(), (path, scope)
+    while isinstance(call, ast.Call) and len(visiting) < 16:
+        consumer = None
+        if len(call.args) == 1 and not call.keywords:
+            func = call.func
+            if isinstance(func, ast.Name) and func.id in {"tuple", "list"}:
+                consumer = func.id
+                _protocol_builtin_unshadowed(path, scope, state, consumer)
+            elif (
+                isinstance(func, ast.Attribute)
+                and func.attr == "join"
+                and isinstance(func.value, ast.Constant)
+                and isinstance(func.value.value, str)
+            ):
+                consumer = "str.join"
+        if consumer:
+            state.setdefault("receiver_safe_calls", set()).add(call)
+            summary["demand_chain"].append(
+                dict(phase="forces", consumer=consumer, line=call.lineno)
+            )
+            call, forced = call.args[0], True
+            continue
+        source, function = _protocol_demand_target(call.func, path, scope, state)
+        if (
+            (source, id(function)) in visiting
+            or not isinstance(function, ast.FunctionDef)
+            or function.decorator_list
+        ):
+            raise ValueError("DEMAND_CALLABLE_OR_CYCLE_UNKNOWN")
+        previous = {
+            name: value
+            for name, value in state["source_arguments"]
+            .get((path, id(scope)), {})
+            .items()
+            if not any(
+                name in _protocol_class_bound_names(s)
+                for s in scope.body
+                if s.lineno < call.lineno
+            )
+        }
+        state["source_arguments"][(source, id(function))] = state[
+            "audit"
+        ].integrity.bind_source_call(
+            call, function, receiver=state["demand_receiver"], previous=previous
+        )
+        visiting.add((source, id(function)))
+        dependency = _protocol_dependency(source, function, "demand_callable", state)
+        summary["dependencies"].append(dependency)
+        nodes = [n for s in function.body for n in state["audit"]._body_nodes(s)]
+        yields = [n for n in nodes if isinstance(n, (ast.Yield, ast.YieldFrom))]
+        summary["demand_chain"].append(
+            dict(
+                dependency,
+                phase=("body_entered" if forced else "created")
+                if yields
+                else "returns",
+            )
+        )
+        _protocol_dependencies_closed(
+            *origin, [*state["demand_targets"], (source, function)], state
+        )
+        if yields:
+            _require(
+                not any(isinstance(n, (ast.With, ast.AsyncWith)) for n in nodes),
+                "GENERATOR_CONTEXT_MANAGER_UNKNOWN",
+            )
+            if not any(
+                isinstance(n, ast.Yield)
+                and n.value is not None
+                and not isinstance(n.value, ast.Constant)
+                for n in yields
+            ):
+                raise ValueError("CONSTANT_OR_EMPTY_GENERATOR")
+            if any(
+                isinstance(n, ast.Try)
+                and any(
+                    not h.body or not isinstance(h.body[-1], ast.Raise)
+                    for h in n.handlers
+                )
+                for n in nodes
+            ) or any(state["audit"]._finally_suppresses_exception(n) for n in nodes):
+                raise ValueError("GENERATOR_FAILURE_MAY_BE_SWALLOWED")
+            return
+        _require(
+            not any(
+                isinstance(
+                    s, (ast.If, ast.For, ast.While, ast.Try, ast.With, ast.Match)
+                )
+                or isinstance(s, ast.Raise)
+                for s in function.body
+            ),
+            "SOURCE_RETURN_CONTROL_UNKNOWN",
+        )
+        returned = [s.value for s in function.body if isinstance(s, ast.Return)]
+        _require(len(returned) == 1, "SOURCE_RETURN_DEMAND_UNKNOWN")
+        call, path, scope = returned[0], source, function
+    raise ValueError("DEMAND_DEPTH_OR_EXPRESSION_UNKNOWN")
+
+
+def _protocol_demand_target(expression, path, scope, state):
+    state["demand_receiver"] = None
+    receiver = expression.value if isinstance(expression, ast.Attribute) else None
+    name = receiver.id if isinstance(receiver, ast.Name) else None
+    bindings = [
+        s
+        for s in scope.body
+        if s.lineno < expression.lineno and name in _protocol_class_bound_names(s)
+    ]
+    if not bindings:
+        return _protocol_class_reference(expression, path, scope, state)
+    origin, *transfers = bindings
+    _require(
+        isinstance(origin, ast.Assign)
+        and len(origin.targets) == 1
+        and isinstance(origin.targets[0], ast.Name)
+        and isinstance(origin.value, ast.Call),
+        "LOCAL_RECEIVER_ALLOCATION_UNKNOWN",
+    )
+    chain, _ = _protocol_class_chain(
+        _protocol_class_reference(origin.value.func, path, scope, state), state
+    )
+    allowed = {origin.targets[0]}
+    for transfer in transfers:
+        _require(
+            isinstance(transfer, ast.Assign)
+            and len(transfer.targets) == 1
+            and isinstance(transfer.value, ast.Call),
+            "LOCAL_RECEIVER_IDENTITY_UNKNOWN",
+        )
+        call = transfer.value
+        _require(
+            isinstance(transfer.targets[0], ast.Name)
+            and transfer.targets[0].id == name
+            and call.args
+            and isinstance(call.args[0], ast.Name)
+            and call.args[0].id == name,
+            "LOCAL_RECEIVER_IDENTITY_UNKNOWN",
+        )
+        target = _protocol_identity_decorator(
+            call.func, path, state, transfer=chain, call=call
+        )
+        state["demand_targets"].append(target)
+        allowed.update((transfer.targets[0], call.args[0]))
+    state["transfer_source"] = path
+    _protocol_receiver_transfer(
+        scope, chain, state, local=(name, allowed, expression, origin.value)
+    )
+    state["demand_targets"].extend(chain)
+    state["demand_receiver"] = origin.value
+    return _protocol_repr_method(chain, expression.attr)
+
+
+def _require(condition, reason):
+    if not condition:
+        raise ValueError(reason)
+
+
+def _invalid(code: str, message: str) -> NoReturn:
+    raise ContextEfficiencyError(code, message)
+
+
+def _protocol_reachable_call(path, test, call, state, parameters=False):
+    """Require a direct synchronous call; return its preceding statements."""
+    _require(
+        not isinstance(test, ast.AsyncFunctionDef)
+        and not any(isinstance(n, (ast.Yield, ast.YieldFrom)) for n in ast.walk(test)),
+        "DEFERRED_EXECUTION",
+    )
+    _require(
+        not test.decorator_list
+        or parameters
+        and all(
+            _protocol_parameter_decorator(d, path, test, state)
+            for d in test.decorator_list
+        ),
+        "TEST_DECORATOR_EFFECTS",
+    )
+    statements = [s for s in test.body if isinstance(s, ast.Expr) and s.value is call]
+    _require(len(statements) == 1, "CALL_NOT_DIRECT_UNSUPPRESSED_STATEMENT")
+    return test.body[: test.body.index(statements[0])]
+
+
+def _protocol_parameter_decorator(decorator, path, test, state):
+    """Support only literal ordinary parametrization, with an intact pytest API."""
+    match decorator:
+        case ast.Call(
+            func=func,
+            args=[ast.Constant(value=str()), ast.List() | ast.Tuple() as values],
+            keywords=[],
+        ):
+            record = _protocol_source_record(path, state)
+            root = _leftmost_name(func)
+            api = "pytest.mark.parametrize"
+            origin = _module_import_binding_origin(
+                record["tree"], root.id if root else "", api
+            )
+            return (
+                all(
+                    isinstance(n, (ast.Constant, ast.List, ast.Tuple, ast.Load))
+                    for n in ast.walk(values)
+                )
+                and origin is not None
+                and _module_import_aliases_are_closed(
+                    record["tree"],
+                    "pytest",
+                    state["audit"],
+                    api=api,
+                    effect_nodes=_protocol_executed_nodes(record["tree"], test, state),
+                )
+            )
+    return False
+
+
+def _protocol_fresh_list_append(call, scope, chain=()):
+    """A literal list's append stores one object without invoking its hooks."""
+    match call:
+        case ast.Call(
+            func=ast.Attribute(
+                value=ast.Attribute(value=ast.Name(id=receiver), attr=field),
+                attr="append",
+            ),
+            args=[_],
+            keywords=[],
+        ):
+            if not scope.args.args or not chain and receiver != scope.args.args[0].arg:
+                return False
+            if chain:
+                scope = _protocol_repr_method(chain, "__init__")[1]
+                receiver = scope.args.args[0].arg
+            fields = [
+                n
+                for n in ast.walk(scope)
+                if isinstance(n, ast.Attribute)
+                and isinstance(n.value, ast.Name)
+                and n.value.id == receiver
+                and n.attr == field
+                and isinstance(n.ctx, (ast.Store, ast.Del))
+            ]
+            if len(fields) == 1:
+                target = fields[0]
+                parent = _ast_parent_map(ast.walk(scope)).get(id(target))
+                return (
+                    isinstance(parent, ast.Assign)
+                    and parent in scope.body
+                    and parent.targets == [target]
+                    and isinstance(parent.value, ast.List)
+                    and not parent.value.elts
+                    and field not in _protocol_chain_bindings(chain)
+                    and (bool(chain) or parent.lineno < call.lineno)
+                )
+    return False
+
+
+def _protocol_receiver_transfer(function, chain, state, local=None):
+    receiver = local[0] if local else state["transfer_receiver"]
+    dependencies = state["constructor_effect_dependencies"]
+    nodes = [
+        n for statement in function.body for n in state["audit"]._body_nodes(statement)
+    ]
+    safe = set(local[1]) if local else {function.body[-1].value}
+    for call in (n for n in nodes if isinstance(n, ast.Call)):
+        if local and (call.func is local[2] or call is local[3]):
+            safe.add(local[2].value)
+            state.setdefault("receiver_safe_calls", set()).add(call)
+            continue
+        if (
+            _protocol_fresh_list_append(call, function, chain)
+            and _leftmost_name(call.func).id == receiver
+        ):
+            safe.add(call.func.value.value)
+        elif (
+            isinstance(call.func, ast.Attribute)
+            and isinstance(call.func.value, ast.Name)
+            and call.func.value.id == receiver
+        ):
+            path, method = _protocol_repr_method(chain, call.func.attr)
+            _require(
+                not method.decorator_list and not call.args and not call.keywords,
+                "RECEIVER_METHOD_EFFECT_UNKNOWN",
+            )
+            _protocol_constructor_receiver_safe(method)
+            _require(
+                all(
+                    isinstance(s, ast.Assign) and _protocol_preceding_statement(s)
+                    for s in method.body
+                ),
+                "RECEIVER_METHOD_EFFECT_UNKNOWN",
+            )
+            fields = {n.attr for n in ast.walk(method) if isinstance(n, ast.Attribute)}
+            bound = _protocol_chain_bindings(chain)
+            _require(
+                not fields.intersection(bound)
+                and not any(f.startswith("__") for f in fields),
+                "RECEIVER_METHOD_DISPATCH_MUTATION",
+            )
+            dependencies.append(
+                _protocol_dependency(path, method, "receiver_effect", state)
+            )
+            safe.add(call.func.value)
+        else:
+            continue
+        state.setdefault("receiver_safe_calls", set()).add(call)
+    _protocol_constructor_bindings_closed(
+        chain[0][0],
+        chain[0][1],
+        {(p, id(c)) for p, c in chain},
+        {p for p, _ in chain},
+        state,
+        functions=[(state["transfer_source"], function)],
+    )
+    _require(
+        all(n in safe for n in nodes if isinstance(n, ast.Name) and n.id == receiver),
+        "IDENTITY_RETURN_RECEIVER_ESCAPE_OR_MUTATION",
+    )
+
+
+def _protocol_chain_bindings(chain):
+    return set().union(
+        *(_protocol_class_bound_names(n) for _, cls in chain for n in cls.body)
+    )
