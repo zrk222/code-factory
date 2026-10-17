@@ -3649,7 +3649,11 @@ def _declared_typecheck_sources(
 
 
 def _oracle_context_cache_key(root: Path, manifest: list, config_identity: dict) -> str:
-    from .context_efficiency import _read_bounded_workspace_source
+    from .context_efficiency import (
+        _consume_security_snapshots,
+        _read_bounded_workspace_source,
+        _scan_missing_security_snapshot,
+    )
 
     helpers = (
         ast.parse,
@@ -3657,6 +3661,8 @@ def _oracle_context_cache_key(root: Path, manifest: list, config_identity: dict)
         contracts._static_type_edges,
         _security_source_bytes,
         _read_bounded_workspace_source,
+        _consume_security_snapshots,
+        _scan_missing_security_snapshot,
         local_file,
         _measure_parse,
         RuntimeAuditError,
@@ -5248,6 +5254,9 @@ def _security_scan_tree(
     test_file_patterns: set[str] | None = None,
 ) -> list[dict[str, Any]]:
     relative = path.relative_to(root).as_posix()
+    tree._security_source_context = (oracle_context or {}).get(
+        "_security_source_context"
+    )
     nodes = list(ast.walk(tree))
     aliases = _security_aliases(nodes)
     for node in nodes:
@@ -5539,31 +5548,23 @@ def _scan_security_sources(
 
     def consume_security_snapshots(snapshots, fingerprints, contexts, retained):
         """Run the fixed scanner closure while its producer-owned trees are live."""
-        try:
-            for path in files:
-                tree = snapshots.pop(path, None)
-                if tree is None:
-                    continue
-                scope = (scoped_reads or {}).get(
-                    path.relative_to(workspace).as_posix(), {}
-                )
-                calls = tuple(
-                    sorted(set(tenant_read_calls) | set(scope.get("calls", ())))
-                )
-                scoped_bindings = {**scope.get("bindings", {}), **tenant_read_bindings}
-                snapshot_rows[path] = _security_scan_file_snapshot(
-                    workspace,
-                    path,
-                    calls,
-                    scoped_bindings,
-                    contexts.get(path, {}),
-                    test_file_patterns,
-                    retained.get(path),
-                    tree,
-                    fingerprints.get(path),
-                )
-        finally:
-            snapshots.clear()
+        from .context_efficiency import _consume_security_snapshots
+
+        snapshot_rows.update(
+            _consume_security_snapshots(
+                workspace,
+                files,
+                snapshots,
+                fingerprints,
+                contexts,
+                retained,
+                scoped_reads,
+                tenant_read_calls,
+                tenant_read_bindings,
+                test_file_patterns,
+                _security_scan_file_snapshot,
+            )
+        )
 
     contexts, context_bindings, oracle_edges, source_bytes = _project_oracle_context(
         workspace,
@@ -5574,7 +5575,10 @@ def _scan_security_sources(
         database_context_out=database_projection,
         security_snapshot_consumer=consume_security_snapshots,
     )
-    from .context_efficiency import verify_database_context
+    from .context_efficiency import (
+        _scan_missing_security_snapshot,
+        verify_database_context,
+    )
 
     database = _security_scan_database_context(
         workspace, source_bytes, python_inventory, database_projection
@@ -5583,20 +5587,18 @@ def _scan_security_sources(
     if database_context is not None:
         database_context.update(database)
     for path in files:
-        scanned = snapshot_rows.pop(path, None)
-        if scanned is None:
-            scope = (scoped_reads or {}).get(path.relative_to(workspace).as_posix(), {})
-            calls = tuple(sorted(set(tenant_read_calls) | set(scope.get("calls", ()))))
-            scoped_bindings = {**scope.get("bindings", {}), **tenant_read_bindings}
-            scanned = _security_scan_file(
-                workspace,
-                path,
-                calls,
-                scoped_bindings,
-                contexts.get(path, {}),
-                test_file_patterns,
-                source_bytes.get(path),
-            )
+        scanned = _scan_missing_security_snapshot(
+            snapshot_rows.pop(path, None),
+            workspace,
+            path,
+            scoped_reads,
+            tenant_read_calls,
+            tenant_read_bindings,
+            contexts,
+            source_bytes,
+            test_file_patterns,
+            _security_scan_file,
+        )
         binding, file_findings, outcome = scanned
         if binding is not None:
             bindings.append(binding)

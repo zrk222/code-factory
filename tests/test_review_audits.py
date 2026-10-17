@@ -3963,17 +3963,21 @@ def test_security_scan_orchestration_stays_within_complexity_budget():
     import ast
     import inspect
 
+    import factoryline.context_efficiency as context_module
     import factoryline.review_audits as module
 
-    for name in (
-        "security_scan",
-        "_tenant_contract_bindings",
-        "_tenant_binding_entry",
-        "_tenant_binding_parts",
-        "_normalize_tenant_selector",
+    for owner, name in (
+        (module, "security_scan"),
+        (module, "_tenant_contract_bindings"),
+        (module, "_tenant_binding_entry"),
+        (module, "_tenant_binding_parts"),
+        (module, "_normalize_tenant_selector"),
+        (module, "_scan_security_sources"),
+        (context_module, "_consume_security_snapshots"),
+        (context_module, "_scan_missing_security_snapshot"),
     ):
         count = 1
-        tree = ast.parse(inspect.getsource(getattr(module, name)))
+        tree = ast.parse(inspect.getsource(getattr(owner, name)))
         for node in ast.walk(tree):
             if isinstance(
                 node,
@@ -9391,6 +9395,541 @@ def test_config_fixture_secrets_are_exempt_without_hiding_credentials(tmp_path):
     serialized = json.dumps(result["findings"])
     assert "real-test-credential-8f1b" not in serialized
     assert '"config"' not in serialized
+
+
+def _command_canary_source(
+    value,
+    extra="",
+    call="subprocess.run",
+    imports="import json\nimport subprocess\n",
+):
+    return (
+        imports + "def test_canary(tmp_path):\n"
+        f"    secret = {value!r}\n"
+        f"    completed = {call}(['tool'], "
+        'input=json.dumps({"tool_input": {"command": secret}}), '
+        "check=False)\n"
+        "    record = tmp_path / 'record.json'\n"
+        "    text = record.read_text(encoding='utf-8')\n"
+        "    assert secret not in text\n"
+        f"{textwrap.indent(extra, '    ') if extra else ''}"
+    )
+
+
+def test_unbound_json_subprocess_and_unrelated_read_keep_secret_finding(tmp_path):
+    source = _command_canary_source("opaque-command-marker-42")
+    path = tmp_path / "tests" / "test_canary.py"
+    path.parent.mkdir()
+    path.write_text(source, encoding="utf-8")
+    result = security_scan(tmp_path, cache_enabled=False)
+    assert [
+        item
+        for item in result["findings"]
+        if item["code"] == "SECURITY_HARDCODED_SECRET"
+    ]
+
+
+def test_stdlib_aliases_without_a_source_bound_consumer_keep_secret_finding(tmp_path):
+    source = _command_canary_source(
+        "opaque-command-marker-42",
+        call="execute",
+        imports="from json import dumps as serialize\n"
+        "from subprocess import run as execute\n",
+    ).replace("json.dumps(", "serialize(")
+    path = tmp_path / "tests" / "test_canary.py"
+    path.parent.mkdir()
+    path.write_text(source, encoding="utf-8")
+    assert any(
+        item["code"] == "SECURITY_HARDCODED_SECRET"
+        for item in security_scan(tmp_path, cache_enabled=False)["findings"]
+    )
+
+
+def test_cached_security_scan_recomputes_canary_after_source_change(tmp_path):
+    path = _write_reported_command_canary(tmp_path)
+    first = security_scan(tmp_path, cache_enabled=True)
+    assert not _reported_canary_findings(first)
+    safe_source = path.read_bytes()
+    changed_source = safe_source.replace(
+        b'"tool_input_sha256": digest(tool_input)', b'"tool_input": tool_input'
+    )
+    assert changed_source != safe_source
+    path.write_bytes(changed_source)
+    second = security_scan(tmp_path, cache_enabled=True)
+    assert _reported_canary_findings(second)
+
+
+def test_non_secret_literal_findings_skip_canary_scope_walk(monkeypatch):
+    import ast
+
+    from factoryline import intent_quality
+
+    node = ast.parse("value = 'ordinary'").body[0]
+    monkeypatch.setattr(
+        intent_quality,
+        "_is_closed_command_canary",
+        lambda *_args: pytest.fail("non-secret assignment entered the scope walk"),
+    )
+    assert intent_quality._literal_assignment_diagnostics("app.py", node, {}, []) == []
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        _command_canary_source("hunter2").replace("secret =", "PASSWORD ="),
+        _command_canary_source("hunter2"),
+        _command_canary_source("bearer abcdefghijklmnopqrstuvwxyz012345"),
+        _command_canary_source("short-marker").replace("secret =", "SECRET_KEY ="),
+        _command_canary_source("short-marker").replace("secret =", "API_KEY ="),
+        _command_canary_source("sk_live_abcdefghijklmnop1234"),
+        _command_canary_source("sk-proj-abcdefghijklmnop123456"),
+        _command_canary_source("AKIA1234567890ABCDEF"),
+        _command_canary_source("ghp_abcdefgh1234567890"),
+        _command_canary_source("short-marker", "print(secret)\n"),
+        _command_canary_source("short-marker", "client.login(secret)\n"),
+        _command_canary_source("short-marker", "headers = {'Authorization': secret}\n"),
+        _command_canary_source("short-marker", "client = OpenAI(api_key=secret)\n"),
+        _command_canary_source("short-marker").replace(
+            "assert secret not in text", "assert secret in text"
+        ),
+        _command_canary_source("short-marker").replace(
+            "check=False)", "check=False, shell=True)"
+        ),
+        _command_canary_source("short-marker").replace(
+            "check=False)", "check=False, **options)"
+        ),
+        _command_canary_source("short-marker").replace(
+            "import subprocess", "import subprocess\njson = object()"
+        ),
+        _command_canary_source(
+            "short-marker", imports="from . import json\nfrom . import subprocess\n"
+        ),
+        _command_canary_source("short-marker").replace(
+            "    secret = 'short-marker'\n",
+            "    secret = 'short-marker'\n    subprocess = object()\n",
+        ),
+        _command_canary_source("short-marker").replace(
+            "secret = 'short-marker'", "secret = 'short-marker'\n    secret = input()"
+        ),
+    ],
+)
+def test_canary_sabotage_and_credential_values_keep_secret_findings(tmp_path, source):
+    path = tmp_path / "tests" / "test_canary.py"
+    path.parent.mkdir()
+    path.write_text(source, encoding="utf-8")
+    result = security_scan(tmp_path, cache_enabled=False)
+    assert any(
+        item["code"] == "SECURITY_HARDCODED_SECRET" for item in result["findings"]
+    )
+
+
+def test_reported_command_canary_file_is_unchanged_and_scans_without_finding(
+    tmp_path,
+):
+    import hashlib
+
+    original = Path(__file__).with_name("test_evidence_supply_line.py").read_bytes()
+    assert hashlib.sha256(original).hexdigest() == (
+        "f90ab29366d81dc31df4d87e6646ada9ba2fcee2142dc4115171ecbf092766eb"
+    )
+    _write_reported_command_canary(tmp_path, original=original)
+    result = security_scan(tmp_path, cache_enabled=False)
+    assert not _reported_canary_findings(result)
+    script_relative = "plugins/code-factory-session-recorder/scripts/record_hook.py"
+    script_source = Path(__file__).parents[1] / script_relative
+    import hashlib
+
+    bound = {item["path"]: item["sha256"] for item in result["sources"]}
+    assert (
+        bound[script_relative] == hashlib.sha256(script_source.read_bytes()).hexdigest()
+    )
+
+
+def _write_reported_command_canary(tmp_path, original=None, recorder=None):
+    """Copy the unchanged triggering test and its local recorder dependency."""
+    source = (
+        original
+        or Path(__file__).with_name("test_evidence_supply_line.py").read_bytes()
+    )
+    destination = tmp_path / "tests" / "test_evidence_supply_line.py"
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_bytes(source)
+    consumer = (
+        tmp_path
+        / "plugins"
+        / "code-factory-session-recorder"
+        / "scripts"
+        / "record_hook.py"
+    )
+    consumer.parent.mkdir(parents=True, exist_ok=True)
+    consumer.write_bytes(
+        recorder
+        if recorder is not None
+        else (
+            Path(__file__).parents[1]
+            / "plugins"
+            / "code-factory-session-recorder"
+            / "scripts"
+            / "record_hook.py"
+        ).read_bytes()
+    )
+    return consumer
+
+
+def _reported_canary_findings(result):
+    """Select only the original hardcoded-secret finding under review."""
+    return [
+        item
+        for item in result["findings"]
+        if item["code"] == "SECURITY_HARDCODED_SECRET"
+        and item["path"] == "tests/test_evidence_supply_line.py"
+        and item["line"] == 222
+    ]
+
+
+@pytest.mark.parametrize(
+    "test_old,test_new,recorder_old,recorder_new",
+    [
+        ('"CLAUDE_PROJECT_DIR": str(tmp_path)', '"OTHER_ROOT": str(tmp_path)', "", ""),
+        (
+            'tmp_path / ".factory" / "session-recorder"',
+            'tmp_path / "unrelated" / "session-recorder"',
+            "",
+            "",
+        ),
+        (
+            'secret = "do-not-retain-this-command"',
+            'secret = "do-not-retain-this-command"\n'
+            '    (tmp_path / ".factory" / "session-recorder" / "claude-hooks" / "unrelated.json").write_text("unrelated")',
+            "",
+            "",
+        ),
+        ("Path(__file__).parents[1]", "Path(__file__).parents[2]", "", ""),
+        ("Path(__file__).parents[1]", 'Path(__file__).parents[1] / ".."', "", ""),
+        ("", "", '".factory" / "session-recorder"', '"unrelated" / "session-recorder"'),
+        (
+            "",
+            "",
+            "    if existing:",
+            '    if existing:\n        Path(__file__).read_text(encoding="utf-8")',
+        ),
+    ],
+)
+def test_changed_readback_environment_or_escaping_source_path_keeps_finding(
+    tmp_path, test_old, test_new, recorder_old, recorder_new
+):
+    original = Path(__file__).with_name("test_evidence_supply_line.py").read_bytes()
+    recorder = (
+        Path(__file__).parents[1]
+        / "plugins"
+        / "code-factory-session-recorder"
+        / "scripts"
+        / "record_hook.py"
+    ).read_bytes()
+    baseline = tmp_path / "baseline"
+    _write_reported_command_canary(baseline, original, recorder)
+    assert not _reported_canary_findings(security_scan(baseline, cache_enabled=False))
+    test_text = original.decode("utf-8")
+    recorder_text = recorder.decode("utf-8")
+    if test_old:
+        assert test_old in test_text
+        test_text = test_text.replace(test_old, test_new)
+    if recorder_old:
+        assert recorder_old in recorder_text
+        recorder_text = recorder_text.replace(recorder_old, recorder_new)
+    test_source = test_text.encode("utf-8")
+    recorder_source = recorder_text.encode("utf-8")
+    _write_reported_command_canary(tmp_path, test_source, recorder_source)
+    assert _reported_canary_findings(security_scan(tmp_path, cache_enabled=False))
+
+
+def test_missing_or_malicious_local_recorder_keeps_original_finding(tmp_path):
+    original = Path(__file__).with_name("test_evidence_supply_line.py").read_bytes()
+    test_path = tmp_path / "tests" / "test_evidence_supply_line.py"
+    test_path.parent.mkdir(parents=True)
+    test_path.write_bytes(original)
+    assert _reported_canary_findings(security_scan(tmp_path, cache_enabled=False))
+
+    recorder = _write_reported_command_canary(tmp_path).read_text(encoding="utf-8")
+    changed = recorder.replace(
+        '        "tool_input_sha256": digest(tool_input),',
+        '        "tool_input_sha256": digest(tool_input),\n'
+        '        "raw_command": tool_input,',
+    )
+    assert changed != recorder
+    _write_reported_command_canary(tmp_path, original, changed.encode("utf-8"))
+    assert _reported_canary_findings(security_scan(tmp_path, cache_enabled=False))
+    untrusted = recorder.replace(
+        "import sys\n", "import sys\nimport urllib.request\n"
+    ).replace(
+        '    path.write_bytes(canonical(record) + b"\\n")',
+        "    urllib.request.urlopen('https://example.invalid')\n"
+        '    path.write_bytes(canonical(record) + b"\\n")',
+    )
+    assert untrusted != recorder
+    _write_reported_command_canary(tmp_path, original, untrusted.encode("utf-8"))
+    assert _reported_canary_findings(security_scan(tmp_path, cache_enabled=False))
+
+
+@pytest.mark.parametrize(
+    "old,new",
+    [
+        (
+            "\ndef main() -> int:",
+            "\ndef digest(value: object) -> str:\n    return value\n"
+            "\ndef main() -> int:",
+        ),
+        (
+            "\ndef main() -> int:",
+            "\nclass digest:\n    pass\n\ndef main() -> int:",
+        ),
+        (
+            "\ndef main() -> int:",
+            "\nasync def digest(value):\n    return value\n\ndef main() -> int:",
+        ),
+        (
+            "\ndef main() -> int:",
+            "\nfrom hashlib import sha256 as digest\n\ndef main() -> int:",
+        ),
+        (
+            "def main() -> int:",
+            "def main(digest=None) -> int:",
+        ),
+        (
+            "        payload = json.load(sys.stdin)",
+            "        json = object()\n        payload = json.load(sys.stdin)",
+        ),
+        (
+            "        payload = json.load(sys.stdin)",
+            "        try:\n            pass\n        except Exception as digest:\n"
+            "            pass\n        payload = json.load(sys.stdin)",
+        ),
+        (
+            "        payload = json.load(sys.stdin)",
+            "        payload = json.load(sys.stdin)\n        match payload:\n"
+            "            case {'digest': digest}:\n                pass",
+        ),
+        (
+            "        payload = json.load(sys.stdin)",
+            "        payload = json.load(sys.stdin)\n        print(payload)",
+        ),
+        (
+            "def main() -> int:",
+            "def main(sys=None) -> int:",
+        ),
+        (
+            "def main() -> int:",
+            "def main(os=None) -> int:",
+        ),
+        (
+            "def main() -> int:",
+            "def main() -> int:\n    sys = object()",
+        ),
+        (
+            "def main() -> int:",
+            "def main() -> int:\n    proxy = digest\n"
+            "    proxy.__code__ = (lambda value: value).__code__",
+        ),
+        (
+            '    root = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd())).resolve()',
+            '    os = object()\n    root = Path(os.environ.get("CLAUDE_PROJECT_DIR", os.getcwd())).resolve()',
+        ),
+        (
+            "\ndef main() -> int:",
+            "\ndigest = lambda value: value\n\ndef main() -> int:",
+        ),
+        (
+            "\ndef main() -> int:",
+            "\nhashlib.sha256 = lambda value: value\n\ndef main() -> int:",
+        ),
+        (
+            "\ndef main() -> int:",
+            "\nglobals()['digest'] = None\n\ndef main() -> int:",
+        ),
+        (
+            "\ndef main() -> int:",
+            "\ndigest.__defaults__ = (None,)\n\ndef main() -> int:",
+        ),
+    ],
+)
+def test_reported_canary_consumer_mutations_keep_finding_after_admission(
+    tmp_path, old, new
+):
+    """Prove each recorder mutation starts from the exact admitted positive."""
+    import ast
+
+    original = Path(__file__).with_name("test_evidence_supply_line.py").read_bytes()
+    recorder_path = (
+        Path(__file__).parents[1]
+        / "plugins"
+        / "code-factory-session-recorder"
+        / "scripts"
+        / "record_hook.py"
+    )
+    recorder = recorder_path.read_text(encoding="utf-8")
+    baseline = tmp_path / "baseline"
+    _write_reported_command_canary(baseline, original, recorder.encode("utf-8"))
+    assert not _reported_canary_findings(security_scan(baseline, cache_enabled=False))
+    assert old in recorder
+    changed = recorder.replace(old, new, 1)
+    assert changed != recorder
+    ast.parse(changed, filename="mutated-record_hook.py")
+    if "proxy = digest" in new:
+        from factoryline.intent_quality import (
+            _canary_digest_helpers,
+            _canary_parse_consumer,
+        )
+
+        parsed = _canary_parse_consumer(
+            Path("mutated-record_hook.py"), changed.encode()
+        )
+        assert parsed is not None
+        assert _canary_digest_helpers(*parsed) is None
+    mutated = tmp_path / "mutated"
+    _write_reported_command_canary(mutated, original, changed.encode("utf-8"))
+    assert _reported_canary_findings(security_scan(mutated, cache_enabled=False))
+
+
+@pytest.mark.parametrize(
+    "old,new,consumer",
+    [
+        (
+            "import json\r\n",
+            "import json; json.dumps = lambda value: value\r\n",
+            None,
+        ),
+        (
+            '[sys.executable, str(script), "pre-tool"]',
+            '["curl", str(script), "pre-tool"]',
+            None,
+        ),
+        (
+            "def test_claude_hook_plugin_hashes_input_without_retaining_it(tmp_path: Path) -> None:",
+            "def test_claude_hook_plugin_hashes_input_without_retaining_it(tmp_path: Path, sys: object) -> None:",
+            None,
+        ),
+        (
+            "def test_claude_hook_plugin_hashes_input_without_retaining_it(tmp_path: Path) -> None:",
+            "def test_claude_hook_plugin_hashes_input_without_retaining_it(tmp_path: Path, os: object) -> None:",
+            None,
+        ),
+        (
+            "    completed = subprocess.run(\r\n",
+            "    sys = object()\r\n    completed = subprocess.run(\r\n",
+            None,
+        ),
+        (
+            "    completed = subprocess.run(\r\n",
+            "    setattr(sys, 'executable', 'python')\r\n"
+            "    completed = subprocess.run(\r\n",
+            None,
+        ),
+        (
+            "    completed = subprocess.run(\r\n",
+            "    sys.__setattr__('executable', 'python')\r\n"
+            "    completed = subprocess.run(\r\n",
+            None,
+        ),
+        (
+            '    env = {**os.environ, "CLAUDE_PROJECT_DIR": str(tmp_path)}',
+            '    os = object()\r\n    env = {**os.environ, "CLAUDE_PROJECT_DIR": str(tmp_path)}',
+            None,
+        ),
+        ("record_hook.py", "alternate.py", "import urllib.request\n"),
+    ],
+)
+def test_reported_canary_test_mutations_keep_finding_after_admission(
+    tmp_path, old, new, consumer
+):
+    """Derive test-side changes from the byte-identical admitted fixture."""
+    import ast
+
+    original = Path(__file__).with_name("test_evidence_supply_line.py").read_bytes()
+    recorder = (
+        Path(__file__).parents[1]
+        / "plugins"
+        / "code-factory-session-recorder"
+        / "scripts"
+        / "record_hook.py"
+    ).read_bytes()
+    baseline = tmp_path / "baseline"
+    _write_reported_command_canary(baseline, original, recorder)
+    assert not _reported_canary_findings(security_scan(baseline, cache_enabled=False))
+    source = original.decode("utf-8")
+    assert old in source
+    changed = source.replace(old, new, 1).encode("utf-8")
+    assert changed != original
+    ast.parse(changed, filename="mutated-test_evidence_supply_line.py")
+    root = tmp_path / "mutated"
+    _write_reported_command_canary(root, changed, recorder)
+    if consumer is not None:
+        alternate = (
+            root
+            / "plugins"
+            / "code-factory-session-recorder"
+            / "scripts"
+            / "alternate.py"
+        )
+        alternate.write_text(
+            consumer
+            + "\ndef main():\n"
+            + "    urllib.request.urlopen('https://example.invalid')\n",
+            encoding="utf-8",
+        )
+    assert _reported_canary_findings(security_scan(root, cache_enabled=False))
+
+
+def test_canary_ast_index_reuses_one_capped_parent_type_inventory():
+    """Verify one traversal supplies repeat typed and parent queries."""
+    import ast
+
+    from factoryline.intent_quality import (
+        _canary_call_name,
+        _canary_index,
+        _canary_nodes,
+        _canary_parent,
+    )
+
+    tree = ast.parse("def sample():\n    return emit({'value': 1})\n")
+    index = _canary_index(tree)
+    first_call = _canary_nodes(tree, ast.Call)[0]
+    assert _canary_index(tree) is index
+    assert _canary_nodes(tree, ast.Call) == (first_call,)
+    assert _canary_parent(tree, first_call) is not None
+    assert _canary_parent(tree, first_call) is not None
+    aliases = {}
+    _canary_call_name(first_call, aliases)
+    _canary_call_name(first_call, aliases)
+    assert index["call_resolution_count"] == 1
+    aliases["emit"] = "changed"
+    _canary_call_name(first_call, aliases)
+    assert index["call_resolution_count"] == 2
+    assert index["node_visits"] == len(index["nodes"])
+    assert index["parent_lookups"] == 2
+
+
+def test_consumer_index_cap_precedes_scope_binding(monkeypatch, tmp_path):
+    """Reject oversized consumers before the recursive lexical binder runs."""
+    from factoryline import intent_quality, review_integrity
+
+    observations = []
+    original_build = intent_quality._canary_build_index
+
+    def observe_index(tree):
+        result = original_build(tree)
+        observations.append(result)
+        return result
+
+    monkeypatch.setattr(intent_quality, "_canary_build_index", observe_index)
+    monkeypatch.setattr(
+        review_integrity,
+        "bind_security_call_scopes",
+        lambda _tree: pytest.fail("oversized AST reached recursive scope binding"),
+    )
+    source = ("value = 1\n" * 40_000).encode("utf-8")
+    assert intent_quality._canary_parse_consumer(tmp_path / "large.py", source) is None
+    assert observations[0]["complete"] is False
+    assert observations[0]["node_visits"] == 100_000
 
 
 @pytest.mark.parametrize("value", ["", "   ", "changeme", "placeholder", "${PASSWORD}"])

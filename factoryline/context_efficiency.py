@@ -58,6 +58,82 @@ def _read_bounded_workspace_source(workspace, relative, max_bytes, path_resolver
     return data
 
 
+def _consume_security_snapshots(
+    workspace,
+    files,
+    snapshots,
+    fingerprints,
+    contexts,
+    retained,
+    scoped_reads,
+    tenant_read_calls,
+    tenant_read_bindings,
+    test_file_patterns,
+    scan_snapshot,
+):
+    """Consume producer-owned trees synchronously and clear their sidecar map."""
+    rows = {}
+    try:
+        for path in files:
+            tree = snapshots.pop(path, None)
+            if tree is None:
+                continue
+            scope = (scoped_reads or {}).get(path.relative_to(workspace).as_posix(), {})
+            calls = tuple(sorted(set(tenant_read_calls) | set(scope.get("calls", ()))))
+            bindings = {**scope.get("bindings", {}), **tenant_read_bindings}
+            source_context = {
+                **contexts.get(path, {}),
+                "_security_source_context": (workspace, retained),
+            }
+            rows[path] = scan_snapshot(
+                workspace,
+                path,
+                calls,
+                bindings,
+                source_context,
+                test_file_patterns,
+                retained.get(path),
+                tree,
+                fingerprints.get(path),
+            )
+    finally:
+        snapshots.clear()
+    return rows
+
+
+def _scan_missing_security_snapshot(
+    scanned,
+    workspace,
+    path,
+    scoped_reads,
+    tenant_read_calls,
+    tenant_read_bindings,
+    contexts,
+    retained,
+    test_file_patterns,
+    scan_source,
+):
+    """Fall back to the captured source bytes when no producer tree is available."""
+    if scanned is not None:
+        return scanned
+    scope = (scoped_reads or {}).get(path.relative_to(workspace).as_posix(), {})
+    calls = tuple(sorted(set(tenant_read_calls) | set(scope.get("calls", ()))))
+    bindings = {**scope.get("bindings", {}), **tenant_read_bindings}
+    source_context = {
+        **contexts.get(path, {}),
+        "_security_source_context": (workspace, retained),
+    }
+    return scan_source(
+        workspace,
+        path,
+        calls,
+        bindings,
+        source_context,
+        test_file_patterns,
+        retained.get(path),
+    )
+
+
 def _verify_source_bindings(
     workspace,
     bindings,

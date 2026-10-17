@@ -2876,9 +2876,12 @@ def _session_tls_constructor_map(scope, node, aliases):
 
 def security_assignment_findings(relative, node, aliases):
     """Combine literal diagnostics with proven session verification changes."""
-    from . import review_audits as audit
+    from . import intent_quality, review_audits as audit
 
-    return audit._literal_assignment_diagnostics(relative, node) + session_tls_findings(
+    literal_findings = intent_quality._literal_assignment_diagnostics(
+        relative, node, aliases, audit._literal_assignment_diagnostics(relative, node)
+    )
+    return literal_findings + session_tls_findings(
         relative, node, aliases, audit._security_finding
     )
 
