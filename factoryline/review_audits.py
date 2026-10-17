@@ -1420,49 +1420,31 @@ def _dynamic_execution_finding(
     )
 
 
-def _os_command_finding(
-    call: str, relative: str, node: ast.AST
-) -> dict[str, Any] | None:
-    if call != "os.system":
-        return None
-    return _security_finding(
-        "SECURITY_OS_COMMAND",
-        relative,
-        node,
-        "os.system invokes a shell and should be replaced with an argv-based process boundary.",
-        "HIGH",
-    )
-
-
-def _shell_command_finding(
+def _security_call_finding(
     call: str, relative: str, node: ast.Call
 ) -> dict[str, Any] | None:
+    """Dispatch primitive rules once, preserving their specific configuration gates."""
     from .review_integrity import shell_execution_enabled
 
-    if call not in {
+    if call in {"eval", "exec", "builtins.eval", "builtins.exec"}:
+        return _dynamic_execution_finding(call, relative, node)
+    if call == "os.system":
+        code = "SECURITY_OS_COMMAND"
+        message = "os.system invokes a shell and should be replaced with an argv-based process boundary."
+        facts = {}
+    elif call in {
         "subprocess.run",
         "subprocess.Popen",
         "subprocess.call",
         "subprocess.check_call",
         "subprocess.check_output",
     }:
-        return None
-    if not shell_execution_enabled(node):
-        return None
-    return _security_finding(
-        "SECURITY_SHELL_COMMAND",
-        relative,
-        node,
-        "subprocess shell execution is enabled; shell metacharacters can cross the command boundary.",
-        "HIGH",
-        call=call,
-    )
-
-
-def _unsafe_deserialization_finding(
-    call: str, relative: str, node: ast.AST
-) -> dict[str, Any] | None:
-    if call not in {
+        if not shell_execution_enabled(node):
+            return None
+        code = "SECURITY_SHELL_COMMAND"
+        message = "subprocess shell execution is enabled; shell metacharacters can cross the command boundary."
+        facts = {"call": call}
+    elif call in {
         "pickle.load",
         "pickle.loads",
         "_pickle.load",
@@ -1470,67 +1452,28 @@ def _unsafe_deserialization_finding(
         "dill.load",
         "dill.loads",
     }:
-        return None
-    return _security_finding(
-        "SECURITY_UNSAFE_DESERIALIZATION",
-        relative,
-        node,
-        "Pickle-like deserialization can execute attacker-controlled code.",
-        "HIGH",
-        call=call,
-    )
+        code = "SECURITY_UNSAFE_DESERIALIZATION"
+        message = "Pickle-like deserialization can execute attacker-controlled code."
+        facts = {"call": call}
+    elif call in {"yaml.load", "yaml.unsafe_load", "yaml.full_load"}:
+        loader = next((kw.value for kw in node.keywords if kw.arg == "Loader"), None)
+        loader_name = _name(loader) if isinstance(loader, ast.AST) else ""
+        if (
+            call == "yaml.load"
+            and loader is not None
+            and not loader_name.endswith(("UnsafeLoader", "FullLoader"))
+        ):
+            return None
+        code = "SECURITY_UNSAFE_YAML"
+        message = "YAML is loaded without an explicit reviewed Loader."
+        facts = {"call": call}
+    else:
+        from .security_configuration import tls_finding
 
-
-def _unsafe_yaml_finding(
-    call: str, relative: str, node: ast.Call
-) -> dict[str, Any] | None:
-    if call not in {"yaml.load", "yaml.unsafe_load", "yaml.full_load"}:
-        return None
-    loader = next(
-        (keyword.value for keyword in node.keywords if keyword.arg == "Loader"), None
-    )
-    loader_name = _name(loader) if isinstance(loader, ast.AST) else ""
-    unsafe_loader = loader_name.endswith("UnsafeLoader") or loader_name.endswith(
-        "FullLoader"
-    )
-    if call == "yaml.load" and loader is not None and not unsafe_loader:
-        return None
-    return _security_finding(
-        "SECURITY_UNSAFE_YAML",
-        relative,
-        node,
-        "YAML is loaded without an explicit reviewed Loader.",
-        "HIGH",
-        call=call,
-    )
-
-
-def _disabled_tls_finding(
-    call: str, relative: str, node: ast.Call
-) -> dict[str, Any] | None:
-    from .security_configuration import tls_finding
-
-    return tls_finding(
-        call, relative, node, getattr(node, "_security_configuration_aliases", {})
-    )
-
-
-def _security_call_finding(
-    call: str, relative: str, node: ast.Call
-) -> dict[str, Any] | None:
-    detectors = (
-        _dynamic_execution_finding,
-        _os_command_finding,
-        _shell_command_finding,
-        _unsafe_deserialization_finding,
-        _unsafe_yaml_finding,
-        _disabled_tls_finding,
-    )
-    for detect in detectors:
-        finding = detect(call, relative, node)
-        if finding is not None:
-            return finding
-    return None
+        return tls_finding(
+            call, relative, node, getattr(node, "_security_configuration_aliases", {})
+        )
+    return _security_finding(code, relative, node, message, "HIGH", **facts)
 
 
 def _bare_except_finding(
