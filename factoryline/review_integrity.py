@@ -9,6 +9,20 @@ import tokenize
 import configparser
 import shlex
 from collections.abc import Mapping
+from .runtime_audit_integrity import (
+    assigned_sync_function_call as assigned_sync_function_call,
+    test_execution_findings as test_execution_findings,
+    native_test_probe as native_test_probe,
+    _oracle_call_candidates as _oracle_call_candidates,
+    _oracle_stable_call as _oracle_stable_call,
+    _later_test_binding as _later_test_binding,
+    _asserted_coroutine_call as _asserted_coroutine_call,
+    _unawaited_coroutine_finding as _unawaited_coroutine_finding,
+    _nearest_native_function_scope as _nearest_native_function_scope,
+    _native_call_probe_lines as _native_call_probe_lines,
+    native_execution_helpers,
+    _LiteralConsumers as _LiteralConsumers,
+)
 from pathlib import Path
 from typing import Any
 from .runtime_audit_common import RuntimeAuditError
@@ -612,129 +626,6 @@ def _annotated_stub(fn: ast.AST) -> bool:
     )
 
 
-def assigned_sync_function_call(
-    call: ast.Call, scope: ast.AST, module: ast.AST, async_only=False
-) -> bool:
-    """Resolve one stable direct helper; async mode reports discarded coroutines."""
-    if isinstance(call.func, ast.Lambda):
-        return not async_only
-    if not isinstance(call.func, ast.Name):
-        return False
-    kind = ast.AsyncFunctionDef if async_only else ast.FunctionDef
-    candidates, body = _oracle_call_candidates(call.func.id, scope, module, kind)
-    return len(candidates) == 1 and _oracle_stable_call(
-        candidates[0], call, scope, body, async_only
-    )
-
-
-def _oracle_call_candidates(name, scope, module, kind):
-    from .review_audits import _scope_parameters
-
-    local = [
-        item for item in scope.body if isinstance(item, kind) and item.name == name
-    ]
-    body = scope.body if local else module.body
-    if not local and (
-        name in _scope_parameters(scope)
-        or any(name in _oracle_bound_names(stmt) for stmt in scope.body)
-    ):
-        return [], body
-    return local or [
-        item for item in body if isinstance(item, kind) and item.name == name
-    ], body
-
-
-def _oracle_stable_call(candidate, call, scope, body, async_only):
-    from .review_audits import _body_nodes
-
-    if candidate.decorator_list:
-        return False
-    if candidate.lineno >= call.lineno and (body is scope.body or not async_only):
-        return False
-    if async_only and any(
-        isinstance(child, ast.Yield)
-        for stmt in candidate.body
-        for child in _body_nodes(stmt)
-    ):
-        return False
-    bindings = [name for stmt in body for name in _oracle_bound_names(stmt)]
-    return [name for name in bindings if name in {call.func.id, "*"}] == [call.func.id]
-
-
-def _later_test_binding(owner, node):
-    for item in getattr(owner, "body", ()):
-        if not isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue
-        if item.name == node.name and item.lineno > node.lineno:
-            return item
-    return None
-
-
-def _asserted_coroutine_call(child, following):
-    assigned = (
-        isinstance(child, ast.Assign)
-        and len(child.targets) == 1
-        and isinstance(child.targets[0], ast.Name)
-        and isinstance(following, ast.Assert)
-        and isinstance(following.test, ast.Name)
-        and following.test.id == child.targets[0].id
-    )
-    assertion = (
-        following if assigned else child if isinstance(child, ast.Assert) else None
-    )
-    return assertion, child.value if assigned else assertion.test if assertion else None
-
-
-def test_execution_findings(node, relative, parents, module):
-    """Report shadowed tests and local async helpers used without awaiting."""
-    from .review_audits import _body_nodes, _security_finding
-
-    owner = (parents.get(id(node)) or ((module, node),))[-1][0]
-    shadow = _later_test_binding(owner, node)
-    if shadow:
-        return [
-            _security_finding(
-                "QUALITY_SHADOWED_TEST",
-                relative,
-                node,
-                "A later direct test definition replaces this test binding.",
-                "MEDIUM",
-                symbol=node.name,
-                shadowed_by_line=shadow.lineno,
-            )
-        ], True
-    findings = []
-    for child, following in zip(node.body, [*node.body[1:], None]):
-        assertion, call = _asserted_coroutine_call(child, following)
-        if isinstance(call, ast.Call) and assigned_sync_function_call(
-            call, node, module, True
-        ):
-            findings.append(
-                _unawaited_coroutine_finding(relative, assertion, node.name)
-            )
-    findings += [
-        _unawaited_coroutine_finding(relative, child, node.name)
-        for child in _body_nodes(ast.Module(body=node.body, type_ignores=[]))
-        if isinstance(child, ast.Expr)
-        and isinstance(child.value, ast.Call)
-        and assigned_sync_function_call(child.value, node, module, True)
-    ]
-    return findings, False
-
-
-def _unawaited_coroutine_finding(relative, source, symbol):
-    from .review_audits import _security_finding
-
-    return _security_finding(
-        "QUALITY_UNAWAITED_COROUTINE",
-        relative,
-        source,
-        "Local async helper is used without awaiting its result.",
-        "MEDIUM",
-        symbol=symbol,
-    )
-
-
 def _oracle_bound_names(statement: ast.AST) -> set[str]:
     from .review_audits import _body_nodes, _bound_names
 
@@ -747,99 +638,6 @@ def _oracle_bound_names(statement: ast.AST) -> set[str]:
                 if default is not None:
                     names.update(_oracle_bound_names(default))
     return names
-
-
-def _nearest_native_function_scope(node: ast.AST, parents: dict) -> bool:
-    current = node
-    while current in parents:
-        current = parents[current]
-        if isinstance(
-            current,
-            (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef),
-        ):
-            return isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef))
-    return False
-
-
-def _native_call_probe_lines(node: ast.AST) -> list[int]:
-    if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-        return []
-    walked = list(ast.walk(node))
-    parents = {
-        child: parent for parent in walked for child in ast.iter_child_nodes(parent)
-    }
-    statements: dict[int, list[ast.stmt]] = {}
-    for child in walked:
-        if isinstance(child, ast.stmt):
-            statements.setdefault(child.lineno, []).append(child)
-    lines = set()
-    for child in walked:
-        if not isinstance(child, ast.Expr):
-            continue
-        if not isinstance(child.value, ast.Call):
-            continue
-        if not _nearest_native_function_scope(child, parents):
-            continue
-        if statements.get(child.lineno) != [child]:
-            continue
-        if sum(isinstance(part, ast.Call) for part in ast.walk(child.value)) != 1:
-            continue
-        lines.add(child.lineno)
-    return sorted(lines)[:32]
-
-
-def native_test_probe(relative: str, node: ast.AST) -> dict[str, Any]:
-    """Build advisory assertion and standalone-call probe guidance for one test."""
-    lines = sorted(
-        {child.lineno for child in ast.walk(node) if isinstance(child, ast.Assert)}
-    )[:32]
-    call_lines = _native_call_probe_lines(node)
-    command = [
-        "python",
-        "-m",
-        "factoryline.pytest_readiness",
-        "--root",
-        ".",
-        "--nodeid",
-        "<exact collected pytest node ID>",
-        "--line",
-        "<assertion line>",
-        "--timeout",
-        "30",
-    ]
-    call_command = [
-        "python",
-        "-m",
-        "factoryline.pytest_readiness",
-        "--kind",
-        "call",
-        "--root",
-        ".",
-        "--nodeid",
-        "<exact collected pytest node ID>",
-        "--line",
-        "<call line>",
-        "--timeout",
-        "30",
-    ]
-    return {
-        "available": bool(lines),
-        "assertion_lines": lines,
-        "nodeid_hint": relative + "::" + getattr(node, "name", ""),
-        "exact_collection_id_required": True,
-        "command": command,
-        "execution": "Explicit local execution only; never started by a static scan",
-        "interpretation": "Reachability and failure propagation only; review semantic strength separately; no automatic suppression",
-        "call_available": bool(call_lines),
-        "call_lines": call_lines,
-        "call_command": call_command,
-        "call_limits": [
-            "Candidates are standalone call statements only; the runtime CLI validates the exact target again",
-            "Injection is before the selected statement and reports reachability and failure escape only",
-            "Production-function mutation sensitivity and semantic quality are not assessed",
-            "No automatic detection change, finding clearance, or execution by static scan",
-        ],
-    }
 
 
 def callback_argument(call: ast.Call, function: ast.AST, parameter: str) -> str | None:
@@ -990,9 +788,14 @@ def runtime_callback_coverage(
     from .runtime_audit_integrity import runtime_callback_coverage as validate
 
     return validate(
-        test, oracle_row, verified_schema=verified_schema, test_qualname=test_qualname,
-        current_config_manifest=current_config_manifest, strong_assertion=strong_assertion,
-        effective_assertion=effective_assertion, aliases=aliases,
+        test,
+        oracle_row,
+        verified_schema=verified_schema,
+        test_qualname=test_qualname,
+        current_config_manifest=current_config_manifest,
+        strong_assertion=strong_assertion,
+        effective_assertion=effective_assertion,
+        aliases=aliases,
     )
 
 
@@ -2614,7 +2417,10 @@ def security_assignment_findings(relative, node, aliases):
     from . import intent_quality, review_audits as audit
 
     literal_findings = intent_quality._literal_assignment_diagnostics(
-        relative, node, aliases, audit._literal_assignment_diagnostics(relative, node, aliases)
+        relative,
+        node,
+        aliases,
+        audit._literal_assignment_diagnostics(relative, node, aliases),
     )
     return literal_findings + session_tls_findings(
         relative, node, aliases, audit._security_finding
@@ -4729,4 +4535,52 @@ def _completion_only_oracle(node: ast.AST) -> bool:
         "assert" in ast.unparse(call.func).lower()
         or "fail" in ast.unparse(call.func).lower()
         for call in calls
+    )
+
+
+def bind_credential_consumers(
+    root, snapshots, imports, contexts, source_bytes, *, inventory
+):
+    """Attach closed source-use witnesses; incomplete workspace evidence earns none."""
+    from . import review_audits as audit
+    import sys
+
+    for context in contexts.values():
+        context["credential_consumers"] = {}
+    try:
+        if not isinstance(inventory, dict) or set(contexts) != set(inventory):
+            return
+        graph = _LiteralConsumers(
+            root,
+            snapshots,
+            imports,
+            audit,
+            sys.modules[__name__],
+            source_bytes=source_bytes,
+            inventory=inventory,
+        )
+        witnesses = graph.witnesses()
+        if not graph.complete:
+            return
+        for (path, line, member), consumers in witnesses.items():
+            contexts[path]["credential_consumers"][line, member] = consumers
+    except (
+        AttributeError,
+        KeyError,
+        TypeError,
+        ValueError,
+        RecursionError,
+        MemoryError,
+    ):
+        for context in contexts.values():
+            context["credential_consumers"] = {}
+
+
+def credential_consumer_helpers():
+    return (
+        bind_credential_consumers,
+        _LiteralConsumers,
+        *native_execution_helpers(),
+        _oracle_bound_names,
+        *(value for value in vars(_LiteralConsumers).values() if callable(value)),
     )

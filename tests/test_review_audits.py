@@ -11400,3 +11400,145 @@ def test_symbolic_enum_used_as_signing_key_still_reports_critical(tmp_path):
     ]
     assert len(findings) == 1 and findings[0]["severity"] == "CRITICAL"
     assert findings[0]["facts"]["credential_use"] == "UNVERIFIED"
+
+
+@pytest.mark.parametrize(
+    "changes,expected",
+    [
+        ({}, True),
+        ({"danger.py": "import defs\nunknown_signer(defs)\n"}, False),
+        (
+            {
+                "bridge.py": "from defs import Signal\n",
+                "danger.py": "import bridge\nunknown_signer(bridge)\n",
+            },
+            False,
+        ),
+        (
+            {
+                "danger.py": "def configure():\n    import defs\n    return unknown_signer(defs)\n"
+            },
+            False,
+        ),
+        (
+            {
+                "fastapi.py": "def HTTPException(**kwargs):\n    return sign(kwargs['detail'])\n"
+            },
+            False,
+        ),
+        ({"enum.py": "class Enum:\n    pass\n"}, False),
+        (
+            {
+                "danger.py": "from defs import Signal\nsigner(secret=Signal.BAD_PASSWORD)\n"
+            },
+            False,
+        ),
+        (
+            {
+                "api.py": "import defs\nfrom fastapi import HTTPException\ndef handler():\n    raise HTTPException(detail=defs.Signal.BAD_PASSWORD)\n"
+            },
+            True,
+        ),
+    ],
+    ids=[
+        "public",
+        "module-escape",
+        "reexport-escape",
+        "nested-escape",
+        "local-fastapi",
+        "local-enum",
+        "signing",
+        "qualified-public",
+    ],
+)
+def test_credential_consumer_closure_rejects_namespace_and_provider_escapes(
+    tmp_path, changes, expected
+):
+    import ast
+    import hashlib
+    from factoryline import review_audits as audit, review_integrity as integrity
+
+    sources = {
+        "defs.py": 'from enum import Enum\nclass Signal(str, Enum):\n    BAD_PASSWORD = "BAD_PASSWORD"\n',
+        "api.py": "from defs import Signal\nfrom fastapi import HTTPException\ndef handler():\n    raise HTTPException(detail=Signal.BAD_PASSWORD)\n",
+        **changes,
+    }
+    raw = {tmp_path / name: source.encode() for name, source in sources.items()}
+    inventory = {path: hashlib.sha256(data).hexdigest() for path, data in raw.items()}
+    trees = {path: ast.parse(data) for path, data in raw.items()}
+    for path, tree in trees.items():
+        tree._oracle_source_sha256 = inventory[path]
+    imports = {
+        path: audit._oracle_imports(tmp_path, path, tree, set(trees))
+        for path, tree in trees.items()
+    }
+    graph = integrity._LiteralConsumers(
+        tmp_path,
+        trees,
+        imports,
+        audit,
+        integrity,
+        source_bytes=raw,
+        inventory=inventory,
+    )
+    witnesses = graph.witnesses()
+    assert bool(witnesses) is expected
+    if expected:
+        assert (tmp_path / "defs.py", 3, "BAD_PASSWORD") in witnesses
+        assert all(
+            use["source_sha256"] == inventory[tmp_path / use["path"]]
+            for uses in witnesses.values()
+            for use in uses
+        )
+
+
+@pytest.mark.parametrize(
+    "consumer,expected",
+    [
+        ('assert Signal.BAD_PASSWORD == "BAD_PASSWORD"', True),
+        ("assert Signal.BAD_PASSWORD == signer", False),
+        (
+            'router = build_router()\nsigner(secret=router.routes[0].responses[400]["detail"])',
+            False,
+        ),
+    ],
+)
+def test_credential_consumer_comparisons_and_returned_metadata(
+    tmp_path, consumer, expected
+):
+    import ast
+    import hashlib
+    from factoryline import review_audits as audit, review_integrity as integrity
+
+    sources = {
+        "defs.py": 'from enum import Enum\nclass Signal(str, Enum):\n    BAD_PASSWORD = "BAD_PASSWORD"\n',
+        "api.py": "from defs import Signal\nfrom fastapi import HTTPException\ndef handler():\n    raise HTTPException(detail=Signal.BAD_PASSWORD)\n",
+        "test_consumer.py": "from defs import Signal\n" + consumer + "\n",
+    }
+    if "router =" in consumer:
+        sources["api.py"] = (
+            "from defs import Signal\nfrom fastapi import APIRouter\n"
+            "def build_router():\n    router = APIRouter()\n"
+            "    @router.get('/', responses={400: {'detail': Signal.BAD_PASSWORD}})\n"
+            "    def handler():\n        pass\n    return router\n"
+        )
+        sources["test_consumer.py"] = "from api import build_router\n" + consumer + "\n"
+    raw = {tmp_path / name: source.encode() for name, source in sources.items()}
+    inventory = {path: hashlib.sha256(data).hexdigest() for path, data in raw.items()}
+    trees = {path: ast.parse(data) for path, data in raw.items()}
+    for path, tree in trees.items():
+        tree._oracle_source_sha256 = inventory[path]
+    imports = {
+        path: audit._oracle_imports(tmp_path, path, tree, set(trees))
+        for path, tree in trees.items()
+    }
+    graph = integrity._LiteralConsumers(
+        tmp_path,
+        trees,
+        imports,
+        audit,
+        integrity,
+        source_bytes=raw,
+        inventory=inventory,
+    )
+    assert bool(graph.witnesses()) is expected
