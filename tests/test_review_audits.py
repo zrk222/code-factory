@@ -2074,6 +2074,257 @@ def test_security_scan_does_not_credit_nested_helper_before_definition(tmp_path)
     assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
 
 
+@pytest.mark.parametrize(
+    "source,hollow",
+    [
+        (
+            "import asyncio\nasync def compute():\n    return 3\n"
+            "def run_async_fn(fn):\n    asyncio.run(fn())\n"
+            "def test_behavior():\n"
+            "    async def check():\n        assert await compute() == 3\n"
+            "    run_async_fn(check)\n",
+            False,
+        ),
+        (
+            "import asyncio\nasync def compute():\n    return 3\n"
+            "def test_behavior():\n"
+            "    async def check():\n        assert await compute() == 3\n"
+            "    loop = asyncio.new_event_loop()\n"
+            "    loop.run_until_complete(check())\n    loop.close()\n",
+            False,
+        ),
+        (
+            "import asyncio\nasync def compute():\n    return 3\n"
+            "def run_async_fn(fn):\n    fn()\n"
+            "def test_behavior():\n"
+            "    async def check():\n        assert await compute() == 3\n"
+            "    run_async_fn(check)\n",
+            True,
+        ),
+        (
+            "import asyncio\nasync def compute():\n    return 3\n"
+            "def run_async_fn(fn):\n    asyncio.run(fn())\n"
+            "def test_behavior():\n"
+            "    async def check():\n        assert await compute() == 3\n"
+            "    try:\n        run_async_fn(check)\n"
+            "    except AssertionError:\n        pass\n",
+            True,
+        ),
+        (
+            "import asyncio\nasync def compute():\n    return 3\n"
+            "def run_async_fn(fn):\n    asyncio.run(fn())\n"
+            "def test_behavior():\n"
+            "    async def check():\n"
+            "        try:\n            assert await compute() == 3\n"
+            "        except AssertionError:\n            pass\n"
+            "    run_async_fn(check)\n",
+            True,
+        ),
+        (
+            "import asyncio\nasync def compute():\n    return 3\n"
+            "def test_behavior():\n"
+            "    async def check():\n        assert await compute() == 3\n"
+            "    asyncio = Fake()\n"
+            "    loop = asyncio.new_event_loop()\n"
+            "    loop.run_until_complete(check())\n",
+            True,
+        ),
+        (
+            "import asyncio\nasync def compute():\n    return 3\n"
+            "def run_async_fn(fn):\n    asyncio.run(fn())\n"
+            "def noop(fn):\n    pass\nasyncio.run = noop\n"
+            "def test_behavior():\n"
+            "    async def check():\n        assert await compute() == 3\n"
+            "    run_async_fn(check)\n",
+            True,
+        ),
+        (
+            "import asyncio as aio\nimport asyncio\n"
+            "async def compute():\n    return 3\n"
+            "def run_async_fn(fn):\n    asyncio.run(fn())\n"
+            "def noop(fn):\n    pass\nasyncio.run = noop\n"
+            "def test_behavior():\n"
+            "    async def check():\n        assert await compute() == 3\n"
+            "    run_async_fn(check)\n",
+            True,
+        ),
+        (
+            "import asyncio as poison\nimport asyncio\n"
+            "async def compute():\n    return 3\n"
+            "poison.run = lambda fn: None\ndel poison\n"
+            "def run_async_fn(fn):\n    asyncio.run(fn())\n"
+            "def test_behavior():\n"
+            "    async def check():\n        assert await compute() == 3\n"
+            "    run_async_fn(check)\n",
+            True,
+        ),
+        (
+            "import asyncio\nasync def compute():\n    return 3\n"
+            "def run_async_fn(fn):\n    asyncio.run(fn())\n"
+            "def noop(fn):\n    pass\nsetattr(asyncio, 'run', noop)\n"
+            "def test_behavior():\n"
+            "    async def check():\n        assert await compute() == 3\n"
+            "    run_async_fn(check)\n",
+            True,
+        ),
+        (
+            "import asyncio\nasync def compute():\n    return 3\n"
+            "def run_async_fn(fn):\n    asyncio.run(fn())\n"
+            "def retain(value):\n    pass\nretain(asyncio.run)\n"
+            "def test_behavior():\n"
+            "    async def check():\n        assert await compute() == 3\n"
+            "    run_async_fn(check)\n",
+            True,
+        ),
+        (
+            "import asyncio\nasync def compute():\n    return 3\n"
+            "def run_async_fn(fn):\n    asyncio.run(fn())\n"
+            "def test_behavior():\n"
+            "    run_async_fn(check)\n"
+            "    async def check():\n        assert await compute() == 3\n",
+            True,
+        ),
+        (
+            "import asyncio\nasync def compute():\n    return 3\n"
+            "def run_async_fn(fn):\n    asyncio.run(fn())\n"
+            "def noop(fn):\n    pass\n"
+            "def test_behavior():\n"
+            "    async def check():\n        assert await compute() == 3\n"
+            "    run_async_fn = noop\n    run_async_fn(check)\n",
+            True,
+        ),
+        (
+            "async def compute():\n    return 3\n"
+            "def test_behavior():\n"
+            "    async def check():\n        assert await compute() == 3\n"
+            "    pass\n",
+            True,
+        ),
+        (
+            "async def compute():\n    return 3\n"
+            "def test_behavior():\n"
+            "    async def check():\n        assert await compute() == 3\n"
+            "    check()\n",
+            True,
+        ),
+        (
+            "import asyncio\nasync def compute():\n    return 3\n"
+            "def run_async_fn(fn):\n    asyncio.run(fn())\n"
+            "def helper_behavior():\n"
+            "    async def check():\n        assert await compute() == 3\n"
+            "    run_async_fn(check)\n"
+            "def test_genuinely_hollow():\n    compute()\n",
+            True,
+        ),
+    ],
+    ids=[
+        "asyncio-run-wrapper",
+        "event-loop-consumption",
+        "no-op-runner",
+        "runner-assertion-swallowed",
+        "inner-assertion-swallowed",
+        "shadowed-asyncio",
+        "mutated-asyncio-run",
+        "mutated-secondary-asyncio-alias",
+        "mutate-deleted-asyncio-alias",
+        "setattr-asyncio-run",
+        "escaped-asyncio-run",
+        "runner-before-helper-definition",
+        "shadowed-runner",
+        "never-referenced-async-helper",
+        "unawaited-direct-helper",
+        "genuine-hollow-control",
+    ],
+)
+def test_nested_async_assertion_requires_proven_completion(tmp_path, source, hollow):
+    (tmp_path / "test_async.py").write_text(source, encoding="utf-8")
+    findings = security_scan(tmp_path, cache_enabled=False)["finding_counts"]
+    assert findings.get("QUALITY_HOLLOW_TEST", 0) == int(hollow)
+
+
+@pytest.mark.parametrize(
+    "import_line,annotation",
+    [
+        ("from unittest.mock import MagicMock\n", "MagicMock"),
+        ("from unittest.mock import MagicMock as MockValue\n", "MockValue"),
+    ],
+)
+def test_source_typed_magicmock_parameter_proves_mock_assertion(
+    tmp_path, import_line, annotation
+):
+    (tmp_path / "test_mock_parameter.py").write_text(
+        import_line + "def configure(module):\n"
+        "    module.fileConfig('x.ini', disable_existing_loggers=False)\n"
+        f"def test_behavior(mocked_module: {annotation}):\n"
+        "    configure(mocked_module)\n"
+        "    mocked_module.fileConfig.assert_called_once_with(\n"
+        "        'x.ini', disable_existing_loggers=False)\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path, cache_enabled=False)["finding_counts"] == {}
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "class MagicMock: pass\n"
+        "def test_behavior(mocked_module: MagicMock):\n"
+        "    mocked_module.fileConfig.assert_called_once_with('x.ini')\n",
+        "from unittest.mock import MagicMock\n"
+        "def configure(module):\n    module.fileConfig('x.ini')\n"
+        "def test_behavior(mocked_module: MagicMock):\n"
+        "    mocked_module = Fake()\n"
+        "    configure(mocked_module)\n"
+        "    mocked_module.fileConfig.assert_called_once_with('x.ini')\n",
+        "unittest = FakeNamespace\n"
+        "def configure(module):\n    module.fileConfig('x.ini')\n"
+        "def test_behavior(mocked_module: unittest.mock.MagicMock):\n"
+        "    configure(mocked_module)\n"
+        "    mocked_module.fileConfig.assert_called_once_with('x.ini')\n",
+        "import pytest\nfrom unittest.mock import MagicMock\n"
+        "@pytest.fixture\ndef mocked_module():\n    return Fake()\n"
+        "@pytest.fixture\ndef mocked_module():\n    return Fake()\n"
+        "def configure(module):\n    module.fileConfig('x.ini')\n"
+        "def test_behavior(mocked_module: MagicMock):\n"
+        "    configure(mocked_module)\n"
+        "    mocked_module.fileConfig.assert_called_once_with('x.ini')\n",
+        "import unittest.mock as mock_api\n"
+        "setattr(mock_api, 'MagicMock', Fake)\n"
+        "def configure(module):\n    module.fileConfig('x.ini')\n"
+        "def test_behavior(mocked_module: mock_api.MagicMock):\n"
+        "    configure(mocked_module)\n"
+        "    mocked_module.fileConfig.assert_called_once_with('x.ini')\n",
+        "import unittest.mock as mock_api\n"
+        "retain(mock_api)\n"
+        "def configure(module):\n    module.fileConfig('x.ini')\n"
+        "def test_behavior(mocked_module: mock_api.MagicMock):\n"
+        "    configure(mocked_module)\n"
+        "    mocked_module.fileConfig.assert_called_once_with('x.ini')\n",
+        "import unittest.mock as poison\n"
+        "import unittest.mock as mock_api\n"
+        "setattr(poison, 'MagicMock', Fake)\ndel poison\n"
+        "def configure(module):\n    module.fileConfig('x.ini')\n"
+        "def test_behavior(mocked_module: mock_api.MagicMock):\n"
+        "    configure(mocked_module)\n"
+        "    mocked_module.fileConfig.assert_called_once_with('x.ini')\n",
+    ],
+    ids=[
+        "lookalike-type",
+        "reassigned-mock-parameter",
+        "dotted-name-shadow",
+        "ambiguous-fake-fixture",
+        "mutated-typed-provider",
+        "escaped-typed-provider",
+        "mutate-deleted-typed-provider",
+    ],
+)
+def test_typed_mock_provenance_rejects_lookalikes_and_reassignment(tmp_path, source):
+    (tmp_path / "test_mock_parameter.py").write_text(source, encoding="utf-8")
+    assert security_scan(tmp_path, cache_enabled=False)["finding_counts"] == {
+        "QUALITY_HOLLOW_TEST": 1
+    }
+
+
 def test_security_scan_nested_helper_shadows_module_oracle(tmp_path):
     (tmp_path / "test_behavior.py").write_text(
         "def assert_ok():\n    assert compute() == 4\n"
@@ -2788,6 +3039,10 @@ def test_mock_configure_mock_cannot_replace_assertion_method(tmp_path):
         (
             "alias = object()\n    alias.assert_called_once_with = lambda *args: None\n    ",
             {},
+        ),
+        (
+            "send = object()\n    ",
+            {"QUALITY_HOLLOW_TEST": 1},
         ),
     ],
 )
@@ -6307,7 +6562,7 @@ def test_security_scan_rejects_tenant_alias_shadowed_by_exception_capture(tmp_pa
     assert result["finding_counts"] == {"SECURITY_MISSING_TENANT_ISOLATION": 1}
 
 
-def test_security_scan_blocks_uncontracted_sqlalchemy_reads(tmp_path):
+def test_security_scan_does_not_assume_tenancy_for_sqlalchemy_reads(tmp_path):
     (tmp_path / "service.py").write_text(
         "from sqlalchemy.orm import Session\n"
         "def fetch_user(user_id):\n"
@@ -6315,11 +6570,10 @@ def test_security_scan_blocks_uncontracted_sqlalchemy_reads(tmp_path):
         encoding="utf-8",
     )
     result = security_scan(tmp_path)
-    assert result["state"] == "BLOCKED"
-    assert result["finding_counts"]["SECURITY_TENANT_READ_UNDECLARED"] >= 1
+    assert result["finding_counts"].get("SECURITY_TENANT_READ_UNDECLARED", 0) == 0
 
 
-def test_security_scan_blocks_uncontracted_django_exclude_read(tmp_path):
+def test_security_scan_does_not_assume_tenancy_for_django_reads(tmp_path):
     (tmp_path / "service.py").write_text(
         "from django.db import models\n"
         "def list_users():\n"
@@ -6327,11 +6581,10 @@ def test_security_scan_blocks_uncontracted_django_exclude_read(tmp_path):
         encoding="utf-8",
     )
     result = security_scan(tmp_path)
-    assert result["state"] == "BLOCKED"
-    assert result["finding_counts"]["SECURITY_TENANT_READ_UNDECLARED"] >= 1
+    assert result["finding_counts"].get("SECURITY_TENANT_READ_UNDECLARED", 0) == 0
 
 
-def test_security_scan_blocks_uncontracted_sqlmodel_exec_read(tmp_path):
+def test_security_scan_does_not_assume_tenancy_for_sqlmodel_reads(tmp_path):
     (tmp_path / "service.py").write_text(
         "from sqlmodel import Session, select\n"
         "def list_users(session: Session):\n"
@@ -6339,8 +6592,76 @@ def test_security_scan_blocks_uncontracted_sqlmodel_exec_read(tmp_path):
         encoding="utf-8",
     )
     result = security_scan(tmp_path)
-    assert result["state"] == "BLOCKED"
-    assert result["finding_counts"]["SECURITY_TENANT_READ_UNDECLARED"] >= 1
+    assert result["finding_counts"].get("SECURITY_TENANT_READ_UNDECLARED", 0) == 0
+
+
+def test_empty_v1_tenant_policy_is_distinct_from_absent_policy(tmp_path):
+    from factoryline.review_audits import load_tenant_read_contract
+    import factoryline.review_audits as audit
+
+    (tmp_path / "service.py").write_text(
+        "from sqlalchemy.orm import Session\n"
+        "def list_users():\n"
+        "    return session.query(User).filter_by(active=True).first()\n",
+        encoding="utf-8",
+    )
+    assert load_tenant_read_contract(tmp_path)[2]["policy_applies"] is False
+    audit._oracle_context_cache_clear()
+    absent = security_scan(tmp_path, cache_enabled=False)
+    security_scan(tmp_path, cache_enabled=True)
+    hits = audit._oracle_context_cache_info()["hits"]
+    absent_warm = security_scan(tmp_path, cache_enabled=True)
+    assert absent["finding_counts"].get("SECURITY_TENANT_READ_UNDECLARED", 0) == 0
+    assert absent_warm["finding_counts"].get("SECURITY_TENANT_READ_UNDECLARED", 0) == 0
+    assert audit._oracle_context_cache_info()["hits"] == hits + 1
+
+    folder = tmp_path / ".factory"
+    folder.mkdir()
+    (folder / "tenant-read-contract.json").write_text(
+        json.dumps({"schema": "factory.tenant-read-contract.v1", "reads": []}),
+        encoding="utf-8",
+    )
+    calls, bindings, evidence = load_tenant_read_contract(tmp_path)
+    assert calls == bindings == ()
+    assert "scoped_reads" not in evidence
+    assert evidence["policy_applies"] is True
+    options = {
+        "tenant_read_calls": calls,
+        "tenant_read_bindings": bindings,
+        "tenant_read_scopes": evidence.get("scoped_reads"),
+        "tenant_policy_applies": evidence["policy_applies"],
+    }
+    declared_empty = security_scan(tmp_path, cache_enabled=False, **options)
+    security_scan(tmp_path, cache_enabled=True, **options)
+    hits = audit._oracle_context_cache_info()["hits"]
+    declared_empty_warm = security_scan(tmp_path, cache_enabled=True, **options)
+    assert declared_empty["finding_counts"] == {"SECURITY_TENANT_READ_UNDECLARED": 1}
+    assert declared_empty["tenant_read_contract"]["policy_applies"] is True
+    assert declared_empty_warm["finding_counts"] == declared_empty["finding_counts"]
+    assert audit._oracle_context_cache_info()["hits"] == hits + 1
+    (folder / "tenant-read-contract.json").write_text(
+        json.dumps({"schema": "factory.tenant-read-contract.v2", "reads": []}),
+        encoding="utf-8",
+    )
+    with pytest.raises(ReviewAuditError, match="nonempty read scopes"):
+        load_tenant_read_contract(tmp_path)
+    with pytest.raises(ReviewAuditError, match="must be a boolean"):
+        security_scan(tmp_path, tenant_policy_applies="true")
+
+
+def test_security_scan_flags_unlisted_read_when_tenant_policy_applies(tmp_path):
+    (tmp_path / "service.py").write_text(
+        "from sqlalchemy.orm import Session\n"
+        "def fetch_user(user_id):\n"
+        "    return session.query(User).filter_by(id=user_id).first()\n",
+        encoding="utf-8",
+    )
+    result = security_scan(
+        tmp_path,
+        tenant_read_calls=("store.fetch",),
+        tenant_policy_applies=False,
+    )
+    assert result["finding_counts"]["SECURITY_TENANT_READ_UNDECLARED"] == 1
 
 
 def test_security_scan_rejects_declared_binding_to_wrong_function_parameter(tmp_path):
@@ -7646,6 +7967,7 @@ def test_tenant_attribute_binding_rejects_rebinding_and_wrong_scope(
 
 def test_scoped_tenant_contract_keeps_other_files_in_security_scan(tmp_path):
     from factoryline.review_audits import load_tenant_read_contract
+    import factoryline.review_audits as audit
 
     (tmp_path / "app.py").write_text(
         "def read(principal):\n    return store.fetch(principal.tenant_id)\n",
@@ -7653,6 +7975,12 @@ def test_scoped_tenant_contract_keeps_other_files_in_security_scan(tmp_path):
     )
     (tmp_path / "test_other.py").write_text(
         "def test_hollow():\n    assert True\n", encoding="utf-8"
+    )
+    (tmp_path / "other.py").write_text(
+        "from sqlalchemy.orm import Session\n"
+        "def list_users():\n"
+        "    return session.query(User).first()\n",
+        encoding="utf-8",
     )
     path = tmp_path / ".factory"
     path.mkdir()
@@ -7676,15 +8004,29 @@ def test_scoped_tenant_contract_keeps_other_files_in_security_scan(tmp_path):
         encoding="utf-8",
     )
     calls, bindings, evidence = load_tenant_read_contract(tmp_path)
+    audit._oracle_context_cache_clear()
+    first = security_scan(
+        tmp_path,
+        tenant_read_calls=calls,
+        tenant_read_bindings=bindings,
+        tenant_read_scopes=evidence["scoped_reads"],
+        cache_enabled=True,
+    )
+    hits = audit._oracle_context_cache_info()["hits"]
     result = security_scan(
         tmp_path,
         tenant_read_calls=calls,
         tenant_read_bindings=bindings,
         tenant_read_scopes=evidence["scoped_reads"],
+        cache_enabled=True,
     )
-    assert result["files_scanned"] == 2
+    assert audit._oracle_context_cache_info()["hits"] == hits + 1
+    assert result["audit_sha256"] == first["audit_sha256"]
+    assert result["finding_counts"] == first["finding_counts"]
+    assert result["files_scanned"] == 3
     assert [item["code"] for item in result["findings"]] == ["QUALITY_HOLLOW_TEST"]
     assert evidence["state"] == "loaded"
+    assert evidence["policy_applies"] is False
 
 
 @pytest.mark.parametrize(

@@ -177,6 +177,7 @@ def _run_security(args: Any) -> int:
             tenant_read_calls=calls,
             tenant_read_bindings=bindings,
             tenant_read_scopes=contract_evidence.get("scoped_reads"),
+            tenant_policy_applies=contract_evidence.get("policy_applies", False),
             oracle_evidence=getattr(args, "oracle_evidence", None),
             oracle_trust_root=getattr(args, "oracle_trust_root", None),
             oracle_trust_sha256=getattr(args, "oracle_trust_sha256", None),

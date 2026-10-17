@@ -78,11 +78,14 @@ def _consume_security_snapshots(
             tree = snapshots.pop(path, None)
             if tree is None:
                 continue
-            scope = (scoped_reads or {}).get(path.relative_to(workspace).as_posix(), {})
+            scope = (scoped_reads or {}).get(
+                path.relative_to(workspace).as_posix(), (scoped_reads or {}).get("", {})
+            )
             calls = tuple(sorted(set(tenant_read_calls) | set(scope.get("calls", ()))))
             bindings = {**scope.get("bindings", {}), **tenant_read_bindings}
             source_context = {
                 **contexts.get(path, {}),
+                "_tenant_policy_applies": scope.get("_policy_applies", False),
                 "_security_source_context": (workspace, retained),
             }
             rows[path] = scan_snapshot(
@@ -116,11 +119,14 @@ def _scan_missing_security_snapshot(
     """Fall back to the captured source bytes when no producer tree is available."""
     if scanned is not None:
         return scanned
-    scope = (scoped_reads or {}).get(path.relative_to(workspace).as_posix(), {})
+    scope = (scoped_reads or {}).get(
+        path.relative_to(workspace).as_posix(), (scoped_reads or {}).get("", {})
+    )
     calls = tuple(sorted(set(tenant_read_calls) | set(scope.get("calls", ()))))
     bindings = {**scope.get("bindings", {}), **tenant_read_bindings}
     source_context = {
         **contexts.get(path, {}),
+        "_tenant_policy_applies": scope.get("_policy_applies", False),
         "_security_source_context": (workspace, retained),
     }
     return scan_source(
@@ -172,6 +178,42 @@ def _security_source_failure(
     return binding, [finding], outcome
 
 
+def _undeclared_tenant_read_findings(relative, nodes, aliases, declared_reads, applies):
+    """Report ORM reads outside an explicitly applicable declaration."""
+    from . import review_audits as audit
+
+    if not declared_reads and not applies:
+        return []
+    return [
+        audit._security_finding(
+            "SECURITY_TENANT_READ_UNDECLARED",
+            relative,
+            call,
+            (
+                f"Potential ORM read {name} needs review for tenant scope. "
+                "If tenant isolation applies, declare the read in --tenant-read-call and bind its tenant scope."
+            ),
+            "HIGH",
+            call=name,
+        )
+        for name, call in audit._orm_read_candidates(nodes, aliases)
+        if name not in declared_reads
+    ]
+
+
+def _verified_security_tree(audit, workspace, path, data, binding, tree, fingerprint):
+    """Reuse only a producer AST that still matches both source and structure."""
+    if (
+        not isinstance(tree, ast.Module)
+        or getattr(tree, "_oracle_source_sha256", None) != binding["sha256"]
+        or fingerprint is None
+        or audit._oracle_tree_fingerprint(tree) != fingerprint
+    ):
+        return audit._measure_parse(ast.parse, data, workspace, path)
+    audit.contracts._clear_analysis_sidecars(tree)
+    return tree
+
+
 def _scan_security_source(
     workspace,
     path,
@@ -221,15 +263,9 @@ def _scan_security_source(
             "sha256": audit._measure_hash("source_hash", audit.sha256, data),
             "bytes": len(data),
         }
-        if (
-            not isinstance(tree, ast.Module)
-            or getattr(tree, "_oracle_source_sha256", None) != binding["sha256"]
-            or fingerprint is None
-            or audit._oracle_tree_fingerprint(tree) != fingerprint
-        ):
-            tree = audit._measure_parse(ast.parse, data, workspace, path)
-        else:
-            audit.contracts._clear_analysis_sidecars(tree)
+        tree = _verified_security_tree(
+            audit, workspace, path, data, binding, tree, fingerprint
+        )
         tree._oracle_source_lines = data.decode("utf-8").splitlines()
     except SyntaxError as exc:
         return _security_source_failure(
@@ -265,9 +301,169 @@ def _scan_security_source(
             tenant_read_bindings,
             oracle_context,
             test_file_patterns,
+            (oracle_context or {}).get("_tenant_policy_applies", False),
         )
     )
     return binding, findings, "audited"
+
+
+def _nested_async_runner_invocations(test, definitions, targets, aliases):
+    """Return nested assertions consumed by an imported, unchanged asyncio API."""
+    from . import review_audits as audit
+
+    module = getattr(test, "_oracle_module", None)
+    if not isinstance(module, ast.Module):
+        return set()
+    imports = audit._scope_security_aliases(
+        audit._module_security_aliases(module), module
+    )
+    roots = {
+        item.asname or item.name.split(".", 1)[0]
+        for node in ast.walk(module)
+        if isinstance(node, ast.Import)
+        for item in node.names
+        if item.name == "asyncio"
+    }
+    if not roots:
+        return set()
+    parents = audit._oracle_ancestor_map(module.body, module)
+    if any(
+        isinstance(node, ast.Name)
+        and node.id in roots
+        and not (
+            isinstance((attribute := parents[id(node)][-1][0]), ast.Attribute)
+            and attribute.value is node
+            and attribute.attr in {"run", "new_event_loop"}
+            and isinstance(attribute.ctx, ast.Load)
+            and isinstance((call := parents[id(attribute)][-1][0]), ast.Call)
+            and call.func is attribute
+        )
+        for node in ast.walk(module)
+    ):
+        return set()
+    aliases = audit._scope_security_aliases(imports, test)
+    nodes = audit._test_oracle_body_nodes(test, aliases)
+    invoked = set()
+    for name in targets:
+        function = definitions.get(name)
+        if isinstance(function, ast.AsyncFunctionDef) and not function.decorator_list:
+            calls = [
+                call
+                for call in nodes
+                if isinstance(call, ast.Call)
+                and call.lineno > function.lineno
+                and audit._effective_assertion(call, aliases)
+                and _nested_async_runner_call(
+                    call, name, test, module, aliases, nodes, audit
+                )
+            ]
+            if calls:
+                invoked.add(name)
+                invoked.update(
+                    call.func.id for call in calls if isinstance(call.func, ast.Name)
+                )
+    return invoked
+
+
+def _nested_async_runner_call(call, name, test, module, aliases, nodes, audit):
+    """Prove event-loop consumption or a one-operation imported asyncio wrapper."""
+    receiver = call.func.value if isinstance(call.func, ast.Attribute) else None
+    if (
+        isinstance(receiver, ast.Name)
+        and getattr(call.func, "attr", None) == "run_until_complete"
+        and len(call.args) == 1
+        and isinstance(call.args[0], ast.Call)
+        and isinstance(call.args[0].func, ast.Name)
+        and call.args[0].func.id == name
+        and not call.args[0].args
+        and not call.args[0].keywords
+        and not call.keywords
+    ):
+        bindings = [
+            item for item in test.body if receiver.id in audit._bound_names(item)
+        ]
+        if len(bindings) == 1:
+            binding = bindings[0]
+            targets = (
+                binding.targets
+                if isinstance(binding, ast.Assign)
+                else [getattr(binding, "target", None)]
+            )
+            creation = getattr(binding, "value", None)
+            if (
+                len(targets) == 1
+                and isinstance(targets[0], ast.Name)
+                and targets[0].id == receiver.id
+                and isinstance(creation, ast.Call)
+                and not creation.args
+                and not creation.keywords
+                and isinstance(creation.func, ast.Attribute)
+                and aliases.get(audit._name(creation.func.value)) == "asyncio"
+                and audit._resolved_ast_name(creation.func, aliases)
+                == "asyncio.new_event_loop"
+                and binding.lineno < call.lineno
+                and not audit._name_rebound(
+                    nodes, receiver.id, binding.lineno, call.lineno
+                )
+                and not audit._click_receiver_mutated(test, receiver.id)
+            ):
+                return True
+    if (
+        not isinstance(call.func, ast.Name)
+        or len(call.args) != 1
+        or not isinstance(call.args[0], ast.Name)
+        or call.args[0].id != name
+        or call.keywords
+        or call.func.id in audit._scope_parameters(test)
+        or audit._scope_binds_name(test, call.func.id)
+    ):
+        return False
+    runner = next(
+        (
+            item
+            for item in module.body
+            if isinstance(item, ast.FunctionDef) and item.name == call.func.id
+        ),
+        None,
+    )
+    if runner is None or audit._module_has_rebinding(module, call.func.id, runner):
+        return False
+    parameters = [*runner.args.posonlyargs, *runner.args.args]
+    body = (
+        runner.body[1:]
+        if runner.body
+        and isinstance(runner.body[0], ast.Expr)
+        and isinstance(runner.body[0].value, ast.Constant)
+        and isinstance(runner.body[0].value.value, str)
+        else runner.body
+    )
+    if (
+        runner.decorator_list
+        or len(parameters) != 1
+        or runner.args.vararg
+        or runner.args.kwarg
+        or runner.args.kwonlyargs
+        or len(body) != 1
+        or call.lineno <= runner.lineno
+    ):
+        return False
+    operation = getattr(body[0], "value", None)
+    scoped = audit._scope_security_aliases(
+        audit._module_security_aliases(module), runner
+    )
+    return (
+        isinstance(operation, ast.Call)
+        and isinstance(operation.func, ast.Attribute)
+        and scoped.get(audit._name(operation.func.value)) == "asyncio"
+        and audit._resolved_ast_name(operation.func, scoped) == "asyncio.run"
+        and len(operation.args) == 1
+        and not operation.keywords
+        and isinstance(operation.args[0], ast.Call)
+        and isinstance(operation.args[0].func, ast.Name)
+        and operation.args[0].func.id == parameters[0].arg
+        and not operation.args[0].args
+        and not operation.args[0].keywords
+    )
 
 
 def database_workspace_context(

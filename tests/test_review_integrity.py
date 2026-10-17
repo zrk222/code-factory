@@ -22,6 +22,7 @@ from hashlib import sha256
 from factoryline.cli import main
 from factoryline.journey_proof import JourneyProofError, _digest
 from factoryline import workflow_audit as workflow_audit_module
+from factoryline import intent_quality as intent_quality_module
 from factoryline.workflow_audit import CATEGORIES, audit_workflows
 
 
@@ -579,6 +580,309 @@ def _credential_source_findings(source):
     )
 
 
+def _request_alias_test_context(source):
+    from factoryline.review_integrity import bind_security_call_scopes
+
+    tree = ast.parse(source)
+    bind_security_call_scopes(tree)
+    return tree, next(node for node in tree.body if isinstance(node, ast.FunctionDef))
+
+
+def test_request_alias_memo_keeps_ordered_prefix_and_scope_semantics(monkeypatch):
+    from factoryline import review_integrity
+
+    tree, function = _request_alias_test_context(
+        "import requests as client\n"
+        "client = object()\n"
+        "import httpx as client\n"
+        "def run(client):\n"
+        "    import urllib as client\n"
+        "    before = client\n"
+        "    import requests as client\n"
+        "    after = client\n"
+        "def branch():\n"
+        "    import urllib as client\n"
+        "    before_if = client\n"
+        "    if condition:\n"
+        "        import httpx as client\n"
+        "    after_if = client\n"
+    )
+    branch = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "branch"
+    )
+    aliases = {"client": "seed"}
+    applications = []
+    original = review_integrity._security_apply_import_bindings
+
+    def count_applications(body, resolved, stop, audit):
+        applications.append((body, stop))
+        return original(body, resolved, stop, audit)
+
+    monkeypatch.setattr(
+        review_integrity, "_security_apply_import_bindings", count_applications
+    )
+    token = intent_quality_module._SECURITY_REQUEST_ALIAS_MEMO.set(
+        intent_quality_module._new_security_request_alias_memo(tree)
+    )
+    try:
+        module_before_import = review_integrity._security_scope_request_aliases(
+            tree, aliases, tree.body[1]
+        )
+        module_after_import = review_integrity._security_scope_request_aliases(
+            tree, aliases
+        )
+        before_statement = review_integrity._security_scope_request_aliases(
+            function, aliases, function.body[1]
+        )
+        before_rebind = review_integrity._security_scope_request_aliases(
+            function, aliases, function.body[2]
+        )
+        after_rebind = review_integrity._security_scope_request_aliases(
+            function, aliases, function.body[3]
+        )
+        complete = review_integrity._security_scope_request_aliases(function, aliases)
+        branch_before = review_integrity._security_scope_request_aliases(
+            branch, aliases, branch.body[1]
+        )
+        branch_after = review_integrity._security_scope_request_aliases(
+            branch, aliases, branch.body[3]
+        )
+        assert module_before_import["client"] == "requests"
+        assert module_after_import["client"] == "httpx"
+        assert before_statement["client"] == "urllib"
+        assert before_rebind["client"] == "urllib"
+        assert after_rebind["client"] == "requests"
+        assert complete["client"] == "requests"
+        assert branch_before["client"] == "urllib"
+        assert "client" not in branch_after
+        assert len(applications) < 12
+    finally:
+        intent_quality_module._SECURITY_REQUEST_ALIAS_MEMO.reset(token)
+
+
+def test_request_alias_memo_copies_results_tracks_alias_mutation_and_bounds(
+    monkeypatch,
+):
+    from factoryline import review_integrity
+
+    tree = ast.parse("import requests as client\n")
+    aliases = {"client": "requests"}
+    applications = []
+    original = review_integrity._security_apply_import_bindings
+
+    def count_applications(body, resolved, stop, audit):
+        applications.append(stop)
+        return original(body, resolved, stop, audit)
+
+    monkeypatch.setattr(
+        review_integrity, "_security_apply_import_bindings", count_applications
+    )
+    token = intent_quality_module._SECURITY_REQUEST_ALIAS_MEMO.set(
+        intent_quality_module._new_security_request_alias_memo(tree)
+    )
+    try:
+        first = review_integrity._security_scope_request_aliases(tree, aliases)
+        first["client"] = "forged"
+        assert (
+            review_integrity._security_scope_request_aliases(tree, aliases)["client"]
+            == "requests"
+        )
+        before_alias_change = len(applications)
+        aliases["client"] = "httpx"
+        assert (
+            review_integrity._security_scope_request_aliases(tree, aliases)["client"]
+            == "requests"
+        )
+        assert len(applications) > before_alias_change
+    finally:
+        intent_quality_module._SECURITY_REQUEST_ALIAS_MEMO.reset(token)
+
+    limits = (
+        "_SECURITY_REQUEST_ALIAS_MAX_ENTRIES",
+        "_SECURITY_REQUEST_ALIAS_MAX_PAIRS",
+        "_SECURITY_REQUEST_ALIAS_MAX_BYTES",
+    )
+    defaults = {limit: getattr(intent_quality_module, limit) for limit in limits}
+    for limit in limits:
+        with monkeypatch.context() as local_patch:
+            for other, default in defaults.items():
+                local_patch.setattr(intent_quality_module, other, default)
+            local_patch.setattr(intent_quality_module, limit, 0)
+            token = intent_quality_module._SECURITY_REQUEST_ALIAS_MEMO.set(
+                intent_quality_module._new_security_request_alias_memo(tree)
+            )
+            try:
+                before_overflow = len(applications)
+                review_integrity._security_scope_request_aliases(tree, aliases)
+                review_integrity._security_scope_request_aliases(tree, aliases)
+                assert len(applications) >= before_overflow + 2
+            finally:
+                intent_quality_module._SECURITY_REQUEST_ALIAS_MEMO.reset(token)
+
+    with monkeypatch.context() as local_patch:
+        local_patch.setattr(
+            intent_quality_module, "_SECURITY_REQUEST_ALIAS_MAX_BYTES", 2
+        )
+        tree = ast.parse("pass\n")
+        token = intent_quality_module._SECURITY_REQUEST_ALIAS_MEMO.set(
+            intent_quality_module._new_security_request_alias_memo(tree)
+        )
+        try:
+            before_unicode_overflow = len(applications)
+            for _ in range(2):
+                review_integrity._security_scope_request_aliases(tree, {"x": "é"})
+            assert len(applications) >= before_unicode_overflow + 2
+        finally:
+            intent_quality_module._SECURITY_REQUEST_ALIAS_MEMO.reset(token)
+
+
+def test_request_alias_memo_is_tree_scoped_and_exception_safe(monkeypatch):
+    from factoryline import review_integrity
+
+    first_tree = ast.parse("import requests as client\n")
+    second_tree = ast.parse("import httpx as client\n")
+    token = intent_quality_module._SECURITY_REQUEST_ALIAS_MEMO.set(
+        intent_quality_module._new_security_request_alias_memo(first_tree)
+    )
+    try:
+        assert (
+            review_integrity._security_scope_request_aliases(
+                second_tree, {"client": "seed"}
+            )["client"]
+            == "httpx"
+        )
+    finally:
+        intent_quality_module._SECURITY_REQUEST_ALIAS_MEMO.reset(token)
+
+    original = review_integrity._security_connector_cursor_helpers
+
+    def fail_once(tree, aliases):
+        raise RuntimeError("forced scan failure")
+
+    monkeypatch.setattr(
+        review_integrity, "_security_connector_cursor_helpers", fail_once
+    )
+    with pytest.raises(RuntimeError, match="forced scan failure"):
+        review_integrity.security_source_sink_findings(
+            "candidate.py", first_tree, list(ast.walk(first_tree)), {}
+        )
+    assert intent_quality_module._SECURITY_REQUEST_ALIAS_MEMO.get() is None
+    monkeypatch.setattr(
+        review_integrity, "_security_connector_cursor_helpers", original
+    )
+
+
+def test_request_alias_raw_path_observes_tree_mutation_without_memo():
+    from factoryline import review_integrity
+
+    tree = ast.parse("import requests as client\n")
+    assert review_integrity._security_scope_request_aliases(tree, {})["client"] == (
+        "requests"
+    )
+    tree.body[0] = ast.parse("import httpx as client\n").body[0]
+    assert review_integrity._security_scope_request_aliases(tree, {})["client"] == (
+        "httpx"
+    )
+
+
+def test_request_alias_nested_scan_restores_outer_memo(monkeypatch):
+    from factoryline import review_integrity
+
+    nested = ast.parse("import httpx as client\n")
+    outer = ast.parse("import requests as client\ndef run():\n    return 1\n")
+    original = review_integrity._security_connector_cursor_helpers
+    calls = 0
+    restored = []
+
+    def nest_once(tree, aliases):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            outer_memo = intent_quality_module._SECURITY_REQUEST_ALIAS_MEMO.get()
+            review_integrity.security_source_sink_findings(
+                "nested.py", nested, list(ast.walk(nested)), {}
+            )
+            restored.append(
+                intent_quality_module._SECURITY_REQUEST_ALIAS_MEMO.get() is outer_memo
+            )
+        return original(tree, aliases)
+
+    monkeypatch.setattr(
+        review_integrity, "_security_connector_cursor_helpers", nest_once
+    )
+    review_integrity.security_source_sink_findings(
+        "outer.py", outer, list(ast.walk(outer)), {}
+    )
+    assert restored == [True]
+    assert intent_quality_module._SECURITY_REQUEST_ALIAS_MEMO.get() is None
+    review_integrity.security_source_sink_findings(
+        "outer.py", outer, list(ast.walk(outer)), {}
+    )
+    assert intent_quality_module._SECURITY_REQUEST_ALIAS_MEMO.get() is None
+
+
+def test_request_alias_memo_matches_uncached_full_findings(monkeypatch):
+    from factoryline import review_integrity
+    from factoryline.review_audits import _security_aliases
+
+    source = textwrap.dedent(
+        """
+        from flask import request
+        import sqlite3
+        import logging
+        connection = sqlite3.connect(':memory:')
+        cursor = connection.cursor()
+        logger = logging.getLogger(__name__)
+        def handle():
+            value = request.args.get('q')
+            cursor.execute('SELECT * FROM item WHERE id=' + value)
+            logger.info('query=%s', value)
+            cursor.execute('SELECT * FROM item WHERE name=' + value)
+            logger.info('query=%s', value)
+        """
+    )
+    base_apply = review_integrity._security_apply_import_bindings
+    memo_factory = intent_quality_module._new_security_request_alias_memo
+
+    def analyze(disable_memo):
+        tree = ast.parse(source)
+        nodes = list(ast.walk(tree))
+        aliases = _security_aliases(nodes)
+        monkeypatch.setattr(
+            review_integrity, "_security_apply_import_bindings", base_apply
+        )
+        monkeypatch.setattr(
+            intent_quality_module, "_new_security_request_alias_memo", memo_factory
+        )
+        if disable_memo:
+            monkeypatch.setattr(
+                intent_quality_module,
+                "_new_security_request_alias_memo",
+                lambda _: None,
+            )
+        calls = []
+
+        def count_applications(body, resolved, stop, audit):
+            calls.append(stop)
+            return base_apply(body, resolved, stop, audit)
+
+        monkeypatch.setattr(
+            review_integrity, "_security_apply_import_bindings", count_applications
+        )
+        findings = review_integrity.security_source_sink_findings(
+            "candidate.py", tree, nodes, aliases
+        )
+        return findings, len(calls)
+
+    cached, cached_calls = analyze(False)
+    uncached, uncached_calls = analyze(True)
+    assert cached == uncached
+    assert cached
+    assert cached_calls < uncached_calls
+
+
 def test_credential_password_request_value_direct_contract():
     from factoryline.intent_quality import credential_password_request_value
 
@@ -1087,7 +1391,7 @@ def test_security_scan_adapter_emits_only_conditional_configuration_findings():
     )
 
 
-def test_security_config_ordered_rebinding_keeps_prior_findings_only():
+def test_security_configuration_ordered_rebinding_keeps_prior_findings_only():
     from factoryline.review_audits import _security_aliases
     from factoryline.security_configuration import configuration_findings
 

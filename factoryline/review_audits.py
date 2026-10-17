@@ -1951,6 +1951,8 @@ def _mock_receiver_has_provenance(assertion, aliases):
         return False
     scoped_aliases = _scope_security_aliases(aliases, scope)
     nodes = _test_oracle_body_nodes(scope, scoped_aliases)
+    from .intent_quality import _mock_scope_binding
+
     proven = _mock_scope_binding(nodes, receiver, assertion, scoped_aliases)
     module = getattr(scope, "_oracle_module", None)
     fixture_proven = bool(
@@ -2026,7 +2028,9 @@ def _mock_fixture_binding(scope, name, module, aliases):
         and _resolved_ast_name(node.decorator_list[0], aliases) == "pytest.fixture"
     ]
     if len(fixtures) != 1 or _module_has_rebinding(module, name, fixtures[0]):
-        return False
+        return not fixtures and contracts._mock_parameter_annotation(
+            scope, name, aliases
+        )
     fixture = fixtures[0]
     fixture_aliases = _scope_security_aliases(aliases, fixture)
     returns = [item for item in fixture.body if isinstance(item, ast.Return)]
@@ -2084,8 +2088,7 @@ def _mock_context_patch_parameter(scope, name, assertion, aliases):
                 item,
                 (ast.Assign, ast.AnnAssign, ast.AugAssign, ast.NamedExpr, ast.Delete),
             )
-            and (node.lineno, node.col_offset)
-            < (item.lineno, item.col_offset)
+            and (item.lineno, item.col_offset)
             < (assertion.lineno, assertion.col_offset)
             and name in _bound_names(item)
             for item in nodes
@@ -2137,15 +2140,30 @@ def _mock_getattr_selector(selector, scope):
 def _mock_root_was_mutated(scope, root, before, aliases):
     from .review_integrity import _source_name_aliases
 
-    for node in _test_oracle_body_nodes(scope, {}):
+    nodes = _test_oracle_body_nodes(scope, {})
+    origin = next(
+        (
+            node
+            for node in nodes
+            if isinstance(node, ast.Name)
+            and node.id == root
+            and isinstance(node.ctx, ast.Store)
+            and _in_current_test_body(node)
+            and (node.lineno, node.col_offset) < (before.lineno, before.col_offset)
+        ),
+        None,
+    )
+    for node in nodes:
         if (getattr(node, "lineno", 0), getattr(node, "col_offset", 0)) >= (
             before.lineno,
             before.col_offset,
         ):
             continue
         if (
-            isinstance(node, (ast.Attribute, ast.Subscript))
+            isinstance(node, (ast.Name, ast.Attribute, ast.Subscript))
             and isinstance(node.ctx, (ast.Store, ast.Del))
+            and (not isinstance(node, ast.Name) or node.id == root)
+            and node is not origin
             and _mock_root_name(node, scope, aliases)
             in _source_name_aliases(scope, {root}, node)
         ):
@@ -2170,21 +2188,6 @@ def _mock_root_was_mutated(scope, root, before, aliases):
             in _source_name_aliases(scope, {root}, node)
         ):
             return True
-    return False
-
-
-def _mock_scope_binding(nodes, name, endpoint, aliases):
-    endpoint_line = endpoint.lineno
-    for statement in nodes:
-        if not isinstance(statement, ast.stmt):
-            continue
-        if statement.lineno >= endpoint_line or not _in_current_test_body(statement):
-            continue
-        if not isinstance(statement, (ast.Assign, ast.AnnAssign)):
-            continue
-        if not _mock_constructor_binding(statement, name, aliases):
-            continue
-        return not _name_rebound(nodes, name, statement.lineno, endpoint_line)
     return False
 
 
@@ -2934,6 +2937,9 @@ def _direct_nested_helper_calls(
                 continue
             if _effective_assertion(call, aliases):
                 direct.add(name)
+    direct |= contracts._nested_async_runner_invocations(
+        test, definitions, effective, aliases
+    )
     direct.update(
         _directly_invoked_callback_names(body_nodes, definitions, effective, aliases)
     )
@@ -4347,7 +4353,7 @@ def load_tenant_read_contract(
     if not contract_path.is_relative_to(workspace):
         raise ReviewAuditError("Tenant-read contract must remain inside the workspace.")
     if not contract_path.exists():
-        return (), (), {"path": relative, "state": "missing"}
+        return (), (), {"path": relative, "state": "missing", "policy_applies": False}
     try:
         data, evidence = _read(workspace, relative)
         contract = json.loads(data, object_pairs_hook=_unique_fields)
@@ -4357,6 +4363,7 @@ def load_tenant_read_contract(
         raise ReviewAuditError("Invalid tenant-read contract schema or fields.")
     if contract.get("schema") == "factory.tenant-read-contract.v2":
         evidence["scoped_reads"] = _tenant_scoped_entries(workspace, contract["reads"])
+        evidence["policy_applies"] = False
         evidence["state"] = "loaded"
         return (), (), evidence
     if contract.get("schema") != TENANT_CONTRACT_SCHEMA:
@@ -4369,6 +4376,7 @@ def load_tenant_read_contract(
         for call, values in normalized_bindings.items()
         for binding in values
     )
+    evidence["policy_applies"] = True
     evidence["state"] = "loaded"
     return normalized_calls, flattened, evidence
 
@@ -4821,31 +4829,6 @@ def _tenant_read_findings(
     ]
 
 
-def _undeclared_tenant_read_findings(
-    relative: str,
-    nodes: list[ast.AST],
-    aliases: dict[str, str],
-    declared_reads: set[str],
-) -> list[dict[str, Any]]:
-    findings: list[dict[str, Any]] = []
-    for call_name, call in _orm_read_candidates(nodes, aliases):
-        if call_name not in declared_reads:
-            findings.append(
-                _security_finding(
-                    "SECURITY_TENANT_READ_UNDECLARED",
-                    relative,
-                    call,
-                    (
-                        f"Potential ORM read {call_name} needs review for tenant scope. "
-                        "If tenant isolation applies, declare the read in --tenant-read-call and bind its tenant scope."
-                    ),
-                    "HIGH",
-                    call=call_name,
-                )
-            )
-    return findings
-
-
 def _test_oracle_findings(
     relative: str,
     nodes: list[ast.AST],
@@ -5256,6 +5239,7 @@ def _security_scan_tree(
     tenant_read_bindings: dict[str, tuple[str, ...]] | None = None,
     oracle_context: dict | None = None,
     test_file_patterns: set[str] | None = None,
+    tenant_policy_applies: bool = False,
 ) -> list[dict[str, Any]]:
     relative = path.relative_to(root).as_posix()
     tree._security_source_context = (oracle_context or {}).get(
@@ -5290,9 +5274,15 @@ def _security_scan_tree(
     findings = _tenant_read_findings(
         relative, nodes, tenant_read_calls, aliases, tenant_read_bindings or {}
     )
+    from .context_efficiency import _undeclared_tenant_read_findings
+
     findings.extend(
         _undeclared_tenant_read_findings(
-            relative, nodes, aliases, set(tenant_read_calls)
+            relative,
+            nodes,
+            aliases,
+            set(tenant_read_calls),
+            tenant_policy_applies,
         )
     )
     findings.extend(source_sink_findings)
@@ -5407,6 +5397,7 @@ def _blocked_security_scan_report(
     files: list[Path],
     tenant_read_calls: tuple[str, ...],
     tenant_read_bindings: dict[str, tuple[str, ...]],
+    tenant_policy_applies: bool = False,
 ) -> dict[str, Any]:
     """Return a fail-closed receipt when the bounded inventory is exceeded."""
     relative_paths = [path.relative_to(workspace).as_posix() for path in files]
@@ -5447,7 +5438,7 @@ def _blocked_security_scan_report(
             ).hexdigest(),
         },
         "tenant_read_contract": _tenant_read_contract(
-            tenant_read_calls, tenant_read_bindings
+            tenant_read_calls, tenant_read_bindings, tenant_policy_applies
         ),
         "sources": [],
         "oracle_context": {
@@ -5477,9 +5468,11 @@ def _blocked_security_scan_report(
 def _tenant_read_contract(
     tenant_read_calls: tuple[str, ...],
     tenant_read_bindings: dict[str, tuple[str, ...]],
+    tenant_policy_applies: bool = False,
 ) -> dict[str, Any]:
     return {
         "calls": list(tenant_read_calls),
+        "policy_applies": tenant_policy_applies,
         "keyword": "tenant_id",
         "legacy_binding": "keyword:tenant_id:tenant_id",
         "argument_bindings": {
@@ -5654,6 +5647,7 @@ def _security_scan_report(
     oracle_edges: list[dict[str, Any]],
     oracle_configuration: list[dict[str, Any]],
     database_context: dict | None = None,
+    tenant_policy_applies: bool = False,
 ) -> dict[str, Any]:
     audit_coverage = _security_scan_coverage(files, outcomes, MAX_SECURITY_SOURCE_FILES)
     state = _security_scan_state(files, findings, database_context, audit_coverage)
@@ -5667,7 +5661,7 @@ def _security_scan_report(
         "oversized_sources": outcomes["too_large"],
         "audit_coverage": audit_coverage,
         "tenant_read_contract": _tenant_read_contract(
-            tenant_read_calls, tenant_read_bindings
+            tenant_read_calls, tenant_read_bindings, tenant_policy_applies
         ),
         "oracle_context": {
             "mode": "one_local_import_hop_ast_only",
@@ -5853,6 +5847,7 @@ def security_scan(
     tenant_read_calls: tuple[str, ...] = (),
     tenant_read_bindings: tuple[str, ...] = (),
     tenant_read_scopes: dict | None = None,
+    tenant_policy_applies: bool = False,
     cache_enabled: bool = True,
     oracle_evidence: str | None = None,
     oracle_trust_root: str | None = None,
@@ -5861,6 +5856,8 @@ def security_scan(
 ) -> dict[str, Any]:
     """Run a bounded AST scan with content-bound process-local context reuse."""
     workspace = Path(root).resolve()
+    if not isinstance(tenant_policy_applies, bool):
+        raise ReviewAuditError("tenant_policy_applies must be a boolean.")
     tenant_read_calls = _tenant_contract_calls(tenant_read_calls)
     tenant_read_bindings = _tenant_contract_bindings(
         tenant_read_bindings, tenant_read_calls
@@ -5874,9 +5871,15 @@ def security_scan(
         oracle_environment_sha256,
     )
     files = _security_source_files(workspace)
+    if tenant_policy_applies:
+        tenant_read_scopes[""] = {"calls": (), "bindings": {}, "_policy_applies": True}
     if len(files) > MAX_SECURITY_SOURCE_FILES:
         blocked = _blocked_security_scan_report(
-            workspace, files, tenant_read_calls, tenant_read_bindings
+            workspace,
+            files,
+            tenant_read_calls,
+            tenant_read_bindings,
+            tenant_policy_applies,
         )
         if any(value is not None for value in evidence):
             blocked["runtime_oracles"] = {
@@ -5912,6 +5915,7 @@ def security_scan(
         oracle_edges,
         oracle_configuration,
         database_context,
+        tenant_policy_applies,
     )
     return (
         _reconcile_runtime_oracles(workspace, result, evidence)

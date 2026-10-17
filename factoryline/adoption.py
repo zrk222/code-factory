@@ -1117,6 +1117,7 @@ def _python_audit_lanes(
                 tenant_read_calls=tuple(calls),
                 tenant_read_bindings=tuple(bindings),
                 tenant_read_scopes=contract.get("scoped_reads"),
+                tenant_policy_applies=contract.get("policy_applies", False),
                 **(oracle_options or {}),
             )
             security_state = _state_for_findings(
@@ -1799,6 +1800,7 @@ def _scan_static_security(
             tenant_read_calls=tuple(calls),
             tenant_read_bindings=tuple(bindings),
             tenant_read_scopes=contract.get("scoped_reads"),
+            tenant_policy_applies=contract.get("policy_applies", False),
             **(oracle_options or {}),
         )
     except Exception as exc:
