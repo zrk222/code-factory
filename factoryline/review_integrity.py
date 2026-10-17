@@ -3871,9 +3871,22 @@ def security_call_name(node, aliases):
 
 def security_source_sink_findings(relative, tree, nodes, aliases):
     """Return bounded static findings for proven request and parameter sink flows."""
-    from .audit_log_flow import audit_log_source_findings
+    from . import intent_quality
 
     bind_security_call_scopes(tree)
+    token = intent_quality._SECURITY_REQUEST_ALIAS_MEMO.set(
+        intent_quality._new_security_request_alias_memo(tree)
+    )
+    try:
+        return _security_source_sink_findings_bound(relative, tree, nodes, aliases)
+    finally:
+        intent_quality._SECURITY_REQUEST_ALIAS_MEMO.reset(token)
+
+
+def _security_source_sink_findings_bound(relative, tree, nodes, aliases):
+    """Analyze one bound tree while its private alias memo is active."""
+    from .audit_log_flow import audit_log_source_findings
+
     helpers = _security_connector_cursor_helpers(tree, aliases)
     findings = []
     scopes = [
@@ -4711,23 +4724,10 @@ def _security_request_args(node, aliases, scope=None, flow_statement=None):
 
 
 def _security_scope_request_aliases(scope, aliases, flow_statement=None):
-    from . import review_audits as audit
+    """Resolve scope bindings through the bounded per-scan SQL analysis helper."""
+    from .intent_quality import _security_scope_request_aliases as resolve
 
-    module = _security_module_scope(scope) if scope is not None else None
-    if module is None:
-        resolved = dict(aliases)
-    else:
-        module_stop = flow_statement if scope is module else None
-        resolved = _security_apply_import_bindings(module.body, {}, module_stop, audit)
-    if isinstance(scope, ast.Module):
-        return resolved
-    if not isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)):
-        return resolved
-    local_names = set(getattr(scope, "_security_local_names", set()))
-    local_names.update(getattr(scope, "_security_parameter_names", set()))
-    for name in local_names:
-        resolved.pop(name, None)
-    return _security_apply_import_bindings(scope.body, resolved, flow_statement, audit)
+    return resolve(scope, aliases, flow_statement)
 
 
 def _security_apply_import_bindings(body, resolved, stop, audit):

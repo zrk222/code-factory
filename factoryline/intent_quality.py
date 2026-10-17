@@ -16,6 +16,7 @@ A human still owns confirmation and an independent verifier still owns results.
 from __future__ import annotations
 
 import ast
+from contextvars import ContextVar
 from bisect import bisect_left
 import configparser
 from collections import Counter
@@ -233,6 +234,117 @@ def implementation_findings(relative, tree, data, context):
         for f in implementation_completeness_findings(relative, tree, data)
         if f["code"] != "QUALITY_EMPTY_IMPLEMENTATION" or f["line"] not in lines
     ]
+
+
+_SECURITY_REQUEST_ALIAS_MEMO = ContextVar("security_request_alias_memo", default=None)
+_SECURITY_REQUEST_ALIAS_MAX_ENTRIES = 512
+_SECURITY_REQUEST_ALIAS_MAX_PAIRS = 8192
+_SECURITY_REQUEST_ALIAS_MAX_BYTES = 524288
+
+
+def _new_security_request_alias_memo(tree):
+    """Create bounded, invocation-local request alias caches for one AST."""
+    return {"tree": tree, "values": {}, "pairs": 0, "bytes": 0}
+
+
+def _security_scope_request_aliases(scope, aliases, flow_statement=None):
+    """Resolve request aliases, reusing only exact-prefix results in one scan."""
+    from . import review_integrity
+    from . import review_audits as audit
+
+    memo = _SECURITY_REQUEST_ALIAS_MEMO.get()
+    module = review_integrity._security_module_scope(scope) if scope else None
+    if not memo or module is None or module is not memo["tree"]:
+        return _security_scope_request_aliases_uncached(scope, aliases, flow_statement)
+    alias_items = tuple(sorted(aliases.items()))
+    key = (module, scope, flow_statement, alias_items)
+    cached = memo["values"].get(key)
+    if cached is not None:
+        return dict(cached)
+    if isinstance(scope, ast.Module):
+        resolved = _security_request_alias_module_bindings(
+            module, alias_items, flow_statement
+        )
+    elif isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        resolved = _security_request_alias_module_bindings(module, alias_items, None)
+        local_names = set(getattr(scope, "_security_local_names", set()))
+        local_names.update(getattr(scope, "_security_parameter_names", set()))
+        for name in local_names:
+            resolved.pop(name, None)
+        resolved = review_integrity._security_apply_import_bindings(
+            scope.body, resolved, flow_statement, audit
+        )
+    else:
+        resolved = _security_scope_request_aliases_uncached(
+            scope, aliases, flow_statement
+        )
+    _security_store_request_alias_bindings(memo, key, alias_items, resolved)
+    return dict(resolved)
+
+
+def _security_scope_request_aliases_uncached(scope, aliases, flow_statement):
+    """Run the compatibility alias walk without consulting an invocation memo."""
+    from . import review_audits as audit
+    from .review_integrity import (
+        _security_apply_import_bindings,
+        _security_module_scope,
+    )
+
+    module = _security_module_scope(scope) if scope is not None else None
+    if module is None:
+        resolved = dict(aliases)
+    else:
+        module_stop = flow_statement if scope is module else None
+        resolved = _security_apply_import_bindings(module.body, {}, module_stop, audit)
+    if isinstance(scope, ast.Module):
+        return resolved
+    if not isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return resolved
+    local_names = set(getattr(scope, "_security_local_names", set()))
+    local_names.update(getattr(scope, "_security_parameter_names", set()))
+    for name in local_names:
+        resolved.pop(name, None)
+    return _security_apply_import_bindings(scope.body, resolved, flow_statement, audit)
+
+
+def _security_request_alias_module_bindings(module, alias_items, stop):
+    """Return full or exact-prefix module bindings in the active invocation."""
+    from . import review_audits as audit
+    from .review_integrity import _security_apply_import_bindings
+
+    memo = _SECURITY_REQUEST_ALIAS_MEMO.get()
+    key = (module, module, stop, alias_items)
+    cached = memo["values"].get(key)
+    if cached is not None:
+        return dict(cached)
+    resolved = _security_apply_import_bindings(module.body, {}, stop, audit)
+    _security_store_request_alias_bindings(memo, key, alias_items, resolved)
+    return dict(resolved)
+
+
+def _security_store_request_alias_bindings(memo, key, alias_items, resolved):
+    """Store a defensive alias copy only while all invocation budgets allow it."""
+    if key in memo["values"]:
+        return
+    value = dict(resolved)
+    pair_count = len(alias_items) + len(value)
+    byte_count = sum(
+        len(str(k).encode("utf-8")) + len(str(v).encode("utf-8"))
+        for k, v in alias_items
+    )
+    byte_count += sum(
+        len(str(k).encode("utf-8")) + len(str(v).encode("utf-8"))
+        for k, v in value.items()
+    )
+    if len(memo["values"]) >= _SECURITY_REQUEST_ALIAS_MAX_ENTRIES:
+        return
+    if memo["pairs"] + pair_count > _SECURITY_REQUEST_ALIAS_MAX_PAIRS:
+        return
+    if memo["bytes"] + byte_count > _SECURITY_REQUEST_ALIAS_MAX_BYTES:
+        return
+    memo["values"][key] = value
+    memo["pairs"] += pair_count
+    memo["bytes"] += byte_count
 
 
 _SQL_CONNECTORS = {
