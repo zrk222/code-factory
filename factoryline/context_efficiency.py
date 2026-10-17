@@ -24,6 +24,8 @@ from pathlib import Path
 from statistics import median
 from typing import Any
 
+from .ops_telemetry import _measured_source_read
+
 REQUEST_SCHEMA = "factory.context-efficiency-request.v1"
 PACKET_SCHEMA = "factory.context-efficiency-packet.v1"
 VERIFICATION_SCHEMA = "factory.context-efficiency-verification.v1"
@@ -33,6 +35,239 @@ EXPERIMENT_SCHEMA = "factory.context-efficiency-paired.v1"
 SHARD_CANDIDATE_SCHEMA = "factory.context-shard-candidate.v1"
 SHARD_REVIEW_SCHEMA = "factory.context-shard-review.v1"
 MODULE_VERSION = "1"
+
+
+@_measured_source_read
+def _read_bounded_workspace_source(workspace, relative, max_bytes, path_resolver):
+    """Read one bounded regular workspace file without following linked entries."""
+    path = path_resolver(workspace, relative)
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    with os.fdopen(descriptor, "rb") as stream:
+        opened = os.fstat(stream.fileno())
+        checked = path_resolver(workspace, relative).stat()
+        if (opened.st_dev, opened.st_ino) != (checked.st_dev, checked.st_ino):
+            raise OSError("source changed before read")
+        data = stream.read(max_bytes + 1)
+        after = path_resolver(workspace, relative).stat()
+        if (opened.st_ino, opened.st_size, opened.st_mtime_ns) != (
+            after.st_ino,
+            after.st_size,
+            after.st_mtime_ns,
+        ):
+            raise OSError("source changed during read")
+    return data
+
+
+def _consume_security_snapshots(
+    workspace,
+    files,
+    snapshots,
+    fingerprints,
+    contexts,
+    retained,
+    scoped_reads,
+    tenant_read_calls,
+    tenant_read_bindings,
+    test_file_patterns,
+    scan_snapshot,
+):
+    """Consume producer-owned trees synchronously and clear their sidecar map."""
+    rows = {}
+    try:
+        for path in files:
+            tree = snapshots.pop(path, None)
+            if tree is None:
+                continue
+            scope = (scoped_reads or {}).get(path.relative_to(workspace).as_posix(), {})
+            calls = tuple(sorted(set(tenant_read_calls) | set(scope.get("calls", ()))))
+            bindings = {**scope.get("bindings", {}), **tenant_read_bindings}
+            source_context = {
+                **contexts.get(path, {}),
+                "_security_source_context": (workspace, retained),
+            }
+            rows[path] = scan_snapshot(
+                workspace,
+                path,
+                calls,
+                bindings,
+                source_context,
+                test_file_patterns,
+                retained.get(path),
+                tree,
+                fingerprints.get(path),
+            )
+    finally:
+        snapshots.clear()
+    return rows
+
+
+def _scan_missing_security_snapshot(
+    scanned,
+    workspace,
+    path,
+    scoped_reads,
+    tenant_read_calls,
+    tenant_read_bindings,
+    contexts,
+    retained,
+    test_file_patterns,
+    scan_source,
+):
+    """Fall back to the captured source bytes when no producer tree is available."""
+    if scanned is not None:
+        return scanned
+    scope = (scoped_reads or {}).get(path.relative_to(workspace).as_posix(), {})
+    calls = tuple(sorted(set(tenant_read_calls) | set(scope.get("calls", ()))))
+    bindings = {**scope.get("bindings", {}), **tenant_read_bindings}
+    source_context = {
+        **contexts.get(path, {}),
+        "_security_source_context": (workspace, retained),
+    }
+    return scan_source(
+        workspace,
+        path,
+        calls,
+        bindings,
+        source_context,
+        test_file_patterns,
+        retained.get(path),
+    )
+
+
+def _verify_source_bindings(
+    workspace,
+    bindings,
+    source_reader,
+    max_bytes,
+    hash_source,
+    error_type,
+    runtime_error,
+    operation,
+):
+    """Reject any source binding whose bounded bytes changed before receipt creation."""
+    for binding in bindings:
+        current = workspace / binding["path"]
+        try:
+            if current.stat().st_size > max_bytes:
+                raise error_type(
+                    f"Evidence changed during {operation}: {binding['path']}"
+                )
+            data = source_reader(workspace, binding["path"])
+            if len(data) > max_bytes or current.stat().st_size > max_bytes:
+                raise error_type(
+                    f"Evidence changed during {operation}: {binding['path']}"
+                )
+        except (OSError, UnicodeError, runtime_error) as exc:
+            raise error_type(
+                f"Evidence changed during {operation}: {binding['path']}"
+            ) from exc
+        if len(data) != binding["bytes"] or hash_source(data) != binding["sha256"]:
+            raise error_type(f"Evidence changed during {operation}: {binding['path']}")
+
+
+def _security_source_failure(
+    audit, binding, relative, code, node, message, outcome, **facts
+):
+    finding = audit._security_finding(code, relative, node, message, "HIGH", **facts)
+    return binding, [finding], outcome
+
+
+def _scan_security_source(
+    workspace,
+    path,
+    tenant_read_calls,
+    tenant_read_bindings,
+    oracle_context,
+    test_file_patterns,
+    source_data,
+    tree=None,
+    fingerprint=None,
+):
+    """Scan one bounded source, consuming only an internal producer-owned AST."""
+    from . import review_audits as audit
+
+    relative = path.relative_to(workspace).as_posix()
+    binding = None
+    try:
+        initial_size = audit.local_file(workspace, relative).stat().st_size
+        if initial_size > audit.MAX_BYTES:
+            return _security_source_failure(
+                audit,
+                None,
+                relative,
+                "SECURITY_SOURCE_TOO_LARGE",
+                ast.Module(body=[], type_ignores=[]),
+                f"Source exceeds the {audit.MAX_BYTES}-byte scan limit.",
+                "too_large",
+                bytes=initial_size,
+            )
+        data = source_data
+        if data is None:
+            data = audit._security_source_bytes(workspace, relative)
+        final_size = audit.local_file(workspace, relative).stat().st_size
+        if len(data) > audit.MAX_BYTES or final_size > audit.MAX_BYTES:
+            return _security_source_failure(
+                audit,
+                None,
+                relative,
+                "SECURITY_SOURCE_TOO_LARGE",
+                ast.Module(body=[], type_ignores=[]),
+                f"Source exceeds the {audit.MAX_BYTES}-byte scan limit.",
+                "too_large",
+                bytes=max(len(data), final_size),
+            )
+        binding = {
+            "path": relative,
+            "sha256": audit._measure_hash("source_hash", audit.sha256, data),
+            "bytes": len(data),
+        }
+        if (
+            not isinstance(tree, ast.Module)
+            or getattr(tree, "_oracle_source_sha256", None) != binding["sha256"]
+            or fingerprint is None
+            or audit._oracle_tree_fingerprint(tree) != fingerprint
+        ):
+            tree = audit._measure_parse(ast.parse, data, workspace, path)
+        else:
+            audit.contracts._clear_analysis_sidecars(tree)
+        tree._oracle_source_lines = data.decode("utf-8").splitlines()
+    except SyntaxError as exc:
+        return _security_source_failure(
+            audit,
+            binding,
+            relative,
+            "QUALITY_SYNTAX_ERROR",
+            exc,
+            "Python source cannot be parsed deterministically.",
+            "syntax_error",
+            detail="invalid Python syntax",
+        )
+    except (OSError, UnicodeError, audit.RuntimeAuditError) as exc:
+        return _security_source_failure(
+            audit,
+            binding,
+            relative,
+            "SECURITY_SOURCE_UNREADABLE",
+            ast.Module(body=[], type_ignores=[]),
+            "Source could not be read for security analysis.",
+            "unreadable",
+            detail=type(exc).__name__,
+        )
+    findings = audit.contracts.implementation_findings(
+        relative, tree, data, oracle_context
+    )
+    findings.extend(
+        audit._security_scan_tree(
+            workspace,
+            path,
+            tree,
+            tenant_read_calls,
+            tenant_read_bindings,
+            oracle_context,
+            test_file_patterns,
+        )
+    )
+    return binding, findings, "audited"
 
 
 def database_workspace_context(
@@ -119,6 +354,18 @@ def _database_workspace_context_from_oracle(
     return _database_workspace_context(
         root, python_sources, read_source, python_inventory, oracle_snapshots
     )
+
+
+def _populate_oracle_database_context(
+    output, root, python_sources, read_source, python_inventory, oracle_snapshots
+):
+    """Populate the optional output with a database projection from fresh trees."""
+    if output is not None:
+        output.update(
+            _database_workspace_context_from_oracle(
+                root, python_sources, read_source, python_inventory, oracle_snapshots
+            )
+        )
 
 
 def _database_sql_sources(root, paths, read_source, selected, gaps):

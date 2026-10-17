@@ -16,7 +16,9 @@ A human still owns confirmation and an independent verifier still owns results.
 from __future__ import annotations
 
 import ast
+from bisect import bisect_left
 import configparser
+from collections import Counter
 from dataclasses import dataclass
 from fnmatch import fnmatchcase
 from hashlib import sha256
@@ -499,6 +501,2027 @@ def _sql_call_receiver(value):
     if isinstance(value, ast.Call) and isinstance(value.func, ast.Attribute):
         return value.func.value
     return None
+
+
+def _literal_assignment_diagnostics(relative, node, aliases, diagnostics):
+    """Keep ordinary literal findings unless a closed test canary is proven."""
+    if not any(
+        item.get("code") == "SECURITY_HARDCODED_SECRET"
+        and item.get("facts", {}).get("name") == "secret"
+        for item in diagnostics
+    ):
+        return diagnostics
+    if not _is_closed_command_canary(relative, node, aliases):
+        return diagnostics
+    return [
+        finding
+        for finding in diagnostics
+        if not (
+            finding.get("code") == "SECURITY_HARDCODED_SECRET"
+            and finding.get("facts", {}).get("name") == "secret"
+        )
+    ]
+
+
+def _is_closed_command_canary(relative, node, aliases):
+    """Accept only a source-resolved local consumer with linked output proof."""
+    context = _canary_context(relative, node, aliases)
+    if context is None:
+        return False
+    scope, secret_loads = context
+    absence = _canary_absence_assertion(scope, secret_loads)
+    if absence is None:
+        return False
+    output_name, assertion_line = absence
+    read = _canary_output_read_call(scope, output_name)
+    if read is None:
+        return False
+    run = _canary_single_secret_run(scope, node, secret_loads, aliases)
+    if run is None:
+        return False
+    return _canary_run_output_is_closed(
+        relative, scope, run, secret_loads, read, assertion_line, aliases
+    )
+
+
+def _canary_single_secret_run(scope, node, secret_loads, aliases):
+    """Find one later JSON subprocess carrying the exact marker binding."""
+    runs = [
+        call
+        for call in _canary_nodes(scope, ast.Call)
+        if _canary_call_name(call, aliases) == "subprocess.run"
+        and _canary_run_payload_contract(call, secret_loads, aliases) is not None
+    ]
+    return runs[0] if len(runs) == 1 and runs[0].lineno > node.lineno else None
+
+
+def _canary_run_output_is_closed(
+    relative, scope, run, secret_loads, read, assertion_line, aliases
+):
+    """Prove the subprocess writer and assertion read share a local root."""
+    source_context = _canary_source_context(scope)
+    if source_context is None:
+        return False
+    contract = _canary_run_payload_contract(run, secret_loads, aliases)
+    if contract is None:
+        return False
+    root = _canary_run_project_root(run, scope, aliases)
+    if root is None:
+        return False
+    workspace, sources = source_context
+    consumer = _canary_local_python_consumer(
+        run, scope, relative, aliases, workspace, sources, root[1], contract
+    )
+    if consumer is None:
+        return False
+    tree, consumer_aliases = consumer
+    writer = _canary_digest_only_output(tree, consumer_aliases, root[1], contract)
+    reader = _canary_readback_prefix(scope, read)
+    return _canary_linked_prefixes(
+        writer, reader, root, scope, run, read, assertion_line
+    )
+
+
+def _canary_linked_prefixes(writer, reader, root, scope, run, read, assertion_line):
+    """Join exact reader/writer roots and preserve execution order."""
+    return bool(
+        writer is not None
+        and reader is not None
+        and reader == writer
+        and writer[0] == root[0]
+        and _canary_tmp_path_is_closed(scope, run, read)
+        and read.lineno > run.lineno
+        and assertion_line > read.lineno
+    )
+
+
+def _canary_context(relative, node, aliases):
+    """Return the test scope and closed literal's two uses, or no context."""
+    if not _canary_assignment(relative, node):
+        return None
+    scope = _canary_test_scope(node, aliases)
+    if scope is None:
+        return None
+    if not _canary_index(scope).get("complete"):
+        return None
+    names = _canary_nodes(scope, ast.Name)
+    secret_names = [item for item in names if item.id == "secret"]
+    if (
+        len(secret_names) != 3
+        or sum(isinstance(item.ctx, ast.Store) for item in secret_names) != 1
+    ):
+        return None
+    secret_loads = [item for item in secret_names if isinstance(item.ctx, ast.Load)]
+    if len(secret_loads) != 2:
+        return None
+    return scope, secret_loads
+
+
+def _canary_test_scope(node, aliases):
+    """Return only a direct test-function scope with no outer secret binding."""
+    scope = getattr(node, "_security_lexical_scope", None)
+    if not isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return None
+    if not _canary_is_direct_test(scope, node):
+        return None
+    if not _canary_has_tmp_path_fixture(scope) or not _canary_has_no_secret_parameter(
+        scope
+    ):
+        return None
+    if not _canary_scope_has_no_rebindings(scope, aliases):
+        return None
+    return scope
+
+
+def _canary_is_direct_test(scope, node):
+    """Require the literal assignment directly in one test-function body."""
+    return scope.name.startswith("test_") and node in scope.body
+
+
+def _canary_scope_parameters(scope):
+    """Return all positional, keyword-only, and variadic parameters."""
+    return (
+        *scope.args.posonlyargs,
+        *scope.args.args,
+        *scope.args.kwonlyargs,
+        scope.args.vararg,
+        scope.args.kwarg,
+    )
+
+
+def _canary_has_tmp_path_fixture(scope):
+    """Require pytest's temporary-directory fixture by parameter name."""
+    return any(
+        argument is not None and argument.arg == "tmp_path"
+        for argument in _canary_scope_parameters(scope)
+    )
+
+
+def _canary_has_no_secret_parameter(scope):
+    """Reject parameter shadowing of the generic literal name."""
+    return not any(
+        argument is not None and argument.arg == "secret"
+        for argument in _canary_scope_parameters(scope)
+    )
+
+
+def _canary_scope_has_no_rebindings(scope, aliases):
+    """Reject global, nonlocal, or dynamic module mutation in the test source."""
+    index = _canary_index(scope)
+    if any(
+        "secret" in item.names
+        for kind in (ast.Global, ast.Nonlocal)
+        for item in _canary_nodes(scope, kind)
+    ):
+        return False
+    return (
+        index.get("complete", False)
+        and not index["attribute_writes"]
+        and not index["subscript_writes"]
+        and not any(
+            isinstance(item.ctx, (ast.Store, ast.Del))
+            for item in _canary_nodes(scope, ast.Name)
+            if item.id == "tmp_path"
+        )
+        and not any(
+            _canary_call_name(item, aliases).rsplit(".", 1)[-1]
+            in {"setattr", "delattr", "__setattr__", "__delattr__"}
+            or (
+                isinstance(item.func, ast.Attribute)
+                and item.func.attr
+                in {"setattr", "delattr", "__setattr__", "__delattr__"}
+            )
+            for item in _canary_nodes(scope, ast.Call)
+        )
+    )
+
+
+def _canary_assignment(relative, node):
+    """Restrict filtering to generic string literals in test sources."""
+    if not isinstance(node, ast.Assign) or len(node.targets) != 1:
+        return False
+    target, value = node.targets[0], node.value
+    if not (
+        isinstance(target, ast.Name)
+        and target.id == "secret"
+        and isinstance(value, ast.Constant)
+        and isinstance(value.value, str)
+    ):
+        return False
+    path = Path(relative)
+    return (
+        "tests" in path.parts or path.name.startswith("test_")
+    ) and not _looks_like_known_credential(value.value)
+
+
+def _canary_output_read_call(scope, output_name):
+    """Return the sole direct read whose bound value is asserted."""
+    reads = [
+        call
+        for call in _canary_nodes(scope, ast.Call)
+        if isinstance(call.func, ast.Attribute) and call.func.attr == "read_text"
+    ]
+    if len(reads) != 1:
+        return None
+    read = reads[0]
+    if not _canary_read_assigned_to(scope, read, output_name):
+        return None
+    if not _canary_output_name_is_closed(scope, output_name):
+        return None
+    return read
+
+
+def _canary_read_assigned_to(scope, read, output_name):
+    """Require the sole file read to be a direct function-body assignment."""
+    parent = _canary_parent(scope, read)
+    return (
+        isinstance(parent, ast.Assign)
+        and parent.value is read
+        and len(parent.targets) == 1
+        and isinstance(parent.targets[0], ast.Name)
+        and parent.targets[0].id == output_name
+        and parent in scope.body
+    )
+
+
+def _canary_output_name_is_closed(scope, output_name):
+    """Require a single output assignment and reject deletion or rebinding."""
+    names = _canary_nodes(scope, ast.Name)
+    output_names = [item for item in names if item.id == output_name]
+    if (
+        sum(isinstance(item.ctx, ast.Store) for item in output_names) != 1
+        or any(isinstance(item.ctx, ast.Del) for item in output_names)
+        or not any(isinstance(item.ctx, ast.Load) for item in output_names)
+    ):
+        return False
+    return True
+
+
+def _looks_like_known_credential(value):
+    """Keep known token formats and credential-shaped strings reportable."""
+    from .context_efficiency import _SECRET_BYTES
+
+    encoded = value.encode("utf-8", "ignore")
+    return bool(
+        re.search(r"\bsk_(?:live|test|prod)_[A-Za-z0-9]{16,}\b", value)
+        or re.search(
+            r"(?i)\b(?:api[_ -]?key|access[_ -]?token|bearer|credential|"
+            r"password|passwd|private[_ -]?key|secret[_ -]?key)\b",
+            value,
+        )
+        or re.fullmatch(r"(?i)[a-z]{4,16}[0-9]{1,4}", value.strip())
+        or any(pattern.search(encoded) for pattern in _SECRET_BYTES)
+    )
+
+
+def _canary_run_payload_contract(run, secret_loads, aliases):
+    """Return top-level JSON fields and the field carrying the literal marker."""
+    serialized = _canary_json_input(run, aliases)
+    if serialized is None or not isinstance(serialized.args[0], ast.Dict):
+        return None
+    payload = serialized.args[0]
+    fields = {}
+    for key, value in zip(payload.keys, payload.values):
+        if not isinstance(key, ast.Constant) or not isinstance(key.value, str):
+            return None
+        if key.value in fields:
+            return None
+        fields[key.value] = value
+    marked = [
+        key
+        for key, value in fields.items()
+        if any(item in secret_loads for item in _canary_nodes(value))
+    ]
+    if len(marked) != 1:
+        return None
+    return marked[0], frozenset(fields)
+
+
+def _canary_json_input(run, aliases):
+    """Return a single proven json.dumps input when shell expansion is absent."""
+    input_value = _canary_run_input_value(run)
+    if input_value is None:
+        return None
+    serialized = input_value
+    if (
+        not isinstance(serialized, ast.Call)
+        or _canary_call_name(serialized, aliases) != "json.dumps"
+    ):
+        return None
+    if len(serialized.args) != 1 or serialized.keywords:
+        return None
+    return serialized
+
+
+def _canary_run_input_value(run):
+    """Return a unique input keyword with explicit shell expansion disabled."""
+    inputs = [keyword.value for keyword in run.keywords if keyword.arg == "input"]
+    shell = [keyword.value for keyword in run.keywords if keyword.arg == "shell"]
+    if len(inputs) != 1 or len(shell) > 1:
+        return None
+    if any(keyword.arg is None for keyword in run.keywords):
+        return None
+    if shell and not (isinstance(shell[0], ast.Constant) and shell[0].value is False):
+        return None
+    return inputs[0]
+
+
+def _canary_absence_assertion(scope, secret_loads):
+    """Find a direct assert that the marker is absent from one output name."""
+    assertions = []
+    for statement in scope.body:
+        match = _canary_absence_assertion_line(statement, secret_loads)
+        if match is not None:
+            assertions.append(match)
+    if len(assertions) != 1:
+        return None
+    return assertions[0][0], assertions[0][1]
+
+
+def _canary_absence_assertion_line(statement, secret_loads):
+    """Recognize one direct secret-not-in-output comparison statement."""
+    if not isinstance(statement, ast.Assert) or not isinstance(
+        statement.test, ast.Compare
+    ):
+        return None
+    test = statement.test
+    if not _canary_secret_not_in_output(test, secret_loads):
+        return None
+    return test.comparators[0].id, statement.lineno
+
+
+def _canary_secret_not_in_output(test, secret_loads):
+    """Check the exact two-name `secret not in output` predicate shape."""
+    return (
+        len(test.ops) == 1
+        and isinstance(test.ops[0], ast.NotIn)
+        and len(test.comparators) == 1
+        and isinstance(test.left, ast.Name)
+        and isinstance(test.left.ctx, ast.Load)
+        and test.left in secret_loads
+        and isinstance(test.comparators[0], ast.Name)
+        and isinstance(test.comparators[0].ctx, ast.Load)
+    )
+
+
+def _canary_call_name(call, aliases):
+    """Resolve imported call aliases through the shared config provenance."""
+    index = _canary_index(call)
+    if not index.get("complete"):
+        return "<incomplete-index>"
+    signature = tuple(sorted(aliases.items()))
+    if index.get("call_alias_signature") != signature:
+        index["call_alias_signature"] = signature
+        index["resolved_call_names"] = {}
+    resolved = index["resolved_call_names"]
+    if id(call) not in resolved:
+        resolved[id(call)] = _canary_resolve_call_name(call, aliases)
+        index["call_resolution_count"] += 1
+    return resolved[id(call)]
+
+
+def _canary_resolve_call_name(call, aliases):
+    """Resolve one uncached call after the source AST has passed its bound."""
+    from .security_configuration import _canonical
+    from .review_audits import _name
+
+    resolved = _canonical(call, aliases)
+    if resolved:
+        return resolved
+    raw = _name(call.func)
+    head = raw.split(".", 1)[0]
+    if head in aliases:
+        from .review_integrity import _security_flow_bindings
+
+        flow, _ = _security_flow_bindings(call, aliases)
+        if head in getattr(call, "_security_shadowed_names", ()) or head not in flow:
+            return "<unresolved-import>"
+    if not isinstance(call.func, ast.Name):
+        return ""
+    if call.func.id in getattr(call, "_security_shadowed_names", ()):
+        return "<unresolved-name>"
+    return call.func.id
+
+
+def _canary_source_context(scope):
+    """Return the scan root and retained source blobs attached by the scanner."""
+    module = getattr(scope, "_oracle_module", None)
+    context = getattr(module, "_security_source_context", None)
+    if not isinstance(context, tuple) or len(context) != 2:
+        return None
+    workspace, sources = context
+    return (workspace, sources) if isinstance(sources, dict) else None
+
+
+def _canary_local_python_consumer(
+    run, scope, relative, aliases, workspace, sources, env_key, payload_contract
+):
+    """Parse only a statically located local Python consumer from scan bytes."""
+    script_name = _canary_local_argv(run, scope, aliases)
+    if script_name is None:
+        return None
+    candidate = _canary_script_path(scope, relative, aliases, workspace, script_name)
+    if candidate is None or candidate not in sources or candidate.is_symlink():
+        return None
+    data = sources[candidate]
+    if not isinstance(data, bytes) or len(data) > 1_000_000:
+        return None
+    return _canary_parse_consumer(candidate, data)
+
+
+def _canary_parse_consumer(candidate, data):
+    """Parse, bind and index one retained consumer source blob."""
+    try:
+        tree = ast.parse(data, filename=str(candidate))
+    except (RecursionError, SyntaxError, UnicodeError, ValueError):
+        return None
+    index = _canary_index(tree)
+    if not index.get("complete"):
+        return None
+    from .review_audits import _security_aliases
+    from .review_integrity import bind_security_call_scopes
+
+    try:
+        bind_security_call_scopes(tree)
+    except RecursionError:
+        return None
+    return tree, _security_aliases(index["nodes"])
+
+
+def _canary_local_argv(run, scope, aliases):
+    """Require one explicit interpreter, assigned script, and fixed event arg."""
+    items = _canary_local_argv_items(run, aliases)
+    if items is None:
+        return None
+    script_name = _canary_script_argument(items[1], aliases)
+    if script_name is None or not _canary_script_binding(
+        scope, script_name, run, items, aliases
+    ):
+        return None
+
+    return script_name
+
+
+def _canary_local_argv_items(run, aliases):
+    """Accept only interpreter, local script path, and one fixed event arg."""
+    if len(run.args) != 1 or not isinstance(run.args[0], ast.List):
+        return None
+    items = run.args[0].elts
+    valid = len(items) == 3 and _canary_reference(items[0], aliases) == "sys.executable"
+    return items if valid else None
+
+
+def _canary_script_argument(script, aliases):
+    """Return a named script value passed through ``str``."""
+    if not isinstance(script, ast.Call) or _canary_call_name(script, aliases) != "str":
+        return None
+    if (
+        len(script.args) != 1
+        or script.keywords
+        or not isinstance(script.args[0], ast.Name)
+    ):
+        return None
+    return script.args[0].id
+
+
+def _canary_script_binding(scope, script_name, run, items, aliases):
+    """Require one earlier path assignment and safe run options."""
+    assigned = [
+        statement
+        for statement in scope.body
+        if isinstance(statement, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == script_name
+            for target in statement.targets
+        )
+    ]
+    env_key = _canary_run_environment(run, aliases, scope)
+    return (
+        len(assigned) == 1
+        and assigned[0].lineno < run.lineno
+        and isinstance(items[2], ast.Constant)
+        and isinstance(items[2].value, str)
+        and env_key is not None
+        and _canary_run_options(run)
+    )
+
+
+def _canary_run_environment(run, aliases, scope):
+    """Bind the subprocess project root directly to the fresh fixture path."""
+    values = [item.value for item in run.keywords if item.arg == "env"]
+    if len(values) != 1:
+        return None
+    environment = values[0]
+    if isinstance(environment, ast.Name):
+        environment = _canary_environment_binding(scope, environment.id, run.lineno)
+    return _canary_environment_key(environment, aliases)
+
+
+def _canary_environment_binding(scope, name, run_line):
+    """Resolve one earlier environment dictionary assignment."""
+    assignment = _canary_name_assignment(scope, name)
+    if assignment is None or assignment.lineno >= run_line:
+        return None
+    return assignment.value
+
+
+def _canary_environment_key(environment, aliases):
+    """Find one project-root key in a copied environment dictionary."""
+    if not isinstance(environment, ast.Dict):
+        return None
+    if not environment.keys or environment.keys[0] is not None:
+        return None
+    if _canary_reference(environment.values[0], aliases) != "os.environ":
+        return None
+    matches = [
+        key.value
+        for key, value in zip(environment.keys[1:], environment.values[1:])
+        if isinstance(key, ast.Constant)
+        and isinstance(key.value, str)
+        and _canary_call_is(value, "str", aliases, "tmp_path")
+    ]
+    if len(environment.keys) != len(environment.values) or len(matches) != 1:
+        return None
+    return matches[0]
+
+
+def _canary_run_options(run):
+    """Reject shell expansion and unsupported subprocess input/output options."""
+    values = {item.arg: item.value for item in run.keywords if item.arg is not None}
+    if len(values) != len(run.keywords) or set(values) - {
+        "input",
+        "text",
+        "capture_output",
+        "env",
+        "check",
+        "shell",
+    }:
+        return False
+    shell = values.get("shell", ast.Constant(False))
+    return isinstance(shell, ast.Constant) and shell.value is False
+
+
+def _canary_script_path(scope, relative, aliases, workspace, script_name):
+    """Resolve a Path(__file__).parents[n] expression without using cwd."""
+    statements = [
+        statement
+        for statement in scope.body
+        if isinstance(statement, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == script_name
+            for target in statement.targets
+        )
+    ]
+    if len(statements) != 1:
+        return None
+    expression = _canary_path_expression(statements[0].value, aliases)
+    if expression is None:
+        return None
+    parent_index, suffix = expression
+    test_path = workspace / relative
+    try:
+        base = test_path.parents[parent_index]
+        candidate = base.joinpath(*suffix)
+        root = workspace.resolve(strict=True)
+        resolved = candidate.resolve(strict=True)
+    except (OSError, IndexError, RuntimeError):
+        return None
+    if not resolved.is_relative_to(root) or resolved.suffix != ".py":
+        return None
+    return resolved
+
+
+def _canary_path_expression(node, aliases):
+    """Return the __file__ parent index and constant path suffix, if exact."""
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
+        return _canary_path_join(node, aliases)
+    return _canary_path_parent_index(node, aliases)
+
+
+def _canary_path_join(node, aliases):
+    """Append one safe constant segment to a Path parent expression."""
+    left = _canary_path_expression(node.left, aliases)
+    right = node.right
+    if left is None or not isinstance(right, ast.Constant):
+        return None
+    if not isinstance(right.value, str) or not right.value:
+        return None
+    return left[0], (*left[1], right.value)
+
+
+def _canary_path_parent_index(node, aliases):
+    """Recognize Path(__file__).parents[index] as the expression root."""
+    if not isinstance(node, ast.Subscript):
+        return None
+    if not _canary_file_parents(node.value, aliases):
+        return None
+    index = node.slice.value if isinstance(node.slice, ast.Constant) else None
+    return (index, ()) if isinstance(index, int) and index >= 0 else None
+
+
+def _canary_file_parents(node, aliases):
+    """Require the path parent expression to be rooted at __file__."""
+    if not isinstance(node, ast.Attribute) or node.attr != "parents":
+        return False
+    call = node.value
+    if (
+        not isinstance(call, ast.Call)
+        or _canary_call_name(call, aliases) != "pathlib.Path"
+    ):
+        return False
+    return (
+        len(call.args) == 1
+        and isinstance(call.args[0], ast.Name)
+        and call.args[0].id == "__file__"
+        and not call.keywords
+    )
+
+
+def _canary_readback_prefix(scope, read):
+    """Resolve the unique JSON rglob directory from the test's tmp_path."""
+    iterator = _canary_readback_iterator(scope, read)
+    if iterator is None:
+        return None
+    return _canary_tmp_path_parts(iterator.func.value)
+
+
+def _canary_rglob_directory(iterator):
+    """Accept only a single '*.json' rglob below a constant local directory."""
+    return (
+        isinstance(iterator, ast.Call)
+        and isinstance(iterator.func, ast.Attribute)
+        and iterator.func.attr == "rglob"
+        and len(iterator.args) == 1
+        and isinstance(iterator.args[0], ast.Constant)
+        and iterator.args[0].value == "*.json"
+        and not iterator.keywords
+        and _canary_tmp_path_parts(iterator.func.value) is not None
+    )
+
+
+def _canary_tmp_path_is_closed(scope, run, read):
+    """Require tmp_path only at the writer root and matching readback prefix."""
+    env_names = _canary_environment_tmp_references(scope, run)
+    iterator = _canary_readback_iterator(scope, read)
+    if len(env_names) != 1 or iterator is None:
+        return False
+    read_root = _canary_tmp_path_root(iterator.func.value)
+    if read_root is None:
+        return False
+    names = [
+        node
+        for node in _canary_nodes(scope, ast.Name)
+        if node.id == "tmp_path" and isinstance(node.ctx, ast.Load)
+    ]
+    return len(names) == 2 and set(map(id, names)) == {id(env_names[0]), id(read_root)}
+
+
+def _canary_environment_tmp_references(scope, run):
+    """Return fixture references in the subprocess environment expression."""
+    env = next((item.value for item in run.keywords if item.arg == "env"), None)
+    if isinstance(env, ast.Name):
+        assignment = _canary_name_assignment(scope, env.id)
+        env = assignment.value if assignment is not None else None
+    return (
+        [
+            node
+            for node in _canary_nodes(env, ast.Name)
+            if node.id == "tmp_path" and isinstance(node.ctx, ast.Load)
+        ]
+        if env is not None
+        else []
+    )
+
+
+def _canary_readback_iterator(scope, read):
+    """Return the exact rglob iterator used by the asserted read_text value."""
+    if not _canary_read_text_call(read):
+        return None
+    record = read.func.value
+    if not isinstance(record, ast.Name):
+        return None
+    assignment = _canary_name_assignment(scope, record.id)
+    iterator = _canary_next_iterator(assignment)
+    return iterator if _canary_rglob_directory(iterator) else None
+
+
+def _canary_read_text_call(read):
+    """Require one UTF-8 text read with no extra arguments."""
+    if not isinstance(read.func, ast.Attribute) or read.func.attr != "read_text":
+        return False
+    if read.args or len(read.keywords) != 1 or read.keywords[0].arg != "encoding":
+        return False
+    value = read.keywords[0].value
+    return isinstance(value, ast.Constant) and value.value == "utf-8"
+
+
+def _canary_next_iterator(assignment):
+    """Resolve one direct or generator-backed next() expression."""
+    if assignment is None or not isinstance(assignment.value, ast.Call):
+        return None
+    parent = assignment.value
+    if (
+        not isinstance(parent.func, ast.Name)
+        or parent.func.id != "next"
+        or len(parent.args) != 1
+    ):
+        return None
+    generator = parent.args[0]
+    if not isinstance(generator, ast.GeneratorExp):
+        return generator
+    if len(generator.generators) != 1:
+        return None
+    return generator.generators[0].iter
+
+
+def _canary_tmp_path_root(node):
+    """Return the root fixture name in a constant-only Path expression."""
+    if isinstance(node, ast.Name) and node.id == "tmp_path":
+        return node
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
+        return _canary_tmp_path_root(node.left)
+    return None
+
+
+def _canary_tmp_path_parts(node):
+    """Return a constant suffix rooted directly at the pytest tmp_path fixture."""
+    if isinstance(node, ast.Name) and node.id == "tmp_path":
+        return "tmp_path", ()
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
+        base = _canary_tmp_path_parts(node.left)
+        if base is None or not isinstance(node.right, ast.Constant):
+            return None
+        if not isinstance(node.right.value, str) or not node.right.value:
+            return None
+        return base[0], (*base[1], node.right.value)
+    return None
+
+
+def _canary_run_project_root(run, scope, aliases):
+    """Return the tmp_path fixture and environment key bound to the consumer."""
+    env_key = _canary_run_environment(run, aliases, scope)
+    if env_key is None:
+        return None
+    return "tmp_path", env_key
+
+
+def _canary_digest_only_output(tree, aliases, env_key, payload_contract):
+    """Recognize a narrow local JSON digest recorder with a linked output root."""
+    helpers = _canary_digest_helpers(tree, aliases)
+    if helpers is None:
+        return None
+    canonical_name, digest_name = helpers
+    entrypoint = _canary_entrypoint(tree, aliases)
+    if entrypoint is None or not _canary_consumer_call_inventory(
+        tree, aliases, {canonical_name, digest_name, entrypoint}
+    ):
+        return None
+    input_name = _canary_payload_is_digest_only(
+        tree, aliases, digest_name, payload_contract
+    )
+    if input_name is None:
+        return None
+    prefix = _canary_writer_is_local(
+        tree, aliases, canonical_name, digest_name, env_key, input_name
+    )
+    if prefix is None:
+        return None
+    return prefix
+
+
+def _canary_consumer_call_inventory(tree, aliases, local_helpers):
+    """Fail closed on extra call families that could export or retain payloads."""
+    calls = _canary_nodes(tree, ast.Call)
+    counts = Counter(_canary_call_name(node, aliases) for node in calls)
+    names = set(counts)
+    attributes = {
+        node.func.attr for node in calls if isinstance(node.func, ast.Attribute)
+    }
+    index = _canary_index(tree)
+    allowed = (
+        names
+        <= {
+            "datetime.datetime.now",
+            "hashlib.sha256",
+            "json.dumps",
+            "json.load",
+            "json.loads",
+            "os.environ.get",
+            "os.getcwd",
+            "pathlib.Path",
+            "re.sub",
+            "str",
+            "isinstance",
+            "len",
+            "sorted",
+            "SystemExit",
+            "",
+        }
+        | local_helpers
+        and attributes
+        <= {
+            "now",
+            "sha256",
+            "dumps",
+            "load",
+            "loads",
+            "get",
+            "getcwd",
+            "Path",
+            "sub",
+            "hexdigest",
+            "encode",
+            "resolve",
+            "mkdir",
+            "glob",
+            "read_text",
+            "lower",
+            "write_bytes",
+            "isoformat",
+            "replace",
+        }
+        and _canary_import_inventory(tree)
+    )
+    return (
+        allowed
+        and all(
+            counts.get(name, 0) == count
+            for name, count in {
+                "json.load": 1,
+                "json.loads": 1,
+                "os.environ.get": 1,
+            }.items()
+        )
+        and sum(
+            isinstance(node.func, ast.Attribute) and node.func.attr == "write_bytes"
+            for node in calls
+        )
+        == 1
+        and not index["attribute_writes"]
+        and not index["subscript_writes"]
+        and _canary_prior_output_read(tree, aliases)
+    )
+
+
+def _canary_import_inventory(tree):
+    """Reject relative or nonstandard imports with unreviewed import-time code."""
+    allowed = {
+        "__future__",
+        "hashlib",
+        "json",
+        "os",
+        "pathlib",
+        "re",
+        "sys",
+        "datetime",
+    }
+    for node in (
+        *_canary_nodes(tree, ast.Import),
+        *_canary_nodes(tree, ast.ImportFrom),
+    ):
+        if isinstance(node, ast.Import):
+            if any(item.name.split(".", 1)[0] not in allowed for item in node.names):
+                return False
+        elif isinstance(node, ast.ImportFrom):
+            if node.level or node.module not in allowed:
+                return False
+    return True
+
+
+def _canary_digest_helpers(tree, aliases):
+    """Discover the local canonical JSON and SHA256 helper names structurally."""
+    functions = [
+        node
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    ]
+    canonical = [
+        node
+        for node in functions
+        if len(node.args.args) == 1
+        and len(node.body) == 1
+        and isinstance(node.body[0], ast.Return)
+        and _canary_canonical_return(node.body[0].value, node, aliases)
+    ]
+    if len(canonical) != 1:
+        return None
+    digest = [
+        node
+        for node in functions
+        if len(node.args.args) == 1
+        and len(node.body) == 1
+        and isinstance(node.body[0], ast.Return)
+        and _canary_digest_return(node.body[0].value, node, aliases, canonical[0].name)
+    ]
+    if len(digest) != 1:
+        return None
+    names = (canonical[0].name, digest[0].name)
+    if any(
+        not _canary_helper_unrebound(tree, name, function)
+        for name, function in zip(names, (canonical[0], digest[0]))
+    ):
+        return None
+    return names
+
+
+def _canary_entrypoint(tree, aliases):
+    """Find the sole main function reached by a guarded SystemExit call."""
+    index = _canary_index(tree)
+    if not index.get("complete") or any(
+        index["writes"].get(name) for name in ("SystemExit", "__name__")
+    ):
+        return None
+    functions = _canary_functions(tree)
+    if functions is None:
+        return None
+    matches = [
+        entry
+        for guard in tree.body
+        if isinstance(guard, ast.If)
+        and (entry := _canary_guard_entry(guard, aliases, functions, index))
+    ]
+    return matches[0] if len(matches) == 1 else None
+
+
+def _canary_functions(tree):
+    """Index unique top-level sync and async function bindings."""
+    definitions = [
+        node
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    ]
+    functions = {node.name: node for node in definitions}
+    return functions if len(functions) == len(definitions) else None
+
+
+def _canary_guard_entry(guard, aliases, functions, index):
+    """Resolve one exact guarded call to an unchanged synchronous function."""
+    name = _canary_guard_call_name(guard, aliases)
+    function = functions.get(name) if name is not None else None
+    if not isinstance(function, ast.FunctionDef) or index["writes"].get(name) != [
+        function
+    ]:
+        return None
+    return name
+
+
+def _canary_guard_call_name(guard, aliases):
+    """Return the call target only for one exact module entry guard."""
+    if not _canary_main_guard_test(guard.test) or len(guard.body) != 1 or guard.orelse:
+        return None
+    statement = guard.body[0]
+    if not isinstance(statement, ast.Raise):
+        return None
+    return _canary_exit_target(statement.exc, aliases)
+
+
+def _canary_exit_target(call, aliases):
+    """Extract an unshadowed function name from one SystemExit invocation."""
+    if (
+        not isinstance(call, ast.Call)
+        or _canary_call_name(call, aliases) != "SystemExit"
+    ):
+        return None
+    if len(call.args) != 1 or call.keywords or not isinstance(call.args[0], ast.Call):
+        return None
+    entry = call.args[0]
+    if (
+        not isinstance(entry.func, ast.Name)
+        or entry.args
+        or entry.keywords
+        or getattr(entry, "_security_shadowed_names", ())
+    ):
+        return None
+    return entry.func.id
+
+
+def _canary_main_guard_test(test):
+    """Require the exact module-name equals-main guard without extra tests."""
+    return (
+        isinstance(test, ast.Compare)
+        and len(test.ops) == len(test.comparators) == 1
+        and isinstance(test.ops[0], ast.Eq)
+        and _canary_main_name_constant(test.left, test.comparators[0])
+    )
+
+
+def _canary_main_name_constant(left, right):
+    """Match __name__ and __main__ on either side of one equality."""
+    return (
+        isinstance(left, ast.Name)
+        and left.id == "__name__"
+        and isinstance(right, ast.Constant)
+        and right.value == "__main__"
+    ) or (
+        isinstance(right, ast.Name)
+        and right.id == "__name__"
+        and isinstance(left, ast.Constant)
+        and left.value == "__main__"
+    )
+
+
+def _canary_canonical_return(value, function, aliases):
+    """Match canonical JSON serialization with deterministic compact options."""
+    if not isinstance(value, ast.Call) or not isinstance(value.func, ast.Attribute):
+        return False
+    if value.func.attr != "encode" or len(value.args) != 1:
+        return False
+    serialized = value.func.value
+    if not _canary_canonical_serialization(serialized, function, aliases):
+        return False
+    return _canary_canonical_encoding(value, serialized)
+
+
+def _canary_canonical_serialization(serialized, function, aliases):
+    """Require json.dumps of the sole canonicalizer argument."""
+    if (
+        not isinstance(serialized, ast.Call)
+        or _canary_call_name(serialized, aliases) != "json.dumps"
+    ):
+        return False
+    return (
+        len(serialized.args) == 1
+        and isinstance(serialized.args[0], ast.Name)
+        and serialized.args[0].id == function.args.args[0].arg
+    )
+
+
+def _canary_canonical_encoding(value, serialized):
+    """Check compact deterministic JSON options and UTF-8 output encoding."""
+    options = {item.arg: item.value for item in serialized.keywords}
+    return (
+        len(options) == len(serialized.keywords)
+        and set(options) == {"sort_keys", "separators", "ensure_ascii"}
+        and isinstance(options.get("sort_keys"), ast.Constant)
+        and options["sort_keys"].value is True
+        and isinstance(options.get("separators"), ast.Tuple)
+        and [
+            item.value
+            for item in options["separators"].elts
+            if isinstance(item, ast.Constant)
+        ]
+        == [",", ":"]
+        and isinstance(options.get("ensure_ascii"), ast.Constant)
+        and options["ensure_ascii"].value is False
+        and isinstance(value.args[0], ast.Constant)
+        and value.args[0].value == "utf-8"
+    )
+
+
+def _canary_digest_return(value, function, aliases, canonical_name):
+    """Match SHA256 over the canonical serialization of one function argument."""
+    if not isinstance(value, ast.Call) or not isinstance(value.func, ast.Attribute):
+        return False
+    if value.func.attr != "hexdigest" or value.args or value.keywords:
+        return False
+    hashed = value.func.value
+    return (
+        isinstance(hashed, ast.Call)
+        and _canary_call_name(hashed, aliases) == "hashlib.sha256"
+        and len(hashed.args) == 1
+        and not hashed.keywords
+        and _canary_call_is(
+            hashed.args[0], canonical_name, aliases, function.args.args[0].arg
+        )
+    )
+
+
+def _canary_payload_is_digest_only(tree, aliases, digest_name, payload_contract):
+    """Ensure the only read of command-bearing JSON is the discovered digest call."""
+    payload_name = _canary_stdin_payload_name(tree, aliases)
+    if payload_name is None:
+        return None
+    return _canary_digest_input_name(
+        tree, aliases, digest_name, payload_name, payload_contract
+    )
+
+
+def _canary_stdin_payload_name(tree, aliases):
+    """Find one direct JSON stdin load assigned to a local name."""
+    loads = [
+        node
+        for node in _canary_nodes(tree, ast.Call)
+        if _canary_call_name(node, aliases) == "json.load"
+    ]
+    if len(loads) != 1 or len(loads[0].args) != 1:
+        return None
+    if _canary_reference(loads[0].args[0], aliases) != "sys.stdin":
+        return None
+    assignment = _canary_parent(tree, loads[0])
+    if not isinstance(assignment, ast.Assign) or len(assignment.targets) != 1:
+        return None
+    return (
+        assignment.targets[0].id
+        if isinstance(assignment.targets[0], ast.Name)
+        else None
+    )
+
+
+def _canary_digest_input_name(tree, aliases, digest_name, payload_name, contract):
+    """Validate payload field reads and the sole digest call input use."""
+    payload_key, allowed_keys = contract
+    names = [node for node in _canary_nodes(tree, ast.Name)]
+    payload = [node for node in names if node.id == payload_name]
+    stores = [node for node in payload if isinstance(node.ctx, ast.Store)]
+    if not stores or any(
+        not _canary_payload_store(tree, node, aliases) for node in stores
+    ):
+        return None
+    payload_reads = [node for node in payload if isinstance(node.ctx, ast.Load)]
+    if not _canary_payload_fields(tree, payload_reads, allowed_keys, payload_key):
+        return None
+    extracted = _canary_payload_extraction(tree, payload_name, payload_key)
+    if extracted is None:
+        return None
+    input_name, extraction = extracted
+    uses = [
+        node
+        for node in names
+        if node.id == input_name and isinstance(node.ctx, ast.Load)
+    ]
+    if len(uses) != 1:
+        return None
+    if not _canary_call_is(
+        _canary_parent(tree, uses[0]), digest_name, aliases, input_name
+    ):
+        return None
+    if (
+        sum(isinstance(node.ctx, ast.Store) for node in names if node.id == input_name)
+        != 1
+    ):
+        return None
+    return input_name
+
+
+def _canary_payload_fields(tree, payload_reads, allowed_keys, payload_key):
+    """Reject JSON fields outside the caller's literal input object."""
+    accessed = [
+        key
+        for node in payload_reads
+        if (key := _canary_payload_field_key(tree, node)) is not None
+    ]
+    return _canary_allowed_payload_keys(accessed, allowed_keys, payload_key)
+
+
+def _canary_payload_field_key(tree, node):
+    """Return a literal field key or a sentinel for the dict type check."""
+    attribute = _canary_parent(tree, node)
+    if _canary_is_dict_check_use(attribute, node):
+        return None
+    call = _canary_parent(tree, attribute) if attribute is not None else None
+    return _canary_payload_get_key(attribute, call, node)
+
+
+def _canary_payload_get_key(attribute, call, node):
+    """Return a literal get() key, rejecting defaults on marked input fields."""
+    if not _canary_payload_get_call(attribute, call, node):
+        return False
+    key = call.args[0]
+    return key.value if _canary_payload_key_argument(call, key) else False
+
+
+def _canary_payload_get_call(attribute, call, node):
+    """Check that the payload name is the receiver of a direct get() call."""
+    return (
+        isinstance(attribute, ast.Attribute)
+        and isinstance(call, ast.Call)
+        and attribute.attr == "get"
+        and attribute.value is node
+        and call.func is attribute
+        and 1 <= len(call.args) <= 2
+        and not call.keywords
+    )
+
+
+def _canary_payload_key_argument(call, key):
+    """Validate a literal field key and reject a default for command input."""
+    return isinstance(key, ast.Constant) and not (
+        len(call.args) == 2 and key.value == "tool_input"
+    )
+
+
+def _canary_is_dict_check_use(attribute, node):
+    """Recognize the payload mapping type guard, not an input data read."""
+    return (
+        isinstance(attribute, ast.Call)
+        and isinstance(attribute.func, ast.Name)
+        and attribute.func.id == "isinstance"
+        and len(attribute.args) == 2
+        and attribute.args[0] is node
+        and isinstance(attribute.args[1], ast.Name)
+        and attribute.args[1].id == "dict"
+    )
+
+
+def _canary_allowed_payload_keys(accessed, allowed_keys, payload_key):
+    """Allow only caller-supplied fields and exactly two input-key reads."""
+    return (
+        set(accessed) <= set(allowed_keys)
+        and accessed.count(payload_key) == 2
+        and all(isinstance(key, str) for key in accessed)
+    )
+
+
+def _canary_payload_store(tree, node, aliases):
+    """Permit JSON input binding and empty-object error fallbacks only."""
+    assignment = _canary_parent(tree, node)
+    if not isinstance(assignment, ast.Assign) or len(assignment.targets) != 1:
+        return False
+    value = assignment.value
+    if isinstance(value, ast.Dict) and not value.keys:
+        return True
+    return (
+        isinstance(value, ast.Call) and _canary_call_name(value, aliases) == "json.load"
+    )
+
+
+def _canary_payload_extraction(tree, payload_name, payload_key):
+    """Find one dict-checked extraction binding for the marker-bearing field."""
+    matches = [
+        result
+        for node in _canary_nodes(tree, ast.Assign)
+        if (result := _canary_extraction_assignment(node, payload_name, payload_key))
+    ]
+    return matches[0] if len(matches) == 1 else None
+
+
+def _canary_extraction_assignment(node, payload_name, payload_key):
+    """Return one assignment guarded by a dict check and empty fallback."""
+    if not isinstance(node, ast.Assign) or len(node.targets) != 1:
+        return None
+    if not isinstance(node.targets[0], ast.Name) or not isinstance(
+        node.value, ast.IfExp
+    ):
+        return None
+    if not _canary_dict_guard(node.value.test, payload_name, payload_key):
+        return None
+    if not _canary_is_payload_get(node.value.body, payload_name, payload_key):
+        return None
+    fallback = node.value.orelse
+    return (
+        (node.targets[0].id, node.value)
+        if isinstance(fallback, ast.Dict) and not fallback.keys
+        else None
+    )
+
+
+def _canary_dict_guard(test, payload_name, payload_key):
+    """Require at least one matching isinstance(field, dict) check."""
+    return any(
+        _canary_is_dict_type_check(item, payload_name, payload_key)
+        for item in _canary_nodes(test, ast.Call)
+    )
+
+
+def _canary_is_payload_get(node, payload_name, payload_key):
+    """Match one named JSON field access without inspecting its contents."""
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "get"
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == payload_name
+        and len(node.args) == 1
+        and isinstance(node.args[0], ast.Constant)
+        and node.args[0].value == payload_key
+    )
+
+
+def _canary_is_dict_type_check(node, payload_name, payload_key):
+    """Require isinstance(field, dict) before hashing the extracted value."""
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "isinstance"
+        and len(node.args) == 2
+        and _canary_is_payload_get(node.args[0], payload_name, payload_key)
+        and isinstance(node.args[1], ast.Name)
+        and node.args[1].id == "dict"
+    )
+
+
+def _canary_writer_is_local(
+    tree, aliases, canonical_name, digest_name, env_key, input_name
+):
+    """Require one local writer to serialize the digest-bearing record."""
+    write = _canary_unique_write_call(tree)
+    record_name = _canary_write_record_name(write, aliases, canonical_name)
+    if write is None or record_name is None:
+        return None
+    directory = _canary_writer_directory(tree, write)
+    if not _canary_prior_output_read(tree, aliases, directory):
+        return None
+    prefix = _canary_writer_path(tree, write.func.value, aliases, env_key)
+    linked = _canary_record_contains_digest(
+        tree, aliases, digest_name, input_name, record_name
+    )
+    return prefix if prefix and linked else None
+
+
+def _canary_unique_write_call(tree):
+    """Find exactly one byte writer among all file-output methods."""
+    writes = [
+        node
+        for node in _canary_nodes(tree, ast.Call)
+        if isinstance(node.func, ast.Attribute)
+        and node.func.attr in {"write_bytes", "write_text"}
+    ]
+    return (
+        writes[0] if len(writes) == 1 and writes[0].func.attr == "write_bytes" else None
+    )
+
+
+def _canary_write_record_name(write, aliases, canonical_name):
+    """Return the record variable passed through canonical serialization."""
+    if write is None or len(write.args) != 1 or write.keywords:
+        return None
+    payload = write.args[0]
+    if not isinstance(payload, ast.BinOp) or not isinstance(payload.op, ast.Add):
+        return None
+    if not isinstance(payload.right, ast.Constant) or payload.right.value != b"\n":
+        return None
+    return _canary_encoded_record_name(payload.left, aliases, canonical_name)
+
+
+def _canary_encoded_record_name(encoded, aliases, canonical_name):
+    """Return a local record name serialized by the canonical helper."""
+    if (
+        not isinstance(encoded, ast.Call)
+        or _canary_call_name(encoded, aliases) != canonical_name
+    ):
+        return None
+    if (
+        len(encoded.args) != 1
+        or encoded.keywords
+        or not isinstance(encoded.args[0], ast.Name)
+    ):
+        return None
+    return encoded.args[0].id
+
+
+def _canary_writer_directory(tree, write):
+    """Return the parent directory variable for the written path."""
+    if write is None or not isinstance(write.func.value, ast.Name):
+        return None
+    output = _canary_name_assignment(tree, write.func.value.id)
+    if output is None or not isinstance(output.value, ast.BinOp):
+        return None
+    return output.value.left if isinstance(output.value.left, ast.Name) else None
+
+
+def _canary_prior_output_read(tree, aliases, target=None):
+    """Bind prior-record reads to the same writer directory and digest field."""
+    prior = _canary_previous_read(tree)
+    if prior is None:
+        return False
+    read, record_name = prior
+    directory = _canary_previous_record_directory(tree, record_name)
+    if directory is None or not _canary_same_name(directory, target):
+        return False
+    return _canary_previous_record_digest(tree, read, aliases)
+
+
+def _canary_previous_read(tree):
+    """Find one UTF-8 read of the latest record file in a local list."""
+    reads = [
+        node
+        for node in _canary_nodes(tree, ast.Call)
+        if isinstance(node.func, ast.Attribute) and node.func.attr == "read_text"
+    ]
+    if len(reads) != 1 or not _canary_read_text_call(reads[0]):
+        return None
+    name = _canary_latest_record_name(reads[0].func.value)
+    return (reads[0], name) if name is not None else None
+
+
+def _canary_latest_record_name(latest):
+    """Return the name holding the final sorted record, if exact."""
+    if not isinstance(latest, ast.Subscript) or not isinstance(latest.value, ast.Name):
+        return None
+    if not isinstance(latest.slice, ast.UnaryOp) or not isinstance(
+        latest.slice.op, ast.USub
+    ):
+        return None
+    if (
+        not isinstance(latest.slice.operand, ast.Constant)
+        or latest.slice.operand.value != 1
+    ):
+        return None
+    return latest.value.id
+
+
+def _canary_previous_record_directory(tree, record_name):
+    """Resolve sorted JSON record names to their producing directory."""
+    records = _canary_name_assignment(tree, record_name)
+    if records is None or not isinstance(records.value, ast.Call):
+        return None
+    glob = _canary_sorted_json_glob(records.value)
+    if glob is None:
+        return None
+    return glob.func.value
+
+
+def _canary_sorted_json_glob(ordered):
+    """Return a single *.json glob passed directly through sorted()."""
+    if not _canary_sorted_one_arg(ordered):
+        return None
+    glob = ordered.args[0]
+    return glob if _canary_json_glob(glob) else None
+
+
+def _canary_sorted_one_arg(node):
+    """Require a direct one-argument call to sorted()."""
+    return (
+        isinstance(node.func, ast.Name)
+        and node.func.id == "sorted"
+        and len(node.args) == 1
+        and not node.keywords
+    )
+
+
+def _canary_json_glob(glob):
+    """Require one literal JSON glob on a directory receiver."""
+    if not isinstance(glob, ast.Call) or not isinstance(glob.func, ast.Attribute):
+        return False
+    if glob.func.attr != "glob" or len(glob.args) != 1 or glob.keywords:
+        return False
+    return isinstance(glob.args[0], ast.Constant) and glob.args[0].value == "*.json"
+
+
+def _canary_same_name(first, second):
+    """Require equivalent local path variable identities when supplied."""
+    return second is None or (
+        isinstance(first, ast.Name)
+        and isinstance(second, ast.Name)
+        and first.id == second.id
+    )
+
+
+def _canary_previous_record_digest(tree, read, aliases):
+    """Require the prior JSON file to contribute only its event digest."""
+    loaded = _canary_parent(tree, read)
+    if (
+        not isinstance(loaded, ast.Call)
+        or _canary_call_name(loaded, aliases) != "json.loads"
+    ):
+        return False
+    if len(loaded.args) != 1 or loaded.args[0] is not read or loaded.keywords:
+        return False
+    prior_name = _canary_loaded_record_name(tree, loaded)
+    return prior_name is not None and _canary_prior_digest_field(tree, prior_name)
+
+
+def _canary_loaded_record_name(tree, loaded):
+    """Return the sole name bound to the parsed prior event record."""
+    assignment = _canary_parent(tree, loaded)
+    if not isinstance(assignment, ast.Assign) or len(assignment.targets) != 1:
+        return None
+    target = assignment.targets[0]
+    return target.id if isinstance(target, ast.Name) else None
+
+
+def _canary_prior_digest_field(tree, prior_name):
+    """Require the prior record's sole read to select event_sha256."""
+    reads = [
+        node
+        for node in _canary_nodes(tree, ast.Name)
+        if node.id == prior_name and isinstance(node.ctx, ast.Load)
+    ]
+    if len(reads) != 1:
+        return False
+    attribute = _canary_parent(tree, reads[0])
+    digest_field = _canary_parent(tree, attribute) if attribute is not None else None
+    return _canary_event_digest_get(digest_field, reads[0])
+
+
+def _canary_event_digest_get(call, prior_read):
+    """Recognize one literal event_sha256 lookup with no fallback value."""
+    return (
+        isinstance(call, ast.Call)
+        and isinstance(call.func, ast.Attribute)
+        and call.func.attr == "get"
+        and call.func.value is prior_read
+        and len(call.args) == 1
+        and isinstance(call.args[0], ast.Constant)
+        and call.args[0].value == "event_sha256"
+        and not call.keywords
+    )
+
+
+def _canary_writer_path(tree, receiver, aliases, env_key):
+    """Derive the output prefix from an environment-rooted local path."""
+    target = _canary_writer_target(tree, receiver, aliases)
+    if target is None:
+        return None
+    rooted = _canary_rooted_path_parts(target.value)
+    if rooted is None:
+        return None
+    root_name, segments = rooted
+    prefix = _canary_constant_prefix(segments)
+    if not _canary_path_segments_safe(tree, segments, len(prefix), aliases):
+        return None
+    root = _canary_name_assignment(tree, root_name)
+    return (
+        ("tmp_path", prefix)
+        if root and _canary_root_env_expression(root.value, aliases, env_key)
+        else None
+    )
+
+
+def _canary_writer_target(tree, receiver, aliases):
+    """Resolve the output file variable to its directory and safe filename."""
+    if not isinstance(receiver, ast.Name):
+        return None
+    assignment = _canary_name_assignment(tree, receiver.id)
+    if assignment is None or not isinstance(assignment.value, ast.BinOp):
+        return None
+    output = assignment.value
+    if not isinstance(output.op, ast.Div) or not isinstance(output.left, ast.Name):
+        return None
+    if not _canary_safe_path_value(tree, output.right, aliases):
+        return None
+    return _canary_name_assignment(tree, output.left.id)
+
+
+def _canary_path_segments_safe(tree, segments, prefix_length, aliases):
+    """Validate each dynamic component following the constant directory prefix."""
+    suffix = segments[prefix_length:]
+    return bool(
+        prefix_length
+        and all(_canary_safe_path_value(tree, item, aliases) for item in suffix)
+    )
+
+
+def _canary_rooted_path_parts(node):
+    """Separate the root variable from ordered literal or dynamic components."""
+    if isinstance(node, ast.Name):
+        return node.id, ()
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
+        left = _canary_rooted_path_parts(node.left)
+        return (left[0], (*left[1], node.right)) if left else None
+    return None
+
+
+def _canary_constant_prefix(segments):
+    """Return a safe directory prefix before the first dynamic component."""
+    result = []
+    for node in segments:
+        if not isinstance(node, ast.Constant) or not isinstance(node.value, str):
+            break
+        if node.value in {"", ".", ".."} or "/" in node.value or "\\" in node.value:
+            return ()
+        result.append(node.value)
+    return tuple(result)
+
+
+def _canary_safe_path_value(tree, node, aliases):
+    """Accept hash-derived names and separator-sanitized filename components."""
+    if isinstance(node, ast.Name):
+        return _canary_safe_path_name(tree, node, aliases)
+    if isinstance(node, ast.JoinedStr):
+        return _canary_safe_fstring(tree, node, aliases)
+    if isinstance(node, ast.Call) and _canary_call_name(node, aliases) == "re.sub":
+        return _canary_sanitized_component(node)
+    return False
+
+
+def _canary_safe_path_name(tree, node, aliases):
+    """Validate a variable as a digest slice or nonnegative index."""
+    binding = _canary_name_assignment(tree, node.id)
+    return binding is not None and (
+        _canary_hash_path_value(binding.value, aliases)
+        or _canary_nonnegative_integer(binding.value)
+    )
+
+
+def _canary_safe_fstring(tree, node, aliases):
+    """Reject separators in literals and recursively check formatted parts."""
+    return all(_canary_safe_fstring_part(tree, item, aliases) for item in node.values)
+
+
+def _canary_safe_fstring_part(tree, item, aliases):
+    """Check one constant or formatted component of a path filename."""
+    if isinstance(item, ast.Constant) and isinstance(item.value, str):
+        return "/" not in item.value and "\\" not in item.value
+    return isinstance(item, ast.FormattedValue) and _canary_safe_path_value(
+        tree, item.value, aliases
+    )
+
+
+def _canary_hash_path_value(value, aliases):
+    """Recognize a SHA256 hexadecimal slice as a safe path segment."""
+    return (
+        isinstance(value, ast.Subscript)
+        and isinstance(value.value, ast.Call)
+        and isinstance(value.value.func, ast.Attribute)
+        and value.value.func.attr == "hexdigest"
+        and isinstance(value.value.func.value, ast.Call)
+        and _canary_call_name(value.value.func.value, aliases) == "hashlib.sha256"
+    )
+
+
+def _canary_sanitized_component(call):
+    """Recognize a slug replacement whose pattern excludes path separators."""
+    return (
+        len(call.args) == 3
+        and _canary_slug_pattern(call.args[0])
+        and _canary_slug_replacement(call.args[1])
+        and _canary_lowered_slug(call.args[2])
+    )
+
+
+def _canary_slug_pattern(node):
+    """Require a character class restricted to letters, digits, and hyphens."""
+    if not isinstance(node, ast.Constant) or not isinstance(node.value, str):
+        return False
+    pattern = node.value
+    allowed = (
+        pattern[2:-2] if pattern.startswith("[^") and pattern.endswith("]+") else ""
+    )
+    return (
+        bool(allowed)
+        and all(char.isalnum() or char == "-" for char in allowed)
+        and ("a-z" in allowed and "0-9" in allowed)
+    )
+
+
+def _canary_slug_replacement(node):
+    """Require a dotless, separator-free replacement string."""
+    return (
+        isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and "/" not in node.value
+        and "\\" not in node.value
+        and "." not in node.value
+    )
+
+
+def _canary_lowered_slug(node):
+    """Require a lower() source call for the slug input."""
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "lower"
+    )
+
+
+def _canary_nonnegative_integer(value):
+    """Recognize a list length plus a nonnegative integer for filenames."""
+    return (
+        isinstance(value, ast.BinOp)
+        and isinstance(value.op, ast.Add)
+        and isinstance(value.left, ast.Call)
+        and isinstance(value.left.func, ast.Name)
+        and value.left.func.id == "len"
+        and len(value.left.args) == 1
+        and not value.left.keywords
+        and isinstance(value.right, ast.Constant)
+        and isinstance(value.right.value, int)
+        and value.right.value >= 0
+    )
+
+
+def _canary_helper_unrebound(tree, name, definition):
+    """Reject competing bindings and mutations of a discovered module helper."""
+    index = _canary_index(tree)
+    if not index.get("complete") or index["writes"].get(name) != [definition]:
+        return False
+    if index["subscript_writes"] or any(
+        _canary_attribute_mentions(node, name) for node in index["attribute_writes"]
+    ):
+        return False
+    return all(
+        isinstance(parent := _canary_parent(tree, node), ast.Call)
+        and parent.func is node
+        for node in _canary_nodes(tree, ast.Name)
+        if node.id == name and isinstance(node.ctx, ast.Load)
+    )
+
+
+def _canary_attribute_mentions(node, name):
+    """Detect writes through a helper name or an attribute named for it."""
+    if node.attr == name:
+        return True
+    receiver = node.value
+    while isinstance(receiver, ast.Attribute):
+        if receiver.attr == name:
+            return True
+        receiver = receiver.value
+    return isinstance(receiver, ast.Name) and receiver.id == name
+
+
+def _canary_root_env_expression(value, aliases, env_key):
+    """Require Path(env root).resolve() with no fallback to an unrelated root."""
+    environment = _canary_resolved_path_input(value, aliases)
+    return environment is not None and _canary_environment_root_matches(
+        environment, aliases, env_key
+    )
+
+
+def _canary_resolved_path_input(value, aliases):
+    """Return the argument to one Path(...).resolve() call."""
+    if not isinstance(value, ast.Call) or not isinstance(value.func, ast.Attribute):
+        return None
+    if value.func.attr != "resolve" or value.args or value.keywords:
+        return None
+    path = value.func.value
+    if (
+        not isinstance(path, ast.Call)
+        or _canary_call_name(path, aliases) != "pathlib.Path"
+    ):
+        return None
+    if len(path.args) != 1 or path.keywords:
+        return None
+    return path.args[0]
+
+
+def _canary_environment_root_matches(env, aliases, env_key):
+    """Require the discovered environment key and cwd fallback exactly."""
+    if (
+        not isinstance(env, ast.Call)
+        or _canary_call_name(env, aliases) != "os.environ.get"
+    ):
+        return False
+    return (
+        len(env.args) == 2
+        and isinstance(env.args[0], ast.Constant)
+        and env.args[0].value == env_key
+        and not env.keywords
+        and isinstance(env.args[1], ast.Call)
+        and _canary_call_name(env.args[1], aliases) == "os.getcwd"
+    )
+
+
+def _canary_root_env_key(tree, aliases, env_key):
+    """Require the consumer's only environment-root lookup to match the caller."""
+    lookups = [
+        node
+        for node in _canary_nodes(tree, ast.Call)
+        if _canary_call_name(node, aliases) == "os.environ.get"
+    ]
+    return (
+        len(lookups) == 1
+        and len(lookups[0].args) == 2
+        and isinstance(lookups[0].args[0], ast.Constant)
+        and lookups[0].args[0].value == env_key
+    )
+
+
+def _canary_record_contains_digest(tree, aliases, digest_name, input_name, record_name):
+    """Link the raw-input digest mapping to the serialized record."""
+    mappings = [
+        node
+        for node in _canary_nodes(tree, ast.Dict)
+        if any(
+            _canary_call_is(value, digest_name, aliases, input_name)
+            for value in node.values
+        )
+    ]
+    if len(mappings) != 1:
+        return False
+    assignment = _canary_parent(tree, mappings[0])
+    if not isinstance(assignment, ast.Assign) or len(assignment.targets) != 1:
+        return False
+    if not isinstance(assignment.targets[0], ast.Name):
+        return False
+    record = _canary_name_assignment(tree, record_name)
+    core_name = assignment.targets[0].id
+    return bool(
+        record
+        and isinstance(record.value, ast.Dict)
+        and any(
+            key is None and isinstance(value, ast.Name) and value.id == core_name
+            for key, value in zip(record.value.keys, record.value.values)
+        )
+    )
+
+
+def _canary_call_is(node, name, aliases, argument):
+    """Check a one-argument call by resolved name and exact local variable."""
+    return (
+        isinstance(node, ast.Call)
+        and _canary_call_name(node, aliases) == name
+        and len(node.args) == 1
+        and not node.keywords
+        and isinstance(node.args[0], ast.Name)
+        and node.args[0].id == argument
+    )
+
+
+def _canary_reference(node, aliases):
+    """Resolve only an imported name proven at the enclosing call site."""
+    from .review_audits import _name
+
+    raw = _name(node)
+    head, _, tail = raw.partition(".")
+    context = node
+    while not isinstance(context, (ast.Call, ast.Assign, ast.AnnAssign)):
+        context = _canary_parent(node, context)
+        if context is None:
+            return ""
+    binding = _canary_reference_binding(context, head, aliases)
+    if not binding:
+        return ""
+    return (
+        raw
+        if raw == binding or raw.startswith(binding + ".")
+        else binding + ("." + tail if tail else "")
+    )
+
+
+def _canary_reference_binding(context, head, aliases):
+    """Return a standard import still bound at one call or assignment site."""
+    from .review_integrity import _security_scope_request_aliases
+    from .security_configuration import _relative_binding
+
+    scope = getattr(context, "_security_lexical_scope", None)
+    if not isinstance(scope, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef)):
+        return None
+    flow_statement = (
+        getattr(context, "_security_flow_statement", None)
+        if isinstance(context, ast.Call)
+        else context
+    )
+    binding = _security_scope_request_aliases(scope, aliases, flow_statement).get(head)
+    if (
+        binding is None
+        or binding != aliases.get(head)
+        or _relative_binding(context, head)
+    ):
+        return None
+    return binding
+
+
+def _canary_name_assignment(tree, name):
+    """Return one simple assignment to a name in a bounded consumer module."""
+    assignments = _canary_named_assignments(tree, name)
+    if len(assignments) != 1:
+        return None
+    assignment = assignments[0]
+    return (
+        assignment
+        if not _canary_has_competing_binding(tree, name, assignment.targets[0])
+        else None
+    )
+
+
+def _canary_named_assignments(tree, name):
+    """Collect direct single-name assignments to one local binding."""
+    return [
+        node
+        for node in _canary_nodes(tree, ast.Assign)
+        if len(node.targets) == 1
+        and isinstance(node.targets[0], ast.Name)
+        and node.targets[0].id == name
+    ]
+
+
+def _canary_has_competing_binding(tree, name, assignment_target):
+    """Reject writes, definitions, and imports that replace an assigned name."""
+    writes = _canary_index(tree).get("writes", {}).get(name, ())
+    return len(writes) != 1 or writes[0] is not assignment_target
+
+
+def _canary_index(root):
+    """Build or reuse one capped parent and type index per source AST."""
+    module = (
+        root if isinstance(root, ast.Module) else getattr(root, "_oracle_module", None)
+    )
+    if module is None:
+        from .review_integrity import _security_module_scope
+
+        module = _security_module_scope(root)
+    if not isinstance(module, ast.Module):
+        return {"complete": False}
+    cached = getattr(module, "_canary_ast_index", None)
+    if cached is not None:
+        return cached
+    index = _canary_build_index(module)
+    module._canary_ast_index = index
+    return index
+
+
+def _canary_build_index(module):
+    """Index one module in a bounded preorder traversal."""
+    nodes, parents, starts, ends, types, positions, writes, attrs, subscripts = (
+        [],
+        {},
+        {},
+        {},
+        {},
+        {},
+        {},
+        [],
+        [],
+    )
+    for node, parent, leaving in _canary_walk_events(module):
+        if leaving:
+            ends[id(node)] = len(nodes)
+            continue
+        if len(nodes) >= 100_000:
+            return {"complete": False, "node_visits": len(nodes)}
+        starts[id(node)] = len(nodes)
+        parents[id(node)] = parent
+        nodes.append(node)
+        node._oracle_module = module
+        types.setdefault(type(node), []).append(node)
+        positions.setdefault(type(node), []).append(len(nodes) - 1)
+        _canary_index_bindings(node, writes, attrs, subscripts)
+    index = {
+        "complete": True,
+        "nodes": tuple(nodes),
+        "parents": parents,
+        "starts": starts,
+        "ends": ends,
+        "types": {kind: tuple(items) for kind, items in types.items()},
+        "positions": {kind: tuple(items) for kind, items in positions.items()},
+        "writes": writes,
+        "attribute_writes": tuple(attrs),
+        "subscript_writes": tuple(subscripts),
+        "node_visits": len(nodes),
+        "parent_lookups": 0,
+        "call_alias_signature": None,
+        "resolved_call_names": {},
+        "call_resolution_count": 0,
+    }
+    return index
+
+
+def _canary_walk_events(root):
+    """Yield enter/exit events for one iterative preorder walk."""
+    stack = [(root, None, False)]
+    while stack:
+        node, parent, leaving = stack.pop()
+        yield node, parent, leaving
+        if not leaving:
+            stack.append((node, parent, True))
+            stack.extend(
+                (child, node, False)
+                for child in reversed(tuple(ast.iter_child_nodes(node)))
+            )
+
+
+def _canary_index_bindings(node, writes, attrs, subscripts):
+    """Index name writes and dynamic helper mutation targets in the same walk."""
+    for name in _canary_written_names(node):
+        writes.setdefault(name, []).append(node)
+    if isinstance(node, ast.Attribute) and isinstance(node.ctx, (ast.Store, ast.Del)):
+        attrs.append(node)
+    if isinstance(node, ast.Subscript) and isinstance(node.ctx, (ast.Store, ast.Del)):
+        subscripts.append(node)
+
+
+def _canary_written_names(node):
+    """Return lexical names introduced or written by one AST node."""
+    if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
+        return (node.id,)
+    if isinstance(node, (ast.Import, ast.ImportFrom)):
+        return tuple(
+            item.asname or item.name.split(".", 1)[0]
+            for item in node.names
+            if item.name != "*"
+        )
+    if isinstance(node, ast.arg):
+        return (node.arg,)
+    if isinstance(
+        node,
+        (
+            ast.FunctionDef,
+            ast.AsyncFunctionDef,
+            ast.ClassDef,
+            ast.ExceptHandler,
+            ast.MatchAs,
+            ast.MatchStar,
+        ),
+    ):
+        name = getattr(node, "name", None)
+        return (name,) if name else ()
+    if isinstance(node, (ast.Global, ast.Nonlocal)):
+        return tuple(node.names)
+    return ()
+
+
+def _canary_nodes(root, kind=None):
+    """Read an indexed subtree or typed view without restarting an AST walk."""
+    index = _canary_index(root)
+    if not index.get("complete"):
+        return ()
+    start = index["starts"].get(id(root), 0)
+    end = index["ends"].get(id(root), start)
+    if kind is None:
+        return index["nodes"][start:end]
+    positions = index["positions"].get(kind, ())
+    first, last = bisect_left(positions, start), bisect_left(positions, end)
+    return index["types"].get(kind, ())[first:last]
+
+
+def _canary_parent(root, child):
+    """Return a direct parent from the source tree's bounded index."""
+    index = _canary_index(root)
+    if not index.get("complete"):
+        return None
+    index["parent_lookups"] += 1
+    return index["parents"].get(id(child))
 
 
 def _sql_assignment_names(statement):
@@ -1388,6 +3411,19 @@ def _oracle_source_snapshots(
         except (OSError, SyntaxError, UnicodeError, runtime_error):
             continue
     return snapshots
+
+
+def _clear_analysis_sidecars(tree):
+    """Remove transient oracle and security annotations before tree reuse."""
+    preserved = {"_oracle_source_lines", "_oracle_source_sha256"}
+    for node in ast.walk(tree):
+        for name in tuple(vars(node)):
+            if name in preserved:
+                continue
+            if name.startswith(
+                ("_oracle_", "_scan_", "_security_", "_implementation_")
+            ):
+                delattr(node, name)
 
 
 def database_structure(

@@ -110,7 +110,7 @@ def test_database_context_rejects_changed_inputs_before_receipt(
     schema = _database_context_project(tmp_path)
     if mutation == "new_configuration":
         (tmp_path / "factory.database.json").unlink()
-    original = audit._security_scan_file
+    original = audit._security_scan_file_snapshot
 
     def change_after_capture(*args, **kwargs):
         result = original(*args, **kwargs)
@@ -125,7 +125,7 @@ def test_database_context_rejects_changed_inputs_before_receipt(
             (tmp_path / "factory.database.json").write_text("{}")
         return result
 
-    monkeypatch.setattr(audit, "_security_scan_file", change_after_capture)
+    monkeypatch.setattr(audit, "_security_scan_file_snapshot", change_after_capture)
     with pytest.raises(audit.ReviewAuditError, match="changed"):
         audit.security_scan(tmp_path, cache_enabled=False)
 

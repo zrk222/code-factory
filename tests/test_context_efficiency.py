@@ -1059,7 +1059,7 @@ def test_security_scan_reuses_oracle_tree_for_database_projection(
     review_audits._scan_security_sources(
         tmp_path, [path], (), {}, test_file_patterns=set(), database_context=database
     )
-    assert calls == [source, source]
+    assert calls == [source]
     assert len(private_calls) == 1
     assert not public_calls
     assert [table["name"] for table in database["tables"]] == ["accounts"]
@@ -1073,10 +1073,276 @@ def test_security_scan_reuses_oracle_tree_for_database_projection(
         test_file_patterns=set(),
         database_context=warm_database,
     )
-    assert calls == [source, source, source]
+    assert calls == [source, source]
     assert len(private_calls) == 1
     assert len(public_calls) == 1
     assert warm_database == database
+
+
+def test_security_scan_reuses_only_fresh_oracle_trees_on_cold_path(
+    tmp_path, monkeypatch
+):
+    import ast
+    import json
+
+    from factoryline import intent_quality, review_audits
+
+    sources = {
+        "models.py": (
+            "from sqlalchemy import Column, Integer\n"
+            "from sqlalchemy.orm import declarative_base\n"
+            "Base = declarative_base()\n"
+            "class Account(Base):\n"
+            "    __tablename__ = 'accounts'\n"
+            "    id = Column(Integer, primary_key=True)\n"
+            "def unfinished():\n"
+            "    pass\n"
+        ),
+        "helper.py": "def invoke(callback):\n    callback()\n",
+        "app.py": "from helper import invoke\ndef run(callback):\n    invoke(callback)\n",
+    }
+    for name, source in sources.items():
+        (tmp_path / name).write_text(source, encoding="utf-8")
+    model_bytes = (tmp_path / "models.py").read_bytes()
+    calls = []
+    parse = ast.parse
+
+    def counted_parse(source, *args, **kwargs):
+        if kwargs.get("filename") == "models.py":
+            calls.append(source)
+        return parse(source, *args, **kwargs)
+
+    monkeypatch.setattr(ast, "parse", counted_parse)
+    monkeypatch.setattr(intent_quality, "_DB_CACHE", {})
+    monkeypatch.setattr(intent_quality, "_DB_CACHE_BYTES", 0)
+    review_audits._oracle_context_cache_clear()
+    scan_snapshot = review_audits._security_scan_file_snapshot
+    structural_inputs = []
+
+    def with_stale_sidecars(*args, **kwargs):
+        tree = args[7]
+        before = ast.dump(tree, include_attributes=True)
+        tree._security_stale_test_marker = "must be cleared"
+        structural_inputs.append(before)
+        result = scan_snapshot(*args, **kwargs)
+        assert not hasattr(tree, "_security_stale_test_marker")
+        assert ast.dump(tree, include_attributes=True) == before
+        return result
+
+    monkeypatch.setattr(
+        review_audits, "_security_scan_file_snapshot", with_stale_sidecars
+    )
+    cold = review_audits.security_scan(tmp_path, cache_enabled=True)
+    assert calls == [model_bytes]
+    assert structural_inputs
+    assert [table["name"] for table in cold["database_context"]["tables"]] == [
+        "accounts"
+    ]
+    assert "QUALITY_EMPTY_IMPLEMENTATION" in cold["finding_counts"]
+
+    # A warm oracle-cache hit has no producer-owned AST, so scanning reparses.
+    warm = review_audits.security_scan(tmp_path, cache_enabled=True)
+    assert calls == [model_bytes, model_bytes]
+    assert warm["audit_sha256"] == cold["audit_sha256"]
+    assert warm["database_context"] == cold["database_context"]
+    assert json.loads(json.dumps(warm, sort_keys=True)) == warm
+
+
+def test_security_scan_reparses_a_tree_changed_by_an_intermediate_consumer(
+    tmp_path, monkeypatch
+):
+    import ast
+
+    from factoryline import context_efficiency, intent_quality, review_audits
+
+    source = (
+        "from sqlalchemy import Column, Integer\n"
+        "from sqlalchemy.orm import declarative_base\n"
+        "Base = declarative_base()\n"
+        "class Account(Base):\n"
+        "    __tablename__ = 'accounts'\n"
+        "    id = Column(Integer, primary_key=True)\n"
+    )
+    path = tmp_path / "models.py"
+    path.write_text(source, encoding="utf-8")
+    source_bytes = path.read_bytes()
+    parse = ast.parse
+    calls = []
+
+    def counted_parse(text, *args, **kwargs):
+        if kwargs.get("filename") == "models.py":
+            calls.append(text)
+        return parse(text, *args, **kwargs)
+
+    monkeypatch.setattr(ast, "parse", counted_parse)
+    monkeypatch.setattr(intent_quality, "_DB_CACHE", {})
+    monkeypatch.setattr(intent_quality, "_DB_CACHE_BYTES", 0)
+    review_audits._oracle_context_cache_clear()
+    expected = review_audits.security_scan(tmp_path, cache_enabled=False)
+    assert calls == [source_bytes]
+
+    parse_calls = len(calls)
+    review_audits._oracle_context_cache_clear()
+    project = context_efficiency._database_workspace_context_from_oracle
+    mutated_trees = []
+
+    def mutate_after_database_projection(root, sources, reader, inventory, snapshots):
+        result = project(root, sources, reader, inventory, snapshots)
+        tree = snapshots[path]
+        tree.body.append(ast.Pass())
+        mutated_trees.append(tree)
+        return result
+
+    monkeypatch.setattr(
+        context_efficiency,
+        "_database_workspace_context_from_oracle",
+        mutate_after_database_projection,
+    )
+    actual = review_audits.security_scan(tmp_path, cache_enabled=False)
+    assert calls[parse_calls:] == [source_bytes, source_bytes]
+    assert actual["audit_sha256"] == expected["audit_sha256"]
+    assert actual["database_context"] == expected["database_context"]
+    assert len(mutated_trees) == 1
+    assert json.loads(json.dumps(actual, sort_keys=True)) == actual
+
+
+def test_security_scan_falls_back_when_producer_snapshot_is_missing(
+    tmp_path, monkeypatch
+):
+    import ast
+
+    from factoryline import review_audits
+
+    source = b"def unfinished():\n    pass\n"
+    path = tmp_path / "models.py"
+    path.write_bytes(source)
+    original_parse = ast.parse
+    parsed = []
+
+    def counted_parse(text, *args, **kwargs):
+        if kwargs.get("filename") == "models.py":
+            parsed.append(text)
+        return original_parse(text, *args, **kwargs)
+
+    monkeypatch.setattr(ast, "parse", counted_parse)
+    review_audits._oracle_context_cache_clear()
+    bound = review_audits.contracts.bound_snapshots
+
+    def drop_snapshot(root, files, source_bytes, source_bindings):
+        snapshots = bound(root, files, source_bytes, source_bindings)
+        snapshots.pop(path, None)
+        return snapshots
+
+    monkeypatch.setattr(review_audits.contracts, "bound_snapshots", drop_snapshot)
+    result = review_audits.security_scan(tmp_path, cache_enabled=False)
+
+    assert parsed == [source, source]
+    assert "QUALITY_EMPTY_IMPLEMENTATION" in result["finding_counts"]
+    assert json.loads(json.dumps(result, sort_keys=True)) == result
+
+
+@pytest.mark.parametrize("corruption", ["non_module", "source_sha"])
+def test_security_scan_rebuilds_corrupt_producer_snapshot(
+    tmp_path, monkeypatch, corruption
+):
+    import ast
+
+    from factoryline import intent_quality, review_audits
+
+    source = b"def run(value):\n    return value\n"
+    path = tmp_path / "app.py"
+    path.write_bytes(source)
+    review_audits._oracle_context_cache_clear()
+    monkeypatch.setattr(intent_quality, "_DB_CACHE", {})
+    monkeypatch.setattr(intent_quality, "_DB_CACHE_BYTES", 0)
+    expected = review_audits.security_scan(tmp_path, cache_enabled=False)
+    review_audits._oracle_context_cache_clear()
+    bound = review_audits.contracts.bound_snapshots
+    original_parse = ast.parse
+    parsed = []
+
+    def counted_parse(text, *args, **kwargs):
+        if kwargs.get("filename") == "app.py":
+            parsed.append(text)
+        return original_parse(text, *args, **kwargs)
+
+    def corrupt_snapshot(root, files, source_bytes, source_bindings):
+        snapshots = bound(root, files, source_bytes, source_bindings)
+        if corruption == "non_module":
+            snapshots[path] = object()
+        else:
+            snapshots[path]._oracle_source_sha256 = "0" * 64
+        return snapshots
+
+    monkeypatch.setattr(ast, "parse", counted_parse)
+    monkeypatch.setattr(review_audits.contracts, "bound_snapshots", corrupt_snapshot)
+    actual = review_audits.security_scan(tmp_path, cache_enabled=False)
+
+    assert parsed == [source, source]
+    assert actual["audit_sha256"] == expected["audit_sha256"]
+    assert json.loads(json.dumps(actual, sort_keys=True)) == actual
+
+
+def test_security_scan_rechecks_configuration_after_snapshot_consumption(
+    tmp_path, monkeypatch
+):
+    import pytest
+
+    from factoryline import review_audits
+    from factoryline.review_audits import ReviewAuditError
+
+    config = tmp_path / "pyproject.toml"
+    config.write_text('[tool.mypy]\nfiles = ["typing_probe.py"]\n', encoding="utf-8")
+    (tmp_path / "pytest.ini").write_text(
+        "[pytest]\npython_files = typing_probe.py\n", encoding="utf-8"
+    )
+    (tmp_path / "typing_probe.py").write_text(
+        "from typing_extensions import assert_type\ndef test_type():\n"
+        "    assert_type(compute(), int)\n",
+        encoding="utf-8",
+    )
+    original = review_audits._security_scan_file_snapshot
+
+    def mutate_after_snapshot(*args, **kwargs):
+        result = original(*args, **kwargs)
+        config.write_text("[tool.mypy]\nfiles = []\n", encoding="utf-8")
+        return result
+
+    monkeypatch.setattr(
+        review_audits, "_security_scan_file_snapshot", mutate_after_snapshot
+    )
+    with pytest.raises(ReviewAuditError, match="Evidence changed.*pyproject.toml"):
+        review_audits.security_scan(tmp_path, cache_enabled=False)
+
+
+@pytest.mark.parametrize("cache_enabled", [False, True])
+def test_security_scan_rechecks_sources_after_cold_and_warm_consumption(
+    tmp_path, monkeypatch, cache_enabled
+):
+    import pytest
+
+    from factoryline import review_audits
+    from factoryline.review_audits import ReviewAuditError
+
+    source = tmp_path / "app.py"
+    source.write_text("def run(value):\n    return value\n", encoding="utf-8")
+    review_audits._oracle_context_cache_clear()
+    if cache_enabled:
+        review_audits.security_scan(tmp_path, cache_enabled=True)
+        scanner = review_audits._security_scan_file
+        scanner_name = "_security_scan_file"
+    else:
+        scanner = review_audits._security_scan_file_snapshot
+        scanner_name = "_security_scan_file_snapshot"
+
+    def mutate_after_scan(*args, **kwargs):
+        result = scanner(*args, **kwargs)
+        source.write_text("def run(value):\n    eval(value)\n", encoding="utf-8")
+        return result
+
+    monkeypatch.setattr(review_audits, scanner_name, mutate_after_scan)
+    with pytest.raises(ReviewAuditError, match="Evidence changed.*app.py"):
+        review_audits.security_scan(tmp_path, cache_enabled=cache_enabled)
 
 
 def test_database_context_structural_metadata_respects_secret_boundaries():

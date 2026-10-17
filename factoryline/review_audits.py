@@ -34,7 +34,7 @@ from .audit_action_refs import (
     _security_scan_action_summary,
 )
 from .deep_audit_io import local_file
-from .ops_telemetry import _measure_hash, _measure_parse, _measured_source_read
+from .ops_telemetry import _measure_hash, _measure_parse
 from .runtime_audit_common import RuntimeAuditError, runtime_config_sources
 from . import review_integrity as integrity, intent_quality as contracts
 from .review_integrity import security_call_name as security_call_name
@@ -3649,11 +3649,22 @@ def _declared_typecheck_sources(
 
 
 def _oracle_context_cache_key(root: Path, manifest: list, config_identity: dict) -> str:
+    from .context_efficiency import (
+        _consume_security_snapshots,
+        _populate_oracle_database_context,
+        _read_bounded_workspace_source,
+        _scan_missing_security_snapshot,
+    )
+
     helpers = (
         ast.parse,
         _build_oracle_context,
         contracts._static_type_edges,
         _security_source_bytes,
+        _read_bounded_workspace_source,
+        _consume_security_snapshots,
+        _populate_oracle_database_context,
+        _scan_missing_security_snapshot,
         local_file,
         _measure_parse,
         RuntimeAuditError,
@@ -3708,6 +3719,7 @@ def _oracle_context_cache_key(root: Path, manifest: list, config_identity: dict)
         _local_weak_assertion_helpers,
         _is_oracle_helper_name,
         _oracle_context_cache_eligible,
+        _project_oracle_context,
     )
     helpers += contracts.project_contract_helpers() + tuple(
         getattr(integrity, name)
@@ -3856,6 +3868,7 @@ def _project_oracle_context(
     collection_identity: dict | None = None,
     python_inventory_out: list | None = None,
     database_context_out: dict | None = None,
+    security_snapshot_consumer=None,
 ) -> tuple[dict, list, list, dict]:
     """Resolve local imports and return retained bytes without executing repository code."""
     if database_context_out is not None:
@@ -3898,14 +3911,43 @@ def _project_oracle_context(
             contexts, edges = cached
             return contexts, bindings, edges, source_bytes
     snapshots = contracts.bound_snapshots(root, files, source_bytes, source_bindings)
-    if database_context_out is not None:
-        from .context_efficiency import _database_workspace_context_from_oracle
-
-        database_context_out.update(
-            _database_workspace_context_from_oracle(
-                root, source_bytes, _security_source_bytes, python_inventory, snapshots
+    file_paths = set(files)
+    source_hashes = {
+        root / binding["path"]: binding["sha256"] for binding in source_bindings
+    }
+    for path, tree in tuple(snapshots.items()):
+        if path not in file_paths:
+            snapshots.pop(path)
+            continue
+        if isinstance(tree, ast.Module) and getattr(
+            tree, "_oracle_source_sha256", None
+        ) == source_hashes.get(path):
+            continue
+        snapshots.pop(path)
+        snapshots.update(
+            contracts._oracle_source_snapshots(
+                root,
+                [path],
+                source_bytes,
+                _security_source_bytes,
+                _measure_parse,
+                RuntimeAuditError,
+                MAX_BYTES,
             )
         )
+    snapshot_fingerprints = {
+        path: _oracle_tree_fingerprint(tree) for path, tree in snapshots.items()
+    }
+    from .context_efficiency import _populate_oracle_database_context
+
+    _populate_oracle_database_context(
+        database_context_out,
+        root,
+        source_bytes,
+        _security_source_bytes,
+        python_inventory,
+        snapshots,
+    )
     ty_identity = config_identity["typecheck"].get("ty", {})
     ty_sources = {root / item for item in ty_identity.get("selected", [])}
     import_views = {"resolved": {}, "bindings": 0, "characters": 0}
@@ -3922,6 +3964,13 @@ def _project_oracle_context(
         cache_enabled, source_cacheable, config_cacheable
     ):
         _oracle_context_cache_write(cache_key, contexts, edges)
+    if security_snapshot_consumer is not None:
+        try:
+            security_snapshot_consumer(
+                snapshots, snapshot_fingerprints, contexts, source_bytes
+            )
+        finally:
+            snapshots.clear()
     return contexts, bindings, edges, source_bytes
 
 
@@ -5209,6 +5258,9 @@ def _security_scan_tree(
     test_file_patterns: set[str] | None = None,
 ) -> list[dict[str, Any]]:
     relative = path.relative_to(root).as_posix()
+    tree._security_source_context = (oracle_context or {}).get(
+        "_security_source_context"
+    )
     nodes = list(ast.walk(tree))
     aliases = _security_aliases(nodes)
     for node in nodes:
@@ -5272,25 +5324,11 @@ def _security_scan_tree(
     return findings
 
 
-@_measured_source_read
 def _security_source_bytes(workspace: Path, relative: str) -> bytes:
     """Read a bounded regular source without following linked workspace entries."""
-    path = local_file(workspace, relative)
-    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
-    with os.fdopen(descriptor, "rb") as stream:
-        opened = os.fstat(stream.fileno())
-        checked = local_file(workspace, relative).stat()
-        if (opened.st_dev, opened.st_ino) != (checked.st_dev, checked.st_ino):
-            raise OSError("source changed before read")
-        data = stream.read(MAX_BYTES + 1)
-        after = local_file(workspace, relative).stat()
-        if (opened.st_ino, opened.st_size, opened.st_mtime_ns) != (
-            after.st_ino,
-            after.st_size,
-            after.st_mtime_ns,
-        ):
-            raise OSError("source changed during read")
-    return data
+    from .context_efficiency import _read_bounded_workspace_source
+
+    return _read_bounded_workspace_source(workspace, relative, MAX_BYTES, local_file)
 
 
 def _security_scan_file(
@@ -5303,122 +5341,65 @@ def _security_scan_file(
     source_data: bytes | None = None,
 ) -> tuple[dict[str, Any] | None, list[dict[str, Any]], str]:
     """Scan one bounded Python source and return its byte binding and findings."""
-    relative = path.relative_to(workspace).as_posix()
-    binding: dict[str, Any] | None = None
-    try:
-        initial_size = local_file(workspace, relative).stat().st_size
-        if initial_size > MAX_BYTES:
-            return (
-                None,
-                [
-                    _security_finding(
-                        "SECURITY_SOURCE_TOO_LARGE",
-                        relative,
-                        ast.Module(body=[], type_ignores=[]),
-                        f"Source exceeds the {MAX_BYTES}-byte scan limit.",
-                        "HIGH",
-                        bytes=initial_size,
-                    )
-                ],
-                "too_large",
-            )
-        data = source_data
-        if data is None:
-            data = _security_source_bytes(workspace, relative)
-        final_size = local_file(workspace, relative).stat().st_size
-        if len(data) > MAX_BYTES or final_size > MAX_BYTES:
-            return (
-                None,
-                [
-                    _security_finding(
-                        "SECURITY_SOURCE_TOO_LARGE",
-                        relative,
-                        ast.Module(body=[], type_ignores=[]),
-                        f"Source exceeds the {MAX_BYTES}-byte scan limit.",
-                        "HIGH",
-                        bytes=max(len(data), final_size),
-                    )
-                ],
-                "too_large",
-            )
-        binding = {
-            "path": relative,
-            "sha256": _measure_hash("source_hash", sha256, data),
-            "bytes": len(data),
-        }
-        tree = _measure_parse(ast.parse, data, workspace, path)
-        tree._oracle_source_lines = data.decode("utf-8").splitlines()
-    except SyntaxError as exc:
-        return (
-            binding,
-            [
-                _security_finding(
-                    "QUALITY_SYNTAX_ERROR",
-                    relative,
-                    exc,
-                    "Python source cannot be parsed deterministically.",
-                    "HIGH",
-                    detail="invalid Python syntax",
-                )
-            ],
-            "syntax_error",
-        )
-    except (OSError, UnicodeError, RuntimeAuditError) as exc:
-        return (
-            binding,
-            [
-                _security_finding(
-                    "SECURITY_SOURCE_UNREADABLE",
-                    relative,
-                    ast.Module(body=[], type_ignores=[]),
-                    "Source could not be read for security analysis.",
-                    "HIGH",
-                    detail=type(exc).__name__,
-                )
-            ],
-            "unreadable",
-        )
-    return (
-        binding,
-        contracts.implementation_findings(relative, tree, data, oracle_context)
-        + _security_scan_tree(
-            workspace,
-            path,
-            tree,
-            tenant_read_calls,
-            tenant_read_bindings,
-            oracle_context,
-            test_file_patterns,
-        ),
-        "audited",
+    from .context_efficiency import _scan_security_source
+
+    return _scan_security_source(
+        workspace,
+        path,
+        tenant_read_calls,
+        tenant_read_bindings,
+        oracle_context,
+        test_file_patterns,
+        source_data,
     )
+
+
+def _security_scan_file_snapshot(
+    workspace,
+    path,
+    calls,
+    call_bindings,
+    context,
+    patterns,
+    source_data,
+    tree,
+    fingerprint,
+):
+    """Scan one producer-owned tree after matching its bytes and structure."""
+    from .context_efficiency import _scan_security_source
+
+    return _scan_security_source(
+        workspace,
+        path,
+        calls,
+        call_bindings,
+        context,
+        patterns,
+        source_data,
+        tree,
+        fingerprint,
+    )
+
+
+def _oracle_tree_fingerprint(tree):
+    """Hash AST structure and source locations without considering sidecars."""
+    return sha256(ast.dump(tree, include_attributes=True).encode("utf-8")).hexdigest()
 
 
 def _verify_security_bindings(workspace: Path, bindings: list[dict[str, Any]]) -> None:
     """Reject a source that changes after its scan but before receipt creation."""
-    for binding in bindings:
-        current = workspace / binding["path"]
-        try:
-            if current.stat().st_size > MAX_BYTES:
-                raise ReviewAuditError(
-                    f"Evidence changed during security scan: {binding['path']}"
-                )
-            data = _security_source_bytes(workspace, binding["path"])
-            if len(data) > MAX_BYTES or current.stat().st_size > MAX_BYTES:
-                raise ReviewAuditError(
-                    f"Evidence changed during security scan: {binding['path']}"
-                )
-        except (OSError, UnicodeError, RuntimeAuditError) as exc:
-            raise ReviewAuditError(
-                f"Evidence changed during security scan: {binding['path']}"
-            ) from exc
-        if (
-            len(data) != binding["bytes"]
-            or _measure_hash("source_hash", sha256, data) != binding["sha256"]
-        ):
-            raise ReviewAuditError(
-                f"Evidence changed during security scan: {binding['path']}"
-            )
+    from .context_efficiency import _verify_source_bindings
+
+    return _verify_source_bindings(
+        workspace,
+        bindings,
+        _security_source_bytes,
+        MAX_BYTES,
+        lambda data: _measure_hash("source_hash", sha256, data),
+        ReviewAuditError,
+        RuntimeAuditError,
+        "security scan",
+    )
 
 
 def _blocked_security_scan_report(
@@ -5567,6 +5548,28 @@ def _scan_security_sources(
         )
     python_inventory = []
     database_projection = {}
+    snapshot_rows = {}
+
+    def consume_security_snapshots(snapshots, fingerprints, contexts, retained):
+        """Run the fixed scanner closure while its producer-owned trees are live."""
+        from .context_efficiency import _consume_security_snapshots
+
+        snapshot_rows.update(
+            _consume_security_snapshots(
+                workspace,
+                files,
+                snapshots,
+                fingerprints,
+                contexts,
+                retained,
+                scoped_reads,
+                tenant_read_calls,
+                tenant_read_bindings,
+                test_file_patterns,
+                _security_scan_file_snapshot,
+            )
+        )
+
     contexts, context_bindings, oracle_edges, source_bytes = _project_oracle_context(
         workspace,
         files,
@@ -5574,8 +5577,12 @@ def _scan_security_sources(
         collection_identity=collection_identity,
         python_inventory_out=python_inventory,
         database_context_out=database_projection,
+        security_snapshot_consumer=consume_security_snapshots,
     )
-    from .context_efficiency import verify_database_context
+    from .context_efficiency import (
+        _scan_missing_security_snapshot,
+        verify_database_context,
+    )
 
     database = _security_scan_database_context(
         workspace, source_bytes, python_inventory, database_projection
@@ -5584,18 +5591,19 @@ def _scan_security_sources(
     if database_context is not None:
         database_context.update(database)
     for path in files:
-        scope = (scoped_reads or {}).get(path.relative_to(workspace).as_posix(), {})
-        calls = tuple(sorted(set(tenant_read_calls) | set(scope.get("calls", ()))))
-        scoped_bindings = {**scope.get("bindings", {}), **tenant_read_bindings}
-        binding, file_findings, outcome = _security_scan_file(
+        scanned = _scan_missing_security_snapshot(
+            snapshot_rows.pop(path, None),
             workspace,
             path,
-            calls,
-            scoped_bindings,
-            contexts.get(path, {}),
+            scoped_reads,
+            tenant_read_calls,
+            tenant_read_bindings,
+            contexts,
+            source_bytes,
             test_file_patterns,
-            source_bytes.get(path),
+            _security_scan_file,
         )
+        binding, file_findings, outcome = scanned
         if binding is not None:
             bindings.append(binding)
         findings.extend(file_findings)
