@@ -3430,6 +3430,66 @@ _DB_LOG_FILTER_LOCK = threading.RLock()
 _DB_EXTRACTOR_ID = "native-db-v1"
 
 
+def _nested_async_runner_invocations(test, definitions, targets, aliases):
+    """Delegate async invocation proof to the bounded source-analysis helpers."""
+    from .context_efficiency import _nested_async_runner_invocations as prove
+
+    return prove(test, definitions, targets, aliases)
+
+
+def _mock_parameter_annotation(scope, name, aliases):
+    """Recognize a MagicMock annotation only through an intact imported binding."""
+    from . import review_audits as audit
+
+    module = getattr(scope, "_oracle_module", None)
+    if not isinstance(module, ast.Module):
+        return False
+    aliases = audit._scope_security_aliases(aliases, scope)
+    parameters = [
+        *scope.args.posonlyargs,
+        *scope.args.args,
+        *scope.args.kwonlyargs,
+        *([scope.args.vararg] if scope.args.vararg else []),
+        *([scope.args.kwarg] if scope.args.kwarg else []),
+    ]
+    return any(
+        item.arg == name
+        and aliases.get(audit._name(item.annotation).split(".", 1)[0])
+        in {"unittest", "unittest.mock", "unittest.mock.MagicMock"}
+        and audit._resolved_ast_name(item.annotation, aliases)
+        == "unittest.mock.MagicMock"
+        and _mock_provider_uses_are_annotations(module, audit)
+        for item in parameters
+        if item.annotation is not None
+    )
+
+
+def _mock_provider_uses_are_annotations(module, audit):
+    """Reject runtime mutation or escape of imported mock type providers."""
+    aliases = audit._scope_security_aliases(
+        audit._module_security_aliases(module), module
+    )
+    providers = {
+        name
+        for node in ast.walk(module)
+        if isinstance(node, (ast.Import, ast.ImportFrom))
+        for name, target in audit._security_aliases([node]).items()
+        if target == "unittest" or target.startswith("unittest.mock")
+    }
+    annotations = {
+        id(child)
+        for item in ast.walk(module)
+        if isinstance(item, ast.arg) and item.annotation is not None
+        for child in ast.walk(item.annotation)
+    }
+    return not any(
+        isinstance(node, ast.Name)
+        and node.id in providers
+        and id(node) not in annotations
+        for node in ast.walk(module)
+    )
+
+
 def _oracle_source_inputs(
     root,
     files,
