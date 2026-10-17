@@ -11306,3 +11306,97 @@ def test_literal_exec_cold_warm_and_source_change_invalidate_credit(tmp_path):
     changed = scanner.security_scan(tmp_path)
     assert changed["findings"][0]["severity"] == "HIGH"
     assert "source_compilation" not in changed["findings"][0]["facts"]
+
+
+@pytest.mark.parametrize(
+    "source, expected",
+    [
+        pytest.param(
+            'enum = custom_namespace\nclass Code(str, enum.Enum):\n    PASSWORD = "PASSWORD"\n',
+            False,
+            id="unimported-enum",
+        ),
+        pytest.param(
+            'import enum\nenum = custom_namespace\nclass Code(str, enum.Enum):\n    PASSWORD = "PASSWORD"\n',
+            False,
+            id="rebound-module-enum",
+        ),
+        (
+            'from enum import Enum\nclass Code(str, Enum):\n    INVALID_PASSWORD = "INVALID_PASSWORD"\n',
+            True,
+        ),
+        (
+            'from enum import Enum as E\nclass Code(str, E):\n    BAD_SECRET = "BAD_SECRET"\n',
+            True,
+        ),
+        (
+            'import enum as e\nclass Code(str, e.Enum):\n    ACCESS_TOKEN_ERROR = "ACCESS_TOKEN_ERROR"\n',
+            True,
+        ),
+        (
+            'from enum import Enum\nclass Code(str, Enum):\n    PASSWORD: str = "PASSWORD"\n',
+            True,
+        ),
+        ('PASSWORD = "PASSWORD"\n', False),
+        (
+            'from enum import Enum\nclass Code(str, Enum):\n    PASSWORD = "hunter2"\n',
+            False,
+        ),
+        (
+            'from local_enum import Enum\nclass Code(str, Enum):\n    PASSWORD = "PASSWORD"\n',
+            False,
+        ),
+        (
+            'from .enum import Enum\nclass Code(str, Enum):\n    PASSWORD = "PASSWORD"\n',
+            False,
+        ),
+        (
+            'from enum import Enum\nEnum = custom_enum\nclass Code(str, Enum):\n    PASSWORD = "PASSWORD"\n',
+            False,
+        ),
+        (
+            'from enum import Enum\n@custom\nclass Code(str, Enum):\n    PASSWORD = "PASSWORD"\n',
+            False,
+        ),
+        (
+            'from enum import Enum\nclass Code(str, Enum, metaclass=Meta):\n    PASSWORD = "PASSWORD"\n',
+            False,
+        ),
+        (
+            'from enum import Enum\nclass Code(str, Enum):\n    PASSWORD = OTHER_SECRET = "PASSWORD"\n',
+            False,
+        ),
+    ],
+)
+def test_credential_role_witness_is_not_a_secret_exemption(tmp_path, source, expected):
+    (tmp_path / "app.py").write_text(source, encoding="utf-8")
+    findings = [
+        f
+        for f in security_scan(tmp_path)["findings"]
+        if f["code"] == "SECURITY_HARDCODED_SECRET"
+    ]
+    assert findings and all(f["severity"] == "CRITICAL" for f in findings)
+    for finding in findings:
+        facts = finding["facts"]
+        assert (facts.get("role_candidate") == "symbolic_enum_identifier") is expected
+        if expected:
+            assert facts["credential_use"] == "UNVERIFIED"
+            assert facts["role_evidence_scope"] == "source_declaration_only"
+            assert facts["missing_evidence"] == [
+                "complete_import_reexport_and_consumer_closure"
+            ]
+
+
+def test_symbolic_enum_used_as_signing_key_still_reports_critical(tmp_path):
+    (tmp_path / "app.py").write_text(
+        'from enum import Enum\nclass Code(str, Enum):\n    PASSWORD = "PASSWORD"\n'
+        "key = Code.PASSWORD.value\nstrategy = JWTStrategy(secret=key)\n",
+        encoding="utf-8",
+    )
+    findings = [
+        f
+        for f in security_scan(tmp_path)["findings"]
+        if f["code"] == "SECURITY_HARDCODED_SECRET"
+    ]
+    assert len(findings) == 1 and findings[0]["severity"] == "CRITICAL"
+    assert findings[0]["facts"]["credential_use"] == "UNVERIFIED"

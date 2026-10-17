@@ -1510,8 +1510,44 @@ def _url_quoting_charset(value: str) -> bool:
     )
 
 
+def _credential_role_witness(node, target, aliases):
+    """Describe a symbolic declaration; it is not a non-credential exemption."""
+    scope = getattr(node, "_security_lexical_scope", None)
+    if not isinstance(scope, ast.ClassDef) or scope.decorator_list or scope.keywords:
+        return {}
+    targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+    if len(targets) != 1 or not isinstance(target, ast.Name):
+        return {}
+    if not isinstance(node.value, ast.Constant) or node.value.value != target.id:
+        return {}
+    if integrity._builtin_repr_names_shadowed(node, {"str"}):
+        return {}
+    from .security_configuration import _relative_binding
+
+    bindings = integrity._security_scope_request_aliases(
+        getattr(scope, "_security_parent_scope", None), aliases, scope
+    )
+    bases = []
+    for base in scope.bases:
+        name = _name(base)
+        head, separator, tail = name.partition(".")
+        if _relative_binding(node, head) or (head != "str" and head not in bindings):
+            return {}
+        bases.append(bindings.get(head, head) + (separator + tail if separator else ""))
+    if bases != ["str", "enum.Enum"]:
+        return {}
+    return {
+        "role_candidate": "symbolic_enum_identifier",
+        "role_evidence_scope": "source_declaration_only",
+        "declaration_class": scope.name,
+        "declaration_line": scope.lineno,
+        "credential_use": "UNVERIFIED",
+        "missing_evidence": ["complete_import_reexport_and_consumer_closure"],
+    }
+
+
 def _literal_assignment_diagnostic(
-    relative: str, node: ast.Assign | ast.AnnAssign, target: ast.expr
+    relative: str, node: ast.Assign | ast.AnnAssign, target: ast.expr, aliases=None
 ) -> dict[str, Any] | None:
     if not isinstance(target, ast.Name) or not _SECRET_ASSIGNMENT.search(target.id):
         return None
@@ -1522,11 +1558,12 @@ def _literal_assignment_diagnostic(
         "Credential-like material is assigned as a source literal.",
         "CRITICAL",
         name=target.id,
+        **_credential_role_witness(node, target, aliases or {}),
     )
 
 
 def _literal_assignment_diagnostics(
-    relative: str, node: ast.Assign | ast.AnnAssign
+    relative: str, node: ast.Assign | ast.AnnAssign, aliases=None
 ) -> list[dict[str, Any]]:
     value = _secret_literal(node)
     is_test_source = "tests" in Path(relative).parts or Path(relative).name.startswith(
@@ -1544,7 +1581,7 @@ def _literal_assignment_diagnostics(
     targets = node.targets if isinstance(node, ast.Assign) else [node.target]
     findings = []
     for target in targets:
-        finding = _literal_assignment_diagnostic(relative, node, target)
+        finding = _literal_assignment_diagnostic(relative, node, target, aliases)
         if finding is not None:
             findings.append(finding)
     return findings

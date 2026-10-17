@@ -2882,7 +2882,7 @@ def security_assignment_findings(relative, node, aliases):
     from . import intent_quality, review_audits as audit
 
     literal_findings = intent_quality._literal_assignment_diagnostics(
-        relative, node, aliases, audit._literal_assignment_diagnostics(relative, node)
+        relative, node, aliases, audit._literal_assignment_diagnostics(relative, node, aliases)
     )
     return literal_findings + session_tls_findings(
         relative, node, aliases, audit._security_finding
