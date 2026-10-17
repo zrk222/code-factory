@@ -4538,6 +4538,269 @@ def _completion_only_oracle(node: ast.AST) -> bool:
     )
 
 
+def discarded_assertion_error_findings(relative, function):
+    """Identify an inert exception construction, without claiming its path ran."""
+    from .review_audits import _body_nodes, _handler_reraises, _security_finding
+
+    findings = []
+    for handler in _body_nodes(ast.Module(body=function.body, type_ignores=[])):
+        if not isinstance(handler, ast.ExceptHandler) or _handler_reraises(handler):
+            continue
+        for statement in handler.body:
+            if not _discarded_builtin_assertion_error(statement):
+                continue
+            findings.append(
+                _security_finding(
+                    "QUALITY_WEAK_TEST_ORACLE",
+                    relative,
+                    statement,
+                    "This handler constructs and discards AssertionError instead of raising it; if reached, this statement does not reject the behavior.",
+                    "MEDIUM",
+                    symbol=function.name,
+                    reasons=["discarded AssertionError construction"],
+                    evidence_scope="local_statement_semantics",
+                    execution_state="NOT_ESTABLISHED",
+                    whole_test_oracle="UNASSESSED",
+                )
+            )
+    return findings
+
+
+def _discarded_builtin_assertion_error(statement):
+    if not isinstance(statement, ast.Expr) or not isinstance(statement.value, ast.Call):
+        return False
+    call = statement.value
+    if not (
+        isinstance(call.func, ast.Name)
+        and call.func.id == "AssertionError"
+        and not call.keywords
+        and len(call.args) <= 1
+        and all(isinstance(arg, ast.Constant) for arg in call.args)
+    ) or _builtin_repr_names_shadowed(call, {"AssertionError"}):
+        return False
+    module = _security_module_scope(getattr(call, "_security_lexical_scope", None))
+    if module is None:
+        return False
+    # Dynamic or explicitly mutated builtin providers do not support this model.
+    return not any(
+        isinstance(item, ast.ImportFrom)
+        and (item.module == "builtins" or any(a.name == "*" for a in item.names))
+        or isinstance(item, ast.Import)
+        and any(a.name == "builtins" for a in item.names)
+        or isinstance(item, ast.Name)
+        and item.id
+        in {"__builtins__", "globals", "locals", "vars", "exec", "eval", "getattr"}
+        or isinstance(item, ast.Attribute)
+        and (
+            item.attr
+            in {
+                "__dict__",
+                "__globals__",
+                "__builtins__",
+                "__getattribute__",
+                "setattr",
+                "delattr",
+                "getattr",
+            }
+            or item.attr == "AssertionError"
+            and isinstance(item.ctx, (ast.Store, ast.Del))
+        )
+        or isinstance(item, ast.Call)
+        and isinstance(item.func, ast.Name)
+        and item.func.id in {"setattr", "delattr", "exec", "eval"}
+        for item in ast.walk(module)
+    )
+
+
+def fixed_program_witness(relative, node, call_name):
+    """Bind the literal-program model to native scan bytes and lexical identity."""
+    from .runtime_audit_integrity import fixed_literal_program_witness
+
+    scope = getattr(node, "_security_lexical_scope", None)
+    if not isinstance(scope, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef)):
+        return {}
+    module = _security_module_scope(scope)
+    workspace_profile = getattr(module, "_fixed_program_workspace", {})
+    if (
+        not isinstance(workspace_profile, dict)
+        or workspace_profile.get("complete") is not True
+        or workspace_profile.get("namespace_mutation_risk") is not False
+        or not isinstance(workspace_profile.get("sources_sha256"), str)
+    ):
+        return {}
+    context = getattr(module, "_security_source_context", None)
+    if not isinstance(context, tuple) or len(context) != 2:
+        return {}
+    if not _fixed_program_builtin_identity(node, module, call_name):
+        return {}
+    root, sources = context
+    raw = sources.get(root / relative) if isinstance(sources, dict) else None
+    if not isinstance(raw, bytes) or hashlib.sha256(raw).hexdigest() != getattr(
+        module, "_oracle_source_sha256", None
+    ):
+        return {}
+    witness = fixed_literal_program_witness(
+        node,
+        call_name,
+        source_bytes=raw,
+        builtin_identity_proven=True,
+        source_path=relative,
+        scope_profile="native-module-or-function-omitted-namespaces",
+    )
+    if witness:
+        witness["workspace_sources_sha256"] = workspace_profile["sources_sha256"]
+    return witness
+
+
+def bind_fixed_program_workspace(root, contexts, snapshots, files):
+    from .runtime_audit_integrity import workspace_builtin_profile
+    import json
+
+    profile = workspace_builtin_profile(snapshots, files)
+    profile.pop("source_hashes", None)
+    sources = sorted(
+        (
+            path.relative_to(root).as_posix(),
+            getattr(tree, "_oracle_source_sha256", None),
+        )
+        for path, tree in snapshots.items()
+    )
+    profile["sources_sha256"] = hashlib.sha256(
+        json.dumps(sources, separators=(",", ":")).encode()
+    ).hexdigest()
+    for context in contexts.values():
+        context["fixed_program_workspace"] = profile
+
+
+def fixed_program_workspace_helpers():
+    from . import runtime_audit_integrity as runtime
+
+    return (
+        bind_fixed_program_workspace,
+        runtime.workspace_builtin_profile,
+        runtime._fixed_literal_program_kinds,
+        runtime._fixed_literal_value,
+        *runtime.workspace_builtin_helpers(),
+    )
+
+
+def _fixed_program_builtin_identity(node, module, call_name):
+    if not isinstance(node.func, ast.Name) or node.func.id not in {"exec", "eval"}:
+        return False
+    if call_name != node.func.id or _builtin_repr_names_shadowed(node, {node.func.id}):
+        return False
+    for item in ast.walk(module):
+        if item is node.func:
+            continue
+        if isinstance(item, ast.Name) and item.id in {
+            "__builtins__",
+            "globals",
+            "locals",
+            "vars",
+            "getattr",
+            "setattr",
+            "delattr",
+            "__import__",
+            "exec",
+            "eval",
+        }:
+            return False
+        if isinstance(item, ast.Attribute) and item.attr in {
+            "__dict__",
+            "__globals__",
+            "__builtins__",
+            "__getattribute__",
+            "__setattr__",
+            "import_module",
+        }:
+            return False
+        if (
+            isinstance(item, ast.Attribute)
+            and item.attr in {"exec", "eval"}
+            and isinstance(item.ctx, (ast.Store, ast.Del))
+        ):
+            return False
+        if isinstance(item, ast.ImportFrom) and (
+            item.module == "builtins" or any(a.name == "*" for a in item.names)
+        ):
+            return False
+        if isinstance(item, ast.Import) and any(
+            a.name == "builtins" for a in item.names
+        ):
+            return False
+    return True
+
+
+def partition_proven_primitive_observations(core):
+    """Keep proved fixed programs visible without describing them as defects."""
+    from .audit_action_refs import _security_scan_state, _security_scan_action_summary
+
+    bindings = {row["path"]: row["sha256"] for row in core.get("sources", [])}
+    prior = core.get("primitive_observations", [])
+    retained, proved = [], []
+    touched = bool(prior)
+    for finding in [*core["findings"], *prior]:
+        facts = finding.get("facts", {})
+        if facts.get("disposition") != "PROVEN_FIXED_LITERAL_PROGRAM":
+            retained.append(finding)
+            continue
+        touched = True
+        if _fixed_primitive_binding(finding, core.get("sources", []), bindings):
+            proved.append(finding)
+        else:
+            retained.append(
+                {
+                    **finding,
+                    "severity": "HIGH",
+                    "message": "The fixed-program proof is not bound to the current source; execution risk remains unverified.",
+                    "facts": {
+                        **facts,
+                        "disposition": "UNVERIFIED_FIXED_PROGRAM",
+                        "state": "INCOMPLETE",
+                        "proof_rejection": "SOURCE_BINDING_MISMATCH",
+                    },
+                }
+            )
+    if not touched:
+        return
+    core["primitive_observations"] = proved
+    core["primitive_observation_count"] = len(core["primitive_observations"])
+    core["findings"] = retained
+    core["finding_counts"] = dict(
+        sorted(
+            (code, sum(f["code"] == code for f in retained))
+            for code in {f["code"] for f in retained}
+        )
+    )
+    core["state"] = _security_scan_state(
+        core.get("sources", []),
+        retained,
+        core.get("database_context"),
+        core.get("audit_coverage"),
+    )
+    core["action_summary"] = _security_scan_action_summary(core["state"])
+
+
+def _fixed_primitive_binding(finding, sources, bindings):
+    import json
+
+    facts = finding.get("facts", {})
+    workspace_sources = sorted((row["path"], row["sha256"]) for row in sources)
+    workspace_digest = hashlib.sha256(
+        json.dumps(workspace_sources, separators=(",", ":")).encode()
+    ).hexdigest()
+    return (
+        finding.get("code") == "SECURITY_DYNAMIC_EXECUTION"
+        and isinstance(facts.get("source_sha256"), str)
+        and re.fullmatch(r"[0-9a-f]{64}", facts["source_sha256"])
+        and facts.get("source_path") == finding.get("path")
+        and sum(row["path"] == finding.get("path") for row in sources) == 1
+        and facts["source_sha256"] == bindings.get(finding.get("path"))
+        and facts.get("schema") == "factory.fixed-literal-program.v1"
+        and facts.get("workspace_sources_sha256") == workspace_digest
+    )
+
+
 def bind_credential_consumers(
     root, snapshots, imports, contexts, source_bytes, *, inventory
 ):

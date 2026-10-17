@@ -9,6 +9,317 @@ from .runtime_audit_common import RuntimeAuditError
 from .runtime_audit_contract import LANES
 
 
+def _fixed_literal_value(node):
+    literal_types = (str, bytes, int, float, complex, bool, type(None), type(Ellipsis))
+    stack = [node]
+    while stack:
+        current = stack.pop()
+        if isinstance(current, ast.Constant):
+            if type(current.value) not in literal_types:
+                return False
+        elif isinstance(current, ast.UnaryOp):
+            if (
+                not isinstance(current.op, (ast.UAdd, ast.USub))
+                or not isinstance(current.operand, ast.Constant)
+                or type(current.operand.value) not in {int, float, complex}
+            ):
+                return False
+            stack.append(current.operand)
+        elif isinstance(current, ast.Dict):
+            if any(key is None for key in current.keys):
+                return False
+            stack.extend(ast.iter_child_nodes(current))
+        elif isinstance(current, (ast.List, ast.Tuple, ast.Set, ast.Load)):
+            stack.extend(ast.iter_child_nodes(current))
+        else:
+            return False
+    try:
+        ast.literal_eval(node)
+    except (
+        ValueError,
+        TypeError,
+        SyntaxError,
+        MemoryError,
+        RecursionError,
+        OverflowError,
+    ):
+        return False
+    return True
+
+
+def _fixed_literal_call(node, call_name):
+    normalized = {
+        "eval": "eval",
+        "builtins.eval": "eval",
+        "__builtin__.eval": "eval",
+        "exec": "exec",
+        "builtins.exec": "exec",
+        "__builtin__.exec": "exec",
+    }
+    normalized = normalized.get(call_name) if isinstance(call_name, str) else None
+    if (
+        normalized is None
+        or not isinstance(node, ast.Call)
+        or len(node.args) != 1
+        or node.keywords
+        or not isinstance(node.args[0], ast.Constant)
+        or type(node.args[0].value) is not str
+    ):
+        return None
+    return normalized, node.args[0]
+
+
+def _fixed_literal_program_kinds(program, normalized, node_limit=1024):
+    mode = "eval" if normalized == "eval" else "exec"
+    try:
+        tree = ast.parse(program, mode=mode)
+        limit = min(1024, node_limit) if type(node_limit) is int else 0
+        nodes_examined = 0
+        for _ in ast.walk(tree):
+            nodes_examined += 1
+            if nodes_examined > limit:
+                return None, nodes_examined
+        if mode == "eval":
+            kinds = ["Expression"] if _fixed_literal_value(tree.body) else None
+            return kinds, nodes_examined
+        kinds = []
+        for statement in tree.body:
+            if isinstance(statement, ast.Pass):
+                pass
+            elif isinstance(statement, ast.Expr) and _fixed_literal_value(
+                statement.value
+            ):
+                pass
+            elif (
+                isinstance(statement, ast.Assign)
+                and len(statement.targets) == 1
+                and isinstance(statement.targets[0], ast.Name)
+                and statement.targets[0].id != "__builtins__"
+                and _fixed_literal_value(statement.value)
+            ):
+                pass
+            else:
+                return None, nodes_examined
+            kinds.append(type(statement).__name__)
+        return kinds, nodes_examined
+    except (
+        SyntaxError,
+        ValueError,
+        TypeError,
+        MemoryError,
+        RecursionError,
+        OverflowError,
+    ):
+        return None, 0
+
+
+def fixed_literal_program_witness(
+    node,
+    call_name,
+    *,
+    source_bytes,
+    builtin_identity_proven,
+    source_path=None,
+    scope_profile=None,
+):
+    """Describe a tiny fixed eval/exec program; never execute the target text."""
+    call = _fixed_literal_call(node, call_name)
+    if (
+        call is None
+        or builtin_identity_proven is not True
+        or not isinstance(source_bytes, bytes)
+        or not isinstance(source_path, str)
+        or not source_path
+    ):
+        return {}
+    normalized, literal = call
+    program = literal.value
+    try:
+        program_bytes = program.encode("utf-8")
+    except UnicodeEncodeError:
+        return {}
+    if len(program_bytes) > 16 * 1024:
+        return {}
+    statement_kinds, _ = _fixed_literal_program_kinds(program, normalized)
+    if statement_kinds is None:
+        return {}
+    source_sha256 = hashlib.sha256(source_bytes).hexdigest()
+    span = {
+        key: getattr(literal, attr, None)
+        for key, attr in (
+            ("line", "lineno"),
+            ("column", "col_offset"),
+            ("end_line", "end_lineno"),
+            ("end_column", "end_col_offset"),
+        )
+    }
+    if any(type(value) is not int or value < 0 for value in span.values()):
+        return {}
+    return {
+        "schema": "factory.fixed-literal-program.v1",
+        "disposition": "PROVEN_FIXED_LITERAL_PROGRAM",
+        "source_path": source_path,
+        "source_sha256": source_sha256,
+        "literal_span": span,
+        "program_sha256": hashlib.sha256(program_bytes).hexdigest(),
+        "statement_kinds": statement_kinds,
+        "profile": {
+            "call": f"builtins.{normalized}",
+            "identity": "caller_proved_lexical_source_context",
+            "namespace": "implicit_caller_namespace",
+            "scope": scope_profile if isinstance(scope_profile, str) else None,
+            "target_execution": "not_performed",
+            "max_program_bytes": 16 * 1024,
+            "max_ast_nodes": 1024,
+        },
+    }
+
+
+def _workspace_namespace_hazard(node, parent=None):
+    if isinstance(node, ast.Name) and node.id in {"eval", "exec"}:
+        return not (isinstance(parent, ast.Call) and parent.func is node)
+    if isinstance(
+        node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+    ) and node.name in {"eval", "exec"}:
+        return True
+    if isinstance(node, ast.arg) and node.arg in {"eval", "exec"}:
+        return True
+    if isinstance(node, ast.Import) and any(
+        alias.name.split(".", 1)[0] in {"builtins", "__builtin__"}
+        for alias in node.names
+    ):
+        return True
+    if isinstance(node, ast.ImportFrom) and (
+        node.module in {"builtins", "__builtin__"}
+        or any(a.name == "*" for a in node.names)
+    ):
+        return True
+    if isinstance(node, ast.Name) and node.id in {
+        "__builtins__",
+        "globals",
+        "locals",
+        "vars",
+        "getattr",
+        "setattr",
+        "delattr",
+        "__import__",
+    }:
+        return True
+    if not isinstance(node, ast.Attribute):
+        return False
+    if node.attr in {
+        "__dict__",
+        "__globals__",
+        "__builtins__",
+        "__getattribute__",
+        "__setattr__",
+        "import_module",
+        "getattr",
+        "setattr",
+        "delattr",
+    }:
+        return True
+    return node.attr in {"exec", "eval", "AssertionError"} and isinstance(
+        node.ctx, (ast.Store, ast.Del)
+    )
+
+
+def _workspace_dynamic_exec_risk(node, remaining_nodes):
+    if not (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id in {"exec", "eval"}
+    ):
+        return False, 0, True
+    call = _fixed_literal_call(node, node.func.id)
+    if call is None:
+        return True, 0, True
+    normalized, literal = call
+    try:
+        if len(literal.value.encode("utf-8")) > 16 * 1024:
+            return True, 0, True
+    except UnicodeEncodeError:
+        return True, 0, True
+    kinds, examined = _fixed_literal_program_kinds(
+        literal.value, normalized, node_limit=remaining_nodes
+    )
+    return kinds is None, examined, examined <= remaining_nodes
+
+
+def _workspace_source_hashes(snapshots, files):
+    if not isinstance(snapshots, dict) or not isinstance(files, list) or not snapshots:
+        return None
+    try:
+        file_paths = set(files)
+    except TypeError:
+        return None
+    if len(file_paths) != len(files) or file_paths != set(snapshots):
+        return None
+    source_hashes = {}
+    for path in sorted(snapshots, key=str):
+        tree = snapshots[path]
+        digest = getattr(tree, "_oracle_source_sha256", None)
+        if (
+            not isinstance(tree, ast.Module)
+            or not isinstance(digest, str)
+            or len(digest) != 64
+            or any(char not in "0123456789abcdef" for char in digest)
+        ):
+            return None
+        source_hashes[str(path)] = digest
+    return source_hashes
+
+
+def workspace_builtin_profile(snapshots, files):
+    """Summarize namespace hazards over the complete verified AST index."""
+    profile = {
+        "complete": False,
+        "namespace_mutation_risk": True,
+        "nodes_examined": 0,
+        "source_hashes": {},
+    }
+    source_hashes = _workspace_source_hashes(snapshots, files)
+    if source_hashes is None:
+        return profile
+    profile["source_hashes"] = source_hashes
+    nodes_examined = 0
+    namespace_mutation_risk = False
+    for path in sorted(snapshots, key=str):
+        pending = [(snapshots[path], None)]
+        while pending:
+            node, parent = pending.pop()
+            nodes_examined += 1
+            if nodes_examined > 200_000:
+                profile["nodes_examined"] = nodes_examined
+                return profile
+            if _workspace_namespace_hazard(node, parent):
+                namespace_mutation_risk = True
+            risk, extra_nodes, bounded = _workspace_dynamic_exec_risk(
+                node, 200_000 - nodes_examined
+            )
+            nodes_examined += extra_nodes
+            if not bounded or nodes_examined > 200_000:
+                profile["nodes_examined"] = nodes_examined
+                return profile
+            namespace_mutation_risk |= risk
+            pending.extend((child, node) for child in ast.iter_child_nodes(node))
+    return {
+        "complete": True,
+        "namespace_mutation_risk": namespace_mutation_risk,
+        "nodes_examined": nodes_examined,
+        "source_hashes": source_hashes,
+    }
+
+
+def workspace_builtin_helpers():
+    return (
+        _workspace_namespace_hazard,
+        _workspace_dynamic_exec_risk,
+        _workspace_source_hashes,
+        _fixed_literal_call,
+    )
+
+
 def _expected_lanes(plan):
     lanes = plan["lanes"]
     expected = {lane["id"]: lane["kind"] for lane in lanes}

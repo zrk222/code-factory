@@ -2205,7 +2205,7 @@ def test_security_scan_does_not_credit_nested_helper_before_definition(tmp_path)
             "def test_behavior():\n"
             "    async def check():\n        assert await compute() == 3\n"
             "    check()\n",
-            True,
+            False,
         ),
         (
             "import asyncio\nasync def compute():\n    return 3\n"
@@ -2236,10 +2236,26 @@ def test_security_scan_does_not_credit_nested_helper_before_definition(tmp_path)
         "genuine-hollow-control",
     ],
 )
-def test_nested_async_assertion_requires_proven_completion(tmp_path, source, hollow):
+def test_nested_async_assertion_requires_proven_completion(
+    tmp_path, source, hollow, request
+):
     (tmp_path / "test_async.py").write_text(source, encoding="utf-8")
-    findings = security_scan(tmp_path, cache_enabled=False)["finding_counts"]
+    report = security_scan(tmp_path, cache_enabled=False)
+    findings = report["finding_counts"]
     assert findings.get("QUALITY_HOLLOW_TEST", 0) == int(hollow)
+    if request.node.callspec.id == "unawaited-direct-helper":
+        _assert_unknown_test_oracle(report, unknown_count=1)
+        unawaited = [
+            item
+            for item in report["findings"]
+            if item["code"] == "QUALITY_UNAWAITED_COROUTINE"
+        ]
+        assert len(unawaited) == 1
+        assert (
+            unawaited[0]["line"],
+            unawaited[0]["severity"],
+            unawaited[0]["facts"]["symbol"],
+        ) == (6, "MEDIUM", "test_behavior")
 
 
 @pytest.mark.parametrize(
@@ -2577,9 +2593,16 @@ def test_mock_oracle_accepts_assigned_direct_sync_dependency_calls(tmp_path, sou
         "rebound-mock",
     ],
 )
-def test_mock_oracle_rejects_unsafe_assigned_dependency_calls(tmp_path, source):
+def test_mock_oracle_rejects_unsafe_assigned_dependency_calls(
+    tmp_path, source, request
+):
     (tmp_path / "test_case.py").write_text(source, encoding="utf-8")
-    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+    report = security_scan(tmp_path)
+    if request.node.callspec.id == "unawaited-async":
+        assert report["finding_counts"] == {"QUALITY_UNKNOWN_TEST_ORACLE": 1}
+        _assert_unknown_test_oracle(report, unknown_count=1)
+    else:
+        assert report["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
 
 
 @pytest.mark.parametrize(
@@ -3078,7 +3101,7 @@ def test_mock_alias_mutations_invalidate_root_provenance(tmp_path, mutation, exp
     ],
 )
 def test_mock_provenance_rejects_same_line_mutation_and_escape(tmp_path, source):
-    (tmp_path / "test_same_line_mutation.py").write_text(source, encoding="utf-8")
+    (tmp_path / "test_case.py").write_text(source, encoding="utf-8")
     assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
 
 
@@ -3112,10 +3135,23 @@ def test_mock_oracle_does_not_credit_unawaited_async_dependency(tmp_path):
         "    perform(dependency)\n    dependency.assert_not_awaited()\n",
         encoding="utf-8",
     )
-    assert security_scan(tmp_path)["finding_counts"] == {
-        "QUALITY_HOLLOW_TEST": 1,
+    report = security_scan(tmp_path)
+    assert report["finding_counts"] == {
+        "QUALITY_UNKNOWN_TEST_ORACLE": 1,
         "QUALITY_UNAWAITED_COROUTINE": 1,
     }
+    _assert_unknown_test_oracle(report, unknown_count=1)
+    unawaited = [
+        item
+        for item in report["findings"]
+        if item["code"] == "QUALITY_UNAWAITED_COROUTINE"
+    ]
+    assert len(unawaited) == 1
+    assert (
+        unawaited[0]["line"],
+        unawaited[0]["severity"],
+        unawaited[0]["facts"]["symbol"],
+    ) == (6, "MEDIUM", "test_behavior")
 
 
 def test_execution_findings_resolves_module_helpers_without_sync_credit():
@@ -11075,6 +11111,117 @@ def test_security_scan_source_read_failure_preserves_finding_and_marks_incomplet
     assert "PRIVATE SOURCE READ DETAIL" not in str(telemetry.snapshot())
 
 
+def _assert_unknown_test_oracle(report, *, unknown_count):
+    unknown = [
+        item
+        for item in report["findings"]
+        if item["code"] == "QUALITY_UNKNOWN_TEST_ORACLE"
+    ]
+    assert len(unknown) == unknown_count
+    assert report["state"] == "INCOMPLETE"
+    assert all(item["severity"] == "INFO" for item in unknown)
+    assert all(item["facts"]["state"] == "INCOMPLETE" for item in unknown)
+    assert all(item["facts"]["evidence_state"] == "UNKNOWN" for item in unknown)
+    assert all(
+        item["facts"]["candidate_rule"] == "QUALITY_HOLLOW_TEST" for item in unknown
+    )
+
+
+def test_discarded_assertion_error_is_reported_as_local_weakness(tmp_path):
+    # This is the extracted test function from pallets/flask tests/test_helpers.py.
+    # Its full-file source hash and upstream line are retained in the ignored
+    # adjudication artifact, while this local fixture stays available in CI.
+    source = textwrap.dedent(
+        """\
+        def test_name_with_import_error(self, modules_tmp_path):
+            (modules_tmp_path / "importerror.py").write_text("raise NotImplementedError()")
+            try:
+                flask.Flask("importerror")
+            except NotImplementedError:
+                AssertionError("Flask(import_name) is importing import_name.")
+        """
+    ).replace("\n", "\r\n")
+    (tmp_path / "test_helpers.py").write_text(source, encoding="utf-8", newline="")
+
+    report = security_scan(tmp_path, cache_enabled=False)
+    findings = [
+        item
+        for item in report["findings"]
+        if item["code"] == "QUALITY_WEAK_TEST_ORACLE"
+    ]
+    assert len(findings) == 1
+    finding = findings[0]
+    assert finding["severity"] == "MEDIUM"
+    assert finding["line"] == 6
+    assert finding["facts"]["symbol"] == "test_name_with_import_error"
+    assert finding["facts"]["reasons"] == ["discarded AssertionError construction"]
+    assert finding["facts"]["evidence_scope"] == "local_statement_semantics"
+    assert finding["facts"]["execution_state"] == "NOT_ESTABLISHED"
+    assert finding["facts"]["whole_test_oracle"] == "UNASSESSED"
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "def test_behavior():\n    try:\n        run()\n    except Error:\n        raise AssertionError('unexpected')\n",
+        "def test_behavior():\n    try:\n        run()\n    except Error:\n        error = AssertionError('unexpected')\n",
+        "def test_behavior():\n    try:\n        run()\n    except Error:\n        return AssertionError('unexpected')\n",
+        "def test_behavior():\n    def nested():\n        try:\n            run()\n        except Error:\n            AssertionError('unexpected')\n",
+        "AssertionError = Error\ndef test_behavior():\n    try:\n        run()\n    except Error:\n        AssertionError('unexpected')\n",
+        "def test_behavior(AssertionError=Error):\n    try:\n        run()\n    except Error:\n        AssertionError('unexpected')\n",
+        "from .provider import AssertionError\ndef test_behavior():\n    try:\n        run()\n    except Error:\n        AssertionError('unexpected')\n",
+        "from dependency import *\ndef test_behavior():\n    try:\n        run()\n    except Error:\n        AssertionError('unexpected')\n",
+        "import builtins\nbuiltins.AssertionError = Error\ndef test_behavior():\n    try:\n        run()\n    except Error:\n        AssertionError('unexpected')\n",
+        "globals()['AssertionError'] = Error\ndef test_behavior():\n    try:\n        run()\n    except Error:\n        AssertionError('unexpected')\n",
+        "import builtins\nbuiltins.__dict__['AssertionError'] = Error\ndef test_behavior():\n    try:\n        run()\n    except Error:\n        AssertionError('unexpected')\n",
+        "from builtins import AssertionError as BuiltinAssertionError\nsetattr(builtins, 'AssertionError', Error)\ndef test_behavior():\n    try:\n        run()\n    except Error:\n        BuiltinAssertionError('unexpected')\n",
+        "def test_behavior():\n    try:\n        run()\n    except Error:\n        AssertionError('x')\n        raise\n",
+        "def reject(*args):\n    raise RuntimeError('rejected')\n"
+        "reject.__globals__['AssertionError'] = reject\n"
+        "def test_case():\n    try: raise ValueError()\n"
+        "    except ValueError:\n        AssertionError('must reject')\n",
+        "def reject(*args):\n    raise RuntimeError('rejected')\n"
+        "getattr(reject, '__globals__')['AssertionError'] = reject\n"
+        "def test_case():\n    try: raise ValueError()\n"
+        "    except ValueError:\n        AssertionError('must reject')\n",
+        "def reject(*args):\n    raise RuntimeError('rejected')\n"
+        "reject.__builtins__['AssertionError'] = reject\n"
+        "def test_case():\n    try: raise ValueError()\n"
+        "    except ValueError:\n        AssertionError('must reject')\n",
+        "def reject(*args):\n    raise RuntimeError('rejected')\n"
+        "def test_case(monkeypatch):\n    try: raise ValueError()\n"
+        "    except ValueError:\n"
+        "        monkeypatch.setattr('builtins.AssertionError', reject)\n"
+        "        AssertionError('must reject')\n",
+        "def test_behavior():\n    try:\n        run()\n    except Error:\n        inspect(AssertionError('unexpected'))\n",
+    ],
+    ids=[
+        "raise-instead",
+        "assigned",
+        "returned",
+        "uninvoked-nested-function",
+        "module-shadow",
+        "parameter-shadow",
+        "relative-provider",
+        "wildcard-provider",
+        "builtin-mutation",
+        "globals-mutation",
+        "builtins-dict-mutation",
+        "aliased-builtin-import-mutation",
+        "handler-reraises",
+        "direct-function-globals-mutation",
+        "reflected-function-globals-mutation",
+        "function-builtins-assertionerror-mutation",
+        "monkeypatch-setattr-builtin-assertionerror",
+        "argument-call",
+    ],
+)
+def test_discarded_assertion_error_controls_are_not_overreported(tmp_path, source):
+    (tmp_path / "test_controls.py").write_text(source, encoding="utf-8")
+    report = security_scan(tmp_path, cache_enabled=False)
+    assert "QUALITY_WEAK_TEST_ORACLE" not in report["finding_counts"]
+
+
 def _protocol_integration_workspace(tmp_path):
     tests = tmp_path / "tests"
     tests.mkdir()
@@ -11306,6 +11453,408 @@ def test_literal_exec_cold_warm_and_source_change_invalidate_credit(tmp_path):
     changed = scanner.security_scan(tmp_path)
     assert changed["findings"][0]["severity"] == "HIGH"
     assert "source_compilation" not in changed["findings"][0]["facts"]
+
+
+@pytest.mark.parametrize(
+    "call,program",
+    [
+        pytest.param("eval", "[1, 2]", id="bare-eval-literal"),
+        pytest.param("exec", "value = 7", id="bare-exec-literal"),
+    ],
+)
+def test_security_scan_records_fixed_literal_program_without_agent_action(
+    tmp_path, call, program
+):
+    import ast
+    import hashlib
+    from factoryline import review_audits as scanner
+
+    source = tmp_path / "app.py"
+    source_text = f"{call}({program!r})\n"
+    source.write_text(source_text, encoding="utf-8")
+    raw = source.read_bytes()
+    scanner._oracle_context_cache_clear()
+    cold = scanner.security_scan(tmp_path, cache_enabled=True)
+    warm = scanner.security_scan(tmp_path, cache_enabled=True)
+
+    assert cold["findings"] == []
+    assert cold["finding_counts"] == {}
+    assert cold["primitive_observation_count"] == 1
+    assert len(cold["primitive_observations"]) == 1
+    row = cold["primitive_observations"][0]
+    facts = row["facts"]
+    assert row["code"] == "SECURITY_DYNAMIC_EXECUTION"
+    assert row["severity"] == "INFO"
+    assert row["path"] == "app.py"
+    assert facts["schema"] == "factory.fixed-literal-program.v1"
+    assert facts["disposition"] == "PROVEN_FIXED_LITERAL_PROGRAM"
+    assert facts["source_path"] == "app.py"
+    assert facts["source_sha256"] == hashlib.sha256(raw).hexdigest()
+    assert (
+        facts["program_sha256"] == hashlib.sha256(program.encode("utf-8")).hexdigest()
+    )
+    literal = next(
+        node
+        for node in ast.walk(ast.parse(source_text))
+        if isinstance(node, ast.Constant) and type(node.value) is str
+    )
+    assert facts["literal_span"] == {
+        "line": literal.lineno,
+        "column": literal.col_offset,
+        "end_line": literal.end_lineno,
+        "end_column": literal.end_col_offset,
+    }
+    assert facts["profile"]["call"] == f"builtins.{call}"
+    assert facts["profile"]["target_execution"] == "not_performed"
+    assert cold["state"] == "CLEAN"
+    assert cold["agent_actions"] == []
+    assert warm["primitive_observations"] == cold["primitive_observations"]
+    assert warm["primitive_observation_count"] == 1
+    assert warm["agent_actions"] == []
+    assert warm["audit_sha256"] == cold["audit_sha256"]
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        pytest.param("exec(\"exec('pass')\")\n", id="nested-exec-string"),
+        pytest.param("eval(\"int('1')\")\n", id="nested-eval-call"),
+        pytest.param('exec("import os")\n', id="import-statement"),
+        pytest.param('exec("value = 1 + 2")\n', id="binary-operation"),
+        pytest.param('exec("value = item.field")\n', id="attribute-expression"),
+        pytest.param('exec("value = item[0]")\n', id="subscript-expression"),
+        pytest.param("exec('\\ud800')\n", id="lone-surrogate-literal"),
+        pytest.param('eval("[item for item in items]")\n', id="comprehension"),
+        pytest.param('exec("consume(*items)")\n', id="starred-call"),
+        pytest.param('exec("value = 1", {})\n', id="custom-namespace"),
+        pytest.param(
+            'exec = custom\ndef f():\n    exec("value = 1")\n', id="module-shadow"
+        ),
+        pytest.param('globals()["eval"] = custom\neval("[1]")\n', id="namespace-write"),
+        pytest.param('class Scope:\n    exec("value = 1")\n', id="class-scope"),
+        pytest.param(
+            'def reject():\n    pass\nreject.__builtins__["eval"] = reject\ndef f():\n    eval("[1]")\n',
+            id="function-builtins-eval-mutation",
+        ),
+    ],
+)
+def test_literal_program_unsupported_shapes_remain_high_findings(tmp_path, source):
+    (tmp_path / "app.py").write_text(source, encoding="utf-8")
+    report = security_scan(tmp_path, cache_enabled=False)
+    findings = [
+        item
+        for item in report["findings"]
+        if item["code"] == "SECURITY_DYNAMIC_EXECUTION"
+    ]
+    assert len(findings) == 1
+    assert findings[0]["severity"] == "HIGH"
+    assert report.get("primitive_observations", []) == []
+    assert report.get("primitive_observation_count", 0) == 0
+
+
+@pytest.mark.parametrize(
+    "program",
+    [
+        pytest.param("pass\n" * 1025, id="program-ast-node-cap"),
+        pytest.param("x" * (16 * 1024 + 1), id="program-byte-cap"),
+    ],
+)
+def test_fixed_literal_program_caps_remain_high_dynamic_execution(tmp_path, program):
+    source = tmp_path / "app.py"
+    source.write_text("exec(" + repr(program) + ")\n", encoding="utf-8")
+    report = security_scan(tmp_path, cache_enabled=False)
+    findings = [
+        item
+        for item in report["findings"]
+        if item["code"] == "SECURITY_DYNAMIC_EXECUTION"
+    ]
+    assert len(findings) == 1
+    assert findings[0]["severity"] == "HIGH"
+    assert report.get("primitive_observations", []) == []
+
+
+def test_fixed_literal_program_helper_without_native_scope_returns_no_witness():
+    import ast
+    from factoryline import review_integrity
+
+    call = next(
+        node
+        for node in ast.walk(ast.parse("eval('[1]')"))
+        if isinstance(node, ast.Call)
+    )
+    assert review_integrity.fixed_program_witness("app.py", call, "eval") == {}
+
+
+def test_security_scan_retains_same_module_fixed_and_unproven_rows_as_findings(
+    tmp_path,
+):
+    source = tmp_path / "app.py"
+    source.write_text('eval("[1]")\nexec(payload)\n', encoding="utf-8")
+    report = security_scan(tmp_path, cache_enabled=False)
+
+    findings = report["findings"]
+    assert report.get("primitive_observations", []) == []
+    assert report.get("primitive_observation_count", 0) == 0
+    assert len(findings) == 2
+    assert all(item["code"] == "SECURITY_DYNAMIC_EXECUTION" for item in findings)
+    assert all(item["severity"] == "HIGH" for item in findings)
+    assert [item["line"] for item in findings] == [1, 2]
+    assert report["finding_counts"] == {"SECURITY_DYNAMIC_EXECUTION": 2}
+    assert len(report["agent_actions"]) == 2
+    assert [item["finding_context"] for item in report["agent_actions"]] == findings
+
+
+def test_security_scan_separates_fixed_and_unproven_primitive_rows_and_actions(
+    tmp_path,
+):
+    (tmp_path / "fixed.py").write_text('eval("[1]")\n', encoding="utf-8")
+    (tmp_path / "unsafe.py").write_text(
+        "import requests\nrequests.get(url, verify=False)\n", encoding="utf-8"
+    )
+    report = security_scan(tmp_path, cache_enabled=False)
+
+    observations = report["primitive_observations"]
+    findings = report["findings"]
+    assert len(observations) == 1
+    assert observations[0]["path"] == "fixed.py"
+    assert len(findings) == 1
+    assert findings[0]["code"] == "SECURITY_TLS_VERIFY_DISABLED"
+    assert findings[0]["severity"] == "HIGH"
+    assert findings[0]["path"] == "unsafe.py"
+    assert report["primitive_observation_count"] == 1
+    assert report["finding_counts"] == {"SECURITY_TLS_VERIFY_DISABLED": 1}
+    assert len(observations) + len(findings) == 2
+    assert len(report["agent_actions"]) == 1
+    assert report["agent_actions"][0]["finding_context"] == findings[0]
+
+
+def test_security_scan_rejects_fixed_program_when_sibling_mutates_builtin(tmp_path):
+    (tmp_path / "app.py").write_text('eval("[1]")\n', encoding="utf-8")
+    (tmp_path / "mutator.py").write_text(
+        "import builtins\nbuiltins.eval = replacement\n", encoding="utf-8"
+    )
+    report = security_scan(tmp_path, cache_enabled=False)
+
+    assert report.get("primitive_observations", []) == []
+    assert report.get("primitive_observation_count", 0) == 0
+    assert len(report["findings"]) == 1
+    finding = report["findings"][0]
+    assert finding["code"] == "SECURITY_DYNAMIC_EXECUTION"
+    assert finding["severity"] == "HIGH"
+    assert finding["path"] == "app.py"
+    assert finding["line"] == 1
+    assert report["finding_counts"] == {"SECURITY_DYNAMIC_EXECUTION": 1}
+    assert len(report["agent_actions"]) == 1
+    assert report["agent_actions"][0]["finding_context"] == finding
+
+
+@pytest.mark.parametrize(
+    "sibling_source, expected_finding_rows",
+    [
+        pytest.param(
+            "exec(\"__builtins__['eval'] = replacement\")\n",
+            [("app.py", 1), ("mutator.py", 1)],
+            id="literal-exec-mutates-builtins",
+        ),
+        pytest.param(
+            "runner = exec\nrunner(payload)\n",
+            [("app.py", 1)],
+            id="exec-alias-runs-unknown-payload",
+        ),
+    ],
+)
+def test_security_scan_rejects_fixed_program_for_sibling_exec_hazards(
+    tmp_path, sibling_source, expected_finding_rows
+):
+    (tmp_path / "app.py").write_text('eval("[1]")\n', encoding="utf-8")
+    (tmp_path / "mutator.py").write_text(sibling_source, encoding="utf-8")
+    report = security_scan(tmp_path, cache_enabled=False)
+
+    assert report.get("primitive_observations", []) == []
+    assert report.get("primitive_observation_count", 0) == 0
+    findings = report["findings"]
+    assert len(findings) == len(expected_finding_rows)
+    assert all(item["code"] == "SECURITY_DYNAMIC_EXECUTION" for item in findings)
+    assert all(item["severity"] == "HIGH" for item in findings)
+    assert [(item["path"], item["line"]) for item in findings] == (
+        expected_finding_rows
+    )
+    assert report["finding_counts"] == {
+        "SECURITY_DYNAMIC_EXECUTION": len(expected_finding_rows)
+    }
+    assert len(report["agent_actions"]) == len(findings)
+    assert [item["finding_context"] for item in report["agent_actions"]] == findings
+
+
+def test_security_scan_allows_fixed_program_with_clean_imported_sibling(tmp_path):
+    (tmp_path / "app.py").write_text(
+        'from helper import value\neval("[1]")\n', encoding="utf-8"
+    )
+    (tmp_path / "helper.py").write_text("value = 1\n", encoding="utf-8")
+    report = security_scan(tmp_path, cache_enabled=False)
+
+    observations = report["primitive_observations"]
+    assert len(observations) == 1
+    assert observations[0]["path"] == "app.py"
+    assert observations[0]["line"] == 2
+    assert report["primitive_observation_count"] == 1
+    assert report["findings"] == []
+    assert report["finding_counts"] == {}
+    assert report["agent_actions"] == []
+
+
+@pytest.mark.parametrize(
+    "rejection",
+    [
+        "missing-hash",
+        "no-source-binding",
+        "stale-hash",
+        "wrong-path",
+        "duplicate-binding",
+    ],
+)
+def test_partition_retains_unbound_fixed_program_findings(rejection):
+    import copy
+    from factoryline.review_integrity import partition_proven_primitive_observations
+
+    digest = "a" * 64
+    finding = {
+        "code": "SECURITY_DYNAMIC_EXECUTION",
+        "severity": "INFO",
+        "path": "app.py",
+        "line": 1,
+        "message": "fixed literal program",
+        "facts": {
+            "schema": "factory.fixed-literal-program.v1",
+            "disposition": "PROVEN_FIXED_LITERAL_PROGRAM",
+            "source_path": "app.py",
+            "source_sha256": digest,
+            "program_sha256": "b" * 64,
+        },
+    }
+    sources = [{"path": "app.py", "sha256": digest}]
+    if rejection == "missing-hash":
+        del finding["facts"]["source_sha256"]
+    elif rejection == "no-source-binding":
+        sources = []
+    elif rejection == "stale-hash":
+        finding["facts"]["source_sha256"] = "c" * 64
+    elif rejection == "wrong-path":
+        finding["facts"]["source_path"] = "other.py"
+    elif rejection == "duplicate-binding":
+        sources.append({"path": "app.py", "sha256": digest})
+
+    original = copy.deepcopy(finding)
+    core = {
+        "sources": sources,
+        "findings": [finding],
+        "primitive_observations": [],
+        "finding_counts": {"SECURITY_DYNAMIC_EXECUTION": 1},
+        "state": "BLOCKED",
+    }
+    partition_proven_primitive_observations(core)
+
+    assert core["primitive_observations"] == []
+    assert core["primitive_observation_count"] == 0
+    assert core["finding_counts"] == {"SECURITY_DYNAMIC_EXECUTION": 1}
+    assert len(core["findings"]) == 1
+    retained = core["findings"][0]
+    assert retained["code"] == original["code"]
+    assert retained["path"] == original["path"]
+    assert retained["line"] == original["line"]
+    assert retained["severity"] == "HIGH"
+    assert retained["facts"]["disposition"] == "UNVERIFIED_FIXED_PROGRAM"
+    assert retained["facts"]["state"] == "INCOMPLETE"
+    assert retained["facts"]["proof_rejection"] == "SOURCE_BINDING_MISMATCH"
+    assert core["state"] == "BLOCKED"
+
+
+def test_partition_revalidates_stale_existing_primitive_observation():
+    from factoryline.review_integrity import partition_proven_primitive_observations
+
+    observation = {
+        "code": "SECURITY_DYNAMIC_EXECUTION",
+        "severity": "INFO",
+        "path": "app.py",
+        "line": 1,
+        "message": "fixed literal program",
+        "facts": {
+            "schema": "factory.fixed-literal-program.v1",
+            "disposition": "PROVEN_FIXED_LITERAL_PROGRAM",
+            "source_path": "app.py",
+            "source_sha256": "a" * 64,
+            "program_sha256": "b" * 64,
+        },
+    }
+    core = {
+        "sources": [{"path": "app.py", "sha256": "c" * 64}],
+        "findings": [],
+        "primitive_observations": [observation],
+        "finding_counts": {},
+        "state": "CLEAN",
+    }
+    partition_proven_primitive_observations(core)
+
+    assert core["primitive_observations"] == []
+    assert core["primitive_observation_count"] == 0
+    assert len(core["findings"]) == 1
+    finding = core["findings"][0]
+    assert finding["severity"] == "HIGH"
+    assert finding["facts"]["disposition"] == "UNVERIFIED_FIXED_PROGRAM"
+    assert finding["facts"]["proof_rejection"] == "SOURCE_BINDING_MISMATCH"
+    assert core["finding_counts"] == {"SECURITY_DYNAMIC_EXECUTION": 1}
+    assert core["state"] == "BLOCKED"
+
+
+def test_partition_and_reseal_are_idempotent_for_current_fixed_program():
+    import hashlib
+    import json
+    from factoryline import review_audits
+
+    digest = "a" * 64
+    sources = [{"path": "app.py", "sha256": digest}]
+    workspace_sources = hashlib.sha256(
+        json.dumps([["app.py", digest]], separators=(",", ":")).encode()
+    ).hexdigest()
+    finding = {
+        "code": "SECURITY_DYNAMIC_EXECUTION",
+        "severity": "INFO",
+        "path": "app.py",
+        "line": 1,
+        "message": "fixed literal program",
+        "facts": {
+            "schema": "factory.fixed-literal-program.v1",
+            "disposition": "PROVEN_FIXED_LITERAL_PROGRAM",
+            "source_path": "app.py",
+            "source_sha256": digest,
+            "workspace_sources_sha256": workspace_sources,
+            "program_sha256": "b" * 64,
+        },
+    }
+    core = {
+        "sources": sources,
+        "findings": [finding],
+        "primitive_observations": [],
+        "finding_counts": {"SECURITY_DYNAMIC_EXECUTION": 1},
+        "state": "FINDINGS",
+        "tenant_read_contract": {},
+        "oracle_context": {},
+        "database_context": {},
+    }
+    first = review_audits._seal_security_scan(core)
+    first_hash = first["audit_sha256"]
+    first_observations = json.dumps(first["primitive_observations"], sort_keys=True)
+    second = review_audits._seal_security_scan(core)
+
+    assert second["audit_sha256"] == first_hash
+    assert (
+        json.dumps(second["primitive_observations"], sort_keys=True)
+        == first_observations
+    )
+    assert second["primitive_observation_count"] == 1
+    assert second["findings"] == []
+    assert second["finding_counts"] == {}
+    assert second["agent_actions"] == []
 
 
 @pytest.mark.parametrize(

@@ -115,6 +115,7 @@ def _oracle_context_cache_read(key: str) -> tuple[dict, list] | None:
                 "codspeed_benchmark": item.get("codspeed_benchmark", False),
                 "async_runner_fixtures": item.get("async_runner_fixtures", {}),
                 "protocol_observations": item.get("protocol_observations", {}),
+                "fixed_program_workspace": item.get("fixed_program_workspace", {}),
                 **decode_structural_context(item.get("structural_context", {})),
             }
             for item in document["contexts"]
@@ -152,6 +153,7 @@ def _oracle_context_cache_write(key: str, contexts: dict, edges: list) -> None:
                 "codspeed_benchmark": context.get("codspeed_benchmark", False),
                 "async_runner_fixtures": context.get("async_runner_fixtures", {}),
                 "protocol_observations": context.get("protocol_observations", {}),
+                "fixed_program_workspace": context.get("fixed_program_workspace", {}),
                 "structural_context": encode_structural_context(context),
             }
         )
@@ -1406,6 +1408,16 @@ def _dynamic_execution_finding(
 ) -> dict[str, Any] | None:
     if call not in {"eval", "exec", "builtins.eval", "builtins.exec"}:
         return None
+    if fixed := integrity.fixed_program_witness(relative, node, call):
+        return _security_finding(
+            "SECURITY_DYNAMIC_EXECUTION",
+            relative,
+            node,
+            "Fixed literal-only program; the execution primitive is retained as an observation, not a demonstrated defect.",
+            "INFO",
+            call=call,
+            **fixed,
+        )
     rejected = contracts.literal_exec_rejected(node)
     return _security_finding(
         "SECURITY_DYNAMIC_EXECUTION",
@@ -3737,6 +3749,7 @@ def _oracle_context_cache_key(root: Path, manifest: list, config_identity: dict)
     )
     helpers += async_runner_fixture_helpers() + protocol_call_helpers()
     helpers += (integrity.source_binding_helpers, *integrity.source_binding_helpers())
+    helpers += integrity.fixed_program_workspace_helpers()
     helpers += contracts.project_contract_helpers() + tuple(
         getattr(integrity, name)
         for name in (
@@ -3971,6 +3984,7 @@ def _project_oracle_context(
         root, files, snapshots, typecheck_sources, ty_sources, import_views
     )
     integrity.bind_benchmark_context(contexts, snapshots, benchmarks)
+    integrity.bind_fixed_program_workspace(root, contexts, snapshots, files)
     resolved = contracts._project_import_views(import_views, snapshots)
     contracts.bind_project_contracts(root, snapshots, contexts, edges, resolved)
     edges += contracts._static_type_edges(
@@ -4879,6 +4893,7 @@ def _test_oracle_findings(
             continue
         node._oracle_click_runners = click_runners or set()
         node._oracle_module = nodes[0]
+        findings.extend(integrity.discarded_assertion_error_findings(relative, node))
         node._oracle_async_functions = {
             item.name
             for item in [*nodes[0].body, *node.body]
@@ -5220,6 +5235,9 @@ def _security_scan_tree(
     relative = path.relative_to(root).as_posix()
     tree._security_source_context = (oracle_context or {}).get(
         "_security_source_context"
+    )
+    tree._fixed_program_workspace = (oracle_context or {}).get(
+        "fixed_program_workspace", {}
     )
     nodes = list(ast.walk(tree))
     aliases = _security_aliases(nodes)
@@ -5593,6 +5611,7 @@ def _scan_security_sources(
 
 
 def _seal_security_scan(core: dict[str, Any]) -> dict[str, Any]:
+    integrity.partition_proven_primitive_observations(core)
     candidate = sha256(
         json.dumps(
             _security_scan_report_candidate_payload(core),
