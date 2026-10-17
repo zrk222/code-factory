@@ -802,12 +802,37 @@ def test_repo_scan_recommends_tenant_contract_for_observed_orm_reads(tmp_path: P
         "    return session.query(User).all()\n",
         encoding="utf-8",
     )
+    factory_dir = tmp_path / ".factory"
+    factory_dir.mkdir()
+    (factory_dir / "tenant-read-contract.json").write_text(
+        json.dumps({"schema": "factory.tenant-read-contract.v1", "reads": []}),
+        encoding="utf-8",
+    )
     result = run_repo_scan(tmp_path)
     assert any(
         finding["code"] == "SECURITY_TENANT_READ_UNDECLARED"
         for finding in result["static_security"]["findings"]
     )
     assert any("tenant-read-contract" in action for action in result["next_actions"])
+
+
+def test_repo_scan_does_not_raise_tenant_high_for_generic_orm_without_policy(
+    tmp_path: Path,
+):
+    (tmp_path / "app.py").write_text(
+        "from sqlalchemy.orm import Session\n"
+        "def users(session: Session):\n"
+        "    return session.query(User).all()\n",
+        encoding="utf-8",
+    )
+    result = run_repo_scan(tmp_path)
+
+    assert result["static_security"]["tenant_read_contract"]["policy_applies"] is False
+    assert not any(
+        finding["code"] == "SECURITY_TENANT_READ_UNDECLARED"
+        and finding["severity"] == "HIGH"
+        for finding in result["static_security"]["findings"]
+    )
 
 
 @pytest.mark.parametrize("deep", [False, True])

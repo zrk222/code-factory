@@ -3040,6 +3040,10 @@ def test_mock_configure_mock_cannot_replace_assertion_method(tmp_path):
             "alias = object()\n    alias.assert_called_once_with = lambda *args: None\n    ",
             {},
         ),
+        (
+            "send = object()\n    ",
+            {"QUALITY_HOLLOW_TEST": 1},
+        ),
     ],
 )
 def test_mock_alias_mutations_invalidate_root_provenance(tmp_path, mutation, expected):

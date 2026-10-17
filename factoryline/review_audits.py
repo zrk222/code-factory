@@ -1951,6 +1951,8 @@ def _mock_receiver_has_provenance(assertion, aliases):
         return False
     scoped_aliases = _scope_security_aliases(aliases, scope)
     nodes = _test_oracle_body_nodes(scope, scoped_aliases)
+    from .intent_quality import _mock_scope_binding
+
     proven = _mock_scope_binding(nodes, receiver, assertion, scoped_aliases)
     module = getattr(scope, "_oracle_module", None)
     fixture_proven = bool(
@@ -2086,8 +2088,7 @@ def _mock_context_patch_parameter(scope, name, assertion, aliases):
                 item,
                 (ast.Assign, ast.AnnAssign, ast.AugAssign, ast.NamedExpr, ast.Delete),
             )
-            and (node.lineno, node.col_offset)
-            < (item.lineno, item.col_offset)
+            and (item.lineno, item.col_offset)
             < (assertion.lineno, assertion.col_offset)
             and name in _bound_names(item)
             for item in nodes
@@ -2139,7 +2140,20 @@ def _mock_getattr_selector(selector, scope):
 def _mock_root_was_mutated(scope, root, before, aliases):
     from .review_integrity import _source_name_aliases
 
-    for node in _test_oracle_body_nodes(scope, {}):
+    nodes = _test_oracle_body_nodes(scope, {})
+    origin = next(
+        (
+            node
+            for node in nodes
+            if isinstance(node, ast.Name)
+            and node.id == root
+            and isinstance(node.ctx, ast.Store)
+            and _in_current_test_body(node)
+            and (node.lineno, node.col_offset) < (before.lineno, before.col_offset)
+        ),
+        None,
+    )
+    for node in nodes:
         if (getattr(node, "lineno", 0), getattr(node, "col_offset", 0)) >= (
             before.lineno,
             before.col_offset,
@@ -2148,6 +2162,8 @@ def _mock_root_was_mutated(scope, root, before, aliases):
         if (
             isinstance(node, (ast.Name, ast.Attribute, ast.Subscript))
             and isinstance(node.ctx, (ast.Store, ast.Del))
+            and (not isinstance(node, ast.Name) or node.id == root)
+            and node is not origin
             and _mock_root_name(node, scope, aliases)
             in _source_name_aliases(scope, {root}, node)
         ):
@@ -2172,21 +2188,6 @@ def _mock_root_was_mutated(scope, root, before, aliases):
             in _source_name_aliases(scope, {root}, node)
         ):
             return True
-    return False
-
-
-def _mock_scope_binding(nodes, name, endpoint, aliases):
-    endpoint_line = endpoint.lineno
-    for statement in nodes:
-        if not isinstance(statement, ast.stmt):
-            continue
-        if statement.lineno >= endpoint_line or not _in_current_test_body(statement):
-            continue
-        if not isinstance(statement, (ast.Assign, ast.AnnAssign)):
-            continue
-        if not _mock_constructor_binding(statement, name, aliases):
-            continue
-        return not _name_rebound(nodes, name, statement.lineno, endpoint_line)
     return False
 
 

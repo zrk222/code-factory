@@ -3464,11 +3464,24 @@ def _mock_parameter_annotation(scope, name, aliases):
     )
 
 
+def _mock_scope_binding(nodes, name, endpoint, aliases):
+    """Recognize an unchanged local mock-constructor binding."""
+    from . import review_audits as audit
+
+    endpoint_line = endpoint.lineno
+    return any(
+        isinstance(statement, (ast.Assign, ast.AnnAssign))
+        and statement.lineno < endpoint_line
+        and audit._in_current_test_body(statement)
+        and audit._mock_constructor_binding(statement, name, aliases)
+        and not audit._name_rebound(nodes, name, 0, statement.lineno)
+        and not audit._name_rebound(nodes, name, statement.lineno, endpoint_line)
+        for statement in nodes
+    )
+
+
 def _mock_provider_uses_are_annotations(module, audit):
     """Reject runtime mutation or escape of imported mock type providers."""
-    aliases = audit._scope_security_aliases(
-        audit._module_security_aliases(module), module
-    )
     providers = {
         name
         for node in ast.walk(module)
