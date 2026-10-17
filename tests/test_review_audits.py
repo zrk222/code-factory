@@ -7548,13 +7548,20 @@ def test_security_scan_rejects_typecheck_configuration_race(tmp_path, monkeypatc
         encoding="utf-8",
     )
     original = module._security_scan_file
+    original_snapshot = module._security_scan_file_snapshot
 
     def mutate_after_read(*args):
         result = original(*args)
         config.write_text("[tool.mypy]\nfiles = []\n", encoding="utf-8")
         return result
 
+    def mutate_after_snapshot(*args, **kwargs):
+        result = original_snapshot(*args, **kwargs)
+        config.write_text("[tool.mypy]\nfiles = []\n", encoding="utf-8")
+        return result
+
     monkeypatch.setattr(module, "_security_scan_file", mutate_after_read)
+    monkeypatch.setattr(module, "_security_scan_file_snapshot", mutate_after_snapshot)
     with pytest.raises(ReviewAuditError, match="Evidence changed.*pyproject.toml"):
         security_scan(tmp_path)
 
@@ -7571,13 +7578,20 @@ def test_security_scan_rejects_source_change_after_oracle_context_projection(
     if cache_enabled:
         security_scan(tmp_path, cache_enabled=True)
     original = module._security_scan_file
+    original_snapshot = module._security_scan_file_snapshot
 
-    def mutate_after_scan(*args, **kwargs):
-        result = original(*args, **kwargs)
+    def mutate_after_scan(scanner, *args, **kwargs):
+        result = scanner(*args, **kwargs)
         source.write_text("def run(value):\n    eval(value)\n", encoding="utf-8")
         return result
 
-    monkeypatch.setattr(module, "_security_scan_file", mutate_after_scan)
+    monkeypatch.setattr(
+        module,
+        "_security_scan_file" if cache_enabled else "_security_scan_file_snapshot",
+        lambda *args, **kwargs: mutate_after_scan(
+            original if cache_enabled else original_snapshot, *args, **kwargs
+        ),
+    )
     with pytest.raises(ReviewAuditError, match="Evidence changed.*app.py"):
         security_scan(tmp_path, cache_enabled=cache_enabled)
 

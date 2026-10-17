@@ -1390,6 +1390,19 @@ def _oracle_source_snapshots(
     return snapshots
 
 
+def _clear_analysis_sidecars(tree):
+    """Remove transient oracle and security annotations before tree reuse."""
+    preserved = {"_oracle_source_lines", "_oracle_source_sha256"}
+    for node in ast.walk(tree):
+        for name in tuple(vars(node)):
+            if name in preserved:
+                continue
+            if name.startswith(
+                ("_oracle_", "_scan_", "_security_", "_implementation_")
+            ):
+                delattr(node, name)
+
+
 def database_structure(
     sources: dict[str, bytes],
     dialect: str = "postgres",
