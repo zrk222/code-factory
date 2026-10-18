@@ -5272,7 +5272,9 @@ def _security_scan_tree(
             unittest_methods.update(id(method) for method in cls.body)
     class_helpers = _class_oracle_helpers(tree, oracle_aliases, unittest_methods)
     from .review_integrity import redirect_source_findings
-    from .security_configuration import configuration_findings
+    from .semantic_credential_sensor import (
+        configuration_and_credential_findings as configuration_findings,
+    )
 
     findings = _tenant_read_findings(
         relative, nodes, tenant_read_calls, aliases, tenant_read_bindings or {}

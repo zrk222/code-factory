@@ -1162,7 +1162,7 @@ def native_execution_helpers():
 def credential_validation_helpers():
     from . import credential_httpx_origins, credential_json_assertions
     from . import credential_router_publication, credential_role_flows
-    from . import provider_mutations
+    from . import provider_mutations, semantic_credential_sensor
 
     modules = (
         credential_httpx_origins,
@@ -1170,6 +1170,7 @@ def credential_validation_helpers():
         credential_router_publication,
         credential_role_flows,
         provider_mutations,
+        *semantic_credential_sensor.validation_modules(),
     )
     return tuple(
         value
