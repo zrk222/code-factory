@@ -105,26 +105,21 @@ def _fact_row(fact):
     }
 
 
-def _analyze_fact(
-    fact, evidence, sink_rows, index, imports, classes, audit, publications, integrity
-):
-    for path, call, role, slot, expr, session_meta in sink_rows:
-        record = record_use(
-            fact, path, call, slot, expr, index, imports, classes, audit, integrity
-        )
-        if record is None:
-            continue
-        if session_meta:
-            record["consumer_profile"] = session_meta["profile"]
-            record["session_hops"] = session_meta["hops"]
-            record["runtime_overrides"] = {
-                "setting_getter": session_meta["runtime_setting_getter"],
-                "adapter": session_meta["runtime_adapter_override"],
-            }
-        if role == "http_url":
-            url_use(fact, record, evidence, publications)
-        else:
-            evidence["known_auth_uses"].append(record)
+def _analyze_fact(fact, evidence, sinks, context, publications, aliases):
+    for path, call, role, slot, expr, session_meta in sinks:
+        records = record_use(fact, path, call, slot, expr, *context, aliases=aliases)
+        for record in records or ():
+            if session_meta:
+                record["consumer_profile"] = session_meta["profile"]
+                record["session_hops"] = session_meta["hops"]
+                record["runtime_overrides"] = {
+                    "setting_getter": session_meta["runtime_setting_getter"],
+                    "adapter": session_meta["runtime_adapter_override"],
+                }
+            if role == "http_url":
+                url_use(fact, record, evidence, publications)
+            else:
+                evidence["known_auth_uses"].append(record)
 
 
 def _analyze(root, snapshots, imports, source_bytes, inventory, audit, integrity):
@@ -147,12 +142,9 @@ def _analyze(root, snapshots, imports, source_bytes, inventory, audit, integrity
             fact,
             evidence,
             sink_rows,
-            index,
-            imports,
-            classes,
-            audit,
+            (index, imports, classes, audit, integrity),
             publications,
-            integrity,
+            aliases,
         )
         if evidence["url_witnesses"]:
             from .credential_role_use_audit import audit_value_uses
@@ -182,18 +174,49 @@ def known_auth_uses(
 
 
 def record_use(
-    fact, path, call, slot, expression, index, imports, classes, audit, integrity
+    fact,
+    path,
+    call,
+    slot,
+    expression,
+    index,
+    imports,
+    classes,
+    audit,
+    integrity,
+    aliases=None,
 ):
-    hops = None
+    paths = [[]]
     if not matches_fact(fact, path, expression, index, imports, classes, audit):
         hops = constructor_url_hops(
             fact, path, call, expression, index, imports, classes, audit, integrity
         )
-        if not hops:
+        paths = [hops] if hops else []
+        if not hops and slot == "endpoint_locator" and aliases is not None:
+            from .credential_role_method_paths import method_url_hop_paths
+
+            method_result = method_url_hop_paths(
+                fact,
+                path,
+                call,
+                expression,
+                index,
+                imports,
+                classes,
+                aliases,
+                audit,
+                integrity,
+            )
+            paths = (
+                method_result.get("paths", [])
+                if method_result.get("state") == "BRANCH_ENUMERATION_COMPLETE"
+                else []
+            )
+        if not paths:
             return None
     if not index.validate(path):
         return None
-    return {
+    record = {
         "path": index.relative(path),
         "line": call.lineno,
         "column": call.col_offset,
@@ -208,5 +231,14 @@ def record_use(
         "source_sha256": fact.source_sha256,
         "sink_sha256": hashlib.sha256(index.source_bytes[path]).hexdigest(),
         "profile": "DECLARED_CLASS_MAY_FLOW",
-        "hops": hops or [],
     }
+    return [
+        {
+            **record,
+            "hops": hops,
+            "method_value_flow": any(
+                h.get("role") == "canonical_http_url_sink" for h in hops
+            ),
+        }
+        for hops in paths
+    ]

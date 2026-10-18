@@ -29,10 +29,13 @@ def audit_value_uses(fact, row, index, imports, classes, audit):
     """Finite declared-class profile; unresolved linked reads remain active alerts."""
     owners = related_owners(fact, index, imports, classes, audit)
     spans, fields = value_spans(row, index, imports, classes)
+    method_unknown = _method_value_spans(
+        row, index, spans, owners, (imports, classes, audit)
+    )
     inherited_fields(fields, index, imports, classes, audit)
     for owner in owners:
         fields.setdefault(owner, set()).add(fact.member)
-    unknown, count = [], 0
+    unknown, count = list(method_unknown), 0
     for path, tree in index.snapshots.items():
         records, reads = _audit_path(
             fact, path, tree, index, imports, classes, audit, fields, spans
@@ -47,6 +50,30 @@ def audit_value_uses(fact, row, index, imports, classes, audit):
         "scope": "captured-source-declared-class-value-uses",
         "runtime_dispatch": "UNASSESSED",
     }
+
+
+def _method_value_spans(row, index, spans, owners, context):
+    traces = [
+        witness["hops"]
+        for witness in row["url_witnesses"]
+        if witness.get("method_value_flow")
+    ]
+    if not traces:
+        return []
+    from .credential_role_method_use_audit import method_value_use_audit
+
+    closure = method_value_use_audit(
+        traces, index, related_owners=owners, context=context
+    )
+    row["method_value_use_audit"] = closure
+    if closure.get("state") != "COMPLETE":
+        return closure.get("unknown_uses") or [
+            {"reason": "method_use_audit_incomplete"}
+        ]
+    for proof in closure["allowed_member_spans"]:
+        span = [proof[k] for k in ("line", "column", "end_line", "end_column")]
+        spans.setdefault(index.root / proof["path"], []).append(span)
+    return []
 
 
 def _attribute_link(node, owner, path, fields, fact, index, imports, classes, audit):

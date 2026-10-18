@@ -46,4 +46,3 @@ def test_closed_json_fixture_still_proves_real_client(tmp_path):
     graph = _json_enum_graph(tmp_path)
     assert graph.complete
     assert _finding_key(tmp_path) in graph.witnesses()
-

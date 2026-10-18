@@ -22,6 +22,8 @@ def _raw():
         "https://appleid.apple.com/auth/token",
         "https://id.twitch.tv/oauth2/token",
         "https://api.login.yahoo.com/oauth2/get_token",
+        "https://api.hubapi.com/oauth/v1/token",
+        "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer",
     ],
 )
 def test_exact_publications_are_offline_facts_not_safety(value, monkeypatch):
@@ -92,7 +94,7 @@ def test_catalog_contains_publication_data_only():
     assert (
         document["admission"]["decision"] == "ADMITTED_PUBLIC_PROTOCOL_PUBLICATION_ONLY"
     )
-    assert len(document["entries"]) == 22
+    assert len(document["entries"]) == 24
     assert not any(
         term in raw
         for term in (
@@ -107,7 +109,7 @@ def test_catalog_contains_publication_data_only():
 
 def test_batch_snapshot_has_immutable_facts():
     snapshot = catalog.endpoint_publications()
-    assert isinstance(snapshot, tuple) and len(snapshot) == 22
+    assert isinstance(snapshot, tuple) and len(snapshot) == 24
     with pytest.raises(TypeError):
         snapshot[0]["value"] = "changed"
     assert catalog.endpoint_publication(snapshot[0]["value"]) == dict(snapshot[0])
