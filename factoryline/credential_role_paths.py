@@ -135,22 +135,25 @@ def _analyze(root, snapshots, imports, source_bytes, inventory, audit, integrity
     sink_rows = _sink_rows(snapshots, aliases, index, default_session)
     facts = candidate_facts(index, snapshots, sink_rows, publications)
     result = {}
-    for fact in facts:
-        key = (fact.path, fact.line, fact.member)
-        evidence = result.setdefault(key, _fact_row(fact))
-        _analyze_fact(
-            fact,
-            evidence,
-            sink_rows,
-            (index, imports, classes, audit, integrity),
-            publications,
-            aliases,
-        )
-        if evidence["url_witnesses"]:
-            from .credential_role_use_audit import audit_value_uses
+    with index.class_chain_memo.analysis_batch() as batch:
+        if not batch.started:
+            return {}
+        for fact in facts:
+            key = (fact.path, fact.line, fact.member)
+            evidence = result.setdefault(key, _fact_row(fact))
+            _analyze_fact(
+                fact,
+                evidence,
+                sink_rows,
+                (index, imports, classes, audit, integrity),
+                publications,
+                aliases,
+            )
+            if evidence["url_witnesses"]:
+                from .credential_role_use_audit import audit_value_uses
 
-            audit_value_uses(fact, evidence, index, imports, classes, audit)
-    return result if index.class_chain_memo.valid() else {}
+                audit_value_uses(fact, evidence, index, imports, classes, audit)
+    return result if batch.accepted else {}
 
 
 def endpoint_role_evidence(

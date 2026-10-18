@@ -17,6 +17,7 @@ class SourceSnapshotIndex:
             inventory,
         )
         self.validated, self.parents = {}, {}
+        self._relative_root, self._relative_paths = self.root, {}
         self.bounded = (
             isinstance(inventory, dict)
             and set(snapshots) == set(source_bytes) == set(inventory)
@@ -55,7 +56,15 @@ class SourceSnapshotIndex:
 
     def relative(self, path):
         try:
-            return Path(path).relative_to(self.root).as_posix()
+            candidate = Path(path)
+            if self._relative_root != self.root:
+                self._relative_root, self._relative_paths = self.root, {}
+            if candidate in self._relative_paths:
+                return self._relative_paths[candidate]
+            relative = candidate.relative_to(self.root).as_posix()
+            if candidate in self.snapshots:
+                self._relative_paths[candidate] = relative
+            return relative
         except (ValueError, TypeError):
             return None
 

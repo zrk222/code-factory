@@ -97,8 +97,13 @@ def _enumerate(
 ):
     memo = getattr(index, "class_chain_memo", None)
     shared_methods = None
+    deferred = bool(
+        memo is not None and memo.defers_validation(index, imports, classes, audit)
+    )
     if memo is not None:
-        if not callable(getattr(memo, "valid", None)) or not memo.valid():
+        if not callable(getattr(memo, "valid", None)) or (
+            not deferred and not memo.valid()
+        ):
             return _result("INCOMPLETE", [], "snapshot_revalidation_failed")
         shared_methods = method_rows(chain, index, imports)
     pending, seen_states, seen_paths, paths = [frozenset()], set(), set(), []
@@ -131,7 +136,7 @@ def _enumerate(
             if candidate not in seen_states and candidate not in pending:
                 pending.append(candidate)
     complete = not pending
-    if shared_methods is not None and not memo.valid():
+    if shared_methods is not None and not deferred and not memo.valid():
         return _result("INCOMPLETE", [], "snapshot_revalidation_failed")
     state = "BRANCH_ENUMERATION_COMPLETE" if complete else "INCOMPLETE"
     return _result(state, paths, None if complete else "branch_budget_exhausted")

@@ -7,22 +7,35 @@ from .credential_role_sources import (
     declaration_fact,
 )
 from .credential_role_class_binding import instance_receiver
+from .credential_role_chain_memo import _import_binding_is_exact
 from .credential_role_name_binding import match_name
 
 
-def _class_ref(path, node, imports, classes, audit):
+def _class_ref(path, node, imports, classes, audit, index=None):
     name = audit._name(node) if isinstance(node, (ast.Name, ast.Attribute)) else ""
     if not name:
         return None
     parts = name.split(".")
     imported = imports.get(path, {}).get(parts[0])
     if imported:
+        if index is not None and not _import_binding_is_exact(
+            index, path, parts[0], imported
+        ):
+            return None
         target, symbol = imported
         if symbol:
             return (target, symbol) if len(parts) == 1 else None
         return (target, parts[1]) if len(parts) == 2 else None
     if len(parts) == 1 and (path, parts[0]) in classes:
-        return path, parts[0]
+        if index is None:
+            return path, parts[0]
+        from .credential_role_scope_bindings import binding_occurrences
+
+        if index.validate(path):
+            owner = classes[(path, parts[0])]
+            definitions = binding_occurrences(index.snapshots[path].body, parts[0])
+            if len(definitions) == 1 and definitions[0] is owner:
+                return path, parts[0]
     return None
 
 
@@ -40,29 +53,9 @@ def class_chain(index, path, name, imports, classes, audit):
 
 
 def _uncached_class_chain(index, path, name, imports, classes, audit):
-    chain, seen = [], set()
-    while (path, name) not in seen and len(chain) < 16:
-        seen.add((path, name))
-        if not index.validate(path):
-            return None
-        owner = classes.get((path, name))
-        if owner is None or owner.decorator_list or owner.keywords:
-            return None
-        from .credential_role_scope_bindings import binding_occurrences
+    from .credential_role_chain_memo import resolve_class_chain
 
-        definitions = binding_occurrences(index.snapshots[path].body, name)
-        if len(definitions) != 1 or definitions[0] is not owner:
-            return None
-        chain.append((path, name, owner))
-        if not owner.bases:
-            return chain
-        if len(owner.bases) != 1:
-            return None
-        parent = _class_ref(path, owner.bases[0], imports, classes, audit)
-        if parent is None:
-            return None
-        path, name = parent
-    return None
+    return resolve_class_chain(index, path, name, imports, classes, audit)
 
 
 def _scope_assignments(function):
@@ -140,7 +133,7 @@ def _match_attribute(fact, path, node, owner, index, imports, classes, audit):
             return False
     if fact.source_role not in {"class_literal", "module_literal"}:
         return False
-    resolved = _class_ref(path, node.value, imports, classes, audit)
+    resolved = _class_ref(path, node.value, imports, classes, audit, index)
     ancestry = (
         class_chain(index, *resolved, imports, classes, audit) if resolved else ()
     )
