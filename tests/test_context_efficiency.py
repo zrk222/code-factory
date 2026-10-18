@@ -2053,6 +2053,31 @@ def test_async_runner_context_oversized_scope_is_uncredited_with_gap(
     assert not summary["fixtures"].get("run_async_fn", {}).get("trusted", False)
 
 
+def _async_test_oracle_rows(report):
+    codes = {
+        "QUALITY_HOLLOW_TEST",
+        "QUALITY_UNKNOWN_TEST_ORACLE",
+        "QUALITY_WEAK_TEST_ORACLE",
+    }
+    return [
+        row
+        for row in report["findings"]
+        if row.get("code") in codes
+        and row.get("path") == "tests/test_async.py"
+        and row.get("facts", {}).get("symbol") == "test_async"
+    ]
+
+
+def _assert_async_oracle_unresolved(report):
+    rows = _async_test_oracle_rows(report)
+    assert len(rows) == 1
+    assert rows[0]["code"] == "QUALITY_UNKNOWN_TEST_ORACLE"
+    assert rows[0]["severity"] == "INFO"
+    assert rows[0]["facts"]["state"] == "INCOMPLETE"
+    assert report["state"] == "INCOMPLETE"
+    return rows
+
+
 def test_security_scan_uses_async_runner_fixture_cold_warm_and_stale_context(
     tmp_path,
 ):
@@ -2074,26 +2099,14 @@ def test_security_scan_uses_async_runner_fixture_cold_warm_and_stale_context(
 
     cold = review_audits.security_scan(tmp_path, cache_enabled=True)
     cold_hits = review_audits._oracle_context_cache_info()["hits"]
-    cold_target = [
-        row
-        for row in cold["findings"]
-        if row.get("code") == "QUALITY_HOLLOW_TEST"
-        and row.get("path") == "tests/test_async.py"
-        and row.get("facts", {}).get("symbol") == "test_async"
-    ]
+    cold_target = _async_test_oracle_rows(cold)
     assert not cold_target
 
     warm = review_audits.security_scan(tmp_path, cache_enabled=True)
     warm_info = review_audits._oracle_context_cache_info()
     assert warm_info["hits"] == cold_hits + 1
     assert warm["audit_sha256"] == cold["audit_sha256"]
-    assert [
-        row
-        for row in warm["findings"]
-        if row.get("code") == "QUALITY_HOLLOW_TEST"
-        and row.get("path") == "tests/test_async.py"
-        and row.get("facts", {}).get("symbol") == "test_async"
-    ] == cold_target
+    assert _async_test_oracle_rows(warm) == cold_target
 
     conftest.write_text(
         "import asyncio\nimport pytest\nimport trio\n"
@@ -2105,13 +2118,7 @@ def test_security_scan_uses_async_runner_fixture_cold_warm_and_stale_context(
     before_stale = review_audits._oracle_context_cache_info()
     stale = review_audits.security_scan(tmp_path, cache_enabled=True)
     after_stale = review_audits._oracle_context_cache_info()
-    stale_target = [
-        row
-        for row in stale["findings"]
-        if row.get("code") == "QUALITY_HOLLOW_TEST"
-        and row.get("path") == "tests/test_async.py"
-        and row.get("facts", {}).get("symbol") == "test_async"
-    ]
+    stale_target = _assert_async_oracle_unresolved(stale)
     assert len(stale_target) == 1
     assert after_stale["hits"] == before_stale["hits"]
     assert after_stale["misses"] == before_stale["misses"] + 1
@@ -2148,13 +2155,7 @@ def test_security_scan_does_not_credit_unproven_async_runner_calls(
 
     result = review_audits.security_scan(tmp_path, cache_enabled=False)
 
-    target = [
-        row
-        for row in result["findings"]
-        if row.get("code") == "QUALITY_HOLLOW_TEST"
-        and row.get("path") == "tests/test_async.py"
-        and row.get("facts", {}).get("symbol") == "test_async"
-    ]
+    target = _assert_async_oracle_unresolved(result)
     assert len(target) == 1
 
 
@@ -2167,7 +2168,7 @@ def test_security_scan_does_not_credit_unproven_async_runner_calls(
         "runner_alias = run_async_fn\n",
     ],
 )
-def test_security_scan_keeps_mutated_async_runner_hollow(tmp_path, mutation):
+def test_security_scan_keeps_mutated_async_runner_unresolved(tmp_path, mutation):
     from factoryline import review_audits
 
     conftest = tmp_path / "conftest.py"
@@ -2185,13 +2186,7 @@ def test_security_scan_keeps_mutated_async_runner_hollow(tmp_path, mutation):
 
     result = review_audits.security_scan(tmp_path, cache_enabled=False)
 
-    target = [
-        row
-        for row in result["findings"]
-        if row.get("code") == "QUALITY_HOLLOW_TEST"
-        and row.get("path") == "tests/test_async.py"
-        and row.get("facts", {}).get("symbol") == "test_async"
-    ]
+    target = _assert_async_oracle_unresolved(result)
     assert len(target) == 1
 
 
@@ -2260,7 +2255,7 @@ def test_async_runner_context_accepts_pure_secondary_fixture_consumer(tmp_path):
 
 
 def _protocol_source_case(
-    tmp_path, test_source, product=None, *, additional=None, **options
+    tmp_path, test_source, product=None, *, additional=None, materialize=True, **options
 ):
     import ast
     import hashlib
@@ -2281,11 +2276,28 @@ def _protocol_source_case(
     snapshots = {}
     for relative, source in sources.items():
         path = tmp_path / relative
+        if materialize:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(source.encode("utf-8"))
         tree = ast.parse(source, filename=str(path))
         tree._oracle_source_sha256 = hashlib.sha256(source.encode()).hexdigest()
         snapshots[path] = tree
+    # These fixtures test the declared model, not the host interpreter profile.
+    options.setdefault(
+        "python_profile", {"implementation": "cpython", "version": "3.11.9"}
+    )
     context = protocol_call_context(tmp_path, list(snapshots), snapshots, **options)
     return context.get("test_protocol.py", {"summaries": [], "gaps": []})
+
+
+def test_protocol_context_requires_materialized_import_source(tmp_path):
+    result = _protocol_source_case(
+        tmp_path,
+        "from pkg import Base\ndef test_protocol():\n    repr(Base())\n",
+        materialize=False,
+    )
+    assert result["summaries"][0]["status"] == "UNKNOWN"
+    assert result["summaries"][0]["unknown_reasons"] == ["IMPORT_SOURCE_UNAVAILABLE"]
 
 
 def test_protocol_context_source_resolves_three_repr_dispatch_shapes(tmp_path):
@@ -2491,8 +2503,11 @@ def test_protocol_context_transfer_has_no_assertion_or_finding_suppression_side_
         {"Base": "pkg.Base"},
         oracle_context={"protocol_call_context": context},
     )
+    baseline = _hollow_test_finding("test_protocol.py", test, {"Base": "pkg.Base"})
     assert context["summaries"][0]["status"] == "WEAK_PROTOCOL"
-    assert finding["code"] == "QUALITY_HOLLOW_TEST"
+    assert finding == baseline
+    assert finding["code"] == "QUALITY_UNKNOWN_TEST_ORACLE"
+    assert finding["facts"]["state"] == "INCOMPLETE"
 
 
 @pytest.mark.parametrize(
