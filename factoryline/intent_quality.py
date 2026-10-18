@@ -5941,6 +5941,8 @@ def _db_query(statement, exp, dialect, loc, queries, gaps):
             "source": loc,
         }
     )
+
+
 def literal_exec_rejected(node):
     """Prove only compilation failure for one source-bound builtin exec literal."""
     from . import review_integrity as integrity
