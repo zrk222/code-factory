@@ -131,15 +131,7 @@ def _targets_function(call, function, path, index):
     scopes = [caller.body] if caller else []
     scopes.append(tree.body)
     for statements in scopes:
-        aliases, targets = {}, {}
-        for node in statements:
-            if not isinstance(node, (ast.Assign, ast.AnnAssign)):
-                continue
-            values = node.targets if isinstance(node, ast.Assign) else [node.target]
-            if len(values) == 1 and isinstance(values[0], ast.Name):
-                targets[values[0].id] = values[0]
-                if isinstance(node.value, ast.Name):
-                    aliases[values[0].id] = node.value.id
+        aliases, targets = _scope_aliases(statements)
         alias, seen = call.func.id, set()
         while alias in aliases and alias not in seen:
             seen.add(alias)
@@ -150,6 +142,19 @@ def _targets_function(call, function, path, index):
         if alias == function.name:
             return True
     return False
+
+
+def _scope_aliases(statements):
+    aliases, targets = {}, {}
+    for node in statements:
+        if not isinstance(node, (ast.Assign, ast.AnnAssign)):
+            continue
+        values = node.targets if isinstance(node, ast.Assign) else [node.target]
+        if len(values) == 1 and isinstance(values[0], ast.Name):
+            targets[values[0].id] = values[0]
+            if isinstance(node.value, ast.Name):
+                aliases[values[0].id] = node.value.id
+    return aliases, targets
 
 
 def class_identity(node, index, path):

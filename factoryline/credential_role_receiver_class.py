@@ -16,7 +16,27 @@ def exact_receiver_class(path, receiver, index, imports, classes, audit):
         return None
     parents = index.parents[path]
     function = _enclosing_function(receiver, parents)
-    if function is None or _has_nested_scope(receiver, function, parents):
+    if function is None:
+        return None
+    constructor = _local_constructor(receiver, function, parents)
+    if constructor is None:
+        return None
+    class_name = _root_name(constructor.func)
+    if class_name is None:
+        return None
+    class_ref = resolve_class(path, constructor.func, imports, classes)
+    if class_ref is None or not _class_binding_is_exact(
+        class_ref, constructor.func, path, index, imports, classes, function, parents
+    ):
+        return None
+    chain = _class_chain(index, class_ref, imports, classes, audit)
+    if not chain or any(_custom_new(owner) for _, _, owner in chain):
+        return None
+    return class_ref
+
+
+def _local_constructor(receiver, function, parents):
+    if _has_nested_scope(receiver, function, parents):
         return None
     if receiver.id in _argument_names(function):
         return None
@@ -40,19 +60,18 @@ def exact_receiver_class(path, receiver, index, imports, classes, audit):
         return None
     if binding_occurrences(function.body, class_name):
         return None
-    class_ref = resolve_class(path, constructor.func, imports, classes)
-    if (
-        class_ref is None
-        or _outer_scope_shadows(function, constructor.func, parents)
-        or not _module_binding_is_exact(
-            class_ref, constructor.func, path, index, imports, classes
+    return constructor
+
+
+def _class_binding_is_exact(
+    class_ref, expression, path, index, imports, classes, function, parents
+):
+    return bool(
+        not _outer_scope_shadows(function, expression, parents)
+        and _module_binding_is_exact(
+            class_ref, expression, path, index, imports, classes
         )
-    ):
-        return None
-    chain = _class_chain(index, class_ref, imports, classes, audit)
-    if not chain or any(_custom_new(owner) for _, _, owner in chain):
-        return None
-    return class_ref
+    )
 
 
 def _module_binding_is_exact(class_ref, expression, path, index, imports, classes):

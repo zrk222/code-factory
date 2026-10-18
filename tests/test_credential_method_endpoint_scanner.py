@@ -52,6 +52,21 @@ def test_public_endpoint_method_return_has_exact_scanner_partition(
     assert observations[0]["facts"]["credential_safety"] == "UNASSESSED"
 
 
+def test_exact_other_receiver_field_origin_is_excluded_from_getter_closure(tmp_path):
+    getter = "        return self.ACCESS_TOKEN_URL\n"
+    extra = (
+        "class Other(Client):\n"
+        "    ACCESS_TOKEN_URL = 'https://other.example/token'\n"
+        "    def inspect(self):\n"
+        "        backend = Other()\n"
+        "        return backend.endpoint()\n"
+    )
+    alerts, observations = _scan(tmp_path, getter, extra)
+    assert not alerts
+    assert len(observations) == 1
+    assert observations[0]["severity"] == "CRITICAL"
+
+
 @pytest.mark.parametrize(
     "getter,extra",
     [

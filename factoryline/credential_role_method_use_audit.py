@@ -19,13 +19,7 @@ _ROLES = set(
 
 def method_value_use_audit(witness, index, *, context=None, related_owners=None):
     """Audit one trace or a collection of related traces; unknown uses stay incomplete."""
-    traces = (
-        [witness]
-        if _trace(witness)
-        else list(witness)
-        if isinstance(witness, (list, tuple))
-        else []
-    )
+    traces = _traces(witness)
     allowed, unknown, nodes = [], [], {}
     if not traces:
         return _result([], [{"reason": "missing_or_malformed_witness"}])
@@ -47,16 +41,7 @@ def method_value_use_audit(witness, index, *, context=None, related_owners=None)
             elif role == "declared_member_read":
                 allowed.append(public_span(row))
             elif role == "canonical_http_url_sink":
-                expression = _url_argument(node) if isinstance(node, ast.Call) else None
-                if expression is None:
-                    unknown.append(
-                        {
-                            "reason": "sink_url_argument_unresolved",
-                            "evidence": public_span(row),
-                        }
-                    )
-                else:
-                    allowed.append(_derived_span(row, expression))
+                _audit_sink(row, node, allowed, unknown)
             elif (
                 role == "method_call"
                 and isinstance(node, ast.Call)
@@ -74,6 +59,22 @@ def method_value_use_audit(witness, index, *, context=None, related_owners=None)
         traces, nodes, index, unknown, context=context, related_owners=related_owners
     )
     return _result(allowed, unknown)
+
+
+def _traces(witness):
+    if _trace(witness):
+        return [witness]
+    return list(witness) if isinstance(witness, (list, tuple)) else []
+
+
+def _audit_sink(row, node, allowed, unknown):
+    expression = _url_argument(node) if isinstance(node, ast.Call) else None
+    if expression is None:
+        unknown.append(
+            {"reason": "sink_url_argument_unresolved", "evidence": public_span(row)}
+        )
+    else:
+        allowed.append(_derived_span(row, expression))
 
 
 def _boolean_value_choices(traces, nodes, unknown):
@@ -146,11 +147,7 @@ def _boolean_operand(expression, operand, prior):
     if not isinstance(expression, ast.BoolOp) or prior is None:
         return None
     if operand is not None:
-        return (
-            operand
-            if any(operand is child for child in expression.values)
-            else None
-        )
+        return operand if any(operand is child for child in expression.values) else None
     choices = [
         child
         for child in expression.values

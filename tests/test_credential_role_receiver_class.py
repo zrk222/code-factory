@@ -7,7 +7,6 @@ import pytest
 
 from factoryline.credential_role_method_use_relation import (
     candidate_getter_fields,
-    exact_local_receiver_matches,
     exact_local_receiver_relation,
 )
 from factoryline.credential_role_sources import SourceSnapshotIndex
@@ -130,16 +129,19 @@ class Client:
 def _linked(tmp_path, source=_BASE):
     path, index, class_nodes, fields, receiver = _context(tmp_path, source)
     related = {(path, "Client")}
-    return exact_local_receiver_matches(
-        path,
-        receiver,
-        "endpoint",
-        index,
-        {path: {}},
-        class_nodes,
-        _Audit(),
-        related,
-        fields,
+    return (
+        exact_local_receiver_relation(
+            path,
+            receiver,
+            "endpoint",
+            index,
+            {path: {}},
+            class_nodes,
+            _Audit(),
+            related,
+            fields,
+        )
+        == "LINKED"
     )
 
 

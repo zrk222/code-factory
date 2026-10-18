@@ -61,26 +61,6 @@ def different_field_origin(
     return True
 
 
-def exact_local_receiver_matches(
-    path, receiver, getter, index, imports, classes, audit, related_owners, fields
-):
-    """Compatibility predicate for an exact local candidate receiver."""
-    return (
-        exact_local_receiver_relation(
-            path,
-            receiver,
-            getter,
-            index,
-            imports,
-            classes,
-            audit,
-            related_owners,
-            fields,
-        )
-        == "LINKED"
-    )
-
-
 def exact_local_receiver_relation(
     path, receiver, getter, index, imports, classes, audit, related_owners, fields
 ):
@@ -89,36 +69,54 @@ def exact_local_receiver_relation(
     if not candidates:
         return "UNKNOWN"
     from .credential_role_receiver_class import exact_receiver_class
-    from .credential_role_bindings import class_chain
-    from .credential_role_field_origin import resolve_declared_field_origin
-    from .credential_role_class_binding import effective_method
 
     class_ref = exact_receiver_class(path, receiver, index, imports, classes, audit)
     if class_ref is None:
         return "UNKNOWN"
+    from .credential_role_bindings import class_chain
+
     chain = class_chain(index, class_ref[0], class_ref[1], imports, classes, audit)
     if not chain:
         return "UNKNOWN"
-    candidate_methods = set()
-    for member, candidate in candidates:
-        candidate_class = _candidate_class(candidate, index)
-        if candidate_class is None:
-            return "UNKNOWN"
-        candidate_chain = class_chain(
-            index, candidate_class[0], candidate_class[1], imports, classes, audit
-        )
-        if not candidate_chain:
-            return "UNKNOWN"
-        candidate_row = effective_method(candidate_chain, getter)
-        if not candidate_row:
-            return "UNKNOWN"
-        candidate_methods.add(_method_identity(candidate_row, index))
+    candidate_methods = _candidate_getter_methods(
+        candidates, getter, index, imports, classes, audit
+    )
+    if candidate_methods is None:
+        return "UNKNOWN"
     if len(candidate_methods) != 1:
         return "UNKNOWN"
+    from .credential_role_class_binding import effective_method
+
     candidate_identity = next(iter(candidate_methods))
     effective = effective_method(chain, getter)
     if not effective or _method_identity(effective, index) != candidate_identity:
         return "UNKNOWN"
+
+    return _receiver_field_relation(candidates, chain, index)
+
+
+def _candidate_getter_methods(candidates, getter, index, imports, classes, audit):
+    from .credential_role_bindings import class_chain
+    from .credential_role_class_binding import effective_method
+
+    methods = set()
+    for _, candidate in candidates:
+        candidate_class = _candidate_class(candidate, index)
+        if candidate_class is None:
+            return None
+        chain = class_chain(
+            index, candidate_class[0], candidate_class[1], imports, classes, audit
+        )
+        row = effective_method(chain, getter) if chain else None
+        if row is None:
+            return None
+        methods.add(_method_identity(row, index))
+    return methods
+
+
+def _receiver_field_relation(candidates, chain, index):
+    from .credential_role_field_origin import resolve_declared_field_origin
+
     matches = []
     for member, candidate in candidates:
         resolved = resolve_declared_field_origin(chain, member, index)
@@ -182,12 +180,10 @@ def _candidate_ancestor(owner, candidate, index, imports, classes, audit):
 def _literal_field_identity(literal, member, row):
     if not isinstance(member, ast.Attribute) or row is None:
         return None
-    if isinstance(literal, ast.Assign):
-        targets, value = literal.targets, literal.value
-    elif isinstance(literal, ast.AnnAssign):
-        targets, value = [literal.target], literal.value
-    else:
+    if not isinstance(literal, (ast.Assign, ast.AnnAssign)):
         return None
+    targets = literal.targets if isinstance(literal, ast.Assign) else [literal.target]
+    value = literal.value
     if not any(
         isinstance(target, ast.Name) and target.id == member.attr for target in targets
     ):
@@ -198,18 +194,8 @@ def _literal_field_identity(literal, member, row):
 
 
 def _span_key(row):
-    return tuple(
-        row.get(key)
-        for key in (
-            "path",
-            "line",
-            "column",
-            "end_line",
-            "end_column",
-            "source_sha256",
-            "role",
-        )
-    )
+    keys = ("path", "line", "column", "end_line", "end_column", "source_sha256", "role")
+    return tuple(row.get(key) for key in keys)
 
 
 def _self_call(node):

@@ -45,28 +45,32 @@ def alias_uses(traces, nodes, index, unknown):
                         "name": name,
                     }
                 )
-            for node in ast.walk(function):
-                if not isinstance(node, ast.Name) or node.id != name:
-                    continue
-                if isinstance(node.ctx, ast.Store) and node is not targets[0]:
-                    unknown.append(
-                        {
-                            "reason": "alias_rebinding",
-                            "path": row["path"],
-                            "line": node.lineno,
-                        }
-                    )
-                elif isinstance(node.ctx, ast.Load) and not covered_value_edge(
-                    node, row["path"], traces, nodes
-                ):
-                    unknown.append(
-                        {
-                            "reason": "unrepresented_alias_use",
-                            "path": row["path"],
-                            "line": node.lineno,
-                            "column": node.col_offset,
-                        }
-                    )
+            _audit_alias_reads(function, targets[0], name, row, traces, nodes, unknown)
+
+
+def _audit_alias_reads(function, target, name, row, traces, nodes, unknown):
+    for node in ast.walk(function):
+        if not isinstance(node, ast.Name) or node.id != name:
+            continue
+        if isinstance(node.ctx, ast.Store) and node is not target:
+            unknown.append(
+                {
+                    "reason": "alias_rebinding",
+                    "path": row["path"],
+                    "line": node.lineno,
+                }
+            )
+        elif isinstance(node.ctx, ast.Load) and not covered_value_edge(
+            node, row["path"], traces, nodes
+        ):
+            unknown.append(
+                {
+                    "reason": "unrepresented_alias_use",
+                    "path": row["path"],
+                    "line": node.lineno,
+                    "column": node.col_offset,
+                }
+            )
 
 
 def covered_value_edge(node, path, traces, nodes):

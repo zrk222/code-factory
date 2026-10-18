@@ -88,44 +88,48 @@ def _parameter_uses(traces, nodes, index, unknown):
             ):
                 targets.append((row, nodes[span_key(row)]))
     for row, target in targets:
-        function = ancestor(
-            target, index, row["path"], (ast.FunctionDef, ast.AsyncFunctionDef)
+        _audit_parameter_target(row, target, sinks, traces, nodes, index, unknown)
+
+
+def _audit_parameter_target(row, target, sinks, traces, nodes, index, unknown):
+    function = ancestor(
+        target, index, row["path"], (ast.FunctionDef, ast.AsyncFunctionDef)
+    )
+    path = absolute_path(index, row["path"])
+    if function is None or path is None:
+        unknown.append(
+            {"reason": "parameter_function_unresolved", "span": span_key(row)}
         )
-        path = absolute_path(index, row["path"])
-        if function is None or path is None:
-            unknown.append(
-                {"reason": "parameter_function_unresolved", "span": span_key(row)}
-            )
+        return
+    if binding_occurrences(function.body, target.arg):
+        unknown.append(
+            {
+                "reason": "parameter_name_rebound",
+                "path": row["path"],
+                "parameter": target.arg,
+            }
+        )
+    for node in ast.walk(function):
+        if not isinstance(node, ast.Name) or node.id != target.arg:
             continue
-        if binding_occurrences(function.body, target.arg):
+        if isinstance(node.ctx, ast.Store):
             unknown.append(
                 {
-                    "reason": "parameter_name_rebound",
+                    "reason": "parameter_rebinding",
                     "path": row["path"],
-                    "parameter": target.arg,
+                    "line": node.lineno,
                 }
             )
-        for node in ast.walk(function):
-            if not isinstance(node, ast.Name) or node.id != target.arg:
-                continue
-            if isinstance(node.ctx, ast.Store):
-                unknown.append(
-                    {
-                        "reason": "parameter_rebinding",
-                        "path": row["path"],
-                        "line": node.lineno,
-                    }
-                )
-            elif (
-                isinstance(node.ctx, ast.Load)
-                and (row["path"], coordinates(node)) not in sinks
-                and not covered_value_edge(node, row["path"], traces, nodes)
-            ):
-                unknown.append(
-                    {
-                        "reason": "unrepresented_parameter_use",
-                        "path": row["path"],
-                        "line": node.lineno,
-                        "column": node.col_offset,
-                    }
-                )
+        elif (
+            isinstance(node.ctx, ast.Load)
+            and (row["path"], coordinates(node)) not in sinks
+            and not covered_value_edge(node, row["path"], traces, nodes)
+        ):
+            unknown.append(
+                {
+                    "reason": "unrepresented_parameter_use",
+                    "path": row["path"],
+                    "line": node.lineno,
+                    "column": node.col_offset,
+                }
+            )

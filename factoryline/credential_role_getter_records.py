@@ -27,17 +27,20 @@ def _record_escape(tree, aliases):
             continue
         if not isinstance(parent, ast.Subscript) or parent.value is not node:
             return True
-        current = parent
-        while isinstance(parents.get(id(current)), (ast.Subscript, ast.Attribute)):
-            current = parents[id(current)]
-        if not isinstance(current, ast.Attribute) or current.attr != "url":
-            return True
-        if not isinstance(current.ctx, ast.Load):
-            return True
-        use = parents.get(id(current))
-        if not isinstance(use, ast.Compare):
+        if not _subscript_readonly(parent, parents):
             return True
     return False
+
+
+def _subscript_readonly(current, parents):
+    while isinstance(parents.get(id(current)), (ast.Subscript, ast.Attribute)):
+        current = parents[id(current)]
+    return bool(
+        isinstance(current, ast.Attribute)
+        and current.attr == "url"
+        and isinstance(current.ctx, ast.Load)
+        and isinstance(parents.get(id(current)), ast.Compare)
+    )
 
 
 def _record_iterator_readonly(comprehension, generator, parents):

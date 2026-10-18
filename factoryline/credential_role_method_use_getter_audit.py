@@ -208,19 +208,10 @@ def _related_receiver(
         return "LINKED"
     if not context:
         return "UNKNOWN"
-    from .credential_role_object_identity import declared_origins
-
-    origins = declared_origins(path, receiver, index, imports, classes)
-    if origins & (related or set()):
-        return "LINKED"
     if isinstance(receiver, ast.Name):
-        if parameter_linked(
-            path, receiver, calls, index, imports, classes, related or set()
-        ):
-            return "LINKED"
-        # This tri-state result only bounds getter-use closure. UNRELATED never
-        # creates a candidate, an exemption, or a MAY_FLOW disposition.
-        return exact_local_receiver_relation(
+        # An exact unrelated receiver must not be widened by ancestor overlap.
+        # UNKNOWN still falls through to the conservative origin/parameter links.
+        relation = exact_local_receiver_relation(
             path,
             receiver,
             getter,
@@ -231,6 +222,18 @@ def _related_receiver(
             related or set(),
             fields,
         )
+        if relation != "UNKNOWN":
+            return relation
+    from .credential_role_object_identity import declared_origins
+
+    origins = declared_origins(path, receiver, index, imports, classes)
+    if origins & (related or set()):
+        return "LINKED"
+    if isinstance(receiver, ast.Name):
+        if parameter_linked(
+            path, receiver, calls, index, imports, classes, related or set()
+        ):
+            return "LINKED"
     return "UNKNOWN"
 
 
