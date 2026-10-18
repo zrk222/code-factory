@@ -8,6 +8,23 @@ from typing import Any
 
 from .runtime_audit_common import RuntimeAuditError
 from .runtime_audit_contract import LANES
+from .finite_capture import (
+    _FiniteInputCapture,
+    finite_template_capture_shape,
+    finite_domain_reference_allowed,
+    finite_provider_attribute_write_index,
+    finite_blocked_provider_prefixes,
+    finite_scope_binding_candidate,
+)
+from .finite_inputs import (
+    _finite_eval_comprehension,  # noqa: F401
+    _finite_eval_domain,  # noqa: F401
+    _finite_eval_module_prefix,  # noqa: F401
+    _finite_template_program_hash,
+    _fixed_literal_value,
+    finite_literal_eval_input_witness,  # noqa: F401
+    finite_template_program_hashes,
+)
 
 
 def _closed_declaration_program(node, call_name):
@@ -229,203 +246,6 @@ def closed_declaration_input_witness(node, call_name, *, source_bytes, source_pa
         "grammar_profile": "python3.12-type-alias-subset-v1",
         "hypothesis": "ARGUMENT_CODE_INJECTION",
         "input_effect": "CLOSED_INERT_DECLARATION",
-        "runtime_assurance": "INCOMPLETE",
-        "target_execution": "not_performed",
-    }
-
-
-def _fixed_literal_value(node):
-    literal_types = (str, bytes, int, float, complex, bool, type(None), type(Ellipsis))
-    stack = [node]
-    while stack:
-        current = stack.pop()
-        if isinstance(current, ast.Constant):
-            if type(current.value) not in literal_types:
-                return False
-        elif isinstance(current, ast.UnaryOp):
-            if (
-                not isinstance(current.op, (ast.UAdd, ast.USub))
-                or not isinstance(current.operand, ast.Constant)
-                or type(current.operand.value) not in {int, float, complex}
-            ):
-                return False
-            stack.append(current.operand)
-        elif isinstance(current, ast.Dict):
-            if any(key is None for key in current.keys):
-                return False
-            stack.extend(ast.iter_child_nodes(current))
-        elif isinstance(current, (ast.List, ast.Tuple, ast.Set, ast.Load)):
-            stack.extend(ast.iter_child_nodes(current))
-        else:
-            return False
-    try:
-        ast.literal_eval(node)
-    except (
-        ValueError,
-        TypeError,
-        SyntaxError,
-        MemoryError,
-        RecursionError,
-        OverflowError,
-    ):
-        return False
-    return True
-
-
-def _finite_eval_comprehension(tree, call):
-    parents = {c: p for p in ast.walk(tree) for c in ast.iter_child_nodes(p)}
-    cursor = parents.get(call)
-    while cursor is not None and not isinstance(cursor, ast.ListComp):
-        if isinstance(
-            cursor, (ast.Lambda, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
-        ):
-            return None
-        cursor = parents.get(cursor)
-    if cursor is None or len(cursor.generators) != 1:
-        return None
-    return cursor
-
-
-def _finite_eval_domain(cursor, call):
-    if cursor is None:
-        return None
-    generator = cursor.generators[0]
-    if (
-        generator.is_async
-        or generator.ifs
-        or not isinstance(generator.target, ast.Tuple)
-        or not all(isinstance(n, ast.Name) for n in generator.target.elts)
-        or not isinstance(generator.iter, (ast.List, ast.Tuple))
-        or not 1 <= len(generator.iter.elts) <= 64
-    ):
-        return None
-    names = [n.id for n in generator.target.elts]
-    if len(set(names)) != len(names) or call.args[0].id not in names:
-        return None
-    target = generator.target.elts[names.index(call.args[0].id)]
-    if any(
-        n.id == target.id and n is not target and n is not call.args[0]
-        for n in ast.walk(cursor)
-        if isinstance(n, ast.Name)
-    ):
-        return None
-    programs = []
-    for row in generator.iter.elts:
-        if (
-            not isinstance(row, (ast.Tuple, ast.List))
-            or len(row.elts) != len(names)
-            or not _fixed_literal_value(row)
-        ):
-            return None
-        value = row.elts[names.index(target.id)]
-        if (
-            not isinstance(value, ast.Constant)
-            or type(value.value) is not str
-            or len(value.value) > 4096
-        ):
-            return None
-        try:
-            expression = ast.parse(value.value, mode="eval")
-        except (SyntaxError, ValueError, RecursionError):
-            return None
-        if any(
-            not isinstance(
-                n,
-                (
-                    ast.Expression,
-                    ast.Name,
-                    ast.Subscript,
-                    ast.Tuple,
-                    ast.List,
-                    ast.Load,
-                    ast.Constant,
-                    ast.BinOp,
-                    ast.BitOr,
-                ),
-            )
-            for n in ast.walk(expression)
-        ):
-            return None
-        programs.append(value.value)
-    return generator.iter, programs
-
-
-def _finite_eval_module_prefix(tree, comprehension):
-    """Module initializer profile: later test bodies cannot run before this input."""
-    prefix = []
-    for statement in tree.body:
-        if (
-            isinstance(statement, (ast.Assign, ast.AnnAssign))
-            and statement.value is comprehension
-        ):
-            return ast.Module(body=[*prefix, statement], type_ignores=[])
-        if isinstance(statement, (ast.Import, ast.ImportFrom)):
-            prefix.append(statement)
-        elif isinstance(
-            statement, (ast.Assign, ast.AnnAssign)
-        ) and _fixed_literal_value(statement.value):
-            prefix.append(statement)
-        else:
-            return None
-    return None
-
-
-def finite_literal_eval_input_witness(node, call_name, *, source_bytes, source_path):
-    """Prove finite source input only, not the effects of resolving type objects."""
-    if (
-        call_name != "eval"
-        or not isinstance(node, ast.Call)
-        or not isinstance(node.func, ast.Name)
-        or node.func.id != "eval"
-        or len(node.args) != 1
-        or node.keywords
-        or not isinstance(node.args[0], ast.Name)
-        or not isinstance(source_bytes, bytes)
-        or not isinstance(source_path, str)
-    ):
-        return {}
-    try:
-        tree = ast.parse(source_bytes)
-    except (SyntaxError, ValueError, TypeError, RecursionError):
-        return {}
-
-    def span(n):
-        return [
-            getattr(n, k, None)
-            for k in ("lineno", "col_offset", "end_lineno", "end_col_offset")
-        ]
-
-    matches = [
-        n for n in ast.walk(tree) if isinstance(n, ast.Call) and span(n) == span(node)
-    ]
-    if len(matches) != 1 or ast.dump(matches[0]) != ast.dump(node):
-        return {}
-    call = matches[0]
-    comprehension = _finite_eval_comprehension(tree, call)
-    domain = _finite_eval_domain(comprehension, call)
-    if domain is None:
-        return {}
-    prefix = _finite_eval_module_prefix(tree, comprehension)
-    if prefix is None or not _closed_declaration_binding(prefix, call):
-        return {}
-    domain_node, programs = domain
-    import json
-
-    return {
-        "schema": "factory.finite-eval-input.v1",
-        "disposition": "PROVEN_FINITE_LITERAL_EVAL_INPUT",
-        "source_path": source_path,
-        "source_sha256": hashlib.sha256(source_bytes).hexdigest(),
-        "call_span": span(call),
-        "domain_span": span(domain_node),
-        "comprehension_span": span(comprehension),
-        "program_sha256": hashlib.sha256(
-            json.dumps(programs, separators=(",", ":")).encode()
-        ).hexdigest(),
-        "domain_size": len(programs),
-        "hypothesis": "ARGUMENT_CODE_INJECTION",
-        "scope_profile": "module-initializer-literal-table",
-        "input_effect": "CLOSED_LITERAL_TYPE_EXPRESSIONS",
         "runtime_assurance": "INCOMPLETE",
         "target_execution": "not_performed",
     }
@@ -1339,7 +1159,53 @@ def native_execution_helpers():
     )
 
 
-class _LiteralConsumers:
+def credential_validation_helpers():
+    from . import credential_httpx_origins, credential_json_assertions
+    from . import credential_router_publication, credential_role_flows
+    from . import provider_mutations
+
+    modules = (
+        credential_httpx_origins,
+        credential_json_assertions,
+        credential_router_publication,
+        credential_role_flows,
+        provider_mutations,
+    )
+    return tuple(
+        value
+        for module in modules
+        for value in vars(module).values()
+        if callable(value) and getattr(value, "__module__", None) == module.__name__
+    )
+
+
+def finite_template_input_helpers():
+    return (
+        credential_validation_helpers,
+        *credential_validation_helpers(),
+        _FiniteInputCapture,
+        *(
+            getattr(_FiniteInputCapture, name).__func__
+            if isinstance(value, classmethod)
+            else getattr(_FiniteInputCapture, name)
+            for name, value in _FiniteInputCapture.__dict__.items()
+            if name.startswith("_finite") or name == "finite_template_inputs"
+        ),
+        _finite_template_program_hash,
+        finite_template_program_hashes,
+        finite_template_capture_shape,
+        finite_domain_reference_allowed,
+        finite_provider_attribute_write_index,
+        finite_blocked_provider_prefixes,
+        finite_scope_binding_candidate,
+        _LiteralConsumers._finite_pytest_provider_closed,
+        _LiteralConsumers._finite_pytest_tree_closed,
+        _LiteralConsumers._finite_pytest_name_closed,
+        _LiteralConsumers._finite_module_initializer_safe,
+    )
+
+
+class _LiteralConsumers(_FiniteInputCapture):
     def __init__(
         self, root, snapshots, imports, audit, integrity, *, source_bytes, inventory
     ):
@@ -1349,11 +1215,18 @@ class _LiteralConsumers:
         self.functions, self.methods, self.node_paths = {}, {}, {}
         self.fixture_cache, self.provider_cache = {}, {}
         self.app_fixture_cache = {}
+        self.assignment_cache = {}
         self.aliases, self.blocked, self.members = {}, set(), {}
         self.unmodeled_imports = []
         self.provider_closure = {}
+        self.provider_attribute_writes = set()
+        self.provider_blocked_prefixes = set()
         self.source_profiles = {}
+        self.pending_fixture_parameters = []
         self.complete = True
+        self.snapshot_complete = True
+        self.source_bytes = source_bytes
+        self.inventory = inventory
         self.remaining_work = 1_000_000
         if (
             set(snapshots) != set(imports)
@@ -1361,58 +1234,221 @@ class _LiteralConsumers:
             or not isinstance(inventory, dict)
             or set(snapshots) != set(inventory)
         ):
-            self.complete = False
+            self._snapshot_incomplete()
             return
         if (
             len(snapshots) > 2000
             or sum(map(len, source_bytes.values())) > 32 * 1024 * 1024
         ):
-            self.complete = False
+            self._snapshot_incomplete()
             return
         self.eligible = {path.resolve(): path for path in snapshots}
         self.aliases = {
             path: self.audit._module_security_aliases(tree)
             for path, tree in snapshots.items()
         }
+        file_indexes = {}
         total = 0
         for path, tree in snapshots.items():
             raw = source_bytes[path]
-            if inventory[path] != hashlib.sha256(raw).hexdigest():
-                self.complete = False
-                return
-            if len(raw) > 1_000_000 or hashlib.sha256(raw).hexdigest() != getattr(
-                tree, "_oracle_source_sha256", None
-            ):
-                self.complete = False
-                return
-            try:
-                parsed = ast.parse(raw)
-                if ast.dump(parsed, include_attributes=True) != ast.dump(
-                    tree, include_attributes=True
-                ):
-                    self.complete = False
-                    return
-            except (SyntaxError, ValueError, RecursionError, MemoryError):
-                self.complete = False
+            if not self._snapshot_valid(path, tree, raw):
+                self._snapshot_incomplete()
                 return
             nodes = []
+            scope_nodes = []
             for node in self._walk(tree):
                 total += 1
-                if total > 200_000 or not self._tick(3):
-                    self.complete = False
+                if total > 200_000 or not self._tick(4):
+                    self._snapshot_incomplete()
                     return
                 nodes.append(node)
                 self.node_paths[id(node)] = path
+                if isinstance(node, (ast.arg, ast.Global, ast.Nonlocal)) or (
+                    isinstance(node, ast.Name)
+                    and isinstance(node.ctx, (ast.Store, ast.Del))
+                ):
+                    scope_nodes.append(node)
             self.parents.update(
                 {id(c): n for n in nodes for c in ast.iter_child_nodes(n)}
             )
+            self.provider_attribute_writes.update(
+                finite_provider_attribute_write_index(
+                    nodes, self.aliases[path], self.audit, self.parents
+                )
+            )
             self.integrity.bind_security_call_scopes(tree)
             self._objects(path, tree)
-            self._bindings(path, nodes)
+            origins = (
+                set(self.imports[path])
+                | {name for p, name in self.objects if p == path}
+                | {name for p, name in self.functions if p == path}
+            )
+            scope_nodes = [
+                n for n in scope_nodes if finite_scope_binding_candidate(n, origins)
+            ]
+            file_indexes[path] = nodes, scope_nodes, origins
+        for path, (nodes, scope_nodes, origins) in file_indexes.items():
+            self._bindings(path, nodes, scope_nodes, origins)
         self._bind_guarded_script_imports()
+        self._finalize_fixture_parameters()
         self._references()
         self._reject_unmodeled_origins()
         self._provider_uses()
+
+    def _snapshot_valid(self, path, tree, raw):
+        digest = hashlib.sha256(raw).hexdigest()
+        if self.inventory[path] != digest or len(raw) > 1_000_000:
+            return False
+        if digest != getattr(tree, "_oracle_source_sha256", None):
+            return False
+        try:
+            parsed = ast.parse(raw)
+            return ast.dump(parsed, include_attributes=True) == ast.dump(
+                tree, include_attributes=True
+            )
+        except (SyntaxError, ValueError, RecursionError, MemoryError):
+            return False
+
+    def _finalize_fixture_parameters(self):
+        self.provider_blocked_prefixes = finite_blocked_provider_prefixes(
+            self.blocked, self.aliases
+        )
+        for path, node in self.pending_fixture_parameters:
+            name = node.arg
+            if name in self.imports[path] or not self._fixture_parameter_value(
+                path, name, node
+            ):
+                self.blocked.add((path, name))
+        self.provider_blocked_prefixes = finite_blocked_provider_prefixes(
+            self.blocked, self.aliases
+        )
+
+    def _finite_pytest_provider_closed(self, candidate_path):
+        if any(name.startswith("pytest_") for _, name in self.functions):
+            return False
+        if not all(
+            self._finite_pytest_tree_closed(path, tree)
+            for path, tree in self.trees.items()
+        ):
+            return False
+        return self._provider_is_unmodified(
+            "pytest", {"mark", "parametrize", "fixture"}
+        )
+
+    def _finite_pytest_tree_closed(self, path, tree):
+        return all(
+            self._finite_pytest_name_closed(path, node)
+            for node in self._walk(tree)
+            if isinstance(node, ast.Name)
+        )
+
+    def _finite_pytest_name_closed(self, path, node):
+        canonical = self.audit._resolved_ast_name(node, self.aliases[path])
+        if canonical != "pytest" and not canonical.startswith("pytest."):
+            return True
+        if isinstance(node.ctx, (ast.Store, ast.Del)):
+            return False
+        if node.id in getattr(node, "_security_shadowed_names", set()):
+            return False
+        parent = self.parents.get(id(node))
+        if (
+            isinstance(parent, ast.Call)
+            and parent.func is node
+            and canonical.startswith("pytest.")
+        ):
+            return True
+        if not isinstance(parent, ast.Attribute) or parent.value is not node:
+            return False
+        end = parent
+        while isinstance(self.parents.get(id(end)), ast.Attribute):
+            end = self.parents[id(end)]
+        consumer = self.parents.get(id(end))
+        if isinstance(consumer, ast.Call) and consumer.func is end:
+            return True
+        if (
+            isinstance(consumer, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+            and end in consumer.decorator_list
+            and (
+                self.audit._resolved_ast_name(end, self.aliases[path])
+                == "pytest.fixture"
+                or self.audit._resolved_ast_name(end, self.aliases[path]).startswith(
+                    "pytest.mark."
+                )
+            )
+        ):
+            return True
+        if isinstance(consumer, ast.arg) and consumer.annotation is end:
+            return True
+        return (
+            isinstance(consumer, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and consumer.returns is end
+        )
+
+    @staticmethod
+    def _finite_module_initializer_safe(tree):
+        pending = list(tree.body)
+        local_functions = {
+            n.name
+            for n in tree.body
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+        }
+        while pending:
+            node = pending.pop()
+            if (
+                isinstance(node, ast.ImportFrom)
+                and node.module == "builtins"
+                and any(
+                    alias.name
+                    in {
+                        "globals",
+                        "locals",
+                        "vars",
+                        "getattr",
+                        "setattr",
+                        "delattr",
+                        "__import__",
+                        "*",
+                    }
+                    for alias in node.names
+                )
+            ):
+                return False
+            if isinstance(node, ast.Name) and node.id in local_functions:
+                return False
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                pending.extend(node.decorator_list)
+                pending.extend(node.args.defaults)
+                pending.extend(value for value in node.args.kw_defaults if value)
+                pending.extend(
+                    arg.annotation
+                    for arg in node.args.posonlyargs
+                    + node.args.args
+                    + node.args.kwonlyargs
+                    if arg.annotation is not None
+                )
+                if node.returns is not None:
+                    pending.append(node.returns)
+                continue
+            if isinstance(node, ast.Name) and node.id in {
+                "globals",
+                "locals",
+                "vars",
+                "getattr",
+                "setattr",
+                "delattr",
+                "__import__",
+                "__builtins__",
+                "builtins",
+            }:
+                return False
+            if isinstance(node, ast.Attribute) and node.attr in {
+                "__dict__",
+                "__globals__",
+                "__builtins__",
+            }:
+                return False
+            pending.extend(ast.iter_child_nodes(node))
+        return True
 
     def _objects(self, path, tree):
         for node in tree.body:
@@ -1587,9 +1623,14 @@ class _LiteralConsumers:
 
     def _commit_guarded_imports(self, module, entry, root, staged, top):
         blocked_before = set(self.blocked)
-        self._scope_bindings(
-            module, list(self._walk(self.trees[module])), set(staged), top
+        pending = self._scope_bindings(
+            module,
+            list(self._walk(self.trees[module])),
+            set(staged),
+            top,
+            defer_fixture_checks=True,
         )
+        self.blocked.update((module, node.arg) for node in pending)
         if any((module, name) in self.blocked for name in staged):
             self.blocked.difference_update(self.blocked - blocked_before)
             return False
@@ -1611,13 +1652,8 @@ class _LiteralConsumers:
         }
         return True
 
-    def _bindings(self, path, nodes):
+    def _bindings(self, path, nodes, scope_nodes, origins):
         tree = self.trees[path]
-        origins = (
-            set(self.imports[path])
-            | {name for p, name in self.objects if p == path}
-            | {name for p, name in self.functions if p == path}
-        )
         top = defaultdict(list)
         for statement in tree.body:
             if not self._tick():
@@ -1625,7 +1661,16 @@ class _LiteralConsumers:
             for name in self.audit._bound_names(statement):
                 top[name].append(statement)
         self.blocked.update((path, name) for name in origins if len(top[name]) != 1)
-        self._scope_bindings(path, nodes, origins, top)
+        self.pending_fixture_parameters.extend(
+            (path, node)
+            for node in self._scope_bindings(
+                path,
+                scope_nodes,
+                origins,
+                top,
+                defer_fixture_checks=True,
+            )
+        )
         if any(
             isinstance(n, ast.Name)
             and n.id in {"globals", "locals", "eval", "exec", "__import__", "vars"}
@@ -1641,16 +1686,18 @@ class _LiteralConsumers:
         ):
             self.complete = False
 
-    def _scope_bindings(self, path, nodes, origins, top):
+    def _scope_bindings(self, path, nodes, origins, top, *, defer_fixture_checks=False):
+        pending = []
         for node in nodes:
             if not self._tick():
-                return
-            if (
-                isinstance(node, ast.arg)
-                and node.arg in origins
-                and not self._fixture_parameter_value(path, node.arg, node)
-            ):
-                self.blocked.add((path, node.arg))
+                return pending
+            if isinstance(node, ast.arg) and node.arg in origins:
+                if defer_fixture_checks and node.arg not in self.imports[path]:
+                    pending.append(node)
+                elif defer_fixture_checks or not self._fixture_parameter_value(
+                    path, node.arg, node
+                ):
+                    self.blocked.add((path, node.arg))
             if isinstance(node, (ast.Global, ast.Nonlocal)):
                 self.blocked.update((path, name) for name in origins & set(node.names))
             if (
@@ -1660,6 +1707,7 @@ class _LiteralConsumers:
             ):
                 if self.parents.get(id(node)) not in top[node.id]:
                     self.blocked.add((path, node.id))
+        return pending
 
     def _fixture_parameter_value(self, path, name, node):
         function = self._containing_function(node)
@@ -1674,11 +1722,13 @@ class _LiteralConsumers:
 
     def _nested_imports(self, path, nodes):
         tree = self.trees[path]
-        eligible = set(self.trees)
         for node in nodes:
             if isinstance(node, (ast.Import, ast.ImportFrom)) and node not in tree.body:
                 view = self.audit._oracle_imports(
-                    self.root, path, ast.Module(body=[node], type_ignores=[]), eligible
+                    self.root,
+                    path,
+                    ast.Module(body=[node], type_ignores=[]),
+                    self.eligible,
                 )
                 self.unmodeled_imports.extend(view.values())
 
@@ -1892,7 +1942,12 @@ class _LiteralConsumers:
                     return False
                 wrapped.append((wrapper_path, owner, wrapper))
             elif not self._router_call_published(use_path, call):
-                return False
+                from .credential_router_publication import (
+                    router_factory_call_published,
+                )
+
+                if not router_factory_call_published(self, use_path, call):
+                    return False
         return bool(uses) and all(
             self._router_wrapper_consumers(*item) for item in wrapped
         )
@@ -1952,6 +2007,16 @@ class _LiteralConsumers:
         )
 
     def _router_wrapper_consumers(self, path, owner, method):
+        from .credential_router_publication import _memo
+
+        return _memo(
+            self,
+            "router_wrapper_cache",
+            (path, id(owner), id(method)),
+            lambda: self._router_wrapper_consumers_uncached(path, owner, method),
+        )
+
+    def _router_wrapper_consumers_uncached(self, path, owner, method):
         found = 0
         for source, tree in self.trees.items():
             for node in self._walk(tree):
@@ -2031,13 +2096,18 @@ class _LiteralConsumers:
         )
 
     def _unique_name_assignment(self, scope, name):
-        writes = [
-            node
-            for node in self._walk(scope)
-            if isinstance(node, ast.Name)
-            and node.id == name
-            and isinstance(node.ctx, (ast.Store, ast.Del))
-        ]
+        key = id(scope)
+        if key not in self.assignment_cache:
+            index = defaultdict(list)
+            for node in self._walk(scope):
+                if isinstance(node, ast.Name) and isinstance(
+                    node.ctx, (ast.Store, ast.Del)
+                ):
+                    index[node.id].append(node)
+            if not self.snapshot_complete:
+                return None
+            self.assignment_cache[key] = index
+        writes = self.assignment_cache[key].get(name, [])
         if len(writes) != 1 or isinstance(writes[0].ctx, ast.Del):
             return None
         binding = self.parents.get(id(writes[0]))
@@ -2495,25 +2565,20 @@ class _LiteralConsumers:
         key = module, tuple(sorted(attributes))
         if key in self.provider_cache:
             return self.provider_cache[key]
-        for path, tree in self.trees.items():
-            aliases = self.aliases[path]
-            for name, origin in aliases.items():
-                if (origin == module or origin.startswith(module + ".")) and (
-                    path,
-                    name,
-                ) in self.blocked:
-                    self.provider_cache[key] = False
-                    return False
-            for node in self._walk(tree):
-                if (
-                    isinstance(node, ast.Attribute)
-                    and node.attr in attributes
-                    and isinstance(node.ctx, (ast.Store, ast.Del))
-                    and self.audit._resolved_ast_name(node.value, aliases)
-                    in {module, *(module + "." + item for item in attributes)}
-                ):
-                    self.provider_cache[key] = False
-                    return False
+        if module in self.provider_blocked_prefixes:
+            self.provider_cache[key] = False
+            return False
+        provider_roots = {module, *(module + "." + item for item in attributes)}
+        if any(
+            (receiver == module and (attribute in attributes or attribute == "*"))
+            or any(
+                receiver == root or receiver.startswith(root + ".")
+                for root in provider_roots - {module}
+            )
+            for receiver, attribute in self.provider_attribute_writes
+        ):
+            self.provider_cache[key] = False
+            return False
         self.provider_cache[key] = True
         return True
 
@@ -2727,81 +2792,9 @@ class _LiteralConsumers:
         return self._provider_is_unmodified("httpx", {"AsyncClient", "ASGITransport"})
 
     def _public_assertion(self, path, node, parent):
-        if (
-            not isinstance(node, (ast.Dict, ast.Attribute))
-            or not isinstance(parent, ast.Compare)
-            or len(parent.ops) != 1
-            or not isinstance(parent.ops[0], ast.Eq)
-            or len(parent.comparators) != 1
-        ):
-            return False
-        if parent.left is node:
-            projection = parent.comparators[0]
-        elif parent.comparators[0] is node:
-            projection = parent.left
-        else:
-            return False
-        assertion = self.parents.get(id(parent))
-        function = self._containing_function(assertion)
-        if (
-            not isinstance(assertion, ast.Assert)
-            or function is None
-            or not isinstance(projection, ast.Subscript)
-            or not isinstance(projection.value, ast.Name)
-            or not isinstance(projection.slice, ast.Constant)
-            or projection.slice.value != "detail"
-        ):
-            return False
-        data_name = projection.value.id
-        data_assignment = self._unique_name_assignment(function, data_name)
-        if (
-            not isinstance(data_assignment, ast.Assign)
-            or data_assignment not in function.body
-        ):
-            return False
-        cast_call = data_assignment.value
-        if (
-            not isinstance(cast_call, ast.Call)
-            or not isinstance(cast_call.func, (ast.Name, ast.Attribute))
-            or self.audit._resolved_ast_name(cast_call.func, self.aliases[path])
-            != "typing.cast"
-            or len(cast_call.args) != 2
-            or cast_call.keywords
-        ):
-            return False
-        response_call = cast_call.args[1]
-        if (
-            not isinstance(response_call, ast.Call)
-            or not isinstance(response_call.func, ast.Attribute)
-            or response_call.func.attr != "json"
-            or response_call.args
-            or response_call.keywords
-            or not isinstance(response_call.func.value, ast.Name)
-        ):
-            return False
-        response_name = response_call.func.value.id
-        response_assignment = self._unique_name_assignment(function, response_name)
-        if (
-            not isinstance(response_assignment, ast.Assign)
-            or response_assignment not in function.body
-        ):
-            return False
-        request = response_assignment.value
-        if (
-            not isinstance(request, ast.Await)
-            or not isinstance(request.value, ast.Call)
-            or not isinstance(request.value.func, ast.Attribute)
-            or request.value.func.attr not in {"get", "post"}
-            or not isinstance(request.value.func.value, ast.Name)
-        ):
-            return False
-        return (
-            self._request_client_origin(path, function, request)
-            and self._provider_is_unmodified("typing", {"cast"})
-            and self._json_assertion_values(
-                path, function, node, data_name, response_name
-            )
-        )
+        from .credential_json_assertions import public_json_assertion
+
+        return public_json_assertion(self, path, node, parent)
 
     def _primitive_assertion(self, path, node, parent):
         if isinstance(parent, ast.Compare):
@@ -2997,4 +2990,9 @@ class _LiteralConsumers:
         self.remaining_work -= amount
         if self.remaining_work < 0:
             self.complete = False
-        return self.complete
+            self.snapshot_complete = False
+        return self.remaining_work >= 0
+
+    def _snapshot_incomplete(self):
+        self.snapshot_complete = False
+        self.complete = False

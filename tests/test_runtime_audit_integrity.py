@@ -486,6 +486,8 @@ def _json_enum_graph(
     test_source=_JSON_TEST,
     client_source=_JSON_CLIENT,
     enum_source=_JSON_ENUM,
+    extra_sources=None,
+    reverse_sources=False,
     stale=False,
 ):
     import hashlib
@@ -493,11 +495,15 @@ def _json_enum_graph(
     from factoryline.runtime_audit_integrity import _LiteralConsumers
 
     root = tmp_path.resolve()
+    root.mkdir(parents=True, exist_ok=True)
     sources = {
         "common.py": enum_source,
         "conftest.py": client_source,
         "test_api.py": test_source,
     }
+    sources.update(extra_sources or {})
+    if reverse_sources:
+        sources = dict(reversed(tuple(sources.items())))
     raw = {root / name: source.encode() for name, source in sources.items()}
     for path, source in raw.items():
         path.write_bytes(source)
@@ -530,6 +536,40 @@ def test_public_enum_json_requires_actual_client_origin(tmp_path):
     result = graph.witnesses()
     assert graph.complete
     assert (tmp_path.resolve() / "common.py", 3, "REGISTER_INVALID_PASSWORD") in result
+
+
+def test_provider_mutation_index_precedes_fixture_decisions(tmp_path):
+    fixture = (
+        "import pytest\n"
+        "@pytest.fixture\ndef client(): pass\n"
+        "def test_client(client): pass\n"
+    )
+    mutations = (
+        "import pytest\npytest.fixture = supplied\n",
+        "import pytest as pt\npt = supplied\n",
+        "import pytest\npytest.fixture.__code__ = supplied\n",
+        "import pytest\npytest.fixture.nested.attribute = supplied\n",
+    )
+    for reverse in (False, True):
+        for index, mutation in enumerate(mutations):
+            case = tmp_path / f"case_{reverse}_{index}"
+            graph = _json_enum_graph(
+                case,
+                extra_sources={"a_fixture.py": fixture, "z_mutation.py": mutation},
+                reverse_sources=reverse,
+            )
+            assert not graph._provider_is_unmodified("pytest", {"fixture"})
+            assert not graph.witnesses()
+
+
+def test_public_enum_witness_is_snapshot_order_independent(tmp_path):
+    graph = _json_enum_graph(tmp_path, reverse_sources=True)
+    assert graph.complete
+    assert (
+        tmp_path.resolve() / "common.py",
+        3,
+        "REGISTER_INVALID_PASSWORD",
+    ) in graph.witnesses()
 
 
 def test_public_enum_json_accepts_scalar_detail_comparison(tmp_path):

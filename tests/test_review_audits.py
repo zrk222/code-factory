@@ -2265,7 +2265,7 @@ def test_nested_async_assertion_requires_proven_completion(
         ("from unittest.mock import MagicMock as MockValue\n", "MockValue"),
     ],
 )
-def test_source_typed_magicmock_parameter_proves_mock_assertion(
+def test_magicmock_annotation_alone_does_not_prove_mock_assertion(
     tmp_path, import_line, annotation
 ):
     (tmp_path / "test_mock_parameter.py").write_text(
@@ -2277,7 +2277,9 @@ def test_source_typed_magicmock_parameter_proves_mock_assertion(
         "        'x.ini', disable_existing_loggers=False)\n",
         encoding="utf-8",
     )
-    assert security_scan(tmp_path, cache_enabled=False)["finding_counts"] == {}
+    assert security_scan(tmp_path, cache_enabled=False)["finding_counts"] == {
+        "QUALITY_UNKNOWN_TEST_ORACLE": 1
+    }
 
 
 @pytest.mark.parametrize(
@@ -2334,10 +2336,10 @@ def test_source_typed_magicmock_parameter_proves_mock_assertion(
         "mutate-deleted-typed-provider",
     ],
 )
-def test_typed_mock_provenance_rejects_lookalikes_and_reassignment(tmp_path, source):
+def test_unbacked_mock_annotations_remain_unknown(tmp_path, source):
     (tmp_path / "test_mock_parameter.py").write_text(source, encoding="utf-8")
     assert security_scan(tmp_path, cache_enabled=False)["finding_counts"] == {
-        "QUALITY_HOLLOW_TEST": 1
+        "QUALITY_UNKNOWN_TEST_ORACLE": 1
     }
 
 

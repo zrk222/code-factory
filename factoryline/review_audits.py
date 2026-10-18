@@ -114,6 +114,7 @@ def _oracle_context_cache_read(key: str) -> tuple[dict, list] | None:
                 "callback_invokers": item.get("callback_invokers", {}),
                 "codspeed_benchmark": item.get("codspeed_benchmark", False),
                 "async_runner_fixtures": item.get("async_runner_fixtures", {}),
+                "mock_fixture_provenance": item.get("mock_fixture_provenance", {}),
                 "protocol_observations": item.get("protocol_observations", {}),
                 "fixed_program_workspace": item.get("fixed_program_workspace", {}),
                 **decode_structural_context(item.get("structural_context", {})),
@@ -152,6 +153,7 @@ def _oracle_context_cache_write(key: str, contexts: dict, edges: list) -> None:
                 "callback_invokers": context.get("callback_invokers", {}),
                 "codspeed_benchmark": context.get("codspeed_benchmark", False),
                 "async_runner_fixtures": context.get("async_runner_fixtures", {}),
+                "mock_fixture_provenance": context.get("mock_fixture_provenance", {}),
                 "protocol_observations": context.get("protocol_observations", {}),
                 "fixed_program_workspace": context.get("fixed_program_workspace", {}),
                 "structural_context": encode_structural_context(context),
@@ -1414,8 +1416,7 @@ def _dynamic_execution_finding(
             relative,
             node,
             "Closed program input; runtime assurance remains incomplete."
-            if fixed.get("disposition")
-            in {"PROVEN_CLOSED_DECLARATION_INPUT", "PROVEN_FINITE_LITERAL_EVAL_INPUT"}
+            if fixed.get("disposition") != "PROVEN_FIXED_LITERAL_PROGRAM"
             else "Fixed literal-only program; the execution primitive is retained as an observation, not a demonstrated defect.",
             "INFO",
             call=call,
@@ -2033,28 +2034,9 @@ def _scope_binds_name(scope, name):
 def _mock_fixture_binding(scope, name, module, aliases):
     if name not in _scope_parameters(scope) or _scope_binds_name(scope, name):
         return False
-    fixtures = [
-        node
-        for node in module.body
-        if isinstance(node, ast.FunctionDef)
-        and node.name == name
-        and len(node.decorator_list) == 1
-        and _resolved_ast_name(node.decorator_list[0], aliases) == "pytest.fixture"
-    ]
-    if len(fixtures) != 1 or _module_has_rebinding(module, name, fixtures[0]):
-        return not fixtures and contracts._mock_parameter_annotation(
-            scope, name, aliases
-        )
-    fixture = fixtures[0]
-    fixture_aliases = _scope_security_aliases(aliases, fixture)
-    returns = [item for item in fixture.body if isinstance(item, ast.Return)]
-    return (
-        len(fixture.body) == 1
-        and len(returns) == 1
-        and isinstance(returns[0].value, ast.Call)
-        and _normalized_call_name(returns[0].value, fixture_aliases)
-        in _UNITTEST_MOCK_CONSTRUCTORS
-    )
+    from .mock_fixture_provenance import fixture_is_mock
+
+    return fixture_is_mock(module, name)
 
 
 def _module_has_rebinding(module, name, fixture):
@@ -3672,6 +3654,10 @@ def _declared_typecheck_sources(
 
 
 def _oracle_context_cache_key(root: Path, manifest: list, config_identity: dict) -> str:
+    from . import test_oracle_misuse as oracle_misuse
+    from . import test_callback_closure
+    from . import mock_fixture_provenance
+    from . import mock_fixture_allocations
     from .context_efficiency import (
         _consume_security_snapshots,
         _populate_oracle_database_context,
@@ -3690,6 +3676,10 @@ def _oracle_context_cache_key(root: Path, manifest: list, config_identity: dict)
         integrity._security_module_scope,
         integrity._security_scope_local_names,
         contracts._static_type_edges,
+        contracts.native_import_profile,
+        contracts.import_configuration,
+        contracts.new_import_views,
+        contracts.import_context_metadata,
         _security_source_bytes,
         _read_bounded_workspace_source,
         _consume_security_snapshots,
@@ -3747,12 +3737,21 @@ def _oracle_context_cache_key(root: Path, manifest: list, config_identity: dict)
         _flask_context_apps,
         _local_assertion_helpers,
         _local_weak_assertion_helpers,
+        oracle_misuse._constant_truth_value,
+        oracle_misuse._static_expression,
+        oracle_misuse.always_truthy_assertion_reason,
+        oracle_misuse.discarded_comparison_reason,
+        oracle_misuse.retain_local_oracle_diagnostics,
+        oracle_misuse.weak_assertion_reason,
         _is_oracle_helper_name,
         _oracle_context_cache_eligible,
         _project_oracle_context,
         integrity.NativeOraclePayload.__new__,
         integrity.NativeOraclePayload.valid,
     )
+    helpers += test_callback_closure.CACHE_HELPERS
+    helpers += mock_fixture_provenance.CACHE_HELPERS
+    helpers += mock_fixture_allocations.CACHE_HELPERS
     helpers += async_runner_fixture_helpers() + protocol_call_helpers()
     helpers += (integrity.source_binding_helpers, *integrity.source_binding_helpers())
     helpers += integrity.fixed_program_workspace_helpers()
@@ -3765,7 +3764,7 @@ def _oracle_context_cache_key(root: Path, manifest: list, config_identity: dict)
         )
     )
     identity = {
-        "schema": "factory.security-oracle-context-cache.v5",
+        "schema": "factory.security-oracle-context-cache.v6",
         "root": root.resolve().as_posix(),
         "sources": manifest,
         "config": config_identity,
@@ -3932,10 +3931,9 @@ def _project_oracle_context(
     ) = integrity.oracle_configuration(
         root, files, _declared_typecheck_sources, _security_source_bytes, MAX_BYTES
     )
-    config_identity = {
-        **config_identity,
-        "pytest_collection": collection_identity or {"state": "default"},
-    }
+    config_identity = contracts.import_configuration(
+        config_identity, collection_identity, len(files)
+    )
     bindings = source_bindings + config_bindings
     cache_key = _oracle_context_cache_key(root, manifest, config_identity)
     if _oracle_context_cache_eligible(
@@ -3985,7 +3983,7 @@ def _project_oracle_context(
     )
     ty_identity = config_identity["typecheck"].get("ty", {})
     ty_sources = {root / item for item in ty_identity.get("selected", [])}
-    import_views = {"resolved": {}, "bindings": 0, "characters": 0}
+    import_views = contracts.new_import_views(len(files))
     contexts, edges = _build_oracle_context(
         root, files, snapshots, typecheck_sources, ty_sources, import_views
     )
@@ -4020,6 +4018,7 @@ def _build_oracle_context(
     ty_sources: set | None = None,
     import_views: dict | None = None,
 ) -> tuple[dict, list]:
+    from . import mock_fixture_provenance
     from .context_efficiency import async_runner_fixture_context, protocol_call_context
 
     async_fixtures = async_runner_fixture_context(root, files, snapshots)
@@ -4035,6 +4034,10 @@ def _build_oracle_context(
         if path.name == "conftest.py"
     ]
     fixture_sources.sort(key=lambda item: len(item[0].parts))
+    mock_fixture_sources = {
+        path: mock_fixture_provenance.fixture_bindings_for_source(tree)
+        for path, tree in snapshots.items()
+    }
     contexts = {
         path: {
             "helpers": set(),
@@ -4054,6 +4057,9 @@ def _build_oracle_context(
         aliases = _scope_security_aliases(_module_security_aliases(tree), tree)
         contexts[path]["async_runner_fixtures"] = async_fixtures.get(
             path.relative_to(root).as_posix(), {}
+        )
+        contexts[path]["mock_fixture_provenance"] = (
+            mock_fixture_provenance.fixtures_for_file(path, mock_fixture_sources)
         )
         fixtures = {}
         for source, declared in fixture_sources:
@@ -4157,39 +4163,11 @@ def _build_oracle_context(
 def _weak_assertion_reason(
     node: ast.AST, aliases: dict[str, str] | None = None
 ) -> str | None:
-    if isinstance(node, ast.Call):
-        if _universal_type_check(node):
-            return "universal object type check does not verify the expected behavior"
-        from .review_integrity import weak_assertion_call_reason
+    from .test_oracle_misuse import weak_assertion_reason
 
-        return weak_assertion_call_reason(node, aliases or {})
-    if isinstance(node, ast.Compare) and len(node.ops) == 1:
-        if isinstance(node.ops[0], (ast.Eq, ast.Is)) and len(node.comparators) == 1:
-            left = node.left
-            right = node.comparators[0]
-            if (
-                any(isinstance(value, ast.Call) for value in ast.walk(left))
-                and any(isinstance(value, ast.Call) for value in ast.walk(right))
-                and ast.dump(left) == ast.dump(right)
-            ):
-                return "repeated invocation compares a result to itself instead of an independent expected value"
-        if isinstance(node.ops[0], ast.IsNot) and any(
-            isinstance(value, ast.Constant) and value.value is None
-            for value in (node.left, *node.comparators)
-        ):
-            return "non-null assertion does not verify the expected behavior"
-        operands = (node.left, *node.comparators)
-        if any(
-            isinstance(value, ast.Attribute) and value.attr in {"called", "call_count"}
-            for operand in operands
-            for value in ast.walk(operand)
-        ):
-            return "mock invocation state does not verify its result or arguments"
-    if getattr(node, "attr", None) in {"called", "call_count"} or (
-        _mock_argument_oracle(node, aliases or {}, uncalled=True)
-    ):
-        return "mock invocation state does not verify its result or arguments"
-    return None
+    return weak_assertion_reason(
+        node, aliases or {}, _universal_type_check, _mock_argument_oracle
+    )
 
 
 def _universal_type_check(node: ast.Call) -> bool:
@@ -4217,6 +4195,14 @@ def _weak_test_oracle_finding(
     if _test_oracle_exempt(node, aliases):
         return None
     nodes = _test_oracle_body_nodes(node, aliases)
+    from . import test_oracle_misuse as oracle_misuse
+    from . import test_callback_closure
+    from . import mock_fixture_provenance
+
+    uninvoked = test_callback_closure.uninvoked_click_callback(
+        node, aliases, helper_names
+    )
+
     weak = [
         (
             child,
@@ -4236,6 +4222,14 @@ def _weak_test_oracle_finding(
         if isinstance(child, ast.Call)
         and _normalized_call_name(child, aliases) in (weak_helper_names or set())
     )
+    weak.extend(
+        (child, reason)
+        for child in nodes
+        if (reason := oracle_misuse.discarded_comparison_reason(child)) is not None
+    )
+    weak.extend(mock_fixture_provenance.inert_fixture_assertions(nodes, aliases))
+    if uninvoked is not None:
+        weak.append(uninvoked)
     weak = [(child, reason) for child, reason in weak if reason]
     strong = bool(
         _local_assertion_nodes(
@@ -4248,7 +4242,7 @@ def _weak_test_oracle_finding(
         )
     )
     if strong:
-        weak = [
+        weak = oracle_misuse.retain_local_oracle_diagnostics(weak) + [
             (child.value, "uninvoked mock assertion attribute")
             for child in nodes
             if isinstance(child, ast.Expr)
@@ -4269,6 +4263,9 @@ def _weak_test_oracle_finding(
         "MEDIUM",
         symbol=node.name,
         reasons=reasons,
+        evidence_scope="local_statement_semantics",
+        execution_state="NOT_ESTABLISHED",
+        whole_test_oracle="UNASSESSED",
     )
 
 
@@ -4926,8 +4923,6 @@ def _test_oracle_findings(
             unittest_context=is_unittest_method,
             oracle_context=oracle_context,
         )
-        if hollow is not None:
-            findings.append(hollow)
         weak = _weak_test_oracle_finding(
             relative,
             node,
@@ -4936,6 +4931,10 @@ def _test_oracle_findings(
             unittest_context=is_unittest_method,
             weak_helper_names=weak_helper_names,
         )
+        if hollow is not None and not (
+            weak is not None and hollow["code"] == "QUALITY_UNKNOWN_TEST_ORACLE"
+        ):
+            findings.append(hollow)
         if weak is not None:
             findings.append(weak)
     return findings
@@ -5260,6 +5259,7 @@ def _security_scan_tree(
     oracle_aliases = _scope_security_aliases(_module_security_aliases(tree), tree)
     context = oracle_context or {}
     tree._oracle_async_runner_fixtures = context.get("async_runner_fixtures", {})
+    tree._oracle_mock_fixture_provenance = context.get("mock_fixture_provenance", {})
     helper_names = _local_assertion_helpers(tree, oracle_aliases) | set(
         context.get("helpers", ())
     )
@@ -5667,12 +5667,9 @@ def _security_scan_report(
         "tenant_read_contract": _tenant_read_contract(
             tenant_read_calls, tenant_read_bindings, tenant_policy_applies
         ),
-        "oracle_context": {
-            "mode": "one_local_import_hop_ast_only",
-            "resolved_edges": oracle_edges,
-            "edge_count": len(oracle_edges),
-            "configuration_sources": oracle_configuration,
-        },
+        "oracle_context": contracts.import_context_metadata(
+            files, oracle_edges, oracle_configuration
+        ),
         "sources": bindings,
         "database_context": database_context or {},
         "findings": findings,

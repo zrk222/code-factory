@@ -29,8 +29,17 @@ import re
 import json
 import logging
 import threading
-from types import MappingProxyType
 from typing import Any
+
+from .import_context import (
+    capture_project_imports as _capture_project_imports,
+    project_import_views as _project_import_views,
+    import_configuration as import_configuration,
+    new_import_views as new_import_views,
+    import_context_metadata as import_context_metadata,
+    native_import_profile as native_import_profile,
+)
+
 
 try:
     import tomllib
@@ -3395,33 +3404,6 @@ def _ty_assertion_provider_mutated(module, aliases):
     )
 
 
-def _capture_project_imports(views, path, imports, eligible):
-    """Retain bounded, immutable maps only for the current context build."""
-    if not views:
-        return
-    views.setdefault("eligible", MappingProxyType(eligible))
-    views["bindings"] += len(imports)
-    views["characters"] += sum(
-        len(alias) + len(str(source)) + len(symbol or "")
-        for alias, (source, symbol) in imports.items()
-    )
-    if views["bindings"] > 4096 or views["characters"] > 1048576:
-        views.clear()
-        return
-    views["resolved"][path] = MappingProxyType(dict(imports))
-
-
-def _project_import_views(views, snapshots):
-    """Select a whole captured view only for the identical resolver inventory."""
-    if (
-        views
-        and views.get("eligible") == {p.resolve(): p for p in snapshots}
-        and views["resolved"].keys() == snapshots.keys()
-    ):
-        return MappingProxyType(dict(views["resolved"]))
-    return None
-
-
 # Native database context is a static projection only.  Its cache stores canonical
 # JSON bytes (never parser objects or source text) so callers cannot mutate entries.
 _DB_CACHE: dict[str, bytes] = {}
@@ -3438,33 +3420,6 @@ def _nested_async_runner_invocations(test, definitions, targets, aliases):
     return prove(test, definitions, targets, aliases)
 
 
-def _mock_parameter_annotation(scope, name, aliases):
-    """Recognize a MagicMock annotation only through an intact imported binding."""
-    from . import review_audits as audit
-
-    module = getattr(scope, "_oracle_module", None)
-    if not isinstance(module, ast.Module):
-        return False
-    aliases = audit._scope_security_aliases(aliases, scope)
-    parameters = [
-        *scope.args.posonlyargs,
-        *scope.args.args,
-        *scope.args.kwonlyargs,
-        *([scope.args.vararg] if scope.args.vararg else []),
-        *([scope.args.kwarg] if scope.args.kwarg else []),
-    ]
-    return any(
-        item.arg == name
-        and aliases.get(audit._name(item.annotation).split(".", 1)[0])
-        in {"unittest", "unittest.mock", "unittest.mock.MagicMock"}
-        and audit._resolved_ast_name(item.annotation, aliases)
-        == "unittest.mock.MagicMock"
-        and _mock_provider_uses_are_annotations(module, audit)
-        for item in parameters
-        if item.annotation is not None
-    )
-
-
 def _mock_scope_binding(nodes, name, endpoint, aliases):
     """Recognize an unchanged local mock-constructor binding."""
     from . import review_audits as audit
@@ -3478,29 +3433,6 @@ def _mock_scope_binding(nodes, name, endpoint, aliases):
         and not audit._name_rebound(nodes, name, 0, statement.lineno)
         and not audit._name_rebound(nodes, name, statement.lineno, endpoint_line)
         for statement in nodes
-    )
-
-
-def _mock_provider_uses_are_annotations(module, audit):
-    """Reject runtime mutation or escape of imported mock type providers."""
-    providers = {
-        name
-        for node in ast.walk(module)
-        if isinstance(node, (ast.Import, ast.ImportFrom))
-        for name, target in audit._security_aliases([node]).items()
-        if target == "unittest" or target.startswith("unittest.mock")
-    }
-    annotations = {
-        id(child)
-        for item in ast.walk(module)
-        if isinstance(item, ast.arg) and item.annotation is not None
-        for child in ast.walk(item.annotation)
-    }
-    return not any(
-        isinstance(node, ast.Name)
-        and node.id in providers
-        and id(node) not in annotations
-        for node in ast.walk(module)
     )
 
 

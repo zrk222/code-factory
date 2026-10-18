@@ -5845,6 +5845,8 @@ def _protocol_reachable_call(path, test, call, state, parameters=False):
         and not any(isinstance(n, (ast.Yield, ast.YieldFrom)) for n in ast.walk(test)),
         "DEFERRED_EXECUTION",
     )
+    statements = [s for s in test.body if isinstance(s, ast.Expr) and s.value is call]
+    _require(len(statements) == 1, "CALL_NOT_DIRECT_UNSUPPRESSED_STATEMENT")
     _require(
         not test.decorator_list
         or parameters
@@ -5854,8 +5856,6 @@ def _protocol_reachable_call(path, test, call, state, parameters=False):
         ),
         "TEST_DECORATOR_EFFECTS",
     )
-    statements = [s for s in test.body if isinstance(s, ast.Expr) and s.value is call]
-    _require(len(statements) == 1, "CALL_NOT_DIRECT_UNSUPPRESSED_STATEMENT")
     return test.body[: test.body.index(statements[0])]
 
 

@@ -298,6 +298,7 @@ def bind_public_symbolic_consumers(
 
     for context in contexts.values():
         context["credential_consumers"] = {}
+        context["finite_template_inputs"] = {}
     try:
         if not isinstance(inventory, dict) or set(contexts) != set(inventory):
             return
@@ -311,8 +312,26 @@ def bind_public_symbolic_consumers(
             inventory=inventory,
         )
         witnesses = graph.witnesses()
-        if not graph.complete:
+        templates = graph.finite_template_inputs()
+        if graph.snapshot_complete is not True:
             return
+        if not graph.complete:
+            witnesses = {}
+        workspace = hashlib.sha256(
+            json.dumps(
+                sorted(
+                    (path.relative_to(root).as_posix(), digest)
+                    for path, digest in inventory.items()
+                ),
+                separators=(",", ":"),
+            ).encode()
+        ).hexdigest()
+        for (path, line, column), facts in templates.items():
+            evidence = {**facts, "workspace_sources_sha256": workspace}
+            evidence["proof_facts_sha256"] = hashlib.sha256(
+                json.dumps(evidence, sort_keys=True, separators=(",", ":")).encode()
+            ).hexdigest()
+            contexts[path]["finite_template_inputs"][f"{line}:{column}"] = evidence
         profiles = [
             {"source_path": path.relative_to(root).as_posix(), **profile}
             for path, profile in sorted(getattr(graph, "source_profiles", {}).items())
@@ -336,3 +355,115 @@ def bind_public_symbolic_consumers(
     ):
         for context in contexts.values():
             context["credential_consumers"] = {}
+            context["finite_template_inputs"] = {}
+
+
+def finite_template_witness(relative, node, call_name, root, sources, profile):
+    """Read native finite-input evidence; never evaluate generated target code."""
+    import ast
+
+    if call_name not in {"exec", "builtins.exec"} or not isinstance(node, ast.Call):
+        return {}
+    ledger = profile.get("finite_template_inputs", {})
+    if not isinstance(ledger, dict):
+        return {}
+    facts = ledger.get(f"{node.lineno}:{node.col_offset}")
+    if not isinstance(facts, dict) or facts.get("source_path") != relative:
+        return {}
+    if facts.get("call_span") != [
+        node.lineno,
+        node.col_offset,
+        node.end_lineno,
+        node.end_col_offset,
+    ]:
+        return {}
+    for path_key, hash_key in (
+        ("source_path", "source_sha256"),
+        ("capture_path", "capture_sha256"),
+        ("domain_path", "domain_sha256"),
+    ):
+        name = facts.get(path_key)
+        raw = sources.get(root / name) if isinstance(name, str) else None
+        if not isinstance(raw, bytes) or hashlib.sha256(raw).hexdigest() != facts.get(
+            hash_key
+        ):
+            return {}
+    return dict(facts)
+
+
+def finite_template_binding(finding, sources, bindings):
+    """Check the stated input-closure envelope, not runtime harmlessness."""
+    import re
+    from .review_integrity import _valid_source_span
+
+    facts = finding.get("facts", {})
+    if not isinstance(facts, dict):
+        return False
+    span, template = facts.get("call_span"), facts.get("template_span")
+    programs, size = facts.get("program_hashes"), facts.get("domain_size")
+    if not (
+        finding.get("code") == "SECURITY_DYNAMIC_EXECUTION"
+        and facts.get("schema") == "factory.finite-template-input.v1"
+        and facts.get("disposition") == "PROVEN_FINITE_TEMPLATE_INPUT"
+        and facts.get("scope_profile") == "pytest-collection-finite-parameter"
+        and facts.get("hypothesis") == "ARGUMENT_CODE_INJECTION"
+        and facts.get("input_effect") == "FINITE_SOURCE_TEMPLATE_INPUT"
+        and facts.get("runtime_assurance") == "INCOMPLETE"
+        and facts.get("execution_effects") == "UNASSESSED"
+        and facts.get("target_execution") == "not_performed"
+        and facts.get("source_path") == finding.get("path")
+        and facts.get("capture_path") == finding.get("path")
+        and _valid_source_span(span)
+        and _valid_source_span(template)
+        and span[:2] == [finding.get("line"), finding.get("column")]
+        and tuple(span[:2])
+        <= tuple(template[:2])
+        <= tuple(template[2:])
+        <= tuple(span[2:])
+        and _valid_source_span(facts.get("capture_span"))
+        and tuple(facts["capture_span"][2:]) <= tuple(span[:2])
+        and _valid_source_span(facts.get("domain_span"))
+        and type(size) is int
+        and 1 <= size <= 64
+        and isinstance(programs, list)
+        and len(programs) == size
+        and all(
+            isinstance(digest, str) and re.fullmatch(r"[0-9a-f]{64}", digest)
+            for digest in programs
+        )
+        and isinstance(facts.get("template_sha256"), str)
+        and re.fullmatch(r"[0-9a-f]{64}", facts["template_sha256"])
+    ):
+        return False
+    for path_key, hash_key in (
+        ("source_path", "source_sha256"),
+        ("capture_path", "capture_sha256"),
+        ("domain_path", "domain_sha256"),
+    ):
+        name = facts.get(path_key)
+        if (
+            not isinstance(name, str)
+            or sum(row["path"] == name for row in sources) != 1
+        ):
+            return False
+        if not isinstance(facts.get(hash_key), str) or facts[hash_key] != bindings.get(
+            name
+        ):
+            return False
+    workspace = hashlib.sha256(
+        json.dumps(
+            sorted((row["path"], row["sha256"]) for row in sources),
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
+    proof = hashlib.sha256(
+        json.dumps(
+            {key: value for key, value in facts.items() if key != "proof_facts_sha256"},
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
+    return (
+        facts.get("workspace_sources_sha256") == workspace
+        and facts.get("proof_facts_sha256") == proof
+    )

@@ -4620,6 +4620,7 @@ def _discarded_builtin_assertion_error(statement):
 
 def fixed_program_witness(relative, node, call_name):
     """Bind the literal-program model to native scan bytes and lexical identity."""
+    from .provenance import finite_template_witness
     from .runtime_audit_integrity import (
         fixed_literal_program_witness,
         closed_declaration_input_witness,
@@ -4648,6 +4649,9 @@ def fixed_program_witness(relative, node, call_name):
                 )
                 or finite_literal_eval_input_witness(
                     node, call_name, source_bytes=raw, source_path=relative
+                )
+                or finite_template_witness(
+                    relative, node, call_name, root, sources, workspace_profile
                 )
             ):
                 witness["workspace_sources_sha256"] = workspace_profile.get(
@@ -4719,6 +4723,7 @@ def bind_fixed_program_workspace(
         context["fixed_program_workspace"] = {
             **profile,
             "credential_consumers": context.get("credential_consumers", {}),
+            "finite_template_inputs": context.get("finite_template_inputs", {}),
         }
 
 
@@ -4738,6 +4743,8 @@ def fixed_program_workspace_helpers():
         runtime._finite_eval_domain,
         runtime._finite_eval_module_prefix,
         runtime.finite_literal_eval_input_witness,
+        runtime.finite_template_input_helpers,
+        *runtime.finite_template_input_helpers(),
         _finite_eval_binding,
         _closed_declaration_binding,
         _valid_source_span,
@@ -4808,6 +4815,7 @@ def partition_proven_primitive_observations(core):
             "PROVEN_CLOSED_DECLARATION_INPUT",
             "PROVEN_FINITE_LITERAL_EVAL_INPUT",
             "PROVEN_PUBLIC_SYMBOLIC_IDENTIFIER",
+            "PROVEN_FINITE_TEMPLATE_INPUT",
         }:
             retained.append(finding)
             continue
@@ -4850,7 +4858,7 @@ def partition_proven_primitive_observations(core):
 
 def _fixed_primitive_binding(finding, sources, bindings):
     import json
-    from .provenance import public_symbolic_binding
+    from .provenance import public_symbolic_binding, finite_template_binding
 
     if (
         finding.get("facts", {}).get("disposition")
@@ -4859,6 +4867,8 @@ def _fixed_primitive_binding(finding, sources, bindings):
         return public_symbolic_binding(finding, sources, bindings)
 
     facts = finding.get("facts", {})
+    if facts.get("disposition") == "PROVEN_FINITE_TEMPLATE_INPUT":
+        return finite_template_binding(finding, sources, bindings)
     workspace_sources = sorted((row["path"], row["sha256"]) for row in sources)
     workspace_digest = hashlib.sha256(
         json.dumps(workspace_sources, separators=(",", ":")).encode()
@@ -4905,6 +4915,8 @@ def credential_consumer_helpers():
     from .provenance import (
         public_symbolic_binding,
         public_symbolic_findings,
+        finite_template_binding,
+        finite_template_witness,
     )
 
     return (
@@ -4912,6 +4924,8 @@ def credential_consumer_helpers():
         bind_public_symbolic_consumers,
         public_symbolic_binding,
         public_symbolic_findings,
+        finite_template_binding,
+        finite_template_witness,
         _LiteralConsumers,
         *native_execution_helpers(),
         _oracle_bound_names,
