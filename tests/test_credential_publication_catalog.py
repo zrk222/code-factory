@@ -67,7 +67,7 @@ def test_corruption_or_missing_resource_is_not_a_publication(monkeypatch):
         def joinpath(self, *args):
             return self
 
-        def read_bytes(self):
+        def open(self, *args):
             raise FileNotFoundError("missing data")
 
     monkeypatch.setattr(catalog.resources, "files", lambda *args: Missing())
@@ -92,7 +92,7 @@ def test_catalog_contains_publication_data_only():
     assert (
         document["admission"]["decision"] == "ADMITTED_PUBLIC_PROTOCOL_PUBLICATION_ONLY"
     )
-    assert len(document["entries"]) == 4
+    assert len(document["entries"]) == 22
     assert not any(
         term in raw
         for term in (
@@ -103,3 +103,33 @@ def test_catalog_contains_publication_data_only():
             b"adjudication_label",
         )
     )
+
+
+def test_batch_snapshot_has_immutable_facts():
+    snapshot = catalog.endpoint_publications()
+    assert isinstance(snapshot, tuple) and len(snapshot) == 22
+    with pytest.raises(TypeError):
+        snapshot[0]["value"] = "changed"
+    assert catalog.endpoint_publication(snapshot[0]["value"]) == dict(snapshot[0])
+
+
+def test_catalog_data_changes_invalidate_native_context_cache_key(
+    tmp_path, monkeypatch
+):
+    import io
+    from factoryline.review_audits import _oracle_context_cache_key
+
+    before = _oracle_context_cache_key(tmp_path, [], {})
+    raw = _raw()
+
+    class Changed:
+        def joinpath(self, *args):
+            return self
+
+        def open(self, *args):
+            return io.BytesIO(raw + b" ")
+
+    monkeypatch.setattr(catalog.resources, "files", lambda *args: Changed())
+    after = _oracle_context_cache_key(tmp_path, [], {})
+    assert before != after
+    assert catalog.endpoint_publications() == ()

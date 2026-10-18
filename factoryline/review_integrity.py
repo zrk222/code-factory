@@ -4816,26 +4816,23 @@ def partition_proven_primitive_observations(core):
             "PROVEN_FINITE_LITERAL_EVAL_INPUT",
             "PROVEN_PUBLIC_SYMBOLIC_IDENTIFIER",
             "PROVEN_FINITE_TEMPLATE_INPUT",
+            "ENDPOINT_DECLARATION_ROLE_PROVEN",
         }:
             retained.append(finding)
             continue
         touched = True
-        if _fixed_primitive_binding(finding, core.get("sources", []), bindings):
+        endpoint_complete = (
+            facts.get("disposition") != "ENDPOINT_DECLARATION_ROLE_PROVEN"
+            or core.get("audit_coverage", {}).get("complete") is True
+        )
+        if endpoint_complete and _fixed_primitive_binding(
+            finding, core.get("sources", []), bindings
+        ):
             proved.append(finding)
         else:
-            retained.append(
-                {
-                    **finding,
-                    "severity": "HIGH",
-                    "message": "The fixed-program proof is not bound to the current source; execution risk remains unverified.",
-                    "facts": {
-                        **facts,
-                        "disposition": "UNVERIFIED_FIXED_PROGRAM",
-                        "state": "INCOMPLETE",
-                        "proof_rejection": "SOURCE_BINDING_MISMATCH",
-                    },
-                }
-            )
+            from .primitive_observation_binding import rejected_primitive_proof
+
+            retained.append(rejected_primitive_proof(finding))
     if not touched:
         return
     core["primitive_observations"] = proved
@@ -4857,40 +4854,10 @@ def partition_proven_primitive_observations(core):
 
 
 def _fixed_primitive_binding(finding, sources, bindings):
-    import json
-    from .provenance import public_symbolic_binding, finite_template_binding
+    from .primitive_observation_binding import fixed_primitive_binding
+    import sys
 
-    if (
-        finding.get("facts", {}).get("disposition")
-        == "PROVEN_PUBLIC_SYMBOLIC_IDENTIFIER"
-    ):
-        return public_symbolic_binding(finding, sources, bindings)
-
-    facts = finding.get("facts", {})
-    if facts.get("disposition") == "PROVEN_FINITE_TEMPLATE_INPUT":
-        return finite_template_binding(finding, sources, bindings)
-    workspace_sources = sorted((row["path"], row["sha256"]) for row in sources)
-    workspace_digest = hashlib.sha256(
-        json.dumps(workspace_sources, separators=(",", ":")).encode()
-    ).hexdigest()
-    return (
-        finding.get("code") == "SECURITY_DYNAMIC_EXECUTION"
-        and isinstance(facts.get("source_sha256"), str)
-        and re.fullmatch(r"[0-9a-f]{64}", facts["source_sha256"])
-        and facts.get("source_path") == finding.get("path")
-        and sum(row["path"] == finding.get("path") for row in sources) == 1
-        and facts["source_sha256"] == bindings.get(finding.get("path"))
-        and (
-            facts.get("schema") == "factory.fixed-literal-program.v1"
-            if facts.get("disposition") == "PROVEN_FIXED_LITERAL_PROGRAM"
-            else (
-                _finite_eval_binding(finding)
-                if facts.get("disposition") == "PROVEN_FINITE_LITERAL_EVAL_INPUT"
-                else _closed_declaration_binding(finding)
-            )
-        )
-        and facts.get("workspace_sources_sha256") == workspace_digest
-    )
+    return fixed_primitive_binding(finding, sources, bindings, sys.modules[__name__])
 
 
 def bind_credential_consumers(
@@ -4912,6 +4879,7 @@ def bind_credential_consumers(
 
 def credential_consumer_helpers():
     from .provenance import bind_public_symbolic_consumers
+    from .primitive_observation_binding import primitive_binding_helpers
     from .provenance import (
         public_symbolic_binding,
         public_symbolic_findings,
@@ -4928,9 +4896,16 @@ def credential_consumer_helpers():
         finite_template_witness,
         _LiteralConsumers,
         *native_execution_helpers(),
+        *primitive_binding_helpers(),
         _oracle_bound_names,
         *(value for value in vars(_LiteralConsumers).values() if callable(value)),
     )
+
+
+def credential_context_cache_schema():
+    from .primitive_observation_binding import credential_context_cache_schema as schema
+
+    return schema()
 
 
 def _closed_declaration_binding(finding):

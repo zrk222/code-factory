@@ -3764,7 +3764,7 @@ def _oracle_context_cache_key(root: Path, manifest: list, config_identity: dict)
         )
     )
     identity = {
-        "schema": "factory.security-oracle-context-cache.v6",
+        "schema": integrity.credential_context_cache_schema(),
         "root": root.resolve().as_posix(),
         "sources": manifest,
         "config": config_identity,

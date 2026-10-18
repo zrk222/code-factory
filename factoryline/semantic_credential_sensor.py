@@ -153,7 +153,7 @@ def _authorization_header_value(headers):
     return selected
 
 
-def _provider_identity_uncertain(tree, aliases):
+def _provider_identity_uncertain(tree, aliases, roots=("requests", "httpx")):
     """Veto HTTP proofs if the full provider mutation index finds a relevant escape."""
     from types import SimpleNamespace
 
@@ -169,7 +169,7 @@ def _provider_identity_uncertain(tree, aliases):
     return any(
         path == root or path.startswith(root + ".")
         for path, _attribute in mutations
-        for root in ("requests", "httpx")
+        for root in roots
     )
 
 

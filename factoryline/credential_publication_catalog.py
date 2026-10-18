@@ -6,7 +6,7 @@ import json
 
 from .credential_protocol_metadata import endpoint_metadata, _unique_object
 
-CATALOG_SHA256 = "b185932f6eb38882b691ae79da885e1ffdabac38f5a9e44a587d654b51015613"
+CATALOG_SHA256 = "76238bdedaa8d9eb2642529e65ee3bbd9c1f2df38ad3068c48a55d751729eca1"
 
 
 def _digest(raw):
@@ -16,6 +16,8 @@ def _digest(raw):
 def _entry(row):
     if not isinstance(row, dict):
         return None
+    if row.get("document_profile") == "REVIEWED_PROTOCOL_PUBLICATION_V1":
+        return _reviewed_entry(row)
     capture = row.get("capture", {})
     document = row.get("document_utf8")
     if not isinstance(document, str):
@@ -31,9 +33,7 @@ def _entry(row):
         and capture.get("raw_sha256") == _digest(raw)
     ):
         return None
-    declaration = endpoint_metadata(
-        raw, source_url=capture.get("source_url"), expected_issuer=row.get("issuer")
-    )
+    declaration = _declaration(row, raw, capture.get("source_url"))
     if declaration is None:
         return None
     return {
@@ -46,6 +46,32 @@ def _entry(row):
         "credential_safety": "UNASSESSED",
         "runtime_assurance": "INCOMPLETE",
     }
+
+
+def _reviewed_entry(row):
+    from .credential_publication_excerpt import reviewed_excerpt_fact
+
+    fact = reviewed_excerpt_fact(row)
+    return {**fact, "catalog_sha256": CATALOG_SHA256} if fact else None
+
+
+def _declaration(row, raw, source_url):
+    profile = row.get("document_profile")
+    if profile is None:
+        return endpoint_metadata(
+            raw, source_url=source_url, expected_issuer=row.get("issuer")
+        )
+    if profile != "OPENAPI3_OAUTH2_TOKEN_URL_V1":
+        return None
+    from .credential_protocol_documents import openapi_endpoint_declarations
+
+    declarations = openapi_endpoint_declarations(raw, source_url=source_url)
+    selected = [
+        fact
+        for fact in declarations or ()
+        if fact["json_pointer"] == row.get("json_pointer")
+    ]
+    return selected[0] if len(selected) == 1 else None
 
 
 def _read(raw):
@@ -70,17 +96,34 @@ def _read(raw):
         return ()
 
 
+def _catalog_bytes():
+    try:
+        resource = resources.files("factoryline").joinpath(
+            "data/protocol_publications.json"
+        )
+        with resource.open("rb") as stream:
+            raw = stream.read(1048577)
+    except (OSError, ValueError):
+        return None
+    return raw
+
+
+def catalog_content_digest():
+    """Fresh data identity for native context caches, including corrupt/missing data."""
+    raw = _catalog_bytes()
+    return _digest(raw) if raw is not None else "MISSING"
+
+
+def endpoint_publications():
+    """Read one immutable historical publication snapshot; never a safety verdict."""
+    from types import MappingProxyType
+
+    return tuple(MappingProxyType(fact) for fact in _read(_catalog_bytes()))
+
+
 def endpoint_publication(value):
     """Exact published endpoint equality; no prefix/template or safety verdict."""
     if not isinstance(value, str):
         return None
-    try:
-        raw = (
-            resources.files("factoryline")
-            .joinpath("data/protocol_publications.json")
-            .read_bytes()
-        )
-    except (OSError, ValueError):
-        return None
-    matches = [fact for fact in _read(raw) if fact["value"] == value]
+    matches = [fact for fact in endpoint_publications() if fact["value"] == value]
     return dict(matches[0]) if len(matches) == 1 else None

@@ -216,7 +216,9 @@ def public_symbolic_findings(relative, node, findings, integrity):
         finding["facts"]["proof_facts_sha256"] = hashlib.sha256(
             json.dumps(finding["facts"], sort_keys=True, separators=(",", ":")).encode()
         ).hexdigest()
-    return findings
+    from .credential_endpoint_admission import annotate_endpoint_findings
+
+    return annotate_endpoint_findings(relative, node, findings, integrity)
 
 
 def public_symbolic_binding(finding, sources, bindings):
