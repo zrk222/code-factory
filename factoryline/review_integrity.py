@@ -2422,6 +2422,12 @@ def security_assignment_findings(relative, node, aliases):
         aliases,
         audit._literal_assignment_diagnostics(relative, node, aliases),
     )
+    from .provenance import public_symbolic_findings
+    import sys
+
+    literal_findings = public_symbolic_findings(
+        relative, node, literal_findings, sys.modules[__name__]
+    )
     return literal_findings + session_tls_findings(
         relative, node, aliases, audit._security_finding
     )
@@ -4679,7 +4685,9 @@ def fixed_program_witness(relative, node, call_name):
     return witness
 
 
-def bind_fixed_program_workspace(root, contexts, snapshots, files):
+def bind_fixed_program_workspace(
+    root, contexts, snapshots, files, source_bytes=None, imports=None
+):
     from .runtime_audit_integrity import workspace_builtin_profile
     import json
 
@@ -4695,8 +4703,23 @@ def bind_fixed_program_workspace(root, contexts, snapshots, files):
     profile["sources_sha256"] = hashlib.sha256(
         json.dumps(sources, separators=(",", ":")).encode()
     ).hexdigest()
+    if (
+        source_bytes is not None
+        and imports is not None
+        and set(snapshots) == set(files)
+    ):
+        inventory = {
+            path: getattr(tree, "_oracle_source_sha256", None)
+            for path, tree in snapshots.items()
+        }
+        bind_credential_consumers(
+            root, snapshots, imports, contexts, source_bytes, inventory=inventory
+        )
     for context in contexts.values():
-        context["fixed_program_workspace"] = profile
+        context["fixed_program_workspace"] = {
+            **profile,
+            "credential_consumers": context.get("credential_consumers", {}),
+        }
 
 
 def fixed_program_workspace_helpers():
@@ -4719,6 +4742,7 @@ def fixed_program_workspace_helpers():
         _closed_declaration_binding,
         _valid_source_span,
         *runtime.workspace_builtin_helpers(),
+        *credential_consumer_helpers(),
     )
 
 
@@ -4783,6 +4807,7 @@ def partition_proven_primitive_observations(core):
             "PROVEN_FIXED_LITERAL_PROGRAM",
             "PROVEN_CLOSED_DECLARATION_INPUT",
             "PROVEN_FINITE_LITERAL_EVAL_INPUT",
+            "PROVEN_PUBLIC_SYMBOLIC_IDENTIFIER",
         }:
             retained.append(finding)
             continue
@@ -4825,6 +4850,13 @@ def partition_proven_primitive_observations(core):
 
 def _fixed_primitive_binding(finding, sources, bindings):
     import json
+    from .provenance import public_symbolic_binding
+
+    if (
+        finding.get("facts", {}).get("disposition")
+        == "PROVEN_PUBLIC_SYMBOLIC_IDENTIFIER"
+    ):
+        return public_symbolic_binding(finding, sources, bindings)
 
     facts = finding.get("facts", {})
     workspace_sources = sorted((row["path"], row["sha256"]) for row in sources)
@@ -4854,44 +4886,32 @@ def _fixed_primitive_binding(finding, sources, bindings):
 def bind_credential_consumers(
     root, snapshots, imports, contexts, source_bytes, *, inventory
 ):
-    """Attach closed source-use witnesses; incomplete workspace evidence earns none."""
-    from . import review_audits as audit
+    from .provenance import bind_public_symbolic_consumers
     import sys
 
-    for context in contexts.values():
-        context["credential_consumers"] = {}
-    try:
-        if not isinstance(inventory, dict) or set(contexts) != set(inventory):
-            return
-        graph = _LiteralConsumers(
-            root,
-            snapshots,
-            imports,
-            audit,
-            sys.modules[__name__],
-            source_bytes=source_bytes,
-            inventory=inventory,
-        )
-        witnesses = graph.witnesses()
-        if not graph.complete:
-            return
-        for (path, line, member), consumers in witnesses.items():
-            contexts[path]["credential_consumers"][line, member] = consumers
-    except (
-        AttributeError,
-        KeyError,
-        TypeError,
-        ValueError,
-        RecursionError,
-        MemoryError,
-    ):
-        for context in contexts.values():
-            context["credential_consumers"] = {}
+    return bind_public_symbolic_consumers(
+        root,
+        snapshots,
+        imports,
+        contexts,
+        source_bytes,
+        inventory,
+        sys.modules[__name__],
+    )
 
 
 def credential_consumer_helpers():
+    from .provenance import bind_public_symbolic_consumers
+    from .provenance import (
+        public_symbolic_binding,
+        public_symbolic_findings,
+    )
+
     return (
         bind_credential_consumers,
+        bind_public_symbolic_consumers,
+        public_symbolic_binding,
+        public_symbolic_findings,
         _LiteralConsumers,
         *native_execution_helpers(),
         _oracle_bound_names,

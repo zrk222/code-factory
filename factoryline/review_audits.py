@@ -3990,8 +3990,10 @@ def _project_oracle_context(
         root, files, snapshots, typecheck_sources, ty_sources, import_views
     )
     integrity.bind_benchmark_context(contexts, snapshots, benchmarks)
-    integrity.bind_fixed_program_workspace(root, contexts, snapshots, files)
     resolved = contracts._project_import_views(import_views, snapshots)
+    integrity.bind_fixed_program_workspace(
+        root, contexts, snapshots, files, source_bytes, resolved
+    )
     contracts.bind_project_contracts(root, snapshots, contexts, edges, resolved)
     edges += contracts._static_type_edges(
         root, typecheck_sources | ty_sources, config_bindings, ty_sources

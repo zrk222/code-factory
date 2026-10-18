@@ -446,3 +446,290 @@ def test_finite_eval_partition_rejects_unrelated_domain_span(tmp_path):
     partition_proven_primitive_observations(report)
     assert not report["primitive_observations"]
     assert report["findings"][0]["severity"] == "HIGH"
+
+
+_JSON_ENUM = """from enum import Enum
+class ErrorCode(str, Enum):
+    REGISTER_INVALID_PASSWORD = "REGISTER_INVALID_PASSWORD"
+"""
+_JSON_CLIENT = """import pytest
+import httpx
+from asgi_lifespan import LifespanManager
+@pytest.fixture
+def get_test_client():
+    async def make_client(app):
+        async with LifespanManager(app):
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="http://test") as client:
+                yield client
+    return make_client
+"""
+_JSON_TEST = """from typing import Any, cast
+import pytest_asyncio
+from fastapi import FastAPI
+from common import ErrorCode
+@pytest_asyncio.fixture
+async def app_client(get_test_client):
+    app = FastAPI()
+    async for client in get_test_client(app):
+        yield client
+async def test_invalid_password(app_client):
+    response = await app_client.post("/register", json={})
+    assert response.status_code == 400
+    data = cast(dict[str, Any], response.json())
+    assert data["detail"] == {"code": ErrorCode.REGISTER_INVALID_PASSWORD}
+"""
+
+
+def _json_enum_graph(
+    tmp_path,
+    *,
+    test_source=_JSON_TEST,
+    client_source=_JSON_CLIENT,
+    enum_source=_JSON_ENUM,
+    stale=False,
+):
+    import hashlib
+    from factoryline import review_audits, review_integrity
+    from factoryline.runtime_audit_integrity import _LiteralConsumers
+
+    root = tmp_path.resolve()
+    sources = {
+        "common.py": enum_source,
+        "conftest.py": client_source,
+        "test_api.py": test_source,
+    }
+    raw = {root / name: source.encode() for name, source in sources.items()}
+    for path, source in raw.items():
+        path.write_bytes(source)
+    trees = {path: ast.parse(source) for path, source in raw.items()}
+    inventory = {
+        path: hashlib.sha256(source).hexdigest() for path, source in raw.items()
+    }
+    for path, tree in trees.items():
+        tree._oracle_source_sha256 = inventory[path]
+    eligible = {path.resolve(): path for path in trees}
+    imports = {
+        path: review_audits._oracle_imports(root, path, tree, eligible)
+        for path, tree in trees.items()
+    }
+    if stale:
+        inventory[root / "common.py"] = "0" * 64
+    return _LiteralConsumers(
+        root,
+        trees,
+        imports,
+        review_audits,
+        review_integrity,
+        source_bytes=raw,
+        inventory=inventory,
+    )
+
+
+def test_public_enum_json_requires_actual_client_origin(tmp_path):
+    graph = _json_enum_graph(tmp_path)
+    result = graph.witnesses()
+    assert graph.complete
+    assert (tmp_path.resolve() / "common.py", 3, "REGISTER_INVALID_PASSWORD") in result
+
+
+@pytest.mark.parametrize("escape", [None, "test_app", "schema"])
+def test_returned_app_tracks_keyword_only_fixture_consumers(tmp_path, escape):
+    source = _JSON_TEST.replace(
+        "async def app_client(get_test_client):\n    app = FastAPI()",
+        "def test_app():\n    app = FastAPI()\n    return app\n"
+        "@pytest_asyncio.fixture\nasync def app_client(test_app, get_test_client):",
+    ).replace("get_test_client(app):", "get_test_client(test_app):")
+    source += (
+        "\n@pytest_asyncio.fixture\ndef schema(test_app):\n    return test_app.openapi()\n"
+        "def test_schema(schema):\n    route = schema['paths']['/register']['post']\n"
+        "    assert list(route['responses'].keys()) == ['400']\n"
+    )
+    if escape:
+        source += f"\ndef test_opaque(*, {escape}):\n    opaque({escape})\n"
+    graph = _json_enum_graph(tmp_path, test_source=source)
+    path = tmp_path.resolve() / "test_api.py"
+    fixture = next(
+        node
+        for node in graph.trees[path].body
+        if getattr(node, "name", None) == "test_app"
+    )
+    assert graph._returned_app_fixture_closed(path, fixture, "app") is (escape is None)
+
+
+def test_public_enum_native_cold_warm_and_source_invalidation(tmp_path):
+    from factoryline.review_audits import security_scan
+
+    _json_enum_graph(tmp_path)
+    for cache in (False, True, True):
+        report = security_scan(tmp_path, cache_enabled=cache)
+        assert not any(
+            row["code"] == "SECURITY_HARDCODED_SECRET" for row in report["findings"]
+        )
+        observations = report.get("primitive_observations", [])
+        assert len(observations) == 1
+        assert (
+            observations[0]["facts"]["disposition"]
+            == "PROVEN_PUBLIC_SYMBOLIC_IDENTIFIER"
+        )
+        assert observations[0]["facts"]["runtime_assurance"] == "INCOMPLETE"
+    with (tmp_path / "common.py").open("a") as stream:
+        stream.write("signed = signer(ErrorCode.REGISTER_INVALID_PASSWORD)\n")
+    report = security_scan(tmp_path, cache_enabled=True)
+    assert any(row["code"] == "SECURITY_HARDCODED_SECRET" for row in report["findings"])
+    assert not report.get("primitive_observations")
+
+
+def test_public_enum_native_incomplete_source_denies_admission(tmp_path):
+    from factoryline.review_audits import security_scan
+
+    _json_enum_graph(tmp_path)
+    (tmp_path / "missing_flow.py").write_text("def broken(:\n")
+    report = security_scan(tmp_path, cache_enabled=False)
+    assert any(row["code"] == "SECURITY_HARDCODED_SECRET" for row in report["findings"])
+    assert not report.get("primitive_observations")
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("declaration_span", [3, 4, 999, 1]),
+        ("name", "OTHER_PASSWORD"),
+        ("source_profiles", [{"invocation": "invented"}]),
+    ],
+)
+def test_public_enum_receipt_rejects_changed_facts(tmp_path, field, value):
+    from factoryline.review_audits import security_scan
+    from factoryline.review_integrity import partition_proven_primitive_observations
+
+    _json_enum_graph(tmp_path)
+    report = security_scan(tmp_path, cache_enabled=False)
+    report["primitive_observations"][0]["facts"][field] = value
+    partition_proven_primitive_observations(report)
+    assert not report["primitive_observations"]
+    assert any(row["code"] == "SECURITY_HARDCODED_SECRET" for row in report["findings"])
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "signing",
+        "client_rebind",
+        "data_rebind",
+        "json_replacement",
+        "client_hooks",
+        "provider_rebind",
+        "stale_source",
+        "client_import",
+        "client_except",
+        "client_match",
+        "client_method",
+        "client_escape",
+        "response_escape",
+        "class_fixture_override",
+        "helper_rebind",
+        "yield_client_escape",
+        "response_setattr",
+        "module_fixture_alias",
+        "provider_fixture_alias",
+        "local_httpx_shadow",
+        "local_manager_shadow",
+    ],
+)
+def test_public_enum_json_retains_unproven_consumers(tmp_path, mutation):
+    source, client, enum = _JSON_TEST, _JSON_CLIENT, _JSON_ENUM
+    source_replacements = {
+        "client_rebind": (
+            "    response =",
+            "    app_client = replacement\n    response =",
+        ),
+        "data_rebind": ("    assert data[", "    data = replacement\n    assert data["),
+        "json_replacement": (
+            "    data =",
+            "    response.json = replacement\n    data =",
+        ),
+        "helper_rebind": ("    app =", "    get_test_client = replacement\n    app ="),
+        "yield_client_escape": (
+            "        yield client",
+            "        opaque(client)\n        yield client",
+        ),
+        "response_setattr": (
+            "    data =",
+            "    response.__setattr__('json', replacement)\n    data =",
+        ),
+    }
+    client_replacements = {
+        "client_hooks": (
+            'base_url="http://test"',
+            'base_url="http://test", event_hooks={"response": [replacement]}',
+        ),
+        "local_httpx_shadow": (
+            "        async with",
+            "        httpx = replacement\n        async with",
+        ),
+        "local_manager_shadow": (
+            "    async def make_client",
+            "    LifespanManager = replacement\n    async def make_client",
+        ),
+    }
+    client += {
+        "provider_rebind": "httpx.AsyncClient = replacement\n",
+        "provider_fixture_alias": "\n@pytest.fixture(name='get_test_client')\ndef override():\n    return replacement\n",
+    }.get(mutation, "")
+    source += {
+        "module_fixture_alias": "\n@pytest_asyncio.fixture(name='app_client')\nasync def override():\n    yield replacement\n"
+    }.get(mutation, "")
+    enum += {"signing": "signed = signer(ErrorCode.REGISTER_INVALID_PASSWORD)\n"}.get(
+        mutation, ""
+    )
+    if mutation in source_replacements:
+        source = source.replace(*source_replacements[mutation])
+    elif mutation in client_replacements:
+        client = client.replace(*client_replacements[mutation], 1)
+    elif mutation in {
+        "client_import",
+        "client_except",
+        "client_match",
+        "client_method",
+        "client_escape",
+        "response_escape",
+    }:
+        statements = {
+            "client_import": "    import arbitrary as app_client\n",
+            "client_except": "    try:\n        pass\n    except Exception as app_client:\n        pass\n",
+            "client_match": '    match replacement:\n        case {"client": app_client}:\n            pass\n',
+            "client_method": "    app_client.post = replacement\n",
+            "client_escape": "    opaque(app_client)\n",
+            "response_escape": "    opaque(response)\n",
+        }
+        anchor = "    data =" if mutation == "response_escape" else "    response ="
+        source = source.replace(anchor, statements[mutation] + anchor)
+    elif mutation == "class_fixture_override":
+        prefix, body = source.split("async def test_invalid_password", 1)
+        override = (
+            "class TestOverride:\n    @pytest_asyncio.fixture\n"
+            "    async def app_client(self):\n        yield replacement\n"
+        )
+        method = "async def test_invalid_password" + body
+        method = method.replace(
+            "test_invalid_password(app_client)",
+            "test_invalid_password(self, app_client)",
+        )
+        source = (
+            prefix + override + "\n".join("    " + line for line in method.splitlines())
+        )
+    graph = _json_enum_graph(
+        tmp_path,
+        test_source=source,
+        client_source=client,
+        enum_source=enum,
+        stale=mutation == "stale_source",
+    )
+    assert not graph.witnesses()
+    if mutation != "stale_source":
+        from factoryline.review_audits import security_scan
+
+        report = security_scan(tmp_path, cache_enabled=False)
+        assert any(
+            row["code"] == "SECURITY_HARDCODED_SECRET" for row in report["findings"]
+        )
+        assert not report.get("primitive_observations")

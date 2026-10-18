@@ -158,3 +158,181 @@ def main(argv=None) -> int:
         with _measure_phase("entrypoint_startup"):
             from .cli import main as cli_main
         return cli_main(values)
+
+
+def public_symbolic_findings(relative, node, findings, integrity):
+    """Attach native source proofs; preserve the original primitive observation."""
+    import hashlib
+    import json
+
+    module = integrity._security_module_scope(
+        getattr(node, "_security_lexical_scope", None)
+    )
+    context = getattr(module, "_security_source_context", None)
+    profile = getattr(module, "_fixed_program_workspace", {})
+    if (
+        not isinstance(context, tuple)
+        or len(context) != 2
+        or not isinstance(profile, dict)
+    ):
+        return findings
+    root, sources = context
+    raw = sources.get(root / relative) if isinstance(sources, dict) else None
+    if not isinstance(raw, bytes) or hashlib.sha256(raw).hexdigest() != getattr(
+        module, "_oracle_source_sha256", None
+    ):
+        return findings
+    for finding in findings:
+        facts = finding.get("facts", {})
+        if (
+            finding.get("code") != "SECURITY_HARDCODED_SECRET"
+            or facts.get("role_candidate") != "symbolic_enum_identifier"
+        ):
+            continue
+        evidence = profile.get("credential_consumers", {}).get(
+            f"{node.lineno}:{facts.get('name')}"
+        )
+        if not isinstance(evidence, dict) or not evidence.get("consumers"):
+            continue
+        finding["facts"] = {
+            **facts,
+            **evidence,
+            "schema": "factory.public-symbolic-identifier.v1",
+            "disposition": "PROVEN_PUBLIC_SYMBOLIC_IDENTIFIER",
+            "source_path": relative,
+            "source_sha256": hashlib.sha256(raw).hexdigest(),
+            "workspace_sources_sha256": profile.get("sources_sha256"),
+            "declaration_span": [
+                node.lineno,
+                node.col_offset,
+                node.end_lineno,
+                node.end_col_offset,
+            ],
+            "runtime_assurance": "INCOMPLETE",
+            "target_execution": "not_performed",
+            "evidence_scope": "source-snapshot-publication-boundary",
+            "downstream_consumer_security": "UNASSESSED",
+        }
+        finding["facts"]["proof_facts_sha256"] = hashlib.sha256(
+            json.dumps(finding["facts"], sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+    return findings
+
+
+def public_symbolic_binding(finding, sources, bindings):
+    """Verify retained evidence integrity, without granting execution authority."""
+    import hashlib
+    import json
+    from .review_integrity import _valid_source_span
+
+    facts = finding.get("facts", {})
+    consumers, profiles = facts.get("consumers"), facts.get("source_profiles")
+    span = facts.get("declaration_span")
+    if not (
+        finding.get("code") == "SECURITY_HARDCODED_SECRET"
+        and facts.get("schema") == "factory.public-symbolic-identifier.v1"
+        and facts.get("disposition") == "PROVEN_PUBLIC_SYMBOLIC_IDENTIFIER"
+        and facts.get("role_candidate") == "symbolic_enum_identifier"
+        and facts.get("runtime_assurance") == "INCOMPLETE"
+        and facts.get("target_execution") == "not_performed"
+        and facts.get("source_path") == finding.get("path")
+        and facts.get("source_sha256") == bindings.get(finding.get("path"))
+        and _valid_source_span(span)
+        and span[:2] == [finding.get("line"), finding.get("column")]
+        and isinstance(consumers, list)
+        and 0 < len(consumers) <= 200_000
+        and isinstance(profiles, list)
+        and len(profiles) <= 2000
+    ):
+        return False
+    if any(
+        not isinstance(row, dict)
+        or row.get("source_sha256") != bindings.get(row.get("path"))
+        or type(row.get("line")) is not int
+        or row["line"] < 1
+        for row in consumers
+    ):
+        return False
+    if any(
+        not isinstance(row, dict)
+        or row.get("entrypoint_sha256") != bindings.get(row.get("entrypoint"))
+        or row.get("module_sha256") != bindings.get(row.get("source_path"))
+        or row.get("runtime_assurance") != "INCOMPLETE"
+        for row in profiles
+    ):
+        return False
+    digest = hashlib.sha256(
+        json.dumps(
+            {"consumers": consumers, "source_profiles": profiles},
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
+    workspace = hashlib.sha256(
+        json.dumps(
+            sorted((row["path"], row["sha256"]) for row in sources),
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
+    proof = hashlib.sha256(
+        json.dumps(
+            {key: value for key, value in facts.items() if key != "proof_facts_sha256"},
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
+    return (
+        facts.get("consumer_evidence_sha256") == digest
+        and facts.get("workspace_sources_sha256") == workspace
+        and facts.get("proof_facts_sha256") == proof
+    )
+
+
+def bind_public_symbolic_consumers(
+    root, snapshots, imports, contexts, source_bytes, inventory, integrity
+):
+    from . import review_audits as audit
+    from .runtime_audit_integrity import _LiteralConsumers
+    import hashlib
+    import json
+
+    for context in contexts.values():
+        context["credential_consumers"] = {}
+    try:
+        if not isinstance(inventory, dict) or set(contexts) != set(inventory):
+            return
+        graph = _LiteralConsumers(
+            root,
+            snapshots,
+            {path: dict(view) for path, view in imports.items()},
+            audit,
+            integrity,
+            source_bytes=source_bytes,
+            inventory=inventory,
+        )
+        witnesses = graph.witnesses()
+        if not graph.complete:
+            return
+        profiles = [
+            {"source_path": path.relative_to(root).as_posix(), **profile}
+            for path, profile in sorted(getattr(graph, "source_profiles", {}).items())
+        ]
+        for (path, line, member), consumers in witnesses.items():
+            evidence = {"consumers": consumers, "source_profiles": profiles}
+            digest = hashlib.sha256(
+                json.dumps(evidence, sort_keys=True, separators=(",", ":")).encode()
+            ).hexdigest()
+            contexts[path]["credential_consumers"][f"{line}:{member}"] = {
+                **evidence,
+                "consumer_evidence_sha256": digest,
+            }
+    except (
+        AttributeError,
+        KeyError,
+        TypeError,
+        ValueError,
+        RecursionError,
+        MemoryError,
+    ):
+        for context in contexts.values():
+            context["credential_consumers"] = {}

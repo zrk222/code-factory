@@ -1346,9 +1346,13 @@ class _LiteralConsumers:
         self.root, self.trees, self.imports = root, snapshots, imports
         self.audit, self.integrity = audit, integrity
         self.parents, self.objects, self.refs = {}, {}, defaultdict(list)
+        self.functions, self.methods, self.node_paths = {}, {}, {}
+        self.fixture_cache, self.provider_cache = {}, {}
+        self.app_fixture_cache = {}
         self.aliases, self.blocked, self.members = {}, set(), {}
         self.unmodeled_imports = []
         self.provider_closure = {}
+        self.source_profiles = {}
         self.complete = True
         self.remaining_work = 1_000_000
         if (
@@ -1365,6 +1369,11 @@ class _LiteralConsumers:
         ):
             self.complete = False
             return
+        self.eligible = {path.resolve(): path for path in snapshots}
+        self.aliases = {
+            path: self.audit._module_security_aliases(tree)
+            for path, tree in snapshots.items()
+        }
         total = 0
         for path, tree in snapshots.items():
             raw = source_bytes[path]
@@ -1393,13 +1402,14 @@ class _LiteralConsumers:
                     self.complete = False
                     return
                 nodes.append(node)
+                self.node_paths[id(node)] = path
             self.parents.update(
                 {id(c): n for n in nodes for c in ast.iter_child_nodes(n)}
             )
-            self.aliases[path] = self.audit._module_security_aliases(tree)
             self.integrity.bind_security_call_scopes(tree)
             self._objects(path, tree)
             self._bindings(path, nodes)
+        self._bind_guarded_script_imports()
         self._references()
         self._reject_unmodeled_origins()
         self._provider_uses()
@@ -1408,27 +1418,33 @@ class _LiteralConsumers:
         for node in tree.body:
             if isinstance(node, ast.ClassDef):
                 self.objects[path, node.name] = node
-                for item in node.body:
-                    if not isinstance(item, (ast.Assign, ast.AnnAssign)):
-                        continue
-                    targets = (
-                        item.targets if isinstance(item, ast.Assign) else [item.target]
-                    )
-                    for target in targets:
-                        if (
-                            isinstance(target, ast.Name)
-                            and self.audit._SECRET_ASSIGNMENT.search(target.id)
-                            and self.audit._credential_role_witness(
-                                item, target, self.aliases[path]
-                            )
-                        ):
-                            self.members[path, node.name, target.id] = item
+                self._class_members(path, node)
+            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                self.functions[path, node.name] = node
             elif isinstance(node, (ast.Assign, ast.AnnAssign)):
                 targets = (
                     node.targets if isinstance(node, ast.Assign) else [node.target]
                 )
                 if len(targets) == 1 and isinstance(targets[0], ast.Name):
                     self.objects[path, targets[0].id] = node.value
+
+    def _class_members(self, path, owner):
+        for item in owner.body:
+            if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                self.methods[path, owner.name, item.name] = item
+                continue
+            if not isinstance(item, (ast.Assign, ast.AnnAssign)):
+                continue
+            targets = item.targets if isinstance(item, ast.Assign) else [item.target]
+            for target in targets:
+                if (
+                    isinstance(target, ast.Name)
+                    and self.audit._SECRET_ASSIGNMENT.search(target.id)
+                    and self.audit._credential_role_witness(
+                        item, target, self.aliases[path]
+                    )
+                ):
+                    self.members[path, owner.name, target.id] = item
 
     def _provider_uses(self):
         providers = {"enum.Enum", "fastapi.HTTPException", "fastapi.APIRouter"}
@@ -1479,11 +1495,129 @@ class _LiteralConsumers:
         ):
             self.complete = False
 
+    def _guarded_script_profile(self, path, tree):
+        if len(tree.body) != 2:
+            return None
+        imported, guard = tree.body
+        if (
+            not isinstance(imported, ast.Import)
+            or len(imported.names) != 1
+            or imported.names[0].name != "uvicorn"
+            or imported.names[0].asname is not None
+            or self.aliases[path].get("uvicorn") != "uvicorn"
+            or (path, "uvicorn") in self.blocked
+            or not isinstance(guard, ast.If)
+            or guard.orelse
+            or not isinstance(guard.test, ast.Compare)
+            or len(guard.test.ops) != 1
+            or not isinstance(guard.test.ops[0], ast.Eq)
+            or not isinstance(guard.test.left, ast.Name)
+            or guard.test.left.id != "__name__"
+            or len(guard.test.comparators) != 1
+            or not isinstance(guard.test.comparators[0], ast.Constant)
+            or guard.test.comparators[0].value != "__main__"
+            or len(guard.body) != 1
+            or not isinstance(guard.body[0], ast.Expr)
+            or not isinstance(guard.body[0].value, ast.Call)
+        ):
+            return None
+        call = guard.body[0].value
+        if (
+            not isinstance(call.func, ast.Attribute)
+            or not isinstance(call.func.value, ast.Name)
+            or call.func.value.id != "uvicorn"
+            or call.func.attr != "run"
+            or len(call.args) != 1
+            or not isinstance(call.args[0], ast.Constant)
+            or call.args[0].value != "app.app:app"
+            or {item.arg for item in call.keywords} != {"host", "log_level"}
+            or len(call.keywords) != 2
+            or any(
+                not isinstance(item.value, ast.Constant)
+                or type(item.value.value) is not str
+                for item in call.keywords
+            )
+        ):
+            return None
+        entry_imports = self.audit._oracle_imports(self.root, path, tree, self.eligible)
+        if "uvicorn" in entry_imports:
+            return None
+        module = path.parent / "app" / "app.py"
+        if module not in self.trees:
+            return None
+        return module, path.parent
+
+    def _bind_guarded_script_imports(self):
+        candidates = defaultdict(list)
+        for path, tree in self.trees.items():
+            profile = self._guarded_script_profile(path, tree)
+            if profile is not None:
+                candidates[profile[0]].append((path, profile[1]))
+        for module, profiles in candidates.items():
+            if len(profiles) == 1:
+                entry, root = profiles[0]
+                staged = self._guarded_import_stage(module, root)
+                if staged is not None:
+                    imports, top = staged
+                    self._commit_guarded_imports(module, entry, root, imports, top)
+
+    def _guarded_import_stage(self, module, root):
+        resolved = self.audit._oracle_imports(
+            root, module, self.trees[module], self.eligible
+        )
+        top = defaultdict(list)
+        for statement in self.trees[module].body:
+            for name in self.audit._bound_names(statement):
+                top[name].append(statement)
+        staged = {}
+        for name, origin in resolved.items():
+            if not origin[0].is_relative_to(root):
+                continue
+            current = self.imports[module].get(name)
+            if name in self.imports[module]:
+                if current != origin:
+                    return None
+                continue
+            if len(top[name]) != 1 or not isinstance(
+                top[name][0], (ast.Import, ast.ImportFrom)
+            ):
+                return None
+            staged[name] = origin
+        return (staged, top) if staged else None
+
+    def _commit_guarded_imports(self, module, entry, root, staged, top):
+        blocked_before = set(self.blocked)
+        self._scope_bindings(
+            module, list(self._walk(self.trees[module])), set(staged), top
+        )
+        if any((module, name) in self.blocked for name in staged):
+            self.blocked.difference_update(self.blocked - blocked_before)
+            return False
+        self.imports[module] = {**self.imports[module], **staged}
+        self.source_profiles[module] = {
+            "schema": "factory.guarded-uvicorn-import-root.v1",
+            "entrypoint": entry.relative_to(self.root).as_posix(),
+            "entrypoint_path": entry.relative_to(self.root).as_posix(),
+            "entrypoint_sha256": getattr(
+                self.trees[entry], "_oracle_source_sha256", None
+            ),
+            "module": "app.app",
+            "source_path": module.relative_to(self.root).as_posix(),
+            "module_sha256": getattr(self.trees[module], "_oracle_source_sha256", None),
+            "import_root": root.relative_to(self.root).as_posix(),
+            "invocation": "direct-script",
+            "other_invocations": "UNKNOWN",
+            "runtime_assurance": "INCOMPLETE",
+        }
+        return True
+
     def _bindings(self, path, nodes):
         tree = self.trees[path]
-        origins = set(self.imports[path]) | {
-            name for p, name in self.objects if p == path
-        }
+        origins = (
+            set(self.imports[path])
+            | {name for p, name in self.objects if p == path}
+            | {name for p, name in self.functions if p == path}
+        )
         top = defaultdict(list)
         for statement in tree.body:
             if not self._tick():
@@ -1511,7 +1645,11 @@ class _LiteralConsumers:
         for node in nodes:
             if not self._tick():
                 return
-            if isinstance(node, ast.arg) and node.arg in origins:
+            if (
+                isinstance(node, ast.arg)
+                and node.arg in origins
+                and not self._fixture_parameter_value(path, node.arg, node)
+            ):
                 self.blocked.add((path, node.arg))
             if isinstance(node, (ast.Global, ast.Nonlocal)):
                 self.blocked.update((path, name) for name in origins & set(node.names))
@@ -1522,6 +1660,17 @@ class _LiteralConsumers:
             ):
                 if self.parents.get(id(node)) not in top[node.id]:
                     self.blocked.add((path, node.id))
+
+    def _fixture_parameter_value(self, path, name, node):
+        function = self._containing_function(node)
+        fixture = self.functions.get((path, name))
+        return bool(
+            function
+            and fixture
+            and any(arg.arg == name for arg in function.args.args)
+            and self._is_pytest_fixture(path, fixture)
+            and self._nearest_fixture(path, name, function) == (path, fixture)
+        )
 
     def _nested_imports(self, path, nodes):
         tree = self.trees[path]
@@ -1588,12 +1737,17 @@ class _LiteralConsumers:
         obj = self.objects.get((path, name))
         if isinstance(obj, ast.ClassDef):
             return "class", path, name, tuple(tail)
+        if (path, name) in self.functions:
+            return "function", path, name, tuple(tail)
         if obj is not None:
             if isinstance(obj, (ast.Name, ast.Attribute)):
                 return self.resolve(
                     path, (*self.audit._name(obj).split("."), *tail), seen
                 )
             return "value", path, name, tuple(tail)
+        return self._resolve_import(path, name, tail, seen)
+
+    def _resolve_import(self, path, name, tail, seen):
         imported = self.imports[path].get(name)
         if name in self.imports[path] and imported is None:
             self.complete = False
@@ -1616,6 +1770,8 @@ class _LiteralConsumers:
         for path, tree in self.trees.items():
             for node in self._walk(tree):
                 if not isinstance(node, ast.Name) or not isinstance(node.ctx, ast.Load):
+                    continue
+                if self._fixture_parameter_value(path, node.id, node):
                     continue
                 end = node
                 while (
@@ -1684,8 +1840,10 @@ class _LiteralConsumers:
                 and isinstance(node.ctx, ast.Load)
             ):
                 parent = self.parents.get(id(node))
-                if not isinstance(parent, ast.Attribute):
-                    return False
+                if isinstance(parent, ast.Return) and parent.value is node:
+                    if not self._router_return_consumers(scope):
+                        return False
+                    continue
                 if isinstance(parent, ast.Attribute):
                     invocation = self.parents.get(id(parent))
                     if (
@@ -1704,7 +1862,588 @@ class _LiteralConsumers:
                         or invocation.func is not parent
                     ):
                         return False
+                else:
+                    return False
         return True
+
+    def _router_return_consumers(self, factory):
+        path = self.node_paths.get(id(factory))
+        if path is None:
+            return False
+        key = ("function", path, factory.name)
+        uses = self.refs.get(key, [])
+        if not uses or not self._tick(len(uses)):
+            return False
+        wrapped = []
+        for use_path, end, tail in uses:
+            if tail:
+                return False
+            call = self.parents.get(id(end))
+            if not isinstance(call, ast.Call) or call.func is not end:
+                return False
+            parent = self.parents.get(id(call))
+            if isinstance(parent, ast.Return) and parent.value is call:
+                wrapper = getattr(call, "_security_lexical_scope", None)
+                wrapper_path = self.node_paths.get(id(wrapper), use_path)
+                owner = self.parents.get(id(wrapper)) if wrapper is not None else None
+                if not isinstance(owner, ast.ClassDef) or not self._router_wrapper_safe(
+                    wrapper_path, owner, wrapper, call
+                ):
+                    return False
+                wrapped.append((wrapper_path, owner, wrapper))
+            elif not self._router_call_published(use_path, call):
+                return False
+        return bool(uses) and all(
+            self._router_wrapper_consumers(*item) for item in wrapped
+        )
+
+    def _router_wrapper_safe(self, path, owner, method, returned_call):
+        body = [
+            node
+            for node in method.body
+            if not isinstance(node, ast.Expr)
+            or not isinstance(node.value, ast.Constant)
+            or not isinstance(node.value.value, str)
+        ]
+        return (
+            not owner.decorator_list
+            and self._router_wrapper_class_safe(path, owner)
+            and not method.decorator_list
+            and len(body) == 1
+            and isinstance(body[0], ast.Return)
+            and body[0].value is returned_call
+            and (path, owner.name, method.name) in self.methods
+        )
+
+    def _router_wrapper_class_safe(self, path, owner):
+        hooks = {
+            "__class_getitem__",
+            "__delattr__",
+            "__getattr__",
+            "__getattribute__",
+            "__init_subclass__",
+            "__mro_entries__",
+            "__new__",
+            "__setattr__",
+        }
+        return (
+            not owner.keywords
+            and all(self._router_wrapper_base_safe(path, base) for base in owner.bases)
+            and not any(
+                self.audit._bound_names(member) & hooks for member in owner.body
+            )
+        )
+
+    def _router_wrapper_base_safe(self, path, base):
+        target = base.value if isinstance(base, ast.Subscript) else base
+        if not isinstance(target, (ast.Name, ast.Attribute)):
+            return False
+        parts = self.audit._name(target).split(".")
+        canonical = self.aliases[path].get(parts[0], parts[0])
+        canonical = ".".join((canonical, *parts[1:]))
+        if canonical != "typing.Generic" or not isinstance(base, ast.Subscript):
+            return False
+        arguments = (
+            base.slice.elts if isinstance(base.slice, ast.Tuple) else [base.slice]
+        )
+        return bool(arguments) and all(
+            isinstance(argument, ast.Attribute) and isinstance(argument.value, ast.Name)
+            for argument in arguments
+        )
+
+    def _router_wrapper_consumers(self, path, owner, method):
+        found = 0
+        for source, tree in self.trees.items():
+            for node in self._walk(tree):
+                if not isinstance(node, ast.Attribute) or node.attr != method.name:
+                    continue
+                parent = self.parents.get(id(node))
+                if not isinstance(parent, ast.Call) or parent.func is not node:
+                    return False
+                if self._class_of_expression(
+                    source,
+                    node.value,
+                    getattr(parent, "_security_lexical_scope", None),
+                ) != (path, owner.name):
+                    return False
+                if not self._router_call_published(source, parent):
+                    return False
+                found += 1
+        return found > 0
+
+    def _class_of_expression(self, path, value, scope, seen=()):
+        if not self._tick() or id(value) in seen or len(seen) > 8:
+            return None
+        seen = (*seen, id(value))
+        if isinstance(value, ast.Name) and isinstance(
+            scope, (ast.FunctionDef, ast.AsyncFunctionDef)
+        ):
+            value = self._class_scope_value(path, value, scope)
+            if value is None:
+                return None
+        if isinstance(value, ast.Call):
+            value = value.func
+        if isinstance(value, ast.Subscript):
+            value = value.value
+        if not isinstance(value, (ast.Name, ast.Attribute)):
+            return None
+        resolved = self.resolve(path, tuple(self.audit._name(value).split(".")))
+        if resolved and resolved[0] == "class" and not resolved[3]:
+            return resolved[1], resolved[2]
+        if resolved and resolved[0] == "value" and not resolved[3]:
+            origin = self.objects.get(resolved[1:3])
+            if isinstance(origin, ast.AST):
+                return self._class_of_expression(resolved[1], origin, None, seen)
+        return None
+
+    def _class_scope_value(self, path, value, scope):
+        binding = self._unique_name_assignment(scope, value.id)
+        local_bindings = [
+            statement
+            for statement in scope.body
+            if value.id in self.audit._bound_names(statement)
+        ]
+        if binding is not None:
+            return (
+                binding.value
+                if len(local_bindings) == 1 and local_bindings[0] is binding
+                else None
+            )
+        if local_bindings:
+            return None
+        arguments = (
+            *scope.args.posonlyargs,
+            *scope.args.args,
+            *scope.args.kwonlyargs,
+            scope.args.vararg,
+            scope.args.kwarg,
+        )
+        if not any(arg is not None and arg.arg == value.id for arg in arguments):
+            return value
+        fixture = self._nearest_fixture(path, value.id)
+        if fixture is None or not self._is_pytest_fixture(*fixture):
+            return None
+        returns = [node for node in fixture[1].body if isinstance(node, ast.Return)]
+        return (
+            returns[0].value
+            if len(returns) == 1 and isinstance(returns[0].value, ast.Call)
+            else None
+        )
+
+    def _unique_name_assignment(self, scope, name):
+        writes = [
+            node
+            for node in self._walk(scope)
+            if isinstance(node, ast.Name)
+            and node.id == name
+            and isinstance(node.ctx, (ast.Store, ast.Del))
+        ]
+        if len(writes) != 1 or isinstance(writes[0].ctx, ast.Del):
+            return None
+        binding = self.parents.get(id(writes[0]))
+        if isinstance(binding, ast.AnnAssign) and binding.target is writes[0]:
+            return binding
+        if isinstance(binding, ast.Assign) and writes[0] in binding.targets:
+            return binding
+        if isinstance(binding, ast.NamedExpr) and binding.target is writes[0]:
+            return binding
+        return None
+
+    def _router_call_published(self, path, call):
+        parent = self.parents.get(id(call))
+        if isinstance(parent, ast.Call) and call in parent.args:
+            return bool(
+                parent.args and parent.args[0] is call
+            ) and self._fastapi_include(path, parent)
+        if isinstance(parent, ast.keyword) and parent.arg == "router":
+            outer = self.parents.get(id(parent))
+            return isinstance(outer, ast.Call) and self._fastapi_include(path, outer)
+        return self._router_assignment_published(path, call, parent)
+
+    def _router_assignment_published(self, path, call, parent):
+        if not isinstance(parent, (ast.Assign, ast.AnnAssign)):
+            return False
+        targets = parent.targets if isinstance(parent, ast.Assign) else [parent.target]
+        if len(targets) != 1 or not isinstance(targets[0], ast.Name):
+            return False
+        scope = getattr(parent, "_security_lexical_scope", None)
+        if scope is None:
+            scope = self.trees[path]
+        alias = targets[0].id
+        found = 0
+        for node in self._walk(scope):
+            if not isinstance(node, ast.Name) or node.id != alias:
+                continue
+            if isinstance(node.ctx, (ast.Store, ast.Del)):
+                if node is not targets[0]:
+                    return False
+                continue
+            parent_node = self.parents.get(id(node))
+            if not isinstance(parent_node, ast.Call):
+                return False
+            if (
+                not parent_node.args
+                or parent_node.args[0] is not node
+                or not self._fastapi_include(path, parent_node)
+            ):
+                return False
+            found += 1
+        return found > 0
+
+    def _fastapi_include(self, path, call):
+        if (
+            not isinstance(call.func, ast.Attribute)
+            or call.func.attr != "include_router"
+            or not call.args
+            or not isinstance(call.func.value, ast.Name)
+        ):
+            return False
+        app_name = call.func.value.id
+        scope = getattr(call, "_security_lexical_scope", None)
+        value = None
+        if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            assignments = [
+                statement
+                for statement in scope.body
+                if isinstance(statement, (ast.Assign, ast.AnnAssign))
+                and any(
+                    isinstance(target, ast.Name) and target.id == app_name
+                    for target in (
+                        statement.targets
+                        if isinstance(statement, ast.Assign)
+                        else [statement.target]
+                    )
+                )
+            ]
+            if len(assignments) != 1:
+                return False
+            value = assignments[0].value
+            binding = self._unique_name_assignment(scope, app_name)
+        else:
+            value = self.objects.get((path, app_name))
+            if isinstance(value, (ast.Assign, ast.AnnAssign)):
+                value = value.value
+            binding = self._unique_name_assignment(self.trees[path], app_name)
+        if (
+            not isinstance(value, ast.Call)
+            or self.integrity.security_call_name(value, self.aliases[path])
+            != "fastapi.FastAPI"
+            or binding is None
+            or binding.value is not value
+        ):
+            return False
+        for node in self._walk(scope or self.trees[path]):
+            if (
+                isinstance(node, ast.Attribute)
+                and self.audit._name(node.value) == app_name
+                and isinstance(node.ctx, (ast.Store, ast.Del))
+            ):
+                return False
+        return self._fastapi_app_uses_closed(path, scope, app_name, binding)
+
+    def _fastapi_app_uses_closed(self, path, scope, app_name, binding):
+        for node in self._walk(scope or self.trees[path]):
+            if isinstance(node, ast.Name) and node.id == app_name:
+                if not self._fastapi_app_use_closed(
+                    path, scope, app_name, binding, node
+                ):
+                    return False
+        return True
+
+    def _fastapi_app_use_closed(self, path, scope, app_name, binding, node):
+        if isinstance(node.ctx, (ast.Store, ast.Del)):
+            targets = (
+                binding.targets if isinstance(binding, ast.Assign) else [binding.target]
+            )
+            return node in targets
+        parent = self.parents.get(id(node))
+        if isinstance(parent, ast.Return) and parent.value is node:
+            return self._returned_app_fixture_closed(path, scope, app_name)
+        if isinstance(parent, ast.Call) and node in parent.args:
+            loop = self.parents.get(id(parent))
+            return (
+                isinstance(loop, ast.AsyncFor)
+                and loop.iter is parent
+                and isinstance(loop.target, ast.Name)
+                and self._test_client_fixture(path, scope, app_name, loop.target.id)
+            )
+        if not isinstance(parent, ast.Attribute) or parent.value is not node:
+            return False
+        invocation = self.parents.get(id(parent))
+        if not isinstance(invocation, ast.Call) or invocation.func is not parent:
+            return False
+        if parent.attr in {
+            "get",
+            "post",
+            "put",
+            "patch",
+            "delete",
+            "options",
+            "head",
+            "api_route",
+            "include_router",
+        }:
+            return True
+        return (
+            parent.attr == "url_path_for"
+            and not invocation.keywords
+            and all(
+                isinstance(arg, ast.Constant)
+                and type(arg.value) in {str, int, bool, type(None)}
+                for arg in invocation.args
+            )
+        )
+
+    def _fixture_export_closed(self, path, fixture):
+        if (
+            (path, fixture.name) in self.blocked
+            or not self._is_pytest_fixture(path, fixture)
+            or self.refs.get(("function", path, fixture.name))
+            or any(
+                origin == (path, fixture.name) or origin == (path, None)
+                for view in self.imports.values()
+                for origin in view.values()
+            )
+        ):
+            return False
+        return not any(
+            isinstance(node, ast.Attribute) and node.attr == "getfixturevalue"
+            for node in self._walk(self.trees[path])
+        )
+
+    def _returned_app_fixture_closed(self, path, fixture, app_name):
+        key = path, getattr(fixture, "name", None), app_name
+        if key in self.app_fixture_cache:
+            return self.app_fixture_cache[key]
+        self.app_fixture_cache[key] = False
+        if not isinstance(fixture, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            return False
+        returns = [node for node in self._walk(fixture) if isinstance(node, ast.Return)]
+        if (
+            not self._fixture_export_closed(path, fixture)
+            or len(returns) != 1
+            or not isinstance(returns[0].value, ast.Name)
+            or returns[0].value.id != app_name
+        ):
+            return False
+        self.app_fixture_cache[key] = self._app_fixture_consumers_closed(path, fixture)
+        return self.app_fixture_cache[key]
+
+    def _app_fixture_consumers_closed(self, path, fixture):
+        consumers = 0
+        for source, tree in self.trees.items():
+            for caller in self._walk(tree):
+                if not isinstance(caller, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    continue
+                parameters = [
+                    arg.arg
+                    for arg in (
+                        *caller.args.posonlyargs,
+                        *caller.args.args,
+                        *caller.args.kwonlyargs,
+                    )
+                    if arg.arg == fixture.name
+                ]
+                if not parameters:
+                    continue
+                origin = self._nearest_fixture(source, fixture.name, caller)
+                if origin is None:
+                    if source == path:
+                        return False
+                    continue
+                if origin != (path, fixture) or len(parameters) != 1:
+                    continue
+                if self._app_client_consumer(source, caller, parameters[0]):
+                    consumers += 1
+                elif self._app_openapi_consumer(source, caller, parameters[0]):
+                    consumers += 1
+                else:
+                    return False
+        return consumers > 0
+
+    def _parameter_used_once(self, scope, name, allowed):
+        uses = [
+            node
+            for node in self._walk(scope)
+            if isinstance(node, ast.Name) and node.id == name
+        ]
+        return (
+            len(uses) == 1
+            and uses[0] is allowed
+            and not any(name in self.audit._bound_names(stmt) for stmt in scope.body)
+        )
+
+    def _app_client_consumer(self, path, function, parameter):
+        if not self._is_pytest_fixture(path, function):
+            return False
+        loops = [
+            node
+            for node in self._walk(function)
+            if isinstance(node, ast.AsyncFor)
+            and isinstance(node.target, ast.Name)
+            and isinstance(node.iter, ast.Call)
+            and len(node.iter.args) == 1
+            and isinstance(node.iter.args[0], ast.Name)
+            and node.iter.args[0].id == parameter
+            and not node.iter.keywords
+        ]
+        return (
+            len(loops) == 1
+            and self._parameter_used_once(function, parameter, loops[0].iter.args[0])
+            and self._test_client_fixture(path, function, parameter, loops[0].target.id)
+        )
+
+    def _app_openapi_consumer(self, path, function, parameter):
+        if not self._is_pytest_fixture(path, function):
+            return False
+        returns = [node for node in function.body if isinstance(node, ast.Return)]
+        if len(returns) != 1 or not isinstance(returns[0].value, ast.Call):
+            return False
+        call = returns[0].value
+        if (
+            not isinstance(call.func, ast.Attribute)
+            or call.func.attr != "openapi"
+            or not isinstance(call.func.value, ast.Name)
+            or call.args
+            or call.keywords
+        ):
+            return False
+        return (
+            self._parameter_used_once(function, parameter, call.func.value)
+            and call.func.value.id == parameter
+            and self._openapi_fixture_consumers_closed(path, function)
+        )
+
+    def _openapi_fixture_consumers_closed(self, path, fixture):
+        if not self._fixture_export_closed(path, fixture):
+            return False
+        found = 0
+        for source, tree in self.trees.items():
+            for consumer in self._walk(tree):
+                if not isinstance(consumer, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    continue
+                parameters = [
+                    arg.arg
+                    for arg in (
+                        *consumer.args.posonlyargs,
+                        *consumer.args.args,
+                        *consumer.args.kwonlyargs,
+                    )
+                    if arg.arg == fixture.name
+                ]
+                if not parameters:
+                    continue
+                origin = self._nearest_fixture(source, fixture.name, consumer)
+                if origin is None:
+                    if source == path:
+                        return False
+                    continue
+                if origin != (path, fixture) or len(parameters) != 1:
+                    continue
+                if not self._openapi_projection_only(source, consumer, parameters[0]):
+                    return False
+                found += 1
+        return found > 0
+
+    def _openapi_projection_only(self, path, function, parameter):
+        uses = [
+            node
+            for node in self._walk(function)
+            if isinstance(node, ast.Name) and node.id == parameter
+        ]
+        if len(uses) != 1 or not isinstance(uses[0].ctx, ast.Load):
+            return False
+        outer = uses[0]
+        while True:
+            parent = self.parents.get(id(outer))
+            if not isinstance(parent, ast.Subscript) or parent.value is not outer:
+                break
+            if (
+                not isinstance(parent.slice, ast.Constant)
+                or type(parent.slice.value) is not str
+            ):
+                return False
+            outer = parent
+        assignment = self.parents.get(id(outer))
+        if (
+            not isinstance(assignment, ast.Assign)
+            or assignment.value is not outer
+            or assignment not in function.body
+            or len(assignment.targets) != 1
+            or not isinstance(assignment.targets[0], ast.Name)
+        ):
+            return False
+        route_name = assignment.targets[0].id
+        if self._unique_name_assignment(function, route_name) is not assignment:
+            return False
+        route_uses = [
+            node
+            for node in self._walk(function)
+            if isinstance(node, ast.Name)
+            and node.id == route_name
+            and isinstance(node.ctx, ast.Load)
+        ]
+        if len(route_uses) != 1:
+            return False
+        return self._openapi_response_keys_asserted(path, function, route_uses[0])
+
+    def _openapi_response_keys_asserted(self, path, function, route_use):
+        response = self.parents.get(id(route_use))
+        if (
+            not isinstance(response, ast.Subscript)
+            or response.value is not route_use
+            or not isinstance(response.slice, ast.Constant)
+            or response.slice.value != "responses"
+        ):
+            return False
+        keys = self.parents.get(id(response))
+        keys_call = self.parents.get(id(keys))
+        listed = self.parents.get(id(keys_call))
+        comparison = self.parents.get(id(listed))
+        assertion = self.parents.get(id(comparison))
+        if (
+            not isinstance(keys, ast.Attribute)
+            or keys.value is not response
+            or keys.attr != "keys"
+            or not isinstance(keys_call, ast.Call)
+            or keys_call.func is not keys
+            or keys_call.args
+            or keys_call.keywords
+            or not isinstance(listed, ast.Call)
+            or not isinstance(listed.func, ast.Name)
+            or listed.func.id != "list"
+            or listed.args != [keys_call]
+            or listed.keywords
+            or not isinstance(comparison, ast.Compare)
+            or len(comparison.ops) != 1
+            or not isinstance(comparison.ops[0], ast.Eq)
+            or len(comparison.comparators) != 1
+            or not isinstance(assertion, ast.Assert)
+            or assertion.msg is not None
+        ):
+            return False
+        expected = (
+            comparison.comparators[0] if comparison.left is listed else comparison.left
+        )
+        if (
+            (comparison.left is not listed and comparison.comparators[0] is not listed)
+            or not isinstance(expected, ast.List)
+            or any(
+                not isinstance(item, ast.Constant) or type(item.value) is not str
+                for item in expected.elts
+            )
+        ):
+            return False
+        if self.aliases[path].get("list") is not None:
+            return False
+        return not any(
+            isinstance(node, ast.Name)
+            and node.id == "list"
+            and isinstance(node.ctx, (ast.Store, ast.Del))
+            or isinstance(node, ast.arg)
+            and node.arg == "list"
+            for node in self._walk(self.trees[path])
+        )
 
     def public(self, path, node, seen=()):
         if not self._tick():
@@ -1731,7 +2470,9 @@ class _LiteralConsumers:
             and parent in self.trees[path].body
         ):
             return self._public_assignment(path, parent, seen)
-        return self._public_assertion(path, node, parent)
+        return self._primitive_assertion(path, node, parent) or self._public_assertion(
+            path, node, parent
+        )
 
     def _public_detail(self, path, call):
         from .context_efficiency import _module_import_aliases_are_closed
@@ -1750,7 +2491,319 @@ class _LiteralConsumers:
             )
         return self.provider_closure[path]
 
+    def _provider_is_unmodified(self, module, attributes):
+        key = module, tuple(sorted(attributes))
+        if key in self.provider_cache:
+            return self.provider_cache[key]
+        for path, tree in self.trees.items():
+            aliases = self.aliases[path]
+            for name, origin in aliases.items():
+                if (origin == module or origin.startswith(module + ".")) and (
+                    path,
+                    name,
+                ) in self.blocked:
+                    self.provider_cache[key] = False
+                    return False
+            for node in self._walk(tree):
+                if (
+                    isinstance(node, ast.Attribute)
+                    and node.attr in attributes
+                    and isinstance(node.ctx, (ast.Store, ast.Del))
+                    and self.audit._resolved_ast_name(node.value, aliases)
+                    in {module, *(module + "." + item for item in attributes)}
+                ):
+                    self.provider_cache[key] = False
+                    return False
+        self.provider_cache[key] = True
+        return True
+
+    def _is_pytest_fixture(self, path, function):
+        if len(function.decorator_list) != 1:
+            return False
+        decorator = function.decorator_list[0]
+        if isinstance(decorator, ast.Call):
+            if decorator.args or decorator.keywords:
+                return False
+            decorator = decorator.func
+        provider = self.audit._resolved_ast_name(decorator, self.aliases[path])
+        if provider not in {"pytest.fixture", "pytest_asyncio.fixture"}:
+            return False
+        return self._provider_is_unmodified(provider.split(".")[0], {"fixture"})
+
+    def _nearest_fixture(self, path, name, scope=None):
+        def alias_override(body):
+            return any(
+                isinstance(decorator, ast.Call)
+                and any(
+                    keyword.arg == "name"
+                    and isinstance(keyword.value, ast.Constant)
+                    and keyword.value.value == name
+                    for keyword in decorator.keywords
+                )
+                for statement in body
+                if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef))
+                for decorator in statement.decorator_list
+            )
+
+        owner = self.parents.get(id(scope))
+        if isinstance(owner, ast.ClassDef):
+            if owner.bases or alias_override(owner.body):
+                return None
+            for statement in owner.body:
+                if name in self.audit._bound_names(statement):
+                    return None
+        candidates = [
+            path,
+            *(
+                parent / "conftest.py"
+                for parent in path.parents
+                if parent == self.root or parent.is_relative_to(self.root)
+            ),
+        ]
+        for candidate in dict.fromkeys(candidates):
+            tree = self.trees.get(candidate)
+            if tree is None:
+                continue
+            if alias_override(tree.body):
+                return None
+            bindings = [
+                statement
+                for statement in tree.body
+                if name in self.audit._bound_names(statement)
+            ]
+            if bindings:
+                return (
+                    (candidate, bindings[0])
+                    if (
+                        len(bindings) == 1
+                        and isinstance(
+                            bindings[0], (ast.FunctionDef, ast.AsyncFunctionDef)
+                        )
+                    )
+                    else None
+                )
+        return None
+
+    def _test_client_fixture(self, test_path, fixture, app_name, yielded_name):
+        key = test_path, fixture.name, app_name, yielded_name
+        if key in self.fixture_cache:
+            return self.fixture_cache[key]
+        if not self._is_pytest_fixture(test_path, fixture):
+            self.fixture_cache[key] = False
+            return False
+        loops = [
+            node
+            for node in self._walk(fixture)
+            if isinstance(node, ast.AsyncFor)
+            and isinstance(node.target, ast.Name)
+            and node.target.id == yielded_name
+            and isinstance(node.iter, ast.Call)
+            and isinstance(node.iter.func, ast.Name)
+            and len(node.iter.args) == 1
+            and isinstance(node.iter.args[0], ast.Name)
+            and node.iter.args[0].id == app_name
+            and not node.iter.keywords
+        ]
+        if len(loops) != 1:
+            self.fixture_cache[key] = False
+            return False
+        loop = loops[0]
+        helper_name = loop.iter.func.id
+        if any(
+            helper_name in self.audit._bound_names(statement)
+            for statement in fixture.body
+        ):
+            self.fixture_cache[key] = False
+            return False
+        if (
+            len(loop.body) != 1
+            or loop.orelse
+            or not isinstance(loop.body[0], ast.Expr)
+            or not isinstance(loop.body[0].value, ast.Yield)
+            or sum(
+                isinstance(use, ast.Name) and use.id == yielded_name
+                for use in self._walk(fixture)
+            )
+            != 2
+            or any(
+                isinstance(use, ast.Name)
+                and use.id == helper_name
+                and isinstance(use.ctx, ast.Load)
+                and use is not loop.iter.func
+                for use in self._walk(fixture)
+            )
+        ):
+            self.fixture_cache[key] = False
+            return False
+        if not any(arg.arg == loop.iter.func.id for arg in fixture.args.args):
+            self.fixture_cache[key] = False
+            return False
+        yields = [node for node in self._walk(loop) if isinstance(node, ast.Yield)]
+        if (
+            len(yields) != 1
+            or not isinstance(yields[0].value, ast.Name)
+            or yields[0].value.id != yielded_name
+        ):
+            self.fixture_cache[key] = False
+            return False
+        origin = self._nearest_fixture(test_path, loop.iter.func.id)
+        if origin is None:
+            self.fixture_cache[key] = False
+            return False
+        provider_path, provider = origin
+        result = self._returned_httpx_client(provider_path, provider)
+        self.fixture_cache[key] = result
+        return result
+
+    def _returned_httpx_client(self, path, fixture):
+        if not self._is_pytest_fixture(path, fixture):
+            return False
+        returns = [
+            node
+            for node in fixture.body
+            if isinstance(node, ast.Return) and isinstance(node.value, ast.Name)
+        ]
+        inner = [
+            node for node in fixture.body if isinstance(node, ast.AsyncFunctionDef)
+        ]
+        if (
+            len(returns) != 1
+            or len(inner) != 1
+            or len(fixture.body) != 2
+            or returns[0].value.id != inner[0].name
+            or len(inner[0].args.args) != 1
+        ):
+            return False
+        outer = [node for node in inner[0].body if isinstance(node, ast.AsyncWith)]
+        if len(outer) != 1 or len(inner[0].body) != 1 or len(outer[0].items) != 1:
+            return False
+        manager = outer[0].items[0].context_expr
+        if (
+            not isinstance(manager, ast.Call)
+            or self.audit._resolved_ast_name(manager.func, self.aliases[path])
+            != "asgi_lifespan.LifespanManager"
+            or len(outer[0].body) != 1
+            or not isinstance(outer[0].body[0], ast.AsyncWith)
+        ):
+            return False
+        client_with = outer[0].body[0]
+        if len(client_with.items) != 1:
+            return False
+        item = client_with.items[0]
+        client, call = item.optional_vars, item.context_expr
+        if (
+            not isinstance(client, ast.Name)
+            or not isinstance(call, ast.Call)
+            or call.args
+            or len(call.keywords) != 2
+            or {keyword.arg for keyword in call.keywords} != {"transport", "base_url"}
+            or self.audit._resolved_ast_name(call.func, self.aliases[path])
+            != "httpx.AsyncClient"
+            or len(client_with.body) != 1
+            or not isinstance(client_with.body[0], ast.Expr)
+            or not isinstance(client_with.body[0].value, ast.Yield)
+            or not isinstance(client_with.body[0].value.value, ast.Name)
+            or client_with.body[0].value.value.id != client.id
+        ):
+            return False
+        transport = [kw.value for kw in call.keywords if kw.arg == "transport"]
+        if len(transport) != 1 or not isinstance(transport[0], ast.Call):
+            return False
+        transport_call = transport[0]
+        app_name = inner[0].args.args[0].arg
+        if (
+            self.audit._resolved_ast_name(transport_call.func, self.aliases[path])
+            != "httpx.ASGITransport"
+            or not any(
+                isinstance(arg, ast.Name) and arg.id == app_name
+                for arg in transport_call.args
+            )
+            and not any(
+                kw.arg == app_name and isinstance(kw.value, ast.Name)
+                for kw in transport_call.keywords
+            )
+        ):
+            return False
+        return self._provider_is_unmodified("httpx", {"AsyncClient", "ASGITransport"})
+
     def _public_assertion(self, path, node, parent):
+        if (
+            not isinstance(node, ast.Dict)
+            or not isinstance(parent, ast.Compare)
+            or len(parent.ops) != 1
+            or not isinstance(parent.ops[0], ast.Eq)
+            or len(parent.comparators) != 1
+        ):
+            return False
+        if parent.left is node:
+            projection = parent.comparators[0]
+        elif parent.comparators[0] is node:
+            projection = parent.left
+        else:
+            return False
+        assertion = self.parents.get(id(parent))
+        function = self._containing_function(assertion)
+        if (
+            not isinstance(assertion, ast.Assert)
+            or function is None
+            or not isinstance(projection, ast.Subscript)
+            or not isinstance(projection.value, ast.Name)
+            or not isinstance(projection.slice, ast.Constant)
+            or projection.slice.value != "detail"
+        ):
+            return False
+        data_name = projection.value.id
+        data_assignment = self._unique_name_assignment(function, data_name)
+        if (
+            not isinstance(data_assignment, ast.Assign)
+            or data_assignment not in function.body
+        ):
+            return False
+        cast_call = data_assignment.value
+        if (
+            not isinstance(cast_call, ast.Call)
+            or not isinstance(cast_call.func, (ast.Name, ast.Attribute))
+            or self.audit._resolved_ast_name(cast_call.func, self.aliases[path])
+            != "typing.cast"
+            or len(cast_call.args) != 2
+            or cast_call.keywords
+        ):
+            return False
+        response_call = cast_call.args[1]
+        if (
+            not isinstance(response_call, ast.Call)
+            or not isinstance(response_call.func, ast.Attribute)
+            or response_call.func.attr != "json"
+            or response_call.args
+            or response_call.keywords
+            or not isinstance(response_call.func.value, ast.Name)
+        ):
+            return False
+        response_name = response_call.func.value.id
+        response_assignment = self._unique_name_assignment(function, response_name)
+        if (
+            not isinstance(response_assignment, ast.Assign)
+            or response_assignment not in function.body
+        ):
+            return False
+        request = response_assignment.value
+        if (
+            not isinstance(request, ast.Await)
+            or not isinstance(request.value, ast.Call)
+            or not isinstance(request.value.func, ast.Attribute)
+            or request.value.func.attr not in {"get", "post"}
+            or not isinstance(request.value.func.value, ast.Name)
+        ):
+            return False
+        return (
+            self._request_client_origin(path, function, request)
+            and self._provider_is_unmodified("typing", {"cast"})
+            and self._json_assertion_values(
+                path, function, node, data_name, response_name
+            )
+        )
+
+    def _primitive_assertion(self, path, node, parent):
         if isinstance(parent, ast.Compare):
             if not all(
                 part is node
@@ -1760,10 +2813,115 @@ class _LiteralConsumers:
             ):
                 return False
             parent = self.parents.get(id(parent))
-        if isinstance(parent, ast.Assert):
-            relative = path.relative_to(self.root)
-            return "tests" in relative.parts or relative.name.startswith("test_")
-        return False
+        relative = path.relative_to(self.root)
+        return isinstance(parent, ast.Assert) and (
+            "tests" in relative.parts or relative.name.startswith("test_")
+        )
+
+    def _request_client_origin(self, path, function, request):
+        client_name = request.value.func.value.id
+        if not any(arg.arg == client_name for arg in function.args.args):
+            return False
+        if any(
+            client_name in self.audit._bound_names(statement)
+            for statement in function.body
+        ):
+            return False
+        for use in self._walk(function):
+            if (
+                isinstance(use, ast.Name)
+                and use.id == client_name
+                and isinstance(use.ctx, ast.Load)
+            ):
+                attribute = self.parents.get(id(use))
+                if (
+                    not isinstance(attribute, ast.Attribute)
+                    or self.parents.get(id(attribute)) is not request.value
+                    or request.value.func is not attribute
+                ):
+                    return False
+        client_fixture = self._nearest_fixture(path, client_name, function)
+        if client_fixture is None or client_fixture[0] != path:
+            return False
+        fixture = client_fixture[1]
+        loops = [
+            item
+            for item in self._walk(fixture)
+            if isinstance(item, ast.AsyncFor)
+            and isinstance(item.target, ast.Name)
+            and isinstance(item.iter, ast.Call)
+            and len(item.iter.args) == 1
+            and isinstance(item.iter.args[0], ast.Name)
+        ]
+        if len(loops) != 1 or not self._test_client_fixture(
+            path, fixture, loops[0].iter.args[0].id, loops[0].target.id
+        ):
+            return False
+        return True
+
+    def _containing_function(self, node):
+        while node is not None:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                return node
+            node = self.parents.get(id(node))
+        return None
+
+    def _json_assertion_values(
+        self, path, function, expected, data_name, response_name
+    ):
+        names = [
+            node
+            for node in self._walk(function)
+            if isinstance(node, ast.Name) and node.id in {data_name, response_name}
+        ]
+        data_loads = [
+            node
+            for node in names
+            if node.id == data_name and isinstance(node.ctx, ast.Load)
+        ]
+        if len(data_loads) != 1:
+            return False
+        response_loads = [
+            node
+            for node in names
+            if node.id == response_name and isinstance(node.ctx, ast.Load)
+        ]
+        if not response_loads:
+            return False
+        for use in response_loads:
+            attribute = self.parents.get(id(use))
+            if not isinstance(attribute, ast.Attribute) or attribute.value is not use:
+                return False
+            parent = self.parents.get(id(attribute))
+            if attribute.attr == "json":
+                if (
+                    not isinstance(parent, ast.Call)
+                    or parent.func is not attribute
+                    or parent.args
+                    or parent.keywords
+                ):
+                    return False
+            elif attribute.attr != "status_code" or isinstance(parent, ast.Call):
+                return False
+        return all(
+            self._json_expected_member(path, key, value)
+            for key, value in zip(expected.keys, expected.values)
+        )
+
+    def _json_expected_member(self, path, key, value):
+        if not isinstance(key, ast.Constant) or type(key.value) is not str:
+            return False
+        if isinstance(value, ast.Constant):
+            return type(value.value) in {str, int, bool, type(None)}
+        if not isinstance(value, ast.Attribute):
+            return False
+        origin = self.resolve(path, tuple(self.audit._name(value).split(".")))
+        return bool(
+            origin
+            and origin[0] == "class"
+            and len(origin[3]) == 1
+            and origin[1:3] + (origin[3][0],) in self.members
+        )
 
     def _public_assignment(self, path, parent, seen):
         targets = parent.targets if isinstance(parent, ast.Assign) else [parent.target]
@@ -1810,6 +2968,11 @@ class _LiteralConsumers:
                     "line": node.lineno,
                     "source_sha256": getattr(
                         self.trees[p], "_oracle_source_sha256", None
+                    ),
+                    **(
+                        {"source_profile": self.source_profiles[p]}
+                        if p in self.source_profiles
+                        else {}
                     ),
                 }
                 for p, node, tail in relevant
