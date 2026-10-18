@@ -4961,6 +4961,105 @@ def test_import_index_reuses_resolved_sources_without_reindexing(tmp_path, monke
     assert len(calls) == indexed_calls + 1
 
 
+def test_oracle_imports_skip_resolving_missing_external_candidates(
+    tmp_path, monkeypatch
+):
+    import ast
+    import factoryline.review_audits as module
+
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    caller = tests_dir / "test_app.py"
+    caller.write_text("", encoding="utf-8")
+    helper = tests_dir / "helpers.py"
+    helper.write_text("def check():\n    assert True\n", encoding="utf-8")
+    tree = ast.parse(
+        "import external_alpha\n"
+        "import external_beta\n"
+        "from vendor_gamma import Widget\n"
+        "from missing_package.deep import Model\n"
+        "from helpers import check as local_check\n"
+    )
+    missing_components = {
+        "external_alpha",
+        "external_beta",
+        "vendor_gamma",
+        "missing_package",
+        "deep",
+        "Widget",
+        "Model",
+    }
+    original_resolve = type(tmp_path).resolve
+    missing_candidate_resolves = []
+
+    def observed_resolve(path, *args, **kwargs):
+        if path.stem in missing_components or any(
+            part in missing_components for part in path.parts
+        ):
+            missing_candidate_resolves.append(path)
+        return original_resolve(path, *args, **kwargs)
+
+    monkeypatch.setattr(type(tmp_path), "resolve", observed_resolve)
+    imports = module._oracle_imports(tmp_path, caller, tree, {helper})
+    assert imports == {"local_check": (helper.resolve(), "check")}
+    assert missing_candidate_resolves == []
+
+    stale_eligible = tmp_path / "stale_eligible.py"
+    import_from = ast.parse("from stale_eligible import check\n").body[0]
+    assert (
+        module._oracle_import_source(
+            tmp_path,
+            caller,
+            import_from,
+            "stale_eligible",
+            {stale_eligible},
+            "check",
+        )
+        is None
+    )
+
+
+def test_oracle_import_resolution_rejects_symlink_appearing_after_resolve(
+    tmp_path, monkeypatch
+):
+    import ast
+    import factoryline.review_audits as module
+
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    caller = tests_dir / "test_app.py"
+    caller.write_text("", encoding="utf-8")
+    helper = tests_dir / "helpers.py"
+    helper.write_text("def check():\n    assert True\n", encoding="utf-8")
+    tree = ast.parse("from helpers import check\n")
+    index = {helper.resolve(): helper}
+    path_type = type(helper)
+    original_resolve = path_type.resolve
+    original_is_symlink = path_type.is_symlink
+    resolved_candidate = False
+    symlink_checks = []
+
+    def observed_resolve(path, *args, **kwargs):
+        nonlocal resolved_candidate
+        resolved = original_resolve(path, *args, **kwargs)
+        if path == helper:
+            resolved_candidate = True
+        return resolved
+
+    def observed_is_symlink(path):
+        if path == helper:
+            symlink_checks.append(resolved_candidate)
+            if resolved_candidate:
+                return True
+        return original_is_symlink(path)
+
+    monkeypatch.setattr(path_type, "resolve", observed_resolve)
+    monkeypatch.setattr(path_type, "is_symlink", observed_is_symlink)
+    assert module._oracle_imports(tmp_path, caller, tree, index) == {}
+    assert resolved_candidate
+    assert symlink_checks == [True]
+
+
 def test_oracle_context_cache_reuses_only_context_and_preserves_report(tmp_path):
     import factoryline.review_audits as module
 

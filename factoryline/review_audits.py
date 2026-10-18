@@ -3575,10 +3575,13 @@ def _oracle_import_source(
             else [target / "__init__.py"]
         )
         for choice in child_choices + package_choices:
+            if not choice.is_file():
+                continue
             resolved = choice.resolve()
             if (
                 resolved.is_relative_to(root_abs)
                 and resolved in eligible_abs
+                and choice.is_file()
                 and not choice.is_symlink()
             ):
                 target_set = (
