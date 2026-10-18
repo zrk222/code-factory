@@ -4308,6 +4308,7 @@ def _hollow_test_finding(
         state="INCOMPLETE",
         evidence_state="UNKNOWN",
         candidate_rule="QUALITY_HOLLOW_TEST",
+        native_assertion_probe=integrity.native_test_probe(relative, node),
         missing_evidence="meaningful oracle and fixture/lifecycle closure",
     )
     return _protocol_annotate_finding(finding, node, oracle_context or {})

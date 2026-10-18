@@ -11111,14 +11111,18 @@ def test_bind_project_contracts_emits_edge_for_stable_local_override(tmp_path):
 
     base = tmp_path / "base.py"
     implementation = tmp_path / "impl.py"
+    base_source = (
+        "class Adapter:\n    def run(self):\n        raise NotImplementedError\n"
+    )
+    implementation_source = (
+        "from base import Adapter\n"
+        "class Concrete(Adapter):\n    def run(self):\n        return 1\n"
+    )
+    base.write_text(base_source, encoding="utf-8")
+    implementation.write_text(implementation_source, encoding="utf-8")
     snapshots = {
-        base: ast.parse(
-            "class Adapter:\n    def run(self):\n        raise NotImplementedError\n"
-        ),
-        implementation: ast.parse(
-            "from base import Adapter\n"
-            "class Concrete(Adapter):\n    def run(self):\n        return 1\n"
-        ),
+        base: ast.parse(base_source),
+        implementation: ast.parse(implementation_source),
     }
     contexts = {path: {} for path in snapshots}
     edges = []
