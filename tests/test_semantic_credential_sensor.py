@@ -179,3 +179,51 @@ def test_combined_sensor_returns_configuration_and_credential_findings():
         "SECURITY_JINJA_AUTOESCAPE_DISABLED",
         "SECURITY_LITERAL_HTTP_CREDENTIAL",
     }
+
+
+def test_provider_mutation_index_is_skipped_without_literal_candidate(monkeypatch):
+    import factoryline.provider_mutations as mutations
+
+    calls = []
+    original = mutations.finite_provider_mutation_index
+
+    def counted(*args, **kwargs):
+        calls.append(None)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(mutations, "finite_provider_mutation_index", counted)
+    findings = _scan(
+        "import requests\n"
+        "requests.get('https://host.test')\n"
+        "requests.get('https://host.test', auth=('user', dynamic_password))\n"
+        "requests.get('https://host.test', auth=('user', ''))\n"
+        "requests.get('https://host.test', auth=('user', 'placeholder'))\n"
+    )
+    assert findings == []
+    assert calls == []
+
+
+@pytest.mark.parametrize(
+    "mutation, expected",
+    [("", 1), ("requests.get = fake_get\n", 0)],
+)
+def test_provider_mutation_index_runs_once_for_literal_candidate(
+    monkeypatch, mutation, expected
+):
+    import factoryline.provider_mutations as mutations
+
+    calls = []
+    original = mutations.finite_provider_mutation_index
+
+    def counted(*args, **kwargs):
+        calls.append(None)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(mutations, "finite_provider_mutation_index", counted)
+    findings = _scan(
+        "import requests\n"
+        + mutation
+        + "requests.get('https://host.test', auth=('user', 'literal-password'))\n"
+    )
+    assert len(findings) == expected
+    assert calls == [None]

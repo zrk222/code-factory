@@ -173,6 +173,18 @@ def _provider_identity_uncertain(tree, aliases):
     )
 
 
+def _credential_candidates(tree, aliases):
+    candidates = []
+    for call in (node for node in ast.walk(tree) if isinstance(node, ast.Call)):
+        for value, consumer_role, slot in _auth_literal_nodes(call, aliases):
+            if slot == "authorization":
+                match = _AUTH_HEADER.match(value.value)
+                value = ast.Constant(match.group(1) if match else "")
+            if _literal_credential(value):
+                candidates.append((call, consumer_role, slot))
+    return candidates
+
+
 def credential_findings(tree, aliases, relative="<source>"):
     """Report only non-placeholder literals in statically bound HTTP auth slots."""
     from .review_audits import _security_finding
@@ -180,36 +192,30 @@ def credential_findings(tree, aliases, relative="<source>"):
 
     if not hasattr(tree, "_security_scope_kind"):
         bind_security_call_scopes(tree)
-    if _provider_identity_uncertain(tree, aliases):
+    candidates = _credential_candidates(tree, aliases)
+    if not candidates or _provider_identity_uncertain(tree, aliases):
         return []
     findings = []
-    for call in (node for node in ast.walk(tree) if isinstance(node, ast.Call)):
-        for value, consumer_role, slot in _auth_literal_nodes(call, aliases):
-            literal = value
-            if slot == "authorization":
-                match = _AUTH_HEADER.match(value.value)
-                literal = ast.Constant(match.group(1) if match else "")
-            if not _literal_credential(literal):
-                continue
-            findings.append(
-                _security_finding(
-                    "SECURITY_LITERAL_HTTP_CREDENTIAL",
-                    relative,
-                    call,
-                    "A non-placeholder credential literal is passed directly to an HTTP authentication sink.",
-                    "MEDIUM",
-                    source_role="credential_literal",
-                    consumer_role=consumer_role,
-                    value_role="credential",
-                    credential_slot=slot,
-                    proof_scope="local_static_wiring",
-                    deployment="unknown",
-                    credential_validity="not_established",
-                    sensor="semantic_credential_sensor",
-                    sensor_schema="factory.security.semantic_credential.v1",
-                    claim_boundary="static_not_runtime",
-                )
+    for call, consumer_role, slot in candidates:
+        findings.append(
+            _security_finding(
+                "SECURITY_LITERAL_HTTP_CREDENTIAL",
+                relative,
+                call,
+                "A non-placeholder credential literal is passed directly to an HTTP authentication sink.",
+                "MEDIUM",
+                source_role="credential_literal",
+                consumer_role=consumer_role,
+                value_role="credential",
+                credential_slot=slot,
+                proof_scope="local_static_wiring",
+                deployment="unknown",
+                credential_validity="not_established",
+                sensor="semantic_credential_sensor",
+                sensor_schema="factory.security.semantic_credential.v1",
+                claim_boundary="static_not_runtime",
             )
+        )
     return findings
 
 
