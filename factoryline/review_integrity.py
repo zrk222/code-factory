@@ -4614,7 +4614,11 @@ def _discarded_builtin_assertion_error(statement):
 
 def fixed_program_witness(relative, node, call_name):
     """Bind the literal-program model to native scan bytes and lexical identity."""
-    from .runtime_audit_integrity import fixed_literal_program_witness, closed_declaration_input_witness, finite_literal_eval_input_witness
+    from .runtime_audit_integrity import (
+        fixed_literal_program_witness,
+        closed_declaration_input_witness,
+        finite_literal_eval_input_witness,
+    )
 
     scope = getattr(node, "_security_lexical_scope", None)
     if not isinstance(scope, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -4622,13 +4626,27 @@ def fixed_program_witness(relative, node, call_name):
     module = _security_module_scope(scope)
     workspace_profile = getattr(module, "_fixed_program_workspace", {})
     context = getattr(module, "_security_source_context", None)
-    if isinstance(context, tuple) and len(context) == 2 and isinstance(workspace_profile, dict):
+    if (
+        isinstance(context, tuple)
+        and len(context) == 2
+        and isinstance(workspace_profile, dict)
+    ):
         root, sources = context
         raw = sources.get(root / relative) if isinstance(sources, dict) else None
-        if isinstance(raw, bytes) and hashlib.sha256(raw).hexdigest() == getattr(module, "_oracle_source_sha256", None):
-            if witness := (closed_declaration_input_witness(node, call_name, source_bytes=raw, source_path=relative)
-                           or finite_literal_eval_input_witness(node, call_name, source_bytes=raw, source_path=relative)):
-                witness["workspace_sources_sha256"] = workspace_profile.get("sources_sha256")
+        if isinstance(raw, bytes) and hashlib.sha256(raw).hexdigest() == getattr(
+            module, "_oracle_source_sha256", None
+        ):
+            if witness := (
+                closed_declaration_input_witness(
+                    node, call_name, source_bytes=raw, source_path=relative
+                )
+                or finite_literal_eval_input_witness(
+                    node, call_name, source_bytes=raw, source_path=relative
+                )
+            ):
+                witness["workspace_sources_sha256"] = workspace_profile.get(
+                    "sources_sha256"
+                )
                 return witness
     if (
         not isinstance(workspace_profile, dict)
@@ -4761,7 +4779,11 @@ def partition_proven_primitive_observations(core):
     touched = bool(prior)
     for finding in [*core["findings"], *prior]:
         facts = finding.get("facts", {})
-        if facts.get("disposition") not in {"PROVEN_FIXED_LITERAL_PROGRAM", "PROVEN_CLOSED_DECLARATION_INPUT", "PROVEN_FINITE_LITERAL_EVAL_INPUT"}:
+        if facts.get("disposition") not in {
+            "PROVEN_FIXED_LITERAL_PROGRAM",
+            "PROVEN_CLOSED_DECLARATION_INPUT",
+            "PROVEN_FINITE_LITERAL_EVAL_INPUT",
+        }:
             retained.append(finding)
             continue
         touched = True
@@ -4816,10 +4838,15 @@ def _fixed_primitive_binding(finding, sources, bindings):
         and facts.get("source_path") == finding.get("path")
         and sum(row["path"] == finding.get("path") for row in sources) == 1
         and facts["source_sha256"] == bindings.get(finding.get("path"))
-        and (facts.get("schema") == "factory.fixed-literal-program.v1"
-             if facts.get("disposition") == "PROVEN_FIXED_LITERAL_PROGRAM"
-             else (_finite_eval_binding(finding) if facts.get("disposition") == "PROVEN_FINITE_LITERAL_EVAL_INPUT"
-                   else _closed_declaration_binding(finding)))
+        and (
+            facts.get("schema") == "factory.fixed-literal-program.v1"
+            if facts.get("disposition") == "PROVEN_FIXED_LITERAL_PROGRAM"
+            else (
+                _finite_eval_binding(finding)
+                if facts.get("disposition") == "PROVEN_FINITE_LITERAL_EVAL_INPUT"
+                else _closed_declaration_binding(finding)
+            )
+        )
         and facts.get("workspace_sources_sha256") == workspace_digest
     )
 
@@ -4888,10 +4915,11 @@ def _closed_declaration_binding(finding):
         and _valid_source_span(span)
         and span[:2] == [finding.get("line"), finding.get("column")]
         and _valid_source_span(facts.get("literal_span"))
-        and tuple(span[:2]) <= tuple(facts["literal_span"][:2])
-        <= tuple(facts["literal_span"][2:]) <= tuple(span[2:])
+        and tuple(span[:2])
+        <= tuple(facts["literal_span"][:2])
+        <= tuple(facts["literal_span"][2:])
+        <= tuple(span[2:])
     )
-
 
 
 def _valid_source_span(span):
@@ -4915,14 +4943,18 @@ def _finite_eval_binding(finding):
         and facts.get("input_effect") == "CLOSED_LITERAL_TYPE_EXPRESSIONS"
         and facts.get("runtime_assurance") == "INCOMPLETE"
         and facts.get("target_execution") == "not_performed"
-        and type(facts.get("domain_size")) is int and 1 <= facts["domain_size"] <= 64
+        and type(facts.get("domain_size")) is int
+        and 1 <= facts["domain_size"] <= 64
         and isinstance(facts.get("program_sha256"), str)
         and re.fullmatch(r"[0-9a-f]{64}", facts["program_sha256"]) is not None
         and _valid_source_span(facts.get("call_span"))
         and facts["call_span"][:2] == [finding.get("line"), finding.get("column")]
         and _valid_source_span(facts.get("domain_span"))
         and _valid_source_span(facts.get("comprehension_span"))
-        and tuple(facts["comprehension_span"][:2]) <= tuple(facts["call_span"][:2])
-        <= tuple(facts["call_span"][2:]) <= tuple(facts["domain_span"][:2])
-        <= tuple(facts["domain_span"][2:]) <= tuple(facts["comprehension_span"][2:])
+        and tuple(facts["comprehension_span"][:2])
+        <= tuple(facts["call_span"][:2])
+        <= tuple(facts["call_span"][2:])
+        <= tuple(facts["domain_span"][:2])
+        <= tuple(facts["domain_span"][2:])
+        <= tuple(facts["comprehension_span"][2:])
     )

@@ -1414,7 +1414,8 @@ def _dynamic_execution_finding(
             relative,
             node,
             "Closed program input; runtime assurance remains incomplete."
-            if fixed.get("disposition") in {"PROVEN_CLOSED_DECLARATION_INPUT", "PROVEN_FINITE_LITERAL_EVAL_INPUT"}
+            if fixed.get("disposition")
+            in {"PROVEN_CLOSED_DECLARATION_INPUT", "PROVEN_FINITE_LITERAL_EVAL_INPUT"}
             else "Fixed literal-only program; the execution primitive is retained as an observation, not a demonstrated defect.",
             "INFO",
             call=call,
