@@ -4614,13 +4614,21 @@ def _discarded_builtin_assertion_error(statement):
 
 def fixed_program_witness(relative, node, call_name):
     """Bind the literal-program model to native scan bytes and lexical identity."""
-    from .runtime_audit_integrity import fixed_literal_program_witness
+    from .runtime_audit_integrity import fixed_literal_program_witness, closed_declaration_input_witness
 
     scope = getattr(node, "_security_lexical_scope", None)
     if not isinstance(scope, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef)):
         return {}
     module = _security_module_scope(scope)
     workspace_profile = getattr(module, "_fixed_program_workspace", {})
+    context = getattr(module, "_security_source_context", None)
+    if isinstance(context, tuple) and len(context) == 2 and isinstance(workspace_profile, dict):
+        root, sources = context
+        raw = sources.get(root / relative) if isinstance(sources, dict) else None
+        if isinstance(raw, bytes) and hashlib.sha256(raw).hexdigest() == getattr(module, "_oracle_source_sha256", None):
+            if witness := closed_declaration_input_witness(node, call_name, source_bytes=raw, source_path=relative):
+                witness["workspace_sources_sha256"] = workspace_profile.get("sources_sha256")
+                return witness
     if (
         not isinstance(workspace_profile, dict)
         or workspace_profile.get("complete") is not True
@@ -4680,6 +4688,12 @@ def fixed_program_workspace_helpers():
         runtime.workspace_builtin_profile,
         runtime._fixed_literal_program_kinds,
         runtime._fixed_literal_value,
+        runtime._closed_declaration_program,
+        runtime._closed_declaration_namespace,
+        runtime._closed_declaration_binding,
+        runtime.closed_declaration_input_witness,
+        _closed_declaration_binding,
+        _valid_source_span,
         *runtime.workspace_builtin_helpers(),
     )
 
@@ -4741,7 +4755,7 @@ def partition_proven_primitive_observations(core):
     touched = bool(prior)
     for finding in [*core["findings"], *prior]:
         facts = finding.get("facts", {})
-        if facts.get("disposition") != "PROVEN_FIXED_LITERAL_PROGRAM":
+        if facts.get("disposition") not in {"PROVEN_FIXED_LITERAL_PROGRAM", "PROVEN_CLOSED_DECLARATION_INPUT"}:
             retained.append(finding)
             continue
         touched = True
@@ -4796,7 +4810,9 @@ def _fixed_primitive_binding(finding, sources, bindings):
         and facts.get("source_path") == finding.get("path")
         and sum(row["path"] == finding.get("path") for row in sources) == 1
         and facts["source_sha256"] == bindings.get(finding.get("path"))
-        and facts.get("schema") == "factory.fixed-literal-program.v1"
+        and (facts.get("schema") == "factory.fixed-literal-program.v1"
+             if facts.get("disposition") == "PROVEN_FIXED_LITERAL_PROGRAM"
+             else _closed_declaration_binding(finding))
         and facts.get("workspace_sources_sha256") == workspace_digest
     )
 
@@ -4846,4 +4862,37 @@ def credential_consumer_helpers():
         *native_execution_helpers(),
         _oracle_bound_names,
         *(value for value in vars(_LiteralConsumers).values() if callable(value)),
+    )
+
+
+def _closed_declaration_binding(finding):
+    facts = finding.get("facts", {})
+    span = facts.get("call_span")
+    return (
+        facts.get("disposition") == "PROVEN_CLOSED_DECLARATION_INPUT"
+        and facts.get("schema") == "factory.closed-declaration-input.v1"
+        and facts.get("grammar_profile") == "python3.12-type-alias-subset-v1"
+        and facts.get("hypothesis") == "ARGUMENT_CODE_INJECTION"
+        and facts.get("input_effect") == "CLOSED_INERT_DECLARATION"
+        and facts.get("runtime_assurance") == "INCOMPLETE"
+        and facts.get("target_execution") == "not_performed"
+        and isinstance(facts.get("program_sha256"), str)
+        and re.fullmatch(r"[0-9a-f]{64}", facts["program_sha256"]) is not None
+        and _valid_source_span(span)
+        and span[:2] == [finding.get("line"), finding.get("column")]
+        and _valid_source_span(facts.get("literal_span"))
+        and tuple(span[:2]) <= tuple(facts["literal_span"][:2])
+        <= tuple(facts["literal_span"][2:]) <= tuple(span[2:])
+    )
+
+
+
+def _valid_source_span(span):
+    return (
+        isinstance(span, list)
+        and len(span) == 4
+        and all(type(n) is int for n in span)
+        and span[0] > 0
+        and min(span[1], span[3]) >= 0
+        and tuple(span[:2]) <= tuple(span[2:])
     )

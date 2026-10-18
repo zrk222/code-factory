@@ -2,11 +2,131 @@
 
 import ast
 import hashlib
+import re
 from collections import defaultdict
 from typing import Any
 
 from .runtime_audit_common import RuntimeAuditError
 from .runtime_audit_contract import LANES
+
+
+def _closed_declaration_program(node, call_name):
+    if (
+        call_name != "exec" or not isinstance(node, ast.Call)
+        or not isinstance(node.func, ast.Name) or node.func.id != "exec"
+        or len(node.args) != 3 or node.keywords
+        or not isinstance(node.args[0], ast.Constant)
+        or type(node.args[0].value) is not str
+        or not isinstance(node.args[1], ast.Name)
+        or not isinstance(node.args[2], ast.Constant) or node.args[2].value is not None
+    ):
+        return None
+    import keyword
+
+    match = re.fullmatch(r"type ([A-Za-z][A-Za-z0-9_]*) = int", node.args[0].value)
+    if not match or keyword.iskeyword(match[1]) or match[1] in {"type", "int"}:
+        return None
+    return match[1]
+
+
+def _closed_declaration_namespace(tree, call, alias):
+    scope = next((fn for fn in ast.walk(tree)
+                  if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef))
+                  and any(isinstance(s, ast.Expr) and s.value is call for s in fn.body)), None)
+    if scope is None:
+        return False
+    name = call.args[1].id
+    assignments = [s for s in scope.body if isinstance(s, (ast.Assign, ast.AnnAssign))
+                   and isinstance(s.value, ast.Dict) and not s.value.keys
+                   and ((isinstance(s, ast.Assign) and len(s.targets) == 1
+                         and isinstance(s.targets[0], ast.Name) and s.targets[0].id == name)
+                        or (isinstance(s, ast.AnnAssign) and isinstance(s.target, ast.Name)
+                            and s.target.id == name))]
+    if len(assignments) != 1 or assignments[0].lineno >= call.lineno:
+        return False
+    target = assignments[0].targets[0] if isinstance(assignments[0], ast.Assign) else assignments[0].target
+    if any(name in _oracle_bound_names(s) for s in scope.body if s is not assignments[0]):
+        return False
+    parents = {child: parent for parent in ast.walk(scope) for child in ast.iter_child_nodes(parent)}
+    for item in ast.walk(scope):
+        if isinstance(item, ast.arg) and item.arg == name:
+            return False
+        if isinstance(item, (ast.Global, ast.Nonlocal)) and name in item.names:
+            return False
+        if not isinstance(item, ast.Name) or item.id != name or item is target or item is call.args[1]:
+            continue
+        parent = parents.get(item)
+        if not (item.lineno > call.lineno and isinstance(parent, ast.Subscript)
+                and parent.value is item and isinstance(parent.ctx, ast.Load)
+                and isinstance(parent.slice, ast.Constant) and parent.slice.value == alias):
+            return False
+    return True
+
+
+def _closed_declaration_binding(tree, call):
+    """Reject explicit source rebinding; this does not attest external runtime state."""
+    from .review_audits import _binding_name
+
+    for item in ast.walk(tree):
+        if item is call.func:
+            continue
+        if _binding_name(item) in {"exec", "int"}:
+            return False
+        if isinstance(item, (ast.Name, ast.arg)):
+            name = item.id if isinstance(item, ast.Name) else item.arg
+            if name in {"exec", "eval", "__builtins__", "globals", "locals", "vars", "setattr", "delattr"} or name == "int" and (
+                isinstance(item, ast.arg) or isinstance(item.ctx, (ast.Store, ast.Del))
+            ):
+                return False
+        if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and item.name in {"exec", "int"}:
+            return False
+        if isinstance(item, (ast.Import, ast.ImportFrom)) and any(
+            (a.asname or a.name.split(".")[0]) in {"exec", "int"} or a.name == "*" for a in item.names
+        ):
+            return False
+        if isinstance(item, ast.ImportFrom) and item.module == "builtins" and any(
+            a.name in {"exec", "eval", "setattr", "delattr", "__dict__", "__builtins__", "globals", "locals", "vars"}
+            for a in item.names
+        ):
+            return False
+        if isinstance(item, ast.Attribute) and (item.attr in {"exec", "eval", "__dict__", "__builtins__", "__setattr__", "__delattr__", "setattr", "delattr"} or item.attr == "int" and isinstance(item.ctx, (ast.Store, ast.Del))):
+            return False
+    return True
+
+
+def closed_declaration_input_witness(node, call_name, *, source_bytes, source_path):
+    """Recognize fixed Python 3.12 alias input without compiling or executing it."""
+    if not isinstance(source_bytes, bytes) or not isinstance(source_path, str) or not source_path:
+        return {}
+    alias = _closed_declaration_program(node, call_name)
+    if alias is None:
+        return {}
+    try:
+        tree = ast.parse(source_bytes)
+    except (SyntaxError, ValueError, TypeError, RecursionError):
+        return {}
+    def span(n):
+        return [getattr(n, k, None) for k in ("lineno", "col_offset", "end_lineno", "end_col_offset")]
+    matches = [n for n in ast.walk(tree) if isinstance(n, ast.Call) and span(n) == span(node)]
+    if len(matches) != 1 or ast.dump(matches[0]) != ast.dump(node):
+        return {}
+    call = matches[0]
+    if not _closed_declaration_binding(tree, call) or not _closed_declaration_namespace(tree, call, alias):
+        return {}
+    return {
+        "schema": "factory.closed-declaration-input.v1",
+        "disposition": "PROVEN_CLOSED_DECLARATION_INPUT",
+        "source_path": source_path,
+        "source_sha256": hashlib.sha256(source_bytes).hexdigest(),
+        "call_span": span(call), "literal_span": span(call.args[0]),
+        "program_sha256": hashlib.sha256(call.args[0].value.encode()).hexdigest(),
+        "grammar_profile": "python3.12-type-alias-subset-v1",
+        "hypothesis": "ARGUMENT_CODE_INJECTION",
+        "input_effect": "CLOSED_INERT_DECLARATION",
+        "runtime_assurance": "INCOMPLETE",
+        "target_execution": "not_performed",
+    }
+
 
 
 def _fixed_literal_value(node):

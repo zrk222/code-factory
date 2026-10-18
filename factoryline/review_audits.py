@@ -1413,7 +1413,9 @@ def _dynamic_execution_finding(
             "SECURITY_DYNAMIC_EXECUTION",
             relative,
             node,
-            "Fixed literal-only program; the execution primitive is retained as an observation, not a demonstrated defect.",
+            "Closed declaration input; runtime assurance remains incomplete."
+            if fixed.get("disposition") == "PROVEN_CLOSED_DECLARATION_INPUT"
+            else "Fixed literal-only program; the execution primitive is retained as an observation, not a demonstrated defect.",
             "INFO",
             call=call,
             **fixed,
