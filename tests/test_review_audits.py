@@ -12122,6 +12122,9 @@ def test_credential_consumer_closure_rejects_namespace_and_provider_escapes(
         **changes,
     }
     raw = {tmp_path / name: source.encode() for name, source in sources.items()}
+    for path, data in raw.items():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
     inventory = {path: hashlib.sha256(data).hexdigest() for path, data in raw.items()}
     trees = {path: ast.parse(data) for path, data in raw.items()}
     for path, tree in trees.items():
@@ -12182,6 +12185,9 @@ def test_credential_consumer_comparisons_and_returned_metadata(
         )
         sources["test_consumer.py"] = "from api import build_router\n" + consumer + "\n"
     raw = {tmp_path / name: source.encode() for name, source in sources.items()}
+    for path, data in raw.items():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
     inventory = {path: hashlib.sha256(data).hexdigest() for path, data in raw.items()}
     trees = {path: ast.parse(data) for path, data in raw.items()}
     for path, tree in trees.items():
