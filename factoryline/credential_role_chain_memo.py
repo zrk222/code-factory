@@ -26,6 +26,25 @@ class ClassChainMemo:
         self.names = audit._name
         self.entries = {}
         self._analysis_batch = None
+        self.getter_role_checks = {}
+
+    def getter_role(self, node, path, audit, derive):
+        """Memoize candidate-independent consumer checks within this derivation."""
+        key = (
+            path,
+            id(node),
+            id(self.index.snapshots.get(path)),
+            self.index.inventory.get(path),
+            derive,
+            audit._module_security_aliases,
+        )
+        if audit is not self.audit:
+            return derive(node, self.index, path, audit) is not None
+        if key not in self.getter_role_checks:
+            self.getter_role_checks[key] = (
+                derive(node, self.index, path, audit) is not None
+            )
+        return self.getter_role_checks[key]
 
     @contextmanager
     def analysis_batch(self):

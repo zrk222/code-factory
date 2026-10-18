@@ -93,6 +93,25 @@ def test_failed_batch_never_reports_acceptance(tmp_path):
     assert not state.accepted and memo._analysis_batch is None
 
 
+def test_candidate_independent_consumer_check_is_reused(tmp_path):
+    path, memo = _memo(tmp_path)
+    memo.audit._module_security_aliases = lambda tree: {}
+    node, calls = memo.index.snapshots[path].body[0], []
+
+    def derive(*args):
+        calls.append(args)
+        return None
+
+    for _ in range(20):
+        assert memo.getter_role(node, path, memo.audit, derive) is False
+    assert len(calls) == 1
+    memo.audit._module_security_aliases = lambda tree: {}
+    assert memo.getter_role(node, path, memo.audit, derive) is False
+    assert len(calls) == 2
+    memo.index.snapshots[path].body.append(ast.Pass())
+    assert memo.valid() is False
+
+
 def test_actual_scanner_discards_mutated_batch(tmp_path, monkeypatch):
     from factoryline import credential_endpoint_admission as admission
     from factoryline import credential_role_paths as paths

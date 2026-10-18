@@ -2,6 +2,8 @@
 
 import ast
 
+from .credential_role_method_use_getter_reflective import _unknown
+
 from .credential_role_method_use_callers import parameter_linked
 from .credential_role_method_use_common import coordinates, span_key
 from .credential_role_method_use_getters import (
@@ -43,8 +45,6 @@ def audit_getter_uses(
             fields,
             witnessed,
             owners,
-            traces,
-            nodes,
             index,
             context,
             related_owners,
@@ -83,8 +83,6 @@ def _audit_snapshot(
     fields,
     witnessed,
     owners,
-    traces,
-    nodes,
     index,
     context,
     related,
@@ -142,6 +140,9 @@ def _audit_snapshot(
 def _consumer_role(node, index, path, audit):
     from .credential_role_getter_consumers import getter_consumer_role
 
+    memo = getattr(index, "class_chain_memo", None)
+    if memo is not None:
+        return memo.getter_role(node, path, audit, getter_consumer_role)
     return getter_consumer_role(node, index, path, audit) is not None
 
 
@@ -243,12 +244,3 @@ def _witnessed_call(parent, node, relative, witnessed):
         and parent.func is node
         and (relative, coordinates(parent)) in witnessed
     )
-
-
-def _unknown(reason, relative, node):
-    return {
-        "reason": reason,
-        "path": relative,
-        "line": node.lineno,
-        "column": node.col_offset,
-    }
