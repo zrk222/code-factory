@@ -2728,7 +2728,7 @@ class _LiteralConsumers:
 
     def _public_assertion(self, path, node, parent):
         if (
-            not isinstance(node, ast.Dict)
+            not isinstance(node, (ast.Dict, ast.Attribute))
             or not isinstance(parent, ast.Compare)
             or len(parent.ops) != 1
             or not isinstance(parent.ops[0], ast.Eq)
@@ -2903,6 +2903,8 @@ class _LiteralConsumers:
                     return False
             elif attribute.attr != "status_code" or isinstance(parent, ast.Call):
                 return False
+        if isinstance(expected, ast.Attribute):
+            return self._json_expected_member(path, ast.Constant("detail"), expected)
         return all(
             self._json_expected_member(path, key, value)
             for key, value in zip(expected.keys, expected.values)
@@ -2916,10 +2918,15 @@ class _LiteralConsumers:
         if not isinstance(value, ast.Attribute):
             return False
         origin = self.resolve(path, tuple(self.audit._name(value).split(".")))
-        return bool(
-            origin
-            and origin[0] == "class"
-            and len(origin[3]) == 1
+        if not origin or origin[0] != "class" or len(origin[3]) != 1:
+            return False
+        owner = self.objects[origin[1:3]]
+        bound_names = self.audit._bound_names
+        body_names = set().union(*(bound_names(statement) for statement in owner.body))
+        refs = self.refs.get(origin[:3], [])
+        return (
+            not any(name[:2] == name[-2:] == "__" for name in body_names)
+            and not any(t and t[0][:2] == t[0][-2:] == "__" for _, _, t in refs)
             and origin[1:3] + (origin[3][0],) in self.members
         )
 

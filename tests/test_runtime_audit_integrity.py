@@ -532,6 +532,84 @@ def test_public_enum_json_requires_actual_client_origin(tmp_path):
     assert (tmp_path.resolve() / "common.py", 3, "REGISTER_INVALID_PASSWORD") in result
 
 
+def test_public_enum_json_accepts_scalar_detail_comparison(tmp_path):
+    source = _JSON_TEST.replace(
+        '{"code": ErrorCode.REGISTER_INVALID_PASSWORD}',
+        "ErrorCode.REGISTER_INVALID_PASSWORD",
+    )
+    graph = _json_enum_graph(tmp_path, test_source=source)
+    assert graph.complete
+    assert (
+        tmp_path.resolve() / "common.py",
+        3,
+        "REGISTER_INVALID_PASSWORD",
+    ) in graph.witnesses()
+
+
+def test_public_enum_scalar_json_retains_signing_consumer(tmp_path):
+    source = _JSON_TEST.replace(
+        '{"code": ErrorCode.REGISTER_INVALID_PASSWORD}',
+        "ErrorCode.REGISTER_INVALID_PASSWORD",
+    )
+    enum_source = (
+        _JSON_ENUM + "\nsigned = signer(ErrorCode.REGISTER_INVALID_PASSWORD)\n"
+    )
+    graph = _json_enum_graph(tmp_path, test_source=source, enum_source=enum_source)
+    assert graph.complete
+    assert not graph.witnesses()
+
+
+def test_public_enum_scalar_json_rejects_custom_equality(tmp_path):
+    source = _JSON_TEST.replace(
+        '{"code": ErrorCode.REGISTER_INVALID_PASSWORD}',
+        "ErrorCode.REGISTER_INVALID_PASSWORD",
+    )
+    enum_source = _JSON_ENUM + "    def __eq__(self, other):\n        return True\n"
+    graph = _json_enum_graph(tmp_path, test_source=source, enum_source=enum_source)
+    assert graph.complete
+    assert not graph.witnesses()
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "    __eq__ = replacement\n",
+        "\nErrorCode.__eq__ = replacement\n",
+    ],
+)
+def test_public_enum_scalar_json_rejects_equality_binding_mutation(tmp_path, mutation):
+    source = _JSON_TEST.replace(
+        '{"code": ErrorCode.REGISTER_INVALID_PASSWORD}',
+        "ErrorCode.REGISTER_INVALID_PASSWORD",
+    )
+    graph = _json_enum_graph(
+        tmp_path, test_source=source, enum_source=_JSON_ENUM + mutation
+    )
+    assert graph.complete
+    assert not graph.witnesses()
+
+
+def test_public_enum_scalar_json_native_observation_is_source_bound(tmp_path):
+    from factoryline.review_audits import security_scan
+
+    source = _JSON_TEST.replace(
+        '{"code": ErrorCode.REGISTER_INVALID_PASSWORD}',
+        "ErrorCode.REGISTER_INVALID_PASSWORD",
+    )
+    _json_enum_graph(tmp_path, test_source=source)
+    report = security_scan(tmp_path, cache_enabled=False)
+    assert report["audit_coverage"]["complete"]
+    assert not any(
+        row["code"] == "SECURITY_HARDCODED_SECRET" for row in report["findings"]
+    )
+    observations = report.get("primitive_observations", [])
+    assert len(observations) == 1
+    assert (
+        observations[0]["facts"]["disposition"] == "PROVEN_PUBLIC_SYMBOLIC_IDENTIFIER"
+    )
+    assert observations[0]["facts"]["runtime_assurance"] == "INCOMPLETE"
+
+
 @pytest.mark.parametrize("escape", [None, "test_app", "schema"])
 def test_returned_app_tracks_keyword_only_fixture_consumers(tmp_path, escape):
     source = _JSON_TEST.replace(
