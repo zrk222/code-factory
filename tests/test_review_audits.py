@@ -2999,6 +2999,114 @@ def test_source_mock_fixture_proves_child_assertion(tmp_path, receiver):
 
 
 @pytest.mark.parametrize(
+    "preamble,spec_arguments",
+    [
+        (
+            "def decorate(cls):\n    return cls\n"
+            "@decorate\nclass LegacyTerm:\n"
+            "    def write_text(self, text):\n        pass\n",
+            "LegacyTerm",
+        ),
+        (
+            "class ExampleMeta(type):\n    pass\n"
+            "class LegacyTerm(metaclass=ExampleMeta):\n"
+            "    def write_text(self, text):\n        pass\n",
+            "LegacyTerm",
+        ),
+        (
+            "class LegacyTerm:\n"
+            "    @property\n    def write_text(self):\n        return None\n",
+            "LegacyTerm",
+        ),
+        ("from external_types import LegacyTerm\n", "LegacyTerm"),
+        (
+            "class LegacyTerm:\n"
+            "    def write_text(self, text):\n        pass\n"
+            "from external_types import *\n"
+            "from unittest.mock import create_autospec\n",
+            "LegacyTerm",
+        ),
+        (
+            "class LegacyTerm:\n"
+            "    def write_text(self, text):\n        pass\n"
+            "LegacyTerm = replacement\n",
+            "LegacyTerm",
+        ),
+        (
+            "class LegacyTerm:\n"
+            "    def write_text(self, text):\n        pass\n"
+            "LegacyTerm.write_text = replacement\n",
+            "LegacyTerm",
+        ),
+        (
+            "class LegacyTerm:\n"
+            "    def write_text(self, text):\n        pass\n"
+            "LegacyTerm.__signature__ = replacement\n",
+            "LegacyTerm",
+        ),
+        (
+            "class LegacyTerm:\n"
+            "    def write_text(self, text):\n        pass\n"
+            "Alias = LegacyTerm\nAlias.write_text = Descriptor()\n",
+            "LegacyTerm",
+        ),
+        (
+            "class LegacyTerm:\n"
+            "    def write_text(self, text):\n        pass\n"
+            "ALIAS_CONTAINER = [LegacyTerm]\n",
+            "LegacyTerm",
+        ),
+        (
+            "class LegacyTerm:\n"
+            "    def write_text(self, text):\n        pass\n"
+            "def return_spec():\n    return LegacyTerm\n",
+            "LegacyTerm",
+        ),
+        (
+            "class Descriptor:\n"
+            "    def __get__(self, instance, owner):\n"
+            "        mock = NonCallableMock()\n"
+            "        mock.assert_called_once_with = lambda *args: None\n"
+            "        return mock\n"
+            "class LegacyTerm:\n"
+            "    write_text = Descriptor()\n",
+            "LegacyTerm",
+        ),
+        (
+            "class LegacyTerm:\n    def write_text(self, text):\n        pass\n",
+            "build_spec()",
+        ),
+        (
+            "class LegacyTerm:\n    def write_text(self, text):\n        pass\n",
+            "LegacyTerm, side_effect=build_side_effect",
+        ),
+        (
+            "create_autospec = replacement\n"
+            "class LegacyTerm:\n"
+            "    def write_text(self, text):\n        pass\n",
+            "LegacyTerm",
+        ),
+    ],
+)
+def test_create_autospec_fixture_requires_source_closed_plain_class(
+    tmp_path, preamble, spec_arguments
+):
+    (tmp_path / "test_mock_fixture.py").write_text(
+        "import pytest\nfrom unittest.mock import create_autospec\n"
+        + preamble
+        + "@pytest.fixture\ndef legacy_term_mock():\n"
+        + f"    return create_autospec({spec_arguments})\n"
+        + "def test_behavior(legacy_term_mock):\n"
+        + "    perform(legacy_term_mock)\n"
+        + "    legacy_term_mock.write_text.assert_called_once_with('payload')\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["finding_counts"] == {
+        "QUALITY_UNKNOWN_TEST_ORACLE": 1
+    }
+
+
+@pytest.mark.parametrize(
     "mutation,receiver",
     [
         ("legacy_term_mock.write_text = Fake()", "legacy_term_mock.write_text"),

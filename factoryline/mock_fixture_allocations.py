@@ -12,19 +12,111 @@ _ASSERTION_METHODS = frozenset(
 )
 
 
-def direct_mock_return(fixture, aliases, audit):
+def _closed_method_signature(method):
+    if method.decorator_list:
+        return False
+    arguments = method.args
+    defaults = [
+        *arguments.defaults,
+        *(item for item in arguments.kw_defaults if item is not None),
+    ]
+    if any(not isinstance(item, ast.Constant) for item in defaults):
+        return False
+    annotated = [
+        item.annotation
+        for item in [
+            *arguments.posonlyargs,
+            *arguments.args,
+            *arguments.kwonlyargs,
+        ]
+        if item.annotation is not None
+    ]
+    if arguments.vararg and arguments.vararg.annotation is not None:
+        annotated.append(arguments.vararg.annotation)
+    if arguments.kwarg and arguments.kwarg.annotation is not None:
+        annotated.append(arguments.kwarg.annotation)
+    if method.returns is not None:
+        annotated.append(method.returns)
+    return all(isinstance(item, ast.Constant) for item in annotated)
+
+
+def _class_is_unmutated(module, spec, name):
+    for node in ast.walk(module):
+        if isinstance(node, ast.Name) and node.id == name and node is not spec:
+            return False
+    return True
+
+
+def _has_wildcard_import(module):
+    return any(
+        isinstance(node, ast.ImportFrom)
+        and any(alias.name == "*" for alias in node.names)
+        for node in ast.walk(module)
+    )
+
+
+def _source_closed_class_spec(module, fixture, spec, audit):
+    if (
+        not isinstance(spec, ast.Name)
+        or spec.id in audit._scope_parameters(fixture)
+        or any(
+            isinstance(node, ast.Name)
+            and node.id == spec.id
+            and isinstance(node.ctx, (ast.Store, ast.Del))
+            for node in ast.walk(fixture)
+        )
+    ):
+        return False
+    classes = [
+        node
+        for node in module.body
+        if isinstance(node, ast.ClassDef) and node.name == spec.id
+    ]
+    if len(classes) != 1:
+        return False
+    cls = classes[0]
+    if (
+        cls.bases
+        or cls.keywords
+        or cls.decorator_list
+        or _has_wildcard_import(module)
+        or not _class_is_unmutated(module, spec, spec.id)
+        or any(
+            statement is not cls and spec.id in audit._bound_names(statement)
+            for statement in module.body
+        )
+    ):
+        return False
+    for statement in cls.body:
+        if isinstance(statement, ast.Pass):
+            continue
+        if not isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            return False
+        if not _closed_method_signature(statement):
+            return False
+    return True
+
+
+def direct_mock_return(module, fixture, aliases, audit):
     body = fixture.body
     if len(body) != 1 or not isinstance(body[0], ast.Return):
         return False
     value = body[0].value
     local_aliases = audit._scope_security_aliases(aliases, fixture)
-    return (
-        isinstance(value, ast.Call)
-        and not value.args
-        and not value.keywords
-        and audit._normalized_call_name(value, local_aliases)
-        in audit._UNITTEST_MOCK_CONSTRUCTORS
-    )
+    if not isinstance(value, ast.Call):
+        return False
+    constructor = audit._normalized_call_name(value, local_aliases)
+    if constructor not in audit._UNITTEST_MOCK_CONSTRUCTORS:
+        return False
+    if constructor == "unittest.mock.create_autospec":
+        return (
+            isinstance(fixture, ast.FunctionDef)
+            and not audit._scope_parameters(fixture)
+            and len(value.args) == 1
+            and not value.keywords
+            and _source_closed_class_spec(module, fixture, value.args[0], audit)
+        )
+    return not value.args and not value.keywords
 
 
 def inert_assertion_methods(module, fixture, audit):
@@ -79,4 +171,12 @@ def fixture_registration(decorator, function_name, aliases, audit):
     return None, False
 
 
-CACHE_HELPERS = (direct_mock_return, inert_assertion_methods, fixture_registration)
+CACHE_HELPERS = (
+    _closed_method_signature,
+    _class_is_unmutated,
+    _has_wildcard_import,
+    _source_closed_class_spec,
+    direct_mock_return,
+    inert_assertion_methods,
+    fixture_registration,
+)

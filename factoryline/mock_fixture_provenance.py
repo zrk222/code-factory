@@ -40,7 +40,7 @@ def fixture_bindings_for_source(tree):
             "mock": bool(
                 controlled
                 and mock_provider_safe
-                and allocation.direct_mock_return(fixture, aliases, audit)
+                and allocation.direct_mock_return(tree, fixture, aliases, audit)
             ),
             "inert_methods": (
                 allocation.inert_assertion_methods(tree, fixture, audit)
