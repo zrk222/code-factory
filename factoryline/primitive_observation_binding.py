@@ -41,7 +41,7 @@ def fixed_primitive_binding(finding, sources, bindings, integrity):
 
 
 def rejected_primitive_proof(finding):
-    """Endpoint rejection preserves the exact original alert priority/message."""
+    """Rejected credential proofs preserve the original alert priority/message."""
     facts = finding.get("facts", {})
     if facts.get("disposition") == "ENDPOINT_DECLARATION_ROLE_PROVEN":
         return {
@@ -51,6 +51,16 @@ def rejected_primitive_proof(finding):
                 "disposition": "UNVERIFIED_ENDPOINT_DECLARATION",
                 "state": "INCOMPLETE",
                 "proof_rejection": "NATIVE_SOURCE_BINDING_OR_PUBLICATION_MISMATCH",
+            },
+        }
+    if finding.get("code") == "SECURITY_HARDCODED_SECRET":
+        return {
+            **finding,
+            "facts": {
+                **facts,
+                "disposition": "UNVERIFIED_CREDENTIAL_ROLE",
+                "state": "INCOMPLETE",
+                "proof_rejection": "SOURCE_BINDING_MISMATCH",
             },
         }
     return {

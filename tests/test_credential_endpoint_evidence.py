@@ -144,3 +144,70 @@ def test_incomplete_or_missing_capture_cannot_partition_endpoint(coverage):
     assert len(core["findings"]) == 1
     assert core["findings"][0]["severity"] == finding["severity"]
     assert not core["primitive_observations"]
+
+
+@pytest.mark.parametrize(
+    "disposition",
+    [
+        "PROVEN_PUBLIC_SYMBOLIC_IDENTIFIER",
+        "PROVEN_FIXED_LITERAL_PROGRAM",
+        "PROVEN_CLOSED_DECLARATION_INPUT",
+        "PROVEN_FINITE_LITERAL_EVAL_INPUT",
+        "PROVEN_FINITE_TEMPLATE_INPUT",
+    ],
+)
+@pytest.mark.parametrize("origin", ["findings", "primitive_observations"])
+def test_rejected_secret_role_proofs_preserve_original_alert(disposition, origin):
+    from factoryline.review_integrity import partition_proven_primitive_observations
+
+    original = {
+        "code": "SECURITY_HARDCODED_SECRET",
+        "path": "source.py",
+        "line": 2,
+        "column": 0,
+        "severity": "CRITICAL",
+        "message": "Credential-like material is assigned as a source literal.",
+        "facts": {
+            "schema": "factory.public-symbolic-identifier.v1",
+            "disposition": disposition,
+            "role_candidate": "symbolic_enum_identifier",
+            "name": "PASSWORD",
+            "source_sha256": "b" * 64,
+        },
+    }
+    core = {
+        "sources": [{"path": "source.py", "sha256": "a" * 64}],
+        "findings": [copy.deepcopy(original)] if origin == "findings" else [],
+        "primitive_observations": (
+            [copy.deepcopy(original)] if origin == "primitive_observations" else []
+        ),
+        "audit_coverage": {"complete": True},
+    }
+    partition_proven_primitive_observations(core)
+    retained = core["findings"][0]
+    assert retained["severity"] == original["severity"]
+    assert retained["message"] == original["message"]
+    assert retained["facts"]["name"] == "PASSWORD"
+    assert retained["facts"]["disposition"] == "UNVERIFIED_CREDENTIAL_ROLE"
+    assert retained["facts"]["state"] == "INCOMPLETE"
+    assert core["primitive_observations"] == []
+    assert core["primitive_observation_count"] == 0
+    assert core["state"] == "BLOCKED"
+    before_repeat = copy.deepcopy(core)
+    partition_proven_primitive_observations(core)
+    assert core == before_repeat
+
+
+def test_rejected_dynamic_execution_retains_existing_risk_diagnostic():
+    from factoryline.primitive_observation_binding import rejected_primitive_proof
+
+    finding = {
+        "code": "SECURITY_DYNAMIC_EXECUTION",
+        "severity": "INFO",
+        "message": "prior proof",
+        "facts": {"disposition": "PROVEN_FIXED_LITERAL_PROGRAM"},
+    }
+    rejected = rejected_primitive_proof(finding)
+    assert rejected["severity"] == "HIGH"
+    assert rejected["facts"]["disposition"] == "UNVERIFIED_FIXED_PROGRAM"
+    assert rejected["message"].startswith("The fixed-program proof is not bound")
