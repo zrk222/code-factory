@@ -1,8 +1,8 @@
 """Data contracts shared by the source-only identity effect analyzer."""
 
+import ast
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
-import ast
 
 
 @dataclass(frozen=True)
@@ -43,6 +43,7 @@ class _Value:
     items: tuple[tuple[object, "_Value"], ...] = ()
     class_roots: frozenset[str] = frozenset()
     unknown: bool = False
+    content_unknown: bool = False
     inert_kind: str | None = None
 
 
@@ -74,3 +75,35 @@ class _Effects:
 
 
 CallResolver = Callable[[ast.Call, object], ResolvedIdentityCall | None]
+
+
+def contains_tracked(value):
+    return bool(
+        value.roots
+        or value.class_roots
+        or value.unknown
+        or value.content_unknown
+        or value.items
+    )
+
+
+def tracked_roots(value):
+    roots = set(value.roots | value.class_roots)
+    for _, item in value.items:
+        roots.update(tracked_roots(item))
+    return roots
+
+
+def _has_unknown_content(value):
+    return bool(
+        value.unknown
+        or value.content_unknown
+        or any(_has_unknown_content(item) for _, item in value.items)
+    )
+
+
+def maps_each_actual_once(actuals, arguments):
+    expressions = tuple(arguments.values())
+    return all(isinstance(expr, ast.expr) for expr in expressions) and sorted(
+        map(id, expressions)
+    ) == sorted(map(id, actuals))

@@ -1,35 +1,44 @@
 """Bounded source-only identity-effect summaries for selected object roots."""
 
-from collections.abc import Mapping
 import ast
+from collections.abc import Mapping
 
+from .credential_role_identity_call_model import (
+    captured_function_valid,
+    exported_names,
+    identity_fields,
+    literal_dict_update,
+    mapped_call_values,
+    own_function_nodes,
+)
+from .credential_role_identity_content_guard import (
+    record_implicit_effects,
+    record_opaque_call,
+    strict_protocol_effects,
+    strict_read_effects,
+)
 from .credential_role_identity_effect_types import (
     CallResolver,
-    IdentityEffectSummary as IdentityEffectSummary,
-    ResolvedIdentityCall as ResolvedIdentityCall,
     SourceFieldLiteral,
     _Effects,
     _Value,
 )
+from .credential_role_identity_effect_types import (
+    IdentityEffectSummary as IdentityEffectSummary,
+)
+from .credential_role_identity_effect_types import (
+    ResolvedIdentityCall as ResolvedIdentityCall,
+)
 from .credential_role_identity_value_model import (
-    call_argument_roots,
+    assignment_target,
     call_has_unknown_value,
     call_tracked_roots,
-    assignment_target,
     contains_tracked,
     identity_value,
     nested_capture_roots,
     record_escape,
-    record_implicit_effects,
     record_write,
     tracked_roots,
-)
-from .credential_role_identity_call_model import (
-    identity_fields,
-    literal_dict_update,
-    mapped_call_values,
-    strict_read_effects,
-    strict_protocol_effects,
 )
 from .credential_role_scope_bindings import binding_occurrences
 from .credential_role_sources import SourceSnapshotIndex
@@ -47,21 +56,12 @@ def summarize_identity_effect(
     max_depth=4,
     state_budget=512,
 ):
-    """Summarize identity effects from captured ASTs; target code never runs.
+    """Summarize captured ASTs without executing target code.
 
-    ``roots`` maps parameter names to labels. Unique aliases and literal
-    container constant-index reads are followed. A trusted exact source binder
-    supplies callees and formal mappings; its binding logic remains external.
-    Heap capture is an escape; unknown field reads are UNKNOWN. Callers prove
-    branch/truth guards, absence of effectful descriptors, and whether ordinary
-    field setters can mutate class identity. Implicit Python protocol dispatch
-    on roots is UNKNOWN.
-
-    ``field_roots`` is a caller-proved, descriptor-free initial heap projection.
-    Literal fields require captured inert ASTs and caller-proved ownership.
-    This analyzer does not establish allocation or field ownership by itself.
-    strict_calls also rejects unresolved calls lacking explicit root arguments.
-    Overwriting a projected field invalidates the summary.
+    Callers prove exact bindings, branches, descriptors, allocation and current
+    field ownership; initial field projections are not admission evidence.
+    Unknown protocols, heap escapes and overwritten projections fail closed.
+    Strict mode also rejects unresolved calls without explicit root arguments.
     """
     return (
         _Analyzer(
@@ -87,10 +87,10 @@ class _Analyzer:
         if depth > self.depth_limit or (path, id(function)) in active:
             out.unknowns.add("call depth or cycle limit")
             return out
-        if not self._valid(function, path):
+        if not captured_function_valid(function, path, self.index):
             out.unknowns.add("callee is not a validated captured function")
             return out
-        nodes = self._own_nodes(function, path)
+        nodes = own_function_nodes(function, path, self.index)
         self.states += len(nodes)
         if self.states > self.budget:
             out.unknowns.add("AST state budget exceeded")
@@ -98,52 +98,50 @@ class _Analyzer:
         aliases = self._aliases(function, roots, nodes, out)
         active = active | {(path, id(function))}
         self._visit(nodes, function, path, aliases, depth, active, out)
-        out.escapes.update(nested_capture_roots(function, path, aliases, self.index))
+        out.escapes.update(
+            nested_capture_roots(
+                function,
+                path,
+                aliases,
+                self.index,
+                strict_calls=self.strict_calls,
+                effects=out,
+            )
+        )
         return out
 
     def _visit(self, nodes, function, path, aliases, depth, active, out):
+        exported = exported_names(nodes)
         for node in nodes:
             if self.strict_calls:
                 strict_read_effects(node, aliases, self.index.parents[path], out)
-                strict_protocol_effects(node, aliases, out)
-            record_implicit_effects(node, function, aliases, out)
+                strict_protocol_effects(node, aliases, self.index.parents[path], out)
+            record_implicit_effects(
+                node, function, aliases, out, strict_calls=self.strict_calls
+            )
             if isinstance(node, (ast.Assign, ast.AnnAssign, ast.NamedExpr)):
-                self._assignment(node, aliases, function, out)
+                self._assignment(node, aliases, function, out, exported)
             elif isinstance(node, (ast.AugAssign, ast.Delete)):
                 for target in (
                     node.targets if isinstance(node, ast.Delete) else [node.target]
                 ):
-                    record_write(target, _Value(), aliases, out)
+                    record_write(
+                        target,
+                        _Value(),
+                        aliases,
+                        out,
+                        strict_calls=self.strict_calls,
+                    )
             elif isinstance(node, (ast.Return, ast.Yield, ast.YieldFrom)):
                 record_escape(
-                    getattr(node, "value", None), aliases, out, "return/yield"
+                    getattr(node, "value", None),
+                    aliases,
+                    out,
+                    "return/yield",
+                    strict_calls=self.strict_calls,
                 )
             elif isinstance(node, ast.Call):
                 self._call(node, path, aliases, depth, active, out)
-
-    def _valid(self, function, path):
-        return bool(
-            isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef))
-            and self.index.validate(path)
-            and any(node is function for node in ast.walk(self.index.snapshots[path]))
-        )
-
-    def _own_nodes(self, function, path):
-        parents, scopes, result = (
-            self.index.parents[path],
-            (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef),
-            [],
-        )
-        for node in ast.walk(function):
-            parent, nested = parents.get(id(node)), False
-            while parent is not None and parent is not function:
-                if isinstance(parent, scopes):
-                    nested = True
-                    break
-                parent = parents.get(id(parent))
-            if not nested:
-                result.append(node)
-        return result
 
     def _aliases(self, function, roots, nodes, out):
         args = function.args
@@ -170,7 +168,11 @@ class _Analyzer:
                     function.body, target.id
                 ) != [target]:
                     continue
-                value = identity_value(getattr(node, "value", None), env)
+                value = identity_value(
+                    getattr(node, "value", None),
+                    env,
+                    strict_calls=self.strict_calls,
+                )
                 if (
                     contains_tracked(value) or value.inert_kind is not None
                 ) and env.get(target.id) != value:
@@ -181,20 +183,32 @@ class _Analyzer:
             out.unknowns.add("alias fixed-point limit")
         return env
 
-    def _assignment(self, node, aliases, function, out):
+    def _assignment(self, node, aliases, function, out, exported):
         if isinstance(node, ast.Assign) and len(node.targets) != 1:
-            value = identity_value(node.value, aliases)
+            value = identity_value(node.value, aliases, strict_calls=self.strict_calls)
             if contains_tracked(value):
                 out.unknowns.add("multi-target tracked assignment")
             return
         value, target = (
-            identity_value(getattr(node, "value", None), aliases),
+            identity_value(
+                getattr(node, "value", None),
+                aliases,
+                strict_calls=self.strict_calls,
+            ),
             assignment_target(node),
         )
         if isinstance(target, (ast.Tuple, ast.List)):
             if contains_tracked(value):
                 out.unknowns.add("destructuring tracked object")
         elif isinstance(target, ast.Name):
+            if target.id in exported:
+                record_escape(
+                    node.value,
+                    aliases,
+                    out,
+                    "global/nonlocal assignment",
+                    strict_calls=self.strict_calls,
+                )
             if contains_tracked(value) and binding_occurrences(
                 function.body, target.id
             ) != [target]:
@@ -205,29 +219,32 @@ class _Analyzer:
                 if value.unknown:
                     out.unknowns.add("alias receives unresolved tracked expression")
         else:
-            record_write(target, value, aliases, out)
+            record_write(target, value, aliases, out, strict_calls=self.strict_calls)
 
     def _call(self, call, path, aliases, depth, active, out):
-        if literal_dict_update(call, aliases):
+        if literal_dict_update(call, aliases, strict_calls=self.strict_calls):
             return
-        if call_has_unknown_value(call, aliases):
+        if call_has_unknown_value(call, aliases, strict_calls=self.strict_calls):
             out.unknowns.add("call receives an unresolved tracked value")
             return
-        involved = call_tracked_roots(call, aliases)
+        involved = call_tracked_roots(call, aliases, strict_calls=self.strict_calls)
         if not involved and not self.strict_calls:
             return
         resolved = self.resolver(call, path) if self.resolver else None
         if resolved is None:
-            self._opaque_call(call, aliases, involved, out)
+            record_opaque_call(
+                call, aliases, involved, out, strict_calls=self.strict_calls
+            )
             return
-        mapped = mapped_call_values(call, aliases, involved, resolved, out)
+        mapped = mapped_call_values(
+            call,
+            aliases,
+            involved,
+            resolved,
+            out,
+            strict_calls=self.strict_calls,
+        )
         if mapped is None:
             return
 
         out.merge(self.run(resolved.function, resolved.path, mapped, depth + 1, active))
-
-    def _opaque_call(self, call, aliases, involved, out):
-        if call_argument_roots(call, aliases):
-            out.escapes.update(involved)
-        else:
-            out.unknowns.add("unresolved method call on tracked object")

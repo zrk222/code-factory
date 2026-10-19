@@ -49,7 +49,7 @@ def _source_literal(root, index):
     return value if value.inert_kind is not None else None
 
 
-def literal_dict_update(call, aliases):
+def literal_dict_update(call, aliases, *, strict_calls=False):
     if not (
         isinstance(call.func, ast.Attribute)
         and call.func.attr == "update"
@@ -58,13 +58,13 @@ def literal_dict_update(call, aliases):
     ):
         return False
     receiver, values = (
-        identity_value(call.func.value, aliases),
-        identity_value(call.args[0], aliases),
+        identity_value(call.func.value, aliases, strict_calls=strict_calls),
+        identity_value(call.args[0], aliases, strict_calls=strict_calls),
     )
     return receiver.inert_kind == values.inert_kind == "dict"
 
 
-def mapped_call_values(call, aliases, involved, resolved, out):
+def mapped_call_values(call, aliases, involved, resolved, out, *, strict_calls=False):
     if any(isinstance(arg, ast.Starred) for arg in call.args) or any(
         keyword.arg is None for keyword in call.keywords
     ):
@@ -92,11 +92,12 @@ def mapped_call_values(call, aliases, involved, resolved, out):
         if formal not in params or not any(expr is actual for actual in actuals):
             out.unknowns.add("call mapping is not an exact parameter binding")
             return
-        value = identity_value(expr, aliases)
+        value = identity_value(expr, aliases, strict_calls=strict_calls)
         roots = tracked_roots(value)
         if (
             not isinstance(expr, ast.expr)
             or value.unknown
+            or (strict_calls and value.content_unknown)
             or len(roots) > 1
             or (value.items and roots)
         ):
@@ -107,10 +108,12 @@ def mapped_call_values(call, aliases, involved, resolved, out):
     if set().union(*(tracked_roots(value) for value in mapped.values())) != involved:
         out.unknowns.add("exact call mapping omits a tracked root")
         return None
-    return _with_inert_defaults(resolved.function, mapped, out)
+    return _with_inert_defaults(
+        resolved.function, mapped, out, strict_calls=strict_calls
+    )
 
 
-def _with_inert_defaults(function, mapped, out):
+def _with_inert_defaults(function, mapped, out, *, strict_calls=False):
     args = function.args
     positional = [*args.posonlyargs, *args.args]
     defaults = dict(
@@ -128,7 +131,7 @@ def _with_inert_defaults(function, mapped, out):
                 "missing formal or omitted default is not an immutable literal"
             )
             return None
-        mapped[parameter.arg] = identity_value(default, {})
+        mapped[parameter.arg] = identity_value(default, {}, strict_calls=strict_calls)
     return mapped
 
 
@@ -153,43 +156,6 @@ def _immutable_default(node, depth=0):
     )
 
 
-def strict_read_effects(node, aliases, parents, out):
-    """Unknown names/properties may hide implicit behavior despite no Call AST."""
-    if not isinstance(node, (ast.Name, ast.Attribute, ast.Subscript)) or not isinstance(
-        node.ctx, ast.Load
-    ):
-        return
-    parent = parents.get(id(node))
-    if isinstance(parent, ast.Call) and parent.func is node:
-        return  # The exact call resolver or literal intrinsic checks this edge.
-    value = identity_value(node, aliases)
-    if value.unknown or not (
-        value.roots or value.class_roots or value.inert_kind or value.items
-    ):
-        out.unknowns.add("unresolved value in strict identity summary")
-
-
-def strict_protocol_effects(node, aliases, out):
-    operands = []
-    if isinstance(node, ast.AugAssign):
-        operands = [node.target, node.value]
-    elif isinstance(node, ast.BinOp):
-        operands = [node.left, node.right]
-    elif isinstance(node, ast.UnaryOp):
-        operands = [node.operand]
-    elif isinstance(node, ast.Compare):
-        operands = [node.left, *node.comparators]
-    elif isinstance(node, ast.BoolOp):
-        operands = node.values
-    elif isinstance(node, (ast.If, ast.While, ast.IfExp, ast.Assert)):
-        test = node.test
-        operands = (
-            [test.left, *test.comparators] if isinstance(test, ast.Compare) else [test]
-        )
-    if any(identity_value(value, aliases).inert_kind is None for value in operands):
-        out.unknowns.add("unresolved protocol operand in strict identity summary")
-
-
 def summarize_identity_call(
     call, path, index, roots, *, resolve_call, field_roots=None
 ):
@@ -198,8 +164,8 @@ def summarize_identity_call(
     Allocation, ownership, descriptors, prior mutations, and binding stability
     are separate caller obligations. This is not fixture admission or execution.
     """
-    from .credential_role_identity_effects import _Analyzer
     from .credential_role_identity_effect_types import _Effects
+    from .credential_role_identity_effects import _Analyzer
 
     out = _Effects()
     if (
@@ -217,3 +183,58 @@ def summarize_identity_call(
     aliases.update(analyzer.fields)
     analyzer._call(call, path, aliases, 0, frozenset(), out)
     return out.freeze()
+
+
+def captured_function_valid(function, path, index):
+    return bool(
+        isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and index.validate(path)
+        and any(node is function for node in ast.walk(index.snapshots[path]))
+    )
+
+
+def own_function_nodes(function, path, index):
+    parents, scopes, result = (
+        index.parents[path],
+        (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef),
+        [],
+    )
+    for node in ast.walk(function):
+        parent, nested = parents.get(id(node)), False
+        while parent is not None and parent is not function:
+            if isinstance(parent, scopes):
+                nested = True
+                break
+            parent = parents.get(id(parent))
+        if not nested:
+            result.append(node)
+    return result
+
+
+def exported_names(nodes):
+    """Names stored outside the owning function's already-separated scope."""
+    return {
+        name
+        for node in nodes
+        if isinstance(node, (ast.Global, ast.Nonlocal))
+        for name in node.names
+    }
+
+
+def _definition_effects_unknown(node):
+    if isinstance(node, ast.ClassDef):
+        return True
+    args = node.args
+    params = [*args.posonlyargs, *args.args, *args.kwonlyargs]
+    params.extend(arg for arg in (args.vararg, args.kwarg) if arg)
+    return bool(
+        getattr(node, "decorator_list", [])
+        or any(not _immutable_default(value) for value in args.defaults)
+        or any(
+            value is not None and not _immutable_default(value)
+            for value in args.kw_defaults
+        )
+        or getattr(node, "returns", None)
+        or getattr(node, "type_params", ())
+        or any(arg.annotation for arg in params)
+    )
