@@ -5,6 +5,7 @@ import hashlib
 import re
 from collections import defaultdict
 from typing import Any
+from pathlib import Path
 
 from .runtime_audit_common import RuntimeAuditError
 from .runtime_audit_contract import LANES
@@ -766,6 +767,21 @@ def workspace_builtin_helpers():
         _source_eval_programs,
         source_generated_eval_input_witness,
         finite_eval_binding,
+        _test_serialization_roundtrip,
+        _local_pickle_roundtrip,
+        _plain_scope_statement_index,
+        _simple_scope_assignment,
+        _prior_pickle_dump,
+        _pickle_protocol_integer,
+        _pickle_protocol_options_closed,
+        _pickle_protocol_parameter,
+        _pickle_protocol_test_unreferenced,
+        _local_pickle_value,
+        _pickle_nested_effect,
+        _pickle_lambda_parameters,
+        _pickle_mentions,
+        _pickle_call_imported,
+        _single_local_pickle_bytes_flow,
     )
 
 
@@ -3274,4 +3290,433 @@ def finite_eval_binding(finding, valid_source_span):
         <= tuple(facts["domain_span"][:2])
         <= tuple(facts["domain_span"][2:])
         <= tuple(facts["comprehension_span"][2:])
+    )
+
+
+def _test_serialization_roundtrip(relative, node, aliases):
+    """Classify direct or same-scope local serializer bytes in test sources."""
+    from . import review_audits as audit
+
+    path = Path(relative)
+    if not (
+        "tests" in path.parts
+        or path.name.startswith("test_")
+        or path.name.endswith("_test.py")
+    ):
+        return False
+    if len(node.args) != 1 or node.keywords:
+        return False
+    loaded_name = audit._normalized_call_name(node, aliases)
+    serialized = node.args[0]
+    if isinstance(serialized, ast.Call):
+        return (
+            len(serialized.args) == 1
+            and not isinstance(serialized.args[0], ast.Starred)
+            and audit._normalized_call_name(serialized, aliases)
+            == loaded_name.removesuffix("loads") + "dumps"
+            and audit._call_name(serialized).split(".", 1)[0] in aliases
+            and not any(keyword.arg is None for keyword in serialized.keywords)
+        )
+    return _local_pickle_roundtrip(node, loaded_name, aliases, audit)
+
+
+def _local_pickle_roundtrip(node, loaded_name, aliases, audit):
+    """Prove an unaliased serialized local value and load in one test scope."""
+    if not isinstance(node.args[0], ast.Name) or not loaded_name.endswith(".loads"):
+        return False
+    scope = getattr(node, "_oracle_scope", None)
+    if not isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return False
+    load_index = _plain_scope_statement_index(node, scope)
+    if load_index is None:
+        return False
+    bytes_name = node.args[0].id
+    dump = _prior_pickle_dump(
+        scope, bytes_name, load_index, loaded_name, aliases, audit
+    )
+    if dump is None:
+        return False
+    dump_index, dump_statement, dump_call, value_name = dump
+    if not _local_pickle_value(scope, value_name, dump_index, dump_call.args[0], audit):
+        return False
+    module = getattr(scope, "_oracle_module", None)
+    return (
+        isinstance(module, ast.Module)
+        and _pickle_call_imported(module, scope, dump_call, dump_index, aliases, audit)
+        and _pickle_call_imported(module, scope, node, load_index, aliases, audit)
+        and _single_local_pickle_bytes_flow(scope, bytes_name, dump_statement, node)
+    )
+
+
+def _plain_scope_statement_index(node, scope):
+    """Return a direct function-body position outside uncertain control flow."""
+    ancestors = getattr(node, "_oracle_ancestors", ())
+    statement = next((child for parent, child in ancestors if parent is scope), None)
+    if statement not in scope.body:
+        return None
+    controls = (
+        ast.If,
+        ast.For,
+        ast.AsyncFor,
+        ast.While,
+        ast.Try,
+        ast.With,
+        ast.AsyncWith,
+        ast.Match,
+        ast.IfExp,
+        ast.BoolOp,
+        ast.ListComp,
+        ast.SetComp,
+        ast.DictComp,
+        ast.GeneratorExp,
+    )
+    if any(
+        parent is not scope and isinstance(parent, controls) for parent, _ in ancestors
+    ):
+        return None
+    return scope.body.index(statement)
+
+
+def _simple_scope_assignment(statement, name):
+    """Return a value only for one plain-name assignment in this scope."""
+    if isinstance(statement, ast.Assign):
+        if len(statement.targets) == 1 and isinstance(statement.targets[0], ast.Name):
+            return statement.value if statement.targets[0].id == name else None
+    if isinstance(statement, ast.AnnAssign) and isinstance(statement.target, ast.Name):
+        return statement.value if statement.target.id == name else None
+    return None
+
+
+def _prior_pickle_dump(scope, bytes_name, load_index, loaded_name, aliases, audit):
+    """Find one earlier direct dump assignment with a same-library loader."""
+    candidates = [
+        (index, statement, _simple_scope_assignment(statement, bytes_name))
+        for index, statement in enumerate(scope.body[:load_index])
+        if _simple_scope_assignment(statement, bytes_name) is not None
+    ]
+    if len(candidates) != 1:
+        return None
+    index, statement, call = candidates[0]
+    if (
+        not isinstance(call, ast.Call)
+        or _plain_scope_statement_index(call, scope) != index
+        or len(call.args) != 1
+        or not isinstance(call.args[0], ast.Name)
+        or not _pickle_protocol_options_closed(call, scope, index, aliases, audit)
+        or audit._normalized_call_name(call, aliases)
+        != loaded_name.removesuffix("loads") + "dumps"
+        or any(isinstance(argument, ast.Starred) for argument in call.args)
+        or any(keyword.arg is None for keyword in call.keywords)
+    ):
+        return None
+    return index, statement, call, call.args[0].id
+
+
+def _pickle_protocol_integer(value):
+    if sum(1 for _ in ast.walk(value)) > 3:
+        return False
+    try:
+        return type(ast.literal_eval(value)) is int
+    except (ValueError, TypeError, SyntaxError):
+        return False
+
+
+def _pickle_protocol_options_closed(call, scope, index, aliases, audit):
+    if not call.keywords:
+        return True
+    if len(call.keywords) != 1 or call.keywords[0].arg != "protocol":
+        return False
+    value = call.keywords[0].value
+    if _pickle_protocol_integer(value):
+        return True
+    if not isinstance(value, ast.Name):
+        return False
+    name = value.id
+    if any(
+        isinstance(item, (ast.Global, ast.Nonlocal)) and name in item.names
+        for item in ast.walk(scope)
+    ):
+        return False
+    if any(_pickle_nested_effect(statement, name, audit) for statement in scope.body):
+        return False
+    bindings = [
+        (i, statement)
+        for i, statement in enumerate(scope.body)
+        if name in audit._bound_names(statement)
+    ]
+    stores = [
+        item
+        for item in ast.walk(scope)
+        if isinstance(item, ast.Name)
+        and item.id == name
+        and isinstance(item.ctx, (ast.Store, ast.Del))
+    ]
+    if name not in audit._scope_parameters(scope):
+        if len(bindings) != 1 or len(stores) != 1:
+            return False
+        position, statement = bindings[0]
+        assigned = _simple_scope_assignment(statement, name)
+        return (
+            position < index
+            and assigned is not None
+            and _pickle_protocol_integer(assigned)
+        )
+    if bindings or stores or len(scope.decorator_list) != 1:
+        return False
+    return _pickle_protocol_parameter(scope, name, audit)
+
+
+def _pickle_protocol_parameter(scope, name, audit):
+    from .intent_quality import sanitizer_provider_unchanged
+
+    module = getattr(scope, "_oracle_module", None)
+    decorator = scope.decorator_list[0]
+    if not isinstance(module, ast.Module) or not isinstance(decorator, ast.Call):
+        return False
+    if not _pickle_protocol_test_unreferenced(scope, module):
+        return False
+    aliases = audit._module_security_aliases(module)
+    if (
+        len(decorator.args) != 2
+        or decorator.keywords
+        or not isinstance(decorator.args[0], ast.Constant)
+        or decorator.args[0].value != name
+        or not isinstance(decorator.args[1], (ast.List, ast.Tuple))
+    ):
+        return False
+    values = decorator.args[1].elts
+    return (
+        1 <= len(values) <= 64
+        and all(_pickle_protocol_integer(value) for value in values)
+        and sanitizer_provider_unchanged(
+            decorator, aliases, "pytest.mark.parametrize", lambda _scope: module
+        )
+    )
+
+
+def _pickle_protocol_test_unreferenced(scope, module):
+    """A pytest domain cannot constrain a function reused by ordinary callers."""
+    if scope not in module.body:
+        return False
+    definitions = [
+        item for item in module.body if getattr(item, "name", None) == scope.name
+    ]
+    if definitions != [scope]:
+        return False
+    blocked = {
+        scope.name,
+        "globals",
+        "locals",
+        "vars",
+        "getattr",
+        "setattr",
+        "eval",
+        "exec",
+        "__dict__",
+        "__getattribute__",
+    }
+    return not any(
+        isinstance(item, (ast.Name, ast.Attribute))
+        and blocked.intersection(
+            (getattr(item, "id", None), getattr(item, "attr", None))
+        )
+        for item in ast.walk(module)
+    )
+
+
+def _local_pickle_value(scope, name, dump_index, dump_argument, audit):
+    """Require one unaliased local generation to reach the exact dump argument."""
+    if name in audit._scope_parameters(scope):
+        return False
+    candidates = [
+        (index, statement, _simple_scope_assignment(statement, name))
+        for index, statement in enumerate(scope.body[:dump_index])
+        if _simple_scope_assignment(statement, name) is not None
+    ]
+    if len(candidates) != 1:
+        return False
+    index, initializer, value = candidates[0]
+    if index >= dump_index or not isinstance(
+        value, (ast.Call, ast.Constant, ast.Dict, ast.List, ast.Tuple, ast.Set)
+    ):
+        return False
+    parameters = audit._scope_parameters(scope)
+    if any(
+        isinstance(item, ast.Name)
+        and item.id in parameters
+        and isinstance(item.ctx, ast.Load)
+        for item in ast.walk(value)
+    ):
+        return False
+    prefix = scope.body[: dump_index + 1]
+    if any(
+        isinstance(item, (ast.Global, ast.Nonlocal)) and name in item.names
+        for statement in scope.body
+        for item in audit._body_nodes(statement)
+    ):
+        return False
+    for statement in prefix:
+        if _pickle_nested_effect(statement, name, audit):
+            return False
+        if statement is not initializer and name in audit._bound_names(statement):
+            return False
+    observations = [
+        statement.value.value
+        for statement in prefix
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == "_"
+        and isinstance(statement.value, ast.Attribute)
+        and isinstance(statement.value.value, ast.Name)
+        and statement.value.value.id == name
+        and isinstance(statement.value.value.ctx, ast.Load)
+    ]
+    nodes = [item for statement in prefix for item in audit._body_nodes(statement)]
+    stores = [
+        item
+        for item in nodes
+        if isinstance(item, ast.Name)
+        and item.id == name
+        and isinstance(item.ctx, (ast.Store, ast.Del))
+    ]
+    target = (
+        initializer.targets[0]
+        if isinstance(initializer, ast.Assign)
+        else initializer.target
+    )
+    occurrences = [
+        item for item in nodes if isinstance(item, ast.Name) and item.id == name
+    ]
+    return (
+        len(stores) == 1
+        and stores[0] is target
+        and isinstance(dump_argument, ast.Name)
+        and dump_argument.id == name
+        and isinstance(dump_argument.ctx, ast.Load)
+        and len(occurrences) == 2 + len(observations)
+        and {id(item) for item in occurrences}
+        == {id(target), id(dump_argument), *(id(item) for item in observations)}
+    )
+
+
+def _pickle_nested_effect(statement, name, audit):
+    """Reject captured values and evaluated headers without counting nested writes."""
+    if isinstance(statement, ast.ClassDef):
+        return _pickle_mentions((statement,), name)
+    if not isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return any(
+            isinstance(item, ast.Lambda)
+            and (
+                _pickle_mentions(
+                    (
+                        expression
+                        for expression in (
+                            *item.args.defaults,
+                            *item.args.kw_defaults,
+                        )
+                        if expression is not None
+                    ),
+                    name,
+                )
+                or name not in _pickle_lambda_parameters(item)
+                and _pickle_mentions((item.body,), name)
+            )
+            for item in ast.walk(statement)
+        )
+    headers = [
+        *statement.decorator_list,
+        *statement.args.defaults,
+        *(item for item in statement.args.kw_defaults if item is not None),
+        *(
+            argument.annotation
+            for argument in (
+                *statement.args.posonlyargs,
+                *statement.args.args,
+                *statement.args.kwonlyargs,
+            )
+            if argument.annotation is not None
+        ),
+    ]
+    if statement.args.vararg and statement.args.vararg.annotation:
+        headers.append(statement.args.vararg.annotation)
+    if statement.args.kwarg and statement.args.kwarg.annotation:
+        headers.append(statement.args.kwarg.annotation)
+    if statement.returns:
+        headers.append(statement.returns)
+    headers.extend(getattr(statement, "type_params", ()))
+    if _pickle_mentions(headers, name):
+        return True
+    local_names = set(audit._scope_parameters(statement))
+    for body_statement in statement.body:
+        local_names.update(audit._bound_names(body_statement))
+    if any(
+        isinstance(item, ast.Nonlocal) and name in item.names
+        for body_statement in statement.body
+        for item in audit._body_nodes(body_statement)
+    ):
+        return True
+    return name not in local_names and _pickle_mentions(statement.body, name)
+
+
+def _pickle_lambda_parameters(node):
+    arguments = node.args
+    return {
+        item.arg
+        for item in (
+            *arguments.posonlyargs,
+            *arguments.args,
+            *arguments.kwonlyargs,
+            *([arguments.vararg] if arguments.vararg else []),
+            *([arguments.kwarg] if arguments.kwarg else []),
+        )
+    }
+
+
+def _pickle_mentions(nodes, name):
+    """Check a small list of lexical expressions for one exact binding."""
+    return any(
+        isinstance(item, ast.Name) and item.id == name
+        for node in nodes
+        for item in ast.walk(node)
+    )
+
+
+def _pickle_call_imported(module, scope, call, call_index, aliases, audit):
+    """Require the exact serializer import to precede the call without rebinding."""
+    raw_name = audit._call_name(call)
+    head = raw_name.split(".", 1)[0]
+    resolved = aliases.get(head)
+    if not raw_name or not isinstance(resolved, str):
+        return False
+    module_aliases = audit._module_security_aliases(module)
+    local_bindings = [
+        (index, statement)
+        for index, statement in enumerate(scope.body)
+        if head in audit._bound_names(statement)
+    ]
+    if not local_bindings:
+        return module_aliases.get(head) == resolved
+    if len(local_bindings) != 1:
+        return False
+    index, statement = local_bindings[0]
+    if index >= call_index or not isinstance(statement, (ast.Import, ast.ImportFrom)):
+        return False
+    return audit._security_aliases([statement]).get(head) == resolved
+
+
+def _single_local_pickle_bytes_flow(scope, name, dump_statement, load_call):
+    """Reuse exact source-origin occurrence matching for local serializer bytes."""
+    from .context_efficiency import _capability_uses_match
+
+    target = (
+        dump_statement.targets[0]
+        if isinstance(dump_statement, ast.Assign)
+        else dump_statement.target
+    )
+    uses = [target, load_call.args[0]]
+    return (
+        isinstance(target.ctx, ast.Store)
+        and isinstance(uses[1].ctx, ast.Load)
+        and _capability_uses_match(list(ast.walk(scope)), name, uses)
     )

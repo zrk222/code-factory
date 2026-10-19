@@ -27,6 +27,29 @@ from typing import Any, NoReturn
 from .ops_telemetry import _measured_source_read
 from .runtime_audit_common import RuntimeAuditError, canonical_bytes
 
+from .runtime_audit_integrity import (
+    _test_serialization_roundtrip as _test_serialization_roundtrip,
+    _local_pickle_roundtrip as _local_pickle_roundtrip,
+    _plain_scope_statement_index as _plain_scope_statement_index,
+    _simple_scope_assignment as _simple_scope_assignment,
+    _prior_pickle_dump as _prior_pickle_dump,
+    _pickle_protocol_integer as _pickle_protocol_integer,
+    _pickle_protocol_options_closed as _pickle_protocol_options_closed,
+    _pickle_protocol_parameter as _pickle_protocol_parameter,
+    _local_pickle_value as _local_pickle_value,
+    _pickle_nested_effect as _pickle_nested_effect,
+    _pickle_lambda_parameters as _pickle_lambda_parameters,
+    _pickle_mentions as _pickle_mentions,
+    _pickle_call_imported as _pickle_call_imported,
+    _single_local_pickle_bytes_flow as _single_local_pickle_bytes_flow,
+)
+from .type_intent_provider_provenance import (
+    bind_provider_context as bind_provider_context,
+    provider_source_inventory as provider_source_inventory,
+    bind_provider_inventory as bind_provider_inventory,
+    provider_cache_fields as provider_cache_fields,
+)
+
 REQUEST_SCHEMA = "factory.context-efficiency-request.v1"
 PACKET_SCHEMA = "factory.context-efficiency-packet.v1"
 VERIFICATION_SCHEMA = "factory.context-efficiency-verification.v1"
@@ -43,8 +66,7 @@ def captured_import_resolver(root, snapshots, eligible, resolver):
     """Resolve each captured tree once within this producer generation only."""
     captured_trees, captured_eligible = dict(snapshots), eligible.copy()
     imports = {
-        path: resolver(root, path, tree, eligible)
-        for path, tree in snapshots.items()
+        path: resolver(root, path, tree, eligible) for path, tree in snapshots.items()
     }
 
     def resolve(request_root, source, tree, request_eligible):
@@ -56,7 +78,9 @@ def captured_import_resolver(root, snapshots, eligible, resolver):
             or source not in snapshots
             or snapshots[source] is not tree
         ):
-            raise ValueError("Import resolver request is outside its captured generation")
+            raise ValueError(
+                "Import resolver request is outside its captured generation"
+            )
         return dict(imports[source])
 
     return resolve
@@ -109,65 +133,6 @@ def _provider_package_initializers(root, sources, eligible):
             if parent == root.resolve():
                 break
     return sorted(result)
-
-
-def bind_provider_context(context, root, path, imports, snapshots, eligible, resolver):
-    """Bind transitive local imports and ancestor conftests to one test source."""
-    conftests = sorted(
-        (
-            source
-            for source in snapshots
-            if source.name == "conftest.py"
-            and source != path
-            and path.is_relative_to(source.parent)
-        ),
-        key=lambda source: (len(source.parts), source.as_posix()),
-    )
-    closure, complete = captured_local_import_closure(
-        root, imports, snapshots, eligible, resolver, conftests
-    )
-    context["provider_source_closure"] = closure
-    context["provider_source_closure_complete"] = complete
-    context["provider_owner_local_imports"] = sorted(imports)
-
-
-def provider_source_inventory(root, source_bytes, manifest, output=None):
-    """Retain the scanned Python inventory used by type-intent source proofs."""
-    retained = {path.relative_to(root).as_posix() for path in source_bytes}
-    rows = [
-        {
-            "path": row["path"],
-            "state": row["state"],
-            "retained": row["path"] in retained,
-        }
-        for row in manifest
-        if row["path"].lower().endswith(".py")
-    ]
-    if output is not None:
-        output.extend(rows)
-    return rows
-
-
-def bind_provider_inventory(contexts, inventory):
-    complete = bool(inventory) and all(
-        row.get("state") == "read" and row.get("retained") is True for row in inventory
-    )
-    for context in contexts.values():
-        context["provider_source_inventory_complete"] = complete
-    return complete
-
-
-def provider_cache_fields(context):
-    return {
-        "provider_source_closure": context.get("provider_source_closure", []),
-        "provider_owner_local_imports": context.get("provider_owner_local_imports", []),
-        "provider_source_closure_complete": bool(
-            context.get("provider_source_closure_complete", False)
-        ),
-        "provider_source_inventory_complete": bool(
-            context.get("provider_source_inventory_complete", False)
-        ),
-    }
 
 
 def oracle_context_cache_context(item, decode_structural_context):
@@ -1050,200 +1015,6 @@ def _scope_has_reflective_capability_access(nodes):
         or isinstance(node, ast.Attribute)
         and node.attr == "modules"
         for node in nodes
-    )
-
-
-def _test_serialization_roundtrip(relative, node, aliases):
-    """Classify direct or same-scope local serializer bytes in test sources."""
-    from . import review_audits as audit
-
-    path = Path(relative)
-    if not (
-        "tests" in path.parts
-        or path.name.startswith("test_")
-        or path.name.endswith("_test.py")
-    ):
-        return False
-    if len(node.args) != 1 or node.keywords:
-        return False
-    loaded_name = audit._normalized_call_name(node, aliases)
-    serialized = node.args[0]
-    if isinstance(serialized, ast.Call):
-        return (
-            len(serialized.args) == 1
-            and not isinstance(serialized.args[0], ast.Starred)
-            and audit._normalized_call_name(serialized, aliases)
-            == loaded_name.removesuffix("loads") + "dumps"
-            and audit._call_name(serialized).split(".", 1)[0] in aliases
-            and not any(keyword.arg is None for keyword in serialized.keywords)
-        )
-    return _local_pickle_roundtrip(node, loaded_name, aliases, audit)
-
-
-def _local_pickle_roundtrip(node, loaded_name, aliases, audit):
-    """Prove an unaliased serialized local value and load in one test scope."""
-    if not isinstance(node.args[0], ast.Name) or not loaded_name.endswith(".loads"):
-        return False
-    scope = getattr(node, "_oracle_scope", None)
-    if not isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)):
-        return False
-    load_index = _plain_scope_statement_index(node, scope)
-    if load_index is None:
-        return False
-    bytes_name = node.args[0].id
-    dump = _prior_pickle_dump(
-        scope, bytes_name, load_index, loaded_name, aliases, audit
-    )
-    if dump is None:
-        return False
-    dump_index, dump_statement, dump_call, value_name = dump
-    if not _local_pickle_value(scope, value_name, dump_index, audit):
-        return False
-    module = getattr(scope, "_oracle_module", None)
-    return (
-        isinstance(module, ast.Module)
-        and _pickle_call_imported(module, scope, dump_call, dump_index, aliases, audit)
-        and _pickle_call_imported(module, scope, node, load_index, aliases, audit)
-        and _single_local_pickle_bytes_flow(scope, bytes_name, dump_statement, node)
-    )
-
-
-def _plain_scope_statement_index(node, scope):
-    """Return a direct function-body position outside uncertain control flow."""
-    ancestors = getattr(node, "_oracle_ancestors", ())
-    statement = next((child for parent, child in ancestors if parent is scope), None)
-    if statement not in scope.body:
-        return None
-    controls = (
-        ast.If,
-        ast.For,
-        ast.AsyncFor,
-        ast.While,
-        ast.Try,
-        ast.With,
-        ast.AsyncWith,
-        ast.Match,
-        ast.IfExp,
-        ast.BoolOp,
-        ast.ListComp,
-        ast.SetComp,
-        ast.DictComp,
-        ast.GeneratorExp,
-    )
-    if any(
-        parent is not scope and isinstance(parent, controls) for parent, _ in ancestors
-    ):
-        return None
-    return scope.body.index(statement)
-
-
-def _simple_scope_assignment(statement, name):
-    """Return a value only for one plain-name assignment in this scope."""
-    if isinstance(statement, ast.Assign):
-        if len(statement.targets) == 1 and isinstance(statement.targets[0], ast.Name):
-            return statement.value if statement.targets[0].id == name else None
-    if isinstance(statement, ast.AnnAssign) and isinstance(statement.target, ast.Name):
-        return statement.value if statement.target.id == name else None
-    return None
-
-
-def _prior_pickle_dump(scope, bytes_name, load_index, loaded_name, aliases, audit):
-    """Find one earlier direct dump assignment with a same-library loader."""
-    candidates = [
-        (index, statement, _simple_scope_assignment(statement, bytes_name))
-        for index, statement in enumerate(scope.body[:load_index])
-        if _simple_scope_assignment(statement, bytes_name) is not None
-    ]
-    if len(candidates) != 1:
-        return None
-    index, statement, call = candidates[0]
-    if (
-        not isinstance(call, ast.Call)
-        or _plain_scope_statement_index(call, scope) != index
-        or len(call.args) != 1
-        or not isinstance(call.args[0], ast.Name)
-        or call.keywords
-        or audit._normalized_call_name(call, aliases)
-        != loaded_name.removesuffix("loads") + "dumps"
-        or any(isinstance(argument, ast.Starred) for argument in call.args)
-        or any(keyword.arg is None for keyword in call.keywords)
-    ):
-        return None
-    return index, statement, call, call.args[0].id
-
-
-def _local_pickle_value(scope, name, dump_index, audit):
-    """Require a prior local construction, not a parameter or branch write."""
-    if name in audit._scope_parameters(scope):
-        return False
-    candidates = [
-        (index, statement, _simple_scope_assignment(statement, name))
-        for index, statement in enumerate(scope.body[:dump_index])
-        if _simple_scope_assignment(statement, name) is not None
-    ]
-    if len(candidates) != 1:
-        return False
-    index, statement, value = candidates[0]
-    if index >= dump_index or not isinstance(
-        value, (ast.Call, ast.Constant, ast.Dict, ast.List, ast.Tuple, ast.Set)
-    ):
-        return False
-    parameters = audit._scope_parameters(scope)
-    if any(
-        isinstance(item, ast.Name)
-        and item.id in parameters
-        and isinstance(item.ctx, ast.Load)
-        for item in ast.walk(value)
-    ):
-        return False
-    stores = [
-        item
-        for item in ast.walk(scope)
-        if isinstance(item, ast.Name)
-        and item.id == name
-        and isinstance(item.ctx, (ast.Store, ast.Del))
-    ]
-    target = (
-        statement.targets[0] if isinstance(statement, ast.Assign) else statement.target
-    )
-    return len(stores) == 1 and stores[0] is target
-
-
-def _pickle_call_imported(module, scope, call, call_index, aliases, audit):
-    """Require the exact serializer import to precede the call without rebinding."""
-    raw_name = audit._call_name(call)
-    head = raw_name.split(".", 1)[0]
-    resolved = aliases.get(head)
-    if not raw_name or not isinstance(resolved, str):
-        return False
-    module_aliases = audit._module_security_aliases(module)
-    local_bindings = [
-        (index, statement)
-        for index, statement in enumerate(scope.body)
-        if head in audit._bound_names(statement)
-    ]
-    if not local_bindings:
-        return module_aliases.get(head) == resolved
-    if len(local_bindings) != 1:
-        return False
-    index, statement = local_bindings[0]
-    if index >= call_index or not isinstance(statement, (ast.Import, ast.ImportFrom)):
-        return False
-    return audit._security_aliases([statement]).get(head) == resolved
-
-
-def _single_local_pickle_bytes_flow(scope, name, dump_statement, load_call):
-    """Reuse exact source-origin occurrence matching for local serializer bytes."""
-    target = (
-        dump_statement.targets[0]
-        if isinstance(dump_statement, ast.Assign)
-        else dump_statement.target
-    )
-    uses = [target, load_call.args[0]]
-    return (
-        isinstance(target.ctx, ast.Store)
-        and isinstance(uses[1].ctx, ast.Load)
-        and _capability_uses_match(list(ast.walk(scope)), name, uses)
     )
 
 

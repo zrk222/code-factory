@@ -243,6 +243,67 @@ def _source_name(node, aliases):
     return ".".join((aliases[node.id], *reversed(parts)))
 
 
+def bind_provider_context(context, root, path, imports, snapshots, eligible, resolver):
+    """Bind transitive local imports and ancestor conftests to one test source."""
+    from .context_efficiency import captured_local_import_closure
+
+    conftests = sorted(
+        (
+            source
+            for source in snapshots
+            if source.name == "conftest.py"
+            and source != path
+            and path.is_relative_to(source.parent)
+        ),
+        key=lambda source: (len(source.parts), source.as_posix()),
+    )
+    closure, complete = captured_local_import_closure(
+        root, imports, snapshots, eligible, resolver, conftests
+    )
+    context["provider_source_closure"] = closure
+    context["provider_source_closure_complete"] = complete
+    context["provider_owner_local_imports"] = sorted(imports)
+
+
+def provider_source_inventory(root, source_bytes, manifest, output=None):
+    """Retain the scanned Python inventory used by type-intent source proofs."""
+    retained = {path.relative_to(root).as_posix() for path in source_bytes}
+    rows = [
+        {
+            "path": row["path"],
+            "state": row["state"],
+            "retained": row["path"] in retained,
+        }
+        for row in manifest
+        if row["path"].lower().endswith(".py")
+    ]
+    if output is not None:
+        output.extend(rows)
+    return rows
+
+
+def bind_provider_inventory(contexts, inventory):
+    complete = bool(inventory) and all(
+        row.get("state") == "read" and row.get("retained") is True for row in inventory
+    )
+    for context in contexts.values():
+        context["provider_source_inventory_complete"] = complete
+    return complete
+
+
+def provider_cache_fields(context):
+    return {
+        "provider_source_closure": context.get("provider_source_closure", []),
+        "provider_owner_local_imports": context.get("provider_owner_local_imports", []),
+        "provider_source_closure_complete": bool(
+            context.get("provider_source_closure_complete", False)
+        ),
+        "provider_source_inventory_complete": bool(
+            context.get("provider_source_inventory_complete", False)
+        ),
+    }
+
+
 CACHE_HELPERS = tuple(
     helper
     for helper in globals().values()

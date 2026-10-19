@@ -3292,3 +3292,358 @@ def test_protocol_context_identity_return_tracks_actual_positional_parameter(
         tmp_path, "import pkg\ndef test_operation():\n    pkg.format('data')\n", product
     )["summaries"]
     assert any(row["status"] == "WEAK_PROTOCOL" for row in rows) is expected, rows
+
+
+@pytest.mark.parametrize(
+    ("body", "severity"),
+    [
+        (
+            "def test_pickle(self):\n"
+            "    objects = select(s for s in Student if s.scholarship > 0).order_by(\n"
+            "        desc(Student.id)\n"
+            "    )\n"
+            "    data = pickle.dumps(objects)\n"
+            "    rollback()\n"
+            "    objects = pickle.loads(data)\n"
+            "    self.assertTrue(objects)\n",
+            "INFO",
+        ),
+        (
+            "def test_pickle():\n"
+            "    packet = {'value': 4}\n"
+            "    serialized = pickle.dumps(packet)\n"
+            "    packet = pickle.loads(serialized)\n"
+            "    assert packet\n",
+            "INFO",
+        ),
+        (
+            "def test_pickle():\n"
+            "    protocol = 4\n"
+            "    packet = {'value': 4}\n"
+            "    serialized = pickle.dumps(packet, protocol=protocol)\n"
+            "    restored = pickle.loads(serialized)\n"
+            "    assert restored == packet\n",
+            "INFO",
+        ),
+        (
+            "def test_pickle():\n"
+            "    objects = []\n"
+            "    data = pickle.dumps(objects)\n"
+            "    objects.append('later generation')\n"
+            "    restored = pickle.loads(data)\n"
+            "    assert restored == []\n",
+            "INFO",
+        ),
+        (
+            "def test_pickle():\n"
+            "    objects = []\n"
+            "    publish(objects)\n"
+            "    data = pickle.dumps(objects)\n"
+            "    restored = pickle.loads(data)\n"
+            "    assert restored\n",
+            "HIGH",
+        ),
+        (
+            "def test_pickle():\n"
+            "    objects = []\n"
+            "    alias = objects\n"
+            "    data = pickle.dumps(objects)\n"
+            "    restored = pickle.loads(data)\n"
+            "    assert restored\n",
+            "HIGH",
+        ),
+        (
+            "def test_pickle():\n"
+            "    objects = []\n"
+            "    objects.clear()\n"
+            "    data = pickle.dumps(objects)\n"
+            "    restored = pickle.loads(data)\n"
+            "    assert restored\n",
+            "HIGH",
+        ),
+        (
+            "def test_pickle():\n"
+            "    objects = []\n"
+            "    def later():\n"
+            "        return objects\n"
+            "    data = pickle.dumps(objects)\n"
+            "    restored = pickle.loads(data)\n"
+            "    assert restored\n",
+            "HIGH",
+        ),
+        (
+            "def test_pickle():\n"
+            "    objects = []\n"
+            "    def later(value=objects):\n"
+            "        return value\n"
+            "    data = pickle.dumps(objects)\n"
+            "    restored = pickle.loads(data)\n"
+            "    assert restored\n",
+            "HIGH",
+        ),
+        (
+            "def test_pickle():\n"
+            "    objects = []\n"
+            "    callback = lambda: objects\n"
+            "    data = pickle.dumps(objects)\n"
+            "    restored = pickle.loads(data)\n"
+            "    assert restored\n",
+            "HIGH",
+        ),
+        (
+            "def test_pickle():\n"
+            "    objects = []\n"
+            "    def unrelated():\n"
+            "        objects = ['local to nested function']\n"
+            "        return objects\n"
+            "    data = pickle.dumps(objects)\n"
+            "    restored = pickle.loads(data)\n"
+            "    assert restored == []\n",
+            "INFO",
+        ),
+        (
+            "def test_pickle():\n"
+            "    objects = []\n"
+            "    objects = make_objects()\n"
+            "    data = pickle.dumps(objects)\n"
+            "    restored = pickle.loads(data)\n"
+            "    assert restored\n",
+            "HIGH",
+        ),
+        (
+            "def test_pickle():\n"
+            "    objects = []\n"
+            "    data = pickle.dumps(objects, protocol=choose_protocol())\n"
+            "    restored = pickle.loads(data)\n"
+            "    assert restored == objects\n",
+            "HIGH",
+        ),
+    ],
+    ids=[
+        "post-dump-rebinding",
+        "name-independent-generation",
+        "known-protocol-option",
+        "post-dump-object-mutation",
+        "opaque-escape-before-dump",
+        "alias-before-dump",
+        "mutation-before-dump",
+        "closure-capture-before-dump",
+        "definition-header-capture-before-dump",
+        "lambda-capture-before-dump",
+        "nested-function-local-write",
+        "rebound-before-dump",
+        "side-effecting-protocol-option",
+    ],
+)
+def test_security_scan_tracks_pickle_value_generation_at_dump(tmp_path, body, severity):
+    from factoryline.review_audits import security_scan
+
+    (tmp_path / "test_pickle.py").write_text("import pickle\n" + body, encoding="utf-8")
+    findings = [
+        finding
+        for finding in security_scan(tmp_path, cache_enabled=False)["findings"]
+        if finding["code"] == "SECURITY_UNSAFE_DESERIALIZATION"
+    ]
+    assert len(findings) == 1
+    assert findings[0]["severity"] == severity
+    if severity == "INFO":
+        assert findings[0]["facts"]["input_provenance"] == "direct_local_serialization"
+
+
+@pytest.mark.parametrize(
+    "prefix,setup,option,severity",
+    [
+        ("def test_roundtrip(protocol):\n", "", "protocol", "HIGH"),
+        ("def test_roundtrip():\n", "    protocol = 4\n", "protocol", "INFO"),
+        ("def test_roundtrip():\n", "    protocol = -1\n", "protocol", "INFO"),
+        ("def test_roundtrip():\n", "    protocol = True\n", "protocol", "HIGH"),
+        ("def test_roundtrip():\n", "    protocol = 'invalid'\n", "protocol", "HIGH"),
+        ("def test_roundtrip():\n", "    protocol = Protocol()\n", "protocol", "HIGH"),
+        (
+            "def test_roundtrip():\n",
+            "    protocol = 4\n    protocol = supplied\n",
+            "protocol",
+            "HIGH",
+        ),
+        (
+            "def test_roundtrip():\n",
+            "    global protocol\n    protocol = 4\n",
+            "protocol",
+            "HIGH",
+        ),
+        ("def test_roundtrip():\n", "", "4", "INFO"),
+        ("def test_roundtrip():\n", "", "choose_protocol()", "HIGH"),
+        (
+            "@pytest.mark.parametrize('protocol', [3, 4])\ndef test_roundtrip(protocol):\n",
+            "",
+            "protocol",
+            "INFO",
+        ),
+        (
+            "@pytest.mark.parametrize('protocol', [3, supplied])\ndef test_roundtrip(protocol):\n",
+            "",
+            "protocol",
+            "HIGH",
+        ),
+        (
+            "@pytest.mark.parametrize('protocol', [3, 4], indirect=True)\ndef test_roundtrip(protocol):\n",
+            "",
+            "protocol",
+            "HIGH",
+        ),
+        (
+            "pytest.mark.parametrize = replacement\n@pytest.mark.parametrize('protocol', [3, 4])\ndef test_roundtrip(protocol):\n",
+            "",
+            "protocol",
+            "HIGH",
+        ),
+    ],
+)
+def test_pickle_protocol_requires_closed_integer_domain(
+    tmp_path, prefix, setup, option, severity
+):
+    from factoryline.review_audits import security_scan
+
+    source = (
+        "import pickle\nimport pytest\n"
+        + prefix
+        + setup
+        + "    local = {'value': 1}\n"
+        + f"    data = pickle.dumps(local, protocol={option})\n"
+        + "    restored = pickle.loads(data)\n    assert restored == local\n"
+    )
+    (tmp_path / "test_protocol.py").write_text(source, encoding="utf-8")
+    findings = security_scan(tmp_path, cache_enabled=False)["findings"]
+    unsafe = [
+        item for item in findings if item["code"] == "SECURITY_UNSAFE_DESERIALIZATION"
+    ]
+    assert len(unsafe) == 1
+    assert unsafe[0]["severity"] == severity
+
+
+@pytest.mark.parametrize(
+    "reuse",
+    [
+        "def test_reentry():\n    test_roundtrip(Protocol())\n",
+        "alias = test_roundtrip\ndef test_reentry():\n    alias(Protocol())\n",
+        "registered = [test_roundtrip]\n",
+        "def test_reentry():\n    globals()['test_roundtrip'](Protocol())\n",
+        "def test_roundtrip(protocol):\n    pass\n",
+        "def test_reentry():\n    module.test_roundtrip(Protocol())\n",
+        "def test_reentry():\n    name = 'test_' + 'roundtrip'\n    globals()[name](Protocol())\n",
+        "def test_reentry():\n    for name, fn in list(globals().items()):\n        if name.startswith('test_round'):\n            fn(Protocol())\n",
+        "namespace = globals\ndef test_reentry():\n    namespace()['test_' + 'roundtrip'](Protocol())\n",
+    ],
+)
+def test_pickle_protocol_parametrize_does_not_close_reused_function(tmp_path, reuse):
+    from factoryline.review_audits import security_scan
+
+    source = (
+        "import pickle\nimport pytest\n"
+        "class Protocol:\n    def __index__(self):\n        return get_protocol()\n"
+        "@pytest.mark.parametrize('protocol', [3, 4])\n"
+        "def test_roundtrip(protocol):\n"
+        "    local = {'value': 1}\n"
+        "    data = pickle.dumps(local, protocol=protocol)\n"
+        "    restored = pickle.loads(data)\n    assert restored == local\n" + reuse
+    )
+    (tmp_path / "test_protocol.py").write_text(source, encoding="utf-8")
+    findings = security_scan(tmp_path, cache_enabled=False)["findings"]
+    unsafe = [
+        item for item in findings if item["code"] == "SECURITY_UNSAFE_DESERIALIZATION"
+    ]
+    assert len(unsafe) == 1
+    assert unsafe[0]["severity"] == "HIGH"
+    assert "input_provenance" not in unsafe[0]["facts"]
+
+
+def test_pickle_protocol_function_name_as_data_is_not_a_callable_escape(tmp_path):
+    from factoryline.review_audits import security_scan
+
+    source = (
+        "import pickle\nimport pytest\n"
+        "@pytest.mark.parametrize('protocol', [3, 4])\n"
+        "def test_roundtrip(protocol):\n"
+        "    local = {'label': 'test_roundtrip'}\n"
+        "    data = pickle.dumps(local, protocol=protocol)\n"
+        "    restored = pickle.loads(data)\n    assert restored == local\n"
+    )
+    (tmp_path / "test_protocol.py").write_text(source, encoding="utf-8")
+    findings = security_scan(tmp_path, cache_enabled=False)["findings"]
+    unsafe = [
+        item for item in findings if item["code"] == "SECURITY_UNSAFE_DESERIALIZATION"
+    ]
+    assert len(unsafe) == 1
+    assert unsafe[0]["severity"] == "INFO"
+    assert unsafe[0]["facts"]["input_provenance"] == "direct_local_serialization"
+
+
+def test_pickle_colocation_uses_current_exact_byte_occurrence_guard(
+    tmp_path, monkeypatch
+):
+    from factoryline import context_efficiency as context
+    from factoryline.review_audits import security_scan
+
+    (tmp_path / "test_roundtrip.py").write_text(
+        "import pickle\ndef test_roundtrip():\n    value = []\n"
+        "    data = pickle.dumps(value)\n    restored = pickle.loads(data)\n"
+        "    assert restored == []\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(context, "_capability_uses_match", lambda *_args: False)
+    findings = security_scan(tmp_path, cache_enabled=False)["findings"]
+    assert any(
+        item["code"] == "SECURITY_UNSAFE_DESERIALIZATION" and item["severity"] == "HIGH"
+        for item in findings
+    )
+
+
+def test_provider_colocation_uses_current_captured_import_closure(
+    monkeypatch, tmp_path
+):
+    from factoryline import context_efficiency as context
+    from factoryline import type_intent_provider_provenance as provider
+
+    context_packet = {}
+    calls = []
+
+    def unresolved(*args):
+        calls.append(args)
+        return [], False
+
+    monkeypatch.setattr(context, "captured_local_import_closure", unresolved)
+    context.bind_provider_context(
+        context_packet, tmp_path, tmp_path / "test_sample.py", {}, {}, {}, None
+    )
+    assert len(calls) == 1
+    assert context_packet["provider_source_closure_complete"] is False
+    assert context.bind_provider_context is provider.bind_provider_context
+    assert provider.bind_provider_context in provider.CACHE_HELPERS
+
+
+def test_pickle_colocation_helpers_participate_in_runtime_proof_identity():
+    from factoryline import context_efficiency as context
+    from factoryline import runtime_audit_integrity as runtime
+
+    helpers = set(runtime.workspace_builtin_helpers())
+    expected = {
+        value
+        for name, value in vars(runtime).items()
+        if (
+            name.startswith("_pickle_")
+            or name.startswith("_local_pickle")
+            or name
+            in {
+                "_test_serialization_roundtrip",
+                "_plain_scope_statement_index",
+                "_simple_scope_assignment",
+                "_prior_pickle_dump",
+                "_single_local_pickle_bytes_flow",
+            }
+        )
+        and callable(value)
+    }
+    assert expected <= helpers
+    assert (
+        context._test_serialization_roundtrip is runtime._test_serialization_roundtrip
+    )
