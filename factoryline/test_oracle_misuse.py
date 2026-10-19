@@ -105,6 +105,19 @@ def _inert_literal(node, known=None):
         return True, None
     if isinstance(node, ast.Name):
         return (True, known[node.id]) if node.id in (known or {}) else (False, None)
+    if isinstance(node, ast.BoolOp):
+        for part in node.values:
+            closed, value = _inert_literal(part, known)
+            if not closed or bool(value) == isinstance(node.op, ast.Or):
+                return closed, value
+        return True, value
+    if isinstance(node, ast.IfExp):
+        closed, value = _inert_literal(node.test, known)
+        return (
+            _inert_literal(node.body if value else node.orelse, known)
+            if closed
+            else (False, None)
+        )
     if (
         isinstance(node, ast.Compare)
         and len(node.ops) == 1
@@ -140,16 +153,14 @@ def _inert_definition(node):
 def _inert_expression(node, known, helpers):
     if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
         helper = helpers.get(node.func.id)
-        if not isinstance(helper, ast.FunctionDef) or node.args or node.keywords:
+        if node.args or node.keywords:
+            return False
+        if not isinstance(helper, (ast.FunctionDef, ast.AsyncFunctionDef)):
             return False
         args = helper.args
-        return not (
-            args.posonlyargs
-            or args.args
-            or args.kwonlyargs
-            or args.vararg
-            or args.kwarg
-        ) and _inert_suite(helper.body)
+        return not any(
+            (args.posonlyargs, args.args, args.kwonlyargs, args.vararg, args.kwarg)
+        ) and (isinstance(helper, ast.AsyncFunctionDef) or _inert_suite(helper.body))
     return _inert_literal(node, known)[0]
 
 
@@ -166,11 +177,7 @@ def _inert_statement(statement, known, helpers):
     if isinstance(statement, ast.Return):
         return _inert_literal(statement.value, known)[0]
     if isinstance(statement, (ast.Assign, ast.AnnAssign)):
-        targets = (
-            statement.targets
-            if isinstance(statement, ast.Assign)
-            else [statement.target]
-        )
+        targets = getattr(statement, "targets", ()) or (statement.target,)
         return (
             all(isinstance(target, ast.Name) for target in targets)
             and _inert_literal(statement.value, known)[0]
@@ -180,17 +187,20 @@ def _inert_statement(statement, known, helpers):
         return closed and _inert_suite(
             statement.body if value else statement.orelse, known, helpers
         )
-    if isinstance(statement, ast.For):
-        known, value = _inert_literal(statement.iter)
+    if isinstance(statement, (ast.For, ast.While)):
+        expression = (
+            statement.iter if isinstance(statement, ast.For) else statement.test
+        )
+        closed, value = _inert_literal(expression, known)
         return (
-            known
-            and type(value) in (tuple, list, dict, set, str, bytes)
+            closed
+            and (
+                isinstance(statement, ast.While)
+                or type(value) in (tuple, list, dict, set, str, bytes)
+            )
             and not value
             and _inert_suite(statement.orelse)
         )
-    if isinstance(statement, ast.While):
-        known, value = _inert_literal(statement.test)
-        return known and not value and _inert_suite(statement.orelse)
     return False
 
 
@@ -206,11 +216,7 @@ def _inert_suite(statements, known=None, helpers=None):
             isinstance(statement, (ast.Assign, ast.AnnAssign))
             and statement.value is not None
         ):
-            targets = (
-                statement.targets
-                if isinstance(statement, ast.Assign)
-                else [statement.target]
-            )
+            targets = getattr(statement, "targets", ()) or (statement.target,)
             for target in targets:
                 known[target.id] = _inert_literal(statement.value, known)[1]
                 helpers.pop(target.id, None)

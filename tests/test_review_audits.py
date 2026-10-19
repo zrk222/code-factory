@@ -1623,7 +1623,7 @@ def test_mock_patch_dict_slot_rejects_nonliteral_receiver():
             "checks.append(fn); return fn",
             "mutate(checks)",
             "for callback in checks:\n        callback(42)",
-            True,
+            False,  # Undefined mutation is opaque, not proof of an inert test.
         ),
         (
             "checks.append(fn); return fn",
@@ -1658,11 +1658,16 @@ def test_local_registered_callback_requires_identity_dispatch_and_escape(
         + "\n"
     )
     (tmp_path / "test_case.py").write_text(source, encoding="utf-8")
+    findings = security_scan(tmp_path)["findings"]
     flagged = any(
         finding["code"] == "QUALITY_HOLLOW_TEST"
-        for finding in security_scan(tmp_path)["findings"]
+        for finding in findings
     )
     assert flagged is hollow
+    if mutation == "mutate(checks)":
+        unknown = next(f for f in findings if f["code"] == "QUALITY_UNKNOWN_TEST_ORACLE")
+        assert unknown["severity"] == "INFO"
+        assert unknown["facts"]["state"] == "INCOMPLETE"
 
 
 def test_local_registry_proof_is_independent_of_names(tmp_path):
@@ -2205,7 +2210,7 @@ def test_security_scan_does_not_credit_nested_helper_before_definition(tmp_path)
             "def test_behavior():\n"
             "    async def check():\n        assert await compute() == 3\n"
             "    check()\n",
-            False,
+            True,  # Exact local coroutine creation never enters the assertion body.
         ),
         (
             "import asyncio\nasync def compute():\n    return 3\n"
@@ -2244,7 +2249,8 @@ def test_nested_async_assertion_requires_proven_completion(
     findings = report["finding_counts"]
     assert findings.get("QUALITY_HOLLOW_TEST", 0) == int(hollow)
     if request.node.callspec.id == "unawaited-direct-helper":
-        _assert_unknown_test_oracle(report, unknown_count=1)
+        assert findings.get("QUALITY_UNKNOWN_TEST_ORACLE", 0) == 0
+        assert findings["QUALITY_HOLLOW_TEST"] == 1
         unawaited = [
             item
             for item in report["findings"]
@@ -9370,75 +9376,79 @@ def test_runtime_oracle_rechecks_source_after_verification(tmp_path, monkeypatch
     "testing,path,mutation,expected",
     [
         (True, "/checked", "", {}),
-        (False, "/checked", "", {"QUALITY_HOLLOW_TEST": 1}),
-        (True, "/other", "", {"QUALITY_HOLLOW_TEST": 1}),
-        (True, "/checked", "app.testing = False\n    ", {"QUALITY_HOLLOW_TEST": 1}),
-        (True, "/checked", "client = fake_client\n    ", {"QUALITY_HOLLOW_TEST": 1}),
+        # Disabled propagation leaves imported framework/lifecycle effects open.
+        (False, "/checked", "", {"QUALITY_UNKNOWN_TEST_ORACLE": 1}),
+        # Another path may invoke uncaptured routing and error handlers.
+        (True, "/other", "", {"QUALITY_UNKNOWN_TEST_ORACLE": 1}),
+        # A changed testing flag is not an absence proof for other hooks.
+        (True, "/checked", "app.testing = False\n    ", {"QUALITY_UNKNOWN_TEST_ORACLE": 1}),
+        # The replacement client's implementation is absent.
+        (True, "/checked", "client = fake_client\n    ", {"QUALITY_UNKNOWN_TEST_ORACLE": 1}),
         (
             True,
             "/checked",
             "app.view_functions['check'] = noop\n    ",
-            {"QUALITY_HOLLOW_TEST": 1},
+            {"QUALITY_UNKNOWN_TEST_ORACLE": 1},  # noop is undefined in this fixture.
         ),
         (
             True,
             "/checked",
             "client.application.testing = False\n    ",
-            {"QUALITY_HOLLOW_TEST": 1},
+            {"QUALITY_UNKNOWN_TEST_ORACLE": 1},  # Imported client/config behavior.
         ),
         (
             True,
             "/checked",
             "views = app.view_functions\n    views.clear()\n    ",
-            {"QUALITY_HOLLOW_TEST": 1},
+            {"QUALITY_UNKNOWN_TEST_ORACLE": 1},  # Routing/lifecycle remains open.
         ),
         (
             True,
             "/checked",
             "getattr(app, 'view_functions').clear()\n    ",
-            {"QUALITY_HOLLOW_TEST": 1},
+            {"QUALITY_UNKNOWN_TEST_ORACLE": 1},  # Unmodeled reflective lookup.
         ),
         (
             True,
             "/checked",
             "getattr(app, 'view_functions').pop('check', None)\n    ",
-            {"QUALITY_HOLLOW_TEST": 1},
+            {"QUALITY_UNKNOWN_TEST_ORACLE": 1},  # Imported lookup/removal path.
         ),
         (
             True,
             "/checked",
             "views = getattr(app, 'view_functions')\n    views.clear()\n    ",
-            {"QUALITY_HOLLOW_TEST": 1},
+            {"QUALITY_UNKNOWN_TEST_ORACLE": 1},  # Reflected alias lacks closure.
         ),
         (
             True,
             "/checked",
             "alias = app; getattr(alias, 'view_functions').clear()\n    ",
-            {"QUALITY_HOLLOW_TEST": 1},
+            {"QUALITY_UNKNOWN_TEST_ORACLE": 1},  # Imported receiver/lookup effects.
         ),
         (
             True,
             "/checked",
             "getattr(app, 'view_functions')['check'] = noop\n    ",
-            {"QUALITY_HOLLOW_TEST": 1},
+            {"QUALITY_UNKNOWN_TEST_ORACLE": 1},  # Replacement noop is undefined.
         ),
         (
             True,
             "/checked",
             "getattr(app, 'config')['TESTING'] = False\n    ",
-            {"QUALITY_HOLLOW_TEST": 1},
+            {"QUALITY_UNKNOWN_TEST_ORACLE": 1},  # Reflected config is unmodeled.
         ),
         (
             True,
             "/checked",
             "setattr(getattr(app, 'config'), 'TESTING', False)\n    ",
-            {"QUALITY_HOLLOW_TEST": 1},
+            {"QUALITY_UNKNOWN_TEST_ORACLE": 1},  # Descriptor effects not captured.
         ),
         (
             True,
             "/checked",
             "app.config.update(TESTING=False)\n    ",
-            {"QUALITY_HOLLOW_TEST": 1},
+            {"QUALITY_UNKNOWN_TEST_ORACLE": 1},  # Imported mapping/lifecycle path.
         ),
     ],
 )
@@ -9459,7 +9469,12 @@ def test_registered_flask_callback_requires_dispatch_and_propagation(
         + "')\n",
         encoding="utf-8",
     )
-    assert security_scan(tmp_path)["finding_counts"] == expected
+    result = security_scan(tmp_path)
+    assert result["finding_counts"] == expected
+    if expected:
+        assert result["state"] == "INCOMPLETE"
+        assert result["findings"][0]["severity"] == "INFO"
+        assert result["findings"][0]["facts"]["candidate_rule"] == "QUALITY_HOLLOW_TEST"
 
 
 @pytest.mark.parametrize(
@@ -12318,6 +12333,12 @@ def test_credential_consumer_comparisons_and_returned_metadata(
         "def noop():\n    pass\nnoop()",
         "def noop():\n    assert True\nnoop()",
         "def noop():\n    return\n    run_oracle()\nnoop()",
+        "True or run_oracle()",
+        "False and run_oracle()",
+        "run_oracle() if False else None",
+        "None if True else run_oracle()",
+        "assert True or run_oracle()",
+        "async def check():\n    assert result == 3\ncheck()",
     ],
 )
 def test_proven_inert_body(body):
@@ -12352,8 +12373,15 @@ def test_proven_inert_body(body):
         "raise AssertionError('failed')",
         "assert False",
         "def check():\n    assert result == 3\ncheck()",
-        "async def check():\n    assert result == 3\ncheck()",
         "def check(arg):\n    pass\ncheck()",
+        "True and run_oracle()",
+        "False or run_oracle()",
+        "run_oracle() if True else None",
+        "None if False else run_oracle()",
+        "value or True or run_oracle()",
+        "value and False and run_oracle()",
+        "async def check(arg):\n    assert arg == 3\ncheck()",
+        "async def check():\n    assert result == 3\nawait check()",
         "def check():\n    pass\ncheck = unknown\ncheck()",
         "value = 1\nif True:\n    value = 2\nassert value == 1",
         "value = 1\nvalue: int\nif value == None:\n    pass\nelse:\n    run_oracle()",
@@ -12402,7 +12430,6 @@ def test_captured_import_resolver_is_generation_bound(tmp_path, mismatch):
             resolve(*args)
 
 
-
 @pytest.mark.parametrize("mutation", ["replace_tree", "add_tree", "remove_tree", "replace_inventory", "add_inventory"])
 def test_captured_import_resolver_rejects_mutated_generation(tmp_path, mutation):
     import ast
@@ -12424,4 +12451,3 @@ def test_captured_import_resolver_rejects_mutated_generation(tmp_path, mutation)
         eligible[tmp_path / "new.py"] = tmp_path / "new.py"
     with pytest.raises(ValueError, match="captured generation"):
         resolve(tmp_path, path, tree, eligible)
-

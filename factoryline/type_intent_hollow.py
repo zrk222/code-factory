@@ -60,9 +60,10 @@ def _valid_relative(value):
 
 
 def obviously_empty_test_body(node: ast.AST) -> bool:
+    from .test_callback_closure import inert_registered_callback_body
     from .test_oracle_misuse import inert_test_body
 
-    return inert_test_body(node)
+    return inert_test_body(node) or inert_registered_callback_body(node)
 
 
 def inert_type_assertion_only_oracle(

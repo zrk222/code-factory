@@ -41,6 +41,221 @@ def _database_context_project(root, dialect="sqlite"):
     return source
 
 
+@pytest.mark.parametrize(
+    "registration,mutation,dispatch,expected",
+    [
+        ("return fn", "", "for callback in checks:\n        callback(42)", True),
+        (
+            "checks.append(lambda value: None); return fn",
+            "",
+            "for callback in checks:\n        callback(42)",
+            True,
+        ),
+        (
+            "checks.append(fn); return fn",
+            "checks.clear()",
+            "for callback in checks:\n        callback(42)",
+            True,
+        ),
+        (
+            "checks.append(fn); return fn",
+            "checks = []",
+            "for callback in checks:\n        callback(42)",
+            True,
+        ),
+        (
+            "checks.append(fn); return fn",
+            "alias = checks; alias.clear()",
+            "for callback in checks:\n        callback(42)",
+            True,
+        ),
+        ("checks.append(fn); return fn", "", "pass", True),
+        (
+            "checks.append(fn); return fn",
+            "",
+            "for callback in []:\n        callback(42)",
+            True,
+        ),
+        (
+            "checks.append(fn); return fn",
+            "",
+            "for callback in checks:\n        callback = lambda value: None\n        callback(42)",
+            True,
+        ),
+        (
+            "checks.append(fn); return fn",
+            "",
+            "try:\n        for callback in checks:\n            callback(42)\n    except AssertionError:\n        pass",
+            True,
+        ),
+        (
+            "checks.append(fn); return fn",
+            "mutate(checks)",
+            "for callback in checks:\n        callback(42)",
+            False,
+        ),
+        (
+            "checks.append(fn); return fn",
+            "",
+            "for callback in checks:\n        if False:\n            callback(42)",
+            True,
+        ),
+        (
+            "checks.append(fn); return fn",
+            "",
+            "for callback in checks:\n        break\n        callback(42)",
+            True,
+        ),
+        (
+            "checks.append(fn); return fn",
+            "return",
+            "for callback in checks:\n        callback(42)",
+            True,
+        ),
+        (
+            "checks.append(fn); return fn",
+            "",
+            "for callback in checks:\n        callback(41)",
+            False,
+        ),
+    ],
+)
+def test_bounded_inert_registered_callback_proof(
+    registration, mutation, dispatch, expected
+):
+    from factoryline.test_callback_closure import inert_registered_callback_body
+
+    source = (
+        "def test_behavior():\n    checks = []\n    def register(fn):\n        "
+        + registration
+        + "\n    @register\n    def check(value):\n        assert value == 42\n    "
+        + mutation
+        + "\n    "
+        + dispatch
+        + "\n"
+    )
+    module = ast.parse(source)
+    function = module.body[0]
+    function._oracle_module = module
+    assert inert_registered_callback_body(function) is expected
+
+
+def _inert_registry_source(
+    register="checks.append(fn)\nreturn fn",
+    callback="assert value == 42",
+    before="",
+    between="",
+    after="pass",
+    parameters="()",
+    dispatch="pass",
+    module_prefix="",
+    register_name="register",
+    callback_name="check",
+    decorator="register",
+    register_parameter="fn",
+):
+    def indent(source, width):
+        return textwrap.indent(textwrap.dedent(source).strip(), " " * width)
+
+    return module_prefix + f"""def test_behavior{parameters}:
+    checks=[]
+{indent(before, 4)}
+    def {register_name}({register_parameter}):
+{indent(register, 8)}
+{indent(between, 4)}
+    @{decorator}
+    def {callback_name}(value):
+{indent(callback, 8)}
+{indent(after, 4)}
+{indent(dispatch, 4)}
+"""
+
+
+def test_bounded_inert_registry_rejects_effects_and_shadowed_bindings():
+    from factoryline.test_callback_closure import inert_registered_callback_body
+
+    sources = [
+        _inert_registry_source(
+            register="checks.append(lambda value: None)\nreturn fn",
+            dispatch="for callback in checks:\n    run_oracle()\n    callback(42)",
+        ),
+        _inert_registry_source(
+            dispatch="try:\n    for callback in checks:\n        run_oracle()\n        callback(41)\nexcept AssertionError:\n    pass",
+        ),
+        _inert_registry_source(
+            register="checks.append(lambda value: None, unexpected=run_oracle())\nreturn fn",
+        ),
+        _inert_registry_source(
+            parameters="(AssertionError)",
+            dispatch="try:\n    for callback in checks:\n        callback(41)\nexcept AssertionError:\n    pass",
+        ),
+        _inert_registry_source(
+            after="try:\n    for callback in checks:\n        callback(41)\nexcept AssertionError as checks:\n    pass\nchecks.clear()",
+        ),
+        _inert_registry_source(
+            between="checks.clear()",
+            callback="run_oracle()\nassert value == 42",
+            dispatch="for callback in checks:\n    callback(42)",
+        ),
+        _inert_registry_source(
+            before="checks.clear()",
+            callback="run_oracle()\nassert value == 42",
+            dispatch="for callback in checks:\n    callback(42)",
+        ),
+        _inert_registry_source(between="register=checks"),
+        _inert_registry_source(
+            dispatch="for checks in checks:\n    checks = lambda value: None\n    checks(42)\nchecks.clear()",
+        ),
+        _inert_registry_source(
+            dispatch="for checks in checks:\n    break\nchecks.clear()",
+        ),
+        _inert_registry_source(
+            dispatch="for checks in checks:\n    if False:\n        checks(42)\nchecks.clear()",
+        ),
+        _inert_registry_source(
+            register="checks.append(checks)\nreturn checks",
+            register_parameter="checks",
+        ),
+        _inert_registry_source(
+            register_name="checks",
+            decorator="checks",
+        ),
+        _inert_registry_source(callback_name="checks"),
+        _inert_registry_source(
+            after="AssertionError=checks\ntry:\n    for callback in checks:\n        callback(41)\nexcept AssertionError:\n    pass",
+        ),
+        _inert_registry_source(
+            module_prefix="AssertionError = ValueError\n",
+            dispatch="try:\n    for callback in checks:\n        callback(41)\nexcept AssertionError:\n    pass",
+        ),
+        _inert_registry_source(
+            module_prefix="import builtins\nbuiltins.AssertionError = ValueError\n",
+            dispatch="try:\n    for callback in checks:\n        callback(41)\nexcept AssertionError:\n    pass",
+        ),
+        _inert_registry_source(
+            module_prefix='import builtins\nsetattr(builtins, "AssertionError", ValueError)\n',
+            dispatch="try:\n    for callback in checks:\n        callback(41)\nexcept AssertionError:\n    pass",
+        ),
+    ]
+    for source in sources:
+        module = ast.parse(source)
+        function = next(node for node in module.body if isinstance(node, ast.FunctionDef))
+        function._oracle_module = module
+        assert not inert_registered_callback_body(function), source
+
+
+def test_bounded_inert_registry_proof_is_name_independent():
+    from factoryline.test_callback_closure import inert_registered_callback_body
+
+    function = ast.parse(
+        "def test_behavior():\n    tasks = []\n    def install(handler):\n"
+        "        tasks.append(handler)\n        return handler\n    @install\n"
+        "    def verify(value):\n        assert value == 42\n    for action in tasks:\n"
+        "        action(42)\n"
+    ).body[0]
+    assert not inert_registered_callback_body(function)
+
+
 def test_security_scan_report_seals_database_context_and_accepts_legacy_payload(
     tmp_path,
 ):

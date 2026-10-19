@@ -21,6 +21,7 @@ from .runtime_audit_integrity import (
     _nearest_native_function_scope as _nearest_native_function_scope,
     _native_call_probe_lines as _native_call_probe_lines,
     native_execution_helpers,
+    runtime_callback_coverage as runtime_callback_coverage,
     _LiteralConsumers as _LiteralConsumers,
 )
 from pathlib import Path
@@ -48,6 +49,22 @@ def _resolve(node: ast.AST | None, aliases: dict[str, str]) -> str:
     name = _name(node)
     head, dot, tail = name.partition(".")
     return aliases.get(head, head) + dot + tail
+
+
+def _click_provider_escapes(module, aliases):
+    roots = {name for name, value in aliases.items() if value == "click"}
+    commands = {name for name, value in aliases.items() if value == "click.command"}
+    if not roots:
+        return True
+    nodes = tuple(ast.walk(module))
+    calls = {node.func for node in nodes if isinstance(node, ast.Call)}
+    parents = {child: node for node in nodes for child in ast.iter_child_nodes(node)}
+    from .test_callback_closure import _click_provider_node_escapes
+
+    return any(
+        _click_provider_node_escapes(node, roots, commands, calls, parents)
+        for node in nodes
+    )
 
 
 def _lexical_nodes(node: ast.AST):
@@ -657,15 +674,6 @@ def _callback_registry_store(node: ast.AST, name: str) -> bool:
     )
 
 
-def _callback_registry_alias(test: ast.AST, name: str) -> bool:
-    return any(
-        isinstance(node, (ast.Assign, ast.AnnAssign))
-        and isinstance(node.value, ast.Name)
-        and node.value.id == name
-        for node in ast.walk(test)
-    )
-
-
 def _callback_registry_mutated(
     test: ast.AST, name: str, initial: ast.AST, append: ast.AST
 ) -> bool:
@@ -687,7 +695,7 @@ def _callback_registry_mutated(
         if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name):
             if node.value.id == name and isinstance(node.ctx, (ast.Store, ast.Del)):
                 return True
-    return _callback_registry_alias(test, name)
+    return False
 
 
 def _callback_catches_assertion(function: ast.AST) -> bool:
@@ -759,6 +767,44 @@ def _callback_registration_body(register, registry):
     return append if valid_append and valid_return else None
 
 
+def _registry_noop_lambda(node):
+    args = node.args if isinstance(node, ast.Lambda) else None
+    return bool(args and len(args.args) == 1 and not any((
+        args.posonlyargs, args.kwonlyargs, args.defaults, args.kw_defaults,
+        args.vararg, args.kwarg)) and isinstance(node.body, ast.Constant) and node.body.value is None)
+
+def _registered_callback_args(function):
+    args = function.args
+    return (len(args.args) == 1 and not any((args.posonlyargs, args.kwonlyargs,
+        args.vararg, args.kwarg, args.defaults, args.kw_defaults)) and
+        args.args[0].annotation is None and function.returns is None)
+
+def _registry_swallowed_assertion(test, callback, call):
+    module = getattr(test, "_oracle_module", None)
+    provider_mutation = module is not None and any(isinstance(node, ast.Call) and ast.unparse(node.func).rsplit(".", 1)[-1] in {"setattr", "delattr"} for node in ast.walk(module))
+    if module is None or {"AssertionError", "__builtins__", "*"} & (
+        _security_scope_local_names(test) | _security_scope_local_names(module)
+    ) or any(arg and arg.arg == "AssertionError" for arg in [
+        *test.args.posonlyargs, *test.args.args, *test.args.kwonlyargs,
+        test.args.vararg, test.args.kwarg,
+    ]) or provider_mutation or any(isinstance(node, ast.Attribute) and node.attr == "AssertionError" and isinstance(node.ctx, (ast.Store, ast.Del)) for node in ast.walk(module)):
+        return False
+    body = [stmt for stmt in callback.body if not _is_docstring(stmt)]
+    if not (len(body) == 1 and isinstance(body[0], ast.Assert) and body[0].msg is None):
+        return False
+    compare = body[0].test
+    if not (isinstance(compare, ast.Compare) and len(compare.ops) == 1 and
+            isinstance(compare.ops[0], (ast.Eq, ast.NotEq)) and len(compare.comparators) == 1):
+        return False
+    if len(callback.args.args) != 1 or len(call.args) != 1 or call.keywords:
+        return False
+    left, right, actual = compare.left, compare.comparators[0], call.args[0]
+    name, literal = (left, right) if isinstance(left, ast.Name) else (right, left)
+    return (isinstance(name, ast.Name) and name.id == callback.args.args[0].arg and
+            isinstance(literal, ast.Constant) and isinstance(actual, ast.Constant) and
+            type(literal.value) is type(actual.value) and
+            type(actual.value) in (type(None), bool, int, float, str, bytes))
+
 def _callback_has_live_assertion(
     callback, aliases, strong_assertion, effective_assertion
 ):
@@ -771,33 +817,6 @@ def _callback_has_live_assertion(
         isinstance(node, ast.Assert) and effective_assertion(node, aliases)
         for node in nodes
     )
-
-
-def runtime_callback_coverage(
-    test: ast.AST,
-    oracle_row: dict,
-    *,
-    verified_schema: str,
-    test_qualname: str,
-    current_config_manifest: dict[str, str] | None,
-    strong_assertion,
-    effective_assertion,
-    aliases: dict[str, str] | None = None,
-) -> dict[str, Any]:
-    """Preserve the legacy API while runtime evidence owns callback reconciliation."""
-    from .runtime_audit_integrity import runtime_callback_coverage as validate
-
-    return validate(
-        test,
-        oracle_row,
-        verified_schema=verified_schema,
-        test_qualname=test_qualname,
-        current_config_manifest=current_config_manifest,
-        strong_assertion=strong_assertion,
-        effective_assertion=effective_assertion,
-        aliases=aliases,
-    )
-
 
 def _callback_registry_dispatch(test, registry, registration, register, callbacks):
     names = {fn.name for fn in callbacks}
@@ -882,9 +901,7 @@ def _callback_registry_dispatch(test, registry, registration, register, callback
         return True
     return False
 
-
 def _empty_callback_registries(test):
-    """Find direct, single-name empty-list initializers without executing code."""
     return [
         node
         for node in test.body
@@ -895,29 +912,40 @@ def _empty_callback_registries(test):
         and not node.value.elts
     ]
 
-
-def registered_callback_oracle(test, aliases, strong_assertion, effective_assertion):
-    """Prove a narrow local append-registry decorator and direct callback loop.
-
-    Cross-file registries, metaclasses, dynamic tags, and indirect dispatch remain
-    unsupported. Unsupported syntax returns false; it is never treated as proven.
-    """
-    if not isinstance(test, ast.FunctionDef):
-        return False
-    initializers = _empty_callback_registries(test)
-    if len(initializers) != 1:
-        return False
-    initial = initializers[0]
-    registry = initial.targets[0].id
+def _callback_registry_context(test, aliases, *, closed=False, inert_kind=None):
+    if not isinstance(test, ast.FunctionDef) or closed and sum(1 for _ in ast.walk(test)) > 512:
+        return None
     functions = [node for node in test.body if isinstance(node, ast.FunctionDef)]
     pair = _registered_callback_functions(functions, aliases)
     if pair is None:
-        return False
+        return None
     register, callbacks = pair
-    if initial.lineno >= register.lineno or any(
-        register.lineno >= fn.lineno for fn in callbacks
-    ):
+    initializers = _empty_callback_registries(test)
+    if closed:
+        initializers = [node for node in initializers if node.lineno < register.lineno]
+    if len(initializers) != 1 or closed and (len(functions), len(callbacks)) != (2, 1):
+        return None
+    initial = initializers[0]
+    if initial.lineno >= register.lineno or any(register.lineno >= fn.lineno for fn in callbacks):
+        return None
+    if closed:
+        callback = callbacks[0]
+        if (register is callback or register.decorator_list or not callback.body or
+            not _registered_callback_args(register) or not _registered_callback_args(callback) or inert_kind is None):
+            return None
+        state = inert_kind(register, initial.targets[0].id)
+        if state is None:
+            return None
+    else:
+        state = None
+    return initial, initial.targets[0].id, register, callbacks, functions, state
+
+def registered_callback_oracle(test, aliases, strong_assertion, effective_assertion):
+    """Prove direct local append-registry dispatch; unsupported syntax is unproven."""
+    context = _callback_registry_context(test, aliases)
+    if context is None:
         return False
+    initial, registry, register, callbacks, _functions, _state = context
     registration = _callback_registration_body(register, registry)
     if registration is None or _callback_registry_mutated(
         test, registry, initial, registration
@@ -934,13 +962,15 @@ def registered_callback_oracle(test, aliases, strong_assertion, effective_assert
         test, registry, registration, register, callbacks
     )
 
-
 def _is_docstring(node: ast.stmt) -> bool:
     return (
         isinstance(node, ast.Expr)
         and isinstance(node.value, ast.Constant)
         and isinstance(node.value.value, str)
     )
+
+
+_CALLBACK_REGISTRY_HELPERS = (_callback_registry_context, _registered_callback_args, _registry_noop_lambda, _registry_swallowed_assertion, _callback_registration_body, _registered_callback_functions, _empty_callback_registries, _is_docstring)
 
 
 def _targets(stmt: ast.AST) -> list[str]:
