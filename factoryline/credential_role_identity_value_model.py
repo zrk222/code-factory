@@ -1,10 +1,30 @@
 """Conservative source projections and writes for tracked identity roots."""
 
 import ast
+from collections.abc import Mapping
 
 from .credential_role_identity_effect_types import _Value
 
 _UNKNOWN_KEY = object()
+
+
+def identity_fields(fields):
+    if fields is None:
+        return {}
+    if not isinstance(fields, Mapping) or len(fields) > 64:
+        return None
+    result = {}
+    for key, root in fields.items():
+        if not (
+            isinstance(key, tuple)
+            and len(key) == 2
+            and all(isinstance(item, str) and item for item in (*key, root))
+            and key[1].isidentifier()
+            and not key[1].startswith("__")
+        ):
+            return None
+        result[key] = _Value(roots=frozenset({root}))
+    return result
 
 
 def identity_value(node, aliases):
@@ -15,6 +35,10 @@ def identity_value(node, aliases):
         base = identity_value(node.value, aliases)
         if node.attr == "__class__" and base.roots:
             return _Value(class_roots=base.roots)
+        if len(base.roots) == 1 and not base.unknown and not base.class_roots:
+            projected = aliases.get((next(iter(base.roots)), node.attr))
+            if projected is not None:
+                return projected
         return _Value(unknown=bool(base.roots or base.class_roots or base.unknown))
     if isinstance(node, (ast.List, ast.Tuple, ast.Dict)):
         return _container_value(node, aliases)
@@ -185,6 +209,8 @@ def record_write(target, value, aliases, effects):
     if isinstance(target, ast.Attribute):
         base = identity_value(target.value, aliases)
         if base.roots:
+            if any((root, target.attr) in aliases for root in base.roots):
+                effects.unknowns.add("projected field identity overwritten")
             if target.attr == "__class__":
                 effects.class_writes.update(base.roots)
             else:

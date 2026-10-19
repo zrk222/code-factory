@@ -17,6 +17,7 @@ from .credential_role_identity_value_model import (
     assignment_target,
     contains_tracked,
     identity_value,
+    identity_fields,
     maps_each_actual_once,
     nested_capture_roots,
     record_escape,
@@ -35,6 +36,7 @@ def summarize_identity_effect(
     roots: Mapping[str, str],
     *,
     resolve_call: CallResolver | None = None,
+    field_roots: Mapping[tuple[str, str], str] | None = None,
     max_depth=4,
     state_budget=512,
 ):
@@ -47,21 +49,29 @@ def summarize_identity_effect(
     branch/truth guards, absence of effectful descriptors, and whether ordinary
     field setters can mutate class identity. Implicit Python protocol dispatch
     on roots is UNKNOWN.
+
+    ``field_roots`` is a caller-proved, descriptor-free initial heap projection.
+    This analyzer does not establish allocation or field ownership by itself.
+    Overwriting a projected field invalidates the summary.
     """
     return (
-        _Analyzer(index, resolve_call, max_depth, state_budget)
+        _Analyzer(index, resolve_call, max_depth, state_budget, field_roots)
         .run(function, path, dict(roots), 0, frozenset())
         .freeze()
     )
 
 
 class _Analyzer:
-    def __init__(self, index, resolver, depth_limit, budget):
+    def __init__(self, index, resolver, depth_limit, budget, field_roots):
         self.index, self.resolver = index, resolver
         self.depth_limit, self.budget, self.states = depth_limit, budget, 0
+        self.fields = identity_fields(field_roots)
 
     def run(self, function, path, roots, depth, active):
         out = _Effects()
+        if self.fields is None:
+            out.unknowns.add("invalid initial field identity graph")
+            return out
         if depth > self.depth_limit or (path, id(function)) in active:
             out.unknowns.add("call depth or cycle limit")
             return out
@@ -125,6 +135,7 @@ class _Analyzer:
         params = [*args.posonlyargs, *args.args, *args.kwonlyargs]
         params += [item for item in (args.vararg, args.kwarg) if item]
         env = {name: _Value(frozenset({root})) for name, root in roots.items()}
+        env.update(self.fields)
         for param in params:
             if param.arg in roots and binding_occurrences(function.body, param.arg):
                 out.unknowns.add(f"root parameter rebound: {param.arg}")
