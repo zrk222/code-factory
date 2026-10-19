@@ -7,6 +7,7 @@ from . import review_integrity as ri
 
 _click_provider_escapes = ri._click_provider_escapes
 
+
 def _outside_callback(node, callback):
     yield node
     if node is callback:
@@ -21,6 +22,7 @@ def _outside_callback(node, callback):
     for child in ast.iter_child_nodes(node):
         yield from _outside_callback(child, callback)
 
+
 def _has_callback_escape(nodes, callback):
     reflective = {"locals", "globals", "vars", "eval", "exec", "getattr"}
     return any(
@@ -32,6 +34,7 @@ def _has_callback_escape(nodes, callback):
         for node in nodes
     )
 
+
 def _callback_is_referenced(nodes, callback):
     return any(
         isinstance(node, ast.Name)
@@ -39,6 +42,7 @@ def _callback_is_referenced(nodes, callback):
         and isinstance(node.ctx, ast.Load)
         for node in nodes
     )
+
 
 def uninvoked_callback_reason(test, is_command, has_oracle):
     for callback in test.body:
@@ -57,32 +61,41 @@ def uninvoked_callback_reason(test, is_command, has_oracle):
         )
     return None
 
+
 def _click_provider_node_escapes(node, roots, commands, calls, parents):
     if isinstance(node, ast.Name):
         if isinstance(node.ctx, (ast.Store, ast.Del)) and node.id in roots | commands:
             return True
         parent = parents.get(node)
-        if isinstance(node.ctx, ast.Load) and node.id in roots and (
-            not isinstance(parent, ast.Attribute) or parent not in calls
+        if (
+            isinstance(node.ctx, ast.Load)
+            and node.id in roots
+            and (not isinstance(parent, ast.Attribute) or parent not in calls)
         ):
             return True
-        if isinstance(node.ctx, ast.Load) and node.id in commands and (
-            not isinstance(parent, ast.Call) or parent.func is not node
+        if (
+            isinstance(node.ctx, ast.Load)
+            and node.id in commands
+            and (not isinstance(parent, ast.Call) or parent.func is not node)
         ):
             return True
     if isinstance(node, ast.Attribute):
         root = ast.unparse(node.value).split(".", 1)[0]
         if root in roots and isinstance(node.ctx, (ast.Store, ast.Del)):
             return True
-        if root in roots and isinstance(node.ctx, ast.Load) and (
-            node not in calls or node.attr.startswith("__")
+        if (
+            root in roots
+            and isinstance(node.ctx, ast.Load)
+            and (node not in calls or node.attr.startswith("__"))
         ):
             return True
     return isinstance(node, ast.Call) and any(
-        isinstance(arg, ast.Constant) and isinstance(arg.value, str)
+        isinstance(arg, ast.Constant)
+        and isinstance(arg.value, str)
         and arg.value.startswith("click.")
         for arg in [*node.args, *(kw.value for kw in node.keywords)]
     )
+
 
 def _default_click_command(callback, aliases, audits):
     if not callback.decorator_list:
@@ -98,6 +111,7 @@ def _default_click_command(callback, aliases, audits):
         )
         and audits._propagating_click_decorators(callback, aliases)
     )
+
 
 def uninvoked_click_callback(test, aliases, helper_names):
     from . import review_audits as audits
@@ -128,25 +142,48 @@ def uninvoked_click_callback(test, aliases, helper_names):
         lambda callback: id(callback) in eligible_ids,
     )
 
+
 def _registry_kind(register, registry):
     body = [stmt for stmt in register.body if not ri._is_docstring(stmt)]
     param = register.args.args[0].arg
-    if len(body) == 1 and isinstance(body[0], ast.Return) and isinstance(body[0].value, ast.Name) and body[0].value.id == param:
+    if (
+        len(body) == 1
+        and isinstance(body[0], ast.Return)
+        and isinstance(body[0].value, ast.Name)
+        and body[0].value.id == param
+    ):
         return "empty"
     if ri._callback_registration_body(register, registry):
         return "callback"
     append = body[0].value if len(body) == 2 and isinstance(body[0], ast.Expr) else None
-    if (isinstance(append, ast.Call) and isinstance(append.func, ast.Attribute) and
-        append.func.attr == "append" and isinstance(append.func.value, ast.Name) and
-        append.func.value.id == registry and len(append.args) == 1 and not append.keywords and
-        ri._registry_noop_lambda(append.args[0]) and isinstance(body[1], ast.Return) and
-        isinstance(body[1].value, ast.Name) and body[1].value.id == param):
+    if (
+        isinstance(append, ast.Call)
+        and isinstance(append.func, ast.Attribute)
+        and append.func.attr == "append"
+        and isinstance(append.func.value, ast.Name)
+        and append.func.value.id == registry
+        and len(append.args) == 1
+        and not append.keywords
+        and ri._registry_noop_lambda(append.args[0])
+        and isinstance(body[1], ast.Return)
+        and isinstance(body[1].value, ast.Name)
+        and body[1].value.id == param
+    ):
         return "noop"
 
+
 def _registry_update(stmt, registry, aliases, state, reserved):
-    if isinstance(stmt, ast.Assign) and len(stmt.targets) == 1 and isinstance(stmt.targets[0], ast.Name):
+    if (
+        isinstance(stmt, ast.Assign)
+        and len(stmt.targets) == 1
+        and isinstance(stmt.targets[0], ast.Name)
+    ):
         name = stmt.targets[0].id
-        if name == registry and isinstance(stmt.value, ast.List) and not stmt.value.elts:
+        if (
+            name == registry
+            and isinstance(stmt.value, ast.List)
+            and not stmt.value.elts
+        ):
             return "empty" if len(aliases) == 1 else None
         if isinstance(stmt.value, ast.Name) and stmt.value.id in aliases:
             if name in reserved and name != registry:
@@ -154,76 +191,129 @@ def _registry_update(stmt, registry, aliases, state, reserved):
             aliases.add(name)
             return state
         return None
-    if (isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Call) and
-        isinstance(stmt.value.func, ast.Attribute) and stmt.value.func.attr == "clear" and
-        isinstance(stmt.value.func.value, ast.Name) and stmt.value.func.value.id in aliases and
-        not stmt.value.args and not stmt.value.keywords):
+    if (
+        isinstance(stmt, ast.Expr)
+        and isinstance(stmt.value, ast.Call)
+        and isinstance(stmt.value.func, ast.Attribute)
+        and stmt.value.func.attr == "clear"
+        and isinstance(stmt.value.func.value, ast.Name)
+        and stmt.value.func.value.id in aliases
+        and not stmt.value.args
+        and not stmt.value.keywords
+    ):
         return "empty"
     return state if isinstance(stmt, ast.Pass) else None
+
 
 def _registry_call(stmt, target):
     if not isinstance(stmt, ast.Expr) or not isinstance(stmt.value, ast.Call):
         return None
     call = stmt.value
-    return call if isinstance(call.func, ast.Name) and call.func.id == target and len(call.args) == 1 and isinstance(call.args[0], ast.Constant) and not call.keywords else None
+    return (
+        call
+        if isinstance(call.func, ast.Name)
+        and call.func.id == target
+        and len(call.args) == 1
+        and isinstance(call.args[0], ast.Constant)
+        and not call.keywords
+        else None
+    )
+
 
 def _registry_loop_inert(test, stmt, registry, aliases, reserved, state, callback):
     guarded = isinstance(stmt, ast.Try)
     loop = stmt.body[0] if guarded and len(stmt.body) == 1 else stmt
-    if not isinstance(loop, ast.For) or loop.orelse or not isinstance(loop.target, ast.Name):
+    if (
+        not isinstance(loop, ast.For)
+        or loop.orelse
+        or not isinstance(loop.target, ast.Name)
+    ):
         return False
     target = loop.target.id
     if target in reserved or target in aliases:
         return False
     if guarded and (
-        stmt.orelse or stmt.finalbody or len(stmt.handlers) != 1
+        stmt.orelse
+        or stmt.finalbody
+        or len(stmt.handlers) != 1
         or not isinstance(stmt.handlers[0].type, ast.Name)
         or stmt.handlers[0].type.id != "AssertionError"
         or stmt.handlers[0].name is not None
         or not all(isinstance(node, ast.Pass) for node in stmt.handlers[0].body)
     ):
         return False
-    known_iter = isinstance(loop.iter, ast.List) and not loop.iter.elts or (
-        isinstance(loop.iter, ast.Name) and loop.iter.id in aliases
+    known_iter = (
+        isinstance(loop.iter, ast.List)
+        and not loop.iter.elts
+        or (isinstance(loop.iter, ast.Name) and loop.iter.id in aliases)
     )
     if not known_iter:
         return False
     if not loop.body:
         return True
     if isinstance(loop.body[0], ast.Break):
-        return len(loop.body) == 1 or len(loop.body) == 2 and _registry_call(loop.body[1], target) is not None
+        return (
+            len(loop.body) == 1
+            or len(loop.body) == 2
+            and _registry_call(loop.body[1], target) is not None
+        )
     dead = loop.body[0]
-    if (len(loop.body) == 1 and isinstance(dead, ast.If) and
-        isinstance(dead.test, ast.Constant) and dead.test.value is False and
-        not dead.orelse and len(dead.body) == 1 and _registry_call(dead.body[0], target)):
+    if (
+        len(loop.body) == 1
+        and isinstance(dead, ast.If)
+        and isinstance(dead.test, ast.Constant)
+        and dead.test.value is False
+        and not dead.orelse
+        and len(dead.body) == 1
+        and _registry_call(dead.body[0], target)
+    ):
         return True
     call = _registry_call(loop.body[-1], target)
     if call is None:
         return False
-    rebound = (len(loop.body) == 2 and isinstance(loop.body[0], ast.Assign) and
-               len(loop.body[0].targets) == 1 and isinstance(loop.body[0].targets[0], ast.Name) and
-               loop.body[0].targets[0].id == target and ri._registry_noop_lambda(loop.body[0].value))
+    rebound = (
+        len(loop.body) == 2
+        and isinstance(loop.body[0], ast.Assign)
+        and len(loop.body[0].targets) == 1
+        and isinstance(loop.body[0].targets[0], ast.Name)
+        and loop.body[0].targets[0].id == target
+        and ri._registry_noop_lambda(loop.body[0].value)
+    )
     canonical = len(loop.body) == 1 or rebound
     empty = isinstance(loop.iter, ast.List) or state == "empty"
-    caught = (guarded and isinstance(loop.iter, ast.Name) and loop.iter.id == registry and
-              state == "callback" and
-              ri._registry_swallowed_assertion(test, callback, call))
+    caught = (
+        guarded
+        and isinstance(loop.iter, ast.Name)
+        and loop.iter.id == registry
+        and state == "callback"
+        and ri._registry_swallowed_assertion(test, callback, call)
+    )
     return bool(canonical and (empty or rebound or state == "noop" or caught))
+
 
 def inert_registered_callback_body(test):
     """Prove inertness only for a bounded, closed local callback registry."""
-    context = ri._callback_registry_context(test, {}, closed=True, inert_kind=_registry_kind)
+    context = ri._callback_registry_context(
+        test, {}, closed=True, inert_kind=_registry_kind
+    )
     if context is None:
         return False
     initial, registry, register, callbacks, _functions, state = context
     callback = callbacks[0]
     owned = {registry, register.name, callback.name, register.args.args[0].arg}
-    if len(owned) != 4 or getattr(register, "type_params", ()) or getattr(callback, "type_params", ()):
+    if (
+        len(owned) != 4
+        or getattr(register, "type_params", ())
+        or getattr(callback, "type_params", ())
+    ):
         return False
     body = [stmt for stmt in test.body if not ri._is_docstring(stmt)]
-    if (body[:3] != [initial, register, callback] or len(callback.decorator_list) != 1
+    if (
+        body[:3] != [initial, register, callback]
+        or len(callback.decorator_list) != 1
         or not isinstance(callback.decorator_list[0], ast.Name)
-        or callback.decorator_list[0].id != register.name):
+        or callback.decorator_list[0].id != register.name
+    ):
         return False
     reserved = owned
     aliases = {registry}
@@ -236,15 +326,30 @@ def inert_registered_callback_body(test):
         if updated is not None:
             state = updated
             continue
-        if not _registry_loop_inert(test, stmt, registry, aliases, reserved, state, callback):
+        if not _registry_loop_inert(
+            test, stmt, registry, aliases, reserved, state, callback
+        ):
             return False
     return True
 
-_REGISTRY_LOCAL_HELPERS = (_registry_kind, _registry_update, _registry_call, _registry_loop_inert)
+
+_REGISTRY_LOCAL_HELPERS = (
+    _registry_kind,
+    _registry_update,
+    _registry_call,
+    _registry_loop_inert,
+)
 
 CACHE_HELPERS = (
-    _outside_callback, _has_callback_escape, _callback_is_referenced, uninvoked_callback_reason,
-    _click_provider_node_escapes, _click_provider_escapes, _default_click_command,
-    uninvoked_click_callback, inert_registered_callback_body,
-    *_REGISTRY_LOCAL_HELPERS, *ri._CALLBACK_REGISTRY_HELPERS,
+    _outside_callback,
+    _has_callback_escape,
+    _callback_is_referenced,
+    uninvoked_callback_reason,
+    _click_provider_node_escapes,
+    _click_provider_escapes,
+    _default_click_command,
+    uninvoked_click_callback,
+    inert_registered_callback_body,
+    *_REGISTRY_LOCAL_HELPERS,
+    *ri._CALLBACK_REGISTRY_HELPERS,
 )
