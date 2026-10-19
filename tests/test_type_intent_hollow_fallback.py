@@ -1041,3 +1041,59 @@ def test_unittest_proof_rejects_cloned_method_not_owned_by_module():
     clone._oracle_module = module
 
     assert not proof.source_proven_unittest_vacuity(clone)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "pass",
+        '"helper docs"\n    pass',
+        '"helper docs"',
+        "...",
+        "return",
+        "return None",
+        '"helper docs"\n    return None',
+    ],
+)
+def test_closed_module_stub_helper_is_hollow(tmp_path, body):
+    _write_test(
+        tmp_path,
+        "def local_pure():\n    " + body + "\ndef test_behavior():\n    local_pure()\n",
+    )
+    report = security_scan(tmp_path, cache_enabled=False)
+    assert report["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+    assert report["findings"][0]["severity"] == "MEDIUM"
+
+
+@pytest.mark.parametrize(
+    "setup",
+    [
+        "from external import *\n",
+        "local_pure = replacement\n",
+        "alias = local_pure\n",
+        "local_pure.__code__ = replacement.__code__\n",
+    ],
+)
+def test_module_stub_binding_must_remain_closed(tmp_path, setup):
+    _write_test(
+        tmp_path,
+        'def local_pure():\n    "helper docs"\n    pass\n'
+        + setup
+        + "def test_behavior():\n    local_pure()\n",
+    )
+    assert "QUALITY_HOLLOW_TEST" not in security_scan(tmp_path)["finding_counts"]
+
+
+@pytest.mark.parametrize(
+    "helper",
+    [
+        "def local_pure():\n    assert False\n",
+        "def local_pure():\n    unknown()\n",
+        "async def local_pure():\n    pass\n",
+        "@decorate\ndef local_pure():\n    pass\n",
+        "def local_pure(required):\n    pass\n",
+    ],
+)
+def test_unproved_module_helper_is_not_hollow(tmp_path, helper):
+    _write_test(tmp_path, helper + "def test_behavior():\n    local_pure()\n")
+    assert "QUALITY_HOLLOW_TEST" not in security_scan(tmp_path)["finding_counts"]

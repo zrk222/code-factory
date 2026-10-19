@@ -1,14 +1,16 @@
 """Unknown-oracle guidance remains advisory and does not change detection."""
 
+import pytest
+
 from factoryline import review_audits as audit
 
 
 def test_unknown_callback_includes_existing_native_probe_guidance(tmp_path):
     (tmp_path / "test_case.py").write_text(
-        "def test_behavior():\n"
+        "def test_behavior(runner):\n"
         "    def check():\n"
         "        assert compute() == 42\n"
-        "    pass\n",
+        "    runner.callback = check\n",
         encoding="utf-8",
     )
     report = audit.security_scan(tmp_path, cache_enabled=False)
@@ -35,7 +37,7 @@ def test_unknown_call_probe_does_not_execute_target_and_cache_preserves_guidance
         "    callback()\n"
         "    pass\n"
         "def callback():\n"
-        "    pass\n",
+        "    opaque_operation()\n",
         encoding="utf-8",
     )
     cold = audit.security_scan(tmp_path)
@@ -49,3 +51,17 @@ def test_unknown_call_probe_does_not_execute_target_and_cache_preserves_guidance
     assert probe["call_available"] is True
     assert "<exact collected pytest node ID>" in probe["call_command"]
     assert not (tmp_path / "scanner-ran-source").exists()
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "def test_behavior():\n    def check():\n        assert compute() == 42\n    pass\n",
+        "def callback():\n    pass\ndef test_behavior():\n    callback()\n",
+    ],
+)
+def test_proven_inert_bodies_are_not_unknown_guidance_fixtures(tmp_path, source):
+    (tmp_path / "test_case.py").write_text(source, encoding="utf-8")
+    report = audit.security_scan(tmp_path, cache_enabled=False)
+    assert report["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+    assert report["findings"][0]["severity"] == "MEDIUM"

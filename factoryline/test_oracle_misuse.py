@@ -429,7 +429,36 @@ def _simple_exception_classes(module, names, bases, stores, test):
             names[item.name], bases[identity] = identity, base
 
 
+def _inert_helper_stub(function):
+    body = function.body
+    if body and _docstring(body[0]):
+        body = body[1:]
+    if not body:
+        return True
+    if len(body) != 1:
+        return False
+    statement = body[0]
+    return (
+        isinstance(statement, ast.Pass)
+        or isinstance(statement, ast.Expr)
+        and isinstance(statement.value, ast.Constant)
+        and statement.value.value is Ellipsis
+        or isinstance(statement, ast.Return)
+        and (
+            statement.value is None
+            or isinstance(statement.value, ast.Constant)
+            and statement.value.value is None
+        )
+    )
+
+
 def _module_pass_helpers(module, stores, test):
+    if any(
+        isinstance(node, ast.ImportFrom)
+        and any(alias.name == "*" for alias in node.names)
+        for node in ast.walk(module)
+    ):
+        return {}
     definitions, imports = _module_bindings(module)
     parents = {
         child: parent
@@ -466,7 +495,7 @@ def _module_pass_helpers(module, stores, test):
             )
         ):
             continue
-        if len(item.body) != 1 or not isinstance(item.body[0], ast.Pass):
+        if not _inert_helper_stub(item):
             continue
         refs = [
             n for n in ast.walk(module) if isinstance(n, ast.Name) and n.id == item.name
@@ -1050,6 +1079,7 @@ INERT_BODY_HELPERS = (
     _completion_import_names,
     _simple_exception_classes,
     _module_pass_helpers,
+    _inert_helper_stub,
     _inert_literal_call,
     _static_inert_literal,
     _local_literal_returns,
