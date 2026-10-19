@@ -1,3 +1,7 @@
+import ast
+from hashlib import sha256
+from pathlib import Path
+
 import pytest
 
 from factoryline.review_audits import security_scan
@@ -722,3 +726,261 @@ def test_assertion_message_helper_return_does_not_return_from_test():
 )
 def test_exception_completion_keeps_unproved_identity_unknown(source):
     assert _completion(source) == ("UNKNOWN", None)
+
+
+@pytest.mark.parametrize(
+    "assertion",
+    [
+        "self.assertTrue(True)",
+        "self.assertFalse(False)",
+        "self.assertEqual(1, 1)",
+        "self.assertTupleEqual((1,), (1,))",
+        "self.assertListEqual([1], [1])",
+    ],
+)
+def test_source_proven_unittest_literal_assertions_are_hollow(tmp_path, assertion):
+    _write_test(
+        tmp_path,
+        "import unittest\n"
+        "class Checks(unittest.TestCase):\n"
+        "    def test_behavior(self):\n"
+        f"        {assertion}\n",
+    )
+
+    report = security_scan(tmp_path)
+
+    assert report["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+
+
+def test_source_proven_unittest_alias_import_is_hollow(tmp_path):
+    _write_test(
+        tmp_path,
+        "import unittest as unit\n"
+        "class Checks(unit.TestCase):\n"
+        "    def test_behavior(self):\n"
+        "        self.assertEqual((1,), (1,))\n",
+    )
+
+    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "import unittest\n"
+        "class Checks(unittest.TestCase):\n"
+        "    def test_behavior(self):\n"
+        "        self.assertEqual(value, value)\n",
+        "import unittest\n"
+        "class Checks(unittest.TestCase):\n"
+        "    def test_behavior(self):\n"
+        "        self.assertTrue(compute())\n",
+        "import unittest\n"
+        "class Checks(unittest.TestCase):\n"
+        "    def test_behavior(self):\n"
+        "        self.assertEqual(1, 2)\n",
+        "import unittest\n"
+        "class Checks(unittest.TestCase):\n"
+        "    def assertTrue(self, value):\n        pass\n"
+        "    def test_behavior(self):\n"
+        "        self.assertTrue(True)\n",
+        "import unittest\n"
+        "class Checks(unittest.TestCase):\n"
+        "    def setUp(self):\n        pass\n"
+        "    def test_behavior(self):\n"
+        "        self.assertTrue(True)\n",
+        "import unittest\n"
+        "class Checks(unittest.TestCase):\n"
+        "    def tearDown(self):\n        pass\n"
+        "    def test_behavior(self):\n"
+        "        self.assertTrue(True)\n",
+        "import unittest\n"
+        "class Checks(unittest.TestCase):\n"
+        "    def __getattribute__(self, name):\n        return object.__getattribute__(self, name)\n"
+        "    def test_behavior(self):\n"
+        "        self.assertTrue(True)\n",
+        "import unittest\n"
+        "@decorate\n"
+        "class Checks(unittest.TestCase):\n"
+        "    def test_behavior(self):\n"
+        "        self.assertTrue(True)\n",
+        "import unittest\n"
+        "class Checks(unittest.TestCase, Mixin):\n"
+        "    def test_behavior(self):\n"
+        "        self.assertTrue(True)\n",
+        "import unittest\n"
+        "class Checks(unittest.TestCase, metaclass=Meta):\n"
+        "    def test_behavior(self):\n"
+        "        self.assertTrue(True)\n",
+        "import unittest\n"
+        "class Checks(unittest.TestCase):\n"
+        "    def test_behavior(self, value=True):\n"
+        "        self.assertTrue(True)\n",
+        "import unittest\n"
+        "class Checks(unittest.TestCase):\n"
+        "    @decorate\n"
+        "    def test_behavior(self):\n"
+        "        self.assertTrue(True)\n",
+        "import unittest\n"
+        "unittest.TestCase.assertTrue = lambda self, value: None\n"
+        "class Checks(unittest.TestCase):\n"
+        "    def test_behavior(self):\n"
+        "        self.assertTrue(True)\n",
+        "import unittest\n"
+        "setattr(unittest.TestCase, 'assertTrue', lambda self, value: None)\n"
+        "class Checks(unittest.TestCase):\n"
+        "    def test_behavior(self):\n"
+        "        self.assertTrue(True)\n",
+        "import unittest\n"
+        "class Checks(unittest.TestCase):\n"
+        "    def test_behavior(self):\n"
+        "        self.assertTrue = replacement\n"
+        "        self.assertTrue(True)\n",
+        "from unittest import TestCase\n"
+        "class Checks(TestCase):\n"
+        "    def test_behavior(self):\n"
+        "        self.assertTrue(True)\n",
+    ],
+)
+def test_unclosed_unittest_literal_sources_are_not_promoted(tmp_path, source):
+    _write_test(tmp_path, source)
+
+    assert "QUALITY_HOLLOW_TEST" not in security_scan(tmp_path)["finding_counts"]
+
+
+def test_local_unittest_source_provider_is_not_credited(tmp_path):
+    (tmp_path / "unittest.py").write_text("class TestCase: pass\n", encoding="utf-8")
+    _write_test(
+        tmp_path,
+        "import unittest\n"
+        "class Checks(unittest.TestCase):\n"
+        "    def test_behavior(self):\n"
+        "        self.assertTrue(True)\n",
+    )
+
+    assert "QUALITY_HOLLOW_TEST" not in security_scan(tmp_path)["finding_counts"]
+
+
+def test_conftest_unittest_provider_mutation_is_not_credited(tmp_path):
+    (tmp_path / "conftest.py").write_text(
+        "import unittest\nunittest.TestCase.assertTrue = lambda self, value: None\n",
+        encoding="utf-8",
+    )
+    _write_test(
+        tmp_path,
+        "import unittest\n"
+        "class Checks(unittest.TestCase):\n"
+        "    def test_behavior(self):\n"
+        "        self.assertTrue(True)\n",
+    )
+
+    assert "QUALITY_HOLLOW_TEST" not in security_scan(tmp_path)["finding_counts"]
+
+
+def test_new_unittest_proof_helpers_are_in_the_cache_epoch():
+    from factoryline import type_intent_hollow
+
+    assert (
+        type_intent_hollow.source_proven_unittest_vacuity
+        in type_intent_hollow.CACHE_HELPERS
+    )
+
+
+def _bound_unittest_test_node(source, relative="tests/test_fixture.py"):
+    from factoryline import type_intent_hollow
+
+    raw = source.encode("utf-8")
+    root = Path("C:/captured")
+    module = ast.parse(raw)
+    node = next(
+        item
+        for item in ast.walk(module)
+        if isinstance(item, ast.FunctionDef) and item.name == "test_behavior"
+    )
+    module._security_oracle_context = {
+        "provider_source_inventory_complete": True,
+        "provider_source_closure_complete": True,
+        "provider_source_closure": [],
+        "provider_owner_local_imports": [],
+    }
+    module._security_source_context = (root, {root / relative: raw})
+    module._oracle_source_sha256 = sha256(raw).hexdigest()
+    module._oracle_source_lines = raw.decode("utf-8").splitlines()
+    node._oracle_module = module
+    return type_intent_hollow, module, node, root, raw
+
+
+@pytest.mark.parametrize("mutation", ["literal", "class_base", "import"])
+def test_unittest_proof_rejects_ast_mutation_after_source_capture(mutation):
+    source = (
+        "import unittest as unit\n"
+        "class Checks(unit.TestCase):\n"
+        "    def test_behavior(self):\n"
+        "        self.assertEqual(1, 1)\n"
+    )
+    proof, module, _node, _root, _raw = _bound_unittest_test_node(source)
+    class_node = next(item for item in module.body if isinstance(item, ast.ClassDef))
+    method = next(item for item in class_node.body if isinstance(item, ast.FunctionDef))
+    if mutation == "literal":
+        method.body[0].value.args[1].value = 2
+    elif mutation == "class_base":
+        class_node.bases[0].attr = "OtherCase"
+    else:
+        module.body[0].names[0].name = "other"
+
+    assert not proof.source_proven_unittest_vacuity(method)
+
+
+def test_unittest_proof_requires_unchanged_captured_bytes():
+    source = (
+        "import unittest\n"
+        "class Checks(unittest.TestCase):\n"
+        "    def test_behavior(self):\n"
+        "        self.assertTrue(True)\n"
+    )
+    proof, module, node, root, _raw = _bound_unittest_test_node(source)
+    module._security_source_context = (
+        root,
+        {
+            root / "tests/test_fixture.py": source.replace("True", "False").encode(
+                "utf-8"
+            )
+        },
+    )
+
+    assert not proof.source_proven_unittest_vacuity(node)
+
+
+def test_unittest_proof_rejects_ambiguous_matching_source_path():
+    source = (
+        "import unittest\n"
+        "class Checks(unittest.TestCase):\n"
+        "    def test_behavior(self):\n"
+        "        self.assertTrue(True)\n"
+    )
+    proof, module, node, root, raw = _bound_unittest_test_node(source)
+    module._security_source_context = (
+        root,
+        {
+            root / "tests/test_fixture.py": raw,
+            root / "unrelated.py": raw,
+        },
+    )
+
+    assert not proof.source_proven_unittest_vacuity(node)
+
+
+def test_unittest_proof_rejects_cloned_method_not_owned_by_module():
+    import copy
+
+    source = (
+        "import unittest\n"
+        "class Checks(unittest.TestCase):\n"
+        "    def test_behavior(self):\n"
+        "        self.assertTrue(True)\n"
+    )
+    proof, module, node, _root, _raw = _bound_unittest_test_node(source)
+    clone = copy.deepcopy(node)
+    clone._oracle_module = module
+
+    assert not proof.source_proven_unittest_vacuity(clone)
