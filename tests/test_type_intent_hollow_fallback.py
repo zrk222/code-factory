@@ -7,6 +7,63 @@ import pytest
 from factoryline.review_audits import security_scan
 
 
+@pytest.mark.parametrize(
+    ("expression", "expected"),
+    [("x + 1", 6), ("x - 1", 4), ("x * 2", 10), ("x // 2", 2), ("x % 2", 1)],
+)
+def test_source_local_integer_arithmetic_is_provably_hollow(
+    tmp_path, expression, expected
+):
+    _write_test(
+        tmp_path,
+        f"def test_arithmetic():\n    x = 5\n    x = {expression}\n    assert x == {expected}\n",
+    )
+    result = security_scan(tmp_path, cache_enabled=False)
+    assert result["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+    assert result["findings"][0]["severity"] == "MEDIUM"
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "x = external(); x = x + 1; assert x == 6",
+        "x = 5; x = x / 2; assert x == 2.5",
+        "x = 5; x = x // 0",
+        "x = 5; x = x % 0",
+        "x = 5; x = x ** 1000000000",
+        "x = 5; x = x << 1000000000",
+        "x = 5; x = x + 1; assert x == 7",
+        "x = True; x = x + 1; assert x == 2",
+        "x = 'a'; x = x * 1000000000; assert x",
+        "x = 340282366920938463463374607431768211455; x = x + 1; assert x",
+        "x = 340282366920938463463374607431768211456; x = x - 1; assert x",
+        "x = 5; x = x + missing; assert x",
+    ],
+)
+def test_arithmetic_cannot_promote_unproved_or_failing_completion_to_hollow(body):
+    from factoryline.test_oracle_misuse import inert_test_completion
+
+    node = ast.parse("def test_arithmetic(): " + body).body[0]
+    assert inert_test_completion(node)[0] not in {"NORMAL", "RETURN"}
+
+
+def test_integer_arithmetic_does_not_invoke_overloaded_operators():
+    from factoryline.test_oracle_misuse import _inert_literal
+
+    class UntrustedInteger(int):
+        def __add__(self, other):
+            raise AssertionError("the scanner executed an overloaded operator")
+
+    expression = ast.parse("x + 1", mode="eval").body
+    assert _inert_literal(expression, {"x": UntrustedInteger(5)}) == (False, None)
+
+
+def test_integer_arithmetic_helper_participates_in_cache_identity():
+    from factoryline import test_oracle_misuse as misuse
+
+    assert misuse._inert_integer_arithmetic in misuse.INERT_BODY_HELPERS
+
+
 def _write_test(tmp_path, source):
     (tmp_path / "test_types.py").write_text(source, encoding="utf-8")
 

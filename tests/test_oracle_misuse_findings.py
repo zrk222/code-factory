@@ -20,14 +20,6 @@ from factoryline.review_audits import security_scan
             "assert {'actual': compute()}",
             "nonempty mapping assertion is always truthy",
         ),
-        (
-            "assert True",
-            "literal assertion is statically truthy",
-        ),
-        (
-            "assert 2 == 1 + 1",
-            "literal assertion is statically truthy",
-        ),
     ],
 )
 def test_security_scan_reports_statically_truthy_assertions(
@@ -49,6 +41,19 @@ def test_security_scan_reports_statically_truthy_assertions(
     assert reason in finding["message"]
     assert finding["facts"]["whole_test_oracle"] == "UNASSESSED"
     assert finding["facts"]["execution_state"] == "NOT_ESTABLISHED"
+
+
+@pytest.mark.parametrize("assertion", ["assert True", "assert 2 == 1 + 1"])
+def test_literal_only_assertion_has_provably_inert_test_body(tmp_path, assertion):
+    # Unlike the container cases above, every expression completes independently
+    # of production behavior. The complete-body proof therefore warrants HOLLOW.
+    (tmp_path / "test_vacuous.py").write_text(
+        f"def compute(): return 1\ndef test_behavior():\n    {assertion}\n",
+        encoding="utf-8",
+    )
+    report = security_scan(tmp_path, cache_enabled=False)
+    assert report["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+    assert report["findings"][0]["severity"] == "MEDIUM"
 
 
 def test_specific_local_defect_survives_an_independent_strong_assertion(tmp_path):

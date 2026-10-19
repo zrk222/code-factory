@@ -137,6 +137,8 @@ def _inert_literal(node, known=None, literal_calls=None):
         return True, None
     if isinstance(node, ast.Name):
         return (True, known[node.id]) if node.id in (known or {}) else (False, None)
+    if isinstance(node, ast.BinOp):
+        return _inert_integer_arithmetic(node, known, literal_calls)
     if isinstance(node, ast.BoolOp):
         for part in node.values:
             closed, value = _inert_literal(part, known, literal_calls)
@@ -164,6 +166,33 @@ def _inert_literal(node, known=None, literal_calls=None):
     if call_value is not None:
         return call_value
     return _static_inert_literal(node)
+
+
+def _inert_integer_arithmetic(node, known, literal_calls):
+    if not isinstance(node.op, (ast.Add, ast.Sub, ast.Mult, ast.FloorDiv, ast.Mod)):
+        return False, None
+    left_ok, left = _inert_literal(node.left, known, literal_calls)
+    right_ok, right = _inert_literal(node.right, known, literal_calls)
+    if not (left_ok and right_ok and type(left) is int and type(right) is int):
+        return False, None
+    if max(left.bit_length(), right.bit_length()) > 128:
+        return False, None
+    if isinstance(node.op, (ast.FloorDiv, ast.Mod)) and right == 0:
+        return False, None
+    value = _inert_integer_operation(node.op, left, right)
+    return (True, value) if value.bit_length() <= 128 else (False, None)
+
+
+def _inert_integer_operation(operation, left, right):
+    if isinstance(operation, ast.Add):
+        return left + right
+    if isinstance(operation, ast.Sub):
+        return left - right
+    if isinstance(operation, ast.Mult):
+        return left * right
+    if isinstance(operation, ast.FloorDiv):
+        return left // right
+    return left % right
 
 
 def _inert_definition(node):
@@ -1005,6 +1034,8 @@ def inert_test_body(node):
 INERT_BODY_HELPERS = (
     _exception_names,
     _inert_literal,
+    _inert_integer_arithmetic,
+    _inert_integer_operation,
     _inert_definition,
     _completion_context,
     _completion_name,
