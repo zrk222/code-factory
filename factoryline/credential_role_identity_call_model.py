@@ -107,7 +107,50 @@ def mapped_call_values(call, aliases, involved, resolved, out):
     if set().union(*(tracked_roots(value) for value in mapped.values())) != involved:
         out.unknowns.add("exact call mapping omits a tracked root")
         return None
+    return _with_inert_defaults(resolved.function, mapped, out)
+
+
+def _with_inert_defaults(function, mapped, out):
+    args = function.args
+    positional = [*args.posonlyargs, *args.args]
+    defaults = dict(
+        zip((arg.arg for arg in positional[-len(args.defaults) :]), args.defaults)
+    )
+    defaults.update(
+        (arg.arg, value) for arg, value in zip(args.kwonlyargs, args.kw_defaults)
+    )
+    for parameter in [*positional, *args.kwonlyargs]:
+        if parameter.arg in mapped:
+            continue
+        default = defaults.get(parameter.arg)
+        if not _immutable_default(default):
+            out.unknowns.add(
+                "missing formal or omitted default is not an immutable literal"
+            )
+            return None
+        mapped[parameter.arg] = identity_value(default, {})
     return mapped
+
+
+def _immutable_default(node, depth=0):
+    if depth >= 8:
+        return False
+    if isinstance(node, ast.Constant):
+        return type(node.value) in (
+            type(None),
+            bool,
+            int,
+            float,
+            complex,
+            str,
+            bytes,
+            type(Ellipsis),
+        )
+    return (
+        isinstance(node, ast.Tuple)
+        and len(node.elts) <= 64
+        and all(_immutable_default(item, depth + 1) for item in node.elts)
+    )
 
 
 def strict_read_effects(node, aliases, parents, out):
@@ -139,7 +182,10 @@ def strict_protocol_effects(node, aliases, out):
     elif isinstance(node, ast.BoolOp):
         operands = node.values
     elif isinstance(node, (ast.If, ast.While, ast.IfExp, ast.Assert)):
-        operands = [node.test]
+        test = node.test
+        operands = (
+            [test.left, *test.comparators] if isinstance(test, ast.Compare) else [test]
+        )
     if any(identity_value(value, aliases).inert_kind is None for value in operands):
         out.unknowns.add("unresolved protocol operand in strict identity summary")
 
