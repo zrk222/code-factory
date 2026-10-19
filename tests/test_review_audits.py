@@ -12368,3 +12368,60 @@ def test_unknown_or_actual_execution_not_inert(body):
         "def test_case():\n" + "\n".join("    " + line for line in body.splitlines())
     ).body[0]
     assert not inert_test_body(node)
+
+
+@pytest.mark.parametrize("mismatch", [None, "root", "tree", "inventory", "missing"])
+def test_captured_import_resolver_is_generation_bound(tmp_path, mismatch):
+    import ast
+    from factoryline.context_efficiency import captured_import_resolver
+
+    path = tmp_path / "test_sample.py"
+    tree = ast.parse("pass")
+    snapshots, eligible, calls = {path: tree}, {path: path}, []
+
+    def original(root, source, captured, inventory):
+        calls.append(source)
+        return {"helper": (path, None)}
+
+    resolve = captured_import_resolver(tmp_path, snapshots, eligible, original)
+    for _ in range(4):
+        result = resolve(tmp_path, path, tree, eligible)
+        result.clear()
+    assert calls == [path]
+    assert resolve(tmp_path, path, tree, eligible) == {"helper": (path, None)}
+    if mismatch:
+        args = [tmp_path, path, tree, eligible]
+        index, replacement = {
+            "root": (0, Path(str(tmp_path))),
+            "tree": (2, ast.parse("pass")),
+            "inventory": (3, dict(eligible)),
+            "missing": (1, tmp_path / "other.py"),
+        }[mismatch]
+        args[index] = replacement
+        with pytest.raises(ValueError, match="captured generation"):
+            resolve(*args)
+
+
+
+@pytest.mark.parametrize("mutation", ["replace_tree", "add_tree", "remove_tree", "replace_inventory", "add_inventory"])
+def test_captured_import_resolver_rejects_mutated_generation(tmp_path, mutation):
+    import ast
+    from factoryline.context_efficiency import captured_import_resolver
+
+    path = tmp_path / "sample.py"
+    tree = ast.parse("pass")
+    snapshots, eligible = {path: tree}, {path: path}
+    resolve = captured_import_resolver(tmp_path, snapshots, eligible, lambda *args: {})
+    if mutation == "replace_tree":
+        tree = snapshots[path] = ast.parse("import changed")
+    elif mutation == "add_tree":
+        snapshots[tmp_path / "new.py"] = ast.parse("pass")
+    elif mutation == "remove_tree":
+        snapshots.clear()
+    elif mutation == "replace_inventory":
+        eligible[path] = tmp_path / "other.py"
+    else:
+        eligible[tmp_path / "new.py"] = tmp_path / "new.py"
+    with pytest.raises(ValueError, match="captured generation"):
+        resolve(tmp_path, path, tree, eligible)
+

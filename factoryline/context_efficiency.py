@@ -39,6 +39,29 @@ MODULE_VERSION = "1"
 _MAX_PROVIDER_SOURCE_MODULES = 64
 
 
+def captured_import_resolver(root, snapshots, eligible, resolver):
+    """Resolve each captured tree once within this producer generation only."""
+    captured_trees, captured_eligible = dict(snapshots), eligible.copy()
+    imports = {
+        path: resolver(root, path, tree, eligible)
+        for path, tree in snapshots.items()
+    }
+
+    def resolve(request_root, source, tree, request_eligible):
+        if (
+            request_root is not root
+            or request_eligible is not eligible
+            or snapshots != captured_trees
+            or eligible != captured_eligible
+            or source not in snapshots
+            or snapshots[source] is not tree
+        ):
+            raise ValueError("Import resolver request is outside its captured generation")
+        return dict(imports[source])
+
+    return resolve
+
+
 def captured_local_import_closure(
     root, imports, snapshots, eligible, resolver, extra_sources=()
 ):
@@ -202,6 +225,7 @@ def provider_context_cache_helpers(contracts):
         provider_context_cache_helpers,
         bind_provider_inventory,
         bind_provider_context,
+        captured_import_resolver,
         captured_local_import_closure,
         _provider_package_initializers,
         oracle_context_cache_context,
