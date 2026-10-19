@@ -6,7 +6,7 @@ import json
 
 from .credential_protocol_metadata import endpoint_metadata, _unique_object
 
-CATALOG_SHA256 = "7a60ee8d043fa08c348d671047ca09af42dbdc16dbded52d0b1bfd9d65cf2450"
+CATALOG_SHA256 = "192d6386503ec5d346bb94fef5b348d46dd755b34913e37415a25f6629af95bc"
 
 
 def _digest(raw):
