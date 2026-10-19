@@ -33,6 +33,9 @@ def getter_consumer_role(node, index, path, audit):
         or result.keywords
     ):
         return None
+    parent = parents.get(id(result))
+    if isinstance(parent, ast.Expr) and parent.value is result:
+        return source_span(index, path, result, "verified_discarded_getter_result")
     aliases = _imports(index.snapshots[path], audit)
     _security_flow_bindings(result, aliases)
     preceding = _preceding_bindings(result, aliases, audit)
