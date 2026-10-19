@@ -1,4 +1,4 @@
-"""Detect literal credentials wired into canonical HTTP authentication sinks."""
+"""Model request-source identity and literal credentials at canonical security sinks."""
 
 from __future__ import annotations
 
@@ -239,3 +239,284 @@ def validation_modules():
     import sys
 
     return (sys.modules[__name__],)
+
+
+def _new_security_request_alias_memo(tree):
+    """Create bounded, invocation-local request alias caches for one AST."""
+    return {"tree": tree, "values": {}, "pairs": 0, "bytes": 0}
+
+
+def _security_scope_request_aliases(scope, aliases, flow_statement=None):
+    """Resolve request aliases, reusing only exact-prefix results in one scan."""
+    from . import intent_quality as request_contracts
+
+    from . import review_integrity
+    from . import review_audits as audit
+
+    memo = request_contracts._SECURITY_REQUEST_ALIAS_MEMO.get()
+    module = review_integrity._security_module_scope(scope) if scope else None
+    if not memo or module is None or module is not memo["tree"]:
+        return _security_scope_request_aliases_uncached(scope, aliases, flow_statement)
+    alias_items = tuple(sorted(aliases.items()))
+    key = (module, scope, flow_statement, alias_items)
+    cached = memo["values"].get(key)
+    if cached is not None:
+        return dict(cached)
+    if isinstance(scope, ast.Module):
+        resolved = _security_request_alias_module_bindings(
+            module, alias_items, flow_statement
+        )
+    elif isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        resolved = _security_request_alias_module_bindings(module, alias_items, None)
+        local_names = set(getattr(scope, "_security_local_names", set()))
+        local_names.update(getattr(scope, "_security_parameter_names", set()))
+        for name in local_names:
+            resolved.pop(name, None)
+        resolved = review_integrity._security_apply_import_bindings(
+            scope.body, resolved, flow_statement, audit
+        )
+    else:
+        resolved = _security_scope_request_aliases_uncached(
+            scope, aliases, flow_statement
+        )
+    _security_store_request_alias_bindings(memo, key, alias_items, resolved)
+    return dict(resolved)
+
+
+def _security_scope_request_aliases_uncached(scope, aliases, flow_statement):
+    """Run the compatibility alias walk without consulting an invocation memo."""
+    from . import review_audits as audit
+    from .review_integrity import (
+        _security_apply_import_bindings,
+        _security_module_scope,
+    )
+
+    module = _security_module_scope(scope) if scope is not None else None
+    if module is None:
+        resolved = dict(aliases)
+    else:
+        module_stop = flow_statement if scope is module else None
+        resolved = _security_apply_import_bindings(module.body, {}, module_stop, audit)
+    if isinstance(scope, ast.Module):
+        return resolved
+    if not isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return resolved
+    local_names = set(getattr(scope, "_security_local_names", set()))
+    local_names.update(getattr(scope, "_security_parameter_names", set()))
+    for name in local_names:
+        resolved.pop(name, None)
+    return _security_apply_import_bindings(scope.body, resolved, flow_statement, audit)
+
+
+def _security_request_alias_module_bindings(module, alias_items, stop):
+    """Return full or exact-prefix module bindings in the active invocation."""
+    from . import intent_quality as request_contracts
+
+    from . import review_audits as audit
+    from .review_integrity import _security_apply_import_bindings
+
+    memo = request_contracts._SECURITY_REQUEST_ALIAS_MEMO.get()
+    key = (module, module, stop, alias_items)
+    cached = memo["values"].get(key)
+    if cached is not None:
+        return dict(cached)
+    resolved = _security_apply_import_bindings(module.body, {}, stop, audit)
+    _security_store_request_alias_bindings(memo, key, alias_items, resolved)
+    return dict(resolved)
+
+
+def _security_store_request_alias_bindings(memo, key, alias_items, resolved):
+    """Store a defensive alias copy only while all invocation budgets allow it."""
+    from . import intent_quality as request_contracts
+
+    if key in memo["values"]:
+        return
+    value = dict(resolved)
+    pair_count = len(alias_items) + len(value)
+    byte_count = sum(
+        len(str(k).encode("utf-8")) + len(str(v).encode("utf-8"))
+        for k, v in alias_items
+    )
+    byte_count += sum(
+        len(str(k).encode("utf-8")) + len(str(v).encode("utf-8"))
+        for k, v in value.items()
+    )
+    if len(memo["values"]) >= request_contracts._SECURITY_REQUEST_ALIAS_MAX_ENTRIES:
+        return
+    if memo["pairs"] + pair_count > request_contracts._SECURITY_REQUEST_ALIAS_MAX_PAIRS:
+        return
+    if memo["bytes"] + byte_count > request_contracts._SECURITY_REQUEST_ALIAS_MAX_BYTES:
+        return
+    memo["values"][key] = value
+    memo["pairs"] += pair_count
+    memo["bytes"] += byte_count
+
+
+def credential_password_request_value(
+    node,
+    password_fields,
+    aliases,
+    scope,
+    flow_statement,
+    flask_collection,
+    django_request,
+):
+    """Recognize password fields read from proven Flask or Django request sources."""
+    if isinstance(node, ast.Call):
+        parts = _credential_get_source_key(node)
+    elif isinstance(node, ast.Subscript):
+        parts = node.value, node.slice
+    else:
+        return False
+    if parts is None:
+        return False
+    request_value, key = parts
+    if (
+        not isinstance(key, ast.Constant)
+        or not isinstance(key.value, str)
+        or key.value.casefold() != "password"
+    ):
+        return False
+    return _credential_request_collection(
+        request_value,
+        password_fields,
+        flask_collection,
+        aliases,
+        scope,
+        flow_statement,
+    ) or django_request(request_value, aliases, scope, flow_statement)
+
+
+def _credential_get_source_key(call):
+    if not isinstance(call.func, ast.Attribute) or call.func.attr != "get":
+        return None
+    if not 1 <= len(call.args) <= 2 or len(call.keywords) > 1:
+        return None
+    if any(keyword.arg != "default" for keyword in call.keywords):
+        return None
+    if len(call.args) == 2 and call.keywords:
+        return None
+    return call.func.value, call.args[0]
+
+
+def _credential_request_collection(
+    node, password_fields, resolve_flask_collection, aliases, scope, flow_statement
+):
+    if isinstance(node, ast.Name):
+        marker = f"request-collection:{node.id}:"
+        return any(
+            isinstance(item, str) and item.startswith(marker)
+            for item in password_fields
+        )
+    return resolve_flask_collection(node, aliases, scope, flow_statement)
+
+
+def _track_credential_request_collection(
+    bindings, statement, password_fields, collection
+):
+    password_fields.difference_update(
+        item
+        for item in tuple(password_fields)
+        if isinstance(item, str)
+        and item.startswith("request-collection:")
+        and item.split(":", 2)[1] in bindings
+    )
+    if collection:
+        targets = getattr(statement, "targets", None) or [statement.target]
+        password_fields.update(
+            f"request-collection:{target.id}:source"
+            for target in targets
+            if isinstance(target, ast.Name)
+        )
+
+
+def flask_upload_expression(node, aliases, scope, flow_statement, collection):
+    if isinstance(node, ast.Subscript):
+        return collection(node.value, aliases, scope, flow_statement, "files")
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "get"
+        and collection(node.func.value, aliases, scope, flow_statement, "files")
+    )
+
+
+def password_comparison_finding(
+    relative,
+    test,
+    password_fields,
+    aliases,
+    scope,
+    flow_statement,
+    password_source,
+    literal_valid,
+):
+    from . import review_audits as audit
+
+    if not isinstance(test, ast.Compare) or len(test.ops) != 1:
+        return None
+    if not isinstance(test.ops[0], ast.Eq) or len(test.comparators) != 1:
+        return None
+    left, right = test.left, test.comparators[0]
+    if password_source(left, password_fields, aliases, scope, flow_statement):
+        literal = right
+    elif password_source(right, password_fields, aliases, scope, flow_statement):
+        literal = left
+    else:
+        return None
+    if not literal_valid(literal):
+        return None
+    return audit._security_finding(
+        "SECURITY_HARDCODED_SECRET",
+        relative,
+        test,
+        "A request-derived password is compared with a hardcoded value.",
+        "CRITICAL",
+        name="password_comparison",
+    )
+
+
+def flask_request_collection(
+    node, aliases, scope, flow_statement, collection, request_aliases
+):
+    from .review_audits import _name
+
+    if not isinstance(node, ast.Attribute) or node.attr != collection:
+        return False
+    raw = _name(node)
+    head, _, tail = raw.partition(".")
+    canonical = request_aliases(scope, aliases, flow_statement).get(head, "") + (
+        "." + tail if tail else ""
+    )
+    return canonical == f"flask.request.{collection}"
+
+
+def django_request_parameter(
+    node, aliases, scope, flow_statement, request_alias_reader
+):
+    from . import review_audits as audit
+    from .review_audits import _name
+
+    if not isinstance(node, ast.Attribute) or node.attr != "GET":
+        return False
+    request = node.value
+    if not isinstance(request, ast.Name):
+        return False
+    scope = scope or getattr(node, "_security_lexical_scope", None)
+    parameters = getattr(scope, "_security_parameter_names", set())
+    if request.id not in parameters or not isinstance(
+        scope, (ast.FunctionDef, ast.AsyncFunctionDef)
+    ):
+        return False
+    if any(
+        isinstance(child, ast.Name)
+        and child.id == request.id
+        and isinstance(child.ctx, (ast.Store, ast.Del))
+        for statement in scope.body
+        for child in audit._iter_ast_nodes(statement)
+    ):
+        return False
+    request_aliases = request_alias_reader(scope, aliases, flow_statement)
+    if not any(value.startswith("django.") for value in request_aliases.values()):
+        return False
+    return _name(request) == request.id

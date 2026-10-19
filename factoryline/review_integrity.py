@@ -769,41 +769,97 @@ def _callback_registration_body(register, registry):
 
 def _registry_noop_lambda(node):
     args = node.args if isinstance(node, ast.Lambda) else None
-    return bool(args and len(args.args) == 1 and not any((
-        args.posonlyargs, args.kwonlyargs, args.defaults, args.kw_defaults,
-        args.vararg, args.kwarg)) and isinstance(node.body, ast.Constant) and node.body.value is None)
+    return bool(
+        args
+        and len(args.args) == 1
+        and not any(
+            (
+                args.posonlyargs,
+                args.kwonlyargs,
+                args.defaults,
+                args.kw_defaults,
+                args.vararg,
+                args.kwarg,
+            )
+        )
+        and isinstance(node.body, ast.Constant)
+        and node.body.value is None
+    )
+
 
 def _registered_callback_args(function):
     args = function.args
-    return (len(args.args) == 1 and not any((args.posonlyargs, args.kwonlyargs,
-        args.vararg, args.kwarg, args.defaults, args.kw_defaults)) and
-        args.args[0].annotation is None and function.returns is None)
+    return (
+        len(args.args) == 1
+        and not any(
+            (
+                args.posonlyargs,
+                args.kwonlyargs,
+                args.vararg,
+                args.kwarg,
+                args.defaults,
+                args.kw_defaults,
+            )
+        )
+        and args.args[0].annotation is None
+        and function.returns is None
+    )
+
 
 def _registry_swallowed_assertion(test, callback, call):
     module = getattr(test, "_oracle_module", None)
-    provider_mutation = module is not None and any(isinstance(node, ast.Call) and ast.unparse(node.func).rsplit(".", 1)[-1] in {"setattr", "delattr"} for node in ast.walk(module))
-    if module is None or {"AssertionError", "__builtins__", "*"} & (
-        _security_scope_local_names(test) | _security_scope_local_names(module)
-    ) or any(arg and arg.arg == "AssertionError" for arg in [
-        *test.args.posonlyargs, *test.args.args, *test.args.kwonlyargs,
-        test.args.vararg, test.args.kwarg,
-    ]) or provider_mutation or any(isinstance(node, ast.Attribute) and node.attr == "AssertionError" and isinstance(node.ctx, (ast.Store, ast.Del)) for node in ast.walk(module)):
+    provider_mutation = module is not None and any(
+        isinstance(node, ast.Call)
+        and ast.unparse(node.func).rsplit(".", 1)[-1] in {"setattr", "delattr"}
+        for node in ast.walk(module)
+    )
+    if (
+        module is None
+        or {"AssertionError", "__builtins__", "*"}
+        & (_security_scope_local_names(test) | _security_scope_local_names(module))
+        or any(
+            arg and arg.arg == "AssertionError"
+            for arg in [
+                *test.args.posonlyargs,
+                *test.args.args,
+                *test.args.kwonlyargs,
+                test.args.vararg,
+                test.args.kwarg,
+            ]
+        )
+        or provider_mutation
+        or any(
+            isinstance(node, ast.Attribute)
+            and node.attr == "AssertionError"
+            and isinstance(node.ctx, (ast.Store, ast.Del))
+            for node in ast.walk(module)
+        )
+    ):
         return False
     body = [stmt for stmt in callback.body if not _is_docstring(stmt)]
     if not (len(body) == 1 and isinstance(body[0], ast.Assert) and body[0].msg is None):
         return False
     compare = body[0].test
-    if not (isinstance(compare, ast.Compare) and len(compare.ops) == 1 and
-            isinstance(compare.ops[0], (ast.Eq, ast.NotEq)) and len(compare.comparators) == 1):
+    if not (
+        isinstance(compare, ast.Compare)
+        and len(compare.ops) == 1
+        and isinstance(compare.ops[0], (ast.Eq, ast.NotEq))
+        and len(compare.comparators) == 1
+    ):
         return False
     if len(callback.args.args) != 1 or len(call.args) != 1 or call.keywords:
         return False
     left, right, actual = compare.left, compare.comparators[0], call.args[0]
     name, literal = (left, right) if isinstance(left, ast.Name) else (right, left)
-    return (isinstance(name, ast.Name) and name.id == callback.args.args[0].arg and
-            isinstance(literal, ast.Constant) and isinstance(actual, ast.Constant) and
-            type(literal.value) is type(actual.value) and
-            type(actual.value) in (type(None), bool, int, float, str, bytes))
+    return (
+        isinstance(name, ast.Name)
+        and name.id == callback.args.args[0].arg
+        and isinstance(literal, ast.Constant)
+        and isinstance(actual, ast.Constant)
+        and type(literal.value) is type(actual.value)
+        and type(actual.value) in (type(None), bool, int, float, str, bytes)
+    )
+
 
 def _callback_has_live_assertion(
     callback, aliases, strong_assertion, effective_assertion
@@ -817,6 +873,7 @@ def _callback_has_live_assertion(
         isinstance(node, ast.Assert) and effective_assertion(node, aliases)
         for node in nodes
     )
+
 
 def _callback_registry_dispatch(test, registry, registration, register, callbacks):
     names = {fn.name for fn in callbacks}
@@ -901,6 +958,7 @@ def _callback_registry_dispatch(test, registry, registration, register, callback
         return True
     return False
 
+
 def _empty_callback_registries(test):
     return [
         node
@@ -912,8 +970,13 @@ def _empty_callback_registries(test):
         and not node.value.elts
     ]
 
+
 def _callback_registry_context(test, aliases, *, closed=False, inert_kind=None):
-    if not isinstance(test, ast.FunctionDef) or closed and sum(1 for _ in ast.walk(test)) > 512:
+    if (
+        not isinstance(test, ast.FunctionDef)
+        or closed
+        and sum(1 for _ in ast.walk(test)) > 512
+    ):
         return None
     functions = [node for node in test.body if isinstance(node, ast.FunctionDef)]
     pair = _registered_callback_functions(functions, aliases)
@@ -926,12 +989,20 @@ def _callback_registry_context(test, aliases, *, closed=False, inert_kind=None):
     if len(initializers) != 1 or closed and (len(functions), len(callbacks)) != (2, 1):
         return None
     initial = initializers[0]
-    if initial.lineno >= register.lineno or any(register.lineno >= fn.lineno for fn in callbacks):
+    if initial.lineno >= register.lineno or any(
+        register.lineno >= fn.lineno for fn in callbacks
+    ):
         return None
     if closed:
         callback = callbacks[0]
-        if (register is callback or register.decorator_list or not callback.body or
-            not _registered_callback_args(register) or not _registered_callback_args(callback) or inert_kind is None):
+        if (
+            register is callback
+            or register.decorator_list
+            or not callback.body
+            or not _registered_callback_args(register)
+            or not _registered_callback_args(callback)
+            or inert_kind is None
+        ):
             return None
         state = inert_kind(register, initial.targets[0].id)
         if state is None:
@@ -939,6 +1010,7 @@ def _callback_registry_context(test, aliases, *, closed=False, inert_kind=None):
     else:
         state = None
     return initial, initial.targets[0].id, register, callbacks, functions, state
+
 
 def registered_callback_oracle(test, aliases, strong_assertion, effective_assertion):
     """Prove direct local append-registry dispatch; unsupported syntax is unproven."""
@@ -962,6 +1034,7 @@ def registered_callback_oracle(test, aliases, strong_assertion, effective_assert
         test, registry, registration, register, callbacks
     )
 
+
 def _is_docstring(node: ast.stmt) -> bool:
     return (
         isinstance(node, ast.Expr)
@@ -970,7 +1043,16 @@ def _is_docstring(node: ast.stmt) -> bool:
     )
 
 
-_CALLBACK_REGISTRY_HELPERS = (_callback_registry_context, _registered_callback_args, _registry_noop_lambda, _registry_swallowed_assertion, _callback_registration_body, _registered_callback_functions, _empty_callback_registries, _is_docstring)
+_CALLBACK_REGISTRY_HELPERS = (
+    _callback_registry_context,
+    _registered_callback_args,
+    _registry_noop_lambda,
+    _registry_swallowed_assertion,
+    _callback_registration_body,
+    _registered_callback_functions,
+    _empty_callback_registries,
+    _is_docstring,
+)
 
 
 def _targets(stmt: ast.AST) -> list[str]:
@@ -2234,6 +2316,7 @@ def tls_verification_disabled(call: str, node: ast.Call) -> bool:
         and keyword.value.value is False
         for keyword in node.keywords
     )
+
 
 def bind_security_call_scopes(tree: ast.AST) -> None:
     """Retain lexical parameter shadowing for nested security call readers."""
@@ -3626,7 +3709,15 @@ def _security_analyze_source_sink_block(
             continue
         if isinstance(
             statement,
-            (ast.Assign, ast.AnnAssign, ast.AugAssign, ast.Expr, ast.Return, ast.Assert, ast.Raise),
+            (
+                ast.Assign,
+                ast.AnnAssign,
+                ast.AugAssign,
+                ast.Expr,
+                ast.Return,
+                ast.Assert,
+                ast.Raise,
+            ),
         ):
             findings.extend(
                 _security_statement_call_findings(
@@ -3909,60 +4000,45 @@ def _security_upload_path_expression(node, aliases, requests, scope, flow_statem
 def _security_is_proven_secure_filename(call, aliases):
     return _security_proven_callee(call, aliases, "werkzeug.utils.secure_filename")
 
+
 def _security_proven_callee(call, aliases, expected):
-    from .review_audits import _call_name
     from .intent_quality import sanitizer_provider_unchanged
 
-    if security_call_name(call, aliases) != expected:
-        return False
-    raw = _call_name(call)
-    head, _, tail = raw.partition(".")
-    resolved, _constants = _security_flow_bindings(call, aliases)
-    canonical = resolved.get(head, "") + ("." + tail if tail else "")
-    return canonical == expected and sanitizer_provider_unchanged(
-        call, aliases, expected, _security_module_scope)
+    return security_call_name(
+        call, aliases
+    ) == expected and sanitizer_provider_unchanged(
+        call, aliases, expected, _security_module_scope
+    )
 
 
 def _security_flask_upload_expression(node, aliases, scope, flow_statement):
-    if isinstance(node, ast.Subscript):
-        return _security_flask_request_collection(
-            node.value, aliases, scope, flow_statement, "files"
-        )
-    return (
-        isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and node.func.attr == "get"
-        and _security_flask_request_collection(
-            node.func.value, aliases, scope, flow_statement, "files"
-        )
+    from .intent_quality import flask_upload_expression
+
+    return flask_upload_expression(
+        node, aliases, scope, flow_statement, _security_flask_request_collection
     )
 
 
 def _security_flask_request_collection(
     node, aliases, scope, flow_statement, collection
 ):
-    from .review_audits import _name
+    from .intent_quality import flask_request_collection
 
-    if not isinstance(node, ast.Attribute) or node.attr != collection:
-        return False
-    raw = _name(node)
-    head, _, tail = raw.partition(".")
-    canonical = _security_scope_request_aliases(scope, aliases, flow_statement).get(
-        head, ""
-    ) + ("." + tail if tail else "")
-    return canonical == f"flask.request.{collection}"
+    return flask_request_collection(
+        node,
+        aliases,
+        scope,
+        flow_statement,
+        collection,
+        _security_scope_request_aliases,
+    )
 
 
 def _security_unsafe_open(call, requests, aliases):
-    from .review_audits import _call_name
-    from .intent_quality import bound_sink_argument, fixed_root_filename_path
+    from .intent_quality import unsafe_open
 
-    path = bound_sink_argument(call, 0, ("file",))
-    return (
-        _call_name(call) == "open"
-        and "open" not in getattr(call, "_security_shadowed_names", set())
-        and _security_expr_tainted(path, requests, set(), aliases)
-        and not fixed_root_filename_path(path, requests, aliases, _security_proven_callee)
+    return unsafe_open(
+        call, requests, aliases, _security_expr_tainted, _security_proven_callee
     )
 
 
@@ -3991,103 +4067,37 @@ def _security_unsafe_request_url(call, name, tainted, aliases):
     from .intent_quality import unsafe_request_url
 
     return unsafe_request_url(
-        call, name, tainted, aliases, _security_expr_tainted,
+        call,
+        name,
+        tainted,
+        aliases,
+        _security_expr_tainted,
         _security_parsed_host_allowlist,
     )
 
+
 def _security_parsed_host_allowlist(call, aliases):
-    from .intent_quality import bound_sink_argument
-    guard = getattr(call, "_security_flow_statement", None)
-    if not isinstance(guard, ast.If) or not _security_guard_has_direct_sink(
-        guard, call
-    ):
-        return False
-    test = _security_host_allowlist_test(guard.test)
-    if test is None:
-        return False
-    hostname = test.left
-    if not isinstance(hostname, ast.Attribute) or hostname.attr != "hostname":
-        return False
-    parser = hostname.value
-    if not isinstance(parser, ast.Call) or not parser.args:
-        return False
-    parser_name = security_call_name(parser, aliases)
-    return parser_name in {
-        "urllib.parse.urlparse",
-        "urllib.parse.urlsplit",
-    } and not any(n is not call and isinstance(n, (ast.Call, ast.NamedExpr, ast.Await, ast.Yield, ast.YieldFrom)) for n in ast.walk(call)) and _security_proven_callee(parser, aliases, parser_name) and _security_expr_same(
-        parser.args[0], bound_sink_argument(call, 0, ("url",))
-    )
+    from .intent_quality import parsed_host_allowlist
 
-
-def _security_host_allowlist_test(test):
-    return (
-        test
-        if isinstance(test, ast.Compare)
-        and len(test.ops) == 1
-        and isinstance(test.ops[0], ast.In)
-        and _security_literal_host_allowlist(test.comparators[0])
-        else None
-    )
-
-
-def _security_guard_has_direct_sink(guard, call):
-    if len(guard.body) != 1:
-        return False
-    statement = guard.body[0]
-    value = getattr(statement, "value", None)
-    return (
-        isinstance(statement, (ast.Expr, ast.Assign, ast.AnnAssign, ast.Return))
-        and value is call
-    )
-
-
-def _security_literal_host_allowlist(node):
-    return (
-        isinstance(node, (ast.Set, ast.Tuple, ast.List))
-        and bool(node.elts)
-        and all(
-            isinstance(item, ast.Constant)
-            and isinstance(item.value, str)
-            and item.value
-            for item in node.elts
-        )
-    )
-
-
-def _security_expr_same(left, right):
-    return ast.dump(left, include_attributes=False) == ast.dump(
-        right, include_attributes=False
+    return parsed_host_allowlist(
+        call, aliases, security_call_name, _security_proven_callee
     )
 
 
 def _security_password_comparison_finding(
     relative, test, password_fields, aliases, scope=None, flow_statement=None
 ):
-    from . import review_audits as audit
+    from .intent_quality import password_comparison_finding
 
-    if not isinstance(test, ast.Compare) or len(test.ops) != 1:
-        return None
-    if not isinstance(test.ops[0], ast.Eq) or len(test.comparators) != 1:
-        return None
-    left, right = test.left, test.comparators[0]
-    if _security_password_source(left, password_fields, aliases, scope, flow_statement):
-        literal = right
-    elif _security_password_source(
-        right, password_fields, aliases, scope, flow_statement
-    ):
-        literal = left
-    else:
-        return None
-    if not _security_hardcoded_password_literal(literal):
-        return None
-    return audit._security_finding(
-        "SECURITY_HARDCODED_SECRET",
+    return password_comparison_finding(
         relative,
         test,
-        "A request-derived password is compared with a hardcoded value.",
-        "CRITICAL",
-        name="password_comparison",
+        password_fields,
+        aliases,
+        scope,
+        flow_statement,
+        _security_password_source,
+        _security_hardcoded_password_literal,
     )
 
 
@@ -4122,32 +4132,11 @@ def _security_password_source(
 
 
 def _security_django_request_parameter(node, aliases, scope=None, flow_statement=None):
-    from . import review_audits as audit
-    from .review_audits import _name
+    from .intent_quality import django_request_parameter
 
-    if not isinstance(node, ast.Attribute) or node.attr != "GET":
-        return False
-    request = node.value
-    if not isinstance(request, ast.Name):
-        return False
-    scope = scope or getattr(node, "_security_lexical_scope", None)
-    parameters = getattr(scope, "_security_parameter_names", set())
-    if request.id not in parameters or not isinstance(
-        scope, (ast.FunctionDef, ast.AsyncFunctionDef)
-    ):
-        return False
-    if any(
-        isinstance(child, ast.Name)
-        and child.id == request.id
-        and isinstance(child.ctx, (ast.Store, ast.Del))
-        for statement in scope.body
-        for child in audit._iter_ast_nodes(statement)
-    ):
-        return False
-    request_aliases = _security_scope_request_aliases(scope, aliases, flow_statement)
-    if not any(value.startswith("django.") for value in request_aliases.values()):
-        return False
-    return _name(request) == request.id
+    return django_request_parameter(
+        node, aliases, scope, flow_statement, _security_scope_request_aliases
+    )
 
 
 def _security_expr_tainted(node, requests, parameters, aliases):
@@ -4289,6 +4278,7 @@ def _security_apply_import_bindings(body, resolved, stop, audit):
             if name in imported:
                 resolved[name] = imported[name]
     return resolved
+
 
 def _security_flow_source_assignment(
     statement,
