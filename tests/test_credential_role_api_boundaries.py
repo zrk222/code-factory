@@ -2,6 +2,7 @@
 
 import ast
 import hashlib
+
 import pytest
 
 from factoryline.credential_role_bindings import auth_constructor_password
@@ -111,3 +112,41 @@ def test_session_factory_arguments_are_unresolved(tmp_path, arguments):
         and n.func.attr == "request"
     )
     assert session_request_context(call, index, path, {}) is False
+
+
+@pytest.mark.parametrize(
+    "body, expected_slots, expected_checks",
+    [
+        ("consume(1)\nconsume(2)\nconsume(3)", [], 0),
+        ("requests.get(endpoint)", ["endpoint_locator"], 1),
+        ("requests.auth.HTTPBasicAuth('user', secret)", ["password"], 1),
+        ("consume(requests)\nrequests.get(endpoint)", [], 1),
+        ("requests.get = replacement\nrequests.get(endpoint)", [], 1),
+    ],
+)
+def test_sink_planning_checks_provider_only_for_candidate_slots(
+    tmp_path, monkeypatch, body, expected_slots, expected_checks
+):
+    from factoryline import credential_role_paths as paths
+    from factoryline import review_audits as audit
+    from factoryline.review_integrity import bind_security_call_scopes
+
+    path = tmp_path / "client.py"
+    raw = ("import requests\n" + body + "\n").encode()
+    tree = ast.parse(raw)
+    digest = hashlib.sha256(raw).hexdigest()
+    tree._oracle_source_sha256 = digest
+    bind_security_call_scopes(tree)
+    index = SourceSnapshotIndex(tmp_path, {path: tree}, {path: raw}, {path: digest})
+    aliases = {path: audit._module_security_aliases(tree)}
+    original = paths._provider_identity_uncertain
+    checks = []
+
+    def observed(*args, **kwargs):
+        checks.append(True)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(paths, "_provider_identity_uncertain", observed)
+    rows = paths._sink_rows({path: tree}, aliases, index, None)
+    assert [row[3] for row in rows] == expected_slots
+    assert len(checks) == expected_checks

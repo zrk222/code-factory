@@ -4,7 +4,7 @@ import ast
 import hashlib
 
 from .credential_publication_catalog import endpoint_publications
-from .credential_role_sources import SourceSnapshotIndex
+from .credential_role_adapter_selection import default_session_evidence
 from .credential_role_bindings import (
     auth_constructor_password,
     candidate_facts,
@@ -13,7 +13,7 @@ from .credential_role_bindings import (
 )
 from .credential_role_constructor_flow import constructor_url_hops
 from .credential_role_session_calls import session_request_context
-from .credential_role_adapter_selection import default_session_evidence
+from .credential_role_sources import SourceSnapshotIndex
 from .semantic_credential_sensor import (
     _canonical_http_call,
     _provider_identity_uncertain,
@@ -73,13 +73,6 @@ def _sink_rows(snapshots, aliases, index, default_session):
             from .review_integrity import _security_flow_bindings
 
             lexical, _ = _security_flow_bindings(call, aliases[path])
-            identity_key = tuple(sorted(lexical.items()))
-            if identity_key not in mutation_profiles:
-                mutation_profiles[identity_key] = _provider_identity_uncertain(
-                    tree, lexical
-                )
-            if mutation_profiles[identity_key]:
-                continue
             identity = session_request_context(call, index, path, aliases[path])
             session = bool(
                 default_session and identity == default_session["get_adapter_canonical"]
@@ -89,6 +82,15 @@ def _sink_rows(snapshots, aliases, index, default_session):
             password = auth_constructor_password(call, path, aliases)
             if password is not None:
                 slots.append(("http_auth", "password", password))
+            if not any(row[2] is not None for row in slots):
+                continue
+            identity_key = tuple(sorted(lexical.items()))
+            if identity_key not in mutation_profiles:
+                mutation_profiles[identity_key] = _provider_identity_uncertain(
+                    tree, lexical
+                )
+            if mutation_profiles[identity_key]:
+                continue
             rows.extend(
                 (path, call, *row, session_meta) for row in slots if row[2] is not None
             )
