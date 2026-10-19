@@ -4644,6 +4644,7 @@ def fixed_program_witness(relative, node, call_name):
         fixed_literal_program_witness,
         closed_declaration_input_witness,
         finite_literal_eval_input_witness,
+        source_generated_eval_input_witness,
     )
 
     scope = getattr(node, "_security_lexical_scope", None)
@@ -4668,6 +4669,15 @@ def fixed_program_witness(relative, node, call_name):
                 )
                 or finite_literal_eval_input_witness(
                     node, call_name, source_bytes=raw, source_path=relative
+                )
+                or source_generated_eval_input_witness(
+                    node,
+                    call_name,
+                    source_bytes=raw,
+                    source_path=relative,
+                    builtin_identity_proven=_fixed_program_builtin_identity(
+                        node, module, call_name
+                    ),
                 )
                 or finite_template_witness(
                     relative, node, call_name, root, sources, workspace_profile
@@ -4777,8 +4787,16 @@ def _fixed_program_builtin_identity(node, module, call_name):
         return False
     if call_name != node.func.id or _builtin_repr_names_shadowed(node, {node.func.id}):
         return False
+    direct_call_names = {
+        call.func
+        for call in ast.walk(module)
+        if isinstance(call, ast.Call)
+        and getattr(call.func, "id", None) in {"exec", "eval"}
+        and getattr(call, "_security_lexical_scope", None)
+        is getattr(node, "_security_lexical_scope", None)
+    }
     for item in ast.walk(module):
-        if item is node.func:
+        if item is node.func or item in direct_call_names:
             continue
         if isinstance(item, ast.Name) and item.id in {
             "__builtins__",
@@ -4962,27 +4980,6 @@ def _valid_source_span(span):
 
 
 def _finite_eval_binding(finding):
-    facts = finding.get("facts", {})
-    return (
-        facts.get("schema") == "factory.finite-eval-input.v1"
-        and facts.get("disposition") == "PROVEN_FINITE_LITERAL_EVAL_INPUT"
-        and facts.get("scope_profile") == "module-initializer-literal-table"
-        and facts.get("hypothesis") == "ARGUMENT_CODE_INJECTION"
-        and facts.get("input_effect") == "CLOSED_LITERAL_TYPE_EXPRESSIONS"
-        and facts.get("runtime_assurance") == "INCOMPLETE"
-        and facts.get("target_execution") == "not_performed"
-        and type(facts.get("domain_size")) is int
-        and 1 <= facts["domain_size"] <= 64
-        and isinstance(facts.get("program_sha256"), str)
-        and re.fullmatch(r"[0-9a-f]{64}", facts["program_sha256"]) is not None
-        and _valid_source_span(facts.get("call_span"))
-        and facts["call_span"][:2] == [finding.get("line"), finding.get("column")]
-        and _valid_source_span(facts.get("domain_span"))
-        and _valid_source_span(facts.get("comprehension_span"))
-        and tuple(facts["comprehension_span"][:2])
-        <= tuple(facts["call_span"][:2])
-        <= tuple(facts["call_span"][2:])
-        <= tuple(facts["domain_span"][:2])
-        <= tuple(facts["domain_span"][2:])
-        <= tuple(facts["comprehension_span"][2:])
-    )
+    from .runtime_audit_integrity import finite_eval_binding
+
+    return finite_eval_binding(finding, _valid_source_span)

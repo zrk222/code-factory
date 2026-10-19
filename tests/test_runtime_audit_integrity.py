@@ -6,6 +6,7 @@ from test_runtime_audit import _plan, _command
 import ast
 from factoryline.runtime_audit_integrity import closed_declaration_input_witness
 from factoryline.runtime_audit_integrity import finite_literal_eval_input_witness
+from factoryline.runtime_audit_integrity import source_generated_eval_input_witness
 
 
 @pytest.mark.parametrize(
@@ -448,6 +449,138 @@ def test_finite_eval_partition_rejects_unrelated_domain_span(tmp_path):
     assert report["findings"][0]["severity"] == "HIGH"
 
 
+_SOURCE_GENERATED_TEMPLATE = """from sqlalchemy import Index
+from sqlalchemy import text
+
+def build(config):
+    return [
+        (
+            eval(f'lambda t: Index("idx", text({conn!r}), _table=t)'),
+            eval(f'lambda t: Index("idx", text({meta!r}), _table=t)'),
+            config.requirements.reflects_indexes_column_sorting,
+        )
+        for meta, conn in __DOMAIN__
+    ]
+"""
+_SOURCE_GENERATED_ROWS = """(
+    ("z nulls first", "z nulls first"),
+    ("z nulls last", "z"),
+)"""
+_SOURCE_GENERATED = _SOURCE_GENERATED_TEMPLATE.replace(
+    "__DOMAIN__", _SOURCE_GENERATED_ROWS
+)
+
+
+def _source_generated_facts(source=_SOURCE_GENERATED, *, identity=True):
+    tree = ast.parse(source)
+    calls = [
+        item
+        for item in ast.walk(tree)
+        if isinstance(item, ast.Call)
+        and isinstance(item.func, ast.Name)
+        and item.func.id == "eval"
+    ]
+    return [
+        source_generated_eval_input_witness(
+            call,
+            "eval",
+            source_bytes=source.encode(),
+            source_path="tests/test_autogen_indexes.py",
+            builtin_identity_proven=identity,
+        )
+        for call in calls
+    ]
+
+
+def test_source_generated_eval_proves_bounded_literal_rows_only():
+    facts = _source_generated_facts()
+    assert len(facts) == 2
+    assert all(item["domain_size"] == 2 for item in facts)
+    assert all(
+        item["scope_profile"] == "single-comprehension-source-template"
+        and item["input_effect"] == "CLOSED_SOURCE_GENERATED_STRINGS"
+        and item["runtime_assurance"] == "INCOMPLETE"
+        and item["target_execution"] == "not_performed"
+        for item in facts
+    )
+    assert len({item["program_sha256"] for item in facts}) == 2
+    assert _source_generated_facts(identity=False) == [{}, {}]
+
+
+def test_source_generated_eval_obeys_domain_and_rendered_byte_caps():
+    domain_overflow = (
+        "(" + ",".join(f'("meta-{index}", "conn-{index}")' for index in range(65)) + ")"
+    )
+    value = "x" * 1100
+    rendered_byte_overflow = (
+        "(" + ",".join(f"({value!r}, {value!r})" for _ in range(9)) + ")"
+    )
+    assert _source_generated_facts(
+        _SOURCE_GENERATED_TEMPLATE.replace("__DOMAIN__", domain_overflow)
+    ) == [{}, {}]
+    assert _source_generated_facts(
+        _SOURCE_GENERATED_TEMPLATE.replace("__DOMAIN__", rendered_byte_overflow)
+    ) == [{}, {}]
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        _SOURCE_GENERATED_TEMPLATE.replace("__DOMAIN__", "supplied_rows"),
+        _SOURCE_GENERATED_TEMPLATE.replace(
+            "__DOMAIN__", "(" + _SOURCE_GENERATED_ROWS + " if config.enabled else ())"
+        ),
+        _SOURCE_GENERATED_TEMPLATE.replace(
+            "__DOMAIN__", '((provider(), "z"), ("meta", "conn"))'
+        ),
+        _SOURCE_GENERATED.replace("{conn!r}", "{config.value!r}"),
+        _SOURCE_GENERATED.replace("{conn!r}", "{(conn := config.value)!r}"),
+    ],
+)
+def test_source_generated_eval_rejects_alias_branch_provider_and_external_values(
+    source,
+):
+    assert _source_generated_facts(source) == [{}, {}]
+
+
+def test_source_generated_eval_native_scan_keeps_builtin_alias_high(tmp_path):
+    from factoryline.review_audits import security_scan
+
+    (tmp_path / "app.py").write_text("eval = replacement\n" + _SOURCE_GENERATED)
+    report = security_scan(tmp_path, cache_enabled=False)
+    assert report.get("primitive_observations", []) == []
+    assert len(report["findings"]) == 2
+    assert all(item["severity"] == "HIGH" for item in report["findings"])
+
+
+def test_source_generated_eval_native_scan_partitions_both_closed_calls(tmp_path):
+    from factoryline.review_audits import security_scan
+
+    (tmp_path / "app.py").write_text(_SOURCE_GENERATED)
+    report = security_scan(tmp_path, cache_enabled=False)
+    assert not report["findings"]
+    assert len(report["primitive_observations"]) == 2
+    assert all(
+        item["facts"]["disposition"] == "PROVEN_FINITE_LITERAL_EVAL_INPUT"
+        and item["facts"]["input_effect"] == "CLOSED_SOURCE_GENERATED_STRINGS"
+        for item in report["primitive_observations"]
+    )
+
+
+def test_source_generated_eval_partition_rejects_tampered_effect(tmp_path):
+    from factoryline.review_audits import security_scan
+    from factoryline.review_integrity import partition_proven_primitive_observations
+
+    (tmp_path / "app.py").write_text(_SOURCE_GENERATED)
+    report = security_scan(tmp_path, cache_enabled=False)
+    for item in report["primitive_observations"]:
+        item["facts"]["input_effect"] = "USER_CONTROLLED"
+    partition_proven_primitive_observations(report)
+    assert report["primitive_observations"] == []
+    assert len(report["findings"]) == 2
+    assert all(item["severity"] == "HIGH" for item in report["findings"])
+
+
 _JSON_ENUM = """from enum import Enum
 class ErrorCode(str, Enum):
     REGISTER_INVALID_PASSWORD = "REGISTER_INVALID_PASSWORD"
@@ -851,3 +984,87 @@ def test_public_enum_json_retains_unproven_consumers(tmp_path, mutation):
             row["code"] == "SECURITY_HARDCODED_SECRET" for row in report["findings"]
         )
         assert not report.get("primitive_observations")
+
+
+@pytest.mark.parametrize(
+    "target,domain",
+    [
+        ("value", "((1,),)"),
+        ("(value,)", "(b'x',)"),
+        ("(value,)", "('x',)"),
+        ("(value,)", "(1,)"),
+        ("(value,value)", "((1,2),)"),
+    ],
+)
+def test_source_generated_eval_rejects_mismatched_unpacking(target, domain):
+    source = f"items = [(eval(f'lambda: {{value!r}}'),) for {target} in {domain}]\n"
+    assert _source_generated_facts(source) == [{}]
+
+
+def test_source_generated_eval_receipt_hash_matches_exact_rendered_strings():
+    import hashlib
+    import json
+
+    source = "items = [(eval(f'lambda: {value!r}'),) for value in ('a', 'b')]\n"
+    facts = _source_generated_facts(source)[0]
+    programs = ["lambda: 'a'", "lambda: 'b'"]
+    assert (
+        facts["program_sha256"]
+        == hashlib.sha256(
+            json.dumps(programs, separators=(",", ":")).encode()
+        ).hexdigest()
+    )
+
+
+@pytest.mark.parametrize("field", ["scope_profile", "input_effect"])
+@pytest.mark.parametrize("value", [[], {}, 3, None])
+def test_source_generated_eval_partition_rejects_unhashable_or_wrong_fact_types(
+    tmp_path, field, value
+):
+    from factoryline.review_audits import security_scan
+    from factoryline.review_integrity import partition_proven_primitive_observations
+
+    (tmp_path / "app.py").write_text(_SOURCE_GENERATED, encoding="utf-8")
+    report = security_scan(tmp_path, cache_enabled=False)
+    assert len(report["primitive_observations"]) == 2
+    report["primitive_observations"][0]["facts"][field] = value
+    partition_proven_primitive_observations(report)
+    assert len(report["primitive_observations"]) == 1
+    assert len(report["findings"]) == 1
+    assert report["findings"][0]["severity"] == "HIGH"
+
+
+@pytest.mark.parametrize(
+    "prefix",
+    [
+        "import builtins\nbuiltins.eval = replacement\n",
+        "exec('eval = replacement')\n",
+        "saved = eval\n",
+    ],
+)
+def test_source_generated_eval_rejects_provider_mutation_or_escape(tmp_path, prefix):
+    from factoryline.review_audits import security_scan
+
+    (tmp_path / "app.py").write_text(prefix + _SOURCE_GENERATED, encoding="utf-8")
+    report = security_scan(tmp_path, cache_enabled=False)
+    assert not report.get("primitive_observations")
+    assert (
+        sum(
+            item["code"] == "SECURITY_DYNAMIC_EXECUTION" and item["severity"] == "HIGH"
+            for item in report["findings"]
+        )
+        >= 2
+    )
+
+
+def test_source_generated_helpers_are_included_in_verifier_source_identity():
+    from factoryline import runtime_audit_integrity as runtime
+
+    helpers = set(runtime.workspace_builtin_helpers())
+    expected = {
+        value
+        for name, value in vars(runtime).items()
+        if name.startswith("_source_eval_") and callable(value)
+    }
+    assert expected <= helpers
+    assert runtime.finite_eval_binding in helpers

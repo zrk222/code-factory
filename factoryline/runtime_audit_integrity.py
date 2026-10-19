@@ -379,6 +379,238 @@ def fixed_literal_program_witness(
     }
 
 
+def _source_eval_span(node):
+    return [
+        getattr(node, key, None)
+        for key in ("lineno", "col_offset", "end_lineno", "end_col_offset")
+    ]
+
+
+def _source_eval_call(node):
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "eval"
+        and len(node.args) == 1
+        and not node.keywords
+        and isinstance(node.args[0], ast.JoinedStr)
+    )
+
+
+def _source_eval_tree(node, source_bytes):
+    try:
+        tree = ast.parse(source_bytes)
+    except (SyntaxError, ValueError, TypeError, MemoryError, RecursionError):
+        return None
+    nodes, parents, pending = [], {}, [tree]
+    while pending:
+        current = pending.pop()
+        nodes.append(current)
+        if len(nodes) > 20_000:
+            return None
+        children = list(ast.iter_child_nodes(current))
+        parents.update((child, current) for child in children)
+        pending.extend(children)
+    matches = [
+        item
+        for item in nodes
+        if isinstance(item, ast.Call)
+        and _source_eval_span(item) == _source_eval_span(node)
+    ]
+    if len(matches) != 1 or ast.dump(matches[0]) != ast.dump(node):
+        return None
+    return nodes, parents, matches[0]
+
+
+def _source_eval_comprehension(call, parents):
+    comprehensions, current = [], parents.get(call)
+    while current is not None:
+        if isinstance(
+            current, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
+        ):
+            comprehensions.append(current)
+        current = parents.get(current)
+    if len(comprehensions) != 1 or not isinstance(comprehensions[0], ast.ListComp):
+        return None
+    result = comprehensions[0]
+    if len(result.generators) != 1 or not isinstance(result.elt, ast.Tuple):
+        return None
+    generator = result.generators[0]
+    return result if not generator.is_async and not generator.ifs else None
+
+
+def _source_eval_calls(comprehension, nodes):
+    calls = [
+        item
+        for item in nodes
+        if isinstance(item, ast.Call)
+        and isinstance(item.func, ast.Name)
+        and item.func.id in {"eval", "exec"}
+    ]
+    direct = [item for item in comprehension.elt.elts if _source_eval_call(item)]
+    if not direct or calls != [item for item in nodes if item in direct]:
+        return []
+    if comprehension.elt.elts[: len(direct)] != direct:
+        return []
+    for item in ast.walk(comprehension.elt):
+        if isinstance(item, ast.Call) and item not in direct:
+            return []
+        if isinstance(
+            item, (ast.If, ast.IfExp, ast.BoolOp, ast.NamedExpr, ast.Await, ast.Yield)
+        ):
+            return []
+    return direct
+
+
+def _source_eval_target_names(target):
+    names = target.elts if isinstance(target, (ast.Tuple, ast.List)) else [target]
+    if not names or any(
+        not isinstance(item, ast.Name) or not isinstance(item.ctx, ast.Store)
+        for item in names
+    ):
+        return []
+    return names if len({item.id for item in names}) == len(names) else []
+
+
+def _source_eval_rows(generator):
+    names = _source_eval_target_names(generator.target)
+    domain = generator.iter
+    if (
+        not names
+        or not isinstance(domain, (ast.Tuple, ast.List))
+        or not 1 <= len(domain.elts) <= 64
+    ):
+        return []
+    destructures = isinstance(generator.target, (ast.Tuple, ast.List))
+    result = []
+    for row in domain.elts:
+        if destructures != isinstance(row, (ast.Tuple, ast.List)):
+            return []
+        values = row.elts if destructures else [row]
+        if len(values) != len(names) or not _source_eval_scalar_values(values):
+            return []
+        result.append({name.id: value.value for name, value in zip(names, values)})
+    return result
+
+
+def _source_eval_scalar_values(values):
+    return all(
+        isinstance(value, ast.Constant)
+        and type(value.value) in {str, bytes, int, bool, type(None)}
+        for value in values
+    )
+
+
+def _source_eval_render(template, values):
+    pieces = []
+    for part in template.values:
+        if isinstance(part, ast.Constant) and type(part.value) is str:
+            pieces.append(part.value)
+        elif (
+            isinstance(part, ast.FormattedValue)
+            and part.conversion == 114
+            and part.format_spec is None
+            and isinstance(part.value, ast.Name)
+            and part.value.id in values
+        ):
+            pieces.append(repr(values[part.value.id]))
+        else:
+            return None
+    return "".join(pieces)
+
+
+def _source_eval_program(program):
+    if program is None:
+        return None
+    try:
+        encoded = program.encode("utf-8")
+        parsed = ast.parse(program, mode="eval")
+    except (
+        SyntaxError,
+        ValueError,
+        TypeError,
+        MemoryError,
+        RecursionError,
+        UnicodeError,
+    ):
+        return None
+    if (
+        len(encoded) > 16 * 1024
+        or not isinstance(parsed.body, ast.Lambda)
+        or parsed.body.args.defaults
+        or parsed.body.args.kw_defaults
+    ):
+        return None
+    nodes = sum(1 for _ in ast.walk(parsed))
+    return (len(encoded), nodes) if nodes <= 1024 else None
+
+
+def _source_eval_programs(calls, rows):
+    programs_by_call, total_bytes, total_nodes = {}, 0, 0
+    for call in calls:
+        programs = []
+        for values in rows:
+            program = _source_eval_render(call.args[0], values)
+            size = _source_eval_program(program)
+            if size is None:
+                return {}
+            total_bytes += size[0]
+            total_nodes += size[1]
+            if total_bytes > 16 * 1024 or total_nodes > 1024:
+                return {}
+            programs.append(program)
+        programs_by_call[call] = programs
+    return programs_by_call
+
+
+def source_generated_eval_input_witness(
+    node, call_name, *, source_bytes, source_path, builtin_identity_proven=False
+):
+    """Bind finite source-generated lambda strings; never execute their bodies."""
+    if (
+        call_name != "eval"
+        or not _source_eval_call(node)
+        or builtin_identity_proven is not True
+        or not isinstance(source_bytes, bytes)
+        or len(source_bytes) > 1024 * 1024
+        or not isinstance(source_path, str)
+        or not source_path
+    ):
+        return {}
+    captured = _source_eval_tree(node, source_bytes)
+    if captured is None:
+        return {}
+    nodes, parents, call = captured
+    comprehension = _source_eval_comprehension(call, parents)
+    if comprehension is None:
+        return {}
+    calls = _source_eval_calls(comprehension, nodes)
+    rows = _source_eval_rows(comprehension.generators[0])
+    programs = _source_eval_programs(calls, rows) if rows else {}
+    if call not in programs:
+        return {}
+    import json
+
+    return {
+        "schema": "factory.finite-eval-input.v1",
+        "disposition": "PROVEN_FINITE_LITERAL_EVAL_INPUT",
+        "source_path": source_path,
+        "source_sha256": hashlib.sha256(source_bytes).hexdigest(),
+        "call_span": _source_eval_span(call),
+        "domain_span": _source_eval_span(comprehension.generators[0].iter),
+        "comprehension_span": _source_eval_span(comprehension),
+        "program_sha256": hashlib.sha256(
+            json.dumps(programs[call], separators=(",", ":")).encode()
+        ).hexdigest(),
+        "domain_size": len(rows),
+        "hypothesis": "ARGUMENT_CODE_INJECTION",
+        "scope_profile": "single-comprehension-source-template",
+        "input_effect": "CLOSED_SOURCE_GENERATED_STRINGS",
+        "runtime_assurance": "INCOMPLETE",
+        "target_execution": "not_performed",
+    }
+
+
 def _workspace_namespace_hazard(node, parent=None):
     if isinstance(node, ast.Name) and node.id in {"eval", "exec"}:
         return not (isinstance(parent, ast.Call) and parent.func is node)
@@ -521,6 +753,19 @@ def workspace_builtin_helpers():
         _workspace_dynamic_exec_risk,
         _workspace_source_hashes,
         _fixed_literal_call,
+        _source_eval_span,
+        _source_eval_call,
+        _source_eval_tree,
+        _source_eval_comprehension,
+        _source_eval_calls,
+        _source_eval_target_names,
+        _source_eval_rows,
+        _source_eval_scalar_values,
+        _source_eval_render,
+        _source_eval_program,
+        _source_eval_programs,
+        source_generated_eval_input_witness,
+        finite_eval_binding,
     )
 
 
@@ -2997,3 +3242,36 @@ class _LiteralConsumers(_FiniteInputCapture):
     def _snapshot_incomplete(self):
         self.snapshot_complete = False
         self.complete = False
+
+
+def finite_eval_binding(finding, valid_source_span):
+    facts = finding.get("facts", {})
+    return (
+        isinstance(facts, dict)
+        and type(facts.get("scope_profile")) is str
+        and type(facts.get("input_effect")) is str
+        and facts.get("schema") == "factory.finite-eval-input.v1"
+        and facts.get("disposition") == "PROVEN_FINITE_LITERAL_EVAL_INPUT"
+        and facts.get("hypothesis") == "ARGUMENT_CODE_INJECTION"
+        and (facts.get("scope_profile"), facts.get("input_effect"))
+        in {
+            ("module-initializer-literal-table", "CLOSED_LITERAL_TYPE_EXPRESSIONS"),
+            ("single-comprehension-source-template", "CLOSED_SOURCE_GENERATED_STRINGS"),
+        }
+        and facts.get("runtime_assurance") == "INCOMPLETE"
+        and facts.get("target_execution") == "not_performed"
+        and type(facts.get("domain_size")) is int
+        and 1 <= facts["domain_size"] <= 64
+        and isinstance(facts.get("program_sha256"), str)
+        and re.fullmatch(r"[0-9a-f]{64}", facts["program_sha256"]) is not None
+        and valid_source_span(facts.get("call_span"))
+        and facts["call_span"][:2] == [finding.get("line"), finding.get("column")]
+        and valid_source_span(facts.get("domain_span"))
+        and valid_source_span(facts.get("comprehension_span"))
+        and tuple(facts["comprehension_span"][:2])
+        <= tuple(facts["call_span"][:2])
+        <= tuple(facts["call_span"][2:])
+        <= tuple(facts["domain_span"][:2])
+        <= tuple(facts["domain_span"][2:])
+        <= tuple(facts["comprehension_span"][2:])
+    )
