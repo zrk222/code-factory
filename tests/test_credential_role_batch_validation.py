@@ -221,3 +221,171 @@ def test_actual_scanner_discards_mutated_batch(tmp_path, monkeypatch):
         f["code"] == "SECURITY_HARDCODED_SECRET" and f["severity"] == "CRITICAL"
         for f in result["findings"]
     )
+
+
+@pytest.mark.parametrize("mutation", ["helper_code", "helper_binding", "provider_code"])
+def test_python_helper_code_epoch_recomputes_and_rejects_batch(tmp_path, mutation):
+    _, memo = _memo(tmp_path)
+
+    def helper():
+        return True
+
+    def replacement():
+        return False
+
+    selected = [helper]
+
+    def epoch():
+        return (selected[0],)
+
+    def changed_epoch():
+        return tuple(selected)
+
+    with memo.analysis_batch() as batch:
+        assert memo.source_model("code", lambda: selected[0](), helper_epoch=epoch)
+        if mutation == "helper_code":
+            helper.__code__ = replacement.__code__
+        elif mutation == "helper_binding":
+            selected[0] = replacement
+        else:
+            epoch.__code__ = changed_epoch.__code__
+        assert not memo.source_model("code", lambda: False, helper_epoch=epoch)
+    assert not batch.accepted
+
+
+@pytest.mark.parametrize("mutation", ["self", "function", "code"])
+def test_bound_helper_code_epoch_is_identity_exact(tmp_path, mutation):
+    _, memo = _memo(tmp_path)
+
+    class Helper:
+        def check(self):
+            return True
+
+        def negative(self):
+            return False
+
+    first, second = Helper(), Helper()
+    selected, calls = [first], []
+
+    def epoch():
+        return (selected[0].check,)
+
+    def derive():
+        calls.append(True)
+        return len(calls)
+
+    with memo.analysis_batch() as batch:
+        assert memo.source_model("bound-code", derive, helper_epoch=epoch) == 1
+        assert memo.source_model("bound-code", derive, helper_epoch=epoch) == 1
+        if mutation == "self":
+            selected[0] = second
+        elif mutation == "function":
+            Helper.check = Helper.negative
+        else:
+            Helper.check.__code__ = Helper.negative.__code__
+        assert memo.source_model("bound-code", derive, helper_epoch=epoch) == 2
+    assert not batch.accepted
+
+
+def test_fresh_local_epoch_wrappers_reuse_code_and_explicit_dependencies(tmp_path):
+    _, memo = _memo(tmp_path)
+    dependency, calls = object(), []
+
+    def epoch_factory(value):
+        def epoch():
+            return (value,)
+
+        return epoch
+
+    def derive():
+        calls.append(True)
+        return len(calls)
+
+    with memo.analysis_batch() as batch:
+        for _ in range(20):
+            assert (
+                memo.source_model(
+                    "local-wrapper", derive, helper_epoch=epoch_factory(dependency)
+                )
+                == 1
+            )
+    assert batch.accepted and len(calls) == 1
+
+
+def test_local_epoch_wrapper_changed_dependency_rejects_batch(tmp_path):
+    _, memo = _memo(tmp_path)
+
+    def epoch_factory(value):
+        def epoch():
+            return (value,)
+
+        return epoch
+
+    with memo.analysis_batch() as batch:
+        assert memo.source_model(
+            "local-change", lambda: True, helper_epoch=epoch_factory(object())
+        )
+        assert not memo.source_model(
+            "local-change", lambda: False, helper_epoch=epoch_factory(object())
+        )
+    assert not batch.accepted
+
+
+@pytest.mark.parametrize("mutation", ["bound_self", "globals"])
+def test_provider_implementation_namespace_is_bound(tmp_path, mutation):
+    from types import FunctionType
+
+    _, memo = _memo(tmp_path)
+
+    class Provider:
+        def epoch(self):
+            return ()
+
+    first, second = Provider(), Provider()
+
+    def epoch():
+        return ()
+
+    provider = first.epoch if mutation == "bound_self" else epoch
+    with memo.analysis_batch() as batch:
+        assert memo.source_model("provider", lambda: True, helper_epoch=provider)
+        changed = (
+            second.epoch
+            if mutation == "bound_self"
+            else FunctionType(epoch.__code__, {})
+        )
+        assert not memo.source_model("provider", lambda: False, helper_epoch=changed)
+    assert not batch.accepted
+
+
+def test_opaque_epoch_values_use_identity_without_equality(tmp_path):
+    _, memo = _memo(tmp_path)
+
+    class Opaque:
+        def __eq__(self, other):
+            raise AssertionError("epoch must not call opaque equality")
+
+    opaque = Opaque()
+    value = (opaque, "data")
+
+    def epoch():
+        return (opaque, value)
+
+    with memo.analysis_batch() as batch:
+        assert memo.source_model("opaque", lambda: True, helper_epoch=epoch)
+        assert memo.source_model("opaque", lambda: False, helper_epoch=epoch)
+    assert batch.accepted
+
+
+@pytest.mark.parametrize("invalid", ["raises", "non_tuple"])
+def test_invalid_provider_epoch_never_accepts_batch(tmp_path, invalid):
+    _, memo = _memo(tmp_path)
+
+    def epoch():
+        if invalid == "raises":
+            raise ValueError("bad epoch")
+        return []
+
+    with memo.analysis_batch() as batch:
+        assert memo.source_model("invalid-code", lambda: True, helper_epoch=epoch)
+    assert not batch.accepted

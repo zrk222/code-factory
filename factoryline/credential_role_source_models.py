@@ -1,8 +1,10 @@
 """Batch-local source model caching with helper identity freshness."""
 
-from types import MethodType
+from types import FunctionType, MethodType
 
+_FUNCTION = object()
 _BOUND_METHOD = object()
+_PROVIDER = object()
 
 
 def source_model(self, key, derive, *, helper_epoch=None):
@@ -28,42 +30,45 @@ def source_model(self, key, derive, *, helper_epoch=None):
 
 
 def _helper_snapshot(helper_epoch):
+    """Code freshness; mutable defaults, globals and closures need explicit epochs."""
     try:
+        provider = _provider_snapshot(helper_epoch)
         values = helper_epoch()
+        if not isinstance(values, tuple):
+            return None
+        return (provider, *(_helper_identity(value) for value in values))
     except Exception:
         return None
-    if not isinstance(values, tuple):
-        return None
-    return tuple(
-        (_BOUND_METHOD, value.__self__, value.__func__)
-        if isinstance(value, MethodType)
-        else value
-        for value in values
-    )
+
+
+def _provider_snapshot(provider):
+    if isinstance(provider, MethodType):
+        function = provider.__func__
+        return (_PROVIDER, provider.__self__, function.__code__, function.__globals__)
+    if isinstance(provider, FunctionType):
+        return (_PROVIDER, provider.__code__, provider.__globals__)
+    return (provider,)
+
+
+def _helper_identity(value):
+    if isinstance(value, MethodType):
+        return (_BOUND_METHOD, value.__self__, value.__func__, value.__func__.__code__)
+    if isinstance(value, FunctionType):
+        return (_FUNCTION, value, value.__code__)
+    return (value,)
 
 
 def _same_helper_epoch(left, right):
     if left is None or right is None or len(left) != len(right):
         return False
     return all(
-        isinstance(b, tuple)
-        and len(b) == 3
-        and b[0] is _BOUND_METHOD
-        and a[1] is b[1]
-        and a[2] is b[2]
-        if isinstance(a, tuple) and len(a) == 3 and a[0] is _BOUND_METHOD
-        else a is b
+        len(a) == len(b) and all(x is y for x, y in zip(a, b))
         for a, b in zip(left, right)
     )
 
 
 def _helper_epoch_key(epoch):
-    return tuple(
-        (id(value[1]), id(value[2]))
-        if isinstance(value, tuple) and len(value) == 3 and value[0] is _BOUND_METHOD
-        else id(value)
-        for value in epoch
-    )
+    return tuple(tuple(id(part) for part in value) for value in epoch)
 
 
 def helper_epochs_valid(epochs):
