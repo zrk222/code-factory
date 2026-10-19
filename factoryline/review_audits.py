@@ -36,7 +36,12 @@ from .audit_action_refs import (
 from .deep_audit_io import local_file
 from .ops_telemetry import _measure_hash, _measure_parse
 from .runtime_audit_common import RuntimeAuditError, runtime_config_sources
-from . import review_integrity as integrity, intent_quality as contracts
+from . import (
+    review_integrity as integrity,
+    intent_quality as contracts,
+    type_intent_hollow,
+    type_intent_provider_provenance,
+)
 from .review_integrity import security_call_name as security_call_name
 
 _completion_only_oracle = integrity._completion_only_oracle
@@ -117,6 +122,13 @@ def _oracle_context_cache_read(key: str) -> tuple[dict, list] | None:
                 "mock_fixture_provenance": item.get("mock_fixture_provenance", {}),
                 "protocol_observations": item.get("protocol_observations", {}),
                 "fixed_program_workspace": item.get("fixed_program_workspace", {}),
+                "provider_source_closure": item.get("provider_source_closure", []),
+                "provider_source_closure_complete": item.get(
+                    "provider_source_closure_complete", False
+                ),
+                "provider_source_inventory_complete": item.get(
+                    "provider_source_inventory_complete", False
+                ),
                 **decode_structural_context(item.get("structural_context", {})),
             }
             for item in document["contexts"]
@@ -156,6 +168,13 @@ def _oracle_context_cache_write(key: str, contexts: dict, edges: list) -> None:
                 "mock_fixture_provenance": context.get("mock_fixture_provenance", {}),
                 "protocol_observations": context.get("protocol_observations", {}),
                 "fixed_program_workspace": context.get("fixed_program_workspace", {}),
+                "provider_source_closure": context.get("provider_source_closure", []),
+                "provider_source_closure_complete": bool(
+                    context.get("provider_source_closure_complete", False)
+                ),
+                "provider_source_inventory_complete": bool(
+                    context.get("provider_source_inventory_complete", False)
+                ),
                 "structural_context": encode_structural_context(context),
             }
         )
@@ -3723,6 +3742,8 @@ def _oracle_context_cache_key(root: Path, manifest: list, config_identity: dict)
         contracts._ty_ignore_file_patterns,
         contracts._ty_parse_ignore_lines,
         contracts._ty_matches_ignore,
+        *type_intent_hollow.CACHE_HELPERS,
+        *type_intent_provider_provenance.CACHE_HELPERS,
         _source_callback_invokers,
         _source_methods_are_stable,
         _source_callback_parameters,
@@ -3922,6 +3943,11 @@ def _project_oracle_context(
     ]
     if python_inventory_out is not None:
         python_inventory_out.extend(python_inventory)
+    provider_inventory_complete = (
+        type_intent_provider_provenance.provider_source_inventory_complete(
+            python_inventory
+        )
+    )
     (
         typecheck_sources,
         config_bindings,
@@ -3942,6 +3968,9 @@ def _project_oracle_context(
         cached = _oracle_context_cache_read(cache_key)
         if cached is not None:
             contexts, edges = cached
+            type_intent_provider_provenance.bind_provider_inventory(
+                contexts, provider_inventory_complete
+            )
             return contexts, bindings, edges, source_bytes
     snapshots = contracts.bound_snapshots(root, files, source_bytes, source_bindings)
     file_paths = set(files)
@@ -3986,6 +4015,9 @@ def _project_oracle_context(
     import_views = contracts.new_import_views(len(files))
     contexts, edges = _build_oracle_context(
         root, files, snapshots, typecheck_sources, ty_sources, import_views
+    )
+    type_intent_provider_provenance.bind_provider_inventory(
+        contexts, provider_inventory_complete
     )
     integrity.bind_benchmark_context(contexts, snapshots, benchmarks)
     resolved = contracts._project_import_views(import_views, snapshots)
@@ -4074,6 +4106,13 @@ def _build_oracle_context(
         )
         contexts[path]["flask_apps"] = _flask_context_apps(path, tree, snapshots)
         imports = _oracle_imports(root, path, tree, eligible)
+        closure, closure_complete = (
+            type_intent_provider_provenance.captured_local_import_closure(
+                root, imports, snapshots, eligible, _oracle_imports
+            )
+        )
+        contexts[path]["provider_source_closure"] = closure
+        contexts[path]["provider_source_closure_complete"] = closure_complete
         contracts._capture_project_imports(import_views, path, imports, eligible)
         contexts[path].update(
             integrity._structural_oracle_context(tree, imports, snapshots)
@@ -4298,6 +4337,34 @@ def _hollow_test_finding(
         for child in _test_oracle_body_nodes(node, aliases)
     ):
         return None
+    oracle_module = getattr(node, "_oracle_module", None)
+    module_aliases = (
+        _scope_security_aliases(_module_security_aliases(oracle_module), oracle_module)
+        if isinstance(oracle_module, ast.Module)
+        else {}
+    )
+    if type_intent_hollow.obviously_empty_test_body(
+        node
+    ) or type_intent_hollow.inert_type_assertion_only_oracle(
+        node,
+        aliases,
+        module_aliases=module_aliases,
+        scope_parameters=_scope_parameters(node),
+        provider_mutated=contracts._ty_assertion_provider_mutated,
+        relative=relative,
+        provider_context_closed=(
+            type_intent_provider_provenance.captured_provider_context_closed
+        ),
+    ):
+        return _security_finding(
+            "QUALITY_HOLLOW_TEST",
+            relative,
+            node,
+            "Test has no local non-vacuous runtime assertion; type-only intent is not credited without a proven selected checker.",
+            "MEDIUM",
+            symbol=node.name,
+            native_assertion_probe=integrity.native_test_probe(relative, node),
+        )
     finding = _security_finding(
         "QUALITY_UNKNOWN_TEST_ORACLE",
         relative,
@@ -5244,6 +5311,7 @@ def _security_scan_tree(
     tree._security_source_context = (oracle_context or {}).get(
         "_security_source_context"
     )
+    tree._security_oracle_context = oracle_context or {}
     tree._fixed_program_workspace = (oracle_context or {}).get(
         "fixed_program_workspace", {}
     )

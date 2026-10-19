@@ -8135,25 +8135,35 @@ def test_security_scan_keeps_uninvoked_command_with_recursive_invoke_hollow(tmp_
 @pytest.mark.parametrize(
     "filename, declared, body, expected",
     [
-        ("typing_probe.py", True, "assert_type(compute(), int)", {}),
+        (
+            "typing_probe.py",
+            True,
+            "assert_type(compute(), int)",
+            {"QUALITY_UNKNOWN_TEST_ORACLE": 1},
+        ),
         (
             "typing_probe.py",
             False,
             "assert_type(compute(), int)",
-            {"QUALITY_HOLLOW_TEST": 1},
+            {"QUALITY_UNKNOWN_TEST_ORACLE": 2},
         ),
         (
             "test_runtime.py",
             True,
             "assert_type(compute(), int)",
-            {"QUALITY_HOLLOW_TEST": 1},
+            {"QUALITY_UNKNOWN_TEST_ORACLE": 2},
         ),
-        ("typing_probe.py", True, "compute()", {"QUALITY_HOLLOW_TEST": 1}),
+        (
+            "typing_probe.py",
+            True,
+            "compute()",
+            {"QUALITY_UNKNOWN_TEST_ORACLE": 2},
+        ),
         (
             "typing_probe.py",
             True,
             "assert_type = lambda *args: None\n    assert_type(compute(), int)",
-            {"QUALITY_HOLLOW_TEST": 1},
+            {"QUALITY_UNKNOWN_TEST_ORACLE": 2},
         ),
     ],
 )
@@ -8175,9 +8185,7 @@ def test_security_scan_recognizes_individual_declared_static_type_oracle(
             "[pytest]\npython_files = typing_probe.py\n", encoding="utf-8"
         )
     result = security_scan(tmp_path)
-    counts = dict(expected)
-    counts["QUALITY_HOLLOW_TEST"] = counts.get("QUALITY_HOLLOW_TEST", 0) + 1
-    assert result["finding_counts"] == counts
+    assert result["finding_counts"] == expected
     if declared and filename == "typing_probe.py":
         edge = next(
             item
@@ -8731,16 +8739,23 @@ def test_runtime_oracle_eligibility_does_not_weaken_static_scan(
         "def test_validate():\n    " + body + "\n", encoding="utf-8"
     )
     result = security_scan(tmp_path)
-    finding = next(
-        item
-        for item in result["findings"]
-        if item["code"] == "QUALITY_UNKNOWN_TEST_ORACLE"
-    )
     import ast
     from factoryline.review_audits import _completion_only_oracle
 
     node = ast.parse("def test_validate():\n    " + body + "\n").body[0]
     assert _completion_only_oracle(node) is eligible
+    if body == "pass":
+        assert result["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+        finding = result["findings"][0]
+        assert finding["code"] == "QUALITY_HOLLOW_TEST"
+        assert finding["severity"] == "MEDIUM"
+        assert "runtime_oracle_eligible" not in finding["facts"]
+        return
+    finding = next(
+        item
+        for item in result["findings"]
+        if item["code"] == "QUALITY_UNKNOWN_TEST_ORACLE"
+    )
     assert "runtime_oracle_eligible" not in finding["facts"]
     assert finding["facts"]["candidate_rule"] == "QUALITY_HOLLOW_TEST"
     assert result["state"] == "INCOMPLETE"
