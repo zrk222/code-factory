@@ -2300,6 +2300,78 @@ def test_protocol_context_requires_materialized_import_source(tmp_path):
     assert result["summaries"][0]["unknown_reasons"] == ["IMPORT_SOURCE_UNAVAILABLE"]
 
 
+@pytest.mark.parametrize(
+    "body, expected",
+    [
+        (
+            "    repr(Base())\n    repr(Base())\n",
+            [
+                ("WEAK_PROTOCOL", (), 3),
+                ("UNKNOWN", ("PRECEDING_CONTROL_OR_EFFECT_UNKNOWN",), 4),
+            ],
+        ),
+        (
+            "    yield None\n    repr(Base())\n",
+            [("UNKNOWN", ("DEFERRED_EXECUTION",), 4)],
+        ),
+        (
+            "    import builtins\n    repr(Base())\n",
+            [("UNKNOWN", ("REFLECTIVE_TEST_EFFECTS",), 4)],
+        ),
+    ],
+)
+def test_protocol_context_reuses_one_ordered_test_walk(
+    tmp_path, monkeypatch, body, expected
+):
+    import ast
+    import hashlib
+
+    from factoryline import context_efficiency as efficiency
+
+    sources = {
+        "pkg/__init__.py": (
+            "from abc import ABC\n"
+            "class Base(ABC):\n"
+            "    def __init__(self):\n        self.value = 3\n"
+            "    def __repr__(self):\n        return f'<value={self.value}>'\n"
+        ),
+        "test_protocol.py": "from pkg import Base\ndef test_protocol():\n" + body,
+    }
+    snapshots = {}
+    for relative, source in sources.items():
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(source.encode("utf-8"))
+        tree = ast.parse(source, filename=str(path))
+        tree._oracle_source_sha256 = hashlib.sha256(source.encode()).hexdigest()
+        snapshots[path] = tree
+
+    test_path = tmp_path / "test_protocol.py"
+    test_node = snapshots[test_path].body[1]
+    original_walk = ast.walk
+    test_walks = 0
+
+    def counted_walk(node):
+        nonlocal test_walks
+        if node is test_node:
+            test_walks += 1
+        return original_walk(node)
+
+    monkeypatch.setattr(ast, "walk", counted_walk)
+    result = efficiency.protocol_call_context(
+        tmp_path,
+        list(snapshots),
+        snapshots,
+        python_profile={"implementation": "cpython", "version": "3.11.9"},
+    )
+    summaries = result["test_protocol.py"]["summaries"]
+    observed = [
+        (row["status"], tuple(row["unknown_reasons"]), row["line"]) for row in summaries
+    ]
+    assert observed == expected
+    assert test_walks == 1
+
+
 def test_protocol_context_source_resolves_three_repr_dispatch_shapes(tmp_path):
     source = (
         "import pkg as library\n"

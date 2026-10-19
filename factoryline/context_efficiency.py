@@ -4792,20 +4792,27 @@ def protocol_call_context(
             if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
             and n.name.startswith("test_")
         ]
-        summaries = [
-            summary
-            for test in tests
-            for call in ast.walk(test)
-            if isinstance(call, ast.Call)
-            if (
-                summary := (
-                    _protocol_call_summary
-                    if isinstance(call.func, ast.Name) and call.func.id == "repr"
-                    else _protocol_demand_summary
-                )(path, test, call, state)
+        summaries = []
+        for test in tests:
+            test_nodes = list(ast.walk(test))
+            state["active_test_nodes"] = (
+                test,
+                test_nodes,
+                any(isinstance(n, (ast.Yield, ast.YieldFrom)) for n in test_nodes),
             )
-            is not None
-        ]
+            summaries.extend(
+                summary
+                for call in test_nodes
+                if isinstance(call, ast.Call)
+                if (
+                    summary := (
+                        _protocol_call_summary
+                        if isinstance(call.func, ast.Name) and call.func.id == "repr"
+                        else _protocol_demand_summary
+                    )(path, test, call, state)
+                )
+                is not None
+            )
         if summaries:
             result[relative] = {
                 "schema": "factory.protocol-context.v1",
@@ -5283,7 +5290,9 @@ def _protocol_builtin_unshadowed(path, test, state, name="repr"):
     record = _protocol_source_record(path, state)
     if any(name in audit._bound_names(s) for s in record["tree"].body):
         raise ValueError("BUILTIN_SHADOWED")
-    if _scope_has_reflective_capability_access(list(ast.walk(test))):
+    active = state.get("active_test_nodes")
+    nodes = active[1] if active and active[0] is test else list(ast.walk(test))
+    if _scope_has_reflective_capability_access(nodes):
         raise ValueError("REFLECTIVE_TEST_EFFECTS")
 
 
@@ -5810,9 +5819,14 @@ def _invalid(code: str, message: str) -> NoReturn:
 
 def _protocol_reachable_call(path, test, call, state, parameters=False):
     """Require a direct synchronous call; return its preceding statements."""
+    active = state.get("active_test_nodes")
+    has_yield = (
+        active[2]
+        if active and active[0] is test
+        else any(isinstance(n, (ast.Yield, ast.YieldFrom)) for n in ast.walk(test))
+    )
     _require(
-        not isinstance(test, ast.AsyncFunctionDef)
-        and not any(isinstance(n, (ast.Yield, ast.YieldFrom)) for n in ast.walk(test)),
+        not isinstance(test, ast.AsyncFunctionDef) and not has_yield,
         "DEFERRED_EXECUTION",
     )
     statements = [s for s in test.body if isinstance(s, ast.Expr) and s.value is call]
