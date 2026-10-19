@@ -587,3 +587,138 @@ def test_type_intent_imported_capability_load_contract(source, expected):
     from factoryline.type_intent_provider_provenance import dynamic_provider_capability
 
     assert dynamic_provider_capability(ast.parse(source)) is expected
+
+
+def _completion(source):
+    import ast
+
+    from factoryline.test_oracle_misuse import inert_test_completion
+
+    module = ast.parse(source)
+    test = next(
+        node
+        for node in module.body
+        if isinstance(node, ast.FunctionDef) and node.name.startswith("test_")
+    )
+    test._oracle_module = module
+    return inert_test_completion(test)
+
+
+def test_exception_completion_uses_source_local_helper_and_class_identity():
+    assert _completion(
+        "class CustomError(Exception):\n    pass\n"
+        "def operation():\n    pass\n"
+        "def test_behavior():\n"
+        "    try:\n        operation()\n"
+        "    except CustomError:\n        pass\n"
+    ) == ("NORMAL", None)
+
+
+def test_exception_completion_requires_source_for_builtin_identity():
+    import ast
+
+    from factoryline.test_oracle_misuse import inert_test_completion
+
+    node = ast.parse(
+        "def test_behavior():\n"
+        "    try:\n        raise RuntimeError\n"
+        "    except RuntimeError:\n        pass\n"
+    ).body[0]
+
+    assert inert_test_completion(node) == ("UNKNOWN", None)
+
+
+def test_exception_completion_accepts_unescaped_qualified_contextlib_provider():
+    assert _completion(
+        "import contextlib as ctx\n"
+        "class CustomError(Exception):\n    pass\n"
+        "def test_behavior():\n"
+        "    try:\n        with ctx.nullcontext():\n"
+        "            raise CustomError()\n"
+        "    except CustomError:\n        pass\n"
+        "    else:\n        raise RuntimeError\n"
+    ) == ("NORMAL", None)
+
+
+def test_exception_completion_accepts_unescaped_qualified_builtin_provider():
+    assert _completion(
+        "import builtins as bi\n"
+        "def test_behavior():\n"
+        "    try:\n        raise bi.RuntimeError\n"
+        "    except bi.RuntimeError:\n        pass\n"
+    ) == ("NORMAL", None)
+
+
+def test_assertion_message_helper_return_does_not_return_from_test():
+    assert _completion(
+        "def test_behavior():\n"
+        "    def message():\n        return None\n"
+        "    assert False, message()\n"
+    ) == ("RAISE", "builtins.AssertionError")
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "def test_behavior():\n    raise RuntimeError from build_cause()\n",
+        "class CustomError(Exception):\n"
+        "    def __init__(self):\n        pass\n"
+        "def test_behavior():\n"
+        "    try:\n        raise CustomError()\n"
+        "    except CustomError:\n        pass\n",
+        "class CustomError(Exception):\n    pass\n"
+        "def test_behavior():\n"
+        "    try:\n        raise CustomError()\n"
+        "    except (CustomError, dynamic_type()):\n        pass\n",
+        "from contextlib import nullcontext\n"
+        "class CustomError(Exception):\n    pass\n"
+        "def test_behavior():\n"
+        "    try:\n        with nullcontext():\n"
+        "            raise CustomError()\n"
+        "    except CustomError:\n        pass\n"
+        "    nullcontext = replacement\n",
+        "import contextlib as ctx\n"
+        "provider = ctx\n"
+        "class CustomError(Exception):\n    pass\n"
+        "def test_behavior():\n"
+        "    with ctx.nullcontext():\n        raise CustomError()\n",
+        "import contextlib as ctx\n"
+        "ctx.nullcontext = replacement\n"
+        "class CustomError(Exception):\n    pass\n"
+        "def test_behavior():\n"
+        "    with ctx.nullcontext():\n        raise CustomError()\n",
+        "def test_behavior():\n"
+        "    try:\n        assert False, run_oracle()\n"
+        "    except AssertionError:\n        pass\n",
+        "def test_behavior():\n"
+        "    x = True\n    try:\n        x = False\n"
+        "    finally:\n        if x:\n            pass\n"
+        "        else:\n            run_oracle()\n",
+        "def test_behavior():\n"
+        "    x = True\n    try:\n        x = False\n"
+        "    except Exception:\n        pass\n    else:\n"
+        "        if x:\n            pass\n        else:\n"
+        "            run_oracle()\n",
+        "import builtins\n"
+        "builtins.RuntimeError = lambda: run_oracle()\n"
+        "def test_behavior():\n    RuntimeError()\n",
+        "import contextlib\n"
+        "contextlib.nullcontext = lambda: run_oracle()\n"
+        "from contextlib import nullcontext\n"
+        "def test_behavior():\n    with nullcontext():\n        pass\n",
+        "import builtins\n"
+        "builtins.Exception = opaque_base\n"
+        "class CustomError(Exception):\n    pass\n"
+        "def test_behavior():\n"
+        "    try:\n        raise CustomError()\n"
+        "    except CustomError:\n        pass\n",
+        "def test_behavior():\n"
+        "    def helper():\n        pass\n"
+        "    try:\n        def helper():\n            run_oracle()\n"
+        "    except Exception:\n        pass\n    else:\n        helper()\n",
+        '__builtins__["RuntimeError"] = lambda: run_oracle()\n'
+        "def test_behavior():\n    RuntimeError()\n",
+    ],
+)
+def test_exception_completion_keeps_unproved_identity_unknown(source):
+    assert _completion(source) == ("UNKNOWN", None)
