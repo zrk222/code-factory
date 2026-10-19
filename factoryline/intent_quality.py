@@ -4320,22 +4320,23 @@ def _db_python_declarations(
 
 
 def _db_python_symbols(tree):
+    nodes = tuple(ast.walk(tree))
     symbols, seen, import_counts = {}, {}, {}
     for node in tree.body:
         for local, qualified in _db_import_bindings(node):
             seen[local] = seen.get(local, 0) + 1
             symbols[local] = qualified
-    for node in ast.walk(tree):
+    for node in nodes:
         for local in _db_python_import_names(node):
             import_counts[local] = import_counts.get(local, 0) + 1
     bound = set()
     if any(
         isinstance(node, ast.ImportFrom)
         and any(alias.name == "*" for alias in node.names)
-        for node in ast.walk(tree)
+        for node in nodes
     ):
         bound.update(symbols)
-    for node in ast.walk(tree):
+    for node in nodes:
         if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
             bound.add(node.id)
         elif isinstance(node, ast.arg):
