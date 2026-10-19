@@ -78,6 +78,10 @@ def exact_local_receiver_relation(
     chain = class_chain(index, class_ref[0], class_ref[1], imports, classes, audit)
     if not chain:
         return "UNKNOWN"
+    from .credential_role_receiver_lifetime import local_receiver_stable
+
+    if not local_receiver_stable(path, receiver, getter, chain, index):
+        return "UNKNOWN"
     candidate_methods = _candidate_getter_methods(
         candidates, getter, index, imports, classes, audit
     )
