@@ -24,6 +24,86 @@ def _memo(tmp_path):
     return path, ClassChainMemo(index, imports, classes, audit)
 
 
+def test_source_models_reuse_only_inside_validated_batch(tmp_path):
+    _, memo = _memo(tmp_path)
+    calls = []
+
+    def derive():
+        calls.append(True)
+        return len(calls)
+
+    assert memo.source_model(("fixture", derive), derive) == 1
+    assert memo.source_model(("fixture", derive), derive) == 2
+    with memo.analysis_batch() as batch:
+        assert batch.started
+        assert memo.source_model(("fixture", derive), derive) == 3
+        assert memo.source_model(("fixture", derive), derive) == 3
+    assert batch.accepted
+    assert memo.source_model(("fixture", derive), derive) == 4
+
+
+def test_source_model_cache_cannot_admit_late_mutation(tmp_path):
+    path, memo = _memo(tmp_path)
+    with memo.analysis_batch() as batch:
+        assert batch.started
+        assert memo.source_model("fixture", lambda: True)
+        memo.index.snapshots[path].body[0].body.append(ast.Pass())
+        assert memo.source_model("fixture", lambda: False)
+    assert not batch.accepted
+
+
+def test_receiver_identity_summary_reused_only_inside_batch(tmp_path, monkeypatch):
+    from factoryline import credential_role_receiver_lifetime as lifetime
+
+    path, memo = _memo(tmp_path)
+    memo.index.class_chain_memo = memo
+    receiver = ast.Name("client", ast.Load())
+    chain = [(path, "Client", memo.classes[(path, "Client")])]
+    calls = []
+
+    def derive(*args):
+        calls.append(True)
+        return False
+
+    monkeypatch.setattr(lifetime, "_local_receiver_stable", derive)
+    with memo.analysis_batch() as batch:
+        for _ in range(20):
+            assert not lifetime.local_receiver_stable(
+                path, receiver, "endpoint", chain, memo.index
+            )
+    assert batch.accepted and len(calls) == 1
+    assert not lifetime.local_receiver_stable(
+        path, receiver, "endpoint", chain, memo.index
+    )
+    assert len(calls) == 2
+
+
+def test_helper_epoch_replacement_rejects_batch_after_fresh_negative(
+    tmp_path, monkeypatch
+):
+    from factoryline import credential_role_receiver_lifetime as lifetime
+
+    path, memo = _memo(tmp_path)
+    memo.index.class_chain_memo = memo
+    receiver = ast.Name("client", ast.Load())
+    chain = [(path, "Client", memo.classes[(path, "Client")])]
+    monkeypatch.setattr(
+        lifetime,
+        "_local_receiver_stable",
+        lambda *args: lifetime._field_writes_safe(None, ()),
+    )
+    monkeypatch.setattr(lifetime, "_field_writes_safe", lambda *args: True)
+    with memo.analysis_batch() as batch:
+        assert lifetime.local_receiver_stable(
+            path, receiver, "endpoint", chain, memo.index
+        )
+        monkeypatch.setattr(lifetime, "_field_writes_safe", lambda *args: False)
+        assert not lifetime.local_receiver_stable(
+            path, receiver, "endpoint", chain, memo.index
+        )
+    assert not batch.accepted
+
+
 @pytest.mark.parametrize("mutation", ["bytes", "ast", "inventory", "imports", "helper"])
 def test_batch_exit_freshly_rejects_mutation(tmp_path, mutation):
     path, memo = _memo(tmp_path)

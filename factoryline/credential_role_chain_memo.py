@@ -6,6 +6,7 @@ from contextlib import contextmanager
 from types import SimpleNamespace
 
 from .credential_role_sources import SourceSnapshotIndex
+from .credential_role_source_models import helper_epochs_valid, source_model
 
 
 def _view(imports, classes):
@@ -13,6 +14,8 @@ def _view(imports, classes):
 
 
 class ClassChainMemo:
+    source_model = source_model
+
     def __init__(self, index, imports, classes, audit):
         self.index, self.imports, self.classes, self.audit = (
             index,
@@ -27,6 +30,7 @@ class ClassChainMemo:
         self.entries = {}
         self._analysis_batch = None
         self.getter_role_checks = {}
+        self.source_models = {}
 
     def getter_role(self, node, path, audit, derive):
         """Memoize candidate-independent consumer checks within this derivation."""
@@ -51,7 +55,7 @@ class ClassChainMemo:
         """Defer repeated fresh checks until the producer's all-evidence exit."""
         if self._analysis_batch is not None:
             raise ValueError("nested analysis batch")
-        state = SimpleNamespace(started=self.valid(), accepted=False)
+        state = SimpleNamespace(started=self.valid(), accepted=False, helper_epoch={})
         if not state.started:
             yield state
             return
@@ -63,7 +67,9 @@ class ClassChainMemo:
         finally:
             self._analysis_batch = None
             fresh = self.valid()
-            state.accepted = completed and fresh
+            state.accepted = (
+                completed and fresh and helper_epochs_valid(state.helper_epoch)
+            )
 
     def defers_validation(self, index, imports, classes, audit):
         return bool(

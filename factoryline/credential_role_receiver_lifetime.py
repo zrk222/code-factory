@@ -2,6 +2,9 @@
 
 import ast
 
+from . import credential_role_class_binding as _class_binding
+from . import credential_role_identity_effects as _identity_effects
+from . import credential_role_scope_bindings as _scope_bindings
 from .credential_role_class_binding import effective_method
 from .credential_role_identity_effects import summarize_identity_effect
 from .credential_role_scope_bindings import binding_occurrences
@@ -18,7 +21,48 @@ _HOOKS = (
 )
 
 
+def _receiver_helper_epoch():
+    return (
+        *(
+            globals()[name]
+            for name in (
+                "_HOOKS",
+                "_local_receiver_stable",
+                "_safe_use",
+                "_method_stable",
+                "_field_writes_safe",
+                "_function",
+                "summarize_identity_effect",
+                "effective_method",
+                "binding_occurrences",
+            )
+        ),
+        _class_binding.effective_method,
+        _identity_effects.summarize_identity_effect,
+        _scope_bindings.binding_occurrences,
+    )
+
+
 def local_receiver_stable(path, receiver, getter, chain, index):
+    """Reuse candidate-independent identity checks only in a validated batch."""
+
+    def derive():
+        return _local_receiver_stable(path, receiver, getter, chain, index)
+
+    memo = getattr(index, "class_chain_memo", None)
+    if memo is None:
+        return derive()
+    key = (
+        "local-receiver-lifetime",
+        path,
+        id(receiver),
+        getter,
+        tuple((source, name, id(owner)) for source, name, owner in chain),
+    )
+    return memo.source_model(key, derive, helper_epoch=_receiver_helper_epoch)
+
+
+def _local_receiver_stable(path, receiver, getter, chain, index):
     """Unknown calls/escapes or effectful initialization cannot prove exclusion."""
     if not isinstance(receiver, ast.Name) or not index.validate(path):
         return False

@@ -2,7 +2,24 @@
 
 
 def absolute_path(index, relative):
-    matches = [path for path in index.snapshots if index.relative(path) == relative]
+    def derive():
+        rows = {}
+        for path in index.snapshots:
+            rows.setdefault(index.relative(path), []).append(path)
+        return rows
+
+    def epoch():
+        relative_helper = index.relative
+        return (
+            absolute_path,
+            getattr(relative_helper, "__func__", relative_helper),
+            getattr(relative_helper, "__self__", None),
+        )
+
+    memo = getattr(index, "class_chain_memo", None)
+    key = ("relative-source-paths", index.root, tuple(index.snapshots))
+    rows = memo.source_model(key, derive, helper_epoch=epoch) if memo else derive()
+    matches = rows.get(relative, ())
     return matches[0] if len(matches) == 1 and index.validate(matches[0]) else None
 
 

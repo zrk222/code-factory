@@ -174,6 +174,7 @@ def endpoint_admission_helpers():
         "credential_role_sources",
         "credential_role_bindings",
         "credential_role_chain_memo",
+        "credential_role_source_models",
         "credential_role_class_binding",
         "credential_role_constructor_flow",
         "credential_role_adapter_selection",
