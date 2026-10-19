@@ -26,6 +26,7 @@ def _raw():
         "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer",
         "https://oauth.yandex.com/token",
         "https://open.feishu.cn/open-apis/authen/v1/access_token",
+        "https://auth.dataporten.no/oauth/token",
     ],
 )
 def test_exact_publications_are_offline_facts_not_safety(value, monkeypatch):
@@ -58,6 +59,8 @@ def test_exact_publications_are_offline_facts_not_safety(value, monkeypatch):
         "https://oauth.yandex.com/token/",
         "https://open.feishu.cn/open-apis/authen/v1/access_token/",
         "https://open.feishu.cn/open-apis/auth/v3/app_access_token/internal/",
+        "https://auth.dataporten.no/oauth/token/",
+        "https://auth.dataporten.no/oauth/token?secret=credential",
         None,
     ],
 )
@@ -99,7 +102,7 @@ def test_catalog_contains_publication_data_only():
     assert (
         document["admission"]["decision"] == "ADMITTED_PUBLIC_PROTOCOL_PUBLICATION_ONLY"
     )
-    assert len(document["entries"]) == 26
+    assert len(document["entries"]) == 27
     assert not any(
         term in raw
         for term in (
@@ -114,7 +117,7 @@ def test_catalog_contains_publication_data_only():
 
 def test_batch_snapshot_has_immutable_facts():
     snapshot = catalog.endpoint_publications()
-    assert isinstance(snapshot, tuple) and len(snapshot) == 26
+    assert isinstance(snapshot, tuple) and len(snapshot) == 27
     with pytest.raises(TypeError):
         snapshot[0]["value"] = "changed"
     assert catalog.endpoint_publication(snapshot[0]["value"]) == dict(snapshot[0])
