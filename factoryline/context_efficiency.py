@@ -124,13 +124,14 @@ def _provider_package_initializers(root, sources, eligible):
         if isinstance(eligible, dict)
         else {path.resolve(): path for path in eligible}
     )
+    resolved_root = root.resolve()
     result = set()
     for source in sources:
         for parent in source.resolve().parents:
-            initializer = parent / "__init__.py"
-            if initializer.resolve() in paths:
-                result.add(paths[initializer.resolve()])
-            if parent == root.resolve():
+            initializer = (parent / "__init__.py").resolve()
+            if initializer in paths:
+                result.add(paths[initializer])
+            if parent == resolved_root:
                 break
     return sorted(result)
 

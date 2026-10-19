@@ -122,3 +122,87 @@ def test_native_context_cold_warm_keeps_the_same_profile_and_evidence(tmp_path):
     assert encode_structural_context(cold[0]) == encode_structural_context(warm[0])
     assert cold[1:] == warm[1:]
     assert audit._oracle_context_cache_info()["hits"] >= 1
+
+
+@pytest.mark.parametrize("inventory_kind", ["mapping", "set"])
+def test_provider_initializer_resolution_retains_exact_eligible_paths(
+    tmp_path, inventory_kind
+):
+    from factoryline.context_efficiency import _provider_package_initializers
+
+    source = tmp_path / "package" / "nested" / "module.py"
+    initializers = [tmp_path / "__init__.py", source.parent / "__init__.py"]
+    initializers.append(source.parent.parent / "__init__.py")
+    for path in [source, *initializers]:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("", encoding="utf-8")
+    eligible = {path.resolve(): path for path in [source, *initializers]}
+    if inventory_kind == "set":
+        eligible = set(eligible.values())
+
+    assert _provider_package_initializers(
+        tmp_path, [source, source], eligible
+    ) == sorted(initializers)
+    excluded = source.parent / "__init__.py"
+    if isinstance(eligible, dict):
+        eligible.pop(excluded.resolve())
+    else:
+        eligible.remove(excluded)
+    assert _provider_package_initializers(tmp_path, [source], eligible) == sorted(
+        path for path in initializers if path != excluded
+    )
+
+
+def test_provider_initializer_resolution_does_not_scan_above_root(tmp_path):
+    from factoryline.context_efficiency import _provider_package_initializers
+
+    root = tmp_path / "project"
+    source = root / "package" / "module.py"
+    outside = tmp_path / "__init__.py"
+    inside = root / "__init__.py"
+    eligible = {path.resolve(): path for path in [outside, inside]}
+    assert _provider_package_initializers(root, [source], eligible) == [inside]
+
+
+def test_provider_initializer_resolves_root_and_each_initializer_once(
+    tmp_path, monkeypatch
+):
+    from pathlib import Path
+
+    from factoryline.context_efficiency import _provider_package_initializers
+
+    source = tmp_path / "package" / "nested" / "module.py"
+    initializer = source.parent / "__init__.py"
+    eligible = {initializer.resolve(): initializer}
+    original = Path.resolve
+    calls = []
+
+    def counted(path, *args, **kwargs):
+        calls.append(path)
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "resolve", counted)
+    assert _provider_package_initializers(tmp_path, [source], eligible) == [initializer]
+    assert calls.count(tmp_path) == 1
+    assert calls.count(initializer) == 1
+    assert len(calls) == 5
+
+
+def test_provider_initializer_resolution_preserves_symlink_canonicalization(tmp_path):
+    from factoryline.context_efficiency import _provider_package_initializers
+
+    actual = tmp_path / "actual"
+    actual.mkdir()
+    source = actual / "module.py"
+    source.write_text("", encoding="utf-8")
+    initializer = actual / "__init__.py"
+    initializer.write_text("", encoding="utf-8")
+    linked = tmp_path / "linked"
+    try:
+        linked.symlink_to(actual, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks unavailable")
+    eligible = {initializer.resolve(): linked / "__init__.py"}
+    assert _provider_package_initializers(linked, [linked / "module.py"], eligible) == [
+        linked / "__init__.py"
+    ]
