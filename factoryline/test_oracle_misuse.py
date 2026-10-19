@@ -111,21 +111,42 @@ def _constant_truth_value(node: ast.expr, _known: dict) -> bool | None:
     return constant_truth(node, {})
 
 
-def _inert_literal(node, known=None):
+def _inert_literal_call(node, literal_calls):
+    if (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and not node.args
+        and not node.keywords
+        and node.func.id in (literal_calls or {})
+    ):
+        return True, literal_calls[node.func.id]
+    return None
+
+
+def _static_inert_literal(node):
+    if sum(1 for _ in ast.walk(node)) > 128 or not _static_expression(node):
+        return False, None
+    try:
+        return True, ast.literal_eval(node)
+    except (ValueError, TypeError, SyntaxError, MemoryError, RecursionError):
+        return False, None
+
+
+def _inert_literal(node, known=None, literal_calls=None):
     if node is None:
         return True, None
     if isinstance(node, ast.Name):
         return (True, known[node.id]) if node.id in (known or {}) else (False, None)
     if isinstance(node, ast.BoolOp):
         for part in node.values:
-            closed, value = _inert_literal(part, known)
+            closed, value = _inert_literal(part, known, literal_calls)
             if not closed or bool(value) == isinstance(node.op, ast.Or):
                 return closed, value
         return True, value
     if isinstance(node, ast.IfExp):
-        closed, value = _inert_literal(node.test, known)
+        closed, value = _inert_literal(node.test, known, literal_calls)
         return (
-            _inert_literal(node.body if value else node.orelse, known)
+            _inert_literal(node.body if value else node.orelse, known, literal_calls)
             if closed
             else (False, None)
         )
@@ -135,15 +156,14 @@ def _inert_literal(node, known=None):
         and isinstance(node.ops[0], ast.Eq)
     ):
         left, right = (
-            _inert_literal(part, known) for part in (node.left, node.comparators[0])
+            _inert_literal(part, known, literal_calls)
+            for part in (node.left, node.comparators[0])
         )
         return (True, left[1] == right[1]) if left[0] and right[0] else (False, None)
-    if sum(1 for _ in ast.walk(node)) > 128 or not _static_expression(node):
-        return False, None
-    try:
-        return True, ast.literal_eval(node)
-    except (ValueError, TypeError, SyntaxError, MemoryError, RecursionError):
-        return False, None
+    call_value = _inert_literal_call(node, literal_calls)
+    if call_value is not None:
+        return call_value
+    return _static_inert_literal(node)
 
 
 def _inert_definition(node):
@@ -432,11 +452,94 @@ def _module_pass_helpers(module, stores, test):
     return helpers
 
 
+def _local_literal_returns(test):
+    nodes = tuple(ast.walk(test))
+    if len(nodes) > 512:
+        return {}
+    parents = {
+        child: parent for parent in nodes for child in ast.iter_child_nodes(parent)
+    }
+    definitions = [
+        node
+        for node in nodes
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+    ]
+    stores = {
+        node.id
+        for node in nodes
+        if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del))
+    }
+    arguments = {node.arg for node in nodes if isinstance(node, ast.arg)}
+    imports = set()
+    for node in nodes:
+        if isinstance(node, ast.Import):
+            imports.update(
+                alias.asname or alias.name.split(".", 1)[0] for alias in node.names
+            )
+        elif isinstance(node, ast.ImportFrom):
+            imports.update(
+                alias.asname or alias.name for alias in node.names if alias.name != "*"
+            )
+            if any(alias.name == "*" for alias in node.names):
+                return {}
+    candidates = [
+        node
+        for node in definitions
+        if isinstance(node, ast.FunctionDef) and parents.get(node) is test
+    ]
+    results = {}
+    for function in candidates:
+        name = function.name
+        same_name = [node for node in definitions if node.name == name]
+        if (
+            len(same_name) != 1
+            or name in stores
+            or name in arguments
+            or name in imports
+            or function.decorator_list
+            or getattr(function, "type_params", ())
+            or function.returns is not None
+            or function.type_comment
+            or function.args.posonlyargs
+            or function.args.args
+            or function.args.vararg
+            or function.args.kwonlyargs
+            or function.args.kwarg
+            or function.args.defaults
+            or function.args.kw_defaults
+            or len(function.body) != 1
+            or not isinstance(function.body[0], ast.Return)
+            or not isinstance(function.body[0].value, ast.Constant)
+            or type(function.body[0].value.value)
+            not in (str, bytes, int, bool, type(None))
+        ):
+            continue
+        references = [
+            node for node in nodes if isinstance(node, ast.Name) and node.id == name
+        ]
+        if not references or any(
+            not isinstance(parents.get(node), ast.Call)
+            or parents[node].func is not node
+            for node in references
+        ):
+            continue
+        results[name] = (function, function.body[0].value.value)
+    return results
+
+
 def _completion_context(test):
     names, bases = _builtins_completion_context()
     module = getattr(test, "_oracle_module", None)
     if not isinstance(module, ast.Module):
-        return {"names": {}, "bases": {}, "helpers": {}, "modules": {}}
+        return {
+            "names": {},
+            "bases": {},
+            "helpers": {},
+            "modules": {},
+            "literal_functions": {},
+            "literal_calls": {},
+            "active_helpers": (),
+        }
     stores = _stored_names(module)
     module_aliases = {
         "builtins": _module_provider_aliases(
@@ -465,6 +568,9 @@ def _completion_context(test):
         "names": names,
         "bases": bases,
         "helpers": _module_pass_helpers(module, stores, test),
+        "literal_functions": _local_literal_returns(test),
+        "literal_calls": {},
+        "active_helpers": (),
         "modules": (
             {
                 **(module_aliases["builtins"] if providers["builtins"] else {}),
@@ -528,30 +634,115 @@ def _local_bindings(test):
     return bound
 
 
+def _helper_alias(stmt, helpers):
+    return (
+        isinstance(stmt, ast.Assign)
+        and len(stmt.targets) == 1
+        and isinstance(stmt.targets[0], ast.Name)
+        and stmt.targets[0].id != "__builtins__"
+        and isinstance(stmt.value, ast.Name)
+        and stmt.value.id in helpers
+    )
+
+
+def _callback_helper(function, call, helpers):
+    if (
+        not isinstance(function, ast.FunctionDef)
+        or call.keywords
+        or len(call.args) != 1
+        or not isinstance(call.args[0], ast.Name)
+        or len(function.body) != 1
+        or not isinstance(function.body[0], ast.Expr)
+        or not isinstance(function.body[0].value, ast.Call)
+    ):
+        return None
+    callback = helpers.get(call.args[0].id)
+    if not isinstance(callback, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return None
+    if _function_needs_arguments(callback):
+        return None
+    invoke = function.body[0].value
+    if invoke.args or invoke.keywords:
+        return None
+    parameters = (*function.args.posonlyargs, *function.args.args)
+    direct_parameter_call = (
+        len(parameters) == 1
+        and function.args.vararg is None
+        and not function.args.kwonlyargs
+        and function.args.kwarg is None
+        and not function.args.defaults
+        and not function.args.kw_defaults
+        and isinstance(invoke.func, ast.Name)
+        and invoke.func.id == parameters[0].arg
+    )
+    first_vararg_call = (
+        not parameters
+        and function.args.vararg is not None
+        and not function.args.kwonlyargs
+        and function.args.kwarg is None
+        and not function.args.defaults
+        and not function.args.kw_defaults
+        and isinstance(invoke.func, ast.Subscript)
+        and isinstance(invoke.func.value, ast.Name)
+        and invoke.func.value.id == function.args.vararg.arg
+        and isinstance(invoke.func.slice, ast.Constant)
+        and type(invoke.func.slice.value) is int
+        and invoke.func.slice.value == 0
+    )
+    return callback if direct_parameter_call or first_vararg_call else None
+
+
+def _run_inert_helper(helper, context, helpers):
+    if isinstance(helper, ast.AsyncFunctionDef):
+        return "NORMAL", None
+    active = context.get("active_helpers", ())
+    identity = id(helper)
+    if identity in active or len(active) >= 8 or _function_needs_arguments(helper):
+        return "UNKNOWN", None
+    nested_helpers = dict(helpers)
+    nested = {
+        **context,
+        "active_helpers": (*active, identity),
+        "helpers": nested_helpers,
+        "names": dict(context.get("names", {})),
+        "modules": dict(context.get("modules", {})),
+        "literal_calls": dict(context.get("literal_calls", {})),
+    }
+    for name in _local_bindings(helper):
+        for key in ("helpers", "names", "modules", "literal_calls"):
+            nested[key].pop(name, None)
+    result = _inert_suite(helper.body, nested, helpers=nested_helpers)
+    return ("NORMAL", None) if result[0] == "RETURN" else result
+
+
 def _inert_expression(node, known, helpers, context):
     if not isinstance(node, ast.Call):
-        return ("NORMAL", None) if _inert_literal(node, known)[0] else ("UNKNOWN", None)
+        return (
+            ("NORMAL", None)
+            if _inert_literal(node, known, context.get("literal_calls"))[0]
+            else ("UNKNOWN", None)
+        )
     if (
         isinstance(node.func, ast.Name)
         and node.func.id in helpers
         and node.func.id not in known
-        and not node.args
         and not node.keywords
     ):
         helper = helpers[node.func.id]
-        if _function_needs_arguments(helper):
-            return "UNKNOWN", None
-        if isinstance(helper, ast.AsyncFunctionDef):
-            return "NORMAL", None
-        result = _inert_suite(helper.body, context)
-        return ("NORMAL", None) if result[0] == "RETURN" else result
+        if not node.args and not _function_needs_arguments(helper):
+            return _run_inert_helper(helper, context, helpers)
+        callback = _callback_helper(helper, node, helpers)
+        if callback is not None:
+            return _run_inert_helper(callback, context, helpers)
     identity = _completion_name(node.func, context, known)
     args = (*node.args, *(kw.value for kw in node.keywords))
     return (
         ("NORMAL", None)
         if identity in context["bases"]
         and not node.keywords
-        and all(_inert_literal(arg, known)[0] for arg in args)
+        and all(
+            _inert_literal(arg, known, context.get("literal_calls"))[0] for arg in args
+        )
         else ("UNKNOWN", None)
     )
 
@@ -572,7 +763,7 @@ def _simple_completion(stmt, known, helpers, context):
     if isinstance(stmt, ast.Expr):
         return _inert_expression(stmt.value, known, helpers, context)
     if isinstance(stmt, ast.Assert):
-        closed, value = _inert_literal(stmt.test, known)
+        closed, value = _inert_literal(stmt.test, known, context.get("literal_calls"))
         if closed and not value and stmt.msg is not None:
             message = _inert_expression(stmt.msg, known, helpers, context)
             if message[0] != "NORMAL":
@@ -585,7 +776,11 @@ def _simple_completion(stmt, known, helpers, context):
             else unknown
         )
     if isinstance(stmt, ast.Return):
-        return ("RETURN", None) if _inert_literal(stmt.value, known)[0] else unknown
+        return (
+            ("RETURN", None)
+            if _inert_literal(stmt.value, known, context.get("literal_calls"))[0]
+            else unknown
+        )
     return unknown
 
 
@@ -596,22 +791,24 @@ def _raise_completion(stmt, known, context):
     identity = _completion_name(expr, context, known)
     args = stmt.exc.args if isinstance(stmt.exc, ast.Call) else ()
     closed = identity in context["bases"] and all(
-        _inert_literal(arg, known)[0] for arg in args
+        _inert_literal(arg, known, context.get("literal_calls"))[0] for arg in args
     )
     if isinstance(stmt.exc, ast.Call):
         closed = closed and not stmt.exc.keywords
     return ("RAISE", identity) if closed else ("UNKNOWN", None)
 
 
-def _assignment_completion(stmt, known):
+def _assignment_completion(stmt, known, context):
     targets = getattr(stmt, "targets", ()) or (stmt.target,)
     closed = all(isinstance(target, ast.Name) for target in targets)
-    closed = closed and _inert_literal(stmt.value, known)[0]
+    closed = (
+        closed and _inert_literal(stmt.value, known, context.get("literal_calls"))[0]
+    )
     return ("NORMAL", None) if closed else ("UNKNOWN", None)
 
 
 def _conditional_completion(stmt, known, helpers, context):
-    closed, value = _inert_literal(stmt.test, known)
+    closed, value = _inert_literal(stmt.test, known, context.get("literal_calls"))
     if not closed:
         return "UNKNOWN", None
     return _inert_suite(stmt.body if value else stmt.orelse, context, known, helpers)
@@ -619,7 +816,7 @@ def _conditional_completion(stmt, known, helpers, context):
 
 def _loop_completion(stmt, known, helpers, context):
     expr = stmt.iter if isinstance(stmt, ast.For) else stmt.test
-    closed, value = _inert_literal(expr, known)
+    closed, value = _inert_literal(expr, known, context.get("literal_calls"))
     empty_type = isinstance(stmt, ast.While) or type(value) in (
         tuple,
         list,
@@ -704,7 +901,9 @@ def _inert_statement(stmt, known, helpers, context):
     if isinstance(stmt, ast.Raise):
         return _raise_completion(stmt, known, context)
     if isinstance(stmt, (ast.Assign, ast.AnnAssign)):
-        return _assignment_completion(stmt, known)
+        if _helper_alias(stmt, helpers):
+            return "NORMAL", None
+        return _assignment_completion(stmt, known, context)
     if isinstance(stmt, ast.If):
         return _conditional_completion(stmt, known, helpers, context)
     if isinstance(stmt, (ast.For, ast.While)):
@@ -716,25 +915,62 @@ def _inert_statement(stmt, known, helpers, context):
     return "UNKNOWN", None
 
 
+def _track_inert_definition(stmt, known, helpers, context):
+    if not isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return
+    helpers[stmt.name] = stmt
+    known.pop(stmt.name, None)
+    literal = context.get("literal_functions", {}).get(stmt.name)
+    if literal is not None and literal[0] is stmt:
+        context["literal_calls"][stmt.name] = literal[1]
+
+
+def _track_inert_assignment(stmt, known, helpers, context):
+    if not isinstance(stmt, (ast.Assign, ast.AnnAssign)) or stmt.value is None:
+        return
+    for target in getattr(stmt, "targets", ()) or (stmt.target,):
+        if not isinstance(target, ast.Name):
+            continue
+        if _helper_alias(stmt, helpers):
+            helpers[target.id] = helpers[stmt.value.id]
+            known.pop(target.id, None)
+        else:
+            helpers.pop(target.id, None)
+            closed, value = _inert_literal(stmt.value, known, context["literal_calls"])
+            if closed:
+                known[target.id] = value
+            else:
+                known.pop(target.id, None)
+        context["literal_calls"].pop(target.id, None)
+
+
+def _reset_inert_branch(stmt, known, context, literal_calls_before):
+    if not isinstance(stmt, (ast.If, ast.For, ast.While, ast.Try, ast.With)):
+        return None
+    known.clear()
+    context["literal_calls"] = literal_calls_before
+    return dict(context["helpers"])
+
+
 def _inert_suite(statements, context, known=None, helpers=None):
+    context = {
+        **context,
+        "literal_calls": dict(context.get("literal_calls", {})),
+    }
     known, helpers = (
         dict(known or {}),
         dict(context["helpers"] if helpers is None else helpers),
     )
     for stmt in statements:
+        literal_calls_before = dict(context["literal_calls"])
         result = _inert_statement(stmt, known, helpers, context)
         if result[0] != "NORMAL":
             return result
-        if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            helpers[stmt.name] = stmt
-            known.pop(stmt.name, None)
-        if isinstance(stmt, (ast.Assign, ast.AnnAssign)) and stmt.value is not None:
-            for target in getattr(stmt, "targets", ()) or (stmt.target,):
-                known[target.id] = _inert_literal(stmt.value, known)[1]
-                helpers.pop(target.id, None)
-        if isinstance(stmt, (ast.If, ast.For, ast.While, ast.Try, ast.With)):
-            known.clear()
-            helpers = dict(context["helpers"])
+        _track_inert_definition(stmt, known, helpers, context)
+        _track_inert_assignment(stmt, known, helpers, context)
+        reset_helpers = _reset_inert_branch(stmt, known, context, literal_calls_before)
+        if reset_helpers is not None:
+            helpers = reset_helpers
     return "NORMAL", None
 
 
@@ -749,6 +985,7 @@ def inert_test_completion(node):
         context["names"].pop(name, None)
         context["helpers"].pop(name, None)
         context["modules"].pop(name, None)
+        context["literal_calls"].pop(name, None)
     for arg in (
         *node.args.posonlyargs,
         *node.args.args,
@@ -782,6 +1019,15 @@ INERT_BODY_HELPERS = (
     _completion_import_names,
     _simple_exception_classes,
     _module_pass_helpers,
+    _inert_literal_call,
+    _static_inert_literal,
+    _local_literal_returns,
+    _helper_alias,
+    _callback_helper,
+    _run_inert_helper,
+    _track_inert_definition,
+    _track_inert_assignment,
+    _reset_inert_branch,
     _inert_expression,
     _function_needs_arguments,
     _simple_completion,

@@ -1659,13 +1659,12 @@ def test_local_registered_callback_requires_identity_dispatch_and_escape(
     )
     (tmp_path / "test_case.py").write_text(source, encoding="utf-8")
     findings = security_scan(tmp_path)["findings"]
-    flagged = any(
-        finding["code"] == "QUALITY_HOLLOW_TEST"
-        for finding in findings
-    )
+    flagged = any(finding["code"] == "QUALITY_HOLLOW_TEST" for finding in findings)
     assert flagged is hollow
     if mutation == "mutate(checks)":
-        unknown = next(f for f in findings if f["code"] == "QUALITY_UNKNOWN_TEST_ORACLE")
+        unknown = next(
+            f for f in findings if f["code"] == "QUALITY_UNKNOWN_TEST_ORACLE"
+        )
         assert unknown["severity"] == "INFO"
         assert unknown["facts"]["state"] == "INCOMPLETE"
 
@@ -1993,16 +1992,29 @@ def test_virtual_dispatch_defaults_direct_contract():
         ("def bar():\n        assert compute() == 4", "pass", True),
         ("def bar():\n        assert True", "bar()", True),
         (
-            "def bar():\n        try:\n            assert compute() == 4\n        except AssertionError:\n            pass",
+            "def compute():\n        return 5\n    def bar():\n        try:\n            assert compute() == 4\n        except AssertionError:\n            pass",
             "bar()",
             True,
         ),
-        ("def bar():\n        assert compute() == 4", "bar = noop\n    bar()", True),
-        ("@swallow\n    def bar():\n        assert compute() == 4", "bar()", True),
+        (
+            "def compute():\n        return 5\n    def noop():\n        pass\n"
+            "    def bar():\n        assert compute() == 4",
+            "bar = noop\n    bar()",
+            True,
+        ),
+        (
+            "def compute():\n        return 5\n    def swallow(fn):\n"
+            "        def wrapped():\n            try:\n                fn()\n"
+            "            except AssertionError:\n                pass\n"
+            "        return wrapped\n    @swallow\n    def bar():\n"
+            "        assert compute() == 4",
+            "bar()",
+            True,
+        ),
         ("async def bar():\n        assert compute() == 4", "bar()", True),
         ("async def bar():\n        assert compute() == 4", "await bar()", False),
         (
-            "def bar():\n        assert compute() == 4",
+            "def compute():\n        return 5\n    def bar():\n        assert compute() == 4",
             "try:\n        bar()\n    except AssertionError:\n        pass",
             True,
         ),
@@ -2018,11 +2030,13 @@ def test_virtual_dispatch_defaults_direct_contract():
         ),
         (
             "def foo():\n        def bar():\n            assert compute() == 4",
-            "bar()",
+            "foo()",
             True,
         ),
         (
-            "def bar():\n        assert compute() == 4\n    def foo(bar):\n        bar()",
+            "def compute():\n        return 5\n    def noop():\n        pass\n"
+            "    def bar():\n        assert compute() == 4\n"
+            "    def foo(bar):\n        bar()",
             "foo(noop)",
             True,
         ),
@@ -2034,10 +2048,14 @@ def test_virtual_dispatch_defaults_direct_contract():
         ),
         ("def bar():\n        x = 5\n        assert x == 5", "bar()", True),
         ("def bar():\n        assert compute() == 4", "True or bar()", True),
-        ("def bar():\n        assert compute() == 4", "value or True or bar()", True),
         (
             "def bar():\n        assert compute() == 4",
-            "value and False and bar()",
+            "value = False\n    value or True or bar()",
+            True,
+        ),
+        (
+            "def bar():\n        assert compute() == 4",
+            "value = True\n    value and False and bar()",
             True,
         ),
         ("def bar():\n        assert compute() == 4", "False and bar()", True),
@@ -2046,12 +2064,14 @@ def test_virtual_dispatch_defaults_direct_contract():
         ("def bar():\n        assert compute() == 4", "False or bar()", False),
         ("def bar():\n        assert compute() == 4", "True and bar()", False),
         (
-            "def bar():\n        assert compute() == 4",
+            "def compute():\n        return 5\n    def bar():\n        assert compute() == 4",
             "from somewhere import noop as bar\n    bar()",
             True,
         ),
         (
-            "def bar():\n        assert compute() == 4\n    def foo(*bar):\n        bar()",
+            "def compute():\n        return 5\n    def noop():\n        pass\n"
+            "    def bar():\n        assert compute() == 4\n"
+            "    def foo(*bar):\n        bar[0]()",
             "foo(noop)",
             True,
         ),
@@ -2060,16 +2080,165 @@ def test_virtual_dispatch_defaults_direct_contract():
             "class bar:\n        pass\n    bar()",
             True,
         ),
+        pytest.param(
+            "def bar():\n        pass\n    def foo(bar=None):\n        bar()",
+            "foo()",
+            False,
+            id="default-parameter-shadow",
+        ),
+        pytest.param(
+            "def bar():\n        pass\n    def foo():\n        bar()\n"
+            "        def bar():\n            pass",
+            "foo()",
+            False,
+            id="local-use-before-binding",
+        ),
+        pytest.param(
+            "def bar():\n        pass\n    def foo():\n        bar()",
+            "foo()",
+            True,
+            id="free-variable-helper",
+        ),
     ],
 )
 def test_security_scan_tracks_invoked_nested_oracle_helpers(
     tmp_path, helper, invocation, hollow
 ):
+    if "from somewhere import noop as bar" in invocation:
+        (tmp_path / "somewhere.py").write_text("def noop():\n    pass\n")
     (tmp_path / "test_behavior.py").write_text(
         "async def test_behavior():\n    " + helper + "\n    " + invocation + "\n"
     )
     result = security_scan(tmp_path)
     assert any(f["code"] == "QUALITY_HOLLOW_TEST" for f in result["findings"]) is hollow
+
+
+@pytest.mark.parametrize(
+    ("source", "completion"),
+    [
+        (
+            "def test_behavior():\n"
+            "    def compute():\n        return 5\n"
+            "    assert compute() == 4\n",
+            "RAISE",
+        ),
+        (
+            "def test_behavior():\n"
+            "    def noop():\n        pass\n"
+            "    def invoke(callback):\n        callback()\n"
+            "    invoke(noop)\n",
+            "NORMAL",
+        ),
+        (
+            "def test_behavior():\n"
+            "    def compute():\n        return 5\n"
+            "    compute = external\n"
+            "    assert compute() == 4\n",
+            "UNKNOWN",
+        ),
+        (
+            "def test_behavior():\n"
+            "    def noop():\n        pass\n"
+            "    def invoke(callback):\n        callback()\n"
+            "    invoke(make_callback())\n",
+            "UNKNOWN",
+        ),
+        (
+            "def test_behavior():\n"
+            "    def noop():\n        pass\n"
+            "    def invoke(callback):\n"
+            "        callback = external\n        callback()\n"
+            "    invoke(noop)\n",
+            "UNKNOWN",
+        ),
+        (
+            "def test_behavior():\n"
+            "    def compute(value=external()):\n        return 5\n"
+            "    assert compute() == 4\n",
+            "UNKNOWN",
+        ),
+        (
+            "def test_behavior():\n"
+            "    @external\n"
+            "    def compute():\n        return 5\n"
+            "    assert compute() == 4\n",
+            "UNKNOWN",
+        ),
+        (
+            "def test_behavior():\n"
+            "    def compute():\n"
+            "        if external:\n            return 5\n"
+            "        return 5\n"
+            "    assert compute() == 4\n",
+            "UNKNOWN",
+        ),
+        (
+            "def test_behavior():\n"
+            "    def foo():\n"
+            "        def bar():\n            assert compute() == 4\n"
+            "    bar()\n",
+            "UNKNOWN",
+        ),
+        (
+            "def compute():\n    return 5\n"
+            "compute = external\n"
+            "def test_behavior():\n    assert compute() == 4\n",
+            "UNKNOWN",
+        ),
+        (
+            "def test_behavior():\n"
+            "    def noop():\n        pass\n"
+            "    def invoke(*callbacks):\n        callbacks[0]()\n"
+            "    invoke(noop)\n",
+            "NORMAL",
+        ),
+        (
+            "def test_behavior():\n"
+            "    def noop():\n        pass\n"
+            "    def invoke(*callbacks):\n        callbacks[0]()\n"
+            "    invoke(*callbacks)\n",
+            "UNKNOWN",
+        ),
+        pytest.param(
+            "def test_behavior():\n"
+            "    def bar():\n        pass\n"
+            "    def foo():\n        bar()\n"
+            "        def bar():\n            pass\n"
+            "    foo()\n",
+            "UNKNOWN",
+            id="local-use-before-binding",
+        ),
+        pytest.param(
+            "def test_behavior():\n"
+            "    def bar():\n        pass\n"
+            "    def foo(bar=None):\n        bar()\n"
+            "    foo()\n",
+            "UNKNOWN",
+            id="default-parameter-shadow",
+        ),
+        pytest.param(
+            "def test_behavior():\n"
+            "    def bar():\n        pass\n"
+            "    def foo():\n        bar()\n"
+            "    foo()\n",
+            "NORMAL",
+            id="free-variable-helper",
+        ),
+    ],
+)
+def test_nested_helper_completion_keeps_opaque_inputs_unknown(source, completion):
+    import ast
+
+    from factoryline.test_oracle_misuse import inert_test_completion
+
+    module = ast.parse(source)
+    test = next(
+        node
+        for node in module.body
+        if isinstance(node, ast.FunctionDef) and node.name == "test_behavior"
+    )
+    test._oracle_module = module
+    assert inert_test_completion(test)[0] == completion
 
 
 def test_security_scan_does_not_credit_nested_helper_before_definition(tmp_path):
@@ -9381,9 +9550,19 @@ def test_runtime_oracle_rechecks_source_after_verification(tmp_path, monkeypatch
         # Another path may invoke uncaptured routing and error handlers.
         (True, "/other", "", {"QUALITY_UNKNOWN_TEST_ORACLE": 1}),
         # A changed testing flag is not an absence proof for other hooks.
-        (True, "/checked", "app.testing = False\n    ", {"QUALITY_UNKNOWN_TEST_ORACLE": 1}),
+        (
+            True,
+            "/checked",
+            "app.testing = False\n    ",
+            {"QUALITY_UNKNOWN_TEST_ORACLE": 1},
+        ),
         # The replacement client's implementation is absent.
-        (True, "/checked", "client = fake_client\n    ", {"QUALITY_UNKNOWN_TEST_ORACLE": 1}),
+        (
+            True,
+            "/checked",
+            "client = fake_client\n    ",
+            {"QUALITY_UNKNOWN_TEST_ORACLE": 1},
+        ),
         (
             True,
             "/checked",
@@ -12430,7 +12609,10 @@ def test_captured_import_resolver_is_generation_bound(tmp_path, mismatch):
             resolve(*args)
 
 
-@pytest.mark.parametrize("mutation", ["replace_tree", "add_tree", "remove_tree", "replace_inventory", "add_inventory"])
+@pytest.mark.parametrize(
+    "mutation",
+    ["replace_tree", "add_tree", "remove_tree", "replace_inventory", "add_inventory"],
+)
 def test_captured_import_resolver_rejects_mutated_generation(tmp_path, mutation):
     import ast
     from factoryline.context_efficiency import captured_import_resolver
