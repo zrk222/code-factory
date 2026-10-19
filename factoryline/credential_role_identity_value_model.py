@@ -1,45 +1,20 @@
 """Conservative source projections and writes for tracked identity roots."""
 
 import ast
-from collections.abc import Mapping
 
 from .credential_role_identity_effect_types import _Value
 
 _UNKNOWN_KEY = object()
 
 
-def identity_fields(fields):
-    if fields is None:
-        return {}
-    if not isinstance(fields, Mapping) or len(fields) > 64:
-        return None
-    result = {}
-    for key, root in fields.items():
-        if not (
-            isinstance(key, tuple)
-            and len(key) == 2
-            and all(isinstance(item, str) and item for item in (*key, root))
-            and key[1].isidentifier()
-            and not key[1].startswith("__")
-        ):
-            return None
-        result[key] = _Value(roots=frozenset({root}))
-    return result
-
-
 def identity_value(node, aliases):
     """Project names, attributes, and literal containers without evaluation."""
+    if isinstance(node, ast.Constant):
+        return _Value(inert_kind="scalar")
     if isinstance(node, ast.Name):
         return aliases.get(node.id, _Value())
     if isinstance(node, ast.Attribute):
-        base = identity_value(node.value, aliases)
-        if node.attr == "__class__" and base.roots:
-            return _Value(class_roots=base.roots)
-        if len(base.roots) == 1 and not base.unknown and not base.class_roots:
-            projected = aliases.get((next(iter(base.roots)), node.attr))
-            if projected is not None:
-                return projected
-        return _Value(unknown=bool(base.roots or base.class_roots or base.unknown))
+        return _attribute_value(node, aliases)
     if isinstance(node, (ast.List, ast.Tuple, ast.Dict)):
         return _container_value(node, aliases)
     if isinstance(node, ast.Subscript):
@@ -91,7 +66,11 @@ def _container_value(node, aliases):
                 items.append(
                     (key.value if isinstance(key, ast.Constant) else key, value)
                 )
-        return _Value(items=tuple(items), unknown=unknown)
+        return _Value(
+            items=tuple(items),
+            unknown=unknown,
+            inert_kind=_inert_container(node, items),
+        )
     return _Value()
 
 
@@ -226,7 +205,7 @@ def record_write(target, value, aliases, effects):
                 effects.unknowns.add("write through tracked value")
     elif isinstance(target, ast.Subscript):
         base = identity_value(target.value, aliases)
-        if base.roots or contains_tracked(base):
+        if base.roots or contains_tracked(base) or base.inert_kind in {"dict", "list"}:
             effects.unknowns.add("write through tracked container")
         effects.escapes.update(tracked_roots(value))
 
@@ -236,3 +215,26 @@ def record_escape(node, aliases, effects, reason):
     effects.escapes.update(tracked_roots(value))
     if value.unknown:
         effects.unknowns.add(reason + " contains unresolved tracked value")
+
+
+def _inert_container(node, items):
+    if isinstance(node, ast.Dict) and not all(
+        isinstance(key, ast.Constant) for key in node.keys
+    ):
+        return None
+    return (
+        type(node).__name__.lower()
+        if all(value.inert_kind is not None for _, value in items)
+        else None
+    )
+
+
+def _attribute_value(node, aliases):
+    base = identity_value(node.value, aliases)
+    if node.attr == "__class__" and base.roots:
+        return _Value(class_roots=base.roots)
+    if len(base.roots) == 1 and not base.unknown and not base.class_roots:
+        projected = aliases.get((next(iter(base.roots)), node.attr))
+        if projected is not None:
+            return projected
+    return _Value(unknown=bool(base.roots or base.class_roots or base.unknown))

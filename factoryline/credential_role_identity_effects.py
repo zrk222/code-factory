@@ -6,7 +6,8 @@ import ast
 from .credential_role_identity_effect_types import (
     CallResolver,
     IdentityEffectSummary as IdentityEffectSummary,
-    ResolvedIdentityCall,
+    ResolvedIdentityCall as ResolvedIdentityCall,
+    SourceFieldLiteral,
     _Effects,
     _Value,
 )
@@ -17,13 +18,18 @@ from .credential_role_identity_value_model import (
     assignment_target,
     contains_tracked,
     identity_value,
-    identity_fields,
-    maps_each_actual_once,
     nested_capture_roots,
     record_escape,
     record_implicit_effects,
     record_write,
     tracked_roots,
+)
+from .credential_role_identity_call_model import (
+    identity_fields,
+    literal_dict_update,
+    mapped_call_values,
+    strict_read_effects,
+    strict_protocol_effects,
 )
 from .credential_role_scope_bindings import binding_occurrences
 from .credential_role_sources import SourceSnapshotIndex
@@ -36,7 +42,8 @@ def summarize_identity_effect(
     roots: Mapping[str, str],
     *,
     resolve_call: CallResolver | None = None,
-    field_roots: Mapping[tuple[str, str], str] | None = None,
+    field_roots: Mapping[tuple[str, str], str | SourceFieldLiteral] | None = None,
+    strict_calls=False,
     max_depth=4,
     state_budget=512,
 ):
@@ -51,21 +58,26 @@ def summarize_identity_effect(
     on roots is UNKNOWN.
 
     ``field_roots`` is a caller-proved, descriptor-free initial heap projection.
+    Literal fields require captured inert ASTs and caller-proved ownership.
     This analyzer does not establish allocation or field ownership by itself.
+    strict_calls also rejects unresolved calls lacking explicit root arguments.
     Overwriting a projected field invalidates the summary.
     """
     return (
-        _Analyzer(index, resolve_call, max_depth, state_budget, field_roots)
+        _Analyzer(
+            index, resolve_call, max_depth, state_budget, field_roots, strict_calls
+        )
         .run(function, path, dict(roots), 0, frozenset())
         .freeze()
     )
 
 
 class _Analyzer:
-    def __init__(self, index, resolver, depth_limit, budget, field_roots):
+    def __init__(self, index, resolver, depth_limit, budget, field_roots, strict_calls):
         self.index, self.resolver = index, resolver
         self.depth_limit, self.budget, self.states = depth_limit, budget, 0
-        self.fields = identity_fields(field_roots)
+        self.fields = identity_fields(field_roots, index)
+        self.strict_calls = strict_calls
 
     def run(self, function, path, roots, depth, active):
         out = _Effects()
@@ -91,6 +103,9 @@ class _Analyzer:
 
     def _visit(self, nodes, function, path, aliases, depth, active, out):
         for node in nodes:
+            if self.strict_calls:
+                strict_read_effects(node, aliases, self.index.parents[path], out)
+                strict_protocol_effects(node, aliases, out)
             record_implicit_effects(node, function, aliases, out)
             if isinstance(node, (ast.Assign, ast.AnnAssign, ast.NamedExpr)):
                 self._assignment(node, aliases, function, out)
@@ -134,7 +149,10 @@ class _Analyzer:
         args = function.args
         params = [*args.posonlyargs, *args.args, *args.kwonlyargs]
         params += [item for item in (args.vararg, args.kwarg) if item]
-        env = {name: _Value(frozenset({root})) for name, root in roots.items()}
+        env = {
+            name: root if isinstance(root, _Value) else _Value(frozenset({root}))
+            for name, root in roots.items()
+        }
         env.update(self.fields)
         for param in params:
             if param.arg in roots and binding_occurrences(function.body, param.arg):
@@ -153,7 +171,9 @@ class _Analyzer:
                 ) != [target]:
                     continue
                 value = identity_value(getattr(node, "value", None), env)
-                if contains_tracked(value) and env.get(target.id) != value:
+                if (
+                    contains_tracked(value) or value.inert_kind is not None
+                ) and env.get(target.id) != value:
                     env[target.id], changed = value, True
             if not changed:
                 break
@@ -188,17 +208,19 @@ class _Analyzer:
             record_write(target, value, aliases, out)
 
     def _call(self, call, path, aliases, depth, active, out):
+        if literal_dict_update(call, aliases):
+            return
         if call_has_unknown_value(call, aliases):
             out.unknowns.add("call receives an unresolved tracked value")
             return
         involved = call_tracked_roots(call, aliases)
-        if not involved:
+        if not involved and not self.strict_calls:
             return
         resolved = self.resolver(call, path) if self.resolver else None
         if resolved is None:
             self._opaque_call(call, aliases, involved, out)
             return
-        mapped = self._mapped_call_roots(call, aliases, involved, resolved, out)
+        mapped = mapped_call_values(call, aliases, involved, resolved, out)
         if mapped is None:
             return
 
@@ -209,40 +231,3 @@ class _Analyzer:
             out.escapes.update(involved)
         else:
             out.unknowns.add("unresolved method call on tracked object")
-
-    def _mapped_call_roots(self, call, aliases, involved, resolved, out):
-        if not isinstance(resolved, ResolvedIdentityCall):
-            out.unknowns.add("invalid exact call binding")
-            return None
-        params = {
-            arg.arg
-            for arg in [
-                *resolved.function.args.posonlyargs,
-                *resolved.function.args.args,
-                *resolved.function.args.kwonlyargs,
-            ]
-        }
-        actuals = [*call.args, *(kw.value for kw in call.keywords)]
-        if isinstance(call.func, ast.Attribute):
-            actuals.append(call.func.value)
-        if not maps_each_actual_once(actuals, resolved.arguments):
-            out.unknowns.add("exact call mapping must cover each actual once")
-            return None
-        mapped = {}
-        for formal, expr in resolved.arguments.items():
-            if formal not in params or not any(expr is actual for actual in actuals):
-                out.unknowns.add("call mapping is not an exact parameter binding")
-                return
-            value = identity_value(expr, aliases)
-            roots = tracked_roots(value)
-            if not isinstance(expr, ast.expr) or (
-                contains_tracked(value) and len(roots) != 1
-            ):
-                out.unknowns.add("ambiguous exact call root mapping")
-                return None
-            elif roots:
-                mapped[formal] = next(iter(roots))
-        if set(mapped.values()) != involved:
-            out.unknowns.add("exact call mapping omits a tracked root")
-            return None
-        return mapped

@@ -15,6 +15,14 @@ class ResolvedIdentityCall:
 
 
 @dataclass(frozen=True)
+class SourceFieldLiteral:
+    """Captured literal; caller proves current contents, ownership and no escape."""
+
+    path: object
+    value: ast.expr
+
+
+@dataclass(frozen=True)
 class IdentityEffectSummary:
     """May-effects; field writes do not change class identity."""
 
@@ -35,6 +43,7 @@ class _Value:
     items: tuple[tuple[object, "_Value"], ...] = ()
     class_roots: frozenset[str] = frozenset()
     unknown: bool = False
+    inert_kind: str | None = None
 
 
 @dataclass

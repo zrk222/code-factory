@@ -209,6 +209,7 @@ def endpoint_admission_helpers():
         "credential_role_identity_effects",
         "credential_role_identity_effect_types",
         "credential_role_identity_value_model",
+        "credential_role_identity_call_model",
         "credential_role_field_origin",
         "credential_role_getter_consumers",
         "credential_role_getter_records",
