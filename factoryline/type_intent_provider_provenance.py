@@ -243,7 +243,9 @@ def _source_name(node, aliases):
     return ".".join((aliases[node.id], *reversed(parts)))
 
 
-def bind_provider_context(context, root, path, imports, snapshots, eligible, resolver):
+def bind_provider_context(
+    context, root, path, imports, snapshots, eligible, resolver, initializer_lookup=None
+):
     """Bind transitive local imports and ancestor conftests to one test source."""
     from .context_efficiency import captured_local_import_closure
 
@@ -258,7 +260,7 @@ def bind_provider_context(context, root, path, imports, snapshots, eligible, res
         key=lambda source: (len(source.parts), source.as_posix()),
     )
     closure, complete = captured_local_import_closure(
-        root, imports, snapshots, eligible, resolver, conftests
+        root, imports, snapshots, eligible, resolver, conftests, initializer_lookup
     )
     context["provider_source_closure"] = closure
     context["provider_source_closure_complete"] = complete

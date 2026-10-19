@@ -206,3 +206,242 @@ def test_provider_initializer_resolution_preserves_symlink_canonicalization(tmp_
     assert _provider_package_initializers(linked, [linked / "module.py"], eligible) == [
         linked / "__init__.py"
     ]
+
+
+@pytest.mark.parametrize("mutation", ["inventory", "tree"])
+def test_initializer_lookup_rejects_changed_generation(tmp_path, mutation):
+    import ast
+
+    from factoryline.context_efficiency import captured_import_resolver
+
+    source = tmp_path / "module.py"
+    snapshots = {source: ast.parse("pass")}
+    eligible = {source.resolve(): source}
+    _, initializers, _validate = captured_import_resolver(
+        tmp_path, snapshots, eligible, lambda *args: {}, with_initializers=True
+    )
+    initializers([source])
+    if mutation == "inventory":
+        eligible.clear()
+    else:
+        snapshots[source] = ast.parse("pass")
+    with pytest.raises(ValueError, match="outside its captured generation"):
+        initializers([source])
+
+
+@pytest.mark.parametrize("mutation", ["binding", "code"])
+def test_initializer_lookup_rejects_changed_helper(tmp_path, monkeypatch, mutation):
+    from factoryline import context_efficiency as context
+
+    _, initializers, _validate = context.captured_import_resolver(
+        tmp_path, {}, {}, lambda *args: {}, with_initializers=True
+    )
+    initializers([])
+
+    def replacement(root, sources, eligible):
+        return []
+
+    if mutation == "binding":
+        monkeypatch.setattr(context, "_provider_package_initializers", replacement)
+    else:
+        monkeypatch.setattr(
+            context._provider_package_initializers, "__code__", replacement.__code__
+        )
+    with pytest.raises(ValueError, match="Initializer helper changed"):
+        initializers([])
+
+
+def test_initializer_lookup_memoizes_exact_groups_and_returns_copies(
+    tmp_path, monkeypatch
+):
+    from factoryline import context_efficiency as context
+
+    first = tmp_path / "first.py"
+    second = tmp_path / "second.py"
+    calls = []
+
+    def arbitrary_helper(root, sources, eligible):
+        calls.append(tuple(sources))
+        return [root / f"arity_{len(sources)}.py"]
+
+    monkeypatch.setattr(context, "_provider_package_initializers", arbitrary_helper)
+    _, lookup, validate = context.captured_import_resolver(
+        tmp_path,
+        {first: object(), second: object()},
+        {first: first, second: second},
+        lambda *args: {},
+        with_initializers=True,
+    )
+    groups = [[], [first], [first, second], [second, first]]
+    for group in groups:
+        expected = arbitrary_helper(tmp_path, group, {})
+        observed = lookup(group)
+        assert observed == expected
+        observed.clear()
+        assert lookup(group) == expected
+    assert calls == [item for group in groups for item in [tuple(group), tuple(group)]]
+    context.captured_import_resolver(
+        tmp_path, {}, {}, lambda *args: {}, with_initializers=True
+    )[1]([])
+    assert calls[-1] == ()
+    assert len(calls) == 9
+
+
+@pytest.mark.parametrize("module_count,complete", [(62, True), (63, True), (64, False)])
+def test_initializer_lookup_preserves_exact_closure_cycle_and_bound(
+    tmp_path, module_count, complete
+):
+    import ast
+
+    from factoryline.context_efficiency import (
+        captured_import_resolver,
+        captured_local_import_closure,
+    )
+
+    modules = [tmp_path / f"module_{index}.py" for index in range(module_count)]
+    initializer = tmp_path / "__init__.py"
+    snapshots = {path: ast.parse("pass") for path in [*modules, initializer]}
+    for tree in snapshots.values():
+        tree._oracle_source_sha256 = "b" * 64
+    eligible = {path.resolve(): path for path in snapshots}
+    imports = {
+        source: {"Next": (modules[(index + 1) % module_count], "Name")}
+        for index, source in enumerate(modules)
+    }
+    imports[initializer] = {}
+    resolve, lookup, validate = captured_import_resolver(
+        tmp_path,
+        snapshots,
+        eligible,
+        lambda root, source, tree, inventory: imports[source],
+        with_initializers=True,
+    )
+    arguments = (
+        tmp_path,
+        {"Start": (modules[0], "Name")},
+        snapshots,
+        eligible,
+        resolve,
+    )
+    expected = captured_local_import_closure(*arguments, extra_sources=[modules[0]])
+    observed = captured_local_import_closure(
+        *arguments, extra_sources=[modules[0]], initializer_lookup=lookup
+    )
+    assert observed == expected
+    rows, actual_complete = observed
+    assert actual_complete is complete
+    if complete:
+        assert len(rows) == module_count + 1
+    else:
+        assert rows == []
+
+
+@pytest.mark.parametrize("foreign", ["inventory", "source"])
+def test_initializer_lookup_uses_fresh_results_outside_canonical_inventory(
+    tmp_path, monkeypatch, foreign
+):
+    from factoryline import context_efficiency as context
+
+    source = tmp_path / "source.py"
+    seen = []
+
+    def counted(root, sources, eligible):
+        seen.append(tuple(sources))
+        return []
+
+    monkeypatch.setattr(context, "_provider_package_initializers", counted)
+    eligible = {source: source}
+    query = [source]
+    if foreign == "inventory":
+        eligible = {source: tmp_path / "alias.py"}
+    else:
+        query = [tmp_path / "foreign.py"]
+    _, lookup, validate = context.captured_import_resolver(
+        tmp_path,
+        {source: object()},
+        eligible,
+        lambda *args: {},
+        with_initializers=True,
+    )
+    assert lookup(query) == lookup(query) == []
+    assert len(seen) == 2
+    validate()
+
+
+def test_initializer_validation_rejects_a_new_previously_absent_alias(tmp_path):
+    import ast
+
+    from factoryline import context_efficiency as context
+
+    source = tmp_path / "package" / "module.py"
+    source.parent.mkdir()
+    source.write_text("value = 1", encoding="utf-8")
+    poison = tmp_path / "poison.py"
+    poison.write_text("value = 1", encoding="utf-8")
+    snapshots = {path: ast.parse(path.read_text()) for path in [source, poison]}
+    eligible = {path: path for path in snapshots}
+    _, lookup, validate = context.captured_import_resolver(
+        tmp_path, snapshots, eligible, lambda *args: {}, with_initializers=True
+    )
+    assert lookup([source]) == []
+    validate()
+    initializer = source.parent / "__init__.py"
+    try:
+        initializer.symlink_to(poison)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks unavailable")
+    assert lookup([source]) == []
+    assert context._provider_package_initializers(tmp_path, [source], eligible) == [
+        poison
+    ]
+    with pytest.raises(ValueError, match="Initializer paths changed"):
+        validate()
+
+
+def test_native_context_builder_requires_initializer_validation_before_cache(
+    tmp_path, monkeypatch
+):
+    from factoryline import context_efficiency as context
+    from factoryline import review_audits as audit
+
+    (tmp_path / "source.py").write_text("value = 1", encoding="utf-8")
+    original = context.captured_import_resolver
+    observed = []
+    cache_writes = []
+
+    def captured(*args, **kwargs):
+        resolve, lookup, validate = original(*args, **kwargs)
+
+        def rejected():
+            observed.append("validated")
+            validate()
+            raise ValueError("initializer-validation-sentinel")
+
+        return resolve, lookup, rejected
+
+    monkeypatch.setattr(context, "captured_import_resolver", captured)
+    monkeypatch.setattr(
+        audit, "_oracle_context_cache_write", lambda *args: cache_writes.append(args)
+    )
+    with pytest.raises(ValueError, match="initializer-validation-sentinel"):
+        audit.security_scan(tmp_path, cache_enabled=True)
+    assert observed == ["validated"]
+    assert cache_writes == []
+
+
+def test_initializer_factory_implementation_participates_in_cache_epoch(
+    tmp_path, monkeypatch
+):
+    from factoryline import context_efficiency as context
+    from factoryline import review_audits as audit
+
+    original = context.captured_initializer_lookup
+    assert original in context.provider_context_cache_helpers(audit.contracts)
+    before = audit._oracle_context_cache_key(tmp_path, [], {})
+
+    def replacement(*args, **kwargs):
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(context, "captured_initializer_lookup", replacement)
+    after = audit._oracle_context_cache_key(tmp_path, [], {})
+    assert before != after

@@ -62,36 +62,102 @@ MODULE_VERSION = "1"
 _MAX_PROVIDER_SOURCE_MODULES = 64
 
 
-def captured_import_resolver(root, snapshots, eligible, resolver):
-    """Resolve each captured tree once within this producer generation only."""
+def captured_import_resolver(
+    root, snapshots, eligible, resolver, *, with_initializers=False
+):
+    """Capture imports and initializer reuse for a producer-owned no-link generation.
+
+    Callers must validate initializer requests and reread source bindings before
+    returning a scan receipt; this is not a generic live-filesystem cache.
+    """
     captured_trees, captured_eligible = dict(snapshots), eligible.copy()
     imports = {
         path: resolver(root, path, tree, eligible) for path, tree in snapshots.items()
     }
 
-    def resolve(request_root, source, tree, request_eligible):
+    def check_generation(request_root, request_eligible):
         if (
             request_root is not root
             or request_eligible is not eligible
             or snapshots != captured_trees
             or eligible != captured_eligible
-            or source not in snapshots
-            or snapshots[source] is not tree
         ):
+            raise ValueError(
+                "Import resolver request is outside its captured generation"
+            )
+
+    def resolve(request_root, source, tree, request_eligible):
+        check_generation(request_root, request_eligible)
+        if source not in snapshots or snapshots[source] is not tree:
             raise ValueError(
                 "Import resolver request is outside its captured generation"
             )
         return dict(imports[source])
 
-    return resolve
+    if not with_initializers:
+        return resolve
+    lookup, validate = captured_initializer_lookup(
+        root, snapshots, eligible, check_generation
+    )
+    return resolve, lookup, validate
+
+
+def captured_initializer_lookup(root, snapshots, eligible, check_generation):
+    """Memoize exact requests and require a fresh final filesystem comparison."""
+    initializer_helper = _provider_package_initializers
+    initializer_code = initializer_helper.__code__
+    initializer_cache = {}
+    canonical_inventory = isinstance(eligible, dict) and all(
+        key == value for key, value in eligible.items()
+    )
+
+    def check_initializers():
+        check_generation(root, eligible)
+        if (
+            _provider_package_initializers is not initializer_helper
+            or initializer_helper.__code__ is not initializer_code
+        ):
+            raise ValueError("Initializer helper changed during captured generation")
+
+    def initializers(sources):
+        check_initializers()
+        key = tuple(sources)
+        if not canonical_inventory or any(source not in eligible for source in key):
+            return list(initializer_helper(root, key, eligible))
+        if key not in initializer_cache:
+            values = tuple(initializer_helper(root, key, eligible))
+            if len(initializer_cache) < 2 * len(snapshots) + 1:
+                initializer_cache[key] = values
+            return list(values)
+        return list(initializer_cache[key])
+
+    def validate_initializers():
+        check_initializers()
+        for sources, expected in initializer_cache.items():
+            if tuple(initializer_helper(root, sources, eligible)) != expected:
+                raise ValueError("Initializer paths changed during captured generation")
+        check_initializers()
+
+    return initializers, validate_initializers
 
 
 def captured_local_import_closure(
-    root, imports, snapshots, eligible, resolver, extra_sources=()
+    root,
+    imports,
+    snapshots,
+    eligible,
+    resolver,
+    extra_sources=(),
+    initializer_lookup=None,
 ):
     """Build a bounded, hash-bound closure from already captured source trees."""
+    if initializer_lookup is None:
+
+        def initializer_lookup(sources):
+            return _provider_package_initializers(root, sources, eligible)
+
     pending = [source for source, _symbol in imports.values()] + list(extra_sources)
-    pending.extend(_provider_package_initializers(root, pending, eligible))
+    pending.extend(initializer_lookup(pending))
     seen, rows = set(), []
     while pending:
         source = pending.pop()
@@ -114,7 +180,7 @@ def captured_local_import_closure(
         )
         imported = [target for target, _symbol in resolved.values()]
         pending.extend(imported)
-        pending.extend(_provider_package_initializers(root, imported, eligible))
+        pending.extend(initializer_lookup(imported))
     return sorted(rows, key=lambda row: row["path"]), True
 
 
@@ -192,6 +258,7 @@ def provider_context_cache_helpers(contracts):
         bind_provider_inventory,
         bind_provider_context,
         captured_import_resolver,
+        captured_initializer_lookup,
         captured_local_import_closure,
         _provider_package_initializers,
         oracle_context_cache_context,

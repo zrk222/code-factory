@@ -4022,7 +4022,11 @@ def _build_oracle_context(
     callback_summaries = {}
     helper_summaries = {}
     eligible = {path.resolve(): path for path in files}
-    resolve_imports = captured_import_resolver(root, snapshots, eligible, _oracle_imports)
+    resolve_imports, initializer_lookup, validate_initializers = (
+        captured_import_resolver(
+            root, snapshots, eligible, _oracle_imports, with_initializers=True
+        )
+    )
     for path, tree in snapshots.items():
         caller = path.relative_to(root).as_posix()
         contexts[path]["protocol_observations"] = protocols.get(caller, {})
@@ -4041,11 +4045,20 @@ def _build_oracle_context(
         contexts[path]["click_runners"] = {
             name for name, trusted in fixtures.items() if trusted
         }
-        contexts[path]["typecheck"] = path in typecheck_sources or path in (ty_sources or ())
+        contexts[path]["typecheck"] = path in typecheck_sources or path in (
+            ty_sources or ()
+        )
         contexts[path]["flask_apps"] = _flask_context_apps(path, tree, snapshots)
         imports = resolve_imports(root, path, tree, eligible)
         bind_provider_context(
-            contexts[path], root, path, imports, snapshots, eligible, resolve_imports
+            contexts[path],
+            root,
+            path,
+            imports,
+            snapshots,
+            eligible,
+            resolve_imports,
+            initializer_lookup,
         )
         contracts._capture_project_imports(import_views, path, imports, eligible)
         contexts[path].update(
@@ -4130,6 +4143,7 @@ def _build_oracle_context(
         }
         for caller, target, kind, symbol, strength in sorted(edges)
     ]
+    validate_initializers()
     return contexts, edges
 
 
@@ -4935,7 +4949,9 @@ def _test_oracle_findings(
             weak is not None and hollow["code"] == "QUALITY_UNKNOWN_TEST_ORACLE"
         ):
             findings.append(hollow)
-        if weak is not None and not (hollow and hollow["code"] == "QUALITY_HOLLOW_TEST"):
+        if weak is not None and not (
+            hollow and hollow["code"] == "QUALITY_HOLLOW_TEST"
+        ):
             findings.append(weak)
     return findings
 
