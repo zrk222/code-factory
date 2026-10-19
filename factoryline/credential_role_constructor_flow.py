@@ -11,7 +11,11 @@ from .credential_role_class_binding import (
     scope_class,
     instance_receiver,
 )
-from .credential_role_transfer_guards import direct_factory_call, exact_parameter_field
+from .credential_role_transfer_guards import (
+    constructor_bindings_inert,
+    direct_factory_call,
+    exact_parameter_field,
+)
 
 
 def _function_alias(expression, function, source_name, use_line):
@@ -86,7 +90,7 @@ def constructor_url_hops(
     if client_ref is None:
         return None
     client_chain = class_chain(index, *client_ref, imports, classes, audit)
-    if not client_chain:
+    if not client_chain or not constructor_bindings_inert(client_chain, index, imports):
         return None
 
     transfer = _find_constructor_transfer(

@@ -2,8 +2,63 @@
 
 import ast
 
+from . import credential_role_constructor_provider as _constructor_provider
+from . import provider_mutations as _provider_mutations
+
 from .credential_role_class_binding import instance_receiver
 from .credential_role_scope_bindings import binding_occurrences
+
+
+def constructor_bindings_inert(chain, index, imports):
+    """Reject captured mutations/escapes of the selected constructor providers."""
+
+    def derive():
+        return _constructor_provider.constructor_provider_bindings_inert(
+            chain, index, imports
+        )
+
+    memo = getattr(index, "class_chain_memo", None)
+    if memo is None or index is not memo.index or imports is not memo.imports:
+        return derive()
+    key = (
+        "constructor-provider-bindings",
+        tuple((path, name, id(owner)) for path, name, owner in chain),
+    )
+    return memo.source_model(key, derive, helper_epoch=_constructor_provider_epoch)
+
+
+def _constructor_provider_epoch():
+    from importlib import import_module
+
+    modules = (
+        _provider_mutations,
+        *(
+            import_module("." + name, __package__)
+            for name in (
+                "credential_role_constructor_capture",
+                "credential_role_constructor_consumer",
+                "credential_role_constructor_types",
+                "credential_role_constructor_provider_provenance",
+            )
+        ),
+    )
+    mutation_helpers = tuple(
+        helper
+        for module in modules
+        for _, helper in sorted(vars(module).items())
+        if callable(helper)
+    )
+    helpers = (
+        constructor_bindings_inert,
+        _constructor_provider_epoch,
+        *_constructor_provider.constructor_provider_helper_epoch(),
+        *mutation_helpers,
+    )
+    return tuple(
+        identity
+        for helper in helpers
+        for identity in (helper, getattr(helper, "__code__", None))
+    )
 
 
 def direct_factory_call(call, function, index, path):
