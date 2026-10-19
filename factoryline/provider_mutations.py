@@ -4,7 +4,9 @@ import ast
 from collections import defaultdict
 
 
-def finite_provider_mutation_index(nodes, aliases, audit, parents):
+def finite_provider_mutation_index(
+    nodes, aliases, audit, parents, *, capture_predicate=None
+):
     bindings = _provider_alias_bindings(nodes)
     facts = set()
     for node in nodes:
@@ -17,7 +19,8 @@ def finite_provider_mutation_index(nodes, aliases, audit, parents):
         elif isinstance(node, ast.Call):
             _reflective_provider_write(node, aliases, audit, bindings, facts)
         elif isinstance(node, (ast.Assign, ast.AnnAssign, ast.NamedExpr)):
-            _record_provider_capture(node, aliases, audit, bindings, facts)
+            if capture_predicate is None or capture_predicate(node):
+                _record_provider_capture(node, aliases, audit, bindings, facts)
         elif isinstance(node, (ast.Name, ast.Attribute)):
             if _provider_call_argument(node, parents):
                 _record_provider_paths(node, "*", aliases, audit, bindings, facts)

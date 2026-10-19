@@ -2235,9 +2235,9 @@ def tls_verification_disabled(call: str, node: ast.Call) -> bool:
         for keyword in node.keywords
     )
 
-
 def bind_security_call_scopes(tree: ast.AST) -> None:
     """Retain lexical parameter shadowing for nested security call readers."""
+    tree._security_sanitizer_provider_cache = {}
     tree._security_parent_scope = None
     tree._security_scope_kind = "module"
     tree._security_local_names = set()
@@ -3626,14 +3626,14 @@ def _security_analyze_source_sink_block(
             continue
         if isinstance(
             statement,
-            (ast.Assign, ast.AnnAssign, ast.Expr, ast.Return, ast.Assert, ast.Raise),
+            (ast.Assign, ast.AnnAssign, ast.AugAssign, ast.Expr, ast.Return, ast.Assert, ast.Raise),
         ):
             findings.extend(
                 _security_statement_call_findings(
                     relative, statement, scope, aliases, *sink_flow, helpers
                 )
             )
-        if isinstance(statement, (ast.Assign, ast.AnnAssign)):
+        if isinstance(statement, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
             _security_flow_source_assignment(statement, aliases, *flow, helpers)
         elif not isinstance(statement, (ast.Expr, ast.Return, ast.Assert, ast.Raise)):
             from . import review_audits as audit
@@ -3907,15 +3907,20 @@ def _security_upload_path_expression(node, aliases, requests, scope, flow_statem
 
 
 def _security_is_proven_secure_filename(call, aliases):
-    from .review_audits import _call_name
+    return _security_proven_callee(call, aliases, "werkzeug.utils.secure_filename")
 
-    if security_call_name(call, aliases) != "werkzeug.utils.secure_filename":
+def _security_proven_callee(call, aliases, expected):
+    from .review_audits import _call_name
+    from .intent_quality import sanitizer_provider_unchanged
+
+    if security_call_name(call, aliases) != expected:
         return False
     raw = _call_name(call)
     head, _, tail = raw.partition(".")
     resolved, _constants = _security_flow_bindings(call, aliases)
     canonical = resolved.get(head, "") + ("." + tail if tail else "")
-    return canonical == "werkzeug.utils.secure_filename"
+    return canonical == expected and sanitizer_provider_unchanged(
+        call, aliases, expected, _security_module_scope)
 
 
 def _security_flask_upload_expression(node, aliases, scope, flow_statement):
@@ -3950,12 +3955,14 @@ def _security_flask_request_collection(
 
 def _security_unsafe_open(call, requests, aliases):
     from .review_audits import _call_name
+    from .intent_quality import bound_sink_argument, fixed_root_filename_path
 
+    path = bound_sink_argument(call, 0, ("file",))
     return (
         _call_name(call) == "open"
         and "open" not in getattr(call, "_security_shadowed_names", set())
-        and bool(call.args)
-        and _security_expr_tainted(call.args[0], requests, set(), aliases)
+        and _security_expr_tainted(path, requests, set(), aliases)
+        and not fixed_root_filename_path(path, requests, aliases, _security_proven_callee)
     )
 
 
@@ -3981,26 +3988,15 @@ def _security_unsafe_sql(
 
 
 def _security_unsafe_request_url(call, name, tainted, aliases):
-    if (
-        name
-        not in {
-            "requests.get",
-            "requests.post",
-            "requests.put",
-            "requests.patch",
-            "requests.delete",
-            "requests.head",
-            "requests.options",
-        }
-        or not call.args
-    ):
-        return False
-    if not _security_expr_tainted(call.args[0], tainted, set(), aliases):
-        return False
-    return not _security_parsed_host_allowlist(call, aliases)
+    from .intent_quality import unsafe_request_url
 
+    return unsafe_request_url(
+        call, name, tainted, aliases, _security_expr_tainted,
+        _security_parsed_host_allowlist,
+    )
 
 def _security_parsed_host_allowlist(call, aliases):
+    from .intent_quality import bound_sink_argument
     guard = getattr(call, "_security_flow_statement", None)
     if not isinstance(guard, ast.If) or not _security_guard_has_direct_sink(
         guard, call
@@ -4019,7 +4015,9 @@ def _security_parsed_host_allowlist(call, aliases):
     return parser_name in {
         "urllib.parse.urlparse",
         "urllib.parse.urlsplit",
-    } and _security_expr_same(parser.args[0], call.args[0])
+    } and not any(n is not call and isinstance(n, (ast.Call, ast.NamedExpr, ast.Await, ast.Yield, ast.YieldFrom)) for n in ast.walk(call)) and _security_proven_callee(parser, aliases, parser_name) and _security_expr_same(
+        parser.args[0], bound_sink_argument(call, 0, ("url",))
+    )
 
 
 def _security_host_allowlist_test(test):
@@ -4292,7 +4290,6 @@ def _security_apply_import_bindings(body, resolved, stop, audit):
                 resolved[name] = imported[name]
     return resolved
 
-
 def _security_flow_source_assignment(
     statement,
     aliases,
@@ -4306,6 +4303,8 @@ def _security_flow_source_assignment(
     from . import review_audits as audit
 
     value = getattr(statement, "value", None)
+    if isinstance(statement, ast.AugAssign):
+        value = ast.BinOp(left=statement.target, op=statement.op, right=value)
     bindings = audit._bound_names(statement)
     scope = getattr(statement, "_security_lexical_scope", None)
     from . import intent_quality

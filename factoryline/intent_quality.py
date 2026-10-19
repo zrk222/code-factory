@@ -2673,6 +2673,111 @@ def sqlalchemy_with_findings(
         cursors.update(old_cursors)
 
 
+def bound_sink_argument(call, position, keywords=()):
+    """Select one declared argument slot; reject ambiguous stars or duplicates."""
+    selected = [item.value for item in call.keywords if item.arg in keywords]
+    if any(isinstance(item, ast.Starred) for item in call.args[: position + 1]):
+        return None
+    if len(call.args) > position:
+        return None if selected else call.args[position]
+    return selected[0] if len(selected) == 1 else None
+
+
+def unsafe_request_url(call, name, tainted, aliases, is_tainted, allowed):
+    if name not in {
+        "requests." + verb
+        for verb in ("get", "post", "put", "patch", "delete", "head", "options")
+    }:
+        return False
+    argument = bound_sink_argument(call, 0, ("url",))
+    return is_tainted(argument, tainted, set(), aliases) and not allowed(call, aliases)
+
+
+def fixed_root_filename_path(node, requests, aliases, proven):
+    """A basename barrier proves lexical traversal only, not filesystem safety."""
+    if not isinstance(node, ast.Call) or not proven(node, aliases, "os.path.join"):
+        return False
+    if len(node.args) < 2 or node.keywords:
+        return False
+    root = node.args[0]
+    if not isinstance(root, ast.Constant) or not isinstance(root.value, str):
+        return False
+    if not re.match(r"^(?:/|[A-Za-z]:[\\/]|\\\\)", root.value):
+        return False
+    return all(
+        isinstance(leaf, ast.Name)
+        and ("secure-upload-leaf", leaf.id) in requests
+        or isinstance(leaf, ast.Call)
+        and proven(leaf, aliases, "werkzeug.utils.secure_filename")
+        for leaf in node.args[1:]
+    )
+
+
+def sanitizer_provider_unchanged(call, aliases, expected, module_for):
+    """Reuse the provider mutation index for guards within one captured AST."""
+    from types import SimpleNamespace
+
+    from . import review_audits as audit
+    from . import provider_mutations
+    from .review_integrity import _security_flow_bindings
+
+    module = module_for(getattr(call, "_security_lexical_scope", None))
+    if module is None:
+        return False
+    flow, _ = _security_flow_bindings(call, aliases)
+    name = audit._name(call.func)
+    head, _, tail = name.partition(".")
+    if flow.get(head, "") + ("." + tail if tail else "") != expected:
+        return False
+    key = (expected, name, tuple(sorted(aliases.items())))
+    cache = getattr(module, "_security_sanitizer_provider_cache", {})
+    if key not in cache:
+        nodes = list(ast.walk(module))
+        parents = {
+            id(child): node for node in nodes for child in ast.iter_child_nodes(node)
+        }
+
+        def include_capture(node):
+            if isinstance(node, ast.Assign):
+                targets = node.targets
+                value = node.value
+            elif isinstance(node, ast.AnnAssign):
+                targets = [node.target] if node.simple else []
+                value = node.value
+            else:
+                return True
+            if (
+                len(targets) == 1
+                and isinstance(targets[0], ast.Name)
+                and isinstance(call.func, ast.Name)
+                and targets[0].id == head
+                and isinstance(value, (ast.Name, ast.Attribute))
+                and audit._resolved_ast_name(value, aliases) == expected
+            ):
+                return False
+            return True
+
+        mutations = provider_mutations.finite_provider_mutation_index(
+            nodes,
+            aliases,
+            SimpleNamespace(_resolved_ast_name=audit._resolved_ast_name),
+            parents,
+            capture_predicate=include_capture,
+        )
+
+        def overlaps(path, attribute):
+            changed = path if attribute == "*" else path + "." + attribute
+            return (
+                changed == expected
+                or expected.startswith(changed + ".")
+                or changed.startswith(expected + ".")
+            )
+
+        cache[key] = any(overlaps(path, attribute) for path, attribute in mutations)
+        module._security_sanitizer_provider_cache = cache
+    return not cache[key]
+
+
 def unsafe_sql_driver(
     call,
     requests,
@@ -2772,7 +2877,6 @@ def sql_sink_driver(
         not isinstance(call, ast.Call)
         or not isinstance(call.func, ast.Attribute)
         or call.func.attr != "execute"
-        or not call.args
     ):
         return None
     receiver = call.func.value
@@ -2800,7 +2904,13 @@ def sql_sink_driver(
 
 def sql_statement_argument(call, driver, aliases, resolve_call):
     """Unwrap only SQLAlchemy text() around the SQL statement argument."""
-    statement = call.args[0]
+    names = {
+        "psycopg": ("query",),
+        "django": ("sql",),
+        "sqlalchemy": ("statement",),
+        "mysql.connector": ("operation",),
+    }
+    statement = bound_sink_argument(call, 0, names.get(driver, ()))
     if (
         driver == "sqlalchemy"
         and isinstance(statement, ast.Call)
