@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from factoryline.credential_role_chain_memo import ClassChainMemo
-from factoryline.credential_role_method_use_common import absolute_path
+from factoryline.credential_role_method_use_audit import absolute_path
 from factoryline.credential_role_sources import SourceSnapshotIndex
 
 

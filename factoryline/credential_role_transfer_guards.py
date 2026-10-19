@@ -35,9 +35,7 @@ def _constructor_provider_epoch():
         *(
             import_module("." + name, __package__)
             for name in (
-                "credential_role_constructor_capture",
-                "credential_role_constructor_consumer",
-                "credential_role_constructor_types",
+                "credential_role_constructor_provider",
                 "credential_role_constructor_provider_provenance",
             )
         ),

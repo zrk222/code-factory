@@ -5,7 +5,7 @@ import pytest
 from test_credential_role_chain_memo import setup
 
 from factoryline import credential_role_constructor_provider as provider
-from factoryline import credential_role_constructor_types as type_effects
+from factoryline import credential_role_constructor_provider_provenance as type_effects
 from factoryline import provider_mutations
 from factoryline.credential_role_bindings import class_chain
 from factoryline.credential_role_transfer_guards import constructor_bindings_inert

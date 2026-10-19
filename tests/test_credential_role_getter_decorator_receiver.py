@@ -1,7 +1,7 @@
 import ast
 import hashlib
 
-from factoryline.credential_role_method_use_getters import _stable_self
+from factoryline.credential_role_method_use_getter_audit import _stable_self
 from factoryline.credential_role_sources import SourceSnapshotIndex
 
 

@@ -5,7 +5,7 @@ import hashlib
 
 import pytest
 
-from factoryline.credential_role_method_use_relation import (
+from factoryline.credential_role_method_use_getter_audit import (
     candidate_getter_fields,
     exact_local_receiver_relation,
 )
