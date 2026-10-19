@@ -36,6 +36,181 @@ EXPERIMENT_SCHEMA = "factory.context-efficiency-paired.v1"
 SHARD_CANDIDATE_SCHEMA = "factory.context-shard-candidate.v1"
 SHARD_REVIEW_SCHEMA = "factory.context-shard-review.v1"
 MODULE_VERSION = "1"
+_MAX_PROVIDER_SOURCE_MODULES = 64
+
+
+def captured_local_import_closure(
+    root, imports, snapshots, eligible, resolver, extra_sources=()
+):
+    """Build a bounded, hash-bound closure from already captured source trees."""
+    pending = [source for source, _symbol in imports.values()] + list(extra_sources)
+    pending.extend(_provider_package_initializers(root, pending, eligible))
+    seen, rows = set(), []
+    while pending:
+        source = pending.pop()
+        if source in seen:
+            continue
+        seen.add(source)
+        if len(seen) > _MAX_PROVIDER_SOURCE_MODULES:
+            return [], False
+        tree = snapshots.get(source)
+        digest = getattr(tree, "_oracle_source_sha256", None)
+        if not isinstance(tree, ast.Module) or not isinstance(digest, str):
+            return [], False
+        resolved = resolver(root, source, tree, eligible)
+        try:
+            relative = source.relative_to(root).as_posix()
+        except ValueError:
+            return [], False
+        rows.append(
+            {"path": relative, "sha256": digest, "local_imports": sorted(resolved)}
+        )
+        imported = [target for target, _symbol in resolved.values()]
+        pending.extend(imported)
+        pending.extend(_provider_package_initializers(root, imported, eligible))
+    return sorted(rows, key=lambda row: row["path"]), True
+
+
+def _provider_package_initializers(root, sources, eligible):
+    paths = (
+        eligible
+        if isinstance(eligible, dict)
+        else {path.resolve(): path for path in eligible}
+    )
+    result = set()
+    for source in sources:
+        for parent in source.resolve().parents:
+            initializer = parent / "__init__.py"
+            if initializer.resolve() in paths:
+                result.add(paths[initializer.resolve()])
+            if parent == root.resolve():
+                break
+    return sorted(result)
+
+
+def bind_provider_context(context, root, path, imports, snapshots, eligible, resolver):
+    """Bind transitive local imports and ancestor conftests to one test source."""
+    conftests = sorted(
+        (
+            source
+            for source in snapshots
+            if source.name == "conftest.py"
+            and source != path
+            and path.is_relative_to(source.parent)
+        ),
+        key=lambda source: (len(source.parts), source.as_posix()),
+    )
+    closure, complete = captured_local_import_closure(
+        root, imports, snapshots, eligible, resolver, conftests
+    )
+    context["provider_source_closure"] = closure
+    context["provider_source_closure_complete"] = complete
+    context["provider_owner_local_imports"] = sorted(imports)
+
+
+def provider_source_inventory(root, source_bytes, manifest, output=None):
+    """Retain the scanned Python inventory used by type-intent source proofs."""
+    retained = {path.relative_to(root).as_posix() for path in source_bytes}
+    rows = [
+        {
+            "path": row["path"],
+            "state": row["state"],
+            "retained": row["path"] in retained,
+        }
+        for row in manifest
+        if row["path"].lower().endswith(".py")
+    ]
+    if output is not None:
+        output.extend(rows)
+    return rows
+
+
+def bind_provider_inventory(contexts, inventory):
+    complete = bool(inventory) and all(
+        row.get("state") == "read" and row.get("retained") is True for row in inventory
+    )
+    for context in contexts.values():
+        context["provider_source_inventory_complete"] = complete
+    return complete
+
+
+def provider_cache_fields(context):
+    return {
+        "provider_source_closure": context.get("provider_source_closure", []),
+        "provider_owner_local_imports": context.get("provider_owner_local_imports", []),
+        "provider_source_closure_complete": bool(
+            context.get("provider_source_closure_complete", False)
+        ),
+        "provider_source_inventory_complete": bool(
+            context.get("provider_source_inventory_complete", False)
+        ),
+    }
+
+
+def oracle_context_cache_context(item, decode_structural_context):
+    return {
+        "helpers": set(item["helpers"]),
+        "weak_helpers": set(item["weak_helpers"]),
+        "mixins": set(item["mixins"]),
+        "pytest_inherited": set(item["pytest_inherited"]),
+        "click_runners": set(item["click_runners"]),
+        "typecheck": item["typecheck"],
+        "flask_apps": set(item.get("flask_apps", [])),
+        "callback_invokers": item.get("callback_invokers", {}),
+        "codspeed_benchmark": item.get("codspeed_benchmark", False),
+        "async_runner_fixtures": item.get("async_runner_fixtures", {}),
+        "mock_fixture_provenance": item.get("mock_fixture_provenance", {}),
+        "protocol_observations": item.get("protocol_observations", {}),
+        "fixed_program_workspace": item.get("fixed_program_workspace", {}),
+        **provider_cache_fields(item),
+        **decode_structural_context(item.get("structural_context", {})),
+    }
+
+
+def oracle_context_cache_record(path, context, encode_structural_context):
+    return {
+        "path": path.as_posix(),
+        "helpers": sorted(context["helpers"]),
+        "weak_helpers": sorted(context["weak_helpers"]),
+        "mixins": sorted(context["mixins"]),
+        "pytest_inherited": sorted(context["pytest_inherited"]),
+        "click_runners": sorted(context["click_runners"]),
+        "typecheck": bool(context["typecheck"]),
+        "flask_apps": sorted(context.get("flask_apps", set())),
+        "callback_invokers": context.get("callback_invokers", {}),
+        "codspeed_benchmark": context.get("codspeed_benchmark", False),
+        "async_runner_fixtures": context.get("async_runner_fixtures", {}),
+        "mock_fixture_provenance": context.get("mock_fixture_provenance", {}),
+        "protocol_observations": context.get("protocol_observations", {}),
+        "fixed_program_workspace": context.get("fixed_program_workspace", {}),
+        **provider_cache_fields(context),
+        "structural_context": encode_structural_context(context),
+    }
+
+
+def typecheck_cache_helpers(contracts):
+    return tuple(
+        value
+        for name, value in vars(contracts).items()
+        if name.startswith("_ty_") and callable(value)
+    )
+
+
+def provider_context_cache_helpers(contracts):
+    """Return the source inventory and cache helpers in the cache epoch."""
+    return (
+        provider_context_cache_helpers,
+        bind_provider_inventory,
+        bind_provider_context,
+        captured_local_import_closure,
+        _provider_package_initializers,
+        oracle_context_cache_context,
+        oracle_context_cache_record,
+        provider_cache_fields,
+        provider_source_inventory,
+        typecheck_cache_helpers,
+        *typecheck_cache_helpers(contracts),
+    )
 
 
 @_measured_source_read

@@ -89,6 +89,7 @@ def _oracle_context_cache_info() -> dict[str, int]:
 
 def _oracle_context_cache_read(key: str) -> tuple[dict, list] | None:
     from .review_integrity import decode_structural_context
+    from .context_efficiency import oracle_context_cache_context
 
     global _ORACLE_CONTEXT_CACHE_BYTES, _ORACLE_CONTEXT_CACHE_HITS
     global _ORACLE_CONTEXT_CACHE_MISSES
@@ -108,29 +109,9 @@ def _oracle_context_cache_read(key: str) -> tuple[dict, list] | None:
             raise ValueError("oracle cache payload is not native or current")
         document = json.loads(payload)
         contexts = {
-            Path(item["path"]): {
-                "helpers": set(item["helpers"]),
-                "weak_helpers": set(item["weak_helpers"]),
-                "mixins": set(item["mixins"]),
-                "pytest_inherited": set(item["pytest_inherited"]),
-                "click_runners": set(item["click_runners"]),
-                "typecheck": item["typecheck"],
-                "flask_apps": set(item.get("flask_apps", [])),
-                "callback_invokers": item.get("callback_invokers", {}),
-                "codspeed_benchmark": item.get("codspeed_benchmark", False),
-                "async_runner_fixtures": item.get("async_runner_fixtures", {}),
-                "mock_fixture_provenance": item.get("mock_fixture_provenance", {}),
-                "protocol_observations": item.get("protocol_observations", {}),
-                "fixed_program_workspace": item.get("fixed_program_workspace", {}),
-                "provider_source_closure": item.get("provider_source_closure", []),
-                "provider_source_closure_complete": item.get(
-                    "provider_source_closure_complete", False
-                ),
-                "provider_source_inventory_complete": item.get(
-                    "provider_source_inventory_complete", False
-                ),
-                **decode_structural_context(item.get("structural_context", {})),
-            }
+            Path(item["path"]): oracle_context_cache_context(
+                item, decode_structural_context
+            )
             for item in document["contexts"]
         }
         edges = document["edges"]
@@ -148,36 +129,13 @@ def _oracle_context_cache_read(key: str) -> tuple[dict, list] | None:
 
 def _oracle_context_cache_write(key: str, contexts: dict, edges: list) -> None:
     from .review_integrity import encode_structural_context
+    from .context_efficiency import oracle_context_cache_record
 
     global _ORACLE_CONTEXT_CACHE_BYTES
-    rows = []
-    for path, context in sorted(contexts.items(), key=lambda item: str(item[0])):
-        rows.append(
-            {
-                "path": path.as_posix(),
-                "helpers": sorted(context["helpers"]),
-                "weak_helpers": sorted(context["weak_helpers"]),
-                "mixins": sorted(context["mixins"]),
-                "pytest_inherited": sorted(context["pytest_inherited"]),
-                "click_runners": sorted(context["click_runners"]),
-                "typecheck": bool(context["typecheck"]),
-                "flask_apps": sorted(context.get("flask_apps", set())),
-                "callback_invokers": context.get("callback_invokers", {}),
-                "codspeed_benchmark": context.get("codspeed_benchmark", False),
-                "async_runner_fixtures": context.get("async_runner_fixtures", {}),
-                "mock_fixture_provenance": context.get("mock_fixture_provenance", {}),
-                "protocol_observations": context.get("protocol_observations", {}),
-                "fixed_program_workspace": context.get("fixed_program_workspace", {}),
-                "provider_source_closure": context.get("provider_source_closure", []),
-                "provider_source_closure_complete": bool(
-                    context.get("provider_source_closure_complete", False)
-                ),
-                "provider_source_inventory_complete": bool(
-                    context.get("provider_source_inventory_complete", False)
-                ),
-                "structural_context": encode_structural_context(context),
-            }
-        )
+    rows = [
+        oracle_context_cache_record(path, context, encode_structural_context)
+        for path, context in sorted(contexts.items(), key=lambda item: str(item[0]))
+    ]
     document = {"contexts": rows, "edges": edges}
     payload = integrity.NativeOraclePayload(
         json.dumps(document, sort_keys=True, separators=(",", ":")), key
@@ -3683,6 +3641,7 @@ def _oracle_context_cache_key(root: Path, manifest: list, config_identity: dict)
         _read_bounded_workspace_source,
         _scan_missing_security_snapshot,
         async_runner_fixture_helpers,
+        provider_context_cache_helpers,
         protocol_call_helpers,
     )
 
@@ -3706,6 +3665,7 @@ def _oracle_context_cache_key(root: Path, manifest: list, config_identity: dict)
         _scan_missing_security_snapshot,
         local_file,
         _measure_parse,
+        *provider_context_cache_helpers(contracts),
         RuntimeAuditError,
         _click_runner_fixtures,
         _scope_security_aliases,
@@ -3726,22 +3686,6 @@ def _oracle_context_cache_key(root: Path, manifest: list, config_identity: dict)
         _measure_hash,
         _declared_typecheck_sources,
         contracts._declared_typecheck_sources,
-        contracts._ty_sources,
-        contracts._ty_invocation_profile,
-        contracts._ty_safe_passenv,
-        contracts._ty_external_config_state,
-        contracts._ty_config_scope,
-        contracts._ty_assertion_rules,
-        contracts._ty_selected_paths,
-        contracts._ty_paths,
-        contracts._ty_default_excluded,
-        contracts._ty_assertion_provider_mutated,
-        contracts._ty_global_git_configuration,
-        contracts._ty_ignored_paths,
-        contracts._ty_path_is_ignored,
-        contracts._ty_ignore_file_patterns,
-        contracts._ty_parse_ignore_lines,
-        contracts._ty_matches_ignore,
         *type_intent_hollow.CACHE_HELPERS,
         *type_intent_provider_provenance.CACHE_HELPERS,
         _source_callback_invokers,
@@ -3792,7 +3736,9 @@ def _oracle_context_cache_key(root: Path, manifest: list, config_identity: dict)
         "source_limit": MAX_BYTES,
         "source_retention_limit": 16 * 1024 * 1024,
         "python": [sys.implementation.name, *sys.version_info[:3]],
-        "helpers": [id(helper) for helper in helpers],
+        "helpers": [
+            (id(helper), id(getattr(helper, "__code__", None))) for helper in helpers
+        ],
     }
     encoded = json.dumps(identity, sort_keys=True, separators=(",", ":")).encode()
     return sha256(encoded).hexdigest()
@@ -3931,22 +3877,13 @@ def _project_oracle_context(
     source_bytes, source_bindings, manifest, source_cacheable = _oracle_source_inputs(
         root, files
     )
-    retained_paths = {path.relative_to(root).as_posix() for path in source_bytes}
-    python_inventory = [
-        {
-            "path": item["path"],
-            "state": item["state"],
-            "retained": item["path"] in retained_paths,
-        }
-        for item in manifest
-        if item["path"].lower().endswith(".py")
-    ]
-    if python_inventory_out is not None:
-        python_inventory_out.extend(python_inventory)
-    provider_inventory_complete = (
-        type_intent_provider_provenance.provider_source_inventory_complete(
-            python_inventory
-        )
+    from .context_efficiency import (
+        bind_provider_inventory,
+        provider_source_inventory,
+    )
+
+    python_inventory = provider_source_inventory(
+        root, source_bytes, manifest, python_inventory_out
     )
     (
         typecheck_sources,
@@ -3968,9 +3905,7 @@ def _project_oracle_context(
         cached = _oracle_context_cache_read(cache_key)
         if cached is not None:
             contexts, edges = cached
-            type_intent_provider_provenance.bind_provider_inventory(
-                contexts, provider_inventory_complete
-            )
+            bind_provider_inventory(contexts, python_inventory)
             return contexts, bindings, edges, source_bytes
     snapshots = contracts.bound_snapshots(root, files, source_bytes, source_bindings)
     file_paths = set(files)
@@ -4016,9 +3951,7 @@ def _project_oracle_context(
     contexts, edges = _build_oracle_context(
         root, files, snapshots, typecheck_sources, ty_sources, import_views
     )
-    type_intent_provider_provenance.bind_provider_inventory(
-        contexts, provider_inventory_complete
-    )
+    bind_provider_inventory(contexts, python_inventory)
     integrity.bind_benchmark_context(contexts, snapshots, benchmarks)
     resolved = contracts._project_import_views(import_views, snapshots)
     integrity.bind_fixed_program_workspace(
@@ -4051,7 +3984,11 @@ def _build_oracle_context(
     import_views: dict | None = None,
 ) -> tuple[dict, list]:
     from . import mock_fixture_provenance
-    from .context_efficiency import async_runner_fixture_context, protocol_call_context
+    from .context_efficiency import (
+        async_runner_fixture_context,
+        bind_provider_context,
+        protocol_call_context,
+    )
 
     async_fixtures = async_runner_fixture_context(root, files, snapshots)
     protocols = protocol_call_context(root, files, snapshots)
@@ -4106,13 +4043,9 @@ def _build_oracle_context(
         )
         contexts[path]["flask_apps"] = _flask_context_apps(path, tree, snapshots)
         imports = _oracle_imports(root, path, tree, eligible)
-        closure, closure_complete = (
-            type_intent_provider_provenance.captured_local_import_closure(
-                root, imports, snapshots, eligible, _oracle_imports
-            )
+        bind_provider_context(
+            contexts[path], root, path, imports, snapshots, eligible, _oracle_imports
         )
-        contexts[path]["provider_source_closure"] = closure
-        contexts[path]["provider_source_closure_complete"] = closure_complete
         contracts._capture_project_imports(import_views, path, imports, eligible)
         contexts[path].update(
             integrity._structural_oracle_context(tree, imports, snapshots)
@@ -4352,9 +4285,7 @@ def _hollow_test_finding(
         scope_parameters=_scope_parameters(node),
         provider_mutated=contracts._ty_assertion_provider_mutated,
         relative=relative,
-        provider_context_closed=(
-            type_intent_provider_provenance.captured_provider_context_closed
-        ),
+        provider_context_closed=(type_intent_hollow.captured_provider_context_closed),
     ):
         return _security_finding(
             "QUALITY_HOLLOW_TEST",

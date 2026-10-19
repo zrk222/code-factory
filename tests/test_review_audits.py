@@ -5115,7 +5115,7 @@ def test_oracle_context_cache_invalidates_source_and_configuration_changes(tmp_p
         "[pytest]\npython_files = typing_probe.py\n", encoding="utf-8"
     )
     unconfigured = security_scan(tmp_path, cache_enabled=True)
-    assert unconfigured["finding_counts"].get("QUALITY_HOLLOW_TEST") == 1
+    assert unconfigured["finding_counts"].get("QUALITY_UNKNOWN_TEST_ORACLE") == 1
     (tmp_path / "pyproject.toml").write_text(
         '[tool.mypy]\nfiles = ["typing_probe.py"]\n', encoding="utf-8"
     )
@@ -5151,6 +5151,71 @@ def test_oracle_context_cache_invalidates_when_projector_helper_changes(
         != changed_contexts[test_path]["click_runners"]
     )
     assert module._oracle_context_cache_info()["misses"] > first_misses
+
+
+def test_oracle_context_cache_invalidates_when_provider_inventory_helper_changes(
+    tmp_path, monkeypatch
+):
+    import factoryline.context_efficiency as context_efficiency
+    import factoryline.review_audits as module
+
+    test_path = tmp_path / "test_case.py"
+    test_path.write_text("def test_case():\n    assert True\n", encoding="utf-8")
+    module._oracle_context_cache_clear()
+    module._project_oracle_context(
+        tmp_path, module._security_source_files(tmp_path), cache_enabled=True
+    )
+    first_misses = module._oracle_context_cache_info()["misses"]
+
+    monkeypatch.setattr(
+        context_efficiency, "provider_source_inventory", lambda *args: []
+    )
+    contexts, _, _, _ = module._project_oracle_context(
+        tmp_path, module._security_source_files(tmp_path), cache_enabled=True
+    )
+
+    assert module._oracle_context_cache_info()["misses"] > first_misses
+    assert contexts[test_path]["provider_source_inventory_complete"] is False
+
+
+def test_oracle_context_cache_tracks_provider_helper_code_replacement(
+    tmp_path, monkeypatch
+):
+    import factoryline.context_efficiency as context_efficiency
+    import factoryline.review_audits as module
+
+    (tmp_path / "test_types.py").write_text(
+        "from typing import assert_type\ndef test_types():\n    assert_type(1, int)\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "poison.py").write_text(
+        "def anchor(value):\n    return value + 1\n"
+        "namespace = anchor.__globals__['__builtins__']\n"
+        "loader = namespace['__import__']\n"
+        "provider = loader('ty' + 'ping')\n"
+        "def runtime_assertion(value, expected):\n"
+        "    assert isinstance(value, expected)\n"
+        "provider.assert_type = runtime_assertion\n",
+        encoding="utf-8",
+    )
+    module._oracle_context_cache_clear()
+    before = security_scan(tmp_path, cache_enabled=True)
+    assert before["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+
+    helper = context_efficiency._provider_package_initializers
+
+    def include_poison(root, sources, eligible):
+        return [root / "poison.py"]
+
+    monkeypatch.setattr(helper, "__code__", include_poison.__code__)
+    warm = security_scan(tmp_path, cache_enabled=True)
+    cold = security_scan(tmp_path, cache_enabled=False)
+
+    assert (
+        warm["finding_counts"]
+        == cold["finding_counts"]
+        == {"QUALITY_UNKNOWN_TEST_ORACLE": 1}
+    )
 
 
 def test_security_scan_reuses_projected_source_bytes_on_cache_miss_and_hit(

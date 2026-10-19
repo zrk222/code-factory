@@ -151,7 +151,8 @@ def test_provider_alias_escape_remains_unresolved(tmp_path):
             "typing",
             "import unittest\n"
             "def assert_type(value, expected):\n"
-            "    return getattr(unittest.TestCase(), 'assertIsInstance')(value, expected)\n",
+            "    return getattr(unittest.TestCase(), "
+            "'assertIsInstance')(value, expected)\n",
             "from typing import assert_type\n",
         ),
         (
@@ -166,7 +167,8 @@ def test_provider_alias_escape_remains_unresolved(tmp_path):
             "typing_extensions",
             "import unittest\n"
             "def assert_type(value, expected):\n"
-            "    return getattr(unittest.TestCase(), 'assertIsInstance')(value, expected)\n",
+            "    return getattr(unittest.TestCase(), "
+            "'assertIsInstance')(value, expected)\n",
             "from typing_extensions import assert_type\n",
         ),
         (
@@ -280,6 +282,180 @@ def test_imported_dynamic_provider_acquisition_remains_unknown(tmp_path, acquisi
     }
 
 
+@pytest.mark.parametrize(
+    "owner_setup",
+    [
+        "def anchor(): pass\n"
+        "namespace = anchor.__globals__['__builtins__']\n"
+        "loader = namespace['__import__']\n"
+        "provider = loader('ty' + 'ping')",
+        "from inspect import currentframe\n"
+        "provider = currentframe().f_globals['__builtins__']['__import__'](\n"
+        "    'ty' + 'ping'\n"
+        ")",
+        "import sys\nbox = [sys]\nprovider = box[0].modules['ty' + 'ping']",
+    ],
+)
+def test_owner_module_provider_capabilities_keep_type_oracle_unknown(
+    tmp_path, owner_setup
+):
+    _write_test(
+        tmp_path,
+        owner_setup + "\ndef runtime_assertion(value, expected):\n"
+        "    assert isinstance(value, expected)\n"
+        "provider.assert_type = runtime_assertion\n"
+        "from typing import assert_type\n"
+        "def test_type():\n    assert_type(1, int)\n",
+    )
+
+    assert security_scan(tmp_path)["finding_counts"] == {
+        "QUALITY_UNKNOWN_TEST_ORACLE": 1
+    }
+
+
+def test_owner_module_checks_sibling_functions_but_skips_selected_test_body(tmp_path):
+    _write_test(
+        tmp_path,
+        "def inert_helper():\n    pass\n"
+        "from typing import assert_type\n"
+        "def test_type():\n    assert_type(1, int)\n",
+    )
+
+    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+
+
+def test_owner_module_non_target_callback_body_keeps_oracle_unknown(tmp_path):
+    _write_test(
+        tmp_path,
+        "def possible_fixture_callback():\n    mutate_provider()\n"
+        "from typing import assert_type\n"
+        "def test_type():\n    assert_type(1, int)\n",
+    )
+
+    assert security_scan(tmp_path)["finding_counts"] == {
+        "QUALITY_UNKNOWN_TEST_ORACLE": 1
+    }
+
+
+@pytest.mark.parametrize(
+    ("import_line", "call"),
+    [
+        ("from typing import assert_type", "assert_type"),
+        ("from typing import assert_type as check_type", "check_type"),
+        ("import typing", "typing.assert_type"),
+        ("import typing as type_api", "type_api.assert_type"),
+    ],
+)
+def test_multiple_type_only_tests_keep_individual_hollow_findings(
+    tmp_path, import_line, call
+):
+    _write_test(
+        tmp_path,
+        f"{import_line}\n"
+        f"def test_one():\n    {call}(1, int)\n"
+        f"def test_two():\n    {call}(2, int)\n",
+    )
+
+    report = security_scan(tmp_path)
+
+    assert report["finding_counts"] == {"QUALITY_HOLLOW_TEST": 2}
+    assert {item["facts"]["symbol"] for item in report["findings"]} == {
+        "test_one",
+        "test_two",
+    }
+
+
+def test_sibling_parameter_shadow_keeps_type_provider_unknown(tmp_path):
+    _write_test(
+        tmp_path,
+        "import typing\n"
+        "def helper(typing):\n    typing.assert_type(1, int)\n"
+        "def test_type():\n    typing.assert_type(2, int)\n",
+    )
+
+    assert security_scan(tmp_path)["finding_counts"] == {
+        "QUALITY_UNKNOWN_TEST_ORACLE": 1
+    }
+
+
+@pytest.mark.parametrize(
+    ("import_line", "provider_name"),
+    [("import typing", "typing"), ("import typing as type_api", "type_api")],
+)
+def test_module_qualified_type_only_siblings_keep_hollow_findings(
+    tmp_path, import_line, provider_name
+):
+    _write_test(
+        tmp_path,
+        f"{import_line}\n"
+        f"def test_one():\n    {provider_name}.assert_type(1, int)\n"
+        f"def test_two():\n    {provider_name}.assert_type(2, int)\n",
+    )
+
+    report = security_scan(tmp_path)
+
+    assert report["finding_counts"] == {"QUALITY_HOLLOW_TEST": 2}
+    assert {item["facts"]["symbol"] for item in report["findings"]} == {
+        "test_one",
+        "test_two",
+    }
+
+
+@pytest.mark.parametrize(
+    ("import_line", "provider_name", "call"),
+    [
+        ("from typing import assert_type", "assert_type", "assert_type(1, int)"),
+        (
+            "from typing import assert_type as check_type",
+            "check_type",
+            "check_type(1, int)",
+        ),
+        ("import typing", "typing", "typing.assert_type(1, int)"),
+        ("import typing as type_api", "type_api", "type_api.assert_type(1, int)"),
+    ],
+)
+def test_provider_alias_shadowed_by_test_parameter_stays_unknown(
+    tmp_path, import_line, provider_name, call
+):
+    _write_test(
+        tmp_path,
+        f"{import_line}\ndef test_type({provider_name}):\n    {call}\n",
+    )
+
+    assert security_scan(tmp_path)["finding_counts"] == {
+        "QUALITY_UNKNOWN_TEST_ORACLE": 1
+    }
+
+
+def test_module_qualified_sibling_runtime_assertion_remains_unknown(tmp_path):
+    _write_test(
+        tmp_path,
+        "import typing\n"
+        "def test_type_only():\n    typing.assert_type(1, int)\n"
+        "def test_runtime():\n    assert actual == expected\n",
+    )
+
+    report = security_scan(tmp_path)
+
+    assert report["finding_counts"] == {"QUALITY_UNKNOWN_TEST_ORACLE": 1}
+    assert report["findings"][0]["facts"]["symbol"] == "test_type_only"
+
+
+def test_mixed_type_only_and_runtime_assertions_preserve_per_test_results(tmp_path):
+    _write_test(
+        tmp_path,
+        "from typing import assert_type\n"
+        "def test_type_only():\n    assert_type(1, int)\n"
+        "def test_runtime():\n    assert_type(2, int)\n"
+        "    assert actual == expected\n",
+    )
+
+    report = security_scan(tmp_path)
+
+    assert report["finding_counts"] == {"QUALITY_UNKNOWN_TEST_ORACLE": 1}
+    assert report["findings"][0]["facts"]["symbol"] == "test_type_only"
+
+
 def test_imported_unrelated_sys_usage_does_not_close_provider_context(tmp_path):
     (tmp_path / "patcher.py").write_text(
         "import sys\nversion = sys.version\n", encoding="utf-8"
@@ -291,6 +467,84 @@ def test_imported_unrelated_sys_usage_does_not_close_provider_context(tmp_path):
     )
 
     assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+
+
+@pytest.mark.parametrize(
+    ("test_path", "lifecycle_source", "extra_sources"),
+    [
+        (
+            "test_types.py",
+            "import typing\n"
+            "typing.assert_type = lambda value, expected: value == expected\n",
+            {},
+        ),
+        (
+            "nested/test_types.py",
+            "import typing\n"
+            "typing.assert_type = lambda value, expected: value == expected\n",
+            {},
+        ),
+        (
+            "nested/test_types.py",
+            "import pytest\n"
+            "import typing\n"
+            "@pytest.fixture(autouse=True)\n"
+            "def patch_provider():\n"
+            "    typing.assert_type = lambda value, expected: value == expected\n",
+            {},
+        ),
+        (
+            "nested/test_types.py",
+            "import pytest\n"
+            "import patcher\n"
+            "@pytest.fixture(autouse=True)\n"
+            "def patch_provider():\n"
+            "    patcher.install()\n",
+            {
+                "patcher.py": "import typing\n"
+                "typing.assert_type = lambda value, expected: value == expected\n"
+            },
+        ),
+    ],
+)
+def test_ancestor_conftest_provider_effects_remain_unknown(
+    tmp_path, test_path, lifecycle_source, extra_sources
+):
+    test_file = tmp_path / test_path
+    test_file.parent.mkdir(parents=True, exist_ok=True)
+    test_file.write_text(
+        "from typing import assert_type\ndef test_types():\n    assert_type(1, int)\n",
+        encoding="utf-8",
+    )
+    conftest = test_file.parent / "conftest.py"
+    conftest.write_text(lifecycle_source, encoding="utf-8")
+    for relative, source in extra_sources.items():
+        (tmp_path / relative).write_text(source, encoding="utf-8")
+
+    assert security_scan(tmp_path)["finding_counts"] == {
+        "QUALITY_UNKNOWN_TEST_ORACLE": 1
+    }
+
+
+def test_local_package_initializer_effect_is_in_provider_closure(tmp_path):
+    package = tmp_path / "support"
+    package.mkdir()
+    (package / "__init__.py").write_text(
+        "import typing\n"
+        "typing.assert_type = lambda value, expected: value == expected\n",
+        encoding="utf-8",
+    )
+    (package / "helper.py").write_text("VALUE = 1\n", encoding="utf-8")
+    _write_test(
+        tmp_path,
+        "import support.helper\n"
+        "from typing import assert_type\n"
+        "def test_types():\n    assert_type(1, int)\n",
+    )
+
+    assert security_scan(tmp_path)["finding_counts"] == {
+        "QUALITY_UNKNOWN_TEST_ORACLE": 1
+    }
 
 
 def test_imported_reflective_builtin_capability_remains_unknown(tmp_path):
@@ -320,12 +574,16 @@ def test_imported_reflective_builtin_capability_remains_unknown(tmp_path):
         ("from unrelated import *", True),
         ("import sys\nbox = [sys]", True),
         ("import sys\nversion = sys.version", False),
-        ("import unrelated\nvalue = 1", False),
+        ("import typing", False),
+        ("import typing as types", False),
+        ("import typing\nvalue = typing.version", True),
+        ("from typing import assert_type", True),
+        ("import unrelated\nvalue = 1", True),
     ],
 )
 def test_type_intent_imported_capability_load_contract(source, expected):
     import ast
 
-    from factoryline.type_intent_dynamic_capability import dynamic_provider_capability
+    from factoryline.type_intent_provider_provenance import dynamic_provider_capability
 
     assert dynamic_provider_capability(ast.parse(source)) is expected

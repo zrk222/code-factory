@@ -3,65 +3,120 @@
 from __future__ import annotations
 
 import ast
-from collections.abc import Callable
+from hashlib import sha256
+from pathlib import Path
+
+from . import type_intent_provider_provenance as provider
+
+
+def captured_provider_context_closed(
+    module, relative, selected_test, canonical, noop_write
+) -> bool:
+    context = getattr(module, "_security_oracle_context", None)
+    source = getattr(module, "_security_source_context", None)
+    if (
+        not isinstance(context, dict)
+        or not _valid_relative(relative)
+        or not context.get("provider_source_inventory_complete")
+        or not context.get("provider_source_closure_complete")
+        or not isinstance(context.get("provider_source_closure"), list)
+        or not isinstance(context.get("provider_owner_local_imports"), list)
+        or any(
+            not isinstance(alias, str)
+            for alias in context["provider_owner_local_imports"]
+        )
+        or not isinstance(source, tuple)
+        or len(source) != 2
+        or not isinstance(source[0], Path)
+        or not isinstance(source[1], dict)
+    ):
+        return False
+    root, sources = source
+    digest = getattr(module, "_oracle_source_sha256", None)
+    raw = sources.get(root / relative)
+    return bool(
+        isinstance(digest, str)
+        and len(digest) == 64
+        and isinstance(raw, bytes)
+        and sha256(raw).hexdigest() == digest
+        and provider.owner_module_effects_closed(
+            module,
+            selected_test,
+            canonical,
+            noop_write,
+            context["provider_owner_local_imports"],
+        )
+        and provider._captured_closure_closed(
+            root, sources, context["provider_source_closure"]
+        )
+    )
+
+
+def _valid_relative(value):
+    if not isinstance(value, str) or not value or "\\" in value:
+        return False
+    path = Path(value)
+    return not path.is_absolute() and ".." not in path.parts
 
 
 def obviously_empty_test_body(node: ast.AST) -> bool:
-    """Recognize bodies containing only pass and docstring-like literals."""
+    if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return False
     return bool(node.body) and all(
-        isinstance(statement, ast.Pass)
-        or (
-            isinstance(statement, ast.Expr)
-            and isinstance(statement.value, ast.Constant)
-            and isinstance(statement.value.value, (str, type(Ellipsis)))
-        )
-        for statement in node.body
+        _ignorable(statement, ellipsis=True) for statement in node.body
     )
 
 
 def inert_type_assertion_only_oracle(
-    node: ast.AST,
-    aliases: dict[str, str],
+    node,
+    aliases,
     *,
-    module_aliases: dict[str, str],
-    scope_parameters: set[str],
-    provider_mutated: Callable[[ast.Module, dict[str, str]], bool],
-    relative: str,
-    provider_context_closed: Callable[[ast.Module, str], bool],
+    module_aliases,
+    scope_parameters,
+    provider_mutated,
+    relative,
+    provider_context_closed,
 ) -> bool:
-    """Prove the body is only a canonical, runtime-inert assert_type call."""
+    if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return False
     module = getattr(node, "_oracle_module", None)
     if not isinstance(module, ast.Module):
-        return False
-    if not provider_context_closed(module, relative):
         return False
     source_aliases = dict(module_aliases)
     source_aliases.update(aliases)
     body = [statement for statement in node.body if not _ignorable(statement)]
     call, local_assignment = _test_call(body, scope_parameters)
-    if call is None or not _simple_type_call(call):
+    if call is None or not provider._simple_type_call(call):
         return False
-    canonical = _source_name(call.func, source_aliases)
+    canonical = provider._source_name(call.func, source_aliases)
     if canonical not in {"typing.assert_type", "typing_extensions.assert_type"}:
         return False
-    lexical = _source_name(call.func, aliases)
+    lexical = provider._source_name(call.func, aliases)
     if lexical != canonical and local_assignment is None:
         return False
     if not _provider_references_are_closed(
-        module, node, call, local_assignment, source_aliases, canonical
+        module, call, local_assignment, source_aliases, canonical
     ):
         return False
-    if not provider_mutated(module, source_aliases):
+    noop_write = None
+    if provider_mutated(module, source_aliases):
+        noop_write = _single_noop_provider_write(
+            module, source_aliases, canonical, call
+        )
+        if noop_write is None:
+            return False
+    return provider_context_closed(module, relative, node, canonical, noop_write)
+
+
+def _ignorable(statement: ast.stmt, *, ellipsis: bool = False) -> bool:
+    if isinstance(statement, ast.Pass):
         return True
-    return _single_noop_provider_write(module, source_aliases, canonical, call)
-
-
-def _ignorable(statement: ast.stmt) -> bool:
-    return isinstance(statement, ast.Pass) or (
-        isinstance(statement, ast.Expr)
-        and isinstance(statement.value, ast.Constant)
-        and isinstance(statement.value.value, str)
-    )
+    if not isinstance(statement, ast.Expr) or not isinstance(
+        statement.value, ast.Constant
+    ):
+        return False
+    value = statement.value.value
+    return isinstance(value, str) or ellipsis and value is Ellipsis
 
 
 def _test_call(body: list[ast.stmt], parameters: set[str]):
@@ -84,39 +139,8 @@ def _test_call(body: list[ast.stmt], parameters: set[str]):
     return None, None
 
 
-def _simple_type_call(call: ast.AST) -> bool:
-    return (
-        isinstance(call, ast.Call)
-        and len(call.args) == 2
-        and not call.keywords
-        and all(isinstance(arg, (ast.Name, ast.Constant)) for arg in call.args)
-        and not any(
-            isinstance(child, ast.Call) and child is not call
-            for child in ast.walk(call)
-        )
-    )
-
-
-def _source_name(node: ast.AST, aliases: dict[str, str]) -> str | None:
-    parts = []
-    while isinstance(node, ast.Attribute):
-        parts.append(node.attr)
-        node = node.value
-    if not isinstance(node, ast.Name) or node.id not in aliases:
-        return None
-    return ".".join((aliases[node.id], *reversed(parts)))
-
-
-def _provider_references_are_closed(
-    module: ast.Module,
-    test: ast.AST,
-    call: ast.Call,
-    local_assignment: ast.Assign | None,
-    aliases: dict[str, str],
-    canonical: str,
-) -> bool:
-    """Reject provider aliases, reflection, and opaque provider escapes."""
-    provider = canonical.split(".", 1)[0]
+def _provider_references_are_closed(module, call, local_assignment, aliases, canonical):
+    provider_name = canonical.split(".", 1)[0]
     parent = {
         child: current
         for current in ast.walk(module)
@@ -124,29 +148,30 @@ def _provider_references_are_closed(
     }
     for reference in (item for item in ast.walk(module) if isinstance(item, ast.Name)):
         target = aliases.get(reference.id)
-        if target not in {provider, canonical}:
+        if target not in {provider_name, canonical}:
             continue
-        if target == provider:
+        if target == provider_name:
             attribute = parent.get(reference)
             if not (
                 isinstance(attribute, ast.Attribute)
                 and attribute.value is reference
                 and attribute.attr == "assert_type"
-                and _allowed_provider_attribute(parent.get(attribute), call)
+                and _allowed_provider_attribute(
+                    parent.get(attribute), call, aliases, canonical
+                )
             ):
                 return False
             continue
         use = parent.get(reference)
         if isinstance(use, ast.Call) and use.func is reference:
-            if use is call or _source_name(use.func, aliases) == canonical:
+            if use is call or (
+                provider._source_name(use.func, aliases) == canonical
+                and provider._simple_type_call(use)
+            ):
                 continue
-        if (
-            local_assignment is not None
-            and reference is local_assignment.targets[0]
-            and _within(reference, test)
-        ):
+        if local_assignment is not None and reference is local_assignment.targets[0]:
             continue
-        if _allowed_provider_attribute(use, call):
+        if _allowed_provider_attribute(use, call, aliases, canonical):
             continue
         return False
     return not any(
@@ -155,38 +180,34 @@ def _provider_references_are_closed(
     )
 
 
-def _allowed_provider_attribute(parent: ast.AST | None, call: ast.Call) -> bool:
-    if isinstance(parent, ast.Call) and parent.func is not None:
-        return parent is call
+def _allowed_provider_attribute(
+    parent: ast.AST | None, call: ast.Call, aliases: dict[str, str], canonical: str
+) -> bool:
+    if isinstance(parent, ast.Call):
+        return parent is call or (
+            provider._source_name(parent.func, aliases) == canonical
+            and provider._simple_type_call(parent)
+        )
     return isinstance(parent, ast.Assign) and any(
         isinstance(target, ast.Attribute) and target.attr == "assert_type"
         for target in parent.targets
     )
 
 
-def _within(node: ast.AST, ancestor: ast.AST) -> bool:
-    if node is ancestor:
-        return True
-    return any(
-        child is node or _within(node, child)
-        for child in ast.iter_child_nodes(ancestor)
-    )
-
-
 def _single_noop_provider_write(
     module: ast.Module, aliases: dict[str, str], canonical: str, call: ast.Call
-) -> bool:
+):
     writes = [
         item
         for item in ast.walk(module)
         if isinstance(item, ast.Attribute)
         and isinstance(item.ctx, (ast.Store, ast.Del))
         and item.attr == "assert_type"
-        and _source_name(item, aliases)
+        and provider._source_name(item, aliases)
         in {"typing.assert_type", "typing_extensions.assert_type"}
     ]
-    if len(writes) != 1 or _source_name(writes[0], aliases) != canonical:
-        return False
+    if len(writes) != 1 or provider._source_name(writes[0], aliases) != canonical:
+        return None
     assignments = [
         statement
         for statement in module.body
@@ -194,11 +215,13 @@ def _single_noop_provider_write(
         and len(statement.targets) == 1
         and statement.targets[0] is writes[0]
     ]
-    return (
+    if (
         len(assignments) == 1
         and assignments[0].lineno < call.lineno
         and _none_lambda(assignments[0].value)
-    )
+    ):
+        return assignments[0]
+    return None
 
 
 def _none_lambda(node: ast.AST) -> bool:
@@ -211,16 +234,10 @@ def _none_lambda(node: ast.AST) -> bool:
     )
 
 
-CACHE_HELPERS = (
-    obviously_empty_test_body,
-    inert_type_assertion_only_oracle,
-    _ignorable,
-    _test_call,
-    _simple_type_call,
-    _source_name,
-    _provider_references_are_closed,
-    _allowed_provider_attribute,
-    _within,
-    _single_noop_provider_write,
-    _none_lambda,
+CACHE_HELPERS = tuple(
+    helper
+    for helper in globals().values()
+    if callable(helper)
+    and getattr(helper, "__module__", None) == __name__
+    and hasattr(helper, "__code__")
 )
