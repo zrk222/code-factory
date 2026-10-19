@@ -60,11 +60,9 @@ def _valid_relative(value):
 
 
 def obviously_empty_test_body(node: ast.AST) -> bool:
-    if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-        return False
-    return bool(node.body) and all(
-        _ignorable(statement, ellipsis=True) for statement in node.body
-    )
+    from .test_oracle_misuse import inert_test_body
+
+    return inert_test_body(node)
 
 
 def inert_type_assertion_only_oracle(

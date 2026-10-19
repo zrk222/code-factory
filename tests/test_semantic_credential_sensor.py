@@ -15,6 +15,31 @@ def _scan(source):
     )
 
 
+@pytest.mark.parametrize("mutation", ["", "requests.get = replacement\n"])
+@pytest.mark.parametrize("inventory", [list, tuple, iter])
+def test_reused_inventory_preserves_credentials_and_provider_mutation(
+    monkeypatch, mutation, inventory
+):
+    tree = ast.parse(
+        "import requests\n"
+        + mutation
+        + "requests.get('https://api.test', auth=('name', 'actual-secret'))\n"
+    )
+    nodes = list(ast.walk(tree))
+    aliases = _security_aliases(nodes)
+    expected = credential_findings(tree, aliases, "sample.py")
+
+    def forbidden_walk(_tree):
+        raise AssertionError("reused inventory must avoid another AST walk")
+
+    monkeypatch.setattr(ast, "walk", forbidden_walk)
+    assert (
+        credential_findings(tree, aliases, "sample.py", nodes=inventory(nodes))
+        == expected
+    )
+    assert len(expected) == (0 if mutation else 1)
+
+
 def test_reports_literal_http_auth_and_authorization_without_exposing_values():
     findings = _scan(
         "import requests as r\n"

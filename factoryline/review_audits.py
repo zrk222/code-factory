@@ -3708,6 +3708,7 @@ def _oracle_context_cache_key(root: Path, manifest: list, config_identity: dict)
         oracle_misuse.discarded_comparison_reason,
         oracle_misuse.retain_local_oracle_diagnostics,
         oracle_misuse.weak_assertion_reason,
+        *oracle_misuse.INERT_BODY_HELPERS,
         _is_oracle_helper_name,
         _oracle_context_cache_eligible,
         _project_oracle_context,
@@ -4934,7 +4935,7 @@ def _test_oracle_findings(
             weak is not None and hollow["code"] == "QUALITY_UNKNOWN_TEST_ORACLE"
         ):
             findings.append(hollow)
-        if weak is not None:
+        if weak is not None and not (hollow and hollow["code"] == "QUALITY_HOLLOW_TEST"):
             findings.append(weak)
     return findings
 
@@ -5314,7 +5315,7 @@ def _security_scan_tree(
         findings.extend(
             _security_node_findings(relative, node, aliases, roundtrip_aliases)
         )
-    findings.extend(configuration_findings(tree, aliases, relative))
+    findings.extend(configuration_findings(tree, aliases, relative, nodes=nodes))
     findings.extend(redirect_source_findings(relative, tree, aliases, nodes))
     return findings
 

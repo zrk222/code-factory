@@ -8809,7 +8809,7 @@ def test_runtime_oracle_eligibility_does_not_weaken_static_scan(
 
     node = ast.parse("def test_validate():\n    " + body + "\n").body[0]
     assert _completion_only_oracle(node) is eligible
-    if body == "pass":
+    if body in {"pass", "def helper():\n        assert compute() == 4"}:
         assert result["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
         finding = result["findings"][0]
         assert finding["code"] == "QUALITY_HOLLOW_TEST"
@@ -12292,3 +12292,79 @@ def test_credential_consumer_comparisons_and_returned_metadata(
         inventory=inventory,
     )
     assert bool(graph.witnesses()) is expected
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "pass",
+        "...",
+        "for x in []:\n    assert result == 3",
+        "for x in ():\n    run_oracle()",
+        "for x in {}:\n    run_oracle()",
+        "for x in '':\n    run_oracle()",
+        "while False:\n    run_oracle()",
+        "if False:\n    run_oracle()",
+        "if True:\n    pass\nelse:\n    run_oracle()",
+        "def check():\n    assert result == 3",
+        "async def check():\n    assert result == 3",
+        "value = 1\nreturn\nrun_oracle()",
+        "value: factory() = 1",
+        "assert True",
+        "assert (1,)",
+        "value = 3\nassert value == value",
+        "value = 3\nassert value == 3",
+        "value = 3\nvalue: int\nassert value == 3",
+        "def noop():\n    pass\nnoop()",
+        "def noop():\n    assert True\nnoop()",
+        "def noop():\n    return\n    run_oracle()\nnoop()",
+    ],
+)
+def test_proven_inert_body(body):
+    import ast
+    from factoryline.test_oracle_misuse import inert_test_body
+
+    node = ast.parse(
+        "def test_case():\n" + "\n".join("    " + line for line in body.splitlines())
+    ).body[0]
+    assert inert_test_body(node)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "run_oracle()",
+        "assert result == 3",
+        "for x in []:\n    pass\nelse:\n    run_oracle()",
+        "while False:\n    pass\nelse:\n    run_oracle()",
+        "for x in [1]:\n    run_oracle()",
+        "for x in values:\n    run_oracle()",
+        "if condition:\n    run_oracle()",
+        "def check(x=run_oracle()):\n    pass",
+        "@run_oracle\ndef check():\n    pass",
+        "def check(x: run_oracle()):\n    pass",
+        "class Check(Base):\n    pass",
+        "obj.value = 1",
+        "value = factory()",
+        "return run_oracle()",
+        "import checks",
+        "global value\nvalue = 1",
+        "raise AssertionError('failed')",
+        "assert False",
+        "def check():\n    assert result == 3\ncheck()",
+        "async def check():\n    assert result == 3\ncheck()",
+        "def check(arg):\n    pass\ncheck()",
+        "def check():\n    pass\ncheck = unknown\ncheck()",
+        "value = 1\nif True:\n    value = 2\nassert value == 1",
+        "value = 1\nvalue: int\nif value == None:\n    pass\nelse:\n    run_oracle()",
+        "value = 1\nfor x in []:\n    pass\nelse:\n    value = 2\nassert value == 1",
+    ],
+)
+def test_unknown_or_actual_execution_not_inert(body):
+    import ast
+    from factoryline.test_oracle_misuse import inert_test_body
+
+    node = ast.parse(
+        "def test_case():\n" + "\n".join("    " + line for line in body.splitlines())
+    ).body[0]
+    assert not inert_test_body(node)

@@ -36,7 +36,10 @@ def always_truthy_assertion_reason(node: ast.AST, constant_truth) -> str | None:
 
 def discarded_comparison_reason(statement: ast.AST) -> str | None:
     if isinstance(statement, ast.Expr) and isinstance(statement.value, ast.Compare):
-        return "comparison result is discarded instead of being asserted against an expectation"
+        return (
+            "comparison result is discarded instead of being asserted "
+            "against an expectation"
+        )
     return None
 
 
@@ -69,7 +72,10 @@ def weak_assertion_reason(node, aliases, universal_type_check, mock_argument_ora
                 and any(isinstance(value, ast.Call) for value in ast.walk(right))
                 and ast.dump(left) == ast.dump(right)
             ):
-                return "repeated invocation compares a result to itself instead of an independent expected value"
+                return (
+                    "repeated invocation compares a result to itself instead of "
+                    "an independent expected value"
+                )
         if isinstance(node.ops[0], ast.IsNot) and any(
             isinstance(value, ast.Constant) and value.value is None
             for value in (node.left, *node.comparators)
@@ -92,3 +98,144 @@ def _constant_truth_value(node: ast.expr, _known: dict) -> bool | None:
     from .review_audits import _constant_truth_value as constant_truth
 
     return constant_truth(node, {})
+
+
+def _inert_literal(node, known=None):
+    if node is None:
+        return True, None
+    if isinstance(node, ast.Name):
+        return (True, known[node.id]) if node.id in (known or {}) else (False, None)
+    if (
+        isinstance(node, ast.Compare)
+        and len(node.ops) == 1
+        and isinstance(node.ops[0], ast.Eq)
+    ):
+        left, right = (
+            _inert_literal(node.left, known),
+            _inert_literal(node.comparators[0], known),
+        )
+        return (True, left[1] == right[1]) if left[0] and right[0] else (False, None)
+    if sum(1 for _ in ast.walk(node)) > 128 or not _static_expression(node):
+        return False, None
+    try:
+        return True, ast.literal_eval(node)
+    except (ValueError, TypeError, SyntaxError, MemoryError, RecursionError):
+        return False, None
+
+
+def _inert_definition(node):
+    if node.decorator_list:
+        return False
+    args = node.args
+    annotations = [
+        arg.annotation for arg in (*args.posonlyargs, *args.args, *args.kwonlyargs)
+    ]
+    annotations += [arg.annotation for arg in (args.vararg, args.kwarg) if arg]
+    expressions = [*args.defaults, *args.kw_defaults, *annotations, node.returns]
+    return not getattr(node, "type_params", ()) and all(
+        _inert_literal(value)[0] for value in expressions
+    )
+
+
+def _inert_expression(node, known, helpers):
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+        helper = helpers.get(node.func.id)
+        if not isinstance(helper, ast.FunctionDef) or node.args or node.keywords:
+            return False
+        args = helper.args
+        return not (
+            args.posonlyargs
+            or args.args
+            or args.kwonlyargs
+            or args.vararg
+            or args.kwarg
+        ) and _inert_suite(helper.body)
+    return _inert_literal(node, known)[0]
+
+
+def _inert_statement(statement, known, helpers):
+    if isinstance(statement, ast.Pass):
+        return True
+    if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return _inert_definition(statement)
+    if isinstance(statement, ast.Expr):
+        return _inert_expression(statement.value, known, helpers)
+    if isinstance(statement, ast.Assert):
+        value = _inert_literal(statement.test, known)
+        return value[0] and bool(value[1])
+    if isinstance(statement, ast.Return):
+        return _inert_literal(statement.value, known)[0]
+    if isinstance(statement, (ast.Assign, ast.AnnAssign)):
+        targets = (
+            statement.targets
+            if isinstance(statement, ast.Assign)
+            else [statement.target]
+        )
+        return (
+            all(isinstance(target, ast.Name) for target in targets)
+            and _inert_literal(statement.value, known)[0]
+        )
+    if isinstance(statement, ast.If):
+        closed, value = _inert_literal(statement.test, known)
+        return closed and _inert_suite(
+            statement.body if value else statement.orelse, known, helpers
+        )
+    if isinstance(statement, ast.For):
+        known, value = _inert_literal(statement.iter)
+        return (
+            known
+            and type(value) in (tuple, list, dict, set, str, bytes)
+            and not value
+            and _inert_suite(statement.orelse)
+        )
+    if isinstance(statement, ast.While):
+        known, value = _inert_literal(statement.test)
+        return known and not value and _inert_suite(statement.orelse)
+    return False
+
+
+def _inert_suite(statements, known=None, helpers=None):
+    known, helpers = dict(known or {}), dict(helpers or {})
+    for statement in statements:
+        if not _inert_statement(statement, known, helpers):
+            return False
+        if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            helpers[statement.name] = statement
+            known.pop(statement.name, None)
+        if (
+            isinstance(statement, (ast.Assign, ast.AnnAssign))
+            and statement.value is not None
+        ):
+            targets = (
+                statement.targets
+                if isinstance(statement, ast.Assign)
+                else [statement.target]
+            )
+            for target in targets:
+                known[target.id] = _inert_literal(statement.value, known)[1]
+                helpers.pop(target.id, None)
+        if isinstance(statement, ast.Return):
+            break
+        if isinstance(statement, (ast.If, ast.For, ast.While)):
+            known.clear()
+            helpers.clear()
+    return True
+
+
+def inert_test_body(node):
+    """Prove body-level absence; opaque delegated work is never declared hollow."""
+    return (
+        isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and sum(1 for _ in ast.walk(node)) <= 512
+        and _inert_suite(node.body)
+    )
+
+
+INERT_BODY_HELPERS = (
+    _inert_literal,
+    _inert_definition,
+    _inert_expression,
+    _inert_statement,
+    _inert_suite,
+    inert_test_body,
+)

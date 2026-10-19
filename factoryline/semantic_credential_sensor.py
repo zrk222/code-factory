@@ -1,11 +1,10 @@
-"""Detect literal credentials wired directly into canonical HTTP authentication sinks."""
+"""Detect literal credentials wired into canonical HTTP authentication sinks."""
 
 from __future__ import annotations
 
 import ast
 import re
 from urllib.parse import urlsplit
-
 
 _HTTP_CALLS = frozenset(
     {"get", "post", "put", "patch", "delete", "head", "options", "request"}
@@ -63,7 +62,7 @@ def _http_auth_password(call, name, raw, aliases):
     if name:
         auth = _keyword(call, "auth")
         if isinstance(auth, (ast.Tuple, ast.List)) and len(auth.elts) == 2:
-            # Basic-auth tuples are (username, password); usernames alone are not credentials.
+            # Basic-auth tuples are (username, password); usernames are not secrets.
             return auth.elts[1]
         return None
     return _basic_auth_password(call, raw)
@@ -94,7 +93,7 @@ def _authorization_credential(call, name):
 
 
 def _auth_literal_nodes(call, aliases):
-    from .security_configuration import _expanded, _canonical
+    from .security_configuration import _canonical, _expanded
 
     if _expanded(call):
         return []
@@ -153,14 +152,16 @@ def _authorization_header_value(headers):
     return selected
 
 
-def _provider_identity_uncertain(tree, aliases, roots=("requests", "httpx")):
+def _provider_identity_uncertain(
+    tree, aliases, roots=("requests", "httpx"), *, nodes=None
+):
     """Veto HTTP proofs if the full provider mutation index finds a relevant escape."""
     from types import SimpleNamespace
 
     from .provider_mutations import finite_provider_mutation_index
     from .review_audits import _resolved_ast_name
 
-    nodes = list(ast.walk(tree))
+    nodes = list(ast.walk(tree)) if nodes is None else nodes
     parents = {
         id(child): node for node in nodes for child in ast.iter_child_nodes(node)
     }
@@ -173,9 +174,10 @@ def _provider_identity_uncertain(tree, aliases, roots=("requests", "httpx")):
     )
 
 
-def _credential_candidates(tree, aliases):
+def _credential_candidates(tree, aliases, nodes=None):
     candidates = []
-    for call in (node for node in ast.walk(tree) if isinstance(node, ast.Call)):
+    nodes = ast.walk(tree) if nodes is None else nodes
+    for call in (node for node in nodes if isinstance(node, ast.Call)):
         for value, consumer_role, slot in _auth_literal_nodes(call, aliases):
             if slot == "authorization":
                 match = _AUTH_HEADER.match(value.value)
@@ -185,15 +187,16 @@ def _credential_candidates(tree, aliases):
     return candidates
 
 
-def credential_findings(tree, aliases, relative="<source>"):
+def credential_findings(tree, aliases, relative="<source>", *, nodes=None):
     """Report only non-placeholder literals in statically bound HTTP auth slots."""
     from .review_audits import _security_finding
     from .review_integrity import bind_security_call_scopes
 
     if not hasattr(tree, "_security_scope_kind"):
         bind_security_call_scopes(tree)
-    candidates = _credential_candidates(tree, aliases)
-    if not candidates or _provider_identity_uncertain(tree, aliases):
+    nodes = tuple(ast.walk(tree) if nodes is None else nodes)
+    candidates = _credential_candidates(tree, aliases, nodes)
+    if not candidates or _provider_identity_uncertain(tree, aliases, nodes=nodes):
         return []
     findings = []
     for call, consumer_role, slot in candidates:
@@ -202,7 +205,8 @@ def credential_findings(tree, aliases, relative="<source>"):
                 "SECURITY_LITERAL_HTTP_CREDENTIAL",
                 relative,
                 call,
-                "A non-placeholder credential literal is passed directly to an HTTP authentication sink.",
+                "A non-placeholder credential literal is passed directly "
+                "to an HTTP authentication sink.",
                 "MEDIUM",
                 source_role="credential_literal",
                 consumer_role=consumer_role,
@@ -219,12 +223,14 @@ def credential_findings(tree, aliases, relative="<source>"):
     return findings
 
 
-def configuration_and_credential_findings(tree, aliases, relative="<source>"):
+def configuration_and_credential_findings(
+    tree, aliases, relative="<source>", *, nodes=None
+):
     """Combine configuration and credential sensors with one scope-binding pass."""
     from .security_configuration import configuration_findings
 
     findings = configuration_findings(tree, aliases, relative)
-    findings.extend(credential_findings(tree, aliases, relative))
+    findings.extend(credential_findings(tree, aliases, relative, nodes=nodes))
     return findings
 
 
