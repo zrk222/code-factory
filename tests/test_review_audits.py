@@ -2879,7 +2879,9 @@ def test_mock_assertion_spelling_on_fake_object_is_not_an_oracle(tmp_path):
         "    perform(send)\n    send.assert_called_once_with('payload')\n",
         encoding="utf-8",
     )
-    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+    assert security_scan(tmp_path)["finding_counts"] == {
+        "QUALITY_UNKNOWN_TEST_ORACLE": 1
+    }
 
 
 def test_uncalled_mock_assertion_attribute_is_a_weak_oracle(tmp_path):
@@ -3155,7 +3157,9 @@ def test_mock_fixture_child_replacement_is_not_an_oracle(tmp_path, mutation, rec
         + ".assert_called_once_with('payload')\n",
         encoding="utf-8",
     )
-    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+    assert security_scan(tmp_path)["finding_counts"] == {
+        "QUALITY_UNKNOWN_TEST_ORACLE": 1
+    }
 
 
 def test_source_fixture_returning_fake_does_not_prove_mock(tmp_path):
@@ -3167,7 +3171,9 @@ def test_source_fixture_returning_fake_does_not_prove_mock(tmp_path):
         "    legacy_term_mock.write_text.assert_called_once_with('payload')\n",
         encoding="utf-8",
     )
-    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+    assert security_scan(tmp_path)["finding_counts"] == {
+        "QUALITY_UNKNOWN_TEST_ORACLE": 1
+    }
 
 
 @pytest.mark.parametrize(
@@ -3187,7 +3193,9 @@ def test_patch_parameter_requires_resolved_default_mock_injection(tmp_path, deco
         "    send.assert_called_once_with('payload')\n",
         encoding="utf-8",
     )
-    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+    assert security_scan(tmp_path)["finding_counts"] == {
+        "QUALITY_UNKNOWN_TEST_ORACLE": 1
+    }
 
 
 @pytest.mark.parametrize(
@@ -3213,7 +3221,9 @@ def test_mock_provenance_rejects_shadowed_constructors_and_assertion_methods(
     tmp_path, source
 ):
     (tmp_path / "test_mock_shadow.py").write_text(source, encoding="utf-8")
-    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+    assert security_scan(tmp_path)["finding_counts"] == {
+        "QUALITY_UNKNOWN_TEST_ORACLE": 1
+    }
 
 
 @pytest.mark.parametrize(
@@ -3229,19 +3239,19 @@ def test_mock_provenance_rejects_shadowed_constructors_and_assertion_methods(
             "proxies = {'one': Fake(), 'two': Fake()}\n",
             "with patch.dict(target, proxies):\n",
             "proxies['one'].clear",
-            True,
+            "UNKNOWN",
         ),
         (
             "proxies = {'one': Mock()}\n",
             "with patch.dict(target, proxies, clear=True):\n",
             "proxies['one'].clear",
-            True,
+            "UNKNOWN",
         ),
         (
             "proxies = {'one': Mock()}\n",
             "with patch.dict(target, proxies):\n    proxies['one'] = Fake()\n",
             "proxies['one'].clear",
-            True,
+            "UNKNOWN",
         ),
         (
             "proxies = {'one': Mock()}\n",
@@ -3253,25 +3263,25 @@ def test_mock_provenance_rejects_shadowed_constructors_and_assertion_methods(
             "proxies = {'one': Mock(), 'one': Fake()}\n",
             "with patch.dict(target, proxies):\n",
             "proxies['one'].clear",
-            True,
+            "UNKNOWN",
         ),
         (
             "extra = {'one': Fake()}\nproxies = {'one': Mock(), **extra}\n",
             "with patch.dict(target, proxies):\n",
             "proxies['one'].clear",
-            True,
+            "UNKNOWN",
         ),
         (
             "proxies = {'one': Mock()}\n",
             "with patch.dict(target, proxies):\n    proxies.update({'one': Fake()})\n",
             "proxies['one'].clear",
-            True,
+            "UNKNOWN",
         ),
         (
             "proxies = {'one': Mock()}\n",
             "with patch.dict(target, proxies):\n    mutate(proxies)\n",
             "proxies['one'].clear",
-            True,
+            "UNKNOWN",
         ),
     ],
     ids=[
@@ -3341,7 +3351,9 @@ def test_mock_patch_dict_slot_requires_literal_mock_value_and_default_context(
 )
 def test_mock_context_patch_rejects_shadow_or_replacement(tmp_path, source):
     (tmp_path / "test_patch_context.py").write_text(source, encoding="utf-8")
-    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+    assert security_scan(tmp_path)["finding_counts"] == {
+        "QUALITY_UNKNOWN_TEST_ORACLE": 1
+    }
 
 
 def test_mock_configure_mock_cannot_replace_assertion_method(tmp_path):
@@ -3352,7 +3364,9 @@ def test_mock_configure_mock_cannot_replace_assertion_method(tmp_path):
         "    perform(send)\n    send.assert_called_once_with('payload')\n",
         encoding="utf-8",
     )
-    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+    assert security_scan(tmp_path)["finding_counts"] == {
+        "QUALITY_UNKNOWN_TEST_ORACLE": 1
+    }
 
 
 @pytest.mark.parametrize(
@@ -3361,23 +3375,23 @@ def test_mock_configure_mock_cannot_replace_assertion_method(tmp_path):
         ("", {}),
         (
             "alias.configure_mock(assert_called_once_with=lambda *args: None)\n    ",
-            {"QUALITY_HOLLOW_TEST": 1},
+            {"QUALITY_UNKNOWN_TEST_ORACLE": 1},
         ),
         (
             "alias.assert_called_once_with = lambda *args: None\n    ",
-            {"QUALITY_HOLLOW_TEST": 1},
+            {"QUALITY_UNKNOWN_TEST_ORACLE": 1},
         ),
         (
             "alias.__dict__['assert_called_once_with'] = lambda *args: None\n    ",
-            {"QUALITY_HOLLOW_TEST": 1},
+            {"QUALITY_UNKNOWN_TEST_ORACLE": 1},
         ),
         (
             "alias = send; alias.configure_mock(assert_called_once_with=lambda *args: None)\n    ",
-            {"QUALITY_HOLLOW_TEST": 1},
+            {"QUALITY_UNKNOWN_TEST_ORACLE": 1},
         ),
         (
             "alias.assert_called_once_with = lambda *args: None\n    alias = object()\n    ",
-            {"QUALITY_HOLLOW_TEST": 1},
+            {"QUALITY_UNKNOWN_TEST_ORACLE": 1},
         ),
         (
             "alias = object()\n    alias.assert_called_once_with = lambda *args: None\n    ",
@@ -3385,7 +3399,7 @@ def test_mock_configure_mock_cannot_replace_assertion_method(tmp_path):
         ),
         (
             "send = object()\n    ",
-            {"QUALITY_HOLLOW_TEST": 1},
+            {"QUALITY_UNKNOWN_TEST_ORACLE": 1},
         ),
     ],
 )
@@ -3422,7 +3436,9 @@ def test_mock_alias_mutations_invalidate_root_provenance(tmp_path, mutation, exp
 )
 def test_mock_provenance_rejects_same_line_mutation_and_escape(tmp_path, source):
     (tmp_path / "test_case.py").write_text(source, encoding="utf-8")
-    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+    assert security_scan(tmp_path)["finding_counts"] == {
+        "QUALITY_UNKNOWN_TEST_ORACLE": 1
+    }
 
 
 def test_module_mock_provenance_is_shadowed_by_local_fake(tmp_path):
@@ -3433,7 +3449,9 @@ def test_module_mock_provenance_is_shadowed_by_local_fake(tmp_path):
         "    perform(send)\n    send.assert_called_once_with('payload')\n",
         encoding="utf-8",
     )
-    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+    assert security_scan(tmp_path)["finding_counts"] == {
+        "QUALITY_UNKNOWN_TEST_ORACLE": 1
+    }
 
 
 @pytest.mark.parametrize("invoke", ["check(42)", "return check(42)"])
