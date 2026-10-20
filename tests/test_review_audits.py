@@ -9068,20 +9068,21 @@ def test_scoped_tenant_contract_rejects_missing_source_or_read(tmp_path, path, c
 
 
 @pytest.mark.parametrize(
-    "body,eligible",
+    "body,eligible,diagnostic",
     [
-        ("validate(5)", True),
-        ("pass", False),
-        ("validate(5)\n    assert True", False),
+        ("validate(5)", True, "QUALITY_UNKNOWN_TEST_ORACLE"),
+        ("pass", False, "QUALITY_HOLLOW_TEST"),
+        ("validate(5)\n    assert True", False, "QUALITY_WEAK_TEST_ORACLE"),
         (
             "try:\n        assert result == 4\n    except AssertionError:\n        pass",
             False,
+            "QUALITY_UNKNOWN_TEST_ORACLE",
         ),
-        ("def helper():\n        assert compute() == 4", False),
+        ("def helper():\n        assert compute() == 4", False, "QUALITY_HOLLOW_TEST"),
     ],
 )
 def test_runtime_oracle_eligibility_does_not_weaken_static_scan(
-    tmp_path, body, eligible
+    tmp_path, body, eligible, diagnostic
 ):
     (tmp_path / "test_app.py").write_text(
         "def test_validate():\n    " + body + "\n", encoding="utf-8"
@@ -9092,21 +9093,17 @@ def test_runtime_oracle_eligibility_does_not_weaken_static_scan(
 
     node = ast.parse("def test_validate():\n    " + body + "\n").body[0]
     assert _completion_only_oracle(node) is eligible
-    if body in {"pass", "def helper():\n        assert compute() == 4"}:
-        assert result["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
-        finding = result["findings"][0]
-        assert finding["code"] == "QUALITY_HOLLOW_TEST"
-        assert finding["severity"] == "MEDIUM"
-        assert "runtime_oracle_eligible" not in finding["facts"]
-        return
-    finding = next(
-        item
-        for item in result["findings"]
-        if item["code"] == "QUALITY_UNKNOWN_TEST_ORACLE"
-    )
+    # Capability eligibility never upgrades a static diagnostic. Complete-body
+    # proofs are HOLLOW, locally weak assertions retain WEAK, opaque calls UNKNOWN.
+    assert result["finding_counts"] == {diagnostic: 1}
+    finding = result["findings"][0]
     assert "runtime_oracle_eligible" not in finding["facts"]
-    assert finding["facts"]["candidate_rule"] == "QUALITY_HOLLOW_TEST"
-    assert result["state"] == "INCOMPLETE"
+    assert finding["severity"] == (
+        "INFO" if diagnostic == "QUALITY_UNKNOWN_TEST_ORACLE" else "MEDIUM"
+    )
+    if diagnostic == "QUALITY_UNKNOWN_TEST_ORACLE":
+        assert finding["facts"]["candidate_rule"] == "QUALITY_HOLLOW_TEST"
+        assert result["state"] == "INCOMPLETE"
 
 
 def _runtime_oracle_scan_fixture(tmp_path):

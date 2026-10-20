@@ -12,7 +12,7 @@ from factoryline.mission_control_status import (
 )
 
 
-def _complete_security_scan_receipt(root: Path):
+def _complete_security_scan_receipt(root: Path, *, body="pass"):
     from factoryline.review_audits import _seal_security_scan, security_scan
 
     before_collection = security_scan_pytest_collection_snapshot(root)
@@ -23,7 +23,7 @@ def _complete_security_scan_receipt(root: Path):
         encoding="utf-8",
     )
     (root / "test_case.py").write_text(
-        "def test_hollow():\n    operation()\n", encoding="utf-8"
+        f"def test_hollow():\n    {body}\n", encoding="utf-8"
     )
     report = security_scan(root)
     report["tenant_read_contract"]["configuration"] = {
@@ -188,7 +188,7 @@ def test_security_scan_receipt_detects_new_higher_priority_pytest_config(
         "[tool.pytest.ini_options]\n", encoding="utf-8"
     )
     (tmp_path / "test_case.py").write_text(
-        "def test_hollow():\n    operation()\n", encoding="utf-8"
+        "def test_hollow():\n    pass\n", encoding="utf-8"
     )
     before_collection = security_scan_pytest_collection_snapshot(tmp_path)
     report = security_scan(tmp_path)
@@ -348,3 +348,15 @@ def test_security_scan_cli_write_failure_is_bounded_and_does_not_leak_path(
     assert '"state": "INVALID"' in captured.err
     assert str(tmp_path) not in captured.err
     assert "private-host-path" not in captured.err
+
+
+def test_security_scan_receipt_preserves_undefined_call_incompleteness(tmp_path):
+    # Receipt transport cannot upgrade a source-unknown invocation into HOLLOW.
+    _complete_security_scan_receipt(tmp_path, body="operation()")
+    status = security_scan_status(tmp_path)
+    assert status["state"] == "INCOMPLETE"
+    assert status["candidate_freshness"] == "CURRENT_SOURCE_HASHES_VERIFIED"
+    assert any(
+        item["code"] == "QUALITY_UNKNOWN_TEST_ORACLE" for item in status["findings"]
+    )
+    assert not any(item["code"] == "QUALITY_HOLLOW_TEST" for item in status["findings"])
