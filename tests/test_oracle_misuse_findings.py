@@ -611,6 +611,12 @@ def test_coroutine_binding_counterexamples_really_raise(tmp_path, binding, error
         "_module_binding_conflict",
         "_callback_helper_parameter",
         "_module_helper_references_closed",
+        "_inert_coroutine_signature",
+        "_coroutine_call_arity_matches",
+        "_module_mock_constructors",
+        "_mock_constructor_kind",
+        "_mock_state_assertion_call",
+        "_inert_assigned_coroutine_creation",
     ],
 )
 def test_completion_catalog_helpers_bind_native_cache_epoch(
@@ -627,4 +633,353 @@ def test_completion_catalog_helpers_bind_native_cache_epoch(
         return None
 
     monkeypatch.setattr(helper, "__code__", replacement.__code__)
+    assert scanner._oracle_context_cache_key(tmp_path, [], {}) != before
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "from unittest.mock import AsyncMock\n"
+        "async def test_behavior():\n"
+        "    send = AsyncMock()\n    send.assert_not_awaited()\n",
+        "from unittest.mock import AsyncMock\n"
+        "from starlette.requests import Request\n"
+        "async def test_behavior():\n"
+        "    send = AsyncMock()\n"
+        "    def unused():\n"
+        "        request = Request({'type': 'http'}, send=send)\n"
+        "        request.send_early_hints([])\n"
+        "    send.assert_not_awaited()\n",
+        "from unittest.mock import Mock\n"
+        "def test_behavior():\n    dependency = Mock()\n"
+        "    dependency.assert_not_called()\n",
+        "from unittest.mock import Mock\n"
+        "def test_behavior():\n    dependency = Mock()\n"
+        "    if False:\n        ret = (lambda f: None)(dependency)\n"
+        "    dependency.assert_not_called()\n",
+        "from unittest.mock import Mock\n"
+        "async def perform(dep):\n    pass\n"
+        "def test_behavior():\n    dependency = Mock()\n"
+        "    ret = perform(dependency)\n"
+        "    dependency.assert_not_called()\n",
+    ],
+    ids=[
+        "untouched-async-mock",
+        "uninvoked-helper-with-request-calls",
+        "untouched-mock",
+        "constant-false-branch",
+        "assigned-unawaited-source-coroutine",
+    ],
+)
+def test_source_closed_untouched_mock_state_is_nonraising_but_not_an_oracle(
+    tmp_path, source
+):
+    (tmp_path / "test_mock_completion.py").write_text(source, encoding="utf-8")
+    report = security_scan(tmp_path, cache_enabled=False)
+    assert report["finding_counts"].get("QUALITY_HOLLOW_TEST") == 1
+    assert "QUALITY_UNKNOWN_TEST_ORACLE" not in report["finding_counts"]
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "from unittest.mock import AsyncMock\n"
+        "async def test_behavior():\n    dependency = AsyncMock()\n"
+        "    dependency.assert_called_once()\n",
+        "from unittest.mock import Mock\n"
+        "def test_behavior():\n    dependency = Mock()\n"
+        "    dependency()\n    dependency.assert_not_called()\n",
+        "from unittest.mock import Mock\n"
+        "def test_behavior():\n    dependency = Mock()\n"
+        "    escaped = dependency\n    dependency.assert_not_called()\n",
+        "from unittest.mock import Mock\n"
+        "def test_behavior():\n    dependency = Mock()\n"
+        "    dependency.assert_not_called = lambda: None\n"
+        "    dependency.assert_not_called()\n",
+        "from unittest.mock import Mock\n"
+        "def Mock():\n    return object()\n"
+        "def test_behavior():\n    dependency = Mock()\n"
+        "    dependency.assert_not_called()\n",
+        "from unittest.mock import Mock\n"
+        "constructor = Mock\n"
+        "def test_behavior():\n    dependency = constructor()\n"
+        "    dependency.assert_not_called()\n",
+        "import unittest.mock as um\n"
+        "class Fake:\n"
+        "    def assert_not_called(self):\n"
+        "        raise AssertionError()\n"
+        "um.Mock = Fake\n"
+        "from unittest.mock import Mock\n"
+        "def test_behavior():\n    dependency = Mock()\n"
+        "    dependency.assert_not_called()\n",
+        "from unittest.mock import Mock as Alias, Mock\n"
+        "Alias.assert_not_called = lambda self: (_ for _ in ()).throw(AssertionError())\n"
+        "def test_behavior():\n    dependency = Mock()\n"
+        "    dependency.assert_not_called()\n",
+        "from unittest.mock import patch, Mock\n"
+        "class Fake:\n"
+        "    def assert_not_called(self):\n"
+        "        raise AssertionError()\n"
+        "patch('unittest.mock.Mock', Fake).start()\n"
+        "def test_behavior():\n    dependency = Mock()\n"
+        "    dependency.assert_not_called()\n",
+        "from unittest.mock import Mock\n"
+        "def test_behavior():\n    dependency = Mock(name='dependency')\n"
+        "    dependency.assert_not_called()\n",
+        "from unittest.mock import Mock\n"
+        "@identity\nasync def perform(dep):\n    pass\n"
+        "def test_behavior():\n    dependency = Mock()\n"
+        "    ret = perform(dependency)\n"
+        "    dependency.assert_not_called()\n",
+        "from unittest.mock import Mock\n"
+        "async def perform(dep):\n    pass\n"
+        "def test_behavior():\n    dependency = Mock()\n"
+        "    perform = unknown\n    ret = perform(dependency)\n"
+        "    dependency.assert_not_called()\n",
+        "from starlette.requests import Request\n"
+        "from unittest.mock import AsyncMock\n"
+        "async def test_behavior():\n    send = AsyncMock()\n"
+        "    request = Request({'type': 'http'}, send=send)\n"
+        "    send.assert_not_awaited()\n",
+        "from sys import modules as loaded\n"
+        "loaded['unittest.mock'].Mock.assert_not_called = "
+        "lambda self: (_ for _ in ()).throw(AssertionError())\n"
+        "from unittest.mock import Mock\n"
+        "def test_behavior():\n    dependency = Mock()\n"
+        "    dependency.assert_not_called()\n",
+        "from sys import modules as loaded\n"
+        "async def compute():\n    return 3\n"
+        "def fail():\n    raise RuntimeError()\n"
+        "loaded[__name__].compute = fail\n"
+        "def test_behavior():\n    compute()\n",
+        "from unittest.mock import Mock\n"
+        "def test_behavior():\n    dependency = Mock()\n"
+        "    def dependency():\n        pass\n"
+        "    dependency.assert_not_called()\n",
+        "from unittest.mock import AsyncMock\n"
+        "async def test_behavior():\n    dependency = AsyncMock()\n"
+        "    async def dependency():\n        pass\n"
+        "    dependency.assert_not_awaited()\n",
+        "from unittest.mock import Mock\n"
+        "def test_behavior():\n    dependency = Mock()\n"
+        "    try:\n        def dependency():\n            pass\n"
+        "    finally:\n        dependency.assert_not_called()\n",
+        "from unittest.mock import Mock\n"
+        "def test_behavior():\n    dependency = Mock()\n"
+        "    try:\n        def dependency():\n            pass\n"
+        "    except RuntimeError:\n        pass\n"
+        "    else:\n        dependency.assert_not_called()\n",
+    ],
+    ids=[
+        "raising-assert-called-once",
+        "real-mock-call",
+        "escaped-mock-instance",
+        "mutated-assertion-method",
+        "shadowed-constructor-provider",
+        "escaped-constructor-provider",
+        "mutated-module-mock-provider",
+        "mutated-imported-mock-alias-method",
+        "patched-mock-provider",
+        "configured-constructor-arguments",
+        "decorated-coroutine-helper",
+        "rebound-coroutine-helper",
+        "executed-request-constructor",
+        "sys-modules-mutated-mock-provider",
+        "sys-modules-mutated-source-helper",
+        "mock-instance-shadowed-by-function",
+        "async-mock-instance-shadowed-by-function",
+        "try-finally-instance-shadowed-by-function",
+        "try-else-instance-shadowed-by-function",
+    ],
+)
+def test_mock_completion_keeps_raising_or_opaque_paths_unknown(tmp_path, source):
+    (tmp_path / "test_mock_completion.py").write_text(source, encoding="utf-8")
+    report = security_scan(tmp_path, cache_enabled=False)
+    assert "QUALITY_HOLLOW_TEST" not in report["finding_counts"]
+    assert report["finding_counts"].get("QUALITY_UNKNOWN_TEST_ORACLE") == 1
+
+
+@pytest.mark.parametrize(
+    "package", ["unittest.py", "unittest/__init__.py", "src/unittest/mock.py"]
+)
+def test_local_unittest_provider_cannot_prove_inert_mock(tmp_path, package):
+    path = tmp_path / package
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "class Mock:\n    def assert_not_called(self):\n        raise AssertionError('local provider')\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "test_case.py").write_text(
+        "from unittest.mock import Mock\n"
+        "def test_case():\n    dependency = Mock()\n    dependency.assert_not_called()\n",
+        encoding="utf-8",
+    )
+    report = security_scan(tmp_path, cache_enabled=False)
+    assert report["finding_counts"] == {"QUALITY_UNKNOWN_TEST_ORACLE": 1}
+
+
+def test_missing_captured_provider_context_cannot_prove_inert_mock():
+    import ast
+    from factoryline.test_oracle_misuse import inert_test_completion
+
+    module = ast.parse(
+        "from unittest.mock import Mock\ndef test_case():\n    m = Mock()\n    m.assert_not_called()\n"
+    )
+    test = module.body[-1]
+    test._oracle_module = module
+    assert inert_test_completion(test)[0] == "UNKNOWN"
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "_module_mock_imports",
+        "_module_mock_constructors",
+        "_mock_constructor_kind",
+        "_mock_state_assertion_call",
+        "_inert_coroutine_signature",
+        "_coroutine_call_arity_matches",
+        "_inert_assigned_coroutine_creation",
+    ],
+)
+def test_mock_completion_helpers_bind_native_cache_epoch(tmp_path, monkeypatch, name):
+    from factoryline import review_audits as scanner
+    from factoryline import test_oracle_misuse as misuse
+
+    helper = getattr(misuse, name)
+    assert helper in misuse.INERT_BODY_HELPERS
+    before = scanner._oracle_context_cache_key(tmp_path, [], {})
+
+    def replacement(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(helper, "__code__", replacement.__code__)
+    assert scanner._oracle_context_cache_key(tmp_path, [], {}) != before
+
+
+@pytest.mark.parametrize(
+    "sibling",
+    [
+        "from unittest.mock import Mock as Other\nOther.assert_not_called = lambda self: (_ for _ in ()).throw(AssertionError('sibling mutation'))\n",
+        "import unittest.mock as other\nother.Mock.assert_not_called = lambda self: None\n",
+        "from unittest.mock import *\n",
+        "from unittest import mock\n",
+        "from sys import modules as loaded\nloaded['unittest.mock'].Mock.assert_not_called = lambda self: None\n",
+        "from importlib import import_module as load\nload('unittest.mock').Mock.assert_not_called = lambda self: None\n",
+        "from builtins import getattr as attr\nattr(__import__('unittest.mock'), 'Mock')\n",
+        "from unittest.mock import Mock\ndef test_sibling():\n    m = Mock()\n    m.assert_not_called()\n",
+    ],
+    ids=[
+        "class-method-write",
+        "module-alias",
+        "wildcard",
+        "package-import",
+        "registry-alias",
+        "dynamic-import",
+        "reflected-provider",
+        "benign-second-owner",
+    ],
+)
+def test_mock_provider_requires_exclusive_captured_owner(tmp_path, sibling):
+    (tmp_path / "test_a_sibling.py").write_text(sibling, encoding="utf-8")
+    (tmp_path / "test_z_case.py").write_text(
+        "from unittest.mock import Mock\ndef test_case():\n    m = Mock()\n    m.assert_not_called()\n",
+        encoding="utf-8",
+    )
+    report = security_scan(tmp_path, cache_enabled=False)
+    target = [item for item in report["findings"] if item["path"] == "test_z_case.py"]
+    assert [item["code"] for item in target] == ["QUALITY_UNKNOWN_TEST_ORACLE"]
+
+
+def test_mock_provider_allows_unrelated_captured_sibling(tmp_path):
+    (tmp_path / "test_a_sibling.py").write_text(
+        "def test_sibling():\n    assert 1 == 1\n", encoding="utf-8"
+    )
+    (tmp_path / "test_z_case.py").write_text(
+        "from unittest.mock import Mock\ndef test_case():\n    m = Mock()\n    m.assert_not_called()\n",
+        encoding="utf-8",
+    )
+    report = security_scan(tmp_path, cache_enabled=False)
+    target = [item for item in report["findings"] if item["path"] == "test_z_case.py"]
+    assert [item["code"] for item in target] == ["QUALITY_HOLLOW_TEST"]
+
+
+def test_mock_provider_ownership_rechecks_changed_sibling_with_cache(tmp_path):
+    sibling = tmp_path / "test_a_sibling.py"
+    sibling.write_text("def test_sibling():\n    assert True\n", encoding="utf-8")
+    (tmp_path / "test_z_case.py").write_text(
+        "from unittest.mock import Mock\ndef test_case():\n    m = Mock()\n    m.assert_not_called()\n",
+        encoding="utf-8",
+    )
+    before = security_scan(tmp_path, cache_enabled=True)
+    assert any(
+        item["path"] == "test_z_case.py" and item["code"] == "QUALITY_HOLLOW_TEST"
+        for item in before["findings"]
+    )
+    sibling.write_text(
+        "from unittest.mock import Mock\nMock.assert_not_called = lambda self: None\n",
+        encoding="utf-8",
+    )
+    after = security_scan(tmp_path, cache_enabled=True)
+    assert any(
+        item["path"] == "test_z_case.py"
+        and item["code"] == "QUALITY_UNKNOWN_TEST_ORACLE"
+        for item in after["findings"]
+    )
+
+
+def test_mock_provider_inventory_fact_binds_source_and_cache(tmp_path):
+    from factoryline import type_intent_provider_provenance as provider
+
+    path = tmp_path / "test_case.py"
+    manifest = [{"path": "test_case.py", "state": "read"}]
+    first = provider.provider_source_inventory(
+        tmp_path, {path: b"from unittest.mock import Mock\n"}, manifest
+    )
+    contexts = {path: {}}
+    assert provider.bind_provider_inventory(contexts, first)
+    fields = provider.provider_cache_fields(contexts[path])
+    assert fields["mock_provider_capability_paths"] == ["test_case.py"]
+    second = provider.provider_source_inventory(
+        tmp_path, {path: b"from unittest.mock import AsyncMock\n"}, manifest
+    )
+    provider.bind_provider_inventory(contexts, second)
+    assert (
+        fields["mock_provider_inventory_sha256"]
+        != provider.provider_cache_fields(contexts[path])[
+            "mock_provider_inventory_sha256"
+        ]
+    )
+    assert provider._mock_provider_capability in provider.CACHE_HELPERS
+
+
+@pytest.mark.parametrize(
+    "module_name,name",
+    [
+        ("type_intent_provider_provenance", "_mock_provider_capability"),
+        ("type_intent_provider_provenance", "provider_source_inventory"),
+        ("type_intent_provider_provenance", "bind_provider_inventory"),
+        ("type_intent_provider_provenance", "provider_cache_fields"),
+        ("type_intent_hollow", "_captured_unittest_source_closed"),
+        ("test_oracle_misuse", "_captured_mock_owner_is_exclusive"),
+    ],
+)
+@pytest.mark.parametrize("mutation", ["binding", "code"])
+def test_mock_provider_live_helpers_invalidate_native_cache(
+    tmp_path, monkeypatch, module_name, name, mutation
+):
+    import importlib
+    from factoryline import review_audits as scanner
+
+    module = importlib.import_module("factoryline." + module_name)
+    original = getattr(module, name)
+    before = scanner._oracle_context_cache_key(tmp_path, [], {})
+
+    def replacement(*args, **kwargs):
+        return None
+
+    if mutation == "binding":
+        monkeypatch.setattr(module, name, replacement)
+    else:
+        monkeypatch.setattr(original, "__code__", replacement.__code__)
     assert scanner._oracle_context_cache_key(tmp_path, [], {}) != before

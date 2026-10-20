@@ -3709,6 +3709,11 @@ def _oracle_context_cache_key(root: Path, manifest: list, config_identity: dict)
         integrity.NativeOraclePayload.__new__,
         integrity.NativeOraclePayload.valid,
     )
+    helpers += tuple(
+        getattr(module, helper.__name__, None)
+        for module in (type_intent_hollow, type_intent_provider_provenance)
+        for helper in module.CACHE_HELPERS
+    )
     helpers += test_callback_closure.CACHE_HELPERS
     helpers += (
         integrity._lexical_nodes,

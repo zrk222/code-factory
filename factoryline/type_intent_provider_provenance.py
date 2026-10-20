@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import json
 from copy import copy
 from hashlib import sha256
 from pathlib import Path
@@ -267,14 +268,45 @@ def bind_provider_context(
     context["provider_owner_local_imports"] = sorted(imports)
 
 
+def _mock_provider_capability(raw):
+    from .context_efficiency import _module_has_dynamic_capability_access
+
+    try:
+        nodes = tuple(ast.walk(ast.parse(raw)))
+    except (SyntaxError, ValueError, RecursionError, UnicodeDecodeError):
+        return True
+    return _module_has_dynamic_capability_access(nodes) or any(
+        isinstance(node, ast.Import)
+        and any(
+            alias.name == "unittest" or alias.name.startswith("unittest.")
+            for alias in node.names
+        )
+        or isinstance(node, ast.ImportFrom)
+        and (
+            node.module == "unittest"
+            or (node.module or "").startswith("unittest.")
+            or any(alias.name == "*" for alias in node.names)
+        )
+        for node in nodes
+    )
+
+
 def provider_source_inventory(root, source_bytes, manifest, output=None):
     """Retain the scanned Python inventory used by type-intent source proofs."""
-    retained = {path.relative_to(root).as_posix() for path in source_bytes}
+    retained = {
+        path.relative_to(root).as_posix(): raw for path, raw in source_bytes.items()
+    }
     rows = [
         {
             "path": row["path"],
             "state": row["state"],
             "retained": row["path"] in retained,
+            "sha256": sha256(retained[row["path"]]).hexdigest()
+            if row["path"] in retained
+            else None,
+            "mock_provider_capability": _mock_provider_capability(retained[row["path"]])
+            if row["path"] in retained
+            else True,
         }
         for row in manifest
         if row["path"].lower().endswith(".py")
@@ -288,13 +320,25 @@ def bind_provider_inventory(contexts, inventory):
     complete = bool(inventory) and all(
         row.get("state") == "read" and row.get("retained") is True for row in inventory
     )
+    capability_paths = sorted(
+        row["path"]
+        for row in inventory
+        if row.get("mock_provider_capability") is not False
+    )
+    inventory_digest = sha256(
+        json.dumps(inventory, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
     for context in contexts.values():
         context["provider_source_inventory_complete"] = complete
+        context["mock_provider_capability_paths"] = capability_paths
+        context["mock_provider_inventory_sha256"] = inventory_digest
     return complete
 
 
 def provider_cache_fields(context):
     return {
+        "mock_provider_capability_paths": context.get("mock_provider_capability_paths"),
+        "mock_provider_inventory_sha256": context.get("mock_provider_inventory_sha256"),
         "provider_source_closure": context.get("provider_source_closure", []),
         "provider_owner_local_imports": context.get("provider_owner_local_imports", []),
         "provider_source_closure_complete": bool(

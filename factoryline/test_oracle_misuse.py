@@ -627,26 +627,45 @@ def _module_pass_context_closed(module, namespace_closed):
     return bool(namespace_closed)
 
 
+def _inert_coroutine_signature(function):
+    if (
+        not isinstance(function, ast.AsyncFunctionDef)
+        or function.type_comment
+        or not _inert_definition(function)
+    ):
+        return False
+    args = function.args
+    positional = (*args.posonlyargs, *args.args)
+    return len({argument.arg for argument in positional}) == len(
+        positional
+    ) and not any(
+        (
+            args.vararg,
+            args.kwonlyargs,
+            args.kwarg,
+            args.defaults,
+            args.kw_defaults,
+        )
+    )
+
+
+def _coroutine_call_arity_matches(call, function):
+    return (
+        _inert_coroutine_signature(function)
+        and not call.keywords
+        and not any(isinstance(argument, ast.Starred) for argument in call.args)
+        and len(call.args) == len((*function.args.posonlyargs, *function.args.args))
+    )
+
+
 def _module_helper_kind(function):
     if isinstance(function, ast.FunctionDef):
         if _inert_helper_signature(function) and _inert_helper_stub(function):
             return "stub"
         if _callback_helper_parameter(function) is not None:
             return "callback"
-    if isinstance(function, ast.AsyncFunctionDef) and _inert_definition(function):
-        args = function.args
-        if not any(
-            (
-                args.posonlyargs,
-                args.args,
-                args.vararg,
-                args.kwonlyargs,
-                args.kwarg,
-                args.defaults,
-                args.kw_defaults,
-            )
-        ):
-            return "coroutine"
+    if _inert_coroutine_signature(function):
+        return "coroutine"
     return None
 
 
@@ -704,8 +723,7 @@ def _module_pass_helpers(
             closed = any(id(node) in test_nodes for node in refs) and all(
                 isinstance(parents.get(node), ast.Call)
                 and parents[node].func is node
-                and not parents[node].args
-                and not parents[node].keywords
+                and _coroutine_call_arity_matches(parents[node], item)
                 for node in refs
             )
         else:
@@ -744,6 +762,99 @@ def _module_helper_references_closed(
         ):
             return False
     return True
+
+
+def _module_mock_imports(module):
+    imported_classes = []
+    for node in ast.walk(module):
+        if isinstance(node, ast.Import) and any(
+            alias.name == "unittest" or alias.name.startswith("unittest.")
+            for alias in node.names
+        ):
+            return ()
+        if not isinstance(node, ast.ImportFrom) or not (
+            node.module == "unittest" or (node.module or "").startswith("unittest.")
+        ):
+            continue
+        if node not in module.body or node.level or node.module != "unittest.mock":
+            return ()
+        if any(alias.name not in {"Mock", "AsyncMock"} for alias in node.names):
+            return ()
+        imported_classes.extend(node.names)
+
+    return imported_classes
+
+
+def _captured_mock_owner_is_exclusive(module):
+    from hashlib import sha256
+
+    context = getattr(module, "_security_oracle_context", {})
+    capability_paths = context.get("mock_provider_capability_paths")
+    root, sources = module._security_source_context
+    if not isinstance(capability_paths, list) or len(capability_paths) != 1:
+        return False
+    captured = sources.get(root / capability_paths[0])
+    if not isinstance(captured, bytes) or sha256(captured).hexdigest() != getattr(
+        module, "_oracle_source_sha256", None
+    ):
+        return False
+    return True
+
+
+def _module_mock_constructors(module, test, namespace_closed):
+    if not namespace_closed or any(
+        isinstance(node, ast.ImportFrom)
+        and any(alias.name == "*" for alias in node.names)
+        for node in ast.walk(module)
+    ):
+        return {}
+    definitions, imports = _module_bindings(module)
+    stores = _stored_names(module)
+    local_bindings = _local_bindings(test)
+    parents = {
+        child: parent
+        for parent in ast.walk(module)
+        for child in ast.iter_child_nodes(parent)
+    }
+    test_nodes = {id(child) for child in ast.walk(test)}
+    references = {}
+    for node in ast.walk(module):
+        if isinstance(node, ast.Name):
+            references.setdefault(node.id, []).append(node)
+    imported_classes = _module_mock_imports(module)
+    if not imported_classes:
+        return {}
+    from .type_intent_hollow import _captured_unittest_source_closed
+
+    if not _captured_unittest_source_closed(module):
+        return {}
+    if not _captured_mock_owner_is_exclusive(module):
+        return {}
+    constructors = {}
+    for alias in imported_classes:
+        bound = alias.asname or alias.name
+        target = f"unittest.mock.{alias.name}"
+        if (
+            bound in stores
+            or bound in local_bindings
+            or definitions.get(bound)
+            or imports.get(bound) != [target]
+            or _module_binding_conflict(module, bound, alias)
+        ):
+            return {}
+        refs = references.get(bound, ())
+        if not refs or not all(
+            isinstance(node.ctx, ast.Load)
+            and id(node) in test_nodes
+            and isinstance(parents.get(node), ast.Call)
+            and parents[node].func is node
+            and not parents[node].args
+            and not parents[node].keywords
+            for node in refs
+        ):
+            return {}
+        constructors[bound] = alias.name
+    return constructors
 
 
 def _module_binding_conflict(module, name, definition):
@@ -1039,6 +1150,8 @@ def _completion_context(test):
             "bases": {},
             "helpers": {},
             "modules": {},
+            "mock_constructors": {},
+            "mock_instances": {},
             "namespace_closed": False,
             "literal_functions": {},
             "literal_calls": {},
@@ -1075,8 +1188,9 @@ def _completion_context(test):
         helpers = _module_pass_helpers(
             module, stores, test, namespace_closed, include_callbacks=True
         )
+        mock_constructors = _module_mock_constructors(module, test, namespace_closed)
     else:
-        names, bases, literal_functions, helpers = {}, {}, {}, {}
+        names, bases, literal_functions, helpers, mock_constructors = {}, {}, {}, {}, {}
     literal_calls = {
         name: _BUILTIN_RANGE_CALL
         for name, identity in names.items()
@@ -1093,6 +1207,8 @@ def _completion_context(test):
         "literal_functions": literal_functions,
         "literal_calls": literal_calls,
         "active_helpers": (),
+        "mock_constructors": mock_constructors,
+        "mock_instances": {},
         "modules": (
             {
                 **(module_aliases["builtins"] if providers["builtins"] else {}),
@@ -1100,6 +1216,47 @@ def _completion_context(test):
             }
         ),
     }
+
+
+def _mock_constructor_kind(node, context):
+    if (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and not node.args
+        and not node.keywords
+    ):
+        return context.get("mock_constructors", {}).get(node.func.id)
+    return None
+
+
+def _mock_state_assertion_call(node, context):
+    if (
+        not isinstance(node, ast.Call)
+        or node.args
+        or node.keywords
+        or not isinstance(node.func, ast.Attribute)
+        or not isinstance(node.func.value, ast.Name)
+    ):
+        return False
+    kind = context.get("mock_instances", {}).get(node.func.value.id)
+    return (
+        node.func.attr == "assert_not_called" and kind in {"Mock", "AsyncMock"}
+    ) or (node.func.attr == "assert_not_awaited" and kind == "AsyncMock")
+
+
+def _inert_assigned_coroutine_creation(node, known, context):
+    if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
+        return False
+    helper = context.get("helpers", {}).get(node.func.id)
+    if not _coroutine_call_arity_matches(node, helper):
+        return False
+    return all(
+        _inert_literal(argument, known, context.get("literal_calls"))[0]
+        or isinstance(argument, ast.Name)
+        and argument.id not in known
+        and argument.id in context.get("mock_instances", {})
+        for argument in node.args
+    )
 
 
 def _completion_name(node, context, known):
@@ -1242,9 +1399,18 @@ def _run_inert_helper(helper, context, helpers):
         "names": dict(context.get("names", {})),
         "modules": dict(context.get("modules", {})),
         "literal_calls": dict(context.get("literal_calls", {})),
+        "mock_constructors": dict(context.get("mock_constructors", {})),
+        "mock_instances": dict(context.get("mock_instances", {})),
     }
     for name in _local_bindings(helper):
-        for key in ("helpers", "names", "modules", "literal_calls"):
+        for key in (
+            "helpers",
+            "names",
+            "modules",
+            "literal_calls",
+            "mock_constructors",
+            "mock_instances",
+        ):
             nested[key].pop(name, None)
     result = _inert_suite(helper.body, nested, helpers=nested_helpers)
     return ("NORMAL", None) if result[0] == "RETURN" else result
@@ -1277,6 +1443,10 @@ def _inert_expression(node, known, helpers, context):
         callback = _callback_helper(helper, node, helpers)
         if callback is not None:
             return _run_inert_helper(callback, context, helpers)
+    if _mock_constructor_kind(node, context) is not None:
+        return "NORMAL", None
+    if _mock_state_assertion_call(node, context):
+        return "NORMAL", None
     if _inert_literal_call(node, context.get("literal_calls"), known) is not None:
         return "NORMAL", None
     identity = _completion_name(node.func, context, known)
@@ -1350,6 +1520,20 @@ def _raise_completion(stmt, known, context):
 def _assignment_completion(stmt, known, context):
     targets = getattr(stmt, "targets", ()) or (stmt.target,)
     closed = all(isinstance(target, ast.Name) for target in targets)
+    if (
+        isinstance(stmt, (ast.Assign, ast.AnnAssign))
+        and len(targets) == 1
+        and isinstance(targets[0], ast.Name)
+        and _mock_constructor_kind(stmt.value, context) is not None
+    ):
+        return "NORMAL", None
+    if (
+        isinstance(stmt, (ast.Assign, ast.AnnAssign))
+        and len(targets) == 1
+        and isinstance(targets[0], ast.Name)
+        and _inert_assigned_coroutine_creation(stmt.value, known, context)
+    ):
+        return "NORMAL", None
     if (
         isinstance(stmt, ast.Assign)
         and len(targets) == 1
@@ -1451,6 +1635,7 @@ def _handler_identity(handler, known, context):
 
 
 def _try_completion(stmt, known, helpers, context):
+    context["mock_instances"].clear()
     result = _inert_suite(stmt.body, context, known, helpers)
     if result[0] == "NORMAL":
         result = _inert_suite(stmt.orelse, context, {}, context["helpers"])
@@ -1528,6 +1713,7 @@ def _track_inert_definition(stmt, known, helpers, context):
         return
     helpers[stmt.name] = stmt
     known.pop(stmt.name, None)
+    context["mock_instances"].pop(stmt.name, None)
     literal = context.get("literal_functions", {}).get(stmt.name)
     if literal is not None and literal[0] is stmt:
         context["literal_calls"][stmt.name] = literal[1]
@@ -1539,6 +1725,14 @@ def _track_inert_assignment(stmt, known, helpers, context):
     for target in getattr(stmt, "targets", ()) or (stmt.target,):
         if not isinstance(target, ast.Name):
             continue
+        mock_kind = _mock_constructor_kind(stmt.value, context)
+        if mock_kind is not None:
+            context["mock_instances"][target.id] = mock_kind
+            known.pop(target.id, None)
+            helpers.pop(target.id, None)
+            context["literal_calls"].pop(target.id, None)
+            continue
+        context["mock_instances"].pop(target.id, None)
         if _helper_alias(stmt, helpers):
             helpers[target.id] = helpers[stmt.value.id]
             known.pop(target.id, None)
@@ -1566,8 +1760,16 @@ def _track_inert_assignment(stmt, known, helpers, context):
 def _reset_inert_branch(stmt, known, context, literal_calls_before):
     if not isinstance(stmt, (ast.If, ast.For, ast.While, ast.Try, ast.With)):
         return None
+    preserve_mock_instances = (
+        isinstance(stmt, ast.If)
+        and isinstance(stmt.test, ast.Constant)
+        and stmt.test.value is False
+        and not stmt.orelse
+    )
     known.clear()
     context["literal_calls"] = literal_calls_before
+    if not preserve_mock_instances:
+        context["mock_instances"].clear()
     return dict(context["helpers"])
 
 
@@ -1575,6 +1777,7 @@ def _inert_suite(statements, context, known=None, helpers=None):
     context = {
         **context,
         "literal_calls": dict(context.get("literal_calls", {})),
+        "mock_instances": dict(context.get("mock_instances", {})),
     }
     known, helpers = (
         dict(known or {}),
@@ -1606,6 +1809,8 @@ def inert_test_completion(node):
         context["helpers"].pop(name, None)
         context["modules"].pop(name, None)
         context["literal_calls"].pop(name, None)
+        context["mock_constructors"].pop(name, None)
+        context["mock_instances"].pop(name, None)
     for arg in (
         *node.args.posonlyargs,
         *node.args.args,
@@ -1642,6 +1847,11 @@ INERT_BODY_HELPERS = (
     _simple_exception_classes,
     _module_pass_context_closed,
     _module_pass_helpers,
+    _inert_coroutine_signature,
+    _coroutine_call_arity_matches,
+    _module_mock_imports,
+    _captured_mock_owner_is_exclusive,
+    _module_mock_constructors,
     _module_helper_references_closed,
     _module_binding_conflict,
     _module_helper_kind,
@@ -1668,6 +1878,9 @@ INERT_BODY_HELPERS = (
     _helper_alias,
     _callback_helper_parameter,
     _callback_helper,
+    _mock_constructor_kind,
+    _mock_state_assertion_call,
+    _inert_assigned_coroutine_creation,
     _run_inert_helper,
     _track_inert_definition,
     _track_inert_assignment,
