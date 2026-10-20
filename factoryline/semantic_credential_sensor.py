@@ -153,7 +153,7 @@ def _authorization_header_value(headers):
 
 
 def _provider_identity_uncertain(
-    tree, aliases, roots=("requests", "httpx"), *, nodes=None
+    tree, aliases, roots=("requests", "httpx"), *, nodes=None, parents=None
 ):
     """Veto HTTP proofs if the full provider mutation index finds a relevant escape."""
     from types import SimpleNamespace
@@ -162,9 +162,10 @@ def _provider_identity_uncertain(
     from .review_audits import _resolved_ast_name
 
     nodes = list(ast.walk(tree)) if nodes is None else nodes
-    parents = {
-        id(child): node for node in nodes for child in ast.iter_child_nodes(node)
-    }
+    if parents is None:
+        parents = {
+            id(child): node for node in nodes for child in ast.iter_child_nodes(node)
+        }
     audit = SimpleNamespace(_resolved_ast_name=_resolved_ast_name)
     mutations = finite_provider_mutation_index(nodes, aliases, audit, parents)
     return any(

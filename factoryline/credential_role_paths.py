@@ -69,7 +69,9 @@ def _sink_rows(snapshots, aliases, index, default_session):
         if not isinstance(tree, ast.Module):
             continue
         mutation_profiles = {}
-        for call in (n for n in ast.walk(tree) if isinstance(n, ast.Call)):
+        nodes = tuple(ast.walk(tree))
+        parents = None
+        for call in (n for n in nodes if isinstance(n, ast.Call)):
             from .review_integrity import _security_flow_bindings
 
             lexical, _ = _security_flow_bindings(call, aliases[path])
@@ -86,8 +88,14 @@ def _sink_rows(snapshots, aliases, index, default_session):
                 continue
             identity_key = tuple(sorted(lexical.items()))
             if identity_key not in mutation_profiles:
+                if parents is None:
+                    parents = {
+                        id(child): node
+                        for node in nodes
+                        for child in ast.iter_child_nodes(node)
+                    }
                 mutation_profiles[identity_key] = _provider_identity_uncertain(
-                    tree, lexical
+                    tree, lexical, nodes=nodes, parents=parents
                 )
             if mutation_profiles[identity_key]:
                 continue

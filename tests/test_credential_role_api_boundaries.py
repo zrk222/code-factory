@@ -150,3 +150,45 @@ def test_sink_planning_checks_provider_only_for_candidate_slots(
     rows = paths._sink_rows({path: tree}, aliases, index, None)
     assert [row[3] for row in rows] == expected_slots
     assert len(checks) == expected_checks
+
+
+@pytest.mark.parametrize(
+    "mutation", ["", "requests.get = supplied", "consume(requests)"]
+)
+def test_provider_profiles_share_one_module_index_without_changing_vetoes(
+    tmp_path, monkeypatch, mutation
+):
+    from factoryline import credential_role_paths as paths
+    from factoryline import review_audits as audit
+    from factoryline.review_integrity import bind_security_call_scopes
+
+    path = tmp_path / "client.py"
+    raw = (
+        "import requests\n" + mutation + "\n"
+        "def first():\n    import requests as primary\n    primary.get(endpoint)\n"
+        "def second():\n    import requests as secondary\n    secondary.post(endpoint)\n"
+    ).encode()
+    tree = ast.parse(raw)
+    digest = hashlib.sha256(raw).hexdigest()
+    tree._oracle_source_sha256 = digest
+    bind_security_call_scopes(tree)
+    index = SourceSnapshotIndex(tmp_path, {path: tree}, {path: raw}, {path: digest})
+    aliases = {path: audit._module_security_aliases(tree)}
+    original = paths._provider_identity_uncertain
+    supplied = []
+
+    def observed(tree, lexical, **kwargs):
+        supplied.append((kwargs["nodes"], kwargs["parents"]))
+        reused = original(tree, lexical, **kwargs)
+        assert reused == original(tree, lexical)
+        return reused
+
+    monkeypatch.setattr(paths, "_provider_identity_uncertain", observed)
+    paths._sink_rows({path: tree}, aliases, index, None)
+    assert len(supplied) >= 2
+    assert len({id(nodes) for nodes, _ in supplied}) == 1
+    assert len({id(parents) for _, parents in supplied}) == 1
+    nodes, parents = supplied[0]
+    assert parents == {
+        id(child): node for node in nodes for child in ast.iter_child_nodes(node)
+    }
