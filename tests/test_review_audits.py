@@ -2675,20 +2675,29 @@ def test_mock_state_oracle_requires_an_invoked_injected_dependency(tmp_path, ass
 
 
 @pytest.mark.parametrize(
-    "body",
+    "body, expected",
     [
-        "send = AsyncMock()\n    send.assert_not_awaited()",
-        "send = AsyncMock()\n    request = Request({'type': 'http'}, send=send)\n"
-        "    if False:\n        await request.send_early_hints([])\n"
-        "    send.assert_not_awaited()",
-        "send = AsyncMock()\n    def unused():\n"
-        "        request = Request({'type': 'http'}, send=send)\n"
-        "        request.send_early_hints([])\n"
-        "    send.assert_not_awaited()",
+        (
+            "send = AsyncMock()\n    send.assert_not_awaited()",
+            "QUALITY_HOLLOW_TEST",
+        ),
+        (
+            "send = AsyncMock()\n    request = Request({'type': 'http'}, send=send)\n"
+            "    if False:\n        await request.send_early_hints([])\n"
+            "    send.assert_not_awaited()",
+            "QUALITY_UNKNOWN_TEST_ORACLE",
+        ),
+        (
+            "send = AsyncMock()\n    def unused():\n"
+            "        request = Request({'type': 'http'}, send=send)\n"
+            "        request.send_early_hints([])\n"
+            "    send.assert_not_awaited()",
+            "QUALITY_HOLLOW_TEST",
+        ),
     ],
 )
 def test_mock_state_oracle_does_not_credit_unused_or_unreachable_dependencies(
-    tmp_path, body
+    tmp_path, body, expected
 ):
     (tmp_path / "test_request.py").write_text(
         "from unittest.mock import AsyncMock\n"
@@ -2696,10 +2705,11 @@ def test_mock_state_oracle_does_not_credit_unused_or_unreachable_dependencies(
         "async def test_request():\n    " + body + "\n",
         encoding="utf-8",
     )
-    assert any(
-        finding["code"] == "QUALITY_HOLLOW_TEST"
-        for finding in security_scan(tmp_path)["findings"]
-    )
+    # Only untouched state or unentered coroutine creation proves nonraising completion.
+    report = security_scan(tmp_path)
+    assert report["finding_counts"] == {expected: 1}
+    if expected == "QUALITY_UNKNOWN_TEST_ORACLE":
+        _assert_unknown_test_oracle(report, unknown_count=1)
 
 
 @pytest.mark.parametrize(
@@ -2724,14 +2734,23 @@ def test_mock_oracle_supports_function_dependency_injection(tmp_path, method):
 
 
 @pytest.mark.parametrize(
-    "body",
+    "body, expected",
     [
-        "dependency()",
-        "perform(dependency)\n    dependency = AsyncMock()",
-        "if False:\n        perform(dependency)",
+        (
+            "dependency()",
+            "QUALITY_HOLLOW_TEST",
+        ),
+        (
+            "perform(dependency)\n    dependency = AsyncMock()",
+            "QUALITY_UNKNOWN_TEST_ORACLE",
+        ),
+        (
+            "if False:\n        perform(dependency)",
+            "QUALITY_UNKNOWN_TEST_ORACLE",
+        ),
     ],
 )
-def test_mock_oracle_rejects_self_unused_and_rebound_state(tmp_path, body):
+def test_mock_oracle_rejects_self_unused_and_rebound_state(tmp_path, body, expected):
     (tmp_path / "test_case.py").write_text(
         "from unittest.mock import AsyncMock\ndef test_behavior():\n"
         "    dependency = AsyncMock()\n    "
@@ -2739,7 +2758,8 @@ def test_mock_oracle_rejects_self_unused_and_rebound_state(tmp_path, body):
         + "\n    dependency.assert_called_once()\n",
         encoding="utf-8",
     )
-    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+    # One direct default call proves called-once; opaque calls/rebinds stay UNKNOWN.
+    assert security_scan(tmp_path)["finding_counts"] == {expected: 1}
 
 
 @pytest.mark.parametrize(
@@ -2762,28 +2782,49 @@ def test_mock_oracle_accepts_assigned_direct_sync_dependency_calls(tmp_path, sou
 
 
 @pytest.mark.parametrize(
-    "source",
+    "source, expected",
     [
-        "from unittest.mock import Mock\ndef test_behavior():\n"
-        "    m = Mock()\n    m.assert_not_called()\n",
-        "from unittest.mock import Mock\ndef test_behavior():\n"
-        "    m = Mock()\n    if False:\n        ret = (lambda f: None)(m)\n"
-        "    m.assert_not_called()\n",
-        "from unittest.mock import Mock\nclass Dependency:\n    pass\n"
-        "def test_behavior():\n    m = Mock()\n    ret = Dependency(m)\n"
-        "    m.assert_not_called()\n",
-        "from unittest.mock import Mock\n@wrapper\ndef perform(dep):\n    pass\n"
-        "def test_behavior():\n    m = Mock()\n    ret = perform(m)\n"
-        "    m.assert_not_called()\n",
-        "from unittest.mock import Mock\ndef test_behavior():\n"
-        "    def perform(dep):\n        pass\n    perform = unknown\n"
-        "    m = Mock()\n    ret = perform(m)\n    m.assert_not_called()\n",
-        "from unittest.mock import Mock\nasync def perform(dep):\n    pass\n"
-        "def test_behavior():\n    m = Mock()\n    ret = perform(m)\n"
-        "    m.assert_not_called()\n",
-        "from unittest.mock import Mock\ndef test_behavior():\n"
-        "    m = Mock()\n    ret = (lambda f: None)(m)\n"
-        "    m = object()\n    m.assert_not_called()\n",
+        (
+            "from unittest.mock import Mock\ndef test_behavior():\n"
+            "    m = Mock()\n    m.assert_not_called()\n",
+            "QUALITY_HOLLOW_TEST",
+        ),
+        (
+            "from unittest.mock import Mock\ndef test_behavior():\n"
+            "    m = Mock()\n    if False:\n        ret = (lambda f: None)(m)\n"
+            "    m.assert_not_called()\n",
+            "QUALITY_HOLLOW_TEST",
+        ),
+        (
+            "from unittest.mock import Mock\nclass Dependency:\n    pass\n"
+            "def test_behavior():\n    m = Mock()\n    ret = Dependency(m)\n"
+            "    m.assert_not_called()\n",
+            "QUALITY_UNKNOWN_TEST_ORACLE",
+        ),
+        (
+            "from unittest.mock import Mock\n@wrapper\ndef perform(dep):\n    pass\n"
+            "def test_behavior():\n    m = Mock()\n    ret = perform(m)\n"
+            "    m.assert_not_called()\n",
+            "QUALITY_UNKNOWN_TEST_ORACLE",
+        ),
+        (
+            "from unittest.mock import Mock\ndef test_behavior():\n"
+            "    def perform(dep):\n        pass\n    perform = unknown\n"
+            "    m = Mock()\n    ret = perform(m)\n    m.assert_not_called()\n",
+            "QUALITY_UNKNOWN_TEST_ORACLE",
+        ),
+        (
+            "from unittest.mock import Mock\nasync def perform(dep):\n    pass\n"
+            "def test_behavior():\n    m = Mock()\n    ret = perform(m)\n"
+            "    m.assert_not_called()\n",
+            "QUALITY_HOLLOW_TEST",
+        ),
+        (
+            "from unittest.mock import Mock\ndef test_behavior():\n"
+            "    m = Mock()\n    ret = (lambda f: None)(m)\n"
+            "    m = object()\n    m.assert_not_called()\n",
+            "QUALITY_UNKNOWN_TEST_ORACLE",
+        ),
     ],
     ids=[
         "unused",
@@ -2796,15 +2837,14 @@ def test_mock_oracle_accepts_assigned_direct_sync_dependency_calls(tmp_path, sou
     ],
 )
 def test_mock_oracle_rejects_unsafe_assigned_dependency_calls(
-    tmp_path, source, request
+    tmp_path, source, expected
 ):
     (tmp_path / "test_case.py").write_text(source, encoding="utf-8")
+    # Only untouched state or unentered coroutine creation proves nonraising completion.
     report = security_scan(tmp_path)
-    if request.node.callspec.id == "unawaited-async":
-        assert report["finding_counts"] == {"QUALITY_UNKNOWN_TEST_ORACLE": 1}
+    assert report["finding_counts"] == {expected: 1}
+    if expected == "QUALITY_UNKNOWN_TEST_ORACLE":
         _assert_unknown_test_oracle(report, unknown_count=1)
-    else:
-        assert report["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
 
 
 @pytest.mark.parametrize(
@@ -6635,7 +6675,10 @@ def test_security_scan_rejects_mutated_retry_iteration_protocol(tmp_path, mutati
         "    else:\n        raise Exception\n",
         encoding="utf-8",
     )
-    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+    # Unresolved provider/context effects and surviving raises do not prove inert completion.
+    assert security_scan(tmp_path)["finding_counts"] == {
+        "QUALITY_UNKNOWN_TEST_ORACLE": 1
+    }
 
 
 @pytest.mark.parametrize(
@@ -6742,7 +6785,10 @@ def test_security_scan_rejects_retry_module_mutation_through_equivalent_imports(
         encoding="utf-8",
     )
 
-    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+    # Unresolved provider/context effects and surviving raises do not prove inert completion.
+    assert security_scan(tmp_path)["finding_counts"] == {
+        "QUALITY_UNKNOWN_TEST_ORACLE": 1
+    }
 
 
 def test_security_scan_accepts_unmutated_equivalent_retry_module_imports(tmp_path):
@@ -6831,7 +6877,10 @@ def test_security_scan_rejects_retry_attempt_without_closed_capability_use(
         encoding="utf-8",
     )
 
-    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+    # Unresolved provider/context effects and surviving raises do not prove inert completion.
+    assert security_scan(tmp_path)["finding_counts"] == {
+        "QUALITY_UNKNOWN_TEST_ORACLE": 1
+    }
 
 
 @pytest.mark.parametrize(

@@ -1096,4 +1096,7 @@ def test_module_stub_binding_must_remain_closed(tmp_path, setup):
 )
 def test_unproved_module_helper_is_not_hollow(tmp_path, helper):
     _write_test(tmp_path, helper + "def test_behavior():\n    local_pure()\n")
-    assert "QUALITY_HOLLOW_TEST" not in security_scan(tmp_path)["finding_counts"]
+    # A source-bound async call only creates a coroutine; other bodies can raise or escape.
+    expected_hollow = helper.startswith("async def ")
+    report = security_scan(tmp_path)
+    assert ("QUALITY_HOLLOW_TEST" in report["finding_counts"]) is expected_hollow
