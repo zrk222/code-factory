@@ -1453,12 +1453,10 @@ def _security_call_finding(
         message = "Pickle-like deserialization can execute attacker-controlled code."
         facts = {"call": call}
     elif call in {"yaml.load", "yaml.unsafe_load", "yaml.full_load"}:
-        loader = next((kw.value for kw in node.keywords if kw.arg == "Loader"), None)
-        loader_name = _name(loader) if isinstance(loader, ast.AST) else ""
-        if (
-            call == "yaml.load"
-            and loader is not None
-            and not loader_name.endswith(("UnsafeLoader", "FullLoader"))
+        from .security_configuration import yaml_safe_loader
+
+        if call == "yaml.load" and yaml_safe_loader(
+            node, getattr(node, "_security_configuration_aliases", {})
         ):
             return None
         code = "SECURITY_UNSAFE_YAML"

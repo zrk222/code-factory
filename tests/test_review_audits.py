@@ -13191,3 +13191,45 @@ def test_tenant_read_contract_preserves_scanner_facade_hooks(tmp_path, monkeypat
         {"path": "app.py", "reads": [{"sentinel": "app.read"}]}
     ]
     assert observed == [("app.read", {})]
+
+
+@pytest.mark.parametrize(
+    "source,expected",
+    [
+        ("import yaml\nyaml.load(data, yaml.SafeLoader)\n", False),
+        ("import yaml\nyaml.load(data, Loader=yaml.CSafeLoader)\n", False),
+        ("import yaml\nyaml.load(data, Loader=yaml.BaseLoader)\n", False),
+        ("import yaml\nyaml.load(data, yaml.CBaseLoader)\n", False),
+        (
+            "from yaml import SafeLoader as Safe\nimport yaml\nyaml.load(data, Safe)\n",
+            False,
+        ),
+        (
+            "from yaml.loader import SafeLoader\nimport yaml\nyaml.load(data, Loader=SafeLoader)\n",
+            False,
+        ),
+        ("import yaml\nyaml.load(data, Loader=CustomLoader)\n", True),
+        ("import yaml\nyaml.load(data, Loader=yaml.Loader)\n", True),
+        ("import yaml\nyaml.load(data, yaml.UnsafeLoader)\n", True),
+        ("import yaml\nyaml.load(data, Loader=LooksSafeLoader)\n", True),
+        (
+            "import yaml\nyaml.load(data, yaml.SafeLoader, Loader=yaml.SafeLoader)\n",
+            True,
+        ),
+        ("import yaml\nyaml.load(data, Loader=yaml.SafeLoader, **options)\n", True),
+        (
+            "import yaml\nfrom yaml import SafeLoader as Safe\nSafe = CustomLoader\nyaml.load(data, Loader=Safe)\n",
+            True,
+        ),
+        (
+            "import yaml\ndef parse(data, SafeLoader):\n    return yaml.load(data, Loader=SafeLoader)\n",
+            True,
+        ),
+    ],
+)
+def test_yaml_loader_argument_requires_canonical_safe_provider(
+    tmp_path, source, expected
+):
+    (tmp_path / "parse_input.py").write_text(source, encoding="utf-8")
+    findings = security_scan(tmp_path, cache_enabled=False)["findings"]
+    assert any(item["code"] == "SECURITY_UNSAFE_YAML" for item in findings) is expected

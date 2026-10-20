@@ -14,12 +14,22 @@ _DEFERRED_TYPES = tuple(
 )
 
 
-def _canonical(node, aliases):
-    from .review_integrity import _security_flow_bindings
-    from .review_audits import _call_name
+def _canonical(node, aliases, expression=None):
+    from .review_integrity import (
+        _security_flow_bindings,
+        _security_scope_request_aliases,
+    )
+    from .review_audits import _name
 
-    resolved, _ = _security_flow_bindings(node, aliases)
-    raw = _call_name(node)
+    if expression is None:
+        resolved, _ = _security_flow_bindings(node, aliases)
+    else:
+        resolved = _security_scope_request_aliases(
+            getattr(node, "_security_lexical_scope", None),
+            aliases,
+            getattr(node, "_security_flow_statement", None),
+        )
+    raw = _name(node.func if expression is None else expression)
     head, _, tail = raw.partition(".")
     if head not in resolved or _relative_binding(node, head):
         return ""
@@ -74,6 +84,28 @@ def _keyword(call, name, position=None):
 def _literal_bool(node):
     value = getattr(node, "value", None)
     return value if type(value) is bool else None
+
+
+def yaml_safe_loader(call, aliases):
+    """Credit only a canonical safe loader in an unambiguous argument slot."""
+    if _expanded(call) or len(call.args) > 2:
+        return False
+    keywords = [item for item in call.keywords if item.arg == "Loader"]
+    if len(keywords) > 1 or (len(call.args) == 2 and keywords):
+        return False
+    loader = _keyword(call, "Loader", 1)
+    if loader is None:
+        return False
+    return _canonical(call, aliases, loader) in {
+        "yaml.SafeLoader",
+        "yaml.CSafeLoader",
+        "yaml.BaseLoader",
+        "yaml.CBaseLoader",
+        "yaml.loader.SafeLoader",
+        "yaml.loader.BaseLoader",
+        "yaml.cyaml.CSafeLoader",
+        "yaml.cyaml.CBaseLoader",
+    }
 
 
 def _environment_autoescape(call):
