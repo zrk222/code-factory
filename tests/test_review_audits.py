@@ -9009,7 +9009,10 @@ def test_security_scan_does_not_trust_invalid_typecheck_configuration(
         with pytest.raises(ReviewAuditError, match="pytest test collection"):
             security_scan(tmp_path)
     else:
-        assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+        # compute() is undefined: a failing name lookup is not a proven inert test.
+        result = security_scan(tmp_path)
+        assert result["finding_counts"] == {"QUALITY_UNKNOWN_TEST_ORACLE": 1}
+        assert result["findings"][0]["facts"]["evidence_state"] == "UNKNOWN"
 
 
 def test_security_scan_rejects_typecheck_configuration_race(tmp_path, monkeypatch):
