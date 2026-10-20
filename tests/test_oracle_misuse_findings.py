@@ -217,6 +217,253 @@ def test_source_bound_inert_helpers_accept_literal_arguments(tmp_path, source):
 
 
 @pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        (
+            textwrap.dedent(
+                """\
+                async def compute():
+                    return 3
+                def run_async_fn(callback):
+                    callback()
+                def test_behavior():
+                    async def check():
+                        assert await compute() == 3
+                    run_async_fn(check)
+                """
+            ),
+            {"QUALITY_HOLLOW_TEST": 1},
+        ),
+        (
+            textwrap.dedent(
+                """\
+                def run_async_fn(callback):
+                    callback()
+                def test_behavior():
+                    def check():
+                        unknown_effect()
+                    run_async_fn(check)
+                """
+            ),
+            {"QUALITY_UNKNOWN_TEST_ORACLE": 1},
+        ),
+        (
+            textwrap.dedent(
+                """\
+                def decorate(function):
+                    return function
+                def test_behavior():
+                    @decorate
+                    async def check():
+                        assert compute() == 3
+                    check()
+                """
+            ),
+            {"QUALITY_UNKNOWN_TEST_ORACLE": 1},
+        ),
+        (
+            textwrap.dedent(
+                """\
+                def noop(callback):
+                    pass
+                def decorate(function):
+                    return function
+                def test_behavior():
+                    @decorate
+                    async def check():
+                        assert compute() == 3
+                    noop(check)
+                """
+            ),
+            {"QUALITY_UNKNOWN_TEST_ORACLE": 1},
+        ),
+        (
+            textwrap.dedent(
+                """\
+                async def compute():
+                    return 3
+                try:
+                    raise ValueError()
+                except ValueError as compute:
+                    pass
+                def test_behavior():
+                    compute()
+                """
+            ),
+            {"QUALITY_UNKNOWN_TEST_ORACLE": 1},
+        ),
+        (
+            textwrap.dedent(
+                """\
+                async def compute():
+                    return 3
+                match 1:
+                    case compute:
+                        pass
+                def test_behavior():
+                    compute()
+                """
+            ),
+            {"QUALITY_UNKNOWN_TEST_ORACLE": 1},
+        ),
+        (
+            textwrap.dedent(
+                """\
+                async def compute():
+                    return 3
+                if True:
+                    def compute():
+                        raise RuntimeError()
+                def test_behavior():
+                    compute()
+                """
+            ),
+            {"QUALITY_UNKNOWN_TEST_ORACLE": 1},
+        ),
+        (
+            textwrap.dedent(
+                """\
+                async def compute():
+                    return 3
+                if False:
+                    from source import replacement as compute
+                def test_behavior():
+                    compute()
+                """
+            ),
+            {"QUALITY_UNKNOWN_TEST_ORACLE": 1},
+        ),
+        (
+            textwrap.dedent(
+                """\
+                def dispatch(callback):
+                    callback()
+                try:
+                    raise ValueError()
+                except ValueError as dispatch:
+                    pass
+                def test_behavior():
+                    async def check():
+                        assert compute() == 3
+                    dispatch(check)
+                """
+            ),
+            {"QUALITY_UNKNOWN_TEST_ORACLE": 1},
+        ),
+        (
+            textwrap.dedent(
+                """\
+                async def compute():
+                    return 3
+                def decorate(function):
+                    return function
+                @decorate
+                async def decorated():
+                    return 3
+                def test_behavior():
+                    decorated()
+                """
+            ),
+            {"QUALITY_UNKNOWN_TEST_ORACLE": 1},
+        ),
+        (
+            textwrap.dedent(
+                """\
+                async def compute():
+                    return 3
+                compute = external_compute
+                def test_behavior():
+                    compute()
+                """
+            ),
+            {"QUALITY_UNKNOWN_TEST_ORACLE": 1},
+        ),
+        (
+            textwrap.dedent(
+                """\
+                retained = []
+                async def compute():
+                    return 3
+                retained.append(compute)
+                def test_behavior():
+                    compute()
+                """
+            ),
+            {
+                "QUALITY_UNKNOWN_TEST_ORACLE": 1,
+                "QUALITY_UNAWAITED_COROUTINE": 1,
+            },
+        ),
+        (
+            textwrap.dedent(
+                """\
+                async def compute():
+                    return 3
+                alias = compute
+                def test_behavior():
+                    alias()
+                """
+            ),
+            {"QUALITY_UNKNOWN_TEST_ORACLE": 1},
+        ),
+        (
+            textwrap.dedent(
+                """\
+                def run_async_fn(callback):
+                    unknown_effect(callback)
+                def noop(callback):
+                    pass
+                def test_behavior():
+                    async def check():
+                        assert compute() == 3
+                    run_async_fn = noop
+                    run_async_fn(check)
+                """
+            ),
+            {"QUALITY_HOLLOW_TEST": 1},
+        ),
+        (
+            textwrap.dedent(
+                """\
+                async def compute():
+                    return 3
+                def test_behavior():
+                    compute()
+                """
+            ),
+            {
+                "QUALITY_HOLLOW_TEST": 1,
+                "QUALITY_UNAWAITED_COROUTINE": 1,
+            },
+        ),
+    ],
+    ids=[
+        "sync-callback-without-await",
+        "executed-sync-callback",
+        "decorated-local-coroutine",
+        "decorated-callback-to-noop",
+        "exception-target-coroutine",
+        "match-capture-coroutine",
+        "conditional-coroutine-definition",
+        "conditional-import-binding",
+        "exception-target-callback-helper",
+        "decorated-coroutine",
+        "rebound-coroutine",
+        "escaped-coroutine",
+        "aliased-coroutine",
+        "local-noop-rebind",
+        "ignored-module-coroutine",
+    ],
+)
+def test_closed_async_helper_paths_and_negative_controls(tmp_path, source, expected):
+    (tmp_path / "test_async.py").write_text(source, encoding="utf-8")
+
+    report = security_scan(tmp_path, cache_enabled=False)
+
+    assert report["finding_counts"] == expected
+
+
+@pytest.mark.parametrize(
     "source",
     [
         "def test_case(): noop('stable')\n",
@@ -228,6 +475,60 @@ def test_source_bound_inert_helpers_accept_literal_arguments(tmp_path, source):
         "def decorate(function): return function\n@decorate\ndef noop(value): pass\n"
         "def test_case(): noop('stable')\n",
         "def noop(value): pass\nnoop = other\ndef test_case(): noop('stable')\n",
+        textwrap.dedent(
+            """\
+            def test_case():
+                async def callback():
+                    assert compute() == 3
+                dispatch(callback)
+            """
+        ),
+        textwrap.dedent(
+            """\
+            def decorate(function):
+                return function
+            @decorate
+            def dispatch(callback):
+                callback()
+            def test_case():
+                async def callback():
+                    assert compute() == 3
+                dispatch(callback)
+            """
+        ),
+        textwrap.dedent(
+            """\
+            def dispatch(callback):
+                callback()
+            dispatch = external_dispatch
+            def test_case():
+                async def callback():
+                    assert compute() == 3
+                dispatch(callback)
+            """
+        ),
+        textwrap.dedent(
+            """\
+            retained = []
+            def dispatch(callback):
+                callback()
+            retained.append(dispatch)
+            def test_case():
+                async def callback():
+                    assert compute() == 3
+                dispatch(callback)
+            """
+        ),
+        textwrap.dedent(
+            """\
+            def dispatch(callback):
+                register(callback)
+            def test_case():
+                async def callback():
+                    assert compute() == 3
+                dispatch(callback)
+            """
+        ),
     ],
 )
 def test_unresolved_or_effectful_helpers_remain_unknown(tmp_path, source):
@@ -270,3 +571,60 @@ def test_inverse_self_identity_is_not_hollow(tmp_path):
     )
     report = security_scan(tmp_path, cache_enabled=False)
     assert "QUALITY_HOLLOW_TEST" not in report["finding_counts"]
+
+
+@pytest.mark.parametrize(
+    "binding,error",
+    [
+        (
+            "try:\n    raise ValueError()\nexcept ValueError as compute:\n    pass\n",
+            NameError,
+        ),
+        ("match 1:\n    case compute:\n        pass\n", TypeError),
+        ("if True:\n    def compute():\n        raise RuntimeError()\n", RuntimeError),
+    ],
+    ids=[
+        "exception-deletes-binding",
+        "match-overwrites-binding",
+        "conditional-redefinition",
+    ],
+)
+def test_coroutine_binding_counterexamples_really_raise(tmp_path, binding, error):
+    source = (
+        "async def compute():\n    return 3\n"
+        + binding
+        + "def test_case(): compute()\n"
+    )
+    namespace = {}
+    exec(compile(source, "<binding-counterexample>", "exec"), namespace)
+    with pytest.raises(error):
+        namespace["test_case"]()
+    (tmp_path / "test_binding.py").write_text(source, encoding="utf-8")
+    report = security_scan(tmp_path, cache_enabled=False)
+    assert report["finding_counts"] == {"QUALITY_UNKNOWN_TEST_ORACLE": 1}
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "_module_helper_kind",
+        "_module_binding_conflict",
+        "_callback_helper_parameter",
+        "_module_helper_references_closed",
+    ],
+)
+def test_completion_catalog_helpers_bind_native_cache_epoch(
+    tmp_path, monkeypatch, name
+):
+    from factoryline import review_audits as scanner
+    from factoryline import test_oracle_misuse as misuse
+
+    helper = getattr(misuse, name)
+    assert helper in misuse.INERT_BODY_HELPERS
+    before = scanner._oracle_context_cache_key(tmp_path, [], {})
+
+    def replacement(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(helper, "__code__", replacement.__code__)
+    assert scanner._oracle_context_cache_key(tmp_path, [], {}) != before

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import ast
 
-
 _BUILTIN_RANGE_CALL = object()
 
 
@@ -554,7 +553,7 @@ def _inert_helper_signature(function):
     )
 
 
-def _inert_helper_call(call, function, known, literal_calls):
+def _inert_helper_call(call, function, known, literal_calls, helpers=None):
     if (
         not _inert_helper_signature(function)
         or not _inert_helper_stub(function)
@@ -563,7 +562,15 @@ def _inert_helper_call(call, function, known, literal_calls):
         or len(call.args) != len((*function.args.posonlyargs, *function.args.args))
     ):
         return False
-    return all(_inert_literal(arg, known, literal_calls)[0] for arg in call.args)
+    helpers = helpers or {}
+    return all(
+        _inert_literal(arg, known, literal_calls)[0]
+        or isinstance(arg, ast.Name)
+        and arg.id not in known
+        and isinstance(helpers.get(arg.id), (ast.FunctionDef, ast.AsyncFunctionDef))
+        and _inert_definition(helpers[arg.id])
+        for arg in call.args
+    )
 
 
 def _bound_name_identity_assertion(expression, function, namespace_closed):
@@ -620,13 +627,56 @@ def _module_pass_context_closed(module, namespace_closed):
     return bool(namespace_closed)
 
 
-def _module_pass_helpers(module, stores, test, namespace_closed=None):
-    if not _module_pass_context_closed(module, namespace_closed):
+def _module_helper_kind(function):
+    if isinstance(function, ast.FunctionDef):
+        if _inert_helper_signature(function) and _inert_helper_stub(function):
+            return "stub"
+        if _callback_helper_parameter(function) is not None:
+            return "callback"
+    if isinstance(function, ast.AsyncFunctionDef) and _inert_definition(function):
+        args = function.args
+        if not any(
+            (
+                args.posonlyargs,
+                args.args,
+                args.vararg,
+                args.kwonlyargs,
+                args.kwarg,
+                args.defaults,
+                args.kw_defaults,
+            )
+        ):
+            return "coroutine"
+    return None
+
+
+def _module_pass_helpers(
+    module, stores, test, namespace_closed=None, *, include_callbacks=False
+):
+    if not include_callbacks and not _module_pass_context_closed(
+        module, namespace_closed
+    ):
         return {}
-    if any(
-        isinstance(node, ast.ImportFrom)
-        and any(alias.name == "*" for alias in node.names)
-        for node in ast.walk(module)
+    if namespace_closed is None:
+        namespace_closed = _module_namespace_access_closed(module)
+    candidates = [
+        (item, _module_helper_kind(item))
+        for item in module.body
+        if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+    ]
+    candidates = [
+        (item, kind)
+        for item, kind in candidates
+        if kind is not None and (include_callbacks or kind == "stub")
+    ]
+    if (
+        not namespace_closed
+        or not candidates
+        or any(
+            isinstance(node, ast.ImportFrom)
+            and any(alias.name == "*" for alias in node.names)
+            for node in ast.walk(module)
+        )
     ):
         return {}
     definitions, imports = _module_bindings(module)
@@ -636,28 +686,84 @@ def _module_pass_helpers(module, stores, test, namespace_closed=None):
         for child in ast.iter_child_nodes(parent)
     }
     test_nodes = {id(child) for child in ast.walk(test)}
+    references = {}
+    for node in ast.walk(module):
+        if isinstance(node, ast.Name):
+            references.setdefault(node.id, []).append(node)
     helpers = {}
-    for item in module.body:
+    for item, kind in candidates:
         if (
-            not isinstance(item, ast.FunctionDef)
-            or item.name in stores
+            item.name in stores
+            or _module_binding_conflict(module, item.name, item)
             or definitions.get(item.name) != 1
             or item.name in imports
         ):
             continue
-        if not _inert_helper_signature(item) or not _inert_helper_stub(item):
-            continue
-        refs = [
-            n for n in ast.walk(module) if isinstance(n, ast.Name) and n.id == item.name
-        ]
-        if refs and all(
-            id(n) in test_nodes
-            and isinstance(parents.get(n), ast.Call)
-            and parents[n].func is n
-            for n in refs
-        ):
+        refs = references.get(item.name, ())
+        if kind == "coroutine":
+            closed = any(id(node) in test_nodes for node in refs) and all(
+                isinstance(parents.get(node), ast.Call)
+                and parents[node].func is node
+                and not parents[node].args
+                and not parents[node].keywords
+                for node in refs
+            )
+        else:
+            closed = _module_helper_references_closed(
+                refs, parents, test_nodes, allow_assignment=kind == "stub"
+            )
+        if closed:
             helpers[item.name] = item
     return helpers
+
+
+def _module_helper_references_closed(
+    references, parents, test_nodes, *, allow_assignment=False
+):
+    if not references:
+        return False
+    for reference in references:
+        if id(reference) not in test_nodes:
+            return False
+        parent = parents.get(reference)
+        if isinstance(parent, ast.Call) and parent.func is reference:
+            continue
+        targets = (
+            parent.targets
+            if isinstance(parent, ast.Assign)
+            else (parent.target,)
+            if isinstance(parent, ast.AnnAssign)
+            else ()
+        )
+        if not (
+            allow_assignment
+            and isinstance(parent, (ast.Assign, ast.AnnAssign))
+            and parent.value is reference
+            and len(targets) == 1
+            and isinstance(targets[0], ast.Name)
+        ):
+            return False
+    return True
+
+
+def _module_binding_conflict(module, name, definition):
+    for node in ast.walk(module):
+        if node is definition:
+            continue
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            if node.name == name:
+                return True
+        elif isinstance(node, ast.alias):
+            bound = node.asname or node.name.split(".", 1)[0]
+            if bound == name:
+                return True
+        elif isinstance(node, ast.ExceptHandler) and node.name == name:
+            return True
+        elif (isinstance(node, (ast.MatchAs, ast.MatchStar)) and node.name == name) or (
+            isinstance(node, ast.MatchMapping) and node.rest == name
+        ):
+            return True
+    return False
 
 
 def _local_literal_returns(test, namespace_closed=None):
@@ -966,7 +1072,9 @@ def _completion_context(test):
         names = _completion_import_names(module, names, stores, providers)
         _simple_exception_classes(module, names, bases, stores, test)
         literal_functions = _local_literal_returns(test, namespace_closed)
-        helpers = _module_pass_helpers(module, stores, test, namespace_closed)
+        helpers = _module_pass_helpers(
+            module, stores, test, namespace_closed, include_callbacks=True
+        )
     else:
         names, bases, literal_functions, helpers = {}, {}, {}, {}
     literal_calls = {
@@ -1062,21 +1170,14 @@ def _helper_alias(stmt, helpers):
     )
 
 
-def _callback_helper(function, call, helpers):
+def _callback_helper_parameter(function):
     if (
         not isinstance(function, ast.FunctionDef)
-        or call.keywords
-        or len(call.args) != 1
-        or not isinstance(call.args[0], ast.Name)
+        or not _inert_definition(function)
         or len(function.body) != 1
         or not isinstance(function.body[0], ast.Expr)
         or not isinstance(function.body[0].value, ast.Call)
     ):
-        return None
-    callback = helpers.get(call.args[0].id)
-    if not isinstance(callback, (ast.FunctionDef, ast.AsyncFunctionDef)):
-        return None
-    if _function_needs_arguments(callback):
         return None
     invoke = function.body[0].value
     if invoke.args or invoke.keywords:
@@ -1106,10 +1207,27 @@ def _callback_helper(function, call, helpers):
         and type(invoke.func.slice.value) is int
         and invoke.func.slice.value == 0
     )
-    return callback if direct_parameter_call or first_vararg_call else None
+    if direct_parameter_call:
+        return parameters[0].arg
+    return function.args.vararg.arg if first_vararg_call else None
+
+
+def _callback_helper(function, call, helpers):
+    if call.keywords or len(call.args) != 1 or not isinstance(call.args[0], ast.Name):
+        return None
+    callback = helpers.get(call.args[0].id)
+    if (
+        not isinstance(callback, (ast.FunctionDef, ast.AsyncFunctionDef))
+        or _function_needs_arguments(callback)
+        or _callback_helper_parameter(function) is None
+    ):
+        return None
+    return callback
 
 
 def _run_inert_helper(helper, context, helpers):
+    if not _inert_definition(helper):
+        return "UNKNOWN", None
     if isinstance(helper, ast.AsyncFunctionDef):
         return "NORMAL", None
     active = context.get("active_helpers", ())
@@ -1152,7 +1270,9 @@ def _inert_expression(node, known, helpers, context):
         helper = helpers[node.func.id]
         if not node.args and not _function_needs_arguments(helper):
             return _run_inert_helper(helper, context, helpers)
-        if _inert_helper_call(node, helper, known, context.get("literal_calls")):
+        if _inert_helper_call(
+            node, helper, known, context.get("literal_calls"), helpers
+        ):
             return "NORMAL", None
         callback = _callback_helper(helper, node, helpers)
         if callback is not None:
@@ -1522,6 +1642,9 @@ INERT_BODY_HELPERS = (
     _simple_exception_classes,
     _module_pass_context_closed,
     _module_pass_helpers,
+    _module_helper_references_closed,
+    _module_binding_conflict,
+    _module_helper_kind,
     _inert_helper_stub,
     _inert_helper_signature,
     _inert_helper_call,
@@ -1543,6 +1666,7 @@ INERT_BODY_HELPERS = (
     _literal_empty_lambda,
     _literal_lambda_binding_closed,
     _helper_alias,
+    _callback_helper_parameter,
     _callback_helper,
     _run_inert_helper,
     _track_inert_definition,
