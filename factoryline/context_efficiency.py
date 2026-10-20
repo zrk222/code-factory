@@ -220,6 +220,7 @@ def oracle_context_cache_context(item, decode_structural_context):
         "codspeed_benchmark": item.get("codspeed_benchmark", False),
         "async_runner_fixtures": item.get("async_runner_fixtures", {}),
         "mock_fixture_provenance": item.get("mock_fixture_provenance", {}),
+        "django_fixture_evidence": item.get("django_fixture_evidence", {}),
         "protocol_observations": item.get("protocol_observations", {}),
         "autouse_lifecycle": item.get("autouse_lifecycle", []),
         "requested_fixture_lifecycle": item.get("requested_fixture_lifecycle", []),
@@ -244,6 +245,7 @@ def oracle_context_cache_record(path, context, encode_structural_context):
         "codspeed_benchmark": context.get("codspeed_benchmark", False),
         "async_runner_fixtures": context.get("async_runner_fixtures", {}),
         "mock_fixture_provenance": context.get("mock_fixture_provenance", {}),
+        "django_fixture_evidence": context.get("django_fixture_evidence", {}),
         "protocol_observations": context.get("protocol_observations", {}),
         "autouse_lifecycle": context.get("autouse_lifecycle", []),
         "requested_fixture_lifecycle": context.get("requested_fixture_lifecycle", []),
@@ -261,6 +263,75 @@ def typecheck_cache_helpers(contracts):
     )
 
 
+def bind_django_fixture_context(
+    root,
+    snapshots,
+    contexts,
+    bindings,
+    read_source,
+    limit,
+    *,
+    source_bytes=None,
+    source_inventory=None,
+):
+    """Use existing byte bindings and parse trees; cache only evidence projections."""
+    from . import mock_fixture_provenance as fixture
+    from . import review_audits as audit
+
+    if not isinstance(source_bytes, dict) or not isinstance(source_inventory, dict):
+        return
+    captured = {path: source_bytes.get(path) for path in snapshots}
+    inventory = {path: source_inventory.get(path) for path in snapshots}
+    configs = _captured_fixture_configuration(root, bindings, read_source, limit)
+    if not configs or any(not isinstance(raw, bytes) for raw in captured.values()):
+        return
+    index = fixture.django_test_secret_index(
+        root, snapshots, configs, source_bytes=captured, inventory=inventory
+    )
+    if index is None:
+        return
+    for path, tree in snapshots.items():
+        evidence = {}
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.Assign, ast.AnnAssign)):
+                continue
+            literal = audit._secret_literal(node)
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            if literal is None or len(targets) != 1:
+                continue
+            if not isinstance(
+                targets[0], ast.Name
+            ) or not audit._SECRET_ASSIGNMENT.search(targets[0].id):
+                continue
+            item = fixture.django_test_secret_evidence(
+                index, path, node.value.lineno, literal
+            )
+            if item.get("eligible") is True:
+                evidence[f"{node.lineno}:{node.col_offset}:{targets[0].id}"] = item
+        contexts[path]["django_fixture_evidence"] = evidence
+
+
+def _captured_fixture_configuration(root, bindings, read_source, limit):
+    """Re-read only known configuration inputs, rejecting a changed capture."""
+    selected = {
+        row["path"]: row
+        for row in bindings
+        if row["path"] in {"pyproject.toml", "tox.ini"}
+    }
+    if set(selected) != {"pyproject.toml", "tox.ini"}:
+        return {}
+    result = {}
+    for name, binding in selected.items():
+        try:
+            raw = read_source(root, name)
+        except (OSError, ValueError, RuntimeError):
+            return {}
+        if len(raw) > limit or hashlib.sha256(raw).hexdigest() != binding["sha256"]:
+            return {}
+        result[name] = raw
+    return result
+
+
 def provider_context_cache_helpers(contracts):
     """Return the source inventory and cache helpers in the cache epoch."""
     return (
@@ -273,6 +344,8 @@ def provider_context_cache_helpers(contracts):
         _provider_package_initializers,
         oracle_context_cache_context,
         oracle_context_cache_record,
+        bind_django_fixture_context,
+        _captured_fixture_configuration,
         provider_cache_fields,
         provider_source_inventory,
         typecheck_cache_helpers,

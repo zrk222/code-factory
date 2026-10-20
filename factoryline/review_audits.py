@@ -1551,6 +1551,9 @@ def _literal_assignment_diagnostics(
     for target in targets:
         finding = _literal_assignment_diagnostic(relative, node, target, aliases)
         if finding is not None:
+            from .primitive_observation_binding import annotate_django_fixture
+
+            finding = annotate_django_fixture(finding, node)
             findings.append(finding)
     return findings
 
@@ -3967,6 +3970,18 @@ def _project_oracle_context(
     )
     bind_provider_inventory(contexts, python_inventory)
     integrity.bind_benchmark_context(contexts, snapshots, benchmarks)
+    from .context_efficiency import bind_django_fixture_context
+
+    bind_django_fixture_context(
+        root,
+        snapshots,
+        contexts,
+        config_bindings,
+        _security_source_bytes,
+        MAX_BYTES,
+        source_bytes=source_bytes,
+        source_inventory=source_hashes,
+    )
     resolved = contracts._project_import_views(import_views, snapshots)
     integrity.bind_fixed_program_workspace(
         root, contexts, snapshots, files, source_bytes, resolved

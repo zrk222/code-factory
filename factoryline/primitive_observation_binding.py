@@ -10,6 +10,8 @@ def fixed_primitive_binding(finding, sources, bindings, integrity):
     from .credential_endpoint_evidence import endpoint_binding
 
     facts = finding.get("facts", {})
+    if facts.get("disposition") == "TEST_OWNED_LOCAL_FIXTURE":
+        return django_fixture_binding(finding, sources, bindings)
     if facts.get("disposition") == "ENDPOINT_DECLARATION_ROLE_PROVEN":
         return endpoint_binding(finding, sources, bindings)
     if facts.get("disposition") == "PROVEN_PUBLIC_SYMBOLIC_IDENTIFIER":
@@ -93,16 +95,18 @@ def partition_proven_primitive_observations(core, audit):
             "PROVEN_PUBLIC_SYMBOLIC_IDENTIFIER",
             "PROVEN_FINITE_TEMPLATE_INPUT",
             "ENDPOINT_DECLARATION_ROLE_PROVEN",
+            "TEST_OWNED_LOCAL_FIXTURE",
         }:
             retained.append(finding)
             continue
         touched = True
         endpoint_complete = (
-            facts.get("disposition") != "ENDPOINT_DECLARATION_ROLE_PROVEN"
+            facts.get("disposition")
+            not in {"ENDPOINT_DECLARATION_ROLE_PROVEN", "TEST_OWNED_LOCAL_FIXTURE"}
             or core.get("audit_coverage", {}).get("complete") is True
         )
-        if endpoint_complete and audit._fixed_primitive_binding(
-            finding, core.get("sources", []), bindings
+        if endpoint_complete and _current_primitive_binding(
+            finding, core, bindings, audit
         ):
             proved.append(finding)
         else:
@@ -125,6 +129,98 @@ def partition_proven_primitive_observations(core, audit):
         core.get("audit_coverage"),
     )
     core["action_summary"] = _security_scan_action_summary(core["state"])
+
+
+def _current_primitive_binding(finding, core, bindings, audit):
+    sources = core.get("sources", [])
+    if finding.get("facts", {}).get("disposition") == "TEST_OWNED_LOCAL_FIXTURE":
+        configs = core.get("oracle_context", {}).get("configuration_sources", [])
+        sources = [*sources, *configs]
+        bindings = {row["path"]: row["sha256"] for row in sources}
+    return audit._fixed_primitive_binding(finding, sources, bindings)
+
+
+def annotate_django_fixture(finding, node):
+    """Retain the original severity and primitive; attach captured owner evidence."""
+    from . import review_integrity as integrity
+
+    module = integrity._security_module_scope(
+        getattr(node, "_security_lexical_scope", None)
+    )
+    context = getattr(module, "_security_oracle_context", {})
+    facts = finding.get("facts", {})
+    key = f"{node.lineno}:{node.col_offset}:{facts.get('name')}"
+    item = context.get("django_fixture_evidence", {}).get(key)
+    if not isinstance(item, dict) or item.get("eligible") is not True:
+        return finding
+    if item.get("source_sha256") != getattr(module, "_oracle_source_sha256", None):
+        return finding
+    proof = {
+        **facts,
+        "schema": "factory.test-owned-credential.v1",
+        "disposition": "TEST_OWNED_LOCAL_FIXTURE",
+        "fixture_evidence": item,
+        "declaration_span": [
+            node.lineno,
+            node.col_offset,
+            node.end_lineno,
+            node.end_col_offset,
+        ],
+        "runtime_assurance": "INCOMPLETE",
+        "target_execution": "not_performed",
+    }
+    proof["proof_facts_sha256"] = hashlib.sha256(
+        json.dumps(proof, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    return {**finding, "facts": proof}
+
+
+def django_fixture_binding(finding, sources, bindings):
+    """Validate the full analyzed inventory and config identity before partition."""
+    facts = finding.get("facts", {})
+    evidence = facts.get("fixture_evidence", {})
+    if not isinstance(evidence, dict):
+        return False
+    configs = evidence.get("runner_config_sha256", {})
+    if not isinstance(configs, dict) or set(configs) != {"pyproject.toml", "tox.ini"}:
+        return False
+    paths = [row["path"] for row in sources]
+    if len(paths) != len(set(paths)):
+        return False
+    inventory = {
+        row["path"]: row["sha256"] for row in sources if row["path"].endswith(".py")
+    }
+    if any(bindings.get(name) != digest for name, digest in configs.items()):
+        return False
+    inventory.update(configs)
+    digest = hashlib.sha256(
+        "\n".join(
+            sorted(f"{name}\0{value}" for name, value in inventory.items())
+        ).encode()
+    ).hexdigest()
+    unsigned = {
+        name: value for name, value in facts.items() if name != "proof_facts_sha256"
+    }
+    return (
+        finding.get("code") == "SECURITY_HARDCODED_SECRET"
+        and facts.get("disposition") == "TEST_OWNED_LOCAL_FIXTURE"
+        and facts.get("schema") == "factory.test-owned-credential.v1"
+        and evidence.get("classification") == "TEST_OWNED_LOCAL_FIXTURE"
+        and evidence.get("eligible") is True
+        and evidence.get("source") == finding.get("path")
+        and finding.get("path") in bindings
+        and isinstance(evidence.get("source_sha256"), str)
+        and re.fullmatch(r"[0-9a-f]{64}", evidence["source_sha256"]) is not None
+        and evidence.get("source_sha256") == bindings.get(finding.get("path"))
+        and evidence.get("inventory_sha256") == digest
+        and valid_source_span(facts.get("declaration_span"))
+        and facts["declaration_span"][:2]
+        == [finding.get("line"), finding.get("column")]
+        and facts.get("proof_facts_sha256")
+        == hashlib.sha256(
+            json.dumps(unsigned, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+    )
 
 
 def closed_declaration_binding(finding, audit):
@@ -384,6 +480,9 @@ def primitive_binding_helpers():
         fixed_primitive_binding,
         rejected_primitive_proof,
         partition_proven_primitive_observations,
+        _current_primitive_binding,
+        annotate_django_fixture,
+        django_fixture_binding,
         closed_declaration_binding,
         valid_source_span,
         finite_eval_binding,
