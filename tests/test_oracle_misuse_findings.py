@@ -74,22 +74,27 @@ def test_specific_local_defect_survives_an_independent_strong_assertion(tmp_path
     assert "nonempty container assertion" in findings[0]["message"]
 
 
-def test_security_scan_reports_discarded_comparison_as_local_oracle_defect(tmp_path):
+@pytest.mark.parametrize(
+    "body,expected",
+    [
+        ("return 'plain'", "QUALITY_HOLLOW_TEST"),
+        ("return load_style()", "QUALITY_WEAK_TEST_ORACLE"),
+    ],
+)
+def test_discarded_comparison_requires_whole_body_completion(tmp_path, body, expected):
     (tmp_path / "test_style.py").write_text(
-        "def get_style(): return 'plain'\n"
-        "def test_style():\n    get_style() == 'minimal'\n",
+        f"def get_style(): {body}\ndef test_style():\n    get_style() == 'minimal'\n",
         encoding="utf-8",
     )
     report = security_scan(tmp_path, cache_enabled=False)
-    findings = [
-        item
-        for item in report["findings"]
-        if item["code"] == "QUALITY_WEAK_TEST_ORACLE"
-    ]
+    findings = [item for item in report["findings"] if item["code"] == expected]
     assert len(findings) == 1
     assert findings[0]["severity"] == "MEDIUM"
-    assert "comparison result is discarded" in findings[0]["message"]
-    assert findings[0]["facts"]["whole_test_oracle"] == "UNASSESSED"
+    if expected == "QUALITY_WEAK_TEST_ORACLE":
+        assert "comparison result is discarded" in findings[0]["message"]
+        assert findings[0]["facts"]["whole_test_oracle"] == "UNASSESSED"
+    else:
+        assert report["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
 
 
 def test_comparison_result_consumed_with_side_effect_is_not_discarded(tmp_path):
@@ -140,18 +145,20 @@ def test_global_callback_binding_is_not_proven_uninvoked(tmp_path):
     assert "QUALITY_WEAK_TEST_ORACLE" not in report["finding_counts"]
 
 
-def test_ordinary_compute_smoke_remains_unknown_info(tmp_path):
+@pytest.mark.parametrize(
+    "body,expected,severity",
+    [
+        ("return 4", "QUALITY_HOLLOW_TEST", "MEDIUM"),
+        ("return product()", "QUALITY_UNKNOWN_TEST_ORACLE", "INFO"),
+    ],
+)
+def test_compute_smoke_requires_closed_completion(tmp_path, body, expected, severity):
     (tmp_path / "test_smoke.py").write_text(
-        "def compute(): return 4\ndef test_smoke(): compute()\n", encoding="utf-8"
+        f"def compute(): {body}\ndef test_smoke(): compute()\n", encoding="utf-8"
     )
     report = security_scan(tmp_path, cache_enabled=False)
-    unknown = [
-        item
-        for item in report["findings"]
-        if item["code"] == "QUALITY_UNKNOWN_TEST_ORACLE"
-    ]
-    assert len(unknown) == 1
-    assert unknown[0]["severity"] == "INFO"
+    assert report["finding_counts"] == {expected: 1}
+    assert report["findings"][0]["severity"] == severity
     assert "QUALITY_WEAK_TEST_ORACLE" not in report["finding_counts"]
 
 
