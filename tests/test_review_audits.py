@@ -1769,17 +1769,39 @@ def test_repeated_descriptor_and_index_reads_are_not_tautologies(tmp_path, expre
 
 
 @pytest.mark.parametrize(
-    "expression",
-    ["obj is obj", "obj == obj", "obj <= obj", "obj >= obj", "True", "1 == 1"],
+    "expression,diagnostic",
+    [
+        ("obj is obj", "QUALITY_HOLLOW_TEST"),
+        ("obj == obj", "QUALITY_UNKNOWN_TEST_ORACLE"),
+        ("obj <= obj", "QUALITY_UNKNOWN_TEST_ORACLE"),
+        ("obj >= obj", "QUALITY_UNKNOWN_TEST_ORACLE"),
+        ("True", "QUALITY_HOLLOW_TEST"),
+        ("1 == 1", "QUALITY_HOLLOW_TEST"),
+    ],
 )
-def test_repeated_local_values_remain_hollow(tmp_path, expression):
+def test_repeated_local_values_require_identity_or_literal_proof(
+    tmp_path, expression, diagnostic
+):
     (tmp_path / "test_case.py").write_text(
         f"def test_behavior(obj):\n    assert {expression}\n", encoding="utf-8"
     )
-    assert any(
-        finding["code"] == "QUALITY_HOLLOW_TEST"
-        for finding in security_scan(tmp_path)["findings"]
+    report = security_scan(tmp_path)
+    assert report["finding_counts"] == {diagnostic: 1}
+    assert report["findings"][0]["severity"] == (
+        "INFO" if diagnostic == "QUALITY_UNKNOWN_TEST_ORACLE" else "MEDIUM"
     )
+    if diagnostic == "QUALITY_UNKNOWN_TEST_ORACLE":
+        # Unknown objects can overload comparisons; even ordinary float NaN
+        # falsifies all three expressions. Repeated spelling is not a proof.
+        import operator
+
+        compare = {
+            "obj == obj": operator.eq,
+            "obj <= obj": operator.le,
+            "obj >= obj": operator.ge,
+        }[expression]
+        value = float("nan")
+        assert compare(value, value) is False
 
 
 def test_hollow_callback_report_provides_native_assertion_probe(tmp_path):
