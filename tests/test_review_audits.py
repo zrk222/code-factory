@@ -8345,27 +8345,31 @@ def test_security_scan_does_not_collect_nested_test_named_helper(tmp_path, neste
     "invoke, assertion, expected",
     [
         ("runner.invoke(cli, catch_exceptions=False)", "assert compute() == 4", {}),
-        ("runner.invoke(cli)", "assert compute() == 4", {"QUALITY_HOLLOW_TEST": 1}),
+        (
+            "runner.invoke(cli)",
+            "assert compute() == 4",
+            {"QUALITY_UNKNOWN_TEST_ORACLE": 1},
+        ),
         (
             "runner.invoke(cli, catch_exceptions=True)",
             "assert compute() == 4",
-            {"QUALITY_HOLLOW_TEST": 1},
+            {"QUALITY_UNKNOWN_TEST_ORACLE": 1},
         ),
         (
             "runner.invoke(cli, catch_exceptions=False)",
             "assert True",
-            {"QUALITY_HOLLOW_TEST": 1},
+            {"QUALITY_UNKNOWN_TEST_ORACLE": 1},
         ),
         (
             "runner.invoke(cli, catch_exceptions=False)",
             "assert compute() is not None",
             {"QUALITY_WEAK_TEST_ORACLE": 1},
         ),
-        ("pass", "assert compute() == 4", {"QUALITY_HOLLOW_TEST": 1}),
+        ("pass", "assert compute() == 4", {"QUALITY_WEAK_TEST_ORACLE": 1}),
         (
             "runner.invoke(other, catch_exceptions=False)",
             "assert compute() == 4",
-            {"QUALITY_HOLLOW_TEST": 1},
+            {"QUALITY_WEAK_TEST_ORACLE": 1},
         ),
         (
             "runner.invoke(cli, catch_exceptions=False)\n    assert result.output == 'expected'",
@@ -8387,22 +8391,68 @@ def test_security_scan_follows_only_invoked_noncatching_click_callback(
 
 
 @pytest.mark.parametrize(
-    "body",
+    "body,expected",
     [
-        "try:\n        runner.invoke(cli, catch_exceptions=False)\n    except AssertionError:\n        pass",
-        "with suppress(AssertionError):\n        runner.invoke(cli, catch_exceptions=False)",
-        "with suppress(Exception):\n        runner.invoke(cli, catch_exceptions=False)",
-        "if False:\n        runner.invoke(cli, catch_exceptions=False)",
-        "return\n    runner.invoke(cli, catch_exceptions=False)",
-        "runner = fake_runner\n    runner.invoke(cli, catch_exceptions=False)",
-        "runner.invoke = swallow\n    runner.invoke(cli, catch_exceptions=False)",
-        "setattr(runner, 'invoke', swallow)\n    runner.invoke(cli, catch_exceptions=False)",
-        "configure(runner)\n    runner.invoke(cli, catch_exceptions=False)",
-        "other = runner\n    other.invoke = swallow\n    runner.invoke(cli, catch_exceptions=False)",
-        "cli = other\n    runner.invoke(cli, catch_exceptions=False)",
+        pytest.param(
+            "try:\n        runner.invoke(cli, catch_exceptions=False)\n    except AssertionError:\n        pass",
+            "QUALITY_UNKNOWN_TEST_ORACLE",
+            id="swallowed-assertion",
+        ),
+        pytest.param(
+            "with suppress(AssertionError):\n        runner.invoke(cli, catch_exceptions=False)",
+            "QUALITY_UNKNOWN_TEST_ORACLE",
+            id="suppressed-assertion",
+        ),
+        pytest.param(
+            "with suppress(Exception):\n        runner.invoke(cli, catch_exceptions=False)",
+            "QUALITY_UNKNOWN_TEST_ORACLE",
+            id="suppressed-exception",
+        ),
+        pytest.param(
+            "if False:\n        runner.invoke(cli, catch_exceptions=False)",
+            "QUALITY_WEAK_TEST_ORACLE",
+            id="unreachable-if",
+        ),
+        pytest.param(
+            "return\n    runner.invoke(cli, catch_exceptions=False)",
+            "QUALITY_WEAK_TEST_ORACLE",
+            id="after-return",
+        ),
+        pytest.param(
+            "runner = fake_runner\n    runner.invoke(cli, catch_exceptions=False)",
+            "QUALITY_UNKNOWN_TEST_ORACLE",
+            id="rebound-runner",
+        ),
+        pytest.param(
+            "runner.invoke = swallow\n    runner.invoke(cli, catch_exceptions=False)",
+            "QUALITY_UNKNOWN_TEST_ORACLE",
+            id="rebound-invoke",
+        ),
+        pytest.param(
+            "setattr(runner, 'invoke', swallow)\n    runner.invoke(cli, catch_exceptions=False)",
+            "QUALITY_UNKNOWN_TEST_ORACLE",
+            id="setattr-invoke",
+        ),
+        pytest.param(
+            "configure(runner)\n    runner.invoke(cli, catch_exceptions=False)",
+            "QUALITY_UNKNOWN_TEST_ORACLE",
+            id="escaped-runner",
+        ),
+        pytest.param(
+            "other = runner\n    other.invoke = swallow\n    runner.invoke(cli, catch_exceptions=False)",
+            "QUALITY_UNKNOWN_TEST_ORACLE",
+            id="mutated-runner-alias",
+        ),
+        pytest.param(
+            "cli = other\n    runner.invoke(cli, catch_exceptions=False)",
+            "QUALITY_UNKNOWN_TEST_ORACLE",
+            id="rebound-command",
+        ),
     ],
 )
-def test_security_scan_keeps_swallowed_or_rebound_click_callback_hollow(tmp_path, body):
+def test_security_scan_keeps_swallowed_or_rebound_click_callback_hollow(
+    tmp_path, body, expected
+):
     (tmp_path / "test_case.py").write_text(
         "import click\nfrom click.testing import CliRunner\n"
         "from contextlib import suppress\ndef test_behavior():\n"
@@ -8410,7 +8460,7 @@ def test_security_scan_keeps_swallowed_or_rebound_click_callback_hollow(tmp_path
         "    runner = CliRunner()\n    " + body + "\n",
         encoding="utf-8",
     )
-    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+    assert security_scan(tmp_path)["finding_counts"] == {expected: 1}
 
 
 @pytest.mark.parametrize(
@@ -8441,7 +8491,9 @@ def test_security_scan_rejects_unproven_click_callback_propagation(
         "    runner = CliRunner()\n    runner.invoke(cli, catch_exceptions=False)\n",
         encoding="utf-8",
     )
-    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+    assert security_scan(tmp_path)["finding_counts"] == {
+        "QUALITY_UNKNOWN_TEST_ORACLE": 1
+    }
 
 
 @pytest.mark.parametrize(
