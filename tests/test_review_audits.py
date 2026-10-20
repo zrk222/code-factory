@@ -2271,7 +2271,7 @@ def test_security_scan_does_not_credit_nested_helper_before_definition(tmp_path)
 
 
 @pytest.mark.parametrize(
-    "source,hollow",
+    "source,expected",
     [
         (
             "import asyncio\nasync def compute():\n    return 3\n"
@@ -2279,7 +2279,7 @@ def test_security_scan_does_not_credit_nested_helper_before_definition(tmp_path)
             "def test_behavior():\n"
             "    async def check():\n        assert await compute() == 3\n"
             "    run_async_fn(check)\n",
-            False,
+            "NONE",
         ),
         (
             "import asyncio\nasync def compute():\n    return 3\n"
@@ -2287,7 +2287,7 @@ def test_security_scan_does_not_credit_nested_helper_before_definition(tmp_path)
             "    async def check():\n        assert await compute() == 3\n"
             "    loop = asyncio.new_event_loop()\n"
             "    loop.run_until_complete(check())\n    loop.close()\n",
-            False,
+            "NONE",
         ),
         (
             "import asyncio\nasync def compute():\n    return 3\n"
@@ -2295,7 +2295,7 @@ def test_security_scan_does_not_credit_nested_helper_before_definition(tmp_path)
             "def test_behavior():\n"
             "    async def check():\n        assert await compute() == 3\n"
             "    run_async_fn(check)\n",
-            True,
+            "HOLLOW",
         ),
         (
             "import asyncio\nasync def compute():\n    return 3\n"
@@ -2304,7 +2304,7 @@ def test_security_scan_does_not_credit_nested_helper_before_definition(tmp_path)
             "    async def check():\n        assert await compute() == 3\n"
             "    try:\n        run_async_fn(check)\n"
             "    except AssertionError:\n        pass\n",
-            True,
+            "UNKNOWN",
         ),
         (
             "import asyncio\nasync def compute():\n    return 3\n"
@@ -2314,7 +2314,7 @@ def test_security_scan_does_not_credit_nested_helper_before_definition(tmp_path)
             "        try:\n            assert await compute() == 3\n"
             "        except AssertionError:\n            pass\n"
             "    run_async_fn(check)\n",
-            True,
+            "UNKNOWN",
         ),
         (
             "import asyncio\nasync def compute():\n    return 3\n"
@@ -2323,7 +2323,7 @@ def test_security_scan_does_not_credit_nested_helper_before_definition(tmp_path)
             "    asyncio = Fake()\n"
             "    loop = asyncio.new_event_loop()\n"
             "    loop.run_until_complete(check())\n",
-            True,
+            "UNKNOWN",
         ),
         (
             "import asyncio\nasync def compute():\n    return 3\n"
@@ -2332,7 +2332,7 @@ def test_security_scan_does_not_credit_nested_helper_before_definition(tmp_path)
             "def test_behavior():\n"
             "    async def check():\n        assert await compute() == 3\n"
             "    run_async_fn(check)\n",
-            True,
+            "UNKNOWN",
         ),
         (
             "import asyncio as aio\nimport asyncio\n"
@@ -2342,7 +2342,7 @@ def test_security_scan_does_not_credit_nested_helper_before_definition(tmp_path)
             "def test_behavior():\n"
             "    async def check():\n        assert await compute() == 3\n"
             "    run_async_fn(check)\n",
-            True,
+            "UNKNOWN",
         ),
         (
             "import asyncio as poison\nimport asyncio\n"
@@ -2352,7 +2352,7 @@ def test_security_scan_does_not_credit_nested_helper_before_definition(tmp_path)
             "def test_behavior():\n"
             "    async def check():\n        assert await compute() == 3\n"
             "    run_async_fn(check)\n",
-            True,
+            "UNKNOWN",
         ),
         (
             "import asyncio\nasync def compute():\n    return 3\n"
@@ -2361,7 +2361,7 @@ def test_security_scan_does_not_credit_nested_helper_before_definition(tmp_path)
             "def test_behavior():\n"
             "    async def check():\n        assert await compute() == 3\n"
             "    run_async_fn(check)\n",
-            True,
+            "UNKNOWN",
         ),
         (
             "import asyncio\nasync def compute():\n    return 3\n"
@@ -2370,7 +2370,7 @@ def test_security_scan_does_not_credit_nested_helper_before_definition(tmp_path)
             "def test_behavior():\n"
             "    async def check():\n        assert await compute() == 3\n"
             "    run_async_fn(check)\n",
-            True,
+            "UNKNOWN",
         ),
         (
             "import asyncio\nasync def compute():\n    return 3\n"
@@ -2378,7 +2378,7 @@ def test_security_scan_does_not_credit_nested_helper_before_definition(tmp_path)
             "def test_behavior():\n"
             "    run_async_fn(check)\n"
             "    async def check():\n        assert await compute() == 3\n",
-            True,
+            "UNKNOWN",
         ),
         (
             "import asyncio\nasync def compute():\n    return 3\n"
@@ -2387,21 +2387,21 @@ def test_security_scan_does_not_credit_nested_helper_before_definition(tmp_path)
             "def test_behavior():\n"
             "    async def check():\n        assert await compute() == 3\n"
             "    run_async_fn = noop\n    run_async_fn(check)\n",
-            True,
+            "HOLLOW",
         ),
         (
             "async def compute():\n    return 3\n"
             "def test_behavior():\n"
             "    async def check():\n        assert await compute() == 3\n"
             "    pass\n",
-            True,
+            "HOLLOW",
         ),
         (
             "async def compute():\n    return 3\n"
             "def test_behavior():\n"
             "    async def check():\n        assert await compute() == 3\n"
             "    check()\n",
-            True,  # Exact local coroutine creation never enters the assertion body.
+            "HOLLOW",  # Exact local coroutine creation never enters the assertion body.
         ),
         (
             "import asyncio\nasync def compute():\n    return 3\n"
@@ -2410,7 +2410,7 @@ def test_security_scan_does_not_credit_nested_helper_before_definition(tmp_path)
             "    async def check():\n        assert await compute() == 3\n"
             "    run_async_fn(check)\n"
             "def test_genuinely_hollow():\n    compute()\n",
-            True,
+            "HOLLOW",
         ),
     ],
     ids=[
@@ -2433,12 +2433,15 @@ def test_security_scan_does_not_credit_nested_helper_before_definition(tmp_path)
     ],
 )
 def test_nested_async_assertion_requires_proven_completion(
-    tmp_path, source, hollow, request
+    tmp_path, source, expected, request
 ):
     (tmp_path / "test_async.py").write_text(source, encoding="utf-8")
     report = security_scan(tmp_path, cache_enabled=False)
     findings = report["finding_counts"]
-    assert findings.get("QUALITY_HOLLOW_TEST", 0) == int(hollow)
+    # Source-proven discarded coroutine/callback paths are HOLLOW. Opaque
+    # runner effects, unresolved bindings and unproven mutations stay UNKNOWN.
+    assert findings.get("QUALITY_HOLLOW_TEST", 0) == int(expected == "HOLLOW")
+    assert findings.get("QUALITY_UNKNOWN_TEST_ORACLE", 0) == int(expected == "UNKNOWN")
     if request.node.callspec.id == "unawaited-direct-helper":
         assert findings.get("QUALITY_UNKNOWN_TEST_ORACLE", 0) == 0
         assert findings["QUALITY_HOLLOW_TEST"] == 1
