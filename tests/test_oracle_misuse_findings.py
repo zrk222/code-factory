@@ -236,3 +236,37 @@ def test_unresolved_or_effectful_helpers_remain_unknown(tmp_path, source):
     report = security_scan(tmp_path, cache_enabled=False)
 
     assert report["finding_counts"] == {"QUALITY_UNKNOWN_TEST_ORACLE": 1}
+
+
+def test_parameter_self_identity_is_proven_inert(tmp_path):
+    (tmp_path / "test_identity.py").write_text(
+        "def test_case(obj):\n    assert obj is obj\n", encoding="utf-8"
+    )
+    report = security_scan(tmp_path, cache_enabled=False)
+    assert report["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "def test_case(obj):\n    assert obj == obj\n",
+        "def test_case(obj):\n    assert obj <= obj\n",
+        "def test_case(obj):\n    assert obj >= obj\n",
+        "def test_case(obj):\n    obj = 1\n    assert obj is obj\n",
+        "def test_case(obj):\n    del obj\n    assert obj is obj\n",
+        "def test_case(obj):\n    def capture(): return obj\n    assert obj is obj\n",
+        'def test_case(obj):\n    locals()["obj"] = None\n    assert obj is obj\n',
+    ],
+)
+def test_nonidentity_or_unstable_name_comparisons_remain_unknown(tmp_path, source):
+    (tmp_path / "test_identity.py").write_text(source, encoding="utf-8")
+    report = security_scan(tmp_path, cache_enabled=False)
+    assert report["finding_counts"] == {"QUALITY_UNKNOWN_TEST_ORACLE": 1}
+
+
+def test_inverse_self_identity_is_not_hollow(tmp_path):
+    (tmp_path / "test_identity.py").write_text(
+        "def test_case(obj):\n    assert obj is not obj\n", encoding="utf-8"
+    )
+    report = security_scan(tmp_path, cache_enabled=False)
+    assert "QUALITY_HOLLOW_TEST" not in report["finding_counts"]

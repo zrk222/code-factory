@@ -566,6 +566,49 @@ def _inert_helper_call(call, function, known, literal_calls):
     return all(_inert_literal(arg, known, literal_calls)[0] for arg in call.args)
 
 
+def _bound_name_identity_assertion(expression, function, namespace_closed):
+    if not namespace_closed or not isinstance(
+        function, (ast.FunctionDef, ast.AsyncFunctionDef)
+    ):
+        return False
+    if (
+        not isinstance(expression, ast.Compare)
+        or len(expression.ops) != 1
+        or not isinstance(expression.ops[0], ast.Is)
+        or len(expression.comparators) != 1
+    ):
+        return False
+    left, right = expression.left, expression.comparators[0]
+    if (
+        not isinstance(left, ast.Name)
+        or not isinstance(right, ast.Name)
+        or left.id != right.id
+    ):
+        return False
+    args = function.args
+    if args.vararg or args.kwarg:
+        return False
+    parameters = (*args.posonlyargs, *args.args, *args.kwonlyargs)
+    names = [argument.arg for argument in parameters]
+    if left.id not in names or len(names) != len(set(names)):
+        return False
+    if any(
+        isinstance(node, (ast.Global, ast.Nonlocal)) and left.id in node.names
+        for node in ast.walk(function)
+    ):
+        return False
+    references = [
+        node
+        for node in ast.walk(function)
+        if isinstance(node, ast.Name) and node.id == left.id
+    ]
+    return (
+        len(references) == 2
+        and all(isinstance(reference.ctx, ast.Load) for reference in references)
+        and {id(reference) for reference in references} == {id(left), id(right)}
+    )
+
+
 def _module_pass_context_closed(module, namespace_closed):
     if not any(
         isinstance(item, ast.FunctionDef) and _inert_helper_stub(item)
@@ -890,6 +933,7 @@ def _completion_context(test):
             "bases": {},
             "helpers": {},
             "modules": {},
+            "namespace_closed": False,
             "literal_functions": {},
             "literal_calls": {},
             "active_helpers": (),
@@ -936,6 +980,7 @@ def _completion_context(test):
     return {
         "names": names,
         "bases": bases,
+        "namespace_closed": namespace_closed,
         "helpers": helpers,
         "literal_functions": literal_functions,
         "literal_calls": literal_calls,
@@ -1144,6 +1189,10 @@ def _simple_completion(stmt, known, helpers, context):
         return _inert_expression(stmt.value, known, helpers, context)
     if isinstance(stmt, ast.Assert):
         closed, value = _inert_literal(stmt.test, known, context.get("literal_calls"))
+        if not closed and _bound_name_identity_assertion(
+            stmt.test, context.get("test_function"), context.get("namespace_closed")
+        ):
+            closed, value = True, True
         if closed and not value and stmt.msg is not None:
             message = _inert_expression(stmt.msg, known, helpers, context)
             if message[0] != "NORMAL":
@@ -1431,6 +1480,7 @@ def inert_test_completion(node):
     ):
         return "UNKNOWN", None
     context = _completion_context(node)
+    context["test_function"] = node
     for name in _local_bindings(node):
         context["names"].pop(name, None)
         context["helpers"].pop(name, None)
@@ -1501,6 +1551,7 @@ INERT_BODY_HELPERS = (
     _inert_expression,
     _function_needs_arguments,
     _simple_completion,
+    _bound_name_identity_assertion,
     _raise_completion,
     _assignment_completion,
     _conditional_completion,
