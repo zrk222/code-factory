@@ -3832,6 +3832,7 @@ def _db_code_identity(inspect, digest_fn):
         _db_merge_python_column,
         _db_table_name,
         _db_ident,
+        _db_index_name,
         _db_read_statement,
         _db_empty_table,
         _db_valid_create_items,
@@ -5528,6 +5529,16 @@ def _db_ident(identifier, dialect):
     return identifier.sql(dialect=dialect, normalize=False, pretty=False)
 
 
+def _db_index_name(index, exp, path, dialect, gaps):
+    """Retain absent index identity as a gap while preserving other schema facts."""
+    name = index.this
+    if isinstance(name, exp.Identifier) and name.name:
+        return _db_ident(name, dialect)
+    reason = "index_name_omitted" if name is None else "malformed_index_name"
+    gaps.append(reason + ":" + path)
+    return None
+
+
 def _db_read_statement(
     statement, exp, path, digest, index, dialect, tables, operations, queries, gaps
 ):
@@ -5536,17 +5547,22 @@ def _db_read_statement(
         gaps.append("sql_command_fallback:" + path)
     elif isinstance(statement, exp.Create):
         if statement.kind == "INDEX" and isinstance(statement.this, exp.Index):
-            table_name = _db_table_name(statement.this.args.get("table"), dialect)
+            index = statement.this
+            index_name = _db_index_name(index, exp, path, dialect, gaps)
+
+            table_name = _db_table_name(index.args.get("table"), dialect)
             if table_name not in tables:
                 gaps.append("index_table_unresolved:" + str(table_name))
             else:
                 tables[table_name]["indexes"].append(
                     {
-                        "name": _db_ident(statement.this.this, dialect),
-                        "unique": bool(statement.this.args.get("unique")),
+                        "name": index_name,
+                        "unique": bool(
+                            statement.args.get("unique") or index.args.get("unique")
+                        ),
                         "columns": sorted(
                             _db_ident(c.this, dialect)
-                            for c in statement.this.find_all(exp.Column)
+                            for c in index.find_all(exp.Column)
                         ),
                     }
                 )

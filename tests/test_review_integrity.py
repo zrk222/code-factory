@@ -4782,6 +4782,120 @@ def test_import_index_failure_is_measured_without_error_text(monkeypatch):
     assert "PRIVATE INDEX DETAIL" not in str(snapshot)
 
 
+def test_database_index_name_helper_changes_cache_identity(monkeypatch):
+    import hashlib
+    import inspect
+
+    from factoryline import intent_quality as iq
+
+    before = iq._db_code_identity(inspect, hashlib.sha256)
+
+    def changed_index_name(index, exp, path, dialect, gaps):
+        return None
+
+    monkeypatch.setattr(iq, "_db_index_name", changed_index_name)
+    assert iq._db_code_identity(inspect, hashlib.sha256) != before
+
+
+def test_database_index_names_keep_partial_facts_and_fail_closed():
+    from factoryline.intent_quality import database_structure
+
+    anonymous = database_structure(
+        {
+            "schema.sql": (
+                b"CREATE TABLE entries (published INTEGER); "
+                b"CREATE INDEX ON entries (published);"
+            )
+        },
+        "postgres",
+    )
+    assert anonymous["status"] == "INCOMPLETE"
+    assert "index_name_omitted:schema.sql" in anonymous["gaps"]
+    entries = next(table for table in anonymous["tables"] if table["name"] == "entries")
+    assert entries["indexes"] == [
+        {"name": None, "unique": False, "columns": ["published"]}
+    ]
+    assert anonymous["operations"][-1]["op"] == "create_index"
+    assert anonymous["operations"][-1]["table"] == "entries"
+
+    unique_anonymous = database_structure(
+        {
+            "schema.sql": (
+                b"CREATE TABLE entries (published INTEGER); "
+                b"CREATE UNIQUE INDEX ON entries (published);"
+            )
+        },
+        "postgres",
+    )
+    assert unique_anonymous["status"] == "INCOMPLETE"
+    assert unique_anonymous["tables"][0]["indexes"] == [
+        {"name": None, "unique": True, "columns": ["published"]}
+    ]
+
+    named = database_structure(
+        {
+            "schema.sql": (
+                b"CREATE TABLE entries (published INTEGER); "
+                b"CREATE UNIQUE INDEX ix_entries_published "
+                b"ON entries (published);"
+            )
+        },
+        "postgres",
+    )
+    assert named["status"] == "COMPLETE", named["gaps"]
+    assert named["tables"][0]["indexes"] == [
+        {
+            "name": "ix_entries_published",
+            "unique": True,
+            "columns": ["published"],
+        }
+    ]
+
+    malformed_name = database_structure(
+        {
+            "schema.sql": (
+                b"CREATE TABLE entries (published INTEGER); "
+                b'CREATE INDEX "" ON entries (published);'
+            )
+        },
+        "postgres",
+    )
+    assert malformed_name["status"] == "INCOMPLETE"
+    assert "malformed_index_name:schema.sql" in malformed_name["gaps"]
+    entries = next(
+        table for table in malformed_name["tables"] if table["name"] == "entries"
+    )
+    assert entries["indexes"] == [
+        {"name": None, "unique": False, "columns": ["published"]}
+    ]
+
+    empty_table = database_structure(
+        {
+            "schema.sql": (
+                b"CREATE TABLE entries (published INTEGER); "
+                b'CREATE INDEX ix_entries_published ON "" (published);'
+            )
+        },
+        "postgres",
+    )
+    assert empty_table["status"] == "INCOMPLETE"
+    assert any(gap.startswith("index_table_unresolved:") for gap in empty_table["gaps"])
+    entries = next(
+        table for table in empty_table["tables"] if table["name"] == "entries"
+    )
+    assert entries["indexes"] == []
+    assert empty_table["operations"][-1]["op"] == "create_index"
+
+    missing_table = database_structure(
+        {"schema.sql": b"CREATE INDEX SECRET_INDEX_NAME_7AC1 ON (published);"},
+        "postgres",
+    )
+    assert missing_table["status"] == "INCOMPLETE"
+    assert "sql_parse_error:schema.sql" in missing_table["gaps"]
+    assert missing_table["tables"] == []
+    assert "SECRET_INDEX_NAME_7AC1" not in repr(missing_table)
+
+
 def test_database_context_reader_adversarial_controls():
     from contextlib import redirect_stderr, redirect_stdout
     from io import StringIO
