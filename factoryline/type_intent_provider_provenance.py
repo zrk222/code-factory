@@ -268,6 +268,94 @@ def bind_provider_context(
     context["provider_owner_local_imports"] = sorted(imports)
 
 
+def _module_import_alias_candidates(statement, target_module, api=None):
+    """List imported names that bind the target module or one of its parents."""
+    if isinstance(statement, ast.Import):
+        bindings = [
+            (
+                item.asname or item.name.split(".", 1)[0],
+                item.name if item.asname else item.name.split(".", 1)[0],
+                item,
+            )
+            for item in statement.names
+        ]
+    elif isinstance(statement, ast.ImportFrom) and statement.level == 0:
+        module_name = statement.module or ""
+        has_relevant_star = any(item.name == "*" for item in statement.names) and (
+            _module_path_controls_target(module_name, target_module)
+        )
+        if has_relevant_star:
+            return None
+        bindings = [
+            (
+                item.asname or item.name,
+                f"{module_name}.{item.name}" if module_name else item.name,
+                item,
+            )
+            for item in statement.names
+            if item.name != "*"
+        ]
+    else:
+        return []
+    return [
+        item
+        for item in bindings
+        if _module_path_controls_target(item[1], target_module) or item[1] == api
+    ]
+
+
+def _module_path_controls_target(imported_path, target_module):
+    """Whether a nonempty imported module controls this target path."""
+    if not isinstance(imported_path, str) or not isinstance(target_module, str):
+        return False
+    return bool(imported_path and target_module) and (
+        imported_path == target_module or target_module.startswith(imported_path + ".")
+    )
+
+
+def _capability_reflection_names():
+    return {
+        "__builtins__",
+        "__import__",
+        "delattr",
+        "eval",
+        "exec",
+        "getattr",
+        "globals",
+        "locals",
+        "setattr",
+        "vars",
+    }
+
+
+def _module_has_dynamic_capability_access(nodes):
+    """Fail closed on reflective calls that can reacquire imported modules."""
+    dynamic_names = _capability_reflection_names()
+    dynamic_aliases = set(dynamic_names)
+    for node in nodes:
+        if not isinstance(node, ast.ImportFrom):
+            continue
+        if node.module == "sys" and any(item.name == "*" for item in node.names):
+            return True
+        if node.module in {"builtins", "importlib", "sys"}:
+            dynamic_aliases.update(
+                item.asname or item.name
+                for item in node.names
+                if item.name in dynamic_names
+                or node.module == "importlib"
+                and item.name == "import_module"
+                or node.module == "sys"
+                and item.name == "modules"
+            )
+    return any(
+        isinstance(node, ast.Name)
+        and node.id in dynamic_aliases
+        or isinstance(node, ast.Attribute)
+        and node.attr in dynamic_names | {"import_module", "modules"}
+        for node in nodes
+    )
+
+
 def _mock_provider_capability(raw):
     from .context_efficiency import _module_has_dynamic_capability_access
 
