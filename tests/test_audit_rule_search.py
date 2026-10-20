@@ -1023,14 +1023,18 @@ def _atomic_review_response(request):
         label = {"supported": "SUPPORTED", "contradicted": "CONTRADICTED"}.get(
             claim["status"], "INSUFFICIENT_EVIDENCE"
         )
-        rows.append({
-            "claim_id": claim["id"], "label": label,
-            "supporting_evidence_ids": claim["supporting_evidence_ids"],
-            "contradicting_evidence_ids": claim["contradicting_evidence_ids"],
-            "rationale": "Inspect the bound source rather than infer correctness from scores.",
-            "verification_action": "Run the exact missing check."
-            if label == "INSUFFICIENT_EVIDENCE" else None,
-        })
+        rows.append(
+            {
+                "claim_id": claim["id"],
+                "label": label,
+                "supporting_evidence_ids": claim["supporting_evidence_ids"],
+                "contradicting_evidence_ids": claim["contradicting_evidence_ids"],
+                "rationale": "Inspect the bound source rather than infer correctness from scores.",
+                "verification_action": "Run the exact missing check."
+                if label == "INSUFFICIENT_EVIDENCE"
+                else None,
+            }
+        )
     return {"context_sha256": request["context_sha256"], "claims": rows}
 
 
@@ -1039,6 +1043,7 @@ def test_atomic_review_preserves_every_pending_obligation_on_failure(failure):
     from factoryline.jev_classifier import review_evidence
 
     packet = _review_packet()
+
     def transport(request):
         if failure == "timeout":
             raise TimeoutError("bounded review expired")
@@ -1048,32 +1053,44 @@ def test_atomic_review_preserves_every_pending_obligation_on_failure(failure):
         if failure == "duplicate":
             result["claims"][-1] = result["claims"][0]
         return result
-    result = review_evidence(packet, candidate_sha256="a" * 64,
-                             transport=None if failure == "absent" else transport)
+
+    result = review_evidence(
+        packet,
+        candidate_sha256="a" * 64,
+        transport=None if failure == "absent" else transport,
+    )
     assert result["status"] == "FALLBACK"
     assert result["verification_state"] == "INCOMPLETE"
-    assert {item["claim_id"] for item in result["verification_batch"]
-            if item["claim_id"] is not None} == {
-        item["id"] for item in packet["claims"]
-    }
+    assert {
+        item["claim_id"]
+        for item in result["verification_batch"]
+        if item["claim_id"] is not None
+    } == {item["id"] for item in packet["claims"]}
     assert result["unresolved_verification_actions"] == packet["unknowns"]
-    assert result["verification_batch"][1]["contradicting_evidence_ids"] == ["evidence-2"]
+    assert result["verification_batch"][1]["contradicting_evidence_ids"] == [
+        "evidence-2"
+    ]
     assert result["authority"] == "none" and result["release_decision"] is False
 
 
 @pytest.mark.parametrize("keep_counterevidence", [True, False])
 def test_atomic_review_cannot_average_or_drop_counterevidence(keep_counterevidence):
     from factoryline.jev_classifier import (
-        build_evidence_review_input, normalize_evidence_review, review_evidence,
+        build_evidence_review_input,
+        normalize_evidence_review,
+        review_evidence,
     )
 
     packet = _review_packet()
     packet["claims"][0]["contradicting_evidence_ids"] = ["evidence-2"]
     packet["claims"][0]["status"] = "unresolved"
-    packet["packet_sha256"] = sha256(json.dumps(
-        {k: v for k, v in packet.items() if k != "packet_sha256"},
-        sort_keys=True, separators=(",", ":"),
-    ).encode()).hexdigest()
+    packet["packet_sha256"] = sha256(
+        json.dumps(
+            {k: v for k, v in packet.items() if k != "packet_sha256"},
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
     request = build_evidence_review_input(packet, candidate_sha256="a" * 64)
     response = _atomic_review_response(request)
     response["claims"][0].update(label="SUPPORTED", verification_action=None)
@@ -1081,10 +1098,13 @@ def test_atomic_review_cannot_average_or_drop_counterevidence(keep_countereviden
         response["claims"][0]["contradicting_evidence_ids"] = []
     with pytest.raises(JevClassificationError, match="counterevidence"):
         normalize_evidence_review(response, request=request)
-    result = review_evidence(packet, candidate_sha256="a" * 64,
-                             transport=lambda _: response)
+    result = review_evidence(
+        packet, candidate_sha256="a" * 64, transport=lambda _: response
+    )
     assert result["verification_state"] == "INCOMPLETE"
-    assert result["verification_batch"][0]["contradicting_evidence_ids"] == ["evidence-2"]
+    assert result["verification_batch"][0]["contradicting_evidence_ids"] == [
+        "evidence-2"
+    ]
     assert packet["claims"][0]["status"] == "unresolved"
 
 
@@ -1093,19 +1113,28 @@ def test_atomic_review_batches_conflicts_and_keeps_clean_assessment_advisory():
 
     packet = _review_packet()
     original = json.dumps(packet, sort_keys=True)
-    result = review_evidence(packet, candidate_sha256="a" * 64,
-                             transport=_atomic_review_response)
-    assert [item["claim_id"] for item in result["verification_batch"]] == ["claim-2", "claim-3", None]
+    result = review_evidence(
+        packet, candidate_sha256="a" * 64, transport=_atomic_review_response
+    )
+    assert [item["claim_id"] for item in result["verification_batch"]] == [
+        "claim-2",
+        "claim-3",
+        None,
+    ]
     assert result["verification_state"] == "INCOMPLETE"
     assert json.dumps(packet, sort_keys=True) == original
     packet["claims"] = packet["claims"][:1]
     packet["unknowns"] = []
-    packet["packet_sha256"] = sha256(json.dumps(
-        {k: v for k, v in packet.items() if k != "packet_sha256"},
-        sort_keys=True, separators=(",", ":"),
-    ).encode()).hexdigest()
-    clean = review_evidence(packet, candidate_sha256="a" * 64,
-                            transport=_atomic_review_response)
+    packet["packet_sha256"] = sha256(
+        json.dumps(
+            {k: v for k, v in packet.items() if k != "packet_sha256"},
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
+    clean = review_evidence(
+        packet, candidate_sha256="a" * 64, transport=_atomic_review_response
+    )
     assert clean["verification_state"] == "ASSESSED"
     assert clean["verification_batch"] == []
     assert clean["status"] == "ADVISORY"
@@ -1118,26 +1147,37 @@ def test_atomic_review_transport_cannot_mutate_bound_packet_or_erase_blockers(at
 
     packet = _review_packet()
     original = json.dumps(packet, sort_keys=True)
+
     def transport(request):
         request["packet"]["unknowns"].clear()
         if attack == "timeout":
             raise TimeoutError("mutated provider copy")
         for claim in request["packet"]["claims"]:
-            claim.update(status="supported", supporting_evidence_ids=["evidence-1"],
-                         contradicting_evidence_ids=[])
-        request["packet"]["packet_sha256"] = sha256(json.dumps(
-            {k: v for k, v in request["packet"].items() if k != "packet_sha256"},
-            sort_keys=True, separators=(",", ":"),
-        ).encode()).hexdigest()
-        request.update(build_evidence_review_input(request["packet"],
-                                                  candidate_sha256="a" * 64))
+            claim.update(
+                status="supported",
+                supporting_evidence_ids=["evidence-1"],
+                contradicting_evidence_ids=[],
+            )
+        request["packet"]["packet_sha256"] = sha256(
+            json.dumps(
+                {k: v for k, v in request["packet"].items() if k != "packet_sha256"},
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode()
+        ).hexdigest()
+        request.update(
+            build_evidence_review_input(request["packet"], candidate_sha256="a" * 64)
+        )
         return _atomic_review_response(request)
+
     result = review_evidence(packet, candidate_sha256="a" * 64, transport=transport)
     assert result["status"] == "FALLBACK"
     assert result["verification_state"] == "INCOMPLETE"
     assert result["unresolved_verification_actions"] == packet["unknowns"]
     assert len(result["verification_batch"]) == 4
-    assert result["verification_batch"][1]["contradicting_evidence_ids"] == ["evidence-2"]
+    assert result["verification_batch"][1]["contradicting_evidence_ids"] == [
+        "evidence-2"
+    ]
     assert json.dumps(packet, sort_keys=True) == original
     result["unresolved_verification_actions"].clear()
     assert json.dumps(packet, sort_keys=True) == original

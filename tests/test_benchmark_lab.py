@@ -145,7 +145,9 @@ def test_public_seeded_corpus_executes_real_scanner_and_declared_tenant_contract
 def test_versioned_seeded_corpus_keeps_unresolved_calls_in_unknown_tier(tmp_path):
     from factoryline.review_audits import security_scan
 
-    corpus_path = Path(__file__).parents[1] / "factoryline/data/public_defect_corpus.json"
+    corpus_path = (
+        Path(__file__).parents[1] / "factoryline/data/public_defect_corpus.json"
+    )
     corpus = json.loads(corpus_path.read_text(encoding="utf-8"))
     assert corpus["version"] == "2"
     assert corpus["changes_from_version_1"]

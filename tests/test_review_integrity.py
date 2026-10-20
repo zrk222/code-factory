@@ -157,7 +157,9 @@ def _inert_registry_source(
     def indent(source, width):
         return textwrap.indent(textwrap.dedent(source).strip(), " " * width)
 
-    return module_prefix + f"""def test_behavior{parameters}:
+    return (
+        module_prefix
+        + f"""def test_behavior{parameters}:
     checks=[]
 {indent(before, 4)}
     def {register_name}({register_parameter}):
@@ -169,6 +171,7 @@ def _inert_registry_source(
 {indent(after, 4)}
 {indent(dispatch, 4)}
 """
+    )
 
 
 def test_bounded_inert_registry_rejects_effects_and_shadowed_bindings():
@@ -239,7 +242,9 @@ def test_bounded_inert_registry_rejects_effects_and_shadowed_bindings():
     ]
     for source in sources:
         module = ast.parse(source)
-        function = next(node for node in module.body if isinstance(node, ast.FunctionDef))
+        function = next(
+            node for node in module.body if isinstance(node, ast.FunctionDef)
+        )
         function._oracle_module = module
         assert not inert_registered_callback_body(function), source
 
