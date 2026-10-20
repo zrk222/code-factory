@@ -5,7 +5,7 @@ import json
 import re
 from urllib.parse import urlsplit
 
-from .credential_protocol_metadata import _public_https
+from .credential_publication_catalog import _public_https
 
 PROFILE = "REVIEWED_PROTOCOL_PUBLICATION_V1"
 

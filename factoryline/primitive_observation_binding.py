@@ -378,7 +378,7 @@ def fixed_program_workspace_helpers(audit):
 def primitive_binding_helpers():
     from .credential_endpoint_evidence import endpoint_evidence_helpers
     from .credential_endpoint_admission import endpoint_admission_helpers
-    from . import credential_protocol_metadata, credential_publication_catalog
+    from . import credential_publication_catalog
 
     return (
         fixed_primitive_binding,
@@ -396,7 +396,7 @@ def primitive_binding_helpers():
         *endpoint_admission_helpers(),
         *(
             value
-            for module in (credential_protocol_metadata, credential_publication_catalog)
+            for module in (credential_publication_catalog,)
             for value in vars(module).values()
             if callable(value)
         ),

@@ -4,7 +4,7 @@ import hashlib
 import json
 import re
 
-from .credential_protocol_metadata import _public_https, _unique_object
+from .credential_publication_catalog import _public_https, _unique_object
 
 MAX_DOCUMENT_BYTES = 1_048_576
 MAX_DOCUMENT_NODES = 50_000
