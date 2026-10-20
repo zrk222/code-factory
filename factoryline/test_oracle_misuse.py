@@ -528,9 +528,42 @@ def _inert_helper_stub(function):
         and (
             statement.value is None
             or isinstance(statement.value, ast.Constant)
-            and statement.value.value is None
+            and type(statement.value.value)
+            in (str, bytes, int, bool, float, complex, type(None))
         )
     )
+
+
+def _inert_helper_signature(function):
+    args = function.args
+    positional = (*args.posonlyargs, *args.args)
+    return (
+        isinstance(function, ast.FunctionDef)
+        and not function.type_comment
+        and _inert_definition(function)
+        and len({argument.arg for argument in positional}) == len(positional)
+        and not any(
+            (
+                args.vararg,
+                args.kwonlyargs,
+                args.kwarg,
+                args.defaults,
+                args.kw_defaults,
+            )
+        )
+    )
+
+
+def _inert_helper_call(call, function, known, literal_calls):
+    if (
+        not _inert_helper_signature(function)
+        or not _inert_helper_stub(function)
+        or any(isinstance(arg, ast.Starred) for arg in call.args)
+        or call.keywords
+        or len(call.args) != len((*function.args.posonlyargs, *function.args.args))
+    ):
+        return False
+    return all(_inert_literal(arg, known, literal_calls)[0] for arg in call.args)
 
 
 def _module_pass_context_closed(module, namespace_closed):
@@ -569,27 +602,7 @@ def _module_pass_helpers(module, stores, test, namespace_closed=None):
             or item.name in imports
         ):
             continue
-        args = item.args
-        if (
-            item.decorator_list
-            or getattr(item, "type_params", ())
-            or item.returns is not None
-            or item.type_comment
-        ):
-            continue
-        if any(
-            (
-                args.posonlyargs,
-                args.args,
-                args.kwonlyargs,
-                args.vararg,
-                args.kwarg,
-                args.defaults,
-                args.kw_defaults,
-            )
-        ):
-            continue
-        if not _inert_helper_stub(item):
+        if not _inert_helper_signature(item) or not _inert_helper_stub(item):
             continue
         refs = [
             n for n in ast.walk(module) if isinstance(n, ast.Name) and n.id == item.name
@@ -1094,6 +1107,8 @@ def _inert_expression(node, known, helpers, context):
         helper = helpers[node.func.id]
         if not node.args and not _function_needs_arguments(helper):
             return _run_inert_helper(helper, context, helpers)
+        if _inert_helper_call(node, helper, known, context.get("literal_calls")):
+            return "NORMAL", None
         callback = _callback_helper(helper, node, helpers)
         if callback is not None:
             return _run_inert_helper(callback, context, helpers)
@@ -1458,6 +1473,8 @@ INERT_BODY_HELPERS = (
     _module_pass_context_closed,
     _module_pass_helpers,
     _inert_helper_stub,
+    _inert_helper_signature,
+    _inert_helper_call,
     _inert_literal_call,
     _inert_range_call,
     _inert_lambda_call,

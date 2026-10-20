@@ -188,3 +188,44 @@ def test_shadowed_type_providers_are_not_treated_as_universal_builtin(tmp_path):
     )
     report = security_scan(tmp_path, cache_enabled=False)
     assert "QUALITY_WEAK_TEST_ORACLE" not in report["finding_counts"]
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "def noop(value): pass\ndef test_case(): noop('stable')\n",
+        "def noop(value): return None\ndef test_case(): noop(7)\n",
+        "def constant(value): return 4\ndef test_case(): constant('stable')\n",
+        "def test_case():\n    def noop(value): pass\n    noop('stable')\n",
+        "def test_case():\n    def noop(value): return None\n    noop(7)\n",
+        "def test_case():\n    def constant(value): return 4\n    constant('stable')\n",
+    ],
+)
+def test_source_bound_inert_helpers_accept_literal_arguments(tmp_path, source):
+    (tmp_path / "test_helpers.py").write_text(source, encoding="utf-8")
+
+    report = security_scan(tmp_path, cache_enabled=False)
+
+    assert report["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "def test_case(): noop('stable')\n",
+        "def noop(value): pass\ndef test_case(value): noop(value)\n",
+        "def noop(value): pass\ndef test_case(): noop()\n",
+        "def noop(value, value): pass\ndef test_case(): noop(1, 2)\n",
+        "def noop(value): do_work(value)\ndef test_case(): noop('stable')\n",
+        "def noop(value): raise RuntimeError()\ndef test_case(): noop('stable')\n",
+        "def decorate(function): return function\n@decorate\ndef noop(value): pass\n"
+        "def test_case(): noop('stable')\n",
+        "def noop(value): pass\nnoop = other\ndef test_case(): noop('stable')\n",
+    ],
+)
+def test_unresolved_or_effectful_helpers_remain_unknown(tmp_path, source):
+    (tmp_path / "test_helpers.py").write_text(source, encoding="utf-8")
+
+    report = security_scan(tmp_path, cache_enabled=False)
+
+    assert report["finding_counts"] == {"QUALITY_UNKNOWN_TEST_ORACLE": 1}
