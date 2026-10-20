@@ -3053,9 +3053,26 @@ def test_warm_cache_preserves_structural_import_binding_and_source_drift(tmp_pat
     warm = security_scan(tmp_path)["finding_counts"]
     assert cold == warm == {}
     assert _oracle_context_cache_info()["hits"] >= 1
+    before = security_scan(tmp_path)
     product.write_text("def __getattr__(name):\n    return object()\n")
-    assert "QUALITY_HOLLOW_TEST" in security_scan(tmp_path)["finding_counts"]
-    assert "QUALITY_HOLLOW_TEST" in security_scan(tmp_path)["finding_counts"]
+    drifted = security_scan(tmp_path)
+    drifted_warm = security_scan(tmp_path)
+    _oracle_context_cache_clear()
+    drifted_cold = security_scan(tmp_path)
+    # Dynamic attribute providers have no closed completion summary. Cache
+    # invalidation must preserve that UNKNOWN result, including a fresh run.
+    assert drifted["source_manifest_sha256"] != before["source_manifest_sha256"]
+    assert drifted["finding_counts"] == {"QUALITY_UNKNOWN_TEST_ORACLE": 1}
+    assert (
+        drifted_warm["finding_counts"]
+        == drifted_cold["finding_counts"]
+        == drifted["finding_counts"]
+    )
+    assert (
+        drifted_warm["source_manifest_sha256"]
+        == drifted_cold["source_manifest_sha256"]
+        == drifted["source_manifest_sha256"]
+    )
 
 
 def test_benchmark_configuration_binds_valid_targets_and_identity(tmp_path):

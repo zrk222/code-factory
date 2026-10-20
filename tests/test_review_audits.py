@@ -9227,7 +9227,10 @@ def test_scan_keeps_constant_assertion_despite_runtime_receipt(tmp_path, monkeyp
         lambda *args, **values: {"tests": [row]},
     )
     result = security_scan(tmp_path, **kwargs)
-    assert result["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+    # The constant assertion is locally weak; the imported call has no closed
+    # completion proof. A signed exception-only receipt clears neither fact.
+    assert result["finding_counts"] == {"QUALITY_WEAK_TEST_ORACLE": 1}
+    assert result["findings"][0]["severity"] == "MEDIUM"
     assert result["runtime_oracles"]["reconciled_count"] == 0
 
 
@@ -9486,7 +9489,7 @@ def test_security_scan_seal_is_idempotent(tmp_path):
 @pytest.mark.parametrize(
     "command_prefix", [["audit", "security"], ["scan"], ["scan", "--deep"]]
 )
-def test_signed_runtime_oracle_cli_after_observed_mutant_failure(
+def test_signed_completion_only_cli_receipt_does_not_clear_unknown(
     tmp_path, capsys, command_prefix
 ):
     from datetime import datetime, timedelta, timezone
@@ -9601,18 +9604,17 @@ def test_signed_runtime_oracle_cli_after_observed_mutant_failure(
         ]
     )
     result = json.loads(capsys.readouterr().out)
-    assert code == 0
+    # Real exception failure proves invocation, not a matching output assertion.
+    assert code == (1 if command_prefix[0] == "audit" else 0)
     if command_prefix[0] == "scan":
         assert result["state"] == "INCOMPLETE"
         result = result["static_security"]
-    assert result["state"] == "CLEAN"
-    assert result["runtime_oracles"]["reconciled_count"] == 1
+    assert result["state"] == "INCOMPLETE"
+    assert result["finding_counts"] == {"QUALITY_UNKNOWN_TEST_ORACLE": 1}
+    assert result["runtime_oracles"]["reconciled_count"] == 0
     assert result["runtime_oracles"]["signature"]["identity"] == "test-only@example"
     assert "not established" in result["runtime_oracles"]["claim_boundary"]
-    assert (
-        result["runtime_oracles"]["reconciled"][0]["static_finding"]["code"]
-        == "QUALITY_HOLLOW_TEST"
-    )
+    assert result["runtime_oracles"]["reconciled"] == []
 
 
 def test_runtime_oracle_rechecks_scanner_configuration_after_verification(
@@ -12944,3 +12946,54 @@ def test_behavior():
     (tmp_path / "test_case.py").write_text(source, encoding="utf-8")
     findings = security_scan(tmp_path)["findings"]
     assert not any(finding["code"] == "QUALITY_HOLLOW_TEST" for finding in findings)
+
+
+@pytest.mark.parametrize(
+    "name,source,code,line",
+    [
+        (
+            "attrs-docstring",
+            'def test_hash_deprecated():\n    """Retained dead-test regression shape."""\n',
+            "QUALITY_HOLLOW_TEST",
+            1,
+        ),
+        (
+            "constant-assert",
+            "def test_constant():\n    assert True\n",
+            "QUALITY_HOLLOW_TEST",
+            1,
+        ),
+        ("pass", "def test_empty():\n    pass\n", "QUALITY_HOLLOW_TEST", 1),
+        (
+            "rich-soft-wrap",
+            "def test_soft_wrap():\n    assert result() == 1\ndef test_soft_wrap():\n    assert result() == 2\n",
+            "QUALITY_SHADOWED_TEST",
+            1,
+        ),
+        (
+            "rich-force-color",
+            "def test_force_color():\n    assert result() == 1\ndef test_force_color():\n    assert result() == 2\n",
+            "QUALITY_SHADOWED_TEST",
+            1,
+        ),
+        (
+            "rich-reverse-style",
+            "class TestConsole:\n    def test_write_styled_reverse(self):\n        assert result() == 1\n    def test_write_styled_reverse(self):\n        assert result() == 2\n",
+            "QUALITY_SHADOWED_TEST",
+            2,
+        ),
+    ],
+    ids=lambda value: value if isinstance(value, str) and "\n" not in value else None,
+)
+def test_oracle_family_updates_retain_must_stay_flags(
+    tmp_path, name, source, code, line
+):
+    # Reduced source shapes preserve the reported defects; they are regression
+    # controls, not a fresh external precision measurement.
+    (tmp_path / "test_positive.py").write_text(source, encoding="utf-8")
+    findings = security_scan(tmp_path, cache_enabled=False)["findings"]
+    matches = [
+        item for item in findings if item["code"] == code and item["line"] == line
+    ]
+    assert len(matches) == 1, (name, findings)
+    assert matches[0]["severity"] in {"MEDIUM", "HIGH", "CRITICAL"}
