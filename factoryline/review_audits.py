@@ -1530,6 +1530,18 @@ def _literal_assignment_diagnostic(
     )
 
 
+def _security_parent(node: ast.AST) -> ast.AST | None:
+    return getattr(node, "_security_parent", None)
+
+
+def _module_for_security_node(node: ast.AST) -> ast.Module | None:
+    current = node
+    while (parent := _security_parent(current)) is not None:
+        current = parent
+    return current if isinstance(current, ast.Module) else None
+
+
+
 def _literal_assignment_diagnostics(
     relative: str, node: ast.Assign | ast.AnnAssign, aliases=None
 ) -> list[dict[str, Any]]:
@@ -1549,6 +1561,21 @@ def _literal_assignment_diagnostics(
     targets = node.targets if isinstance(node, ast.Assign) else [node.target]
     findings = []
     for target in targets:
+        from .mock_fixture_provenance import closed_jwt_test_literal
+
+        if proof := closed_jwt_test_literal(relative, node, target):
+            findings.append(
+                _security_finding(
+                    "SECURITY_HARDCODED_SECRET",
+                    relative,
+                    node,
+                    "Source-bound test-owned JWT roundtrip observed; runtime and transport assurance remain incomplete.",
+                    "CRITICAL",
+                    name=target.id if isinstance(target, ast.Name) else "secret",
+                    **proof,
+                )
+            )
+            continue
         finding = _literal_assignment_diagnostic(relative, node, target, aliases)
         if finding is not None:
             from .primitive_observation_binding import annotate_django_fixture
@@ -4205,6 +4232,10 @@ def _build_oracle_context(
         )
         contexts[path]["flask_apps"] = _flask_context_apps(path, tree, snapshots)
         imports = resolve_imports(root, path, tree, eligible)
+        contexts[path]["captured_imports"] = {
+            local: (source.relative_to(root).as_posix(), symbol)
+            for local, (source, symbol) in imports.items()
+        }
         bind_provider_context(
             contexts[path],
             root,
@@ -5394,6 +5425,8 @@ def _security_scan_tree(
     nodes = list(ast.walk(tree))
     aliases = _security_aliases(nodes)
     for node in nodes:
+        for child in ast.iter_child_nodes(node):
+            child._security_parent = node
         node._scan_bound_names = None
         node._oracle_layout = None
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):

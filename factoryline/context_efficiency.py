@@ -220,6 +220,7 @@ def oracle_context_cache_context(item, decode_structural_context):
         "codspeed_benchmark": item.get("codspeed_benchmark", False),
         "async_runner_fixtures": item.get("async_runner_fixtures", {}),
         "mock_fixture_provenance": item.get("mock_fixture_provenance", {}),
+        "captured_imports": cached_import_bindings(item.get("captured_imports", {})),
         "django_fixture_evidence": item.get("django_fixture_evidence", {}),
         "protocol_observations": item.get("protocol_observations", {}),
         "autouse_lifecycle": item.get("autouse_lifecycle", []),
@@ -245,6 +246,7 @@ def oracle_context_cache_record(path, context, encode_structural_context):
         "codspeed_benchmark": context.get("codspeed_benchmark", False),
         "async_runner_fixtures": context.get("async_runner_fixtures", {}),
         "mock_fixture_provenance": context.get("mock_fixture_provenance", {}),
+        "captured_imports": cached_import_bindings(context.get("captured_imports", {})),
         "django_fixture_evidence": context.get("django_fixture_evidence", {}),
         "protocol_observations": context.get("protocol_observations", {}),
         "autouse_lifecycle": context.get("autouse_lifecycle", []),
@@ -253,6 +255,36 @@ def oracle_context_cache_record(path, context, encode_structural_context):
         **provider_cache_fields(context),
         "structural_context": encode_structural_context(context),
     }
+
+
+def cached_import_bindings(value):
+    """Retain only source-relative scalar import bindings across JSON caches."""
+    if not isinstance(value, dict) or len(value) > 2000:
+        return {}
+    result = {}
+    for name, binding in value.items():
+        if (
+            not isinstance(name, str)
+            or not name
+            or not isinstance(binding, (list, tuple))
+            or len(binding) != 2
+        ):
+            return {}
+        relative, symbol = binding
+        if (
+            not isinstance(relative, str)
+            or not relative
+            or relative.startswith("/")
+            or "\\" in relative
+            or ":" in relative
+            or ".." in relative.split("/")
+        ):
+            return {}
+        if symbol is not None and not isinstance(symbol, str):
+            return {}
+        result[name] = (relative, symbol)
+    return result
+
 
 
 def typecheck_cache_helpers(contracts):
@@ -344,6 +376,7 @@ def provider_context_cache_helpers(contracts):
         _provider_package_initializers,
         oracle_context_cache_context,
         oracle_context_cache_record,
+        cached_import_bindings,
         bind_django_fixture_context,
         _captured_fixture_configuration,
         provider_cache_fields,

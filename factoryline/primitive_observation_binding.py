@@ -10,6 +10,50 @@ def fixed_primitive_binding(finding, sources, bindings, integrity):
     from .credential_endpoint_evidence import endpoint_binding
 
     facts = finding.get("facts", {})
+    if facts.get("disposition") == "PROVEN_LOCAL_CRYPTO_TEST_PRIMITIVE":
+        workspace_sources = sorted((row["path"], row["sha256"]) for row in sources)
+        workspace_digest = hashlib.sha256(
+            json.dumps(workspace_sources, separators=(",", ":")).encode()
+        ).hexdigest()
+        provider = next(
+            (row for row in sources if row.get("path") == facts.get("provider_path")),
+            None,
+        )
+        span = facts.get("declaration_span")
+        witness_spans = (
+            "test_owner_span",
+            "provider_allocation_span",
+            "encode_call_span",
+            "decode_call_span",
+            "token_result_span",
+            "payload_source_span",
+        )
+        return bool(
+            finding.get("code") == "SECURITY_HARDCODED_SECRET"
+            and finding.get("severity") == "CRITICAL"
+            and facts.get("schema") == "factory.jwt-local-crypto-test-primitive.v1"
+            and facts.get("source_path") == finding.get("path")
+            and facts.get("source_sha256") == bindings.get(finding.get("path"))
+            and facts.get("workspace_sources_sha256") == workspace_digest
+            and provider is not None
+            and facts.get("provider_sha256") == provider.get("sha256")
+            and facts.get("operation_role")
+            == "test_owned_local_sign_and_verify_roundtrip"
+            and facts.get("authority_role")
+            == "TEST_OWNED_SYNTHETIC_SIGNING_AUTHORITY"
+            and facts.get("transport_role") == "UNASSESSED"
+            and facts.get("runtime_assurance") == "INCOMPLETE"
+            and facts.get("runtime_executed") is False
+            and isinstance(span, list)
+            and len(span) == 4
+            and span[0] == finding.get("line")
+            and span[1] == finding.get("column")
+            and span[2] >= span[0]
+            and span[3] >= span[1]
+            and all(integrity._valid_source_span(facts.get(key)) for key in witness_spans)
+            and facts["test_owner_span"][:2] <= facts["encode_call_span"][:2]
+            and facts["encode_call_span"][:2] <= facts["decode_call_span"][:2]
+        )
     if facts.get("disposition") == "TEST_OWNED_LOCAL_FIXTURE":
         return django_fixture_binding(finding, sources, bindings)
     if facts.get("disposition") == "ENDPOINT_DECLARATION_ROLE_PROVEN":
@@ -56,8 +100,15 @@ def rejected_primitive_proof(finding):
             },
         }
     if finding.get("code") == "SECURITY_HARDCODED_SECRET":
+        jwt_role_proof = facts.get("disposition") == "PROVEN_LOCAL_CRYPTO_TEST_PRIMITIVE"
         return {
             **finding,
+            "severity": "CRITICAL" if jwt_role_proof else finding.get("severity"),
+            "message": (
+                "The JWT test-role proof is not bound to the current source; credential risk remains active."
+                if jwt_role_proof
+                else finding.get("message")
+            ),
             "facts": {
                 **facts,
                 "disposition": "UNVERIFIED_CREDENTIAL_ROLE",
@@ -96,13 +147,14 @@ def partition_proven_primitive_observations(core, audit):
             "PROVEN_FINITE_TEMPLATE_INPUT",
             "ENDPOINT_DECLARATION_ROLE_PROVEN",
             "TEST_OWNED_LOCAL_FIXTURE",
+            "PROVEN_LOCAL_CRYPTO_TEST_PRIMITIVE",
         }:
             retained.append(finding)
             continue
         touched = True
         endpoint_complete = (
             facts.get("disposition")
-            not in {"ENDPOINT_DECLARATION_ROLE_PROVEN", "TEST_OWNED_LOCAL_FIXTURE"}
+            not in {"ENDPOINT_DECLARATION_ROLE_PROVEN", "TEST_OWNED_LOCAL_FIXTURE", "PROVEN_LOCAL_CRYPTO_TEST_PRIMITIVE"}
             or core.get("audit_coverage", {}).get("complete") is True
         )
         if endpoint_complete and _current_primitive_binding(
