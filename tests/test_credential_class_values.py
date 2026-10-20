@@ -243,3 +243,133 @@ def test_ast_remains_unchanged_and_no_value_classification_is_added(tmp_path):
     assert reads["reads"]
     assert "public" not in source
     assert ast.dump(trees[path], include_attributes=True) == before
+
+
+_NATIVE_ENDPOINT_SOURCE = '\nimport requests\nclass Base:\n    def endpoint(self):\n        return self.ACCESS_TOKEN_URL\n    def dispatch(self, url):\n        return requests.request("GET", url)\n    def send(self):\n        return self.dispatch(self.endpoint())\nclass Child(Base):\n    ACCESS_TOKEN_URL = "https://www.arcgis.com/sharing/rest/oauth2/token"\n\nclass Other(Base):\n    ACCESS_TOKEN_URL = "https://other.example/token"\n\nclass Consumer:\n    def use_foreign(self):\n        other = Other()\n        return requests.request("GET", "https://consumer.example/resource", auth=("user", other.endpoint()))\n'
+
+
+@pytest.mark.parametrize(
+    "mutation, active",
+    [
+        ("", False),
+        ("Other.ACCESS_TOKEN_URL = Child.ACCESS_TOKEN_URL\n", True),
+        (
+            "def mutate(typ):\n    Other.ACCESS_TOKEN_URL = typ.ACCESS_TOKEN_URL\nmutate(Child)\n",
+            True,
+        ),
+        (
+            "def steal(typ):\n    return typ.ACCESS_TOKEN_URL\nOther.ACCESS_TOKEN_URL = steal(Child)\n",
+            True,
+        ),
+        (
+            "Alias = Child\ndef steal(typ):\n    return typ.ACCESS_TOKEN_URL\nOther.ACCESS_TOKEN_URL = steal(Alias)\n",
+            True,
+        ),
+        (
+            "def steal(types):\n    return types[0].ACCESS_TOKEN_URL\nOther.ACCESS_TOKEN_URL = steal([Child])\n",
+            True,
+        ),
+        (
+            "def steal(*, typ):\n    return typ.ACCESS_TOKEN_URL\nOther.ACCESS_TOKEN_URL = steal(typ=Child)\n",
+            True,
+        ),
+        (
+            "def steal(typ=Child):\n    return typ.ACCESS_TOKEN_URL\nOther.ACCESS_TOKEN_URL = steal()\n",
+            True,
+        ),
+        (
+            "def carrier():\n    return Child\nOther.ACCESS_TOKEN_URL = carrier().ACCESS_TOKEN_URL\n",
+            True,
+        ),
+        (
+            "class Inherited(Child):\n    pass\ndef steal(typ):\n    return typ.ACCESS_TOKEN_URL\nOther.ACCESS_TOKEN_URL = steal(Inherited)\n",
+            True,
+        ),
+        (
+            'class Overridden(Child):\n    ACCESS_TOKEN_URL = "https://override.example/token"\nopaque(Overridden)\n',
+            False,
+        ),
+        ("opaque(Base)\n", False),
+        (
+            'import client\ndef steal(ns):\n    return ns["Child"].ACCESS_TOKEN_URL\nOther.ACCESS_TOKEN_URL = steal(client.__dict__)\n',
+            True,
+        ),
+        (
+            'import client\ndef steal(typ):\n    return typ.ACCESS_TOKEN_URL\nOther.ACCESS_TOKEN_URL = steal(client.__getattribute__("Child"))\n',
+            True,
+        ),
+        (
+            "import client\ndef mutate(mod):\n    Other.ACCESS_TOKEN_URL = mod.Child.ACCESS_TOKEN_URL\nmutate(client)\n",
+            True,
+        ),
+        (
+            "import client\nmod = client\ndef steal(mod):\n    return mod.Child.ACCESS_TOKEN_URL\nOther.ACCESS_TOKEN_URL = steal(mod)\n",
+            True,
+        ),
+    ],
+)
+def test_native_endpoint_partition_requires_closed_class_capabilities(
+    tmp_path, mutation, active
+):
+    from factoryline.review_audits import security_scan
+
+    source = _NATIVE_ENDPOINT_SOURCE.replace(
+        "\nclass Consumer:", "\n" + mutation + "\nclass Consumer:"
+    )
+    (tmp_path / "client.py").write_text(source, encoding="utf-8")
+    result = security_scan(tmp_path, cache_enabled=False)
+    findings = [
+        row
+        for row in result["findings"]
+        if row["code"] == "SECURITY_HARDCODED_SECRET" and row["line"] == 11
+    ]
+    primitives = [
+        row
+        for row in result.get("primitive_observations", [])
+        if row["code"] == "SECURITY_HARDCODED_SECRET" and row["line"] == 11
+    ]
+    assert bool(findings) is active
+    assert bool(primitives) is not active
+    assert (findings or primitives)[0]["severity"] == "CRITICAL"
+
+
+@pytest.mark.parametrize("target", ["origins", "names"])
+def test_capability_memo_rejects_transitive_helper_code_mutation(
+    tmp_path, monkeypatch, target
+):
+    from factoryline import review_audits as audit
+    from factoryline import credential_role_object_identity as identity
+    from factoryline.credential_role_chain_memo import ClassChainMemo
+    from factoryline.credential_role_sources import SourceSnapshotIndex
+    from factoryline.credential_role_use_audit import _capability_uses
+
+    path = tmp_path / "client.py"
+    data = b'class Candidate:\n    ACCESS_TOKEN_URL = "endpoint"\nopaque(Candidate)\n'
+    tree = ast.parse(data)
+    digest = hashlib.sha256(data).hexdigest()
+    tree._oracle_source_sha256 = digest
+    index = SourceSnapshotIndex(tmp_path, {path: tree}, {path: data}, {path: digest})
+    assert index.validate(path)
+    imports, classes = {path: {}}, {(path, "Candidate"): tree.body[0]}
+    memo = ClassChainMemo(index, imports, classes, audit)
+    index.class_chain_memo = memo
+
+    def replacement(path, name, imports, classes):
+        return set()
+
+    def replacement_name(*args):
+        return ""
+
+    helper = identity._direct_origins if target == "origins" else audit._name
+    replacement_code = (
+        replacement.__code__ if target == "origins" else replacement_name.__code__
+    )
+    with memo.analysis_batch() as batch:
+        first = _capability_uses(path, index, imports, classes, audit)
+        assert first
+        monkeypatch.setattr(helper, "__code__", replacement_code)
+        second = _capability_uses(path, index, imports, classes, audit)
+        assert second is not first
+        if target == "origins":
+            assert not second
+    assert not batch.accepted
