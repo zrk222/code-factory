@@ -739,6 +739,40 @@ def _registered_callback_functions(functions, aliases):
     return register[0], callbacks
 
 
+def _closed_registered_callback_functions(functions, aliases, registry):
+    """Select one local registrar by its exact append body, allowing stacked names."""
+    names = {
+        decorator.id
+        for function in functions
+        for decorator in function.decorator_list
+        if isinstance(decorator, ast.Name)
+        and _resolve(decorator, aliases) == decorator.id
+    }
+    candidates = []
+    for name in names:
+        definitions = [function for function in functions if function.name == name]
+        if len(definitions) != 1:
+            continue
+        register = definitions[0]
+        if not (
+            isinstance(register, ast.AsyncFunctionDef)
+            or isinstance(register, ast.FunctionDef)
+            and _callback_registration_body(register, registry) is not None
+        ):
+            continue
+        callbacks = [
+            function
+            for function in functions
+            if any(
+                isinstance(decorator, ast.Name) and decorator.id == name
+                for decorator in function.decorator_list
+            )
+        ]
+        if len(callbacks) == 1 and callbacks[0] is not register:
+            candidates.append((register, callbacks))
+    return candidates[0] if len(candidates) == 1 else None
+
+
 def _callback_registration_body(register, registry):
     if isinstance(register, ast.AsyncFunctionDef) or register.decorator_list:
         return None
@@ -784,6 +818,69 @@ def _registry_noop_lambda(node):
         )
         and isinstance(node.body, ast.Constant)
         and node.body.value is None
+    )
+
+
+def _registry_identity_lambda(node, parameter):
+    args = node.args if isinstance(node, ast.Lambda) else None
+    return bool(
+        args
+        and len(args.args) == 1
+        and args.args[0].arg == parameter
+        and not any(
+            (
+                args.posonlyargs,
+                args.kwonlyargs,
+                args.defaults,
+                args.kw_defaults,
+                args.vararg,
+                args.kwarg,
+            )
+        )
+        and isinstance(node.body, ast.Name)
+        and node.body.id == parameter
+    )
+
+
+def _registry_noop_decorator(function):
+    if (
+        not isinstance(function, ast.FunctionDef)
+        or function.decorator_list
+        or getattr(function, "type_params", ())
+        or not _registered_callback_args(function)
+    ):
+        return False
+    body = [statement for statement in function.body if not _is_docstring(statement)]
+    return (
+        len(body) == 1
+        and isinstance(body[0], ast.Return)
+        and _registry_noop_lambda(body[0].value)
+    )
+
+
+def _registry_callback_decorators_inert(register, callback, functions):
+    decorators = callback.decorator_list
+    if (
+        not decorators
+        or not isinstance(decorators[0], ast.Name)
+        or decorators[0].id != register.name
+    ):
+        return False
+    wrappers = [
+        function for function in functions if function not in (register, callback)
+    ]
+    extra = decorators[1:]
+    if len(wrappers) != len(extra):
+        return False
+    if not extra:
+        return True
+    if any(not isinstance(decorator, ast.Name) for decorator in extra):
+        return False
+    wrapper_names = {decorator.id for decorator in extra}
+    return (
+        len(wrapper_names) == len(extra)
+        and wrapper_names == {function.name for function in wrappers}
+        and all(_registry_noop_decorator(function) for function in wrappers)
     )
 
 
@@ -971,6 +1068,39 @@ def _empty_callback_registries(test):
     ]
 
 
+def _callback_registry_selection(test, functions, aliases, closed):
+    initializers = _empty_callback_registries(test)
+    if closed and not initializers:
+        return None
+    if closed:
+        sync_functions = [
+            node for node in functions if isinstance(node, ast.FunctionDef)
+        ]
+        pair = _registered_callback_functions(sync_functions, aliases)
+        if pair is None or len(pair[1]) != 1:
+            pair = _closed_registered_callback_functions(
+                functions, aliases, initializers[0].targets[0].id
+            )
+    else:
+        pair = _registered_callback_functions(
+            [node for node in functions if isinstance(node, ast.FunctionDef)], aliases
+        )
+    if pair is None:
+        return None
+    register, callbacks = pair
+    if closed:
+        initializers = [node for node in initializers if node.lineno < register.lineno]
+    valid_counts = (len(functions), len(callbacks)) in {(2, 1), (3, 1)}
+    if len(initializers) != 1 or closed and not valid_counts:
+        return None
+    initial = initializers[0]
+    if initial.lineno >= register.lineno or any(
+        register.lineno >= fn.lineno for fn in callbacks
+    ):
+        return None
+    return initial, register, callbacks
+
+
 def _callback_registry_context(test, aliases, *, closed=False, inert_kind=None):
     if (
         not isinstance(test, ast.FunctionDef)
@@ -978,33 +1108,28 @@ def _callback_registry_context(test, aliases, *, closed=False, inert_kind=None):
         and sum(1 for _ in ast.walk(test)) > 512
     ):
         return None
-    functions = [node for node in test.body if isinstance(node, ast.FunctionDef)]
-    pair = _registered_callback_functions(functions, aliases)
-    if pair is None:
+    functions = [
+        node
+        for node in test.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    ]
+    selection = _callback_registry_selection(test, functions, aliases, closed)
+    if selection is None:
         return None
-    register, callbacks = pair
-    initializers = _empty_callback_registries(test)
-    if closed:
-        initializers = [node for node in initializers if node.lineno < register.lineno]
-    if len(initializers) != 1 or closed and (len(functions), len(callbacks)) != (2, 1):
-        return None
-    initial = initializers[0]
-    if initial.lineno >= register.lineno or any(
-        register.lineno >= fn.lineno for fn in callbacks
-    ):
-        return None
+    initial, register, callbacks = selection
     if closed:
         callback = callbacks[0]
         if (
             register is callback
             or register.decorator_list
             or not callback.body
+            or not _registry_callback_decorators_inert(register, callback, functions)
             or not _registered_callback_args(register)
             or not _registered_callback_args(callback)
             or inert_kind is None
         ):
             return None
-        state = inert_kind(register, initial.targets[0].id)
+        state = inert_kind(test, register, initial.targets[0].id, callback, functions)
         if state is None:
             return None
     else:
@@ -1050,7 +1175,12 @@ _CALLBACK_REGISTRY_HELPERS = (
     _registry_swallowed_assertion,
     _callback_registration_body,
     _registered_callback_functions,
+    _closed_registered_callback_functions,
+    _registry_identity_lambda,
+    _registry_noop_decorator,
+    _registry_callback_decorators_inert,
     _empty_callback_registries,
+    _callback_registry_selection,
     _is_docstring,
 )
 

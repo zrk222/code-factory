@@ -216,6 +216,8 @@ def oracle_context_cache_context(item, decode_structural_context):
         "async_runner_fixtures": item.get("async_runner_fixtures", {}),
         "mock_fixture_provenance": item.get("mock_fixture_provenance", {}),
         "protocol_observations": item.get("protocol_observations", {}),
+        "autouse_lifecycle": item.get("autouse_lifecycle", []),
+        "requested_fixture_lifecycle": item.get("requested_fixture_lifecycle", []),
         "fixed_program_workspace": item.get("fixed_program_workspace", {}),
         **provider_cache_fields(item),
         **decode_structural_context(item.get("structural_context", {})),
@@ -237,6 +239,8 @@ def oracle_context_cache_record(path, context, encode_structural_context):
         "async_runner_fixtures": context.get("async_runner_fixtures", {}),
         "mock_fixture_provenance": context.get("mock_fixture_provenance", {}),
         "protocol_observations": context.get("protocol_observations", {}),
+        "autouse_lifecycle": context.get("autouse_lifecycle", []),
+        "requested_fixture_lifecycle": context.get("requested_fixture_lifecycle", []),
         "fixed_program_workspace": context.get("fixed_program_workspace", {}),
         **provider_cache_fields(context),
         "structural_context": encode_structural_context(context),
@@ -4811,7 +4815,15 @@ _PROTOCOL_EXTERNAL_BINDINGS = frozenset(
 
 
 def protocol_call_context(
-    root, files, snapshots, *, source_hashes=None, max_nodes=None, python_profile=None
+    root,
+    files,
+    snapshots,
+    *,
+    source_hashes=None,
+    max_nodes=None,
+    python_profile=None,
+    import_resolver=None,
+    eligible=None,
 ):
     """Describe captured repr dispatch; never grant an assertion or suppress a finding."""
     from . import review_audits as audit
@@ -4835,7 +4847,10 @@ def protocol_call_context(
     state = {
         "root": root,
         "snapshots": snapshots,
-        "eligible": {p.resolve(): p for p in files},
+        "eligible": {p.resolve(): p for p in files} if eligible is None else eligible,
+        "import_resolver": audit._oracle_imports
+        if import_resolver is None
+        else import_resolver,
         "records": {},
         "limit": limit,
         "hashes": source_hashes,
@@ -4912,7 +4927,7 @@ def _protocol_source_record(path, state):
         "nodes": nodes,
         "parents": _ast_parent_map(nodes),
         "sha256": source_sha,
-        "imports": state["audit"]._oracle_imports(
+        "imports": state["import_resolver"](
             state["root"], path, tree, state["eligible"]
         ),
     }

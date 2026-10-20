@@ -11820,9 +11820,13 @@ def test_protocol_observation_scanner_does_not_credit_constant_computation(tmp_p
         "def compute():\n    return 3\ndef test_unchecked():\n    compute()\n",
         encoding="utf-8",
     )
-    finding = _protocol_integration_finding(
-        security_scan(tmp_path, cache_enabled=False)
-    )
+    findings = security_scan(tmp_path, cache_enabled=False)["findings"]
+    hollow = [
+        finding for finding in findings if finding["code"] == "QUALITY_HOLLOW_TEST"
+    ]
+    assert len(hollow) == 1
+    finding = hollow[0]
+    assert finding["severity"] == "MEDIUM"
     assert "protocol_observations" not in finding["facts"]
 
 
@@ -12685,6 +12689,185 @@ def test_unknown_or_actual_execution_not_inert(body):
     assert not inert_test_body(node)
 
 
+@pytest.mark.parametrize(
+    "body",
+    [
+        "for _ in [1]: break; product()",
+        "for _ in [*()]: product()",
+        "for _ in range(0): product()",
+        "range = lambda count: []\nfor _ in range(1): product()",
+        "unused = (product() for _ in [])",
+    ],
+)
+def test_proven_inert_bounded_control_flow_shapes(body):
+    import ast
+    from factoryline.test_oracle_misuse import inert_test_body
+
+    module = ast.parse(
+        "def test_case():\n" + "\n".join("    " + line for line in body.splitlines())
+    )
+    node = module.body[0]
+    node._oracle_module = module
+    assert inert_test_body(node)
+
+
+def test_inert_unique_module_constant_helper_with_pytestmark():
+    import ast
+    from factoryline.test_oracle_misuse import inert_test_body
+
+    module = ast.parse(
+        "pytestmark = pytest.mark.benchmark()\n"
+        "def product():\n"
+        "    return 1\n"
+        "def test_case():\n"
+        "    product()\n"
+    )
+    node = module.body[-1]
+    node._oracle_module = module
+    assert inert_test_body(node)
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "def product():\n    opaque()\n    return 1\ndef test_case():\n    product()\n",
+        "def product():\n    return 1\nalias = product\ndef test_case():\n    product()\n",
+        "def product():\n    return 1\ndef test_case():\n    product()\n    product = opaque\n",
+        "def product():\n    return 1\ndef product():\n    return 2\ndef test_case():\n    product()\n",
+    ],
+)
+def test_inert_module_constant_helper_requires_closed_direct_binding(source):
+    import ast
+    from factoryline.test_oracle_misuse import inert_test_body
+
+    module = ast.parse(source)
+    node = module.body[-1]
+    node._oracle_module = module
+    assert not inert_test_body(node)
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "def product():\n    return 1\ndef actual():\n    assert observed() == expected()\nglobals()['product'] = actual\ndef test_case():\n    product()\n",
+        "def actual(count):\n    assert observed() == expected()\n    return []\nglobals()['range'] = actual\ndef test_case():\n    for _ in range(0):\n        opaque()\n",
+        "def product():\n    return 1\ndef actual():\n    assert observed() == expected()\nvars()['product'] = actual\ndef test_case():\n    product()\n",
+        "def product():\n    return 1\ndef actual():\n    assert observed() == expected()\nimport sys\nmodule = sys.modules[__name__]\nmodule.__dict__['product'] = actual\ndef test_case():\n    product()\n",
+        "def product():\n    return 1\ndef actual():\n    assert observed() == expected()\ndef mutate():\n    namespace = globals\n    namespace()['product'] = actual\nmutate()\ndef test_case():\n    product()\n",
+        "def product():\n    return 1\ndef actual():\n    assert observed() == expected()\nactual.__globals__['product'] = actual\ndef test_case():\n    product()\n",
+        "def actual(count):\n    assert observed() == expected()\n    return []\nactual.__globals__['range'] = actual\ndef test_case():\n    for _ in range(0):\n        opaque()\n",
+        "def product():\n    pass\ndef actual():\n    assert observed() == expected()\nglobals()['product'] = actual\ndef test_case():\n    product()\n",
+        "def actual(count):\n    assert observed() == expected()\n    return []\nactual.__globals__['__builtins__']['range'] = actual\ndef test_case():\n    for _ in range(0):\n        opaque()\n",
+        "import builtins\ndef actual(count):\n    assert observed() == expected()\n    return []\nbuiltins.range = actual\ndef test_case():\n    for _ in range(0):\n        opaque()\n",
+    ],
+)
+def test_inert_bindings_reject_reflective_module_mutation(source):
+    import ast
+    from factoryline.test_oracle_misuse import inert_test_body
+
+    module = ast.parse(source)
+    node = module.body[-1]
+    node._oracle_module = module
+    assert not inert_test_body(node)
+
+
+def test_module_pass_context_helper_code_change_invalidates_native_key(
+    tmp_path, monkeypatch
+):
+    from factoryline import review_audits as scanner
+    from factoryline import test_oracle_misuse as oracle_misuse
+
+    helper = oracle_misuse._module_pass_context_closed
+    first = scanner._oracle_context_cache_key(tmp_path, [], {})
+
+    def replacement(module, namespace_closed):
+        return bool(namespace_closed)
+
+    monkeypatch.setattr(helper, "__code__", replacement.__code__)
+    assert scanner._oracle_context_cache_key(tmp_path, [], {}) != first
+
+
+@pytest.mark.parametrize(
+    "attribute",
+    [
+        "__globals__",
+        "__builtins__",
+        "__dict__",
+        "__closure__",
+        "f_globals",
+        "f_locals",
+        "gi_frame",
+        "cr_frame",
+        "ag_frame",
+    ],
+)
+def test_inert_namespace_guard_rejects_function_and_frame_capabilities(attribute):
+    import ast
+    from factoryline.test_oracle_misuse import _module_namespace_access_closed
+
+    module = ast.parse(f"def test_case():\n    value.{attribute}\n")
+    assert not _module_namespace_access_closed(module)
+
+
+def test_security_scan_keeps_directly_rebound_builtin_range_unknown(tmp_path):
+    source = (
+        "import builtins\n"
+        "def product():\n"
+        "    pass\n"
+        "def actual(count):\n"
+        "    assert observed() == expected()\n"
+        "    return []\n"
+        "builtins.range = actual\n"
+        "def test_case():\n"
+        "    for _ in range(0):\n"
+        "        opaque()\n"
+    )
+    (tmp_path / "test_sample.py").write_text(source, encoding="utf-8")
+
+    report = security_scan(tmp_path, cache_enabled=False)
+
+    _assert_unknown_test_oracle(report, unknown_count=1)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "for _ in range(1): run_oracle()",
+        "for _ in [*(1,)]: run_oracle()",
+        "for _ in [1]: run_oracle(); break",
+        "for _ in range(0, 1, 0): run_oracle()",
+        "range = lambda count: [1]\nfor _ in range(1): run_oracle()",
+        "range = lambda count: []\nfor _ in range(run_oracle()): run_oracle()",
+        "unused = (run_oracle() for _ in run_oracle())",
+        "unused = (run_oracle() for _ in [])\nlist(unused)",
+    ],
+)
+def test_bounded_control_flow_keeps_active_or_unknown_work(body):
+    import ast
+    from factoryline.test_oracle_misuse import inert_test_body
+
+    module = ast.parse(
+        "def test_case():\n" + "\n".join("    " + line for line in body.splitlines())
+    )
+    node = module.body[0]
+    node._oracle_module = module
+    assert not inert_test_body(node)
+
+
+def test_bounded_control_flow_rejects_module_shadowed_builtin_range():
+    import ast
+    from factoryline.test_oracle_misuse import inert_test_body
+
+    module = ast.parse(
+        "range = lambda count: [1]\n"
+        "def test_case():\n"
+        "    for _ in range(0): run_oracle()\n"
+    )
+    node = module.body[1]
+    node._oracle_module = module
+    assert not inert_test_body(node)
+
+
 @pytest.mark.parametrize("mismatch", [None, "root", "tree", "inventory", "missing"])
 def test_captured_import_resolver_is_generation_bound(tmp_path, mismatch):
     import ast
@@ -12741,3 +12924,23 @@ def test_captured_import_resolver_rejects_mutated_generation(tmp_path, mutation)
         eligible[tmp_path / "new.py"] = tmp_path / "new.py"
     with pytest.raises(ValueError, match="captured generation"):
         resolve(tmp_path, path, tree, eligible)
+
+
+def test_code_replacement_with_captured_assertion_is_not_proven_inert(tmp_path):
+    source = """
+def test_behavior():
+    checks = []
+    required = 42
+    def register(fn):
+        checks.append(fn)
+        return fn
+    @register
+    def check(value):
+        assert value == required
+    check.__code__ = (lambda value: None).__code__
+    for callback in checks:
+        callback(42)
+"""
+    (tmp_path / "test_case.py").write_text(source, encoding="utf-8")
+    findings = security_scan(tmp_path)["findings"]
+    assert not any(finding["code"] == "QUALITY_HOLLOW_TEST" for finding in findings)

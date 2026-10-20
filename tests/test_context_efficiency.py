@@ -1,6 +1,6 @@
 import io
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -594,7 +594,9 @@ def test_cli_context_shard_build_validate_review_is_bounded_and_nonactivating(
                         "unresolved_action",
                     )
                 },
-                "expires_at": "2026-10-20T00:00:00Z",
+                "expires_at": (
+                    datetime.now(timezone.utc) + timedelta(days=1)
+                ).isoformat(),
             }
         ),
         encoding="utf-8",
@@ -3839,3 +3841,40 @@ def test_present_inert_module_helper_retains_reference_validation(body):
         "helper": clean.body[0]
     }
     assert misuse._module_pass_helpers(leaked, {"leaked"}, leaked.body[-1]) == {}
+
+
+def test_protocol_context_uses_invocation_resolver_with_standalone_fallback(
+    tmp_path, monkeypatch
+):
+    import ast
+    import hashlib
+    from factoryline import review_audits as scanner
+    from factoryline.context_efficiency import (
+        captured_import_resolver,
+        protocol_call_context,
+    )
+
+    source = tmp_path / "test_case.py"
+    source.write_text("def test_case():\n    pass\n")
+    tree = ast.parse(source.read_text())
+    tree._oracle_source_sha256 = hashlib.sha256(source.read_bytes()).hexdigest()
+    snapshots = {source: tree}
+    eligible = {source.resolve(): source}
+    calls = []
+    original = scanner._oracle_imports
+
+    def observed(*args):
+        calls.append(args[1])
+        return original(*args)
+
+    monkeypatch.setattr(scanner, "_oracle_imports", observed)
+    resolver = captured_import_resolver(tmp_path, snapshots, eligible, observed)
+    assert calls == [source]
+    captured = protocol_call_context(
+        tmp_path, [source], snapshots, import_resolver=resolver, eligible=eligible
+    )
+    assert calls == [source]
+    assert protocol_call_context(tmp_path, [source], snapshots) == captured
+    assert calls == [source, source]
+    with pytest.raises(ValueError, match="outside its captured generation"):
+        resolver(tmp_path, source, ast.parse(source.read_text()), eligible)

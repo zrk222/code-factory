@@ -3631,12 +3631,15 @@ def _declared_typecheck_sources(
 
 
 def _oracle_context_cache_key(root: Path, manifest: list, config_identity: dict) -> str:
+    import builtins
     from . import test_oracle_misuse as oracle_misuse
     from . import test_callback_closure
     from . import mock_fixture_provenance
     from . import mock_fixture_allocations
     from .context_efficiency import (
         _consume_security_snapshots,
+        _module_has_dynamic_capability_access,
+        _capability_reflection_names,
         _populate_oracle_database_context,
         _read_bounded_workspace_source,
         _scan_missing_security_snapshot,
@@ -3661,6 +3664,8 @@ def _oracle_context_cache_key(root: Path, manifest: list, config_identity: dict)
         _security_source_bytes,
         _read_bounded_workspace_source,
         _consume_security_snapshots,
+        _module_has_dynamic_capability_access,
+        _capability_reflection_names,
         _populate_oracle_database_context,
         _scan_missing_security_snapshot,
         local_file,
@@ -3668,6 +3673,14 @@ def _oracle_context_cache_key(root: Path, manifest: list, config_identity: dict)
         *provider_context_cache_helpers(contracts),
         RuntimeAuditError,
         _click_runner_fixtures,
+        _autouse_fixture_names,
+        _class_has_captured_autouse,
+        _captured_local_class_bases,
+        _update_captured_class_binding,
+        _scope_parameters,
+        _resolved_ast_name,
+        _bound_names,
+        _test_has_captured_autouse,
         _scope_security_aliases,
         _module_security_aliases,
         _ty_assertion_helpers,
@@ -3709,6 +3722,10 @@ def _oracle_context_cache_key(root: Path, manifest: list, config_identity: dict)
         oracle_misuse.retain_local_oracle_diagnostics,
         oracle_misuse.weak_assertion_reason,
         *oracle_misuse.INERT_BODY_HELPERS,
+        *(
+            getattr(oracle_misuse, helper.__name__, None)
+            for helper in oracle_misuse.INERT_BODY_HELPERS
+        ),
         _is_oracle_helper_name,
         _oracle_context_cache_eligible,
         _project_oracle_context,
@@ -3716,6 +3733,17 @@ def _oracle_context_cache_key(root: Path, manifest: list, config_identity: dict)
         integrity.NativeOraclePayload.valid,
     )
     helpers += test_callback_closure.CACHE_HELPERS
+    helpers += (
+        integrity._lexical_nodes,
+        _body_nodes,
+        builtins.compile,
+        getattr(test_callback_closure, "compile", builtins.compile),
+    )
+    helpers += tuple(
+        getattr(module, helper.__name__, None)
+        for helper in test_callback_closure.CACHE_HELPERS
+        for module in (test_callback_closure, integrity)
+    )
     helpers += mock_fixture_provenance.CACHE_HELPERS
     helpers += mock_fixture_allocations.CACHE_HELPERS
     helpers += async_runner_fixture_helpers() + protocol_call_helpers()
@@ -3976,6 +4004,97 @@ def _project_oracle_context(
     return contexts, bindings, edges, source_bytes
 
 
+def _autouse_fixture_names(body, aliases, *, autouse_only=True):
+    """Find captured lifecycle candidates; this veto never credits an oracle."""
+    names = []
+    for function in body:
+        if not isinstance(function, _FUNCTION_NODES):
+            continue
+        for decorator in function.decorator_list:
+            target = decorator.func if isinstance(decorator, ast.Call) else decorator
+            if _resolved_ast_name(target, aliases) != "pytest.fixture":
+                continue
+            if not autouse_only:
+                names.append(function.name)
+                continue
+            if not isinstance(decorator, ast.Call):
+                continue
+            for keyword in decorator.keywords:
+                if keyword.arg == "autouse" and not (
+                    isinstance(keyword.value, ast.Constant)
+                    and keyword.value.value is False
+                ):
+                    names.append(function.name)
+    return sorted(set(names))
+
+
+def _update_captured_class_binding(statement, bindings):
+    value = getattr(statement, "value", None)
+    alias = (
+        bindings.get(value.id)
+        if isinstance(statement, (ast.Assign, ast.AnnAssign))
+        and isinstance(value, ast.Name)
+        else None
+    )
+    for name in _bound_names(statement):
+        if name in bindings or alias is not None:
+            bindings[name] = alias
+
+
+def _captured_local_class_bases(module):
+    bindings, bases = {}, {}
+    pending = list(reversed(module.body))
+    while pending:
+        statement = pending.pop()
+        if isinstance(statement, ast.If) and isinstance(statement.test, ast.Constant):
+            pending.extend(
+                reversed(statement.body if statement.test.value else statement.orelse)
+            )
+        elif isinstance(statement, ast.ClassDef):
+            bases[id(statement)] = [
+                bindings[base.id]
+                for base in statement.bases
+                if isinstance(base, ast.Name) and base.id in bindings
+            ]
+            bindings[statement.name] = statement
+        else:
+            _update_captured_class_binding(statement, bindings)
+    return bases
+
+
+def _class_has_captured_autouse(owner, bases, aliases):
+    pending, seen = [owner], set()
+    while pending:
+        current = pending.pop()
+        if current is None:
+            return True
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        if _autouse_fixture_names(current.body, aliases):
+            return True
+        pending.extend(bases.get(id(current), ()))
+    return False
+
+
+def _test_has_captured_autouse(node, context):
+    if context.get("autouse_lifecycle") or set(_scope_parameters(node)) & set(
+        context.get("requested_fixture_lifecycle", ())
+    ):
+        return True
+    module = getattr(node, "_oracle_module", None)
+    if not isinstance(module, ast.Module):
+        return False
+    aliases = _module_security_aliases(module)
+    bases = _captured_local_class_bases(module)
+    return any(
+        isinstance(owner, ast.ClassDef)
+        and node in owner.body
+        and _class_has_captured_autouse(owner, bases, aliases)
+        for owner in module.body
+    )
+
+
 def _build_oracle_context(
     root: Path,
     files: list[Path],
@@ -3993,7 +4112,15 @@ def _build_oracle_context(
     )
 
     async_fixtures = async_runner_fixture_context(root, files, snapshots)
-    protocols = protocol_call_context(root, files, snapshots)
+    eligible = {path.resolve(): path for path in files}
+    resolve_imports, initializer_lookup, validate_initializers = (
+        captured_import_resolver(
+            root, snapshots, eligible, _oracle_imports, with_initializers=True
+        )
+    )
+    protocols = protocol_call_context(
+        root, files, snapshots, import_resolver=resolve_imports, eligible=eligible
+    )
     fixture_sources = [
         (
             path,
@@ -4005,6 +4132,16 @@ def _build_oracle_context(
         if path.name == "conftest.py"
     ]
     fixture_sources.sort(key=lambda item: len(item[0].parts))
+    requested_fixture_sources = {
+        path: _autouse_fixture_names(
+            tree.body, _module_security_aliases(tree), autouse_only=False
+        )
+        for path, tree in snapshots.items()
+    }
+    lifecycle_sources = {
+        path: _autouse_fixture_names(tree.body, _module_security_aliases(tree))
+        for path, tree in snapshots.items()
+    }
     mock_fixture_sources = {
         path: mock_fixture_provenance.fixture_bindings_for_source(tree)
         for path, tree in snapshots.items()
@@ -4015,21 +4152,39 @@ def _build_oracle_context(
             "weak_helpers": set(),
             "mixins": set(),
             "pytest_inherited": set(),
+            "credential_consumers": {},
+            "finite_template_inputs": {},
         }
         for path in snapshots
     }
     edges = set()
     callback_summaries = {}
     helper_summaries = {}
-    eligible = {path.resolve(): path for path in files}
-    resolve_imports, initializer_lookup, validate_initializers = (
-        captured_import_resolver(
-            root, snapshots, eligible, _oracle_imports, with_initializers=True
-        )
-    )
     for path, tree in snapshots.items():
         caller = path.relative_to(root).as_posix()
         contexts[path]["protocol_observations"] = protocols.get(caller, {})
+        contexts[path]["requested_fixture_lifecycle"] = sorted(
+            {
+                name
+                for source, names in requested_fixture_sources.items()
+                if source == path
+                or (
+                    source.name == "conftest.py"
+                    and path.parent.is_relative_to(source.parent)
+                )
+                for name in names
+            }
+        )
+        contexts[path]["autouse_lifecycle"] = [
+            f"{source.relative_to(root).as_posix()}:{name}"
+            for source, names in lifecycle_sources.items()
+            if source == path
+            or (
+                source.name == "conftest.py"
+                and path.parent.is_relative_to(source.parent)
+            )
+            for name in names
+        ]
         aliases = _scope_security_aliases(_module_security_aliases(tree), tree)
         contexts[path]["async_runner_fixtures"] = async_fixtures.get(
             path.relative_to(root).as_posix(), {}
@@ -4291,16 +4446,19 @@ def _hollow_test_finding(
         if isinstance(oracle_module, ast.Module)
         else {}
     )
-    if type_intent_hollow.obviously_empty_test_body(
-        node
-    ) or type_intent_hollow.inert_type_assertion_only_oracle(
-        node,
-        aliases,
-        module_aliases=module_aliases,
-        scope_parameters=_scope_parameters(node),
-        provider_mutated=contracts._ty_assertion_provider_mutated,
-        relative=relative,
-        provider_context_closed=(type_intent_hollow.captured_provider_context_closed),
+    if not _test_has_captured_autouse(node, oracle_context or {}) and (
+        type_intent_hollow.obviously_empty_test_body(node)
+        or type_intent_hollow.inert_type_assertion_only_oracle(
+            node,
+            aliases,
+            module_aliases=module_aliases,
+            scope_parameters=_scope_parameters(node),
+            provider_mutated=contracts._ty_assertion_provider_mutated,
+            relative=relative,
+            provider_context_closed=(
+                type_intent_hollow.captured_provider_context_closed
+            ),
+        )
     ):
         return _security_finding(
             "QUALITY_HOLLOW_TEST",

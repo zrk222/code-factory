@@ -2970,7 +2970,11 @@ def test_codspeed_module_benchmark_requires_config_and_workload(
 ):
     from factoryline.review_audits import security_scan
 
-    source = "import pytest\npytestmark = pytest.mark.benchmark()\n"
+    # Self-contained workload; the original undefined forms remain UNKNOWN controls.
+    source = (
+        "import pytest\npytestmark = pytest.mark.benchmark()\n"
+        "def product():\n    return 1\n"
+    )
     if change == "shadowed_pytest":
         source += "pytest = object()\n"
     if change == "rebound_marker":
@@ -3008,7 +3012,9 @@ def test_codspeed_config_change_invalidates_cached_oracle(tmp_path):
     from factoryline.review_audits import security_scan
 
     (tmp_path / "test_bench.py").write_text(
-        "import pytest\npytestmark = pytest.mark.benchmark\ndef test_case():\n    product()\n"
+        "import pytest\npytestmark = pytest.mark.benchmark\n"
+        "def product():\n    return 1\n"
+        "def test_case():\n    product()\n"
     )
     config = tmp_path / "tox.ini"
     config.write_text("[testenv:perf]\ncommands = pytest --codspeed test_bench.py\n")
@@ -3935,6 +3941,10 @@ def test_stable_import_helpers_are_fresh_and_invocation_local(tmp_path):
             ),
             implementation: ast.parse(source),
         }
+        # Native import binding requires actual captured source files.
+        root.mkdir(parents=True)
+        for path, tree in snapshots.items():
+            path.write_text(ast.unparse(tree), encoding="utf-8")
         contexts = {path: {} for path in snapshots}
         edges = []
         bind_project_contracts(root, snapshots, contexts, edges)
@@ -5804,14 +5814,27 @@ def test_shared_source_binding_taint_keeps_explicit_defaults_policy(
     assert not getattr(function, "_security_helper_active", False)
 
 
-@pytest.mark.parametrize("body", ["pass", "external_operation()"])
-def test_unknown_policy_generic_local_absence_is_not_deficiency(tmp_path, body):
+@pytest.mark.parametrize(
+    "body,expected",
+    [
+        ("pass", "QUALITY_HOLLOW_TEST"),
+        ("external_operation()", "QUALITY_UNKNOWN_TEST_ORACLE"),
+    ],
+)
+def test_unknown_policy_generic_local_absence_is_not_deficiency(
+    tmp_path, body, expected
+):
     from factoryline.review_audits import security_scan
 
     (tmp_path / "test_case.py").write_text(f"def test_case():\n    {body}\n")
     report = security_scan(tmp_path)
     findings = report["findings"]
     unknown = [f for f in findings if f["code"] == "QUALITY_UNKNOWN_TEST_ORACLE"]
+    if expected == "QUALITY_HOLLOW_TEST":
+        # Local inertness is proved; an opaque call remains unverified.
+        assert [f["code"] for f in findings] == ["QUALITY_HOLLOW_TEST"]
+        assert findings[0]["severity"] == "MEDIUM"
+        return
     assert len(unknown) == 1
     assert unknown[0]["severity"] == "INFO"
     assert unknown[0]["facts"]["state"] == "INCOMPLETE"
@@ -6114,3 +6137,352 @@ def test_native_oracle_payload_missing_edges_is_miss_not_hit():
     assert scanner._oracle_context_cache_info()["hits"] == 0
     assert scanner._oracle_context_cache_info()["misses"] == 1
     assert scanner._oracle_context_cache_info()["serialized_bytes"] == 0
+
+
+@pytest.mark.parametrize(
+    "location,fixture,expected",
+    [
+        (
+            "conftest.py",
+            "yield\n    assert actual() == expected()",
+            "QUALITY_UNKNOWN_TEST_ORACLE",
+        ),
+        (
+            "conftest.py",
+            "assert actual() == expected()\n    yield",
+            "QUALITY_UNKNOWN_TEST_ORACLE",
+        ),
+        (
+            "test_case.py",
+            "yield\n    assert actual() == expected()",
+            "QUALITY_UNKNOWN_TEST_ORACLE",
+        ),
+        (
+            "unrelated/conftest.py",
+            "yield\n    assert actual() == expected()",
+            "QUALITY_HOLLOW_TEST",
+        ),
+    ],
+)
+def test_captured_autouse_lifecycle_scope_preserves_inert_body(
+    tmp_path, location, fixture, expected
+):
+    from factoryline import review_audits as scanner
+
+    source = tmp_path / location
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_text(
+        "import pytest\n@pytest.fixture(autouse=True)\ndef validate():\n    "
+        + fixture
+        + "\n"
+    )
+    test = tmp_path / "test_case.py"
+    with test.open("a") as stream:
+        stream.write("def test_case():\n    pass\n")
+    scanner._oracle_context_cache_clear()
+    reports = [
+        scanner.security_scan(tmp_path),
+        scanner.security_scan(tmp_path),
+        scanner.security_scan(tmp_path, cache_enabled=False),
+    ]
+    for report in reports:
+        rows = [f for f in report["findings"] if f["path"] == "test_case.py"]
+        assert [f["code"] for f in rows] == [expected]
+
+
+def test_autouse_fixture_change_invalidates_cached_lifecycle(tmp_path):
+    from factoryline import review_audits as scanner
+
+    fixture = tmp_path / "conftest.py"
+    fixture.write_text(
+        "import pytest\n@pytest.fixture(autouse=True)\ndef validate():\n    yield\n    assert actual() == expected()\n"
+    )
+    (tmp_path / "test_case.py").write_text("def test_case():\n    pass\n")
+    scanner._oracle_context_cache_clear()
+    assert (
+        "QUALITY_UNKNOWN_TEST_ORACLE"
+        in scanner.security_scan(tmp_path)["finding_counts"]
+    )
+    assert (
+        "QUALITY_UNKNOWN_TEST_ORACLE"
+        in scanner.security_scan(tmp_path)["finding_counts"]
+    )
+    fixture.write_text(fixture.read_text().replace("autouse=True", "autouse=False"))
+    assert "QUALITY_HOLLOW_TEST" in scanner.security_scan(tmp_path)["finding_counts"]
+    assert "QUALITY_HOLLOW_TEST" in scanner.security_scan(tmp_path)["finding_counts"]
+
+
+def test_class_autouse_fixture_does_not_affect_other_test_class(tmp_path):
+    from factoryline.review_audits import security_scan
+
+    (tmp_path / "test_case.py").write_text(
+        "import pytest\nclass TestWithFixture:\n"
+        "    @pytest.fixture(autouse=True)\n    def validate(self):\n        yield\n        assert actual() == expected()\n"
+        "    def test_with_fixture(self):\n        pass\n"
+        "class TestStandalone:\n    def test_empty(self):\n        pass\n"
+    )
+    result = security_scan(tmp_path, cache_enabled=False)
+    rows = {f["facts"]["symbol"]: f["code"] for f in result["findings"]}
+    assert rows["test_with_fixture"] == "QUALITY_UNKNOWN_TEST_ORACLE"
+    assert rows["test_empty"] == "QUALITY_HOLLOW_TEST"
+
+
+@pytest.mark.parametrize(
+    "guard", ["_autouse_fixture_names", "_test_has_captured_autouse"]
+)
+def test_autouse_lifecycle_helper_change_invalidates_cache(
+    tmp_path, monkeypatch, guard
+):
+    from factoryline import review_audits as scanner
+
+    (tmp_path / "test_case.py").write_text("def test_case():\n    pass\n")
+    scanner._oracle_context_cache_clear()
+    scanner.security_scan(tmp_path)
+    before = scanner._oracle_context_cache_info()["misses"]
+    original = getattr(scanner, guard)
+
+    def observed(*args, **kwargs):
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(scanner, guard, observed)
+    scanner.security_scan(tmp_path)
+    assert scanner._oracle_context_cache_info()["misses"] > before
+
+
+def test_arbitrary_autouse_keyword_does_not_hide_real_hollow_test(tmp_path):
+    from factoryline.review_audits import security_scan
+
+    (tmp_path / "test_case.py").write_text(
+        "def tag(*, autouse):\n    def identity(f):\n        return f\n    return identity\n"
+        "@tag(autouse=True)\ndef unused():\n    pass\n"
+        "def test_empty():\n    pass\n"
+    )
+    report = security_scan(tmp_path, cache_enabled=False)
+    assert "QUALITY_HOLLOW_TEST" in report["finding_counts"]
+    assert "QUALITY_UNKNOWN_TEST_ORACLE" not in report["finding_counts"]
+
+
+def test_inherited_local_autouse_lifecycle_is_not_inferred_absent(tmp_path):
+    from factoryline.review_audits import security_scan
+
+    (tmp_path / "test_case.py").write_text(
+        "import pytest\nclass Base:\n    @pytest.fixture(autouse=True)\n"
+        "    def validate(self):\n        yield\n        assert actual() == expected()\n"
+        "class TestEmpty(Base):\n    def test_empty(self):\n        pass\n"
+        "class TestUnrelated:\n    def test_empty(self):\n        pass\n"
+    )
+    report = security_scan(tmp_path, cache_enabled=False)
+    assert report["finding_counts"]["QUALITY_UNKNOWN_TEST_ORACLE"] == 1
+    assert report["finding_counts"]["QUALITY_HOLLOW_TEST"] == 1
+
+
+@pytest.mark.parametrize(
+    "before,after,expected",
+    [
+        ("Base = Empty\n", "", "QUALITY_HOLLOW_TEST"),
+        ("", "Base = Empty\n", "QUALITY_UNKNOWN_TEST_ORACLE"),
+        ("Alias = Base\nBase = Empty\n", "", "QUALITY_UNKNOWN_TEST_ORACLE"),
+    ],
+)
+def test_autouse_lifecycle_uses_class_base_at_creation(
+    tmp_path, before, after, expected
+):
+    from factoryline.review_audits import security_scan
+
+    base_name = "Alias" if before.startswith("Alias") else "Base"
+    (tmp_path / "test_case.py").write_text(
+        "import pytest\nclass Base:\n    @pytest.fixture(autouse=True)\n"
+        "    def validate(self):\n        yield\n        assert actual() == expected()\n"
+        "class Empty:\n    pass\n"
+        + before
+        + f"class TestEmpty({base_name}):\n    def test_empty(self):\n        pass\n"
+        + after
+    )
+    report = security_scan(tmp_path, cache_enabled=False)
+    assert list(report["finding_counts"]) == [expected]
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        "missing_config",
+        "wrong_target",
+        "no_codspeed",
+        "shadowed_pytest",
+        "rebound_marker",
+        "vacuous_assertion",
+        "config_transition",
+    ],
+)
+def test_codspeed_undefined_workload_remains_unknown(tmp_path, change):
+    from factoryline.review_audits import security_scan
+
+    source = "import pytest\npytestmark = pytest.mark.benchmark()\n"
+    if change == "shadowed_pytest":
+        source += "pytest = object()\n"
+    if change == "rebound_marker":
+        source += "pytestmark = []\n"
+    source += "def test_case():\n    product()\n"
+    if change == "vacuous_assertion":
+        source += "    assert True\n"
+    (tmp_path / "test_bench.py").write_text(source)
+    config = tmp_path / "tox.ini"
+    command = "pytest --codspeed test_bench.py"
+    if change == "wrong_target":
+        command = "pytest --codspeed other.py"
+    if change in {
+        "no_codspeed",
+        "shadowed_pytest",
+        "rebound_marker",
+        "vacuous_assertion",
+    }:
+        command = "pytest test_bench.py"
+    if change != "missing_config":
+        config.write_text("[testenv:perf]\ncommands = " + command + "\n")
+    if change == "config_transition":
+        assert (
+            "QUALITY_BENCHMARK_NOT_VERIFIED"
+            in security_scan(tmp_path)["finding_counts"]
+        )
+        config.write_text("[testenv:perf]\ncommands = pytest test_bench.py\n")
+    result = security_scan(tmp_path)
+    expected = (
+        "QUALITY_WEAK_TEST_ORACLE"
+        if change == "vacuous_assertion"
+        else "QUALITY_UNKNOWN_TEST_ORACLE"
+    )
+    assert expected in result["finding_counts"]
+    assert "QUALITY_HOLLOW_TEST" not in result["finding_counts"]
+
+
+@pytest.mark.parametrize(
+    "condition,expected",
+    [
+        ("False", "QUALITY_UNKNOWN_TEST_ORACLE"),
+        ("True", "QUALITY_HOLLOW_TEST"),
+        ("unresolved()", "QUALITY_UNKNOWN_TEST_ORACLE"),
+    ],
+)
+def test_autouse_lifecycle_conditional_base_write_is_not_absence(
+    tmp_path, condition, expected
+):
+    from factoryline.review_audits import security_scan
+
+    (tmp_path / "test_case.py").write_text(
+        "import pytest\nclass Base:\n    @pytest.fixture(autouse=True)\n"
+        "    def validate(self):\n        yield\n        assert actual() == expected()\n"
+        "class Empty:\n    pass\n"
+        + f"if {condition}:\n    Base = Empty\n"
+        + "class TestEmpty(Base):\n    def test_empty(self):\n        pass\n"
+    )
+    report = security_scan(tmp_path, cache_enabled=False)
+    assert list(report["finding_counts"]) == [expected]
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["_inert_range_call", "_inert_empty_generator_creation", "_literal_return_context"],
+)
+@pytest.mark.parametrize("mutation", ["binding", "code"])
+def test_live_inert_helper_mutations_invalidate_oracle_context(
+    tmp_path, monkeypatch, name, mutation
+):
+    from factoryline import review_audits as scanner, test_oracle_misuse as misuse
+
+    (tmp_path / "test_case.py").write_text("def test_case():\n    pass\n")
+    scanner._oracle_context_cache_clear()
+    scanner.security_scan(tmp_path)
+    before = scanner._oracle_context_cache_info()["misses"]
+    original = getattr(misuse, name)
+
+    def replacement(*args, **kwargs):
+        return original(*args, **kwargs)
+
+    if mutation == "binding":
+        monkeypatch.setattr(misuse, name, replacement)
+    else:
+
+        def not_inert(*args, **kwargs):
+            return None
+
+        monkeypatch.setattr(original, "__code__", not_inert.__code__)
+    scanner.security_scan(tmp_path)
+    assert scanner._oracle_context_cache_info()["misses"] > before
+
+
+@pytest.mark.parametrize("requested", [True, False])
+def test_captured_requested_fixture_is_not_silent_lifecycle_absence(
+    tmp_path, requested
+):
+    from factoryline import review_audits as scanner
+
+    (tmp_path / "conftest.py").write_text(
+        "import pytest\n@pytest.fixture\ndef checked():\n    assert actual() == expected()\n    return 1\n"
+    )
+    (tmp_path / "test_case.py").write_text(
+        f"def test_case({'checked' if requested else ''}):\n    pass\n"
+    )
+    scanner._oracle_context_cache_clear()
+    expected = "QUALITY_UNKNOWN_TEST_ORACLE" if requested else "QUALITY_HOLLOW_TEST"
+    for cached in (True, True, False):
+        assert (
+            expected
+            in scanner.security_scan(tmp_path, cache_enabled=cached)["finding_counts"]
+        )
+
+
+@pytest.mark.parametrize(
+    "name", ["_scope_parameters", "_resolved_ast_name", "_bound_names"]
+)
+def test_lifecycle_binding_dependency_change_invalidates_cache(
+    tmp_path, monkeypatch, name
+):
+    from factoryline import review_audits as scanner
+
+    (tmp_path / "test_case.py").write_text("def test_case():\n    pass\n")
+    scanner._oracle_context_cache_clear()
+    scanner.security_scan(tmp_path)
+    before = scanner._oracle_context_cache_info()["misses"]
+    original = getattr(scanner, name)
+
+    def replacement(*args, **kwargs):
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(scanner, name, replacement)
+    scanner.security_scan(tmp_path)
+    assert scanner._oracle_context_cache_info()["misses"] > before
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "_registry_kind",
+        "_registry_noop_code_assignment",
+        "_registry_callback_never_executes_or_asserts",
+    ],
+)
+@pytest.mark.parametrize("mutation", ["binding", "code"])
+def test_live_registry_helper_mutations_invalidate_oracle_cache(
+    tmp_path, monkeypatch, name, mutation
+):
+    from factoryline import review_audits as scanner, test_callback_closure as closure
+
+    (tmp_path / "test_case.py").write_text("def test_case():\n    pass\n")
+    scanner._oracle_context_cache_clear()
+    scanner.security_scan(tmp_path)
+    before = scanner._oracle_context_cache_info()["misses"]
+    original = getattr(closure, name)
+
+    def replacement(*args, **kwargs):
+        return original(*args, **kwargs)
+
+    if mutation == "binding":
+        monkeypatch.setattr(closure, name, replacement)
+    else:
+
+        def unchanged_placeholder(*args, **kwargs):
+            return False
+
+        monkeypatch.setattr(original, "__code__", unchanged_placeholder.__code__)
+    scanner.security_scan(tmp_path)
+    assert scanner._oracle_context_cache_info()["misses"] > before
