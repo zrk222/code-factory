@@ -253,6 +253,13 @@ def _module_bindings(module):
 
 
 def _module_provider_aliases(module, test, module_name, attrs):
+    module_imports = [item for item in module.body if isinstance(item, ast.Import)]
+    if not any(
+        alias.name == module_name or alias.name.startswith(f"{module_name}.")
+        for item in module_imports
+        for alias in item.names
+    ):
+        return {}
     definitions, imports = _module_bindings(module)
     parents = {
         child: parent
@@ -262,9 +269,7 @@ def _module_provider_aliases(module, test, module_name, attrs):
     test_nodes = {id(child) for child in ast.walk(test)}
     stores = _stored_names(module)
     aliases = {}
-    for item in module.body:
-        if not isinstance(item, ast.Import):
-            continue
+    for item in module_imports:
         for alias in item.names:
             if alias.name.startswith(f"{module_name}."):
                 return None
@@ -323,6 +328,11 @@ def _module_provider_aliases(module, test, module_name, attrs):
 
 
 def _imported_provider_names_closed(module, test, provider, allowed):
+    if not any(
+        isinstance(item, ast.ImportFrom) and item.module == provider
+        for item in module.body
+    ):
+        return True
     parents = {
         child: parent
         for parent in ast.walk(module)
@@ -453,6 +463,11 @@ def _inert_helper_stub(function):
 
 
 def _module_pass_helpers(module, stores, test):
+    if not any(
+        isinstance(item, ast.FunctionDef) and _inert_helper_stub(item)
+        for item in module.body
+    ):
+        return {}
     if any(
         isinstance(node, ast.ImportFrom)
         and any(alias.name == "*" for alias in node.names)

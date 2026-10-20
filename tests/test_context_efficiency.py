@@ -3719,3 +3719,123 @@ def test_pickle_colocation_helpers_participate_in_runtime_proof_identity():
     assert (
         context._test_serialization_roundtrip is runtime._test_serialization_roundtrip
     )
+
+
+@pytest.mark.parametrize("provider", ["builtins", "contextlib"])
+def test_absent_oracle_provider_does_not_walk_descendants(monkeypatch, provider):
+    import ast
+    from factoryline import test_oracle_misuse as misuse
+
+    module = ast.parse(
+        "import json\ndef test_value():\n    value = 1\n    assert value == value\n"
+    )
+    test = module.body[1]
+
+    def forbidden_walk(_):
+        raise AssertionError("absent provider must not walk module descendants")
+
+    monkeypatch.setattr(misuse, "_stored_names", forbidden_walk)
+    assert misuse._module_provider_aliases(module, test, provider, {"ValueError"}) == {}
+    assert (
+        misuse._imported_provider_names_closed(module, test, provider, {"ValueError"})
+        is True
+    )
+
+
+@pytest.mark.parametrize(
+    "provider,symbol", [("builtins", "ValueError"), ("contextlib", "suppress")]
+)
+@pytest.mark.parametrize("form", ["module", "from"])
+def test_present_oracle_provider_still_checks_all_references(provider, symbol, form):
+    import ast
+    from factoryline import test_oracle_misuse as misuse
+
+    declaration = (
+        f"import {provider} as p"
+        if form == "module"
+        else f"from {provider} import {symbol} as operation"
+    )
+    call = f"p.{symbol}()" if form == "module" else "operation()"
+    clean = ast.parse(f"{declaration}\ndef test_value():\n    {call}\n")
+    escaped = ast.parse(
+        f"{declaration}\nleaked = {('p' if form == 'module' else 'operation')}\ndef test_value():\n    {call}\n"
+    )
+    if form == "module":
+        assert misuse._module_provider_aliases(
+            clean, clean.body[-1], provider, {symbol}
+        ) == {"p": provider}
+        assert (
+            misuse._module_provider_aliases(
+                escaped, escaped.body[-1], provider, {symbol}
+            )
+            is None
+        )
+    else:
+        assert (
+            misuse._imported_provider_names_closed(
+                clean, clean.body[-1], provider, {symbol}
+            )
+            is True
+        )
+        assert (
+            misuse._imported_provider_names_closed(
+                escaped, escaped.body[-1], provider, {symbol}
+            )
+            is False
+        )
+
+
+@pytest.mark.parametrize("provider", ["builtins", "contextlib"])
+def test_dotted_oracle_provider_does_not_take_absent_fast_path(provider):
+    import ast
+    from factoryline import test_oracle_misuse as misuse
+
+    module = ast.parse(f"import {provider}.extension\ndef test_value():\n    pass\n")
+    assert (
+        misuse._module_provider_aliases(module, module.body[-1], provider, set())
+        is None
+    )
+
+
+@pytest.mark.parametrize("provider", ["builtins", "contextlib"])
+def test_wildcard_oracle_provider_does_not_take_absent_fast_path(provider):
+    import ast
+    from factoryline import test_oracle_misuse as misuse
+
+    module = ast.parse(f"from {provider} import *\ndef test_value():\n    pass\n")
+    assert (
+        misuse._imported_provider_names_closed(module, module.body[-1], provider, set())
+        is False
+    )
+
+
+def test_absent_inert_module_helper_does_not_build_reference_maps(monkeypatch):
+    import ast
+    from factoryline import test_oracle_misuse as misuse
+
+    module = ast.parse(
+        "def helper():\n    return opaque()\ndef test_value():\n    helper()\n"
+    )
+
+    def forbidden_bindings(_):
+        raise AssertionError("no stub candidate needs module reference maps")
+
+    monkeypatch.setattr(misuse, "_module_bindings", forbidden_bindings)
+    assert misuse._module_pass_helpers(module, set(), module.body[-1]) == {}
+
+
+@pytest.mark.parametrize(
+    "body", ["pass", "...", "return", "return None", '"docstring"']
+)
+def test_present_inert_module_helper_retains_reference_validation(body):
+    import ast
+    from factoryline import test_oracle_misuse as misuse
+
+    clean = ast.parse(f"def helper():\n    {body}\ndef test_value():\n    helper()\n")
+    leaked = ast.parse(
+        f"def helper():\n    {body}\nleaked = helper\ndef test_value():\n    helper()\n"
+    )
+    assert misuse._module_pass_helpers(clean, set(), clean.body[-1]) == {
+        "helper": clean.body[0]
+    }
+    assert misuse._module_pass_helpers(leaked, {"leaked"}, leaked.body[-1]) == {}
