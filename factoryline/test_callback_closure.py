@@ -35,11 +35,46 @@ def _has_callback_escape(nodes, callback):
     )
 
 
+def _reference_is_unreachable(node, parents):
+    while node in parents:
+        parent = parents[node]
+        if isinstance(parent, ast.If) and isinstance(parent.test, ast.Constant):
+            value = parent.test.value
+            dead = (
+                parent.body
+                if value is False
+                else parent.orelse
+                if value is True
+                else ()
+            )
+            if node in dead:
+                return True
+        if (
+            isinstance(parent, ast.While)
+            and isinstance(parent.test, ast.Constant)
+            and parent.test.value is False
+            and node in parent.body
+        ):
+            return True
+        for field in ("body", "orelse", "finalbody"):
+            statements = getattr(parent, field, ())
+            if isinstance(statements, list) and node in statements:
+                previous = statements[: statements.index(node)]
+                if any(isinstance(stmt, (ast.Return, ast.Raise)) for stmt in previous):
+                    return True
+        node = parent
+    return False
+
+
 def _callback_is_referenced(nodes, callback):
+    parents = {
+        child: parent for parent in nodes for child in ast.iter_child_nodes(parent)
+    }
     return any(
         isinstance(node, ast.Name)
         and node.id == callback.name
         and isinstance(node.ctx, ast.Load)
+        and not _reference_is_unreachable(node, parents)
         for node in nodes
     )
 
@@ -55,10 +90,18 @@ def uninvoked_callback_reason(test, is_command, has_oracle):
             continue
         if _callback_is_referenced(visible, callback):
             continue
-        return (
-            callback,
-            "local command callback with assertions is never invoked or referenced",
+        unreachable = any(
+            isinstance(node, ast.Name)
+            and node.id == callback.name
+            and isinstance(node.ctx, ast.Load)
+            for node in visible
         )
+        reason = (
+            "local command callback with assertions is only referenced in statically unreachable code"
+            if unreachable
+            else "local command callback with assertions is never invoked or referenced"
+        )
+        return callback, reason
     return None
 
 
@@ -520,6 +563,7 @@ _REGISTRY_LOCAL_HELPERS = (
 CACHE_HELPERS = (
     _outside_callback,
     _has_callback_escape,
+    _reference_is_unreachable,
     _callback_is_referenced,
     uninvoked_callback_reason,
     _click_provider_node_escapes,

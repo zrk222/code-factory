@@ -92,3 +92,94 @@ def test_ordinary_tests_skip_click_module_walk(tmp_path, monkeypatch):
         "def test_smoke(): compute()\n", encoding="utf-8"
     )
     security_scan(tmp_path, cache_enabled=False)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "if False:\n        runner.invoke(cli, catch_exceptions=False)",
+        "if True:\n        pass\n    else:\n        runner.invoke(cli, catch_exceptions=False)",
+        "while False:\n        runner.invoke(cli, catch_exceptions=False)",
+        "return\n    runner.invoke(cli, catch_exceptions=False)",
+        "raise ValueError()\n    runner.invoke(cli, catch_exceptions=False)",
+        "if flag:\n        return\n        runner.invoke(cli, catch_exceptions=False)",
+    ],
+    ids=[
+        "if-false",
+        "dead-else",
+        "while-false",
+        "after-return",
+        "after-raise",
+        "branch-local-return",
+    ],
+)
+def test_unreachable_command_references_retain_local_weak_warning(tmp_path, body):
+    source = (
+        "import click\nfrom click.testing import CliRunner\n"
+        "def test_behavior():\n"
+        "    @click.command()\n    def cli():\n        assert compute() == 7\n"
+        "    runner = CliRunner()\n    " + body + "\n"
+    )
+    (tmp_path / "test_cli.py").write_text(source, encoding="utf-8")
+    report = security_scan(tmp_path, cache_enabled=False)
+    weak = [
+        item
+        for item in report["findings"]
+        if item["code"] == "QUALITY_WEAK_TEST_ORACLE"
+    ]
+    assert len(weak) == 1
+    assert weak[0]["severity"] == "MEDIUM"
+    assert "only referenced in statically unreachable code" in weak[0]["message"]
+    assert weak[0]["facts"]["whole_test_oracle"] == "UNASSESSED"
+    assert "QUALITY_HOLLOW_TEST" not in report["finding_counts"]
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "if flag:\n        runner.invoke(cli, catch_exceptions=False)",
+        "if True:\n        runner.invoke(cli, catch_exceptions=False)",
+        "while flag:\n        runner.invoke(cli, catch_exceptions=False)",
+        "try:\n        return\n    finally:\n        runner.invoke(cli, catch_exceptions=False)",
+        "try:\n        raise ValueError()\n    except ValueError:\n        runner.invoke(cli, catch_exceptions=False)",
+        "if False:\n        pass\n    else:\n        runner.invoke(cli, catch_exceptions=False)",
+        "if False:\n        runner.invoke(cli, catch_exceptions=False)\n    capture(cli)",
+        "if False:\n        runner.invoke(cli, catch_exceptions=False)\n    inspect(locals())",
+        "def later():\n        runner.invoke(cli, catch_exceptions=False)\n    register(later)",
+    ],
+    ids=[
+        "dynamic-if",
+        "live-if",
+        "dynamic-loop",
+        "finally",
+        "except",
+        "live-else",
+        "escape",
+        "reflection",
+        "closure",
+    ],
+)
+def test_live_or_escaped_command_references_remain_conservative(tmp_path, body):
+    (tmp_path / "test_cli.py").write_text(
+        "import click\nfrom click.testing import CliRunner\n"
+        "def test_behavior():\n"
+        "    @click.command()\n    def cli():\n        assert compute() == 7\n"
+        "    runner = CliRunner()\n    " + body + "\n",
+        encoding="utf-8",
+    )
+    report = security_scan(tmp_path, cache_enabled=False)
+    assert "QUALITY_WEAK_TEST_ORACLE" not in report["finding_counts"]
+
+
+def test_dead_reference_helper_binds_native_cache_epoch(tmp_path, monkeypatch):
+    from factoryline import review_audits as scanner
+
+    helper = test_callback_closure._reference_is_unreachable
+    assert helper in test_callback_closure.CACHE_HELPERS
+    before = scanner._oracle_context_cache_key(tmp_path, [], {})
+
+    def replacement(*args):
+        return False
+
+    monkeypatch.setattr(helper, "__code__", replacement.__code__)
+    assert scanner._oracle_context_cache_key(tmp_path, [], {}) != before
