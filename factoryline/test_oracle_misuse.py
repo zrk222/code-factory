@@ -1238,10 +1238,33 @@ def _mock_state_assertion_call(node, context):
         or not isinstance(node.func.value, ast.Name)
     ):
         return False
-    kind = context.get("mock_instances", {}).get(node.func.value.id)
+    state = context.get("mock_instances", {}).get(node.func.value.id)
+    if state is None:
+        return False
+    kind, calls = state
     return (
-        node.func.attr == "assert_not_called" and kind in {"Mock", "AsyncMock"}
-    ) or (node.func.attr == "assert_not_awaited" and kind == "AsyncMock")
+        node.func.attr == "assert_not_called"
+        and calls == 0
+        or node.func.attr == "assert_called_once"
+        and calls == 1
+        or node.func.attr == "assert_called"
+        and calls > 0
+        or node.func.attr == "assert_not_awaited"
+        and kind == "AsyncMock"
+    )
+
+
+def _inert_mock_call(node, context):
+    if not isinstance(node, ast.Call) or node.args or node.keywords:
+        return False
+    if not isinstance(node.func, ast.Name):
+        return _mock_state_assertion_call(node, context)
+    state = context.get("mock_instances", {}).get(node.func.id)
+    if state is None:
+        return False
+    kind, calls = state
+    context["mock_instances"][node.func.id] = (kind, min(calls + 1, 2))
+    return True
 
 
 def _inert_assigned_coroutine_creation(node, known, context):
@@ -1413,6 +1436,11 @@ def _run_inert_helper(helper, context, helpers):
         ):
             nested[key].pop(name, None)
     result = _inert_suite(helper.body, nested, helpers=nested_helpers)
+    captured = set(context["mock_instances"]) - _local_bindings(helper)
+    for name in captured:
+        context["mock_instances"].pop(name, None)
+        if result[0] in {"NORMAL", "RETURN"} and name in nested["mock_instances"]:
+            context["mock_instances"][name] = nested["mock_instances"][name]
     return ("NORMAL", None) if result[0] == "RETURN" else result
 
 
@@ -1445,7 +1473,7 @@ def _inert_expression(node, known, helpers, context):
             return _run_inert_helper(callback, context, helpers)
     if _mock_constructor_kind(node, context) is not None:
         return "NORMAL", None
-    if _mock_state_assertion_call(node, context):
+    if _inert_mock_call(node, context):
         return "NORMAL", None
     if _inert_literal_call(node, context.get("literal_calls"), known) is not None:
         return "NORMAL", None
@@ -1727,7 +1755,7 @@ def _track_inert_assignment(stmt, known, helpers, context):
             continue
         mock_kind = _mock_constructor_kind(stmt.value, context)
         if mock_kind is not None:
-            context["mock_instances"][target.id] = mock_kind
+            context["mock_instances"][target.id] = (mock_kind, 0)
             known.pop(target.id, None)
             helpers.pop(target.id, None)
             context["literal_calls"].pop(target.id, None)
@@ -1774,6 +1802,7 @@ def _reset_inert_branch(stmt, known, context, literal_calls_before):
 
 
 def _inert_suite(statements, context, known=None, helpers=None):
+    caller_context = context
     context = {
         **context,
         "literal_calls": dict(context.get("literal_calls", {})),
@@ -1787,12 +1816,16 @@ def _inert_suite(statements, context, known=None, helpers=None):
         literal_calls_before = dict(context["literal_calls"])
         result = _inert_statement(stmt, known, helpers, context)
         if result[0] != "NORMAL":
+            caller_context["mock_instances"] = (
+                dict(context["mock_instances"]) if result[0] == "RETURN" else {}
+            )
             return result
         _track_inert_definition(stmt, known, helpers, context)
         _track_inert_assignment(stmt, known, helpers, context)
         reset_helpers = _reset_inert_branch(stmt, known, context, literal_calls_before)
         if reset_helpers is not None:
             helpers = reset_helpers
+    caller_context["mock_instances"] = dict(context["mock_instances"])
     return "NORMAL", None
 
 
@@ -1880,6 +1913,7 @@ INERT_BODY_HELPERS = (
     _callback_helper,
     _mock_constructor_kind,
     _mock_state_assertion_call,
+    _inert_mock_call,
     _inert_assigned_coroutine_creation,
     _run_inert_helper,
     _track_inert_definition,

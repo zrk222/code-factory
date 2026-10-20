@@ -983,3 +983,135 @@ def test_mock_provider_live_helpers_invalidate_native_cache(
     else:
         monkeypatch.setattr(original, "__code__", replacement.__code__)
     assert scanner._oracle_context_cache_key(tmp_path, [], {}) != before
+
+
+@pytest.mark.parametrize("kind", ["Mock", "AsyncMock"])
+@pytest.mark.parametrize(
+    "calls,assertion,hollow",
+    [
+        (1, "assert_called_once", True),
+        (1, "assert_called", True),
+        (2, "assert_called", True),
+        (0, "assert_called_once", False),
+        (2, "assert_called_once", False),
+        (1, "assert_not_called", False),
+    ],
+)
+def test_default_mock_direct_call_count_is_source_proven(
+    tmp_path, kind, calls, assertion, hollow
+):
+    source = f"from unittest.mock import {kind}\ndef test_case():\n    dependency = {kind}()\n"
+    source += "    dependency()\n" * calls
+    source += f"    dependency.{assertion}()\n"
+    (tmp_path / "test_count.py").write_text(source, encoding="utf-8")
+    report = security_scan(tmp_path, cache_enabled=False)
+    expected = "QUALITY_HOLLOW_TEST" if hollow else "QUALITY_UNKNOWN_TEST_ORACLE"
+    assert report["finding_counts"] == {expected: 1}
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "dependency(unknown())\n    dependency.assert_called_once()",
+        "dependency = other\n    dependency.assert_called_once()",
+        "alias = dependency\n    alias()\n    dependency.assert_called_once()",
+        "dependency.side_effect = raises\n    dependency()\n    dependency.assert_called_once()",
+        "dependency()\n    try:\n        dependency()\n    finally:\n        dependency.assert_called_once()",
+        "await dependency()\n    dependency.assert_not_awaited()",
+    ],
+)
+def test_mock_count_requires_closed_direct_nonawaited_calls(tmp_path, body):
+    (tmp_path / "test_count.py").write_text(
+        "from unittest.mock import AsyncMock\nasync def test_case():\n    dependency = AsyncMock()\n    "
+        + body
+        + "\n",
+        encoding="utf-8",
+    )
+    assert (
+        "QUALITY_HOLLOW_TEST"
+        not in security_scan(tmp_path, cache_enabled=False)["finding_counts"]
+    )
+
+
+def test_mock_count_helper_binding_and_code_invalidate_native_cache(
+    tmp_path, monkeypatch
+):
+    from factoryline import review_audits as scanner
+    from factoryline import test_oracle_misuse as misuse
+
+    original = misuse._inert_mock_call
+    before = scanner._oracle_context_cache_key(tmp_path, [], {})
+
+    def replacement(*args, **kwargs):
+        return False
+
+    monkeypatch.setattr(misuse, "_inert_mock_call", replacement)
+    assert scanner._oracle_context_cache_key(tmp_path, [], {}) != before
+    monkeypatch.setattr(misuse, "_inert_mock_call", original)
+    monkeypatch.setattr(original, "__code__", replacement.__code__)
+    assert scanner._oracle_context_cache_key(tmp_path, [], {}) != before
+
+
+@pytest.mark.parametrize(
+    "body,hollow",
+    [
+        (
+            "def invoke():\n        dep()\n    invoke()\n    dep.assert_not_called()",
+            False,
+        ),
+        (
+            "dep()\n    def invoke():\n        dep()\n    invoke()\n    dep.assert_called_once()",
+            False,
+        ),
+        (
+            "def invoke():\n        dep()\n    def wrapper(fn):\n        fn()\n    wrapper(invoke)\n    dep.assert_not_called()",
+            False,
+        ),
+        (
+            "def inner():\n        dep()\n    def outer():\n        inner()\n    outer()\n    dep.assert_not_called()",
+            False,
+        ),
+        (
+            "def invoke():\n        dep = Mock()\n        dep()\n    invoke()\n    dep.assert_called_once()",
+            False,
+        ),
+        (
+            "def invoke():\n        dep()\n    invoke()\n    dep.assert_called_once()",
+            True,
+        ),
+        (
+            "def invoke():\n        dep()\n        return\n    invoke()\n    dep.assert_called_once()",
+            True,
+        ),
+        (
+            "async def invoke():\n        dep()\n    invoke()\n    dep.assert_not_called()",
+            True,
+        ),
+        (
+            "def invoke():\n        pass\n    invoke()\n    dep.assert_not_called()",
+            True,
+        ),
+    ],
+    ids=[
+        "captured-call-invalidates-not-called",
+        "captured-second-call-invalidates-once",
+        "callback-captured-call",
+        "transitive-captured-call",
+        "local-shadow-cannot-overwrite-caller-fact",
+        "captured-first-call",
+        "captured-call-before-return",
+        "unentered-async-body",
+        "inert-helper-preserves-state",
+    ],
+)
+def test_mock_call_state_crosses_only_executed_captured_helper_bindings(
+    tmp_path, body, hollow
+):
+    (tmp_path / "test_count.py").write_text(
+        "from unittest.mock import Mock\ndef test_case():\n    dep = Mock()\n    "
+        + body
+        + "\n",
+        encoding="utf-8",
+    )
+    report = security_scan(tmp_path, cache_enabled=False)
+    assert ("QUALITY_HOLLOW_TEST" in report["finding_counts"]) is hollow
