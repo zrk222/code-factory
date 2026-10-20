@@ -1,3 +1,4 @@
+import ast
 import io
 import json
 from datetime import datetime, timedelta, timezone
@@ -15,12 +16,14 @@ from factoryline.context_efficiency import (
     build_context_shard_candidate,
     build_selected_context_packet,
     context_efficiency_status,
+    _module_has_dynamic_capability_access,
     review_context_shard_candidate,
     validate_context_shard_candidate,
     verify_context_packet,
 )
 from factoryline.graph_ops import graph_ops_snapshot
 from factoryline.mission_control_status import mission_control_status
+from factoryline.review_audits import security_scan
 
 
 def _request(paths=("README.md",), **overrides):
@@ -38,6 +41,51 @@ def _request(paths=("README.md",), **overrides):
     }
     value.update(overrides)
     return value
+
+
+@pytest.mark.parametrize(
+    "source, expected",
+    [
+        ("from sys import modules as loaded\nloaded['unittest.mock']", True),
+        ("from sys import *", True),
+        ("from importlib import import_module as load\nload('unittest.mock')", True),
+        ("from builtins import __import__ as load\nload('unittest.mock')", True),
+        ("from sys import version as release", False),
+    ],
+    ids=[
+        "sys-modules-alias",
+        "sys-star-import",
+        "importlib-import-module-alias",
+        "builtins-import-alias",
+        "unrelated-sys-import",
+    ],
+)
+def test_dynamic_capability_guard_covers_module_reacquisition_aliases(source, expected):
+    nodes = tuple(ast.walk(ast.parse(source)))
+    assert _module_has_dynamic_capability_access(nodes) is expected
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "from sys import modules as loaded\n"
+        "async def compute():\n    return 3\n"
+        "def fail():\n    raise RuntimeError()\n"
+        "loaded[__name__].compute = fail\n"
+        "def test_behavior():\n    compute()\n",
+        "from sys import modules as loaded\n"
+        "def perform():\n    pass\n"
+        "def fail():\n    raise RuntimeError()\n"
+        "loaded[__name__].perform = fail\n"
+        "def test_behavior():\n    perform()\n",
+    ],
+    ids=["registry-mutated-coroutine", "registry-mutated-pass-stub"],
+)
+def test_registry_mutated_completion_helpers_remain_unknown(tmp_path, source):
+    (tmp_path / "test_registry_completion.py").write_text(source, encoding="utf-8")
+    report = security_scan(tmp_path, cache_enabled=False)
+    assert "QUALITY_HOLLOW_TEST" not in report["finding_counts"]
+    assert report["finding_counts"].get("QUALITY_UNKNOWN_TEST_ORACLE") == 1
 
 
 def _shard_fixture(tmp_path, source="stable rule: keep API local\n"):

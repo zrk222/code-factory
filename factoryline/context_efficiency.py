@@ -802,14 +802,19 @@ def _module_has_dynamic_capability_access(nodes):
     dynamic_names = _capability_reflection_names()
     dynamic_aliases = set(dynamic_names)
     for node in nodes:
-        if isinstance(node, ast.ImportFrom) and node.module in {
-            "builtins",
-            "importlib",
-        }:
+        if not isinstance(node, ast.ImportFrom):
+            continue
+        if node.module == "sys" and any(item.name == "*" for item in node.names):
+            return True
+        if node.module in {"builtins", "importlib", "sys"}:
             dynamic_aliases.update(
                 item.asname or item.name
                 for item in node.names
-                if item.name in dynamic_names or item.name == "import_module"
+                if item.name in dynamic_names
+                or node.module == "importlib"
+                and item.name == "import_module"
+                or node.module == "sys"
+                and item.name == "modules"
             )
     return any(
         isinstance(node, ast.Name)
