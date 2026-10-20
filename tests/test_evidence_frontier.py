@@ -14,7 +14,7 @@ from factoryline.evidence_frontier import (
 from factoryline.cli import main
 from factoryline.proofsearch import evaluate_proofsearch
 
-from test_proofsearch import _candidate, _plan, _request as _proofsearch_request
+from test_continuous_proof import _candidate, _plan, _request as _proofsearch_request
 
 
 def _sha(path: Path) -> str:

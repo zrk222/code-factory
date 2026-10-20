@@ -3,7 +3,7 @@
     {
       "name": "counterexample_guardrail_and_resilience_boundaries_hold_under_mutation_tests",
       "kind": "python",
-      "run": "import pytest\nassert pytest.main(['-q', 'tests/test_counterexample.py', 'tests/test_guardrails.py', 'tests/test_resilience.py', 'tests/test_graph_ops.py']) == 0\nprint('COUNTEREXAMPLE_CONTINUITY_RESILIENCE_SMOKE_PASS')\n",
+      "run": "import pytest\nassert pytest.main(['-q', 'tests/test_audit_rule_search.py::test_counterexample_compiler_is_complete_hash_sealed_and_read_only', 'tests/test_audit_rule_search.py::test_counterexample_verifier_rejects_semantic_deletion_tamper_and_stale_source', 'tests/test_audit_rule_search.py::test_counterexample_cli_writes_only_explicit_output_and_verifies', 'tests/test_audit_rule_search.py::test_counterexample_rejects_vague_requirement_before_planning', 'tests/test_audit_rule_search.py::test_guardrails_only_activate_promoted_exact_scope_metadata_and_redact_content', 'tests/test_audit_rule_search.py::test_guardrails_do_not_initialize_missing_continuity_or_accept_tampering', 'tests/test_audit_rule_search.py::test_guardrail_cli_emits_hash_bound_redacted_evaluation', 'tests/test_resilience.py', 'tests/test_graph_ops.py']) == 0\nprint('COUNTEREXAMPLE_CONTINUITY_RESILIENCE_SMOKE_PASS')\n",
       "expect_exit": 0,
       "expect_stdout": "COUNTEREXAMPLE_CONTINUITY_RESILIENCE_SMOKE_PASS",
       "timeout_s": 60,

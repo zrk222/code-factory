@@ -3,21 +3,28 @@
     {
       "name": "continuous_proof_contract",
       "kind": "python",
-      "run": "from pathlib import Path; source=Path('factoryline/continuous_proof.py').read_text(encoding='utf-8'); required=['factory.continuous-proof.v1','evidence_required','human_required','reverification_required','review_ready','CONTINUOUS_PROOF_STALE','CONTINUOUS_PROOF_HISTORY_READ_ONLY']; assert all(item in source for item in required); assert 'subprocess' not in source and '\"approval\": True' not in source",
+      "run": "from pathlib import Path\nsource = Path('factoryline/continuous_proof.py').read_text(encoding='utf-8')\nrequired = ['factory.continuous-proof.v1', 'evidence_required', 'human_required', 'reverification_required', 'review_ready', 'CONTINUOUS_PROOF_STALE', 'CONTINUOUS_PROOF_HISTORY_READ_ONLY']\nassert all((item in source for item in required))\nassert 'subprocess' not in source and '\"approval\": True' not in source\n",
       "expect_exit": 0,
       "timeout_s": 30,
       "must_fail_on_stub": true,
-      "covers": ["REQ_CPO_BINDINGS", "REQ_CPO_ROUTING", "REQ_CPO_VERIFY", "REQ_CPO_AUTHORITY"]
+      "covers": [
+        "REQ_CPO_BINDINGS",
+        "REQ_CPO_ROUTING",
+        "REQ_CPO_VERIFY",
+        "REQ_CPO_AUTHORITY"
+      ]
     },
     {
       "name": "continuous_proof_behavior",
       "kind": "python",
-      "run": "import pytest; result=pytest.main(['-q','tests/test_continuous_proof.py']); assert result==0; print('CONTINUOUS_PROOF_BEHAVIOR_PASS')",
+      "run": "import pytest\nresult = pytest.main(['-q', 'tests/test_continuous_proof.py::test_core_missing_session_routes_to_evidence_required_and_writes_views', 'tests/test_continuous_proof.py::test_core_passing_session_routes_to_human_review_ready', 'tests/test_continuous_proof.py::test_core_failed_session_routes_to_human_required', 'tests/test_continuous_proof.py::test_core_intent_and_changed_byte_drift_fail_closed', 'tests/test_continuous_proof.py::test_core_tampered_receipt_is_invalid', 'tests/test_continuous_proof.py::test_core_scoped_repair_requires_fresh_reverification', 'tests/test_continuous_proof.py::test_core_history_preserves_counts_and_claim_limits', 'tests/test_continuous_proof.py::test_cli_assess_verify_and_history_are_machine_readable', 'tests/test_continuous_proof.py::test_graph_projects_continuous_proof_history_read_only'])\nassert result == 0\nprint('CONTINUOUS_PROOF_BEHAVIOR_PASS')\n",
       "expect_exit": 0,
       "expect_stdout": "CONTINUOUS_PROOF_BEHAVIOR_PASS",
       "timeout_s": 120,
       "must_fail_on_stub": true,
-      "covers": ["REQ_CPO_GRAPH"]
+      "covers": [
+        "REQ_CPO_GRAPH"
+      ]
     }
   ]
 }

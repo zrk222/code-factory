@@ -1,1 +1,20 @@
-{"checks":[{"name":"evidence_memory_and_handoff","kind":"python","run":"import pytest\nassert pytest.main(['-q','tests/test_engineering_memory.py','tests/test_knowledge_handoff.py','tests/test_continuity.py']) == 0\nprint('MEMORY_HANDOFF_PASS')","expect_exit":0,"expect_stdout":"MEMORY_HANDOFF_PASS","timeout_s":60,"must_fail_on_stub":true,"covers":["REQ_SCOPE","REQ_EVIDENCE","REQ_WITHDRAW","REQ_HANDOFF","REQ_INFLUENCE"]}]}
+{
+  "checks": [
+    {
+      "name": "evidence_memory_and_handoff",
+      "kind": "python",
+      "run": "import pytest\nassert pytest.main(['-q', 'tests/test_engineering_memory.py', 'tests/test_knowledge_handoff.py', 'tests/test_continuity.py::test_continuity_requires_independent_promotion_and_exact_scope_purpose', 'tests/test_continuity.py::test_continuity_rejects_content_store_and_conflicting_idempotency', 'tests/test_continuity.py::test_continuity_rejects_incomplete_metadata_before_any_record_or_audit_write', 'tests/test_continuity.py::test_continuity_record_rolls_back_when_the_audit_append_fails', 'tests/test_continuity.py::test_continuity_promotion_rejects_tenant_purpose_expiry_and_repeat_attempts', 'tests/test_continuity.py::test_continuity_withholds_expired_records_and_detects_audit_tampering', 'tests/test_continuity.py::test_graph_ops_projects_redacted_continuity_metadata_without_writing', 'tests/test_continuity.py::test_continuity_projection_is_bounded_redacted_and_principal_args_normalize', 'tests/test_continuity.py::test_top_level_continuity_adapters_keep_the_store_as_the_single_boundary', 'tests/test_continuity.py::test_cli_continuity_flow_is_local_and_explicit']) == 0\nprint('MEMORY_HANDOFF_PASS')\n",
+      "expect_exit": 0,
+      "expect_stdout": "MEMORY_HANDOFF_PASS",
+      "timeout_s": 60,
+      "must_fail_on_stub": true,
+      "covers": [
+        "REQ_SCOPE",
+        "REQ_EVIDENCE",
+        "REQ_WITHDRAW",
+        "REQ_HANDOFF",
+        "REQ_INFLUENCE"
+      ]
+    }
+  ]
+}

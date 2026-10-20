@@ -48,3 +48,10 @@ FactoryLine**, confirm that **Verify SaaS journey** requests two project-local
 JSON files and a second execution confirmation, then use **View SaaS status**
 to inspect the local receipt. No provider account or network connection is
 needed for this review path.
+
+## Current test locations
+
+The paths above describe the original release evidence. After test-module consolidation, current test locations are:
+
+- `tests/test_jetbrains_handshake.py` → `tests/test_codex_metadata.py`
+- `tests/test_judgment.py` → `tests/test_first_lap.py`

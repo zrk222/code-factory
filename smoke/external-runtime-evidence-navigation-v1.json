@@ -3,7 +3,7 @@
     {
       "name": "external_runtime_navigation_ui_contract",
       "kind": "python",
-      "run": "from pathlib import Path; page=Path('factoryline/graph_ops.html').read_text(encoding='utf-8'); required=['REQ_EXT_NAV_JUMP','REQ_EXT_NAV_READ_ONLY','REQ_EXT_NAV_MISSING','REQ_EXT_NAV_RESPONSIVE','external-evidence-jump','Inspect node details','scrollIntoView','button.dataset.nodeId=node.id']; assert all(item in page for item in required) and 'innerHTML' not in page",
+      "run": "from pathlib import Path\npage = Path('factoryline/graph_ops.html').read_text(encoding='utf-8')\nrequired = ['REQ_EXT_NAV_JUMP', 'REQ_EXT_NAV_READ_ONLY', 'REQ_EXT_NAV_MISSING', 'REQ_EXT_NAV_RESPONSIVE', 'external-evidence-jump', 'Inspect node details', 'scrollIntoView', 'button.dataset.nodeId=node.id']\nassert all((item in page for item in required)) and 'innerHTML' not in page\n",
       "expect_exit": 0,
       "timeout_s": 30,
       "must_fail_on_stub": true

@@ -227,7 +227,13 @@ jobs:
           python -m pip install -e ".[dev]"
       - name: Verify native process parity
         run: >-
-          python -m pytest -q -rA tests/test_ci_platform_parity.py
+          python -m pytest -q -rA
+          tests/test_assembly_process.py::test_ci_runs_native_python_matrix_on_all_supported_host_families
+          tests/test_assembly_process.py::test_candidate_quality_gate_keeps_attribution_floor_and_python_cap
+          tests/test_assembly_process.py::test_native_timeout_returns_closed_receipt
+          tests/test_assembly_process.py::test_native_output_limit_returns_closed_receipt
+          tests/test_assembly_process.py::test_native_cancellation_returns_closed_receipt
+          tests/test_assembly_process.py::test_native_surviving_child_is_unconfirmed
           --junitxml=native-process-parity.junit.xml
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:

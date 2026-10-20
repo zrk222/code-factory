@@ -12,7 +12,7 @@ from factoryline.provider_router import (
     route_provider,
     verify_provider_policy,
 )
-from test_mission_graph import _pipeline
+from test_continuity import _pipeline
 
 
 def _providers():

@@ -14,3 +14,10 @@ or human review.
 **Fast local path:** open **View | Tool Windows | FactoryLine | AppForge**, choose
 **Refresh local AppForge status**, then inspect the bounded result. No Apple,
 provider, or MCP account is needed. The plugin remains local and human-led.
+
+## Current test locations
+
+The paths above describe the original release evidence. After test-module consolidation, current test locations are:
+
+- `tests/test_jetbrains_handshake.py` → `tests/test_codex_metadata.py`
+- `tests/test_mcp_setup.py` → `tests/test_mcp.py`

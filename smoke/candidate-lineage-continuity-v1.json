@@ -3,7 +3,7 @@
     {
       "name": "candidate_lineage_binds_current_evidence",
       "kind": "python",
-      "run": "import pytest\nassert pytest.main(['-q', 'tests/test_candidate_lineage.py', 'tests/test_graph_forensics.py']) == 0\nprint('CANDIDATE_LINEAGE_CONTINUITY_PASS')\n",
+      "run": "import pytest\nassert pytest.main(['-q', 'tests/test_assembly.py::test_candidate_lineage_verifies_one_current_candidate', 'tests/test_assembly.py::test_cli_surfaces_continuity_receipt_without_authority', 'tests/test_assembly.py::test_legacy_graph_is_readable_but_not_strictly_candidate_bound', 'tests/test_assembly.py::test_mixed_candidate_graph_fails_closed', 'tests/test_assembly.py::test_stale_evidence_digest_and_incomplete_kinds_fail_closed', 'tests/test_assembly.py::test_oracle_authority_and_workspace_paths_fail_closed', 'tests/test_graph_forensics.py']) == 0\nprint('CANDIDATE_LINEAGE_CONTINUITY_PASS')\n",
       "expect_exit": 0,
       "expect_stdout": "CANDIDATE_LINEAGE_CONTINUITY_PASS",
       "timeout_s": 120,

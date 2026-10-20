@@ -3,7 +3,7 @@
     {
       "name": "codex_metadata_tests",
       "kind": "python",
-      "run": "import pytest\nassert pytest.main(['-q', 'tests/test_codex_metadata.py']) == 0\nprint('CODEX_METADATA_TESTS_PASS')\n",
+      "run": "import pytest\nassert pytest.main(['-q', 'tests/test_codex_metadata.py::test_bound_terminal_records_are_verified_and_authority_free', 'tests/test_codex_metadata.py::test_record_audit_walks_nested_values_once', 'tests/test_codex_metadata.py::test_jsonl_receipt_reuses_terminal_sibling_state_lookup', 'tests/test_codex_metadata.py::test_unbound_success_and_self_attested_gate_fail_closed', 'tests/test_codex_metadata.py::test_unclear_intent_is_not_an_acceptable_test_gate', 'tests/test_codex_metadata.py::test_oversized_metadata_is_rejected_before_its_contents_are_read', 'tests/test_codex_metadata.py::test_command_only_terminal_claim_is_weak_evidence', 'tests/test_codex_metadata.py::test_green_gate_requires_negative_or_adversarial_proof', 'tests/test_codex_metadata.py::test_contradictory_provider_state_is_not_collapsed_into_success', 'tests/test_codex_metadata.py::test_malformed_jsonl_is_named_instead_of_skipped', 'tests/test_codex_metadata.py::test_orphan_active_and_workspace_mismatch_are_visible', 'tests/test_codex_metadata.py::test_active_policy_constraints_are_not_misclassified_as_live_execution', 'tests/test_codex_metadata.py::test_markdown_claims_without_receipts_are_review_required', 'tests/test_codex_metadata.py::test_cli_writes_readable_receipt_and_returns_one_for_review', 'tests/test_codex_metadata.py::test_path_escape_and_missing_inventory_are_rejected', 'tests/test_codex_metadata.py::test_explicit_empty_inventory_is_rejected_instead_of_discovering_defaults', 'tests/test_codex_metadata.py::test_file_growth_after_stat_is_still_classified_oversize', 'tests/test_codex_metadata.py::test_metadata_findings_are_scope_labeled_and_cli_can_select_archive', 'tests/test_codex_metadata.py::test_progress_ledger_order_and_head_drift_are_reported', 'tests/test_codex_metadata.py::test_progress_ledger_orders_independent_workflow_streams_separately', 'tests/test_codex_metadata.py::test_state_without_receipt_lineage_is_not_proof', 'tests/test_codex_metadata.py::test_nonterminal_state_without_receipt_lineage_is_not_a_mismatch', 'tests/test_codex_metadata.py::test_compact_forgeline_hash_and_ssat_bind_a_receipt_to_intent', 'tests/test_codex_metadata.py::test_smoked_forgeline_stream_is_classified_as_archive']) == 0\nprint('CODEX_METADATA_TESTS_PASS')\n",
       "covers": [
         "REQ-META-INPUT",
         "REQ-META-PARSE",
@@ -23,7 +23,10 @@
       "name": "codex_metadata_authority_boundary",
       "kind": "python",
       "run": "from pathlib import Path\ntext = Path('factoryline/codex_metadata.py').read_text(encoding='utf-8')\nassert 'subprocess' not in text\nassert 'E_METADATA_UNBOUND_TERMINAL' in text\nassert '\"publish\": False' in text\nassert '\"billing\": False' in text\nprint('CODEX_METADATA_FAIL_CLOSED')\n",
-      "covers": ["REQ-META-BOUNDARY", "REQ-META-RESULT"],
+      "covers": [
+        "REQ-META-BOUNDARY",
+        "REQ-META-RESULT"
+      ],
       "must_fail_on_stub": true
     }
   ]

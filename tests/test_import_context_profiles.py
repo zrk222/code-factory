@@ -1,8 +1,21 @@
 """Native import-context tier boundaries, identity and immutability controls."""
 
 import pytest
-
 from factoryline import import_context as capture
+from factoryline.proof_reuse import evaluate_proofs, record_proof
+from factoryline.incremental_scheduler import (
+    SchedulerError,
+    SCHEMA,
+    compare_shadow,
+    paths_intersect,
+    plan_incremental,
+    validate_schedule_manifest,
+)
+import ast
+from test_runtime_audit_integrity import _JSON_TEST, _json_enum_graph
+from pathlib import Path
+from factoryline import intent_quality
+from factoryline import review_audits as audit
 
 
 @pytest.mark.parametrize(
@@ -445,3 +458,447 @@ def test_initializer_factory_implementation_participates_in_cache_epoch(
     monkeypatch.setattr(context, "captured_initializer_lookup", replacement)
     after = audit._oracle_context_cache_key(tmp_path, [], {})
     assert before != after
+
+
+def _manifest(**overrides):
+    value = {
+        "schema": SCHEMA,
+        "plan_id": "plan-1",
+        "assurance_level": "isolated_worker",
+        "changed_paths": ["src/app.py"],
+        "dependency_closure": {"lint": ["src/app.py"], "tests": ["src/app.py"]},
+        "gates": [
+            {"id": "lint", "depends_on": [], "side_effects": False, "proof": None},
+            {
+                "id": "tests",
+                "depends_on": ["lint"],
+                "side_effects": False,
+                "proof": None,
+            },
+        ],
+    }
+    value.update(overrides)
+    return value
+
+
+def test_unknown_closure_fails_closed_to_run_and_preserves_topological_order():
+    result = plan_incremental(
+        __import__("pathlib").Path.cwd(),
+        _manifest(dependency_closure={"lint": ["src/app.py"]}),
+    )
+    assert result["order"] == ["lint", "tests"]
+    assert result["findings"]["tests"]["disposition"] == "RUN"
+    assert result["findings"]["tests"]["reason"] == "PROOF_RELEVANCE_FAIL_CLOSED"
+    assert result["authority"] == "none"
+
+
+def test_changed_dependency_closure_forces_run_even_with_reusable_proof():
+    manifest = _manifest(
+        gates=[
+            {
+                "id": "lint",
+                "depends_on": [],
+                "side_effects": False,
+                "proof": {"assurance_level": "isolated_worker"},
+            }
+        ],
+        dependency_closure={"lint": ["src/app.py"]},
+    )
+    result = plan_incremental(__import__("pathlib").Path.cwd(), manifest)
+    assert result["findings"]["lint"]["disposition"] == "RUN"
+    assert result["findings"]["lint"]["reason"] == "DEPENDENCY_CLOSURE_CHANGED"
+
+
+def test_side_effect_block_propagates_to_dependents():
+    manifest = _manifest(
+        gates=[
+            {"id": "lint", "depends_on": [], "side_effects": True, "proof": None},
+            {
+                "id": "tests",
+                "depends_on": ["lint"],
+                "side_effects": False,
+                "proof": None,
+            },
+        ]
+    )
+    result = plan_incremental(__import__("pathlib").Path.cwd(), manifest)
+    assert result["findings"]["lint"]["disposition"] == "BLOCK"
+    assert result["findings"]["lint"]["reason"] == "PROOF_SIDE_EFFECT_REUSE_REFUSED"
+    assert result["findings"]["tests"]["disposition"] == "BLOCK"
+    assert result["findings"]["tests"]["reason"] == "SCHEDULER_DEPENDENCY_BLOCKED"
+
+
+def test_cycle_and_unsafe_path_are_rejected():
+    cyclic = _manifest(
+        gates=[
+            {"id": "a", "depends_on": ["b"], "side_effects": False, "proof": None},
+            {"id": "b", "depends_on": ["a"], "side_effects": False, "proof": None},
+        ],
+        dependency_closure={"a": ["src/app.py"], "b": ["src/app.py"]},
+    )
+    with pytest.raises(SchedulerError, match="E_SCHEDULE_CYCLE"):
+        plan_incremental(__import__("pathlib").Path.cwd(), cyclic)
+    with pytest.raises(SchedulerError, match="unsafe path"):
+        validate_schedule_manifest(_manifest(changed_paths=["../secrets.txt"]))
+    with pytest.raises(SchedulerError, match="unsafe path"):
+        validate_schedule_manifest(_manifest(changed_paths=[".."]))
+    with pytest.raises(SchedulerError, match="unsafe path"):
+        validate_schedule_manifest(_manifest(changed_paths=["C:\\secrets.txt"]))
+
+
+@pytest.mark.parametrize(
+    ("left", "right", "expected"),
+    [
+        ("src/app.py", "src", True),
+        ("src/app.py", "src/app.py", True),
+        ("src/app.py", "src/apply.py", False),
+        ("Src\\App.py", "src", True),
+        (".factory/receipts/run.json", ".factory/receipts", True),
+        ("./.factory/run.json", "factory/run.json", False),
+        ("", "src", False),
+    ],
+)
+def test_paths_intersect_is_conservative_and_segment_aware(
+    left: str, right: str, expected: bool
+):
+    assert paths_intersect(left, right) is expected
+
+
+def test_shadow_comparison_exposes_differences_without_authority():
+    incremental = {
+        "assurance_level": "isolated_worker",
+        "obligations": ["lint"],
+        "findings": {"lint": {"disposition": "RUN"}},
+    }
+    full = {
+        "assurance_level": "isolated_worker",
+        "obligations": ["lint"],
+        "findings": {"lint": {"disposition": "RUN"}},
+    }
+    assert compare_shadow(incremental, full)["shadow_equivalent"] is True
+    full["findings"]["lint"]["disposition"] = "BLOCK"
+    result = compare_shadow(incremental, full)
+    assert result["shadow_equivalent"] is False
+    assert "lint" in result["differences"]["findings_changed"]
+    assert result["release_approval"] is False
+
+
+def test_incremental_plan_batches_duplicate_proof_names_without_persistence(
+    tmp_path, monkeypatch
+):
+    import factoryline.incremental_scheduler as scheduler
+    import factoryline.proof_reuse as proof_reuse
+
+    source = tmp_path / "src" / "app.py"
+    source.parent.mkdir(parents=True)
+    source.write_text("print('ok')\n", encoding="utf-8")
+    outputs = []
+    proofs = []
+    for index in range(2):
+        output = tmp_path / "dist" / f"result-{index}.json"
+        output.parent.mkdir(exist_ok=True)
+        output.write_text('{"passed":true}\n', encoding="utf-8")
+        outputs.append(output)
+        proof = {
+            "name": "same-proof-name",
+            "command": ["python", "-m", f"check{index}"],
+            "inputs": ["src/app.py"],
+            "outputs": [output.relative_to(tmp_path).as_posix()],
+            "relevant_paths": ["src"],
+            "safe_to_skip": False,
+            "read_only": True,
+            "toolchain": {"python": "3.11.9"},
+            "environment": {"os": "windows"},
+        }
+        record_proof(tmp_path, proof, elapsed_ms=1000)
+        proofs.append(proof)
+
+    manifest = _manifest(
+        changed_paths=["docs/readme.md"],
+        gates=[
+            {
+                "id": f"gate-{index}",
+                "depends_on": [],
+                "side_effects": False,
+                "proof": proof,
+            }
+            for index, proof in enumerate(proofs)
+        ],
+        dependency_closure={f"gate-{index}": ["src/app.py"] for index in range(2)},
+    )
+    original_evaluate = scheduler.evaluate_proofs
+    calls = []
+
+    def count_batch(*args, **kwargs):
+        calls.append(len(args[1]["gates"]))
+        return original_evaluate(*args, **kwargs)
+
+    writes = 0
+    original_atomic = proof_reuse._atomic_json
+
+    def count_atomic(*args, **kwargs):
+        nonlocal writes
+        writes += 1
+        return original_atomic(*args, **kwargs)
+
+    monkeypatch.setattr(scheduler, "evaluate_proofs", count_batch)
+    monkeypatch.setattr(proof_reuse, "_atomic_json", count_atomic)
+    monkeypatch.setattr(
+        "tempfile.TemporaryDirectory",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("temp directory")),
+    )
+    destination = tmp_path / "incremental-plan.json"
+    result = plan_incremental(tmp_path, manifest, out=destination)
+
+    assert calls == [2]
+    assert writes == 0
+    assert destination.is_file()
+    assert not (tmp_path / ".factory" / "proof-plans").exists()
+    assert [row["disposition"] for row in result["items"]] == ["REUSE", "REUSE"]
+    for row, proof in zip(result["items"], proofs, strict=True):
+        single = evaluate_proofs(
+            tmp_path,
+            {"schema": "factory.proof-request.v1", "gates": [proof]},
+            changed_paths=["docs/readme.md"],
+        )["items"][0]
+        assert row["proof"] == {
+            "proof_key": single["proof_key"],
+            "receipt_sha256": single["receipt_sha256"],
+        }
+        assert row["reason"] == single["reason"]
+
+
+"""Immutable native scope indexes reuse traversal without accepting rebinding."""
+
+
+def test_scope_write_index_is_shared_across_names(tmp_path, monkeypatch):
+    graph = _json_enum_graph(tmp_path)
+    scope = graph.functions[tmp_path.resolve() / "test_api.py", "test_invalid_password"]
+    graph.assignment_cache.clear()
+    calls = []
+    original = graph._walk
+
+    def observed(node):
+        if node is scope:
+            calls.append(node)
+        yield from original(node)
+
+    monkeypatch.setattr(graph, "_walk", observed)
+    response = graph._unique_name_assignment(scope, "response")
+    data = graph._unique_name_assignment(scope, "data")
+    assert isinstance(response, ast.Assign)
+    assert isinstance(data, ast.Assign)
+    assert graph._unique_name_assignment(scope, "response") is response
+    assert graph._unique_name_assignment(scope, "missing") is None
+    assert len(calls) == 1
+
+
+def test_scope_index_retains_later_rebinding_veto(tmp_path):
+    graph = _json_enum_graph(
+        tmp_path, test_source=_JSON_TEST + "    response = supplied\n"
+    )
+    scope = graph.functions[tmp_path.resolve() / "test_api.py", "test_invalid_password"]
+    assert graph._unique_name_assignment(scope, "response") is None
+    assert not graph.witnesses()
+
+
+TARGETS = {
+    "factoryline/codex_metadata.py": {"audit_metadata"},
+    "factoryline/oracle_firewall.py": {
+        "seal_oracle_contract",
+        "compile_oracle_challenge",
+        "validate_oracle_challenge_plan",
+        "verify_oracle_challenge_result",
+        "record_oracle_incident",
+    },
+}
+BRANCHES = (
+    ast.If,
+    ast.For,
+    ast.AsyncFor,
+    ast.While,
+    ast.IfExp,
+    ast.comprehension,
+    ast.ExceptHandler,
+    ast.Match,
+)
+
+
+def test_public_oracle_coordinators_stay_within_ten_branches() -> None:
+    found = set()
+    for filename, names in TARGETS.items():
+        tree = ast.parse(Path(filename).read_text(encoding="utf-8"), filename=filename)
+        for node in tree.body:
+            if (
+                isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and node.name in names
+            ):
+                found.add(node.name)
+                assert (
+                    sum(isinstance(item, BRANCHES) for item in ast.walk(node)) <= 10
+                ), node.name
+    assert found == set().union(*TARGETS.values())
+
+
+def test_a2a_validators_stay_within_forgeline_complexity_limit() -> None:
+    """Preserve the measured refactor, including its extracted validators."""
+    tree = ast.parse(Path("factoryline/agentic_control.py").read_text(encoding="utf-8"))
+    functions = [
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and (node.name.startswith("_a2a_") or node.name == "audit_a2a_agent_card")
+    ]
+    assert len(functions) == 14
+    for node in functions:
+        complexity = 1
+        for child in ast.walk(node):
+            if isinstance(
+                child,
+                (
+                    ast.If,
+                    ast.For,
+                    ast.While,
+                    ast.ExceptHandler,
+                    ast.With,
+                    ast.Assert,
+                    ast.IfExp,
+                ),
+            ):
+                complexity += 1
+            elif isinstance(child, ast.BoolOp):
+                complexity += len(child.values) - 1
+        assert complexity <= 10, (node.name, complexity)
+
+
+"""Host overrides must remain visible to the real type-intent policy."""
+
+
+@pytest.fixture
+def isolated_host(tmp_path, monkeypatch):
+    for name in ("HOME", "USERPROFILE", "APPDATA", "XDG_CONFIG_HOME", "ProgramFiles"):
+        directory = tmp_path / name.lower()
+        directory.mkdir()
+        monkeypatch.setenv(name, str(directory))
+    for name in (
+        "GIT_CONFIG_GLOBAL",
+        "GIT_CONFIG_SYSTEM",
+        "GIT_CONFIG_PARAMETERS",
+        "GIT_CONFIG_COUNT",
+        "TY_CONFIG_FILE",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    return tmp_path
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "GIT_CONFIG_GLOBAL",
+        "GIT_CONFIG_SYSTEM",
+        "GIT_CONFIG_PARAMETERS",
+        "GIT_CONFIG_COUNT",
+    ],
+)
+def test_git_environment_override_still_vetoes_type_credit(
+    isolated_host, monkeypatch, name
+):
+    monkeypatch.setenv(name, "1")
+    state, safe = intent_quality._ty_global_git_configuration(65536)
+    assert safe is False
+    assert state["state"] == "environment_override"
+
+
+@pytest.mark.parametrize(
+    "relative", ["userprofile/.gitconfig", "xdg_config_home/git/config"]
+)
+@pytest.mark.parametrize(
+    "content", ["[include]\npath = external\n", "[core]\nexcludesFile = external\n"]
+)
+def test_host_git_file_still_vetoes_type_credit(isolated_host, relative, content):
+    # Path.home uses USERPROFILE on Windows and HOME on POSIX.
+    from pathlib import Path
+
+    target = isolated_host / relative
+    if relative == "userprofile/.gitconfig":
+        target = Path.home() / ".gitconfig"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(content, encoding="utf-8")
+    state, safe = intent_quality._ty_global_git_configuration(65536)
+    assert safe is False
+    assert state["state"] in {"include", "global_ignore_configured"}
+
+
+def test_host_ty_configuration_still_vetoes_type_credit(isolated_host):
+    config = isolated_host / "appdata/ty/ty.toml"
+    config.parent.mkdir()
+    config.write_text("[src]\nexclude = ['tests']\n", encoding="utf-8")
+    assert intent_quality._ty_external_config_state(isolated_host) == {
+        "state": "unknown",
+        "config_override": True,
+    }
+
+
+"""Unknown-oracle guidance remains advisory and does not change detection."""
+
+
+def test_unknown_callback_includes_existing_native_probe_guidance(tmp_path):
+    (tmp_path / "test_case.py").write_text(
+        "def test_behavior(runner):\n"
+        "    def check():\n"
+        "        assert compute() == 42\n"
+        "    runner.callback = check\n",
+        encoding="utf-8",
+    )
+    report = audit.security_scan(tmp_path, cache_enabled=False)
+    finding = next(
+        f for f in report["findings"] if f["code"] == "QUALITY_UNKNOWN_TEST_ORACLE"
+    )
+    assert finding["severity"] == "INFO"
+    assert finding["facts"]["state"] == "INCOMPLETE"
+    probe = finding["facts"]["native_assertion_probe"]
+    assert probe["assertion_lines"] == [3]
+    assert probe["nodeid_hint"] == "test_case.py::test_behavior"
+    assert probe["exact_collection_id_required"] is True
+    assert probe["call_available"] is False
+    assert "never started by a static scan" in probe["execution"]
+
+
+def test_unknown_call_probe_does_not_execute_target_and_cache_preserves_guidance(
+    tmp_path,
+):
+    (tmp_path / "test_case.py").write_text(
+        "from pathlib import Path\n"
+        "Path('scanner-ran-source').write_text('unexpected')\n"
+        "def test_behavior():\n"
+        "    callback()\n"
+        "    pass\n"
+        "def callback():\n"
+        "    opaque_operation()\n",
+        encoding="utf-8",
+    )
+    cold = audit.security_scan(tmp_path)
+    warm = audit.security_scan(tmp_path)
+    assert cold["findings"] == warm["findings"]
+    finding = next(
+        f for f in cold["findings"] if f["code"] == "QUALITY_UNKNOWN_TEST_ORACLE"
+    )
+    probe = finding["facts"]["native_assertion_probe"]
+    assert probe["call_lines"] == [4]
+    assert probe["call_available"] is True
+    assert "<exact collected pytest node ID>" in probe["call_command"]
+    assert not (tmp_path / "scanner-ran-source").exists()
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "def test_behavior():\n    def check():\n        assert compute() == 42\n    pass\n",
+        "def callback():\n    pass\ndef test_behavior():\n    callback()\n",
+    ],
+)
+def test_proven_inert_bodies_are_not_unknown_guidance_fixtures(tmp_path, source):
+    (tmp_path / "test_case.py").write_text(source, encoding="utf-8")
+    report = audit.security_scan(tmp_path, cache_enabled=False)
+    assert report["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+    assert report["findings"][0]["severity"] == "MEDIUM"

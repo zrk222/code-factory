@@ -3,7 +3,7 @@
     {
       "name": "mission_graph_transitions_are_receipt_and_budget_guarded",
       "kind": "python",
-      "run": "import pytest\nassert pytest.main(['-q','tests/test_mission_graph.py']) == 0\n",
+      "run": "import pytest\nassert pytest.main(['-q', 'tests/test_continuity.py::test_mission_graph_history_returns_bound_ordered_events', 'tests/test_continuity.py::test_native_graph_rejects_legacy_claim_as_daily_completion', 'tests/test_continuity.py::test_completion_gate_accepts_upstream_verified_complete_receipt', 'tests/test_continuity.py::test_native_graph_rejects_replay_role_confusion_and_receipt_drift', 'tests/test_continuity.py::test_native_budget_kill_switch_and_route_are_measured', 'tests/test_continuity.py::test_native_owner_can_pause_bind_a_plan_and_resume_fresh', 'tests/test_continuity.py::test_langgraph_adapter_checkpoints_native_transition']) == 0\n",
       "covers": [
         "MISSION_GRAPH_INITIALIZED",
         "MISSION_GRAPH_HASH_CHAIN_BOUND",
@@ -30,7 +30,7 @@
     {
       "name": "provider_policy_is_secret_free_and_ide_bounded",
       "kind": "python",
-      "run": "import pytest\nassert pytest.main(['-q','tests/test_provider_router.py']) == 0\n",
+      "run": "import pytest\nassert pytest.main(['-q', 'tests/test_provider_router.py']) == 0\n",
       "covers": [
         "PROVIDER_POLICY_SECRET_FREE",
         "PROVIDER_POLICY_VERIFIED",

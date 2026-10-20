@@ -1,11 +1,16 @@
 import sys
 import time
 from types import SimpleNamespace
-
 import pytest
-
 import factoryline.assembly_process as assembly_process
 from factoryline.assembly_process import run_cli, run_cli_detailed
+import ast
+import textwrap
+from factoryline.credential_role_flows import binding_dominates
+import os
+import signal
+from pathlib import Path
+from factoryline.assembly_process import MAX_STREAM_BYTES
 
 
 def test_success_preserves_both_streams(tmp_path):
@@ -408,3 +413,153 @@ def test_shared_measure_call_facade_preserves_return_and_records_phase():
     phases = {item["phase"]: item for item in telemetry.snapshot()["phases"]}
     assert phases["source_parse"]["calls"] == 1
     assert phases["source_parse"]["completed"] == 1
+
+
+"""Source-only ordering controls for branch-local response evidence."""
+
+
+@pytest.mark.parametrize(
+    "body,expected",
+    [
+        ("data = {}\nassert data", True),
+        ("if condition:\n    data = {}\n    assert data", True),
+        ("data = {}\nif condition:\n    assert data", True),
+        ("if condition:\n    pass\nelse:\n    data = {}\n    assert data", True),
+        ("if condition:\n    data = {}\nassert data", False),
+        ("if condition:\n    data = {}\nelse:\n    assert data", False),
+        ("assert data\ndata = {}", False),
+        ("for item in items:\n    data = {}\nassert data", False),
+        ("while condition:\n    data = {}\nassert data", False),
+        ("try:\n    data = {}\nexcept Exception:\n    pass\nassert data", False),
+        ("try:\n    data = {}\n    assert data\nexcept Exception:\n    pass", True),
+        ("data = {}\ndef inner():\n    assert data", False),
+        ("def inner():\n    data = {}\nassert data", False),
+        ("data = {}\nclass Inner:\n    assert data", False),
+    ],
+)
+def test_binding_order_requires_the_same_execution_branch(body, expected):
+    tree = ast.parse("def outer():\n" + textwrap.indent(body, "    "))
+    scope = tree.body[0]
+    parents = {
+        id(child): node
+        for node in ast.walk(tree)
+        for child in ast.iter_child_nodes(node)
+    }
+    binding = next(node for node in ast.walk(scope) if isinstance(node, ast.Assign))
+    use = next(node for node in ast.walk(scope) if isinstance(node, ast.Assert))
+    before = ast.dump(tree, include_attributes=True)
+    assert binding_dominates(binding, use, parents, scope) is expected
+    assert ast.dump(tree, include_attributes=True) == before
+
+
+def test_assignment_cannot_prove_its_own_rhs_and_malformed_parents_fail_closed():
+    tree = ast.parse("def outer():\n    data = source(data)\n")
+    scope = tree.body[0]
+    binding = scope.body[0]
+    use = binding.value
+    parents = {
+        id(child): node
+        for node in ast.walk(tree)
+        for child in ast.iter_child_nodes(node)
+    }
+    assert not binding_dominates(binding, use, parents, scope)
+    assert not binding_dominates(binding, use, {}, scope)
+    assert not binding_dominates(binding, use, parents, tree)
+    assert not binding_dominates(binding, use, {id(use): use}, scope)
+
+
+def test_ci_runs_native_python_matrix_on_all_supported_host_families() -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    assert "os: [ubuntu-latest, windows-latest, macos-latest]" in workflow
+    assert 'python: ["3.10", "3.11", "3.12"]' in workflow
+    assert "runs-on: ${{ matrix.os }}" in workflow
+    assert "native-process-parity:" in workflow
+    assert "os: [ubuntu-latest, macos-latest]" in workflow
+    assert "native-process-parity-${{ matrix.os }}" in workflow
+    assert "--junitxml=native-process-parity.junit.xml" in workflow
+
+
+def test_candidate_quality_gate_keeps_attribution_floor_and_python_cap() -> None:
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    assert "report['attribution']['rate'] >= 0.9985" in workflow
+    assert "max_python_files'] == 460" in workflow
+    assert "<= 460" in workflow
+
+
+@pytest.mark.skipif(
+    os.name == "nt", reason="native POSIX parity executes in Linux/macOS CI"
+)
+def test_native_timeout_returns_closed_receipt(tmp_path) -> None:
+    result = run_cli_detailed(
+        sys.executable, ["-c", "import time; time.sleep(30)"], tmp_path, timeout=1
+    )
+    assert result["ok"] is False
+    assert result["reason"] == "stage timed out"
+    assert result["cleanup_confirmed"] is True
+    assert result["streams_closed"] is True
+
+
+@pytest.mark.skipif(
+    os.name == "nt", reason="native POSIX parity executes in Linux/macOS CI"
+)
+def test_native_output_limit_returns_closed_receipt(tmp_path) -> None:
+    code = f"import sys; sys.stdout.buffer.write(b'x' * {MAX_STREAM_BYTES + 1})"
+    result = run_cli_detailed(sys.executable, ["-c", code], tmp_path, timeout=10)
+    assert result["ok"] is False
+    assert result["reason"] == "output limit exceeded or stream read failed"
+    assert result["cleanup_confirmed"] is True
+    assert result["streams_closed"] is True
+
+
+@pytest.mark.skipif(
+    os.name == "nt", reason="native POSIX parity executes in Linux/macOS CI"
+)
+def test_native_cancellation_returns_closed_receipt(tmp_path) -> None:
+    result = run_cli_detailed(
+        sys.executable,
+        ["-c", "import time; time.sleep(30)"],
+        tmp_path,
+        timeout=10,
+        heartbeat=lambda: False,
+    )
+    assert result["ok"] is False
+    assert result["reason"] == "stop requested through the local Studio"
+    assert result["cleanup_confirmed"] is True
+    assert result["streams_closed"] is True
+
+
+@pytest.mark.skipif(
+    os.name == "nt", reason="native POSIX parity executes in Linux/macOS CI"
+)
+def test_native_surviving_child_is_unconfirmed(tmp_path) -> None:
+    """A child that starts a new session is known but outside our cleanup unit."""
+    pid_file = tmp_path / "escaped-child.pid"
+    child = (
+        "import os,pathlib,sys,time; os.setsid(); "
+        "pathlib.Path(sys.argv[1]).write_text(str(os.getpid()), encoding='utf-8'); time.sleep(30)"
+    )
+    parent = (
+        "import pathlib,subprocess,sys,time; "
+        "subprocess.Popen([sys.executable, '-c', sys.argv[2], sys.argv[1]], "
+        "stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL); time.sleep(30)"
+    )
+    result = run_cli_detailed(
+        sys.executable, ["-c", parent, str(pid_file), child], tmp_path, timeout=1
+    )
+    assert result["ok"] is False
+    assert result["reason"] == "stage timed out"
+    assert result["cleanup_confirmed"] is False
+    assert "cleanup could not be confirmed" in result["output"]
+
+    deadline = time.monotonic() + 2
+    while not pid_file.is_file() and time.monotonic() < deadline:
+        time.sleep(0.02)
+    assert pid_file.is_file()
+    escaped_pid = int(pid_file.read_text(encoding="utf-8"))
+    try:
+        os.kill(escaped_pid, 0)
+    finally:
+        try:
+            os.kill(escaped_pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass

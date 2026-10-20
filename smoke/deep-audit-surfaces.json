@@ -1,11 +1,13 @@
 {
-  "checks": [{
-    "name": "deep_audit_surfaces_behavior",
-    "kind": "python",
-    "run": "import pytest\nassert pytest.main(['-q', 'tests/test_deep_audit_surfaces.py']) == 0\nprint('DEEP_SURFACES_PASS')\n",
-    "expect_exit": 0,
-    "expect_stdout": "DEEP_SURFACES_PASS",
-    "timeout_s": 60,
-    "must_fail_on_stub": true
-  }]
+  "checks": [
+    {
+      "name": "deep_audit_surfaces_behavior",
+      "kind": "python",
+      "run": "import pytest\nassert pytest.main(['-q', 'tests/test_deep_audit_surfaces.py::test_cli_evaluates_signed_inputs_and_status', 'tests/test_deep_audit_surfaces.py::test_no_evidence_is_not_a_green_cli', 'tests/test_deep_audit_surfaces.py::test_mission_and_mcp_preserve_review_boundary', 'tests/test_deep_audit_surfaces.py::test_tampering_blocks_mission', 'tests/test_deep_audit_surfaces.py::test_playbook_discovers_read_only_tool', 'tests/test_deep_audit_surfaces.py::test_mcp_dispatch_routes_to_read_only_status', 'tests/test_deep_audit_surfaces.py::test_execution_cli_inventory_and_read_only_mcp']) == 0\nprint('DEEP_SURFACES_PASS')\n",
+      "expect_exit": 0,
+      "expect_stdout": "DEEP_SURFACES_PASS",
+      "timeout_s": 60,
+      "must_fail_on_stub": true
+    }
+  ]
 }

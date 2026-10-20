@@ -3,21 +3,33 @@
     {
       "name": "proof_review_contract",
       "kind": "python",
-      "run": "from pathlib import Path\nsource=Path('factoryline/proof_review_workflow.py').read_text(encoding='utf-8')\nrequired=['INTENT_CONTRACT_CONFIRMED','FIVE_MINUTE_PROOF_REVIEW_RECORDED','AGENT_HOOK_PACK_WRITTEN','REGRESSION_CAPSULE_PROMOTED','TEAM_PROOF_INBOX_READ_ONLY','AGENT_TRAJECTORY_PROVED','SHAREABLE_PROOF_CARD_EXPORTED']\nassert all(item in source for item in required)\nassert 'subprocess' not in source and '\"approval\": True' not in source and '\"network\": True' not in source\n",
+      "run": "from pathlib import Path\nsource = Path('factoryline/proof_review_workflow.py').read_text(encoding='utf-8')\nrequired = ['INTENT_CONTRACT_CONFIRMED', 'FIVE_MINUTE_PROOF_REVIEW_RECORDED', 'AGENT_HOOK_PACK_WRITTEN', 'REGRESSION_CAPSULE_PROMOTED', 'TEAM_PROOF_INBOX_READ_ONLY', 'AGENT_TRAJECTORY_PROVED', 'SHAREABLE_PROOF_CARD_EXPORTED']\nassert all((item in source for item in required))\nassert 'subprocess' not in source and '\"approval\": True' not in source and ('\"network\": True' not in source)\n",
       "expect_exit": 0,
       "timeout_s": 30,
       "must_fail_on_stub": true,
-      "covers": ["REQ-PR-001", "REQ-PR-002", "REQ-PR-003", "REQ-PR-004", "REQ-PR-005", "REQ-PR-006", "REQ-PR-007", "REQ-PR-009"]
+      "covers": [
+        "REQ-PR-001",
+        "REQ-PR-002",
+        "REQ-PR-003",
+        "REQ-PR-004",
+        "REQ-PR-005",
+        "REQ-PR-006",
+        "REQ-PR-007",
+        "REQ-PR-009"
+      ]
     },
     {
       "name": "proof_review_behavior",
       "kind": "python",
-      "run": "import pytest\nresult=pytest.main(['-q','tests/test_proof_review_workflow.py','tests/test_continuous_proof.py'])\nassert result==0\nprint('PROOF_REVIEW_WORKFLOW_PASS')\n",
+      "run": "import pytest\nresult = pytest.main(['-q', 'tests/test_audit_rule_search.py::test_req_pr_001_intent_contract_is_complete_confirmed_bound_and_immutable', 'tests/test_audit_rule_search.py::test_req_pr_002_five_minute_review_has_exact_fail_closed_routes', 'tests/test_audit_rule_search.py::test_req_pr_003_hook_pack_writes_five_templates_without_vendor_mutation', 'tests/test_audit_rule_search.py::test_req_pr_004_failure_learning_requires_human_and_is_immutable', 'tests/test_audit_rule_search.py::test_req_pr_005_team_inbox_prioritizes_human_work_and_keeps_claim_limits', 'tests/test_audit_rule_search.py::test_req_pr_006_trajectory_enforces_order_scope_tools_and_independent_audit', 'tests/test_audit_rule_search.py::test_req_pr_007_card_is_public_safe_and_offline_tamper_evident', 'tests/test_audit_rule_search.py::test_req_pr_008_graph_ops_projects_read_only_team_inbox', 'tests/test_audit_rule_search.py::test_req_pr_009_paths_are_workspace_contained_and_large_inputs_fail_closed', 'tests/test_audit_rule_search.py::test_req_pr_010_cli_is_one_machine_readable_front_door_without_regression', 'tests/test_audit_rule_search.py::test_strict_proof_review_binds_intake_scope_and_digest', 'tests/test_audit_rule_search.py::test_strict_proof_review_rejects_missing_intake', 'tests/test_audit_rule_search.py::test_empty_templates_are_versioned_and_authority_free', 'tests/test_audit_rule_search.py::test_empty_projections_report_no_local_evidence_or_authority', 'tests/test_audit_rule_search.py::test_deep_scan_projection_marks_unrun_state_without_promoting_assurance', 'tests/test_audit_rule_search.py::test_sha_of_tracks_exact_bytes_and_absent_files', 'tests/test_audit_rule_search.py::test_version_tuple_parses_release_components_and_rejects_invalid_versions', 'tests/test_audit_rule_search.py::test_merkle_root_is_order_independent_and_rejects_empty_commitments', 'tests/test_audit_rule_search.py::test_mermaid_for_emits_challenge_nodes_into_a_compact_proof_graph', 'tests/test_audit_rule_search.py::test_dsse_pae_uses_utf8_byte_lengths_and_exact_payload_bytes', 'tests/test_audit_rule_search.py::test_source_language_classification_does_not_promote_unknown_formats', 'tests/test_audit_rule_search.py::test_bound_bytes_requires_matching_hash_and_workspace_containment', 'tests/test_audit_rule_search.py::test_proof_review_and_continuity_projections_stay_empty_without_receipts', 'tests/test_audit_rule_search.py::test_update_manifest_reader_normalizes_release_order', 'tests/test_audit_rule_search.py::test_feature_discovery_uses_exact_spec_stems', 'tests/test_audit_rule_search.py::test_read_only_continuity_rejects_missing_database_without_initializing_it', 'tests/test_audit_rule_search.py::test_failure_guidance_keeps_causal_code_and_evidence', 'tests/test_audit_rule_search.py::test_fix_manifest_loader_accepts_json_object', 'tests/test_audit_rule_search.py::test_fix_manifest_loader_rejects_json_array', 'tests/test_audit_rule_search.py::test_directory_groups_map_to_sorted_unique_known_roles', 'tests/test_audit_rule_search.py::test_scm_event_json_is_canonical_and_preserves_normalized_identity', 'tests/test_audit_rule_search.py::test_failure_capsule_validator_rejects_unbound_input', 'tests/test_audit_rule_search.py::test_live_manifest_validator_rejects_incomplete_contract', 'tests/test_audit_rule_search.py::test_live_json_loader_rejects_non_object_manifest', 'tests/test_audit_rule_search.py::test_lifecycle_writer_excludes_raw_arguments_and_workspace_paths', 'tests/test_audit_rule_search.py::test_receipt_path_index_discovers_only_json_receipts', 'tests/test_audit_rule_search.py::test_pareto_comparison_rejects_regressions_in_guarded_metrics', 'tests/test_audit_rule_search.py::test_run_metrics_load_and_export_remain_aggregate_safe', 'tests/test_audit_rule_search.py::test_savings_pair_loader_ignores_malformed_and_foreign_files', 'tests/test_audit_rule_search.py::test_live_activity_stage_completion_updates_only_observed_counts', 'tests/test_audit_rule_search.py::test_live_activity_reads_only_matching_run_cancellation', 'tests/test_audit_rule_search.py::test_public_cdte_export_writes_aggregate_only_report', 'tests/test_continuous_proof.py::test_core_missing_session_routes_to_evidence_required_and_writes_views', 'tests/test_continuous_proof.py::test_core_passing_session_routes_to_human_review_ready', 'tests/test_continuous_proof.py::test_core_failed_session_routes_to_human_required', 'tests/test_continuous_proof.py::test_core_intent_and_changed_byte_drift_fail_closed', 'tests/test_continuous_proof.py::test_core_tampered_receipt_is_invalid', 'tests/test_continuous_proof.py::test_core_scoped_repair_requires_fresh_reverification', 'tests/test_continuous_proof.py::test_core_history_preserves_counts_and_claim_limits', 'tests/test_continuous_proof.py::test_cli_assess_verify_and_history_are_machine_readable', 'tests/test_continuous_proof.py::test_graph_projects_continuous_proof_history_read_only'])\nassert result == 0\nprint('PROOF_REVIEW_WORKFLOW_PASS')\n",
       "expect_exit": 0,
       "expect_stdout": "PROOF_REVIEW_WORKFLOW_PASS",
       "timeout_s": 120,
       "must_fail_on_stub": true,
-      "covers": ["REQ-PR-008", "REQ-PR-010"]
+      "covers": [
+        "REQ-PR-008",
+        "REQ-PR-010"
+      ]
     }
   ]
 }

@@ -1,11 +1,13 @@
 {
-  "checks": [{
-    "name": "deep_audit_loop_behavior",
-    "kind": "python",
-    "run": "import pytest\nassert pytest.main(['-q', 'tests/test_deep_audit_loop.py']) == 0\nprint('DEEP_LOOP_PASS')\n",
-    "expect_exit": 0,
-    "expect_stdout": "DEEP_LOOP_PASS",
-    "timeout_s": 60,
-    "must_fail_on_stub": true
-  }]
+  "checks": [
+    {
+      "name": "deep_audit_loop_behavior",
+      "kind": "python",
+      "run": "import pytest\nassert pytest.main(['-q', 'tests/test_deep_audit_surfaces.py::test_same_receipt_stagnates_without_authority', 'tests/test_deep_audit_surfaces.py::test_changed_policy_blocks', 'tests/test_deep_audit_surfaces.py::test_lost_coverage_blocks', 'tests/test_deep_audit_surfaces.py::test_new_finding_and_new_blocker_regress', 'tests/test_deep_audit_surfaces.py::test_reduction_then_human_only_closure', 'tests/test_deep_audit_surfaces.py::test_invalid_and_escaping_inputs_block', 'tests/test_deep_audit_surfaces.py::test_graph_has_six_non_authorizing_stages', 'tests/test_deep_audit_surfaces.py::test_projection_bound_and_stale_observation', 'tests/test_deep_audit_surfaces.py::test_compare_cli', 'tests/test_deep_audit_surfaces.py::test_run_details_retains_trace_observations_and_missing_bindings', 'tests/test_deep_audit_surfaces.py::test_trace_display_is_bounded_without_hiding_counts', 'tests/test_deep_audit_surfaces.py::test_trace_projection_rejects_noncanonical_paths', 'tests/test_deep_audit_surfaces.py::test_trace_error_remains_visible_without_invented_observations', 'tests/test_deep_audit_surfaces.py::test_trace_projection_never_matches_replay_with_changed_identity']) == 0\nprint('DEEP_LOOP_PASS')\n",
+      "expect_exit": 0,
+      "expect_stdout": "DEEP_LOOP_PASS",
+      "timeout_s": 60,
+      "must_fail_on_stub": true
+    }
+  ]
 }

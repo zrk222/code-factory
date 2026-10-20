@@ -82,10 +82,10 @@ invariants:
         symbol: graph_ops_snapshot
         max_lines: 180
 tests:
-  - path: tests/test_counterexample.py
-    command: python -m pytest -q tests/test_counterexample.py
-  - path: tests/test_guardrails.py
-    command: python -m pytest -q tests/test_guardrails.py
+  - path: tests/test_audit_rule_search.py
+    command: python -m pytest -q tests/test_audit_rule_search.py::test_counterexample_compiler_is_complete_hash_sealed_and_read_only tests/test_audit_rule_search.py::test_counterexample_verifier_rejects_semantic_deletion_tamper_and_stale_source tests/test_audit_rule_search.py::test_counterexample_cli_writes_only_explicit_output_and_verifies tests/test_audit_rule_search.py::test_counterexample_rejects_vague_requirement_before_planning
+  - path: tests/test_audit_rule_search.py
+    command: python -m pytest -q tests/test_audit_rule_search.py::test_guardrails_only_activate_promoted_exact_scope_metadata_and_redact_content tests/test_audit_rule_search.py::test_guardrails_do_not_initialize_missing_continuity_or_accept_tampering tests/test_audit_rule_search.py::test_guardrail_cli_emits_hash_bound_redacted_evaluation
   - path: tests/test_resilience.py
     command: python -m pytest -q tests/test_resilience.py
   - path: tests/test_graph_ops.py

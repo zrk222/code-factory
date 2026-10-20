@@ -1,10 +1,26 @@
+from __future__ import annotations
 import ast
 from hashlib import sha256
 from pathlib import Path
-
 import pytest
-
 from factoryline.review_audits import security_scan
+import json
+from factoryline.cli import main
+from factoryline.intent_ledger import (
+    IntentLedgerError,
+    capture_intent_ledger,
+    inspect_intent_ledger,
+    validate_intent_ledger_record,
+)
+from factoryline.proof_reuse import record_proof
+from factoryline.intent_quality import (
+    IntentFinding,
+    IntentQualityError,
+    assess,
+    findings_as_dict,
+    normalize,
+    require_clear,
+)
 
 
 @pytest.mark.parametrize(
@@ -1100,6 +1116,767 @@ def test_unproved_module_helper_is_not_hollow(tmp_path, helper):
     expected_hollow = helper.startswith("async def ")
     report = security_scan(tmp_path)
     assert ("QUALITY_HOLLOW_TEST" in report["finding_counts"]) is expected_hollow
+
+
+# --- Merged from test_intent_ledger.py; test definitions and fixtures retained ---
+
+
+def _files(root: Path) -> dict[str, bytes]:
+    return {
+        path.relative_to(root).as_posix(): path.read_bytes()
+        for path in root.rglob("*")
+        if path.is_file()
+    }
+
+
+def _capture(root: Path, changed: list[str] | None = None) -> dict:
+    return capture_intent_ledger(
+        root,
+        change_list="Billing cancellation",
+        changed=changed or ["app/billing.py"],
+        confirmed_by="Ada",
+        promise="Cancelled accounts never receive a new invoice.",
+        non_goal="This change does not migrate historical invoices.",
+        failure_case="A cancelled account receiving an invoice must fail the declared negative proof.",
+        confirmation="CAPTURE Billing cancellation",
+    )
+
+
+def _review(
+    *, paths: list[str], stale: list[str] | None = None, coverage: bool = True
+) -> dict:
+    return {
+        "input_source": "explicit",
+        "changed_paths": paths,
+        "review_sha256": "a" * 64,
+        "unproven_claims": [],
+        "coverage": {"ok": coverage, "uncovered": ["REQ-1"] if not coverage else []},
+        "impact": {
+            "rerun_proofs": [{"proof_id": item} for item in stale or []],
+            "unmatched_changed_paths": [],
+        },
+    }
+
+
+def test_capture_records_only_confirmed_local_metadata(tmp_path: Path) -> None:
+    result = _capture(tmp_path)
+
+    assert result["marker"] == "INTENT_LEDGER_CAPTURED"
+    assert result["authority"]["record_write"] is True
+    assert all(
+        value is False
+        for key, value in result["authority"].items()
+        if key != "record_write"
+    )
+    path = tmp_path / result["path"]
+    assert path.is_file()
+    assert (
+        validate_intent_ledger_record(json.loads(path.read_text(encoding="utf-8")))
+        == result["record"]
+    )
+
+
+def test_capture_rejects_missing_exact_confirmation_without_writing(
+    tmp_path: Path,
+) -> None:
+    before = _files(tmp_path)
+    with pytest.raises(IntentLedgerError) as exc:
+        capture_intent_ledger(
+            tmp_path,
+            change_list="Billing cancellation",
+            changed=["app/billing.py"],
+            confirmed_by="Ada",
+            promise="Promise",
+            non_goal="Non-goal",
+            failure_case="Failure case",
+            confirmation="yes",
+        )
+    assert exc.value.code == "INTENT_LEDGER_CONFIRMATION_REQUIRED"
+    assert _files(tmp_path) == before
+
+
+def test_capture_rejects_vague_promise_even_with_exact_confirmation(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(IntentLedgerError) as exc:
+        capture_intent_ledger(
+            tmp_path,
+            change_list="Billing cancellation",
+            changed=["app/billing.py"],
+            confirmed_by="Ada",
+            promise="Make it better.",
+            non_goal="No historical migration.",
+            failure_case="A cancelled account receiving an invoice fails.",
+            confirmation="CAPTURE Billing cancellation",
+        )
+    assert exc.value.code == "INTENT_LEDGER_INTENT_UNCLEAR"
+    assert not (tmp_path / ".factory" / "intent-ledgers").exists()
+
+
+def test_inspection_is_read_only_and_returns_uncontracted_without_inventing_intent(
+    tmp_path: Path,
+) -> None:
+    before = _files(tmp_path)
+    inspection = inspect_intent_ledger(
+        tmp_path, change_list="Billing cancellation", changed=["app/billing.py"]
+    )
+
+    assert inspection["state"] == "uncontracted"
+    assert inspection["next_action"]["action"] == "capture_intent"
+    assert inspection["record"] is None
+    assert inspection["authority"]["record_write"] is False
+    assert all(value is False for value in inspection["authority"].values())
+    assert _files(tmp_path) == before
+
+
+def test_scope_escape_precedes_lower_priority_change_review_findings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _capture(tmp_path)
+    monkeypatch.setattr(
+        "factoryline.intent_ledger.review_change",
+        lambda *_args, **_kwargs: _review(
+            paths=["app/billing.py", "app/invoices.py"],
+            stale=["proof-1"],
+            coverage=False,
+        ),
+    )
+
+    inspection = inspect_intent_ledger(
+        tmp_path,
+        change_list="Billing cancellation",
+        changed=["app/billing.py", "app/invoices.py"],
+    )
+
+    assert inspection["state"] == "scope_escape"
+    assert inspection["findings"][0]["facts"]["paths"] == ["app/invoices.py"]
+    assert inspection["next_action"]["action"] == "amend_or_split_change_list"
+
+
+def test_stale_proof_uses_existing_change_review_without_executing_a_gate(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "input.txt").write_text("before", encoding="utf-8")
+    (tmp_path / "output.txt").write_text("green", encoding="utf-8")
+    record_proof(
+        tmp_path,
+        {
+            "name": "unit",
+            "command": ["python", "-m", "pytest"],
+            "read_only": True,
+            "inputs": ["input.txt"],
+            "outputs": ["output.txt"],
+        },
+        elapsed_ms=50,
+    )
+    (tmp_path / "input.txt").write_text("after", encoding="utf-8")
+    _capture(tmp_path, ["input.txt"])
+    before = _files(tmp_path)
+
+    inspection = inspect_intent_ledger(
+        tmp_path, change_list="Billing cancellation", changed=["input.txt"]
+    )
+
+    assert inspection["state"] == "stale_proof"
+    assert inspection["next_action"]["action"] == "rerun_stale_proof"
+    assert inspection["change_review"]["stale_proof_ids"]
+    assert _files(tmp_path) == before
+
+
+def test_coverage_gap_and_ready_state_are_deterministic_from_explicit_review(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _capture(tmp_path)
+    monkeypatch.setattr(
+        "factoryline.intent_ledger.review_change",
+        lambda *_args, **_kwargs: _review(paths=["app/billing.py"], coverage=False),
+    )
+    gap = inspect_intent_ledger(
+        tmp_path, change_list="Billing cancellation", changed=["app/billing.py"]
+    )
+    assert gap["state"] == "coverage_incomplete"
+
+    monkeypatch.setattr(
+        "factoryline.intent_ledger.review_change",
+        lambda *_args, **_kwargs: _review(paths=["app/billing.py"]),
+    )
+    ready = inspect_intent_ledger(
+        tmp_path, change_list="Billing cancellation", changed=["app/billing.py"]
+    )
+    assert ready["state"] == "ready_for_human_review"
+    assert ready["next_action"]["action"] == "review_packet"
+    assert (
+        inspect_intent_ledger(
+            tmp_path, change_list="Billing cancellation", changed=["app/billing.py"]
+        )["inspection_sha256"]
+        == ready["inspection_sha256"]
+    )
+
+
+def test_latest_tampered_record_fails_closed_without_fallback(tmp_path: Path) -> None:
+    first = _capture(tmp_path)
+    second = _capture(tmp_path)
+    assert first["path"] != second["path"]
+    (tmp_path / second["path"]).write_text("{}", encoding="utf-8")
+
+    inspection = inspect_intent_ledger(
+        tmp_path, change_list="Billing cancellation", changed=["app/billing.py"]
+    )
+
+    assert inspection["state"] == "intent_ledger_invalid"
+    assert inspection["record"] is None
+    assert inspection["record_path"] == second["path"]
+
+
+def test_identical_clock_tick_captures_never_overwrite_each_other(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("factoryline.intent_ledger.time.time_ns", lambda: 42)
+
+    first = _capture(tmp_path)
+    second = _capture(tmp_path)
+
+    assert first["path"] != second["path"]
+    assert (tmp_path / first["path"]).is_file()
+    assert (tmp_path / second["path"]).is_file()
+    assert len(list((tmp_path / ".factory" / "intent-ledgers").glob("*.json"))) == 2
+
+
+def test_cli_capture_and_read_only_inspection_are_machine_readable(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    capture_args = [
+        "intent",
+        "capture",
+        "--root",
+        str(tmp_path),
+        "--change-list",
+        "Billing cancellation",
+        "--changed",
+        "app/billing.py",
+        "--confirmed-by",
+        "Ada",
+        "--promise",
+        "Cancelled accounts never receive a new invoice.",
+        "--non-goal",
+        "No historical migration.",
+        "--failure-case",
+        "Invoice creation for a cancelled account fails.",
+        "--confirmation",
+        "CAPTURE Billing cancellation",
+        "--json",
+    ]
+    assert main(capture_args) == 0
+    captured = json.loads(capsys.readouterr().out)
+    before = _files(tmp_path)
+
+    assert (
+        main(
+            [
+                "intent",
+                "inspect",
+                "--root",
+                str(tmp_path),
+                "--change-list",
+                "Billing cancellation",
+                "--changed",
+                "app/billing.py",
+                "--json",
+            ]
+        )
+        == 0
+    )
+    inspection = json.loads(capsys.readouterr().out)
+    assert captured["marker"] == "INTENT_LEDGER_CAPTURED"
+    assert inspection["state"] in {
+        "coverage_incomplete",
+        "scope_escape",
+        "ready_for_human_review",
+    }
+    assert _files(tmp_path) == before
+
+
+# --- Merged from test_intent_quality.py; test definitions and fixtures retained ---
+
+
+def test_normalize_and_findings_as_dict_preserve_text_and_emit_stable_diagnostics():
+    assert normalize("  A reviewer\n checks   the receipt. ") == (
+        "A reviewer checks the receipt."
+    )
+    assert normalize(None) == ""
+
+    findings = findings_as_dict("Make it better", field="acceptance")
+
+    assert findings == [
+        {
+            "code": "INTENT_VAGUE_LANGUAGE",
+            "message": "acceptance contains vague phrase: make_it_better",
+        },
+        {
+            "code": "INTENT_NO_ACTION",
+            "message": "acceptance does not state an observable action or state transition",
+        },
+    ]
+    assert IntentFinding("INTENT_NO_ACTION", "missing action").as_dict() == {
+        "code": "INTENT_NO_ACTION",
+        "message": "missing action",
+    }
+
+
+def test_intent_quality_accepts_concrete_action_and_observation() -> None:
+    text, findings = assess(
+        "A reviewer can create a hash-bound receipt.",
+        field="intent",
+        require_observable=True,
+    )
+    assert text == "A reviewer can create a hash-bound receipt."
+    assert findings == []
+
+
+@pytest.mark.parametrize(
+    "value, field, observable, code",
+    [
+        ("Make it better", "intent", False, "INTENT_VAGUE_LANGUAGE"),
+        ("TODO", "intent", False, "INTENT_PLACEHOLDER"),
+        ("Fine", "intent", False, "INTENT_NO_ACTION"),
+        ("Do something", "acceptance", True, "INTENT_VAGUE_LANGUAGE"),
+        ("The task runs", "acceptance", True, "INTENT_NOT_OBSERVABLE"),
+    ],
+)
+def test_intent_quality_rejects_unverifiable_language(
+    value: str, field: str, observable: bool, code: str
+) -> None:
+    with pytest.raises(IntentQualityError, match=code):
+        require_clear(value, field=field, require_observable=observable)
+
+
+@pytest.mark.parametrize(
+    ("import_statement", "call_expression", "expected"),
+    [
+        (
+            "import unittest.mock\n",
+            "unittest.mock.MagicMock()",
+            "unittest.mock.MagicMock",
+        ),
+        (
+            "import unittest.mock as mock\n",
+            "mock.MagicMock()",
+            "unittest.mock.MagicMock",
+        ),
+        (
+            "from unittest import mock\n",
+            "mock.MagicMock()",
+            "unittest.mock.MagicMock",
+        ),
+        (
+            "from unittest.mock import MagicMock as Mock\n",
+            "Mock()",
+            "unittest.mock.MagicMock",
+        ),
+        (
+            "import xml.etree.ElementTree\n",
+            "xml.etree.ElementTree.fromstring(data)",
+            "xml.etree.ElementTree.fromstring",
+        ),
+        ("import pickle\n", "pickle.loads(data)", "pickle.loads"),
+        (
+            "import pickle as serializer\n",
+            "serializer.loads(data)",
+            "pickle.loads",
+        ),
+    ],
+)
+def test_import_aliases_follow_python_binding_semantics(
+    import_statement: str, call_expression: str, expected: str
+) -> None:
+    from factoryline.review_audits import (
+        _module_security_aliases,
+        _normalized_call_name,
+        _scope_security_aliases,
+    )
+
+    tree = ast.parse(import_statement + f"def test_case():\n    {call_expression}\n")
+    scope = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "test_case"
+    )
+    call = next(node for node in ast.walk(scope) if isinstance(node, ast.Call))
+    aliases = _scope_security_aliases(_module_security_aliases(tree), scope)
+
+    assert _normalized_call_name(call, aliases) == expected
+
+
+@pytest.mark.parametrize(
+    ("import_statement", "binding", "call_expression"),
+    [
+        (
+            "import unittest.mock\n",
+            "unittest",
+            "unittest.mock.MagicMock()",
+        ),
+        (
+            "import unittest.mock as mock\n",
+            "mock",
+            "mock.MagicMock()",
+        ),
+        (
+            "from unittest import mock\n",
+            "mock",
+            "mock.MagicMock()",
+        ),
+    ],
+)
+def test_import_aliases_are_invalidated_by_local_rebinding(
+    import_statement: str, binding: str, call_expression: str
+) -> None:
+    from factoryline.review_audits import (
+        _module_security_aliases,
+        _normalized_call_name,
+        _scope_security_aliases,
+    )
+
+    tree = ast.parse(
+        import_statement
+        + f"def test_case():\n    {binding} = replacement\n    {call_expression}\n"
+    )
+    scope = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "test_case"
+    )
+    call = next(node for node in ast.walk(scope) if isinstance(node, ast.Call))
+    aliases = _scope_security_aliases(_module_security_aliases(tree), scope)
+
+    assert binding not in aliases
+    assert _normalized_call_name(call, aliases) == call_expression.removesuffix("()")
+
+
+def test_local_dotted_import_rebinds_the_top_level_package_after_shadowing() -> None:
+    from factoryline.review_audits import (
+        _normalized_call_name,
+        _scope_security_aliases,
+    )
+
+    tree = ast.parse(
+        "def test_case():\n"
+        "    unittest = replacement\n"
+        "    import unittest.mock\n"
+        "    unittest.mock.MagicMock()\n"
+    )
+    scope = next(node for node in tree.body if isinstance(node, ast.FunctionDef))
+    call = next(node for node in ast.walk(scope) if isinstance(node, ast.Call))
+    aliases = _scope_security_aliases({}, scope)
+
+    assert aliases["unittest"] == "unittest"
+    assert _normalized_call_name(call, aliases) == "unittest.mock.MagicMock"
+
+
+@pytest.mark.parametrize(
+    "case, source, rule, expected",
+    [
+        (
+            "open_raw",
+            "from flask import request\nfrom werkzeug.utils import secure_filename\nimport os\ndef view():\n    name = request.args.get('filename')\n    open(os.path.join('/srv/uploads', name), 'wb')\n",
+            "SECURITY_PATH_TRAVERSAL",
+            True,
+        ),
+        (
+            "open_exact_return_fixed_root",
+            "from flask import request\nfrom werkzeug.utils import secure_filename\nimport os\ndef view():\n    name = secure_filename(request.args.get('filename'))\n    open(os.path.join('/srv/uploads', name), 'wb')\n",
+            "SECURITY_PATH_TRAVERSAL",
+            False,
+        ),
+        (
+            "open_sibling_unsanitized",
+            "from flask import request\nfrom werkzeug.utils import secure_filename\nimport os\ndef view():\n    raw = request.args.get('filename')\n    clean = secure_filename(raw)\n    open(os.path.join('/srv/uploads', raw), 'wb')\n",
+            "SECURITY_PATH_TRAVERSAL",
+            True,
+        ),
+        (
+            "open_later_rebind",
+            "from flask import request\nfrom werkzeug.utils import secure_filename\nimport os\ndef view():\n    name = secure_filename(request.args.get('filename'))\n    name = request.args.get('other')\n    open(os.path.join('/srv/uploads', name), 'wb')\n",
+            "SECURITY_PATH_TRAVERSAL",
+            True,
+        ),
+        (
+            "open_custom_same_name",
+            "from flask import request\nfrom werkzeug.utils import secure_filename\nimport os\ndef view():\n    def secure_filename(value):\n        return value\n    name = secure_filename(request.args.get('filename'))\n    open(os.path.join('/srv/uploads', name), 'wb')\n",
+            "SECURITY_PATH_TRAVERSAL",
+            True,
+        ),
+        (
+            "upload_fixed_root",
+            "from flask import request\nfrom werkzeug.utils import secure_filename\nimport os\ndef view():\n    file = request.files['file']\n    file.save(os.path.join('/srv/uploads', secure_filename(file.filename)))\n",
+            "SECURITY_PATH_TRAVERSAL",
+            False,
+        ),
+        (
+            "upload_tainted_root",
+            "from flask import request\nfrom werkzeug.utils import secure_filename\nimport os\ndef view():\n    file = request.files['file']\n    file.save(os.path.join(request.args.get('root'), secure_filename(file.filename)))\n",
+            "SECURITY_PATH_TRAVERSAL",
+            True,
+        ),
+        (
+            "upload_ignore_return",
+            "from flask import request\nfrom werkzeug.utils import secure_filename\nimport os\ndef view():\n    file = request.files['file']\n    secure_filename(file.filename)\n    file.save(os.path.join('/srv/uploads', file.filename))\n",
+            "SECURITY_PATH_TRAVERSAL",
+            True,
+        ),
+        (
+            "upload_module_replaced",
+            "from flask import request\nfrom werkzeug.utils import secure_filename\nimport os\ndef view():\n    import werkzeug.utils\n    werkzeug.utils.secure_filename = lambda value: value\n    file = request.files['file']\n    file.save(os.path.join('/srv/uploads', werkzeug.utils.secure_filename(file.filename)))\n",
+            "SECURITY_PATH_TRAVERSAL",
+            True,
+        ),
+        (
+            "upload_return_rebind",
+            "from flask import request\nfrom werkzeug.utils import secure_filename\nimport os\ndef view():\n    file = request.files['file']\n    leaf = secure_filename(file.filename)\n    leaf = file.filename\n    file.save(os.path.join('/srv/uploads', leaf))\n",
+            "SECURITY_PATH_TRAVERSAL",
+            True,
+        ),
+        (
+            "upload_branch_mismatch",
+            "from flask import request\nfrom werkzeug.utils import secure_filename\nimport os\ndef view():\n    file = request.files['file']\n    if request.args.get('safe'):\n        leaf = secure_filename(file.filename)\n    else:\n        leaf = file.filename\n    file.save(os.path.join('/srv/uploads', leaf))\n",
+            "SECURITY_PATH_TRAVERSAL",
+            True,
+        ),
+        (
+            "url_positional",
+            'from flask import request\nimport requests\nimport urllib.parse\ndef view():\n    url = request.args.get("url")\n    requests.get(url)\n',
+            "SECURITY_SSRF",
+            True,
+        ),
+        (
+            "url_keyword",
+            'from flask import request\nimport requests\nimport urllib.parse\ndef view():\n    url = request.args.get("url")\n    requests.get(url=url)\n',
+            "SECURITY_SSRF",
+            True,
+        ),
+        (
+            "url_guard_true",
+            "from flask import request\nimport requests\nimport urllib.parse\ndef view():\n    url = request.args.get(\"url\")\n    if urllib.parse.urlparse(url).hostname in {'example.test'}:\n        requests.get(url)\n",
+            "SECURITY_SSRF",
+            False,
+        ),
+        (
+            "url_guard_else",
+            "from flask import request\nimport requests\nimport urllib.parse\ndef view():\n    url = request.args.get(\"url\")\n    if urllib.parse.urlparse(url).hostname in {'example.test'}:\n        pass\n    else:\n        requests.get(url)\n",
+            "SECURITY_SSRF",
+            True,
+        ),
+        (
+            "url_guard_other",
+            "from flask import request\nimport requests\nimport urllib.parse\ndef view():\n    url = request.args.get(\"url\")\n    other = request.args.get('other')\n    if urllib.parse.urlparse(other).hostname in {'example.test'}:\n        requests.get(url)\n",
+            "SECURITY_SSRF",
+            True,
+        ),
+        (
+            "url_guard_rebind",
+            "from flask import request\nimport requests\nimport urllib.parse\ndef view():\n    url = request.args.get(\"url\")\n    if urllib.parse.urlparse(url).hostname in {'example.test'}:\n        url = request.args.get('other')\n        requests.get(url)\n",
+            "SECURITY_SSRF",
+            True,
+        ),
+        (
+            "url_custom_parser",
+            "from flask import request\nimport requests\nimport urllib.parse\ndef view():\n    url = request.args.get(\"url\")\n    def fake_parse(value):\n        return type('URL', (), {'hostname':'example.test'})()\n    urllib.parse.urlparse = fake_parse\n    if urllib.parse.urlparse(url).hostname in {'example.test'}:\n        requests.get(url)\n",
+            "SECURITY_SSRF",
+            True,
+        ),
+        (
+            "sql_interpolated_positional",
+            'from flask import request\nimport psycopg\ndef view():\n    conn = psycopg.connect("dbname=app")\n    cursor = conn.cursor()\n    name = request.args.get("name")\n    cursor.execute(\'SELECT * FROM users WHERE name=\' + name)\n',
+            "SECURITY_SQL_INJECTION",
+            True,
+        ),
+        (
+            "sql_interpolated_keyword",
+            'from flask import request\nimport psycopg\ndef view():\n    conn = psycopg.connect("dbname=app")\n    cursor = conn.cursor()\n    name = request.args.get("name")\n    cursor.execute(query=\'SELECT * FROM users WHERE name=\' + name)\n',
+            "SECURITY_SQL_INJECTION",
+            True,
+        ),
+        (
+            "sql_bound_parameter",
+            'from flask import request\nimport psycopg\ndef view():\n    conn = psycopg.connect("dbname=app")\n    cursor = conn.cursor()\n    name = request.args.get("name")\n    cursor.execute(\'SELECT * FROM users WHERE name=%s\', (name,))\n',
+            "SECURITY_SQL_INJECTION",
+            False,
+        ),
+        (
+            "sql_bound_parameter_keyword",
+            'from flask import request\nimport psycopg\ndef view():\n    conn = psycopg.connect("dbname=app")\n    cursor = conn.cursor()\n    name = request.args.get("name")\n    cursor.execute(query=\'SELECT * FROM users WHERE name=%s\', params=(name,))\n',
+            "SECURITY_SQL_INJECTION",
+            False,
+        ),
+        (
+            "sql_tainted_query_with_params",
+            'from flask import request\nimport psycopg\ndef view():\n    conn = psycopg.connect("dbname=app")\n    cursor = conn.cursor()\n    name = request.args.get("name")\n    cursor.execute(\'SELECT * FROM users ORDER BY \' + name, ())\n',
+            "SECURITY_SQL_INJECTION",
+            True,
+        ),
+        (
+            "open_keyword_file",
+            "from flask import request\ndef view():\n    open(file=request.args.get('path'))\n",
+            "SECURITY_PATH_TRAVERSAL",
+            True,
+        ),
+        (
+            "url_sibling_params",
+            "from flask import request\nimport requests\ndef view():\n    requests.get('https://example.test', params={'next':request.args.get('url')})\n",
+            "SECURITY_SSRF",
+            False,
+        ),
+        (
+            "os_path_parent_replaced",
+            'from flask import request\nfrom werkzeug.utils import secure_filename\nimport os\nfrom types import SimpleNamespace\nos.path=SimpleNamespace(join=lambda root,leaf: request.args.get("path"))\ndef view():\n    leaf=secure_filename(request.args.get("filename"))\n    open(os.path.join("/srv/uploads",leaf),"wb")\n',
+            "SECURITY_PATH_TRAVERSAL",
+            True,
+        ),
+        (
+            "urllib_parse_parent_replaced",
+            'from flask import request\nimport requests\nimport urllib.parse\nfrom types import SimpleNamespace\nurllib.parse=SimpleNamespace(urlparse=lambda value: SimpleNamespace(hostname="example.test"))\ndef view():\n    url=request.args.get("url")\n    if urllib.parse.urlparse(url).hostname in {"example.test"}:\n        requests.get(url=url)\n',
+            "SECURITY_SSRF",
+            True,
+        ),
+        (
+            "werkzeug_utils_parent_replaced",
+            'from flask import request\nimport werkzeug.utils\nimport os\nfrom types import SimpleNamespace\nwerkzeug.utils=SimpleNamespace(secure_filename=lambda value:value)\ndef view():\n    leaf=werkzeug.utils.secure_filename(request.args.get("filename"))\n    open(os.path.join("/srv/uploads",leaf),"wb")\n',
+            "SECURITY_PATH_TRAVERSAL",
+            True,
+        ),
+        (
+            "url_keyword_rebind_during_evaluation",
+            'from flask import request\nimport requests\nimport urllib.parse\ndef view():\n    url=request.args.get("url")\n    if urllib.parse.urlparse(url).hostname in {"example.test"}:\n        requests.get(params=(url := request.args.get("other")),url=url)\n',
+            "SECURITY_SSRF",
+            True,
+        ),
+        (
+            "sanitized_leaf_augmented_with_raw",
+            'from flask import request\nfrom werkzeug.utils import secure_filename\nimport os\ndef view():\n    leaf=secure_filename(request.args.get("filename"))\n    leaf += request.args.get("suffix")\n    open(os.path.join("/srv/uploads",leaf),"wb")\n',
+            "SECURITY_PATH_TRAVERSAL",
+            True,
+        ),
+        (
+            "bound-secure-filename-import-alias",
+            "from flask import request\nfrom werkzeug.utils import secure_filename\ndef save_upload():\n    clean = secure_filename\n    uploaded = request.files['file']\n    uploaded.save('/uploads/' + clean(uploaded.filename))\n",
+            "SECURITY_PATH_TRAVERSAL",
+            False,
+        ),
+    ],
+)
+def test_security_sink_slots_and_exact_sanitizer_results(
+    tmp_path, case, source, rule, expected
+):
+    from factoryline.review_audits import security_scan
+
+    (tmp_path / "app.py").write_text(source, encoding="utf-8")
+    result = security_scan(tmp_path, cache_enabled=False)
+    matching = [finding for finding in result["findings"] if finding["code"] == rule]
+    assert bool(matching) is expected, (case, result)
+    if expected:
+        assert all(finding["severity"] == "HIGH" for finding in matching)
+
+
+def test_sanitizer_provider_cache_is_invalidated_at_scope_binding():
+    from factoryline.review_integrity import (
+        _security_proven_callee,
+        bind_security_call_scopes,
+    )
+
+    tree = ast.parse(
+        "import urllib.parse\ndef f(url):\n    return urllib.parse.urlparse(url)\n"
+    )
+    call = tree.body[1].body[0].value
+    aliases = {"urllib": "urllib"}
+    bind_security_call_scopes(tree)
+    assert _security_proven_callee(call, aliases, "urllib.parse.urlparse")
+    tree.body.insert(1, ast.parse("urllib.parse.urlparse = replacement").body[0])
+    bind_security_call_scopes(tree)
+    assert not _security_proven_callee(call, aliases, "urllib.parse.urlparse")
+
+
+def test_url_guard_does_not_survive_sibling_argument_effect(tmp_path):
+    from factoryline.review_audits import security_scan
+
+    (tmp_path / "app.py").write_text(
+        "from flask import request\nimport requests\nimport urllib.parse\n"
+        "def view():\n    url = request.args.get('url')\n"
+        "    def change_url():\n        nonlocal url\n"
+        "        url = request.args.get('other')\n"
+        "    if urllib.parse.urlparse(url).hostname in {'example.test'}:\n"
+        "        requests.get(params=change_url(), url=url)\n",
+        encoding="utf-8",
+    )
+    result = security_scan(tmp_path, cache_enabled=False)
+    assert any(row["code"] == "SECURITY_SSRF" for row in result["findings"])
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "import sqlalchemy as sa\nx = 1\n",
+        "import sqlalchemy as sa\ndef f(sa):\n    return sa\n",
+        "import sqlalchemy as sa\nfrom other import *\n",
+        "import sqlalchemy as sa\nimport sqlalchemy as sa\n",
+        "import sqlalchemy as sa\ndef f():\n    import other as sa\n",
+        "import sqlalchemy as sa\nclass sa: pass\n",
+    ],
+)
+def test_db_symbol_inventory_is_local_and_preserves_shadowing(source, monkeypatch):
+    from factoryline import intent_quality as contracts
+
+    tree = ast.parse(source)
+    original_walk = ast.walk
+    nodes = tuple(original_walk(tree))
+    symbols = {}
+    seen = {}
+    counts = {}
+    for node in tree.body:
+        for local, qualified in contracts._db_import_bindings(node):
+            seen[local] = seen.get(local, 0) + 1
+            symbols[local] = qualified
+    for node in nodes:
+        for local in contracts._db_python_import_names(node):
+            counts[local] = counts.get(local, 0) + 1
+    bound = (
+        set(symbols)
+        if any(
+            isinstance(n, ast.ImportFrom) and any(a.name == "*" for a in n.names)
+            for n in nodes
+        )
+        else set()
+    )
+    bound.update(
+        n.id for n in nodes if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store)
+    )
+    bound.update(n.arg for n in nodes if isinstance(n, ast.arg))
+    bound.update(
+        n.name
+        for n in nodes
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+    )
+    expected = (
+        symbols,
+        (
+            bound
+            | {n for n, c in seen.items() if c > 1}
+            | {n for n, c in counts.items() if c > 1}
+        )
+        & symbols.keys(),
+    )
+    calls = []
+
+    def observe(node):
+        calls.append(node)
+        return original_walk(node)
+
+    monkeypatch.setattr(ast, "walk", observe)
+    assert contracts._db_python_symbols(tree) == expected
+    assert calls == [tree]
+    tree.body.append(
+        ast.Assign(targets=[ast.Name(id="sa", ctx=ast.Store())], value=ast.Constant(1))
+    )
+    assert "sa" in contracts._db_python_symbols(tree)[1]
+    assert calls == [tree, tree]
 
 
 @pytest.mark.parametrize("cache_enabled", [False, True])

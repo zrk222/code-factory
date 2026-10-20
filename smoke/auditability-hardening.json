@@ -3,29 +3,44 @@
     {
       "name": "offline_receipt_mutations_are_rejected",
       "kind": "python",
-      "run": "from pathlib import Path\nfrom tempfile import TemporaryDirectory\nfrom factoryline.receipt_challenge import verify_receipt_mutations\nwith TemporaryDirectory() as value:\n result=verify_receipt_mutations(Path(value)); assert result['passed']; assert result['attempted']==result['rejected']==4; assert result['marker']=='RECEIPT_MUTATIONS_REJECTED'; assert result['offline_marker']=='RECEIPT_CHALLENGE_OFFLINE'; assert not any(result['authority'].values()); assert not list(Path(value).rglob('*.pem'))\n",
-      "covers": ["REQ-AUD-RECEIPTS", "REQ-AUD-MUTATION-RECEIPT", "REQ-AUD-OFFLINE"],
+      "run": "from pathlib import Path\nfrom tempfile import TemporaryDirectory\nfrom factoryline.receipt_challenge import verify_receipt_mutations\nwith TemporaryDirectory() as value:\n    result = verify_receipt_mutations(Path(value))\n    assert result['passed']\n    assert result['attempted'] == result['rejected'] == 4\n    assert result['marker'] == 'RECEIPT_MUTATIONS_REJECTED'\n    assert result['offline_marker'] == 'RECEIPT_CHALLENGE_OFFLINE'\n    assert not any(result['authority'].values())\n    assert not list(Path(value).rglob('*.pem'))\n",
+      "covers": [
+        "REQ-AUD-RECEIPTS",
+        "REQ-AUD-MUTATION-RECEIPT",
+        "REQ-AUD-OFFLINE"
+      ],
       "must_fail_on_stub": true
     },
     {
       "name": "canonical_json_is_stable_and_fail_closed",
       "kind": "python",
-      "run": "import json,math\nfrom pathlib import Path\nfrom tempfile import TemporaryDirectory\nfrom factoryline.enterprise_receipts import EnterpriseReceiptError,canonical_json\nfrom factoryline.receipt_challenge import verify_receipt_mutations\nvalues=[None,True,42,-0.0,'Unicode \\U0001f9ea',[],{'z':[1,2],'a':{'ok':True}}]\nfor value in values:\n encoded=canonical_json(value); assert canonical_json(json.loads(encoded))==encoded\nassert canonical_json({'a':1,'b':2})==canonical_json({'b':2,'a':1})\nfor value in [math.nan,math.inf,-math.inf,'\\ud800',object()]:\n try: canonical_json({'value':value})\n except EnterpriseReceiptError as exc: assert exc.code=='E_INVALID_PAYLOAD'\n else: raise AssertionError('invalid canonical input accepted')\nwith TemporaryDirectory() as directory: assert verify_receipt_mutations(Path(directory))['passed']\n",
-      "covers": ["REQ-AUD-CANONICAL", "REQ-AUD-CANONICAL-INVALID"],
+      "run": "import json, math\nfrom pathlib import Path\nfrom tempfile import TemporaryDirectory\nfrom factoryline.enterprise_receipts import EnterpriseReceiptError, canonical_json\nfrom factoryline.receipt_challenge import verify_receipt_mutations\nvalues = [None, True, 42, -0.0, 'Unicode 🧪', [], {'z': [1, 2], 'a': {'ok': True}}]\nfor value in values:\n    encoded = canonical_json(value)\n    assert canonical_json(json.loads(encoded)) == encoded\nassert canonical_json({'a': 1, 'b': 2}) == canonical_json({'b': 2, 'a': 1})\nfor value in [math.nan, math.inf, -math.inf, '\\ud800', object()]:\n    try:\n        canonical_json({'value': value})\n    except EnterpriseReceiptError as exc:\n        assert exc.code == 'E_INVALID_PAYLOAD'\n    else:\n        raise AssertionError('invalid canonical input accepted')\nwith TemporaryDirectory() as directory:\n    assert verify_receipt_mutations(Path(directory))['passed']\n",
+      "covers": [
+        "REQ-AUD-CANONICAL",
+        "REQ-AUD-CANONICAL-INVALID"
+      ],
       "must_fail_on_stub": true
     },
     {
       "name": "auditability_contract_tests_pass",
       "kind": "python",
-      "run": "import subprocess,sys\nfiles=['tests/test_public_docstrings.py','tests/test_receipt_challenge.py','tests/test_enterprise_receipts.py','tests/test_migration.py','tests/test_studio.py','tests/test_signed_receipts.py']\nresult=subprocess.run([sys.executable,'-m','pytest','-q',*files],capture_output=True,text=True,timeout=120,check=False); assert result.returncode==0,result.stdout+result.stderr\n",
-      "covers": ["REQ-AUD-DOCSTRINGS", "REQ-AUD-STUDIO", "REQ-AUD-MIGRATION-ASSESS", "REQ-AUD-MIGRATION-VERIFY", "REQ-AUD-SIGSTORE"],
+      "run": "import subprocess, sys\nfiles = ['tests/test_public_docstrings.py', 'tests/test_receipt_challenge.py::test_receipt_mutation_gate_rejects_every_declared_mutant', 'tests/test_receipt_challenge.py::test_verify_receipts_cli_emits_json_and_fails_when_a_mutant_survives', 'tests/test_receipt_challenge.py::test_unclassified_mutation_failure_cannot_be_reported_as_a_pass', 'tests/test_enterprise_receipts.py', 'tests/test_compliance.py::test_migration_readiness_separates_registration_from_executable_proof', 'tests/test_compliance.py::test_autowiki_and_lore_are_bound_to_tracked_facts', 'tests/test_compliance.py::test_readiness_rejects_invalid_argv_and_implicit_replacement', 'tests/test_compliance.py::test_migration_verifiers_fail_closed_on_malformed_records', 'tests/test_compliance.py::test_readiness_evidence_cannot_escape_the_repository', 'tests/test_studio.py', 'tests/test_signed_receipts.py']\nresult = subprocess.run([sys.executable, '-m', 'pytest', '-q', *files], capture_output=True, text=True, timeout=120, check=False)\nassert result.returncode == 0, result.stdout + result.stderr\n",
+      "covers": [
+        "REQ-AUD-DOCSTRINGS",
+        "REQ-AUD-STUDIO",
+        "REQ-AUD-MIGRATION-ASSESS",
+        "REQ-AUD-MIGRATION-VERIFY",
+        "REQ-AUD-SIGSTORE"
+      ],
       "must_fail_on_stub": true
     },
     {
       "name": "scope_remains_bounded",
       "kind": "python",
-      "run": "from pathlib import Path\nspec=Path('specs/auditability-hardening.md').read_text(encoding='utf-8'); workflow=Path('.github/workflows/signed-receipts.yml').read_text(encoding='utf-8'); assert 'CLI split as a separately planned refactor' in spec; assert 'SSO/SCIM' in spec; assert workflow.count('sigstore/gh-action-sigstore-python@')==1; assert 'id-token: write' in workflow; assert 'verify-cert-identity' in workflow; assert 'verify-oidc-issuer' in workflow\n",
-      "covers": ["REQ-AUD-SCOPE"],
+      "run": "from pathlib import Path\nspec = Path('specs/auditability-hardening.md').read_text(encoding='utf-8')\nworkflow = Path('.github/workflows/signed-receipts.yml').read_text(encoding='utf-8')\nassert 'CLI split as a separately planned refactor' in spec\nassert 'SSO/SCIM' in spec\nassert workflow.count('sigstore/gh-action-sigstore-python@') == 1\nassert 'id-token: write' in workflow\nassert 'verify-cert-identity' in workflow\nassert 'verify-oidc-issuer' in workflow\n",
+      "covers": [
+        "REQ-AUD-SCOPE"
+      ],
       "must_fail_on_stub": true
     }
   ]

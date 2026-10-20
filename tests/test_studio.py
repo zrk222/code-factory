@@ -2137,7 +2137,7 @@ def test_unauthorized_partial_body_has_bounded_drain_deadline(tmp_path: Path):
 def test_http_graph_ops_authorization_requires_token_and_consumes_one_reality_check(
     tmp_path: Path,
 ):
-    from test_reality_check import _write
+    from test_first_lap import _write
 
     from factoryline.graph_ops import graph_ops_snapshot
     from factoryline.reality_check import (

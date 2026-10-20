@@ -1,1 +1,19 @@
-{"checks":[{"name":"runtime_and_code_audit_readiness","kind":"python","run":"from factoryline.pytest_readiness import collect_pytest_readiness\nresult = collect_pytest_readiness(['tests/test_runtime_receipt_readiness.py','tests/test_runtime_audit.py','tests/test_proof_reuse.py','tests/test_review_audits.py','tests/test_capability_evidence.py'])\nassert result == {'exit_code': 0, 'passed': 90, 'skipped': 0, 'xfailed': 0}\nprint('READINESS_PASS')","expect_exit":0,"expect_stdout":"READINESS_PASS","timeout_s":90,"must_fail_on_stub":true,"covers":["REQ_RECEIPT","REQ_PROOF","REQ_CODE_AUDIT","REQ_CAPABILITY_EVIDENCE"]}]}
+{
+  "checks": [
+    {
+      "name": "runtime_and_code_audit_readiness",
+      "kind": "python",
+      "run": "from factoryline.pytest_readiness import collect_pytest_readiness\nresult = collect_pytest_readiness(['tests/test_receipt_challenge.py::test_rehashed_false_readiness_is_rejected', 'tests/test_runtime_audit.py', 'tests/test_proof_reuse.py::test_malformed_artifact_rows_reject_without_crashing', 'tests/test_proof_reuse.py::test_proof_key_is_stable_and_changes_with_input', 'tests/test_proof_reuse.py::test_exact_green_receipt_is_reused', 'tests/test_proof_reuse.py::test_changed_output_declaration_does_not_reuse_receipt', 'tests/test_proof_reuse.py::test_output_declaration_order_and_duplicates_do_not_change_reuse', 'tests/test_proof_reuse.py::test_incomplete_output_declaration_fails_closed', 'tests/test_proof_reuse.py::test_missing_requested_output_fails_closed', 'tests/test_proof_reuse.py::test_first_run_with_not_yet_created_output_routes_to_run', 'tests/test_proof_reuse.py::test_malformed_output_declaration_fails_closed', 'tests/test_proof_reuse.py::test_symlinked_requested_output_fails_closed_when_supported', 'tests/test_proof_reuse.py::test_receipt_binds_regular_file_identity', 'tests/test_proof_reuse.py::test_replaced_file_blocks_receipt_reuse', 'tests/test_proof_reuse.py::test_truncated_file_blocks_receipt_reuse', 'tests/test_proof_reuse.py::test_symlinked_file_blocks_receipt_reuse_when_supported', 'tests/test_proof_reuse.py::test_mutated_input_forces_run_and_challenge_rejects_it', 'tests/test_proof_reuse.py::test_side_effect_gate_is_blocked_and_cannot_be_recorded', 'tests/test_proof_reuse.py::test_reviewed_unaffected_gate_skips_but_ambiguous_relevance_runs', 'tests/test_proof_reuse.py::test_missing_or_escaping_input_blocks', 'tests/test_proof_reuse.py::test_auto_savings_records_exact_pair_and_preserves_unknown_tokens', 'tests/test_proof_reuse.py::test_compact_plan_omits_raw_commands_and_absolute_paths', 'tests/test_proof_reuse.py::test_evaluation_batches_shared_input_and_plan_wrapper_writes_once', 'tests/test_proof_reuse.py::test_proof_evaluation_phase_preserves_behavior_and_records_failures', 'tests/test_proof_reuse.py::test_shared_snapshot_does_not_bypass_per_receipt_freshness_check', 'tests/test_proof_reuse.py::test_malformed_gate_does_not_suppress_valid_sibling', 'tests/test_proof_reuse.py::test_batch_route_exception_does_not_suppress_valid_reuse', 'tests/test_proof_reuse.py::test_shared_input_cache_is_limited_to_one_evaluation', 'tests/test_proof_reuse.py::test_proofs_cli_record_plan_verify_and_challenge', 'tests/test_review_audits.py', 'tests/test_capability_evidence.py'])\nassert result == {'exit_code': 0, 'passed': 90, 'skipped': 0, 'xfailed': 0}\nprint('READINESS_PASS')\n",
+      "expect_exit": 0,
+      "expect_stdout": "READINESS_PASS",
+      "timeout_s": 90,
+      "must_fail_on_stub": true,
+      "covers": [
+        "REQ_RECEIPT",
+        "REQ_PROOF",
+        "REQ_CODE_AUDIT",
+        "REQ_CAPABILITY_EVIDENCE"
+      ]
+    }
+  ]
+}
