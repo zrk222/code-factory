@@ -1100,3 +1100,120 @@ def test_unproved_module_helper_is_not_hollow(tmp_path, helper):
     expected_hollow = helper.startswith("async def ")
     report = security_scan(tmp_path)
     assert ("QUALITY_HOLLOW_TEST" in report["finding_counts"]) is expected_hollow
+
+
+@pytest.mark.parametrize("cache_enabled", [False, True])
+def test_negative_type_expectation_requires_strict_selected_checker(
+    tmp_path, cache_enabled
+):
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.pyright]\ninclude = ["test_negative.py"]\n'
+        "reportUnnecessaryTypeIgnoreComment = true\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "test_negative.py").write_text(
+        "def test_negative():\n    value: int = 'wrong'  # type: ignore\n"
+        "def test_pass():\n    pass\n"
+        "def test_constant():\n    assert True\n"
+        'def test_docstring():\n    "Only a docstring"\n',
+        encoding="utf-8",
+    )
+    for _ in range(2):
+        findings = security_scan(tmp_path, cache_enabled=cache_enabled)["findings"]
+        codes = {row["facts"].get("symbol"): row["code"] for row in findings}
+        assert codes["test_negative"] == "QUALITY_TYPECHECK_NOT_VERIFIED"
+        assert {
+            codes[name] for name in ("test_pass", "test_constant", "test_docstring")
+        } == {"QUALITY_HOLLOW_TEST"}
+
+
+@pytest.mark.parametrize(
+    "config",
+    [
+        'include = ["test_negative.py"]\nreportUnnecessaryTypeIgnoreComment = "warning"',
+        'include = ["test_negative.py"]\nreportUnnecessaryTypeIgnoreComment = 1',
+        'include = ["test_*.py"]\nreportUnnecessaryTypeIgnoreComment = true',
+        'include = ["other.py"]\nreportUnnecessaryTypeIgnoreComment = true',
+        'include = ["test_negative.py"]',
+        'include = ["test_negative.py"]\nreportUnnecessaryTypeIgnoreComment = false',
+        'include = ["test_negative.py"]\nreportUnnecessaryTypeIgnoreComment = "none"',
+        'include = ["test_negative.py"]\nreportUnnecessaryTypeIgnoreComment = true\nenableTypeIgnoreComments = false',
+        'include = ["test_negative.py"]\nreportUnnecessaryTypeIgnoreComment = true\nexclude = ["test_negative.py"]',
+        'include = ["test_negative.py"]\nreportUnnecessaryTypeIgnoreComment = true\nignore = ["test_negative.py"]',
+        'include = ["test_negative.py"]\nreportUnnecessaryTypeIgnoreComment = true\nextends = "other.json"',
+    ],
+)
+def test_negative_type_expectation_does_not_credit_unproven_config(tmp_path, config):
+    (tmp_path / "pyproject.toml").write_text(
+        "[tool.pyright]\n" + config, encoding="utf-8"
+    )
+    (tmp_path / "test_negative.py").write_text(
+        "def test_negative():\n    value: int = 'wrong'  # type: ignore\n",
+        encoding="utf-8",
+    )
+    findings = security_scan(tmp_path, cache_enabled=False)["findings"]
+    assert not any(row["code"] == "QUALITY_TYPECHECK_NOT_VERIFIED" for row in findings)
+    assert any(row["code"] == "QUALITY_HOLLOW_TEST" for row in findings)
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        'def test_negative():\n    value: str = "# type: ignore"\n',
+        "def test_negative():\n    value: int = 1\n    # type: ignore\n",
+        "def test_negative():\n    pass  # type: ignore\n",
+        '# pyright: reportUnnecessaryTypeIgnoreComment=false\ndef test_negative():\n    value: int = "wrong"  # type: ignore\n',
+    ],
+)
+def test_negative_type_expectation_requires_real_statement_comment(tmp_path, source):
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.pyright]\ninclude = ["test_negative.py"]\nreportUnnecessaryTypeIgnoreComment = true\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "test_negative.py").write_text(source, encoding="utf-8")
+    findings = security_scan(tmp_path, cache_enabled=False)["findings"]
+    assert not any(row["code"] == "QUALITY_TYPECHECK_NOT_VERIFIED" for row in findings)
+
+
+@pytest.mark.parametrize("alternate", ["pyrightconfig.json", "basedpyrightconfig.json"])
+def test_negative_type_expectation_rejects_alternate_config(tmp_path, alternate):
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.pyright]\ninclude = ["test_negative.py"]\nreportUnnecessaryTypeIgnoreComment = true\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "test_negative.py").write_text(
+        "def test_negative():\n    value: int = 'wrong'  # type: ignore\n",
+        encoding="utf-8",
+    )
+    first = security_scan(tmp_path)["finding_counts"]
+    assert first.get("QUALITY_TYPECHECK_NOT_VERIFIED") == 1
+    (tmp_path / alternate).write_text("{}", encoding="utf-8")
+    assert security_scan(tmp_path)["finding_counts"].get("QUALITY_HOLLOW_TEST") == 1
+
+
+def test_negative_type_expectation_config_and_source_changes_invalidate_cache(tmp_path):
+    config = tmp_path / "pyproject.toml"
+    source = tmp_path / "test_negative.py"
+    config.write_text(
+        '[tool.pyright]\ninclude = ["test_negative.py"]\nreportUnnecessaryTypeIgnoreComment = true\n',
+        encoding="utf-8",
+    )
+    source.write_text(
+        "def test_negative():\n    value: int = 'wrong'  # type: ignore\n",
+        encoding="utf-8",
+    )
+    assert (
+        security_scan(tmp_path)["finding_counts"].get("QUALITY_TYPECHECK_NOT_VERIFIED")
+        == 1
+    )
+    config.write_text(
+        '[tool.pyright]\ninclude = ["test_negative.py"]\nreportUnnecessaryTypeIgnoreComment = false\n',
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path)["finding_counts"].get("QUALITY_HOLLOW_TEST") == 1
+    config.write_text(
+        '[tool.pyright]\ninclude = ["test_negative.py"]\nreportUnnecessaryTypeIgnoreComment = true\n',
+        encoding="utf-8",
+    )
+    source.write_text("def test_negative():\n    pass\n", encoding="utf-8")
+    assert security_scan(tmp_path)["finding_counts"].get("QUALITY_HOLLOW_TEST") == 1

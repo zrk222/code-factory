@@ -3013,6 +3013,9 @@ def _declared_typecheck_sources(
             max_bytes,
             max_paths,
         )
+        identity["negative_typecheck_selected"] = _ty_negative_expectation_sources(
+            root, files, tools.get("pyright"), local_file, source_error, max_paths
+        )
         identity["ty"] = ty_identity
         if ty_identity.get("invocation"):
             bindings.append(ty_identity["invocation"])
@@ -3036,6 +3039,36 @@ def _declared_typecheck_sources(
     except (OSError, ValueError, UnicodeError, AttributeError, TypeError):
         identity.update(state="unreadable", ty={"state": "unknown"})
         return set(), bindings, identity, False
+
+
+def _ty_negative_expectation_sources(
+    root, files, config, local_file, source_error, limit
+):
+    """Select explicit negative-error checks; alternate checker configs earn no credit."""
+    if not isinstance(config, dict) or config.get("extends"):
+        return []
+    report = config.get("reportUnnecessaryTypeIgnoreComment")
+    if report is not True and report != "error":
+        return []
+    if config.get("enableTypeIgnoreComments", True) is not True:
+        return []
+    for name in ("pyrightconfig.json", "basedpyrightconfig.json"):
+        try:
+            local_file(root, name)
+        except source_error as exc:
+            if getattr(exc, "code", None) != "E_SOURCE_MISSING":
+                return []
+            continue
+        return []
+    included = _ty_paths(root, config.get("include"), limit)
+    excluded = _ty_paths(root, config.get("exclude", []), limit)
+    ignored = _ty_paths(root, config.get("ignore", []), limit)
+    if included is None or excluded is None or ignored is None:
+        return []
+    return sorted(
+        path.relative_to(root).as_posix()
+        for path in _ty_selected_paths(root, files, included, excluded + ignored, {})
+    )
 
 
 def _ty_sources(

@@ -456,6 +456,50 @@ def _none_lambda(node: ast.AST) -> bool:
     )
 
 
+def bind_negative_checker_context(root, contexts, identity):
+    """Keep declared negative-check scope inside the source/config cache identity."""
+    selected = set(identity.get("negative_typecheck_selected", ()))
+    for path, context in contexts.items():
+        context["negative_typecheck"] = path.relative_to(root).as_posix() in selected
+
+
+def negative_type_expectation(node, context):
+    """Recognize a declared negative typing check, without certifying its execution."""
+    if not context.get("negative_typecheck") or not isinstance(node, ast.FunctionDef):
+        return False
+    module = getattr(node, "_oracle_module", None)
+    lines = getattr(module, "_oracle_source_lines", None)
+    if not isinstance(lines, list) or any(not isinstance(line, str) for line in lines):
+        return False
+    body = [item for item in node.body if not _ignorable(item)]
+    if len(body) != 1 or not isinstance(body[0], ast.AnnAssign):
+        return False
+    statement = body[0]
+    if not isinstance(statement.target, ast.Name) or statement.value is None:
+        return False
+    from io import StringIO
+    import tokenize
+
+    try:
+        comments = [
+            token
+            for token in tokenize.generate_tokens(StringIO("\n".join(lines)).readline)
+            if token.type == tokenize.COMMENT
+        ]
+    except (tokenize.TokenError, IndentationError, SyntaxError):
+        return False
+    if any(
+        token.string.lstrip("# ").startswith(("pyright:", "basedpyright:"))
+        for token in comments
+    ):
+        return False
+    return any(
+        token.start[0] == statement.end_lineno
+        and token.string.strip() == "# type: ignore"
+        for token in comments
+    )
+
+
 CACHE_HELPERS = tuple(
     helper
     for helper in globals().values()

@@ -382,8 +382,12 @@ def structural_oracle_status(node: ast.AST, context: dict) -> str | None:
         return "import"
     if _attribute_access_oracle(node, context):
         return "attribute"
+    from .type_intent_hollow import negative_type_expectation
+
     if annotated_callable_oracle(node, context):
         return "typed"
+    if negative_type_expectation(node, context):
+        return "negative_typed"
     return None
 
 
@@ -407,14 +411,18 @@ def structural_oracle_finding(
     status = structural_oracle_status(node, context)
     if status in {"import", "attribute"}:
         return True
-    if status == "typed":
+    if status in {"typed", "negative_typed"}:
         from .review_audits import _security_finding
 
         return _security_finding(
             "QUALITY_TYPECHECK_NOT_VERIFIED",
             relative,
             node,
-            "Source-bound API construction passed; no type-checker receipt was verified.",
+            (
+                "Declared static-type expectation; no type-checker receipt was verified."
+                if status == "negative_typed"
+                else "Source-bound API construction passed; no type-checker receipt was verified."
+            ),
             "INFO",
             symbol=node.name,
             state="INCOMPLETE",

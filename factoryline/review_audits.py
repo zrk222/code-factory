@@ -3964,6 +3964,9 @@ def _project_oracle_context(
     contexts, edges = _build_oracle_context(
         root, files, snapshots, typecheck_sources, ty_sources, import_views
     )
+    type_intent_hollow.bind_negative_checker_context(
+        root, contexts, config_identity["typecheck"]
+    )
     bind_provider_inventory(contexts, python_inventory)
     integrity.bind_benchmark_context(contexts, snapshots, benchmarks)
     resolved = contracts._project_import_views(import_views, snapshots)
