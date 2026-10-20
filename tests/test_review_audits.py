@@ -1293,7 +1293,7 @@ def test_import_behavior_does_not_exempt_unrelated_test_name(tmp_path):
         "def test_compute():\n    import product.interface\n"
     )
     report = security_scan(tmp_path, cache_enabled=False)
-    assert any(f["code"] == "QUALITY_HOLLOW_TEST" for f in report["findings"])
+    assert any(f["code"] == "QUALITY_UNKNOWN_TEST_ORACLE" for f in report["findings"])
 
 
 def test_import_smoke_oracle_direct_async_and_missing_body():
@@ -2267,7 +2267,9 @@ def test_security_scan_does_not_credit_nested_helper_before_definition(tmp_path)
     (tmp_path / "test_behavior.py").write_text(
         "def test_behavior():\n    bar()\n    def bar():\n        assert compute() == 4\n"
     )
-    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+    assert security_scan(tmp_path)["finding_counts"] == {
+        "QUALITY_UNKNOWN_TEST_ORACLE": 1
+    }
 
 
 @pytest.mark.parametrize(
@@ -3783,7 +3785,7 @@ def test_callback_oracle_requires_direct_invocation_not_callback_passing(tmp_pat
     hollow = {
         finding["facts"]["symbol"]
         for finding in findings
-        if finding["code"] == "QUALITY_HOLLOW_TEST"
+        if finding["code"] == "QUALITY_UNKNOWN_TEST_ORACLE"
     }
     assert hollow == {
         "test_conditional_invoker",
@@ -6486,7 +6488,9 @@ def test_security_scan_rejects_imported_helper_that_swallows_assertion(tmp_path)
         "def test_behavior():\n    assert_expected(compute(), 4)\n",
         encoding="utf-8",
     )
-    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+    assert security_scan(tmp_path)["finding_counts"] == {
+        "QUALITY_UNKNOWN_TEST_ORACLE": 1
+    }
 
 
 def test_security_scan_recognizes_test_named_assertion_helper(tmp_path):
@@ -6557,7 +6561,9 @@ def test_security_scan_does_not_credit_unrelated_call_after_swallowed_warning(tm
         "        compute()\n",
         encoding="utf-8",
     )
-    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+    assert security_scan(tmp_path)["finding_counts"] == {
+        "QUALITY_UNKNOWN_TEST_ORACLE": 1
+    }
 
 
 def test_security_scan_ignores_manual_raise_after_unconditional_return(tmp_path):
@@ -6601,7 +6607,9 @@ def test_security_scan_does_not_execute_nested_warning_filter_syntax(
         + "\n        perform()\n",
         encoding="utf-8",
     )
-    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+    assert security_scan(tmp_path)["finding_counts"] == {
+        "QUALITY_UNKNOWN_TEST_ORACLE": 1
+    }
 
 
 @pytest.mark.parametrize("handler", ["Exception", "(AssertionError, ValueError)"])
@@ -6617,7 +6625,9 @@ def test_security_scan_rejects_helper_swallowing_broad_assertion(tmp_path, handl
         "def test_behavior():\n    assert_expected(compute(), 4)\n",
         encoding="utf-8",
     )
-    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+    assert security_scan(tmp_path)["finding_counts"] == {
+        "QUALITY_UNKNOWN_TEST_ORACLE": 1
+    }
 
 
 def test_security_scan_accepts_assertion_reraised_from_handler(tmp_path):
@@ -7036,7 +7046,9 @@ def test_security_scan_detects_suppress_context_for_assertion(
         + "        assert compute() == 4\n",
         encoding="utf-8",
     )
-    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+    assert security_scan(tmp_path)["finding_counts"] == {
+        "QUALITY_UNKNOWN_TEST_ORACLE": 1
+    }
 
 
 def test_security_scan_detects_assertion_suppressed_in_finally(tmp_path):
@@ -7073,7 +7085,9 @@ def test_security_scan_rejects_assertion_swallowed_by_finally_return(tmp_path):
         "def test_behavior():\n    assert_expected(compute(), 4)\n",
         encoding="utf-8",
     )
-    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+    assert security_scan(tmp_path)["finding_counts"] == {
+        "QUALITY_UNKNOWN_TEST_ORACLE": 1
+    }
 
 
 @pytest.mark.parametrize(
@@ -7157,7 +7171,9 @@ def test_security_scan_does_not_trust_imported_production_function(tmp_path):
         "    render(compute_value())\n",
         encoding="utf-8",
     )
-    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+    assert security_scan(tmp_path)["finding_counts"] == {
+        "QUALITY_UNKNOWN_TEST_ORACLE": 1
+    }
 
 
 def test_security_scan_does_not_trust_imported_noop_helper(tmp_path):
@@ -7173,7 +7189,7 @@ def test_security_scan_does_not_trust_imported_noop_helper(tmp_path):
     )
     result = security_scan(tmp_path)
     assert result["finding_counts"] == {
-        "QUALITY_HOLLOW_TEST": 1,
+        "QUALITY_UNKNOWN_TEST_ORACLE": 1,
         "QUALITY_EMPTY_IMPLEMENTATION": 1,
     }
 
@@ -7375,7 +7391,9 @@ def test_security_scan_rejects_rebound_benchmark_decorator(tmp_path, binding):
         f"    {binding}\n    @benchmark\n    def run():\n        compute_value()\n",
         encoding="utf-8",
     )
-    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+    assert security_scan(tmp_path)["finding_counts"] == {
+        "QUALITY_UNKNOWN_TEST_ORACLE": 1
+    }
 
 
 @pytest.mark.parametrize("nested", [False, True])
@@ -7413,7 +7431,9 @@ def test_security_scan_does_not_skip_untyped_benchmark_named_security_test(tmp_p
         "    benchmark(lambda: dangerous_operation())\n",
         encoding="utf-8",
     )
-    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+    assert security_scan(tmp_path)["finding_counts"] == {
+        "QUALITY_UNKNOWN_TEST_ORACLE": 1
+    }
 
 
 def test_security_scan_does_not_exempt_untyped_benchmark_parameter_alone(tmp_path):
@@ -7436,7 +7456,9 @@ def test_security_scan_rejects_lookalike_benchmark_signals(tmp_path, declaration
         f"{declaration}\n    benchmark(lambda: dangerous_operation())\n",
         encoding="utf-8",
     )
-    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+    assert security_scan(tmp_path)["finding_counts"] == {
+        "QUALITY_UNKNOWN_TEST_ORACLE": 1
+    }
 
 
 @pytest.mark.parametrize(
@@ -7458,7 +7480,9 @@ def test_security_scan_rejects_unrelated_benchmark_imports(tmp_path, imports):
         "    benchmark(lambda: dangerous_operation())\n",
         encoding="utf-8",
     )
-    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+    assert security_scan(tmp_path)["finding_counts"] == {
+        "QUALITY_UNKNOWN_TEST_ORACLE": 1
+    }
 
 
 def test_security_scan_rejects_noop_assertion_named_helper(tmp_path):
@@ -7483,7 +7507,7 @@ def test_security_scan_does_not_trust_local_noop_unittest_named_method(tmp_path)
         encoding="utf-8",
     )
     result = security_scan(tmp_path)
-    assert result["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+    assert result["finding_counts"] == {"QUALITY_UNKNOWN_TEST_ORACLE": 1}
 
 
 def test_security_scan_reports_unittest_non_null_only_oracle(tmp_path):
@@ -7882,7 +7906,7 @@ def test_security_scan_keeps_negative_callback_and_import_alias_controls(tmp_pat
         "    compute()\n"
     )
     result = security_scan(tmp_path)
-    assert result["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+    assert result["finding_counts"] == {"QUALITY_UNKNOWN_TEST_ORACLE": 1}
     assert result["findings"][0]["facts"]["symbol"] == "test_no_read"
 
 
@@ -7963,7 +7987,7 @@ def test_security_scan_does_not_trust_assertion_alias_call_inside_comprehension(
         encoding="utf-8",
     )
     result = security_scan(tmp_path)
-    assert result["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+    assert result["finding_counts"] == {"QUALITY_UNKNOWN_TEST_ORACLE": 1}
 
 
 def test_security_scan_does_not_trust_rebound_pytest_raises_alias(tmp_path):
@@ -8038,7 +8062,7 @@ def test_security_scan_invalidates_oracle_alias_after_branch_star_import(tmp_pat
         encoding="utf-8",
     )
     result = security_scan(tmp_path)
-    assert result["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+    assert result["finding_counts"] == {"QUALITY_UNKNOWN_TEST_ORACLE": 1}
 
 
 @pytest.mark.parametrize(
@@ -8058,7 +8082,7 @@ def test_security_scan_does_not_trust_captured_pytest_raises_alias(tmp_path, bin
         encoding="utf-8",
     )
     result = security_scan(tmp_path)
-    assert result["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+    assert result["finding_counts"] == {"QUALITY_UNKNOWN_TEST_ORACLE": 1}
 
 
 def test_security_scan_does_not_trust_unused_assertion_callback(tmp_path):
@@ -8070,7 +8094,7 @@ def test_security_scan_does_not_trust_unused_assertion_callback(tmp_path):
         encoding="utf-8",
     )
     result = security_scan(tmp_path)
-    assert result["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+    assert result["finding_counts"] == {"QUALITY_UNKNOWN_TEST_ORACLE": 1}
 
 
 def test_security_cli_applies_explicit_tenant_contract(tmp_path, capsys):
@@ -8610,7 +8634,9 @@ def test_security_scan_nearer_fixture_override_invalidates_click_runner(tmp_path
         "    runner.invoke(cli, catch_exceptions=False)\n",
         encoding="utf-8",
     )
-    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+    assert security_scan(tmp_path)["finding_counts"] == {
+        "QUALITY_UNKNOWN_TEST_ORACLE": 1
+    }
 
 
 def test_security_scan_keeps_uninvoked_command_with_recursive_invoke_hollow(tmp_path):
@@ -9958,7 +9984,9 @@ def test_flask_fixture_rejects_positional_config_update(tmp_path):
         "    client.get('/checked')\n",
         encoding="utf-8",
     )
-    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+    assert security_scan(tmp_path)["finding_counts"] == {
+        "QUALITY_UNKNOWN_TEST_ORACLE": 1
+    }
 
 
 @pytest.mark.parametrize(
@@ -10052,7 +10080,9 @@ def test_source_callback_rejects_aliased_assertion_handler(tmp_path, wrapped):
         "from engine import Application\nasync def test_behavior():\n    async def check(message):\n        assert message == expected\n    app = Application()\n    await app({}, None, check)\n",
         encoding="utf-8",
     )
-    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+    assert security_scan(tmp_path)["finding_counts"] == {
+        "QUALITY_UNKNOWN_TEST_ORACLE": 1
+    }
 
 
 @pytest.mark.parametrize(
@@ -10069,7 +10099,9 @@ def test_source_callback_rejects_constructor_method_override(tmp_path, mutation)
         "from engine import Application\nasync def test_behavior():\n    async def check(message):\n        assert message == expected\n    app = Application()\n    await app({}, None, check)\n",
         encoding="utf-8",
     )
-    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+    assert security_scan(tmp_path)["finding_counts"] == {
+        "QUALITY_UNKNOWN_TEST_ORACLE": 1
+    }
 
 
 @pytest.mark.parametrize(
@@ -10211,7 +10243,7 @@ def test_virtual_dispatch_rejects_class_and_source_mutations(
         override,
         "Application(None)",
         operation,
-        {"QUALITY_HOLLOW_TEST": 1},
+        {"QUALITY_UNKNOWN_TEST_ORACLE": 1},
     )
 
 
