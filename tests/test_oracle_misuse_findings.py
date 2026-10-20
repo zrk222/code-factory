@@ -1115,3 +1115,43 @@ def test_mock_call_state_crosses_only_executed_captured_helper_bindings(
     )
     report = security_scan(tmp_path, cache_enabled=False)
     assert ("QUALITY_HOLLOW_TEST" in report["finding_counts"]) is hollow
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "_source_closed_class_spec",
+        "_mock_providers_are_closed",
+        "_closed_method_signature",
+        "_class_is_unmutated",
+        "fixture_registration",
+        "direct_mock_return",
+        "inert_assertion_methods",
+        "fixture_bindings_for_source",
+        "_has_wildcard_import",
+        "fixtures_for_file",
+        "fixture_is_mock",
+        "inert_fixture_assertion_reason",
+        "inert_fixture_assertions",
+        "_root_name",
+        "_pytest_fixture_provider_safe",
+    ],
+)
+@pytest.mark.parametrize("mutation", ["binding", "code"])
+def test_consolidated_fixture_live_helpers_invalidate_native_cache(
+    tmp_path, monkeypatch, name, mutation
+):
+    from factoryline import mock_fixture_provenance as provider
+    from factoryline import review_audits as scanner
+
+    original = getattr(provider, name)
+    before = scanner._oracle_context_cache_key(tmp_path, [], {})
+
+    def replacement(*args, **kwargs):
+        return None
+
+    if mutation == "binding":
+        monkeypatch.setattr(provider, name, replacement)
+    else:
+        monkeypatch.setattr(original, "__code__", replacement.__code__)
+    assert scanner._oracle_context_cache_key(tmp_path, [], {}) != before

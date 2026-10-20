@@ -3612,7 +3612,6 @@ def _oracle_context_cache_key(root: Path, manifest: list, config_identity: dict)
     from . import test_oracle_misuse as oracle_misuse
     from . import test_callback_closure
     from . import mock_fixture_provenance
-    from . import mock_fixture_allocations
     from .context_efficiency import (
         _consume_security_snapshots,
         _module_has_dynamic_capability_access,
@@ -3726,8 +3725,10 @@ def _oracle_context_cache_key(root: Path, manifest: list, config_identity: dict)
         for helper in test_callback_closure.CACHE_HELPERS
         for module in (test_callback_closure, integrity)
     )
-    helpers += mock_fixture_provenance.CACHE_HELPERS
-    helpers += mock_fixture_allocations.CACHE_HELPERS
+    helpers += mock_fixture_provenance.CACHE_HELPERS + tuple(
+        getattr(mock_fixture_provenance, helper.__name__, None)
+        for helper in mock_fixture_provenance.CACHE_HELPERS
+    )
     helpers += async_runner_fixture_helpers() + protocol_call_helpers()
     helpers += (integrity.source_binding_helpers, *integrity.source_binding_helpers())
     helpers += integrity.fixed_program_workspace_helpers()
