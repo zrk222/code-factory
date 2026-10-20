@@ -3720,3 +3720,206 @@ def _single_local_pickle_bytes_flow(scope, name, dump_statement, load_call):
         and isinstance(uses[1].ctx, ast.Load)
         and _capability_uses_match(list(ast.walk(scope)), name, uses)
     )
+
+
+def tenant_scope_read(audit, call: str, bindings: dict) -> dict:
+    values = bindings.get(call, ())
+    if not isinstance(values, (tuple, list)) or len(values) > 1:
+        raise audit.ReviewAuditError("Each scoped call requires at most one binding.")
+    return {"call": call, "binding": values[0]} if values else {"call": call}
+
+
+def validate_tenant_scopes(audit, workspace: Path, scopes: dict | None) -> dict:
+    """Revalidate programmatic declarations through the same contract boundary."""
+    if scopes is None:
+        return {}
+    if not isinstance(scopes, dict) or len(scopes) > audit.MAX_PATHS:
+        raise audit.ReviewAuditError("Invalid tenant read scope map.")
+    rows = []
+    for path, scope in scopes.items():
+        if not isinstance(scope, dict) or set(scope) != {"calls", "bindings"}:
+            raise audit.ReviewAuditError("Invalid scoped tenant calls and bindings.")
+        if not isinstance(scope["calls"], (tuple, list)):
+            raise audit.ReviewAuditError("Scoped calls must be a bounded sequence.")
+        calls = audit._tenant_contract_calls(tuple(scope["calls"]))
+        bindings = scope["bindings"]
+        if not isinstance(bindings, dict) or set(bindings) - set(calls):
+            raise audit.ReviewAuditError("Scoped bindings must name declared calls.")
+        reads = [audit._tenant_scope_read(call, bindings) for call in calls]
+        rows.append({"path": path, "reads": reads})
+    return audit._tenant_scoped_entries(workspace, rows) if rows else {}
+
+
+def load_tenant_read_contract(
+    audit, root: Path, path: str = ".factory/tenant-read-contract.json"
+):
+    """Load a bounded tenant-read declaration through the audit module's seams."""
+    workspace = audit.Path(root).resolve()
+    relative = audit._relative_path(path).as_posix()
+    contract_path = (workspace / relative).resolve()
+    if not contract_path.is_relative_to(workspace):
+        raise audit.ReviewAuditError(
+            "Tenant-read contract must remain inside the workspace."
+        )
+    if not contract_path.exists():
+        return (), (), {"path": relative, "state": "missing", "policy_applies": False}
+    try:
+        data, evidence = audit._read(workspace, relative)
+        contract = audit.json.loads(data, object_pairs_hook=audit._unique_fields)
+    except (OSError, UnicodeError, audit.json.JSONDecodeError, ValueError) as exc:
+        raise audit.ReviewAuditError(f"Invalid tenant-read contract: {exc}") from exc
+    if not isinstance(contract, dict) or set(contract) != {"schema", "reads"}:
+        raise audit.ReviewAuditError("Invalid tenant-read contract schema or fields.")
+    if contract.get("schema") == "factory.tenant-read-contract.v2":
+        evidence["scoped_reads"] = audit._tenant_scoped_entries(
+            workspace, contract["reads"]
+        )
+        evidence["policy_applies"] = False
+        evidence["state"] = "loaded"
+        return (), (), evidence
+    if contract.get("schema") != audit.TENANT_CONTRACT_SCHEMA:
+        raise audit.ReviewAuditError("Invalid tenant-read contract schema or fields.")
+    calls, bindings = audit._tenant_contract_entries(contract["reads"])
+    normalized_calls = audit._tenant_contract_calls(calls)
+    normalized_bindings = audit._tenant_contract_bindings(bindings, normalized_calls)
+    flattened = tuple(
+        f"{call}={binding}"
+        for call, values in normalized_bindings.items()
+        for binding in values
+    )
+    evidence["policy_applies"] = True
+    evidence["state"] = "loaded"
+    return normalized_calls, flattened, evidence
+
+
+def tenant_contract_helpers(audit):
+    return (
+        load_tenant_read_contract,
+        audit.Path,
+        audit.ReviewAuditError,
+        audit.json.loads,
+        audit._relative_path,
+        audit._read,
+        audit._unique_fields,
+        audit._tenant_scoped_entries,
+        audit._tenant_scope_source,
+        audit._tenant_contract_entries,
+        audit._tenant_contract_calls,
+        audit._tenant_contract_bindings,
+    )
+
+
+def oracle_bound_row(audit, workspace: Path, row: dict, sources: dict) -> None:
+    """Require both original test and mutated production source in this scan."""
+    for path, digest in (
+        (row["path"], row["test_sha256"]),
+        (row["mutation"]["source_path"], row["mutation"]["source_sha256"]),
+    ):
+        if sources.get(path) != digest:
+            raise audit.ReviewAuditError(
+                "Runtime oracle source binding does not match this scan."
+            )
+    raw = audit._security_source_bytes(workspace, row["path"])
+    if (
+        len(raw) > audit.MAX_BYTES
+        or audit.sha256(raw).hexdigest() != row["test_sha256"]
+    ):
+        raise audit.ReviewAuditError(
+            "Runtime oracle test source changed during reconciliation."
+        )
+    tree = ast.parse(raw, filename=row["path"])
+    matches = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, audit._FUNCTION_NODES)
+        and node.name == row["symbol"]
+        and node.lineno == row["line"]
+    ]
+    if len(matches) != 1:
+        raise audit.ReviewAuditError(
+            "Runtime oracle test identity does not match this scan."
+        )
+    parents = audit._oracle_ancestor_map(tree.body).get(id(matches[0]), ())
+    classes = [
+        parent.name for parent, _child in parents if isinstance(parent, ast.ClassDef)
+    ]
+    if any(isinstance(parent, audit._FUNCTION_NODES) for parent, _child in parents):
+        raise audit.ReviewAuditError(
+            "Runtime oracle cannot credit a nested helper as a collected test."
+        )
+    prefix = "::".join([row["path"], *classes, row["symbol"]])
+    if any(
+        case != prefix and not case.startswith(prefix + "[")
+        for case in row["baseline"]["case_ids"]
+    ):
+        raise audit.ReviewAuditError(
+            "Runtime oracle collected node does not match the qualified test."
+        )
+
+
+def reconcile_runtime_oracles(
+    audit, workspace: Path, core: dict, evidence: tuple
+) -> dict:
+    """Credit only signed same-test mutation observations, keeping static history."""
+    from .runtime_attestation import RuntimeAttestationError, verify_signed_test_oracles
+
+    receipt, trust_root, trust_sha256, environment_sha256 = evidence
+    if not all(value is not None for value in evidence):
+        raise audit.ReviewAuditError(
+            "Runtime oracle evidence requires receipt, trust root and both pins."
+        )
+    if not core["audit_coverage"]["complete"]:
+        raise audit.ReviewAuditError(
+            "Runtime oracle reconciliation requires a complete source scan."
+        )
+    try:
+        verified = verify_signed_test_oracles(
+            audit.local_file(workspace, receipt),
+            audit.local_file(workspace, trust_root),
+            trust_root_sha256=trust_sha256,
+            source_manifest_sha256=core["source_manifest_sha256"],
+            environment_sha256=environment_sha256,
+        )
+        sources = {item["path"]: item["sha256"] for item in core["sources"]}
+        schema = verified.get("schema", "")
+        manifests = {}
+        for row in verified["tests"]:
+            audit._oracle_bound_row(workspace, row, sources)
+            manifests[id(row)] = audit.runtime_config_sources(
+                workspace, core, row, schema
+            )
+        bindings = core["sources"] + core["oracle_context"]["configuration_sources"]
+        audit._verify_security_bindings(workspace, bindings)
+    except (RuntimeAttestationError, RuntimeAuditError, OSError, ValueError) as error:
+        raise audit.ReviewAuditError(
+            "Runtime oracle evidence rejected: " + type(error).__name__
+        ) from error
+    rows = {(row["path"], row["line"], row["symbol"]): row for row in verified["tests"]}
+    retained, reconciled = [], []
+
+    for finding in core["findings"]:
+        key = (finding["path"], finding["line"], finding["facts"].get("symbol"))
+        row = rows.get(key)
+        arguments = (workspace, finding, row, verified.get("schema", ""))
+        config_manifest = manifests.get(id(row), []) if row is not None else []
+        if audit.integrity.runtime_finding_coverage(*arguments, config_manifest):
+            reconciled.append({"static_finding": finding, "runtime_evidence": row})
+        else:
+            retained.append(finding)
+    core["findings"] = retained
+    core["finding_counts"] = {
+        code: sum(item["code"] == code for item in retained)
+        for code in sorted({item["code"] for item in retained})
+    }
+    core["runtime_oracles"] = {
+        **{key: value for key, value in verified.items() if key != "tests"},
+        "reconciled": reconciled,
+        "reconciled_count": len(reconciled),
+        "unmatched_evidence_count": len(rows) - len(reconciled),
+        "environment_sha256": environment_sha256,
+    }
+    core["state"] = audit._security_scan_state(
+        core["sources"], retained, coverage=core.get("audit_coverage")
+    )
+    core["action_summary"] = audit._security_scan_action_summary(core["state"])
+    return audit._seal_security_scan(core)

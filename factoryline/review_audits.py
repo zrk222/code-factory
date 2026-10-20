@@ -27,17 +27,21 @@ try:
 except ModuleNotFoundError:  # Python 3.10
     import tomli as tomllib
 from .audit_action_refs import (
-    audit_remediation_packet,
-    _security_scan_report_candidate_payload,
-    _security_scan_coverage,
-    _security_scan_state,
-    _security_scan_action_summary,
+    audit_remediation_packet as audit_remediation_packet,
+    _security_scan_report_candidate_payload as _security_scan_report_candidate_payload,
+    _security_scan_coverage as _security_scan_coverage,
+    _security_scan_state as _security_scan_state,
+    _security_scan_action_summary as _security_scan_action_summary,
 )
 from .deep_audit_io import local_file
 from .ops_telemetry import _measure_hash, _measure_parse
-from .runtime_audit_common import RuntimeAuditError, runtime_config_sources
+from .runtime_audit_common import (
+    RuntimeAuditError,
+    runtime_config_sources as runtime_config_sources,
+)
 from . import (
     review_integrity as integrity,
+    runtime_audit_integrity,
     intent_quality as contracts,
     type_intent_hollow,
     type_intent_provider_provenance,
@@ -1505,38 +1509,11 @@ def _url_quoting_charset(value: str) -> bool:
 
 def _credential_role_witness(node, target, aliases):
     """Describe a symbolic declaration; it is not a non-credential exemption."""
-    scope = getattr(node, "_security_lexical_scope", None)
-    if not isinstance(scope, ast.ClassDef) or scope.decorator_list or scope.keywords:
-        return {}
-    targets = node.targets if isinstance(node, ast.Assign) else [node.target]
-    if len(targets) != 1 or not isinstance(target, ast.Name):
-        return {}
-    if not isinstance(node.value, ast.Constant) or node.value.value != target.id:
-        return {}
-    if integrity._builtin_repr_names_shadowed(node, {"str"}):
-        return {}
-    from .security_configuration import _relative_binding
+    import sys
 
-    bindings = integrity._security_scope_request_aliases(
-        getattr(scope, "_security_parent_scope", None), aliases, scope
-    )
-    bases = []
-    for base in scope.bases:
-        name = _name(base)
-        head, separator, tail = name.partition(".")
-        if _relative_binding(node, head) or (head != "str" and head not in bindings):
-            return {}
-        bases.append(bindings.get(head, head) + (separator + tail if separator else ""))
-    if bases != ["str", "enum.Enum"]:
-        return {}
-    return {
-        "role_candidate": "symbolic_enum_identifier",
-        "role_evidence_scope": "source_declaration_only",
-        "declaration_class": scope.name,
-        "declaration_line": scope.lineno,
-        "credential_use": "UNVERIFIED",
-        "missing_evidence": ["complete_import_reexport_and_consumer_closure"],
-    }
+    from .provenance import credential_role_witness
+
+    return credential_role_witness(sys.modules[__name__], node, target, aliases)
 
 
 def _literal_assignment_diagnostic(
@@ -3749,6 +3726,7 @@ def _oracle_context_cache_key(root: Path, manifest: list, config_identity: dict)
     helpers += async_runner_fixture_helpers() + protocol_call_helpers()
     helpers += (integrity.source_binding_helpers, *integrity.source_binding_helpers())
     helpers += integrity.fixed_program_workspace_helpers()
+    helpers += runtime_audit_integrity.tenant_contract_helpers(sys.modules[__name__])
     helpers += contracts.project_contract_helpers() + tuple(
         getattr(integrity, name)
         for name in (
@@ -4529,39 +4507,9 @@ def _tenant_contract_bindings(
 def load_tenant_read_contract(
     root: Path, path: str = ".factory/tenant-read-contract.json"
 ) -> tuple[tuple[str, ...], tuple[str, ...], dict[str, Any]]:
-    """Load a bounded, workspace-contained tenant-read declaration for CLI audits."""
-    workspace = Path(root).resolve()
-    relative = _relative_path(path).as_posix()
-    contract_path = (workspace / relative).resolve()
-    if not contract_path.is_relative_to(workspace):
-        raise ReviewAuditError("Tenant-read contract must remain inside the workspace.")
-    if not contract_path.exists():
-        return (), (), {"path": relative, "state": "missing", "policy_applies": False}
-    try:
-        data, evidence = _read(workspace, relative)
-        contract = json.loads(data, object_pairs_hook=_unique_fields)
-    except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
-        raise ReviewAuditError(f"Invalid tenant-read contract: {exc}") from exc
-    if not isinstance(contract, dict) or set(contract) != {"schema", "reads"}:
-        raise ReviewAuditError("Invalid tenant-read contract schema or fields.")
-    if contract.get("schema") == "factory.tenant-read-contract.v2":
-        evidence["scoped_reads"] = _tenant_scoped_entries(workspace, contract["reads"])
-        evidence["policy_applies"] = False
-        evidence["state"] = "loaded"
-        return (), (), evidence
-    if contract.get("schema") != TENANT_CONTRACT_SCHEMA:
-        raise ReviewAuditError("Invalid tenant-read contract schema or fields.")
-    calls, bindings = _tenant_contract_entries(contract["reads"])
-    normalized_calls = _tenant_contract_calls(calls)
-    normalized_bindings = _tenant_contract_bindings(bindings, normalized_calls)
-    flattened = tuple(
-        f"{call}={binding}"
-        for call, values in normalized_bindings.items()
-        for binding in values
+    return runtime_audit_integrity.load_tenant_read_contract(
+        sys.modules[__name__], root, path
     )
-    evidence["policy_applies"] = True
-    evidence["state"] = "loaded"
-    return normalized_calls, flattened, evidence
 
 
 def _tenant_scoped_entries(workspace: Path, value: Any) -> dict:
@@ -5796,25 +5744,11 @@ def _scan_security_sources(
 
 
 def _seal_security_scan(core: dict[str, Any]) -> dict[str, Any]:
-    integrity.partition_proven_primitive_observations(core)
-    candidate = sha256(
-        json.dumps(
-            _security_scan_report_candidate_payload(core),
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode("utf-8")
-    ).hexdigest()
-    core["candidate_sha256"] = candidate
-    core["agent_actions"] = [
-        audit_remediation_packet(candidate, item) for item in core["findings"]
-    ]
-    core.pop("audit_sha256", None)
-    core["audit_sha256"] = sha256(
-        json.dumps(
-            core, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-        ).encode("utf-8")
-    ).hexdigest()
-    return core
+    import sys
+
+    from .audit_action_refs import seal_security_scan
+
+    return seal_security_scan(sys.modules[__name__], core)
 
 
 def _security_scan_report(
@@ -5830,180 +5764,50 @@ def _security_scan_report(
     database_context: dict | None = None,
     tenant_policy_applies: bool = False,
 ) -> dict[str, Any]:
-    audit_coverage = _security_scan_coverage(files, outcomes, MAX_SECURITY_SOURCE_FILES)
-    state = _security_scan_state(files, findings, database_context, audit_coverage)
-    core: dict[str, Any] = {
-        "schema": SECURITY_SCHEMA,
-        "marker": "SECURITY_AUDIT_COMPLETE",
-        "state": state,
-        "files_scanned": len(bindings),
-        "parse_errors": outcomes["syntax_error"],
-        "unreadable_sources": outcomes["unreadable"],
-        "oversized_sources": outcomes["too_large"],
-        "audit_coverage": audit_coverage,
-        "tenant_read_contract": _tenant_read_contract(
-            tenant_read_calls, tenant_read_bindings, tenant_policy_applies
-        ),
-        "oracle_context": contracts.import_context_metadata(
-            files, oracle_edges, oracle_configuration
-        ),
-        "sources": bindings,
-        "database_context": database_context or {},
-        "findings": findings,
-        "finding_counts": dict(sorted(counts.items())),
-        "governance": "human_controlled",
-        "authority": {
-            "execution": False,
-            "approval": False,
-            "publication": False,
-            "deployment": False,
-        },
-        "claim_boundary": "Bounded Python AST pattern scan only. Declared tenant argument bindings verify syntactic pass-through, not tenant identity, authorization, or access isolation; this is not a penetration test, runtime exploit proof, dependency advisory, or release approval.",
-    }
-    core["source_manifest_sha256"] = sha256(
-        json.dumps(
-            {
-                "sources": bindings,
-                "oracle_context": core["oracle_context"],
-                "database_context": core["database_context"],
-            },
-            sort_keys=True,
-            separators=(",", ":"),
-            ensure_ascii=False,
-        ).encode("utf-8")
-    ).hexdigest()
-    core["action_summary"] = _security_scan_action_summary(state)
-    return _seal_security_scan(core)
+    import sys
+
+    from .audit_action_refs import security_scan_report
+
+    return security_scan_report(
+        sys.modules[__name__],
+        files,
+        findings,
+        bindings,
+        counts,
+        outcomes,
+        tenant_read_calls,
+        tenant_read_bindings,
+        oracle_edges,
+        oracle_configuration,
+        database_context,
+        tenant_policy_applies,
+    )
 
 
 def _oracle_bound_row(workspace: Path, row: dict, sources: dict) -> None:
     """Require both original test and mutated production source in this scan."""
-    for path, digest in (
-        (row["path"], row["test_sha256"]),
-        (row["mutation"]["source_path"], row["mutation"]["source_sha256"]),
-    ):
-        if sources.get(path) != digest:
-            raise ReviewAuditError(
-                "Runtime oracle source binding does not match this scan."
-            )
-    raw = _security_source_bytes(workspace, row["path"])
-    if len(raw) > MAX_BYTES or sha256(raw).hexdigest() != row["test_sha256"]:
-        raise ReviewAuditError(
-            "Runtime oracle test source changed during reconciliation."
-        )
-    tree = ast.parse(raw, filename=row["path"])
-    matches = [
-        node
-        for node in ast.walk(tree)
-        if isinstance(node, _FUNCTION_NODES)
-        and node.name == row["symbol"]
-        and node.lineno == row["line"]
-    ]
-    if len(matches) != 1:
-        raise ReviewAuditError("Runtime oracle test identity does not match this scan.")
-    parents = _oracle_ancestor_map(tree.body).get(id(matches[0]), ())
-    classes = [
-        parent.name for parent, _child in parents if isinstance(parent, ast.ClassDef)
-    ]
-    if any(isinstance(parent, _FUNCTION_NODES) for parent, _child in parents):
-        raise ReviewAuditError(
-            "Runtime oracle cannot credit a nested helper as a collected test."
-        )
-    prefix = "::".join([row["path"], *classes, row["symbol"]])
-    if any(
-        case != prefix and not case.startswith(prefix + "[")
-        for case in row["baseline"]["case_ids"]
-    ):
-        raise ReviewAuditError(
-            "Runtime oracle collected node does not match the qualified test."
-        )
+    import sys
+
+    from .runtime_audit_integrity import oracle_bound_row
+
+    return oracle_bound_row(sys.modules[__name__], workspace, row, sources)
 
 
 def _reconcile_runtime_oracles(workspace: Path, core: dict, evidence: tuple) -> dict:
     """Credit only signed same-test mutation observations, keeping static history."""
-    from .runtime_attestation import RuntimeAttestationError, verify_signed_test_oracles
+    import sys
 
-    receipt, trust_root, trust_sha256, environment_sha256 = evidence
-    if not all(value is not None for value in evidence):
-        raise ReviewAuditError(
-            "Runtime oracle evidence requires receipt, trust root and both pins."
-        )
-    if not core["audit_coverage"]["complete"]:
-        raise ReviewAuditError(
-            "Runtime oracle reconciliation requires a complete source scan."
-        )
-    try:
-        verified = verify_signed_test_oracles(
-            local_file(workspace, receipt),
-            local_file(workspace, trust_root),
-            trust_root_sha256=trust_sha256,
-            source_manifest_sha256=core["source_manifest_sha256"],
-            environment_sha256=environment_sha256,
-        )
-        sources = {item["path"]: item["sha256"] for item in core["sources"]}
-        schema = verified.get("schema", "")
-        manifests = {}
-        for row in verified["tests"]:
-            _oracle_bound_row(workspace, row, sources)
-            manifests[id(row)] = runtime_config_sources(workspace, core, row, schema)
-        bindings = core["sources"] + core["oracle_context"]["configuration_sources"]
-        _verify_security_bindings(workspace, bindings)
-    except (RuntimeAttestationError, RuntimeAuditError, OSError, ValueError) as error:
-        raise ReviewAuditError(
-            "Runtime oracle evidence rejected: " + type(error).__name__
-        ) from error
-    rows = {(row["path"], row["line"], row["symbol"]): row for row in verified["tests"]}
-    from .review_integrity import runtime_finding_coverage
+    from .runtime_audit_integrity import reconcile_runtime_oracles
 
-    retained, reconciled = [], []
-
-    for finding in core["findings"]:
-        key = (finding["path"], finding["line"], finding["facts"].get("symbol"))
-        row = rows.get(key)
-        arguments = (workspace, finding, row, verified.get("schema", ""))
-        config_manifest = manifests.get(id(row), []) if row is not None else []
-        if runtime_finding_coverage(*arguments, config_manifest):
-            reconciled.append({"static_finding": finding, "runtime_evidence": row})
-        else:
-            retained.append(finding)
-    core["findings"] = retained
-    core["finding_counts"] = {
-        code: sum(item["code"] == code for item in retained)
-        for code in sorted({item["code"] for item in retained})
-    }
-    core["runtime_oracles"] = {
-        **{key: value for key, value in verified.items() if key != "tests"},
-        "reconciled": reconciled,
-        "reconciled_count": len(reconciled),
-        "unmatched_evidence_count": len(rows) - len(reconciled),
-        "environment_sha256": environment_sha256,
-    }
-    core["state"] = _security_scan_state(
-        core["sources"], retained, coverage=core.get("audit_coverage")
-    )
-    core["action_summary"] = _security_scan_action_summary(core["state"])
-    return _seal_security_scan(core)
+    return reconcile_runtime_oracles(sys.modules[__name__], workspace, core, evidence)
 
 
 def _validate_tenant_scopes(workspace: Path, scopes: dict | None) -> dict:
-    """Revalidate programmatic declarations through the same contract boundary."""
-    if scopes is None:
-        return {}
-    if not isinstance(scopes, dict) or len(scopes) > MAX_PATHS:
-        raise ReviewAuditError("Invalid tenant read scope map.")
-    rows = []
-    for path, scope in scopes.items():
-        if not isinstance(scope, dict) or set(scope) != {"calls", "bindings"}:
-            raise ReviewAuditError("Invalid scoped tenant calls and bindings.")
-        if not isinstance(scope["calls"], (tuple, list)):
-            raise ReviewAuditError("Scoped calls must be a bounded sequence.")
-        calls = _tenant_contract_calls(tuple(scope["calls"]))
-        bindings = scope["bindings"]
-        if not isinstance(bindings, dict) or set(bindings) - set(calls):
-            raise ReviewAuditError("Scoped bindings must name declared calls.")
-        reads = [_tenant_scope_read(call, bindings) for call in calls]
-        rows.append({"path": path, "reads": reads})
-    return _tenant_scoped_entries(workspace, rows) if rows else {}
+    import sys
+
+    from .runtime_audit_integrity import validate_tenant_scopes
+
+    return validate_tenant_scopes(sys.modules[__name__], workspace, scopes)
 
 
 def _validate_cache_enabled(value: bool) -> bool:
@@ -6013,10 +5817,11 @@ def _validate_cache_enabled(value: bool) -> bool:
 
 
 def _tenant_scope_read(call: str, bindings: dict) -> dict:
-    values = bindings.get(call, ())
-    if not isinstance(values, (tuple, list)) or len(values) > 1:
-        raise ReviewAuditError("Each scoped call requires at most one binding.")
-    return {"call": call, "binding": values[0]} if values else {"call": call}
+    import sys
+
+    from .runtime_audit_integrity import tenant_scope_read
+
+    return tenant_scope_read(sys.modules[__name__], call, bindings)
 
 
 def security_scan(

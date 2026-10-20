@@ -395,6 +395,93 @@ def _security_scan_action_summary(state: str) -> str:
     return "Resolve each listed finding and rerun this deterministic scan before release review."
 
 
+def seal_security_scan(audit, core: dict[str, Any]) -> dict[str, Any]:
+    """Seal a scan while resolving compatibility hooks through its audit module."""
+    audit.integrity.partition_proven_primitive_observations(core)
+    candidate = sha256(
+        json.dumps(
+            audit._security_scan_report_candidate_payload(core),
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    core["candidate_sha256"] = candidate
+    core["agent_actions"] = [
+        audit.audit_remediation_packet(candidate, item) for item in core["findings"]
+    ]
+    core.pop("audit_sha256", None)
+    core["audit_sha256"] = sha256(
+        json.dumps(
+            core, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+    ).hexdigest()
+    return core
+
+
+def security_scan_report(
+    audit,
+    files: list[Path],
+    findings: list[dict[str, Any]],
+    bindings: list[dict[str, Any]],
+    counts: dict[str, int],
+    outcomes: dict[str, int],
+    tenant_read_calls: tuple[str, ...],
+    tenant_read_bindings: dict[str, tuple[str, ...]],
+    oracle_edges: list[dict[str, Any]],
+    oracle_configuration: list[dict[str, Any]],
+    database_context: dict | None = None,
+    tenant_policy_applies: bool = False,
+) -> dict[str, Any]:
+    audit_coverage = audit._security_scan_coverage(
+        files, outcomes, audit.MAX_SECURITY_SOURCE_FILES
+    )
+    state = audit._security_scan_state(
+        files, findings, database_context, audit_coverage
+    )
+    core: dict[str, Any] = {
+        "schema": audit.SECURITY_SCHEMA,
+        "marker": "SECURITY_AUDIT_COMPLETE",
+        "state": state,
+        "files_scanned": len(bindings),
+        "parse_errors": outcomes["syntax_error"],
+        "unreadable_sources": outcomes["unreadable"],
+        "oversized_sources": outcomes["too_large"],
+        "audit_coverage": audit_coverage,
+        "tenant_read_contract": audit._tenant_read_contract(
+            tenant_read_calls, tenant_read_bindings, tenant_policy_applies
+        ),
+        "oracle_context": audit.contracts.import_context_metadata(
+            files, oracle_edges, oracle_configuration
+        ),
+        "sources": bindings,
+        "database_context": database_context or {},
+        "findings": findings,
+        "finding_counts": dict(sorted(counts.items())),
+        "governance": "human_controlled",
+        "authority": {
+            "execution": False,
+            "approval": False,
+            "publication": False,
+            "deployment": False,
+        },
+        "claim_boundary": "Bounded Python AST pattern scan only. Declared tenant argument bindings verify syntactic pass-through, not tenant identity, authorization, or access isolation; this is not a penetration test, runtime exploit proof, dependency advisory, or release approval.",
+    }
+    core["source_manifest_sha256"] = audit.sha256(
+        json.dumps(
+            {
+                "sources": bindings,
+                "oracle_context": core["oracle_context"],
+                "database_context": core["database_context"],
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        ).encode("utf-8")
+    ).hexdigest()
+    core["action_summary"] = audit._security_scan_action_summary(state)
+    return audit._seal_security_scan(core)
+
+
 def _security_scan_coverage(
     files: list[Path], outcomes: dict[str, int], limit: int
 ) -> dict[str, Any]:

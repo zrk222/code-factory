@@ -469,3 +469,71 @@ def finite_template_binding(finding, sources, bindings):
         facts.get("workspace_sources_sha256") == workspace
         and facts.get("proof_facts_sha256") == proof
     )
+
+
+def credential_role_witness(audit, node, target, aliases):
+    """Describe a symbolic declaration; it is not a non-credential exemption."""
+    scope = getattr(node, "_security_lexical_scope", None)
+    if (
+        not isinstance(scope, audit.ast.ClassDef)
+        or scope.decorator_list
+        or scope.keywords
+    ):
+        return {}
+    targets = node.targets if isinstance(node, audit.ast.Assign) else [node.target]
+    if len(targets) != 1 or not isinstance(target, audit.ast.Name):
+        return {}
+    if not isinstance(node.value, audit.ast.Constant) or node.value.value != target.id:
+        return {}
+    if audit.integrity._builtin_repr_names_shadowed(node, {"str"}):
+        return {}
+    from .security_configuration import _relative_binding
+
+    bindings = audit.integrity._security_scope_request_aliases(
+        getattr(scope, "_security_parent_scope", None), aliases, scope
+    )
+    bases = []
+    for base in scope.bases:
+        name = audit._name(base)
+        head, separator, tail = name.partition(".")
+        if _relative_binding(node, head) or (head != "str" and head not in bindings):
+            return {}
+        bases.append(bindings.get(head, head) + (separator + tail if separator else ""))
+    if bases != ["str", "enum.Enum"]:
+        return {}
+    return {
+        "role_candidate": "symbolic_enum_identifier",
+        "role_evidence_scope": "source_declaration_only",
+        "declaration_class": scope.name,
+        "declaration_line": scope.lineno,
+        "credential_use": "UNVERIFIED",
+        "missing_evidence": ["complete_import_reexport_and_consumer_closure"],
+    }
+
+
+def bind_credential_consumers(
+    audit, root, snapshots, imports, contexts, source_bytes, *, inventory
+):
+    return bind_public_symbolic_consumers(
+        root, snapshots, imports, contexts, source_bytes, inventory, audit
+    )
+
+
+def credential_consumer_helpers(audit):
+    from .primitive_observation_binding import primitive_binding_helpers
+
+    return (
+        audit.bind_credential_consumers,
+        bind_credential_consumers,
+        bind_public_symbolic_consumers,
+        public_symbolic_binding,
+        credential_role_witness,
+        public_symbolic_findings,
+        finite_template_binding,
+        finite_template_witness,
+        audit._LiteralConsumers,
+        *audit.native_execution_helpers(),
+        *primitive_binding_helpers(),
+        audit._oracle_bound_names,
+        *(value for value in vars(audit._LiteralConsumers).values() if callable(value)),
+    )

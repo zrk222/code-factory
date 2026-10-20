@@ -6503,3 +6503,13 @@ def test_live_registry_helper_mutations_invalidate_oracle_cache(
         monkeypatch.setattr(original, "__code__", unchanged_placeholder.__code__)
     scanner.security_scan(tmp_path)
     assert scanner._oracle_context_cache_info()["misses"] > before
+
+
+def test_oracle_cache_tracks_live_credential_consumer_facade(tmp_path, monkeypatch):
+    from factoryline import review_audits as module, review_integrity as integrity
+
+    before = module._oracle_context_cache_key(tmp_path, [], {})
+    monkeypatch.setattr(
+        integrity, "bind_credential_consumers", lambda *args, **kwargs: None
+    )
+    assert module._oracle_context_cache_key(tmp_path, [], {}) != before

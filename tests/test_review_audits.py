@@ -12994,3 +12994,21 @@ def test_oracle_family_updates_retain_must_stay_flags(
     ]
     assert len(matches) == 1, (name, findings)
     assert matches[0]["severity"] in {"MEDIUM", "HIGH", "CRITICAL"}
+
+
+def test_tenant_read_contract_preserves_scanner_facade_hooks(tmp_path, monkeypatch):
+    import factoryline.review_audits as module
+
+    observed = []
+
+    def scope_read(call, bindings):
+        observed.append((call, bindings))
+        return {"sentinel": call}
+
+    monkeypatch.setattr(module, "_tenant_scope_read", scope_read)
+    monkeypatch.setattr(module, "_tenant_scoped_entries", lambda workspace, rows: rows)
+    scopes = {"app.py": {"calls": ["app.read"], "bindings": {}}}
+    assert module._validate_tenant_scopes(tmp_path, scopes) == [
+        {"path": "app.py", "reads": [{"sentinel": "app.read"}]}
+    ]
+    assert observed == [("app.read", {})]
