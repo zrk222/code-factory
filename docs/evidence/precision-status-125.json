@@ -1,0 +1,64 @@
+{
+  "schema": "factory.precision.development-checkpoint.v1",
+  "observed_at": "2026-10-20T17:12:09.020107+00:00",
+  "head": "3a0bb25c4f1e19bbef0e37b4b383c0b26a38c3a2",
+  "scanner_content_sha256": "9d26c8aa46dd963296ec189426e2f4884d02513931df9cf35c16cd716817bcdb",
+  "includes_uncommitted_source": true,
+  "measurement": {
+    "kind": "EXPOSED_DEVELOPMENT_PAIRED_REPLAY",
+    "repositories_completed": 7,
+    "labelled_units": 60,
+    "TP": 0,
+    "FP": 60,
+    "actionable_precision": 0.0,
+    "wilson_95": [
+      0.0,
+      0.06017185214208986
+    ],
+    "severity_changes": 0,
+    "labelling": "One prior independent AI pass; not human validation or a fresh held-out claim."
+  },
+  "rejected_candidate": {
+    "state": "NEEDS_WORK_NOT_INTEGRATED",
+    "known_FP_removed": 8,
+    "known_FP_retained": 52,
+    "TP": 0,
+    "precision": 0.0,
+    "independent_review_bypasses": 16,
+    "helper_sha256": "94dfce33ff8e326a5a2825150d1da6ca9d1a7b7ad5acd06fb19b604dce274f3c",
+    "reason": "Ownership/transport guarantees were false. Bypasses do not establish sixteen production-secret vulnerabilities."
+  },
+  "measurement_limits": [
+    "The sixty units are all labelled false positives. They can evaluate false-alarm removal but cannot establish improved post-tuning precision.",
+    "Do not combine thirteen separate historical positive controls with this sample to invent a precision percentage.",
+    "Earlier 13/88 precision used a different cohort and is not a paired comparison.",
+    "No runtime clearance code from the rejected candidate is admitted by this document. PR255 full suite and architecture remain unresolved."
+  ],
+  "next_repair": "Use source-bound synthetic authority classification with separate origin/authority/transport facts; retain real/default credentials and unresolved authority. Revised contract preregistered before implementation.",
+  "artifacts": [
+    {
+      "path": ".factory/repair-family119/current-paired125/paired-report.json",
+      "sha256": "b49220242d6482e6a278e7e51ec4e80f38c36260efeb27b09e7c35949f06bc9e"
+    },
+    {
+      "path": ".factory/repair-family119/current-paired125/freeze.json",
+      "sha256": "761f417823df917e63117c9e47f2696c063069e791ffeb381cedf6246f053f6c"
+    },
+    {
+      "path": ".factory/repair-family119/django-paired124/paired-report.json",
+      "sha256": "c2a951b5d28af2891e1f69e4f6593d1f9ab207de4fc82ee08731fb99bf5b8b58"
+    },
+    {
+      "path": ".factory/repair-family119/django121/reviewer/ecc-exact-repros124.json",
+      "sha256": "0291ac4bb0c2761dc2bccf0b3e542079040391d7dc70b01704c2a338bcef2f3f"
+    },
+    {
+      "path": ".factory/repair-family119/django121/reviewer/ecc-registration-probes124.json",
+      "sha256": "e1856d75d942e4b0ec3d9412fe9fc65b437dc11c5add3ef54c0c75e4a321d20d"
+    },
+    {
+      "path": ".factory/repair-family119/django125-authority-contract.json",
+      "sha256": "5f7727b2b351f5bf9e9c4b41add24b3f09275ae096a7fd6dd57969dc0846cc13"
+    }
+  ]
+}
