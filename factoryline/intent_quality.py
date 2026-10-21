@@ -4178,7 +4178,7 @@ def _db_read_sql(
 ):
     try:
         statements = _db_parse_sql(sqlglot, text, dialect)
-    except sqlglot.errors.ParseError:
+    except (sqlglot.errors.ParseError, sqlglot.errors.TokenError):
         gaps.append("sql_parse_error:" + path)
         return
     if len(statements) > 2000:
@@ -5473,7 +5473,7 @@ def _db_python_execute(
         return
     try:
         statements = _db_parse_sql(sqlglot, query_text, dialect)
-    except sqlglot.errors.ParseError:
+    except (sqlglot.errors.ParseError, sqlglot.errors.TokenError):
         gaps.append("python_sql_parse_error:" + path)
         return
     for index, statement in enumerate(statements, 1):

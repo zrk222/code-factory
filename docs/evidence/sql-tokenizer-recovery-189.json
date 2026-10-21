@@ -1,0 +1,70 @@
+{
+  "schema": "factory.sql-tokenizer-recovery.v1",
+  "state": "SCOPED_PASS_GLOBAL_ACCURACY_GATES_INCOMPLETE",
+  "parent_commit": "7aa62b79230bd7b98e72b2456a2d848300918d79",
+  "source_sha256": {
+    "factoryline/intent_quality.py": "059e7202983b5c834a63ed0bfe7cd2d16b02d869670686bffd3007ec7d087962",
+    "tests/test_review_integrity.py": "8b3a05fb56570844998d1aeb8441cf298a7adf9ed1b6c79883112eb47746f536"
+  },
+  "change": "CatchonlySQLGlot ParseError/TokenError atbothschemaSQL andPython-embeddedSQL parserboundaries; preserveexplicitINCOMPLETEgaps andothersecurityfindings.",
+  "baseline": {
+    "schema": {
+      "exception_type": "TokenError"
+    },
+    "python_query": {
+      "exception_type": "TokenError"
+    }
+  },
+  "tests": {
+    "database_passed": 81,
+    "independent_focused_passed": 3,
+    "failed": 0,
+    "skipped": 0,
+    "privacy": "MalformedprivateSQLfragment notpresent inresults/stdout/stderr."
+  },
+  "exposed_recovery": {
+    "scanner_state": "BLOCKED",
+    "database_state": "INCOMPLETE",
+    "scan_seconds": 3.8490912999986904,
+    "source_immutable": true,
+    "result_sha256": "633eab43da246edd3c4d626f31a23514502c7dfed37b8341f69bd4cb66782801",
+    "limitation": "Oneexposedrecovery replay; not freshheldout,cleanDBcoverage,orpairedspeedgain."
+  },
+  "architecture": {
+    "decision": "HEALTHY",
+    "python_files": 429,
+    "core_modules": 133,
+    "caps_unchanged": true
+  },
+  "independent_review_sha256": "89783135b9bfe2b3a97b12ee5057f9c73c9c26d3591985af88fd52ead0852fdf",
+  "latest_frozen_AI_precision": {
+    "candidate": "c05034e",
+    "TP": 0,
+    "FP": 41,
+    "unclear": 6,
+    "actionable_precision": 0.0,
+    "wilson95": [
+      0,
+      0.08566757018442756
+    ],
+    "Claude": "PENDING",
+    "new_gain_claimed": false
+  },
+  "limits": [
+    "Originalfrozenstudy inputs/resultsunchanged; its2nativeerrors remain inthatstudy.",
+    "Newrecoverydoesnotclaim completecoverage:SQLdialectconfirmation andPythonparsegaps remainexplicit.",
+    "No targetsourceexecution, parserpin/dialect/capchange,newmodule,mergeorreleaseapproval.",
+    "FullCI/nativequality/semanticdetectionrepairremainincomplete."
+  ],
+  "evidence": {
+    "doctor.json": "8c3ded5206ef2a93f77990cde143dc75414ff4bbf63fd1e6d0267b1181bb4856",
+    "baseline-repros.json": "852a405efe1d0cea0f368e8443735b8b53befb60623e37cf94c4a190f39ece99",
+    "tests.xml": "70f2aed9a3b61fd8d63325b15795001a061b6531f7051049538313884a5bca55",
+    "process.json": "2a7ab9eba466e26260765c820c3c5fcd060c20b38676306b5b063db0a1c02c75",
+    "independent-review.json": "89783135b9bfe2b3a97b12ee5057f9c73c9c26d3591985af88fd52ead0852fdf",
+    "recovery-result.json": "633eab43da246edd3c4d626f31a23514502c7dfed37b8341f69bd4cb66782801",
+    "health.json": "d5d12958ded570bf7d4f35645e0d7b4dbea703f0880c9c1b76359ec890df2d8d",
+    "ruff.txt": "a4443afdcfb6d7363adb285762515ccf7cf50473b1a05c20c1a50f6bed4d26b0",
+    "c901.txt": "a4443afdcfb6d7363adb285762515ccf7cf50473b1a05c20c1a50f6bed4d26b0"
+  }
+}

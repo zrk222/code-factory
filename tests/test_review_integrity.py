@@ -351,7 +351,12 @@ def test_database_context_rejects_changed_inputs_before_receipt(
         audit.security_scan(tmp_path, cache_enabled=False)
 
 
-def test_database_context_missing_dialect_and_invalid_sql_are_incomplete(tmp_path):
+@pytest.mark.parametrize(
+    "malformed_sql", ["CREATE TABLE (", "SELECT 'PRIVATE_TOKENIZER_FRAGMENT"]
+)
+def test_database_context_missing_dialect_and_invalid_sql_are_incomplete(
+    tmp_path, malformed_sql
+):
     from factoryline.review_audits import security_scan
 
     source = _database_context_project(tmp_path)
@@ -361,7 +366,7 @@ def test_database_context_missing_dialect_and_invalid_sql_are_incomplete(tmp_pat
     assert (
         "database_dialect_confirmation_required" in result["database_context"]["gaps"]
     )
-    source.write_text("CREATE TABLE (")
+    source.write_text(malformed_sql)
     result = security_scan(tmp_path)
     assert result["database_context"]["status"] == "INCOMPLETE"
     assert any(
@@ -5260,6 +5265,28 @@ def load():
     assert malformed["status"] == "INCOMPLETE"
     assert "sql_parse_error:broken.sql" in malformed["gaps"]
     assert malformed["tables"] == []
+    for inputs, expected in [
+        (
+            {"broken.sql": b"SELECT 'PRIVATE_TOKENIZER_FRAGMENT"},
+            "sql_parse_error:broken.sql",
+        ),
+        (
+            {
+                "schema.sql": b"CREATE TABLE users (id INT)",
+                "query.py": b"import sqlite3\ndef load():\n    connection = sqlite3.connect(':memory:')\n    connection.execute(\"SELECT 'PRIVATE_TOKENIZER_FRAGMENT\")\n",
+            },
+            "python_sql_parse_error:query.py",
+        ),
+    ]:
+        stdout, stderr = StringIO(), StringIO()
+        with redirect_stdout(stdout), redirect_stderr(stderr):
+            tokenized = iq.database_structure(inputs, "sqlite")
+        assert tokenized["status"] == "INCOMPLETE"
+        assert expected in tokenized["gaps"]
+        assert (
+            "PRIVATE_TOKENIZER_FRAGMENT"
+            not in repr(tokenized) + stdout.getvalue() + stderr.getvalue()
+        )
 
     parser, exp, version = iq._db_load_parser()
     original_version = parser.__version__
