@@ -4,12 +4,12 @@ import pytest
 from factoryline.review_audits import security_scan
 import copy
 import json
-from factoryline import credential_endpoint_evidence as evidence
-from factoryline.credential_publication_catalog import endpoint_publication
+from factoryline import credential_endpoint_admission as evidence
+from factoryline.credential_endpoint_admission import endpoint_publication
 from test_runtime_audit_integrity import _JSON_CLIENT, _JSON_TEST, _json_enum_graph
 import hashlib
-from factoryline import credential_publication_catalog as catalog
-from factoryline.credential_publication_excerpt import (
+from factoryline import credential_endpoint_admission as catalog
+from factoryline.credential_endpoint_admission import (
     PROFILE,
     digest,
     reviewed_excerpt_fact,

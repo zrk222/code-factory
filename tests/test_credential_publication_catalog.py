@@ -2,7 +2,7 @@ import hashlib
 from importlib import resources
 import json
 import pytest
-from factoryline import credential_publication_catalog as catalog
+from factoryline import credential_endpoint_admission as catalog
 import ast
 from types import SimpleNamespace
 from factoryline.credential_role_bindings import class_chain

@@ -1,6 +1,6 @@
 import json
 import pytest
-from factoryline.credential_protocol_documents import (
+from factoryline.credential_endpoint_admission import (
     matches_openapi_endpoint,
     openapi_endpoint_declarations,
 )
@@ -116,7 +116,7 @@ def test_forged_fact_and_changed_document_do_not_match():
 
 
 def test_size_and_node_budgets_fail_closed(monkeypatch):
-    import factoryline.credential_protocol_documents as parser
+    import factoryline.credential_endpoint_admission as parser
 
     raw = encode(document())
     monkeypatch.setattr(parser, "MAX_DOCUMENT_BYTES", len(raw) - 1)

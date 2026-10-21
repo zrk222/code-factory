@@ -8,7 +8,7 @@ import re
 def fixed_primitive_binding(finding, sources, bindings, integrity):
     """Validate a critical hardcoded-secret finding against recognized static test, fixture, endpoint, symbolic, or finite-input evidence and its source hashes."""
     from .provenance import public_symbolic_binding, finite_template_binding
-    from .credential_endpoint_evidence import endpoint_binding
+    from .credential_endpoint_admission import endpoint_binding
 
     facts = finding.get("facts", {})
     if facts.get("disposition") == "PROVEN_LOCAL_CRYPTO_TEST_PRIMITIVE":
@@ -766,9 +766,9 @@ def fixed_program_workspace_helpers(audit):
 
 def primitive_binding_helpers():
     """Return primitive-binding validators for endpoint, fixture, declaration, finite-eval, workspace, and symbolic-identifier evidence."""
-    from .credential_endpoint_evidence import endpoint_evidence_helpers
+    from .credential_endpoint_admission import endpoint_evidence_helpers
     from .credential_endpoint_admission import endpoint_admission_helpers
-    from . import credential_publication_catalog
+    from .credential_endpoint_admission import catalog_callable_helpers
 
     return (
         fixed_primitive_binding,
@@ -794,17 +794,12 @@ def primitive_binding_helpers():
         credential_context_cache_schema,
         *endpoint_evidence_helpers(),
         *endpoint_admission_helpers(),
-        *(
-            value
-            for module in (credential_publication_catalog,)
-            for value in vars(module).values()
-            if callable(value)
-        ),
+        *catalog_callable_helpers(),
     )
 
 
 def credential_context_cache_schema():
     """Return the versioned oracle-context cache key derived from the current publication catalog digest."""
-    from .credential_publication_catalog import catalog_content_digest
+    from .credential_endpoint_admission import catalog_content_digest
 
     return "factory.security-oracle-context-cache.v7:" + catalog_content_digest()

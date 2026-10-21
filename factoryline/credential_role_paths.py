@@ -4,7 +4,7 @@ import ast
 
 import hashlib
 
-from .credential_publication_catalog import endpoint_publications
+from .credential_endpoint_admission import endpoint_publications
 
 from .credential_role_adapter_selection import default_session_evidence
 

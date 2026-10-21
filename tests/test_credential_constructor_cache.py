@@ -7,10 +7,10 @@ from factoryline import credential_role_constructor_provider_provenance as type_
 from factoryline import provider_mutations
 from factoryline.credential_role_bindings import class_chain
 from factoryline.credential_role_constructor_flow import constructor_bindings_inert
-from factoryline import credential_httpx_origins as httpx
-from factoryline import credential_json_assertions as assertions
+from factoryline import credential_endpoint_admission as httpx
+from factoryline import credential_endpoint_admission as assertions
 from factoryline import credential_role_scope_bindings as roles
-from factoryline import credential_router_publication as routers
+from factoryline import credential_endpoint_admission as routers
 from factoryline import review_audits as audit
 import ast
 from types import SimpleNamespace
@@ -173,6 +173,59 @@ def test_validator_replacement_invalidates_native_context(
         return original(*args, **kwargs)
 
     monkeypatch.setattr(module, name, replacement)
+    after = audit._oracle_context_cache_key(tmp_path, [], {})
+    assert before != after
+
+
+@pytest.mark.parametrize(
+    "helper_name",
+    [
+        "request_client_origin",
+        "public_json_assertion",
+        "router_factory_call_published",
+        "endpoint_binding",
+        "endpoint_publication",
+        "reviewed_excerpt_fact",
+        "openapi_endpoint_declarations",
+        "session_factory_witness",
+    ],
+)
+def test_moved_validator_code_mutation_invalidates_native_context(
+    tmp_path, monkeypatch, helper_name
+):
+    helper = getattr(httpx, helper_name)
+    before = audit._oracle_context_cache_key(tmp_path, [], {})
+
+    def changed(*args, **kwargs):
+        return False
+
+    monkeypatch.setattr(helper, "__code__", changed.__code__)
+    after = audit._oracle_context_cache_key(tmp_path, [], {})
+    assert before != after
+
+
+@pytest.mark.parametrize(
+    "helper_name",
+    [
+        "request_client_origin",
+        "public_json_assertion",
+        "router_factory_call_published",
+        "endpoint_binding",
+        "endpoint_publication",
+        "reviewed_excerpt_fact",
+        "openapi_endpoint_declarations",
+        "session_factory_witness",
+    ],
+)
+def test_moved_helper_binding_replacement_invalidates_native_context(
+    tmp_path, monkeypatch, helper_name
+):
+    before = audit._oracle_context_cache_key(tmp_path, [], {})
+
+    def replacement(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(httpx, helper_name, replacement)
     after = audit._oracle_context_cache_key(tmp_path, [], {})
     assert before != after
 

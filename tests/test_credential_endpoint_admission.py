@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 from factoryline import credential_endpoint_admission as admission
-from factoryline.credential_endpoint_evidence import endpoint_binding
+from factoryline.credential_endpoint_admission import endpoint_binding
 
 ENDPOINT = "https://appleid.apple.com/auth/token"
 

@@ -1424,23 +1424,22 @@ def native_execution_helpers():
 
 def credential_validation_helpers():
     """Collect callable validators from the credential-related analysis modules while excluding imported callables."""
-    from . import credential_httpx_origins, credential_json_assertions
-    from . import credential_router_publication, credential_role_scope_bindings
+    from . import credential_endpoint_admission, credential_role_scope_bindings
     from . import provider_mutations, semantic_credential_sensor
 
     modules = (
-        credential_httpx_origins,
-        credential_json_assertions,
-        credential_router_publication,
         credential_role_scope_bindings,
         provider_mutations,
         *semantic_credential_sensor.validation_modules(),
     )
-    return tuple(
-        value
-        for module in modules
-        for value in vars(module).values()
-        if callable(value) and getattr(value, "__module__", None) == module.__name__
+    return (
+        *credential_endpoint_admission.validation_helpers(),
+        *(
+            value
+            for module in modules
+            for value in vars(module).values()
+            if callable(value) and getattr(value, "__module__", None) == module.__name__
+        ),
     )
 
 
@@ -2209,9 +2208,7 @@ class _LiteralConsumers(_FiniteInputCapture):
                     return False
                 wrapped.append((wrapper_path, owner, wrapper))
             elif not self._router_call_published(use_path, call):
-                from .credential_router_publication import (
-                    router_factory_call_published,
-                )
+                from .credential_endpoint_admission import router_factory_call_published
 
                 if not router_factory_call_published(self, use_path, call):
                     return False
@@ -2274,7 +2271,7 @@ class _LiteralConsumers(_FiniteInputCapture):
         )
 
     def _router_wrapper_consumers(self, path, owner, method):
-        from .credential_router_publication import _memo
+        from .credential_endpoint_admission import _memo
 
         return _memo(
             self,
@@ -3060,7 +3057,7 @@ class _LiteralConsumers(_FiniteInputCapture):
         return self._provider_is_unmodified("httpx", {"AsyncClient", "ASGITransport"})
 
     def _public_assertion(self, path, node, parent):
-        from .credential_json_assertions import public_json_assertion
+        from .credential_endpoint_admission import public_json_assertion
 
         return public_json_assertion(self, path, node, parent)
 
