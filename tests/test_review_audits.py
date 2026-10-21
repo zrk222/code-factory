@@ -1891,27 +1891,47 @@ def test_native_test_probe_attribution_excludes_ambiguous_call_shapes():
 
 
 @pytest.mark.parametrize(
-    "source",
+    "source,expected_code",
     [
-        "def test_behavior():\n    value = callback()\n    pass\n",
-        "def test_behavior():\n    callback(); other()\n",
-        "def test_behavior():\n    callback(other())\n",
-        "def test_behavior():\n    callback() or other()\n",
-        "async def test_behavior():\n    await callback()\n",
-        "def test_behavior():\n    lambda: callback()\n",
-        "@register(callback())\ndef test_behavior():\n    pass\n",
-        "def test_behavior(value=callback()):\n    pass\n",
-        "def test_behavior():\n    class Container:\n        callback()\n",
-        "callback()\ndef test_behavior():\n    pass\n",
+        (
+            "def test_behavior():\n    value = callback()\n    pass\n",
+            "QUALITY_UNKNOWN_TEST_ORACLE",
+        ),
+        (
+            "def test_behavior():\n    callback(); other()\n",
+            "QUALITY_UNKNOWN_TEST_ORACLE",
+        ),
+        (
+            "def test_behavior():\n    callback(other())\n",
+            "QUALITY_UNKNOWN_TEST_ORACLE",
+        ),
+        (
+            "def test_behavior():\n    callback() or other()\n",
+            "QUALITY_UNKNOWN_TEST_ORACLE",
+        ),
+        (
+            "async def test_behavior():\n    await callback()\n",
+            "QUALITY_UNKNOWN_TEST_ORACLE",
+        ),
+        ("def test_behavior():\n    lambda: callback()\n", "QUALITY_HOLLOW_TEST"),
+        ("@register(callback())\ndef test_behavior():\n    pass\n", "QUALITY_HOLLOW_TEST"),
+        ("def test_behavior(value=callback()):\n    pass\n", "QUALITY_HOLLOW_TEST"),
+        (
+            "def test_behavior():\n    class Container:\n        callback()\n",
+            "QUALITY_UNKNOWN_TEST_ORACLE",
+        ),
+        ("callback()\ndef test_behavior():\n    pass\n", "QUALITY_HOLLOW_TEST"),
     ],
 )
-def test_hollow_test_call_probe_guidance_rejects_non_direct_targets(tmp_path, source):
+def test_hollow_test_call_probe_guidance_rejects_non_direct_targets(
+    tmp_path, source, expected_code
+):
     (tmp_path / "test_case.py").write_text(source, encoding="utf-8")
 
     finding = next(
         item
         for item in security_scan(tmp_path)["findings"]
-        if item["code"] == "QUALITY_HOLLOW_TEST"
+        if item["code"] == expected_code
     )
     probe = finding["facts"]["native_assertion_probe"]
 

@@ -1,0 +1,94 @@
+{
+  "project": "cf-probe-guidance-family200",
+  "parent": "37bfda8054715ee040cba72f5d463cac4a319dee",
+  "source_sha256": {
+    "tests/test_review_audits.py": "68b6d1650571359b6d9283fecfa4f04f00dda04d0ac251aac3e6f4961ada0c4d"
+  },
+  "counts": {
+    "expectations_migrated_to_UNKNOWN": 6,
+    "retained_HOLLOW": 4,
+    "frozen_focused_passed": 25
+  },
+  "family_decisions": [
+    {
+      "index": 1,
+      "expected_code": "QUALITY_UNKNOWN_TEST_ORACLE",
+      "payload_sha256": "b576c9919f68b1a2e7dc524e3a7ee4048c503cb5974dfadd349ee30e0e1d01c3",
+      "payload_unchanged_from_HEAD": true,
+      "why": "Unresolved call may raise before later body statements."
+    },
+    {
+      "index": 2,
+      "expected_code": "QUALITY_UNKNOWN_TEST_ORACLE",
+      "payload_sha256": "2e6f265dd1cef595473a8f84ca2759fa1a3aa19e7c58b7d8245f7c18e4f88659",
+      "payload_unchanged_from_HEAD": true,
+      "why": "Unresolved sibling calls may raise and neither call is a direct standalone probe target."
+    },
+    {
+      "index": 3,
+      "expected_code": "QUALITY_UNKNOWN_TEST_ORACLE",
+      "payload_sha256": "772338c2b0b6fec4c912c9ddc9703f12d5687bb43a9282915acda506f9bc962f",
+      "payload_unchanged_from_HEAD": true,
+      "why": "Nested unresolved call evaluation may raise."
+    },
+    {
+      "index": 4,
+      "expected_code": "QUALITY_UNKNOWN_TEST_ORACLE",
+      "payload_sha256": "8c3058cafd54810c4efe2514538ac242f63d5be8f67cfcd87a975d812e3744db",
+      "payload_unchanged_from_HEAD": true,
+      "why": "Boolean expression invokes unresolved calls and may raise."
+    },
+    {
+      "index": 5,
+      "expected_code": "QUALITY_UNKNOWN_TEST_ORACLE",
+      "payload_sha256": "a565a93607ae0552905675ed185cf8462bc313138ed3fb15ca5587fa33f3ccb3",
+      "payload_unchanged_from_HEAD": true,
+      "why": "Unresolved awaited call may raise or fail during coroutine handling."
+    },
+    {
+      "index": 6,
+      "expected_code": "QUALITY_HOLLOW_TEST",
+      "payload_sha256": "182efd5d72a05ad6980dd91fe1213c0de83dbabc708f77c8bce3157bd672d106",
+      "payload_unchanged_from_HEAD": true,
+      "why": "Lambda creation does not execute its body; the test has no assertion and is inert."
+    },
+    {
+      "index": 7,
+      "expected_code": "QUALITY_HOLLOW_TEST",
+      "payload_sha256": "89c105fe63cadb755fea1d250e36d35515f796e68b87b5d2b4105e1744b4bfc0",
+      "payload_unchanged_from_HEAD": true,
+      "why": "Decorator call occurs during function definition, outside the selected test body; the body is pass-only."
+    },
+    {
+      "index": 8,
+      "expected_code": "QUALITY_HOLLOW_TEST",
+      "payload_sha256": "f9c876718ba8c96d57e9844f64749e55a2a4509a156134f8c655201a9bb99920",
+      "payload_unchanged_from_HEAD": true,
+      "why": "Default expression runs during function definition, outside the selected test body; the body is pass-only."
+    },
+    {
+      "index": 9,
+      "expected_code": "QUALITY_UNKNOWN_TEST_ORACLE",
+      "payload_sha256": "95eb4f28d9dd03cb029acdec13b948deb2145631543af1f3a007f351b6d4487f",
+      "payload_unchanged_from_HEAD": true,
+      "why": "Class body executes the unresolved call when the test reaches the class statement, so completion is unknown."
+    },
+    {
+      "index": 10,
+      "expected_code": "QUALITY_HOLLOW_TEST",
+      "payload_sha256": "290389363afc49be5460e934ee845fd6a7a9ed5c10e5260f59a20c5dae5ae69b",
+      "payload_unchanged_from_HEAD": true,
+      "why": "Module-level call is outside the selected test body; the test body is pass-only."
+    }
+  ],
+  "independent_review": {
+    "path": ".factory/guidance200/independent-review.json",
+    "sha256": "0940d4df20377c37da01d48b1600cfc44d2df499c3580470730e11aa2094de35"
+  },
+  "boundaries": [
+    "Expectation-only migration for six unresolved/raising bodies; all10 source payloads and native probe assertions unchanged.",
+    "Uninvoked lambda retains HOLLOW and is separately repaired in37bfda8; three prior HOLLOW controls are preserved.",
+    "Frozen guidance/nested-helper25cases pass; independent ECC AI review passes.",
+    "No detector behavior, fresh precision or full CI gain is claimed by this expectation-only commit."
+  ]
+}
