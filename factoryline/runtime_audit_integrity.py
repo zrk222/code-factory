@@ -1424,7 +1424,10 @@ def native_execution_helpers():
 
 def credential_validation_helpers():
     """Collect callable validators from the credential-related analysis modules while excluding imported callables."""
-    from . import credential_endpoint_admission, credential_role_scope_bindings
+    from . import (
+        credential_endpoint_admission,
+        credential_role_constructor_provider as credential_role_scope_bindings,
+    )
     from . import provider_mutations, semantic_credential_sensor
 
     modules = (

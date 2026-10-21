@@ -1,10 +1,10 @@
 import ast
 import hashlib
 
-from factoryline.credential_role_method_contracts import alias_value, cast_value
-from factoryline.credential_role_sources import SourceSnapshotIndex
-from factoryline.credential_role_strategy_default import setting_default
-from factoryline.credential_role_forwarding_decorator import forwarding_definition
+from factoryline.credential_role_paths import alias_value, cast_value
+from factoryline.credential_role_constructor_provider import SourceSnapshotIndex
+from factoryline.credential_role_paths import setting_default
+from factoryline.credential_role_paths import forwarding_definition
 
 
 class _Audit:

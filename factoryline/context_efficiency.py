@@ -346,7 +346,7 @@ def bind_application_fixture_context(
 ):
     """Bind eligible application-fixture evidence to the captured source inventory and hashed configuration without asserting runtime isolation."""
     from . import mock_fixture_provenance as fixture
-    from .credential_role_sources import SourceSnapshotIndex, PresentationRoleIndex
+    from . import credential_role_constructor_provider as roles
     from collections.abc import Mapping
     from . import review_audits as audit
 
@@ -363,10 +363,10 @@ def bind_application_fixture_context(
     source = (
         index["source"]
         if index is not None
-        else SourceSnapshotIndex(root, snapshots, captured, inventory)
+        else roles.SourceSnapshotIndex(root, snapshots, captured, inventory)
     )
     presentation = (
-        PresentationRoleIndex(source, imports, audit)
+        roles.PresentationRoleIndex(source, imports, audit)
         if isinstance(imports, Mapping)
         else None
     )
@@ -507,7 +507,7 @@ def _captured_fixture_configuration(root, bindings, read_source, limit):
 
 def provider_context_cache_helpers(contracts):
     """Return the source inventory and cache helpers in the cache epoch."""
-    from . import credential_role_sources as roles
+    from . import credential_role_constructor_provider as roles
 
     return (
         roles.PresentationRoleIndex,

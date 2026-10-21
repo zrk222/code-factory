@@ -5,8 +5,8 @@ import pytest
 
 from factoryline import review_audits as audit
 from factoryline import review_integrity as integrity
-from factoryline.credential_role_sources import SourceSnapshotIndex
-from factoryline.credential_role_getter_consumers import getter_consumer_role
+from factoryline.credential_role_constructor_provider import SourceSnapshotIndex
+from factoryline.credential_role_method_use_getter_audit import getter_consumer_role
 
 
 def _proof(tmp_path, source):
@@ -95,8 +95,8 @@ def test_auth_opaque_ambiguous_or_mutated_consumer_stays_unknown(tmp_path, sourc
 def test_provider_check_cache_is_local_profile_bound_and_freshly_validated(
     tmp_path, monkeypatch
 ):
-    from factoryline import credential_role_getter_consumers as consumer
-    from factoryline.credential_role_chain_memo import ClassChainMemo
+    from factoryline import credential_role_method_use_getter_audit as consumer
+    from factoryline.credential_role_constructor_provider import ClassChainMemo
 
     path = tmp_path / "sample.py"
     raw = b"import responses\nresponses.add('GET', 'https://example.test')\n"
@@ -216,7 +216,7 @@ def test_transfer155_callable_shape_or_escape_stays_unknown(tmp_path, row, body,
 def test_transfer155_record_methods_invalidate_context_cache(
     tmp_path, monkeypatch, mutation
 ):
-    from factoryline import credential_role_getter_records as records
+    from factoryline import credential_role_method_use_getter_audit as records
     from factoryline.credential_endpoint_admission import endpoint_admission_helpers
 
     method = records.RecordProjectionIndex.closed
@@ -234,7 +234,9 @@ def test_transfer155_record_methods_invalidate_context_cache(
 
 
 def test_transfer155_record_budget_exhaustion_cannot_accept_partial_graph():
-    from factoryline.credential_role_getter_records import RecordProjectionIndex
+    from factoryline.credential_role_method_use_getter_audit import (
+        RecordProjectionIndex,
+    )
 
     tree = ast.parse("import responses\nx = responses.calls[0].request.url")
     model = RecordProjectionIndex(tree, {"responses": "responses"})

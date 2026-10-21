@@ -7,10 +7,16 @@ from factoryline.credential_endpoint_admission import (
 import ast
 import hashlib
 from factoryline import review_audits, review_integrity
-from factoryline.credential_role_bindings import matches_fact
-from factoryline.credential_role_scope_bindings import class_attribute, effective_method
-from factoryline.credential_role_sources import SourceSnapshotIndex, declaration_fact
-from factoryline.credential_role_setting_boundary import setting_boundary_nodes
+from factoryline.credential_role_constructor_provider import matches_fact
+from factoryline.credential_role_constructor_provider import (
+    class_attribute,
+    effective_method,
+)
+from factoryline.credential_role_constructor_provider import (
+    SourceSnapshotIndex,
+    declaration_fact,
+)
+from factoryline.credential_role_paths import setting_boundary_nodes
 from factoryline.credential_role_method_use_getter_audit import _stable_self
 
 SOURCE = "https://publisher.example/openapi.json"

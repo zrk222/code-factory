@@ -210,34 +210,11 @@ def endpoint_admission_helpers():
         "session_factory_witness",
     )
     role_names = (
-        "credential_role_paths",
-        "credential_role_sources",
-        "credential_role_bindings",
-        "credential_role_chain_memo",
-        "credential_role_constructor_flow",
         "credential_role_constructor_provider",
-        "credential_role_constructor_provider_provenance",
-        "provider_mutations",
-        "credential_role_adapter_selection",
-        "credential_role_setting_boundary",
-        "credential_role_scope_bindings",
-        "credential_role_module_settings",
-        "credential_role_use_audit",
-        "credential_role_value_slices",
-        "credential_role_default_contract",
-        "credential_role_method_flow",
-        "credential_role_method_paths",
-        "credential_role_method_call",
-        "credential_role_method_contracts",
-        "credential_role_method_use_audit",
         "credential_role_method_use_getter_audit",
+        "credential_role_paths",
+        "provider_mutations",
         "credential_role_identity_effects",
-        "credential_role_field_origin",
-        "credential_role_getter_consumers",
-        "credential_role_getter_records",
-        "credential_role_strategy_default",
-        "credential_role_strategy_fallback",
-        "credential_role_forwarding_decorator",
         "security_configuration",
         "semantic_credential_sensor",
     )
@@ -248,7 +225,7 @@ def endpoint_admission_helpers():
         for value in vars(module).values()
         if callable(value)
     )
-    from .credential_role_getter_records import RecordProjectionIndex
+    from .credential_role_method_use_getter_audit import RecordProjectionIndex
 
     return (
         *_callable_values(owner_names),
@@ -943,7 +920,7 @@ def _request_client_origin(graph, path, function, request):
         or any(not isinstance(leaf, ast.Name) for leaf in leaves)
     ):
         return False
-    from .credential_role_scope_bindings import binding_dominates
+    from .credential_role_constructor_provider import binding_dominates
 
     if not binding_dominates(owner, request, graph.parents, function):
         return False
@@ -1196,7 +1173,7 @@ _JSON_HTTP_METHODS = {"get", "post", "put", "patch", "delete", "options", "head"
 
 def public_json_assertion(graph, path, node, parent):
     """Accept only a source-bound JSON comparison dominated by its request."""
-    from .credential_role_scope_bindings import binding_dominates
+    from .credential_role_constructor_provider import binding_dominates
 
     container = node
     while isinstance(parent, (ast.Dict, ast.List, ast.Tuple)):
@@ -1721,7 +1698,7 @@ def _factory_owner_valid(path, function, index):
     if isinstance(owner, ast.ClassDef) and (owner.decorator_list or owner.keywords):
         return False
     from . import review_audits as audit
-    from .credential_class_values import _class_bindings
+    from .credential_role_constructor_provider import _class_bindings
 
     bindings = [
         statement

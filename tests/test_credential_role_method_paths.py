@@ -1,12 +1,15 @@
 import ast
 import hashlib
 from types import SimpleNamespace
-from factoryline.credential_role_method_paths import method_url_hop_paths
-from factoryline.credential_role_sources import SourceSnapshotIndex, declaration_fact
+from factoryline.credential_role_paths import method_url_hop_paths
+from factoryline.credential_role_constructor_provider import (
+    SourceSnapshotIndex,
+    declaration_fact,
+)
 from factoryline.review_integrity import bind_source_call
 import pytest
-from factoryline.credential_role_chain_memo import ClassChainMemo
-from factoryline.credential_role_method_use_audit import absolute_path
+from factoryline.credential_role_constructor_provider import ClassChainMemo
+from factoryline.credential_role_method_use_getter_audit import absolute_path
 
 
 class _Audit:
@@ -49,9 +52,9 @@ class Client:
     classes = {(path, owner.name): owner}
     imports = {path: {}}
     audit = _Audit()
-    from factoryline import credential_role_method_paths as path_module
-    from factoryline import credential_role_forwarding_decorator as forwarding
-    from factoryline.credential_role_chain_memo import ClassChainMemo
+    from factoryline import credential_role_paths as path_module
+    from factoryline import credential_role_paths as forwarding
+    from factoryline.credential_role_constructor_provider import ClassChainMemo
 
     index.class_chain_memo = ClassChainMemo(index, imports, classes, audit)
     calls = []

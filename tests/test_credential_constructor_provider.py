@@ -10,7 +10,7 @@ import pytest
 from factoryline.credential_role_constructor_provider import (
     constructor_provider_bindings_inert,
 )
-from factoryline.credential_role_sources import SourceSnapshotIndex
+from factoryline.credential_role_constructor_provider import SourceSnapshotIndex
 
 
 def _index(files):

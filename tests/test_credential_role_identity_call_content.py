@@ -13,7 +13,7 @@ from factoryline.credential_role_identity_effects import (
     identity_value,
     tracked_roots,
 )
-from factoryline.credential_role_sources import SourceSnapshotIndex
+from factoryline.credential_role_constructor_provider import SourceSnapshotIndex
 from factoryline.credential_role_identity_effects import SourceFieldLiteral
 
 

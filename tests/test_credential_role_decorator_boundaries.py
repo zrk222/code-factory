@@ -1,16 +1,16 @@
 import ast
 import hashlib
-from factoryline.credential_role_forwarding_decorator import method_rows
-from factoryline.credential_role_sources import SourceSnapshotIndex
+from factoryline.credential_role_paths import method_rows
+from factoryline.credential_role_constructor_provider import SourceSnapshotIndex
 from types import SimpleNamespace
 import pytest
-from factoryline.credential_role_bindings import class_chain
-from factoryline.credential_role_chain_memo import ClassChainMemo
-from factoryline.credential_role_adapter_selection import _property_default
-from factoryline.credential_role_setting_boundary import _setting_getter_shape
+from factoryline.credential_role_constructor_provider import class_chain
+from factoryline.credential_role_constructor_provider import ClassChainMemo
+from factoryline.credential_role_paths import _property_default
+from factoryline.credential_role_paths import _setting_getter_shape
 from factoryline.review_audits import security_scan
 import textwrap
-from factoryline.credential_role_method_contracts import method_returns
+from factoryline.credential_role_paths import method_returns
 
 
 def _index(tmp_path, client, decorators):
@@ -229,7 +229,7 @@ def test_cached_and_uncached_actual_scanner_findings_match(
     tmp_path, monkeypatch, extra
 ):
     from factoryline.review_audits import security_scan
-    import factoryline.credential_role_chain_memo as module
+    import factoryline.credential_role_constructor_provider as module
     import factoryline.credential_endpoint_admission as admission
 
     (tmp_path / "app.py").write_text(

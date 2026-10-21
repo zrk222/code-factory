@@ -1,11 +1,11 @@
 import ast
 import hashlib
 import pytest
-from factoryline.credential_role_method_use_audit import method_value_use_audit
-from factoryline.credential_role_sources import SourceSnapshotIndex
+from factoryline.credential_role_method_use_getter_audit import method_value_use_audit
+from factoryline.credential_role_constructor_provider import SourceSnapshotIndex
 from types import SimpleNamespace
-from factoryline.credential_role_method_flow import method_url_hops
-from factoryline.credential_role_sources import declaration_fact
+from factoryline.credential_role_paths import method_url_hops
+from factoryline.credential_role_constructor_provider import declaration_fact
 from factoryline.review_integrity import bind_source_call
 from test_credential_endpoint_scanner import _scan
 

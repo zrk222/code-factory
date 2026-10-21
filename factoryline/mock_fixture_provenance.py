@@ -378,7 +378,7 @@ def django_test_secret_index(
     """Build a bounded index from the producer's captured Python and config bytes."""
     if not isinstance(source_bytes, dict) or not isinstance(inventory, dict):
         return None
-    from .credential_role_sources import SourceSnapshotIndex
+    from .credential_role_constructor_provider import SourceSnapshotIndex
 
     source = SourceSnapshotIndex(root, modules, source_bytes, inventory)
     if not source.bounded or set(configs) != {"pyproject.toml", "tox.ini"}:
@@ -637,7 +637,7 @@ def _django_name(index, path):
 
 
 def _django_import_targets(index, path, tree):
-    from .credential_role_scope_bindings import binding_occurrences
+    from .credential_role_constructor_provider import binding_occurrences
 
     current = _django_name(index, path)
     package = current.rpartition(".")[0]
@@ -702,7 +702,7 @@ def _django_expr(index, path, node, function=None):
             return None
         if node.id in imports:
             if function is not None:
-                from .credential_role_scope_bindings import binding_occurrences
+                from .credential_role_constructor_provider import binding_occurrences
 
                 if binding_occurrences(function.body, node.id):
                     return None
@@ -735,7 +735,7 @@ def _django_source_function(index, path, expression, function=None):
     target_path, tree = _django_mod(index, module)
     if tree is None:
         return None
-    from .credential_role_scope_bindings import binding_occurrences
+    from .credential_role_constructor_provider import binding_occurrences
 
     rows = [
         node
@@ -750,7 +750,7 @@ def _django_source_function(index, path, expression, function=None):
 
 
 def _django_assignment(tree, name):
-    from .credential_role_scope_bindings import binding_occurrences
+    from .credential_role_constructor_provider import binding_occurrences
 
     bindings = binding_occurrences(tree.body, name)
     rows = []
@@ -775,7 +775,7 @@ def _django_builtins_unshadowed(index, path, names):
     tree = index["modules"].get(path)
     if tree is None:
         return False
-    from .credential_role_scope_bindings import binding_occurrences
+    from .credential_role_constructor_provider import binding_occurrences
 
     return not any(binding_occurrences(tree.body, name) for name in names)
 
@@ -798,7 +798,7 @@ def _django_setting_facts(index):
     db_rows = _django_assignment(settings_tree, "DATABASES")
     app_rows = _django_assignment(settings_tree, "OAUTH2_PROVIDER_APPLICATION_MODEL")
     installed_rows = _django_assignment(settings_tree, "INSTALLED_APPS")
-    from .credential_role_scope_bindings import binding_occurrences
+    from .credential_role_constructor_provider import binding_occurrences
 
     if (
         len(db_rows) != 1
@@ -1003,7 +1003,7 @@ def _django_provider_object(index, path, provider):
         or _class_has_binding(provider_class, "__setattr__")
     ):
         return False
-    from .credential_role_scope_bindings import effective_method
+    from .credential_role_constructor_provider import effective_method
 
     chain = [(path, provider_class.name, provider_class)]
     getter = effective_method(chain, "__getattr__")
@@ -1034,7 +1034,7 @@ def _django_class(index, path, name):
     tree = index["modules"].get(path)
     if tree is None or not index["source"].validate(path):
         return None
-    from .credential_role_scope_bindings import binding_occurrences
+    from .credential_role_constructor_provider import binding_occurrences
 
     rows = [
         node
@@ -1183,7 +1183,7 @@ def _django_base_class(index, path, base, canonical):
 
 
 def _django_hooks_unbound(chain, names):
-    from .credential_role_scope_bindings import binding_occurrences
+    from .credential_role_constructor_provider import binding_occurrences
 
     return all(
         not binding_occurrences(owner.body, name)
@@ -1210,7 +1210,7 @@ def _django_model_field(index, path, model_chain, manager):
         field_chain, _FIELD_AUTHORITY_HOOKS
     ):
         return None
-    from .credential_role_scope_bindings import effective_method
+    from .credential_role_constructor_provider import effective_method
 
     method = effective_method(field_chain, "pre_save")
     if (
@@ -1231,7 +1231,7 @@ def _django_model_field(index, path, model_chain, manager):
 
 
 def _django_effective_class_attribute(chain, name):
-    from .credential_role_scope_bindings import binding_occurrences
+    from .credential_role_constructor_provider import binding_occurrences
 
     for _, _, owner in chain:
         bindings = binding_occurrences(owner.body, name)
@@ -1244,7 +1244,7 @@ def _django_effective_class_attribute(chain, name):
 
 
 def _class_has_binding(owner, name):
-    from .credential_role_scope_bindings import binding_occurrences
+    from .credential_role_constructor_provider import binding_occurrences
 
     return bool(binding_occurrences(owner.body, name))
 
@@ -1282,7 +1282,7 @@ def _django_secret_field_hook(index, path, method):
 
 
 def _django_hash_imports(index, path, imports):
-    from .credential_role_scope_bindings import binding_occurrences
+    from .credential_role_constructor_provider import binding_occurrences
 
     for name, canonical in (
         ("identify_hasher", "django.contrib.auth.hashers.identify_hasher"),
@@ -1366,7 +1366,7 @@ def _django_test_function(index, path, assignment):
         arg.arg == "client" and arg is not args[0] for arg in current.args.kwonlyargs
     ):
         return None
-    from .credential_role_scope_bindings import binding_occurrences
+    from .credential_role_constructor_provider import binding_occurrences
 
     if binding_occurrences(current.body, "client"):
         return None
@@ -1640,7 +1640,7 @@ def django_test_secret_evidence(index, path, line, value):
         return _django_unknown(
             "declaration is not inside a resolved pytest-django test with canonical client fixture"
         )
-    from .credential_role_scope_bindings import binding_occurrences
+    from .credential_role_constructor_provider import binding_occurrences
 
     if binding_occurrences(function.body, secret) != [assignment.targets[0]]:
         return _django_unknown("credential binding is reassigned or shadowed")
@@ -1744,7 +1744,7 @@ def _django_factory_call(index, path, function):
 def _django_model_witness(
     index, path, function, secret, factory_call, app_label, model_name
 ):
-    from .credential_role_scope_bindings import binding_occurrences
+    from .credential_role_constructor_provider import binding_occurrences
 
     app_binding = next(
         (
@@ -1843,7 +1843,7 @@ def _django_literal_class_projection(index, path, chain, node):
     parent = index["source"].parents[path].get(id(node))
     if not isinstance(parent, ast.Attribute) or parent.value is not node:
         return False
-    from .credential_role_scope_bindings import binding_occurrences
+    from .credential_role_constructor_provider import binding_occurrences
 
     for _, _, owner in chain:
         bindings = binding_occurrences(owner.body, parent.attr)
@@ -2943,7 +2943,7 @@ def _jwt_timestamp_helper_is_source_bound(helper, source):
 
 
 def _jwt_captured_import_binding_is_stable(source, name):
-    from .credential_role_scope_bindings import binding_occurrences
+    from .credential_role_constructor_provider import binding_occurrences
 
     imports = [
         item
@@ -3426,7 +3426,7 @@ def application_test_index(
     root, modules, source_bytes, inventory, configuration_bytes=None
 ):
     """Reuse the captured snapshot graph for application credential role slices."""
-    from .credential_role_sources import SourceSnapshotIndex
+    from .credential_role_constructor_provider import SourceSnapshotIndex
 
     source = SourceSnapshotIndex(root, modules, source_bytes, inventory)
     if not source.bounded:
@@ -3462,7 +3462,7 @@ def application_test_index(
 
 def _app_expression_name(index, path, node, function=None):
     """Resolve only the requested binding; unrelated shadowing is irrelevant."""
-    from .credential_role_scope_bindings import binding_occurrences
+    from .credential_role_constructor_provider import binding_occurrences
 
     if isinstance(node, ast.Attribute):
         base = _app_expression_name(index, path, node.value, function)
@@ -3498,7 +3498,7 @@ def _app_expression_name(index, path, node, function=None):
 
 
 def _app_local_assignment(function, name):
-    from .credential_role_scope_bindings import binding_occurrences
+    from .credential_role_constructor_provider import binding_occurrences
 
     bindings = binding_occurrences(function.body, name)
     rows = [
@@ -3943,7 +3943,7 @@ def _app_drf_enrollment(index, path, function, owner, secret):
         != "rest_framework.test.APITestCase"
     ):
         return None
-    from .credential_role_scope_bindings import binding_occurrences
+    from .credential_role_constructor_provider import binding_occurrences
 
     if any(
         binding_occurrences(owner.body, name)
@@ -4014,7 +4014,7 @@ def _app_source_function(index, path, expression, function=None):
     target, tree = _django_mod(index, module)
     if tree is None:
         return None
-    from .credential_role_scope_bindings import binding_occurrences
+    from .credential_role_constructor_provider import binding_occurrences
 
     rows = binding_occurrences(tree.body, name)
     return (
@@ -4174,7 +4174,7 @@ def _app_source_symbol(index, path, expression, function=None, seen=()):
     """Resolve captured imports/reexports to one exact module declaration."""
     canonical = _app_expression_name(index, path, expression, function)
     if canonical is None and isinstance(expression, ast.Name):
-        from .credential_role_scope_bindings import binding_occurrences
+        from .credential_role_constructor_provider import binding_occurrences
 
         if function is not None and binding_occurrences(function.body, expression.id):
             return None
@@ -4185,7 +4185,7 @@ def _app_source_symbol(index, path, expression, function=None, seen=()):
     target, tree = _django_mod(index, module)
     if tree is None:
         return None
-    from .credential_role_scope_bindings import binding_occurrences
+    from .credential_role_constructor_provider import binding_occurrences
 
     rows = binding_occurrences(tree.body, name)
     if len(rows) != 1:
@@ -4201,7 +4201,7 @@ def _app_source_symbol(index, path, expression, function=None, seen=()):
 
 
 def _app_effective_method(chain, name, decorators=()):
-    from .credential_role_scope_bindings import effective_method
+    from .credential_role_constructor_provider import effective_method
 
     return effective_method(chain, name, allowed_decorators=decorators)
 
@@ -4584,7 +4584,7 @@ def _app_json_encoder_init(function):
     if function.args.kwarg is None:
         return False
     kwargs = function.args.kwarg.arg
-    from .credential_role_scope_bindings import binding_occurrences
+    from .credential_role_constructor_provider import binding_occurrences
 
     if binding_occurrences(function.body, kwargs):
         return False

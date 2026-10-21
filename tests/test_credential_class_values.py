@@ -3,7 +3,7 @@ import hashlib
 
 import pytest
 
-from factoryline.credential_class_values import member_reads, source_member
+from factoryline.credential_role_constructor_provider import member_reads, source_member
 
 
 def _graph(tmp_path, sources):
@@ -338,10 +338,10 @@ def test_capability_memo_rejects_transitive_helper_code_mutation(
     tmp_path, monkeypatch, target
 ):
     from factoryline import review_audits as audit
-    from factoryline import credential_role_scope_bindings as identity
-    from factoryline.credential_role_chain_memo import ClassChainMemo
-    from factoryline.credential_role_sources import SourceSnapshotIndex
-    from factoryline.credential_role_use_audit import _capability_uses
+    from factoryline import credential_role_constructor_provider as identity
+    from factoryline.credential_role_constructor_provider import ClassChainMemo
+    from factoryline.credential_role_constructor_provider import SourceSnapshotIndex
+    from factoryline.credential_role_method_use_getter_audit import _capability_uses
 
     path = tmp_path / "client.py"
     data = b'class Candidate:\n    ACCESS_TOKEN_URL = "endpoint"\nopaque(Candidate)\n'

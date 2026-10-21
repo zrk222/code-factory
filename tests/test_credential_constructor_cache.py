@@ -3,28 +3,28 @@
 import pytest
 from test_credential_role_decorator_boundaries import setup
 from factoryline import credential_role_constructor_provider as provider
-from factoryline import credential_role_constructor_provider_provenance as type_effects
+from factoryline import credential_role_constructor_provider as type_effects
 from factoryline import provider_mutations
-from factoryline.credential_role_bindings import class_chain
-from factoryline.credential_role_constructor_flow import constructor_bindings_inert
+from factoryline.credential_role_constructor_provider import class_chain
+from factoryline.credential_role_constructor_provider import constructor_bindings_inert
 from factoryline import credential_endpoint_admission as httpx
 from factoryline import credential_endpoint_admission as assertions
-from factoryline import credential_role_scope_bindings as roles
+from factoryline import credential_role_constructor_provider as roles
 from factoryline import credential_endpoint_admission as routers
 from factoryline import review_audits as audit
 import ast
 from types import SimpleNamespace
-from factoryline import credential_role_adapter_selection as selection
+from factoryline import credential_role_paths as selection
 import hashlib
-from factoryline.credential_role_bindings import auth_constructor_password
+from factoryline.credential_role_constructor_provider import auth_constructor_password
 from factoryline.credential_role_paths import session_request_context
-from factoryline.credential_role_sources import (
+from factoryline.credential_role_constructor_provider import (
     SourceSnapshotIndex,
     source_session_factories,
 )
-from factoryline.credential_role_chain_memo import ClassChainMemo
-from factoryline.credential_role_constructor_flow import constructor_url_hops
-from factoryline.credential_role_sources import declaration_fact
+from factoryline.credential_role_constructor_provider import ClassChainMemo
+from factoryline.credential_role_constructor_provider import constructor_url_hops
+from factoryline.credential_role_constructor_provider import declaration_fact
 from factoryline.review_integrity import bind_source_call
 
 SOURCE = "class Client: pass\nclass Adapter:\n    client_class = Client\n"

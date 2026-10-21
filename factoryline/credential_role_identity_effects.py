@@ -5,19 +5,19 @@ import ast
 from collections.abc import Callable, Mapping
 
 from dataclasses import dataclass, field as _dataclass_field
-from .credential_role_scope_bindings import resolve_class
+from .credential_role_constructor_provider import resolve_class
 
-from .credential_role_scope_bindings import binding_occurrences
+from .credential_role_constructor_provider import binding_occurrences
 
-from . import credential_role_scope_bindings as _class_binding
+from . import credential_role_constructor_provider as _class_binding
 
 from . import credential_role_identity_effects as _identity_effects
 
-from . import credential_role_scope_bindings as _scope_bindings
+from . import credential_role_constructor_provider as _scope_bindings
 
-from .credential_role_scope_bindings import effective_method
+from .credential_role_constructor_provider import effective_method
 
-from .credential_role_sources import SourceSnapshotIndex
+from .credential_role_constructor_provider import SourceSnapshotIndex
 
 
 @dataclass(frozen=True)
@@ -822,7 +822,7 @@ def _module_binding_is_exact(class_ref, expression, path, index, imports, classe
 
 
 def _class_chain(index, class_ref, imports, classes, audit):
-    from .credential_role_bindings import class_chain
+    from .credential_role_constructor_provider import class_chain
 
     return class_chain(index, class_ref[0], class_ref[1], imports, classes, audit)
 

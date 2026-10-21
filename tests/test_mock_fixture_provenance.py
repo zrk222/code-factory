@@ -1139,7 +1139,7 @@ def test_application_binding_helpers_track_runtime_replacements(monkeypatch, nam
 
 
 def test_application_direct_returns_use_captured_source_index(tmp_path):
-    from factoryline.credential_role_sources import SourceSnapshotIndex
+    from factoryline.credential_role_constructor_provider import SourceSnapshotIndex
     from factoryline.mock_fixture_provenance import _app_direct_returns
 
     path = tmp_path / "factory.py"
@@ -1185,7 +1185,7 @@ def _metadata143_projection(
     tmp_path, text, member, owner=None, extras=None, stale=False
 ):
     from factoryline import review_audits as audit
-    from factoryline.credential_role_sources import (
+    from factoryline.credential_role_constructor_provider import (
         SourceSnapshotIndex,
         PresentationRoleIndex,
     )
@@ -1490,7 +1490,7 @@ def test_metadata143_rehashed_invalid_witness_restores_critical_alert(
 def test_metadata143_runtime_projection_method_replacement_invalidates_cache(
     tmp_path, monkeypatch, member
 ):
-    from factoryline import credential_role_sources as roles
+    from factoryline import credential_role_constructor_provider as roles
 
     _write(
         tmp_path,
@@ -1518,7 +1518,7 @@ def test_metadata143_runtime_projection_method_replacement_invalidates_cache(
 def test_metadata143_shared_source_method_code_change_invalidates_cache(
     tmp_path, monkeypatch, owner, member
 ):
-    from factoryline import credential_role_sources as roles
+    from factoryline import credential_role_constructor_provider as roles
 
     _write(tmp_path, "sample.py", _METADATA143_MASK)
     assert security_scan(tmp_path).get("primitive_observations")
