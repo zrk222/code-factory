@@ -274,11 +274,16 @@ def _inert_definition(node):
     ]
     annotations.extend(arg.annotation for arg in (args.vararg, args.kwarg) if arg)
     return (
-        not node.decorator_list
+        not getattr(node, "decorator_list", ())
         and not getattr(node, "type_params", ())
         and all(
             _inert_literal(value)[0]
-            for value in (*args.defaults, *args.kw_defaults, *annotations, node.returns)
+            for value in (
+                *args.defaults,
+                *args.kw_defaults,
+                *annotations,
+                getattr(node, "returns", None),
+            )
         )
     )
 
@@ -1449,8 +1454,9 @@ def _run_inert_helper(helper, context, helpers):
 
 
 def _inert_expression(node, known, helpers, context):
-    if isinstance(node, ast.GeneratorExp) and _inert_empty_generator_creation(
-        node, known, context
+    if (isinstance(node, ast.Lambda) and _inert_definition(node)) or (
+        isinstance(node, ast.GeneratorExp)
+        and _inert_empty_generator_creation(node, known, context)
     ):
         return "NORMAL", None
     if not isinstance(node, ast.Call):

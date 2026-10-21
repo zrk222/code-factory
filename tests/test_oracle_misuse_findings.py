@@ -10,6 +10,33 @@ from factoryline.review_audits import security_scan
 
 
 @pytest.mark.parametrize(
+    "expression,expected",
+    [
+        ("lambda: callback()", "QUALITY_HOLLOW_TEST"),
+        ("lambda: 1 / 0", "QUALITY_HOLLOW_TEST"),
+        ("lambda: missing.attribute", "QUALITY_HOLLOW_TEST"),
+        ("lambda value=3: callback(value)", "QUALITY_HOLLOW_TEST"),
+        ("lambda *, value=3: callback(value)", "QUALITY_HOLLOW_TEST"),
+        ("lambda *, value: callback(value)", "QUALITY_HOLLOW_TEST"),
+        ("lambda value=callback(): value", "QUALITY_UNKNOWN_TEST_ORACLE"),
+        ("lambda *, value=callback(): value", "QUALITY_UNKNOWN_TEST_ORACLE"),
+        ("lambda value=missing: value", "QUALITY_UNKNOWN_TEST_ORACLE"),
+        ("lambda value=1 / 0: value", "QUALITY_UNKNOWN_TEST_ORACLE"),
+        ("(lambda: callback())()", "QUALITY_UNKNOWN_TEST_ORACLE"),
+        ("(lambda: 1 / 0)()", "QUALITY_UNKNOWN_TEST_ORACLE"),
+    ],
+)
+def test_unused_lambda_creation_checks_only_eager_defaults(
+    tmp_path, expression, expected
+):
+    (tmp_path / "test_lambda.py").write_text(
+        f"def test_behavior():\n    {expression}\n", encoding="utf-8"
+    )
+    report = security_scan(tmp_path, cache_enabled=False)
+    assert report["finding_counts"] == {expected: 1}
+
+
+@pytest.mark.parametrize(
     ("assertion", "reason"),
     [
         (
