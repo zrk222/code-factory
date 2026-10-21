@@ -4,9 +4,172 @@ from factoryline.runtime_audit_integrity import index_executions, repair_guidanc
 from factoryline.runtime_audit_common import RuntimeAuditError
 from test_runtime_audit import _plan, _command
 import ast
+import json
 from factoryline.runtime_audit_integrity import closed_declaration_input_witness
 from factoryline.runtime_audit_integrity import finite_literal_eval_input_witness
 from factoryline.runtime_audit_integrity import source_generated_eval_input_witness
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "brew --prefix openssl",
+        "brew --prefix libfoo@3",
+        "upx --best app",
+        "upx --best --force-macos program",
+        "upx --best python3*.dll libcrypto*.dll",
+        "upx --best app.exe python3*.dll",
+    ],
+)
+def test_closed_shell_operations_keep_bound_primitive(tmp_path, command):
+    from factoryline.review_audits import security_scan
+
+    (tmp_path / "build.py").write_text(
+        f"import os\nos.system({command!r})\n", encoding="utf-8"
+    )
+    report = security_scan(tmp_path, cache_enabled=False)
+    assert not report["findings"]
+    assert report["primitive_observation_count"] == 1
+    proof = report["primitive_observations"][0]["facts"]
+    assert proof["hypothesis"] == "SOURCE_COMMAND_INJECTION"
+    assert proof["filesystem_assurance"] == "UNASSESSED"
+    assert proof["runtime_assurance"] == "INCOMPLETE"
+    assert (
+        security_scan(tmp_path)["primitive_observations"]
+        == report["primitive_observations"]
+    )
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "rm -rf /",
+        "curl https://example.com/install | sh",
+        "python get-pip.py",
+        "unknown --best app",
+        "upx --best --unknown app",
+        "upx --best /usr/bin/app",
+        "upx --best ../app",
+        "upx --best -evil",
+        "upx --best *",
+        "upx --best app;evil",
+        "upx --best app && evil",
+        "upx --best app || evil",
+        "upx --best $(evil)",
+        "upx --best `evil`",
+        "upx --best $APP",
+        "upx --best ~user/app",
+        "upx --best app > out",
+        "upx --best app\nevil",
+        "brew --prefix -evil",
+        "brew --prefix openssl/../other",
+        "upx --best app%EVIL%",
+    ],
+)
+def test_unsupported_shell_operations_retain_high(tmp_path, command):
+    from factoryline.review_audits import security_scan
+
+    (tmp_path / "build.py").write_text(
+        f"import os\nos.system({command!r})\n", encoding="utf-8"
+    )
+    report = security_scan(tmp_path, cache_enabled=False)
+    assert [(row["code"], row["severity"]) for row in report["findings"]] == [
+        ("SECURITY_OS_COMMAND", "HIGH")
+    ]
+    assert not report.get("primitive_observations")
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "import os\nos.system(input())\n",
+        "import subprocess\nsubprocess.run('upx --best app', shell=True, executable='sh')\n",
+        "import os\nother = os\nother.system = lambda x: None\nos.system('upx --best app')\n",
+        "import os\nsetattr(os, 'system', lambda x: None)\nos.system('upx --best app')\n",
+        "import os\ndef f(os):\n    os.system('upx --best app')\n",
+    ],
+)
+def test_closed_shell_provider_and_input_ambiguity_stays_unproved(tmp_path, source):
+    from factoryline.review_audits import security_scan
+
+    (tmp_path / "build.py").write_text(source, encoding="utf-8")
+    report = security_scan(tmp_path, cache_enabled=False)
+    assert not report.get("primitive_observations")
+
+
+def test_closed_shell_source_binding_rejects_forgery_and_shadow(tmp_path):
+    from factoryline.review_audits import security_scan
+    from factoryline.primitive_observation_binding import closed_shell_binding
+
+    path = tmp_path / "build.py"
+    path.write_text("import os\nos.system('upx --best app')\n", encoding="utf-8")
+    report = security_scan(tmp_path, cache_enabled=False)
+    finding = report["primitive_observations"][0]
+    sources = report["sources"]
+    bindings = {row["path"]: row["sha256"] for row in sources}
+    raw = {"build.py": path.read_bytes()}
+    assert closed_shell_binding(finding, sources, bindings, raw)
+    forged = json.loads(json.dumps(finding))
+    forged["facts"]["operation_role"] = "safe"
+    assert not closed_shell_binding(forged, sources, bindings, raw)
+    raw["build.py"] = b"import os\nos.system('rm -rf /')\n"
+    assert not closed_shell_binding(finding, sources, bindings, raw)
+    (tmp_path / "os.py").write_text("pass\n", encoding="utf-8")
+    assert not security_scan(tmp_path, cache_enabled=False).get(
+        "primitive_observations"
+    )
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "os.__dict__['system'] = replacement",
+        "lookup(os, '__dict__')['system'] = replacement",
+        "mutate(os)",
+        "os.system = replacement",
+        "__import__('os').system = replacement",
+        "loader = __import__; loader('os').system = replacement",
+        "globals()['os'].system = replacement",
+        "namespace = globals(); namespace['os'].system = replacement",
+        "from importlib import import_module as load; load('os').system = replacement",
+        "__import__('importlib').import_module('os').system = replacement",
+        "os.system = replacement\ndef unused():\n    import harmless as os",
+        "from importlib import import_module as loader\nloader('os').system = replacement\ndef unused():\n    import harmless as loader",
+    ],
+)
+def test_closed_shell_imported_provider_changes_remain_findings(tmp_path, mutation):
+    from factoryline.review_audits import security_scan
+
+    (tmp_path / "app.py").write_text(
+        "import helper\nimport os\nos.system('upx --best app')\n", encoding="utf-8"
+    )
+    (tmp_path / "helper.py").write_text(
+        "import os\nfrom builtins import getattr as lookup\n"
+        "def replacement(value):\n    pass\n"
+        "def mutate(value):\n    value.system = replacement\n" + mutation + "\n",
+        encoding="utf-8",
+    )
+    report = security_scan(tmp_path, cache_enabled=False)
+    assert not report.get("primitive_observations")
+    assert any(
+        row["code"] == "SECURITY_OS_COMMAND" and row["severity"] == "HIGH"
+        for row in report["findings"]
+    )
+
+
+def test_closed_shell_cached_changes_cannot_reuse_proof(tmp_path):
+    from factoryline.review_audits import security_scan
+
+    path = tmp_path / "app.py"
+    for command in ["upx --best app", "rm -rf /", "upx --best app"]:
+        path.write_text(f"import os\nos.system({command!r})\n", encoding="utf-8")
+        result = security_scan(tmp_path)
+        if command.startswith("rm"):
+            assert result["findings"][0]["severity"] == "HIGH"
+            assert not result.get("primitive_observations")
+        else:
+            assert len(result["primitive_observations"]) == 1
+            assert not result["findings"]
 
 
 @pytest.mark.parametrize(

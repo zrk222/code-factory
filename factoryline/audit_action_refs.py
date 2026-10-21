@@ -400,7 +400,10 @@ def _captured_application_source_bytes(workspace, findings, bindings, source_byt
         finding.get("path")
         for finding in findings
         if finding.get("facts", {}).get("disposition")
-        == "TEST_OWNED_APPLICATION_CREDENTIAL"
+        in {
+            "TEST_OWNED_APPLICATION_CREDENTIAL",
+            "PROVEN_CLOSED_OPERATION_COMMAND_SYNTAX",
+        }
     }
     for finding in findings:
         evidence = finding.get("facts", {}).get("fixture_evidence", {})
@@ -416,7 +419,10 @@ def _captured_application_source_bytes(workspace, findings, bindings, source_byt
         finding
         for finding in findings
         if finding.get("facts", {}).get("disposition")
-        == "PROVEN_LOCAL_CRYPTO_TEST_PRIMITIVE"
+        in {
+            "PROVEN_LOCAL_CRYPTO_TEST_PRIMITIVE",
+            "PROVEN_CLOSED_OPERATION_COMMAND_SYNTAX",
+        }
     ]
     if jwt_findings:
         # Revalidation uses the complete current source inventory, including

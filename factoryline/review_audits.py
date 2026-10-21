@@ -34,6 +34,7 @@ from .audit_action_refs import (
     _security_scan_state as _security_scan_state,
     _security_scan_action_summary as _security_scan_action_summary,
 )
+from .finite_capture import closed_shell_finding, shell_execution_calls
 from .deep_audit_io import local_file
 from .ops_telemetry import _measure_hash, _measure_parse
 from .runtime_audit_common import (
@@ -1430,13 +1431,7 @@ def _security_call_finding(
         code = "SECURITY_OS_COMMAND"
         message = "os.system invokes a shell and should be replaced with an argv-based process boundary."
         facts = {}
-    elif call in {
-        "subprocess.run",
-        "subprocess.Popen",
-        "subprocess.call",
-        "subprocess.check_call",
-        "subprocess.check_output",
-    }:
+    elif call in shell_execution_calls():
         if not shell_execution_enabled(node):
             return None
         code = "SECURITY_SHELL_COMMAND"
@@ -1469,7 +1464,9 @@ def _security_call_finding(
         return tls_finding(
             call, relative, node, getattr(node, "_security_configuration_aliases", {})
         )
-    return _security_finding(code, relative, node, message, "HIGH", **facts)
+    return closed_shell_finding(call, relative, node) or _security_finding(
+        code, relative, node, message, "HIGH", **facts
+    )
 
 
 def _bare_except_finding(

@@ -5,6 +5,443 @@ import hashlib
 from collections import defaultdict
 
 
+def shell_execution_calls():
+    """Return the shared canonical process primitives modeled by this scanner."""
+    return (
+        "os.system subprocess.run subprocess.Popen subprocess.call "
+        "subprocess.check_call subprocess.check_output"
+    ).split()
+
+
+def _closed_shell_operation(command):
+    """Recognize simple non-interpreter operations, never arbitrary shell safety."""
+    import re
+
+    if not isinstance(command, str) or not re.fullmatch(
+        r"[A-Za-z0-9_.@+* -]{1,512}", command
+    ):
+        return None
+    words = command.split()
+    if len(words) == 3 and words[:2] == ["brew", "--prefix"]:
+        if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.@+-]*", words[2]):
+            return "package_prefix_query"
+    if len(words) >= 3 and words[:2] == ["upx", "--best"]:
+        targets = words[3:] if words[2] == "--force-macos" else words[2:]
+        if targets and all(
+            re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.+-]*(?:\*[A-Za-z0-9_.+-]+)?", word)
+            for word in targets
+        ):
+            return "executable_packing"
+    return None
+
+
+def _closed_shell_call_role(call, call_name):
+    """Accept one literal argument and explicit supported shell call options."""
+    if len(call.args) != 1 or not isinstance(call.args[0], ast.Constant):
+        return None
+    if any(kw.arg is None for kw in call.keywords):
+        return None
+    if call_name == "os.system":
+        if call.keywords:
+            return None
+    elif not any(
+        kw.arg == "shell"
+        and isinstance(kw.value, ast.Constant)
+        and kw.value.value is True
+        for kw in call.keywords
+    ):
+        return None
+    # An overridden executable could use the same arguments for different effects.
+    if any(
+        kw.arg
+        not in {
+            "shell",
+            "text",
+            "encoding",
+            "errors",
+            "capture_output",
+            "check",
+            "timeout",
+        }
+        or not isinstance(kw.value, ast.Constant)
+        for kw in call.keywords
+    ):
+        return None
+    return _closed_shell_operation(call.args[0].value)
+
+
+def _closed_shell_provider_mutated(node, head, supported):
+    """Reject source-visible provider writes, reflection and monkey patches."""
+    if isinstance(node, ast.ImportFrom) and any(
+        alias.name == "*" for alias in node.names
+    ):
+        return True
+    if (
+        isinstance(node, ast.Name)
+        and node.id == head
+        and isinstance(node.ctx, (ast.Store, ast.Del))
+    ):
+        return True
+    if isinstance(node, ast.arg) and node.arg == head:
+        return True
+    if (
+        isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+        and node.name == head
+    ):
+        return True
+    if isinstance(node, ast.Attribute) and isinstance(node.ctx, (ast.Store, ast.Del)):
+        base = node.value
+        while isinstance(base, ast.Attribute):
+            base = base.value
+        if (isinstance(base, ast.Name) and base.id == head) or node.attr in {
+            name.rsplit(".", 1)[-1] for name in supported
+        }:
+            return True
+    if isinstance(node, ast.Call) and (
+        node.func.id
+        if isinstance(node.func, ast.Name)
+        else getattr(node.func, "attr", "")
+    ) in {
+        "eval",
+        "exec",
+        "globals",
+        "locals",
+        "vars",
+        "setattr",
+        "delattr",
+        "getattr",
+        "__import__",
+        "patch",
+    }:
+        return True
+    return False
+
+
+def _closed_shell_provider(tree, call, call_name, supported):
+    """Bind a simple process call to one stable module-level provider import."""
+    func = call.func
+    name = (
+        func.id
+        if isinstance(func, ast.Name)
+        else (
+            f"{func.value.id}.{func.attr}"
+            if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name)
+            else ""
+        )
+    )
+    head = name.partition(".")[0]
+    imports = []
+    for statement in tree.body:
+        if isinstance(statement, ast.Import):
+            imports.extend(
+                (alias.asname or alias.name.split(".")[0], alias.name)
+                for alias in statement.names
+            )
+        elif isinstance(statement, ast.ImportFrom) and not statement.level:
+            imports.extend(
+                (alias.asname or alias.name, f"{statement.module}.{alias.name}")
+                for alias in statement.names
+            )
+    origins = [origin for alias, origin in imports if alias == head]
+    if len(origins) != 1 or origins[0] + name[len(head) :] != call_name:
+        return False
+    if not _closed_shell_namespace(tree, head):
+        return False
+    return not any(
+        _closed_shell_provider_mutated(node, head, supported) for node in ast.walk(tree)
+    )
+
+
+def _closed_shell_namespace(tree, head):
+    """Reject capability escapes, namespace access and aliased reflection."""
+    parents = {
+        child: parent
+        for parent in ast.walk(tree)
+        for child in ast.iter_child_nodes(parent)
+    }
+    reflective = {
+        "eval",
+        "exec",
+        "globals",
+        "locals",
+        "vars",
+        "setattr",
+        "delattr",
+        "getattr",
+        "__import__",
+    }
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Name)
+            and node.id == head
+            and isinstance(node.ctx, ast.Load)
+        ):
+            if not isinstance(parents.get(node), ast.Attribute):
+                return False
+        if isinstance(node, ast.Attribute) and node.attr.startswith("__"):
+            base = node.value
+            while isinstance(base, ast.Attribute):
+                base = base.value
+            if isinstance(base, ast.Name) and base.id == head:
+                return False
+        if isinstance(node, ast.ImportFrom) and node.module in {
+            "builtins",
+            "__builtin__",
+        }:
+            if any(alias.name in reflective for alias in node.names):
+                return False
+    return True
+
+
+def _shell_source_provider_clear(raw, provider):
+    """Reuse provider mutation/escape indexing across captured helper modules."""
+    from . import review_audits as audit
+
+    try:
+        tree = ast.parse(raw)
+    except (SyntaxError, ValueError, RecursionError):
+        return False
+    nodes = list(ast.walk(tree))
+    aliases = _shell_import_aliases(nodes, audit, provider)
+    if aliases is None:
+        return False
+    parents = {
+        id(child): parent for parent in nodes for child in ast.iter_child_nodes(parent)
+    }
+    # Index maximal provider expressions: passing os.environ does not expose os.
+    maximal = [
+        node
+        for node in nodes
+        if not (
+            isinstance(node, (ast.Name, ast.Attribute))
+            and isinstance(parents.get(id(node)), ast.Attribute)
+            and parents[id(node)].value is node
+        )
+    ]
+    mutations = finite_provider_mutation_index(maximal, aliases, audit, parents)
+    if _shell_dynamic_provider_access(
+        nodes, aliases, audit, parents, provider
+    ) or not _shell_namespace_queries_closed(nodes, aliases, audit, parents, provider):
+        return False
+    leaves = (
+        {"system"}
+        if provider == "os"
+        else {"run", "Popen", "call", "check_call", "check_output"}
+    )
+    if any(
+        (path == provider and attribute in leaves | {"*"})
+        or path.startswith(provider + ".")
+        and path.split(".")[1] in leaves
+        for path, attribute in mutations
+    ):
+        return False
+    for node in nodes:
+        if isinstance(node, ast.Attribute) and node.attr.startswith("__"):
+            origin = audit._resolved_ast_name(node, aliases)
+            if origin.startswith(provider + "."):
+                return False
+        if isinstance(node, ast.Attribute) and node.attr == "modules":
+            if any(isinstance(n, ast.Constant) and n.value == provider for n in nodes):
+                return False
+    return True
+
+
+def _shell_import_aliases(nodes, audit, provider):
+    """Preserve imported capability origins instead of flat last-binding wins."""
+    origins = defaultdict(set)
+    for node in nodes:
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                origins[alias.asname or alias.name.split(".")[0]].add(alias.name)
+        elif isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                origins[alias.asname or alias.name].add(
+                    "." * node.level + (node.module or "") + "." + alias.name
+                )
+    protected = {provider, "builtins", "importlib"}
+    if any(
+        len(values) > 1 and any(value.split(".")[0] in protected for value in values)
+        for values in origins.values()
+    ):
+        return None
+    return audit._security_aliases(nodes)
+
+
+def _shell_dynamic_provider_access(nodes, aliases, audit, parents, provider):
+    """Reject dynamic provider lookup and importer capability escapes."""
+    importers = {"__import__", "builtins.__import__", "importlib.import_module"}
+    for node in nodes:
+        if not isinstance(node, (ast.Name, ast.Attribute)):
+            continue
+        if audit._resolved_ast_name(node, aliases) not in importers:
+            continue
+        parent = parents.get(id(node))
+        if not isinstance(parent, ast.Call) or parent.func is not node:
+            return True
+        if not parent.args or not isinstance(parent.args[0], ast.Constant):
+            return True
+        module = parent.args[0].value
+        if not isinstance(module, str) or module.split(".")[0] == provider:
+            return True
+        result_use = parents.get(id(parent))
+        if not (
+            isinstance(result_use, ast.Attribute)
+            and result_use.attr == "__file__"
+            and isinstance(result_use.ctx, ast.Load)
+        ):
+            return True
+    return False
+
+
+def _shell_namespace_queries_closed(nodes, aliases, audit, parents, provider):
+    """Allow namespace presence queries without exposing mutable namespace maps."""
+    for node in nodes:
+        if not isinstance(node, (ast.Name, ast.Attribute)):
+            continue
+        canonical = audit._resolved_ast_name(node, aliases).removeprefix("builtins.")
+        if canonical not in {"globals", "locals", "vars"}:
+            continue
+        call = parents.get(id(node))
+        comparison = parents.get(id(call))
+        if not (
+            isinstance(call, ast.Call)
+            and call.func is node
+            and not call.args
+            and not call.keywords
+            and isinstance(comparison, ast.Compare)
+            and len(comparison.ops) == 1
+            and isinstance(comparison.ops[0], (ast.In, ast.NotIn))
+            and comparison.comparators == [call]
+            and isinstance(comparison.left, ast.Constant)
+            and isinstance(comparison.left.value, str)
+            and comparison.left.value != provider
+        ):
+            return False
+    return True
+
+
+def closed_shell_workspace(sources, provider):
+    """Hash the complete consulted source inventory after provider checks."""
+    import json
+
+    if not sources or any(
+        path.rsplit("/", 1)[-1] in {provider + ".py", "__init__.py"}
+        and provider in path.replace(".py", "").split("/")
+        for path in sources
+    ):
+        return None
+    if not all(
+        isinstance(raw, bytes) and _shell_source_provider_clear(raw, provider)
+        for raw in sources.values()
+    ):
+        return None
+    return hashlib.sha256(
+        json.dumps(
+            sorted(
+                (path, hashlib.sha256(raw).hexdigest()) for path, raw in sources.items()
+            ),
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
+
+
+def closed_shell_operation_witness(raw, relative, span, call_name):
+    """Reconstruct a literal shell-injection classification from captured bytes."""
+    if not isinstance(raw, bytes) or len(raw) > 1_000_000:
+        return {}
+    supported = shell_execution_calls()
+    if call_name not in supported:
+        return {}
+    try:
+        tree = ast.parse(raw)
+    except (SyntaxError, ValueError, RecursionError):
+        return {}
+    calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and [
+            getattr(node, key, None)
+            for key in ("lineno", "col_offset", "end_lineno", "end_col_offset")
+        ]
+        == span
+    ]
+    if len(calls) != 1:
+        return {}
+    call = calls[0]
+    role = _closed_shell_call_role(call, call_name)
+    if role is None or not _closed_shell_provider(tree, call, call_name, supported):
+        return {}
+    command = call.args[0].value
+    return {
+        "schema": "factory.closed-shell-operation.v1",
+        "disposition": "PROVEN_CLOSED_OPERATION_COMMAND_SYNTAX",
+        "source_path": relative,
+        "source_sha256": hashlib.sha256(raw).hexdigest(),
+        "call_span": span,
+        "call": call_name,
+        "command_sha256": hashlib.sha256(command.encode()).hexdigest(),
+        "operation_role": role,
+        "hypothesis": "SOURCE_COMMAND_INJECTION",
+        "input_effect": "CLOSED_LITERAL_COMMAND_SYNTAX",
+        "operational_effects": "LOCAL_ARTIFACT_MUTATION"
+        if role == "executable_packing"
+        else "METADATA_QUERY",
+        "runtime_assurance": "INCOMPLETE",
+        "filesystem_assurance": "UNASSESSED",
+        "executable_provenance": "UNASSESSED",
+        "target_execution": "not_performed",
+    }
+
+
+def closed_shell_finding(call_name, relative, node):
+    """Keep supported fixed-operation primitives separate from injection defects."""
+    from . import review_audits as audit
+
+    if call_name not in shell_execution_calls():
+        return None
+    module = audit.integrity._security_module_scope(
+        getattr(node, "_security_lexical_scope", None)
+    )
+    context = getattr(module, "_security_source_context", None)
+    if not isinstance(context, tuple) or len(context) != 2:
+        return None
+    root, sources = context
+    raw = sources.get(root / relative)
+    provider = call_name.split(".")[0]
+    if any(
+        path.relative_to(root).parts[0] in {provider, provider + ".py"}
+        for path in sources
+    ):
+        return None
+    span = [
+        getattr(node, key, None)
+        for key in ("lineno", "col_offset", "end_lineno", "end_col_offset")
+    ]
+    proof = closed_shell_operation_witness(raw, relative, span, call_name)
+    if not proof or proof["source_sha256"] != getattr(
+        module, "_oracle_source_sha256", None
+    ):
+        return None
+    captured = {
+        path.relative_to(root).as_posix(): data
+        for path, data in sources.items()
+        if path.suffix == ".py"
+    }
+    inventory = closed_shell_workspace(captured, provider)
+    if inventory is None:
+        return None
+    proof["workspace_sources_sha256"] = inventory
+    return audit._security_finding(
+        "SECURITY_OS_COMMAND" if call_name == "os.system" else "SECURITY_SHELL_COMMAND",
+        relative,
+        node,
+        "Fixed supported command syntax has no source injection input; executable, filesystem and runtime safety remain unassessed.",
+        "INFO",
+        **proof,
+    )
+
+
 def finite_domain_reference_allowed(
     path, use, tail, capture_path, capture_name, capture, parents
 ):

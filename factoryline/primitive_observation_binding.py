@@ -107,6 +107,35 @@ def fixed_primitive_binding(finding, sources, bindings, integrity, source_bytes=
     )
 
 
+def closed_shell_binding(finding, sources, bindings, source_bytes):
+    """Reject stale, forged, shadowed or unsupported command classifications."""
+    from .finite_capture import closed_shell_operation_witness, closed_shell_workspace
+
+    facts = finding.get("facts", {})
+    relative = finding.get("path")
+    call = facts.get("call", "")
+    if not all(isinstance(value, str) for value in (relative, call)):
+        return False
+    if not isinstance(source_bytes, dict):
+        return False
+    captured = _jwt_bound_source_inventory(source_bytes, bindings)
+    if captured is None:
+        return False
+    raw = captured.get(Path(relative))
+    code = "SECURITY_OS_COMMAND" if call == "os.system" else "SECURITY_SHELL_COMMAND"
+    if (finding.get("code"), finding.get("severity")) != (code, "INFO"):
+        return False
+    proof = closed_shell_operation_witness(raw, relative, facts.get("call_span"), call)
+    inventory = closed_shell_workspace(source_bytes, call.split(".")[0])
+    if not proof or inventory is None:
+        return False
+    proof["workspace_sources_sha256"] = inventory
+    return bool(
+        facts == proof
+        and facts["call_span"][:2] == [finding.get("line"), finding.get("column")]
+    )
+
+
 def _jwt_operation_recomputes_from_sources(
     finding, facts, source_bytes, workspace_digest, bindings
 ):
@@ -283,6 +312,7 @@ def partition_proven_primitive_observations(core, audit):
             "TEST_OWNED_APPLICATION_CREDENTIAL",
             "SOURCE_PRESENTATION_METADATA",
             "PROVEN_LOCAL_CRYPTO_TEST_PRIMITIVE",
+            "PROVEN_CLOSED_OPERATION_COMMAND_SYNTAX",
         }:
             retained.append(finding)
             continue
@@ -295,6 +325,7 @@ def partition_proven_primitive_observations(core, audit):
                 "TEST_OWNED_APPLICATION_CREDENTIAL",
                 "SOURCE_PRESENTATION_METADATA",
                 "PROVEN_LOCAL_CRYPTO_TEST_PRIMITIVE",
+                "PROVEN_CLOSED_OPERATION_COMMAND_SYNTAX",
             }
             or core.get("audit_coverage", {}).get("complete") is True
         )
@@ -326,6 +357,13 @@ def partition_proven_primitive_observations(core, audit):
 
 def _current_primitive_binding(finding, core, bindings, audit):
     sources = core.get("sources", [])
+    if (
+        finding.get("facts", {}).get("disposition")
+        == "PROVEN_CLOSED_OPERATION_COMMAND_SYNTAX"
+    ):
+        return closed_shell_binding(
+            finding, sources, bindings, core.get("_primitive_source_bytes")
+        )
     if finding.get("facts", {}).get("disposition") in {
         "TEST_OWNED_LOCAL_FIXTURE",
         "TEST_OWNED_APPLICATION_CREDENTIAL",
@@ -1098,9 +1136,37 @@ def bind_fixed_program_workspace(
 def fixed_program_workspace_helpers(audit):
     """Return the source and validator helpers used to construct fixed-program workspace evidence."""
     from . import runtime_audit_integrity as runtime
+    from .finite_capture import (
+        shell_execution_calls,
+        _closed_shell_operation,
+        _closed_shell_call_role,
+        _closed_shell_provider_mutated,
+        _closed_shell_provider,
+        _closed_shell_namespace,
+        _shell_source_provider_clear,
+        _shell_import_aliases,
+        _shell_dynamic_provider_access,
+        _shell_namespace_queries_closed,
+        closed_shell_workspace,
+        closed_shell_operation_witness,
+        closed_shell_finding,
+    )
 
     return (
         audit.bind_fixed_program_workspace,
+        shell_execution_calls,
+        _closed_shell_operation,
+        _closed_shell_call_role,
+        _closed_shell_provider_mutated,
+        _closed_shell_provider,
+        _closed_shell_namespace,
+        _shell_source_provider_clear,
+        _shell_import_aliases,
+        _shell_dynamic_provider_access,
+        _shell_namespace_queries_closed,
+        closed_shell_workspace,
+        closed_shell_operation_witness,
+        closed_shell_finding,
         runtime.workspace_builtin_profile,
         runtime._fixed_literal_program_kinds,
         runtime._fixed_literal_value,
@@ -1130,6 +1196,7 @@ def primitive_binding_helpers():
 
     return (
         fixed_primitive_binding,
+        closed_shell_binding,
         _jwt_operation_recomputes_from_sources,
         _jwt_bound_source_inventory,
         _jwt_declaration_targets,

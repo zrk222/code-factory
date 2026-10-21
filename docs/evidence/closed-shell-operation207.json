@@ -1,0 +1,125 @@
+{
+  "schema": "factory.closed-shell-operation-repair.v1",
+  "candidate_parent": "1a63c57889aae25dfe0904b4eb02215069fdddd3",
+  "source_sha256": {
+    "factoryline/finite_capture.py": "49dff05a831793e2d2367597fe9e32eb894b06fc65f11b44693d542793d8142d",
+    "factoryline/review_audits.py": "827756f9390c13768ac097616c7dd810382cdc93fc78f4af0a02f2133a8c38c4",
+    "factoryline/primitive_observation_binding.py": "551a43c37ea96a73063c9b9344ddb74e4c7bc06ace8891232b4565343025d8ed",
+    "factoryline/audit_action_refs.py": "b30b1d31caa12dc2b87d2bd7f8d208f5a0568170848f2e59431da1abe95f3865"
+  },
+  "test_sha256": "70ea25b94eaf8b0ae8325102d9abd4443564291ec752c442f93f3520aa88628b",
+  "rule_scope": [
+    "SECURITY_OS_COMMAND",
+    "SECURITY_SHELL_COMMAND"
+  ],
+  "hypothesis": "SOURCE_COMMAND_INJECTION",
+  "behavior": "Only source-bound fixed supported non-interpreter operation grammar becomes a visible primitive observation. Unsupported or ambiguous input/provider/effect retains original severity. No all-literal safety assumption.",
+  "development_replay": {
+    "repositories": 12,
+    "selected_alerts": 47,
+    "before": {
+      "TP": 0,
+      "FP": 41,
+      "UNCLEAR": 6
+    },
+    "after": {
+      "TP": 0,
+      "FP": 36,
+      "UNCLEAR": 6
+    },
+    "removed_agreed_fp_ids": [
+      "S180-004",
+      "S180-020",
+      "S180-039",
+      "S180-042",
+      "S180-047"
+    ],
+    "severity_changes_retained": 0,
+    "precision": 0.0,
+    "wilson95": [
+      0,
+      0.09641862859446367
+    ],
+    "two_ai_consensus_after": {
+      "TP": 0,
+      "FP": 35,
+      "UNCLEAR": 7
+    },
+    "two_ai_consensus_wilson95": [
+      0,
+      0.09890099232440401
+    ]
+  },
+  "checks": {
+    "repository_tests_passed": 173,
+    "historical_tp_severity_retained": "13/13",
+    "independent_ecc_review": "PASS",
+    "architecture": {
+      "state": "HEALTHY",
+      "python_files": 429,
+      "core_modules": 133
+    },
+    "new_public_functions_native_forge_complexity": "all <=10; existing global debt remains"
+  },
+  "limits": [
+    "Exposed development cohort; original frozen labels, cohort and errors preserved. No new held-out generalization or improved precision percentage.",
+    "All five removals are independently agreed FP labels; primitives remain visible with filesystem/executable/runtime assurance unassessed.",
+    "Historical13TP controls are source slices, not a full-repository recall estimate.",
+    "Full CI remains red at pushed4465aa3 (66 failed,8157 passed,12 skipped); no current full-suite pass or merge readiness.",
+    "Native Forge repo-wide quality remains gradeC from existing complexity debt; a pre-final run also captured the now-removed45vs44 max regression. Allnew public functions <=10 by actual native metric.",
+    "No target sources imported or executed; no package publication, deployment or release approval.",
+    "Django mixed-inheritance work remains unfinished and is preserved outside candidate; it contributes no gain."
+  ],
+  "artifacts": [
+    {
+      "path": ".factory/precision207/final5/candidate-freeze.json",
+      "sha256": "5729e19ce08c386f1ede0ca796726fd5804c75f62aeec5d9dc983bb607cbd539",
+      "kind": "contract"
+    },
+    {
+      "path": ".factory/precision207/final5/full-replay/report.json",
+      "sha256": "f1b35479d3d5908de42dc478862a21562e78236480ad155c92302f2edf43bf10",
+      "kind": "receipt"
+    },
+    {
+      "path": ".factory/precision207/final5/checks.json",
+      "sha256": "a9497ddaaed3b2965d9e97a9ed706a2f03795a22a8176e0e0a06d99cb90894d5",
+      "kind": "receipt"
+    },
+    {
+      "path": ".factory/precision207/final5/runtime.xml",
+      "sha256": "91ee56af309e5f5d79834c1b4c01c4a1135352387d8594566cb77bb9ee140b9c",
+      "kind": "test"
+    },
+    {
+      "path": ".factory/precision207/final5/retained-tp/result.json",
+      "sha256": "9eae279a96512e5e7e546f921139874c93eb70eda2b8a9456a9d950b66ea17b5",
+      "kind": "receipt"
+    },
+    {
+      "path": ".factory/precision207/final5/architecture.log",
+      "sha256": "f103c328fcaa53d22c0dfa133c773ab0f3166d700bfc6b2d962277ac3027d1f4",
+      "kind": "receipt"
+    },
+    {
+      "path": ".factory/precision207/review-final5-verdict.json",
+      "sha256": "a67bf075ae81199add14c333b69991ccf976cc8d94a79cce96901817d5b351fc",
+      "kind": "review"
+    },
+    {
+      "path": ".factory/precision207/native-complexity-delta.json",
+      "sha256": "dd6536cdced192bbce96f38375b9046a183c7554282662b38bc0e88fcdee0982",
+      "kind": "receipt"
+    },
+    {
+      "path": ".factory/precision207/doctor.json",
+      "sha256": "8c3ded5206ef2a93f77990cde143dc75414ff4bbf63fd1e6d0267b1181bb4856",
+      "kind": "receipt"
+    }
+  ],
+  "git_content_binding": {
+    "path": ".factory/precision207/final5/git-content-binding.json",
+    "sha256": "192c86a2f9a4ca1fad353620980cefcd366515b73baa53878646d8911b998928",
+    "scope": "Native Windows hashes above; Git stores LF-normalized equivalent source. Linux CI has not passed."
+  }
+}
