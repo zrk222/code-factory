@@ -213,7 +213,7 @@ def endpoint_admission_helpers():
         "credential_role_constructor_provider",
         "credential_role_method_use_getter_audit",
         "credential_role_paths",
-        "provider_mutations",
+        "finite_capture",
         "credential_role_identity_effects",
         "security_configuration",
         "semantic_credential_sensor",

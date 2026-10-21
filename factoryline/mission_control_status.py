@@ -24,7 +24,7 @@ from .oracle_firewall import oracle_firewall_projection
 from .repair_loop import repair_loop_projection
 from .runtime_audit import runtime_audit_status
 from .deep_audit import deep_audit_status
-from .protocol_enums import MissionControlState
+from .protocol import MissionControlState
 from .release_integrity import release_integrity
 from .supply_chain import supply_chain_status
 from .context_efficiency import context_efficiency_status

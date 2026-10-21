@@ -20,7 +20,7 @@ import tempfile
 from typing import Any
 
 from .agent_license import normalize_agent_identity
-from .protocol_enums import AuthorityOrigin, RuleEffect
+from .protocol import AuthorityOrigin, RuleEffect
 
 
 HANDOFF_SCHEMA = "factory.intent-handoff.v1"

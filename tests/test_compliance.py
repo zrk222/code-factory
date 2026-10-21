@@ -36,7 +36,7 @@ from factoryline.atomic_proof_adapter import _STAGE_KINDS, _STAGE_STATUS
 from factoryline.lifecycle_ledger import _EVENTS, _TRACE_STAGES
 from factoryline.operations_control import _TIERS, _WORK_KINDS
 from factoryline.oracle_firewall import AUTHORITY_ORIGINS, EFFECTS, ORIGINS
-from factoryline.protocol_enums import (
+from factoryline.protocol import (
     AgentCapability,
     AgentProvider,
     AgentRunStatus,

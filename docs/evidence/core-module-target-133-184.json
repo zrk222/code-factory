@@ -1,0 +1,122 @@
+{
+  "schema": "factory.core-module-target-133.v1",
+  "state": "SCOPED_PASS_ARCHITECTURE_HEALTHY_GLOBAL_GATES_INCOMPLETE",
+  "parent_commit": "5a47d440453c11f27a88a6ed1e142bdd10171163",
+  "mapping": {
+    "protocol_enums": "protocol",
+    "finite_inputs": "finite_capture",
+    "provider_mutations": "finite_capture",
+    "coverage": "attribution",
+    "output_map": "app_builder",
+    "passport": "proof",
+    "hosted_github": "hosted_api"
+  },
+  "source_sha256": {
+    "factoryline/adoption.py": "f27e3f2eb5c119be129b29bf041bb4f576421908f2752fb740084ef3a61c3e5b",
+    "factoryline/agent_license.py": "df1b176ba9a13fc6ab48223396de5ac2310b7739172288256064a88d4c403983",
+    "factoryline/agent_proof_bridge.py": "2ef25491db57f9b15e9eedc5bc9c763e83838dbe1b17a6d26c283fdc5d2dae92",
+    "factoryline/app_builder.py": "546334683fb2f700a63763e7793786d8e2b5f9a2e8657241e284ed3462909185",
+    "factoryline/atomic_proof_adapter.py": "6febade5a5e133348f4eb2eb8065cb849b2ecf7fb8e5ee6343a4c358e092c7d3",
+    "factoryline/attribution.py": "f3f778bd0474aac4454e169842a4ca70ca788aeb5e1c5306004321c757b781cc",
+    "factoryline/change_review.py": "fcf51081c7f4fdad663846d7c24e7e07ea8820a67ca7c7b5179d8cb0cf872c16",
+    "factoryline/cli_artifacts.py": "32193e9715c9e44382829611191881fe20c05c6e747813ca9fe3deafbe1dab2e",
+    "factoryline/credential_endpoint_admission.py": "a0976d612058f2f871c2b89fc5593e45246167c42b71b85b7152c9e1355a4391",
+    "factoryline/credential_role_constructor_provider.py": "9f2a3f074193646af93a0964610997531453f4223db944bb8a213e0a85a0aa65",
+    "factoryline/finite_capture.py": "3be801f7b9f500cf11dc4a6fbbc43d924dbe610a904557c4d520445c51fa3f6a",
+    "factoryline/hosted_api.py": "e4af5d6a064d0dc31ada9af7a6c4604cab0b7f969d7620de6c952ffab704cf50",
+    "factoryline/intent_quality.py": "08c5edd0caac27f7e2a7bb0e1ff253afd7b221cd6ea3987dd3947e63cf90ce0d",
+    "factoryline/lifecycle_ledger.py": "c4c85e071f4754c04cb95c720908644ef8be336f21a07e6556e09cac10df0208",
+    "factoryline/mission_control_status.py": "90a855f060f062373da4526ef898b9cfa486e4ce192fef7afdd622023a102326",
+    "factoryline/operations_control.py": "11d627963f42dbbcfec93cd1d45e33376aadeddf22814eccb84881b45675c71b",
+    "factoryline/oracle_firewall.py": "61a655d07ffe2b14cd9bc16c051b10a78d7a149903003453940970b5fcbd53e8",
+    "factoryline/proof.py": "e3c8ebc84f637664e2145e2644b6261efbf8a6293bfc5eb8b8285022f1382918",
+    "factoryline/protocol.py": "000a9ef56b894470d61ebc568b30868c097e75e8004de7cad24c7bdcad827a84",
+    "factoryline/repair_loop.py": "fcf6127c8317c711534f7cb261c7b5b5b27f6a7f8d5efaf7f0c73b0981494ab8",
+    "factoryline/runtime_audit_integrity.py": "09f9e185b205c69a5a6be794d005de39d00defe737953430e9fa8da9bd5199e0",
+    "factoryline/semantic_credential_sensor.py": "ffde882b2c4c5295556b6b54524b824cede5fdaf868c93914a28dedc87c20bdf",
+    "factoryline/target_compiler.py": "2a8772ee61968b6742515ddc33aab8eb655727e6b08ae2c738360702a758d691",
+    "plans/accuracy-efficiency174.md": "e11aaac84b767698bc1c973d980ecb15be743a6cb8c7ba61f65dbd946817f52e",
+    "scripts/prooflab_e2e.py": "e5fee2f6265b5dabe9430e8ac36de54f44d9646ccf340324a957e38a11f7daa2",
+    "tests/test_audit_rule_search.py": "a14bcfa4f1afea4904f2eb54a44951cbada4d5d071b12c742326974d0361d360",
+    "tests/test_change_review.py": "bb4223686e9265ffe952f86725ef2a10d68d06bfbd3fb2e0cfed736870a6ed00",
+    "tests/test_compliance.py": "0a3760a212c78cfa337d9eb38f9119b5a6060d550e23ba04616503b775d63185",
+    "tests/test_credential_constructor_cache.py": "06993e95655af2a9e66a843cf95e3fa62f51e984f99bda0f23b51431507b53a2",
+    "tests/test_factoryline.py": "95fa510171a82fbfad0eb86a8acee7c1841c2df4682633370e3ef4c3d00fb940",
+    "tests/test_hosted_adapter.py": "e3231d97ec6d6b62c626700b3c851e2afd276b3ffa8188abe67d828ad8c7cb39",
+    "tests/test_semantic_credential_sensor.py": "59063aec81e4c490c6465c9375f9b40dcf336d66b8071ce94133b5b7594a4eb4"
+  },
+  "deleted": [
+    "factoryline/coverage.py",
+    "factoryline/finite_inputs.py",
+    "factoryline/hosted_github.py",
+    "factoryline/output_map.py",
+    "factoryline/passport.py",
+    "factoryline/protocol_enums.py",
+    "factoryline/provider_mutations.py"
+  ],
+  "new_modules": 0,
+  "compatibility_stubs": 0,
+  "policy_or_classification_changes": 0,
+  "architecture": {
+    "decision": "HEALTHY",
+    "python_files": 429,
+    "core_modules": 133,
+    "max_python_files": 464,
+    "max_core_modules": 133,
+    "file_ceilings_unchanged": true,
+    "regressions": []
+  },
+  "from_remote_checkpoint_a5febf0": {
+    "python_before": 463,
+    "core_before": 165,
+    "physical_module_files_deleted": 34,
+    "core_reduction": 32
+  },
+  "behavior_evidence": {
+    "moved_AST_statements_preserved": 55,
+    "prior_owner_AST_nodes_preserved": 144,
+    "test_assertions_preserved": 1135,
+    "independent_focused_passed": 171,
+    "integrated_focused_passed": 516,
+    "post_format_cache_file_passed": 95,
+    "native_critical_restoration_controls": 20,
+    "historical_positive_controls_retained": 13,
+    "historical_positive_controls_total": 13,
+    "scope_note": "516 integrated cases passed on final product bytes before one AST-equivalent test import-format change; whole95-case affected test file reran on final bytes. Not a full repository suite result."
+  },
+  "completed_plan_steps_removed": true,
+  "latest_precision_context": {
+    "candidate": "c05034e5b12071781eed22d2182b4d83c34b0724",
+    "scope": "Frozen preregistered security sample, one blinded AI reviewer; Claude and human pending; no mechanical-change gain.",
+    "actionable_TP": 0,
+    "actionable_FP": 41,
+    "unclear": 6,
+    "decided_precision": 0.0,
+    "wilson95": [
+      0,
+      0.08566757018442756
+    ],
+    "primitive_matches": 46,
+    "sample_size": 47,
+    "native_scan_errors_retained": 2,
+    "report_sha256": "1586e122ddde48407d7e1ad79b8d32d80594282bbf81eaf140409107e0919227",
+    "publication_qualified": false
+  },
+  "limits": [
+    "Full repository suite, CI, native Forge quality, accuracy repairs and publication remain incomplete.",
+    "HEALTHY architecture is not release or merge approval.",
+    "Removed module import/pickle paths have no shims.",
+    "Historical control retention is not recall; primitive matching is not actionable precision."
+  ],
+  "review_sha256": "7b3101babf5d9c708d6d43d964e09f9c6a7df25030a2be998097b6613e8093ad",
+  "evidence": {
+    "independent-review.json": "03610fd2838ae7c542ab278fd55fe8c4bbd4df11f40a4c6cbf94c902dcaa0cd6",
+    "independent-integration-addendum.json": "7b3101babf5d9c708d6d43d964e09f9c6a7df25030a2be998097b6613e8093ad",
+    "integrated-health.json": "959317a2ffd60db5a7b1a6b302ecd0319e0e3b18045dfa3e7f575685f0d10489",
+    "integrated-tests.xml": "8408ca0c1b38c5089749b94c648ddd3aaf6baabb5831514cc96fe54d74c61569",
+    "integrated-test-process.json": "73c8854b8301c43b96ce61f6b2a38d42155da00513a1d34b76e7f6bb427a575a",
+    "cache-post-format.xml": "4fddd6db7d6c854a3817d0addeb8d080067e481eb9ff713373497bcf45dcb1b4",
+    "test-format-addendum.json": "b89c1a3a40660d76b63c72e1fffc03887cfee8ac99ae32a6b01d04149ca573c1",
+    "integrated-gates.json": "ae490701283377b493fa33610ee03975df79368f49d27abd80872ae4fdec673d"
+  }
+}

@@ -2628,7 +2628,7 @@ def sanitizer_provider_unchanged(call, aliases, expected, module_for):
     from types import SimpleNamespace
 
     from . import review_audits as audit
-    from . import provider_mutations
+    from . import finite_capture
     from .review_integrity import _security_flow_bindings
 
     module = module_for(getattr(call, "_security_lexical_scope", None))
@@ -2667,7 +2667,7 @@ def sanitizer_provider_unchanged(call, aliases, expected, module_for):
                 return False
             return True
 
-        mutations = provider_mutations.finite_provider_mutation_index(
+        mutations = finite_capture.finite_provider_mutation_index(
             nodes,
             aliases,
             SimpleNamespace(_resolved_ast_name=audit._resolved_ast_name),

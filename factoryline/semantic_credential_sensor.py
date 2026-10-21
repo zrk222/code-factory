@@ -162,7 +162,7 @@ def _provider_identity_uncertain(
     """Veto HTTP proofs if the full provider mutation index finds a relevant escape."""
     from types import SimpleNamespace
 
-    from .provider_mutations import finite_provider_mutation_index
+    from .finite_capture import finite_provider_mutation_index
     from .review_audits import _resolved_ast_name
 
     nodes = list(ast.walk(tree)) if nodes is None else nodes

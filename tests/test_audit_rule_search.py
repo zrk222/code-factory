@@ -67,7 +67,7 @@ from factoryline.domain_ontology import domain_ontology_template
 from factoryline.enterprise_receipts import dsse_pae
 from factoryline.lifecycle_ledger import lifecycle_template
 from factoryline.operations_control import operations_control_template
-from factoryline.passport import mermaid_for
+from factoryline.proof import mermaid_for
 from factoryline.privacy import PrivacyError, merkle_root
 from factoryline.proof_review_workflow import proof_review_projection
 from factoryline.protocol import version_tuple

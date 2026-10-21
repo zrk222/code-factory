@@ -62,18 +62,13 @@ drift; require cold/first-hit/warm equality and helper mutation invalidation.
 Any unsafe HOLLOW counterexample blocks admission. Do not build a new interpreter
 or per-pattern proof-module tree.
 
-### A4 — Close architecture and native quality
+### A4 — Close native quality and preserve the architecture budget
 
-Consolidate the role helpers into the existing constructor, getter and path
-owners using the reviewed namespace/collision mapping. Preserve definitions,
-initialization/default order, live imports and cache registrations. Delete the
-absorbed modules. Validate import orders and native key mutations independently.
-
-Recount actual files/core modules after each committed batch. Reach at most 133
-core modules through physical consolidation. Address any
-remaining excess through cohesive absorptions, not API hiding. Refactor measured
-native Forge hotspots in place; both its unchanged quality gate and Ruff/C901
-must pass. Do not equate the two metrics.
+The physical consolidation target is met: 429 Python files and 133 core modules;
+the unchanged architecture health gate passes. Keep those ceilings and all
+per-file limits intact as accuracy work proceeds. Refactor measured native Forge
+hotspots in existing owners; both its unchanged quality gate and Ruff/C901 must
+pass. Do not equate those metrics or treat architecture PASS as full CI approval.
 
 ### A5 — Measure and reduce runtime cost
 
@@ -155,10 +150,10 @@ improvements.
 - Accepted integration: `4184a9b`; scoped family migration: `1df111a`.
 - Development-only actionable result: 2 TP, 6 FP, 2 unclear; 25% decided,
   Wilson 95% 7.15–59.07%. Fresh held-out precision remains unmeasured.
-- Architecture after integration: 463 Python files / 165 core modules;
-  the core gate is still blocked, with 32 core modules to remove under the new
-  133-module cap. Historical full-suite failures need a current
-  integrated rerun; scoped passes do not subtract from that historical total.
+- Current architecture candidate: 429 Python files / 133 core modules; the
+  unchanged architecture gate passes after physical module absorption. Evidence:
+  `docs/evidence/core-module-target-133-184.json`. Historical full-suite failures
+  still need a current integrated rerun; scoped passes do not subtract from them.
 - One recorded full social-core scan took 152.636 process seconds. No paired
   speed gain is established.
 - Review provenance and packet acceptance are recorded in

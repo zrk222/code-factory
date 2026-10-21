@@ -208,7 +208,7 @@ def test_combined_sensor_returns_configuration_and_credential_findings():
 
 
 def test_provider_mutation_index_is_skipped_without_literal_candidate(monkeypatch):
-    import factoryline.provider_mutations as mutations
+    import factoryline.finite_capture as mutations
 
     calls = []
     original = mutations.finite_provider_mutation_index
@@ -236,7 +236,7 @@ def test_provider_mutation_index_is_skipped_without_literal_candidate(monkeypatc
 def test_provider_mutation_index_runs_once_for_literal_candidate(
     monkeypatch, mutation, expected
 ):
-    import factoryline.provider_mutations as mutations
+    import factoryline.finite_capture as mutations
 
     calls = []
     original = mutations.finite_provider_mutation_index

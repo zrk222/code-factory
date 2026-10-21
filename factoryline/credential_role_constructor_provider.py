@@ -7,15 +7,15 @@ from dataclasses import dataclass, field as dataclass_field
 from pathlib import Path
 from types import FunctionType, MethodType, SimpleNamespace
 from contextlib import contextmanager
-from .provider_mutations import finite_provider_mutation_index
+from .finite_capture import finite_provider_mutation_index
 from .review_audits import _resolved_ast_name
 from .review_integrity import bind_source_call
 from urllib.parse import urlsplit
 from functools import partial
 from . import (
-    provider_mutations,
+    finite_capture,
     credential_role_constructor_provider as _constructor_provider,
-    provider_mutations as _provider_mutations,
+    finite_capture as _finite_capture,
 )
 
 """Check captured constructor and selector providers without executing code."""
@@ -2702,7 +2702,7 @@ def _owner_method_mutation(tree, aliases, owners, roots, audit, parents):
 
 
 def _owner_container_paths(nodes, aliases, audit, parents, mutations):
-    bindings = provider_mutations._provider_alias_bindings(nodes)
+    bindings = finite_capture._provider_alias_bindings(nodes)
     containers = (
         ast.List,
         ast.Tuple,
@@ -2721,7 +2721,7 @@ def _owner_container_paths(nodes, aliases, audit, parents, mutations):
             if isinstance(parent, ast.Attribute) and parent.value is item:
                 continue
             if isinstance(item, (ast.Name, ast.Attribute)):
-                provider_mutations._record_provider_paths(
+                finite_capture._record_provider_paths(
                     item, "*", aliases, audit, bindings, mutations
                 )
 
@@ -2729,7 +2729,7 @@ def _owner_container_paths(nodes, aliases, audit, parents, mutations):
 def constructor_provider_helper_epoch():
     """Return semantic helper identities for batch-cache freshness checks."""
     from .credential_role_constructor_provider import _import_binding_is_exact
-    from .provider_mutations import _provider_call_argument
+    from .finite_capture import _provider_call_argument
     from .review_audits import _resolved_ast_name
 
     model_helpers = constructor_provider_model_helper_epoch()
@@ -2757,11 +2757,11 @@ def constructor_provider_helper_epoch():
         _owner_container_paths,
         *constructor_provider_provenance_epoch(),
         _provider_call_argument,
-        provider_mutations._record_provider_paths,
-        provider_mutations._record_provider_capture,
-        provider_mutations._provider_alias_bindings,
-        provider_mutations._provider_paths,
-        provider_mutations._reflective_provider_write,
+        finite_capture._record_provider_paths,
+        finite_capture._record_provider_capture,
+        finite_capture._provider_alias_bindings,
+        finite_capture._provider_paths,
+        finite_capture._reflective_provider_write,
         *model_helpers,
     )
 
@@ -2895,7 +2895,7 @@ def _owner_call_argument(
     ordinary_type,
     aliases_by_path,
 ):
-    from .provider_mutations import _provider_call_argument
+    from .finite_capture import _provider_call_argument
 
     if (
         owner_path(node, aliases, fields) not in owners
@@ -3162,7 +3162,7 @@ def _constructor_provider_epoch():
     from importlib import import_module
 
     modules = (
-        _provider_mutations,
+        _finite_capture,
         *(
             import_module("." + name, __package__)
             for name in ("credential_role_constructor_provider",)

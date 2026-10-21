@@ -14,7 +14,7 @@ import subprocess
 import tempfile
 from typing import Any
 
-from .coverage import requirement_coverage
+from .attribution import requirement_coverage
 from .graph_ops import graph_ops_impact
 from .proof import git_changed_paths, risk_for_paths
 from .review_audits import ReviewAuditError, audit_code

@@ -17,7 +17,7 @@ from .finite_capture import (
     finite_blocked_provider_prefixes,
     finite_scope_binding_candidate,
 )
-from .finite_inputs import (
+from .finite_capture import (
     _finite_eval_comprehension,  # noqa: F401
     _finite_eval_domain,  # noqa: F401
     _finite_eval_module_prefix,  # noqa: F401
@@ -1428,11 +1428,11 @@ def credential_validation_helpers():
         credential_endpoint_admission,
         credential_role_constructor_provider as credential_role_scope_bindings,
     )
-    from . import provider_mutations, semantic_credential_sensor
+    from . import finite_capture, semantic_credential_sensor
 
     modules = (
         credential_role_scope_bindings,
-        provider_mutations,
+        finite_capture,
         *semantic_credential_sensor.validation_modules(),
     )
     return (

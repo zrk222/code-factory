@@ -18,7 +18,7 @@ from .app_builder import (
     _purpose_from_text,
 )
 from .capability_packs import target_inventory
-from .output_map import write_output_map
+from .app_builder import write_output_map
 
 
 TARGET_SCHEMA = "factory.target.v1"

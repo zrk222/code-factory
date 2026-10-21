@@ -23,7 +23,7 @@ from .oracle_firewall import (
     validate_oracle_challenge_plan,
     verify_oracle_contract,
 )
-from .protocol_enums import RepairConsequence, RepairSeverity
+from .protocol import RepairConsequence, RepairSeverity
 
 
 MANIFEST_SCHEMA = "factory.repair-loop-manifest.v1"

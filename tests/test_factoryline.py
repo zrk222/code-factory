@@ -33,7 +33,7 @@ from factoryline.proof import (
     risk_for_paths,
     verify_trace,
 )
-from factoryline.passport import build_passport, verify_passport
+from factoryline.proof import build_passport, verify_passport
 from factoryline.protocol import (
     CHALLENGE_SCHEMA,
     MINIMUM_VERSIONS,
@@ -1956,7 +1956,7 @@ def test_app_builder_direct_and_prd_paths_preserve_blueprint_and_output_map(tmp_
 
 def test_app_builder_requirement_coverage_blocks_uncovered_product_reqs(tmp_path):
     from factoryline.app_builder import app_from_prompt
-    from factoryline.coverage import requirement_coverage
+    from factoryline.attribution import requirement_coverage
 
     app_from_prompt(
         "Build a clinical prior auth portal with patient status and audit logs.",

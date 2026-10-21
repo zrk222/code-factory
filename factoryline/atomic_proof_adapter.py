@@ -24,7 +24,7 @@ from .oracle_firewall import (
     admission_oracle_decision,
     verify_oracle_contract,
 )
-from .protocol_enums import (
+from .protocol import (
     AgentCapability,
     AgentRunStatus,
     AutonomyLevel,

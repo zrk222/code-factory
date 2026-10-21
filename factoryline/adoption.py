@@ -1414,7 +1414,7 @@ def _workflow_integrity_lane(workspace: Path) -> dict[str, Any]:
 def _requirement_runtime_lanes(
     workspace: Path, code_count: int
 ) -> list[dict[str, Any]]:
-    from .coverage import requirement_coverage
+    from .attribution import requirement_coverage
     from .runtime_coverage import read_runtime_coverage_report
 
     requirement = requirement_coverage(workspace)

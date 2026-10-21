@@ -16,7 +16,7 @@ from factoryline.hosted_api import (
     create_hosted_app,
     create_hosted_app_from_env,
 )
-from factoryline.hosted_github import GitHubAppPublisher, publish_check
+from factoryline.hosted_api import GitHubAppPublisher, publish_check
 from factoryline.hosted_identity import JwksCache, get_jwks
 from factoryline.hosted_storage import OutboxRecord, SCHEMA_SQL, initialize_schema
 from factoryline.pr_assurance import PRAssuranceError

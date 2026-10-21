@@ -4,7 +4,7 @@ import pytest
 from test_credential_role_decorator_boundaries import setup
 from factoryline import credential_role_constructor_provider as provider
 from factoryline import credential_role_constructor_provider as type_effects
-from factoryline import provider_mutations
+from factoryline import finite_capture
 from factoryline.credential_role_constructor_provider import class_chain
 from factoryline.credential_role_constructor_provider import constructor_bindings_inert
 from factoryline import credential_endpoint_admission as httpx
@@ -115,12 +115,10 @@ def test_transitive_mutation_helper_change_revokes_batch(
     with index.class_chain_memo.analysis_batch() as batch:
         assert constructor_bindings_inert(chain, index, imports)
         if mutation == "binding":
-            monkeypatch.setattr(
-                provider_mutations, "_reflective_provider_write", changed
-            )
+            monkeypatch.setattr(finite_capture, "_reflective_provider_write", changed)
         else:
             monkeypatch.setattr(
-                provider_mutations._reflective_provider_write,
+                finite_capture._reflective_provider_write,
                 "__code__",
                 changed.__code__,
             )

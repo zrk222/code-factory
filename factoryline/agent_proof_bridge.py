@@ -27,7 +27,7 @@ from .oracle_firewall import (
 )
 from .semantic_authority import SemanticAuthorityError, verify_semantic_binding
 from .intake_parameters import verify_intake_binding
-from .protocol_enums import (
+from .protocol import (
     AgentCapability,
     AgentProvider,
     AgentRunStatus,
