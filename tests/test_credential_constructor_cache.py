@@ -180,6 +180,11 @@ def test_validator_replacement_invalidates_native_context(
     [
         "request_client_origin",
         "public_json_assertion",
+        "_json_assertion_operands",
+        "_json_detail_name",
+        "_json_cast_response",
+        "_json_response_name",
+        "_json_response_request",
         "router_factory_call_published",
         "endpoint_binding",
         "endpoint_publication",
@@ -207,6 +212,11 @@ def test_moved_validator_code_mutation_invalidates_native_context(
     [
         "request_client_origin",
         "public_json_assertion",
+        "_json_assertion_operands",
+        "_json_detail_name",
+        "_json_cast_response",
+        "_json_response_name",
+        "_json_response_request",
         "router_factory_call_published",
         "endpoint_binding",
         "endpoint_publication",

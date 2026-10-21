@@ -285,6 +285,11 @@ def validation_helpers():
             "request_client_origin",
             "factory_fixture_consumer_status",
             "public_json_assertion",
+            "_json_assertion_operands",
+            "_json_detail_name",
+            "_json_cast_response",
+            "_json_response_name",
+            "_json_response_request",
             "_assertion_values",
             "_public_expected_value",
             "_public_enum_member",
@@ -1175,6 +1180,39 @@ def public_json_assertion(graph, path, node, parent):
     """Accept only a source-bound JSON comparison dominated by its request."""
     from .credential_role_constructor_provider import binding_dominates
 
+    operands = _json_assertion_operands(graph, node, parent)
+    if operands is None:
+        return False
+    container, assertion, projection = operands
+    function = graph._containing_function(assertion)
+    if not isinstance(assertion, ast.Assert) or function is None:
+        return False
+    data_name = _json_detail_name(projection)
+    if data_name is None:
+        return False
+    assignment = graph._unique_name_assignment(function, data_name)
+    response_call = _json_cast_response(
+        graph, path, assignment, assertion, function, binding_dominates
+    )
+    response_name = _json_response_name(response_call)
+    if response_name is None:
+        return False
+    request = _json_response_request(
+        graph, function, response_name, assignment, binding_dominates
+    )
+    if request is None:
+        return False
+    return (
+        request_client_origin(graph, path, function, request)
+        and graph._provider_is_unmodified("typing", {"cast"})
+        and _assertion_values(
+            graph, path, function, container, data_name, response_name
+        )
+    )
+
+
+def _json_assertion_operands(graph, node, parent):
+    """Find the expected JSON value and its single equality comparison."""
     container = node
     while isinstance(parent, (ast.Dict, ast.List, ast.Tuple)):
         container = parent
@@ -1186,23 +1224,30 @@ def public_json_assertion(graph, path, node, parent):
         or not isinstance(parent.ops[0], ast.Eq)
         or len(parent.comparators) != 1
     ):
-        return False
+        return None
     projection = parent.comparators[0] if parent.left is container else parent.left
     if projection is container:
-        return False
+        return None
     assertion = graph.parents.get(id(parent))
-    function = graph._containing_function(assertion)
-    if not isinstance(assertion, ast.Assert) or function is None:
-        return False
+    return container, assertion, projection
+
+
+def _json_detail_name(projection):
+    """Resolve the exact local name behind a literal detail projection."""
     if (
         not isinstance(projection, ast.Subscript)
         or not isinstance(projection.value, ast.Name)
         or not isinstance(projection.slice, ast.Constant)
         or projection.slice.value != "detail"
     ):
-        return False
-    data_name = projection.value.id
-    assignment = graph._unique_name_assignment(function, data_name)
+        return None
+    return projection.value.id
+
+
+def _json_cast_response(
+    graph, path, assignment, assertion, function, binding_dominates
+):
+    """Require the dominating typing.cast assignment before reading its input."""
     if (
         not isinstance(assignment, ast.Assign)
         or not isinstance(assignment.value, ast.Call)
@@ -1212,8 +1257,12 @@ def public_json_assertion(graph, path, node, parent):
         or assignment.value.keywords
         or not binding_dominates(assignment, assertion, graph.parents, function)
     ):
-        return False
-    response_call = assignment.value.args[1]
+        return None
+    return assignment.value.args[1]
+
+
+def _json_response_name(response_call):
+    """Accept only a zero-argument response.json call on one local name."""
     if (
         not isinstance(response_call, ast.Call)
         or not isinstance(response_call.func, ast.Attribute)
@@ -1222,8 +1271,14 @@ def public_json_assertion(graph, path, node, parent):
         or response_call.keywords
         or not isinstance(response_call.func.value, ast.Name)
     ):
-        return False
-    response_name = response_call.func.value.id
+        return None
+    return response_call.func.value.id
+
+
+def _json_response_request(
+    graph, function, response_name, assignment, binding_dominates
+):
+    """Bind response creation to an earlier awaited HTTP-method call."""
     response_assignment = graph._unique_name_assignment(function, response_name)
     request = (
         response_assignment.value
@@ -1241,14 +1296,8 @@ def public_json_assertion(graph, path, node, parent):
         or request.value.func.attr not in _JSON_HTTP_METHODS
         or not isinstance(request.value.func.value, ast.Name)
     ):
-        return False
-    return (
-        request_client_origin(graph, path, function, request)
-        and graph._provider_is_unmodified("typing", {"cast"})
-        and _assertion_values(
-            graph, path, function, container, data_name, response_name
-        )
-    )
+        return None
+    return request
 
 
 def _assertion_values(graph, path, function, expected, data_name, response_name):

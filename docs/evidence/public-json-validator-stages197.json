@@ -1,0 +1,43 @@
+{
+  "project": "cf-json-validator-stages197",
+  "parent": "ee5677c7cfc5c61b017109af755c6b9ac9b08a6f",
+  "source_sha256": {
+    "factoryline/credential_endpoint_admission.py": "7008c116a06cc88f6726f39e42e2cc9ecef97c4979b4e3a4f32751038a4d9842",
+    "tests/test_credential_constructor_cache.py": "6ad75547c81712343e87deb493cfda99e7e0f8d453d6e72779e778036be32c27"
+  },
+  "observed": {
+    "focused_passed": 334,
+    "native_complexity": {
+      "native_analyzer": "forgeline.gates.qa_audit._complexity",
+      "before": {
+        "public_json_assertion": 37
+      },
+      "after": {
+        "public_json_assertion": 9,
+        "_json_assertion_operands": 9,
+        "_json_detail_name": 5,
+        "_json_cast_response": 7,
+        "_json_response_name": 7,
+        "_json_response_request": 9
+      }
+    },
+    "native_analyzer_source_sha256": "bbf306e357d74bdaac77569f60db526f738412f7d7932f597e76e247ae944973",
+    "architecture": {
+      "decision": "HEALTHY",
+      "python_files": 429,
+      "core_modules": 133
+    }
+  },
+  "independent_review": {
+    "path": ".factory/quality197/independent-review.json",
+    "sha256": "96964d1d423522296c3de27a82f0dce46d80c962695e45b9255a192ab3bb59d0"
+  },
+  "boundaries": [
+    "Source-equivalent decomposition; no detector, severity or held-out precision gain claimed.",
+    "The selected function had native Forge complexity37; staged functions each measure9orless.",
+    "Other repository-wide native complexity findings remain; no full quality-gate pass claimed.",
+    "An isolated tracked snapshot excludes concurrent class-fixture and oracle work; archive-without-Git0/0 result retained separately and not called a pass.",
+    "No new Python modules or cap changes; frozen snapshot architecture429Python/133core.",
+    "Full CI and overall accuracy/publication goal remain incomplete."
+  ]
+}
