@@ -10129,22 +10129,22 @@ def test_flask_fixture_rejects_positional_config_update(tmp_path):
         (
             "run = partial(self.deliver, send)\n        run: object = noop",
             "await run()",
-            {"QUALITY_HOLLOW_TEST": 1},
+            {"QUALITY_UNKNOWN_TEST_ORACLE": 1},
         ),
         (
             "run = partial(self.deliver, send)\n        send = noop",
             "await self.deliver(send)",
-            {"QUALITY_HOLLOW_TEST": 1},
+            {"QUALITY_UNKNOWN_TEST_ORACLE": 1},
         ),
         (
             "",
             "await run()\n        run = partial(self.deliver, send)",
-            {"QUALITY_HOLLOW_TEST": 1},
+            {"QUALITY_UNKNOWN_TEST_ORACLE": 1},
         ),
         (
             "run = partial(self.deliver, send)",
             "try:\n            await run()\n        except AssertionError:\n            pass",
-            {"QUALITY_HOLLOW_TEST": 1},
+            {"QUALITY_UNKNOWN_TEST_ORACLE": 1},
         ),
     ],
 )

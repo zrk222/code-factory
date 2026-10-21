@@ -1,0 +1,124 @@
+{
+  "schema": "factory.expectation-family-migration.v1",
+  "family": "test_source_partial_callback_rejects_rebinding_and_swallowing",
+  "test_file_sha256": "52d0fa6f3b82307326ef2326c1d0b6f1c375e3dcef648bc8dce30cd3299d88c3",
+  "scope": "Four expectation-only rows whose source can raise; all generated sources unchanged.",
+  "changes": {
+    "2": "Undefined noop read before awaiting run; NameError is not inert completion.",
+    "3": "Undefined noop read before send dispatch; NameError is not inert completion.",
+    "4": "Local run awaited before assignment; UnboundLocalError can escape.",
+    "5": "Undefined expected read inside invoked callback; NameError escapes AssertionError handler."
+  },
+  "generated_payloads": [
+    {
+      "index": 0,
+      "sha256": {
+        "engine.py": "c3c1fd33ab2e57d12383b268555b2ad40c2eceb0bc566ae0752ddcca512b23ad",
+        "test_case.py": "a7ce85b484bdadd91207832ee6bd38b0f14fd9cc76d9039e7334fb061223b5d1"
+      },
+      "before": {},
+      "after": {}
+    },
+    {
+      "index": 1,
+      "sha256": {
+        "engine.py": "7a7a632a8639b0e5544f795bfcdf6f47cd4481ee90212ffb0be7cbd9cfc5490d",
+        "test_case.py": "a7ce85b484bdadd91207832ee6bd38b0f14fd9cc76d9039e7334fb061223b5d1"
+      },
+      "before": {
+        "QUALITY_HOLLOW_TEST": 1
+      },
+      "after": {
+        "QUALITY_HOLLOW_TEST": 1
+      }
+    },
+    {
+      "index": 2,
+      "sha256": {
+        "engine.py": "4a0cb354704060347b0f7edfc793ad760f611ee4c0d2e2c9ef4a5e4fe8a4668c",
+        "test_case.py": "a7ce85b484bdadd91207832ee6bd38b0f14fd9cc76d9039e7334fb061223b5d1"
+      },
+      "before": {
+        "QUALITY_HOLLOW_TEST": 1
+      },
+      "after": {
+        "QUALITY_UNKNOWN_TEST_ORACLE": 1
+      }
+    },
+    {
+      "index": 3,
+      "sha256": {
+        "engine.py": "d25b76910e8daebf203605dd891e5d2138d1c32dc1dc7b2f195affd7498f15c9",
+        "test_case.py": "a7ce85b484bdadd91207832ee6bd38b0f14fd9cc76d9039e7334fb061223b5d1"
+      },
+      "before": {
+        "QUALITY_HOLLOW_TEST": 1
+      },
+      "after": {
+        "QUALITY_UNKNOWN_TEST_ORACLE": 1
+      }
+    },
+    {
+      "index": 4,
+      "sha256": {
+        "engine.py": "eae4ffae99ffd126c577b0571774b9d8d48b92883474991046193dd7cff37613",
+        "test_case.py": "a7ce85b484bdadd91207832ee6bd38b0f14fd9cc76d9039e7334fb061223b5d1"
+      },
+      "before": {
+        "QUALITY_HOLLOW_TEST": 1
+      },
+      "after": {
+        "QUALITY_UNKNOWN_TEST_ORACLE": 1
+      }
+    },
+    {
+      "index": 5,
+      "sha256": {
+        "engine.py": "5544da4e780a516ca481fbab3e72c2bbed3ac924a8c99e21cec7114779c0081f",
+        "test_case.py": "a7ce85b484bdadd91207832ee6bd38b0f14fd9cc76d9039e7334fb061223b5d1"
+      },
+      "before": {
+        "QUALITY_HOLLOW_TEST": 1
+      },
+      "after": {
+        "QUALITY_UNKNOWN_TEST_ORACLE": 1
+      }
+    }
+  ],
+  "validation": {
+    "changed_rows_plus_positive_passed": 5,
+    "whole_family_failed": 1,
+    "whole_family_passed": 5,
+    "unresolved": "Unawaited partial callback remains expected HOLLOW; native scanner still UNKNOWN. This source false negative is not repaired or waived.",
+    "independent_ecc_review": "PASS_SCOPED_EXPECTATION_MIGRATION",
+    "full_ci_at_parent": "66 failed /8157 passed /12 skipped at4465aa3; no full rerun at this test-only change yet."
+  },
+  "precision_gain": false,
+  "implementation_changed": false,
+  "artifacts": [
+    {
+      "path": ".factory/partial206/before.json",
+      "sha256": "5a834b20de2c2f60d3f62653f6046b968b0e3644428d31edc8ae146217a34c15"
+    },
+    {
+      "path": ".factory/partial206/after.json",
+      "sha256": "649fca36501574e879a4ba5dc83e7e57b4d3b9afa7ed2f03d6a6372a65bd78fe"
+    },
+    {
+      "path": ".factory/partial206/family.xml",
+      "sha256": "692d162e8ba88b56ddf13f2cb935f86be8df476663eb2b81bce17c001a15632c"
+    },
+    {
+      "path": ".factory/partial206/changed-and-positive.xml",
+      "sha256": "7e5d9aa1147cf68b33bf57a0e37473848f953479079a166da445b3fb7065da5d"
+    },
+    {
+      "path": ".factory/partial206/checks.json",
+      "sha256": "3f09a8567f484dedc63157fc0069381666ef230638e13c8c27210ff33f2bd3e1"
+    },
+    {
+      "path": ".factory/partial206/independent-review.json",
+      "sha256": "175e108756a443c2fadad1a41618432532ddc914be5a2d32888f1b9c0387dde1"
+    }
+  ]
+}
