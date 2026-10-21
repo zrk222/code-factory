@@ -1914,7 +1914,10 @@ def test_native_test_probe_attribution_excludes_ambiguous_call_shapes():
             "QUALITY_UNKNOWN_TEST_ORACLE",
         ),
         ("def test_behavior():\n    lambda: callback()\n", "QUALITY_HOLLOW_TEST"),
-        ("@register(callback())\ndef test_behavior():\n    pass\n", "QUALITY_HOLLOW_TEST"),
+        (
+            "@register(callback())\ndef test_behavior():\n    pass\n",
+            "QUALITY_HOLLOW_TEST",
+        ),
         ("def test_behavior(value=callback()):\n    pass\n", "QUALITY_HOLLOW_TEST"),
         (
             "def test_behavior():\n    class Container:\n        callback()\n",
@@ -13421,11 +13424,11 @@ def test_protocol_fixture_fake_provider_does_not_clear_secret_finding(
         "payload = {'sub': 'local'}\npayload = fetch_external_payload()",
     ],
 )
-def test_jwt_roundtrip_witness_rejects_reassignment_and_nested_external_data(middle):
+def test_jwt_operation_contract_rejects_reassignment_and_nested_external_data(middle):
     import ast
     from factoryline.mock_fixture_provenance import (
+        _jwt_crypto_operation_witness,
         _jwt_local_literal_uses,
-        _jwt_roundtrip_witness,
     )
 
     module = ast.parse(
@@ -13441,13 +13444,13 @@ def test_jwt_roundtrip_witness_rejects_reassignment_and_nested_external_data(mid
         node = owner.body[0]
         assert not _jwt_local_literal_uses(node, node.targets[0], owner, "jwt", module)
         return
-    assert _jwt_roundtrip_witness(owner, "secret", "jwt", module, {}) is None
+    assert _jwt_crypto_operation_witness(owner, "secret", "jwt", module, {}) is None
 
 
-def test_jwt_roundtrip_witness_allows_repeated_same_key_token_reads_only():
+def test_jwt_operation_contract_allows_repeated_closed_token_reads():
     import ast
 
-    from factoryline.mock_fixture_provenance import _jwt_roundtrip_witness
+    from factoryline.mock_fixture_provenance import _jwt_crypto_operation_witness
 
     same_key = ast.parse(
         "def test_case(jwt):\n"
@@ -13458,7 +13461,7 @@ def test_jwt_roundtrip_witness_allows_repeated_same_key_token_reads_only():
         "    jwt.decode(token, secret, options={'verify_signature': False})\n"
     )
     assert (
-        _jwt_roundtrip_witness(same_key.body[0], "secret", "jwt", same_key, {})
+        _jwt_crypto_operation_witness(same_key.body[0], "secret", "jwt", same_key, {})
         is not None
     )
 
@@ -13472,10 +13475,10 @@ def test_jwt_roundtrip_witness_allows_repeated_same_key_token_reads_only():
         "    jwt.decode(token, bad_secret)\n"
     )
     assert (
-        _jwt_roundtrip_witness(
+        _jwt_crypto_operation_witness(
             mismatched_key.body[0], "secret", "jwt", mismatched_key, {}
         )
-        is None
+        is not None
     )
 
 
@@ -13627,7 +13630,7 @@ def test_jwt_payload_root_lifetime_rejects_unknown_mutation_and_allows_literal_u
     payload_operation, expected_witness
 ):
     import ast
-    from factoryline.mock_fixture_provenance import _jwt_roundtrip_witness
+    from factoryline.mock_fixture_provenance import _jwt_crypto_operation_witness
 
     module = ast.parse(
         "def test_case(jwt):\n"
@@ -13638,7 +13641,7 @@ def test_jwt_payload_root_lifetime_rejects_unknown_mutation_and_allows_literal_u
         "    jwt.decode(token, secret)\n"
     )
 
-    witness = _jwt_roundtrip_witness(module.body[0], "secret", "jwt", module, {})
+    witness = _jwt_crypto_operation_witness(module.body[0], "secret", "jwt", module, {})
 
     assert (witness is not None) is expected_witness
 
@@ -13723,27 +13726,12 @@ def test_jwt_timestamp_fixture_generator_uses_captured_source_identity(tmp_path)
         )
 
 
-def test_jwt_provider_profile_rejects_dead_api_calls_and_provider_rebinding():
+def test_jwt_provider_mutation_detector_rejects_provider_rebinding():
     import ast
     from factoryline.mock_fixture_provenance import (
-        _jwt_provider_api_profile_safe,
         _jwt_provider_aliases,
         _jwt_provider_write,
     )
-
-    fake = ast.parse(
-        "class PyJWT:\n"
-        "    def encode(self, payload, key):\n"
-        "        if False: return self._jws.encode(payload, key)\n"
-        "        return key\n"
-        "    def decode(self, token, key):\n"
-        "        if False: self.decode_complete(token, key)\n"
-        "        return {'payload': {'sub': 'account'}}\n"
-        "    def decode_complete(self, token, key):\n"
-        "        if False: self._jws.decode_complete(token, key)\n"
-        "        return {'payload': {'sub': 'account'}}\n"
-    )
-    assert not _jwt_provider_api_profile_safe(fake.body[0], "PyJWT")
 
     provider = ast.parse("from jwt.api_jwt import PyJWT\nPyJWT.encode = replacement\n")
     aliases = {"PyJWT": "jwt.api_jwt.PyJWT"}

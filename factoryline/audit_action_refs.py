@@ -412,6 +412,16 @@ def _captured_application_source_bytes(workspace, findings, bindings, source_byt
                 if isinstance(row, dict)
             )
     hashes = {row["path"]: row["sha256"] for row in bindings}
+    jwt_findings = [
+        finding
+        for finding in findings
+        if finding.get("facts", {}).get("disposition")
+        == "PROVEN_LOCAL_CRYPTO_TEST_PRIMITIVE"
+    ]
+    if jwt_findings:
+        # Revalidation uses the complete current source inventory, including
+        # imported initializers and shadows; selective capture would omit risks.
+        paths.update(hashes)
     return {
         relative: data
         for relative in paths

@@ -4,6 +4,7 @@ import ast
 import hashlib
 import json
 import re
+from pathlib import Path
 
 
 def fixed_primitive_binding(finding, sources, bindings, integrity, source_bytes=None):
@@ -22,15 +23,11 @@ def fixed_primitive_binding(finding, sources, bindings, integrity, source_bytes=
             None,
         )
         span = facts.get("declaration_span")
-        witness_spans = (
+        owner_spans = (
             "test_owner_span",
             "provider_allocation_span",
-            "encode_call_span",
-            "decode_call_span",
-            "token_result_span",
-            "payload_source_span",
         )
-        return bool(
+        common = bool(
             finding.get("code") == "SECURITY_HARDCODED_SECRET"
             and finding.get("severity") == "CRITICAL"
             and facts.get("schema") == "factory.jwt-local-crypto-test-primitive.v1"
@@ -39,8 +36,6 @@ def fixed_primitive_binding(finding, sources, bindings, integrity, source_bytes=
             and facts.get("workspace_sources_sha256") == workspace_digest
             and provider is not None
             and facts.get("provider_sha256") == provider.get("sha256")
-            and facts.get("operation_role")
-            == "test_owned_local_sign_and_verify_roundtrip"
             and facts.get("authority_role") == "TEST_OWNED_SYNTHETIC_SIGNING_AUTHORITY"
             and facts.get("transport_role") == "UNASSESSED"
             and facts.get("runtime_assurance") == "INCOMPLETE"
@@ -51,11 +46,29 @@ def fixed_primitive_binding(finding, sources, bindings, integrity, source_bytes=
             and span[1] == finding.get("column")
             and span[2] >= span[0]
             and span[3] >= span[1]
+            and all(integrity._valid_source_span(facts.get(key)) for key in owner_spans)
+        )
+        if not common:
+            return False
+        if not _jwt_operation_recomputes_from_sources(
+            finding, facts, source_bytes, workspace_digest, bindings
+        ):
+            return False
+        calls = facts.get("crypto_call_spans")
+        inputs = facts.get("input_source_spans")
+        return bool(
+            facts.get("operation_role") == "test_owned_local_crypto_operation"
+            and facts.get("operation_kind") in {"encode", "decode", "roundtrip"}
+            and isinstance(calls, list)
+            and isinstance(inputs, list)
+            and len(calls) > 0
+            and len(calls) == len(inputs)
+            and all(integrity._valid_source_span(span) for span in calls + inputs)
             and all(
-                integrity._valid_source_span(facts.get(key)) for key in witness_spans
+                facts["test_owner_span"][:2] <= span[:2]
+                and span[2:] <= facts["test_owner_span"][2:]
+                for span in calls
             )
-            and facts["test_owner_span"][:2] <= facts["encode_call_span"][:2]
-            and facts["encode_call_span"][:2] <= facts["decode_call_span"][:2]
         )
     if facts.get("disposition") == "TEST_OWNED_LOCAL_FIXTURE":
         return django_fixture_binding(finding, sources, bindings)
@@ -92,6 +105,116 @@ def fixed_primitive_binding(finding, sources, bindings, integrity, source_bytes=
         )
         and facts.get("workspace_sources_sha256") == workspace_digest
     )
+
+
+def _jwt_operation_recomputes_from_sources(
+    finding, facts, source_bytes, workspace_digest, bindings
+):
+    """Rebuild the JWT role proof from current captured bytes before admission."""
+    if not isinstance(source_bytes, dict) or not source_bytes:
+        return False
+    relative = facts.get("source_path")
+    if not isinstance(relative, str) or relative != finding.get("path"):
+        return False
+    captured = _jwt_bound_source_inventory(source_bytes, bindings)
+    if captured is None:
+        return False
+    test_path = Path(relative)
+    raw = captured.get(test_path)
+    if not isinstance(raw, bytes) or hashlib.sha256(raw).hexdigest() != facts.get(
+        "source_sha256"
+    ):
+        return False
+    try:
+        tree = ast.parse(raw, filename=relative)
+    except (SyntaxError, ValueError):
+        return False
+    targets = _jwt_declaration_targets(tree, facts)
+    if len(targets) != 1:
+        return False
+    for parent in ast.walk(tree):
+        for child in ast.iter_child_nodes(parent):
+            child._security_parent = parent
+    captured_imports = _jwt_captured_api_imports(tree, captured, test_path)
+    tree._security_source_context = (Path("."), captured)
+    tree._security_oracle_context = {"captured_imports": captured_imports}
+    tree._oracle_source_sha256 = hashlib.sha256(raw).hexdigest()
+    tree._security_workspace_sources_sha256 = workspace_digest
+    from .mock_fixture_provenance import closed_jwt_test_literal
+
+    regenerated = closed_jwt_test_literal(relative, *targets[0])
+    if not isinstance(regenerated, dict):
+        return False
+    return all(facts.get(key) == value for key, value in regenerated.items())
+
+
+def _jwt_bound_source_inventory(source_bytes, bindings):
+    captured = {}
+    for name, raw in source_bytes.items():
+        if not isinstance(name, str) or not isinstance(raw, bytes):
+            return None
+        path = Path(name)
+        if path.is_absolute() or ".." in path.parts:
+            return None
+        captured[path] = raw
+    if set(source_bytes) != set(bindings) or any(
+        hashlib.sha256(source_bytes[name]).hexdigest() != digest
+        for name, digest in bindings.items()
+    ):
+        return None
+    return captured
+
+
+def _jwt_declaration_targets(tree, facts):
+    span = facts.get("declaration_span")
+    targets = []
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.Assign, ast.AnnAssign)):
+            continue
+        if [node.lineno, node.col_offset, node.end_lineno, node.end_col_offset] != span:
+            continue
+        for target in node.targets if isinstance(node, ast.Assign) else [node.target]:
+            if isinstance(target, ast.Name) and target.id == facts.get("name"):
+                targets.append((node, target))
+    return targets
+
+
+def _jwt_captured_api_imports(tree, captured, test_path):
+    imports = {}
+    for statement in tree.body:
+        if not isinstance(statement, ast.ImportFrom):
+            continue
+        bases = [test_path.parent, Path("."), Path("src")]
+        if statement.level:
+            base = test_path.parent
+            for _ in range(statement.level - 1):
+                base = base.parent
+            bases = [base]
+        for alias in statement.names:
+            if alias.name == "*":
+                continue
+            modules = {
+                base.joinpath(*(statement.module or "").split(".")) for base in bases
+            }
+            children = {
+                candidate
+                for module in modules
+                for child in (module / alias.name,)
+                for candidate in (child.with_suffix(".py"), child / "__init__.py")
+                if candidate in captured
+            }
+            providers = children or {
+                candidate
+                for module in modules
+                for candidate in (module.with_suffix(".py"), module / "__init__.py")
+                if candidate in captured
+            }
+            if len(providers) == 1:
+                imports[alias.asname or alias.name] = (
+                    next(iter(providers)).as_posix(),
+                    alias.name,
+                )
+    return imports
 
 
 def rejected_primitive_proof(finding):
@@ -1007,6 +1130,10 @@ def primitive_binding_helpers():
 
     return (
         fixed_primitive_binding,
+        _jwt_operation_recomputes_from_sources,
+        _jwt_bound_source_inventory,
+        _jwt_declaration_targets,
+        _jwt_captured_api_imports,
         rejected_primitive_proof,
         partition_proven_primitive_observations,
         _current_primitive_binding,

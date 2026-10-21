@@ -1,0 +1,855 @@
+{
+  "schema": "factory.development-detection-repair.v1",
+  "candidate": {
+    "factoryline/audit_action_refs.py": "fbdf4af1b980f8a9d15256851487863fc5a3e055c7eda99104d55091b1f7b867",
+    "factoryline/mock_fixture_provenance.py": "6971049dcf41abde0b36653fff66e71b5c1c2a54e1c4db57dc66d5c22b24113a",
+    "factoryline/primitive_observation_binding.py": "ed5b8cc68afeae12a87b25cb320da10561f99d82d1aae52821a97315a7902ffd",
+    "tests/test_mock_fixture_provenance.py": "84e93d80ce72afef5bc61bd14fb78379c22a150e2e1288cc5be4ebd1317d8fbb",
+    "tests/test_review_audits.py": "bb828ee501a29761d7da24ccdf1685cd562cd48c22f539068c6a2dfc4a8dfc03"
+  },
+  "scope": "Closed local crypto-operation fixture role and current-byte native evidence admission; static analysis only.",
+  "implementation": [
+    "Replace marker-based provider/API matching and roundtrip-only witness with one encode/decode/roundtrip use model.",
+    "Exact supported PyJWT provider AST inventory; full source capture; current-byte/hash regeneration before primitive admission.",
+    "Reject unknown argument/result sinks, callbacks, provider/dependency/import/conftest mutations, closure escape, and reachable same-module namespace reflection.",
+    "Reuse local-definition lookup; remove obsolete provider marker and duplicated roundtrip proof code; no new Python module."
+  ],
+  "development_measurements": {
+    "old60": {
+      "before_retained_fp": 45,
+      "after_retained_fp": 37,
+      "additional_labeled_fp_removed": 8,
+      "labeled_fp_reintroduced": 0,
+      "cumulative_removed": 23,
+      "total": 60,
+      "severity_changes": 0,
+      "removed_alerts": [
+        {
+          "id": "A-b3bdb2173825ff62d1ee",
+          "repository": "jpadilla/pyjwt",
+          "path": "tests/test_api_jws.py",
+          "line": 301,
+          "rule": "SECURITY_HARDCODED_SECRET",
+          "actionable_label": "FP",
+          "state": "REMOVED",
+          "baseline_severity": "CRITICAL",
+          "candidate_severity": null
+        },
+        {
+          "id": "A-e06d603a2af8c0f00327",
+          "repository": "jpadilla/pyjwt",
+          "path": "tests/test_api_jws.py",
+          "line": 524,
+          "rule": "SECURITY_HARDCODED_SECRET",
+          "actionable_label": "FP",
+          "state": "REMOVED",
+          "baseline_severity": "CRITICAL",
+          "candidate_severity": null
+        },
+        {
+          "id": "A-3f6527b2e58cd6b805b7",
+          "repository": "jpadilla/pyjwt",
+          "path": "tests/test_api_jws.py",
+          "line": 546,
+          "rule": "SECURITY_HARDCODED_SECRET",
+          "actionable_label": "FP",
+          "state": "REMOVED",
+          "baseline_severity": "CRITICAL",
+          "candidate_severity": null
+        },
+        {
+          "id": "A-8f0c56e438f29029b209",
+          "repository": "jpadilla/pyjwt",
+          "path": "tests/test_api_jws.py",
+          "line": 653,
+          "rule": "SECURITY_HARDCODED_SECRET",
+          "actionable_label": "FP",
+          "state": "REMOVED",
+          "baseline_severity": "CRITICAL",
+          "candidate_severity": null
+        },
+        {
+          "id": "A-ccb33815cded6e4c82cd",
+          "repository": "jpadilla/pyjwt",
+          "path": "tests/test_api_jws.py",
+          "line": 666,
+          "rule": "SECURITY_HARDCODED_SECRET",
+          "actionable_label": "FP",
+          "state": "REMOVED",
+          "baseline_severity": "CRITICAL",
+          "candidate_severity": null
+        },
+        {
+          "id": "A-c0d433f8ad04341149a4",
+          "repository": "jpadilla/pyjwt",
+          "path": "tests/test_api_jwt.py",
+          "line": 214,
+          "rule": "SECURITY_HARDCODED_SECRET",
+          "actionable_label": "FP",
+          "state": "REMOVED",
+          "baseline_severity": "CRITICAL",
+          "candidate_severity": null
+        },
+        {
+          "id": "A-40316c6901f12a0d44e6",
+          "repository": "jpadilla/pyjwt",
+          "path": "tests/test_api_jwt.py",
+          "line": 233,
+          "rule": "SECURITY_HARDCODED_SECRET",
+          "actionable_label": "FP",
+          "state": "REMOVED",
+          "baseline_severity": "CRITICAL",
+          "candidate_severity": null
+        },
+        {
+          "id": "A-26f30c273ca58c4fd8a1",
+          "repository": "jpadilla/pyjwt",
+          "path": "tests/test_api_jwt.py",
+          "line": 254,
+          "rule": "SECURITY_HARDCODED_SECRET",
+          "actionable_label": "FP",
+          "state": "REMOVED",
+          "baseline_severity": "CRITICAL",
+          "candidate_severity": null
+        }
+      ],
+      "precision": 0.0,
+      "warning": "All60 baseline labels are FP. Removal is not a fresh precision estimate."
+    },
+    "pyjwt_full_inventory": {
+      "before_hardcoded_secret_alerts": 45,
+      "after": 20,
+      "removed_count": 27,
+      "new_unlabelled_alerts": [
+        [
+          "tests/test_api_jwt.py",
+          "SECURITY_HARDCODED_SECRET",
+          961,
+          8
+        ],
+        [
+          "tests/test_api_jwt.py",
+          "SECURITY_HARDCODED_SECRET",
+          572,
+          8
+        ]
+      ],
+      "source_identity_verified_equal": true,
+      "scan_seconds_after": 57.46866410000075,
+      "scope": "Same26files; exposed development source; no claim these unlabelled rows are all FP."
+    },
+    "true_positive_retention": {
+      "scope": "EXPOSED_HISTORICAL_TP_SOURCE_SLICE_RETENTION_NOT_PRECISION",
+      "retained": 13,
+      "total": 13,
+      "seconds": 1.593136900002719,
+      "controls": [
+        {
+          "case_id": "P007-f184337598",
+          "repository": "dpgaspar/Flask-AppBuilder",
+          "commit": "9e2adea741c35aa517b2f87b1530ee388b11c0e0",
+          "path": "examples/masterdetail/config.py",
+          "source_sha256": "1268cd03a6154050d847de2373da6c4171b94827c1dfe502d7ca969b9a25c9ae",
+          "rule": "SECURITY_HARDCODED_SECRET",
+          "line": 6,
+          "column": 0,
+          "label": "TP",
+          "expected_severity": "CRITICAL",
+          "retained_at_original_severity": true,
+          "observed_severities": [
+            "CRITICAL"
+          ]
+        },
+        {
+          "case_id": "P010-0bbfc0d70e",
+          "repository": "dpgaspar/Flask-AppBuilder",
+          "commit": "9e2adea741c35aa517b2f87b1530ee388b11c0e0",
+          "path": "examples/oauth/config.py",
+          "source_sha256": "3bd4fcb08b323ef38583b58dec5d517bd25c2a16fa062fffdf0a0783053df84f",
+          "rule": "SECURITY_HARDCODED_SECRET",
+          "line": 8,
+          "column": 0,
+          "label": "TP",
+          "expected_severity": "CRITICAL",
+          "retained_at_original_severity": true,
+          "observed_severities": [
+            "CRITICAL"
+          ]
+        },
+        {
+          "case_id": "P012-828b61f9c1",
+          "repository": "dpgaspar/Flask-AppBuilder",
+          "commit": "9e2adea741c35aa517b2f87b1530ee388b11c0e0",
+          "path": "examples/quickcharts/config.py",
+          "source_sha256": "241072a3dab46906cbd6a8d09131d37cd5703cd2534f709f39a0dd9201386aed",
+          "rule": "SECURITY_HARDCODED_SECRET",
+          "line": 6,
+          "column": 0,
+          "label": "TP",
+          "expected_severity": "CRITICAL",
+          "retained_at_original_severity": true,
+          "observed_severities": [
+            "CRITICAL"
+          ]
+        },
+        {
+          "case_id": "P020-c57dfce156",
+          "repository": "dpgaspar/Flask-AppBuilder",
+          "commit": "9e2adea741c35aa517b2f87b1530ee388b11c0e0",
+          "path": "examples/simpleview2/config.py",
+          "source_sha256": "f5b4b077a35a8258905fa801765a2e684f5b8d0f1ed47d25010a8b6442f0d927",
+          "rule": "SECURITY_HARDCODED_SECRET",
+          "line": 6,
+          "column": 0,
+          "label": "TP",
+          "expected_severity": "CRITICAL",
+          "retained_at_original_severity": true,
+          "observed_severities": [
+            "CRITICAL"
+          ]
+        },
+        {
+          "case_id": "P021-43f1c8cd15",
+          "repository": "dpgaspar/Flask-AppBuilder",
+          "commit": "9e2adea741c35aa517b2f87b1530ee388b11c0e0",
+          "path": "examples/extendsecurity/config.py",
+          "source_sha256": "67756f94a669c5bc8ec4840a6f7d60cbbc68656718e4f186865cd54c793064ed",
+          "rule": "SECURITY_HARDCODED_SECRET",
+          "line": 6,
+          "column": 0,
+          "label": "TP",
+          "expected_severity": "CRITICAL",
+          "retained_at_original_severity": true,
+          "observed_severities": [
+            "CRITICAL"
+          ]
+        },
+        {
+          "case_id": "P023-8157b9c219",
+          "repository": "dpgaspar/Flask-AppBuilder",
+          "commit": "9e2adea741c35aa517b2f87b1530ee388b11c0e0",
+          "path": "examples/enums/config.py",
+          "source_sha256": "7fe9ac3a83ab8add39607ad04ecef1c95b97bf693e9a73f75d875625146f06e9",
+          "rule": "SECURITY_HARDCODED_SECRET",
+          "line": 6,
+          "column": 0,
+          "label": "TP",
+          "expected_severity": "CRITICAL",
+          "retained_at_original_severity": true,
+          "observed_severities": [
+            "CRITICAL"
+          ]
+        },
+        {
+          "case_id": "P032-658f106be0",
+          "repository": "dpgaspar/Flask-AppBuilder",
+          "commit": "9e2adea741c35aa517b2f87b1530ee388b11c0e0",
+          "path": "examples/quickimages/config.py",
+          "source_sha256": "bee7b574e2c1f0e81317d28ee0009ded8572620f5c2da45ecbe6201e0a32e43c",
+          "rule": "SECURITY_HARDCODED_SECRET",
+          "line": 6,
+          "column": 0,
+          "label": "TP",
+          "expected_severity": "CRITICAL",
+          "retained_at_original_severity": true,
+          "observed_severities": [
+            "CRITICAL"
+          ]
+        },
+        {
+          "case_id": "P035-16cb0d3709",
+          "repository": "dpgaspar/Flask-AppBuilder",
+          "commit": "9e2adea741c35aa517b2f87b1530ee388b11c0e0",
+          "path": "examples/related_fields/config.py",
+          "source_sha256": "238d0ccf99a40d3bdbc52d904be26d0c1c3f5fd408aeacc3a496df2a84991fdc",
+          "rule": "SECURITY_HARDCODED_SECRET",
+          "line": 6,
+          "column": 0,
+          "label": "TP",
+          "expected_severity": "CRITICAL",
+          "retained_at_original_severity": true,
+          "observed_severities": [
+            "CRITICAL"
+          ]
+        },
+        {
+          "case_id": "P039-adb965bec2",
+          "repository": "dpgaspar/Flask-AppBuilder",
+          "commit": "9e2adea741c35aa517b2f87b1530ee388b11c0e0",
+          "path": "examples/quickactions/config.py",
+          "source_sha256": "76b0d28836602fa23bd1617678b95e822104e21a00ba830c3841bc94bec2688b",
+          "rule": "SECURITY_HARDCODED_SECRET",
+          "line": 13,
+          "column": 0,
+          "label": "TP",
+          "expected_severity": "CRITICAL",
+          "retained_at_original_severity": true,
+          "observed_severities": [
+            "CRITICAL"
+          ]
+        },
+        {
+          "case_id": "P041-f5da61262e",
+          "repository": "dpgaspar/Flask-AppBuilder",
+          "commit": "9e2adea741c35aa517b2f87b1530ee388b11c0e0",
+          "path": "examples/quickcharts2/config.py",
+          "source_sha256": "bd5d8f8177d28bb4df3c6a7dc3e0fc8808e9fa4414a7291d66f7b61170769999",
+          "rule": "SECURITY_HARDCODED_SECRET",
+          "line": 6,
+          "column": 0,
+          "label": "TP",
+          "expected_severity": "CRITICAL",
+          "retained_at_original_severity": true,
+          "observed_severities": [
+            "CRITICAL"
+          ]
+        },
+        {
+          "case_id": "P067-b727f76060",
+          "repository": "dpgaspar/Flask-AppBuilder",
+          "commit": "9e2adea741c35aa517b2f87b1530ee388b11c0e0",
+          "path": "examples/extendsecurity2/config.py",
+          "source_sha256": "0fdbcbaf20afe0e4bc37b31ac9e5f8dde5f9400ad5f899879c60e3e8f6bddcf6",
+          "rule": "SECURITY_HARDCODED_SECRET",
+          "line": 6,
+          "column": 0,
+          "label": "TP",
+          "expected_severity": "CRITICAL",
+          "retained_at_original_severity": true,
+          "observed_severities": [
+            "CRITICAL"
+          ]
+        },
+        {
+          "case_id": "P056-d4b9026a58",
+          "repository": "ansible/awx",
+          "commit": "6fc51b6d25b5bf3ad7efa66cc4e62bdb27177027",
+          "path": "tools/scripts/pk_to_named_url.py",
+          "source_sha256": "66c3420aa845770e06f8213b4cb69646d4e1f7bd6270356b1a8c808e2d1d3d99",
+          "rule": "SECURITY_TLS_VERIFY_DISABLED",
+          "line": 94,
+          "column": 8,
+          "label": "TP",
+          "expected_severity": "HIGH",
+          "retained_at_original_severity": true,
+          "observed_severities": [
+            "HIGH"
+          ]
+        },
+        {
+          "case_id": "added-AWX-TP",
+          "repository": "ansible/awx",
+          "commit": "6fc51b6d25b5bf3ad7efa66cc4e62bdb27177027",
+          "path": "awx/main/tests/live/tests/api/test_uniqueness.py",
+          "source_sha256": "b50ecf4c8cd2c2bd6d2384888e3ba220b37daad0b18636df4e4e87ac38246a46",
+          "rule": "SECURITY_LITERAL_HTTP_CREDENTIAL",
+          "line": 49,
+          "column": 11,
+          "label": "TP",
+          "expected_severity": "MEDIUM",
+          "retained_at_original_severity": true,
+          "observed_severities": [
+            "MEDIUM"
+          ]
+        }
+      ],
+      "limitations": "Only the13 exact source-file controls; no full-repository TP retention, new heldout precision or recall claim."
+    }
+  },
+  "checks": {
+    "pytest": {
+      "jwt": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "0",
+          "skipped": "0",
+          "tests": "74",
+          "time": "5.242",
+          "timestamp": "2026-10-21T09:35:59.879397-04:00",
+          "hostname": "MSI"
+        }
+      ],
+      "role": [
+        {
+          "name": "pytest",
+          "errors": "0",
+          "failures": "0",
+          "skipped": "0",
+          "tests": "449",
+          "time": "28.326",
+          "timestamp": "2026-10-21T09:35:59.879397-04:00",
+          "hostname": "MSI"
+        }
+      ]
+    },
+    "native_positive_cases": 1,
+    "native_negative_cases": 20,
+    "native_negative_severity": "CRITICAL",
+    "cache": {
+      "schema": "factory.independent-cache-probe.v1",
+      "verdict": "PASS",
+      "candidate": {
+        "factoryline/mock_fixture_provenance.py": "6971049dcf41abde0b36653fff66e71b5c1c2a54e1c4db57dc66d5c22b24113a",
+        "factoryline/primitive_observation_binding.py": "ed5b8cc68afeae12a87b25cb320da10561f99d82d1aae52821a97315a7902ffd"
+      },
+      "target_code_executed": false,
+      "observations": [
+        {
+          "case": "cold_baseline",
+          "cache_enabled": false,
+          "expected": {
+            "secrets": 0,
+            "primitives": 1
+          },
+          "observed": {
+            "secrets": 0,
+            "primitives": 1
+          },
+          "pass": true,
+          "cache_info": {
+            "entries": 0,
+            "serialized_bytes": 0,
+            "hits": 0,
+            "misses": 0
+          },
+          "coverage": {
+            "language": "Python",
+            "files_discovered": 13,
+            "files_attempted": 13,
+            "files_audited": 13,
+            "audit_rate": 1.0,
+            "rate_defined": true,
+            "inventory_complete": true,
+            "measurement_state": "complete",
+            "complete": true,
+            "limit": 460
+          }
+        },
+        {
+          "case": "first_cache_baseline",
+          "cache_enabled": true,
+          "expected": {
+            "secrets": 0,
+            "primitives": 1
+          },
+          "observed": {
+            "secrets": 0,
+            "primitives": 1
+          },
+          "pass": true,
+          "cache_info": {
+            "entries": 1,
+            "serialized_bytes": 60191,
+            "hits": 0,
+            "misses": 1
+          },
+          "coverage": {
+            "language": "Python",
+            "files_discovered": 13,
+            "files_attempted": 13,
+            "files_audited": 13,
+            "audit_rate": 1.0,
+            "rate_defined": true,
+            "inventory_complete": true,
+            "measurement_state": "complete",
+            "complete": true,
+            "limit": 460
+          }
+        },
+        {
+          "case": "warm_cache_baseline",
+          "cache_enabled": true,
+          "expected": {
+            "secrets": 0,
+            "primitives": 1
+          },
+          "observed": {
+            "secrets": 0,
+            "primitives": 1
+          },
+          "pass": true,
+          "cache_info": {
+            "entries": 1,
+            "serialized_bytes": 60191,
+            "hits": 1,
+            "misses": 1
+          },
+          "coverage": {
+            "language": "Python",
+            "files_discovered": 13,
+            "files_attempted": 13,
+            "files_audited": 13,
+            "audit_rate": 1.0,
+            "rate_defined": true,
+            "inventory_complete": true,
+            "measurement_state": "complete",
+            "complete": true,
+            "limit": 460
+          }
+        },
+        {
+          "case": "warm_source_changed_namespace",
+          "cache_enabled": true,
+          "expected": {
+            "secrets": 1,
+            "primitives": 0
+          },
+          "observed": {
+            "secrets": 1,
+            "primitives": 0
+          },
+          "pass": true,
+          "cache_info": {
+            "entries": 2,
+            "serialized_bytes": 120629,
+            "hits": 1,
+            "misses": 2
+          },
+          "coverage": {
+            "language": "Python",
+            "files_discovered": 13,
+            "files_attempted": 13,
+            "files_audited": 13,
+            "audit_rate": 1.0,
+            "rate_defined": true,
+            "inventory_complete": true,
+            "measurement_state": "complete",
+            "complete": true,
+            "limit": 460
+          }
+        },
+        {
+          "case": "cold_source_changed_namespace",
+          "cache_enabled": false,
+          "expected": {
+            "secrets": 1,
+            "primitives": 0
+          },
+          "observed": {
+            "secrets": 1,
+            "primitives": 0
+          },
+          "pass": true,
+          "cache_info": {
+            "entries": 2,
+            "serialized_bytes": 120629,
+            "hits": 1,
+            "misses": 2
+          },
+          "coverage": {
+            "language": "Python",
+            "files_discovered": 13,
+            "files_attempted": 13,
+            "files_audited": 13,
+            "audit_rate": 1.0,
+            "rate_defined": true,
+            "inventory_complete": true,
+            "measurement_state": "complete",
+            "complete": true,
+            "limit": 460
+          }
+        },
+        {
+          "case": "warm_source_restored",
+          "cache_enabled": true,
+          "expected": {
+            "secrets": 0,
+            "primitives": 1
+          },
+          "observed": {
+            "secrets": 0,
+            "primitives": 1
+          },
+          "pass": true,
+          "cache_info": {
+            "entries": 2,
+            "serialized_bytes": 120629,
+            "hits": 2,
+            "misses": 2
+          },
+          "coverage": {
+            "language": "Python",
+            "files_discovered": 13,
+            "files_attempted": 13,
+            "files_audited": 13,
+            "audit_rate": 1.0,
+            "rate_defined": true,
+            "inventory_complete": true,
+            "measurement_state": "complete",
+            "complete": true,
+            "limit": 460
+          }
+        },
+        {
+          "case": "warm_helper_code_changed",
+          "cache_enabled": true,
+          "expected": {
+            "secrets": 1,
+            "primitives": 0
+          },
+          "observed": {
+            "secrets": 1,
+            "primitives": 0
+          },
+          "pass": true,
+          "cache_info": {
+            "entries": 3,
+            "serialized_bytes": 180820,
+            "hits": 2,
+            "misses": 3
+          },
+          "coverage": {
+            "language": "Python",
+            "files_discovered": 13,
+            "files_attempted": 13,
+            "files_audited": 13,
+            "audit_rate": 1.0,
+            "rate_defined": true,
+            "inventory_complete": true,
+            "measurement_state": "complete",
+            "complete": true,
+            "limit": 460
+          }
+        },
+        {
+          "case": "cold_helper_code_changed",
+          "cache_enabled": false,
+          "expected": {
+            "secrets": 1,
+            "primitives": 0
+          },
+          "observed": {
+            "secrets": 1,
+            "primitives": 0
+          },
+          "pass": true,
+          "cache_info": {
+            "entries": 3,
+            "serialized_bytes": 180820,
+            "hits": 2,
+            "misses": 3
+          },
+          "coverage": {
+            "language": "Python",
+            "files_discovered": 13,
+            "files_attempted": 13,
+            "files_audited": 13,
+            "audit_rate": 1.0,
+            "rate_defined": true,
+            "inventory_complete": true,
+            "measurement_state": "complete",
+            "complete": true,
+            "limit": 460
+          }
+        },
+        {
+          "case": "warm_helper_code_restored",
+          "cache_enabled": true,
+          "expected": {
+            "secrets": 0,
+            "primitives": 1
+          },
+          "observed": {
+            "secrets": 0,
+            "primitives": 1
+          },
+          "pass": true,
+          "cache_info": {
+            "entries": 3,
+            "serialized_bytes": 180820,
+            "hits": 3,
+            "misses": 3
+          },
+          "coverage": {
+            "language": "Python",
+            "files_discovered": 13,
+            "files_attempted": 13,
+            "files_audited": 13,
+            "audit_rate": 1.0,
+            "rate_defined": true,
+            "inventory_complete": true,
+            "measurement_state": "complete",
+            "complete": true,
+            "limit": 460
+          }
+        },
+        {
+          "case": "plain_json_cache_payload",
+          "cache_enabled": true,
+          "expected": {
+            "secrets": 0,
+            "primitives": 1
+          },
+          "observed": {
+            "secrets": 0,
+            "primitives": 1
+          },
+          "pass": true,
+          "cache_info": {
+            "entries": 3,
+            "serialized_bytes": 180820,
+            "hits": 3,
+            "misses": 4
+          },
+          "coverage": {
+            "language": "Python",
+            "files_discovered": 13,
+            "files_attempted": 13,
+            "files_audited": 13,
+            "audit_rate": 1.0,
+            "rate_defined": true,
+            "inventory_complete": true,
+            "measurement_state": "complete",
+            "complete": true,
+            "limit": 460
+          }
+        }
+      ],
+      "plain_cache_json_observation": {
+        "before": {
+          "entries": 3,
+          "serialized_bytes": 180820,
+          "hits": 3,
+          "misses": 3
+        },
+        "after": {
+          "entries": 3,
+          "serialized_bytes": 180820,
+          "hits": 3,
+          "misses": 4
+        },
+        "rejected_and_rebuilt": true,
+        "note": "A plain str loses NativeOraclePayload provenance; most recent entry is the actual restored-baseline cache key."
+      }
+    },
+    "forged_proof": {
+      "schema": "factory.independent-admission-probe.v1",
+      "candidate": {
+        "factoryline/mock_fixture_provenance.py": "6971049dcf41abde0b36653fff66e71b5c1c2a54e1c4db57dc66d5c22b24113a",
+        "factoryline/primitive_observation_binding.py": "ed5b8cc68afeae12a87b25cb320da10561f99d82d1aae52821a97315a7902ffd"
+      },
+      "target_code_executed": false,
+      "method": "Native scan of actual unclosed raw-key export fixture followed by JSON roundtrip and full primitive partition admission with correctly rebound hashes but forged encode-operation facts.",
+      "honest": {
+        "secrets": 1,
+        "primitive_count": 0
+      },
+      "forged": {
+        "secrets": 1,
+        "primitive_count": 0
+      },
+      "coverage": {
+        "language": "Python",
+        "files_discovered": 13,
+        "files_attempted": 13,
+        "files_audited": 13,
+        "audit_rate": 1.0,
+        "rate_defined": true,
+        "inventory_complete": true,
+        "measurement_state": "complete",
+        "complete": true,
+        "limit": 460
+      }
+    },
+    "architecture": {
+      "decision": "HEALTHY",
+      "python_files": 429,
+      "core_modules": 133,
+      "caps_changed": false
+    }
+  },
+  "test_contract_changes": [
+    "Existing helper unit tests now call shared operation witness. Different locally declared literal keys are permitted per-operation; external key origins remain rejected.",
+    "Removed obsolete marker-profile unit invocation along with its deleted helper; native fake-provider test and full provider AST mismatch/egress probes retain rejection coverage.",
+    "No HOLLOW/UNKNOWN severity expectation migration in this patch."
+  ],
+  "independent_review": {
+    "completed_on": "final4 and final5",
+    "status": "Final6 root-run controls close final4 R7 and final5 R8; independent final6 signoff remains PENDING because reviewer reached provider usage limit. No final6 independent PASS claimed."
+  },
+  "publication": {
+    "fresh_study_commit": "c05034e5b12071781eed22d2182b4d83c34b0724",
+    "actionable_tp": 0,
+    "actionable_fp": 41,
+    "unclear": 6,
+    "precision": 0.0,
+    "wilson95": [
+      0,
+      0.08566757018442756
+    ],
+    "candidate_claim": false,
+    "claude": "PENDING",
+    "global_ci": "Latest95f1eab CI66failed/8131passed/12skipped. Candidate full CI not run yet.",
+    "merge_ready": false
+  },
+  "limits": [
+    "Pinned supported provider profile is deliberately bounded; other versions/providers retain findings. Not a universal Python purity proof.",
+    "13 historical TP source controls do not establish full-repository recall.",
+    "Two new unlabelled PyJWT alerts retained separately; no unlabelled item counted as a win.",
+    "No target application imported or executed. Actual provider/runtime behavior, transport safety and fixture isolation remain unassessed.",
+    "No speed improvement claim: candidate scans overlapped other validation jobs. Full fresh precision target and66CI failures remain incomplete."
+  ],
+  "artifacts": [
+    {
+      "path": ".factory/crypto199/final6/candidate.json",
+      "sha256": "f69098ac50153f727f8c7e1dea9c64164ed3e897eb14137cf73c247eab83317d",
+      "kind": "receipt"
+    },
+    {
+      "path": ".factory/crypto199/final6/static-checks.json",
+      "sha256": "1fa0b0467baa02e37503f2020705a9f976962ba072488ab286abd1f385196053",
+      "kind": "receipt"
+    },
+    {
+      "path": ".factory/crypto199/final6/role.xml",
+      "sha256": "bcb86b02974c10d18876692db292ede09bc1fa6cc4cf3c938d2508dd8b330e6b",
+      "kind": "test"
+    },
+    {
+      "path": ".factory/crypto199/final6/jwt.xml",
+      "sha256": "e3c7a211a2f1568b61583786d8a3139bdb2968c5fc604ca4610b6bbc21a3e206",
+      "kind": "test"
+    },
+    {
+      "path": ".factory/crypto199/final6/architecture.log",
+      "sha256": "bbb1390944f1d92e1cc3fa71c03fe05115e0019bcb2df993b214ac7578ab4eea",
+      "kind": "receipt"
+    },
+    {
+      "path": ".factory/crypto199/final6-old60/paired-report.json",
+      "sha256": "4d81b52b8ac6550fc87423f0e70a13bc196f6b93f8e31d684b5eef50add923a9",
+      "kind": "test"
+    },
+    {
+      "path": ".factory/crypto199/final6-retention/result.json",
+      "sha256": "d691fc4dfb1b267d7f6a5bc1cbfb30e090c2d8407e838ab90d4ed6143a695aae",
+      "kind": "test"
+    },
+    {
+      "path": ".factory/crypto199/review/final6-all-counterexamples.json",
+      "sha256": "cdcbe4483fa3dd3c4982de7eff58a2dee9eb4401b81990566785373a0cf6795f",
+      "kind": "test"
+    },
+    {
+      "path": ".factory/crypto199/review/final6-cache-probe.json",
+      "sha256": "8b6378302794d7d8b4be395812db2124e17004767750971bc928c66f26317c9c",
+      "kind": "test"
+    },
+    {
+      "path": ".factory/crypto199/review/final6-admission-probe.json",
+      "sha256": "800e06f32cc20bfef32475bd2c346dd40a96debf1e63a36e0973ea1e2fe90e5f",
+      "kind": "test"
+    },
+    {
+      "path": ".factory/crypto199/review/final4-independent-review.json",
+      "sha256": "c543fcd2e6e1ae78c4e94d7e0505ee58db61e36e9b9649333638a2a416ac9348",
+      "kind": "review"
+    },
+    {
+      "path": ".factory/crypto199/review/final5-independent-review.json",
+      "sha256": "f42e9935c645b59991e106fa21319f8a4706be6af4c2868630d0f3d0110385b5",
+      "kind": "review"
+    }
+  ]
+}

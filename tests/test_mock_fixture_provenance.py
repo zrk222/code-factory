@@ -1797,3 +1797,146 @@ def test_jwt_provider_binding_stability_is_memoized_per_module_walk(monkeypatch)
     attach_parents(module)
     assert proof._jwt_provider_is_mutated(module, "PyJWS", aliases, fixture)
     assert len(dynamic_checks) == 2
+
+
+@pytest.mark.parametrize(
+    "expression,closed",
+    [
+        ("token = jwt.encode({}, secret)", True),
+        ("token: str = jwt.encode({}, secret)", True),
+        ("jwt.decode('token', secret)", True),
+        ("assert jwt.decode('token', secret) == {}", True),
+        ("sink.token = jwt.encode({}, secret)", False),
+        ("sink['token'] = jwt.encode({}, secret)", False),
+        ("return jwt.encode({}, secret)", False),
+        ("publish(jwt.encode({}, secret))", False),
+        ("assert publish(jwt.encode({}, secret))", False),
+    ],
+)
+def test_crypto_operation_result_requires_closed_sink(expression, closed):
+    import ast
+
+    from factoryline.mock_fixture_provenance import _jwt_crypto_result_is_closed
+
+    owner = ast.parse(f"def test_case():\n    {expression}\n").body[0]
+    parents = {
+        child: node for node in ast.walk(owner) for child in ast.iter_child_nodes(node)
+    }
+    call = next(
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr in {"encode", "decode"}
+    )
+    assert _jwt_crypto_result_is_closed(call, owner, parents) is closed
+
+
+@pytest.mark.parametrize(
+    "expression,closed",
+    [
+        ("jwt.encode({}, secret)", True),
+        ("jwt.decode('token', key=secret)", True),
+        ("jwt.encode(secret, 'other')", False),
+        ("jwt.encode({}, 'other', algorithm=secret)", False),
+        ("jwt.encode({}, secret, key='other')", False),
+        ("jwt.encode({}, secret, **options)", False),
+        ("jwt.encode(*args, key=secret)", False),
+    ],
+)
+def test_crypto_literal_requires_exact_key_slot(expression, closed):
+    import ast
+
+    from factoryline.mock_fixture_provenance import _jwt_load_is_closed_call
+
+    call = ast.parse(expression).body[0].value
+    parents = {
+        child: node for node in ast.walk(call) for child in ast.iter_child_nodes(node)
+    }
+    secret = next(
+        node
+        for node in ast.walk(call)
+        if isinstance(node, ast.Name) and node.id == "secret"
+    )
+    assert (_jwt_load_is_closed_call(secret, "jwt", parents) is call) is closed
+
+
+def test_crypto_native_source_inventory_requires_all_current_bytes():
+    import hashlib
+
+    from factoryline.primitive_observation_binding import _jwt_bound_source_inventory
+
+    data = {"test_case.py": b"pass\n", "helper.py": b"pass\n"}
+    bindings = {name: hashlib.sha256(raw).hexdigest() for name, raw in data.items()}
+    assert _jwt_bound_source_inventory(data, bindings) is not None
+    assert (
+        _jwt_bound_source_inventory({"test_case.py": data["test_case.py"]}, bindings)
+        is None
+    )
+    assert (
+        _jwt_bound_source_inventory({**data, "helper.py": b"external()\n"}, bindings)
+        is None
+    )
+    assert (
+        _jwt_bound_source_inventory({**data, "../outside.py": b"pass\n"}, bindings)
+        is None
+    )
+
+
+@pytest.mark.parametrize(
+    "statement,expected",
+    [
+        ("from helper import value", ["helper", "helper.value"]),
+        ("from .helper import value", ["tests.helper", "tests.helper.value"]),
+        ("from tests.helper import value", ["tests.helper", "tests.helper.value"]),
+        ("def test_case():\n    from helper import value", ["helper", "helper.value"]),
+    ],
+)
+def test_crypto_import_graph_distinguishes_absolute_and_relative_names(
+    statement, expected
+):
+    import ast
+    from pathlib import Path
+    from factoryline.mock_fixture_provenance import _jwt_imported_local_module_names
+
+    root = Path("captured")
+    sources = {root / "tests/__init__.py": b""}
+    assert (
+        _jwt_imported_local_module_names(
+            ast.parse(statement), root / "tests/test_protocol.py", root, sources
+        )
+        == expected
+    )
+
+
+@pytest.mark.parametrize(
+    "invocation,closed",
+    [
+        ("", True),
+        ("leak_caller()", False),
+        ("alias()", False),
+        ("runner = leak_caller; runner()", False),
+        ("runner = alias; runner()", False),
+    ],
+)
+def test_crypto_literal_namespace_guard_follows_local_function_objects(
+    invocation, closed
+):
+    import ast
+    from factoryline.mock_fixture_provenance import _jwt_local_literal_uses
+
+    module = ast.parse(
+        "def leak_caller():\n    from inspect import currentframe as frame\n    return frame().f_back.f_locals\n"
+        "alias = leak_caller\n"
+        "def test_case(jwt):\n    secret = 'fixture-key'\n    jwt.encode({}, secret)\n    "
+        + invocation
+        + "\n"
+    )
+    owner = module.body[-1]
+    declaration = owner.body[0]
+    assert (
+        _jwt_local_literal_uses(
+            declaration, declaration.targets[0], owner, "jwt", module
+        )
+        is closed
+    )

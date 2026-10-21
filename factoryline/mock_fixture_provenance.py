@@ -2014,7 +2014,7 @@ def _jwt_fixture_is_exact(
 
 
 def _jwt_module_fixture(
-    module: ast.Module, module_aliases: dict[str, str]
+    module: ast.Module, module_aliases: dict[str, str], relative: str
 ) -> ast.FunctionDef | ast.AsyncFunctionDef | None:
     fixture_candidates = [
         statement
@@ -2038,7 +2038,7 @@ def _jwt_module_fixture(
         return None
     if _jwt_nearer_fixture_override(module, fixture):
         return None
-    if not _jwt_provider_source_safe(module, fixture, module_aliases):
+    if not _jwt_provider_source_safe(module, fixture, module_aliases, relative):
         return None
     return fixture
 
@@ -2069,16 +2069,16 @@ def _jwt_provider_source_safe(
     module: ast.Module,
     fixture: ast.FunctionDef | ast.AsyncFunctionDef,
     aliases: dict[str, str],
+    relative: str,
 ) -> bool:
-    """Require the imported provider's captured source and reject external effects."""
-    import hashlib
-
+    """Admit only the captured PyJWT source profile with closed test consumers."""
     source_context = getattr(module, "_security_source_context", None)
     if not isinstance(source_context, tuple) or len(source_context) != 2:
         return False
     root, sources = source_context
     type_name = _JWT_TEST_FIXTURE_TYPES[fixture.name]
     provider_module, provider_class = type_name.rsplit(".", 1)
+    test_relative = relative
     captured = getattr(module, "_security_oracle_context", {}).get(
         "captured_imports", {}
     )
@@ -2096,311 +2096,178 @@ def _jwt_provider_source_safe(
         or captured.get(provider_class) != (relative.as_posix(), provider_class)
     ):
         return False
-    candidates = [path for path in sources if path == root / relative]
-    if len(candidates) != 1:
+    if not _jwt_captured_provider_sources_safe(root, sources):
         return False
-    raw = sources[candidates[0]]
-    if not isinstance(raw, bytes) or len(raw) > _review_audit().MAX_BYTES:
+    if _jwt_provider_sources_mutated(
+        root, sources, module, test_relative, provider_class
+    ):
         return False
-    try:
-        provider = ast.parse(raw, filename=str(relative))
-    except (SyntaxError, ValueError):
-        return False
-    provider_classes = [
-        item
-        for item in provider.body
-        if isinstance(item, ast.ClassDef) and item.name == provider_class
-    ]
-    provider_aliases = _jwt_provider_aliases(
-        provider, provider_class, {provider_class: type_name}
-    )
-    provider_safe = (
-        len(provider_classes) == 1
-        and not provider_classes[0].bases
-        and not provider_classes[0].keywords
-        and not provider_classes[0].decorator_list
-        and not any(
-            _jwt_provider_write(
-                item, provider_class, {provider_class: type_name}, provider_aliases
-            )
-            for item in ast.walk(provider)
-        )
-        and _jwt_provider_api_profile_safe(provider_classes[0], provider_class)
-        and bool(hashlib.sha256(raw).hexdigest())
-    )
-    if not provider_safe:
-        return False
-    if provider_class != "PyJWT":
-        return True
-    return _jwt_pyjws_source_safe(provider, root, sources)
+    return True
 
 
-def _jwt_pyjws_source_safe(provider, root, sources):
-    imports_jws = [
-        alias.name
-        for item in provider.body
-        if isinstance(item, ast.ImportFrom)
-        and item.module == "api_jws"
-        and item.level == 1
-        for alias in item.names
-        if alias.name == "PyJWS"
-    ]
-    jws_relative = Path("jwt/api_jws.py")
-    if imports_jws != ["PyJWS"] or root / jws_relative not in sources:
-        return False
-    jws_raw = sources[root / jws_relative]
-    if not isinstance(jws_raw, bytes) or len(jws_raw) > _review_audit().MAX_BYTES:
-        return False
-    try:
-        jws_module = ast.parse(jws_raw, filename=jws_relative.as_posix())
-    except (SyntaxError, ValueError):
-        return False
-    jws_classes = [
-        item
-        for item in jws_module.body
-        if isinstance(item, ast.ClassDef) and item.name == "PyJWS"
-    ]
-    jws_aliases = _jwt_provider_aliases(
-        jws_module, "PyJWS", {"PyJWS": "jwt.api_jws.PyJWS"}
-    )
-    return bool(
-        len(jws_classes) == 1
-        and not any(
-            _jwt_provider_write(
-                item,
-                "PyJWS",
-                {"PyJWS": "jwt.api_jws.PyJWS"},
-                jws_aliases,
-            )
-            for item in ast.walk(jws_module)
-        )
-        and _jwt_provider_api_profile_safe(jws_classes[0], "PyJWS")
-    )
-
-
-def _jwt_attribute_path(node):
-    if isinstance(node, ast.Name):
-        return (node.id,)
-    if isinstance(node, ast.Attribute):
-        return (*_jwt_attribute_path(node.value), node.attr)
-    return ()
-
-
-def _jwt_method_has_call(method, attribute_path):
-    return any(
-        isinstance(node, ast.Call) and _jwt_attribute_path(node.func) == attribute_path
-        for node in ast.walk(method)
-    )
-
-
-def _jwt_provider_api_profile_safe(provider_class, provider_class_name):
-    """Recognize the captured PyJWT API flow without asserting provider purity."""
-    methods = {
-        item.name: item
-        for item in provider_class.body
-        if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+def _jwt_captured_provider_sources_safe(root, sources):
+    expected = {
+        "jwt/__init__.py": "f8f61e8d4e05e471fe7be86232fe31f12032a936ce429ae12c03d03ab68b32e6",
+        "jwt/api_jwt.py": "976ed8585007e68083dd2acbcc415960e4b17ce8514fb7b5bf90ec297d3ca55b",
+        "jwt/api_jws.py": "ebc79619623c88bbd9776afc592a990ae1d4c89ec2ea60f4037ac5b36abd2a53",
+        "jwt/algorithms.py": "1b90a461c6ca7b3e8d62b53742d7c411c4d1146ef8bd6ee5286774ff9cac112b",
+        "jwt/api_jwk.py": "1533a7fdc34aa23db7c649af87559424d8398223c65ecd3bf7d29761330f62b9",
+        "jwt/exceptions.py": "d4541ff6f736aad49a42412955b8f24e31e018cdb62bc0cbc31a0e8caad12b80",
+        "jwt/help.py": "83c1677b6abdfee51e2ade8105cfe5cf38e1b14ef8bdba42d10701a31e19e45f",
+        "jwt/jwk_set_cache.py": "3d21e96bc1601e79db8dad50edac410babcaeec934151b11ceb3482a0b727eb1",
+        "jwt/jwks_client.py": "0857af89523afe69d988044d0aefcd8f562cda0d2692001e4d6a4fa9dbd818d0",
+        "jwt/types.py": "0b78d477efe2475213796919badb73f022b70518f5f4404f43532289f4781a26",
+        "jwt/utils.py": "014e2080681802aa360efed7ccaccbe41d57bc54b5b6dd5676f010aade6cb9e9",
+        "jwt/warnings.py": "3822ccb2edff125525f5a5b74ecfb83c5d81c82802a910d3a976abec4ddaba10",
     }
-    if provider_class_name == "PyJWT":
-        initializer = methods.get("__init__")
-        encode = methods.get("encode")
-        decode = methods.get("decode")
-        decode_complete = methods.get("decode_complete")
-        return bool(
-            encode
-            and decode
-            and decode_complete
-            and initializer
-            and not encode.decorator_list
-            and not decode.decorator_list
-            and not decode_complete.decorator_list
-            and _jwt_initializer_binds_jws(initializer)
-            and any(
-                isinstance(statement, ast.Return)
-                and isinstance(statement.value, ast.Call)
-                and _jwt_attribute_path(statement.value.func)
-                == ("self", "_jws", "encode")
-                for statement in encode.body
+    package_paths = {
+        path.relative_to(root).as_posix()
+        for path in sources
+        if path.is_relative_to(root / "jwt") and path.suffix == ".py"
+    }
+    if package_paths != set(expected):
+        return False
+    for relative, expected_hash in expected.items():
+        raw = sources.get(root / relative)
+        if not isinstance(raw, bytes) or len(raw) > _review_audit().MAX_BYTES:
+            return False
+        try:
+            source = ast.parse(raw, filename=relative)
+            actual = hashlib.sha256(
+                ast.dump(source, include_attributes=False).encode()
+            ).hexdigest()
+        except (SyntaxError, ValueError):
+            return False
+        if actual != expected_hash:
+            return False
+        for item in ast.walk(source):
+            names = (
+                [alias.name.split(".", 1)[0] for alias in item.names]
+                if isinstance(item, ast.Import)
+                else [item.module.split(".", 1)[0]]
+                if isinstance(item, ast.ImportFrom) and item.level == 0 and item.module
+                else []
             )
-            and _jwt_method_has_call(
-                decode_complete, ("self", "_jws", "decode_complete")
-            )
-            and _jwt_direct_assignment_from_call(
-                decode_complete, "decoded", ("self", "_jws", "decode_complete")
-            )
-            and _jwt_direct_assignment_from_call(
-                decode, "decoded", ("self", "decode_complete")
-            )
-            and _jwt_method_has_call(decode, ("self", "decode_complete"))
-            and _jwt_returns_payload(decode)
+            if any(
+                root / f"{name}.py" in sources or root / name / "__init__.py" in sources
+                for name in names
+            ):
+                return False
+    return True
+
+
+def _jwt_provider_sources_mutated(root, sources, module, relative, provider_class):
+    providers = ("PyJWT", "PyJWS") if provider_class == "PyJWT" else ("PyJWS",)
+    pending = [(root / relative, module)]
+    test_parent = Path(relative).parent
+    pending.extend(
+        (path, None)
+        for path in sources
+        if path.name == "conftest.py"
+        and path.relative_to(root).parent
+        in (*test_parent.parents, test_parent, Path("."))
+    )
+    visited = set()
+    while pending:
+        path, known_source = pending.pop()
+        if path in visited:
+            continue
+        visited.add(path)
+        raw = sources.get(path)
+        if not isinstance(raw, bytes):
+            return True
+        try:
+            source = known_source or ast.parse(raw, filename=str(path))
+        except (SyntaxError, ValueError):
+            return True
+        if path.relative_to(root).as_posix().startswith("jwt/"):
+            continue
+        if path != root / relative and _jwt_module_has_dynamic_execution(source):
+            return True
+        if _jwt_source_mutates_provider(source, providers):
+            return True
+        names = _jwt_imported_local_module_names(source, path, root, sources)
+        if names is None:
+            return True
+        pending.extend(
+            (candidate, None)
+            for name in names
+            for candidate in _jwt_local_module_paths(name, root, sources)
+            if candidate not in visited
         )
-    if provider_class_name == "PyJWS":
-        encode = methods.get("encode")
-        decode = methods.get("decode")
-        decode_complete = methods.get("decode_complete")
-        verify = methods.get("_verify_signature")
-        return bool(
-            encode
-            and decode
-            and decode_complete
-            and verify
-            and not encode.decorator_list
-            and not decode.decorator_list
-            and not decode_complete.decorator_list
-            and not verify.decorator_list
-            and _jwt_method_has_call(encode, ("self", "get_algorithm_by_name"))
+    return False
+
+
+def _jwt_source_mutates_provider(source, providers):
+    aliases = _review_audit()._module_security_aliases(source)
+    nodes = list(ast.walk(source))
+    for name in providers:
+        provider_aliases = _jwt_provider_aliases(source, name, aliases)
+        if any(
+            _jwt_provider_write(node, name, aliases, provider_aliases) for node in nodes
+        ):
+            return True
+        if any(
+            isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign, ast.Delete))
             and any(
-                isinstance(statement, ast.Assign)
-                and isinstance(statement.value, ast.Call)
-                and isinstance(statement.value.func, ast.Attribute)
-                and statement.value.func.attr == "sign"
-                and any(
-                    isinstance(target, ast.Name) and target.id == "signature"
-                    for target in statement.targets
+                isinstance(target, ast.Attribute)
+                and target.attr in {"encode", "decode"}
+                for target in (
+                    node.targets
+                    if isinstance(node, (ast.Assign, ast.Delete))
+                    else [node.target]
                 )
-                for statement in encode.body
             )
-            and _jwt_signed_result_is_encoded(encode)
-            and any(
-                isinstance(statement, ast.Return)
-                and isinstance(statement.value, ast.Call)
-                and isinstance(statement.value.func, ast.Attribute)
-                and statement.value.func.attr == "decode"
-                and isinstance(statement.value.func.value, ast.Name)
-                and statement.value.func.value.id == "encoded_string"
-                for statement in encode.body
-            )
-            and _jwt_active_verify_call(decode_complete)
-            and _jwt_method_has_call(verify, ("self", "get_algorithm_by_name"))
-            and _jwt_verify_failure_is_active(verify)
-            and _jwt_direct_assignment_from_call(
-                decode, "decoded", ("self", "decode_complete")
-            )
-            and _jwt_returns_payload(decode)
-            and _jwt_method_has_call(decode, ("self", "decode_complete"))
+            or isinstance(node, ast.Call)
+            and _review_audit()
+            ._resolved_ast_name(node.func, aliases)
+            .endswith(("setattr", "patch.object"))
+            and len(node.args) > 1
+            and isinstance(node.args[1], ast.Constant)
+            and node.args[1].value in {"encode", "decode"}
+            for node in nodes
+        ):
+            return True
+    return False
+
+
+def _jwt_imported_local_module_names(source, path, root, sources):
+    names = []
+    for item in ast.walk(source):
+        if isinstance(item, ast.Import):
+            names.extend(alias.name for alias in item.names)
+        elif isinstance(item, ast.ImportFrom):
+            relative = path.relative_to(root)
+            package = list(relative.parent.parts)
+            if path.name != "__init__.py":
+                package = (
+                    package if root / Path(*package) / "__init__.py" in sources else []
+                )
+            if item.level:
+                if item.level > len(package) + 1:
+                    return None
+                package = package[: len(package) - item.level + 1]
+            base = [
+                *(package if item.level else []),
+                *(item.module.split(".") if item.module else []),
+            ]
+            if base:
+                names.append(".".join(base))
+                names.extend(".".join([*base, alias.name]) for alias in item.names)
+    return names
+
+
+def _jwt_local_module_paths(name, root, sources):
+    if name is None:
+        return []
+    parts = name.split(".")
+    candidates = []
+    for index in range(1, len(parts) + 1):
+        prefix = Path(*parts[:index])
+        candidates.extend(
+            (root / prefix.with_suffix(".py"), root / prefix / "__init__.py")
         )
-
-
-def _jwt_direct_assignment_from_call(method, target_name, attribute_path):
-    return any(
-        isinstance(statement, ast.Assign)
-        and isinstance(statement.value, ast.Call)
-        and _jwt_attribute_path(statement.value.func) == attribute_path
-        and any(
-            isinstance(target, ast.Name) and target.id == target_name
-            for target in statement.targets
-        )
-        for statement in method.body
-    )
-
-
-def _jwt_returns_payload(method):
-    return any(
-        isinstance(statement, ast.Return)
-        and any(
-            isinstance(node, ast.Subscript)
-            and isinstance(node.value, ast.Name)
-            and node.value.id == "decoded"
-            for node in ast.walk(statement.value)
-        )
-        for statement in method.body
-    )
-
-
-def _jwt_initializer_binds_jws(method):
-    return any(
-        isinstance(statement, (ast.Assign, ast.AnnAssign))
-        and isinstance(statement.value, ast.Call)
-        and isinstance(statement.value.func, ast.Name)
-        and statement.value.func.id == "PyJWS"
-        and any(
-            isinstance(target, ast.Attribute)
-            and target.attr == "_jws"
-            and isinstance(target.value, ast.Name)
-            and target.value.id == "self"
-            for target in (
-                statement.targets
-                if isinstance(statement, ast.Assign)
-                else [statement.target]
-            )
-        )
-        for statement in method.body
-    )
-
-
-def _jwt_active_verify_call(method):
-    return any(
-        isinstance(statement, ast.If)
-        and isinstance(statement.test, ast.Name)
-        and statement.test.id == "verify_signature"
-        and any(
-            isinstance(node, ast.Call)
-            and _jwt_attribute_path(node.func) == ("self", "_verify_signature")
-            for child in statement.body
-            for node in ast.walk(child)
-        )
-        for statement in method.body
-    )
-
-
-def _jwt_verify_failure_is_active(method):
-    return any(
-        isinstance(statement, ast.If)
-        and isinstance(statement.test, ast.UnaryOp)
-        and isinstance(statement.test.op, ast.Not)
-        and isinstance(statement.test.operand, ast.Call)
-        and isinstance(statement.test.operand.func, ast.Attribute)
-        and statement.test.operand.func.attr == "verify"
-        and any(
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Name)
-            and node.func.id == "InvalidSignatureError"
-            for child in statement.body
-            for node in ast.walk(child)
-        )
-        for statement in method.body
-    )
-
-
-def _jwt_method_returns_call(method, attribute_path):
-    return any(
-        isinstance(node, ast.Return)
-        and isinstance(node.value, ast.Call)
-        and _jwt_attribute_path(node.value.func) == attribute_path
-        for node in ast.walk(method)
-    )
-
-
-def _jwt_signed_result_is_encoded(method):
-    signature_names = {
-        target.id
-        for node in method.body
-        if isinstance(node, ast.Assign)
-        and isinstance(node.value, ast.Call)
-        and isinstance(node.value.func, ast.Attribute)
-        and node.value.func.attr == "sign"
-        for target in node.targets
-        if isinstance(target, ast.Name)
-    }
-    return bool(signature_names) and any(
-        isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and node.func.attr == "append"
-        and isinstance(node.func.value, ast.Name)
-        and node.func.value.id == "segments"
-        and len(node.args) == 1
-        and isinstance(node.args[0], ast.Call)
-        and isinstance(node.args[0].func, ast.Name)
-        and node.args[0].func.id == "base64url_encode"
-        and any(
-            isinstance(argument, ast.Name) and argument.id in signature_names
-            for argument in node.args[0].args
-        )
-        for node in (
-            statement.value
-            for statement in method.body
-            if isinstance(statement, ast.Expr)
-        )
-    )
+    return [path for path in candidates if path in sources]
 
 
 def _jwt_test_has_typed_fixture_parameter(
@@ -2476,8 +2343,15 @@ def _jwt_provider_write(item, provider_name, aliases, provider_aliases):
             if isinstance(item, ast.Assign)
             else (item.targets if isinstance(item, ast.Delete) else [item.target])
         )
+        canonical = _JWT_TEST_FIXTURE_TYPES[
+            "jwt" if provider_name == "PyJWT" else "jws"
+        ]
         if any(
-            _jwt_provider_write_target(target, provider_aliases) for target in targets
+            _jwt_provider_write_target(target, provider_aliases)
+            or isinstance(target, ast.Attribute)
+            and target.attr in {"encode", "decode"}
+            and _review_audit()._resolved_ast_name(target.value, aliases) == canonical
+            for target in targets
         ):
             return True
         for target in targets:
@@ -2627,7 +2501,15 @@ def _jwt_module_has_dynamic_execution(module):
         "ag_frame",
         "tb_frame",
     }
-    aliases = _review_audit()._module_security_aliases(module)
+    imports = ast.Module(
+        body=[
+            item
+            for item in ast.walk(module)
+            if isinstance(item, (ast.Import, ast.ImportFrom))
+        ],
+        type_ignores=[],
+    )
+    aliases = _review_audit()._module_security_aliases(imports)
     return any(
         isinstance(node, ast.Name)
         and isinstance(node.ctx, ast.Load)
@@ -2832,91 +2714,15 @@ def _jwt_static_parameter_values_are_bytes(values, parameter_count):
 
 
 def _jwt_static_source_profile(module):
-    import hashlib
-
     context = getattr(module, "_security_source_context", None)
     captured = getattr(module, "_security_oracle_context", {}).get(
         "captured_imports", {}
     )
-    if not isinstance(context, tuple) or len(context) != 2:
-        return False
-    root, sources = context
-    try:
-        api_path, utils_path = root / "jwt/api_jws.py", root / "jwt/utils.py"
-        api_raw, utils_raw = sources[api_path], sources[utils_path]
-        api, utils = ast.parse(api_raw), ast.parse(utils_raw)
-    except (KeyError, TypeError, SyntaxError, ValueError):
-        return False
-
-    def ast_hash(tree):
-        return hashlib.sha256(
-            ast.dump(tree, include_attributes=False).encode()
-        ).hexdigest()
-
-    if (
-        captured.get("PyJWS") != ("jwt/api_jws.py", "PyJWS")
-        or ast_hash(api)
-        != "ebc79619623c88bbd9776afc592a990ae1d4c89ec2ea60f4037ac5b36abd2a53"
-        or ast_hash(utils)
-        != "014e2080681802aa360efed7ccaccbe41d57bc54b5b6dd5676f010aade6cb9e9"
-    ):
-        return False
-    classes = [
-        node
-        for node in api.body
-        if isinstance(node, ast.ClassDef) and node.name == "PyJWS"
-    ]
-    methods = (
-        [
-            node
-            for node in classes[0].body
-            if isinstance(node, ast.FunctionDef)
-            and node.name == "_decode_base64url_segment"
-        ]
-        if len(classes) == 1
-        else []
-    )
-    alphabet = [
-        node
-        for node in api.body
-        if isinstance(node, ast.Assign)
-        and any(
-            isinstance(t, ast.Name) and t.id == "_BASE64URL_ALPHABET"
-            for t in node.targets
-        )
-    ]
-    helpers = {
-        name: [
-            node
-            for node in utils.body
-            if isinstance(node, ast.FunctionDef) and node.name == name
-        ]
-        for name in ("force_bytes", "base64url_decode", "base64url_encode")
-    }
     return bool(
-        len(methods) == 1
-        and len(methods[0].decorator_list) == 1
-        and isinstance(methods[0].decorator_list[0], ast.Name)
-        and methods[0].decorator_list[0].id == "staticmethod"
-        and hashlib.sha256(
-            ast.dump(methods[0], include_attributes=False).encode()
-        ).hexdigest()
-        == "fb054bce5cd548a23dbc2b0d370a72bf190ee14ec7e4098bbf64e7eec54f3277"
-        and not _jwt_provider_builtin_is_shadowed(api, "staticmethod")
-        and len(alphabet) == 1
-        and isinstance(alphabet[0].value, ast.Constant)
-        and alphabet[0].value.value
-        == b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
-        and all(len(defs) == 1 for defs in helpers.values())
-        and _jwt_captured_import_binding_is_stable(api, "base64url_decode")
-        and _jwt_captured_import_binding_is_stable(api, "base64url_encode")
-        and _jwt_captured_import_binding_is_stable(api, "DecodeError")
-        and _jwt_captured_import_binding_is_stable(api, "binascii")
-        and _jwt_captured_import_binding_is_stable(utils, "base64")
-        and not any(
-            isinstance(n, ast.Name) and n.id in helpers and isinstance(n.ctx, ast.Store)
-            for n in ast.walk(utils)
-        )
+        isinstance(context, tuple)
+        and len(context) == 2
+        and captured.get("PyJWS") == ("jwt/api_jws.py", "PyJWS")
+        and _jwt_captured_provider_sources_safe(*context)
     )
 
 
@@ -2960,9 +2766,12 @@ def _jwt_provider_mutation_call(
                 f"{canonical}.encode",
                 f"{canonical}.decode",
             }
-    if not (isinstance(call.args[0], ast.Name) and call.args[0].id in provider_aliases):
+    if (
+        not (isinstance(call.args[0], ast.Name) and call.args[0].id in provider_aliases)
+        and _review_audit()._resolved_ast_name(call.args[0], aliases) != canonical
+    ):
         return False
-    if name == "setattr":
+    if name in {"setattr", "builtins.setattr"}:
         return True
     if not (name.endswith(".setattr") or name.endswith(".patch.object")):
         return False
@@ -2977,16 +2786,28 @@ def _jwt_load_is_closed_call(
     name: ast.Name, receiver: str, parent_map: dict[ast.AST, ast.AST]
 ) -> ast.Call | None:
     call = parent_map.get(name)
-    if not isinstance(call, ast.Call):
+    if isinstance(call, ast.keyword):
+        call = parent_map.get(call)
+    if (
+        not isinstance(call, ast.Call)
+        or any(isinstance(arg, ast.Starred) for arg in call.args)
+        or any(keyword.arg is None for keyword in call.keywords)
+    ):
         return None
-    direct_argument = name in call.args or any(
-        keyword.value is name for keyword in call.keywords
-    )
-    if not direct_argument or not isinstance(call.func, ast.Attribute):
+    if not isinstance(call.func, ast.Attribute):
         return None
     if not isinstance(call.func.value, ast.Name) or call.func.value.id != receiver:
         return None
-    return call if call.func.attr in {"encode", "decode"} else None
+    if call.func.attr not in {"encode", "decode"}:
+        return None
+    positional_key = call.args[1] if len(call.args) > 1 else None
+    keyword_keys = [keyword.value for keyword in call.keywords if keyword.arg == "key"]
+    if len(keyword_keys) > 1 or positional_key is not None and keyword_keys:
+        return None
+    key = (
+        positional_key if positional_key is not None else next(iter(keyword_keys), None)
+    )
+    return call if key is name else None
 
 
 def _jwt_call_escapes(
@@ -3002,14 +2823,47 @@ def _jwt_call_escapes(
     return False
 
 
-def _jwt_local_literal_uses(
-    node: ast.AST,
-    target: ast.Name,
-    owner: ast.FunctionDef | ast.AsyncFunctionDef,
-    receiver: str,
-    module: ast.Module,
-) -> bool:
+def _jwt_local_namespace_scope(module, owner):
+    definitions = {}
+    for item in ast.walk(module):
+        if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            definitions.setdefault(item.name, []).append(item)
+    for item in module.body:
+        if isinstance(item, (ast.Assign, ast.AnnAssign)):
+            for name in _review_audit()._bound_names(item):
+                definitions.setdefault(name, []).append(item)
+    pending, visited = [owner], set()
+    while pending:
+        item = pending.pop()
+        if item in visited:
+            continue
+        visited.add(item)
+        for reference in ast.walk(item):
+            name = (
+                reference.id
+                if isinstance(reference, ast.Name)
+                else getattr(reference, "attr", None)
+            )
+            pending.extend(definitions.get(name, []))
+    return ast.Module(
+        body=[
+            *visited,
+            *(
+                item
+                for item in module.body
+                if isinstance(item, (ast.Import, ast.ImportFrom))
+            ),
+        ],
+        type_ignores=[],
+    )
+
+
+def _jwt_local_literal_uses(node, target, owner, receiver, module) -> bool:
     if _jwt_receiver_is_rebound(owner, receiver):
+        return False
+    if _jwt_module_has_dynamic_execution(_jwt_local_namespace_scope(module, owner)):
+        return False
+    if not _jwt_local_data_expression(node.value):
         return False
     targets = node.targets if isinstance(node, ast.Assign) else [node.target]
     literal_targets = {item for item in targets if isinstance(item, ast.Name)}
@@ -3061,33 +2915,13 @@ def _jwt_local_data_expression(value):
     return False
 
 
-def _jwt_payload_source_span(value, owner, module, aliases, encode_statement):
-    if _jwt_local_data_expression(value):
-        return [value.lineno, value.col_offset, value.end_lineno, value.end_col_offset]
-    if not isinstance(value, ast.Name):
-        return None
-    local_definition = next(
-        (
-            statement
-            for statement in ast.walk(owner)
-            if isinstance(statement, (ast.Assign, ast.AnnAssign))
-            and any(
-                isinstance(target, ast.Name) and target.id == value.id
-                for target in (
-                    statement.targets
-                    if isinstance(statement, ast.Assign)
-                    else [statement.target]
-                )
-            )
-        ),
-        None,
-    )
-    definitions = [
+def _jwt_local_definitions(owner, name):
+    return [
         statement
         for statement in ast.walk(owner)
         if isinstance(statement, (ast.Assign, ast.AnnAssign))
         and any(
-            isinstance(target, ast.Name) and target.id == value.id
+            isinstance(target, ast.Name) and target.id == name
             for target in (
                 statement.targets
                 if isinstance(statement, ast.Assign)
@@ -3095,19 +2929,26 @@ def _jwt_payload_source_span(value, owner, module, aliases, encode_statement):
             )
         )
     ]
+
+
+def _jwt_payload_source_span(value, owner, module, aliases, encode_statement):
+    if _jwt_local_data_expression(value):
+        return [value.lineno, value.col_offset, value.end_lineno, value.end_col_offset]
+    if not isinstance(value, ast.Name):
+        return None
+    definitions = _jwt_local_definitions(owner, value.id)
     if (
         len(definitions) == 1
-        and local_definition is not None
-        and _jwt_local_data_expression(local_definition.value)
+        and _jwt_local_data_expression(definitions[0].value)
         and _jwt_payload_root_is_stable(
             value.id, owner, encode_statement, module, aliases
         )
     ):
         return [
-            local_definition.value.lineno,
-            local_definition.value.col_offset,
-            local_definition.value.end_lineno,
-            local_definition.value.end_col_offset,
+            definitions[0].value.lineno,
+            definitions[0].value.col_offset,
+            definitions[0].value.end_lineno,
+            definitions[0].value.end_col_offset,
         ]
     if value.id not in {
         argument.arg
@@ -3419,7 +3260,29 @@ def _jwt_payload_root_is_stable(
         if loads and not _jwt_is_literal_payload_update(
             statement, name, loads, parents, module, aliases
         ):
-            return False
+            fixtures = [
+                item
+                for item in module.body
+                if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and item.name in _JWT_TEST_FIXTURE_TYPES
+                and _jwt_fixture_is_exact(item, aliases)
+            ]
+            fixture = fixtures[0] if len(fixtures) == 1 else None
+            if (
+                len(loads) != 1
+                or fixture is None
+                or not _jwt_test_has_typed_fixture_parameter(owner, fixture, aliases)
+                or not isinstance(statement, ast.Assign)
+                or len(statement.targets) != 1
+                or not isinstance(statement.targets[0], ast.Name)
+                or not isinstance(statement.value, ast.Call)
+                or _jwt_bound_argument(statement.value, 0, {"payload"}) is not loads[0]
+                or _jwt_encoded_input_span(
+                    statement.targets[0], owner, fixture.name, module, aliases
+                )
+                is None
+            ):
+                return False
     return True
 
 
@@ -3482,132 +3345,286 @@ def _jwt_is_literal_payload_update(statement, name, loads, parents, module, alia
     return parents.get(statement.targets[0].value) is statement.targets[0]
 
 
-def _jwt_roundtrip_witness(owner, key_name, receiver, module, aliases):
-    parent_map = {
+def _jwt_bound_argument(call, position, names):
+    values = ([call.args[position]] if len(call.args) > position else []) + [
+        item.value for item in call.keywords if item.arg in names
+    ]
+    return values[0] if len(values) == 1 else None
+
+
+def _jwt_owner_statement(node, owner, parents):
+    while node is not None and parents.get(node) is not owner:
+        node = parents.get(node)
+    return node
+
+
+def _jwt_crypto_operation_witness(owner, key_name, receiver, module, aliases):
+    parents = {
         child: parent
         for parent in ast.walk(module)
         for child in ast.iter_child_nodes(parent)
     }
-    pairs = []
-    for statement in ast.walk(owner):
-        if (
-            not isinstance(statement, ast.Assign)
-            or len(statement.targets) != 1
-            or not isinstance(statement.targets[0], ast.Name)
-            or not isinstance(statement.value, ast.Call)
-        ):
-            continue
-        encode = statement.value
+    if not _jwt_receiver_crypto_calls_are_closed(
+        owner, receiver, key_name, module, aliases, parents
+    ):
+        return None
+    calls, inputs, kinds = [], [], set()
+    for item in ast.walk(owner):
         if not (
-            isinstance(encode.func, ast.Attribute)
-            and encode.func.attr == "encode"
-            and isinstance(encode.func.value, ast.Name)
-            and encode.func.value.id == receiver
+            isinstance(item, ast.Name)
+            and item.id == key_name
+            and isinstance(item.ctx, ast.Load)
         ):
             continue
-        key_bound = _jwt_argument_is_bound(encode, key_name, 1, "key")
-        payload = (
-            encode.args[0]
-            if encode.args
-            else next((kw.value for kw in encode.keywords if kw.arg == "payload"), None)
+        call = _jwt_load_is_closed_call(item, receiver, parents)
+        if (
+            call is None
+            or _jwt_call_escapes(call, owner, parents)
+            or not _jwt_crypto_result_is_closed(call, owner, parents)
+        ):
+            return None
+        kind = call.func.attr
+        value = _jwt_bound_argument(
+            call, 0, {"payload"} if kind == "encode" else {"jwt", "msg"}
         )
-        payload_span = (
-            _jwt_payload_source_span(payload, owner, module, aliases, statement)
-            if payload is not None
-            else None
-        )
-        if not key_bound or payload_span is None:
-            continue
-        token_name = statement.targets[0].id
-        token_stores = [
-            item
-            for item in ast.walk(owner)
-            if isinstance(item, ast.Name)
-            and item.id == token_name
-            and isinstance(item.ctx, (ast.Store, ast.Del))
-        ]
-        if token_stores != [statement.targets[0]]:
-            continue
-        for decode in ast.walk(owner):
-            if not (
-                isinstance(decode, ast.Call)
-                and isinstance(decode.func, ast.Attribute)
-                and decode.func.attr == "decode"
-                and isinstance(decode.func.value, ast.Name)
-                and decode.func.value.id == receiver
-            ):
-                continue
-            has_token = _jwt_argument_is_bound(decode, token_name, 0, "jwt", "msg")
-            has_same_key = _jwt_argument_is_bound(decode, key_name, 1, "key")
-            token_arguments = ([decode.args[0]] if decode.args else []) + [
-                item.value for item in decode.keywords if item.arg in {"jwt", "msg"}
-            ]
-            token_decodes = _jwt_token_loads_have_closed_decodes(
-                owner,
-                token_name,
-                receiver,
-                key_name,
-                parent_map,
-            )
-            if (
-                has_token
-                and has_same_key
-                and token_decodes
-                and decode is token_decodes[0]
-                and token_arguments
-            ):
-                pairs.append(
-                    {
-                        "encode": encode,
-                        "decode": decode,
-                        "token_target": statement.targets[0],
-                        "payload_span": payload_span,
-                    }
-                )
-    return pairs[0] if len(pairs) == 1 else None
+        statement = _jwt_owner_statement(call, owner, parents)
+        if statement is None:
+            return None
+        span = _jwt_payload_source_span(value, owner, module, aliases, statement)
+        if span is None and kind == "decode":
+            span = _jwt_encoded_input_span(value, owner, receiver, module, aliases)
+        if span is None:
+            return None
+        calls.append(call)
+        inputs.append(span)
+        kinds.add(kind)
+    if not calls:
+        return None
+    if len(kinds) > 1:
+        kind = "roundtrip"
+    else:
+        kind = kinds.pop()
+    return {"kind": kind, "calls": calls, "inputs": inputs}
 
 
-def _jwt_token_loads_have_closed_decodes(
-    owner, token_name, receiver, key_name, parents
+def _jwt_receiver_crypto_calls_are_closed(
+    owner, receiver, key_name, module, aliases, parents
 ):
-    loads = [
+    calls = [
+        item
+        for item in ast.walk(owner)
+        if isinstance(item, ast.Call)
+        and isinstance(item.func, ast.Attribute)
+        and isinstance(item.func.value, ast.Name)
+        and item.func.value.id == receiver
+        and item.func.attr in {"encode", "decode"}
+    ]
+    if not calls:
+        return False
+    for call in calls:
+        kind = call.func.attr
+        key = _jwt_bound_argument(call, 1, {"key"})
+        if (
+            any(isinstance(item, ast.Starred) for item in call.args)
+            or any(item.arg is None for item in call.keywords)
+            or not _jwt_crypto_result_is_closed(call, owner, parents)
+            or key is not None
+            and not _jwt_key_value_is_local(
+                key, key_name, owner, receiver, module, parents
+            )
+            or not _jwt_crypto_arguments_are_local(
+                call, kind, key, owner, module, aliases
+            )
+        ):
+            return False
+    return True
+
+
+def _jwt_key_value_is_local(value, key_name, owner, receiver, module, parents):
+    if _jwt_local_data_expression(value):
+        return True
+    if not isinstance(value, ast.Name):
+        return False
+    definitions = _jwt_local_definitions(owner, value.id)
+    if len(definitions) != 1 or not _jwt_local_data_expression(definitions[0].value):
+        return False
+    definition = definitions[0]
+    target = next(
+        (
+            item
+            for item in (
+                definition.targets
+                if isinstance(definition, ast.Assign)
+                else [definition.target]
+            )
+            if isinstance(item, ast.Name) and item.id == value.id
+        ),
+        None,
+    )
+    if target is None:
+        return False
+    if value.id == key_name:
+        return _jwt_local_literal_uses(definition, target, owner, receiver, module)
+    stores = [
         item
         for item in ast.walk(owner)
         if isinstance(item, ast.Name)
-        and item.id == token_name
-        and isinstance(item.ctx, ast.Load)
+        and item.id == value.id
+        and isinstance(item.ctx, (ast.Store, ast.Del))
     ]
-    if not loads:
-        return ()
-    decodes = []
-    for item in loads:
-        call = parents.get(item)
-        if not (
-            isinstance(call, ast.Call)
-            and isinstance(call.func, ast.Attribute)
-            and call.func.attr == "decode"
-            and isinstance(call.func.value, ast.Name)
-            and call.func.value.id == receiver
-            and _jwt_argument_is_bound(call, token_name, 0, "jwt", "msg")
-            and _jwt_argument_is_bound(call, key_name, 1, "key")
-        ):
-            return ()
-        token_arguments = ([call.args[0]] if call.args else []) + [
-            item.value for item in call.keywords if item.arg in {"jwt", "msg"}
-        ]
-        if item not in token_arguments:
-            return ()
-        decodes.append(call)
-    return tuple(decodes)
-
-
-def _jwt_argument_is_bound(call, name, position, *keyword_names):
-    positional = call.args[position] if len(call.args) > position else None
-    keyword_values = [item.value for item in call.keywords if item.arg in keyword_names]
-    return any(
-        isinstance(item, ast.Name) and item.id == name
-        for item in ([positional] if positional is not None else []) + keyword_values
+    if stores != [target] or _jwt_literal_has_nested_use(owner, target, {target}):
+        return False
+    return all(
+        isinstance(parent := parents.get(item), ast.Call)
+        and isinstance(parent.func, ast.Attribute)
+        and isinstance(parent.func.value, ast.Name)
+        and parent.func.value.id == receiver
+        and parent.func.attr in {"encode", "decode"}
+        and _jwt_bound_argument(parent, 1, {"key"}) is item
+        for item in ast.walk(owner)
+        if isinstance(item, ast.Name)
+        and item.id == value.id
+        and isinstance(item.ctx, ast.Load)
     )
+
+
+def _jwt_crypto_arguments_are_local(call, kind, key, owner, module, aliases):
+    parents = {
+        child: parent
+        for parent in ast.walk(owner)
+        for child in ast.iter_child_nodes(parent)
+    }
+    statement = _jwt_owner_statement(call, owner, parents)
+    positional, input_name, allowed = (
+        (
+            ("payload", "key", "algorithm", "headers", "json_encoder"),
+            "payload",
+            {"payload", "key", "algorithm", "headers", "json_encoder"},
+        )
+        if kind == "encode"
+        else (
+            ("jwt", "key", "algorithms", "options"),
+            "jwt",
+            {
+                "jwt",
+                "key",
+                "algorithms",
+                "options",
+                "audience",
+                "issuer",
+                "leeway",
+                "subject",
+                "jti",
+                "nonce",
+                "detached_payload",
+            },
+        )
+    )
+    if len(call.args) > len(positional) or any(
+        item.arg not in allowed and not _jwt_local_data_expression(item.value)
+        for item in call.keywords
+    ):
+        return False
+    bound = dict(zip(positional, call.args))
+    for item in call.keywords:
+        if item.arg in bound:
+            return False
+        bound[item.arg] = item.value
+    if key is not None and bound.get("key") is not key:
+        return False
+    if (
+        kind == "encode"
+        and "json_encoder" in bound
+        and not (
+            isinstance(bound["json_encoder"], ast.Constant)
+            and bound["json_encoder"].value is None
+        )
+    ):
+        return False
+    input_value = bound.get(input_name)
+    if kind == "decode" and isinstance(input_value, ast.Name):
+        source_span = _jwt_payload_source_span(
+            input_value, owner, module, aliases, statement
+        ) or _jwt_encoded_input_span(
+            input_value, owner, call.func.value.id, module, aliases
+        )
+    else:
+        source_span = _jwt_payload_source_span(
+            input_value, owner, module, aliases, statement
+        )
+    if source_span is None:
+        return False
+    return all(
+        name in {input_name, "key", "json_encoder"}
+        or _jwt_local_data_expression(value)
+        or name == "detached_payload"
+        and _jwt_payload_source_span(value, owner, module, aliases, statement)
+        is not None
+        for name, value in bound.items()
+    )
+
+
+def _jwt_crypto_result_is_closed(call, owner, parents):
+    parent = parents.get(call)
+    if isinstance(parent, ast.Assign) and parent.value is call:
+        return len(parent.targets) == 1 and isinstance(parent.targets[0], ast.Name)
+    if isinstance(parent, ast.AnnAssign) and parent.value is call:
+        return isinstance(parent.target, ast.Name)
+    if isinstance(parent, ast.Expr) and parent.value is call:
+        return True
+    while parent is not None and parent is not owner:
+        if isinstance(
+            parent,
+            (
+                ast.Return,
+                ast.Yield,
+                ast.YieldFrom,
+                ast.Call,
+                ast.Attribute,
+                ast.Subscript,
+                ast.Dict,
+                ast.List,
+                ast.Tuple,
+                ast.Set,
+            ),
+        ):
+            return False
+        if isinstance(parent, ast.Assert):
+            return True
+        if not isinstance(parent, (ast.Compare, ast.BoolOp, ast.UnaryOp)):
+            return False
+        parent = parents.get(parent)
+    return False
+
+
+def _jwt_encoded_input_span(value, owner, receiver, module, aliases):
+    if not isinstance(value, ast.Name):
+        return None
+    definitions = _jwt_local_definitions(owner, value.id)
+    if len(definitions) != 1:
+        return None
+    definition = definitions[0]
+    token = definition.value
+    if not (
+        isinstance(token, ast.Call)
+        and isinstance(token.func, ast.Attribute)
+        and token.func.attr == "encode"
+        and isinstance(token.func.value, ast.Name)
+        and token.func.value.id == receiver
+    ):
+        return None
+    key = _jwt_bound_argument(token, 1, {"key"})
+    parents = {
+        child: parent
+        for parent in ast.walk(owner)
+        for child in ast.iter_child_nodes(parent)
+    }
+    if not _jwt_key_value_is_local(key, "", owner, receiver, module, parents):
+        return None
+    payload = _jwt_bound_argument(token, 0, {"payload"})
+    if _jwt_payload_source_span(payload, owner, module, aliases, definition) is None:
+        return None
+    return [token.lineno, token.col_offset, token.end_lineno, token.end_col_offset]
 
 
 def _jwt_literal_loads_closed(owner, target, literal_targets, receiver, parent_map):
@@ -3650,36 +3667,46 @@ def _jwt_receiver_uses_are_closed(owner, receiver, parent_map) -> bool:
 
 
 def _jwt_derived_results_are_closed(owner, receiver, parent_map) -> bool:
-    derived = _jwt_result_assignments(owner, receiver)
-    return all(
-        _jwt_result_load_is_closed(name, derived[name.id], receiver, parent_map)
-        for name in ast.walk(owner)
-        if isinstance(name, ast.Name) and name.id in derived
-    )
-
-
-def _jwt_result_assignments(owner, receiver):
-    derived = {}
     for item in ast.walk(owner):
-        if not isinstance(item, ast.Assign) or len(item.targets) != 1:
-            continue
-        target = item.targets[0]
-        value = item.value
-        if (
-            isinstance(target, ast.Name)
+        targets = (
+            item.targets
+            if isinstance(item, ast.Assign)
+            else [item.target]
+            if isinstance(item, ast.AnnAssign)
+            else []
+        )
+        value = getattr(item, "value", None)
+        if not (
+            len(targets) == 1
+            and isinstance(targets[0], ast.Name)
             and isinstance(value, ast.Call)
             and isinstance(value.func, ast.Attribute)
             and isinstance(value.func.value, ast.Name)
             and value.func.value.id == receiver
             and value.func.attr in {"encode", "decode"}
         ):
-            derived[target.id] = value.func.attr
-    return derived
+            continue
+        target = targets[0]
+        uses = [
+            node
+            for node in ast.walk(owner)
+            if isinstance(node, ast.Name) and node.id == target.id
+        ]
+        if [node for node in uses if isinstance(node.ctx, (ast.Store, ast.Del))] != [
+            target
+        ]:
+            return False
+        if not all(
+            _jwt_derived_load_is_closed(name, value.func.attr, receiver, parent_map)
+            for name in uses
+            if not isinstance(name.ctx, ast.Store)
+        ):
+            return False
+
+    return True
 
 
-def _jwt_result_load_is_closed(name, role, receiver, parent_map):
-    if isinstance(name.ctx, ast.Store):
-        return isinstance(parent_map.get(name), ast.Assign)
+def _jwt_derived_load_is_closed(name, role, receiver, parent_map):
     if not isinstance(name.ctx, ast.Load):
         return False
     parent = parent_map.get(name)
@@ -3690,14 +3717,13 @@ def _jwt_result_load_is_closed(name, role, receiver, parent_map):
             and isinstance(parent.func.value, ast.Name)
             and parent.func.value.id == receiver
             and parent.func.attr == "decode"
-            and name in parent.args
+            and _jwt_bound_argument(parent, 0, {"jwt", "msg"}) is name
         )
-    ancestor = parent
-    while ancestor is not None and not isinstance(ancestor, ast.Assert):
-        if isinstance(ancestor, (ast.Return, ast.Yield, ast.YieldFrom, ast.Call)):
+    while parent is not None and not isinstance(parent, ast.Assert):
+        if isinstance(parent, (ast.Return, ast.Yield, ast.YieldFrom, ast.Call)):
             return False
-        ancestor = parent_map.get(ancestor)
-    return isinstance(ancestor, ast.Assert)
+        parent = parent_map.get(parent)
+    return isinstance(parent, ast.Assert)
 
 
 def _jwt_receiver_is_rebound(
@@ -3716,22 +3742,20 @@ def _jwt_literal_has_nested_use(
     target: ast.Name,
     literal_targets: set[ast.Name],
 ) -> bool:
-    for statement in owner.body:
-        for scoped_node in ast.walk(statement):
-            if not isinstance(
-                scoped_node,
-                (*_review_audit()._FUNCTION_NODES, ast.ClassDef, ast.Lambda),
-            ):
-                continue
-            if scoped_node is statement:
-                continue
-            if any(
-                isinstance(child, ast.Name)
-                and child.id == target.id
-                and child not in literal_targets
-                for child in ast.walk(scoped_node)
-            ):
+    parents = {
+        child: parent
+        for parent in ast.walk(owner)
+        for child in ast.iter_child_nodes(parent)
+    }
+    scopes = (*_review_audit()._FUNCTION_NODES, ast.ClassDef, ast.Lambda)
+    for item in ast.walk(owner):
+        if not isinstance(item, ast.Name) or item.id != target.id:
+            continue
+        parent = parents.get(item)
+        while parent is not None and parent is not owner:
+            if isinstance(parent, scopes):
                 return True
+            parent = parents.get(parent)
     return False
 
 
@@ -3739,6 +3763,10 @@ def closed_jwt_test_literal(
     relative: str, node: ast.AST, target: ast.expr
 ) -> dict | None:
     """Prove a local test literal is used only by its in-process JWT fixture."""
+    value = getattr(node, "value", None)
+    if isinstance(value, ast.Constant) and isinstance(value.value, str):
+        if _app_known_credential_format(value.value):
+            return None
     if not isinstance(target, ast.Name):
         return None
     owner = _jwt_test_owner(node, target)
@@ -3750,17 +3778,17 @@ def closed_jwt_test_literal(
     module_aliases = _review_audit()._scope_security_aliases(
         _review_audit()._module_security_aliases(module), module
     )
-    fixture = _jwt_module_fixture(module, module_aliases)
+    fixture = _jwt_module_fixture(module, module_aliases, relative)
     if fixture is None or not _jwt_test_has_typed_fixture_parameter(
         owner, fixture, module_aliases
     ):
         return None
     if not _jwt_local_literal_uses(node, target, owner, fixture.name, module):
         return None
-    witness = _jwt_roundtrip_witness(
+    operation = _jwt_crypto_operation_witness(
         owner, target.id, fixture.name, module, module_aliases
     )
-    if witness is None:
+    if operation is None:
         return None
     import hashlib
     import json
@@ -3777,10 +3805,12 @@ def closed_jwt_test_literal(
         for path, raw in sources.items()
         if isinstance(raw, bytes)
     )
-    workspace_sha = hashlib.sha256(
-        json.dumps(source_rows, separators=(",", ":")).encode()
-    ).hexdigest()
-    return {
+    workspace_sha = getattr(module, "_security_workspace_sources_sha256", None)
+    if not isinstance(workspace_sha, str):
+        workspace_sha = hashlib.sha256(
+            json.dumps(source_rows, separators=(",", ":")).encode()
+        ).hexdigest()
+    evidence = {
         "schema": "factory.jwt-local-crypto-test-primitive.v1",
         "disposition": "PROVEN_LOCAL_CRYPTO_TEST_PRIMITIVE",
         "source_path": relative,
@@ -3796,7 +3826,6 @@ def closed_jwt_test_literal(
         ],
         "test_owner": owner.name,
         "fixture_provider": fixture.name,
-        "operation_role": "test_owned_local_sign_and_verify_roundtrip",
         "authority_role": "TEST_OWNED_SYNTHETIC_SIGNING_AUTHORITY",
         "transport_role": "UNASSESSED",
         "runtime_assurance": "INCOMPLETE",
@@ -3812,27 +3841,18 @@ def closed_jwt_test_literal(
             fixture.body[0].value.end_lineno,
             fixture.body[0].value.end_col_offset,
         ],
-        "encode_call_span": [
-            witness["encode"].lineno,
-            witness["encode"].col_offset,
-            witness["encode"].end_lineno,
-            witness["encode"].end_col_offset,
-        ],
-        "decode_call_span": [
-            witness["decode"].lineno,
-            witness["decode"].col_offset,
-            witness["decode"].end_lineno,
-            witness["decode"].end_col_offset,
-        ],
-        "token_result_span": [
-            witness["token_target"].lineno,
-            witness["token_target"].col_offset,
-            witness["token_target"].end_lineno,
-            witness["token_target"].end_col_offset,
-        ],
-        "payload_source_span": witness["payload_span"],
         "runtime_executed": False,
     }
+    evidence.update(
+        operation_role="test_owned_local_crypto_operation",
+        operation_kind=operation["kind"],
+        crypto_call_spans=[
+            [call.lineno, call.col_offset, call.end_lineno, call.end_col_offset]
+            for call in operation["calls"]
+        ],
+        input_source_spans=operation["inputs"],
+    )
+    return evidence
 
 
 def application_test_index(
