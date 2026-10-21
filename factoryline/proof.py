@@ -10,15 +10,17 @@ from __future__ import annotations
 from . import canonical_ascii_json_compat_bytes as _canonical_encode
 
 from dataclasses import asdict
+from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
 import hashlib
 import json
 import subprocess
+import tempfile
 from typing import Iterable
 
 from .assembly import DEFAULT_CHAIN, _stage_order, rollup_attributions
-from .boundary import assert_build_metadata_locations
+from .refinement import assert_build_metadata_locations
 from .contract import LAYOUT, MODULES, Receipt, ensure_layout
 from .meter import summarize
 
@@ -691,3 +693,52 @@ def public_evidence_text(evidence: dict) -> str:
     lines.extend(["", "SCOPE LIMITS", "-" * 52])
     lines.extend(f"- {limit}" for limit in evidence["scope_limits"])
     return "\n".join(lines)
+
+
+def challenge_trace(trace_path: Path, root: Path | None = None) -> dict:
+    """Mutate a proof trace and report whether each invalid variant is rejected."""
+    trace_path = Path(trace_path)
+    trace = load_trace(trace_path)
+    baseline = verify_trace(trace_path, root=root)
+    mutations = []
+    variants = []
+
+    empty = deepcopy(trace)
+    empty["nodes"] = []
+    variants.append(("empty_trace", empty))
+
+    bad_hash = deepcopy(trace)
+    if bad_hash.get("nodes"):
+        bad_hash["nodes"][0]["receipt_sha256"] = "0" * 64
+    variants.append(("receipt_hash_tamper", bad_hash))
+
+    if len(trace.get("nodes", [])) > 1:
+        reordered = deepcopy(trace)
+        reordered["nodes"] = list(reversed(reordered["nodes"]))
+        variants.append(("stage_reorder", reordered))
+
+    with tempfile.TemporaryDirectory(prefix="factory-challenge-") as temp:
+        for name, variant in variants:
+            path = Path(temp) / f"{name}.json"
+            path.write_text(json.dumps(variant, indent=2), encoding="utf-8")
+            result = verify_trace(path, root=root)
+            mutations.append(
+                {
+                    "unit": name,
+                    "killed": not result["valid"],
+                    "evidence": "; ".join(result["errors"])
+                    if result["errors"]
+                    else "mutant incorrectly verified",
+                }
+            )
+    killed = sum(bool(item["killed"]) for item in mutations)
+    return {
+        "schema": "factory.challenge.v1",
+        "brick": "factoryline",
+        "feature": trace.get("feature"),
+        "stage": "proof_integrity_counterfactual",
+        "passed": baseline["valid"] and killed == len(mutations),
+        "mutants_total": len(mutations),
+        "mutants_killed": killed,
+        "mutations": mutations,
+    }

@@ -20,7 +20,7 @@ from factoryline.assembly import (
     rollup_receipts,
     _attribution_from_output,
 )
-from factoryline.boundary import (
+from factoryline.refinement import (
     assert_no_attribution_in_artifact,
     assert_build_metadata_locations,
 )
@@ -1646,7 +1646,7 @@ def test_factory_passport_accepts_distinct_challenge_stages_from_one_brick(tmp_p
 
 
 def test_factoryline_challenge_kills_trace_integrity_mutants(tmp_path):
-    from factoryline.challenge import challenge_trace
+    from factoryline.proof import challenge_trace
 
     trace = _write_proof_fixture(tmp_path)
     payload = challenge_trace(tmp_path / trace["trace_path"], root=tmp_path)

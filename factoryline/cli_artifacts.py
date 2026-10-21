@@ -92,7 +92,7 @@ def _run_verify_passport(a) -> int:
 
 
 def _run_challenge(a) -> int:
-    from .challenge import challenge_trace
+    from .proof import challenge_trace
 
     payload = challenge_trace(Path(a.trace), root=Path(a.root))
     out = (

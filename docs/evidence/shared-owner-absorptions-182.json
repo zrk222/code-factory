@@ -1,0 +1,55 @@
+{
+  "schema": "factory.shared-owner-absorptions.v1",
+  "state": "SCOPED_PASS_GLOBAL_GATES_INCOMPLETE",
+  "parent_commit": "a5febf08f9e88b6d13b0ee7e3ef08bda934a389b",
+  "mapping": {
+    "boundary": "refinement",
+    "challenge": "proof",
+    "knowledge_handoff": "engineering_memory"
+  },
+  "source_sha256": {
+    "factoryline/cli.py": "12e710e47bb057b0c70688b324b2ea15e9c386f97ba6b5075725770c15d0b39f",
+    "factoryline/cli_artifacts.py": "c2703ba52d773291d8fcfc1d2f71c6960e6cd72c4cdbb51041e9e80fe28caa29",
+    "factoryline/engineering_memory.py": "88f8172e71b5eb5df54e62d7178d6a76856898b96dbbfd73dd3537df26a7cd2b",
+    "factoryline/proof.py": "8fe07c61890f38c04703ef73a0d9e687bb14a4c9ed3b4f7f953a7e4abcfbaeb3",
+    "factoryline/refinement.py": "aa885f2326c898f4d3d927f9660d6c00c7fe9df8dfce2a226fd88a7acb6ba67a",
+    "scripts/prooflab_e2e.py": "f76ad7cb5e30c5d84bb417611241108ef440f6bb0fb130d35fe8a13c22831226",
+    "tests/test_factoryline.py": "7f4a17dce06054c647d461e9aa87d26874a12b5746efa98c742f1d718d6af496",
+    "tests/test_knowledge_handoff.py": "f479f5d86af5cfd1a7d9a0f10aadb184a05359ab61e44cf332f55f6fb14a687a"
+  },
+  "deleted": [
+    "factoryline/boundary.py",
+    "factoryline/challenge.py",
+    "factoryline/knowledge_handoff.py"
+  ],
+  "definitions_preserved": 7,
+  "prior_owner_definition_ASTs": "unchanged",
+  "test_assertion_changes": 0,
+  "new_modules": 0,
+  "compatibility_stubs": 0,
+  "independent_review_sha256": "04cde81afd5246065bd92618433722a7efef416ee78e2eb8c316caf89f809fa9",
+  "parent_tests": {
+    "passed": 186,
+    "failed": 0,
+    "process_seconds": 75.05550930000027
+  },
+  "independent_tests": {
+    "command": "pytest -p pytest_asyncio.plugin -p xdist.plugin tests/test_factoryline.py tests/test_knowledge_handoff.py -q",
+    "result": "113 passed in 103.77s"
+  },
+  "architecture_after_commit_expected": {
+    "python_files": 460,
+    "core_modules": 162,
+    "max_python_files": 464,
+    "max_core_modules": 133,
+    "remaining_core_reduction": 29
+  },
+  "limits": [
+    "Actualarchitecturehealth mustberead aftercommit.",
+    "Threephysicalmoduledeletions only;133targetnotyetmet.",
+    "Removedprivateimportpaths have noimport/picklecompatibilityshims.",
+    "CI/nativequality/fullsuite/freshheldout remainincomplete.",
+    "No precisiongain; exposeddevelopment2TP/6FP=25%,2unclear."
+  ],
+  "index_note": "git ls-files -v H denotes a regular cached file, not assume-unchanged. Four reviewed identity context files have retained bytes with lineending normalization; no content diff and no staging in this commit."
+}
