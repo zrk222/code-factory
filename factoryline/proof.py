@@ -27,10 +27,6 @@ from .refinement import assert_build_metadata_locations
 TRACE_SCHEMA = "factoryline.proof_trace.v1"
 
 
-def _canonical(payload: object) -> bytes:
-    return _canonical_encode(payload)
-
-
 def _sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 

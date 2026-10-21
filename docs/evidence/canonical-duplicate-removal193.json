@@ -1,0 +1,34 @@
+{
+  "scope": "Delete shadowed duplicate encoder only; no runtime behavior change.",
+  "candidate_parent": "26b5080c3468a4d8092059d608970f2716a87c58",
+  "source_sha256": {
+    "factoryline/proof.py": "e33e2042fc5a34c8e8ece0bfb992957625d642ca87e1646066abeed6789a321b"
+  },
+  "observed": {
+    "related_proof_receipt_cases_passed": 373,
+    "independent_canonical_cases_passed": 92,
+    "obsolete_passport_inventory_cases_deselected": 1,
+    "deleted_production_lines": 4
+  },
+  "source_equivalence": {
+    "state": "PASS",
+    "removed_shadowed_definition": true,
+    "surviving_effective_definitions_AST_unchanged": true,
+    "function": "_canonical",
+    "former_lines": [
+      30,
+      31
+    ],
+    "source_sha256": "e33e2042fc5a34c8e8ece0bfb992957625d642ca87e1646066abeed6789a321b"
+  },
+  "independent_review": {
+    "path": ".factory/canonical193/independent-review.json",
+    "sha256": "eadbbaf854e42a451653fbdbad1bcf133c3476e26b2d6241bf4e79784ea58dc0"
+  },
+  "boundaries": [
+    "Obsolete passport inventory migration follows in its own test-only commit.",
+    "No detection or fresh precision gain claimed for this deduplication.",
+    "Concurrent worker WIP currently fails architecture size discovery; this source deletion neither raises caps nor resolves that separate WIP.",
+    "Full CI remains red; no merge, release or global completion claim."
+  ]
+}
