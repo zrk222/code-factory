@@ -1,0 +1,144 @@
+{
+  "schema": "factory.operating-discipline.v1",
+  "recorded_at": "2026-10-21T01:40:45.442855+00:00",
+  "state": "APPLIED_TO_ACTIVE_WORKFLOW_NOT_DETECTION_IMPLEMENTATION",
+  "scanner_baseline": "8fb03c066980264bfbc92936206213020c1afa1a",
+  "objective_preserved": "COMPLETE FULLY AS",
+  "implementation_owner": "/root",
+  "independent_implementation_reviewer": "/root/ecc_fixture_design120",
+  "source_records": [
+    {
+      "path": ".factory/social-core90/work-order.json",
+      "sha256": "46d1ba23bcc7172c753b577079df895409c70116da67ab20908f2a4af6ac583f"
+    },
+    {
+      "path": ".factory/deferred-demand/accuracy-publication-80/strategic-next-p0.json",
+      "sha256": "d2fb004871d6c9d2c873cadbac12ce5e49b4b42730401f3861361ad433464bb8"
+    },
+    {
+      "path": ".factory/repair-family119/social-reassessment151.json",
+      "sha256": "f57d5f9d92aae598e3d464d58e155756caa192eb30d8281dbf957b33cce274cc"
+    },
+    {
+      "path": ".factory/repair-family119/social-diagnostic152.json",
+      "sha256": "69c393f2a71dce5b706a1ede26399a591ac748eb38b59da1d521d4f0e32b7633"
+    },
+    {
+      "path": ".factory/repair-family119/notebook-reports153/attachments-assessment153.json",
+      "sha256": "247dd1847832529b952e7ba38a240455d39eaccb97cae26fc1cf0d585ab6a0c0"
+    },
+    {
+      "path": ".factory/repair-family119/application-paired150/paired-report.json",
+      "sha256": "3d90b081707336293f23c6bbe05eb2519bb2f2c4cb42382b58d4c2a7082ca2d5"
+    }
+  ],
+  "active_task": {
+    "priority": "P0",
+    "family": "social-core exact38 source-role false positives",
+    "source_pin": "269876e171b3415433b264f5eb1517e228c8afda",
+    "source_python_files": 376,
+    "case_ids_reference": ".factory/social-core90/comparison-contract.json",
+    "measured_baseline": {
+      "active": 38,
+      "partitioned": 0,
+      "scan_seconds": 139.06930800000555
+    },
+    "current_one_declaration_diagnostic": {
+      "url_witnesses": 4,
+      "known_auth_uses": 0,
+      "unresolved_getter_receivers": 48,
+      "additional_member_use": 1
+    },
+    "implementation_shape": "Reuse captured AST/import/argument/source summaries for a shared value-and-callable transfer worklist. No per-backend exception list or additional proof pipeline.",
+    "scope_rule": "Declare exact changed files and their base hashes before editing; preserve unrelated WIP. Added scope or unsupported transfer returns to review before expansion.",
+    "work_budget": {
+      "repository_timeout_seconds": 180,
+      "evaluation_python_file_limit": 2000,
+      "production_python_file_limit": 460,
+      "source_byte_limit": 33554432,
+      "budget_exhaustion": "UNKNOWN and original active alert retained"
+    },
+    "completion_rule": "All38 fixed cases must be accounted for by inspected source-bound role evidence or retained unresolved/credential evidence; unresolved cases are not called repaired. No forced partition to satisfy a target."
+  },
+  "required_paired_examples_before_edit": [
+    {
+      "safe": "Source-bound getter value reaches the canonical URL slot.",
+      "unsafe": "The same value also reaches auth/password/Authorization or an opaque consumer; keep it active."
+    },
+    {
+      "safe": "Tuple-held bound getter is invoked and its result is discarded.",
+      "unsafe": "The callable or returned value escapes, is rebound, or is supplied to authentication; keep it active or UNKNOWN."
+    },
+    {
+      "safe": "Exact source-owned helper preserves URL argument role.",
+      "unsafe": "Helper swaps URL/auth slots, loses source identity, or has unsupported forwarding; keep it active."
+    },
+    {
+      "safe": "Captured independent receiver is proven disjoint from the selected declaration.",
+      "unsafe": "Unknown receiver, alias, reflective access or candidate-related mutation is never assumed disjoint."
+    },
+    {
+      "safe": "Hash-current complete capture and matching cold/warm decisions.",
+      "unsafe": "Source/config/helper drift, malformed witness or exhausted budget restores the original active alert."
+    }
+  ],
+  "required_handoff_fields": [
+    "requirement_and_example_ids",
+    "candidate_commit_and_file_hashes",
+    "source_and_profile_hashes",
+    "observations_and_evidence_hashes",
+    "unresolved_questions",
+    "actual_reviewer_identity",
+    "remaining_human_authority"
+  ],
+  "verification_and_commit_order": [
+    "Freeze exact candidate, source roots, selected IDs, labels, execution profile and budgets before measurement.",
+    "Run focused positive/negative and source-mutation/cache controls. Keep old assertions; separate justified expectation changes.",
+    "Independent reviewer inspects exact candidate and unsafe counterparts; rejected evidence is retained.",
+    "Replay the same fixed family, application census and13 historical TP controls; inspect every removal and newly emitted alert.",
+    "Record active/partitioned/unclear counts, retained TP/severity, complete coverage and scan seconds; run existing workflow evidence gate.",
+    "Commit only reviewed scoped files with measured counts; push and verify remote head. Full goal/merge/release claims require all broader gates."
+  ],
+  "retry_rule": "Retain failed attempts. Two consecutive candidates without new bound evidence or a Pareto improvement trigger root-cause reassessment using the existing no-gain workflow; they do not pause the user goal or authorize deleting unrelated work.",
+  "reuse_rule": "Reuse only exact source/tool/config/profile-bound proofs. A source or method-code mutation invalidates the reused proof; unknown relevance runs again.",
+  "metric_rule": {
+    "do_not_mix_cohorts": true,
+    "implementation_reviewer_is_not_second_labeller": true,
+    "current_application_development": {
+      "TP": 2,
+      "FP": 6,
+      "unclear": 2,
+      "decided_n": 8,
+      "retained_n": 10,
+      "decided_precision": 0.25,
+      "conservative_actionable_rate": 0.2,
+      "fresh_held_out": false
+    },
+    "publication_gate": "Freeze before prediction; at least30 independently adjudicated final alerts and80% conservative actionable precision with a confidence interval; include unresolved/unclear final alerts in the denominator. Report primitive truth and bounded TP retention separately.",
+    "reviewer_provenance": "Disclose actual AI/human labels and pending second review. Never call existing exposed tuning data fresh heldout."
+  },
+  "module_responsibilities": {
+    "SpecLine": "Intent, boundaries, examples and acceptance criteria.",
+    "ForgeLine": "Scoped feature state, SSAT and behavioral challenges.",
+    "CodeFactory": "Source-bound observations, measurements and gate composition; no self-approval."
+  },
+  "remaining_goal_work_only": [
+    "Resolve the shared precision families and prove retention on the same frozen development inputs.",
+    "Freeze the stabilized scanner and complete the preregistered fresh evaluation and actual adjudication.",
+    "Clear full regressions and frozen architecture gates without raising caps; keep the small trusted core distinct from experimental rules.",
+    "Measure main stability across subsequent real releases; no local test can establish this prospectively.",
+    "After P0, trial diff/contract-first ordering within existing bounded context packets with paired completeness/time observations."
+  ],
+  "not_adopted": [
+    "Universal heapless rewrite",
+    "Uncalibrated model confidence thresholds",
+    "Forced destructive worktree disposal",
+    "Unsupported benchmark statistics",
+    "New graph/proof framework without measured need"
+  ],
+  "limits": [
+    "Three supplied report exports reviewed; four unavailable.",
+    "This operating update changes no detector behavior or precision score.",
+    "Architecture/full-suite/fresh evaluation/release remain incomplete."
+  ]
+}
