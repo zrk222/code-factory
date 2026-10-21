@@ -11,8 +11,10 @@ Only remaining work is listed below. Order: accuracy, speed, simplicity.
   sample with at least 30 decided candidate alerts. Report the Wilson 95%
   interval, primitive match rate, unclear count and positive retention separately.
   The later target remains 90%; no score is promised by this plan.
-- Use an actual human label submission and a separate blinded AI label set.
-  Preserve disagreements. AI review of implementation is not human labeling.
+- The owner authorized AI labeling for the current pass; Claude's second
+  independent labels are pending. Report reviewer kind and disagreements.
+  Preserve the original human-plus-AI protocol and disclose that its human
+  requirement was not met; do not describe AI review as human validation.
 - Keep all genuine positives at their justified severity. UNKNOWN is not HOLLOW;
   a primitive observation is not a proven actionable defect.
 - Architecture ceilings are 464 Python files and 133 core modules, following
@@ -85,7 +87,18 @@ For slow subprocess tests, record bootstrap/readiness, collection, execution and
 cleanup. Compare controlled worker counts before changing scheduling. Preserve
 production deadlines and the complete test inventory; no timeout-to-PASS retry.
 
-### A6 — Execute the fresh precision study
+### A6 — Repair after the failed study, then preregister a successor
+
+Study180 has executed and failed: 0 actionable TP, 41 FP and 6 unclear from
+47 independently AI-labeled alerts; Wilson 95% interval 0–8.57%. The scanner
+and original labels remain frozen. This cohort is now exposed, so every repair
+replay on it is development evidence. Claude's second labels are pending.
+The original human-plus-AI protocol is not satisfied. Only 22 of 24 planned
+scans completed; two errored, so declared repository coverage is incomplete.
+Complete the outstanding error accounting and report disagreements without relabeling away the
+failure. No second study has run. Before a successor, resolve the highest-yield
+families using general source/consumer models, stabilize the candidate, and
+preregister a new untouched cohort under the boundaries below.
 
 Use a non-tuning evaluation custodian. Freeze the rule/maturity scope, labeling
 rubric and acceptance thresholds before viewing outputs: at least 30 decided
@@ -137,7 +150,7 @@ After the integrated candidate freezes: strict doctor, scoped independent
 reviews, all trusted positives, architecture ceilings, Ruff/format/C901,
 public-docstring checks, native Forge quality, and one complete current full
 suite must pass. Preserve contended runtime failures and reconcile each family.
-Then run the sealed study on matching candidate bytes.
+Then run the separately preregistered successor study on matching candidate bytes.
 
 Publication also requires current channel policy, package/install provenance,
 authorization and provider readback. Demonstrate main remaining green across
@@ -145,16 +158,28 @@ subsequent releases; this cannot be established by one local test run. Record
 time to first justified action and human triage cost before claiming user-value
 improvements.
 
-## Evidence baseline, not a new result
+## Current measurements and remaining limits
 
-- Accepted integration: `4184a9b`; scoped family migration: `1df111a`.
-- Development-only actionable result: 2 TP, 6 FP, 2 unclear; 25% decided,
-  Wilson 95% 7.15–59.07%. Fresh held-out precision remains unmeasured.
+- Detection integration `26b5080`: exposed old60 replay removed 15 labeled
+  false positives, versus 9 before this repair; 45 remain, with no severity
+  changes. All 13 separate historical positive controls remain at their original
+  severity. This all-FP cohort cannot establish positive precision or recall.
+- Separate exposed development result: 2 TP, 6 FP, 2 unclear; 25% decided,
+  Wilson 95% 7.15–59.07%. Do not combine it with the old60 denominator.
+- Study180 frozen candidate `c05034e`: 0/41 actionable decided, 6 unclear;
+  0% with Wilson 95% 0–8.57%. It was fresh when run, is now exposed, and has
+one independent AI submission. There is no improved fresh-study score yet.
 - Current architecture candidate: 429 Python files / 133 core modules; the
   unchanged architecture gate passes after physical module absorption. Evidence:
   `docs/evidence/core-module-target-133-184.json`. Historical full-suite failures
-  still need a current integrated rerun; scoped passes do not subtract from them.
-- One recorded full social-core scan took 152.636 process seconds. No paired
-  speed gain is established.
+  at `26b5080` are 90 failed, 8,085 passed and 12 skipped on Ubuntu Python 3.11.
+  Two canonical regressions were subsequently fixed in separate source and
+  inventory commits (`c16c2bb`, `b4676d9`); a current full rerun is still needed.
+- Evaluation-local JWT memoization: an isolated alternating pair on the same
+  26-file snapshot measured 16.806s baseline median versus 14.819s candidate
+  median (11.82% lower), with equal canonical finding digests and coverage.
+  This is a bounded local scan result, not a whole-product speed claim.
+- Repository-specific OAuth proof and broad literal-shell severity shortcuts
+  were rejected before integration; neither contributes a precision gain.
 - Review provenance and packet acceptance are recorded in
   `docs/evidence/astra-plan-integration-174.json`.

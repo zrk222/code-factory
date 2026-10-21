@@ -1749,3 +1749,51 @@ def test_metadata143_shared_source_method_code_change_invalidates_cache(
             if row["code"] == "SECURITY_HARDCODED_SECRET"
             and row["severity"] == "CRITICAL"
         ]
+
+
+def test_jwt_provider_binding_stability_is_memoized_per_module_walk(monkeypatch):
+    import ast
+
+    from factoryline import mock_fixture_provenance as proof
+    from factoryline import review_audits as audit
+
+    module = ast.parse(
+        "import pytest\nfrom jwt.api_jws import PyJWS\n"
+        "def jws():\n    return PyJWS()\n"
+        "def test_constructor():\n"
+        "    pytest.raises(TypeError, PyJWS)\n"
+        "    pytest.raises(TypeError, PyJWS)\n"
+    )
+
+    def attach_parents(tree):
+        for parent in ast.walk(tree):
+            for child in ast.iter_child_nodes(parent):
+                child._security_parent = parent
+
+    attach_parents(module)
+    aliases = audit._scope_security_aliases(
+        audit._module_security_aliases(module), module
+    )
+    fixture = next(node for node in module.body if getattr(node, "name", None) == "jws")
+    dynamic_checks = []
+    original_dynamic_check = proof._jwt_module_has_dynamic_execution
+
+    def count_dynamic_checks(tree):
+        dynamic_checks.append(tree)
+        return original_dynamic_check(tree)
+
+    monkeypatch.setattr(
+        proof, "_jwt_module_has_dynamic_execution", count_dynamic_checks
+    )
+    monkeypatch.setattr(
+        proof, "_jwt_captured_import_binding_is_stable", lambda *_args: True
+    )
+
+    assert not proof._jwt_provider_is_mutated(module, "PyJWS", aliases, fixture)
+    assert len(dynamic_checks) == 1
+
+    mutation = ast.parse("alias = pytest\nalias.raises = external\n")
+    module.body.extend(mutation.body)
+    attach_parents(module)
+    assert proof._jwt_provider_is_mutated(module, "PyJWS", aliases, fixture)
+    assert len(dynamic_checks) == 2

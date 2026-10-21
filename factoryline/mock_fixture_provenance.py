@@ -2431,12 +2431,15 @@ def _jwt_provider_is_mutated(
     fixture: ast.FunctionDef | ast.AsyncFunctionDef,
 ) -> bool:
     provider_aliases = _jwt_provider_aliases(module, provider_name, aliases)
+    binding_cache = {}
     for item in ast.walk(module):
         if _jwt_provider_write(item, provider_name, aliases, provider_aliases) or (
             isinstance(item, ast.Name)
             and item.id in provider_aliases
             and isinstance(item.ctx, ast.Load)
-            and not _jwt_provider_use_is_closed(item, fixture, provider_aliases)
+            and not _jwt_provider_use_is_closed(
+                item, fixture, provider_aliases, binding_cache
+            )
         ):
             return True
     return False
@@ -2493,7 +2496,7 @@ def _jwt_provider_write(item, provider_name, aliases, provider_aliases):
     )
 
 
-def _jwt_provider_use_is_closed(name, fixture, provider_aliases):
+def _jwt_provider_use_is_closed(name, fixture, provider_aliases, binding_cache=None):
     parent = _review_audit()._security_parent(name)
     if isinstance(parent, ast.arg) and parent.annotation is name:
         return True
@@ -2512,9 +2515,11 @@ def _jwt_provider_use_is_closed(name, fixture, provider_aliases):
     # real provider independently of this fixture.
     if isinstance(parent, ast.Call) and parent.func is name:
         return True
-    if _jwt_provider_is_exception_callback(name, parent):
+    if _jwt_provider_is_exception_callback(name, parent, binding_cache):
         return True
-    if _jwt_provider_static_call_is_closed(name, parent, fixture, provider_aliases):
+    if _jwt_provider_static_call_is_closed(
+        name, parent, fixture, provider_aliases, binding_cache
+    ):
         return True
     return bool(
         isinstance(parent, ast.Call)
@@ -2524,7 +2529,7 @@ def _jwt_provider_use_is_closed(name, fixture, provider_aliases):
     )
 
 
-def _jwt_provider_is_exception_callback(name, call):
+def _jwt_provider_is_exception_callback(name, call, binding_cache=None):
     """pytest's callable raises form invokes a constructor without exporting it."""
     if not (
         isinstance(call, ast.Call)
@@ -2553,41 +2558,48 @@ def _jwt_provider_is_exception_callback(name, call):
     return (
         head in aliases
         and audit._normalized_call_name(call, aliases) == "pytest.raises"
-        and _jwt_exception_callback_binding_stable(module, head)
+        and _jwt_exception_callback_binding_stable(module, head, binding_cache)
     )
 
 
-def _jwt_exception_callback_binding_stable(module, head):
-    if _jwt_module_has_dynamic_execution(
+def _jwt_exception_callback_binding_stable(module, head, binding_cache=None):
+    if binding_cache is not None and head in binding_cache:
+        return binding_cache[head]
+    stable = not _jwt_module_has_dynamic_execution(
         module
-    ) or not _jwt_captured_import_binding_is_stable(module, head):
-        return False
-    for node in ast.walk(module):
-        if (
-            isinstance(node, ast.Name)
-            and node.id == head
-            and isinstance(node.ctx, ast.Load)
-            and not _jwt_namespace_reference_is_closed(node)
-        ):
-            return False
-        if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign, ast.Delete)):
-            targets = (
-                node.targets
-                if isinstance(node, (ast.Assign, ast.Delete))
-                else [node.target]
-            )
-            if any(
-                not isinstance(target, ast.Name) and _root_name(target) == head
-                for target in targets
+    ) and _jwt_captured_import_binding_is_stable(module, head)
+    if stable:
+        for node in ast.walk(module):
+            if (
+                isinstance(node, ast.Name)
+                and node.id == head
+                and isinstance(node.ctx, ast.Load)
+                and not _jwt_namespace_reference_is_closed(node)
             ):
-                return False
-        if (
-            isinstance(node, ast.Call)
-            and node.args
-            and _root_name(node.args[0]) == head
-        ):
-            return False
-    return True
+                stable = False
+                break
+            if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign, ast.Delete)):
+                targets = (
+                    node.targets
+                    if isinstance(node, (ast.Assign, ast.Delete))
+                    else [node.target]
+                )
+                if any(
+                    not isinstance(target, ast.Name) and _root_name(target) == head
+                    for target in targets
+                ):
+                    stable = False
+                    break
+            if (
+                isinstance(node, ast.Call)
+                and node.args
+                and _root_name(node.args[0]) == head
+            ):
+                stable = False
+                break
+    if binding_cache is not None:
+        binding_cache[head] = stable
+    return stable
 
 
 def _jwt_module_has_dynamic_execution(module):
@@ -2644,8 +2656,12 @@ def _jwt_namespace_reference_is_closed(node):
     return False
 
 
-def _jwt_provider_static_call_is_closed(name, parent, fixture, provider_aliases):
-    call = _jwt_provider_static_call_shape(name, parent, fixture, provider_aliases)
+def _jwt_provider_static_call_is_closed(
+    name, parent, fixture, provider_aliases, binding_cache=None
+):
+    call = _jwt_provider_static_call_shape(
+        name, parent, fixture, provider_aliases, binding_cache
+    )
     module = module_for(name)
     if call is None or module is None:
         return False
@@ -2666,7 +2682,9 @@ def _jwt_provider_static_call_is_closed(name, parent, fixture, provider_aliases)
     )
 
 
-def _jwt_provider_static_call_shape(name, parent, fixture, provider_aliases):
+def _jwt_provider_static_call_shape(
+    name, parent, fixture, provider_aliases, binding_cache=None
+):
     if not (
         fixture.name == "jws"
         and isinstance(name, ast.Name)
@@ -2691,13 +2709,13 @@ def _jwt_provider_static_call_shape(name, parent, fixture, provider_aliases):
     if isinstance(first, ast.Constant) and type(first.value) is bytes:
         return call
     if isinstance(first, ast.Name) and _jwt_static_bytes_parameter_is_finite(
-        first, call
+        first, call, binding_cache
     ):
         return call
     return None
 
 
-def _jwt_static_bytes_parameter_is_finite(name, call):
+def _jwt_static_bytes_parameter_is_finite(name, call, binding_cache=None):
     audit = _review_audit()
     owner = audit._security_parent(call)
     while owner is not None and not isinstance(
@@ -2747,12 +2765,16 @@ def _jwt_static_bytes_parameter_is_finite(name, call):
         )
         and loads == [name]
         and not _jwt_provider_builtin_is_shadowed(module_for(name), "bytes")
-        and _jwt_static_parametrize_domain_is_literal(module_for(name), owner, name.id)
+        and _jwt_static_parametrize_domain_is_literal(
+            module_for(name), owner, name.id, binding_cache
+        )
     )
 
 
-def _jwt_static_parametrize_domain_is_literal(module, owner, parameter):
-    decorator = _jwt_static_parametrize_decorator(module, owner)
+def _jwt_static_parametrize_domain_is_literal(
+    module, owner, parameter, binding_cache=None
+):
+    decorator = _jwt_static_parametrize_decorator(module, owner, binding_cache)
     if decorator is None or len(decorator.args) != 2 or decorator.keywords:
         return False
     names, values = decorator.args
@@ -2772,7 +2794,7 @@ def _jwt_static_parametrize_domain_is_literal(module, owner, parameter):
     )
 
 
-def _jwt_static_parametrize_decorator(module, owner):
+def _jwt_static_parametrize_decorator(module, owner, binding_cache=None):
     aliases = _review_audit()._scope_security_aliases(
         _review_audit()._module_security_aliases(module), module
     )
@@ -2790,7 +2812,7 @@ def _jwt_static_parametrize_decorator(module, owner):
         item
         if _review_audit()._normalized_call_name(item, aliases)
         == "pytest.mark.parametrize"
-        and _jwt_exception_callback_binding_stable(module, head)
+        and _jwt_exception_callback_binding_stable(module, head, binding_cache)
         else None
     )
 
