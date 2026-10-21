@@ -222,6 +222,7 @@ def oracle_context_cache_context(item, decode_structural_context):
         "mock_fixture_provenance": item.get("mock_fixture_provenance", {}),
         "captured_imports": cached_import_bindings(item.get("captured_imports", {})),
         "django_fixture_evidence": item.get("django_fixture_evidence", {}),
+        "application_fixture_evidence": item.get("application_fixture_evidence", {}),
         "protocol_observations": item.get("protocol_observations", {}),
         "autouse_lifecycle": item.get("autouse_lifecycle", []),
         "requested_fixture_lifecycle": item.get("requested_fixture_lifecycle", []),
@@ -248,6 +249,7 @@ def oracle_context_cache_record(path, context, encode_structural_context):
         "mock_fixture_provenance": context.get("mock_fixture_provenance", {}),
         "captured_imports": cached_import_bindings(context.get("captured_imports", {})),
         "django_fixture_evidence": context.get("django_fixture_evidence", {}),
+        "application_fixture_evidence": context.get("application_fixture_evidence", {}),
         "protocol_observations": context.get("protocol_observations", {}),
         "autouse_lifecycle": context.get("autouse_lifecycle", []),
         "requested_fixture_lifecycle": context.get("requested_fixture_lifecycle", []),
@@ -293,6 +295,74 @@ def typecheck_cache_helpers(contracts):
         for name, value in vars(contracts).items()
         if name.startswith("_ty_") and callable(value)
     )
+
+
+
+def application_profile_configuration(root, read_source, limit):
+    name = 'requirements.txt'
+    try:
+        raw = read_source(root, name)
+    except FileNotFoundError:
+        return [], {'path': name, 'state': 'missing'}, True
+    except (OSError, ValueError, RuntimeError) as exc:
+        code = getattr(exc, 'code', type(exc).__name__)
+        return [], {'path': name, 'state': code}, code == 'E_SOURCE_MISSING'
+    if len(raw) > limit:
+        return [], {'path': name, 'state': 'oversized'}, False
+    binding = {'path': name, 'sha256': hashlib.sha256(raw).hexdigest(), 'bytes': len(raw)}
+    return [binding], binding, True
+
+
+def _application_profile_bytes(root, bindings, read_source, limit):
+    selected = {row['path']: row for row in bindings
+                if row['path'] in {'requirements.txt', 'pyproject.toml', 'tox.ini'}}
+    result = {}
+    for name, binding in selected.items():
+        try:
+            raw = read_source(root, name)
+        except (OSError, ValueError, RuntimeError):
+            return None
+        if len(raw) > limit or hashlib.sha256(raw).hexdigest() != binding['sha256']:
+            return None
+        result[name] = raw
+    return result
+
+
+def bind_application_fixture_context(root, snapshots, contexts, bindings, read_source,
+                                     limit, *, source_bytes=None, source_inventory=None):
+    from . import mock_fixture_provenance as fixture
+    from . import review_audits as audit
+    if not isinstance(source_bytes, dict) or not isinstance(source_inventory, dict):
+        return
+    configs = _application_profile_bytes(root, bindings, read_source, limit)
+    if configs is None:
+        return
+    captured = {path: source_bytes.get(path) for path in snapshots}
+    inventory = {path: source_inventory.get(path) for path in snapshots}
+    index = fixture.application_test_index(root, snapshots, captured, inventory, configs)
+    if index is None:
+        return
+    manifest = {path.relative_to(root).as_posix(): digest for path, digest in inventory.items()}
+    config_hashes = {name: hashlib.sha256(raw).hexdigest() for name, raw in configs.items()}
+    manifest.update(config_hashes)
+    digest = hashlib.sha256('\n'.join(sorted(f'{name}\0{value}' for name, value in manifest.items())).encode()).hexdigest()
+    for path, tree in snapshots.items():
+        evidence = {}
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.Assign, ast.AnnAssign)):
+                continue
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            literal = audit._secret_literal(node)
+            if len(targets) != 1 or literal is None or not isinstance(targets[0], ast.Name):
+                continue
+            if not audit._SECRET_ASSIGNMENT.search(targets[0].id):
+                continue
+            item = fixture.application_test_secret_evidence(index, path, node.value.lineno, literal)
+            if item.get('eligible') is True and item.get('witness_sources'):
+                evidence[f'{node.lineno}:{node.col_offset}:{targets[0].id}'] = {
+                    **item, 'inventory_sha256': digest, 'configuration_sha256': config_hashes,
+                }
+        contexts[path]['application_fixture_evidence'] = evidence
 
 
 def bind_django_fixture_context(
@@ -378,6 +448,9 @@ def provider_context_cache_helpers(contracts):
         oracle_context_cache_record,
         cached_import_bindings,
         bind_django_fixture_context,
+        bind_application_fixture_context,
+        application_profile_configuration,
+        _application_profile_bytes,
         _captured_fixture_configuration,
         provider_cache_fields,
         provider_source_inventory,

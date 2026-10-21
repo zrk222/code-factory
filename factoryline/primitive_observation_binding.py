@@ -56,6 +56,8 @@ def fixed_primitive_binding(finding, sources, bindings, integrity):
         )
     if facts.get("disposition") == "TEST_OWNED_LOCAL_FIXTURE":
         return django_fixture_binding(finding, sources, bindings)
+    if facts.get("disposition") == "TEST_OWNED_APPLICATION_CREDENTIAL":
+        return application_fixture_binding(finding, sources, bindings)
     if facts.get("disposition") == "ENDPOINT_DECLARATION_ROLE_PROVEN":
         return endpoint_binding(finding, sources, bindings)
     if facts.get("disposition") == "PROVEN_PUBLIC_SYMBOLIC_IDENTIFIER":
@@ -147,6 +149,7 @@ def partition_proven_primitive_observations(core, audit):
             "PROVEN_FINITE_TEMPLATE_INPUT",
             "ENDPOINT_DECLARATION_ROLE_PROVEN",
             "TEST_OWNED_LOCAL_FIXTURE",
+            "TEST_OWNED_APPLICATION_CREDENTIAL",
             "PROVEN_LOCAL_CRYPTO_TEST_PRIMITIVE",
         }:
             retained.append(finding)
@@ -154,7 +157,7 @@ def partition_proven_primitive_observations(core, audit):
         touched = True
         endpoint_complete = (
             facts.get("disposition")
-            not in {"ENDPOINT_DECLARATION_ROLE_PROVEN", "TEST_OWNED_LOCAL_FIXTURE", "PROVEN_LOCAL_CRYPTO_TEST_PRIMITIVE"}
+            not in {"ENDPOINT_DECLARATION_ROLE_PROVEN", "TEST_OWNED_LOCAL_FIXTURE", "TEST_OWNED_APPLICATION_CREDENTIAL", "PROVEN_LOCAL_CRYPTO_TEST_PRIMITIVE"}
             or core.get("audit_coverage", {}).get("complete") is True
         )
         if endpoint_complete and _current_primitive_binding(
@@ -185,11 +188,88 @@ def partition_proven_primitive_observations(core, audit):
 
 def _current_primitive_binding(finding, core, bindings, audit):
     sources = core.get("sources", [])
-    if finding.get("facts", {}).get("disposition") == "TEST_OWNED_LOCAL_FIXTURE":
+    if finding.get("facts", {}).get("disposition") in {"TEST_OWNED_LOCAL_FIXTURE", "TEST_OWNED_APPLICATION_CREDENTIAL"}:
         configs = core.get("oracle_context", {}).get("configuration_sources", [])
         sources = [*sources, *configs]
         bindings = {row["path"]: row["sha256"] for row in sources}
     return audit._fixed_primitive_binding(finding, sources, bindings)
+
+
+
+def annotate_application_fixture(finding, node):
+    from . import review_integrity as integrity
+    if finding.get('facts', {}).get('disposition'):
+        return finding
+    module = integrity._security_module_scope(getattr(node, '_security_lexical_scope', None))
+    context = getattr(module, '_security_oracle_context', {})
+    facts = finding.get('facts', {})
+    key = f"{node.lineno}:{node.col_offset}:{facts.get('name')}"
+    evidence = context.get('application_fixture_evidence', {}).get(key)
+    if not isinstance(evidence, dict) or evidence.get('eligible') is not True:
+        return finding
+    proof = {**facts, 'schema': 'factory.application-test-credential.v1',
+             'disposition': 'TEST_OWNED_APPLICATION_CREDENTIAL', 'fixture_evidence': evidence,
+             'declaration_span': [node.lineno,node.col_offset,node.end_lineno,node.end_col_offset],
+             'runtime_assurance': 'INCOMPLETE', 'transport_role': 'UNASSESSED',
+             'isolation_assurance': 'UNASSESSED', 'target_execution': 'not_performed'}
+    proof['proof_facts_sha256'] = hashlib.sha256(json.dumps(proof,sort_keys=True,separators=(',',':')).encode()).hexdigest()
+    return {**finding, 'facts': proof}
+
+
+def application_fixture_binding(finding, sources, bindings):
+    facts = finding.get('facts', {})
+    evidence = facts.get('fixture_evidence', {})
+    if not isinstance(evidence, dict):
+        return False
+    configs = evidence.get('configuration_sha256', {})
+    if not isinstance(configs, dict) or not set(configs) <= {'requirements.txt','pyproject.toml','tox.ini'}:
+        return False
+    if len(sources) != len({row['path'] for row in sources}):
+        return False
+    manifest = {row['path']:row['sha256'] for row in sources if row['path'].endswith('.py')}
+    if any(bindings.get(name) != digest for name,digest in configs.items()):
+        return False
+    manifest.update(configs)
+    digest = hashlib.sha256('\n'.join(sorted(f'{name}\0{value}' for name,value in manifest.items())).encode()).hexdigest()
+    unsigned = {key:value for key,value in facts.items() if key != 'proof_facts_sha256'}
+    return bool(finding.get('code') == 'SECURITY_HARDCODED_SECRET' and finding.get('severity') == 'CRITICAL'
+                and facts.get('schema') == 'factory.application-test-credential.v1'
+                and evidence.get('classification') == 'APPLICATION_TEST_CREDENTIAL_ROLE'
+                and evidence.get('eligible') is True and evidence.get('inventory_sha256') == digest
+                and evidence.get('source') == finding.get('path')
+                and evidence.get('source_sha256') == bindings.get(finding.get('path'))
+                and valid_source_span(facts.get('declaration_span'))
+                and facts['declaration_span'][:2] == [finding.get('line'),finding.get('column')]
+                and _application_assurance_binding(facts, evidence)
+                and _application_witness_bindings(evidence, bindings)
+                and facts.get('proof_facts_sha256') == hashlib.sha256(json.dumps(unsigned,sort_keys=True,separators=(',',':')).encode()).hexdigest())
+
+
+def _application_assurance_binding(facts, evidence):
+    expected = {'runtime_assurance': 'INCOMPLETE', 'transport_role': 'UNASSESSED',
+                'isolation_assurance': 'UNASSESSED', 'target_execution': 'not_performed'}
+    return (all(container.get(key) == value for container in (facts,evidence)
+                for key,value in expected.items())
+            and evidence.get('declaration_span') == facts.get('declaration_span'))
+
+
+def _application_witness_bindings(evidence, bindings):
+    profiles = {
+        'DRF_TEST_USER_ENROLLMENT': {'creation','header','request'},
+        'PYTEST_FLASK_TEST_STORE_ENROLLMENT': {'creation','enrollment','request'},
+        'UNITTEST_FACTORY_USER_ENROLLMENT': {'creation','enrollment','request'},
+        'UNITTEST_FACTORY_INVITATION_ENROLLMENT': {'creation','enrollment','request','token'},
+    }
+    witnesses = evidence.get('witness_sources')
+    spans = evidence.get('witness_spans')
+    required = profiles.get(evidence.get('profile'))
+    if not isinstance(witnesses,dict) or not isinstance(spans,dict) or required is None:
+        return False
+    if set(witnesses) != required or set(spans) != required:
+        return False
+    return all(isinstance(row,dict) and bindings.get(row.get('path')) == row.get('sha256')
+               and isinstance(row.get('sha256'), str) and valid_source_span(row.get('span'))
+               and spans[key] == row['span'] for key,row in witnesses.items())
 
 
 def annotate_django_fixture(finding, node):
@@ -535,6 +615,10 @@ def primitive_binding_helpers():
         _current_primitive_binding,
         annotate_django_fixture,
         django_fixture_binding,
+        annotate_application_fixture,
+        application_fixture_binding,
+        _application_witness_bindings,
+        _application_assurance_binding,
         closed_declaration_binding,
         valid_source_span,
         finite_eval_binding,

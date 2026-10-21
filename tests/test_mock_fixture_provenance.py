@@ -865,3 +865,159 @@ def test_django_fixture_scanner_cold_warm_and_config_drift(tmp_path):
         if f["code"] == "SECURITY_HARDCODED_SECRET" and f["path"] == "tests/test_auth.py"
     ]
     assert len(active) == 1 and active[0]["severity"] == "CRITICAL"
+
+
+_APP133_DRF = """import base64
+from rest_framework import HTTP_HEADER_ENCODING
+from rest_framework.test import APITestCase
+from django.contrib.auth.models import User
+
+class LoginCheck(APITestCase):
+    def test_login(self):
+        username = "created-user"
+        password = "fixture-credential"
+        User.objects.create_user(username=username, password=password)
+        credentials = f"{username}:{password}"
+        encoded = base64.b64encode(credentials.encode(HTTP_HEADER_ENCODING)).decode(HTTP_HEADER_ENCODING)
+        self.client.credentials(HTTP_AUTHORIZATION=f"Basic {encoded}")
+        response = self.client.post("/session")
+        self.assertEqual(response.status_code, 200)
+"""
+
+
+def _app133_drf_projection(tmp_path, text, *, corrupt_source=False):
+    from factoryline.mock_fixture_provenance import (
+        application_test_index, application_test_secret_evidence,
+    )
+    path = tmp_path / 'checks' / 'login.py'
+    raw = text.encode()
+    tree = ast.parse(raw)
+    tree._oracle_source_sha256 = hashlib.sha256(raw).hexdigest()
+    modules, sources, inventory = {path: tree}, {path: raw}, {path: tree._oracle_source_sha256}
+    if corrupt_source:
+        sources[path] += b'\n# stale capture'
+    index = application_test_index(tmp_path, modules, sources, inventory)
+    assignment = next(node for node in ast.walk(tree) if isinstance(node, ast.Assign)
+                      and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name)
+                      and node.targets[0].id == 'password')
+    return application_test_secret_evidence(index, path, assignment.value.lineno, assignment.value.value)
+
+
+def test_application133_credential_role_uses_authority_not_filename(tmp_path):
+    evidence = _app133_drf_projection(tmp_path, _APP133_DRF)
+    assert evidence['eligible'] is True
+    assert evidence['runtime_assurance'] == 'INCOMPLETE'
+    assert evidence['transport_role'] == 'UNASSESSED'
+    assert evidence['target_execution'] == 'not_performed'
+    assert evidence['witness_sources']
+
+
+@pytest.mark.parametrize(('old', 'new'), [
+    ('username=username, password=password', 'username="existing-user", password=password'),
+    ('credentials = f"{username}:{password}"', 'credentials = f"other:{password}"'),
+    ('{username}:{password}', '{password}:{username}'),
+    ('credentials.encode(HTTP_HEADER_ENCODING)', '(password * 0).encode(HTTP_HEADER_ENCODING)'),
+    ('        self.client.credentials(', '        self.client = foreign_client\n        self.client.credentials('),
+    ('        User.objects.create_user(', '        User.objects.create_user = foreign_factory\n        User.objects.create_user('),
+    ('        credentials = ', '        password = "another"\n        credentials = '),
+    ('        User.objects.create_user(username=username, password=password)\n', ''),
+    ('    def test_login(self):', '    def operational_login(self):'),
+    ('        encoded = ', '        base64.b64encode = foreign_encoder\n        encoded = '),
+])
+def test_application133_mismatch_and_replacement_keep_unknown(tmp_path, old, new):
+    assert old in _APP133_DRF
+    evidence = _app133_drf_projection(tmp_path, _APP133_DRF.replace(old, new, 1))
+    assert evidence['eligible'] is False
+
+
+def test_application133_stale_source_rejects_projection(tmp_path):
+    assert _app133_drf_projection(tmp_path, _APP133_DRF, corrupt_source=True)['eligible'] is False
+
+
+@pytest.mark.parametrize('provider', [
+    'pytest', 'flask', 'django', 'rest_framework', 'hashlib', 'base64',
+    'json', 'itsdangerous', 'passlib', 'unittest',
+])
+def test_application_provider_workspace_replacement_rejects_profile(tmp_path, provider):
+    from factoryline.mock_fixture_provenance import application_test_index
+
+    source = tmp_path / 'check.py'
+    replacement = tmp_path / (provider + '.py')
+    sources = {source: _APP133_DRF.encode(), replacement: b'def dumps(*args, **kwargs): return "discarded"\n'}
+    modules = {path: ast.parse(raw) for path, raw in sources.items()}
+    inventory = {path: hashlib.sha256(raw).hexdigest() for path, raw in sources.items()}
+    for path, tree in modules.items():
+        tree._oracle_source_sha256 = inventory[path]
+    assert application_test_index(tmp_path, modules, sources, inventory) is None
+
+
+@pytest.mark.parametrize('mutation', [
+    'missing-header', 'unknown-profile', 'executed-target', 'claimed-transport',
+    'claimed-isolation', 'claimed-runtime', 'declaration-mismatch',
+])
+def test_application_binding_rejects_rehashed_incomplete_assurance(tmp_path, mutation):
+    import copy
+    import json
+    from factoryline.primitive_observation_binding import application_fixture_binding
+
+    path = tmp_path / 'checks' / 'login.py'
+    path.parent.mkdir(parents=True)
+    path.write_text(_APP133_DRF, encoding='utf-8')
+    report = security_scan(tmp_path, cache_enabled=False)
+    finding = next(item for item in report['primitive_observations']
+                   if item['facts'].get('disposition') == 'TEST_OWNED_APPLICATION_CREDENTIAL')
+    binding = {'checks/login.py': hashlib.sha256(path.read_bytes()).hexdigest()}
+    sources = [{'path': key, 'sha256': digest} for key, digest in binding.items()]
+    assert application_fixture_binding(finding, sources, binding)
+    altered = copy.deepcopy(finding)
+    facts = altered['facts']
+    evidence = facts['fixture_evidence']
+    if mutation == 'missing-header':
+        del evidence['witness_sources']['header']
+        del evidence['witness_spans']['header']
+    elif mutation == 'unknown-profile':
+        evidence['profile'] = 'UNREVIEWED_PROFILE'
+    elif mutation == 'declaration-mismatch':
+        evidence['declaration_span'][0] += 1
+    else:
+        field, value = {
+            'executed-target': ('target_execution', 'performed'),
+            'claimed-transport': ('transport_role', 'PROVEN_NO_EXTERNAL_TRANSPORT'),
+            'claimed-isolation': ('isolation_assurance', 'PROVEN_ISOLATED'),
+            'claimed-runtime': ('runtime_assurance', 'COMPLETE'),
+        }[mutation]
+        facts[field] = evidence[field] = value
+    unsigned = {key: value for key, value in facts.items() if key != 'proof_facts_sha256'}
+    facts['proof_facts_sha256'] = hashlib.sha256(json.dumps(unsigned, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+    assert application_fixture_binding(altered, sources, binding) is False
+
+
+@pytest.mark.parametrize('name', [
+    'annotate_application_fixture', 'application_fixture_binding',
+    '_application_witness_bindings', '_application_assurance_binding',
+])
+def test_application_binding_helpers_track_runtime_replacements(monkeypatch, name):
+    from factoryline import primitive_observation_binding as binding
+
+    original = getattr(binding, name)
+    assert original in binding.primitive_binding_helpers()
+    def replacement(*args, **kwargs):
+        return False
+    monkeypatch.setattr(binding, name, replacement)
+    assert replacement in binding.primitive_binding_helpers()
+    assert original not in binding.primitive_binding_helpers()
+
+
+
+def test_application_direct_returns_use_captured_source_index(tmp_path):
+    from factoryline.credential_role_sources import SourceSnapshotIndex
+    from factoryline.mock_fixture_provenance import _app_direct_returns
+
+    path = tmp_path / 'factory.py'
+    raw = b'def create():\n    def nested(): return 99\n    return 7\n'
+    tree = ast.parse(raw)
+    digest = hashlib.sha256(raw).hexdigest()
+    tree._oracle_source_sha256 = digest
+    source = SourceSnapshotIndex(tmp_path, {path: tree}, {path: raw}, {path: digest})
+    returns = _app_direct_returns({'source': source}, path, tree.body[0])
+    assert len(returns) == 1 and returns[0].value.value == 7
