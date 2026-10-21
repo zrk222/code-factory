@@ -19,7 +19,7 @@ def _returns(function):
 
 def _get_adapter(path, tree, aliases, imports, expected_settings_path):
     from .security_configuration import _canonical
-    from .credential_role_object_identity import binding_statements
+    from .credential_role_scope_bindings import binding_statements
 
     bindings = binding_statements(tree.body, "get_adapter")
     if len(bindings) != 1 or not isinstance(bindings[0], ast.FunctionDef):

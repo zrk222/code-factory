@@ -44,7 +44,7 @@ def _request_client_origin(graph, path, function, request):
         or any(not isinstance(leaf, ast.Name) for leaf in leaves)
     ):
         return False
-    from .credential_role_flows import binding_dominates
+    from .credential_role_scope_bindings import binding_dominates
 
     if not binding_dominates(owner, request, graph.parents, function):
         return False

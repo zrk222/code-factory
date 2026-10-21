@@ -9,7 +9,7 @@ from factoryline.credential_role_bindings import class_chain
 from factoryline.credential_role_transfer_guards import constructor_bindings_inert
 from factoryline import credential_httpx_origins as httpx
 from factoryline import credential_json_assertions as assertions
-from factoryline import credential_role_flows as roles
+from factoryline import credential_role_scope_bindings as roles
 from factoryline import credential_router_publication as routers
 from factoryline import review_audits as audit
 import ast
@@ -943,3 +943,34 @@ def test_mutated_or_conditional_constructor_transfer_is_unresolved(
     tmp_path, constructor
 ):
     assert _case(tmp_path, 'sess.request("POST", url)', constructor) is None
+
+
+@pytest.mark.parametrize(
+    "capture", [None, "value = 1\n", 17, bytearray(b"value = 1\n")],
+    ids=["missing", "text", "integer", "mutable_bytes"],
+)
+@pytest.mark.parametrize("mixed", [False, True])
+def test_nonbyte_source_capture_rejects_the_whole_snapshot(tmp_path, capture, mixed):
+    raw = b"value = 1\n"
+    digest = hashlib.sha256(raw).hexdigest()
+    path = tmp_path / "missing.py"
+    tree = ast.parse(raw)
+    tree._oracle_source_sha256 = digest
+    snapshots, captured, inventory = {path: tree}, {path: capture}, {path: digest}
+    if mixed:
+        valid = tmp_path / "valid.py"
+        snapshots[valid], captured[valid], inventory[valid] = tree, raw, digest
+    index = SourceSnapshotIndex(tmp_path, snapshots, captured, inventory)
+    assert index.bounded is False
+    assert all(index.validate(member) is False for member in snapshots)
+    assert index.parents == {}
+
+
+def test_immutable_source_capture_keeps_hash_bound_snapshot_valid(tmp_path):
+    path, raw = tmp_path / "valid.py", b"value = 1\n"
+    digest = hashlib.sha256(raw).hexdigest()
+    tree = ast.parse(raw)
+    tree._oracle_source_sha256 = digest
+    index = SourceSnapshotIndex(tmp_path, {path: tree}, {path: raw}, {path: digest})
+    assert index.bounded is True
+    assert index.validate(path) is True

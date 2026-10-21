@@ -4,7 +4,7 @@ import ast
 from copy import deepcopy
 
 from .credential_publication_catalog import endpoint_publication
-from .credential_role_method_evidence import source_span
+from .credential_role_method_contracts import source_span
 from .review_integrity import (
     _security_flow_assignment,
     _security_flow_bindings,

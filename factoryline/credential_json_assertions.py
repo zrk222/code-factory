@@ -9,7 +9,7 @@ _HTTP_METHODS = {"get", "post", "put", "patch", "delete", "options", "head"}
 
 def public_json_assertion(graph, path, node, parent):
     """Accept only a source-bound JSON comparison dominated by its request."""
-    from .credential_role_flows import binding_dominates
+    from .credential_role_scope_bindings import binding_dominates
 
     container = node
     while isinstance(parent, (ast.Dict, ast.List, ast.Tuple)):

@@ -2,7 +2,7 @@
 
 import ast
 
-from .credential_role_method_evidence import source_current
+from .credential_role_method_contracts import source_current
 from .credential_role_scope_bindings import binding_occurrences
 
 _ROLES = set(

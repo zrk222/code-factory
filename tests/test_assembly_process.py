@@ -6,7 +6,7 @@ import factoryline.assembly_process as assembly_process
 from factoryline.assembly_process import run_cli, run_cli_detailed
 import ast
 import textwrap
-from factoryline.credential_role_flows import binding_dominates
+from factoryline.credential_role_scope_bindings import binding_dominates
 import os
 import signal
 from pathlib import Path

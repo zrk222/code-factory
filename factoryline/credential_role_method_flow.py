@@ -7,7 +7,7 @@ from .credential_role_class_binding import (
     scope_class,
 )
 from .credential_role_method_contracts import alias_value
-from .credential_role_method_evidence import (
+from .credential_role_method_contracts import (
     source_current as _current,
     source_span as _span,
 )

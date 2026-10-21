@@ -22,6 +22,7 @@ class SourceSnapshotIndex:
             isinstance(inventory, dict)
             and set(snapshots) == set(source_bytes) == set(inventory)
             and len(snapshots) <= 2000
+            and all(isinstance(raw, bytes) for raw in source_bytes.values())
             and sum(len(raw) for raw in source_bytes.values()) <= 32 * 1024 * 1024
         )
 
@@ -582,9 +583,9 @@ def _presentation_assignment_name(node):
 
 def _presentation_global_match(fact, path, node, source, audit, imports=None):
     from .credential_role_bindings import _scope
-    from .credential_role_name_binding import function_bindings, module_literal_binding
+    from .credential_role_scope_bindings import function_bindings, module_literal_binding
     if isinstance(node, ast.Attribute) and node.attr == fact.member and isinstance(node.value, ast.Name):
-        from .credential_role_name_binding import import_is_stable
+        from .credential_role_scope_bindings import import_is_stable
         alias = node.value.id
         function, _ = _scope(node, source, path)
         return ((binding := (imports or {}).get(path, {}).get(alias)) is not None

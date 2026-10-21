@@ -97,7 +97,7 @@ def settings_module_bridge(snapshots, settings_path, owner, module_binding):
 
 
 def module_binding(tree, name, kind):
-    from .credential_role_object_identity import binding_statements
+    from .credential_role_scope_bindings import binding_statements
 
     rows = binding_statements(tree.body, name)
     return rows[0] if len(rows) == 1 and isinstance(rows[0], kind) else None

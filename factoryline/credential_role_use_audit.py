@@ -81,7 +81,7 @@ def _attribute_link(node, owner, path, fields, fact, index, imports, classes, au
     if owner and node.attr in fields.get((path, owner.name), set()):
         return True
     from .credential_role_bindings import matches_fact
-    from .credential_role_object_identity import declared_origins
+    from .credential_role_scope_bindings import declared_origins
 
     if any(
         node.attr in fields.get(origin, set())
@@ -153,7 +153,7 @@ def _linked_reflection(
         return owner is not None and (path, owner.name) in fields
     from .credential_role_bindings import _class_ref
 
-    from .credential_role_object_identity import declared_origins
+    from .credential_role_scope_bindings import declared_origins
 
     resolved = _class_ref(path, target, imports, classes, audit)
     return resolved in fields or bool(
@@ -193,7 +193,7 @@ def _literal_carriers(fact, owners, index, imports, classes, audit):
 
 def _capability_uses(path, index, imports, classes, audit):
     """Share candidate-independent source capability escapes in one derivation."""
-    from .credential_role_object_identity import declared_origins
+    from .credential_role_scope_bindings import declared_origins
 
     def derive():
         rows, parents = [], index.parents[path]
@@ -255,7 +255,7 @@ def _module_capabilities(path, imports, classes):
 def _capability_helpers():
     from types import FunctionType
 
-    from . import credential_role_object_identity, credential_role_scope_bindings
+    from . import credential_role_scope_bindings
 
     return (
         _capability_uses,
@@ -263,7 +263,6 @@ def _capability_helpers():
         *(
             value
             for module in (
-                credential_role_object_identity,
                 credential_role_scope_bindings,
             )
             for value in vars(module).values()

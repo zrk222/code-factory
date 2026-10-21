@@ -217,7 +217,7 @@ def _related_receiver(
         )
         if relation != "UNKNOWN":
             return relation
-    from .credential_role_object_identity import declared_origins
+    from .credential_role_scope_bindings import declared_origins
 
     origins = declared_origins(path, receiver, index, imports, classes)
     if origins & (related or set()):
@@ -256,7 +256,7 @@ def parameter_linked(path, receiver, calls, index, imports, classes, owners):
             actuals = bind_source_call(call, function, apply_defaults=False)
         except (TypeError, ValueError):
             continue
-        from .credential_role_object_identity import declared_origins
+        from .credential_role_scope_bindings import declared_origins
 
         for name in possible_parameters:
             actual = actuals.get(name)

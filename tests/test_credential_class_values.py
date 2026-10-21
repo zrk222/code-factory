@@ -338,7 +338,7 @@ def test_capability_memo_rejects_transitive_helper_code_mutation(
     tmp_path, monkeypatch, target
 ):
     from factoryline import review_audits as audit
-    from factoryline import credential_role_object_identity as identity
+    from factoryline import credential_role_scope_bindings as identity
     from factoryline.credential_role_chain_memo import ClassChainMemo
     from factoryline.credential_role_sources import SourceSnapshotIndex
     from factoryline.credential_role_use_audit import _capability_uses

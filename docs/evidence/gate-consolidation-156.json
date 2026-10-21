@@ -1,0 +1,94 @@
+{
+  "schema": "factory.gate-consolidation.progress.v1",
+  "state": "SCOPED_REVIEWED_PROGRESS_GLOBAL_GATES_INCOMPLETE",
+  "base_commit": "021f07f3c78116a7f02de98363401dff138e4097",
+  "changes": {
+    "credential_role_name_binding": "credential_role_scope_bindings",
+    "credential_role_object_identity": "credential_role_scope_bindings",
+    "credential_role_flows": "credential_role_scope_bindings",
+    "credential_role_method_evidence": "credential_role_method_contracts",
+    "credential_role_transfer_hops": "credential_role_constructor_flow"
+  },
+  "capture_repair": "Reject missing and nonbyte retained capture before summing lengths; incomplete capture rejects whole source index without fallback reads.",
+  "verification": {
+    "focused_passed": 1470,
+    "skipped": 4,
+    "seconds": 70.89042359999439,
+    "independent_review_sha256": "9ea410f366638e132d048ec1db477a88c5ee3cb83f9f7b5fa9d8c67b853ce72e",
+    "review_scope": "Sol6.1high ECC implementation review, not independent precision labelling.",
+    "historical_TP_retained": 13,
+    "historical_TP_total": 13,
+    "retention_boundary": "Existing exact source slices at original severity; not recall.",
+    "existing_assertions": "Unchanged; four test imports retarget canonical module owners; nine new capture controls.",
+    "lint": "PASS",
+    "complexity_max10": "PASS"
+  },
+  "footprint": {
+    "python_before": 488,
+    "python_after": 483,
+    "python_cap": 460,
+    "core_before": 190,
+    "core_after": 185,
+    "core_cap": 129,
+    "new_modules": 0,
+    "deleted_modules": 5,
+    "policy_caps_changed": false
+  },
+  "accuracy": {
+    "exposed_application_TP": 2,
+    "FP": 6,
+    "unclear": 2,
+    "decided_precision": 0.25,
+    "unclear_inclusive_rate": 0.2,
+    "new_gain": 0,
+    "fresh_held_out": false,
+    "primitive_match_rate": "Separate; not actionable precision."
+  },
+  "remaining_ordered_requirements": [
+    "Finish current receipt/cache/docstring regressions and audit semantic families; separate expectation changes from scanner changes.",
+    "Consolidate to frozen460Python/129core and fix four source-size regressions without raising ceilings.",
+    "Resume detector improvements on top3-4 noisy security rules after red gates; preserve genuine positives and distinguish experimental maturity from severity.",
+    "Freeze stabilized scanner, content root, fresh sample and sampling protocol before predictions;>=30 decided labels with Wilson interval and>=80percent conservative target.",
+    "Obtain actual second independent labels; disagreements remain unclear; report actionable precision, primitive rate and TP retention separately.",
+    "Verify tenant-policy positive controls and document exact sqlglot pin rationale or test compatible alternatives.",
+    "Merge only after broad gates pass; establish main stability across subsequent releases and publish small trusted core with experimental long tail."
+  ],
+  "source_and_test_sha256": {
+    "factoryline/credential_endpoint_admission.py": "950a45b3a0f66091ce07d8fa3db90f82b33e0db692df1f99da6bf1a11c2ab9c1",
+    "factoryline/credential_httpx_origins.py": "828be342897403560178b200f93a4f0eb524178053b5ab0efd5adbfdeb223905",
+    "factoryline/credential_json_assertions.py": "8291ccbee684272b32f72451900f7eca03714f7c007a960bb8f334079d4e4fed",
+    "factoryline/credential_role_adapter_selection.py": "d53aa3f497f00db09c2f82abafab9066c2ac4122d60d35b80f3a68978c8aa81d",
+    "factoryline/credential_role_bindings.py": "65be151fb4e03cc890402002df632784ebeaf2a0b9f1d238e441753ffd73eacd",
+    "factoryline/credential_role_constructor_flow.py": "6b058fd94bd89c374ffd1a0c674df4d91389d65ab827d879c112d076550daae2",
+    "factoryline/credential_role_getter_consumers.py": "9b950e3f4e0a238b1b0f521e3ae6694a8599ab422097b0b49a77611497f9a425",
+    "factoryline/credential_role_method_contracts.py": "3b255eadbc3f271408f98e5ac616769aed82f47c46240a99881f8df103113c10",
+    "factoryline/credential_role_method_flow.py": "f4cbab70b5ec9d00a4a1a5f25f15918ba562dd7bd246c1817bf0af536a453c42",
+    "factoryline/credential_role_method_paths.py": "c5821b9cfa93c9adb37963f3eab6afe9ef0a08a99b64a5e5fdd507114ee6060c",
+    "factoryline/credential_role_method_use_audit.py": "5115446ef97fdeae7a42d4929c9059470214b3afc6223194a1f3aea1b8ccfa71",
+    "factoryline/credential_role_method_use_getter_audit.py": "fce24d3a8a8338de5137a02a4f212fdd04711fa7fb14481f21ec10ac3de0e57b",
+    "factoryline/credential_role_module_settings.py": "147f17e4bdae89c1930e41100aabba97adc227bd02c78cd46ced79b59261fe17",
+    "factoryline/credential_role_scope_bindings.py": "c6ceb5534d5ad74268d4f53153dda16a3c94c322297613c1909da6c8328322ef",
+    "factoryline/credential_role_setting_boundary.py": "6cb6b257778aa3d24d218da5f205a4a240c9ada90bf077d1ec15cd5c08c250d3",
+    "factoryline/credential_role_sources.py": "2be6ce6f79c3da9bedc95713c44418ea04d290bbe61015a7e9d6993a626f502f",
+    "factoryline/credential_role_use_audit.py": "4aed813ac4741782a9d3ec3f53be3407ffd027496c4894f5d633023488469af6",
+    "factoryline/runtime_audit_integrity.py": "ca9be9a33ad17c5cf987fa4f16866eb7f0b2f789663021e1cf7a827827c792e5",
+    "tests/test_assembly_process.py": "0e022ff65126e48ad73376267458405762c9056987956bbbb2143b4916fbc3cf",
+    "tests/test_credential_class_values.py": "aecf27dd08cfc60b885ab85f2d3c03746292a3f112b8f114323bf854160d8bbf",
+    "tests/test_credential_constructor_cache.py": "304fa64425c53b232d31d8d82cb4d2f9d41d71d259a01cf63927ef478dd39c0f",
+    "tests/test_credential_role_receiver_class.py": "85cd9c0e9aad9640138211e924459be69631a143a7f2dbbacdd5aa9c19d04173"
+  },
+  "evidence_sha256": {
+    "contract.json": "e7dc9f1da35e4f6d9ce4a42a162881c1e783b55c1e08d4cb3afce231eafb0e68",
+    "review-v2.json": "9ea410f366638e132d048ec1db477a88c5ee3cb83f9f7b5fa9d8c67b853ce72e",
+    "pytest.json": "d1befa12347e0c5e3d384e6a8a71e3888e13054ac1702efdd938d40010aae5e9",
+    "tests.xml": "f8b736777cdc884d43bdaae537960e79cd9d68757d8e684fecc9e128756dd3ab",
+    "ruff.json": "236feaf09f999636d03b1a2ea97350e175e3894144ea39a9472331a17f0affdb",
+    "complexity.json": "7833ba2f2bdd85c8a3aacd853c283636dbbed0279553181ad853ab160f9c206e",
+    "tp-retention.json": "9e2bd945309f521c39ad0f8d49490ca697963357ddaee275b6636766514e95dc",
+    "architecture-current.json": "88642dd58df043b3537f5720afa1f648b09a95e12485c1f3301bdddfb4827f46"
+  },
+  "limits": [
+    "Full baseline run stopped before final XML; no completed full-suite count from that run.",
+    "Architecture remains BLOCKED with six regressions; no merge, release, new held-out score or precision improvement claimed."
+  ]
+}

@@ -8,7 +8,7 @@ from .credential_role_sources import (
 )
 from .credential_role_class_binding import instance_receiver
 from .credential_role_chain_memo import _import_binding_is_exact
-from .credential_role_name_binding import match_name
+from .credential_role_scope_bindings import match_name
 
 
 def _class_ref(path, node, imports, classes, audit, index=None):
@@ -122,7 +122,7 @@ def _match_attribute(fact, path, node, owner, index, imports, classes, audit):
         )
     function, _ = _scope(node, index, path)
     root = node.value
-    from .credential_role_name_binding import function_bindings
+    from .credential_role_scope_bindings import function_bindings
 
     if isinstance(root, ast.Attribute):
         while isinstance(root, ast.Attribute):
