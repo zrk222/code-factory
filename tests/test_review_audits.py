@@ -1261,31 +1261,45 @@ def test_shell_flow_cache_preserves_boolean_changes_without_cross_call_leakage()
 
 
 @pytest.mark.parametrize(
-    "body,hollow",
+    "body,expected_findings",
     [
-        ("import product.interface", False),
-        ("from product import interface", False),
-        ("import product.interface as api", False),
+        ("import product.interface", {}),
+        ("from product import interface", {}),
+        ("import product.interface as api", {}),
         (
             '"""The public interface is importable."""\nfrom product import interface',
-            False,
+            {},
         ),
-        ("try:\n    import product.interface\nexcept ImportError:\n    pass", True),
-        ("if False:\n    import product.interface", True),
-        ("def deferred():\n    import product.interface", True),
-        ("return\nimport product.interface", True),
-        ("import product.interface\nassert True", True),
-        ("import product.interface\nresult = compute()", True),
-        ('"""import product.interface"""', True),
-        ("from product import *", True),
+        (
+            "try:\n    import product.interface\nexcept ImportError:\n    pass",
+            {"QUALITY_UNKNOWN_TEST_ORACLE": 1},
+        ),
+        ("if False:\n    import product.interface", {"QUALITY_HOLLOW_TEST": 1}),
+        ("def deferred():\n    import product.interface", {"QUALITY_HOLLOW_TEST": 1}),
+        ("return\nimport product.interface", {"QUALITY_HOLLOW_TEST": 1}),
+        (
+            "import product.interface\nassert True",
+            {"QUALITY_WEAK_TEST_ORACLE": 1},
+        ),
+        (
+            "import product.interface\nresult = compute()",
+            {"QUALITY_UNKNOWN_TEST_ORACLE": 1},
+        ),
+        ('"""import product.interface"""', {"QUALITY_HOLLOW_TEST": 1}),
+        (
+            "from product import *",
+            {"QUALITY_UNKNOWN_TEST_ORACLE": 1},
+        ),
     ],
 )
-def test_import_behavior_oracle_requires_direct_complete_body(tmp_path, body, hollow):
+def test_import_behavior_oracle_requires_direct_complete_body(
+    tmp_path, body, expected_findings
+):
     (tmp_path / "test_interfaces.py").write_text(
         "def test_import_interface():\n" + textwrap.indent(body, "    ") + "\n"
     )
     report = security_scan(tmp_path, cache_enabled=False)
-    assert any(f["code"] == "QUALITY_HOLLOW_TEST" for f in report["findings"]) is hollow
+    assert report["finding_counts"] == expected_findings
 
 
 def test_import_behavior_does_not_exempt_unrelated_test_name(tmp_path):
@@ -1334,35 +1348,45 @@ def test_attribute_access_oracle_requires_import_binding_and_no_dynamic_fallback
     tmp_path,
 ):
     product = tmp_path / "product.py"
-    product.write_text("public = object()\n")
     test_file = tmp_path / "test_product.py"
-    test_file.write_text("import product\ndef test_public():\n    product.public\n")
-    assert not any(
-        f["code"] == "QUALITY_HOLLOW_TEST"
-        for f in security_scan(tmp_path, cache_enabled=False)["findings"]
-    )
-
-    test_file.write_text(
-        "from unittest.mock import Mock\nproduct = Mock()\ndef test_public():\n    product.public\n"
-    )
-    report = security_scan(tmp_path, cache_enabled=False)
-    assert any(f["code"] == "QUALITY_HOLLOW_TEST" for f in report["findings"])
-
-    test_file.write_text(
-        "import product\ndef test_public():\n"
-        "    from unittest.mock import sentinel as product\n    product.anything\n"
-    )
-    report = security_scan(tmp_path, cache_enabled=False)
-    assert any(f["code"] == "QUALITY_HOLLOW_TEST" for f in report["findings"])
-
-    test_file.write_text("def test_public():\n    unresolved.public\n")
-    report = security_scan(tmp_path, cache_enabled=False)
-    assert any(f["code"] == "QUALITY_HOLLOW_TEST" for f in report["findings"])
-
-    product.write_text("def __getattr__(name):\n    return object()\n")
-    test_file.write_text("import product\ndef test_public():\n    product.missing\n")
-    report = security_scan(tmp_path, cache_enabled=False)
-    assert any(f["code"] == "QUALITY_HOLLOW_TEST" for f in report["findings"])
+    test_import = "import product\ndef test_public():\n    product.missing\n"
+    scenarios = {
+        "direct_source_attribute": (
+            "public = object()\n",
+            "import product\ndef test_public():\n    product.public\n",
+        ),
+        "mock_rebinding": (
+            "public = object()\n",
+            "from unittest.mock import Mock\nproduct = Mock()\ndef test_public():\n    product.public\n",
+        ),
+        "test_scope_import_rebinding": (
+            "public = object()\n",
+            "import product\ndef test_public():\n    from unittest.mock import sentinel as product\n    product.anything\n",
+        ),
+        "unresolved_root": (
+            "public = object()\n",
+            "def test_public():\n    unresolved.public\n",
+        ),
+        "source_catchall_getattr": (
+            "def __getattr__(name):\n    return object()\n",
+            test_import,
+        ),
+    }
+    expected = {
+        "direct_source_attribute": {},
+        "mock_rebinding": {"QUALITY_UNKNOWN_TEST_ORACLE": 1},
+        "test_scope_import_rebinding": {"QUALITY_UNKNOWN_TEST_ORACLE": 1},
+        "unresolved_root": {"QUALITY_UNKNOWN_TEST_ORACLE": 1},
+        # A getter definition alone does not prove that the current imported
+        # module, builtin, or lookup path is unchanged at the test operation.
+        "source_catchall_getattr": {"QUALITY_UNKNOWN_TEST_ORACLE": 1},
+    }
+    observed = {}
+    for case, (module_source, test_source) in scenarios.items():
+        product.write_text(module_source)
+        test_file.write_text(test_source)
+        observed[case] = security_scan(tmp_path, cache_enabled=False)["finding_counts"]
+    assert observed == expected
 
 
 def test_annotated_stub_oracle_requires_source_bound_constructor(tmp_path):
@@ -1378,10 +1402,7 @@ def test_annotated_stub_oracle_requires_source_bound_constructor(tmp_path):
         "    Middleware(handler)\n"
     )
     report = security_scan(tmp_path, cache_enabled=False)
-    assert any(
-        f["code"] == "QUALITY_TYPECHECK_NOT_VERIFIED" for f in report["findings"]
-    )
-    assert not any(f["code"] == "QUALITY_HOLLOW_TEST" for f in report["findings"])
+    assert report["finding_counts"] == {"QUALITY_TYPECHECK_NOT_VERIFIED": 1}
 
     test.write_text(
         "from api import Middleware\nfrom unittest.mock import Mock\nMiddleware = Mock()\n"
@@ -1391,7 +1412,7 @@ def test_annotated_stub_oracle_requires_source_bound_constructor(tmp_path):
         "    Middleware(handler)\n"
     )
     report = security_scan(tmp_path, cache_enabled=False)
-    assert any(f["code"] == "QUALITY_HOLLOW_TEST" for f in report["findings"])
+    assert report["finding_counts"] == {"QUALITY_UNKNOWN_TEST_ORACLE": 1}
 
     test.write_text(
         "from api import Middleware\n"
@@ -1403,7 +1424,7 @@ def test_annotated_stub_oracle_requires_source_bound_constructor(tmp_path):
         "    App(handler)\n"
     )
     report = security_scan(tmp_path, cache_enabled=False)
-    assert any(f["code"] == "QUALITY_HOLLOW_TEST" for f in report["findings"])
+    assert report["finding_counts"] == {"QUALITY_UNKNOWN_TEST_ORACLE": 1}
 
     test.write_text(
         "from api import Middleware\n"
@@ -1413,7 +1434,7 @@ def test_annotated_stub_oracle_requires_source_bound_constructor(tmp_path):
         "    Middleware(handler)\n"
     )
     report = security_scan(tmp_path, cache_enabled=False)
-    assert any(f["code"] == "QUALITY_HOLLOW_TEST" for f in report["findings"])
+    assert report["finding_counts"] == {"QUALITY_UNKNOWN_TEST_ORACLE": 1}
 
 
 def test_annotated_callable_oracle_requires_source_bound_constructor():
@@ -13766,3 +13787,232 @@ def test_jwt_fixture_proof_helper_code_change_invalidates_native_key(
 
     monkeypatch.setattr(helper, "__code__", replacement.__code__)
     assert scanner._oracle_context_cache_key(tmp_path, [], {}) != first
+
+
+@pytest.mark.parametrize(
+    "files",
+    [
+        pytest.param(
+            {
+                "product.py": "def __getattr__(name):\n    return object()\n",
+                "test_product.py": (
+                    "import product\ndef explode(name):\n    raise ValueError(name)\n"
+                    "product.__getattr__ = explode\ndef test_public():\n    product.missing\n"
+                ),
+            },
+            id="module-getter-replaced",
+        ),
+        pytest.param(
+            {
+                "product.py": "def __getattr__(name):\n    return object()\n",
+                "test_product.py": (
+                    "import product\nimport builtins\ndef explode():\n    raise RuntimeError()\n"
+                    "builtins.object = explode\ndef test_public():\n    product.missing\n"
+                ),
+            },
+            id="builtin-object-replaced",
+        ),
+        pytest.param(
+            {
+                "product.py": "def __getattr__(name):\n    return object()\n",
+                "test_product.py": (
+                    "import product\nimport pytest\ndef explode(name):\n    raise ValueError(name)\n"
+                    "@pytest.fixture(autouse=True)\ndef install():\n    product.__getattr__ = explode\n"
+                    "def test_public():\n    product.missing\n"
+                ),
+            },
+            id="same-module-autouse-getter",
+        ),
+        pytest.param(
+            {
+                "product.py": "def __getattr__(name):\n    return object()\n",
+                "test_product.py": (
+                    "import product\nimport pytest\nimport builtins\ndef explode():\n    raise RuntimeError()\n"
+                    "@pytest.fixture(autouse=True)\ndef install():\n    builtins.object = explode\n"
+                    "def test_public():\n    product.missing\n"
+                ),
+            },
+            id="same-module-autouse-builtin",
+        ),
+        pytest.param(
+            {
+                "product.py": "def __getattr__(name):\n    return object()\n",
+                "test_product.py": (
+                    "import product\nimport pytest\ndef explode(name):\n    raise ValueError(name)\n"
+                    "@pytest.fixture\ndef install():\n    product.__getattr__ = explode\n"
+                    "def test_public(install):\n    product.missing\n"
+                ),
+            },
+            id="explicit-fixture-getter",
+        ),
+        pytest.param(
+            {
+                "product.py": "def __getattr__(name):\n    return object()\n",
+                "test_product.py": (
+                    "import product\nimport pytest\ndef explode(name):\n    raise ValueError(name)\n"
+                    "@pytest.fixture\ndef install():\n    product.__getattr__ = explode\n"
+                    "@pytest.mark.usefixtures('install')\ndef test_public():\n    product.missing\n"
+                ),
+            },
+            id="marked-fixture-getter",
+        ),
+        pytest.param(
+            {
+                "product.py": "def __getattr__(name):\n    return object()\n",
+                "conftest.py": (
+                    "import pytest\nimport product\ndef explode(name):\n    raise ValueError(name)\n"
+                    "@pytest.fixture(autouse=True)\ndef install():\n    product.__getattr__ = explode\n"
+                ),
+                "test_product.py": "import product\ndef test_public():\n    product.missing\n",
+            },
+            id="conftest-autouse-getter",
+        ),
+        pytest.param(
+            {
+                "product.py": "def __getattr__(name):\n    return object()\n",
+                "test_product.py": (
+                    "import product\ndef explode(name):\n    raise ValueError(name)\ndef replace(fn):\n"
+                    "    product.__getattr__ = explode\n    return fn\n@replace\ndef test_public():\n"
+                    "    product.missing\n"
+                ),
+            },
+            id="effectful-test-decorator",
+        ),
+        pytest.param(
+            {
+                "product.py": "def __getattr__(name):\n    return object()\n",
+                "test_product.py": "import product\ndef test_public():\n    product.__getattr__\n",
+            },
+            id="existing-module-getattr-attribute",
+        ),
+        pytest.param(
+            {
+                "product.py": "def __getattr__(name):\n    return object()\n",
+                "test_product.py": "import product\ndef test_public():\n    product.__name__\n",
+            },
+            id="existing-module-name-attribute",
+        ),
+        pytest.param(
+            {
+                "product.py": "def __getattr__(name):\n    return object()\n",
+                "other.py": "raise ValueError()\n",
+                "test_product.py": (
+                    "import product\ndef test_public():\n    import other\n    product.missing\n"
+                ),
+            },
+            id="test-body-eager-import",
+        ),
+        pytest.param(
+            {
+                "product.py": "def __getattr__(name):\n    return object(1)\n",
+                "test_product.py": "import product\ndef test_public():\n    product.missing\n",
+            },
+            id="bad-arity-literal",
+        ),
+        pytest.param(
+            {
+                "product.py": "def __getattr__(name):\n    return object(name)\n",
+                "test_product.py": "import product\ndef test_public():\n    product.missing\n",
+            },
+            id="bad-arity-name",
+        ),
+        pytest.param(
+            {
+                "product.py": "def __getattr__(name):\n    return object(1, 2)\n",
+                "test_product.py": "import product\ndef test_public():\n    product.missing\n",
+            },
+            id="bad-arity-two-arguments",
+        ),
+        pytest.param(
+            {
+                "product.py": "def __getattr__(name):\n    return object(x=1)\n",
+                "test_product.py": "import product\ndef test_public():\n    product.missing\n",
+            },
+            id="bad-arity-keyword",
+        ),
+        pytest.param(
+            {
+                "product.py": "def __getattr__(key, /):\n    return object()\n",
+                "test_product.py": "import product\ndef test_public():\n    product.missing\n",
+            },
+            id="getter-positional-only-binding",
+        ),
+        pytest.param(
+            {
+                "product.py": "def __getattr__(*name):\n    return object()\n",
+                "test_product.py": "import product\ndef test_public():\n    product.missing\n",
+            },
+            id="getter-variadic-binding",
+        ),
+        pytest.param(
+            {
+                "product.py": "def __getattr__(name):\n    object = lambda: None\n    return object()\n",
+                "test_product.py": "import product\ndef test_public():\n    product.missing\n",
+            },
+            id="getter-local-object-rebinding",
+        ),
+        pytest.param(
+            {
+                "product.py": "def __getattr__(name):\n    raise AttributeError(name)\n",
+                "test_product.py": "import product\ndef test_public():\n    product.missing\n",
+            },
+            id="getter-raises",
+        ),
+        pytest.param(
+            {
+                "product.py": (
+                    "def __getattr__(name):\n    return object()\n"
+                    "object = lambda: None\n"
+                ),
+                "test_product.py": "import product\ndef test_public():\n    product.missing\n",
+            },
+            id="module-builtin-rebinding",
+        ),
+        pytest.param(
+            {
+                "product.py": (
+                    "def __getattr__(name):\n    return object()\n"
+                    "__getattr__ = lambda name: object()\n"
+                ),
+                "test_product.py": "import product\ndef test_public():\n    product.missing\n",
+            },
+            id="module-getter-rebinding",
+        ),
+        pytest.param(
+            {
+                "product.py": (
+                    "def __getattr__(name, seed=object()):\n    return object()\n"
+                ),
+                "test_product.py": "import product\ndef test_public():\n    product.missing\n",
+            },
+            id="getter-eager-default-effect",
+        ),
+        pytest.param(
+            {
+                "product.py": (
+                    "events = []\nevents.append('loaded')\n"
+                    "def __getattr__(name):\n    return object()\n"
+                ),
+                "test_product.py": "import product\ndef test_public():\n    product.missing\n",
+            },
+            id="module-eager-effect",
+        ),
+    ],
+)
+def test_dynamic_module_lookup_requires_current_binding_and_completion_proof(
+    tmp_path, files
+):
+    """Unwitnessed runtime effects and invalid calls must remain exact UNKNOWN."""
+    for name, source in files.items():
+        (tmp_path / name).write_text(source)
+    report = security_scan(tmp_path, cache_enabled=False)
+    assert report["finding_counts"] == {"QUALITY_UNKNOWN_TEST_ORACLE": 1}
+
+
+def test_malformed_dynamic_getter_source_reports_syntax_error(tmp_path):
+    (tmp_path / "product.py").write_text("def __getattr__(name)\n    return object()\n")
+    (tmp_path / "test_product.py").write_text(
+        "import product\ndef test_public():\n    product.missing\n"
+    )
+    report = security_scan(tmp_path, cache_enabled=False)
+    assert report["finding_counts"] == {"QUALITY_SYNTAX_ERROR": 1}
