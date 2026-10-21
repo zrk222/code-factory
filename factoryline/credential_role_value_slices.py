@@ -154,3 +154,108 @@ def reflective_member_use(node, fields, aliases=None):
         if isinstance(name, ast.Constant) and name.value not in fields:
             return None
     return node.args[0]
+
+
+def discarded_callable_projection(node, parents):
+    """Follow an exact tuple element through one finite for-unpack invocation."""
+    current, position = node, []
+    parent = parents.get(id(current))
+    while isinstance(parent, ast.Tuple) and isinstance(parent.ctx, ast.Load):
+        position.insert(
+            0, next(i for i, child in enumerate(parent.elts) if child is current)
+        )
+        current, parent = parent, parents.get(id(parent))
+    if not position or not isinstance(parent, ast.For) or parent.iter is not current:
+        return False
+    if not _finite_unpack_matches(current, parent.target):
+        return False
+    # The outermost index selects an iterator row, not an unpacked target.
+    target = parent.target
+    for selected in position[1:]:
+        if not isinstance(target, ast.Tuple) or selected >= len(target.elts):
+            return False
+        target = target.elts[selected]
+    if not isinstance(target, ast.Name):
+        return False
+    function, _ = source_scope(parent, parents)
+    if function is None:
+        return False
+    from .credential_role_scope_bindings import binding_occurrences
+
+    if binding_occurrences(function.body, target.id) != [target]:
+        return False
+    uses = [
+        item
+        for item in ast.walk(function)
+        if isinstance(item, ast.Name)
+        and item.id == target.id
+        and isinstance(item.ctx, ast.Load)
+    ]
+    return bool(uses) and all(
+        _discarded_callable_load(item, parent, parents) for item in uses
+    )
+
+
+def _discarded_callable_load(node, loop, parents):
+    call = parents.get(id(node))
+    statement = parents.get(id(call))
+    if not (
+        isinstance(call, ast.Call)
+        and call.func is node
+        and not call.args
+        and not call.keywords
+        and isinstance(statement, ast.Expr)
+        and statement.value is call
+    ):
+        return False
+    current = statement
+    while current is not None and current is not loop:
+        if current is not statement and not _finite_dispatch_region(current, parents):
+            return False
+        current = parents.get(id(current))
+    return current is loop
+
+
+def _finite_dispatch_region(node, parents):
+    if isinstance(node, ast.With):
+        return True
+    if not isinstance(node, ast.For):
+        return False
+    value = node.iter
+    if isinstance(value, ast.Name):
+        from .credential_role_scope_bindings import binding_occurrences
+
+        function, _ = source_scope(node, parents)
+        bindings = binding_occurrences(function.body, value.id) if function else []
+        assignment = parents.get(id(bindings[0])) if len(bindings) == 1 else None
+        if (
+            not isinstance(assignment, (ast.Assign, ast.AnnAssign))
+            or assignment not in function.body
+        ):
+            return False
+        value = assignment.value
+    return (
+        isinstance(value, (ast.Tuple, ast.List))
+        and bool(value.elts)
+        and all(not isinstance(item, ast.Starred) for item in value.elts)
+    )
+
+
+def _finite_unpack_matches(rows, target):
+    if not isinstance(rows, ast.Tuple) or not rows.elts:
+        return False
+    return all(_unpack_matches(row, target) for row in rows.elts)
+
+
+def _unpack_matches(value, target):
+    if isinstance(target, ast.Name):
+        return True
+    return (
+        isinstance(target, ast.Tuple)
+        and isinstance(value, ast.Tuple)
+        and len(target.elts) == len(value.elts)
+        and all(
+            _unpack_matches(item, binding)
+            for item, binding in zip(value.elts, target.elts)
+        )
+    )

@@ -216,10 +216,20 @@ def endpoint_admission_helpers():
         "security_configuration",
         "semantic_credential_sensor",
     )
-    return tuple(
+    helpers = tuple(
         value
         for name in names
         for module in [import_module(f".{name}", __package__)]
         for value in vars(module).values()
         if callable(value)
+    )
+    from .credential_role_getter_records import RecordProjectionIndex
+
+    return (
+        *helpers,
+        *(
+            method
+            for method in vars(RecordProjectionIndex).values()
+            if callable(method)
+        ),
     )

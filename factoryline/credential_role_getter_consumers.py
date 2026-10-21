@@ -26,12 +26,9 @@ def getter_consumer_role(node, index, path, audit):
         return None
     parents = index.parents[path]
     result = parents.get(id(node))
-    if (
-        not isinstance(result, ast.Call)
-        or result.func is not node
-        or result.args
-        or result.keywords
-    ):
+    if not isinstance(result, ast.Call):
+        return _discarded_projection_role(node, index, path)
+    if result.func is not node or result.args or result.keywords:
         return None
     parent = parents.get(id(result))
     if isinstance(parent, ast.Expr) and parent.value is result:
@@ -58,6 +55,14 @@ def getter_consumer_role(node, index, path, audit):
         return source_span(index, path, result, "verified_url_comparison_result")
     if _url_matcher(parent, result, index, path, preceding):
         return source_span(index, path, result, "verified_url_matcher_result")
+    return None
+
+
+def _discarded_projection_role(node, index, path):
+    from .credential_role_value_slices import discarded_callable_projection
+
+    if discarded_callable_projection(node, index.parents[path]):
+        return source_span(index, path, node, "verified_discarded_callable_result")
     return None
 
 
@@ -138,43 +143,10 @@ def _url_matcher(parent, result, index, path, aliases):
 
 
 def _request_url(node, index, path, aliases):
-    if isinstance(node, ast.Call) and _canonical(node, aliases) == "typing.cast":
-        if len(node.args) != 2 or node.keywords:
-            return False
-        node = node.args[1]
-    if not isinstance(node, ast.Attribute) or node.attr != "url":
-        return False
-    request = node.value
-    if not isinstance(request, ast.Attribute) or request.attr != "request":
-        return False
-    return _recorded_call(request.value, index, path, aliases)
+    from .credential_role_getter_records import record_projection
 
-
-def _recorded_call(node, index, path, aliases):
-    if isinstance(node, ast.Subscript):
-        return bool(
-            _named(node.value, aliases) == "responses.calls"
-            and isinstance(node.slice, ast.Constant)
-            and type(node.slice.value) is int
-            and node.slice.value >= 0
-        )
-    if not isinstance(node, ast.Name):
-        return False
-    current = index.parents[path].get(id(node))
-    while current is not None:
-        if isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
-            return False
-        if isinstance(current, (ast.GeneratorExp, ast.ListComp, ast.SetComp)):
-            if len(current.generators) != 1:
-                return False
-            generator = current.generators[0]
-            return bool(
-                isinstance(generator.target, ast.Name)
-                and generator.target.id == node.id
-                and _named(generator.iter, aliases) == "responses.calls"
-            )
-        current = index.parents[path].get(id(current))
-    return False
+    model = record_projection(index, path, aliases)
+    return model.kind(node) == "url" and model.closed()
 
 
 def _named(node, aliases):
@@ -210,6 +182,13 @@ def _provider_mutated(tree, aliases, records=True):
 
     if records and _record_escape(tree, aliases):
         return True
+    return _provider_binding_uncertain(tree, aliases)
+
+
+def _provider_binding_uncertain(tree, aliases):
+    """Validate exact provider bindings independently of record capabilities."""
+    if _namespace_effect_unknown(tree, aliases):
+        return True
 
     class RecordedReads(ast.NodeTransformer):
         def visit_Attribute(self, node):
@@ -222,8 +201,53 @@ def _provider_mutated(tree, aliases, records=True):
 
     checked = RecordedReads().visit(deepcopy(tree))
     return _provider_identity_uncertain(
-        checked, aliases, roots=("requests", "httpx", "responses", "typing")
+        checked, aliases, roots=("requests", "httpx", "responses", "typing", "builtins")
     )
+
+
+def _namespace_effect_unknown(tree, aliases):
+    """Unmodelled namespace authority invalidates finite provider binding proofs."""
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute) and node.attr in {
+            "__dict__",
+            "__globals__",
+            "__builtins__",
+            "__getattribute__",
+        }:
+            return True
+        reference = node.func if isinstance(node, ast.Call) else node
+        name = _named(reference, aliases)
+        if not name and isinstance(reference, ast.Name):
+            name = reference.id
+        name = name.removeprefix("builtins.")
+        if name in {
+            "globals",
+            "locals",
+            "exec",
+            "eval",
+            "__import__",
+            "vars",
+            "__builtins__",
+        }:
+            return True
+        if (
+            name == "getattr"
+            and isinstance(node, ast.Call)
+            and _namespace_attribute_unknown(node)
+        ):
+            return True
+    return False
+
+
+def _namespace_attribute_unknown(call):
+    if len(call.args) < 2 or not isinstance(call.args[1], ast.Constant):
+        return True
+    return call.args[1].value in {
+        "__dict__",
+        "__globals__",
+        "__builtins__",
+        "__getattribute__",
+    }
 
 
 def _provider_result(index, path, aliases, records=True):
