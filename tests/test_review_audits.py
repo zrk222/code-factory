@@ -13372,6 +13372,141 @@ def test_jwt_roundtrip_witness_allows_repeated_same_key_token_reads_only():
 
 
 @pytest.mark.parametrize(
+    "imports,signature,body,expected_mutation",
+    [
+        (
+            "import pytest",
+            "",
+            "pytest.raises(TypeError, PyJWS, options=object())",
+            False,
+        ),
+        ("import pytest as pt", "", "pt.raises((TypeError, ValueError), PyJWS)", False),
+        ("from pytest import raises as check", "", "check(TypeError, PyJWS)", False),
+        ("import pytest", "", "unknown.raises(TypeError, PyJWS)", True),
+        ("import pytest", "pytest", "pytest.raises(TypeError, PyJWS)", True),
+        (
+            "import pytest\npytest = external",
+            "",
+            "pytest.raises(TypeError, PyJWS)",
+            True,
+        ),
+        ("import pytest", "", "pytest.raises(PyJWS, external)", True),
+        ("import pytest", "", "pytest.raises(TypeError, callback=PyJWS)", True),
+        ("import pytest", "", "pytest.raises(*exceptions, PyJWS)", True),
+        ("import pytest", "", "pytest.raises(TypeError, PyJWS, **options)", True),
+        (
+            "import pytest\nimport builtins\ngetattr(builtins, 'exec')('pytest.raises = external')",
+            "",
+            "pytest.raises(TypeError, PyJWS)",
+            True,
+        ),
+        (
+            "import pytest\nimport builtins\nvars(builtins)['exec']('pytest.raises = external')",
+            "",
+            "pytest.raises(TypeError, PyJWS)",
+            True,
+        ),
+        (
+            "import pytest\nimport builtins as b\nrunner = getattr(b, 'eval')\nrunner('0')",
+            "",
+            "pytest.raises(TypeError, PyJWS)",
+            True,
+        ),
+        (
+            "import pytest\nexec('pytest.raises = external')",
+            "",
+            "pytest.raises(TypeError, PyJWS)",
+            True,
+        ),
+        (
+            "import pytest\nfrom builtins import exec as execute\nexecute('pytest.raises = external')",
+            "",
+            "pytest.raises(TypeError, PyJWS)",
+            True,
+        ),
+        (
+            "import pytest\nimport builtins as b\nb.exec('pytest.raises = external')",
+            "",
+            "pytest.raises(TypeError, PyJWS)",
+            True,
+        ),
+        (
+            "import pytest\nexecute = exec\nexecute('pytest.raises = external')",
+            "",
+            "pytest.raises(TypeError, PyJWS)",
+            True,
+        ),
+        (
+            "import pytest",
+            "",
+            "alias = pytest\nalias.raises = external\npytest.raises(TypeError, PyJWS)",
+            True,
+        ),
+        (
+            "import pytest",
+            "",
+            "raiser = pytest.raises\nraiser.__code__ = external\npytest.raises(TypeError, PyJWS)",
+            True,
+        ),
+        (
+            "import pytest",
+            "",
+            "pytest.raises = external\npytest.raises(TypeError, PyJWS)",
+            True,
+        ),
+        (
+            "import pytest",
+            "",
+            "setattr(pytest, 'raises', external)\npytest.raises(TypeError, PyJWS)",
+            True,
+        ),
+        (
+            "import pytest",
+            "",
+            "monkeypatch.setattr(pytest, 'raises', external)\npytest.raises(TypeError, PyJWS)",
+            True,
+        ),
+        (
+            "from pytest import raises as check",
+            "",
+            "check.__code__ = external\ncheck(TypeError, PyJWS)",
+            True,
+        ),
+        (
+            "from pytest import raises as check",
+            "",
+            "check = external\ncheck(TypeError, PyJWS)",
+            True,
+        ),
+    ],
+)
+def test_jwt_provider_class_callback_requires_canonical_pytest_callable_form(
+    imports, signature, body, expected_mutation
+):
+    import ast
+
+    from factoryline import mock_fixture_provenance as proof
+    from factoryline import review_audits as audit
+
+    module = ast.parse(
+        imports + "\nfrom jwt.api_jws import PyJWS\n"
+        "def jws():\n    return PyJWS()\n"
+        f"def test_constructor({signature}):\n" + textwrap.indent(body, "    ") + "\n"
+    )
+    for parent in ast.walk(module):
+        for child in ast.iter_child_nodes(parent):
+            child._security_parent = parent
+    aliases = audit._scope_security_aliases(
+        audit._module_security_aliases(module), module
+    )
+    fixture = next(item for item in module.body if getattr(item, "name", None) == "jws")
+    assert (
+        proof._jwt_provider_is_mutated(module, "PyJWS", aliases, fixture)
+        is expected_mutation
+    )
+
+
+@pytest.mark.parametrize(
     ("payload_operation", "expected_witness"),
     [
         ("payload['sub'] = fetch_external_subject()", False),
@@ -14016,3 +14151,193 @@ def test_malformed_dynamic_getter_source_reports_syntax_error(tmp_path):
     )
     report = security_scan(tmp_path, cache_enabled=False)
     assert report["finding_counts"] == {"QUALITY_SYNTAX_ERROR": 1}
+
+
+@pytest.mark.parametrize(
+    "decorator,signature,body,expected",
+    [
+        (
+            '@pytest.mark.parametrize(("segment", "decoded"), '
+            '[(b"Zg", b"f"), (b"Zm8=", b"fo")])',
+            "self, segment: bytes, decoded: bytes",
+            'PyJWS._decode_base64url_segment(segment, "crypto")',
+            True,
+        ),
+        (
+            '@pytest.mark.parametrize(("segment", "decoded"), [(b"Zg", make_bytes())])',
+            "self, segment: bytes, decoded: bytes",
+            'PyJWS._decode_base64url_segment(segment, "crypto")',
+            False,
+        ),
+        (
+            '@pytest.mark.parametrize("segment", [b"Zg===", b"Z?=="])',
+            "self, segment: bytes",
+            'PyJWS._decode_base64url_segment(segment, "crypto")',
+            True,
+        ),
+        (
+            "",
+            "self",
+            'PyJWS._decode_base64url_segment(b"Zg", "crypto")',
+            True,
+        ),
+        (
+            '@pytest.mark.parametrize(("segment", "decoded"), values)',
+            "self, segment: bytes, decoded: bytes",
+            'PyJWS._decode_base64url_segment(segment, "crypto")',
+            False,
+        ),
+        (
+            '@pytest.mark.parametrize(("segment", "decoded"), [(make_bytes(), b"f")])',
+            "self, segment: bytes, decoded: bytes",
+            'PyJWS._decode_base64url_segment(segment, "crypto")',
+            False,
+        ),
+        (
+            '@pytest.mark.parametrize(("segment", "decoded"), '
+            '[(b"Zg", b"f")], indirect=True)',
+            "self, segment: bytes, decoded: bytes",
+            'PyJWS._decode_base64url_segment(segment, "crypto")',
+            False,
+        ),
+        (
+            '@pytest.mark.parametrize(("segment", "decoded"), [(b"Zg", b"f")])',
+            "self, segment, decoded: bytes",
+            'PyJWS._decode_base64url_segment(segment, "crypto")',
+            False,
+        ),
+        (
+            '@pytest.mark.parametrize(("segment", "decoded"), [(b"Zg", b"f")])',
+            "self, segment: bytes, decoded: bytes",
+            'segment = b"other"\nPyJWS._decode_base64url_segment(segment, "crypto")',
+            False,
+        ),
+        (
+            '@pytest.mark.parametrize(("segment", "decoded"), [(b"Zg", b"f")])',
+            "self, segment: bytes, decoded: bytes",
+            "PyJWS._decode_base64url_segment(segment, encoding)",
+            False,
+        ),
+        (
+            '@pytest.mark.parametrize(("segment", "decoded"), [(b"Zg", b"f")])',
+            "self, segment: bytes, decoded: bytes",
+            'jws._decode_base64url_segment(segment, "crypto")',
+            False,
+        ),
+    ],
+)
+def test_jwt_static_provider_call_requires_literal_bytes_domain(
+    decorator, signature, body, expected
+):
+    import ast
+
+    from factoryline import mock_fixture_provenance as proof
+
+    source = (
+        "import pytest\nfrom jwt.api_jws import PyJWS\n"
+        "def jws():\n    return PyJWS()\n"
+        "class TestDecode:\n"
+        f"    {decorator}\n"
+        if decorator
+        else "import pytest\nfrom jwt.api_jws import PyJWS\n"
+        "def jws():\n    return PyJWS()\n"
+        "class TestDecode:\n"
+    )
+    source += (
+        f"    def test_decode({signature}):\n"
+        + textwrap.indent(body, "        ")
+        + "\n"
+    )
+    module = ast.parse(source)
+    for parent in ast.walk(module):
+        for child in ast.iter_child_nodes(parent):
+            child._security_parent = parent
+    fixture = next(item for item in module.body if getattr(item, "name", None) == "jws")
+    call = (
+        next(
+            item
+            for item in ast.walk(module)
+            if isinstance(item, ast.Call)
+            and isinstance(item.func, ast.Attribute)
+            and item.func.attr == "_decode_base64url_segment"
+        )
+        if "PyJWS._decode_base64url_segment" in source
+        else None
+    )
+    if call is None:
+        assert not expected
+        return
+    assert proof._jwt_provider_static_call_shape(
+        call.func.value, call.func, fixture, {"PyJWS"}
+    ) is (call if expected else None)
+
+
+@pytest.mark.parametrize(
+    "parameter,expected",
+    [("", True), ("PyJWS", False)],
+)
+def test_jwt_static_provider_call_rejects_lexical_provider_shadow(
+    monkeypatch, parameter, expected
+):
+    import ast
+
+    from factoryline import mock_fixture_provenance as proof
+
+    module = ast.parse(
+        "from jwt.api_jws import PyJWS\n"
+        "def jws():\n    return PyJWS()\n"
+        f"def test_decode({parameter}):\n"
+        "    PyJWS._decode_base64url_segment(b'Zg', 'crypto')\n"
+    )
+    for parent in ast.walk(module):
+        for child in ast.iter_child_nodes(parent):
+            child._security_parent = parent
+    test = next(
+        node for node in module.body if getattr(node, "name", None) == "test_decode"
+    )
+    name = next(
+        node
+        for node in ast.walk(test)
+        if isinstance(node, ast.Name) and node.id == "PyJWS"
+    )
+    fixture = next(node for node in module.body if getattr(node, "name", None) == "jws")
+    monkeypatch.setattr(proof, "module_for", lambda _node: module)
+    monkeypatch.setattr(
+        proof, "_jwt_captured_import_binding_is_stable", lambda *_: True
+    )
+    monkeypatch.setattr(proof, "_jwt_static_source_profile", lambda *_: True)
+
+    assert (
+        proof._jwt_provider_static_call_is_closed(
+            name, name._security_parent, fixture, {"PyJWS"}
+        )
+        is expected
+    )
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "alias = pytest\nalias.mark.parametrize = external",
+        "parametrize = pytest.mark.parametrize\nparametrize.__code__ = external",
+    ],
+)
+def test_jwt_static_parametrize_rejects_escaped_callable_mutation(mutation):
+    import ast
+
+    from factoryline import mock_fixture_provenance as proof
+
+    module = ast.parse(
+        "import pytest\n"
+        f"{mutation}\n"
+        "@pytest.mark.parametrize('segment', [b'Zg'])\n"
+        "def test_decode(segment: bytes):\n    pass\n"
+    )
+    for parent in ast.walk(module):
+        for child in ast.iter_child_nodes(parent):
+            child._security_parent = parent
+    owner = next(
+        node for node in module.body if getattr(node, "name", None) == "test_decode"
+    )
+
+    assert proof._jwt_static_parametrize_decorator(module, owner) is None

@@ -1,11 +1,12 @@
 """Source-binding checks for retained primitive observations."""
 
+import ast
 import hashlib
 import json
 import re
 
 
-def fixed_primitive_binding(finding, sources, bindings, integrity):
+def fixed_primitive_binding(finding, sources, bindings, integrity, source_bytes=None):
     """Validate a critical hardcoded-secret finding against recognized static test, fixture, endpoint, symbolic, or finite-input evidence and its source hashes."""
     from .provenance import public_symbolic_binding, finite_template_binding
     from .credential_endpoint_admission import endpoint_binding
@@ -62,7 +63,7 @@ def fixed_primitive_binding(finding, sources, bindings, integrity):
         "TEST_OWNED_APPLICATION_CREDENTIAL",
         "SOURCE_PRESENTATION_METADATA",
     }:
-        return application_fixture_binding(finding, sources, bindings)
+        return application_fixture_binding(finding, sources, bindings, source_bytes)
     if facts.get("disposition") == "ENDPOINT_DECLARATION_ROLE_PROVEN":
         return endpoint_binding(finding, sources, bindings)
     if facts.get("disposition") == "PROVEN_PUBLIC_SYMBOLIC_IDENTIFIER":
@@ -210,7 +211,9 @@ def _current_primitive_binding(finding, core, bindings, audit):
         configs = core.get("oracle_context", {}).get("configuration_sources", [])
         sources = [*sources, *configs]
         bindings = {row["path"]: row["sha256"] for row in sources}
-    return audit._fixed_primitive_binding(finding, sources, bindings)
+    return audit._fixed_primitive_binding(
+        finding, sources, bindings, core.get("_primitive_source_bytes")
+    )
 
 
 def annotate_application_fixture(finding, node):
@@ -257,7 +260,7 @@ def annotate_application_fixture(finding, node):
     return {**finding, "facts": proof}
 
 
-def application_fixture_binding(finding, sources, bindings):
+def application_fixture_binding(finding, sources, bindings, source_bytes=None):
     """Validate application-fixture evidence, source/configuration hashes, spans, and proof fields without claiming runtime isolation."""
     facts = finding.get("facts", {})
     evidence = facts.get("fixture_evidence", {})
@@ -302,11 +305,243 @@ def application_fixture_binding(finding, sources, bindings):
             _presentation_witness_bindings(evidence, bindings, facts)
             if evidence.get("classification") == "PRESENTATION_METADATA_ROLE"
             else _application_witness_bindings(evidence, bindings)
+            and _application_use_closure_binding(
+                evidence, bindings, facts.get("name"), source_bytes
+            )
         )
         and facts.get("proof_facts_sha256")
         == hashlib.sha256(
             json.dumps(unsigned, sort_keys=True, separators=(",", ":")).encode()
         ).hexdigest()
+    )
+
+
+def _application_use_closure_binding(
+    evidence, bindings, secret_name, source_bytes=None
+):
+    closure = evidence.get("consumer_use_closure")
+    if not isinstance(closure, dict):
+        return False
+    assignments, uses = closure.get("assignments"), closure.get("uses")
+    operations = closure.get("operations")
+    if (
+        closure.get("schema") != "factory.application-consumer-use-closure.v1"
+        or closure.get("complete") is not True
+        or closure.get("source") != evidence.get("source")
+        or closure.get("source_sha256") != bindings.get(closure.get("source"))
+        or not isinstance(assignments, list)
+        or len(assignments) > 8
+        or not isinstance(uses, list)
+        or not 1 <= len(uses) <= 512
+        or not isinstance(operations, list)
+        or len(operations) > 16
+    ):
+        return False
+    captured = (
+        source_bytes.get(closure.get("source"))
+        if isinstance(source_bytes, dict)
+        else None
+    )
+    if not isinstance(captured, bytes) or hashlib.sha256(
+        captured
+    ).hexdigest() != closure.get("source_sha256"):
+        return False
+    try:
+        source_tree = ast.parse(captured.decode("utf-8"))
+    except (SyntaxError, UnicodeError):
+        return False
+    if not _application_closure_ast_rows(
+        source_tree,
+        closure.get("source"),
+        assignments,
+        uses,
+        operations,
+        source_bytes,
+    ):
+        return False
+    witnesses = evidence.get("witness_spans")
+    if not isinstance(witnesses, dict) or not _application_closure_rows_bound(
+        closure, assignments, uses, operations, witnesses, bindings, secret_name
+    ):
+        return False
+    return _application_closure_use_containment(
+        assignments, uses, operations, witnesses
+    )
+
+
+def _application_closure_rows_bound(
+    closure, assignments, uses, operations, witnesses, bindings, secret_name
+):
+    rows = [*assignments, *uses]
+    assignment_names = [row.get("name") for row in assignments if isinstance(row, dict)]
+    use_names = {row.get("name") for row in uses if isinstance(row, dict)}
+    allowed_roles = {"derived_value", "verification", *witnesses}
+    if (
+        not isinstance(secret_name, str)
+        or not secret_name.isidentifier()
+        or not all(
+            _application_closure_local_row(row, closure, bindings) for row in rows
+        )
+        or not all(
+            row["role"] == "credential_lineage_assignment" for row in assignments
+        )
+        or not all(row["role"] in allowed_roles for row in uses)
+        or not all(
+            _application_closure_operation_row(row, closure, bindings)
+            for row in operations
+        )
+    ):
+        return False
+    return (
+        secret_name in use_names
+        and len(set(assignment_names)) == len(assignment_names)
+        and set(assignment_names) <= use_names
+        and use_names <= {secret_name, *assignment_names}
+        and len({tuple(row["span"]) for row in rows}) == len(rows)
+        and (
+            "verification" not in {row["role"] for row in uses}
+            or any(row["role"] == "verification" for row in operations)
+        )
+        and len([row for row in operations if row["role"] == "verification"])
+        == len(
+            [row for row in operations if row["role"] == "verification_implementation"]
+        )
+    )
+
+
+def _application_closure_local_row(row, closure, bindings):
+    return bool(
+        isinstance(row, dict)
+        and row.get("path") == closure.get("source")
+        and row.get("sha256") == closure.get("source_sha256")
+        and valid_source_span(row.get("span"))
+        and isinstance(row.get("name"), str)
+        and row["name"].isidentifier()
+        and bindings.get(row["path"]) == row["sha256"]
+    )
+
+
+def _application_closure_operation_row(row, closure, bindings):
+    if (
+        not isinstance(row, dict)
+        or not isinstance(row.get("path"), str)
+        or not isinstance(row.get("sha256"), str)
+        or not valid_source_span(row.get("span"))
+        or row.get("name") != ""
+        or row.get("role")
+        not in {"request", "verification", "verification_implementation"}
+        or bindings.get(row["path"]) != row["sha256"]
+    ):
+        return False
+    return row["role"] == "verification_implementation" or (
+        row["path"] == closure.get("source")
+        and row["sha256"] == closure.get("source_sha256")
+    )
+
+
+def _application_closure_use_containment(assignments, uses, operations, witnesses):
+    for row in uses:
+        if row["role"] == "derived_value":
+            containers = assignments
+        else:
+            containers = (
+                [{"span": witnesses[row["role"]]}] if row["role"] in witnesses else []
+            ) + [op for op in operations if op["role"] == row["role"]]
+        if not any(
+            _source_span_contains(parent["span"], row["span"]) for parent in containers
+        ):
+            return False
+    return True
+
+
+def _application_closure_ast_rows(
+    source_tree, source_path, assignments, uses, operations, source_bytes
+):
+    by_span = _application_closure_span_index(source_tree)
+    return (
+        _application_closure_assignment_ast_rows(by_span, assignments)
+        and _application_closure_use_ast_rows(by_span, uses)
+        and _application_closure_operation_ast_rows(
+            source_tree, by_span, source_path, operations, source_bytes
+        )
+    )
+
+
+def _application_closure_span_index(tree):
+    return {
+        (
+            node.lineno,
+            node.col_offset,
+            node.end_lineno,
+            node.end_col_offset,
+        ): node
+        for node in ast.walk(tree)
+        if hasattr(node, "lineno") and hasattr(node, "end_lineno")
+    }
+
+
+def _application_closure_assignment_ast_rows(by_span, assignments):
+    for row in assignments:
+        statement = by_span.get(tuple(row["span"]))
+        targets = (
+            statement.targets
+            if isinstance(statement, ast.Assign)
+            else [statement.target]
+            if isinstance(statement, ast.AnnAssign)
+            else []
+        )
+        if len(targets) != 1 or not isinstance(targets[0], ast.Name):
+            return False
+        if targets[0].id != row["name"]:
+            return False
+    return True
+
+
+def _application_closure_use_ast_rows(by_span, uses):
+    for row in uses:
+        node = by_span.get(tuple(row["span"]))
+        if (
+            not isinstance(node, ast.Name)
+            or not isinstance(node.ctx, ast.Load)
+            or node.id != row["name"]
+        ):
+            return False
+    return True
+
+
+def _application_closure_operation_ast_rows(
+    source_tree, by_span, source_path, operations, source_bytes
+):
+    for row in operations:
+        tree = source_tree
+        if row["path"] != source_path:
+            raw = source_bytes.get(row["path"])
+            if not isinstance(raw, bytes):
+                return False
+            try:
+                tree = ast.parse(raw.decode("utf-8"))
+            except (SyntaxError, UnicodeError):
+                return False
+            by_span = _application_closure_span_index(tree)
+        operation = by_span.get(tuple(row["span"]))
+        if row["role"] in {"request", "verification"}:
+            if not isinstance(operation, ast.Call):
+                return False
+        elif row["role"] == "verification_implementation":
+            if not isinstance(operation, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                return False
+        else:
+            return False
+    return True
+
+
+def _source_span_contains(parent, child):
+    return (
+        valid_source_span(parent)
+        and valid_source_span(child)
+        and parent[0] <= child[0] <= child[2] <= parent[2]
+        and (parent[0] != child[0] or parent[1] <= child[1])
+        and (parent[2] != child[2] or child[3] <= parent[3])
     )
 
 
@@ -781,6 +1016,17 @@ def primitive_binding_helpers():
         application_fixture_binding,
         _application_role_binding,
         _application_witness_bindings,
+        _application_use_closure_binding,
+        _application_closure_ast_rows,
+        _application_closure_span_index,
+        _application_closure_assignment_ast_rows,
+        _application_closure_use_ast_rows,
+        _application_closure_operation_ast_rows,
+        _application_closure_rows_bound,
+        _application_closure_local_row,
+        _application_closure_operation_row,
+        _application_closure_use_containment,
+        _source_span_contains,
         _presentation_witness_bindings,
         _presentation_witness_row,
         _application_assurance_binding,

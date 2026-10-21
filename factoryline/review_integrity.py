@@ -4841,11 +4841,13 @@ def partition_proven_primitive_observations(core):
     return partition(core, sys.modules[__name__])
 
 
-def _fixed_primitive_binding(finding, sources, bindings):
+def _fixed_primitive_binding(finding, sources, bindings, source_bytes=None):
     from .primitive_observation_binding import fixed_primitive_binding
     import sys
 
-    return fixed_primitive_binding(finding, sources, bindings, sys.modules[__name__])
+    return fixed_primitive_binding(
+        finding, sources, bindings, sys.modules[__name__], source_bytes
+    )
 
 
 def bind_credential_consumers(

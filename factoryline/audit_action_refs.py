@@ -395,9 +395,36 @@ def _security_scan_action_summary(state: str) -> str:
     return "Resolve each listed finding and rerun this deterministic scan before release review."
 
 
+def _captured_application_source_bytes(workspace, findings, bindings, source_bytes):
+    paths = {
+        finding.get("path")
+        for finding in findings
+        if finding.get("facts", {}).get("disposition")
+        == "TEST_OWNED_APPLICATION_CREDENTIAL"
+    }
+    for finding in findings:
+        evidence = finding.get("facts", {}).get("fixture_evidence", {})
+        closure = evidence.get("consumer_use_closure", {})
+        if evidence.get("classification") == "APPLICATION_TEST_CREDENTIAL_ROLE":
+            paths.update(
+                row.get("path")
+                for row in closure.get("operations", [])
+                if isinstance(row, dict)
+            )
+    hashes = {row["path"]: row["sha256"] for row in bindings}
+    return {
+        relative: data
+        for relative in paths
+        if isinstance(relative, str)
+        and isinstance((data := source_bytes.get(workspace / relative)), bytes)
+        and sha256(data).hexdigest() == hashes.get(relative)
+    }
+
+
 def seal_security_scan(audit, core: dict[str, Any]) -> dict[str, Any]:
     """Seal a scan while resolving compatibility hooks through its audit module."""
     audit.integrity.partition_proven_primitive_observations(core)
+    core.pop("_primitive_source_bytes", None)
     candidate = sha256(
         json.dumps(
             audit._security_scan_report_candidate_payload(core),
@@ -431,6 +458,7 @@ def security_scan_report(
     oracle_configuration: list[dict[str, Any]],
     database_context: dict | None = None,
     tenant_policy_applies: bool = False,
+    primitive_source_bytes: dict[str, bytes] | None = None,
 ) -> dict[str, Any]:
     """Assemble and seal the bounded Python security scan report with coverage, source bindings, findings, and its non-runtime, non-approval limits."""
     audit_coverage = audit._security_scan_coverage(
@@ -455,6 +483,7 @@ def security_scan_report(
             files, oracle_edges, oracle_configuration
         ),
         "sources": bindings,
+        "_primitive_source_bytes": primitive_source_bytes or {},
         "database_context": database_context or {},
         "findings": findings,
         "finding_counts": dict(sorted(counts.items())),

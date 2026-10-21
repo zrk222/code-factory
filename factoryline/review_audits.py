@@ -27,6 +27,7 @@ try:
 except ModuleNotFoundError:  # Python 3.10
     import tomli as tomllib
 from .audit_action_refs import (
+    _captured_application_source_bytes as _app_source_bytes,
     audit_remediation_packet as audit_remediation_packet,
     _security_scan_report_candidate_payload as _security_scan_report_candidate_payload,
     _security_scan_coverage as _security_scan_coverage,
@@ -5704,6 +5705,7 @@ def _scan_security_sources(
     cache_enabled: bool = True,
     test_file_patterns: set[str] | None = None,
     database_context: dict | None = None,
+    primitive_source_bytes_out: dict[str, bytes] | None = None,
 ) -> tuple[
     list[dict[str, Any]],
     list[dict[str, Any]],
@@ -5809,6 +5811,10 @@ def _scan_security_sources(
     counts: dict[str, int] = {}
     for finding in findings:
         counts[finding["code"]] = counts.get(finding["code"], 0) + 1
+    if primitive_source_bytes_out is not None:
+        primitive_source_bytes_out.update(
+            _app_source_bytes(workspace, findings, bindings, source_bytes)
+        )
     scanned = {item["path"] for item in bindings}
     extra_bindings = [item for item in context_bindings if item["path"] not in scanned]
     return bindings, findings, counts, outcomes, oracle_edges, extra_bindings
@@ -5834,6 +5840,7 @@ def _security_scan_report(
     oracle_configuration: list[dict[str, Any]],
     database_context: dict | None = None,
     tenant_policy_applies: bool = False,
+    primitive_source_bytes: dict[str, bytes] | None = None,
 ) -> dict[str, Any]:
     import sys
 
@@ -5852,6 +5859,7 @@ def _security_scan_report(
         oracle_configuration,
         database_context,
         tenant_policy_applies,
+        primitive_source_bytes,
     )
 
 
@@ -5947,6 +5955,7 @@ def security_scan(
             }
         return _seal_security_scan(blocked)
     database_context = {}
+    primitive_source_bytes = {}
     bindings, findings, counts, outcomes, oracle_edges, oracle_configuration = (
         _scan_security_sources(
             workspace,
@@ -5956,6 +5965,7 @@ def security_scan(
             tenant_read_scopes,
             cache_enabled=cache_enabled,
             database_context=database_context,
+            primitive_source_bytes_out=primitive_source_bytes,
         )
     )
     result = _security_scan_report(
@@ -5970,6 +5980,7 @@ def security_scan(
         oracle_configuration,
         database_context,
         tenant_policy_applies,
+        primitive_source_bytes,
     )
     return (
         _reconcile_runtime_oracles(workspace, result, evidence)

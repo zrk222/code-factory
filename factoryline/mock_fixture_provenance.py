@@ -2512,11 +2512,402 @@ def _jwt_provider_use_is_closed(name, fixture, provider_aliases):
     # real provider independently of this fixture.
     if isinstance(parent, ast.Call) and parent.func is name:
         return True
+    if _jwt_provider_is_exception_callback(name, parent):
+        return True
+    if _jwt_provider_static_call_is_closed(name, parent, fixture, provider_aliases):
+        return True
     return bool(
         isinstance(parent, ast.Call)
         and parent.func is name
         and isinstance(fixture.body[0], ast.Return)
         and parent is fixture.body[0].value
+    )
+
+
+def _jwt_provider_is_exception_callback(name, call):
+    """pytest's callable raises form invokes a constructor without exporting it."""
+    if not (
+        isinstance(call, ast.Call)
+        and len(call.args) >= 2
+        and call.args[1] is name
+        and not any(isinstance(item, ast.Starred) for item in call.args)
+        and all(item.arg is not None for item in call.keywords)
+    ):
+        return False
+    module = module_for(name)
+    if module is None:
+        return False
+    audit = _review_audit()
+    aliases = audit._scope_security_aliases(
+        audit._module_security_aliases(module), module
+    )
+    scopes = []
+    owner = audit._security_parent(call)
+    while owner is not None and owner is not module:
+        if isinstance(owner, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            scopes.append(owner)
+        owner = audit._security_parent(owner)
+    for scope in reversed(scopes):
+        aliases = audit._scope_security_aliases(aliases, scope)
+    head = audit._call_name(call).split(".", 1)[0]
+    return (
+        head in aliases
+        and audit._normalized_call_name(call, aliases) == "pytest.raises"
+        and _jwt_exception_callback_binding_stable(module, head)
+    )
+
+
+def _jwt_exception_callback_binding_stable(module, head):
+    if _jwt_module_has_dynamic_execution(
+        module
+    ) or not _jwt_captured_import_binding_is_stable(module, head):
+        return False
+    for node in ast.walk(module):
+        if (
+            isinstance(node, ast.Name)
+            and node.id == head
+            and isinstance(node.ctx, ast.Load)
+            and not _jwt_namespace_reference_is_closed(node)
+        ):
+            return False
+        if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign, ast.Delete)):
+            targets = (
+                node.targets
+                if isinstance(node, (ast.Assign, ast.Delete))
+                else [node.target]
+            )
+            if any(
+                not isinstance(target, ast.Name) and _root_name(target) == head
+                for target in targets
+            ):
+                return False
+        if (
+            isinstance(node, ast.Call)
+            and node.args
+            and _root_name(node.args[0]) == head
+        ):
+            return False
+    return True
+
+
+def _jwt_module_has_dynamic_execution(module):
+    names = {
+        "exec",
+        "eval",
+        "compile",
+        "getattr",
+        "setattr",
+        "delattr",
+        "vars",
+        "globals",
+        "locals",
+        "__import__",
+        "__builtins__",
+    }
+    canonical = {f"builtins.{name}" for name in names}
+    namespaces = {"builtins", "sys", "inspect", "importlib"}
+    frames = {
+        "f_locals",
+        "f_globals",
+        "f_builtins",
+        "gi_frame",
+        "cr_frame",
+        "ag_frame",
+        "tb_frame",
+    }
+    aliases = _review_audit()._module_security_aliases(module)
+    return any(
+        isinstance(node, ast.Name)
+        and isinstance(node.ctx, ast.Load)
+        and (
+            node.id in names
+            or aliases.get(node.id) in canonical
+            or aliases.get(node.id, "").split(".", 1)[0] in namespaces
+        )
+        or isinstance(node, ast.Attribute)
+        and (node.attr in names | frames or node.attr.startswith("__"))
+        for node in ast.walk(module)
+    )
+
+
+def _jwt_namespace_reference_is_closed(node):
+    """A namespace or callable captured as data can be mutated through aliases."""
+    parent = _review_audit()._security_parent(node)
+    while isinstance(parent, ast.Attribute) and parent.value is node:
+        node, parent = parent, _review_audit()._security_parent(parent)
+    if isinstance(parent, ast.Call):
+        return parent.func is node
+    if isinstance(parent, ast.arg):
+        return parent.annotation is node
+    if isinstance(parent, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return node in parent.decorator_list or parent.returns is node
+    return False
+
+
+def _jwt_provider_static_call_is_closed(name, parent, fixture, provider_aliases):
+    call = _jwt_provider_static_call_shape(name, parent, fixture, provider_aliases)
+    module = module_for(name)
+    if call is None or module is None:
+        return False
+    audit = _review_audit()
+    aliases = audit._module_security_aliases(module)
+    scopes = []
+    owner = audit._security_parent(name)
+    while owner is not None and owner is not module:
+        if isinstance(owner, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            scopes.append(owner)
+        owner = audit._security_parent(owner)
+    for scope in reversed(scopes):
+        aliases = audit._scope_security_aliases(aliases, scope)
+    return (
+        aliases.get("PyJWS") == "jwt.api_jws.PyJWS"
+        and _jwt_captured_import_binding_is_stable(module, "PyJWS")
+        and _jwt_static_source_profile(module)
+    )
+
+
+def _jwt_provider_static_call_shape(name, parent, fixture, provider_aliases):
+    if not (
+        fixture.name == "jws"
+        and isinstance(name, ast.Name)
+        and name.id == "PyJWS"
+        and name.id in provider_aliases
+        and isinstance(parent, ast.Attribute)
+        and parent.value is name
+        and parent.attr == "_decode_base64url_segment"
+    ):
+        return None
+    call = _review_audit()._security_parent(parent)
+    if not (
+        isinstance(call, ast.Call)
+        and call.func is parent
+        and len(call.args) == 2
+        and not call.keywords
+        and isinstance(call.args[1], ast.Constant)
+        and type(call.args[1].value) is str
+    ):
+        return None
+    first = call.args[0]
+    if isinstance(first, ast.Constant) and type(first.value) is bytes:
+        return call
+    if isinstance(first, ast.Name) and _jwt_static_bytes_parameter_is_finite(
+        first, call
+    ):
+        return call
+    return None
+
+
+def _jwt_static_bytes_parameter_is_finite(name, call):
+    audit = _review_audit()
+    owner = audit._security_parent(call)
+    while owner is not None and not isinstance(
+        owner, (ast.FunctionDef, ast.AsyncFunctionDef)
+    ):
+        owner = audit._security_parent(owner)
+    params = (
+        [
+            arg
+            for arg in [
+                *owner.args.posonlyargs,
+                *owner.args.args,
+                *owner.args.kwonlyargs,
+            ]
+            if arg.arg == name.id
+        ]
+        if owner
+        else []
+    )
+    loads = (
+        [
+            node
+            for stmt in owner.body
+            for node in ast.walk(stmt)
+            if isinstance(node, ast.Name)
+            and node.id == name.id
+            and isinstance(node.ctx, ast.Load)
+        ]
+        if owner
+        else []
+    )
+    return bool(
+        owner
+        and len(params) == 1
+        and isinstance(params[0].annotation, ast.Name)
+        and params[0].annotation.id == "bytes"
+        and not owner.args.vararg
+        and not owner.args.kwarg
+        and not owner.args.defaults
+        and not any(owner.args.kw_defaults)
+        and not any(
+            isinstance(node, ast.Name)
+            and node.id == name.id
+            and isinstance(node.ctx, (ast.Store, ast.Del))
+            for stmt in owner.body
+            for node in ast.walk(stmt)
+        )
+        and loads == [name]
+        and not _jwt_provider_builtin_is_shadowed(module_for(name), "bytes")
+        and _jwt_static_parametrize_domain_is_literal(module_for(name), owner, name.id)
+    )
+
+
+def _jwt_static_parametrize_domain_is_literal(module, owner, parameter):
+    decorator = _jwt_static_parametrize_decorator(module, owner)
+    if decorator is None or len(decorator.args) != 2 or decorator.keywords:
+        return False
+    names, values = decorator.args
+    if isinstance(names, ast.Constant):
+        names = [names.value] if type(names.value) is str else []
+    elif isinstance(names, (ast.Tuple, ast.List)) and all(
+        isinstance(item, ast.Constant) and type(item.value) is str
+        for item in names.elts
+    ):
+        names = [item.value for item in names.elts]
+    else:
+        names = []
+    return (
+        len(names) == len(set(names))
+        and parameter in names
+        and _jwt_static_parameter_values_are_bytes(values, len(names))
+    )
+
+
+def _jwt_static_parametrize_decorator(module, owner):
+    aliases = _review_audit()._scope_security_aliases(
+        _review_audit()._module_security_aliases(module), module
+    )
+    if len(owner.decorator_list) != 1:
+        return None
+    item = owner.decorator_list[0]
+    if (
+        not isinstance(item, ast.Call)
+        or item.keywords
+        or any(isinstance(arg, ast.Starred) for arg in item.args)
+    ):
+        return None
+    head = _review_audit()._call_name(item).split(".", 1)[0]
+    return (
+        item
+        if _review_audit()._normalized_call_name(item, aliases)
+        == "pytest.mark.parametrize"
+        and _jwt_exception_callback_binding_stable(module, head)
+        else None
+    )
+
+
+def _jwt_static_parameter_values_are_bytes(values, parameter_count):
+    return bool(isinstance(values, (ast.Tuple, ast.List)) and values.elts) and all(
+        isinstance(case, ast.Constant) and type(case.value) is bytes
+        if parameter_count == 1
+        else isinstance(case, (ast.Tuple, ast.List))
+        and len(case.elts) == parameter_count
+        and all(
+            isinstance(value, ast.Constant) and type(value.value) is bytes
+            for value in case.elts
+        )
+        for case in values.elts
+    )
+
+
+def _jwt_static_source_profile(module):
+    import hashlib
+
+    context = getattr(module, "_security_source_context", None)
+    captured = getattr(module, "_security_oracle_context", {}).get(
+        "captured_imports", {}
+    )
+    if not isinstance(context, tuple) or len(context) != 2:
+        return False
+    root, sources = context
+    try:
+        api_path, utils_path = root / "jwt/api_jws.py", root / "jwt/utils.py"
+        api_raw, utils_raw = sources[api_path], sources[utils_path]
+        api, utils = ast.parse(api_raw), ast.parse(utils_raw)
+    except (KeyError, TypeError, SyntaxError, ValueError):
+        return False
+
+    def ast_hash(tree):
+        return hashlib.sha256(
+            ast.dump(tree, include_attributes=False).encode()
+        ).hexdigest()
+
+    if (
+        captured.get("PyJWS") != ("jwt/api_jws.py", "PyJWS")
+        or ast_hash(api)
+        != "ebc79619623c88bbd9776afc592a990ae1d4c89ec2ea60f4037ac5b36abd2a53"
+        or ast_hash(utils)
+        != "014e2080681802aa360efed7ccaccbe41d57bc54b5b6dd5676f010aade6cb9e9"
+    ):
+        return False
+    classes = [
+        node
+        for node in api.body
+        if isinstance(node, ast.ClassDef) and node.name == "PyJWS"
+    ]
+    methods = (
+        [
+            node
+            for node in classes[0].body
+            if isinstance(node, ast.FunctionDef)
+            and node.name == "_decode_base64url_segment"
+        ]
+        if len(classes) == 1
+        else []
+    )
+    alphabet = [
+        node
+        for node in api.body
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(t, ast.Name) and t.id == "_BASE64URL_ALPHABET"
+            for t in node.targets
+        )
+    ]
+    helpers = {
+        name: [
+            node
+            for node in utils.body
+            if isinstance(node, ast.FunctionDef) and node.name == name
+        ]
+        for name in ("force_bytes", "base64url_decode", "base64url_encode")
+    }
+    return bool(
+        len(methods) == 1
+        and len(methods[0].decorator_list) == 1
+        and isinstance(methods[0].decorator_list[0], ast.Name)
+        and methods[0].decorator_list[0].id == "staticmethod"
+        and hashlib.sha256(
+            ast.dump(methods[0], include_attributes=False).encode()
+        ).hexdigest()
+        == "fb054bce5cd548a23dbc2b0d370a72bf190ee14ec7e4098bbf64e7eec54f3277"
+        and not _jwt_provider_builtin_is_shadowed(api, "staticmethod")
+        and len(alphabet) == 1
+        and isinstance(alphabet[0].value, ast.Constant)
+        and alphabet[0].value.value
+        == b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+        and all(len(defs) == 1 for defs in helpers.values())
+        and _jwt_captured_import_binding_is_stable(api, "base64url_decode")
+        and _jwt_captured_import_binding_is_stable(api, "base64url_encode")
+        and _jwt_captured_import_binding_is_stable(api, "DecodeError")
+        and _jwt_captured_import_binding_is_stable(api, "binascii")
+        and _jwt_captured_import_binding_is_stable(utils, "base64")
+        and not any(
+            isinstance(n, ast.Name) and n.id in helpers and isinstance(n.ctx, ast.Store)
+            for n in ast.walk(utils)
+        )
+    )
+
+
+def _jwt_provider_builtin_is_shadowed(module, name):
+    return any(
+        isinstance(node, ast.Name)
+        and node.id == name
+        and isinstance(node.ctx, ast.Store)
+        or isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+        and node.name == name
+        or isinstance(node, (ast.Import, ast.ImportFrom))
+        and name in _review_audit()._bound_names(node)
+        for node in ast.walk(module)
     )
 
 
@@ -3581,6 +3972,350 @@ def _app_credential_lineage(index, path, function, expression, secret, seen=()):
     return False
 
 
+def _app_consumer_aliases(index, path, function, secret):
+    candidates, assignments = {secret}, {}
+    for _ in range(9):
+        changed = False
+        for statement in function.body:
+            if not isinstance(statement, ast.Assign) or len(statement.targets) != 1:
+                continue
+            target = statement.targets[0]
+            if not isinstance(target, ast.Name) or target.id in candidates:
+                continue
+            if _app_local_assignment(function, target.id) is not statement:
+                continue
+            if not _app_credential_lineage(
+                index, path, function, statement.value, secret
+            ):
+                continue
+            candidates.add(target.id)
+            assignments[target.id] = statement
+            changed = True
+            if len(candidates) > 9:
+                return None
+        if not changed:
+            return candidates, assignments
+    return None
+
+
+def _app_consumer_roots(index, path, function, secret, witness):
+    roots = []
+    for role, operation in witness.items():
+        if role in {"additional_requests", "verified_password_calls"}:
+            continue
+        if isinstance(operation, (ast.Assign, ast.AnnAssign)):
+            expression = operation.value
+            if _app_credential_lineage(index, path, function, expression, secret):
+                roots.append((role, expression))
+            continue
+        if not isinstance(operation, ast.Call):
+            continue
+        if role == "header":
+            expressions = [
+                keyword.value
+                for keyword in operation.keywords
+                if keyword.arg == "HTTP_AUTHORIZATION"
+            ]
+        elif role == "request":
+            expressions = _app_request_secret_values(operation)
+        else:
+            expressions = [
+                *operation.args,
+                *(item.value for item in operation.keywords),
+            ]
+        roots.extend(
+            (role, expression)
+            for expression in expressions
+            if _app_credential_lineage(index, path, function, expression, secret)
+        )
+    for operation in witness.get("additional_requests", ()):
+        roots.extend(
+            ("request", expression)
+            for expression in _app_request_secret_values(operation)
+            if _app_credential_lineage(index, path, function, expression, secret)
+        )
+    for operation in witness.get("verified_password_calls", ()):
+        roots.extend(
+            ("verification", expression)
+            for expression in operation.args[:1]
+            if _app_credential_lineage(index, path, function, expression, secret)
+        )
+    return roots
+
+
+def _app_request_secret_values(operation):
+    return [
+        value
+        for keyword in operation.keywords
+        if keyword.arg in {"data", "json"} and isinstance(keyword.value, ast.Dict)
+        for key, value in zip(keyword.value.keys, keyword.value.values)
+        if isinstance(key, ast.Constant)
+        and key.value in {"password", "old_password", "new_password"}
+    ]
+
+
+def _app_consumer_reached_assignments(candidates, assignments, secret, roots):
+    pending = {
+        node.id
+        for _, expression in roots
+        for node in ast.walk(expression)
+        if isinstance(node, ast.Name) and node.id in candidates
+    }
+    reached, used = {secret}, {}
+    while pending:
+        name = pending.pop()
+        if name in reached:
+            continue
+        statement = assignments.get(name)
+        if statement is None:
+            return None
+        reached.add(name)
+        used[name] = statement
+        pending.update(
+            node.id
+            for node in ast.walk(statement.value)
+            if isinstance(node, ast.Name)
+            and node.id in candidates
+            and node.id not in reached
+        )
+    return used
+
+
+def _app_consumer_stores_closed(nodes, function, secret, candidates, used):
+    for node in nodes:
+        if not isinstance(node, ast.Name) or node.id not in candidates:
+            continue
+        if not isinstance(node.ctx, (ast.Store, ast.Del)):
+            continue
+        assignment = _app_local_assignment(function, node.id)
+        permitted = assignment is not None and node is assignment.targets[0]
+        permitted = permitted and (
+            node.id == secret or node.id in used and used[node.id] is assignment
+        )
+        if not permitted:
+            return False
+    return True
+
+
+def _app_consumer_allowed_loads(nodes, function, secret, candidates, used, roots):
+    if not _app_consumer_stores_closed(nodes, function, secret, candidates, used):
+        return None
+    allowed = {}
+    for statement in used.values():
+        for node in ast.walk(statement.value):
+            if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
+                allowed[id(node)] = "derived_value"
+    for role, expression in roots:
+        for node in ast.walk(expression):
+            if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
+                allowed[id(node)] = role
+    loads = [
+        node
+        for node in nodes
+        if isinstance(node, ast.Name)
+        and isinstance(node.ctx, ast.Load)
+        and node.id in candidates
+    ]
+    return (
+        (loads, allowed)
+        if loads and all(id(node) in allowed for node in loads)
+        else None
+    )
+
+
+def _app_closed_consumer_uses(index, path, function, secret, secret_value, witness):
+    """Bind every local secret use to the supported enrollment and exercise path."""
+    nodes = list(ast.walk(function))
+    if len(nodes) > 512:
+        return None
+    source_path = index["source"].relative(path)
+    source_hash = index["source"].inventory.get(path)
+    if source_path is None or not isinstance(source_hash, str):
+        return None
+    if _app_known_credential_format(secret_value) or _app_has_dynamic_scope(
+        index, path, function, nodes
+    ):
+        return None
+    aliases = _app_consumer_aliases(index, path, function, secret)
+    if aliases is None:
+        return None
+    candidates, assignments = aliases
+    roots = _app_consumer_roots(index, path, function, secret, witness)
+    if not roots:
+        return None
+    used = _app_consumer_reached_assignments(candidates, assignments, secret, roots)
+    if used is None:
+        return None
+    closure = _app_consumer_allowed_loads(
+        nodes, function, secret, candidates, used, roots
+    )
+    if closure is None:
+        return None
+    loads, allowed = closure
+
+    def source_row(node, name, role):
+        return {
+            "path": source_path,
+            "sha256": source_hash,
+            "span": [
+                node.lineno,
+                node.col_offset,
+                node.end_lineno,
+                node.end_col_offset,
+            ],
+            "name": name,
+            "role": role,
+        }
+
+    operations = _app_consumer_operation_rows(index, witness, source_row)
+    if operations is None:
+        return None
+    return {
+        "schema": "factory.application-consumer-use-closure.v1",
+        "complete": True,
+        "source": source_path,
+        "source_sha256": source_hash,
+        "assignments": [
+            source_row(statement, name, "credential_lineage_assignment")
+            for name, statement in sorted(used.items())
+        ],
+        "uses": [
+            source_row(node, node.id, allowed[id(node)])
+            for node in sorted(loads, key=lambda item: (item.lineno, item.col_offset))
+        ],
+        "operations": operations,
+    }
+
+
+def _app_consumer_operation_rows(index, witness, source_row):
+    operations = [
+        source_row(node, "", role)
+        for role, rows in (
+            ("request", witness.get("additional_requests", ())),
+            ("verification", witness.get("verified_password_calls", ())),
+        )
+        for node in rows
+    ]
+    for selected in witness.get("verified_password_implementations", ()):
+        if not isinstance(selected, tuple) or len(selected) != 2:
+            return None
+        implementation_path, implementation = selected
+        relative = index["source"].relative(implementation_path)
+        implementation_hash = index["source"].inventory.get(implementation_path)
+        if relative is None or not isinstance(implementation_hash, str):
+            return None
+        operations.append(
+            {
+                "path": relative,
+                "sha256": implementation_hash,
+                "span": [
+                    implementation.lineno,
+                    implementation.col_offset,
+                    implementation.end_lineno,
+                    implementation.end_col_offset,
+                ],
+                "name": "",
+                "role": "verification_implementation",
+            }
+        )
+    return operations
+
+
+def _app_has_dynamic_scope(index, path, function, nodes):
+    dynamic_calls = {
+        "globals",
+        "locals",
+        "vars",
+        "eval",
+        "exec",
+        "compile",
+        "getattr",
+        "setattr",
+        "delattr",
+        "_getframe",
+        "currentframe",
+        "stack",
+        "walk_stack",
+    }
+    namespace_names = {
+        "__builtins__",
+        "__globals__",
+        "__dict__",
+        "_getframe",
+        "currentframe",
+        "f_locals",
+        "f_globals",
+        "f_builtins",
+        "gi_frame",
+        "cr_frame",
+        "ag_frame",
+        "tb_frame",
+    }
+    return (
+        any(isinstance(node, (ast.Global, ast.Nonlocal)) for node in nodes)
+        or any(
+            isinstance(node, ast.Attribute)
+            and (node.attr.startswith("_") or node.attr in namespace_names)
+            for node in nodes
+        )
+        or any(
+            isinstance(node, ast.Name) and node.id in namespace_names for node in nodes
+        )
+        or any(
+            isinstance(node, ast.Call)
+            and _app_dynamic_callable(index, path, function, node.func, dynamic_calls)
+            for node in nodes
+        )
+    )
+
+
+def _app_dynamic_callable(index, path, function, expression, dynamic_calls, seen=()):
+    if id(expression) in seen or len(seen) >= 8:
+        return False
+    seen = (*seen, id(expression))
+    if isinstance(expression, (ast.Call, ast.Subscript)):
+        return True
+    if isinstance(expression, ast.Attribute):
+        canonical = _app_expression_name(index, path, expression, function)
+        return expression.attr in dynamic_calls or canonical in {
+            *(f"builtins.{name}" for name in dynamic_calls),
+            "sys._getframe",
+            "inspect.currentframe",
+            "inspect.stack",
+            "traceback.walk_stack",
+        }
+    if not isinstance(expression, ast.Name):
+        return False
+    if expression.id in dynamic_calls:
+        return True
+    canonical = _app_expression_name(index, path, expression, function)
+    if canonical in {
+        *(f"builtins.{name}" for name in dynamic_calls),
+        "sys._getframe",
+        "inspect.currentframe",
+        "inspect.stack",
+        "traceback.walk_stack",
+    }:
+        return True
+    assignment = _app_local_assignment(function, expression.id)
+    return bool(
+        assignment
+        and _app_dynamic_callable(
+            index, path, function, assignment.value, dynamic_calls, seen
+        )
+    )
+
+
+def _app_known_credential_format(value):
+    from .context_efficiency import _SECRET_BYTES
+    from .intent_quality import _looks_like_known_credential
+
+    if value.startswith("sk_") and _looks_like_known_credential(value):
+        return True
+    encoded = value.encode("utf-8", "ignore")
+    return any(pattern.search(encoded) for pattern in _SECRET_BYTES)
+
+
 def _app_exact_raw_credential(index, path, function, expression, secret, seen=()):
     if id(expression) in seen or len(seen) >= 24:
         return False
@@ -4164,10 +4899,16 @@ def _app_pytest_store_enrollment(index, path, function, secret):
         call
         for call in _app_client_requests(function, ["client"])
         if _app_request_credential(index, path, function, call, secret)
+        and _app_active_call(index, path, function, call)
     ]
     if len(installs) != 1 or not requests or installs[0].lineno >= requests[0].lineno:
         return None
-    return {**profile, "enrollment": installs[0], "request": requests[0]}
+    return {
+        **profile,
+        "enrollment": installs[0],
+        "request": requests[0],
+        "additional_requests": requests[1:],
+    }
 
 
 def _app_source_symbol(index, path, expression, function=None, seen=()):
@@ -4797,7 +5538,7 @@ def _app_argument_contains_member(node, member):
 
 def _app_password_operation(index, model, method_name, kind):
     path, owner = model
-    selected = _app_effective_method([(path, owner.name, owner)], method_name)
+    selected = _app_password_method(index, model, method_name)
     if selected is None:
         return None
     function = selected[1]
@@ -4824,6 +5565,11 @@ def _app_password_operation(index, model, method_name, kind):
     return _app_password_call_field(
         index, path, function, member, call, params[0], kind
     )
+
+
+def _app_password_method(index, model, method_name):
+    path, owner = model
+    return _app_effective_method([(path, owner.name, owner)], method_name)
 
 
 def _app_password_call_field(index, path, function, member, call, parameter, kind):
@@ -4934,6 +5680,14 @@ def _app_user_credential_witness(index, path, function, profile, request, secret
         "creation": user["allocation"],
         "enrollment": installed[0],
         "request": request,
+        "verified_password_calls": [
+            node for node in verified if _app_active_call(index, path, function, node)
+        ],
+        "verified_password_implementations": [
+            _app_password_method(index, user["model"], node.func.attr)
+            for node in verified
+            if _app_active_call(index, path, function, node)
+        ],
     }
 
 
@@ -4976,6 +5730,10 @@ def _app_invitation_credential_witness(index, path, function, profile, request, 
                 "enrollment": request,
                 "request": request,
                 "token": tokens[0],
+                "verified_password_calls": [verify],
+                "verified_password_implementations": [
+                    _app_password_method(index, user["model"], verify.func.attr)
+                ],
             }
     return None
 
@@ -5088,6 +5846,13 @@ def application_test_secret_evidence(index, path, line, value):
         return _django_unknown(
             "captured framework authority creation and same-client exercise are unresolved"
         )
+    use_closure = _app_closed_consumer_uses(
+        index, path, function, secret, literal.value, witness
+    )
+    if use_closure is None:
+        return _django_unknown(
+            "credential has an unresolved, unbound, or credential-shaped use"
+        )
     if not all(
         _app_active_call(index, path, function, witness[key])
         for key in ("enrollment", "request", "header", "token")
@@ -5124,6 +5889,7 @@ def application_test_secret_evidence(index, path, line, value):
         "target_execution": "not_performed",
         "isolation_assurance": "UNASSESSED",
         "witness_sources": _app_witness_sources(index, witness),
+        "consumer_use_closure": use_closure,
     }
 
 
@@ -5153,8 +5919,35 @@ def _app_witness_sources(index, witness):
     return result
 
 
-CACHE_HELPERS = tuple(
-    value
-    for name, value in sorted(globals().items())
-    if callable(value) and getattr(value, "__module__", None) == __name__
+def _app_known_credential_cache_dependencies():
+    from .intent_quality import _looks_like_known_credential
+
+    return (_looks_like_known_credential, _APP_SECRET_INVENTORY_CACHE_TOKEN)
+
+
+class _AppSecretInventoryCacheToken:
+    """Expose the live immutable token inventory identity to the native cache epoch."""
+
+    __name__ = "_APP_SECRET_INVENTORY_CACHE_TOKEN"
+
+    @property
+    def __code__(self):
+        from .context_efficiency import _SECRET_BYTES
+
+        return _SECRET_BYTES
+
+    def __call__(self):
+        return self.__code__
+
+
+_APP_SECRET_INVENTORY_CACHE_TOKEN = _AppSecretInventoryCacheToken()
+
+
+CACHE_HELPERS = (
+    tuple(
+        value
+        for name, value in sorted(globals().items())
+        if callable(value) and getattr(value, "__module__", None) == __name__
+    )
+    + _app_known_credential_cache_dependencies()
 )
