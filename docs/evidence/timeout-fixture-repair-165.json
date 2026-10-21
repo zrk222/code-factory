@@ -1,0 +1,64 @@
+{
+  "schema": "factory.reviewed-timeout-fixture-repair.v1",
+  "state": "SCOPED_REVIEW_PASS_GLOBAL_GATES_INCOMPLETE",
+  "parent_commit": "b0dece530955a71c1a73883721a54ff8d9a398a6",
+  "source_sha256": {
+    "tests/test_enterprise_ops.py": "d8cfa8c95e250679aea125c88dcf1c3c7b74ed903753f412c2c814e8daf563db"
+  },
+  "review_sha256": "92f1c270a2eb98459d0dcda962c5fb24732744541efb56eebab1725b9bf3c565",
+  "first_review": {
+    "state": "NEEDS_WORK",
+    "preserved_sha256": "8d292a99c3e036577b12db5d7d210fa0d890d4844f4fcb05fa6e9c072df741da",
+    "fixes": [
+      "Always attempt wait after stop failure.",
+      "Always attempt stderr close after stdout close failure."
+    ]
+  },
+  "observations": {
+    "integrated_module_cases": 24,
+    "integrated": {
+      "argv": [
+        "C:\\Users\\rkatz\\AppData\\Local\\Programs\\Python\\Python311\\python.exe",
+        "-B",
+        "-m",
+        "pytest",
+        "-p",
+        "pytest_asyncio.plugin",
+        "-q",
+        "--tb=short",
+        "tests/test_enterprise_ops.py",
+        "--basetemp=.factory/timeout165/integrated-tmp",
+        "--junitxml=.factory/timeout165/integrated.xml"
+      ],
+      "returncode": 0,
+      "seconds": 8.33245459999307,
+      "source_sha256": {
+        "tests/test_enterprise_ops.py": "d8cfa8c95e250679aea125c88dcf1c3c7b74ed903753f412c2c814e8daf563db"
+      },
+      "profile": "Windows CPython3.11.9; explicit asyncio plugin"
+    },
+    "independent_native_controls": 2,
+    "independent_fault_probes": 6,
+    "late_deadline_mutant_rejected": true,
+    "original_assertions_preserved": 5,
+    "unrelated_original_definitions_AST_identical": 18,
+    "parent_repeated_controls": "3 runs x 2 cases passed"
+  },
+  "production_source_changes": 0,
+  "production_timeout_seconds": 1,
+  "boundary": "Output-retention fixture waits for owned-child readiness, excluding startup from that fixture only. Separate delayed-launch control requires production deadline before launch. No precision gain or full-suite green claim.",
+  "last_full_suite": {
+    "passed": 7956,
+    "failed": 97,
+    "skipped": 15,
+    "seconds": 892.1664174
+  },
+  "precision": {
+    "kind": "EXPOSED_DEVELOPMENT_RETEST",
+    "actionable_decided": 0.25,
+    "TP": 2,
+    "FP": 6,
+    "unclear": 2,
+    "new_held_out": null
+  }
+}
