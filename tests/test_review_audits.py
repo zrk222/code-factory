@@ -6596,9 +6596,16 @@ def test_security_scan_ignores_manual_raise_after_unconditional_return(tmp_path)
 
 
 @pytest.mark.parametrize(
-    "handler", ["UserWarning", "Warning", "(ValueError, UserWarning)"]
+    "handler, expected_code",
+    [
+        ("UserWarning", "QUALITY_UNKNOWN_TEST_ORACLE"),
+        ("Warning", "QUALITY_UNKNOWN_TEST_ORACLE"),
+        ("(ValueError, UserWarning)", "QUALITY_UNKNOWN_TEST_ORACLE"),
+    ],
 )
-def test_security_scan_rejects_warning_swallowed_outside_context(tmp_path, handler):
+def test_security_scan_rejects_warning_swallowed_outside_context(
+    tmp_path, handler, expected_code
+):
     (tmp_path / "test_case.py").write_text(
         "import warnings\ndef test_warning():\n"
         "    try:\n        with warnings.catch_warnings():\n"
@@ -6607,7 +6614,7 @@ def test_security_scan_rejects_warning_swallowed_outside_context(tmp_path, handl
         f"    except {handler}:\n        pass\n",
         encoding="utf-8",
     )
-    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+    assert security_scan(tmp_path)["finding_counts"] == {expected_code: 1}
 
 
 @pytest.mark.parametrize(
@@ -6970,57 +6977,111 @@ def test_security_scan_rejects_unrelated_call_before_expected_exception_raise(tm
 
 
 @pytest.mark.parametrize(
-    "body",
+    "body, expected_code",
     [
-        "    try:\n        operation()\n    except CustomError:\n        pass\n",
-        "    try:\n        operation()\n"
-        "    except Exception:\n        pass\n"
-        "    else:\n        raise RuntimeError\n",
-        "    try:\n        operation()\n"
-        "    except (CustomError, Exception):\n        pass\n"
-        "    else:\n        raise RuntimeError\n",
-        "    with suppress(Exception):\n"
-        "        try:\n            operation()\n"
-        "        except CustomError:\n            pass\n"
-        "        else:\n            raise RuntimeError\n",
-        "    try:\n        operation()\n"
-        "    except CustomError:\n        pass\n"
-        "    else:\n        raise RuntimeError\n"
-        "    finally:\n        return None\n",
-        "    try:\n        operation()\n"
-        "    except CustomError:\n        pass\n"
-        "    else:\n        if False:\n            raise RuntimeError\n",
-        "    raise RuntimeError\n",
-        "    RuntimeError()\n",
-        "    try:\n"
-        "        raise CustomError()\n"
-        "    except CustomError:\n"
-        "        pass\n"
-        "    else:\n"
-        "        raise RuntimeError\n",
-        "    try:\n"
-        "        def nested():\n"
-        "            operation()\n"
-        "    except CustomError:\n"
-        "        pass\n"
-        "    else:\n"
-        "        raise RuntimeError\n",
-        "    try:\n        operation()\n"
-        "        if True:\n            raise CustomError()\n"
-        "    except CustomError:\n        pass\n"
-        "    else:\n        raise RuntimeError\n",
-        "    try:\n        operation()\n"
-        "        with nullcontext():\n            raise CustomError()\n"
-        "    except CustomError:\n        pass\n"
-        "    else:\n        raise RuntimeError\n",
-        "    try:\n        operation()\n"
-        "        try:\n            raise CustomError()\n"
-        "        except CustomError:\n            pass\n"
-        "    except CustomError:\n        pass\n"
-        "    else:\n        raise RuntimeError\n",
+        pytest.param(
+            "    try:\n        operation()\n    except CustomError:\n        pass\n",
+            "QUALITY_HOLLOW_TEST",
+            id="custom-only-catch",
+        ),
+        pytest.param(
+            "    try:\n        operation()\n"
+            "    except Exception:\n        pass\n"
+            "    else:\n        raise RuntimeError\n",
+            "QUALITY_UNKNOWN_TEST_ORACLE",
+            id="broad-exception-else-raise",
+        ),
+        pytest.param(
+            "    try:\n        operation()\n"
+            "    except (CustomError, Exception):\n        pass\n"
+            "    else:\n        raise RuntimeError\n",
+            "QUALITY_UNKNOWN_TEST_ORACLE",
+            id="tuple-broad-catch-else-raise",
+        ),
+        pytest.param(
+            "    with suppress(Exception):\n"
+            "        try:\n            operation()\n"
+            "        except CustomError:\n            pass\n"
+            "        else:\n            raise RuntimeError\n",
+            "QUALITY_HOLLOW_TEST",
+            id="suppress-known-raise",
+        ),
+        pytest.param(
+            "    try:\n        operation()\n"
+            "    except CustomError:\n        pass\n"
+            "    else:\n        raise RuntimeError\n"
+            "    finally:\n        return None\n",
+            "QUALITY_HOLLOW_TEST",
+            id="finally-return",
+        ),
+        pytest.param(
+            "    try:\n        operation()\n"
+            "    except CustomError:\n        pass\n"
+            "    else:\n        if False:\n            raise RuntimeError\n",
+            "QUALITY_HOLLOW_TEST",
+            id="unreachable-else-raise",
+        ),
+        pytest.param(
+            "    raise RuntimeError\n",
+            "QUALITY_UNKNOWN_TEST_ORACLE",
+            id="unconditional-runtime-error",
+        ),
+        pytest.param(
+            "    RuntimeError()\n",
+            "QUALITY_HOLLOW_TEST",
+            id="discarded-runtime-error-call",
+        ),
+        pytest.param(
+            "    try:\n"
+            "        raise CustomError()\n"
+            "    except CustomError:\n"
+            "        pass\n"
+            "    else:\n"
+            "        raise RuntimeError\n",
+            "QUALITY_HOLLOW_TEST",
+            id="caught-custom-error",
+        ),
+        pytest.param(
+            "    try:\n"
+            "        def nested():\n"
+            "            operation()\n"
+            "    except CustomError:\n"
+            "        pass\n"
+            "    else:\n"
+            "        raise RuntimeError\n",
+            "QUALITY_UNKNOWN_TEST_ORACLE",
+            id="nested-def-else-raise",
+        ),
+        pytest.param(
+            "    try:\n        operation()\n"
+            "        if True:\n            raise CustomError()\n"
+            "    except CustomError:\n        pass\n"
+            "    else:\n        raise RuntimeError\n",
+            "QUALITY_HOLLOW_TEST",
+            id="caught-conditional-custom-error",
+        ),
+        pytest.param(
+            "    try:\n        operation()\n"
+            "        with nullcontext():\n            raise CustomError()\n"
+            "    except CustomError:\n        pass\n"
+            "    else:\n        raise RuntimeError\n",
+            "QUALITY_HOLLOW_TEST",
+            id="caught-nullcontext-error",
+        ),
+        pytest.param(
+            "    try:\n        operation()\n"
+            "        try:\n            raise CustomError()\n"
+            "        except CustomError:\n            pass\n"
+            "    except CustomError:\n        pass\n"
+            "    else:\n        raise RuntimeError\n",
+            "QUALITY_UNKNOWN_TEST_ORACLE",
+            id="nested-catch-outer-else-raise",
+        ),
     ],
 )
-def test_security_scan_rejects_unbounded_expected_exception_shapes(tmp_path, body):
+def test_security_scan_rejects_unbounded_expected_exception_shapes(
+    tmp_path, body, expected_code
+):
     (tmp_path / "test_case.py").write_text(
         "from contextlib import nullcontext, suppress\n"
         "class CustomError(Exception):\n    pass\n"
@@ -7028,18 +7089,32 @@ def test_security_scan_rejects_unbounded_expected_exception_shapes(tmp_path, bod
         "def test_behavior():\n" + body,
         encoding="utf-8",
     )
-    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+    assert security_scan(tmp_path)["finding_counts"] == {expected_code: 1}
 
 
 @pytest.mark.parametrize(
-    "imports,handler",
+    "imports,handler,expected_code",
     [
-        ("from builtins import BaseException as Ignore\n", "Ignore"),
-        ("from builtins import Exception as Ignore\n", "Ignore"),
-        ("import builtins as bi\n", "bi.BaseException"),
+        (
+            "from builtins import BaseException as Ignore\n",
+            "Ignore",
+            "QUALITY_UNKNOWN_TEST_ORACLE",
+        ),
+        (
+            "from builtins import Exception as Ignore\n",
+            "Ignore",
+            "QUALITY_UNKNOWN_TEST_ORACLE",
+        ),
+        (
+            "import builtins as bi\n",
+            "bi.BaseException",
+            "QUALITY_UNKNOWN_TEST_ORACLE",
+        ),
     ],
 )
-def test_security_scan_detects_aliased_exception_catch(tmp_path, imports, handler):
+def test_security_scan_detects_aliased_exception_catch(
+    tmp_path, imports, handler, expected_code
+):
     (tmp_path / "test_case.py").write_text(
         imports
         + "def test_behavior():\n"
@@ -7047,7 +7122,7 @@ def test_security_scan_detects_aliased_exception_catch(tmp_path, imports, handle
         + f"    except {handler}:\n        pass\n",
         encoding="utf-8",
     )
-    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+    assert security_scan(tmp_path)["finding_counts"] == {expected_code: 1}
 
 
 @pytest.mark.parametrize(
@@ -7079,7 +7154,9 @@ def test_security_scan_detects_assertion_suppressed_in_finally(tmp_path):
         "    finally:\n        return None\n",
         encoding="utf-8",
     )
-    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+    assert security_scan(tmp_path)["finding_counts"] == {
+        "QUALITY_UNKNOWN_TEST_ORACLE": 1
+    }
 
 
 def test_security_scan_accepts_tuple_handler_with_named_reraise(tmp_path):
@@ -7150,7 +7227,9 @@ def test_security_scan_does_not_trust_assertion_caught_in_nested_try(tmp_path):
         "    except Exception:\n        pass\n",
         encoding="utf-8",
     )
-    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+    assert security_scan(tmp_path)["finding_counts"] == {
+        "QUALITY_UNKNOWN_TEST_ORACLE": 1
+    }
 
 
 def test_security_scan_rejects_builtin_exception_alias_and_finally_return(tmp_path):
@@ -7164,7 +7243,9 @@ def test_security_scan_rejects_builtin_exception_alias_and_finally_return(tmp_pa
         "    finally:\n        return\n",
         encoding="utf-8",
     )
-    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 2}
+    assert security_scan(tmp_path)["finding_counts"] == {
+        "QUALITY_UNKNOWN_TEST_ORACLE": 2
+    }
 
 
 def test_security_scan_rejects_contextlib_suppress_and_unreachable_manual_raise(
@@ -7178,7 +7259,14 @@ def test_security_scan_rejects_contextlib_suppress_and_unreachable_manual_raise(
         "    if False:\n        raise AssertionError('wrong')\n",
         encoding="utf-8",
     )
-    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 2}
+    findings_by_test = {
+        item["facts"]["symbol"]: item["code"]
+        for item in security_scan(tmp_path)["findings"]
+    }
+    assert findings_by_test == {
+        "test_suppress": "QUALITY_UNKNOWN_TEST_ORACLE",
+        "test_unreachable": "QUALITY_HOLLOW_TEST",
+    }
 
 
 def test_security_scan_does_not_trust_imported_production_function(tmp_path):
