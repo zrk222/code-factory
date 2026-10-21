@@ -1,0 +1,38 @@
+{
+  "schema": "factory.architecture-decision.v1",
+  "status": "ACCEPTED_BY_EXPLICIT_USER_INSTRUCTION_IMPLEMENTATION_INCOMPLETE",
+  "authorization": {
+    "source": "Direct user message in this chat",
+    "quote": "REDUCE MODULE COUNT TO 133"
+  },
+  "previous": {
+    "max_python_files": 464,
+    "max_core_modules": 140
+  },
+  "approved": {
+    "max_python_files": 464,
+    "max_core_modules": 133
+  },
+  "observed_current": {
+    "python_files": 463,
+    "core_modules": 165
+  },
+  "remaining_core_reduction": 32,
+  "source_sha256": {
+    "architecture-policy.json": "8353f26d66b8c7d3ce7efe66ac02d721d774394a8558ecef234810602b4b9cb0",
+    "tests/test_architecture_health.py": "508b51fcf4de2f995cbf6270fbf232e1b97fa60b7b2df8b16649504dd3311117",
+    "tests/test_publication_metadata.py": "2c4ddfa261fb0b1c54c949c7771623d2391f7fa9c4b4551efc91bd86fc5b0d00",
+    ".github/workflows/ci.yml": "578f505cc6321f49cbf9d130d789b38212262137923ef9c0d8665ee251567f17",
+    "plans/accuracy-efficiency174.md": "a9f36e5afc4cf8a9555017f9c4a1e9ea68478045edaa2269a5b4b4beb6391d69"
+  },
+  "scope": "Tighten architecture core budget; synchronize prior464file approval into stale CI/test assertions. Other policy, enforcement, classifications and quality controls unchanged.",
+  "evidence": {
+    "scope_proof_sha256": "bbcec328dee3c910b14caa89ab213557378b81701593b3fbe845de11e2307620",
+    "tests": ".factory/caps181/tests.xml"
+  },
+  "limits": [
+    "This lowers the allowed module count; it does not remove the required32modules.",
+    "Architecture and CI remain blocked until actual consolidation and all other gates pass.",
+    "No detector behavior, severity or accuracy change; no merge/release approval."
+  ]
+}

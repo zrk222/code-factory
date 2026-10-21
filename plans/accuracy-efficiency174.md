@@ -15,7 +15,8 @@ Only remaining work is listed below. Order: accuracy, speed, simplicity.
   Preserve disagreements. AI review of implementation is not human labeling.
 - Keep all genuine positives at their justified severity. UNKNOWN is not HOLLOW;
   a primitive observation is not a proven actionable defect.
-- Architecture ceilings remain 464 Python files and 140 core modules. Do not
+- Architecture ceilings are 464 Python files and 133 core modules, following
+  the owner's subsequent instruction to reduce the module target to 133. Do not
   increase caps, reclassify modules to hide growth, or leave facade files.
 - Repository scan target is below 180 seconds on the declared standard profile,
   with unchanged coverage and canonical findings. Full-suite time is separate.
@@ -68,7 +69,8 @@ owners using the reviewed namespace/collision mapping. Preserve definitions,
 initialization/default order, live imports and cache registrations. Delete the
 absorbed modules. Validate import orders and native key mutations independently.
 
-Recount actual files/core modules after each committed batch. Address any
+Recount actual files/core modules after each committed batch. Reach at most 133
+core modules through physical consolidation. Address any
 remaining excess through cohesive absorptions, not API hiding. Refactor measured
 native Forge hotspots in place; both its unchanged quality gate and Ruff/C901
 must pass. Do not equate the two metrics.
@@ -154,7 +156,8 @@ improvements.
 - Development-only actionable result: 2 TP, 6 FP, 2 unclear; 25% decided,
   Wilson 95% 7.15–59.07%. Fresh held-out precision remains unmeasured.
 - Architecture after integration: 463 Python files / 165 core modules;
-  the core gate is still blocked. Historical full-suite failures need a current
+  the core gate is still blocked, with 32 core modules to remove under the new
+  133-module cap. Historical full-suite failures need a current
   integrated rerun; scoped passes do not subtract from that historical total.
 - One recorded full social-core scan took 152.636 process seconds. No paired
   speed gain is established.

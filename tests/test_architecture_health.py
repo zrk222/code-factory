@@ -1342,7 +1342,7 @@ def test_implementation_audit_budget_uses_owner_approved_inventory_ceilings():
     guard = policy["file_size_guard"]
     name = "factoryline/implementation_audit.py"
     assert policy["budgets"]["max_python_files"] == 464
-    assert policy["budgets"]["max_core_modules"] == 140
+    assert policy["budgets"]["max_core_modules"] == 133
     assert name in guard["required_paths"]
     assert (guard["files"][name]["max_lines"], guard["files"][name]["max_bytes"]) == (
         800,

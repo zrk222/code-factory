@@ -70,7 +70,7 @@ jobs:
         run: |
           python -m pip install code-factory-2-forge==0.10.8
           npm install --no-save --no-package-lock typescript@5.9.3
-      - name: Require A grade at 97.9, 99.85% attribution and the strict 460 Python file ceiling
+      - name: Require A grade at 97.9, 99.85% attribution and the strict 464 Python file ceiling
         run: |
           forge qa --repo-wide --root . --strict > candidate-quality.json
           python - <<'PY'
@@ -84,10 +84,11 @@ jobs:
           assert not report.get('findings'), 'quality findings remain'
           assert not report['metrics'].get('skipped_paths'), 'source was unreadable'
           paths = subprocess.check_output(['git', 'ls-files', '-z']).decode().split('\0')
-          assert sum(path.endswith('.py') for path in paths if path) <= 460
+          assert sum(path.endswith('.py') for path in paths if path) <= 464
           policy = json.loads(Path('architecture-policy.json').read_text())
-          assert policy['budgets']['max_python_files'] == 460
-          print('CANDIDATE_QUALITY_A_97_9_AND_460_CEILING_OK')
+          assert policy['budgets']['max_python_files'] == 464
+          assert policy['budgets']['max_core_modules'] == 133
+          print('CANDIDATE_QUALITY_A_97_9_AND_464_CEILING_OK')
           PY
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         if: always()

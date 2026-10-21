@@ -17,7 +17,7 @@
     "max_markdown_python_ratio": 1.7,
     "max_cli_lines": 4977,
     "max_cli_command_declarations": 184,
-    "max_core_modules": 140
+    "max_core_modules": 133
   },
   "file_size_guard": {
     "required": true,
