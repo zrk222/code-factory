@@ -271,61 +271,14 @@ def configuration_findings(tree, aliases, relative="<source>"):
 
 
 def legacy_tls_verification_risk(call, node, aliases=None):
-    """Recognize client use of ssl.wrap_socket with omitted or CERT_NONE checks."""
-    aliases = aliases or {}
-    if (
-        call != "ssl.wrap_socket"
-        or _expanded(node)
-        or _canonical(node, aliases) != call
-    ):
-        return False
-    server = _keyword(node, "server_side", 3)
-    if _literal_bool(server) is True or (
-        server is not None and _literal_bool(server) is None
-    ):
-        return False
-    verification = _keyword(node, "cert_reqs", 4)
-    if verification is None:
-        return True
-    from .review_integrity import _security_scope_request_aliases
-    from .review_audits import _name
+    """Delegate canonical client TLS configuration analysis to the semantic lane."""
+    from .semantic_credential_sensor import legacy_tls_verification_risk as analyze
 
-    bindings = _security_scope_request_aliases(
-        getattr(node, "_security_lexical_scope", None),
-        aliases,
-        getattr(node, "_security_flow_statement", None),
-    )
-    raw = _name(verification)
-    head, _, tail = raw.partition(".")
-    return bindings.get(head, "") + ("." + tail if tail else "") == "ssl.CERT_NONE"
+    return analyze(call, node, aliases)
 
 
 def tls_finding(call, relative, node, aliases=None):
-    """Preserve request TLS findings and add conditional legacy client findings."""
-    from .review_audits import _security_finding
-    from .review_integrity import tls_verification_disabled
+    """Preserve the existing TLS finding entry point and live helper identity."""
+    from .semantic_credential_sensor import tls_finding as analyze
 
-    if tls_verification_disabled(call, node):
-        return _security_finding(
-            "SECURITY_TLS_VERIFY_DISABLED",
-            relative,
-            node,
-            "TLS certificate verification is disabled for an outbound request.",
-            "HIGH",
-            call=call,
-        )
-    if not legacy_tls_verification_risk(call, node, aliases):
-        return None
-    return _security_finding(
-        "SECURITY_TLS_VERIFY_DISABLED",
-        relative,
-        node,
-        "Legacy client TLS configuration omits or disables certificate verification; runtime availability and hostname behavior are not established.",
-        "MEDIUM",
-        call=call,
-        configuration="legacy_CERT_NONE",
-        role="client",
-        runtime_availability="unknown",
-        hostname_verification="not_established",
-        trust_or_exploitability="unknown",
-    )
+    return analyze(call, relative, node, aliases)

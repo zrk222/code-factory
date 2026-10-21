@@ -1541,7 +1541,6 @@ def _module_for_security_node(node: ast.AST) -> ast.Module | None:
     return current if isinstance(current, ast.Module) else None
 
 
-
 def _literal_assignment_diagnostics(
     relative: str, node: ast.Assign | ast.AnnAssign, aliases=None
 ) -> list[dict[str, Any]]:
@@ -1582,6 +1581,7 @@ def _literal_assignment_diagnostics(
 
             finding = annotate_django_fixture(finding, node)
             from .primitive_observation_binding import annotate_application_fixture
+
             findings.append(annotate_application_fixture(finding, node))
     return findings
 
@@ -3998,7 +3998,10 @@ def _project_oracle_context(
     )
     bind_provider_inventory(contexts, python_inventory)
     integrity.bind_benchmark_context(contexts, snapshots, benchmarks)
-    from .context_efficiency import bind_django_fixture_context, bind_application_fixture_context
+    from .context_efficiency import (
+        bind_django_fixture_context,
+        bind_application_fixture_context,
+    )
 
     bind_django_fixture_context(
         root,
@@ -4012,8 +4015,15 @@ def _project_oracle_context(
     )
     resolved = contracts._project_import_views(import_views, snapshots)
     bind_application_fixture_context(
-        root, snapshots, contexts, config_bindings, _security_source_bytes, MAX_BYTES,
-        source_bytes=source_bytes, source_inventory=source_hashes, imports=resolved,
+        root,
+        snapshots,
+        contexts,
+        config_bindings,
+        _security_source_bytes,
+        MAX_BYTES,
+        source_bytes=source_bytes,
+        source_inventory=source_hashes,
+        imports=resolved,
     )
     integrity.bind_fixed_program_workspace(
         root, contexts, snapshots, files, source_bytes, resolved
@@ -5968,69 +5978,7 @@ def security_scan(
 
 
 def security_evals() -> dict[str, Any]:
-    """Evaluate security rules against fixed adversarial and safe-control fixtures."""
-    fixture_path = Path(__file__).parent / "data" / "security_evals.json"
-    fixtures = json.loads(fixture_path.read_text(encoding="utf-8"))
-    rows: list[dict[str, Any]] = []
-    for item in fixtures:
-        name, source, expected = item["name"], item["source"], set(item["expected"])
-        tree = ast.parse(source, filename=f"{name}.py")
-        calls = _tenant_contract_calls(tuple(item.get("tenant_read_calls", ())))
-        bindings = _tenant_contract_bindings(
-            tuple(item.get("tenant_read_bindings", ())), calls
-        )
-        findings = _security_scan_tree(
-            Path("."), Path(f"{name}.py"), tree, calls, bindings
-        )
-        actual = {item["code"] for item in findings}
-        passed = actual == expected
-        rows.append(
-            {
-                "id": name,
-                "expected": sorted(expected),
-                "observed": sorted(actual),
-                "passed": passed,
-            }
-        )
-    fixture_expectations = [set(item["expected"]) for item in fixtures]
-    attempted = sum(bool(expected) for expected in fixture_expectations)
-    caught = sum(
-        row["passed"] for row, expected in zip(rows, fixture_expectations) if expected
-    )
-    controls = sum(not expected for expected in fixture_expectations)
-    controls_passed = sum(
-        row["passed"]
-        for row, expected in zip(rows, fixture_expectations)
-        if not expected
-    )
-    state = "PASS" if all(row["passed"] for row in rows) else "BLOCKED"
-    result: dict[str, Any] = {
-        "schema": "factory.security-evals.v1",
-        "marker": "SECURITY_EVALS_COMPLETE",
-        "state": state,
-        "fixtures": rows,
-        "mutation_coverage": {
-            "attempted": attempted,
-            "caught": caught,
-            "rate": round(caught / attempted, 4) if attempted else 1.0,
-        },
-        "safe_controls": {"attempted": controls, "passed": controls_passed},
-        "authority": {
-            "execution": False,
-            "approval": False,
-            "publication": False,
-            "deployment": False,
-        },
-        "claim_boundary": "Fixed local AST evaluation of scanner rules only; not a penetration test, runtime exploit proof, dependency advisory, or release approval.",
-    }
-    result["audit_sha256"] = sha256(
-        json.dumps(
-            result, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-        ).encode("utf-8")
-    ).hexdigest()
-    result["action_summary"] = (
-        "All adversarial fixtures were caught and safe controls remained clean."
-        if state == "PASS"
-        else "A scanner rule failed an adversarial fixture or contaminated a safe control; block promotion and repair the evaluator."
-    )
-    return result
+    """Evaluate the same seeded security fixtures through the semantic lane."""
+    from .semantic_credential_sensor import security_evals as evaluate
+
+    return evaluate()

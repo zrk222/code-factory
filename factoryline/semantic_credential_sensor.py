@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 import ast
+from hashlib import sha256
+import json
+from pathlib import Path
+from typing import Any
 import re
 from urllib.parse import urlsplit
 
@@ -521,3 +525,193 @@ def django_request_parameter(
     if not any(value.startswith("django.") for value in request_aliases.values()):
         return False
     return _name(request) == request.id
+
+
+def legacy_tls_verification_risk(call, node, aliases=None):
+    """Recognize client use of ssl.wrap_socket with omitted or CERT_NONE checks."""
+    from .security_configuration import _canonical, _expanded, _keyword, _literal_bool
+
+    aliases = aliases or {}
+    if (
+        call != "ssl.wrap_socket"
+        or _expanded(node)
+        or _canonical(node, aliases) != call
+    ):
+        return False
+    server = _keyword(node, "server_side", 3)
+    if _literal_bool(server) is True or (
+        server is not None and _literal_bool(server) is None
+    ):
+        return False
+    verification = _keyword(node, "cert_reqs", 4)
+    if verification is None:
+        return True
+    from .review_integrity import _security_scope_request_aliases
+    from .review_audits import _name
+
+    bindings = _security_scope_request_aliases(
+        getattr(node, "_security_lexical_scope", None),
+        aliases,
+        getattr(node, "_security_flow_statement", None),
+    )
+    raw = _name(verification)
+    head, _, tail = raw.partition(".")
+    return bindings.get(head, "") + ("." + tail if tail else "") == "ssl.CERT_NONE"
+
+
+def tls_finding(call, relative, node, aliases=None):
+    """Preserve request TLS findings and add conditional legacy client findings."""
+    from .review_audits import _security_finding
+    from .review_integrity import tls_verification_disabled
+    from .security_configuration import legacy_tls_verification_risk
+
+    if tls_verification_disabled(call, node):
+        return _security_finding(
+            "SECURITY_TLS_VERIFY_DISABLED",
+            relative,
+            node,
+            "TLS certificate verification is disabled for an outbound request.",
+            "HIGH",
+            call=call,
+        )
+    if not legacy_tls_verification_risk(call, node, aliases):
+        return None
+    return _security_finding(
+        "SECURITY_TLS_VERIFY_DISABLED",
+        relative,
+        node,
+        "Legacy client TLS configuration omits or disables certificate verification; runtime availability and hostname behavior are not established.",
+        "MEDIUM",
+        call=call,
+        configuration="legacy_CERT_NONE",
+        role="client",
+        runtime_availability="unknown",
+        hostname_verification="not_established",
+        trust_or_exploitability="unknown",
+    )
+
+
+def security_evals() -> dict[str, Any]:
+    """Evaluate security rules against fixed adversarial and safe-control fixtures."""
+    from . import review_audits as audit
+
+    fixture_path = Path(__file__).parent / "data" / "security_evals.json"
+    fixtures = json.loads(fixture_path.read_text(encoding="utf-8"))
+    rows: list[dict[str, Any]] = []
+    for item in fixtures:
+        name, source, expected = item["name"], item["source"], set(item["expected"])
+        tree = ast.parse(source, filename=f"{name}.py")
+        calls = audit._tenant_contract_calls(tuple(item.get("tenant_read_calls", ())))
+        bindings = audit._tenant_contract_bindings(
+            tuple(item.get("tenant_read_bindings", ())), calls
+        )
+        findings = audit._security_scan_tree(
+            Path("."), Path(f"{name}.py"), tree, calls, bindings
+        )
+        actual = {item["code"] for item in findings}
+        passed = actual == expected
+        rows.append(
+            {
+                "id": name,
+                "expected": sorted(expected),
+                "observed": sorted(actual),
+                "passed": passed,
+            }
+        )
+    fixture_expectations = [set(item["expected"]) for item in fixtures]
+    attempted = sum(bool(expected) for expected in fixture_expectations)
+    caught = sum(
+        row["passed"] for row, expected in zip(rows, fixture_expectations) if expected
+    )
+    controls = sum(not expected for expected in fixture_expectations)
+    controls_passed = sum(
+        row["passed"]
+        for row, expected in zip(rows, fixture_expectations)
+        if not expected
+    )
+    state = "PASS" if all(row["passed"] for row in rows) else "BLOCKED"
+    result: dict[str, Any] = {
+        "schema": "factory.security-evals.v1",
+        "marker": "SECURITY_EVALS_COMPLETE",
+        "state": state,
+        "fixtures": rows,
+        "mutation_coverage": {
+            "attempted": attempted,
+            "caught": caught,
+            "rate": round(caught / attempted, 4) if attempted else 1.0,
+        },
+        "safe_controls": {"attempted": controls, "passed": controls_passed},
+        "authority": {
+            "execution": False,
+            "approval": False,
+            "publication": False,
+            "deployment": False,
+        },
+        "claim_boundary": "Fixed local AST evaluation of scanner rules only; not a penetration test, runtime exploit proof, dependency advisory, or release approval.",
+    }
+    result["audit_sha256"] = sha256(
+        json.dumps(
+            result, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+    ).hexdigest()
+    result["action_summary"] = (
+        "All adversarial fixtures were caught and safe controls remained clean."
+        if state == "PASS"
+        else "A scanner rule failed an adversarial fixture or contaminated a safe control; block promotion and repair the evaluator."
+    )
+    return result
+
+
+def literal_exec_rejected(node):
+    """Prove only compilation failure for one source-bound builtin exec literal."""
+    from . import review_integrity as integrity
+    from .context_efficiency import (
+        _bounded_ast_nodes,
+        _module_has_dynamic_capability_access,
+    )
+
+    match node:
+        case ast.Call(
+            func=ast.Name(id="exec"),
+            args=[ast.Constant(value=str()) as literal],
+            keywords=[],
+        ):
+            pass
+        case _:
+            return {}
+    if not hasattr(node, "_security_shadowed_names"):
+        return {}
+    module = integrity._security_module_scope(
+        getattr(node, "_security_lexical_scope", None)
+    )
+    if module is None or integrity._builtin_repr_names_shadowed(node, {"exec"}):
+        return {}
+    nodes = _bounded_ast_nodes(module)
+    if nodes is None or _module_has_dynamic_capability_access(
+        [n for n in nodes if n is not node.func]
+    ):
+        return {}
+    if any(
+        isinstance(n, ast.Attribute)
+        and n.attr == "__dict__"
+        or isinstance(n, (ast.Import, ast.ImportFrom))
+        and any(a.name in {"builtins", "*"} for a in n.names)
+        or isinstance(n, ast.ImportFrom)
+        and n.module == "builtins"
+        for n in nodes
+    ):
+        return {}
+    try:
+        if len(literal.value.encode("utf-8")) > 4096:
+            return {}
+        ast.parse(literal.value, mode="exec")
+    except SyntaxError:
+        return dict(
+            primitive_present=True,
+            source_compilation="REJECTED_SYNTAX",
+            execution_of_literal_source=False,
+            evidence_scope="exact_builtin_call_literal",
+        )
+    except (MemoryError, RecursionError, UnicodeError, ValueError):
+        pass
+    return {}

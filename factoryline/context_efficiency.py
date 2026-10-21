@@ -288,7 +288,6 @@ def cached_import_bindings(value):
     return result
 
 
-
 def typecheck_cache_helpers(contracts):
     return tuple(
         value
@@ -297,43 +296,60 @@ def typecheck_cache_helpers(contracts):
     )
 
 
-
 def application_profile_configuration(root, read_source, limit):
-    name = 'requirements.txt'
+    name = "requirements.txt"
     try:
         raw = read_source(root, name)
     except FileNotFoundError:
-        return [], {'path': name, 'state': 'missing'}, True
+        return [], {"path": name, "state": "missing"}, True
     except (OSError, ValueError, RuntimeError) as exc:
-        code = getattr(exc, 'code', type(exc).__name__)
-        return [], {'path': name, 'state': code}, code == 'E_SOURCE_MISSING'
+        code = getattr(exc, "code", type(exc).__name__)
+        return [], {"path": name, "state": code}, code == "E_SOURCE_MISSING"
     if len(raw) > limit:
-        return [], {'path': name, 'state': 'oversized'}, False
-    binding = {'path': name, 'sha256': hashlib.sha256(raw).hexdigest(), 'bytes': len(raw)}
+        return [], {"path": name, "state": "oversized"}, False
+    binding = {
+        "path": name,
+        "sha256": hashlib.sha256(raw).hexdigest(),
+        "bytes": len(raw),
+    }
     return [binding], binding, True
 
 
 def _application_profile_bytes(root, bindings, read_source, limit):
-    selected = {row['path']: row for row in bindings
-                if row['path'] in {'requirements.txt', 'pyproject.toml', 'tox.ini'}}
+    selected = {
+        row["path"]: row
+        for row in bindings
+        if row["path"] in {"requirements.txt", "pyproject.toml", "tox.ini"}
+    }
     result = {}
     for name, binding in selected.items():
         try:
             raw = read_source(root, name)
         except (OSError, ValueError, RuntimeError):
             return None
-        if len(raw) > limit or hashlib.sha256(raw).hexdigest() != binding['sha256']:
+        if len(raw) > limit or hashlib.sha256(raw).hexdigest() != binding["sha256"]:
             return None
         result[name] = raw
     return result
 
 
-def bind_application_fixture_context(root, snapshots, contexts, bindings, read_source,
-                                     limit, *, source_bytes=None, source_inventory=None, imports=None):
+def bind_application_fixture_context(
+    root,
+    snapshots,
+    contexts,
+    bindings,
+    read_source,
+    limit,
+    *,
+    source_bytes=None,
+    source_inventory=None,
+    imports=None,
+):
     from . import mock_fixture_provenance as fixture
     from .credential_role_sources import SourceSnapshotIndex, PresentationRoleIndex
     from collections.abc import Mapping
     from . import review_audits as audit
+
     if not isinstance(source_bytes, dict) or not isinstance(source_inventory, dict):
         return
     configs = _application_profile_bytes(root, bindings, read_source, limit)
@@ -341,13 +357,31 @@ def bind_application_fixture_context(root, snapshots, contexts, bindings, read_s
         return
     captured = {path: source_bytes.get(path) for path in snapshots}
     inventory = {path: source_inventory.get(path) for path in snapshots}
-    index = fixture.application_test_index(root, snapshots, captured, inventory, configs)
-    source = index['source'] if index is not None else SourceSnapshotIndex(root, snapshots, captured, inventory)
-    presentation = PresentationRoleIndex(source, imports, audit) if isinstance(imports, Mapping) else None
-    manifest = {path.relative_to(root).as_posix(): digest for path, digest in inventory.items()}
-    config_hashes = {name: hashlib.sha256(raw).hexdigest() for name, raw in configs.items()}
+    index = fixture.application_test_index(
+        root, snapshots, captured, inventory, configs
+    )
+    source = (
+        index["source"]
+        if index is not None
+        else SourceSnapshotIndex(root, snapshots, captured, inventory)
+    )
+    presentation = (
+        PresentationRoleIndex(source, imports, audit)
+        if isinstance(imports, Mapping)
+        else None
+    )
+    manifest = {
+        path.relative_to(root).as_posix(): digest for path, digest in inventory.items()
+    }
+    config_hashes = {
+        name: hashlib.sha256(raw).hexdigest() for name, raw in configs.items()
+    }
     manifest.update(config_hashes)
-    digest = hashlib.sha256('\n'.join(sorted(f'{name}\0{value}' for name, value in manifest.items())).encode()).hexdigest()
+    digest = hashlib.sha256(
+        "\n".join(
+            sorted(f"{name}\0{value}" for name, value in manifest.items())
+        ).encode()
+    ).hexdigest()
     for path, tree in snapshots.items():
         evidence = {}
         for node in ast.walk(tree):
@@ -355,27 +389,50 @@ def bind_application_fixture_context(root, snapshots, contexts, bindings, read_s
                 continue
             targets = node.targets if isinstance(node, ast.Assign) else [node.target]
             literal = audit._secret_literal(node)
-            if len(targets) != 1 or literal is None or not isinstance(targets[0], ast.Name):
+            if (
+                len(targets) != 1
+                or literal is None
+                or not isinstance(targets[0], ast.Name)
+            ):
                 continue
             if not audit._SECRET_ASSIGNMENT.search(targets[0].id):
                 continue
-            item = _application_literal_evidence(fixture, index, presentation, path, node, literal)
-            if item.get('eligible') is True:
-                evidence[f'{node.lineno}:{node.col_offset}:{targets[0].id}'] = {
-                    **item, 'inventory_sha256': digest, 'configuration_sha256': config_hashes,
+            item = _application_literal_evidence(
+                fixture, index, presentation, path, node, literal
+            )
+            if item.get("eligible") is True:
+                evidence[f"{node.lineno}:{node.col_offset}:{targets[0].id}"] = {
+                    **item,
+                    "inventory_sha256": digest,
+                    "configuration_sha256": config_hashes,
                 }
-        contexts[path]['application_fixture_evidence'] = evidence
+        contexts[path]["application_fixture_evidence"] = evidence
 
 
 def _application_literal_evidence(fixture, index, presentation, path, node, literal):
-    item = fixture.application_test_secret_evidence(index, path, node.value.lineno, literal) if index is not None else {}
-    if item.get('eligible') is not True and presentation is not None:
+    item = (
+        fixture.application_test_secret_evidence(
+            index, path, node.value.lineno, literal
+        )
+        if index is not None
+        else {}
+    )
+    if item.get("eligible") is not True and presentation is not None:
         item = presentation.evidence(path, node)
-        if item.get('eligible') is True:
+        if item.get("eligible") is True:
             source = presentation.source
-            item = {**item, 'source': source.relative(path), 'source_sha256': source.inventory[path],
-                    'declaration_span': [node.lineno, node.col_offset, node.end_lineno, node.end_col_offset],
-                    'isolation_assurance': 'UNASSESSED'}
+            item = {
+                **item,
+                "source": source.relative(path),
+                "source_sha256": source.inventory[path],
+                "declaration_span": [
+                    node.lineno,
+                    node.col_offset,
+                    node.end_lineno,
+                    node.end_col_offset,
+                ],
+                "isolation_assurance": "UNASSESSED",
+            }
     return item
 
 
@@ -451,11 +508,24 @@ def _captured_fixture_configuration(root, bindings, read_source, limit):
 def provider_context_cache_helpers(contracts):
     """Return the source inventory and cache helpers in the cache epoch."""
     from . import credential_role_sources as roles
+
     return (
         roles.PresentationRoleIndex,
-        *(value for name, value in vars(roles).items() if name.startswith("_presentation_")),
-        *(value for owner in (roles.PresentationRoleIndex, roles.SourceSnapshotIndex, roles.DeclarationFact)
-          for value in vars(owner).values() if callable(value)),
+        *(
+            value
+            for name, value in vars(roles).items()
+            if name.startswith("_presentation_")
+        ),
+        *(
+            value
+            for owner in (
+                roles.PresentationRoleIndex,
+                roles.SourceSnapshotIndex,
+                roles.DeclarationFact,
+            )
+            for value in vars(owner).values()
+            if callable(value)
+        ),
         provider_context_cache_helpers,
         bind_provider_inventory,
         bind_provider_context,
@@ -5615,6 +5685,7 @@ def _protocol_constructor_callee(call, path, scope, state):
 def protocol_call_helpers():
     """Bind the producer, deterministic local helper inventory, and inventory code."""
     from .review_integrity import source_binding_helpers
+    from . import test_oracle_misuse as oracle
 
     helpers = tuple(
         fn
@@ -5627,6 +5698,17 @@ def protocol_call_helpers():
         _capability_reflection_names,
         _require,
         *helpers,
+        *(
+            getattr(oracle, name)
+            for name in (
+                "_protocol_chain_bindings",
+                "_protocol_demand_summary",
+                "_protocol_demand_target",
+                "_protocol_demand_visit",
+                "_protocol_fresh_list_append",
+                "_protocol_receiver_transfer",
+            )
+        ),
         *source_binding_helpers(),
     )
 
@@ -5810,207 +5892,24 @@ def _context_project_fields(row, fields):
 
 
 def _protocol_demand_summary(path, test, call, state):
-    summary = dict(
-        protocol="python.iteration",
-        test=test.name,
-        line=call.lineno,
-        output_checked=False,
-        runtime_observed=False,
-        status="UNKNOWN",
-        demand_chain=[],
-        dependencies=[],
-        unknown_reasons=[],
-    )
-    summary["unresolved_effects"] = [
-        "PATH_CONSTRUCTOR_AND_GENERATOR_EFFECTS_NOT_VERIFIED"
-    ]
-    summary.update(item_produced=None, exhausted=None, conditional_on_path=True)
-    state["demand_targets"] = []
-    state["receiver_safe_calls"] = set()
-    state["source_arguments"] = {}
-    state["constructor_effect_dependencies"] = summary["dependencies"]
-    try:
-        preceding = _protocol_reachable_call(path, test, call, state, parameters=True)
-        _require(
-            all(
-                _protocol_preceding_statement(s)
-                or isinstance(s, ast.Expr)
-                and isinstance(s.value, ast.Call)
-                for s in preceding
-            ),
-            "PRECEDING_CONTROL_OR_EFFECT_UNKNOWN",
-        )
-        summary["dependencies"].append(_protocol_dependency(path, test, "test", state))
-        _protocol_demand_visit(call, path, test, summary, state)
-        phases = {step["phase"] for step in summary["demand_chain"]}
-        if not phases.intersection({"created", "body_entered"}):
-            return None
-        summary["status"] = (
-            "WEAK_PROTOCOL" if "body_entered" in phases else "CREATED_ONLY"
-        )
-        summary["exception_channels"] = ["may_propagate", "opaque_effects_unresolved"]
-    except ValueError as exc:
-        summary["unknown_reasons"].append(str(exc))
-        if not any(s["phase"] != "returns" for s in summary["demand_chain"]):
-            return None
-    summary["dependencies"].extend(
-        _protocol_dependency(p, cls, "demand_allocation", state)
-        for p, cls in state["demand_targets"]
-    )
-    return summary
+    """Delegate iteration-demand analysis to the canonical oracle owner."""
+    from .test_oracle_misuse import _protocol_demand_summary as analyze
+
+    return analyze(path, test, call, state)
 
 
 def _protocol_demand_visit(call, path, scope, summary, state):
-    forced, visiting, origin = False, set(), (path, scope)
-    while isinstance(call, ast.Call) and len(visiting) < 16:
-        consumer = None
-        if len(call.args) == 1 and not call.keywords:
-            func = call.func
-            if isinstance(func, ast.Name) and func.id in {"tuple", "list"}:
-                consumer = func.id
-                _protocol_builtin_unshadowed(path, scope, state, consumer)
-            elif (
-                isinstance(func, ast.Attribute)
-                and func.attr == "join"
-                and isinstance(func.value, ast.Constant)
-                and isinstance(func.value.value, str)
-            ):
-                consumer = "str.join"
-        if consumer:
-            state.setdefault("receiver_safe_calls", set()).add(call)
-            summary["demand_chain"].append(
-                dict(phase="forces", consumer=consumer, line=call.lineno)
-            )
-            call, forced = call.args[0], True
-            continue
-        source, function = _protocol_demand_target(call.func, path, scope, state)
-        if (
-            (source, id(function)) in visiting
-            or not isinstance(function, ast.FunctionDef)
-            or function.decorator_list
-        ):
-            raise ValueError("DEMAND_CALLABLE_OR_CYCLE_UNKNOWN")
-        previous = {
-            name: value
-            for name, value in state["source_arguments"]
-            .get((path, id(scope)), {})
-            .items()
-            if not any(
-                name in _protocol_class_bound_names(s)
-                for s in scope.body
-                if s.lineno < call.lineno
-            )
-        }
-        state["source_arguments"][(source, id(function))] = state[
-            "audit"
-        ].integrity.bind_source_call(
-            call, function, receiver=state["demand_receiver"], previous=previous
-        )
-        visiting.add((source, id(function)))
-        dependency = _protocol_dependency(source, function, "demand_callable", state)
-        summary["dependencies"].append(dependency)
-        nodes = [n for s in function.body for n in state["audit"]._body_nodes(s)]
-        yields = [n for n in nodes if isinstance(n, (ast.Yield, ast.YieldFrom))]
-        summary["demand_chain"].append(
-            dict(
-                dependency,
-                phase=("body_entered" if forced else "created")
-                if yields
-                else "returns",
-            )
-        )
-        _protocol_dependencies_closed(
-            *origin, [*state["demand_targets"], (source, function)], state
-        )
-        if yields:
-            _require(
-                not any(isinstance(n, (ast.With, ast.AsyncWith)) for n in nodes),
-                "GENERATOR_CONTEXT_MANAGER_UNKNOWN",
-            )
-            if not any(
-                isinstance(n, ast.Yield)
-                and n.value is not None
-                and not isinstance(n.value, ast.Constant)
-                for n in yields
-            ):
-                raise ValueError("CONSTANT_OR_EMPTY_GENERATOR")
-            if any(
-                isinstance(n, ast.Try)
-                and any(
-                    not h.body or not isinstance(h.body[-1], ast.Raise)
-                    for h in n.handlers
-                )
-                for n in nodes
-            ) or any(state["audit"]._finally_suppresses_exception(n) for n in nodes):
-                raise ValueError("GENERATOR_FAILURE_MAY_BE_SWALLOWED")
-            return
-        _require(
-            not any(
-                isinstance(
-                    s, (ast.If, ast.For, ast.While, ast.Try, ast.With, ast.Match)
-                )
-                or isinstance(s, ast.Raise)
-                for s in function.body
-            ),
-            "SOURCE_RETURN_CONTROL_UNKNOWN",
-        )
-        returned = [s.value for s in function.body if isinstance(s, ast.Return)]
-        _require(len(returned) == 1, "SOURCE_RETURN_DEMAND_UNKNOWN")
-        call, path, scope = returned[0], source, function
-    raise ValueError("DEMAND_DEPTH_OR_EXPRESSION_UNKNOWN")
+    """Delegate iteration-demand analysis to the canonical oracle owner."""
+    from .test_oracle_misuse import _protocol_demand_visit as analyze
+
+    return analyze(call, path, scope, summary, state)
 
 
 def _protocol_demand_target(expression, path, scope, state):
-    state["demand_receiver"] = None
-    receiver = expression.value if isinstance(expression, ast.Attribute) else None
-    name = receiver.id if isinstance(receiver, ast.Name) else None
-    bindings = [
-        s
-        for s in scope.body
-        if s.lineno < expression.lineno and name in _protocol_class_bound_names(s)
-    ]
-    if not bindings:
-        return _protocol_class_reference(expression, path, scope, state)
-    origin, *transfers = bindings
-    _require(
-        isinstance(origin, ast.Assign)
-        and len(origin.targets) == 1
-        and isinstance(origin.targets[0], ast.Name)
-        and isinstance(origin.value, ast.Call),
-        "LOCAL_RECEIVER_ALLOCATION_UNKNOWN",
-    )
-    chain, _ = _protocol_class_chain(
-        _protocol_class_reference(origin.value.func, path, scope, state), state
-    )
-    allowed = {origin.targets[0]}
-    for transfer in transfers:
-        _require(
-            isinstance(transfer, ast.Assign)
-            and len(transfer.targets) == 1
-            and isinstance(transfer.value, ast.Call),
-            "LOCAL_RECEIVER_IDENTITY_UNKNOWN",
-        )
-        call = transfer.value
-        _require(
-            isinstance(transfer.targets[0], ast.Name)
-            and transfer.targets[0].id == name
-            and call.args
-            and isinstance(call.args[0], ast.Name)
-            and call.args[0].id == name,
-            "LOCAL_RECEIVER_IDENTITY_UNKNOWN",
-        )
-        target = _protocol_identity_decorator(
-            call.func, path, state, transfer=chain, call=call
-        )
-        state["demand_targets"].append(target)
-        allowed.update((transfer.targets[0], call.args[0]))
-    state["transfer_source"] = path
-    _protocol_receiver_transfer(
-        scope, chain, state, local=(name, allowed, expression, origin.value)
-    )
-    state["demand_targets"].extend(chain)
-    state["demand_receiver"] = origin.value
-    return _protocol_repr_method(chain, expression.attr)
+    """Delegate iteration-demand analysis to the canonical oracle owner."""
+    from .test_oracle_misuse import _protocol_demand_target as analyze
+
+    return analyze(expression, path, scope, state)
 
 
 def _require(condition, reason):
@@ -6080,109 +5979,21 @@ def _protocol_parameter_decorator(decorator, path, test, state):
 
 
 def _protocol_fresh_list_append(call, scope, chain=()):
-    """A literal list's append stores one object without invoking its hooks."""
-    match call:
-        case ast.Call(
-            func=ast.Attribute(
-                value=ast.Attribute(value=ast.Name(id=receiver), attr=field),
-                attr="append",
-            ),
-            args=[_],
-            keywords=[],
-        ):
-            if not scope.args.args or not chain and receiver != scope.args.args[0].arg:
-                return False
-            if chain:
-                scope = _protocol_repr_method(chain, "__init__")[1]
-                receiver = scope.args.args[0].arg
-            fields = [
-                n
-                for n in ast.walk(scope)
-                if isinstance(n, ast.Attribute)
-                and isinstance(n.value, ast.Name)
-                and n.value.id == receiver
-                and n.attr == field
-                and isinstance(n.ctx, (ast.Store, ast.Del))
-            ]
-            if len(fields) == 1:
-                target = fields[0]
-                parent = _ast_parent_map(ast.walk(scope)).get(id(target))
-                return (
-                    isinstance(parent, ast.Assign)
-                    and parent in scope.body
-                    and parent.targets == [target]
-                    and isinstance(parent.value, ast.List)
-                    and not parent.value.elts
-                    and field not in _protocol_chain_bindings(chain)
-                    and (bool(chain) or parent.lineno < call.lineno)
-                )
-    return False
+    """Delegate iteration-demand analysis to the canonical oracle owner."""
+    from .test_oracle_misuse import _protocol_fresh_list_append as analyze
+
+    return analyze(call, scope, chain)
 
 
 def _protocol_receiver_transfer(function, chain, state, local=None):
-    receiver = local[0] if local else state["transfer_receiver"]
-    dependencies = state["constructor_effect_dependencies"]
-    nodes = [
-        n for statement in function.body for n in state["audit"]._body_nodes(statement)
-    ]
-    safe = set(local[1]) if local else {function.body[-1].value}
-    for call in (n for n in nodes if isinstance(n, ast.Call)):
-        if local and (call.func is local[2] or call is local[3]):
-            safe.add(local[2].value)
-            state.setdefault("receiver_safe_calls", set()).add(call)
-            continue
-        if (
-            _protocol_fresh_list_append(call, function, chain)
-            and _leftmost_name(call.func).id == receiver
-        ):
-            safe.add(call.func.value.value)
-        elif (
-            isinstance(call.func, ast.Attribute)
-            and isinstance(call.func.value, ast.Name)
-            and call.func.value.id == receiver
-        ):
-            path, method = _protocol_repr_method(chain, call.func.attr)
-            _require(
-                not method.decorator_list and not call.args and not call.keywords,
-                "RECEIVER_METHOD_EFFECT_UNKNOWN",
-            )
-            _protocol_constructor_receiver_safe(method)
-            _require(
-                all(
-                    isinstance(s, ast.Assign) and _protocol_preceding_statement(s)
-                    for s in method.body
-                ),
-                "RECEIVER_METHOD_EFFECT_UNKNOWN",
-            )
-            fields = {n.attr for n in ast.walk(method) if isinstance(n, ast.Attribute)}
-            bound = _protocol_chain_bindings(chain)
-            _require(
-                not fields.intersection(bound)
-                and not any(f.startswith("__") for f in fields),
-                "RECEIVER_METHOD_DISPATCH_MUTATION",
-            )
-            dependencies.append(
-                _protocol_dependency(path, method, "receiver_effect", state)
-            )
-            safe.add(call.func.value)
-        else:
-            continue
-        state.setdefault("receiver_safe_calls", set()).add(call)
-    _protocol_constructor_bindings_closed(
-        chain[0][0],
-        chain[0][1],
-        {(p, id(c)) for p, c in chain},
-        {p for p, _ in chain},
-        state,
-        functions=[(state["transfer_source"], function)],
-    )
-    _require(
-        all(n in safe for n in nodes if isinstance(n, ast.Name) and n.id == receiver),
-        "IDENTITY_RETURN_RECEIVER_ESCAPE_OR_MUTATION",
-    )
+    """Delegate iteration-demand analysis to the canonical oracle owner."""
+    from .test_oracle_misuse import _protocol_receiver_transfer as analyze
+
+    return analyze(function, chain, state, local)
 
 
 def _protocol_chain_bindings(chain):
-    return set().union(
-        *(_protocol_class_bound_names(n) for _, cls in chain for n in cls.body)
-    )
+    """Delegate iteration-demand analysis to the canonical oracle owner."""
+    from .test_oracle_misuse import _protocol_chain_bindings as analyze
+
+    return analyze(chain)

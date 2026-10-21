@@ -262,9 +262,7 @@ def _capability_helpers():
         _module_capabilities,
         *(
             value
-            for module in (
-                credential_role_scope_bindings,
-            )
+            for module in (credential_role_scope_bindings,)
             for value in vars(module).values()
             if isinstance(value, FunctionType)
         ),

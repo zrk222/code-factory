@@ -221,16 +221,20 @@ def _fact(index, path, node, member, owner, source_role, value):
     )
 
 
-
 class PresentationRoleIndex:
     """Bounded captured uses under schema-annotation and masking API profiles."""
 
     def __init__(self, source, imports, audit):
         self.source, self.imports, self.audit = source, imports, audit
-        self.classes = {(path, node.name): node
-                        for path, tree in source.snapshots.items()
-                        for node in tree.body if isinstance(node, ast.ClassDef)}
-        self.complete = source.bounded and all(source.validate(path) for path in source.snapshots)
+        self.classes = {
+            (path, node.name): node
+            for path, tree in source.snapshots.items()
+            for node in tree.body
+            if isinstance(node, ast.ClassDef)
+        }
+        self.complete = source.bounded and all(
+            source.validate(path) for path in source.snapshots
+        )
         self.references, self.reflected_members = {}, set()
         self.reflective_paths, self.calls = set(), []
         for path, tree in source.snapshots.items() if self.complete else ():
@@ -238,53 +242,93 @@ class PresentationRoleIndex:
                 if isinstance(node, (ast.Name, ast.Attribute)):
                     name = node.id if isinstance(node, ast.Name) else node.attr
                     self.references.setdefault(name, []).append((path, node))
-                    if name in {'getattr', 'setattr', 'delattr', 'vars', '__getattribute__', '__dict__'}:
+                    if name in {
+                        "getattr",
+                        "setattr",
+                        "delattr",
+                        "vars",
+                        "__getattribute__",
+                        "__dict__",
+                    }:
                         self.reflective_paths.add(path)
-                if isinstance(node, ast.ImportFrom) and node.module == 'builtins' and any(
-                    alias.name in {'getattr', 'setattr', 'delattr', 'vars'} for alias in node.names):
+                if (
+                    isinstance(node, ast.ImportFrom)
+                    and node.module == "builtins"
+                    and any(
+                        alias.name in {"getattr", "setattr", "delattr", "vars"}
+                        for alias in node.names
+                    )
+                ):
                     self.reflective_paths.add(path)
                 if isinstance(node, ast.Call):
                     self.calls.append((path, node))
-                if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
-                    and node.func.id in {'getattr', 'setattr', 'delattr'} and len(node.args) >= 2
-                    and isinstance(node.args[1], ast.Constant) and isinstance(node.args[1].value, str)):
+                if (
+                    isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Name)
+                    and node.func.id in {"getattr", "setattr", "delattr"}
+                    and len(node.args) >= 2
+                    and isinstance(node.args[1], ast.Constant)
+                    and isinstance(node.args[1].value, str)
+                ):
                     self.reflected_members.add(node.args[1].value)
 
     def evidence(self, path, node):
         fact = declaration_fact(self.source, path, node) if self.complete else None
         if fact is None:
-            return {'eligible': False, 'reason': 'unbound or incomplete declaration'}
-        if fact.source_role == 'class_literal':
+            return {"eligible": False, "reason": "unbound or incomplete declaration"}
+        if fact.source_role == "class_literal":
             uses = self._schema_uses(fact)
-            profile = 'JSON_SCHEMA_ANNOTATION'
-        elif fact.source_role == 'module_literal':
+            profile = "JSON_SCHEMA_ANNOTATION"
+        elif fact.source_role == "module_literal":
             uses = self._mask_uses(fact)
-            profile = 'MASKING_SENTINEL'
+            profile = "MASKING_SENTINEL"
         else:
             uses, profile = None, None
         if not uses:
-            return {'eligible': False, 'reason': 'missing or conflicting demanded value uses'}
-        return {'eligible': True, 'classification': 'PRESENTATION_METADATA_ROLE',
-                'profile': profile, 'declaration': fact.public_facts(), 'uses': uses,
-                'runtime_assurance': 'INCOMPLETE', 'transport_role': 'UNASSESSED',
-                'target_execution': 'not_performed', 'downstream_consumer_security': 'UNASSESSED'}
+            return {
+                "eligible": False,
+                "reason": "missing or conflicting demanded value uses",
+            }
+        return {
+            "eligible": True,
+            "classification": "PRESENTATION_METADATA_ROLE",
+            "profile": profile,
+            "declaration": fact.public_facts(),
+            "uses": uses,
+            "runtime_assurance": "INCOMPLETE",
+            "transport_role": "UNASSESSED",
+            "target_execution": "not_performed",
+            "downstream_consumer_security": "UNASSESSED",
+        }
 
     def _chain(self, path, name):
         from .credential_role_bindings import class_chain
-        return class_chain(self.source, path, name, self.imports, self.classes, self.audit)
+
+        return class_chain(
+            self.source, path, name, self.imports, self.classes, self.audit
+        )
 
     def _schema_uses(self, fact):
         from .credential_role_bindings import _scope
         from .credential_role_scope_bindings import binding_occurrences
+
         selected = self._chain(self.source.root / fact.path, fact.owner)
-        if not selected or not _presentation_literal_matches(selected, fact, self.source.root):
+        if not selected or not _presentation_literal_matches(
+            selected, fact, self.source.root
+        ):
             return None
         keys = {(path, name) for path, name, _ in selected}
         uses = []
-        if fact.member in self.reflected_members or self._reflection_conflict(fact, keys):
+        if fact.member in self.reflected_members or self._reflection_conflict(
+            fact, keys
+        ):
             return None
         for path, node in self.references.get(fact.member, ()):
-            if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load) and path == self.source.root / fact.path:
+            if (
+                isinstance(node, ast.Name)
+                and isinstance(node.ctx, ast.Load)
+                and path == self.source.root / fact.path
+            ):
                 return None
             if not isinstance(node, ast.Attribute) or node.attr != fact.member:
                 continue
@@ -296,11 +340,17 @@ class PresentationRoleIndex:
                 return None
             if related is False:
                 continue
-            if (not _presentation_class_receiver(node, function, owner, self.source, path)
-                or binding_occurrences(self.source.snapshots[path].body, 'classmethod')
-                or not _presentation_schema_title(node, function, self.source.parents[path])):
+            if (
+                not _presentation_class_receiver(
+                    node, function, owner, self.source, path
+                )
+                or binding_occurrences(self.source.snapshots[path].body, "classmethod")
+                or not _presentation_schema_title(
+                    node, function, self.source.parents[path]
+                )
+            ):
                 return None
-            uses.append(self._witness(path, node, 'SCHEMA_TITLE'))
+            uses.append(self._witness(path, node, "SCHEMA_TITLE"))
         return uses
 
     def _schema_receiver(self, path, owner, keys, fact):
@@ -315,158 +365,260 @@ class PresentationRoleIndex:
 
     def _reflection_conflict(self, fact, keys=()):
         from .credential_role_class_binding import resolve_class
+
         for path, call in self.calls:
             if path not in self.reflective_paths or not call.args:
                 continue
             selected = resolve_class(path, call.args[0], self.imports, self.classes)
             if selected in keys:
                 return True
-            if isinstance(call.args[0], ast.Name) and self._namespace_alias(path, call.args[0].id, fact):
+            if isinstance(call.args[0], ast.Name) and self._namespace_alias(
+                path, call.args[0].id, fact
+            ):
                 return True
         return False
 
     def _namespace_alias(self, path, name, fact):
         binding = self.imports.get(path, {}).get(name)
-        return (binding is not None and binding[0] == self.source.root / fact.path
-                and _presentation_namespace_binding(self.source, path, name, binding))
+        return (
+            binding is not None
+            and binding[0] == self.source.root / fact.path
+            and _presentation_namespace_binding(self.source, path, name, binding)
+        )
 
     def _mask_uses(self, fact):
         from .credential_role_bindings import matches_fact
+
         uses = []
         if fact.member in self.reflected_members or self._reflection_conflict(fact):
             return None
         names = {fact.member}
         for path, view in self.imports.items():
-            names.update(name for name, binding in view.items()
-                         if binding == (self.source.root / fact.path, fact.member)
-                         or self._namespace_alias(path, name, fact))
-        for path, node in [row for name in names for row in self.references.get(name, ())]:
+            names.update(
+                name
+                for name, binding in view.items()
+                if binding == (self.source.root / fact.path, fact.member)
+                or self._namespace_alias(path, name, fact)
+            )
+        for path, node in [
+            row for name in names for row in self.references.get(name, ())
+        ]:
             status = self._mask_reference(fact, path, node)
-            if status == 'conflict':
+            if status == "conflict":
                 return None
-            if status == 'ignore':
+            if status == "ignore":
                 continue
-            if not (_presentation_global_match(fact, path, node, self.source, self.audit, self.imports)
-                    or matches_fact(fact, path, node, self.source, self.imports, self.classes, self.audit)):
+            if not (
+                _presentation_global_match(
+                    fact, path, node, self.source, self.audit, self.imports
+                )
+                or matches_fact(
+                    fact,
+                    path,
+                    node,
+                    self.source,
+                    self.imports,
+                    self.classes,
+                    self.audit,
+                )
+            ):
                 continue
             parents = self.source.parents[path]
-            role = (_presentation_mask_output(node, parents)
-                    or _presentation_mask_restore(node, parents))
+            role = _presentation_mask_output(
+                node, parents
+            ) or _presentation_mask_restore(node, parents)
             if role is None:
                 return None
             uses.append(self._witness(path, node, role))
-        return uses if {row['role'] for row in uses} == {'MASK_OUTPUT', 'PRESERVE_PREVIOUS_VALUE'} else None
+        return (
+            uses
+            if {row["role"] for row in uses}
+            == {"MASK_OUTPUT", "PRESERVE_PREVIOUS_VALUE"}
+            else None
+        )
 
     def _mask_reference(self, fact, path, node):
         if not isinstance(node.ctx, ast.Load):
-            if path == self.source.root / fact.path and isinstance(node, ast.Name) and node.id == fact.member and node.lineno != fact.line:
-                return 'conflict'
-            return 'ignore'
+            if (
+                path == self.source.root / fact.path
+                and isinstance(node, ast.Name)
+                and node.id == fact.member
+                and node.lineno != fact.line
+            ):
+                return "conflict"
+            return "ignore"
         if isinstance(node, ast.Name) and self._namespace_alias(path, node.id, fact):
             parent = self.source.parents[path].get(id(node))
-            return 'ignore' if isinstance(parent, ast.Attribute) and parent.value is node else 'conflict'
-        return 'read'
+            return (
+                "ignore"
+                if isinstance(parent, ast.Attribute) and parent.value is node
+                else "conflict"
+            )
+        return "read"
 
     def _witness(self, path, node, role):
-        return {'path': self.source.relative(path), 'sha256': self.source.inventory[path],
-                'span': [node.lineno, node.col_offset, node.end_lineno, node.end_col_offset], 'role': role}
+        return {
+            "path": self.source.relative(path),
+            "sha256": self.source.inventory[path],
+            "span": [
+                node.lineno,
+                node.col_offset,
+                node.end_lineno,
+                node.end_col_offset,
+            ],
+            "role": role,
+        }
 
 
 def _presentation_literal_matches(chain, fact, root):
     from .credential_role_scope_bindings import binding_occurrences
+
     for path, _, owner in chain:
         bindings = binding_occurrences(owner.body, fact.member)
         if not bindings:
             continue
         if len(bindings) != 1:
             return False
-        rows = [row for row in owner.body if _presentation_assignment_name(row) == fact.member]
+        rows = [
+            row
+            for row in owner.body
+            if _presentation_assignment_name(row) == fact.member
+        ]
         if len(rows) != 1:
             return False
         row = rows[0]
-        return (isinstance(row, (ast.Assign, ast.AnnAssign))
-                and row.lineno == fact.line and row.col_offset == fact.column
-                and path == root / fact.path
-                and isinstance(row.value, ast.Constant) and row.value.value == fact._literal)
+        return (
+            isinstance(row, (ast.Assign, ast.AnnAssign))
+            and row.lineno == fact.line
+            and row.col_offset == fact.column
+            and path == root / fact.path
+            and isinstance(row.value, ast.Constant)
+            and row.value.value == fact._literal
+        )
     return False
 
 
 def _presentation_class_receiver(node, function, owner, source, path):
     from .credential_role_scope_bindings import binding_occurrences
+
     args = [*function.args.posonlyargs, *function.args.args]
-    return (source.parents[path].get(id(function)) is owner and len(args) == 1
-            and len(function.decorator_list) == 1
-            and isinstance(function.decorator_list[0], ast.Name)
-            and function.decorator_list[0].id == 'classmethod'
-            and isinstance(node.value, ast.Name) and node.value.id == args[0].arg
-            and not binding_occurrences(function.body, args[0].arg))
+    return (
+        source.parents[path].get(id(function)) is owner
+        and len(args) == 1
+        and len(function.decorator_list) == 1
+        and isinstance(function.decorator_list[0], ast.Name)
+        and function.decorator_list[0].id == "classmethod"
+        and isinstance(node.value, ast.Name)
+        and node.value.id == args[0].arg
+        and not binding_occurrences(function.body, args[0].arg)
+    )
 
 
 def _presentation_dict_value(node, key):
     if not isinstance(node, ast.Dict):
         return None
-    rows = [value for name, value in zip(node.keys, node.values)
-            if isinstance(name, ast.Constant) and name.value == key]
-    return rows[0] if len(rows) == 1 and all(name is not None for name in node.keys) else None
+    rows = [
+        value
+        for name, value in zip(node.keys, node.values)
+        if isinstance(name, ast.Constant) and name.value == key
+    ]
+    return (
+        rows[0]
+        if len(rows) == 1 and all(name is not None for name in node.keys)
+        else None
+    )
 
 
 def _presentation_schema_title(node, function, parents):
     descriptor = parents.get(id(node))
-    if (_presentation_dict_value(descriptor, 'title') is not node
-        or not isinstance(kind := _presentation_dict_value(descriptor, 'type'), ast.Constant)
-        or kind.value != 'string'):
+    if (
+        _presentation_dict_value(descriptor, "title") is not node
+        or not isinstance(
+            kind := _presentation_dict_value(descriptor, "type"), ast.Constant
+        )
+        or kind.value != "string"
+    ):
         return False
     properties = parents.get(id(descriptor))
     schema = parents.get(id(properties))
-    if (_presentation_dict_value(schema, 'properties') is not properties
-        or not isinstance(kind := _presentation_dict_value(schema, 'type'), ast.Constant)
-        or kind.value != 'object'):
+    if (
+        _presentation_dict_value(schema, "properties") is not properties
+        or not isinstance(
+            kind := _presentation_dict_value(schema, "type"), ast.Constant
+        )
+        or kind.value != "object"
+    ):
         return False
     statement = parents.get(id(schema))
     returns = [row for row in ast.walk(function) if isinstance(row, ast.Return)]
     if len(returns) != 1 or returns[0] not in function.body:
         return False
     if isinstance(statement, ast.Return):
-        return statement is returns[0] and _presentation_active_statement(statement, function)
+        return statement is returns[0] and _presentation_active_statement(
+            statement, function
+        )
     name = _presentation_assignment_name(statement)
-    if name is None or statement not in function.body or not _presentation_active_statement(statement, function):
+    if (
+        name is None
+        or statement not in function.body
+        or not _presentation_active_statement(statement, function)
+    ):
         return False
-    return (_presentation_unique_binding(function, name, statement)
-            and isinstance(returns[0].value, ast.Name) and returns[0].value.id == name
-            and _presentation_local_uses(function, name, parents, 'schema'))
+    return (
+        _presentation_unique_binding(function, name, statement)
+        and isinstance(returns[0].value, ast.Name)
+        and returns[0].value.id == name
+        and _presentation_local_uses(function, name, parents, "schema")
+    )
 
 
 def _presentation_active_statement(statement, function):
     if statement not in function.body:
         return False
-    return not any(isinstance(row, (ast.Return, ast.Raise)) for row in function.body[:function.body.index(statement)])
+    return not any(
+        isinstance(row, (ast.Return, ast.Raise))
+        for row in function.body[: function.body.index(statement)]
+    )
 
 
 def _presentation_unique_binding(function, name, statement):
     from .credential_role_scope_bindings import binding_occurrences
+
     bindings = binding_occurrences(function.body, name)
     return len(bindings) == 1 and _presentation_assignment_name(statement) == name
 
 
 def _presentation_local_uses(function, name, parents, mode):
-    return all(_presentation_local_use(node, parents, mode) for node in ast.walk(function)
-               if isinstance(node, ast.Name) and node.id == name and isinstance(node.ctx, ast.Load))
+    return all(
+        _presentation_local_use(node, parents, mode)
+        for node in ast.walk(function)
+        if isinstance(node, ast.Name)
+        and node.id == name
+        and isinstance(node.ctx, ast.Load)
+    )
 
 
 def _presentation_local_use(node, parents, mode):
     parent = parents.get(id(node))
     if isinstance(parent, ast.Return) and parent.value is node:
-        return mode != 'restore'
+        return mode != "restore"
     if isinstance(parent, ast.For) and parent.iter is node:
-        return mode == 'mask'
+        return mode == "mask"
     if isinstance(parent, ast.Assign) and parent.value is node:
-        return mode == 'restore' and len(parent.targets) == 1 and _presentation_member(parent.targets[0]) == ['self', '_config']
+        return (
+            mode == "restore"
+            and len(parent.targets) == 1
+            and _presentation_member(parent.targets[0]) == ["self", "_config"]
+        )
     if not isinstance(parent, ast.Subscript) or parent.value is not node:
         return False
-    if mode in {'mask', 'restore'}:
+    if mode in {"mask", "restore"}:
         return isinstance(parent.ctx, ast.Store)
-    return (isinstance(parent.ctx, ast.Store) and isinstance(parent.slice, ast.Constant)
-            and parent.slice.value == 'required')
+    return (
+        isinstance(parent.ctx, ast.Store)
+        and isinstance(parent.slice, ast.Constant)
+        and parent.slice.value == "required"
+    )
 
 
 def _presentation_member(node):
@@ -479,26 +631,48 @@ def _presentation_member(node):
 
 
 def _presentation_subscript(node):
-    return (node.value.id, node.slice.id) if (isinstance(node, ast.Subscript)
-        and isinstance(node.value, ast.Name) and isinstance(node.slice, ast.Name)) else None
+    return (
+        (node.value.id, node.slice.id)
+        if (
+            isinstance(node, ast.Subscript)
+            and isinstance(node.value, ast.Name)
+            and isinstance(node.slice, ast.Name)
+        )
+        else None
+    )
 
 
 def _presentation_secret_membership(node, name):
-    if not isinstance(node, ast.Compare) or len(node.ops) != 1 or not isinstance(node.ops[0], ast.In):
+    if (
+        not isinstance(node, ast.Compare)
+        or len(node.ops) != 1
+        or not isinstance(node.ops[0], ast.In)
+    ):
         return False
     if not isinstance(node.left, ast.Name) or node.left.id != name:
         return False
     schema = node.comparators[0]
     if isinstance(schema, ast.Subscript) and isinstance(schema.slice, ast.Constant):
-        return schema.slice.value == 'secret' and _presentation_member(schema.value) == ['self', 'schema']
-    return (isinstance(schema, ast.Call) and _presentation_member(schema.func) == ['self', 'schema', 'get']
-            and len(schema.args) in {1, 2} and not schema.keywords
-            and isinstance(schema.args[0], ast.Constant) and schema.args[0].value == 'secret')
+        return schema.slice.value == "secret" and _presentation_member(
+            schema.value
+        ) == ["self", "schema"]
+    return (
+        isinstance(schema, ast.Call)
+        and _presentation_member(schema.func) == ["self", "schema", "get"]
+        and len(schema.args) in {1, 2}
+        and not schema.keywords
+        and isinstance(schema.args[0], ast.Constant)
+        and schema.args[0].value == "secret"
+    )
 
 
 def _presentation_mask_output(node, parents):
     statement = parents.get(id(node))
-    if not isinstance(statement, ast.Assign) or statement.value is not node or len(statement.targets) != 1:
+    if (
+        not isinstance(statement, ast.Assign)
+        or statement.value is not node
+        or len(statement.targets) != 1
+    ):
         return None
     target = _presentation_subscript(statement.targets[0])
     guard = parents.get(id(statement))
@@ -508,66 +682,102 @@ def _presentation_mask_output(node, parents):
         return None
     loop = parents.get(id(guard))
     function = parents.get(id(loop))
-    if not (isinstance(loop, ast.For) and guard in loop.body
-            and isinstance(loop.target, ast.Name) and loop.target.id == target[1]
-            and isinstance(loop.iter, ast.Name) and loop.iter.id == target[0]
-            and isinstance(function, ast.FunctionDef) and loop in function.body):
+    if not (
+        isinstance(loop, ast.For)
+        and guard in loop.body
+        and isinstance(loop.target, ast.Name)
+        and loop.target.id == target[1]
+        and isinstance(loop.iter, ast.Name)
+        and loop.iter.id == target[0]
+        and isinstance(function, ast.FunctionDef)
+        and loop in function.body
+    ):
         return None
-    if not (_presentation_active_statement(loop, function)
-            and _presentation_output_copy(function, target[0], parents)):
+    if not (
+        _presentation_active_statement(loop, function)
+        and _presentation_output_copy(function, target[0], parents)
+    ):
         return None
-    return 'MASK_OUTPUT'
+    return "MASK_OUTPUT"
 
 
 def _presentation_mask_restore(node, parents):
     compare = parents.get(id(node))
-    if not (isinstance(compare, ast.Compare) and len(compare.ops) == 1
-            and isinstance(compare.ops[0], ast.Eq) and len(compare.comparators) == 1):
+    if not (
+        isinstance(compare, ast.Compare)
+        and len(compare.ops) == 1
+        and isinstance(compare.ops[0], ast.Eq)
+        and len(compare.comparators) == 1
+    ):
         return None
     value = compare.left if compare.comparators[0] is node else compare.comparators[0]
     if not isinstance(value, ast.Name):
         return None
     condition = parents.get(id(compare))
     guard = parents.get(id(condition))
-    if not (isinstance(condition, ast.BoolOp) and isinstance(condition.op, ast.And)
-            and isinstance(guard, ast.If) and guard.test is condition and len(guard.body) == 1
-            and len(condition.values) == 2):
+    if not (
+        isinstance(condition, ast.BoolOp)
+        and isinstance(condition.op, ast.And)
+        and isinstance(guard, ast.If)
+        and guard.test is condition
+        and len(guard.body) == 1
+        and len(condition.values) == 2
+    ):
         return None
     assignment = guard.body[0]
     if not isinstance(assignment, ast.Assign) or len(assignment.targets) != 1:
         return None
     target = _presentation_subscript(assignment.targets[0])
     old = _presentation_subscript(assignment.value)
-    if target is None or old != ('self', target[1]):
+    if target is None or old != ("self", target[1]):
         return None
-    if not any(_presentation_secret_membership(test, target[1]) for test in condition.values):
+    if not any(
+        _presentation_secret_membership(test, target[1]) for test in condition.values
+    ):
         return None
     loop = parents.get(id(guard))
-    if not isinstance(loop, ast.For) or not isinstance(loop.target, ast.Tuple) or len(loop.target.elts) != 2:
+    if (
+        not isinstance(loop, ast.For)
+        or not isinstance(loop.target, ast.Tuple)
+        or len(loop.target.elts) != 2
+    ):
         return None
     if not all(isinstance(item, ast.Name) for item in loop.target.elts):
         return None
     if [item.id for item in loop.target.elts] != [target[1], value.id]:
         return None
-    return 'PRESERVE_PREVIOUS_VALUE' if _presentation_restore_flow(loop, target[0], parents) else None
-
+    return (
+        "PRESERVE_PREVIOUS_VALUE"
+        if _presentation_restore_flow(loop, target[0], parents)
+        else None
+    )
 
 
 def _presentation_output_copy(function, name, parents):
     from .credential_role_scope_bindings import binding_occurrences
+
     bindings = binding_occurrences(function.body, name)
     rows = [row for row in function.body if _presentation_assignment_name(row) == name]
     if len(bindings) != 1 or len(rows) != 1:
         return False
     value = rows[0].value
-    if not (isinstance(value, ast.Call) and not value.args and not value.keywords
-            and _presentation_member(value.func) == ['self', '_config', 'copy']):
+    if not (
+        isinstance(value, ast.Call)
+        and not value.args
+        and not value.keywords
+        and _presentation_member(value.func) == ["self", "_config", "copy"]
+    ):
         return False
-    return (_presentation_active_statement(rows[0], function)
-            and _presentation_local_uses(function, name, parents, 'mask')
-            and any(isinstance(row, ast.Return) and isinstance(row.value, ast.Name)
-                    and row.value.id == name for row in function.body))
-
+    return (
+        _presentation_active_statement(rows[0], function)
+        and _presentation_local_uses(function, name, parents, "mask")
+        and any(
+            isinstance(row, ast.Return)
+            and isinstance(row.value, ast.Name)
+            and row.value.id == name
+            for row in function.body
+        )
+    )
 
 
 def _presentation_assignment_name(node):
@@ -580,18 +790,29 @@ def _presentation_assignment_name(node):
     return target.id if isinstance(target, ast.Name) else None
 
 
-
 def _presentation_global_match(fact, path, node, source, audit, imports=None):
     from .credential_role_bindings import _scope
-    from .credential_role_scope_bindings import function_bindings, module_literal_binding
-    if isinstance(node, ast.Attribute) and node.attr == fact.member and isinstance(node.value, ast.Name):
+    from .credential_role_scope_bindings import (
+        function_bindings,
+        module_literal_binding,
+    )
+
+    if (
+        isinstance(node, ast.Attribute)
+        and node.attr == fact.member
+        and isinstance(node.value, ast.Name)
+    ):
         from .credential_role_scope_bindings import import_is_stable
+
         alias = node.value.id
         function, _ = _scope(node, source, path)
-        return ((binding := (imports or {}).get(path, {}).get(alias)) is not None
-                and binding[0] == source.root / fact.path
-                and _presentation_namespace_binding(source, path, alias, binding) and import_is_stable(path, alias, source, audit)
-                and (function is None or function_bindings(function, alias, audit) == []))
+        return (
+            (binding := (imports or {}).get(path, {}).get(alias)) is not None
+            and binding[0] == source.root / fact.path
+            and _presentation_namespace_binding(source, path, alias, binding)
+            and import_is_stable(path, alias, source, audit)
+            and (function is None or function_bindings(function, alias, audit) == [])
+        )
     if not isinstance(node, ast.Name):
         return False
     function, _ = _scope(node, source, path)
@@ -600,43 +821,63 @@ def _presentation_global_match(fact, path, node, source, audit, imports=None):
     return module_literal_binding(fact, path, source, node, audit)
 
 
-
 def _presentation_restore_flow(loop, name, parents):
     from .credential_role_scope_bindings import binding_occurrences
+
     function = parents.get(id(loop))
-    if not isinstance(function, ast.FunctionDef) or not _presentation_active_statement(loop, function):
+    if not isinstance(function, ast.FunctionDef) or not _presentation_active_statement(
+        loop, function
+    ):
         return False
     iterator = loop.iter
-    if not (isinstance(iterator, ast.Call) and not iterator.args and not iterator.keywords
-            and isinstance(iterator.func, ast.Attribute) and iterator.func.attr == 'items'
-            and isinstance(iterator.func.value, ast.Name)):
+    if not (
+        isinstance(iterator, ast.Call)
+        and not iterator.args
+        and not iterator.keywords
+        and isinstance(iterator.func, ast.Attribute)
+        and iterator.func.attr == "items"
+        and isinstance(iterator.func.value, ast.Name)
+    ):
         return False
     incoming = iterator.func.value.id
     args = [*function.args.posonlyargs, *function.args.args]
-    if incoming not in {arg.arg for arg in args[1:]} or binding_occurrences(function.body, incoming):
+    if incoming not in {arg.arg for arg in args[1:]} or binding_occurrences(
+        function.body, incoming
+    ):
         return False
     rows = [row for row in function.body if _presentation_assignment_name(row) == name]
     if len(rows) != 1 or not isinstance(rows[0].value, ast.Dict) or rows[0].value.keys:
         return False
     # The published mapping cannot be read, aliased, mutated or replaced here.
-    writes = [node for node in ast.walk(function) if isinstance(node, ast.Attribute)
-              and _presentation_member(node) == ['self', '_config']]
+    writes = [
+        node
+        for node in ast.walk(function)
+        if isinstance(node, ast.Attribute)
+        and _presentation_member(node) == ["self", "_config"]
+    ]
     if len(writes) != 1:
         return False
     publication = parents.get(id(writes[0]))
-    if not (isinstance(publication, ast.Assign) and publication in function.body
-            and len(publication.targets) == 1 and publication.targets[0] is writes[0]
-            and isinstance(publication.value, ast.Name) and publication.value.id == name
-            and publication.lineno > loop.end_lineno):
+    if not (
+        isinstance(publication, ast.Assign)
+        and publication in function.body
+        and len(publication.targets) == 1
+        and publication.targets[0] is writes[0]
+        and isinstance(publication.value, ast.Name)
+        and publication.value.id == name
+        and publication.lineno > loop.end_lineno
+    ):
         return False
-    return (_presentation_active_statement(rows[0], function)
-            and _presentation_unique_binding(function, name, rows[0])
-            and _presentation_local_uses(function, name, parents, 'restore'))
-
+    return (
+        _presentation_active_statement(rows[0], function)
+        and _presentation_unique_binding(function, name, rows[0])
+        and _presentation_local_uses(function, name, parents, "restore")
+    )
 
 
 def _presentation_namespace_binding(source, path, alias, binding):
     from .credential_role_scope_bindings import binding_occurrences
+
     if binding[1] is None:
         return True
     rows = binding_occurrences(source.snapshots[path].body, alias)
@@ -652,7 +893,13 @@ def _presentation_namespace_binding(source, path, alias, binding):
             base = base.parent
         roots = [base]
     else:
-        roots = [source.root, source.root / 'src']
-    parts = (statement.module or '').split('.') if statement.module else []
-    return any(binding[0] in {(base.joinpath(*parts) / binding[1]).with_suffix('.py'),
-                             base.joinpath(*parts) / binding[1] / '__init__.py'} for base in roots)
+        roots = [source.root, source.root / "src"]
+    parts = (statement.module or "").split(".") if statement.module else []
+    return any(
+        binding[0]
+        in {
+            (base.joinpath(*parts) / binding[1]).with_suffix(".py"),
+            base.joinpath(*parts) / binding[1] / "__init__.py",
+        }
+        for base in roots
+    )

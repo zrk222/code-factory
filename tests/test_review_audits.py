@@ -13310,9 +13310,7 @@ def test_jwt_roundtrip_witness_rejects_reassignment_and_nested_external_data(mid
     owner = module.body[0]
     if middle.startswith("secret ="):
         node = owner.body[0]
-        assert not _jwt_local_literal_uses(
-            node, node.targets[0], owner, "jwt", module
-        )
+        assert not _jwt_local_literal_uses(node, node.targets[0], owner, "jwt", module)
         return
     assert _jwt_roundtrip_witness(owner, "secret", "jwt", module, {}) is None
 
@@ -13330,9 +13328,10 @@ def test_jwt_roundtrip_witness_allows_repeated_same_key_token_reads_only():
         "    jwt.decode(token, secret)\n"
         "    jwt.decode(token, secret, options={'verify_signature': False})\n"
     )
-    assert _jwt_roundtrip_witness(
-        same_key.body[0], "secret", "jwt", same_key, {}
-    ) is not None
+    assert (
+        _jwt_roundtrip_witness(same_key.body[0], "secret", "jwt", same_key, {})
+        is not None
+    )
 
     mismatched_key = ast.parse(
         "def test_case(jwt):\n"
@@ -13343,9 +13342,12 @@ def test_jwt_roundtrip_witness_allows_repeated_same_key_token_reads_only():
         "    jwt.decode(token, secret)\n"
         "    jwt.decode(token, bad_secret)\n"
     )
-    assert _jwt_roundtrip_witness(
-        mismatched_key.body[0], "secret", "jwt", mismatched_key, {}
-    ) is None
+    assert (
+        _jwt_roundtrip_witness(
+            mismatched_key.body[0], "secret", "jwt", mismatched_key, {}
+        )
+        is None
+    )
 
 
 @pytest.mark.parametrize(
@@ -13408,8 +13410,7 @@ def test_jwt_timestamp_fixture_generator_uses_captured_source_identity(tmp_path)
     assert _jwt_captured_test_timestamp_call(call, module, aliases)
 
     shadowed = ast.parse(
-        "from .utils import tick as generated_now\n"
-        "generated_now = remote_clock\n"
+        "from .utils import tick as generated_now\ngenerated_now = remote_clock\n"
     )
     shadowed._security_source_context = (root, {helper_path: source})
     shadowed._security_oracle_context = module._security_oracle_context
@@ -13433,9 +13434,7 @@ def test_jwt_timestamp_fixture_generator_uses_captured_source_identity(tmp_path)
     )
     assert not _jwt_timestamp_helper_is_source_bound(rebound_function, rebound)
 
-    mutated_attribute = ast.parse(
-        source.decode() + "datetime.now = external_clock\n"
-    )
+    mutated_attribute = ast.parse(source.decode() + "datetime.now = external_clock\n")
     mutated_function = next(
         item
         for item in mutated_attribute.body

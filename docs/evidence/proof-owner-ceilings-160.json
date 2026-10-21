@@ -1,0 +1,184 @@
+{
+  "schema": "factory.reviewed-proof-owner-consolidation.v1",
+  "state": "SCOPED_INDEPENDENT_REVIEW_PASS_GLOBAL_GATES_INCOMPLETE",
+  "base_commit": "492dc02d17af32573cacaaebccfd73483355820f",
+  "scope": "15 actual changed files, carrying157TLS/eval relocation,159literalexec relocation, context158-parent sixprotocol demand functions,160formatting. Separate from162sixmoduleconsolidation.",
+  "reviewer": "Independent Sol6.1high with ECC",
+  "review_sha256": "ffb713683a9d7ed68dc5b2f89d7dbaff3c7340d20ec1a27de29805932422fcbc",
+  "observations": {
+    "all15_current_bytes_match_final2_and_315package_native_freeze": true,
+    "old_top_level_definitions_inspected": 1991,
+    "old_definition_AST_identical": 1979,
+    "moved_implementation_bodies_equivalent_under_only_explicit_qualification": [
+      {
+        "name": "_protocol_demand_summary",
+        "source": "factoryline/context_efficiency.py",
+        "target": "factoryline/test_oracle_misuse.py",
+        "body_preserved_under_explicit_dependency_qualification": true,
+        "wrapper_signature_preserved": true
+      },
+      {
+        "name": "_protocol_demand_visit",
+        "source": "factoryline/context_efficiency.py",
+        "target": "factoryline/test_oracle_misuse.py",
+        "body_preserved_under_explicit_dependency_qualification": true,
+        "wrapper_signature_preserved": true
+      },
+      {
+        "name": "_protocol_demand_target",
+        "source": "factoryline/context_efficiency.py",
+        "target": "factoryline/test_oracle_misuse.py",
+        "body_preserved_under_explicit_dependency_qualification": true,
+        "wrapper_signature_preserved": true
+      },
+      {
+        "name": "_protocol_fresh_list_append",
+        "source": "factoryline/context_efficiency.py",
+        "target": "factoryline/test_oracle_misuse.py",
+        "body_preserved_under_explicit_dependency_qualification": true,
+        "wrapper_signature_preserved": true
+      },
+      {
+        "name": "_protocol_receiver_transfer",
+        "source": "factoryline/context_efficiency.py",
+        "target": "factoryline/test_oracle_misuse.py",
+        "body_preserved_under_explicit_dependency_qualification": true,
+        "wrapper_signature_preserved": true
+      },
+      {
+        "name": "_protocol_chain_bindings",
+        "source": "factoryline/context_efficiency.py",
+        "target": "factoryline/test_oracle_misuse.py",
+        "body_preserved_under_explicit_dependency_qualification": true,
+        "wrapper_signature_preserved": true
+      },
+      {
+        "name": "legacy_tls_verification_risk",
+        "source": "factoryline/security_configuration.py",
+        "target": "factoryline/semantic_credential_sensor.py",
+        "body_preserved_under_explicit_dependency_qualification": true,
+        "wrapper_signature_preserved": true
+      },
+      {
+        "name": "tls_finding",
+        "source": "factoryline/security_configuration.py",
+        "target": "factoryline/semantic_credential_sensor.py",
+        "body_preserved_under_explicit_dependency_qualification": true,
+        "wrapper_signature_preserved": true
+      },
+      {
+        "name": "security_evals",
+        "source": "factoryline/review_audits.py",
+        "target": "factoryline/semantic_credential_sensor.py",
+        "body_preserved_under_explicit_dependency_qualification": true,
+        "wrapper_signature_preserved": true
+      },
+      {
+        "name": "literal_exec_rejected",
+        "source": "factoryline/intent_quality.py",
+        "target": "factoryline/semantic_credential_sensor.py",
+        "body_preserved_under_explicit_dependency_qualification": true,
+        "wrapper_signature_preserved": true
+      }
+    ],
+    "old_compatibility_signatures_preserved": 10,
+    "separately_reviewed_registry_functions": [
+      "context_efficiency.protocol_call_helpers",
+      "intent_quality.project_contract_helpers"
+    ],
+    "formatting_12_declared_paths": "All original source/test ASTs unchanged forformatonlypaths;9of15actualchangedfilesarewholemoduleASTidentical. All4changedtestmodulesentireASTidentical including embeddedfixture strings/assertions. Three other declaredformatpaths are unchangedvsbase.",
+    "no_new_modules_or_namespace_injection": true,
+    "explicit_dependencies": "Movedprotocol implementations lazily importcontext and resolveexistinghelpers byqualifiedlookup. No globalsupdate/injection. Oldwrappers callcanonicalowners withsamedeclaredparameters; oldnesteddependencylookup remains live.",
+    "canonical_cache_inventory": "protocolhelperinventory containsboth oldwrapper andcurrent6oracleimplementations. project_contract_helpers contains both execwrapper andcurrentsensorimplementation. Existingendpoint+credentialvalidation enumeration captures sensorTLS/evals.",
+    "independent_cache_observations": {
+      "binding_and_code_registry_mutations": 34,
+      "actual_native_context_key_mutations": 8,
+      "passed": 42
+    },
+    "runtime_live_delegation_checks": 3,
+    "exact_seeded_eval_JSON_equal": true,
+    "seeded_parity_boundary": "492dc02 originalsecurity_evals functiondefinition executedwithcurrentunchangedscannerhelperdefinitions comparedtooriginalAPIwrapper/newimplementation; fullseedJSONincludingauditdigestidentical. This is not a secondbaselinefullscannerreplay orprecisionmeasurement.",
+    "independent_selected_tests": {
+      "passed": 36,
+      "seconds": 3.42,
+      "scope": "TLSaliases/client-server,seededevals,literalexecunknown/shadow/coldwarm/sourcechange andprotocolreceiver/sourcebindingnegative+positivecontrols",
+      "warning": "Singleunusedasyncio configwarning withautoload disabled."
+    },
+    "parent_current_hash_bound_selected_tests": {
+      "passed": 2493,
+      "skipped": 4,
+      "failed": 0,
+      "pytest_seconds": 88.9,
+      "process_seconds": 90.19190589999198
+    },
+    "parent_native376_replay": {
+      "active": 38,
+      "partitioned": 0,
+      "unmatched": 0,
+      "seconds": 144.5228941999958,
+      "finding_and_severity_parity": true,
+      "boundary": "Packetnativeevidence verifiedhash-bound tocurrent315package files; not independentlyrerun.38stillactive,no precisiongain."
+    },
+    "restored_line_ceilings": {
+      "factoryline/context_efficiency.py": 5999,
+      "factoryline/intent_quality.py": 5965,
+      "factoryline/review_audits.py": 5984,
+      "factoryline/security_configuration.py": 284
+    }
+  },
+  "findings": [],
+  "source_sha256": {
+    "factoryline/context_efficiency.py": "2b87129885518f328846a900e6d2d5290de96a78ef6e3a130ebfaeaded307544",
+    "factoryline/credential_role_sources.py": "4016cad94e7604c98448a3e88c48977eba8bfcdcf434b280af3d2e3c3d724786",
+    "factoryline/credential_role_use_audit.py": "5d52c499587a1cf54f7dd6e6d13184e8591136dd6bffc03d37c963b3c4908ad6",
+    "factoryline/intent_quality.py": "e31f48c182f62a898e92ce05fe4d3b2ff6e02f459660ca6479110903f5092c34",
+    "factoryline/mock_fixture_provenance.py": "27708cd7f58acf9c14105035d1a42f8d9b1711d931e6bc12db66ab5f11004dcc",
+    "factoryline/primitive_observation_binding.py": "8c5d563a1171b9862269662bd229096e05abd997bd2de9f979b8df7c9c700241",
+    "factoryline/review_audits.py": "156d0da26363ba3b238176e9b229292ef3a9c3075964b045a702eb125371a2b2",
+    "factoryline/review_integrity.py": "454c4f76796cca06dbf902a1766ad2cadbd97378a033c302a079b3ac30744ca6",
+    "factoryline/security_configuration.py": "16d0073656ecc996c3eddaa93f7ebb2679da829c4688d63c12739972d6a25c7b",
+    "factoryline/semantic_credential_sensor.py": "e9a3a0a70f3931e848494a1bd2f282c9792cdb6abae464e381ecdd55d165f2f9",
+    "factoryline/test_oracle_misuse.py": "8eb182af8792845d2ad58a12bfc053b6a69557cfbd684ca42b7e1e5e438abef9",
+    "tests/test_credential_constructor_cache.py": "3ba200e42b26b43dc163227ee0c263bfc621e6cf204fca97abffa83882ff134e",
+    "tests/test_credential_role_getter_consumers.py": "8cb848fa0872bbb8ba2e81d03f2f4f6faed615f10fc0cc57381d0a1e2ffc8144",
+    "tests/test_mock_fixture_provenance.py": "3d2ae58190bd8f76e455f3e87d6dd07bf28569b1c8b6d0298a11d87113a16435",
+    "tests/test_review_audits.py": "34c242b6780818800553aceb527e4f226ab358d30523b13055413ffbc8a988d8"
+  },
+  "line_ceilings": {
+    "factoryline/context_efficiency.py": 5999,
+    "factoryline/intent_quality.py": 5965,
+    "factoryline/review_audits.py": 5984,
+    "factoryline/security_configuration.py": 284
+  },
+  "policy_caps_changed": false,
+  "global_footprint_at_this_candidate": {
+    "python": 483,
+    "python_cap": 460,
+    "core": 185,
+    "core_cap": 129
+  },
+  "precision": {
+    "exposed_development_TP": 2,
+    "FP": 6,
+    "unclear": 2,
+    "decided_actionable_precision": 0.25,
+    "new_gain": 0,
+    "fresh_held_out": false,
+    "independent_second_labels": false
+  },
+  "open_requirements": [
+    "Complete regression-family repairs and nativeForgequality gate.",
+    "Consolidate to frozen460Python/129core caps.",
+    "Improve credential/sink role mechanics on top noisy rules, preserving genuine positives and severity.",
+    "Freeze fresh preregistered>=30decided-alert evaluation before predictions and obtain actual second labels; report Wilson interval.",
+    "Merge/release only after global gates pass; keep trusted core and experimental maturity explicit."
+  ],
+  "evidence_sha256": {
+    ".factory/format160/final2/process.json": "fa1d9f53dcf0ad429f0da7e53e66fa3353b55f7f7c429db1324b4a74092e9553",
+    ".factory/format160/final2/tests.xml": "18131cff0b310864fbb45ddc8383dbac140c73a640311662e6d223b9cb4b1622",
+    ".factory/format160/native/result.json": "7f1945879478b46fce3b72918bb612dd18fc587a913c30592ed7b15eb93234ac",
+    ".factory/format160/native/receipt.json": "1a07df4592f4c8da5858e33e1ac7bf54f23373a34b1b7fffeafea64384254f67",
+    ".factory/format160/independent-review.json": "ffb713683a9d7ed68dc5b2f89d7dbaff3c7340d20ec1a27de29805932422fcbc"
+  },
+  "authority": "No merge, release, held-out precision or universal-correctness approval."
+}

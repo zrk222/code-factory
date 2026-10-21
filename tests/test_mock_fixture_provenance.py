@@ -451,7 +451,7 @@ def _assert_fixture_credential_active(root):
     assert findings[0]["severity"] == "CRITICAL"
 
 
-_authority128_MODEL = '''from django.db import models
+_authority128_MODEL = """from django.db import models
 from django.apps import apps
 from .settings import oauth2_settings
 class SecretField(models.CharField):
@@ -464,16 +464,16 @@ class ClientApplication(Record):
     objects = RecordManager()
 def get_application_model():
     return apps.get_model(oauth2_settings.APPLICATION_MODEL)
-'''
+"""
 
 
-_authority128_FORM = '''from urllib.parse import urlencode
+_authority128_FORM = """from urllib.parse import urlencode
 def post_form(client, path, data=None, **extra):
     return client.post(path, data=urlencode(data or {}, doseq=True), **extra)
-'''
+"""
 
 
-_authority128_TEST = '''import pytest
+_authority128_TEST = """import pytest
 from sample.models import get_application_model
 from tests.helpers import post_form as request_token
 @pytest.mark.django_db
@@ -482,10 +482,15 @@ def test_login(client):
     client_secret = "owned-fixture-58a92"
     app = Application.objects.create(client_secret=client_secret)
     return request_token(client, "/token", {"client_secret": client_secret})
-'''
+"""
 
 
-def _authority128_fixture_project(root, test_source=_authority128_TEST, model_source=_authority128_MODEL, helper_source=_authority128_FORM):
+def _authority128_fixture_project(
+    root,
+    test_source=_authority128_TEST,
+    model_source=_authority128_MODEL,
+    helper_source=_authority128_FORM,
+):
     sources = {
         "pyproject.toml": "[project.optional-dependencies]\ntest=['pytest>=8','pytest-django>=4']\n",
         "tox.ini": "[testenv]\ncommands=pytest {posargs}\nextras=test\nsetenv=\n DJANGO_SETTINGS_MODULE=tests.settings\n",
@@ -507,12 +512,18 @@ def _captured_fixture_evidence(root, value="owned-fixture-58a92"):
         digest = hashlib.sha256(raw).hexdigest()
         tree._oracle_source_sha256 = digest
         modules[path], source_bytes[path], inventory[path] = tree, raw, digest
-    configs = {name: (root / name).read_bytes() for name in ("pyproject.toml", "tox.ini")}
+    configs = {
+        name: (root / name).read_bytes() for name in ("pyproject.toml", "tox.ini")
+    }
     index = django_test_secret_index(
         root, modules, configs, source_bytes=source_bytes, inventory=inventory
     )
     path = root / "tests/test_auth.py"
-    literals = [node for node in ast.walk(modules[path]) if isinstance(node, ast.Constant) and node.value == value]
+    literals = [
+        node
+        for node in ast.walk(modules[path])
+        if isinstance(node, ast.Constant) and node.value == value
+    ]
     assert len(literals) == 1
     return django_test_secret_evidence(index, path, literals[0].lineno, value)
 
@@ -537,8 +548,7 @@ def test_django_fixture_allows_only_source_bound_literal_model_projections(tmp_p
     )
     test_source = _authority128_TEST.replace(
         "    return request_token",
-        "    grant_type = Application.CLIENT_CONFIDENTIAL\n"
-        "    return request_token",
+        "    grant_type = Application.CLIENT_CONFIDENTIAL\n    return request_token",
     )
     _authority128_fixture_project(tmp_path, test_source=test_source, model_source=model)
     assert _captured_fixture_evidence(tmp_path)["eligible"] is True
@@ -547,23 +557,45 @@ def test_django_fixture_allows_only_source_bound_literal_model_projections(tmp_p
 @pytest.mark.parametrize(
     "test_source",
     [
-        _authority128_TEST.replace("client_secret = \"owned-fixture-58a92\"", "client_secret = \"owned-fixture-58a92\"\n    client_secret = external()"),
-        _authority128_TEST.replace("client_secret=client_secret", "client_secret=external(client_secret)"),
-        _authority128_TEST.replace("{\"client_secret\": client_secret}", "{\"client_secret\": external(client_secret)}"),
-        _authority128_TEST.replace("    app = Application.objects.create", "    mutate(Application)\n    app = Application.objects.create"),
-        _authority128_TEST.replace("    return request_token", "    mutate(client)\n    return request_token"),
-        _authority128_TEST.replace("@pytest.mark.django_db", "@pytest.mark.django_db\n@settings_override({'OAUTH2_PROVIDER_APPLICATION_MODEL': 'other.App'})"),
+        _authority128_TEST.replace(
+            'client_secret = "owned-fixture-58a92"',
+            'client_secret = "owned-fixture-58a92"\n    client_secret = external()',
+        ),
+        _authority128_TEST.replace(
+            "client_secret=client_secret", "client_secret=external(client_secret)"
+        ),
+        _authority128_TEST.replace(
+            '{"client_secret": client_secret}',
+            '{"client_secret": external(client_secret)}',
+        ),
+        _authority128_TEST.replace(
+            "    app = Application.objects.create",
+            "    mutate(Application)\n    app = Application.objects.create",
+        ),
+        _authority128_TEST.replace(
+            "    return request_token", "    mutate(client)\n    return request_token"
+        ),
+        _authority128_TEST.replace(
+            "@pytest.mark.django_db",
+            "@pytest.mark.django_db\n@settings_override({'OAUTH2_PROVIDER_APPLICATION_MODEL': 'other.App'})",
+        ),
     ],
 )
-def test_django_fixture_reassignment_or_unresolved_authority_stays_active(tmp_path, test_source):
+def test_django_fixture_reassignment_or_unresolved_authority_stays_active(
+    tmp_path, test_source
+):
     _authority128_fixture_project(tmp_path, test_source=test_source)
     assert _captured_fixture_evidence(tmp_path)["eligible"] is False
 
 
 def test_django_fixture_class_and_module_literals_are_out_of_scope(tmp_path):
-    _authority128_fixture_project(tmp_path, test_source="secret = 'owned-fixture-58a92'\n")
+    _authority128_fixture_project(
+        tmp_path, test_source="secret = 'owned-fixture-58a92'\n"
+    )
     assert _captured_fixture_evidence(tmp_path)["eligible"] is False
-    _authority128_fixture_project(tmp_path, test_source="class Tests:\n    secret = 'owned-fixture-58a92'\n")
+    _authority128_fixture_project(
+        tmp_path, test_source="class Tests:\n    secret = 'owned-fixture-58a92'\n"
+    )
     assert _captured_fixture_evidence(tmp_path)["eligible"] is False
 
 
@@ -608,7 +640,7 @@ def test_django_fixture_rejects_provider_and_import_shadowing(tmp_path):
 
 def test_django_fixture_rejects_test_database_subscript_mutation(tmp_path):
     source = _authority128_TEST.replace(
-        "    client_secret = \"owned-fixture-58a92\"",
+        '    client_secret = "owned-fixture-58a92"',
         "    client_secret = \"owned-fixture-58a92\"\n    settings.DATABASES['default']['NAME'] = 'production.sqlite3'",
     ).replace("import pytest", "import pytest\nfrom django.conf import settings")
     _authority128_fixture_project(tmp_path, test_source=source)
@@ -622,7 +654,10 @@ def test_django_fixture_rejects_registered_plugins_and_plugin_option(tmp_path):
 
     _authority128_fixture_project(tmp_path)
     path = tmp_path / "pyproject.toml"
-    path.write_text(path.read_text() + "\n[tool.pytest.ini_options]\naddopts='-p remote_client_plugin'\n")
+    path.write_text(
+        path.read_text()
+        + "\n[tool.pytest.ini_options]\naddopts='-p remote_client_plugin'\n"
+    )
     assert _captured_fixture_evidence(tmp_path)["eligible"] is False
 
 
@@ -639,7 +674,8 @@ def test_django_fixture_rejects_registered_plugins_and_plugin_option(tmp_path):
         pytest.param(
             {
                 "tests/test_auth.py": _authority128_TEST.replace(
-                    "def test_login(client):", "def test_login(client, get_application_model):"
+                    "def test_login(client):",
+                    "def test_login(client, get_application_model):",
                 )
             },
             id="factory-name-shadowed-by-parameter",
@@ -695,7 +731,10 @@ def test_django_fixture_rejects_registered_plugins_and_plugin_option(tmp_path):
             id="model-save-class-assignment-override",
         ),
         pytest.param(
-            {"sample/models.py": _authority128_MODEL + "\ngetattr = external_getattr\n"},
+            {
+                "sample/models.py": _authority128_MODEL
+                + "\ngetattr = external_getattr\n"
+            },
             id="model-module-builtin-rebinding",
         ),
         pytest.param(
@@ -801,8 +840,7 @@ def test_django_fixture_rejects_registered_signal_callable_alias(tmp_path):
     _authority128_fixture_project(tmp_path)
     path = tmp_path / "sample/models.py"
     path.write_text(
-        path.read_text()
-        + "\nfrom django.db.models.signals import pre_save\n"
+        path.read_text() + "\nfrom django.db.models.signals import pre_save\n"
         "def callback(sender,instance,**kwargs):\n"
         "    instance.client_secret=external_credential()\n"
         "register = pre_save.connect\n"
@@ -813,7 +851,11 @@ def test_django_fixture_rejects_registered_signal_callable_alias(tmp_path):
 
 def test_django_fixture_rejects_nearer_client_override_and_stale_capture(tmp_path):
     _authority128_fixture_project(tmp_path)
-    _write(tmp_path, "tests/conftest.py", "import pytest\n@pytest.fixture(name='client')\ndef remote(): return External()\n")
+    _write(
+        tmp_path,
+        "tests/conftest.py",
+        "import pytest\n@pytest.fixture(name='client')\ndef remote(): return External()\n",
+    )
     assert _captured_fixture_evidence(tmp_path)["eligible"] is False
     _authority128_fixture_project(tmp_path)
     modules, source_bytes, inventory = {}, {}, {}
@@ -823,11 +865,18 @@ def test_django_fixture_rejects_nearer_client_override_and_stale_capture(tmp_pat
         digest = hashlib.sha256(raw).hexdigest()
         tree._oracle_source_sha256 = digest
         modules[path], source_bytes[path], inventory[path] = tree, raw, digest
-    configs = {name: (tmp_path / name).read_bytes() for name in ("pyproject.toml", "tox.ini")}
-    index = django_test_secret_index(tmp_path, modules, configs, source_bytes=source_bytes, inventory=inventory)
+    configs = {
+        name: (tmp_path / name).read_bytes() for name in ("pyproject.toml", "tox.ini")
+    }
+    index = django_test_secret_index(
+        tmp_path, modules, configs, source_bytes=source_bytes, inventory=inventory
+    )
     path = tmp_path / "tests/test_auth.py"
     source_bytes[path] = b"def changed(): pass\n"
-    assert django_test_secret_evidence(index, path, 6, "owned-fixture-58a92")["eligible"] is False
+    assert (
+        django_test_secret_evidence(index, path, 6, "owned-fixture-58a92")["eligible"]
+        is False
+    )
 
 
 def test_django_external_transport_is_not_misreported_as_role_guard(tmp_path):
@@ -847,11 +896,14 @@ def test_django_fixture_scanner_cold_warm_and_config_drift(tmp_path):
     for _ in range(2):
         report = security_scan(tmp_path)
         assert not [
-            f for f in report["findings"]
-            if f["code"] == "SECURITY_HARDCODED_SECRET" and f["path"] == "tests/test_auth.py"
+            f
+            for f in report["findings"]
+            if f["code"] == "SECURITY_HARDCODED_SECRET"
+            and f["path"] == "tests/test_auth.py"
         ]
         observed = [
-            f for f in report.get("primitive_observations", [])
+            f
+            for f in report.get("primitive_observations", [])
             if f["path"] == "tests/test_auth.py"
         ]
         assert len(observed) == 1
@@ -861,8 +913,10 @@ def test_django_fixture_scanner_cold_warm_and_config_drift(tmp_path):
     path.write_text(path.read_text().replace(":memory:", "production.sqlite3"))
     report = security_scan(tmp_path)
     active = [
-        f for f in report["findings"]
-        if f["code"] == "SECURITY_HARDCODED_SECRET" and f["path"] == "tests/test_auth.py"
+        f
+        for f in report["findings"]
+        if f["code"] == "SECURITY_HARDCODED_SECRET"
+        and f["path"] == "tests/test_auth.py"
     ]
     assert len(active) == 1 and active[0]["severity"] == "CRITICAL"
 
@@ -887,63 +941,117 @@ class LoginCheck(APITestCase):
 
 def _app133_drf_projection(tmp_path, text, *, corrupt_source=False):
     from factoryline.mock_fixture_provenance import (
-        application_test_index, application_test_secret_evidence,
+        application_test_index,
+        application_test_secret_evidence,
     )
-    path = tmp_path / 'checks' / 'login.py'
+
+    path = tmp_path / "checks" / "login.py"
     raw = text.encode()
     tree = ast.parse(raw)
     tree._oracle_source_sha256 = hashlib.sha256(raw).hexdigest()
-    modules, sources, inventory = {path: tree}, {path: raw}, {path: tree._oracle_source_sha256}
+    modules, sources, inventory = (
+        {path: tree},
+        {path: raw},
+        {path: tree._oracle_source_sha256},
+    )
     if corrupt_source:
-        sources[path] += b'\n# stale capture'
+        sources[path] += b"\n# stale capture"
     index = application_test_index(tmp_path, modules, sources, inventory)
-    assignment = next(node for node in ast.walk(tree) if isinstance(node, ast.Assign)
-                      and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name)
-                      and node.targets[0].id == 'password')
-    return application_test_secret_evidence(index, path, assignment.value.lineno, assignment.value.value)
+    assignment = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Assign)
+        and len(node.targets) == 1
+        and isinstance(node.targets[0], ast.Name)
+        and node.targets[0].id == "password"
+    )
+    return application_test_secret_evidence(
+        index, path, assignment.value.lineno, assignment.value.value
+    )
 
 
 def test_application133_credential_role_uses_authority_not_filename(tmp_path):
     evidence = _app133_drf_projection(tmp_path, _APP133_DRF)
-    assert evidence['eligible'] is True
-    assert evidence['runtime_assurance'] == 'INCOMPLETE'
-    assert evidence['transport_role'] == 'UNASSESSED'
-    assert evidence['target_execution'] == 'not_performed'
-    assert evidence['witness_sources']
+    assert evidence["eligible"] is True
+    assert evidence["runtime_assurance"] == "INCOMPLETE"
+    assert evidence["transport_role"] == "UNASSESSED"
+    assert evidence["target_execution"] == "not_performed"
+    assert evidence["witness_sources"]
 
 
-@pytest.mark.parametrize(('old', 'new'), [
-    ('username=username, password=password', 'username="existing-user", password=password'),
-    ('credentials = f"{username}:{password}"', 'credentials = f"other:{password}"'),
-    ('{username}:{password}', '{password}:{username}'),
-    ('credentials.encode(HTTP_HEADER_ENCODING)', '(password * 0).encode(HTTP_HEADER_ENCODING)'),
-    ('        self.client.credentials(', '        self.client = foreign_client\n        self.client.credentials('),
-    ('        User.objects.create_user(', '        User.objects.create_user = foreign_factory\n        User.objects.create_user('),
-    ('        credentials = ', '        password = "another"\n        credentials = '),
-    ('        User.objects.create_user(username=username, password=password)\n', ''),
-    ('    def test_login(self):', '    def operational_login(self):'),
-    ('        encoded = ', '        base64.b64encode = foreign_encoder\n        encoded = '),
-])
+@pytest.mark.parametrize(
+    ("old", "new"),
+    [
+        (
+            "username=username, password=password",
+            'username="existing-user", password=password',
+        ),
+        ('credentials = f"{username}:{password}"', 'credentials = f"other:{password}"'),
+        ("{username}:{password}", "{password}:{username}"),
+        (
+            "credentials.encode(HTTP_HEADER_ENCODING)",
+            "(password * 0).encode(HTTP_HEADER_ENCODING)",
+        ),
+        (
+            "        self.client.credentials(",
+            "        self.client = foreign_client\n        self.client.credentials(",
+        ),
+        (
+            "        User.objects.create_user(",
+            "        User.objects.create_user = foreign_factory\n        User.objects.create_user(",
+        ),
+        (
+            "        credentials = ",
+            '        password = "another"\n        credentials = ',
+        ),
+        (
+            "        User.objects.create_user(username=username, password=password)\n",
+            "",
+        ),
+        ("    def test_login(self):", "    def operational_login(self):"),
+        (
+            "        encoded = ",
+            "        base64.b64encode = foreign_encoder\n        encoded = ",
+        ),
+    ],
+)
 def test_application133_mismatch_and_replacement_keep_unknown(tmp_path, old, new):
     assert old in _APP133_DRF
     evidence = _app133_drf_projection(tmp_path, _APP133_DRF.replace(old, new, 1))
-    assert evidence['eligible'] is False
+    assert evidence["eligible"] is False
 
 
 def test_application133_stale_source_rejects_projection(tmp_path):
-    assert _app133_drf_projection(tmp_path, _APP133_DRF, corrupt_source=True)['eligible'] is False
+    assert (
+        _app133_drf_projection(tmp_path, _APP133_DRF, corrupt_source=True)["eligible"]
+        is False
+    )
 
 
-@pytest.mark.parametrize('provider', [
-    'pytest', 'flask', 'django', 'rest_framework', 'hashlib', 'base64',
-    'json', 'itsdangerous', 'passlib', 'unittest',
-])
+@pytest.mark.parametrize(
+    "provider",
+    [
+        "pytest",
+        "flask",
+        "django",
+        "rest_framework",
+        "hashlib",
+        "base64",
+        "json",
+        "itsdangerous",
+        "passlib",
+        "unittest",
+    ],
+)
 def test_application_provider_workspace_replacement_rejects_profile(tmp_path, provider):
     from factoryline.mock_fixture_provenance import application_test_index
 
-    source = tmp_path / 'check.py'
-    replacement = tmp_path / (provider + '.py')
-    sources = {source: _APP133_DRF.encode(), replacement: b'def dumps(*args, **kwargs): return "discarded"\n'}
+    source = tmp_path / "check.py"
+    replacement = tmp_path / (provider + ".py")
+    sources = {
+        source: _APP133_DRF.encode(),
+        replacement: b'def dumps(*args, **kwargs): return "discarded"\n',
+    }
     modules = {path: ast.parse(raw) for path, raw in sources.items()}
     inventory = {path: hashlib.sha256(raw).hexdigest() for path, raw in sources.items()}
     for path, tree in modules.items():
@@ -951,75 +1059,96 @@ def test_application_provider_workspace_replacement_rejects_profile(tmp_path, pr
     assert application_test_index(tmp_path, modules, sources, inventory) is None
 
 
-@pytest.mark.parametrize('mutation', [
-    'missing-header', 'unknown-profile', 'executed-target', 'claimed-transport',
-    'claimed-isolation', 'claimed-runtime', 'declaration-mismatch',
-])
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "missing-header",
+        "unknown-profile",
+        "executed-target",
+        "claimed-transport",
+        "claimed-isolation",
+        "claimed-runtime",
+        "declaration-mismatch",
+    ],
+)
 def test_application_binding_rejects_rehashed_incomplete_assurance(tmp_path, mutation):
     import copy
     import json
     from factoryline.primitive_observation_binding import application_fixture_binding
 
-    path = tmp_path / 'checks' / 'login.py'
+    path = tmp_path / "checks" / "login.py"
     path.parent.mkdir(parents=True)
-    path.write_text(_APP133_DRF, encoding='utf-8')
+    path.write_text(_APP133_DRF, encoding="utf-8")
     report = security_scan(tmp_path, cache_enabled=False)
-    finding = next(item for item in report['primitive_observations']
-                   if item['facts'].get('disposition') == 'TEST_OWNED_APPLICATION_CREDENTIAL')
-    binding = {'checks/login.py': hashlib.sha256(path.read_bytes()).hexdigest()}
-    sources = [{'path': key, 'sha256': digest} for key, digest in binding.items()]
+    finding = next(
+        item
+        for item in report["primitive_observations"]
+        if item["facts"].get("disposition") == "TEST_OWNED_APPLICATION_CREDENTIAL"
+    )
+    binding = {"checks/login.py": hashlib.sha256(path.read_bytes()).hexdigest()}
+    sources = [{"path": key, "sha256": digest} for key, digest in binding.items()]
     assert application_fixture_binding(finding, sources, binding)
     altered = copy.deepcopy(finding)
-    facts = altered['facts']
-    evidence = facts['fixture_evidence']
-    if mutation == 'missing-header':
-        del evidence['witness_sources']['header']
-        del evidence['witness_spans']['header']
-    elif mutation == 'unknown-profile':
-        evidence['profile'] = 'UNREVIEWED_PROFILE'
-    elif mutation == 'declaration-mismatch':
-        evidence['declaration_span'][0] += 1
+    facts = altered["facts"]
+    evidence = facts["fixture_evidence"]
+    if mutation == "missing-header":
+        del evidence["witness_sources"]["header"]
+        del evidence["witness_spans"]["header"]
+    elif mutation == "unknown-profile":
+        evidence["profile"] = "UNREVIEWED_PROFILE"
+    elif mutation == "declaration-mismatch":
+        evidence["declaration_span"][0] += 1
     else:
         field, value = {
-            'executed-target': ('target_execution', 'performed'),
-            'claimed-transport': ('transport_role', 'PROVEN_NO_EXTERNAL_TRANSPORT'),
-            'claimed-isolation': ('isolation_assurance', 'PROVEN_ISOLATED'),
-            'claimed-runtime': ('runtime_assurance', 'COMPLETE'),
+            "executed-target": ("target_execution", "performed"),
+            "claimed-transport": ("transport_role", "PROVEN_NO_EXTERNAL_TRANSPORT"),
+            "claimed-isolation": ("isolation_assurance", "PROVEN_ISOLATED"),
+            "claimed-runtime": ("runtime_assurance", "COMPLETE"),
         }[mutation]
         facts[field] = evidence[field] = value
-    unsigned = {key: value for key, value in facts.items() if key != 'proof_facts_sha256'}
-    facts['proof_facts_sha256'] = hashlib.sha256(json.dumps(unsigned, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+    unsigned = {
+        key: value for key, value in facts.items() if key != "proof_facts_sha256"
+    }
+    facts["proof_facts_sha256"] = hashlib.sha256(
+        json.dumps(unsigned, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
     assert application_fixture_binding(altered, sources, binding) is False
 
 
-@pytest.mark.parametrize('name', [
-    'annotate_application_fixture', 'application_fixture_binding',
-    '_application_witness_bindings', '_application_assurance_binding',
-])
+@pytest.mark.parametrize(
+    "name",
+    [
+        "annotate_application_fixture",
+        "application_fixture_binding",
+        "_application_witness_bindings",
+        "_application_assurance_binding",
+    ],
+)
 def test_application_binding_helpers_track_runtime_replacements(monkeypatch, name):
     from factoryline import primitive_observation_binding as binding
 
     original = getattr(binding, name)
     assert original in binding.primitive_binding_helpers()
+
     def replacement(*args, **kwargs):
         return False
+
     monkeypatch.setattr(binding, name, replacement)
     assert replacement in binding.primitive_binding_helpers()
     assert original not in binding.primitive_binding_helpers()
-
 
 
 def test_application_direct_returns_use_captured_source_index(tmp_path):
     from factoryline.credential_role_sources import SourceSnapshotIndex
     from factoryline.mock_fixture_provenance import _app_direct_returns
 
-    path = tmp_path / 'factory.py'
-    raw = b'def create():\n    def nested(): return 99\n    return 7\n'
+    path = tmp_path / "factory.py"
+    raw = b"def create():\n    def nested(): return 99\n    return 7\n"
     tree = ast.parse(raw)
     digest = hashlib.sha256(raw).hexdigest()
     tree._oracle_source_sha256 = digest
     source = SourceSnapshotIndex(tmp_path, {path: tree}, {path: raw}, {path: digest})
-    returns = _app_direct_returns({'source': source}, path, tree.body[0])
+    returns = _app_direct_returns({"source": source}, path, tree.body[0])
     assert len(returns) == 1 and returns[0].value.value == 7
 
 
@@ -1052,12 +1181,20 @@ class Holder:
 """
 
 
-def _metadata143_projection(tmp_path, text, member, owner=None, extras=None, stale=False):
+def _metadata143_projection(
+    tmp_path, text, member, owner=None, extras=None, stale=False
+):
     from factoryline import review_audits as audit
-    from factoryline.credential_role_sources import SourceSnapshotIndex, PresentationRoleIndex
-    path = tmp_path / 'sample.py'
+    from factoryline.credential_role_sources import (
+        SourceSnapshotIndex,
+        PresentationRoleIndex,
+    )
+
+    path = tmp_path / "sample.py"
     files = {path: text.encode()}
-    files.update({tmp_path / name: value.encode() for name, value in (extras or {}).items()})
+    files.update(
+        {tmp_path / name: value.encode() for name, value in (extras or {}).items()}
+    )
     snapshots, inventory = {}, {}
     for target, raw in files.items():
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -1066,181 +1203,337 @@ def _metadata143_projection(tmp_path, text, member, owner=None, extras=None, sta
         tree._oracle_source_sha256 = hashlib.sha256(raw).hexdigest()
         snapshots[target], inventory[target] = tree, tree._oracle_source_sha256
     tree = snapshots[path]
-    scope = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == owner) if owner else tree
-    declaration = next(node for node in scope.body if isinstance(node, ast.Assign)
-                       and isinstance(node.targets[0], ast.Name) and node.targets[0].id == member)
+    scope = (
+        next(
+            node
+            for node in tree.body
+            if isinstance(node, ast.ClassDef) and node.name == owner
+        )
+        if owner
+        else tree
+    )
+    declaration = next(
+        node
+        for node in scope.body
+        if isinstance(node, ast.Assign)
+        and isinstance(node.targets[0], ast.Name)
+        and node.targets[0].id == member
+    )
     if stale:
-        files[path] += b'\n# changed'
+        files[path] += b"\n# changed"
     source = SourceSnapshotIndex(tmp_path, snapshots, files, inventory)
-    imports = {target: audit._oracle_imports(tmp_path, target, node, {p: p for p in files})
-               for target, node in snapshots.items()}
+    imports = {
+        target: audit._oracle_imports(tmp_path, target, node, {p: p for p in files})
+        for target, node in snapshots.items()
+    }
     return PresentationRoleIndex(source, imports, audit).evidence(path, declaration)
 
 
-@pytest.mark.parametrize('owner', ['Root', 'Child'])
+@pytest.mark.parametrize("owner", ["Root", "Child"])
 def test_metadata143_schema_label_and_inherited_label(tmp_path, owner):
-    evidence = _metadata143_projection(tmp_path, _METADATA143_SCHEMA, 'password_caption', owner)
-    assert evidence['eligible'] is True
-    assert evidence['profile'] == 'JSON_SCHEMA_ANNOTATION'
-    assert evidence['runtime_assurance'] == 'INCOMPLETE'
-    assert evidence['transport_role'] == 'UNASSESSED'
-    assert {row['role'] for row in evidence['uses']} == {'SCHEMA_TITLE'}
+    evidence = _metadata143_projection(
+        tmp_path, _METADATA143_SCHEMA, "password_caption", owner
+    )
+    assert evidence["eligible"] is True
+    assert evidence["profile"] == "JSON_SCHEMA_ANNOTATION"
+    assert evidence["runtime_assurance"] == "INCOMPLETE"
+    assert evidence["transport_role"] == "UNASSESSED"
+    assert {row["role"] for row in evidence["uses"]} == {"SCHEMA_TITLE"}
 
 
-@pytest.mark.parametrize(('old', 'new'), [
-    ('"title": cls.password_caption', '"default": cls.password_caption'),
-    ('"type": "object"', '"type": "unknown"'),
-    ('@classmethod', '@staticmethod'),
-    ('def schema(cls):', 'def schema(cls):\n        cls = replacement'),
-    ('class Child(Root):', 'class Child(UnknownRoot):'),
-    ('    password_caption = "Child label"', '    password_caption = "Child label"\n    password_caption = "second"'),
-    ('class Child(Root):', 'class Child(Root):\n    def authenticate(self): return self.password_caption'),
-    ('class Child(Root):', 'class Child(Root, UnknownMixin):'),
-])
+@pytest.mark.parametrize(
+    ("old", "new"),
+    [
+        ('"title": cls.password_caption', '"default": cls.password_caption'),
+        ('"type": "object"', '"type": "unknown"'),
+        ("@classmethod", "@staticmethod"),
+        ("def schema(cls):", "def schema(cls):\n        cls = replacement"),
+        ("class Child(Root):", "class Child(UnknownRoot):"),
+        (
+            '    password_caption = "Child label"',
+            '    password_caption = "Child label"\n    password_caption = "second"',
+        ),
+        (
+            "class Child(Root):",
+            "class Child(Root):\n    def authenticate(self): return self.password_caption",
+        ),
+        ("class Child(Root):", "class Child(Root, UnknownMixin):"),
+    ],
+)
 def test_metadata143_ambiguous_schema_keeps_credential_unknown(tmp_path, old, new):
-    evidence = _metadata143_projection(tmp_path, _METADATA143_SCHEMA.replace(old, new), 'password_caption', 'Child')
-    assert evidence['eligible'] is False
+    evidence = _metadata143_projection(
+        tmp_path, _METADATA143_SCHEMA.replace(old, new), "password_caption", "Child"
+    )
+    assert evidence["eligible"] is False
 
 
 def test_metadata143_mask_requires_output_and_previous_value_roles(tmp_path):
-    evidence = _metadata143_projection(tmp_path, _METADATA143_MASK, 'SECRET_SENTINEL')
-    assert evidence['eligible'] is True
-    assert evidence['profile'] == 'MASKING_SENTINEL'
-    assert {row['role'] for row in evidence['uses']} == {'MASK_OUTPUT', 'PRESERVE_PREVIOUS_VALUE'}
+    evidence = _metadata143_projection(tmp_path, _METADATA143_MASK, "SECRET_SENTINEL")
+    assert evidence["eligible"] is True
+    assert evidence["profile"] == "MASKING_SENTINEL"
+    assert {row["role"] for row in evidence["uses"]} == {
+        "MASK_OUTPUT",
+        "PRESERVE_PREVIOUS_VALUE",
+    }
 
 
-@pytest.mark.parametrize(('old', 'new'), [
-    ('self._config.copy()', 'self._config'),
-    ('config[k] = self[k]', 'config[k] = "replacement-password"'),
-    ('v == SECRET_SENTINEL', 'v != SECRET_SENTINEL'),
-    ('key in self.schema["secret"]', 'key in self.schema["public"]'),
-    ('k in self.schema.get("secret", [])', 'k in self.schema.get("public", [])'),
-    ('        self._config = config', '        self._config = config\n        authenticate(SECRET_SENTINEL)'),
-    ('        return config', '        return SECRET_SENTINEL'),
-])
+@pytest.mark.parametrize(
+    ("old", "new"),
+    [
+        ("self._config.copy()", "self._config"),
+        ("config[k] = self[k]", 'config[k] = "replacement-password"'),
+        ("v == SECRET_SENTINEL", "v != SECRET_SENTINEL"),
+        ('key in self.schema["secret"]', 'key in self.schema["public"]'),
+        ('k in self.schema.get("secret", [])', 'k in self.schema.get("public", [])'),
+        (
+            "        self._config = config",
+            "        self._config = config\n        authenticate(SECRET_SENTINEL)",
+        ),
+        ("        return config", "        return SECRET_SENTINEL"),
+    ],
+)
 def test_metadata143_mask_conflicts_keep_credential_unknown(tmp_path, old, new):
-    evidence = _metadata143_projection(tmp_path, _METADATA143_MASK.replace(old, new), 'SECRET_SENTINEL')
-    assert evidence['eligible'] is False
+    evidence = _metadata143_projection(
+        tmp_path, _METADATA143_MASK.replace(old, new), "SECRET_SENTINEL"
+    )
+    assert evidence["eligible"] is False
 
 
-@pytest.mark.parametrize('text,member,owner', [
-    (_METADATA143_SCHEMA, 'password_caption', 'Child'),
-    (_METADATA143_MASK, 'SECRET_SENTINEL', None),
-])
+@pytest.mark.parametrize(
+    "text,member,owner",
+    [
+        (_METADATA143_SCHEMA, "password_caption", "Child"),
+        (_METADATA143_MASK, "SECRET_SENTINEL", None),
+    ],
+)
 def test_metadata143_stale_source_rejects_projection(tmp_path, text, member, owner):
-    assert _metadata143_projection(tmp_path, text, member, owner, stale=True)['eligible'] is False
+    assert (
+        _metadata143_projection(tmp_path, text, member, owner, stale=True)["eligible"]
+        is False
+    )
 
 
-
-@pytest.mark.parametrize('extra', [
-    '        authenticate(password=schema["properties"]["password"]["title"])',
-    '        schema["properties"]["password"]["default"] = schema["properties"]["password"].pop("title")',
-    '        schema = foreign_schema',
-    '        forwarded = schema\n        publish(forwarded)',
-    '        return {}',
-])
+@pytest.mark.parametrize(
+    "extra",
+    [
+        '        authenticate(password=schema["properties"]["password"]["title"])',
+        '        schema["properties"]["password"]["default"] = schema["properties"]["password"].pop("title")',
+        "        schema = foreign_schema",
+        "        forwarded = schema\n        publish(forwarded)",
+        "        return {}",
+    ],
+)
 def test_metadata143_schema_escape_or_rebind_is_not_a_label_proof(tmp_path, extra):
-    source = _METADATA143_SCHEMA.replace('        return {"type":', '        schema = {"type":', 1)
-    source = source.replace('\n\nclass Child', '\n' + extra + '\n        return schema\n\nclass Child', 1)
-    assert _metadata143_projection(tmp_path, source, 'password_caption', 'Child')['eligible'] is False
+    source = _METADATA143_SCHEMA.replace(
+        '        return {"type":', '        schema = {"type":', 1
+    )
+    source = source.replace(
+        "\n\nclass Child", "\n" + extra + "\n        return schema\n\nclass Child", 1
+    )
+    assert (
+        _metadata143_projection(tmp_path, source, "password_caption", "Child")[
+            "eligible"
+        ]
+        is False
+    )
 
 
-@pytest.mark.parametrize('foreign', [
-    'import sample\nauthenticate(sample.SECRET_SENTINEL)\n',
-    'from sample import SECRET_SENTINEL as forwarded\nauthenticate(forwarded)\n',
-])
-def test_metadata143_cross_module_credential_use_blocks_mask_projection(tmp_path, foreign):
-    evidence = _metadata143_projection(tmp_path, _METADATA143_MASK, 'SECRET_SENTINEL', extras={'consumer.py': foreign})
-    assert evidence['eligible'] is False
-
+@pytest.mark.parametrize(
+    "foreign",
+    [
+        "import sample\nauthenticate(sample.SECRET_SENTINEL)\n",
+        "from sample import SECRET_SENTINEL as forwarded\nauthenticate(forwarded)\n",
+    ],
+)
+def test_metadata143_cross_module_credential_use_blocks_mask_projection(
+    tmp_path, foreign
+):
+    evidence = _metadata143_projection(
+        tmp_path, _METADATA143_MASK, "SECRET_SENTINEL", extras={"consumer.py": foreign}
+    )
+    assert evidence["eligible"] is False
 
 
 def test_metadata143_restored_map_publication_cannot_be_overwritten(tmp_path):
-    source = _METADATA143_MASK.replace('        self._config = config',
-        '        self._config = config\n        self._config = incoming')
-    assert _metadata143_projection(tmp_path, source, 'SECRET_SENTINEL')['eligible'] is False
+    source = _METADATA143_MASK.replace(
+        "        self._config = config",
+        "        self._config = config\n        self._config = incoming",
+    )
+    assert (
+        _metadata143_projection(tmp_path, source, "SECRET_SENTINEL")["eligible"]
+        is False
+    )
 
 
-@pytest.mark.parametrize('mutation', [
-    'self._config["password"] = incoming["password"]',
-    'self._config.update(incoming)',
-    'alias = self._config\n        alias.update(incoming)',
-    'mutate(self._config)',
-])
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        'self._config["password"] = incoming["password"]',
+        "self._config.update(incoming)",
+        "alias = self._config\n        alias.update(incoming)",
+        "mutate(self._config)",
+    ],
+)
 def test_metadata143_published_storage_cannot_escape_or_mutate(tmp_path, mutation):
-    source = _METADATA143_MASK + '\n        ' + mutation + '\n'
-    assert _metadata143_projection(tmp_path, source, 'SECRET_SENTINEL')['eligible'] is False
+    source = _METADATA143_MASK + "\n        " + mutation + "\n"
+    assert (
+        _metadata143_projection(tmp_path, source, "SECRET_SENTINEL")["eligible"]
+        is False
+    )
 
 
-@pytest.mark.parametrize('source,expected', [(_METADATA143_SCHEMA, 2), (_METADATA143_MASK, 1)])
-def test_metadata143_native_metadata_partition_retains_critical_primitive(tmp_path, source, expected):
-    _write(tmp_path, 'sample.py', source)
+@pytest.mark.parametrize(
+    "source,expected", [(_METADATA143_SCHEMA, 2), (_METADATA143_MASK, 1)]
+)
+def test_metadata143_native_metadata_partition_retains_critical_primitive(
+    tmp_path, source, expected
+):
+    _write(tmp_path, "sample.py", source)
     first = security_scan(tmp_path)
     second = security_scan(tmp_path)
     for report in (first, second):
-        primitives = [row for row in report.get('primitive_observations', [])
-                      if row.get('facts', {}).get('disposition') == 'SOURCE_PRESENTATION_METADATA']
+        primitives = [
+            row
+            for row in report.get("primitive_observations", [])
+            if row.get("facts", {}).get("disposition") == "SOURCE_PRESENTATION_METADATA"
+        ]
         assert len(primitives) == expected
-        assert not [row for row in report['findings'] if row['code'] == 'SECURITY_HARDCODED_SECRET']
+        assert not [
+            row
+            for row in report["findings"]
+            if row["code"] == "SECURITY_HARDCODED_SECRET"
+        ]
         for finding in primitives:
-            assert finding['severity'] == 'CRITICAL'
-            assert finding['facts']['runtime_assurance'] == 'INCOMPLETE'
-            assert finding['facts']['downstream_consumer_security'] == 'UNASSESSED'
+            assert finding["severity"] == "CRITICAL"
+            assert finding["facts"]["runtime_assurance"] == "INCOMPLETE"
+            assert finding["facts"]["downstream_consumer_security"] == "UNASSESSED"
 
 
-@pytest.mark.parametrize('mutation', ['schema', 'disposition', 'witness', 'roles', 'duplicate', 'declaration', 'consumer', 'source'])
-def test_metadata143_rehashed_invalid_witness_restores_critical_alert(tmp_path, mutation):
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "schema",
+        "disposition",
+        "witness",
+        "roles",
+        "duplicate",
+        "declaration",
+        "consumer",
+        "source",
+    ],
+)
+def test_metadata143_rehashed_invalid_witness_restores_critical_alert(
+    tmp_path, mutation
+):
     import copy
     import json
     from factoryline import primitive_observation_binding as binding
     from factoryline import review_audits as audit
-    _write(tmp_path, 'sample.py', _METADATA143_MASK)
+
+    _write(tmp_path, "sample.py", _METADATA143_MASK)
     report = security_scan(tmp_path, cache_enabled=False)
-    finding = next(row for row in report['primitive_observations']
-                   if row['facts'].get('disposition') == 'SOURCE_PRESENTATION_METADATA')
+    finding = next(
+        row
+        for row in report["primitive_observations"]
+        if row["facts"].get("disposition") == "SOURCE_PRESENTATION_METADATA"
+    )
     altered = copy.deepcopy(finding)
-    facts = altered['facts']
-    evidence = facts['fixture_evidence']
-    if mutation in {'schema', 'disposition'}:
-        facts[mutation] = 'factory.application-test-credential.v1' if mutation == 'schema' else 'TEST_OWNED_APPLICATION_CREDENTIAL'
-    elif mutation == 'witness':
-        evidence['uses'][0]['sha256'] = '0' * 64
-    elif mutation == 'roles':
-        evidence['uses'] = [row for row in evidence['uses'] if row['role'] != 'PRESERVE_PREVIOUS_VALUE']
-    elif mutation == 'duplicate':
-        evidence['uses'].append(copy.deepcopy(evidence['uses'][0]))
-    elif mutation == 'declaration':
-        evidence['declaration']['source_role'] = 'local_literal'
-    elif mutation == 'consumer':
-        evidence['downstream_consumer_security'] = facts['downstream_consumer_security'] = 'PROVEN_SAFE'
+    facts = altered["facts"]
+    evidence = facts["fixture_evidence"]
+    if mutation in {"schema", "disposition"}:
+        facts[mutation] = (
+            "factory.application-test-credential.v1"
+            if mutation == "schema"
+            else "TEST_OWNED_APPLICATION_CREDENTIAL"
+        )
+    elif mutation == "witness":
+        evidence["uses"][0]["sha256"] = "0" * 64
+    elif mutation == "roles":
+        evidence["uses"] = [
+            row for row in evidence["uses"] if row["role"] != "PRESERVE_PREVIOUS_VALUE"
+        ]
+    elif mutation == "duplicate":
+        evidence["uses"].append(copy.deepcopy(evidence["uses"][0]))
+    elif mutation == "declaration":
+        evidence["declaration"]["source_role"] = "local_literal"
+    elif mutation == "consumer":
+        evidence["downstream_consumer_security"] = facts[
+            "downstream_consumer_security"
+        ] = "PROVEN_SAFE"
     else:
-        evidence['source_sha256'] = '0' * 64
-    unsigned = {key: value for key, value in facts.items() if key != 'proof_facts_sha256'}
-    facts['proof_facts_sha256'] = hashlib.sha256(json.dumps(unsigned, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
-    core = {'sources': [{'path': 'sample.py', 'sha256': hashlib.sha256((tmp_path / 'sample.py').read_bytes()).hexdigest()}],
-            'findings': [], 'primitive_observations': [altered], 'audit_coverage': {'complete': True}}
+        evidence["source_sha256"] = "0" * 64
+    unsigned = {
+        key: value for key, value in facts.items() if key != "proof_facts_sha256"
+    }
+    facts["proof_facts_sha256"] = hashlib.sha256(
+        json.dumps(unsigned, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    core = {
+        "sources": [
+            {
+                "path": "sample.py",
+                "sha256": hashlib.sha256(
+                    (tmp_path / "sample.py").read_bytes()
+                ).hexdigest(),
+            }
+        ],
+        "findings": [],
+        "primitive_observations": [altered],
+        "audit_coverage": {"complete": True},
+    }
     binding.partition_proven_primitive_observations(core, audit.integrity)
-    assert not core['primitive_observations']
-    assert len(core['findings']) == 1 and core['findings'][0]['severity'] == 'CRITICAL'
+    assert not core["primitive_observations"]
+    assert len(core["findings"]) == 1 and core["findings"][0]["severity"] == "CRITICAL"
 
 
-@pytest.mark.parametrize('member', ['evidence', '_schema_uses', '_mask_uses'])
-def test_metadata143_runtime_projection_method_replacement_invalidates_cache(tmp_path, monkeypatch, member):
+@pytest.mark.parametrize("member", ["evidence", "_schema_uses", "_mask_uses"])
+def test_metadata143_runtime_projection_method_replacement_invalidates_cache(
+    tmp_path, monkeypatch, member
+):
     from factoryline import credential_role_sources as roles
-    _write(tmp_path, 'sample.py', _METADATA143_SCHEMA if member == '_schema_uses' else _METADATA143_MASK)
-    assert security_scan(tmp_path).get('primitive_observations')
-    monkeypatch.setattr(roles.PresentationRoleIndex, member, lambda *args, **kw: {'eligible': False} if member == 'evidence' else None)
+
+    _write(
+        tmp_path,
+        "sample.py",
+        _METADATA143_SCHEMA if member == "_schema_uses" else _METADATA143_MASK,
+    )
+    assert security_scan(tmp_path).get("primitive_observations")
+    monkeypatch.setattr(
+        roles.PresentationRoleIndex,
+        member,
+        lambda *args, **kw: {"eligible": False} if member == "evidence" else None,
+    )
     report = security_scan(tmp_path)
-    assert [row for row in report['findings'] if row['code'] == 'SECURITY_HARDCODED_SECRET' and row['severity'] == 'CRITICAL']
+    assert [
+        row
+        for row in report["findings"]
+        if row["code"] == "SECURITY_HARDCODED_SECRET" and row["severity"] == "CRITICAL"
+    ]
 
 
-@pytest.mark.parametrize('owner,member', [('SourceSnapshotIndex', 'validate'), ('DeclarationFact', 'public_facts')])
-def test_metadata143_shared_source_method_code_change_invalidates_cache(tmp_path, monkeypatch, owner, member):
+@pytest.mark.parametrize(
+    "owner,member",
+    [("SourceSnapshotIndex", "validate"), ("DeclarationFact", "public_facts")],
+)
+def test_metadata143_shared_source_method_code_change_invalidates_cache(
+    tmp_path, monkeypatch, owner, member
+):
     from factoryline import credential_role_sources as roles
-    _write(tmp_path, 'sample.py', _METADATA143_MASK)
-    assert security_scan(tmp_path).get('primitive_observations')
+
+    _write(tmp_path, "sample.py", _METADATA143_MASK)
+    assert security_scan(tmp_path).get("primitive_observations")
     method = getattr(getattr(roles, owner), member)
-    replacement = (lambda self, path: False) if member == 'validate' else (lambda self: {})
-    monkeypatch.setattr(method, '__code__', replacement.__code__)
-    for report in (security_scan(tmp_path), security_scan(tmp_path, cache_enabled=False)):
-        assert [row for row in report['findings'] if row['code'] == 'SECURITY_HARDCODED_SECRET' and row['severity'] == 'CRITICAL']
+    replacement = (
+        (lambda self, path: False) if member == "validate" else (lambda self: {})
+    )
+    monkeypatch.setattr(method, "__code__", replacement.__code__)
+    for report in (
+        security_scan(tmp_path),
+        security_scan(tmp_path, cache_enabled=False),
+    ):
+        assert [
+            row
+            for row in report["findings"]
+            if row["code"] == "SECURITY_HARDCODED_SECRET"
+            and row["severity"] == "CRITICAL"
+        ]

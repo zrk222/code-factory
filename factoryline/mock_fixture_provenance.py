@@ -364,7 +364,9 @@ def _django_unknown(reason):
     return {"eligible": False, "classification": "UNPROVEN", "reason": reason}
 
 
-def django_test_secret_index(root, modules, configs, *, source_bytes=None, inventory=None):
+def django_test_secret_index(
+    root, modules, configs, *, source_bytes=None, inventory=None
+):
     """Build a bounded index from the producer's captured Python and config bytes."""
     if not isinstance(source_bytes, dict) or not isinstance(inventory, dict):
         return None
@@ -377,13 +379,16 @@ def django_test_secret_index(root, modules, configs, *, source_bytes=None, inven
         return None
     try:
         import tomllib
+
         pyproject = tomllib.loads(configs["pyproject.toml"].decode("utf-8"))
         tox = configparser.ConfigParser()
         tox.read_string(configs["tox.ini"].decode("utf-8"))
     except (ImportError, UnicodeError, ValueError, configparser.Error):
         return None
     testenv = tox["testenv"] if tox.has_section("testenv") else None
-    if testenv is None or not re.search(r"\bpytest(?:\s|$)", testenv.get("commands", "")):
+    if testenv is None or not re.search(
+        r"\bpytest(?:\s|$)", testenv.get("commands", "")
+    ):
         return None
     if not _django_runner_plugins_safe(pyproject, testenv):
         return None
@@ -403,13 +408,17 @@ def django_test_secret_index(root, modules, configs, *, source_bytes=None, inven
     if setting_match is None:
         return None
     runner = setting_match.group(1)
-    configs_sha = {name: hashlib.sha256(raw).hexdigest() for name, raw in configs.items()}
+    configs_sha = {
+        name: hashlib.sha256(raw).hexdigest() for name, raw in configs.items()
+    }
     rows = {
         source.relative(path): digest
         for path, digest in inventory.items()
         if source.relative(path) is not None
     }
-    module_paths = {source.relative(path): path for path in modules if source.relative(path)}
+    module_paths = {
+        source.relative(path): path for path in modules if source.relative(path)
+    }
     if len(rows) != len(inventory) or any(
         _django_provider_root_shadowed(module_paths, root)
         for root in _DJANGO_CANONICAL_PROVIDER_ROOTS
@@ -418,7 +427,9 @@ def django_test_secret_index(root, modules, configs, *, source_bytes=None, inven
     combined = dict(rows)
     combined.update(configs_sha)
     inventory_sha = hashlib.sha256(
-        "\n".join(sorted(f"{name}\0{digest}" for name, digest in combined.items())).encode()
+        "\n".join(
+            sorted(f"{name}\0{digest}" for name, digest in combined.items())
+        ).encode()
     ).hexdigest()
     return {
         "root": source.root,
@@ -452,7 +463,9 @@ def _django_runner_plugins_safe(pyproject, testenv):
 
 def _django_mod(index, name):
     root = name.partition(".")[0]
-    if root in _DJANGO_CANONICAL_PROVIDER_ROOTS and _django_provider_root_shadowed(index["module_paths"], root):
+    if root in _DJANGO_CANONICAL_PROVIDER_ROOTS and _django_provider_root_shadowed(
+        index["module_paths"], root
+    ):
         return None, None
     for suffix in (".py", "/__init__.py"):
         path = index["module_paths"].get(name.replace(".", "/") + suffix)
@@ -487,7 +500,12 @@ def _django_test_conftests(index, test_path):
     return [
         path
         for directory in directories
-        if (path := index["module_paths"].get(f"{directory + '/' if directory else ''}conftest.py")) is not None
+        if (
+            path := index["module_paths"].get(
+                f"{directory + '/' if directory else ''}conftest.py"
+            )
+        )
+        is not None
     ]
 
 
@@ -517,7 +535,9 @@ def _django_signal_scan_paths(index, test_path, app_label):
         imports = _django_imports(index, path)
         if imports is None:
             relative = index["source"].relative(path)
-            if relative == package + ".py" or (relative and relative.startswith(package + "/")):
+            if relative == package + ".py" or (
+                relative and relative.startswith(package + "/")
+            ):
                 continue
             return None
         for target in imports.values():
@@ -531,11 +551,16 @@ def _django_ambiguous_signal_calls_clear(tree):
     return not any(
         isinstance(node, ast.Call)
         and (
-            isinstance(node.func, ast.Attribute) and node.func.attr in {"connect", "connect_via"}
-            or isinstance(node.func, ast.Name) and node.func.id == "receiver"
-            or isinstance(node.func, ast.Name) and node.func.id in {"connect", "connect_via"}
-            or isinstance(node.func, ast.Attribute) and node.func.attr == "receiver"
-            or isinstance(node.func, ast.Name) and node.func.id in {"pre_save", "post_save", "pre_init", "post_init"}
+            isinstance(node.func, ast.Attribute)
+            and node.func.attr in {"connect", "connect_via"}
+            or isinstance(node.func, ast.Name)
+            and node.func.id == "receiver"
+            or isinstance(node.func, ast.Name)
+            and node.func.id in {"connect", "connect_via"}
+            or isinstance(node.func, ast.Attribute)
+            and node.func.attr == "receiver"
+            or isinstance(node.func, ast.Name)
+            and node.func.id in {"pre_save", "post_save", "pre_init", "post_init"}
         )
         for node in ast.walk(tree)
     )
@@ -568,7 +593,11 @@ def _django_model_signal_registration_clear(index, path):
 
 def _django_signal_import_call(index, path, call):
     canonical = _django_expr(index, path, call.func)
-    if canonical not in {"importlib.import_module", "__import__", "builtins.__import__"}:
+    if canonical not in {
+        "importlib.import_module",
+        "__import__",
+        "builtins.__import__",
+    }:
         return False
     return bool(
         call.args
@@ -611,7 +640,11 @@ def _django_import_targets(index, path, tree):
             return None
         for bound, target in rows:
             occurrences = binding_occurrences(tree.body, bound)
-            if len(occurrences) != 1 or occurrences[0] is not statement or bound in result:
+            if (
+                len(occurrences) != 1
+                or occurrences[0] is not statement
+                or bound in result
+            ):
                 return None
             result[bound] = target
     return result
@@ -620,7 +653,10 @@ def _django_import_targets(index, path, tree):
 def _django_import_rows(statement, package):
     if isinstance(statement, ast.Import):
         return [
-            (alias.asname or alias.name.split(".")[0], alias.name if alias.asname else alias.name.split(".")[0])
+            (
+                alias.asname or alias.name.split(".")[0],
+                alias.name if alias.asname else alias.name.split(".")[0],
+            )
             for alias in statement.names
         ]
     if not isinstance(statement, ast.ImportFrom):
@@ -659,10 +695,19 @@ def _django_expr(index, path, node, function=None):
         if node.id in imports:
             if function is not None:
                 from .credential_role_scope_bindings import binding_occurrences
+
                 if binding_occurrences(function.body, node.id):
                     return None
-                args = [*function.args.posonlyargs, *function.args.args, *function.args.kwonlyargs]
-                if any(arg.arg == node.id for arg in args) or (function.args.vararg and function.args.vararg.arg == node.id) or (function.args.kwarg and function.args.kwarg.arg == node.id):
+                args = [
+                    *function.args.posonlyargs,
+                    *function.args.args,
+                    *function.args.kwonlyargs,
+                ]
+                if (
+                    any(arg.arg == node.id for arg in args)
+                    or (function.args.vararg and function.args.vararg.arg == node.id)
+                    or (function.args.kwarg and function.args.kwarg.arg == node.id)
+                ):
                     return None
             return imports[node.id]
         return None
@@ -683,7 +728,13 @@ def _django_source_function(index, path, expression, function=None):
     if tree is None:
         return None
     from .credential_role_scope_bindings import binding_occurrences
-    rows = [node for node in tree.body if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == name]
+
+    rows = [
+        node
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name == name
+    ]
     bindings = binding_occurrences(tree.body, name)
     if len(rows) != 1 or len(bindings) != 1 or bindings[0] is not rows[0]:
         return None
@@ -692,12 +743,22 @@ def _django_source_function(index, path, expression, function=None):
 
 def _django_assignment(tree, name):
     from .credential_role_scope_bindings import binding_occurrences
+
     bindings = binding_occurrences(tree.body, name)
     rows = []
     for statement in tree.body:
-        if isinstance(statement, ast.Assign) and len(statement.targets) == 1 and isinstance(statement.targets[0], ast.Name) and statement.targets[0].id == name:
+        if (
+            isinstance(statement, ast.Assign)
+            and len(statement.targets) == 1
+            and isinstance(statement.targets[0], ast.Name)
+            and statement.targets[0].id == name
+        ):
             rows.append((statement, statement.value))
-        elif isinstance(statement, ast.AnnAssign) and isinstance(statement.target, ast.Name) and statement.target.id == name:
+        elif (
+            isinstance(statement, ast.AnnAssign)
+            and isinstance(statement.target, ast.Name)
+            and statement.target.id == name
+        ):
             rows.append((statement, statement.value))
     return rows if len(rows) == len(bindings) else []
 
@@ -714,7 +775,11 @@ def _django_builtins_unshadowed(index, path, names):
 def _django_dict_value(node, key):
     if not isinstance(node, ast.Dict):
         return None
-    found = [value for item, value in zip(node.keys, node.values) if isinstance(item, ast.Constant) and item.value == key]
+    found = [
+        value
+        for item, value in zip(node.keys, node.values)
+        if isinstance(item, ast.Constant) and item.value == key
+    ]
     return found[0] if len(found) == 1 else None
 
 
@@ -726,13 +791,26 @@ def _django_setting_facts(index):
     app_rows = _django_assignment(settings_tree, "OAUTH2_PROVIDER_APPLICATION_MODEL")
     installed_rows = _django_assignment(settings_tree, "INSTALLED_APPS")
     from .credential_role_scope_bindings import binding_occurrences
-    if len(db_rows) != 1 or len(app_rows) < 1 or not installed_rows or binding_occurrences(settings_tree.body, "OAUTH2_PROVIDER"):
+
+    if (
+        len(db_rows) != 1
+        or len(app_rows) < 1
+        or not installed_rows
+        or binding_occurrences(settings_tree.body, "OAUTH2_PROVIDER")
+    ):
         return None
     db = db_rows[0][1]
     default = _django_dict_value(db, "default")
     engine = _django_dict_value(default, "ENGINE")
     name = _django_dict_value(default, "NAME")
-    if not (isinstance(db, ast.Dict) and len(db.keys) == 1 and isinstance(engine, ast.Constant) and engine.value == "django.db.backends.sqlite3" and isinstance(name, ast.Constant) and name.value == ":memory:"):
+    if not (
+        isinstance(db, ast.Dict)
+        and len(db.keys) == 1
+        and isinstance(engine, ast.Constant)
+        and engine.value == "django.db.backends.sqlite3"
+        and isinstance(name, ast.Constant)
+        and name.value == ":memory:"
+    ):
         return None
     configured = []
     for _, value in app_rows:
@@ -743,7 +821,11 @@ def _django_setting_facts(index):
         return None
     app_label, model_name = configured[0].split(".", 1)
     apps = installed_rows[0][1]
-    installed = {item.value for item in ast.walk(apps) if isinstance(item, ast.Constant) and isinstance(item.value, str)}
+    installed = {
+        item.value
+        for item in ast.walk(apps)
+        if isinstance(item, ast.Constant) and isinstance(item.value, str)
+    }
     if app_label not in installed:
         return None
     if _django_settings_mutated(settings_tree):
@@ -752,11 +834,22 @@ def _django_setting_facts(index):
 
 
 def _django_settings_mutated(tree):
-    protected = {"DATABASES", "OAUTH2_PROVIDER_APPLICATION_MODEL", "INSTALLED_APPS", "OAUTH2_PROVIDER"}
+    protected = {
+        "DATABASES",
+        "OAUTH2_PROVIDER_APPLICATION_MODEL",
+        "INSTALLED_APPS",
+        "OAUTH2_PROVIDER",
+    }
     for node in ast.walk(tree):
-        if isinstance(node, ast.Attribute) and isinstance(node.ctx, (ast.Store, ast.Del)) and node.attr in protected:
+        if (
+            isinstance(node, ast.Attribute)
+            and isinstance(node.ctx, (ast.Store, ast.Del))
+            and node.attr in protected
+        ):
             return True
-        if isinstance(node, ast.Subscript) and isinstance(node.ctx, (ast.Store, ast.Del)):
+        if isinstance(node, ast.Subscript) and isinstance(
+            node.ctx, (ast.Store, ast.Del)
+        ):
             if _django_settings_reference(node.value, protected):
                 return True
         if isinstance(node, ast.Call):
@@ -775,8 +868,10 @@ def _django_settings_reference(node, protected):
     return isinstance(node, ast.AST) and (
         _root_name(node) in protected
         or any(
-            isinstance(part, ast.Attribute) and part.attr in protected
-            or isinstance(part, ast.Name) and part.id in protected
+            isinstance(part, ast.Attribute)
+            and part.attr in protected
+            or isinstance(part, ast.Name)
+            and part.id in protected
             for part in ast.walk(node)
         )
     )
@@ -797,20 +892,40 @@ def _django_factory_resolves(index, path, function, expected_model):
     configured = _django_setting_facts(index)
     if configured is None or ".".join(configured[2:]) != expected_model:
         return False
-    return _django_provider_settings(index, provider_path, provider) and _django_provider_object(index, provider_path, provider)
+    return _django_provider_settings(
+        index, provider_path, provider
+    ) and _django_provider_object(index, provider_path, provider)
 
 
 def _django_factory_model_call(index, path, function):
     body = list(function.body)
-    if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant) and isinstance(body[0].value.value, str):
+    if (
+        body
+        and isinstance(body[0], ast.Expr)
+        and isinstance(body[0].value, ast.Constant)
+        and isinstance(body[0].value.value, str)
+    ):
         body.pop(0)
-    if len(body) != 1 or not isinstance(body[0], ast.Return) or not isinstance(body[0].value, ast.Call):
+    if (
+        len(body) != 1
+        or not isinstance(body[0], ast.Return)
+        or not isinstance(body[0].value, ast.Call)
+    ):
         return None
     call = body[0].value
-    if len(call.args) != 1 or call.keywords or _django_expr(index, path, call.func, function) != "django.apps.apps.get_model":
+    if (
+        len(call.args) != 1
+        or call.keywords
+        or _django_expr(index, path, call.func, function)
+        != "django.apps.apps.get_model"
+    ):
         return None
     model_arg = call.args[0]
-    if not isinstance(model_arg, ast.Attribute) or model_arg.attr != "APPLICATION_MODEL" or not isinstance(model_arg.value, ast.Name):
+    if (
+        not isinstance(model_arg, ast.Attribute)
+        or model_arg.attr != "APPLICATION_MODEL"
+        or not isinstance(model_arg.value, ast.Name)
+    ):
         return None
     return call
 
@@ -824,7 +939,9 @@ def _django_provider_settings(index, path, provider):
     if len(configured) != 1 or len(defaults) != 1 or len(user) != 1:
         return False
     call = configured[0][1]
-    if not _django_getattr(call, "OAUTH2_PROVIDER_APPLICATION_MODEL", required_type=str):
+    if not _django_getattr(
+        call, "OAUTH2_PROVIDER_APPLICATION_MODEL", required_type=str
+    ):
         return False
     if _django_expr(index, path, call.args[0]) != "django.conf.settings":
         return False
@@ -840,7 +957,12 @@ def _django_provider_settings(index, path, provider):
 
 
 def _django_getattr(node, setting, *, required_type):
-    if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name) or node.func.id != "getattr" or len(node.args) != 3:
+    if (
+        not isinstance(node, ast.Call)
+        or not isinstance(node.func, ast.Name)
+        or node.func.id != "getattr"
+        or len(node.args) != 3
+    ):
         return False
     key, fallback = node.args[1:]
     return (
@@ -853,23 +975,50 @@ def _django_getattr(node, setting, *, required_type):
 
 def _django_provider_object(index, path, provider):
     instance = _django_assignment(provider, "oauth2_settings")
-    if len(instance) != 1 or not isinstance(instance[0][1], ast.Call) or not isinstance(instance[0][1].func, ast.Name):
+    if (
+        len(instance) != 1
+        or not isinstance(instance[0][1], ast.Call)
+        or not isinstance(instance[0][1].func, ast.Name)
+    ):
         return False
     args = instance[0][1].args
-    if len(args) < 2 or not all(isinstance(arg, ast.Name) for arg in args[:2]) or [arg.id for arg in args[:2]] != ["USER_SETTINGS", "DEFAULTS"]:
+    if (
+        len(args) < 2
+        or not all(isinstance(arg, ast.Name) for arg in args[:2])
+        or [arg.id for arg in args[:2]] != ["USER_SETTINGS", "DEFAULTS"]
+    ):
         return False
     provider_class = _django_class(index, path, instance[0][1].func.id)
-    if provider_class is None or provider_class.bases or _class_has_binding(provider_class, "__setattr__"):
+    if (
+        provider_class is None
+        or provider_class.bases
+        or _class_has_binding(provider_class, "__setattr__")
+    ):
         return False
     from .credential_role_class_binding import effective_method
+
     chain = [(path, provider_class.name, provider_class)]
     getter = effective_method(chain, "__getattr__")
     constructor = effective_method(chain, "__init__")
     return (
         constructor is not None
         and getter is not None
-        and any(isinstance(node, ast.Subscript) and isinstance(node.value, ast.Attribute) and isinstance(node.value.value, ast.Name) and node.value.value.id == "self" and node.value.attr == "defaults" for node in ast.walk(getter[1]))
-        and any(isinstance(node, ast.Attribute) and node.attr == "defaults" and isinstance(node.value, ast.Name) and node.value.id == "self" and isinstance(node.ctx, ast.Store) for node in ast.walk(constructor[1]))
+        and any(
+            isinstance(node, ast.Subscript)
+            and isinstance(node.value, ast.Attribute)
+            and isinstance(node.value.value, ast.Name)
+            and node.value.value.id == "self"
+            and node.value.attr == "defaults"
+            for node in ast.walk(getter[1])
+        )
+        and any(
+            isinstance(node, ast.Attribute)
+            and node.attr == "defaults"
+            and isinstance(node.value, ast.Name)
+            and node.value.id == "self"
+            and isinstance(node.ctx, ast.Store)
+            for node in ast.walk(constructor[1])
+        )
     )
 
 
@@ -878,9 +1027,18 @@ def _django_class(index, path, name):
     if tree is None or not index["source"].validate(path):
         return None
     from .credential_role_scope_bindings import binding_occurrences
-    rows = [node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == name]
+
+    rows = [
+        node
+        for node in tree.body
+        if isinstance(node, ast.ClassDef) and node.name == name
+    ]
     bindings = binding_occurrences(tree.body, name)
-    return rows[0] if len(rows) == 1 and len(bindings) == 1 and bindings[0] is rows[0] else None
+    return (
+        rows[0]
+        if len(rows) == 1 and len(bindings) == 1 and bindings[0] is rows[0]
+        else None
+    )
 
 
 def _django_model_authority(index, app_label, model_name):
@@ -890,10 +1048,14 @@ def _django_model_authority(index, app_label, model_name):
     model_path, tree = _django_mod(index, app_label + ".models")
     if tree is None:
         return _django_cache_model(index, cache_key, None)
-    if not _django_builtins_unshadowed(index, model_path, {"getattr", "setattr", "super"}):
+    if not _django_builtins_unshadowed(
+        index, model_path, {"getattr", "setattr", "super"}
+    ):
         return _django_cache_model(index, cache_key, None)
     resolved = _django_model_classes(index, model_path, model_name)
-    result = None if resolved is None else _django_model_field(index, model_path, *resolved)
+    result = (
+        None if resolved is None else _django_model_field(index, model_path, *resolved)
+    )
     if result is not None:
         result = {"model": model_name, **result}
     return _django_cache_model(index, cache_key, result)
@@ -906,7 +1068,9 @@ def _django_cache_model(index, cache_key, result):
 
 def _django_model_classes(index, path, name):
     cls = _django_class(index, path, name)
-    chain = _django_class_chain(index, path, cls, "django.db.models.Model") if cls else None
+    chain = (
+        _django_class_chain(index, path, cls, "django.db.models.Model") if cls else None
+    )
     if chain is None or not _django_hooks_unbound(chain, _MODEL_AUTHORITY_HOOKS):
         return None
     manager_data = _django_model_manager(index, path, cls)
@@ -920,27 +1084,62 @@ def _django_model_classes(index, path, name):
 
 def _django_model_manager(index, path, cls):
     assignments = _django_assignment_from_class(cls, "objects")
-    if len(assignments) != 1 or not isinstance(assignments[0], ast.Call) or not isinstance(assignments[0].func, ast.Name):
+    if (
+        len(assignments) != 1
+        or not isinstance(assignments[0], ast.Call)
+        or not isinstance(assignments[0].func, ast.Name)
+    ):
         return None
     manager = _django_class(index, path, assignments[0].func.id)
-    chain = _django_class_chain(index, path, manager, "django.db.models.Manager") if manager else None
+    chain = (
+        _django_class_chain(index, path, manager, "django.db.models.Manager")
+        if manager
+        else None
+    )
     if chain is None:
         return None
     return manager, chain
 
 
-_MODEL_AUTHORITY_HOOKS = frozenset({
-    "save", "save_base", "from_db", "__init__", "__new__", "__getattribute__",
-    "__getattr__", "__setattr__", "__delattr__",
-})
-_MANAGER_AUTHORITY_HOOKS = frozenset({
-    "create", "get_queryset", "get_query_set", "bulk_create", "__init__", "__new__",
-    "__getattribute__", "__getattr__", "__setattr__", "__delattr__",
-})
-_FIELD_AUTHORITY_HOOKS = frozenset({
-    "__init__", "__new__", "__getattribute__", "__getattr__", "__setattr__",
-    "__delattr__", "get_prep_value", "get_db_prep_save",
-})
+_MODEL_AUTHORITY_HOOKS = frozenset(
+    {
+        "save",
+        "save_base",
+        "from_db",
+        "__init__",
+        "__new__",
+        "__getattribute__",
+        "__getattr__",
+        "__setattr__",
+        "__delattr__",
+    }
+)
+_MANAGER_AUTHORITY_HOOKS = frozenset(
+    {
+        "create",
+        "get_queryset",
+        "get_query_set",
+        "bulk_create",
+        "__init__",
+        "__new__",
+        "__getattribute__",
+        "__getattr__",
+        "__setattr__",
+        "__delattr__",
+    }
+)
+_FIELD_AUTHORITY_HOOKS = frozenset(
+    {
+        "__init__",
+        "__new__",
+        "__getattribute__",
+        "__getattr__",
+        "__setattr__",
+        "__delattr__",
+        "get_prep_value",
+        "get_db_prep_save",
+    }
+)
 
 
 def _django_class_chain(index, path, cls, terminal):
@@ -987,20 +1186,40 @@ def _django_hooks_unbound(chain, names):
 
 def _django_model_field(index, path, model_chain, manager):
     field_value = _django_effective_class_attribute(model_chain, "client_secret")
-    if len(field_value) != 1 or not isinstance(field_value[0], ast.Call) or not isinstance(field_value[0].func, ast.Name):
+    if (
+        len(field_value) != 1
+        or not isinstance(field_value[0], ast.Call)
+        or not isinstance(field_value[0].func, ast.Name)
+    ):
         return None
     field_class = _django_class(index, path, field_value[0].func.id)
-    field_chain = _django_class_chain(index, path, field_class, "django.db.models.CharField") if field_class else None
-    if field_chain is None or not _django_hooks_unbound(field_chain, _FIELD_AUTHORITY_HOOKS):
+    field_chain = (
+        _django_class_chain(index, path, field_class, "django.db.models.CharField")
+        if field_class
+        else None
+    )
+    if field_chain is None or not _django_hooks_unbound(
+        field_chain, _FIELD_AUTHORITY_HOOKS
+    ):
         return None
     from .credential_role_class_binding import effective_method
+
     method = effective_method(field_chain, "pre_save")
-    if any(_class_has_binding(owner, "pre_save") for _, _, owner in field_chain) and method is None:
+    if (
+        any(_class_has_binding(owner, "pre_save") for _, _, owner in field_chain)
+        and method is None
+    ):
         return None
     hook = method[1] if method is not None else None
     if hook is not None and not _django_secret_field_hook(index, path, hook):
         return None
-    return {"manager": manager.name, "field": field_class.name, "field_hook": "source-bound hash-or-pass-through" if hook else "Django CharField pre_save"}
+    return {
+        "manager": manager.name,
+        "field": field_class.name,
+        "field_hook": "source-bound hash-or-pass-through"
+        if hook
+        else "Django CharField pre_save",
+    }
 
 
 def _django_effective_class_attribute(chain, name):
@@ -1025,9 +1244,18 @@ def _class_has_binding(owner, name):
 def _django_assignment_from_class(cls, name):
     rows = []
     for statement in cls.body:
-        if isinstance(statement, ast.Assign) and len(statement.targets) == 1 and isinstance(statement.targets[0], ast.Name) and statement.targets[0].id == name:
+        if (
+            isinstance(statement, ast.Assign)
+            and len(statement.targets) == 1
+            and isinstance(statement.targets[0], ast.Name)
+            and statement.targets[0].id == name
+        ):
             rows.append(statement.value)
-        elif isinstance(statement, ast.AnnAssign) and isinstance(statement.target, ast.Name) and statement.target.id == name:
+        elif (
+            isinstance(statement, ast.AnnAssign)
+            and isinstance(statement.target, ast.Name)
+            and statement.target.id == name
+        ):
             rows.append(statement.value)
     return rows
 
@@ -1040,13 +1268,22 @@ def _django_secret_field_hook(index, path, method):
         return False
     if not _django_hash_imports(index, path, imports):
         return False
-    return _django_hash_calls(method) and _django_secret_uses_are_modeled(index, path, method)
+    return _django_hash_calls(method) and _django_secret_uses_are_modeled(
+        index, path, method
+    )
 
 
 def _django_hash_imports(index, path, imports):
     from .credential_role_scope_bindings import binding_occurrences
-    for name, canonical in (("identify_hasher", "django.contrib.auth.hashers.identify_hasher"), ("make_password", "django.contrib.auth.hashers.make_password")):
-        if imports.get(name) != canonical or len(binding_occurrences(index["modules"][path].body, name)) != 1:
+
+    for name, canonical in (
+        ("identify_hasher", "django.contrib.auth.hashers.identify_hasher"),
+        ("make_password", "django.contrib.auth.hashers.make_password"),
+    ):
+        if (
+            imports.get(name) != canonical
+            or len(binding_occurrences(index["modules"][path].body, name)) != 1
+        ):
             return False
     return True
 
@@ -1057,7 +1294,10 @@ def _django_hash_calls(method):
         if isinstance(node, ast.Call):
             if isinstance(node.func, ast.Name) and node.func.id in allowed:
                 continue
-            if isinstance(node.func, ast.Attribute) and node.func.attr in {"debug", "pre_save"}:
+            if isinstance(node.func, ast.Attribute) and node.func.attr in {
+                "debug",
+                "pre_save",
+            }:
                 continue
             return False
     names = {
@@ -1071,14 +1311,20 @@ def _django_hash_calls(method):
 def _django_secret_uses_are_modeled(index, path, method):
     parents = index["source"].parents[path]
     for node in ast.walk(method):
-        if not isinstance(node, ast.Name) or node.id != "secret" or not isinstance(node.ctx, ast.Load):
+        if (
+            not isinstance(node, ast.Name)
+            or node.id != "secret"
+            or not isinstance(node.ctx, ast.Load)
+        ):
             continue
         parent = parents.get(id(node))
         if not isinstance(parent, ast.Call):
             return False
         accepted = (
-            isinstance(parent.func, ast.Name) and parent.func.id in {"identify_hasher", "make_password"}
-            or isinstance(parent.func, ast.Attribute) and parent.func.attr == "debug"
+            isinstance(parent.func, ast.Name)
+            and parent.func.id in {"identify_hasher", "make_password"}
+            or isinstance(parent.func, ast.Attribute)
+            and parent.func.attr == "debug"
         )
         if not accepted:
             return False
@@ -1088,22 +1334,46 @@ def _django_secret_uses_are_modeled(index, path, method):
 def _django_test_function(index, path, assignment):
     parents = index["source"].parents[path]
     current = parents.get(id(assignment))
-    while current is not None and not isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef)):
+    while current is not None and not isinstance(
+        current, (ast.FunctionDef, ast.AsyncFunctionDef)
+    ):
         current = parents.get(id(current))
-    if current is None or parents.get(id(current)) is not index["modules"][path] or not current.name.startswith("test_"):
+    if (
+        current is None
+        or parents.get(id(current)) is not index["modules"][path]
+        or not current.name.startswith("test_")
+    ):
         return None
-    if any(isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)) and node is not current for stmt in current.body for node in ast.walk(stmt)):
+    if any(
+        isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda))
+        and node is not current
+        for stmt in current.body
+        for node in ast.walk(stmt)
+    ):
         return None
     args = [*current.args.posonlyargs, *current.args.args]
     if not any(arg.arg == "client" for arg in args):
         return None
-    if any(arg.arg == "client" and arg is not args[0] for arg in current.args.kwonlyargs):
+    if any(
+        arg.arg == "client" and arg is not args[0] for arg in current.args.kwonlyargs
+    ):
         return None
     from .credential_role_scope_bindings import binding_occurrences
+
     if binding_occurrences(current.body, "client"):
         return None
     imports = _django_imports(index, path)
-    if not imports or any(_django_expr(index, path, (item.func if isinstance(item, ast.Call) else item)) == "pytest.mark.django_db" for item in current.decorator_list) is False:
+    if (
+        not imports
+        or any(
+            _django_expr(
+                index, path, (item.func if isinstance(item, ast.Call) else item)
+            )
+            == "pytest.mark.django_db"
+            for item in current.decorator_list
+        )
+        is False
+    ):
         return None
     if not _django_test_module_client_fixture_safe(index, path):
         return None
@@ -1129,8 +1399,16 @@ def _django_plugins_unmodified(index):
             continue
         for statement in tree.body:
             if isinstance(statement, (ast.Assign, ast.AnnAssign)):
-                targets = statement.targets if isinstance(statement, ast.Assign) else [statement.target]
-                if any(isinstance(node, ast.Name) and node.id == "pytest_plugins" for target in targets for node in ast.walk(target)):
+                targets = (
+                    statement.targets
+                    if isinstance(statement, ast.Assign)
+                    else [statement.target]
+                )
+                if any(
+                    isinstance(node, ast.Name) and node.id == "pytest_plugins"
+                    for target in targets
+                    for node in ast.walk(target)
+                ):
                     return False
     return True
 
@@ -1143,7 +1421,9 @@ def _django_no_client_override(index):
         if imports is None:
             return False
         for statement in tree.body:
-            if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)) and not _django_fixture_decorators_safe(index, path, statement):
+            if isinstance(
+                statement, (ast.FunctionDef, ast.AsyncFunctionDef)
+            ) and not _django_fixture_decorators_safe(index, path, statement):
                 return False
     return True
 
@@ -1155,8 +1435,14 @@ def _django_fixture_decorators_safe(index, path, function):
             continue
         fixture_name = function.name
         if isinstance(decorator, ast.Call):
-            names = [keyword.value for keyword in decorator.keywords if keyword.arg == "name"]
-            if names and (len(names) != 1 or not isinstance(names[0], ast.Constant) or not isinstance(names[0].value, str)):
+            names = [
+                keyword.value for keyword in decorator.keywords if keyword.arg == "name"
+            ]
+            if names and (
+                len(names) != 1
+                or not isinstance(names[0], ast.Constant)
+                or not isinstance(names[0].value, str)
+            ):
                 return False
             if names:
                 fixture_name = names[0].value
@@ -1166,20 +1452,32 @@ def _django_fixture_decorators_safe(index, path, function):
 
 
 def _django_form_request(index, path, function, secret, client_name="client"):
-    calls = [node for statement in function.body for node in ast.walk(statement) if isinstance(node, ast.Call)]
+    calls = [
+        node
+        for statement in function.body
+        for node in ast.walk(statement)
+        if isinstance(node, ast.Call)
+    ]
     for call in calls:
         direct = _django_direct_form_request(call, secret, client_name)
         if direct:
             return direct, call
         helper = _django_source_function(index, path, call.func, function)
-        if helper is not None and _django_form_helper_call(index, call, helper, secret, client_name):
+        if helper is not None and _django_form_helper_call(
+            index, call, helper, secret, client_name
+        ):
             return "source-resolved form helper to local test-client post", call
     return None
 
 
 def _django_direct_form_request(call, secret, client_name):
     func = call.func
-    if not isinstance(func, ast.Attribute) or func.attr != "post" or not isinstance(func.value, ast.Name) or func.value.id != client_name:
+    if (
+        not isinstance(func, ast.Attribute)
+        or func.attr != "post"
+        or not isinstance(func.value, ast.Name)
+        or func.value.id != client_name
+    ):
         return None
     data = next((kw.value for kw in call.keywords if kw.arg == "data"), None)
     return "direct test-client post" if _django_form_dict(data, secret) else None
@@ -1188,9 +1486,16 @@ def _django_direct_form_request(call, secret, client_name):
 def _django_form_helper_call(index, call, helper, secret, client_name):
     helper_path, function = helper
     signature = [*function.args.posonlyargs, *function.args.args]
-    if len(signature) < 2 or not call.args or not isinstance(call.args[0], ast.Name) or call.args[0].id != client_name:
+    if (
+        len(signature) < 2
+        or not call.args
+        or not isinstance(call.args[0], ast.Name)
+        or call.args[0].id != client_name
+    ):
         return False
-    if any(isinstance(arg, ast.Starred) for arg in call.args) or any(keyword.arg is None for keyword in call.keywords):
+    if any(isinstance(arg, ast.Starred) for arg in call.args) or any(
+        keyword.arg is None for keyword in call.keywords
+    ):
         return False
     param = _django_form_helper_data_parameter(index, helper_path, function, signature)
     if param is None:
@@ -1201,15 +1506,41 @@ def _django_form_helper_call(index, call, helper, secret, client_name):
 
 def _django_form_helper_data_parameter(index, path, function, signature):
     imports = _django_imports(index, path)
-    posts = [node for node in ast.walk(function) if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "post" and isinstance(node.func.value, ast.Name) and node.func.value.id == signature[0].arg]
+    posts = [
+        node
+        for node in ast.walk(function)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "post"
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == signature[0].arg
+    ]
     if len(posts) != 1 or not imports:
         return None
     data = next((kw.value for kw in posts[0].keywords if kw.arg == "data"), None)
-    if not isinstance(data, ast.Call) or _django_expr(index, path, data.func, function) != "urllib.parse.urlencode" or not data.args:
+    if (
+        not isinstance(data, ast.Call)
+        or _django_expr(index, path, data.func, function) != "urllib.parse.urlencode"
+        or not data.args
+    ):
         return None
     candidate = data.args[0]
-    param = candidate.values[0].id if isinstance(candidate, ast.BoolOp) and isinstance(candidate.op, ast.Or) and candidate.values and isinstance(candidate.values[0], ast.Name) else candidate.id if isinstance(candidate, ast.Name) else None
-    if param is None or any(isinstance(node, ast.Name) and node.id == param and isinstance(node.ctx, (ast.Store, ast.Del)) for node in ast.walk(function)):
+    param = (
+        candidate.values[0].id
+        if isinstance(candidate, ast.BoolOp)
+        and isinstance(candidate.op, ast.Or)
+        and candidate.values
+        and isinstance(candidate.values[0], ast.Name)
+        else candidate.id
+        if isinstance(candidate, ast.Name)
+        else None
+    )
+    if param is None or any(
+        isinstance(node, ast.Name)
+        and node.id == param
+        and isinstance(node.ctx, (ast.Store, ast.Del))
+        for node in ast.walk(function)
+    ):
         return None
     return param if any(item.arg == param for item in signature) else None
 
@@ -1230,7 +1561,8 @@ def _django_form_dict(node, secret):
 
 def _django_before(node, target):
     return (getattr(node, "lineno", 0), getattr(node, "col_offset", 0)) < (
-        getattr(target, "lineno", 0), getattr(target, "col_offset", 0)
+        getattr(target, "lineno", 0),
+        getattr(target, "col_offset", 0),
     )
 
 
@@ -1250,9 +1582,15 @@ def _django_mutated_before(function, name, target):
 
 def _django_receiver_written_before(function, name, target):
     for node in ast.walk(function):
-        if not isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign, ast.Delete, ast.NamedExpr)):
+        if not isinstance(
+            node, (ast.Assign, ast.AnnAssign, ast.AugAssign, ast.Delete, ast.NamedExpr)
+        ):
             continue
-        targets = node.targets if isinstance(node, (ast.Assign, ast.Delete)) else [node.target]
+        targets = (
+            node.targets
+            if isinstance(node, (ast.Assign, ast.Delete))
+            else [node.target]
+        )
         if _django_before(node, target) and any(
             isinstance(part, (ast.Attribute, ast.Subscript))
             and _root_name(part) == name
@@ -1265,9 +1603,18 @@ def _django_receiver_written_before(function, name, target):
 
 def _django_model_binding_rebound(function, name, binding):
     for node in ast.walk(function):
-        if isinstance(node, ast.Name) and node.id == name and isinstance(node.ctx, (ast.Store, ast.Del)) and node is not binding:
+        if (
+            isinstance(node, ast.Name)
+            and node.id == name
+            and isinstance(node.ctx, (ast.Store, ast.Del))
+            and node is not binding
+        ):
             return True
-        if isinstance(node, (ast.Attribute, ast.Subscript)) and isinstance(node.ctx, (ast.Store, ast.Del)) and _root_name(node) == name:
+        if (
+            isinstance(node, (ast.Attribute, ast.Subscript))
+            and isinstance(node.ctx, (ast.Store, ast.Del))
+            and _root_name(node) == name
+        ):
             return True
     return False
 
@@ -1281,8 +1628,11 @@ def django_test_secret_evidence(index, path, line, value):
     literal, assignment, secret = candidate
     function = _django_test_function(index, path, assignment)
     if function is None:
-        return _django_unknown("declaration is not inside a resolved pytest-django test with canonical client fixture")
+        return _django_unknown(
+            "declaration is not inside a resolved pytest-django test with canonical client fixture"
+        )
     from .credential_role_scope_bindings import binding_occurrences
+
     if binding_occurrences(function.body, secret) != [assignment.targets[0]]:
         return _django_unknown("credential binding is reassigned or shadowed")
     witness, reason = _django_fixture_role_witness(index, path, function, secret)
@@ -1296,13 +1646,30 @@ def _django_candidate_binding(index, path, line, value):
     tree = index["modules"].get(path)
     if tree is None or not source.validate(path):
         return None, "source bytes and captured AST did not validate"
-    candidates = [node for node in ast.walk(tree) if isinstance(node, ast.Constant) and node.lineno == line and isinstance(node.value, str) and node.value == value]
+    candidates = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant)
+        and node.lineno == line
+        and isinstance(node.value, str)
+        and node.value == value
+    ]
     if len(candidates) != 1:
         return None, "literal does not identify one captured declaration"
     literal = candidates[0]
     assignment = source.parents[path].get(id(literal))
-    targets = assignment.targets if isinstance(assignment, ast.Assign) else [assignment.target] if isinstance(assignment, ast.AnnAssign) else []
-    if len(targets) != 1 or not isinstance(targets[0], ast.Name) or assignment.value is not literal:
+    targets = (
+        assignment.targets
+        if isinstance(assignment, ast.Assign)
+        else [assignment.target]
+        if isinstance(assignment, ast.AnnAssign)
+        else []
+    )
+    if (
+        len(targets) != 1
+        or not isinstance(targets[0], ast.Name)
+        or assignment.value is not literal
+    ):
         return None, "only direct function-local string bindings are in scope"
     return (literal, assignment, targets[0].id), None
 
@@ -1310,7 +1677,10 @@ def _django_candidate_binding(index, path, line, value):
 def _django_fixture_role_witness(index, path, function, secret):
     settings = _django_setting_facts(index)
     if settings is None or not _django_client_fixture(index):
-        return None, "runner settings, isolated database, model default, or client fixture is unresolved"
+        return (
+            None,
+            "runner settings, isolated database, model default, or client fixture is unresolved",
+        )
     _, _, app_label, model_name = settings
     imports = _django_imports(index, path)
     if not imports:
@@ -1320,17 +1690,28 @@ def _django_fixture_role_witness(index, path, function, secret):
         return None, "no source-resolved active application-model factory call"
     factory_path, factory_function = factory
     factory_name = _django_name(index, factory_path)
-    if factory_name != app_label + ".models" or not _django_factory_resolves(index, factory_path, factory_function, f"{app_label}.{model_name}"):
-        return None, "application-model factory or provider setting resolution is not closed"
+    if factory_name != app_label + ".models" or not _django_factory_resolves(
+        index, factory_path, factory_function, f"{app_label}.{model_name}"
+    ):
+        return (
+            None,
+            "application-model factory or provider setting resolution is not closed",
+        )
     if not _django_model_signal_hooks_closed(index, path, app_label):
         return None, "registered model authority signal is unresolved"
-    model, reason = _django_model_witness(index, path, function, secret, factory_call, app_label, model_name)
+    model, reason = _django_model_witness(
+        index, path, function, secret, factory_call, app_label, model_name
+    )
     if model is None:
         return None, reason
     request, reason = _django_request_witness(index, path, function, secret)
     if request is None:
         return None, reason
-    if _django_settings_mutated(function) or any(isinstance(node, ast.Constant) and node.value in {"APPLICATION_MODEL", "OAUTH2_PROVIDER_APPLICATION_MODEL"} for node in ast.walk(function)):
+    if _django_settings_mutated(function) or any(
+        isinstance(node, ast.Constant)
+        and node.value in {"APPLICATION_MODEL", "OAUTH2_PROVIDER_APPLICATION_MODEL"}
+        for node in ast.walk(function)
+    ):
         return None, "test mutates or overrides the active application-model setting"
     return {
         "model_facts": model["facts"],
@@ -1351,27 +1732,71 @@ def _django_factory_call(index, path, function):
     return None, None
 
 
-def _django_model_witness(index, path, function, secret, factory_call, app_label, model_name):
+def _django_model_witness(
+    index, path, function, secret, factory_call, app_label, model_name
+):
     from .credential_role_scope_bindings import binding_occurrences
 
-    app_binding = next((node for stmt in function.body for node in ast.walk(stmt) if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name) and isinstance(node.value, ast.Call) and node.value is factory_call), None)
-    if app_binding is None or binding_occurrences(function.body, app_binding.targets[0].id) != [app_binding.targets[0]]:
+    app_binding = next(
+        (
+            node
+            for stmt in function.body
+            for node in ast.walk(stmt)
+            if isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+            and isinstance(node.value, ast.Call)
+            and node.value is factory_call
+        ),
+        None,
+    )
+    if app_binding is None or binding_occurrences(
+        function.body, app_binding.targets[0].id
+    ) != [app_binding.targets[0]]:
         return None, "active model class is not held by one stable local binding"
     model_name_local = app_binding.targets[0].id
     model_facts = _django_model_authority(index, app_label, model_name)
     if model_facts is None:
         return None, "resolved model, manager, or client-secret field hook is unproven"
-    create = next((node for stmt in function.body for node in ast.walk(stmt) if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "create" and isinstance(node.func.value, ast.Attribute) and node.func.value.attr == "objects" and isinstance(node.func.value.value, ast.Name) and node.func.value.value.id == model_name_local), None)
-    if create is None or not any(keyword.arg == "client_secret" and isinstance(keyword.value, ast.Name) and keyword.value.id == secret for keyword in create.keywords):
-        return None, "same local binding does not create the resolved model client_secret"
-    if not _django_model_capability_uses_closed(index, path, function, model_name_local, create, app_label, model_name):
+    create = next(
+        (
+            node
+            for stmt in function.body
+            for node in ast.walk(stmt)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "create"
+            and isinstance(node.func.value, ast.Attribute)
+            and node.func.value.attr == "objects"
+            and isinstance(node.func.value.value, ast.Name)
+            and node.func.value.value.id == model_name_local
+        ),
+        None,
+    )
+    if create is None or not any(
+        keyword.arg == "client_secret"
+        and isinstance(keyword.value, ast.Name)
+        and keyword.value.id == secret
+        for keyword in create.keywords
+    ):
+        return (
+            None,
+            "same local binding does not create the resolved model client_secret",
+        )
+    if not _django_model_capability_uses_closed(
+        index, path, function, model_name_local, create, app_label, model_name
+    ):
         return None, "model capability escapes the witnessed authority creation"
-    if _django_model_binding_rebound(function, model_name_local, app_binding.targets[0]):
+    if _django_model_binding_rebound(
+        function, model_name_local, app_binding.targets[0]
+    ):
         return None, "resolved model provider is mutated"
     return {"name": model_name_local, "facts": model_facts}, None
 
 
-def _django_model_capability_uses_closed(index, path, function, name, create, app_label, model_name):
+def _django_model_capability_uses_closed(
+    index, path, function, name, create, app_label, model_name
+):
     model_receiver = (
         create.func.value.value
         if isinstance(create.func, ast.Attribute)
@@ -1391,11 +1816,16 @@ def _django_model_capability_uses_closed(index, path, function, name, create, ap
         return False
     model_path, _ = _django_mod(index, app_label + ".models")
     cls = _django_class(index, model_path, model_name) if model_path else None
-    chain = _django_class_chain(index, model_path, cls, "django.db.models.Model") if cls else None
+    chain = (
+        _django_class_chain(index, model_path, cls, "django.db.models.Model")
+        if cls
+        else None
+    )
     if chain is None:
         return False
     return all(
-        node is model_receiver or _django_literal_class_projection(index, path, chain, node)
+        node is model_receiver
+        or _django_literal_class_projection(index, path, chain, node)
         for node in loads
     )
 
@@ -1413,17 +1843,29 @@ def _django_literal_class_projection(index, path, chain, node):
         if len(bindings) != 1:
             return False
         values = _django_assignment_from_class(owner, parent.attr)
-        return len(values) == 1 and isinstance(values[0], ast.Constant) and type(values[0].value) in {str, int, float, bool, bytes, type(None)}
+        return (
+            len(values) == 1
+            and isinstance(values[0], ast.Constant)
+            and type(values[0].value) in {str, int, float, bool, bytes, type(None)}
+        )
     return False
 
 
 def _django_request_witness(index, path, function, secret):
     request = _django_form_request(index, path, function, secret)
     if request is None:
-        return None, "same local binding is not exercised through a source-resolved local test client"
+        return (
+            None,
+            "same local binding is not exercised through a source-resolved local test client",
+        )
     request_kind, request_call = request
-    if _django_mutated_before(function, "client", request_call) or _django_receiver_written_before(function, "client", request_call):
-        return None, "test client is passed to an opaque operation before the local request"
+    if _django_mutated_before(
+        function, "client", request_call
+    ) or _django_receiver_written_before(function, "client", request_call):
+        return (
+            None,
+            "test client is passed to an opaque operation before the local request",
+        )
     return (request_kind, request_call), None
 
 
@@ -1436,15 +1878,34 @@ def _django_evidence_record(index, path, value, literal, witness):
         "source": relative,
         "source_sha256": hashlib.sha256(raw).hexdigest(),
         "value_sha256": hashlib.sha256(value.encode("utf-8")).hexdigest(),
-        "declaration_span": [literal.lineno, literal.col_offset, getattr(literal, "end_lineno", literal.lineno), getattr(literal, "end_col_offset", literal.col_offset)],
+        "declaration_span": [
+            literal.lineno,
+            literal.col_offset,
+            getattr(literal, "end_lineno", literal.lineno),
+            getattr(literal, "end_col_offset", literal.col_offset),
+        ],
         "inventory_sha256": index["inventory_sha256"],
         "runner_config_sha256": index["config_hashes"],
         "settings_module": index["runner"],
         "witness_count": 2,
-        "modeled_effects": ["pytest-django test marked for database access", "SQLite in-memory test database", "resolved configured Django model created with this local credential binding", "same binding placed in a source-resolved local test-client form request"],
-        "authority": {"kind": "synthetic Django test model", **witness["model_facts"], "factory": witness["factory_name"], "configured_model": witness["configured_model"]},
+        "modeled_effects": [
+            "pytest-django test marked for database access",
+            "SQLite in-memory test database",
+            "resolved configured Django model created with this local credential binding",
+            "same binding placed in a source-resolved local test-client form request",
+        ],
+        "authority": {
+            "kind": "synthetic Django test model",
+            **witness["model_facts"],
+            "factory": witness["factory_name"],
+            "configured_model": witness["configured_model"],
+        },
         "origin": "function-local fixed string literal",
-        "transport": {"local_exercise": witness["request_kind"], "other_transports": "UNASSESSED", "exclusivity": "UNASSESSED"},
+        "transport": {
+            "local_exercise": witness["request_kind"],
+            "other_transports": "UNASSESSED",
+            "exclusivity": "UNASSESSED",
+        },
         "runtime_assurance": "INCOMPLETE",
         "captured_repo_only": True,
     }
@@ -1649,7 +2110,9 @@ def _jwt_provider_source_safe(
         and not provider_classes[0].keywords
         and not provider_classes[0].decorator_list
         and not any(
-            _jwt_provider_write(item, provider_class, {provider_class: type_name}, provider_aliases)
+            _jwt_provider_write(
+                item, provider_class, {provider_class: type_name}, provider_aliases
+            )
             for item in ast.walk(provider)
         )
         and _jwt_provider_api_profile_safe(provider_classes[0], provider_class)
@@ -1715,8 +2178,7 @@ def _jwt_attribute_path(node):
 
 def _jwt_method_has_call(method, attribute_path):
     return any(
-        isinstance(node, ast.Call)
-        and _jwt_attribute_path(node.func) == attribute_path
+        isinstance(node, ast.Call) and _jwt_attribute_path(node.func) == attribute_path
         for node in ast.walk(method)
     )
 
@@ -1781,7 +2243,10 @@ def _jwt_provider_api_profile_safe(provider_class, provider_class_name):
                 and isinstance(statement.value, ast.Call)
                 and isinstance(statement.value.func, ast.Attribute)
                 and statement.value.func.attr == "sign"
-                and any(isinstance(target, ast.Name) and target.id == "signature" for target in statement.targets)
+                and any(
+                    isinstance(target, ast.Name) and target.id == "signature"
+                    for target in statement.targets
+                )
                 for statement in encode.body
             )
             and _jwt_signed_result_is_encoded(encode)
@@ -1843,7 +2308,9 @@ def _jwt_initializer_binds_jws(method):
             and isinstance(target.value, ast.Name)
             and target.value.id == "self"
             for target in (
-                statement.targets if isinstance(statement, ast.Assign) else [statement.target]
+                statement.targets
+                if isinstance(statement, ast.Assign)
+                else [statement.target]
             )
         )
         for statement in method.body
@@ -1918,7 +2385,11 @@ def _jwt_signed_result_is_encoded(method):
             isinstance(argument, ast.Name) and argument.id in signature_names
             for argument in node.args[0].args
         )
-        for node in (statement.value for statement in method.body if isinstance(statement, ast.Expr))
+        for node in (
+            statement.value
+            for statement in method.body
+            if isinstance(statement, ast.Expr)
+        )
     )
 
 
@@ -2148,7 +2619,13 @@ def _jwt_local_literal_uses(
 
 def _jwt_local_data_expression(value):
     if isinstance(value, ast.Constant):
-        return value.value is None or type(value.value) in {str, bytes, int, float, bool}
+        return value.value is None or type(value.value) in {
+            str,
+            bytes,
+            int,
+            float,
+            bool,
+        }
     if isinstance(value, ast.Dict):
         return all(
             key is not None
@@ -2189,7 +2666,9 @@ def _jwt_payload_source_span(value, owner, module, aliases, encode_statement):
         and any(
             isinstance(target, ast.Name) and target.id == value.id
             for target in (
-                statement.targets if isinstance(statement, ast.Assign) else [statement.target]
+                statement.targets
+                if isinstance(statement, ast.Assign)
+                else [statement.target]
             )
         )
     ]
@@ -2236,9 +2715,7 @@ def _jwt_payload_source_span(value, owner, module, aliases, encode_statement):
     ]
     if (
         len(fixture.decorator_list) != 1
-        or _review_audit()._resolved_ast_name(
-            fixture.decorator_list[0], aliases
-        )
+        or _review_audit()._resolved_ast_name(fixture.decorator_list[0], aliases)
         != "pytest.fixture"
         or fixture.args.posonlyargs
         or fixture.args.args
@@ -2251,7 +2728,8 @@ def _jwt_payload_source_span(value, owner, module, aliases, encode_statement):
             fixture_body[0].value, module, aliases
         )
         or any(
-            statement is not fixture and fixture.name in _review_audit()._bound_names(statement)
+            statement is not fixture
+            and fixture.name in _review_audit()._bound_names(statement)
             for statement in module.body
         )
         or not _jwt_payload_root_is_stable(
@@ -2265,7 +2743,12 @@ def _jwt_payload_source_span(value, owner, module, aliases, encode_statement):
     ):
         return None
     returned = fixture_body[0].value
-    return [returned.lineno, returned.col_offset, returned.end_lineno, returned.end_col_offset]
+    return [
+        returned.lineno,
+        returned.col_offset,
+        returned.end_lineno,
+        returned.end_col_offset,
+    ]
 
 
 def _jwt_fixture_payload_expression_safe(value, module, aliases):
@@ -2278,10 +2761,7 @@ def _jwt_fixture_payload_expression_safe(value, module, aliases):
             and _jwt_fixture_payload_expression_safe(item, module, aliases)
             for key, item in zip(value.keys, value.values)
         )
-    if (
-        isinstance(value, ast.BinOp)
-        and isinstance(value.op, (ast.Add, ast.Sub))
-    ):
+    if isinstance(value, ast.BinOp) and isinstance(value.op, (ast.Add, ast.Sub)):
         return (
             _jwt_captured_test_timestamp_call(value.left, module, aliases)
             and isinstance(value.right, ast.Constant)
@@ -2302,9 +2782,11 @@ def _jwt_captured_test_timestamp_call(value, module, aliases):
         or value.keywords
     ):
         return False
-    binding = getattr(module, "_security_oracle_context", {}).get(
-        "captured_imports", {}
-    ).get(value.func.id)
+    binding = (
+        getattr(module, "_security_oracle_context", {})
+        .get("captured_imports", {})
+        .get(value.func.id)
+    )
     if (
         not isinstance(binding, tuple)
         or len(binding) != 2
@@ -2341,8 +2823,8 @@ def _jwt_captured_test_timestamp_call(value, module, aliases):
     helpers = [
         item
         for item in source.body
-        if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)
-        ) and item.name == binding[1]
+        if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and item.name == binding[1]
     ]
     if len(helpers) != 1:
         return False
@@ -2353,9 +2835,7 @@ def _jwt_module_name_is_rebound(module, name):
     for statement in module.body:
         if isinstance(statement, (ast.Import, ast.ImportFrom)):
             continue
-        if isinstance(
-            statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
-        ):
+        if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             if statement.name == name:
                 return True
             continue
@@ -2417,9 +2897,7 @@ def _jwt_timestamp_helper_is_source_bound(helper, source):
     result = body[0].value
     if not (
         isinstance(result, ast.Call)
-        and _review_audit()._resolved_ast_name(
-            result.func, aliases
-        )
+        and _review_audit()._resolved_ast_name(result.func, aliases)
         == "calendar.timegm"
         and len(result.args) == 1
         and not result.keywords
@@ -2462,14 +2940,15 @@ def _jwt_captured_import_binding_is_stable(source, name):
         for item in source.body
         if isinstance(item, (ast.Import, ast.ImportFrom))
         and any(
-            (alias.asname or alias.name.split(".")[0]) == name
-            for alias in item.names
+            (alias.asname or alias.name.split(".")[0]) == name for alias in item.names
         )
     ]
     if len(imports) != 1 or binding_occurrences(source.body, name) != imports:
         return False
     for statement in source.body:
-        if isinstance(statement, (ast.Assign, ast.AnnAssign, ast.AugAssign, ast.Delete)):
+        if isinstance(
+            statement, (ast.Assign, ast.AnnAssign, ast.AugAssign, ast.Delete)
+        ):
             targets = (
                 statement.targets
                 if isinstance(statement, (ast.Assign, ast.Delete))
@@ -2607,9 +3086,7 @@ def _jwt_roundtrip_witness(owner, key_name, receiver, module, aliases):
         payload = (
             encode.args[0]
             if encode.args
-            else next(
-                (kw.value for kw in encode.keywords if kw.arg == "payload"), None
-            )
+            else next((kw.value for kw in encode.keywords if kw.arg == "payload"), None)
         )
         payload_span = (
             _jwt_payload_source_span(payload, owner, module, aliases, statement)
@@ -2637,18 +3114,11 @@ def _jwt_roundtrip_witness(owner, key_name, receiver, module, aliases):
                 and decode.func.value.id == receiver
             ):
                 continue
-            has_token = _jwt_argument_is_bound(
-                decode, token_name, 0, "jwt", "msg"
-            )
+            has_token = _jwt_argument_is_bound(decode, token_name, 0, "jwt", "msg")
             has_same_key = _jwt_argument_is_bound(decode, key_name, 1, "key")
-            token_arguments = (
-                ([decode.args[0]] if decode.args else [])
-                + [
-                    item.value
-                    for item in decode.keywords
-                    if item.arg in {"jwt", "msg"}
-                ]
-            )
+            token_arguments = ([decode.args[0]] if decode.args else []) + [
+                item.value for item in decode.keywords if item.arg in {"jwt", "msg"}
+            ]
             token_decodes = _jwt_token_loads_have_closed_decodes(
                 owner,
                 token_name,
@@ -2674,7 +3144,9 @@ def _jwt_roundtrip_witness(owner, key_name, receiver, module, aliases):
     return pairs[0] if len(pairs) == 1 else None
 
 
-def _jwt_token_loads_have_closed_decodes(owner, token_name, receiver, key_name, parents):
+def _jwt_token_loads_have_closed_decodes(
+    owner, token_name, receiver, key_name, parents
+):
     loads = [
         item
         for item in ast.walk(owner)
@@ -2697,10 +3169,9 @@ def _jwt_token_loads_have_closed_decodes(owner, token_name, receiver, key_name, 
             and _jwt_argument_is_bound(call, key_name, 1, "key")
         ):
             return ()
-        token_arguments = (
-            ([call.args[0]] if call.args else [])
-            + [item.value for item in call.keywords if item.arg in {"jwt", "msg"}]
-        )
+        token_arguments = ([call.args[0]] if call.args else []) + [
+            item.value for item in call.keywords if item.arg in {"jwt", "msg"}
+        ]
         if item not in token_arguments:
             return ()
         decodes.append(call)
@@ -2709,9 +3180,7 @@ def _jwt_token_loads_have_closed_decodes(owner, token_name, receiver, key_name, 
 
 def _jwt_argument_is_bound(call, name, position, *keyword_names):
     positional = call.args[position] if len(call.args) > position else None
-    keyword_values = [
-        item.value for item in call.keywords if item.arg in keyword_names
-    ]
+    keyword_values = [item.value for item in call.keywords if item.arg in keyword_names]
     return any(
         isinstance(item, ast.Name) and item.id == name
         for item in ([positional] if positional is not None else []) + keyword_values
@@ -2943,9 +3412,9 @@ def closed_jwt_test_literal(
     }
 
 
-
-
-def application_test_index(root, modules, source_bytes, inventory, configuration_bytes=None):
+def application_test_index(
+    root, modules, source_bytes, inventory, configuration_bytes=None
+):
     """Reuse the captured snapshot graph for application credential role slices."""
     from .credential_role_sources import SourceSnapshotIndex
 
@@ -2955,12 +3424,30 @@ def application_test_index(root, modules, source_bytes, inventory, configuration
     paths = {source.relative(path): path for path in modules}
     if None in paths or len(paths) != len(modules):
         return None
-    if any(_django_provider_root_shadowed(paths, name) for name in
-           ('pytest', 'flask', 'django', 'rest_framework', 'hashlib', 'base64',
-            'json', 'itsdangerous', 'passlib', 'unittest')):
+    if any(
+        _django_provider_root_shadowed(paths, name)
+        for name in (
+            "pytest",
+            "flask",
+            "django",
+            "rest_framework",
+            "hashlib",
+            "base64",
+            "json",
+            "itsdangerous",
+            "passlib",
+            "unittest",
+        )
+    ):
         return None
-    return {'source': source, 'modules': modules, 'module_paths': paths,
-            'imports': {}, 'profiles': {}, 'configuration_bytes': configuration_bytes or {}}
+    return {
+        "source": source,
+        "modules": modules,
+        "module_paths": paths,
+        "imports": {},
+        "profiles": {},
+        "configuration_bytes": configuration_bytes or {},
+    }
 
 
 def _app_expression_name(index, path, node, function=None):
@@ -2969,18 +3456,32 @@ def _app_expression_name(index, path, node, function=None):
 
     if isinstance(node, ast.Attribute):
         base = _app_expression_name(index, path, node.value, function)
-        return base + '.' + node.attr if base else None
-    if not isinstance(node, ast.Name) or not index['source'].validate(path):
+        return base + "." + node.attr if base else None
+    if not isinstance(node, ast.Name) or not index["source"].validate(path):
         return None
-    tree = index['modules'][path]
+    tree = index["modules"][path]
     module = _django_name(index, path)
-    package = module if index['source'].relative(path).endswith('/__init__.py') else module.rpartition('.')[0]
-    scope = function if function is not None and binding_occurrences(function.body, node.id) else tree
+    package = (
+        module
+        if index["source"].relative(path).endswith("/__init__.py")
+        else module.rpartition(".")[0]
+    )
+    scope = (
+        function
+        if function is not None and binding_occurrences(function.body, node.id)
+        else tree
+    )
     bindings = binding_occurrences(scope.body, node.id)
     if len(bindings) != 1 or not isinstance(bindings[0], (ast.Import, ast.ImportFrom)):
         return None
-    if isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)) and any(arg.arg == node.id for arg in
-            [*function.args.posonlyargs, *function.args.args, *function.args.kwonlyargs]):
+    if isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)) and any(
+        arg.arg == node.id
+        for arg in [
+            *function.args.posonlyargs,
+            *function.args.args,
+            *function.args.kwonlyargs,
+        ]
+    ):
         return None
     rows = _django_import_rows(bindings[0], package)
     return next((target for name, target in rows or () if name == node.id), None)
@@ -2990,17 +3491,29 @@ def _app_local_assignment(function, name):
     from .credential_role_scope_bindings import binding_occurrences
 
     bindings = binding_occurrences(function.body, name)
-    rows = [statement for statement in function.body
-            if isinstance(statement, ast.Assign) and len(statement.targets) == 1
-            and isinstance(statement.targets[0], ast.Name) and statement.targets[0].id == name]
+    rows = [
+        statement
+        for statement in function.body
+        if isinstance(statement, ast.Assign)
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+        and statement.targets[0].id == name
+    ]
     return rows[0] if len(rows) == len(bindings) == 1 else None
 
 
 def _app_literal_encoding(index, path, function, call):
-    return not call.keywords and len(call.args) <= 2 and all(
-        isinstance(arg, ast.Constant) and isinstance(arg.value, str)
-        or _app_expression_name(index, path, arg, function) == "rest_framework.HTTP_HEADER_ENCODING"
-        for arg in call.args)
+    return (
+        not call.keywords
+        and len(call.args) <= 2
+        and all(
+            isinstance(arg, ast.Constant)
+            and isinstance(arg.value, str)
+            or _app_expression_name(index, path, arg, function)
+            == "rest_framework.HTTP_HEADER_ENCODING"
+            for arg in call.args
+        )
+    )
 
 
 def _app_credential_lineage(index, path, function, expression, secret, seen=()):
@@ -3012,29 +3525,50 @@ def _app_credential_lineage(index, path, function, expression, secret, seen=()):
         if expression.id == secret:
             return True
         row = _app_local_assignment(function, expression.id)
-        return bool(row and row.lineno < expression.lineno and _app_credential_lineage(
-            index, path, function, row.value, secret, seen))
+        return bool(
+            row
+            and row.lineno < expression.lineno
+            and _app_credential_lineage(index, path, function, row.value, secret, seen)
+        )
     if isinstance(expression, ast.BinOp):
         return isinstance(expression.op, ast.Add) and any(
             _app_hash_derived(index, path, function, child, secret, seen)
-            for child in (expression.left, expression.right))
+            for child in (expression.left, expression.right)
+        )
     if isinstance(expression, (ast.JoinedStr, ast.FormattedValue)):
-        return any(_app_credential_lineage(index, path, function, child, secret, seen)
-                   for child in ast.iter_child_nodes(expression))
+        return any(
+            _app_credential_lineage(index, path, function, child, secret, seen)
+            for child in ast.iter_child_nodes(expression)
+        )
     if not isinstance(expression, ast.Call):
         return False
-    if isinstance(expression.func, ast.Attribute) and expression.func.attr in {'encode', 'decode'}:
-        return _app_literal_encoding(index, path, function, expression) and _app_credential_lineage(
-            index, path, function, expression.func.value, secret, seen)
+    if isinstance(expression.func, ast.Attribute) and expression.func.attr in {
+        "encode",
+        "decode",
+    }:
+        return _app_literal_encoding(
+            index, path, function, expression
+        ) and _app_credential_lineage(
+            index, path, function, expression.func.value, secret, seen
+        )
     canonical = _app_expression_name(index, path, expression.func, function)
-    if canonical in {'base64.b64encode', 'base64.b64decode'}:
-        return len(expression.args) == 1 and not expression.keywords and _app_credential_lineage(
-            index, path, function, expression.args[0], secret, seen)
-    if canonical == 'hashlib.pbkdf2_hmac':
-        return len(expression.args) == 4 and not expression.keywords and _app_exact_raw_credential(
-            index, path, function, expression.args[1], secret, seen)
+    if canonical in {"base64.b64encode", "base64.b64decode"}:
+        return (
+            len(expression.args) == 1
+            and not expression.keywords
+            and _app_credential_lineage(
+                index, path, function, expression.args[0], secret, seen
+            )
+        )
+    if canonical == "hashlib.pbkdf2_hmac":
+        return (
+            len(expression.args) == 4
+            and not expression.keywords
+            and _app_exact_raw_credential(
+                index, path, function, expression.args[1], secret, seen
+            )
+        )
     return False
-
 
 
 def _app_exact_raw_credential(index, path, function, expression, secret, seen=()):
@@ -3045,11 +3579,21 @@ def _app_exact_raw_credential(index, path, function, expression, secret, seen=()
         if expression.id == secret:
             return True
         row = _app_local_assignment(function, expression.id)
-        return bool(row and _app_exact_raw_credential(index, path, function, row.value, secret, seen))
-    return bool(isinstance(expression, ast.Call) and isinstance(expression.func, ast.Attribute)
-                and expression.func.attr in {'encode', 'decode'}
-                and _app_literal_encoding(index, path, function, expression)
-                and _app_exact_raw_credential(index, path, function, expression.func.value, secret, seen))
+        return bool(
+            row
+            and _app_exact_raw_credential(
+                index, path, function, row.value, secret, seen
+            )
+        )
+    return bool(
+        isinstance(expression, ast.Call)
+        and isinstance(expression.func, ast.Attribute)
+        and expression.func.attr in {"encode", "decode"}
+        and _app_literal_encoding(index, path, function, expression)
+        and _app_exact_raw_credential(
+            index, path, function, expression.func.value, secret, seen
+        )
+    )
 
 
 def _app_hash_derived(index, path, function, expression, secret, seen=()):
@@ -3058,18 +3602,37 @@ def _app_hash_derived(index, path, function, expression, secret, seen=()):
     seen = (*seen, id(expression))
     if isinstance(expression, ast.Name):
         row = _app_local_assignment(function, expression.id)
-        return bool(row and _app_hash_derived(index, path, function, row.value, secret, seen))
-    return bool(isinstance(expression, ast.Call)
-                and _app_expression_name(index, path, expression.func, function) == 'hashlib.pbkdf2_hmac'
-                and len(expression.args) == 4 and not expression.keywords
-                and _app_exact_raw_credential(index, path, function, expression.args[1], secret, seen))
+        return bool(
+            row and _app_hash_derived(index, path, function, row.value, secret, seen)
+        )
+    return bool(
+        isinstance(expression, ast.Call)
+        and _app_expression_name(index, path, expression.func, function)
+        == "hashlib.pbkdf2_hmac"
+        and len(expression.args) == 4
+        and not expression.keywords
+        and _app_exact_raw_credential(
+            index, path, function, expression.args[1], secret, seen
+        )
+    )
 
 
 def _app_active_call(index, path, function, call):
     parent = call
-    parents = index['source'].parents[path]
+    parents = index["source"].parents[path]
     while not isinstance(parent, ast.stmt):
-        if isinstance(parent, (ast.BoolOp, ast.IfExp, ast.Lambda, ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)):
+        if isinstance(
+            parent,
+            (
+                ast.BoolOp,
+                ast.IfExp,
+                ast.Lambda,
+                ast.ListComp,
+                ast.SetComp,
+                ast.DictComp,
+                ast.GeneratorExp,
+            ),
+        ):
             return False
         parent = parents.get(id(parent))
         if parent is None:
@@ -3077,8 +3640,11 @@ def _app_active_call(index, path, function, call):
     if parent not in function.body:
         return False
     position = function.body.index(parent)
-    return not any(isinstance(node, ast.Return) for statement in function.body[:position]
-                   for node in ast.walk(statement))
+    return not any(
+        isinstance(node, ast.Return)
+        for statement in function.body[:position]
+        for node in ast.walk(statement)
+    )
 
 
 def _app_subscript_chain(node):
@@ -3094,61 +3660,91 @@ def _app_member_chain(node):
     while isinstance(node, ast.Attribute):
         members.insert(0, node.attr)
         node = node.value
-    return ([node.id, *members] if isinstance(node, ast.Name) else None)
+    return [node.id, *members] if isinstance(node, ast.Name) else None
 
 
 def _app_client_requests(function, receiver):
-    return [node for node in ast.walk(function) if isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Attribute) and node.func.attr in {'post', 'put', 'patch'}
-            and _app_member_chain(node.func.value) == receiver]
+    return [
+        node
+        for node in ast.walk(function)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr in {"post", "put", "patch"}
+        and _app_member_chain(node.func.value) == receiver
+    ]
 
 
 def _app_request_credential(index, path, function, call, secret):
-    data = next((kw.value for kw in call.keywords if kw.arg in {'data', 'json'}), None)
+    data = next((kw.value for kw in call.keywords if kw.arg in {"data", "json"}), None)
     if not isinstance(data, ast.Dict):
         return False
-    return any(isinstance(key, ast.Constant) and key.value == 'password'
-               and _app_credential_lineage(index, path, function, value, secret)
-               for key, value in zip(data.keys, data.values))
+    return any(
+        isinstance(key, ast.Constant)
+        and key.value == "password"
+        and _app_credential_lineage(index, path, function, value, secret)
+        for key, value in zip(data.keys, data.values)
+    )
 
 
 def _app_provider_unchanged(index, path, function, canonical):
     """Related module/attribute writes and reflective replacement invalidate roles."""
     for node in ast.walk(function):
-        if isinstance(node, ast.Attribute) and isinstance(node.ctx, (ast.Store, ast.Del)):
+        if isinstance(node, ast.Attribute) and isinstance(
+            node.ctx, (ast.Store, ast.Del)
+        ):
             value = _app_expression_name(index, path, node.value, function)
-            if value and (canonical == value or canonical.startswith(value + '.') or value.startswith(canonical + '.')):
+            if value and (
+                canonical == value
+                or canonical.startswith(value + ".")
+                or value.startswith(canonical + ".")
+            ):
                 return False
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in {'setattr', 'delattr'}:
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id in {"setattr", "delattr"}
+        ):
             if node.args and _app_expression_name(index, path, node.args[0], function):
                 return False
     return True
 
 
-
 def _app_capability_interval(index, path, function, before):
     """Reject explicit replacement/escape of the selected client/factory roots."""
-    protected = (['client'], ['self', 'client'], ['self', 'factory'], ['self', 'app'])
+    protected = (["client"], ["self", "client"], ["self", "factory"], ["self", "app"])
     for node in ast.walk(function):
-        if getattr(node, 'lineno', before + 1) >= before:
+        if getattr(node, "lineno", before + 1) >= before:
             continue
-        if isinstance(node, (ast.Name, ast.Attribute)) and isinstance(node.ctx, (ast.Store, ast.Del)):
+        if isinstance(node, (ast.Name, ast.Attribute)) and isinstance(
+            node.ctx, (ast.Store, ast.Del)
+        ):
             chain = _app_member_chain(node)
-            if chain and any(chain[:len(root)] == root for root in protected):
+            if chain and any(chain[: len(root)] == root for root in protected):
                 return False
-        if isinstance(node, ast.Call) and _app_capability_call_escapes(index, path, function, node, protected):
+        if isinstance(node, ast.Call) and _app_capability_call_escapes(
+            index, path, function, node, protected
+        ):
             return False
     return True
 
 
 def _app_capability_call_escapes(index, path, function, call, protected):
     arguments = [*call.args, *(kw.value for kw in call.keywords)]
-    if isinstance(call.func, ast.Name) and call.func.id in {'setattr', 'delattr'} and call.args:
+    if (
+        isinstance(call.func, ast.Name)
+        and call.func.id in {"setattr", "delattr"}
+        and call.args
+    ):
         chain = _app_member_chain(call.args[0])
-        return chain == ['self'] or any(chain == root for root in protected)
-    tracked = [arg for arg in arguments if any(_app_member_chain(arg) == root for root in protected)]
-    return bool(tracked) and not _app_captured_call_preserves(index, path, function, call, tracked)
-
+        return chain == ["self"] or any(chain == root for root in protected)
+    tracked = [
+        arg
+        for arg in arguments
+        if any(_app_member_chain(arg) == root for root in protected)
+    ]
+    return bool(tracked) and not _app_captured_call_preserves(
+        index, path, function, call, tracked
+    )
 
 
 def _app_captured_call_preserves(index, path, function, call, tracked):
@@ -3161,38 +3757,67 @@ def _app_captured_call_preserves(index, path, function, call, tracked):
         return False
     mapping = dict(zip(parameters, call.args))
     mapping.update({kw.arg: kw.value for kw in call.keywords if kw.arg})
-    roots = {name: 'selected-capability' for name, value in mapping.items() if value in tracked}
+    roots = {
+        name: "selected-capability"
+        for name, value in mapping.items()
+        if value in tracked
+    }
     if len(roots) != len(tracked):
         return False
     from .credential_role_identity_effects import summarize_identity_effect
-    effect = summarize_identity_effect(callee, callee_path, index['source'], roots)
+
+    effect = summarize_identity_effect(callee, callee_path, index["source"], roots)
     return effect.preserves_class_identity and not effect.field_writes
 
 
 def _app_direct_returns(index, path, function):
     from .credential_role_identity_call_model import own_function_nodes
-    if not index['source'].validate(path):
+
+    if not index["source"].validate(path):
         return []
-    rows = [node for node in own_function_nodes(function, path, index['source']) if isinstance(node, ast.Return)]
+    rows = [
+        node
+        for node in own_function_nodes(function, path, index["source"])
+        if isinstance(node, ast.Return)
+    ]
     return rows if all(node in function.body for node in rows) else []
 
 
 def _app_exact_formatted_member(node, member):
     if isinstance(node, ast.JoinedStr):
-        return any(isinstance(value, ast.FormattedValue) and value.format_spec is None
-                   and value.conversion == -1 and _app_member_chain(value.value) == member
-                   for value in node.values)
-    if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-            and node.func.attr == 'format' and isinstance(node.func.value, ast.Constant)
-            and isinstance(node.func.value.value, str) and len(node.args) == 1 and not node.keywords):
+        return any(
+            isinstance(value, ast.FormattedValue)
+            and value.format_spec is None
+            and value.conversion == -1
+            and _app_member_chain(value.value) == member
+            for value in node.values
+        )
+    if not (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "format"
+        and isinstance(node.func.value, ast.Constant)
+        and isinstance(node.func.value.value, str)
+        and len(node.args) == 1
+        and not node.keywords
+    ):
         return False
     import string
+
     try:
-        fields = [(name, spec, conversion) for _, name, spec, conversion in
-                  string.Formatter().parse(node.func.value.value) if name is not None]
+        fields = [
+            (name, spec, conversion)
+            for _, name, spec, conversion in string.Formatter().parse(
+                node.func.value.value
+            )
+            if name is not None
+        ]
     except ValueError:
         return False
-    return fields in [[('', '', None)], [('0', '', None)]] and _app_member_chain(node.args[0]) == member
+    return (
+        fields in [[("", "", None)], [("0", "", None)]]
+        and _app_member_chain(node.args[0]) == member
+    )
 
 
 def _app_signed_user_id(index, path, function):
@@ -3201,19 +3826,31 @@ def _app_signed_user_id(index, path, function):
     if len(returns) != 1 or len(parameters) != 1:
         return False
     call = returns[0].value
-    if not (isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute)
-            and call.func.attr == 'dumps' and isinstance(call.func.value, ast.Name)
-            and len(call.args) == 1 and not call.keywords):
+    if not (
+        isinstance(call, ast.Call)
+        and isinstance(call.func, ast.Attribute)
+        and call.func.attr == "dumps"
+        and isinstance(call.func.value, ast.Name)
+        and len(call.args) == 1
+        and not call.keywords
+    ):
         return False
-    rows = _django_assignment(index['modules'][path], call.func.value.id)
+    rows = _django_assignment(index["modules"][path], call.func.value.id)
     if len(rows) != 1 or not isinstance(rows[0][1], ast.Call):
         return False
-    if _app_expression_name(index, path, rows[0][1].func) != 'itsdangerous.URLSafeTimedSerializer':
+    if (
+        _app_expression_name(index, path, rows[0][1].func)
+        != "itsdangerous.URLSafeTimedSerializer"
+    ):
         return False
     argument = call.args[0]
-    return bool(isinstance(argument, ast.Call) and isinstance(argument.func, ast.Name)
-                and argument.func.id == 'str' and len(argument.args) == 1
-                and _app_member_chain(argument.args[0]) == [parameters[0].arg, 'id'])
+    return bool(
+        isinstance(argument, ast.Call)
+        and isinstance(argument.func, ast.Name)
+        and argument.func.id == "str"
+        and len(argument.args) == 1
+        and _app_member_chain(argument.args[0]) == [parameters[0].arg, "id"]
+    )
 
 
 def _app_basic_pair(function, expression, seen=()):
@@ -3224,60 +3861,126 @@ def _app_basic_pair(function, expression, seen=()):
         row = _app_local_assignment(function, expression.id)
         return _app_basic_pair(function, row.value, seen) if row else None
     if isinstance(expression, ast.Call):
-        if isinstance(expression.func, ast.Attribute) and expression.func.attr in {'encode', 'decode'}:
+        if isinstance(expression.func, ast.Attribute) and expression.func.attr in {
+            "encode",
+            "decode",
+        }:
             return _app_basic_pair(function, expression.func.value, seen)
-        return _app_basic_pair(function, expression.args[0], seen) if expression.args else None
+        return (
+            _app_basic_pair(function, expression.args[0], seen)
+            if expression.args
+            else None
+        )
     if not isinstance(expression, ast.JoinedStr):
         return None
     values = expression.values
-    if (len(values) == 3 and isinstance(values[0], ast.FormattedValue)
-            and isinstance(values[1], ast.Constant) and values[1].value == ':'
-            and isinstance(values[2], ast.FormattedValue)):
-        if all(isinstance(values[n].value, ast.Name) and values[n].format_spec is None
-               and values[n].conversion == -1 for n in (0, 2)):
+    if (
+        len(values) == 3
+        and isinstance(values[0], ast.FormattedValue)
+        and isinstance(values[1], ast.Constant)
+        and values[1].value == ":"
+        and isinstance(values[2], ast.FormattedValue)
+    ):
+        if all(
+            isinstance(values[n].value, ast.Name)
+            and values[n].format_spec is None
+            and values[n].conversion == -1
+            for n in (0, 2)
+        ):
             return values[0].value.id, values[2].value.id
-    pairs = [_app_basic_pair(function, value.value, seen)
-             for value in values if isinstance(value, ast.FormattedValue)]
+    pairs = [
+        _app_basic_pair(function, value.value, seen)
+        for value in values
+        if isinstance(value, ast.FormattedValue)
+    ]
     pairs = [pair for pair in pairs if pair is not None]
     return pairs[0] if len(pairs) == 1 else None
 
 
 def _app_drf_same_credentials(function, creation, header, secret):
-    username = next((kw.value for kw in creation.keywords if kw.arg == 'username'), None)
-    if not isinstance(username, ast.Name) or _app_local_assignment(function, username.id) is None:
+    username = next(
+        (kw.value for kw in creation.keywords if kw.arg == "username"), None
+    )
+    if (
+        not isinstance(username, ast.Name)
+        or _app_local_assignment(function, username.id) is None
+    ):
         return False
-    expression = next((kw.value for kw in header.keywords if kw.arg == 'HTTP_AUTHORIZATION'), None)
+    expression = next(
+        (kw.value for kw in header.keywords if kw.arg == "HTTP_AUTHORIZATION"), None
+    )
     return _app_basic_pair(function, expression) == (username.id, secret)
 
 
 def _app_provider_scopes_clear(index, path, function):
-    providers = ('django.contrib.auth.models.User', 'rest_framework.test.APITestCase',
-                 'base64.b64encode', 'hashlib.pbkdf2_hmac')
-    return all(_app_provider_unchanged(index, path, function, name) for name in providers)
+    providers = (
+        "django.contrib.auth.models.User",
+        "rest_framework.test.APITestCase",
+        "base64.b64encode",
+        "hashlib.pbkdf2_hmac",
+    )
+    return all(
+        _app_provider_unchanged(index, path, function, name) for name in providers
+    )
 
 
 def _app_drf_enrollment(index, path, function, owner, secret):
     if not isinstance(owner, ast.ClassDef) or owner.decorator_list or owner.keywords:
         return None
-    if len(owner.bases) != 1 or _app_expression_name(index, path, owner.bases[0]) != 'rest_framework.test.APITestCase':
+    if (
+        len(owner.bases) != 1
+        or _app_expression_name(index, path, owner.bases[0])
+        != "rest_framework.test.APITestCase"
+    ):
         return None
     from .credential_role_scope_bindings import binding_occurrences
 
-    if any(binding_occurrences(owner.body, name) for name in
-           ('client', 'client_class', '__init__', '__new__', '__getattribute__', '__getattr__', 'run')):
+    if any(
+        binding_occurrences(owner.body, name)
+        for name in (
+            "client",
+            "client_class",
+            "__init__",
+            "__new__",
+            "__getattribute__",
+            "__getattr__",
+            "run",
+        )
+    ):
         return None
-    creates = [call for call in ast.walk(function) if isinstance(call, ast.Call)
-               and _app_expression_name(index, path, call.func, function) == 'django.contrib.auth.models.User.objects.create_user'
-               and any(kw.arg == 'password' and isinstance(kw.value, ast.Name) and kw.value.id == secret for kw in call.keywords)]
-    creates = [call for call in creates if _app_active_call(index, path, function, call)]
-    if len(creates) != 1 or not _app_provider_unchanged(index, path, function, 'django.contrib.auth.models.User'):
+    creates = [
+        call
+        for call in ast.walk(function)
+        if isinstance(call, ast.Call)
+        and _app_expression_name(index, path, call.func, function)
+        == "django.contrib.auth.models.User.objects.create_user"
+        and any(
+            kw.arg == "password"
+            and isinstance(kw.value, ast.Name)
+            and kw.value.id == secret
+            for kw in call.keywords
+        )
+    ]
+    creates = [
+        call for call in creates if _app_active_call(index, path, function, call)
+    ]
+    if len(creates) != 1 or not _app_provider_unchanged(
+        index, path, function, "django.contrib.auth.models.User"
+    ):
         return None
     # The Basic header must descend from this same password binding.
-    headers = [call for call in ast.walk(function) if isinstance(call, ast.Call)
-               and _app_member_chain(call.func) == ['self', 'client', 'credentials']
-               and any(kw.arg == 'HTTP_AUTHORIZATION' and _app_credential_lineage(
-                   index, path, function, kw.value, secret) for kw in call.keywords)]
-    requests = _app_client_requests(function, ['self', 'client'])
+    headers = [
+        call
+        for call in ast.walk(function)
+        if isinstance(call, ast.Call)
+        and _app_member_chain(call.func) == ["self", "client", "credentials"]
+        and any(
+            kw.arg == "HTTP_AUTHORIZATION"
+            and _app_credential_lineage(index, path, function, kw.value, secret)
+            for kw in call.keywords
+        )
+    ]
+    requests = _app_client_requests(function, ["self", "client"])
     if len(headers) != 1 or not requests or creates[0].lineno >= headers[0].lineno:
         return None
     requests = [call for call in requests if call.lineno > headers[0].lineno]
@@ -3285,52 +3988,72 @@ def _app_drf_enrollment(index, path, function, owner, secret):
         return None
     if not _app_drf_same_credentials(function, creates[0], headers[0], secret):
         return None
-    return {'profile': 'DRF_TEST_USER_ENROLLMENT', 'creation': creates[0],
-            'request': requests[0], 'header': headers[0]}
-
+    return {
+        "profile": "DRF_TEST_USER_ENROLLMENT",
+        "creation": creates[0],
+        "request": requests[0],
+        "header": headers[0],
+    }
 
 
 def _app_source_function(index, path, expression, function=None):
     canonical = _app_expression_name(index, path, expression, function)
     if canonical is None:
         return None
-    module, _, name = canonical.rpartition('.')
+    module, _, name = canonical.rpartition(".")
     target, tree = _django_mod(index, module)
     if tree is None:
         return None
     from .credential_role_scope_bindings import binding_occurrences
 
     rows = binding_occurrences(tree.body, name)
-    return (target, rows[0]) if len(rows) == 1 and isinstance(rows[0], ast.FunctionDef) else None
+    return (
+        (target, rows[0])
+        if len(rows) == 1 and isinstance(rows[0], ast.FunctionDef)
+        else None
+    )
 
 
 def _app_fixture_provider(index, path, name):
     """Nearest fixture binding, with declared pytest-Flask plugin as API boundary."""
-    declared = index['configuration_bytes'].get('requirements.txt', b'')
-    if re.search(rb'(?m)^\s*pytest[-_]flask\s*(?:[<>=!~\[]|$)', declared) is None:
+    declared = index["configuration_bytes"].get("requirements.txt", b"")
+    if re.search(rb"(?m)^\s*pytest[-_]flask\s*(?:[<>=!~\[]|$)", declared) is None:
         return None
     cursor = Path(path).parent
-    while cursor.is_relative_to(index['source'].root):
-        provider = cursor / 'conftest.py'
-        tree = index['modules'].get(provider)
+    while cursor.is_relative_to(index["source"].root):
+        provider = cursor / "conftest.py"
+        tree = index["modules"].get(provider)
         if tree is not None:
-            if not index['source'].validate(provider) or 'client' in fixture_bindings_for_source(tree):
+            if not index["source"].validate(
+                provider
+            ) or "client" in fixture_bindings_for_source(tree):
                 return None
-            if any(isinstance(node, (ast.FunctionDef, ast.Assign)) and (
-                    getattr(node, 'name', None) in {'client', 'pytest_plugins'}
-                    or any(isinstance(t, ast.Name) and t.id in {'client', 'pytest_plugins'}
-                           for t in getattr(node, 'targets', []))) for node in tree.body):
+            if any(
+                isinstance(node, (ast.FunctionDef, ast.Assign))
+                and (
+                    getattr(node, "name", None) in {"client", "pytest_plugins"}
+                    or any(
+                        isinstance(t, ast.Name) and t.id in {"client", "pytest_plugins"}
+                        for t in getattr(node, "targets", [])
+                    )
+                )
+                for node in tree.body
+            ):
                 return None
-            rows = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == name]
+            rows = [
+                node
+                for node in tree.body
+                if isinstance(node, ast.FunctionDef) and node.name == name
+            ]
             if rows:
                 if len(rows) != 1 or len(rows[0].decorator_list) != 1:
                     return None
                 decorator = rows[0].decorator_list[0]
                 expr = decorator.func if isinstance(decorator, ast.Call) else decorator
-                if _app_expression_name(index, provider, expr) != 'pytest.fixture':
+                if _app_expression_name(index, provider, expr) != "pytest.fixture":
                     return None
                 return provider, rows[0]
-        if cursor == index['source'].root:
+        if cursor == index["source"].root:
             break
         cursor = cursor.parent
     return None
@@ -3342,17 +4065,17 @@ def _app_flask_datastore_factory(index, path, function):
     if len(returns) != 1 or not isinstance(returns[0].value, ast.Name):
         return None
     name = returns[0].value.id
-    rows = _django_assignment(index['modules'][path], name)
+    rows = _django_assignment(index["modules"][path], name)
     if len(rows) != 1 or not isinstance(rows[0][1], ast.Call):
         return None
-    if _app_expression_name(index, path, rows[0][1].func) != 'flask.Flask':
+    if _app_expression_name(index, path, rows[0][1].func) != "flask.Flask":
         return None
     stores = []
     for node in function.body:
         if not isinstance(node, ast.Assign) or len(node.targets) != 1:
             continue
         root, keys = _app_subscript_chain(node.targets[0])
-        if _app_member_chain(root) == [name, 'config'] and keys == ['DATASTORE']:
+        if _app_member_chain(root) == [name, "config"] and keys == ["DATASTORE"]:
             stores.append(node.value)
     if len(stores) != 1 or not isinstance(stores[0], ast.Name):
         return None
@@ -3361,19 +4084,22 @@ def _app_flask_datastore_factory(index, path, function):
 
 
 def _app_pytest_store_profile(index, path, function):
-    if not any(arg.arg == 'client' for arg in function.args.args):
+    if not any(arg.arg == "client" for arg in function.args.args):
         return None
-    if 'client' in fixture_bindings_for_source(index['modules'][path]):
+    if "client" in fixture_bindings_for_source(index["modules"][path]):
         return None
-    provider = _app_fixture_provider(index, path, 'app')
+    provider = _app_fixture_provider(index, path, "app")
     if provider is None:
         return None
     return _app_fixture_store_profile(index, *provider)
 
 
 def _app_fixture_store_profile(index, fixture_path, fixture):
-    yields = [node.value.value for node in fixture.body
-              if isinstance(node, ast.Expr) and isinstance(node.value, ast.Yield)]
+    yields = [
+        node.value.value
+        for node in fixture.body
+        if isinstance(node, ast.Expr) and isinstance(node.value, ast.Yield)
+    ]
     if len(yields) != 1 or not isinstance(yields[0], ast.Name):
         return None
     allocation = _app_local_assignment(fixture, yields[0].id)
@@ -3392,13 +4118,16 @@ def _app_fixture_store_profile(index, fixture_path, fixture):
     if store is None or not isinstance(store.value, ast.Call):
         return None
     canonical = _app_expression_name(index, fixture_path, store.value.func, fixture)
-    module, _, cls_name = (canonical or '').rpartition('.')
+    module, _, cls_name = (canonical or "").rpartition(".")
     cls_path, tree = _django_mod(index, module)
     if tree is None or _django_class(index, cls_path, cls_name) is None:
         return None
-    return {'profile': 'PYTEST_FLASK_TEST_STORE_ENROLLMENT', 'creation': store,
-            'provider_path': index['source'].relative(fixture_path),
-            'factory_path': index['source'].relative(factory[0])}
+    return {
+        "profile": "PYTEST_FLASK_TEST_STORE_ENROLLMENT",
+        "creation": store,
+        "provider_path": index["source"].relative(fixture_path),
+        "factory_path": index["source"].relative(factory[0]),
+    }
 
 
 def _app_pytest_store_enrollment(index, path, function, secret):
@@ -3411,19 +4140,24 @@ def _app_pytest_store_enrollment(index, path, function, secret):
             continue
         root, tail = _app_subscript_chain(statement.targets[0])
         # .data is a member between the app configuration and its nested store keys.
-        if not isinstance(root, ast.Attribute) or root.attr != 'data':
+        if not isinstance(root, ast.Attribute) or root.attr != "data":
             continue
         app, prefix = _app_subscript_chain(root.value)
-        if (_app_member_chain(app) == ['client', 'application', 'config']
-                and prefix == ['DATASTORE'] and tail == ['settings', 'application', 'password']
-                and _app_credential_lineage(index, path, function, statement.value, secret)):
+        if (
+            _app_member_chain(app) == ["client", "application", "config"]
+            and prefix == ["DATASTORE"]
+            and tail == ["settings", "application", "password"]
+            and _app_credential_lineage(index, path, function, statement.value, secret)
+        ):
             installs.append(statement)
-    requests = [call for call in _app_client_requests(function, ['client'])
-                if _app_request_credential(index, path, function, call, secret)]
+    requests = [
+        call
+        for call in _app_client_requests(function, ["client"])
+        if _app_request_credential(index, path, function, call, secret)
+    ]
     if len(installs) != 1 or not requests or installs[0].lineno >= requests[0].lineno:
         return None
-    return {**profile, 'enrollment': installs[0], 'request': requests[0]}
-
+    return {**profile, "enrollment": installs[0], "request": requests[0]}
 
 
 def _app_source_symbol(index, path, expression, function=None, seen=()):
@@ -3431,35 +4165,45 @@ def _app_source_symbol(index, path, expression, function=None, seen=()):
     canonical = _app_expression_name(index, path, expression, function)
     if canonical is None and isinstance(expression, ast.Name):
         from .credential_role_scope_bindings import binding_occurrences
+
         if function is not None and binding_occurrences(function.body, expression.id):
             return None
-        canonical = _django_name(index, path) + '.' + expression.id
+        canonical = _django_name(index, path) + "." + expression.id
     if not canonical or canonical in seen or len(seen) >= 12:
         return None
-    module, _, name = canonical.rpartition('.')
+    module, _, name = canonical.rpartition(".")
     target, tree = _django_mod(index, module)
     if tree is None:
         return None
     from .credential_role_scope_bindings import binding_occurrences
+
     rows = binding_occurrences(tree.body, name)
     if len(rows) != 1:
         return None
     if isinstance(rows[0], (ast.Import, ast.ImportFrom)):
-        return _app_source_symbol(index, target, ast.Name(id=name, ctx=ast.Load()), seen=(*seen, canonical))
+        return _app_source_symbol(
+            index, target, ast.Name(id=name, ctx=ast.Load()), seen=(*seen, canonical)
+        )
     binding = rows[0]
     if isinstance(binding, ast.Name):
-        binding = index['source'].parents[target].get(id(binding))
+        binding = index["source"].parents[target].get(id(binding))
     return target, binding
 
 
 def _app_effective_method(chain, name, decorators=()):
     from .credential_role_class_binding import effective_method
+
     return effective_method(chain, name, allowed_decorators=decorators)
 
 
 def _app_direct_field_assignment(function, field):
-    rows = [node for node in function.body if isinstance(node, ast.Assign)
-            and len(node.targets) == 1 and _app_member_chain(node.targets[0]) == ['self', field]]
+    rows = [
+        node
+        for node in function.body
+        if isinstance(node, ast.Assign)
+        and len(node.targets) == 1
+        and _app_member_chain(node.targets[0]) == ["self", field]
+    ]
     return rows[0] if len(rows) == 1 else None
 
 
@@ -3481,34 +4225,43 @@ def _app_flask_constructor(index, path, call, function=None):
         owner_path, owner = selected
     if not isinstance(owner, ast.ClassDef):
         return None
-    return selected if _django_class_chain(index, owner_path, owner, 'flask.Flask') else None
+    return (
+        selected
+        if _django_class_chain(index, owner_path, owner, "flask.Flask")
+        else None
+    )
 
 
 def _app_unittest_profile(index, path, owner):
     if not isinstance(owner, ast.ClassDef):
         return None
-    chain = _django_class_chain(index, path, owner, 'unittest.TestCase')
+    chain = _django_class_chain(index, path, owner, "unittest.TestCase")
     if chain is None:
         return None
-    setup = _app_effective_method(chain, 'setUp')
+    setup = _app_effective_method(chain, "setUp")
     if setup is None:
         return None
     setup_path, method = setup
-    app = _app_direct_field_assignment(method, 'app')
-    client = _app_direct_field_assignment(method, 'client')
-    factory = _app_direct_field_assignment(method, 'factory')
+    app = _app_direct_field_assignment(method, "app")
+    client = _app_direct_field_assignment(method, "client")
+    factory = _app_direct_field_assignment(method, "factory")
     if app is None or client is None or factory is None:
         return None
     if not all(isinstance(node.value, ast.Call) for node in (app, client, factory)):
         return None
-    if _app_member_chain(client.value.func) != ['self', 'app', 'test_client']:
+    if _app_member_chain(client.value.func) != ["self", "app", "test_client"]:
         return None
     if _app_flask_constructor(index, setup_path, app.value, method) is None:
         return None
     selected = _app_source_symbol(index, setup_path, factory.value.func, method)
     if selected is None or not isinstance(selected[1], ast.ClassDef):
         return None
-    return {'chain': chain, 'setup': setup, 'factory': selected, 'client_creation': client}
+    return {
+        "chain": chain,
+        "setup": setup,
+        "factory": selected,
+        "client_creation": client,
+    }
 
 
 def _app_factory_return(index, path, owner, method):
@@ -3517,17 +4270,23 @@ def _app_factory_return(index, path, owner, method):
     if len(returns) != 1 or not isinstance(returns[0].value, ast.Call):
         return None
     call = returns[0].value
-    if not isinstance(call.func, ast.Attribute) or not isinstance(call.func.value, ast.Name):
+    if not isinstance(call.func, ast.Attribute) or not isinstance(
+        call.func.value, ast.Name
+    ):
         return None
     selected = _app_source_symbol(index, path, call.func.value, method)
-    if selected is None or not isinstance(selected[1], ast.Assign) or not isinstance(selected[1].value, ast.Call):
+    if (
+        selected is None
+        or not isinstance(selected[1], ast.Assign)
+        or not isinstance(selected[1].value, ast.Call)
+    ):
         return None
     factory_path, declaration = selected
     creator = _app_source_symbol(index, factory_path, declaration.value.func)
     if creator is None or not isinstance(creator[1], ast.ClassDef) or creator[1].bases:
         return None
     chain = [(creator[0], creator[1].name, creator[1])]
-    constructor = _app_effective_method(chain, '__init__')
+    constructor = _app_effective_method(chain, "__init__")
     create = _app_effective_method(chain, call.func.attr)
     if constructor is None or create is None:
         return None
@@ -3541,7 +4300,9 @@ def _app_factory_return(index, path, owner, method):
     params = [arg.arg for arg in constructor[1].args.args][1:]
     if field.value.id not in params:
         return None
-    return _app_bound_model_argument(index, factory_path, declaration, params.index(field.value.id), allocation)
+    return _app_bound_model_argument(
+        index, factory_path, declaration, params.index(field.value.id), allocation
+    )
 
 
 def _app_bound_model_argument(index, path, declaration, position, allocation):
@@ -3550,7 +4311,11 @@ def _app_bound_model_argument(index, path, declaration, position, allocation):
     model = _app_source_symbol(index, path, declaration.value.args[position])
     if model is None or not isinstance(model[1], ast.ClassDef):
         return None
-    return {'model': model, 'allocation': allocation, 'factory_declaration': declaration}
+    return {
+        "model": model,
+        "allocation": allocation,
+        "factory_declaration": declaration,
+    }
 
 
 def _app_fresh_model_return(index, path, method):
@@ -3561,17 +4326,21 @@ def _app_fresh_model_return(index, path, method):
     if row is None or not isinstance(row.value, ast.Call):
         return None
     chain = _app_member_chain(row.value.func)
-    return (chain[1], row.value) if chain and len(chain) == 2 and chain[0] == 'self' else None
+    return (
+        (chain[1], row.value)
+        if chain and len(chain) == 2 and chain[0] == "self"
+        else None
+    )
 
 
 def _app_factory_user(index, profile, expression, function, path):
-    factory_path, owner = profile['factory']
+    factory_path, owner = profile["factory"]
     parts = _app_member_chain(expression)
-    if parts is None or len(parts) != 3 or parts[:2] != ['self', 'factory']:
+    if parts is None or len(parts) != 3 or parts[:2] != ["self", "factory"]:
         return None
     chain = [(factory_path, owner.name, owner)]
     if isinstance(expression.ctx, ast.Load):
-        getter = _app_effective_method(chain, parts[2], ('property',))
+        getter = _app_effective_method(chain, parts[2], ("property",))
         if getter is not None:
             return _app_lazy_user_return(index, factory_path, owner, getter[1])
     return None
@@ -3582,137 +4351,222 @@ def _app_lazy_user_return(index, path, owner, getter):
     if len(returns) != 1:
         return None
     member = _app_member_chain(returns[0].value)
-    if member is None or len(member) != 2 or member[0] != 'self':
+    if member is None or len(member) != 2 or member[0] != "self":
         return None
     chain = [(path, owner.name, owner)]
-    constructor = _app_effective_method(chain, '__init__')
-    initial = _app_direct_field_assignment(constructor[1], member[1]) if constructor else None
-    if initial is None or not isinstance(initial.value, ast.Constant) or initial.value.value is not None:
+    constructor = _app_effective_method(chain, "__init__")
+    initial = (
+        _app_direct_field_assignment(constructor[1], member[1]) if constructor else None
+    )
+    if (
+        initial is None
+        or not isinstance(initial.value, ast.Constant)
+        or initial.value.value is not None
+    ):
         return None
-    assignments = [node for node in ast.walk(getter) if isinstance(node, ast.Assign)
-                   and len(node.targets) == 1 and _app_member_chain(node.targets[0]) == member]
+    assignments = [
+        node
+        for node in ast.walk(getter)
+        if isinstance(node, ast.Assign)
+        and len(node.targets) == 1
+        and _app_member_chain(node.targets[0]) == member
+    ]
     if len(assignments) != 1 or not isinstance(assignments[0].value, ast.Call):
         return None
-    guards = [node for node in getter.body if isinstance(node, ast.If) and assignments[0] in node.body]
+    guards = [
+        node
+        for node in getter.body
+        if isinstance(node, ast.If) and assignments[0] in node.body
+    ]
     if len(guards) != 1 or not _app_none_guard(guards[0].test, member):
         return None
     selected = _app_member_chain(assignments[0].value.func)
-    if selected is None or len(selected) != 2 or selected[0] != 'self':
+    if selected is None or len(selected) != 2 or selected[0] != "self":
         return None
     creator = _app_effective_method(chain, selected[1])
     return _app_factory_return(index, path, owner, creator[1]) if creator else None
 
 
 def _app_none_guard(node, member):
-    return (isinstance(node, ast.Compare) and len(node.ops) == len(node.comparators) == 1
-            and isinstance(node.ops[0], ast.Is) and _app_member_chain(node.left) == member
-            and isinstance(node.comparators[0], ast.Constant) and node.comparators[0].value is None)
+    return (
+        isinstance(node, ast.Compare)
+        and len(node.ops) == len(node.comparators) == 1
+        and isinstance(node.ops[0], ast.Is)
+        and _app_member_chain(node.left) == member
+        and isinstance(node.comparators[0], ast.Constant)
+        and node.comparators[0].value is None
+    )
 
 
 def _app_factory_call_user(index, profile, expression):
     if not isinstance(expression, ast.Call):
         return None
     parts = _app_member_chain(expression.func)
-    if parts is None or len(parts) != 3 or parts[:2] != ['self', 'factory']:
+    if parts is None or len(parts) != 3 or parts[:2] != ["self", "factory"]:
         return None
-    path, owner = profile['factory']
+    path, owner = profile["factory"]
     method = _app_effective_method([(path, owner.name, owner)], parts[2])
     return _app_factory_return(index, path, owner, method[1]) if method else None
 
 
-
-
 def _app_wrapper_data_projection(index, path, method):
     from .credential_role_identity_call_model import own_function_nodes
-    parents = index['source'].parents[path]
-    for node in own_function_nodes(method, path, index['source']):
-        if isinstance(node, ast.Name) and node.id == 'data':
+
+    parents = index["source"].parents[path]
+    for node in own_function_nodes(method, path, index["source"]):
+        if isinstance(node, ast.Name) and node.id == "data":
             parent = parents.get(id(node))
             if not _app_payload_name_use(index, path, method, node, parent):
                 return False
-        if isinstance(node, ast.Subscript) and isinstance(node.ctx, (ast.Store, ast.Del)):
-            if isinstance(node.value, ast.Name) and node.value.id == 'data':
+        if isinstance(node, ast.Subscript) and isinstance(
+            node.ctx, (ast.Store, ast.Del)
+        ):
+            if isinstance(node.value, ast.Name) and node.value.id == "data":
                 return False
     return True
 
 
 def _app_payload_name_use(index, path, method, node, parent):
     if isinstance(node.ctx, (ast.Store, ast.Del)):
-        return bool(isinstance(parent, ast.Assign) and len(parent.targets) == 1
-                    and _app_json_string_map(index, path, method, parent.value))
+        return bool(
+            isinstance(parent, ast.Assign)
+            and len(parent.targets) == 1
+            and _app_json_string_map(index, path, method, parent.value)
+        )
     if isinstance(parent, ast.Assign):
         return False  # Unmodeled mutable aliases cannot retain a payload proof.
     if isinstance(parent, ast.Attribute):
         return False  # A dict method may mutate or leak the selected payload.
     if isinstance(parent, (ast.Call, ast.keyword)):
-        call = parent if isinstance(parent, ast.Call) else index['source'].parents[path].get(id(parent))
-        return bool(isinstance(call, ast.Call) and (_app_wrapper_dispatch(index, path, method, call)
-                    or _app_json_string_map(index, path, method, call)))
+        call = (
+            parent
+            if isinstance(parent, ast.Call)
+            else index["source"].parents[path].get(id(parent))
+        )
+        return bool(
+            isinstance(call, ast.Call)
+            and (
+                _app_wrapper_dispatch(index, path, method, call)
+                or _app_json_string_map(index, path, method, call)
+            )
+        )
     return True
 
 
 def _app_wrapper_dispatch(index, path, method, call):
     chain = _app_member_chain(call.func)
-    if chain and chain[:2] == ['self', 'client'] and len(chain) == 3:
-        return chain[2] in {'post', 'put', 'patch'}
+    if chain and chain[:2] == ["self", "client"] and len(chain) == 3:
+        return chain[2] in {"post", "put", "patch"}
     if not isinstance(call.func, ast.Name):
         return False
     row = _app_local_assignment(method, call.func.id)
-    return bool(row and isinstance(row.value, ast.Call) and isinstance(row.value.func, ast.Name)
-                and row.value.func.id == 'getattr' and row.value.args
-                and _app_member_chain(row.value.args[0]) == ['self', 'client'])
+    return bool(
+        row
+        and isinstance(row.value, ast.Call)
+        and isinstance(row.value.func, ast.Name)
+        and row.value.func.id == "getattr"
+        and row.value.args
+        and _app_member_chain(row.value.args[0]) == ["self", "client"]
+    )
 
 
 def _app_json_string_map(index, path, wrapper, call):
-    if not (isinstance(call, ast.Call) and len(call.args) == 1 and not call.keywords
-            and isinstance(call.args[0], ast.Name) and call.args[0].id == 'data'):
+    if not (
+        isinstance(call, ast.Call)
+        and len(call.args) == 1
+        and not call.keywords
+        and isinstance(call.args[0], ast.Name)
+        and call.args[0].id == "data"
+    ):
         return False
     selected = _app_source_function(index, path, call.func, wrapper)
     if selected is None:
         return False
     helper_path, helper = selected
-    if not _app_provider_unchanged(index, helper_path, index['modules'][helper_path], 'json.dumps'):
+    if not _app_provider_unchanged(
+        index, helper_path, index["modules"][helper_path], "json.dumps"
+    ):
         return False
     returns = _app_direct_returns(index, helper_path, helper)
     if len(helper.args.args) != 1 or len(returns) != 1:
         return False
     parameter = helper.args.args[0].arg
     expression = returns[0].value
-    if not isinstance(expression, ast.Call) or _app_expression_name(index, helper_path, expression.func, helper) != 'json.dumps':
+    if (
+        not isinstance(expression, ast.Call)
+        or _app_expression_name(index, helper_path, expression.func, helper)
+        != "json.dumps"
+    ):
         return False
-    if not expression.args or not _app_json_normalizer(index, helper_path, helper, expression.args[0], parameter):
+    if not expression.args or not _app_json_normalizer(
+        index, helper_path, helper, expression.args[0], parameter
+    ):
         return False
-    return all(_app_json_helper_statement(index, helper_path, helper, node)
-               for node in helper.body if node is not returns[0])
+    return all(
+        _app_json_helper_statement(index, helper_path, helper, node)
+        for node in helper.body
+        if node is not returns[0]
+    )
 
 
 def _app_json_helper_statement(index, path, function, statement):
-    if isinstance(statement, ast.Expr) and isinstance(statement.value, ast.Constant) and isinstance(statement.value.value, str):
+    if (
+        isinstance(statement, ast.Expr)
+        and isinstance(statement.value, ast.Constant)
+        and isinstance(statement.value.value, str)
+    ):
         return True
     call = statement.value if isinstance(statement, ast.Expr) else None
-    if not (isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute)
-            and _app_member_chain(call.func.value) == [function.args.kwarg.arg if function.args.kwarg else None]
-            and call.func.attr == 'setdefault' and len(call.args) == 2 and not call.keywords
-            and isinstance(call.args[0], ast.Constant)):
+    if not (
+        isinstance(call, ast.Call)
+        and isinstance(call.func, ast.Attribute)
+        and _app_member_chain(call.func.value)
+        == [function.args.kwarg.arg if function.args.kwarg else None]
+        and call.func.attr == "setdefault"
+        and len(call.args) == 2
+        and not call.keywords
+        and isinstance(call.args[0], ast.Constant)
+    ):
         return False
-    if call.args[0].value in {'allow_nan', 'ensure_ascii'}:
-        return isinstance(call.args[1], ast.Constant) and type(call.args[1].value) is bool
-    if call.args[0].value != 'cls':
+    if call.args[0].value in {"allow_nan", "ensure_ascii"}:
+        return (
+            isinstance(call.args[1], ast.Constant) and type(call.args[1].value) is bool
+        )
+    if call.args[0].value != "cls":
         return False
     selected = _app_source_symbol(index, path, call.args[1], function)
     return selected is not None and _app_default_only_json_encoder(index, *selected)
 
 
 def _app_default_only_json_encoder(index, path, owner):
-    if not isinstance(owner, ast.ClassDef) or owner.decorator_list or owner.keywords or len(owner.bases) != 1:
+    if (
+        not isinstance(owner, ast.ClassDef)
+        or owner.decorator_list
+        or owner.keywords
+        or len(owner.bases) != 1
+    ):
         return False
-    if _app_expression_name(index, path, owner.bases[0]) != 'json.JSONEncoder':
+    if _app_expression_name(index, path, owner.bases[0]) != "json.JSONEncoder":
         return False
-    body = [node for node in owner.body if not (isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str))]
-    return all(isinstance(node, ast.FunctionDef) and not node.decorator_list
-               and (node.name == 'default' or node.name == '__init__' and _app_json_encoder_init(node))
-               for node in body)
-
+    body = [
+        node
+        for node in owner.body
+        if not (
+            isinstance(node, ast.Expr)
+            and isinstance(node.value, ast.Constant)
+            and isinstance(node.value.value, str)
+        )
+    ]
+    return all(
+        isinstance(node, ast.FunctionDef)
+        and not node.decorator_list
+        and (
+            node.name == "default"
+            or node.name == "__init__"
+            and _app_json_encoder_init(node)
+        )
+        for node in body
+    )
 
 
 def _app_json_encoder_init(function):
@@ -3721,31 +4575,58 @@ def _app_json_encoder_init(function):
         return False
     kwargs = function.args.kwarg.arg
     from .credential_role_scope_bindings import binding_occurrences
+
     if binding_occurrences(function.body, kwargs):
         return False
-    forwards = [node for node in ast.walk(function) if isinstance(node, ast.Call)
-                and isinstance(node.func, ast.Attribute) and node.func.attr == '__init__'
-                and isinstance(node.func.value, ast.Call) and isinstance(node.func.value.func, ast.Name)
-                and node.func.value.func.id == 'super']
+    forwards = [
+        node
+        for node in ast.walk(function)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "__init__"
+        and isinstance(node.func.value, ast.Call)
+        and isinstance(node.func.value.func, ast.Name)
+        and node.func.value.func.id == "super"
+    ]
     if len(forwards) != 1:
         return False
     forward = forwards[0]
-    if forward.args or len(forward.keywords) != 1 or forward.keywords[0].arg is not None:
+    if (
+        forward.args
+        or len(forward.keywords) != 1
+        or forward.keywords[0].arg is not None
+    ):
         return False
-    if not isinstance(forward.keywords[0].value, ast.Name) or forward.keywords[0].value.id != kwargs:
+    if (
+        not isinstance(forward.keywords[0].value, ast.Name)
+        or forward.keywords[0].value.id != kwargs
+    ):
         return False
     return _app_json_initializer_fields(function, forward.func.value)
 
 
 def _app_json_initializer_fields(function, super_call):
-    protected = {'encode', 'iterencode', '__dict__', '__class__', 'skipkeys', 'sort_keys',
-                 'ensure_ascii', 'allow_nan', 'item_separator', 'key_separator', 'check_circular'}
+    protected = {
+        "encode",
+        "iterencode",
+        "__dict__",
+        "__class__",
+        "skipkeys",
+        "sort_keys",
+        "ensure_ascii",
+        "allow_nan",
+        "item_separator",
+        "key_separator",
+        "check_circular",
+    }
     for node in ast.walk(function):
-        if isinstance(node, ast.Attribute) and isinstance(node.ctx, (ast.Store, ast.Del)):
-            if _app_member_chain(node.value) == ['self'] and node.attr in protected:
+        if isinstance(node, ast.Attribute) and isinstance(
+            node.ctx, (ast.Store, ast.Del)
+        ):
+            if _app_member_chain(node.value) == ["self"] and node.attr in protected:
                 return False
         if isinstance(node, ast.Call) and node is not super_call:
-            if any(isinstance(arg, ast.Name) and arg.id == 'self' for arg in node.args):
+            if any(isinstance(arg, ast.Name) and arg.id == "self" for arg in node.args):
                 return False
     return True
 
@@ -3753,16 +4634,27 @@ def _app_json_initializer_fields(function, super_call):
 def _app_type_guard(expression, parameter, types):
     if isinstance(expression, ast.BoolOp) and isinstance(expression.op, ast.And):
         expression = expression.values[0]
-    return (isinstance(expression, ast.Call) and isinstance(expression.func, ast.Name)
-            and expression.func.id == 'isinstance' and len(expression.args) == 2
-            and isinstance(expression.args[0], ast.Name) and expression.args[0].id == parameter
-            and isinstance(expression.args[1], ast.Name) and expression.args[1].id in types)
+    return (
+        isinstance(expression, ast.Call)
+        and isinstance(expression.func, ast.Name)
+        and expression.func.id == "isinstance"
+        and len(expression.args) == 2
+        and isinstance(expression.args[0], ast.Name)
+        and expression.args[0].id == parameter
+        and isinstance(expression.args[1], ast.Name)
+        and expression.args[1].id in types
+    )
 
 
 def _app_json_normalizer(index, path, function, node, parameter):
     if isinstance(node, ast.Name) and node.id == parameter:
         return True
-    if not isinstance(node, ast.Call) or len(node.args) != 1 or not isinstance(node.args[0], ast.Name) or node.args[0].id != parameter:
+    if (
+        not isinstance(node, ast.Call)
+        or len(node.args) != 1
+        or not isinstance(node.args[0], ast.Name)
+        or node.args[0].id != parameter
+    ):
         return False
     selected = _app_source_symbol(index, path, node.func, function)
     if selected is None or not isinstance(selected[1], ast.FunctionDef):
@@ -3772,65 +4664,121 @@ def _app_json_normalizer(index, path, function, node, parameter):
         return False
     name = helper.args.args[0].arg
     first, last = helper.body[0], helper.body[-1]
-    if not (isinstance(first, ast.If) and not first.orelse and _app_type_guard(first.test, name, {'dict'})
-            and isinstance(last, ast.Return) and isinstance(last.value, ast.Name) and last.value.id == name):
+    if not (
+        isinstance(first, ast.If)
+        and not first.orelse
+        and _app_type_guard(first.test, name, {"dict"})
+        and isinstance(last, ast.Return)
+        and isinstance(last.value, ast.Name)
+        and last.value.id == name
+    ):
         return False
-    if not all(isinstance(item, ast.If) and not item.orelse and _app_type_guard(item.test, name, {'list','float'})
-               for item in helper.body[1:-1]):
+    if not all(
+        isinstance(item, ast.If)
+        and not item.orelse
+        and _app_type_guard(item.test, name, {"list", "float"})
+        for item in helper.body[1:-1]
+    ):
         return False
     return _app_recursive_string_map(first.body, helper, name)
 
 
 def _app_recursive_string_map(body, function, parameter):
-    if len(body) != 1 or not isinstance(body[0], ast.Return) or not isinstance(body[0].value, ast.DictComp):
+    if (
+        len(body) != 1
+        or not isinstance(body[0], ast.Return)
+        or not isinstance(body[0].value, ast.DictComp)
+    ):
         return False
     comp = body[0].value
     if len(comp.generators) != 1:
         return False
     generator = comp.generators[0]
-    if not isinstance(generator.target, ast.Tuple) or len(generator.target.elts) != 2 or generator.ifs or generator.is_async:
+    if (
+        not isinstance(generator.target, ast.Tuple)
+        or len(generator.target.elts) != 2
+        or generator.ifs
+        or generator.is_async
+    ):
         return False
     if not all(isinstance(part, ast.Name) for part in generator.target.elts):
         return False
     key, value = [part.id for part in generator.target.elts]
-    return (isinstance(comp.key, ast.Name) and comp.key.id == key
-            and isinstance(generator.iter, ast.Call) and not generator.iter.args and not generator.iter.keywords
-            and _app_member_chain(generator.iter.func) == [parameter, 'items']
-            and isinstance(comp.value, ast.Call) and isinstance(comp.value.func, ast.Name)
-            and comp.value.func.id == function.name and len(comp.value.args) == 1 and not comp.value.keywords
-            and isinstance(comp.value.args[0], ast.Name) and comp.value.args[0].id == value)
+    return (
+        isinstance(comp.key, ast.Name)
+        and comp.key.id == key
+        and isinstance(generator.iter, ast.Call)
+        and not generator.iter.args
+        and not generator.iter.keywords
+        and _app_member_chain(generator.iter.func) == [parameter, "items"]
+        and isinstance(comp.value, ast.Call)
+        and isinstance(comp.value.func, ast.Name)
+        and comp.value.func.id == function.name
+        and len(comp.value.args) == 1
+        and not comp.value.keywords
+        and isinstance(comp.value.args[0], ast.Name)
+        and comp.value.args[0].id == value
+    )
 
 
 def _app_request_wrapper(index, profile, call):
     chain = _app_member_chain(call.func)
-    if chain is None or len(chain) != 2 or chain[0] != 'self':
+    if chain is None or len(chain) != 2 or chain[0] != "self":
         return None
-    selected = _app_effective_method(profile['chain'], chain[1])
+    selected = _app_effective_method(profile["chain"], chain[1])
     if selected is None:
         return None
     path, method = selected
     if not _app_wrapper_data_projection(index, path, method):
         return None
-    direct = [node for node in ast.walk(method) if isinstance(node, ast.Call)
-              and _app_member_chain(node.func) == ['self', 'client', 'post']
-              and any(kw.arg == 'data' and isinstance(kw.value, ast.Name) and kw.value.id == 'data'
-                      for kw in node.keywords)]
+    direct = [
+        node
+        for node in ast.walk(method)
+        if isinstance(node, ast.Call)
+        and _app_member_chain(node.func) == ["self", "client", "post"]
+        and any(
+            kw.arg == "data"
+            and isinstance(kw.value, ast.Name)
+            and kw.value.id == "data"
+            for kw in node.keywords
+        )
+    ]
     if len(direct) == 1:
         return direct[0] if _app_active_call(index, path, method, direct[0]) else None
     # The dynamic method selector is still bound to this same captured client.
-    selectors = [node for node in method.body if isinstance(node, ast.Assign)
-                 and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name)
-                 and isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Name)
-                 and node.value.func.id == 'getattr' and len(node.value.args) == 2
-                 and _app_member_chain(node.value.args[0]) == ['self', 'client']]
+    selectors = [
+        node
+        for node in method.body
+        if isinstance(node, ast.Assign)
+        and len(node.targets) == 1
+        and isinstance(node.targets[0], ast.Name)
+        and isinstance(node.value, ast.Call)
+        and isinstance(node.value.func, ast.Name)
+        and node.value.func.id == "getattr"
+        and len(node.value.args) == 2
+        and _app_member_chain(node.value.args[0]) == ["self", "client"]
+    ]
     if len(selectors) != 1:
         return None
     name = selectors[0].targets[0].id
-    calls = [node for node in ast.walk(method) if isinstance(node, ast.Call)
-             and isinstance(node.func, ast.Name) and node.func.id == name
-             and any(kw.arg == 'data' and isinstance(kw.value, ast.Name) and kw.value.id == 'data'
-                     for kw in node.keywords)]
-    return calls[0] if len(calls) == 1 and _app_active_call(index, path, method, calls[0]) else None
+    calls = [
+        node
+        for node in ast.walk(method)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == name
+        and any(
+            kw.arg == "data"
+            and isinstance(kw.value, ast.Name)
+            and kw.value.id == "data"
+            for kw in node.keywords
+        )
+    ]
+    return (
+        calls[0]
+        if len(calls) == 1 and _app_active_call(index, path, method, calls[0])
+        else None
+    )
 
 
 def _app_argument_contains_member(node, member):
@@ -3847,28 +4795,49 @@ def _app_password_operation(index, model, method_name, kind):
     if len(params) != 1 or len(function.body) != 1:
         return None
     statement = function.body[0]
-    if kind == 'hash':
+    if kind == "hash":
         if not isinstance(statement, ast.Assign) or len(statement.targets) != 1:
             return None
         member, call = _app_member_chain(statement.targets[0]), statement.value
     else:
-        if not isinstance(statement, ast.Return) or not isinstance(statement.value, ast.BoolOp):
+        if not isinstance(statement, ast.Return) or not isinstance(
+            statement.value, ast.BoolOp
+        ):
             return None
-        if not isinstance(statement.value.op, ast.And) or len(statement.value.values) != 2:
+        if (
+            not isinstance(statement.value.op, ast.And)
+            or len(statement.value.values) != 2
+        ):
             return None
         member = _app_member_chain(statement.value.values[0])
         call = statement.value.values[1]
-    return _app_password_call_field(index, path, function, member, call, params[0], kind)
+    return _app_password_call_field(
+        index, path, function, member, call, params[0], kind
+    )
 
 
 def _app_password_call_field(index, path, function, member, call, parameter, kind):
-    if not member or len(member) != 2 or member[0] != 'self' or not isinstance(call, ast.Call):
+    if (
+        not member
+        or len(member) != 2
+        or member[0] != "self"
+        or not isinstance(call, ast.Call)
+    ):
         return None
-    if _app_expression_name(index, path, call.func, function) != 'passlib.apps.custom_app_context.' + kind:
+    if (
+        _app_expression_name(index, path, call.func, function)
+        != "passlib.apps.custom_app_context." + kind
+    ):
         return None
-    if not call.args or not isinstance(call.args[0], ast.Name) or call.args[0].id != parameter:
+    if (
+        not call.args
+        or not isinstance(call.args[0], ast.Name)
+        or call.args[0].id != parameter
+    ):
         return None
-    if kind == 'verify' and (len(call.args) != 2 or _app_member_chain(call.args[1]) != member):
+    if kind == "verify" and (
+        len(call.args) != 2 or _app_member_chain(call.args[1]) != member
+    ):
         return None
     return member[1]
 
@@ -3882,10 +4851,15 @@ def _app_selected_user(index, path, function, expression, owner, model):
     if row is None or not isinstance(row.value, ast.Call):
         return False
     call = row.value
-    if not (isinstance(call.func, ast.Attribute) and call.func.attr == 'get'
-            and isinstance(call.func.value, ast.Attribute) and call.func.value.attr == 'query'
-            and len(call.args) == 1 and not call.keywords
-            and _app_member_chain(call.args[0]) == [*owner, 'id']):
+    if not (
+        isinstance(call.func, ast.Attribute)
+        and call.func.attr == "get"
+        and isinstance(call.func.value, ast.Attribute)
+        and call.func.value.attr == "query"
+        and len(call.args) == 1
+        and not call.keywords
+        and _app_member_chain(call.args[0]) == [*owner, "id"]
+    ):
         return False
     return _app_source_symbol(index, path, call.func.value.value, function) == model
 
@@ -3899,63 +4873,119 @@ def _app_credential_operations(index, path, function, model, owner, request):
             continue
         if not _app_selected_user(index, path, function, node.func.value, owner, model):
             continue
-        if node.lineno < request.lineno and _app_password_operation(index, model, node.func.attr, 'hash'):
+        if node.lineno < request.lineno and _app_password_operation(
+            index, model, node.func.attr, "hash"
+        ):
             installed.append(node)
-        if node.lineno > request.lineno and _app_password_operation(index, model, node.func.attr, 'verify'):
+        if node.lineno > request.lineno and _app_password_operation(
+            index, model, node.func.attr, "verify"
+        ):
             verified.append(node)
     return installed, verified
 
 
 def _app_user_credential_witness(index, path, function, profile, request, secret):
-    owner = ['self', 'factory', 'user']
-    if not any(_app_exact_formatted_member(arg, [*owner, 'id']) for arg in request.args):
+    owner = ["self", "factory", "user"]
+    if not any(
+        _app_exact_formatted_member(arg, [*owner, "id"]) for arg in request.args
+    ):
         return None
-    user = _app_factory_user(index, profile, ast.parse('self.factory.user', mode='eval').body, function, path)
+    user = _app_factory_user(
+        index, profile, ast.parse("self.factory.user", mode="eval").body, function, path
+    )
     if user is None:
         return None
-    installed, verified = _app_credential_operations(index, path, function, user['model'], owner, request)
+    installed, verified = _app_credential_operations(
+        index, path, function, user["model"], owner, request
+    )
     if len(installed) != 1 or not verified:
         return None
-    data = next((kw.value for kw in request.keywords if kw.arg == 'data'), None)
+    data = next((kw.value for kw in request.keywords if kw.arg == "data"), None)
     if not isinstance(data, ast.Dict):
         return None
-    values = {key.value: value for key, value in zip(data.keys, data.values) if isinstance(key, ast.Constant)}
-    old, new = values.get('old_password'), values.get('password')
-    if not isinstance(old, ast.Name) or old.id != installed[0].args[0].id or not isinstance(new, ast.Name):
+    values = {
+        key.value: value
+        for key, value in zip(data.keys, data.values)
+        if isinstance(key, ast.Constant)
+    }
+    old, new = values.get("old_password"), values.get("password")
+    if (
+        not isinstance(old, ast.Name)
+        or old.id != installed[0].args[0].id
+        or not isinstance(new, ast.Name)
+    ):
         return None
-    if not any(node.args[0].id == new.id for node in verified) or secret not in {old.id, new.id}:
+    if not any(node.args[0].id == new.id for node in verified) or secret not in {
+        old.id,
+        new.id,
+    }:
         return None
-    return {'creation': user['allocation'], 'enrollment': installed[0], 'request': request}
+    return {
+        "creation": user["allocation"],
+        "enrollment": installed[0],
+        "request": request,
+    }
 
 
 def _app_invitation_credential_witness(index, path, function, profile, request, secret):
-    verifies = [node for node in ast.walk(function) if isinstance(node, ast.Call)
-                and isinstance(node.func, ast.Attribute) and isinstance(node.func.value, ast.Name)
-                and len(node.args) == 1 and isinstance(node.args[0], ast.Name) and node.args[0].id == secret
-                and node.lineno > request.lineno]
+    verifies = [
+        node
+        for node in ast.walk(function)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and isinstance(node.func.value, ast.Name)
+        and len(node.args) == 1
+        and isinstance(node.args[0], ast.Name)
+        and node.args[0].id == secret
+        and node.lineno > request.lineno
+    ]
     for verify in verifies:
         # A postcondition may re-query the same ID; construction before request owns it.
-        assignments = [node for node in function.body if isinstance(node, ast.Assign)
-                       and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name)
-                       and node.targets[0].id == verify.func.value.id and node.lineno < request.lineno]
+        assignments = [
+            node
+            for node in function.body
+            if isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+            and node.targets[0].id == verify.func.value.id
+            and node.lineno < request.lineno
+        ]
         if len(assignments) != 1:
             continue
         user = _app_factory_call_user(index, profile, assignments[0].value)
-        if user is None or not _app_password_operation(index, user['model'], verify.func.attr, 'verify'):
+        if user is None or not _app_password_operation(
+            index, user["model"], verify.func.attr, "verify"
+        ):
             continue
-        tokens = _app_invitation_tokens(index, path, function, verify.func.value.id, request)
+        tokens = _app_invitation_tokens(
+            index, path, function, verify.func.value.id, request
+        )
         if tokens:
-            return {'creation': user['allocation'], 'enrollment': request, 'request': request, 'token': tokens[0]}
+            return {
+                "creation": user["allocation"],
+                "enrollment": request,
+                "request": request,
+                "token": tokens[0],
+            }
     return None
 
 
 def _app_invitation_tokens(index, path, function, user, request):
     results = []
     for statement in function.body:
-        if not isinstance(statement, ast.Assign) or len(statement.targets) != 1 or not isinstance(statement.targets[0], ast.Name):
+        if (
+            not isinstance(statement, ast.Assign)
+            or len(statement.targets) != 1
+            or not isinstance(statement.targets[0], ast.Name)
+        ):
             continue
         call = statement.value
-        if not isinstance(call, ast.Call) or len(call.args) != 1 or not isinstance(call.args[0], ast.Name) or call.args[0].id != user:
+        if (
+            not isinstance(call, ast.Call)
+            or len(call.args) != 1
+            or not isinstance(call.args[0], ast.Name)
+            or call.args[0].id != user
+        ):
             continue
         selected = _app_source_function(index, path, call.func, function)
         if selected is None or not request.args:
@@ -3963,7 +4993,10 @@ def _app_invitation_tokens(index, path, function, user, request):
         body = selected[1]
         if not _app_signed_user_id(index, selected[0], body):
             continue
-        if any(_app_exact_formatted_member(arg, [statement.targets[0].id]) for arg in request.args):
+        if any(
+            _app_exact_formatted_member(arg, [statement.targets[0].id])
+            for arg in request.args
+        ):
             results.append(statement)
     return results
 
@@ -3972,61 +5005,116 @@ def _app_unittest_enrollment(index, path, function, owner, secret):
     profile = _app_unittest_profile(index, path, owner)
     if profile is None:
         return None
-    calls = [node for node in ast.walk(function) if isinstance(node, ast.Call)
-             and _app_request_credential(index, path, function, node, secret)]
+    calls = [
+        node
+        for node in ast.walk(function)
+        if isinstance(node, ast.Call)
+        and _app_request_credential(index, path, function, node, secret)
+    ]
     for call in calls:
         if _app_request_wrapper(index, profile, call) is None:
             continue
-        witness = (_app_user_credential_witness(index, path, function, profile, call, secret)
-                   or _app_invitation_credential_witness(index, path, function, profile, call, secret))
+        witness = _app_user_credential_witness(
+            index, path, function, profile, call, secret
+        ) or _app_invitation_credential_witness(
+            index, path, function, profile, call, secret
+        )
         if witness is not None:
-            return {'profile': ('UNITTEST_FACTORY_INVITATION_ENROLLMENT' if 'token' in witness else 'UNITTEST_FACTORY_USER_ENROLLMENT'), **witness}
+            return {
+                "profile": (
+                    "UNITTEST_FACTORY_INVITATION_ENROLLMENT"
+                    if "token" in witness
+                    else "UNITTEST_FACTORY_USER_ENROLLMENT"
+                ),
+                **witness,
+            }
     # An old-password input is paired with the same owned user's new password.
     for call in ast.walk(function):
-        if not isinstance(call, ast.Call) or _app_request_wrapper(index, profile, call) is None:
+        if (
+            not isinstance(call, ast.Call)
+            or _app_request_wrapper(index, profile, call) is None
+        ):
             continue
-        witness = _app_user_credential_witness(index, path, function, profile, call, secret)
+        witness = _app_user_credential_witness(
+            index, path, function, profile, call, secret
+        )
         if witness is not None:
-            return {'profile': ('UNITTEST_FACTORY_INVITATION_ENROLLMENT' if 'token' in witness else 'UNITTEST_FACTORY_USER_ENROLLMENT'), **witness}
+            return {
+                "profile": (
+                    "UNITTEST_FACTORY_INVITATION_ENROLLMENT"
+                    if "token" in witness
+                    else "UNITTEST_FACTORY_USER_ENROLLMENT"
+                ),
+                **witness,
+            }
     return None
 
 
 def application_test_secret_evidence(index, path, line, value):
     """Project a local test credential's captured creation and request witnesses."""
     if index is None:
-        return _django_unknown('captured application source index is unavailable')
+        return _django_unknown("captured application source index is unavailable")
     candidate, reason = _django_candidate_binding(index, path, line, value)
     if candidate is None:
         return _django_unknown(reason)
     literal, assignment, secret = candidate
-    parents = index['source'].parents[path]
+    parents = index["source"].parents[path]
     function = parents.get(id(assignment))
-    if not isinstance(function, ast.FunctionDef) or not function.name.startswith('test_') or function.decorator_list:
-        return _django_unknown('literal is not a direct test-function declaration')
+    if (
+        not isinstance(function, ast.FunctionDef)
+        or not function.name.startswith("test_")
+        or function.decorator_list
+    ):
+        return _django_unknown("literal is not a direct test-function declaration")
     if _app_local_assignment(function, secret) is not assignment:
-        return _django_unknown('credential is rebound or not a unique local binding')
+        return _django_unknown("credential is rebound or not a unique local binding")
     owner = parents.get(id(function))
-    witness = (_app_drf_enrollment(index, path, function, owner, secret)
-               or _app_pytest_store_enrollment(index, path, function, secret)
-               or _app_unittest_enrollment(index, path, function, owner, secret))
+    witness = (
+        _app_drf_enrollment(index, path, function, owner, secret)
+        or _app_pytest_store_enrollment(index, path, function, secret)
+        or _app_unittest_enrollment(index, path, function, owner, secret)
+    )
     if witness is None:
-        return _django_unknown('captured framework authority creation and same-client exercise are unresolved')
-    if not all(_app_active_call(index, path, function, witness[key])
-               for key in ('enrollment', 'request', 'header', 'token') if key in witness):
-        return _django_unknown('selected enrollment or exercise is not on a supported active statement path')
-    if not _app_capability_interval(index, path, function, witness['request'].lineno) or not _app_provider_scopes_clear(index, path, function):
-        return _django_unknown('selected client, authority or encoder capability was replaced or escaped')
-    return {'eligible': True, 'classification': 'APPLICATION_TEST_CREDENTIAL_ROLE',
-            'source': index['source'].relative(path),
-            'source_sha256': hashlib.sha256(index['source'].source_bytes[path]).hexdigest(),
-            'declaration_span': [assignment.lineno, assignment.col_offset, assignment.end_lineno, assignment.end_col_offset],
-            'profile': witness['profile'],
-            'witness_spans': {key: [node.lineno, node.col_offset, node.end_lineno, node.end_col_offset]
-                              for key, node in witness.items() if isinstance(node, ast.AST)},
-            'runtime_assurance': 'INCOMPLETE', 'transport_role': 'UNASSESSED',
-            'target_execution': 'not_performed',
-            'isolation_assurance': 'UNASSESSED',
-            'witness_sources': _app_witness_sources(index, witness)}
+        return _django_unknown(
+            "captured framework authority creation and same-client exercise are unresolved"
+        )
+    if not all(
+        _app_active_call(index, path, function, witness[key])
+        for key in ("enrollment", "request", "header", "token")
+        if key in witness
+    ):
+        return _django_unknown(
+            "selected enrollment or exercise is not on a supported active statement path"
+        )
+    if not _app_capability_interval(
+        index, path, function, witness["request"].lineno
+    ) or not _app_provider_scopes_clear(index, path, function):
+        return _django_unknown(
+            "selected client, authority or encoder capability was replaced or escaped"
+        )
+    return {
+        "eligible": True,
+        "classification": "APPLICATION_TEST_CREDENTIAL_ROLE",
+        "source": index["source"].relative(path),
+        "source_sha256": hashlib.sha256(index["source"].source_bytes[path]).hexdigest(),
+        "declaration_span": [
+            assignment.lineno,
+            assignment.col_offset,
+            assignment.end_lineno,
+            assignment.end_col_offset,
+        ],
+        "profile": witness["profile"],
+        "witness_spans": {
+            key: [node.lineno, node.col_offset, node.end_lineno, node.end_col_offset]
+            for key, node in witness.items()
+            if isinstance(node, ast.AST)
+        },
+        "runtime_assurance": "INCOMPLETE",
+        "transport_role": "UNASSESSED",
+        "target_execution": "not_performed",
+        "isolation_assurance": "UNASSESSED",
+        "witness_sources": _app_witness_sources(index, witness),
+    }
 
 
 def _app_witness_sources(index, witness):
@@ -4034,13 +5122,24 @@ def _app_witness_sources(index, witness):
     for key, node in witness.items():
         if not isinstance(node, ast.AST):
             continue
-        paths = [path for path, parents in index['source'].parents.items() if id(node) in parents]
+        paths = [
+            path
+            for path, parents in index["source"].parents.items()
+            if id(node) in parents
+        ]
         if len(paths) != 1:
             return {}
         path = paths[0]
-        result[key] = {'path': index['source'].relative(path),
-                       'sha256': index['source'].inventory[path],
-                       'span': [node.lineno, node.col_offset, node.end_lineno, node.end_col_offset]}
+        result[key] = {
+            "path": index["source"].relative(path),
+            "sha256": index["source"].inventory[path],
+            "span": [
+                node.lineno,
+                node.col_offset,
+                node.end_lineno,
+                node.end_col_offset,
+            ],
+        }
     return result
 
 

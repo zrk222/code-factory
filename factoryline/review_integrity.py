@@ -591,14 +591,21 @@ def oracle_configuration(root, files, typecheck_inputs, read_bytes, limit):
     """Combine bounded type-checker and benchmark configuration identities."""
     types, bindings, identity, cacheable = typecheck_inputs(root, files)
     from .context_efficiency import application_profile_configuration
-    application_bindings, application_identity, application_valid = application_profile_configuration(root, read_bytes, limit)
+
+    application_bindings, application_identity, application_valid = (
+        application_profile_configuration(root, read_bytes, limit)
+    )
     benchmarks, added, config, valid = benchmark_configuration(
         root, files, read_bytes, limit
     )
     return (
         types,
         bindings + added + application_bindings,
-        {"typecheck": identity, "benchmark": config, "application_profiles": application_identity},
+        {
+            "typecheck": identity,
+            "benchmark": config,
+            "application_profiles": application_identity,
+        },
         cacheable and valid and application_valid,
         benchmarks,
     )

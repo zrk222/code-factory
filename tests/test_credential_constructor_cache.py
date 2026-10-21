@@ -946,7 +946,8 @@ def test_mutated_or_conditional_constructor_transfer_is_unresolved(
 
 
 @pytest.mark.parametrize(
-    "capture", [None, "value = 1\n", 17, bytearray(b"value = 1\n")],
+    "capture",
+    [None, "value = 1\n", 17, bytearray(b"value = 1\n")],
     ids=["missing", "text", "integer", "mutable_bytes"],
 )
 @pytest.mark.parametrize("mixed", [False, True])
