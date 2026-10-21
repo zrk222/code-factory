@@ -73,6 +73,7 @@ def _constructor_provider_epoch():
 
 
 def direct_factory_call(call, function, index, path):
+    """Recognize a direct factory call only when it is the instance method's immediate return or assignment value."""
     owner = index.parents[path].get(id(function))
     if not instance_receiver(call, function, owner, index, path):
         return False
@@ -85,6 +86,7 @@ def direct_factory_call(call, function, index, path):
 
 
 def exact_parameter_field(ctor, assignment, param, index, path):
+    """Accept a constructor field binding only when one parameter read feeds one instance-field write with no reflective mutation."""
     if assignment not in ctor.body or binding_occurrences(ctor.body, param):
         return False
     target = assignment.targets[0]
@@ -361,6 +363,7 @@ def build_hops(
     ctor_path,
     sink_path,
 ):
+    """Build source-hashed provenance hops from the literal declaration through client selection and constructor binding to the HTTP sink."""
     fact_path = index.root / fact.path
     fact_node = next(
         (

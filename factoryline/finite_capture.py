@@ -10,6 +10,7 @@ from .provider_mutations import finite_provider_mutation_index
 def finite_domain_reference_allowed(
     path, use, tail, capture_path, capture_name, capture, parents
 ):
+    """Allow a finite-domain reference only in the capture, membership, set, intersection, or literal-string join shapes modeled here."""
     if tail:
         return False
     parent = parents.get(id(use))
@@ -38,10 +39,12 @@ def finite_domain_reference_allowed(
 
 
 def finite_provider_attribute_write_index(nodes, aliases, audit, parents=None):
+    """Build the finite provider-attribute mutation set using the shared provider mutation analysis."""
     return finite_provider_mutation_index(nodes, aliases, audit, parents or {})
 
 
 def finite_blocked_provider_prefixes(blocked, aliases):
+    """Expand blocked provider aliases into every dotted prefix used to reject descendants."""
     prefixes = set()
     for path, name in blocked:
         origin = aliases.get(path, {}).get(name)
@@ -52,6 +55,7 @@ def finite_blocked_provider_prefixes(blocked, aliases):
 
 
 def finite_scope_binding_candidate(node, origins):
+    """Recognize parameter, store/delete name, global, or nonlocal bindings that intersect the finite origin set."""
     if isinstance(node, ast.arg):
         return node.arg in origins
     if isinstance(node, ast.Name):
@@ -62,6 +66,7 @@ def finite_scope_binding_candidate(node, origins):
 
 
 def finite_template_capture_shape(function, aliases, audit, integrity):
+    """Recognize the single-parameter pytest parametrization shape that captures a sorted finite domain without shadowed builtins."""
     if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
         return None
     if len(function.decorator_list) != 1 or len(function.args.args) != 1:
@@ -94,6 +99,7 @@ def finite_template_capture_shape(function, aliases, audit, integrity):
 
 class _FiniteInputCapture:
     def finite_template_inputs(self):
+        """Build source-hashed finite-template witnesses only when snapshots, parameter domains, call sites, and template hashes are complete."""
         if not self.snapshot_complete:
             return {}
         rows = {}

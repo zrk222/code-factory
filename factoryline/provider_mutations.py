@@ -7,6 +7,7 @@ from collections import defaultdict
 def finite_provider_mutation_index(
     nodes, aliases, audit, parents, *, capture_predicate=None
 ):
+    """Collect provider mutation facts from writes, reflective calls, captured assignments, passed aliases, and returned aliases."""
     bindings = _provider_alias_bindings(nodes)
     facts = set()
     for node in nodes:

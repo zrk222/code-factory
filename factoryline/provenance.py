@@ -32,6 +32,7 @@ class NativeOraclePayload(str):
     __delattr__ = __setattr__
 
     def valid(self, key):
+        """Confirm a native oracle payload has the exact payload type, sealing key, and matching UTF-8 content digest."""
         return type(self) is NativeOraclePayload and getattr(self, "_seal", None) == (
             key,
             hashlib.sha256(self.encode("utf-8")).digest(),
@@ -293,6 +294,7 @@ def public_symbolic_binding(finding, sources, bindings):
 def bind_public_symbolic_consumers(
     root, snapshots, imports, contexts, source_bytes, inventory, integrity
 ):
+    """Populate credential-consumer and finite-template context evidence from a matching source inventory; clear it on incomplete or failed analysis."""
     from . import review_audits as audit
     from .runtime_audit_integrity import _LiteralConsumers
     import hashlib
@@ -514,12 +516,14 @@ def credential_role_witness(audit, node, target, aliases):
 def bind_credential_consumers(
     audit, root, snapshots, imports, contexts, source_bytes, *, inventory
 ):
+    """Delegate credential-consumer binding to the shared symbolic-consumer analyzer."""
     return bind_public_symbolic_consumers(
         root, snapshots, imports, contexts, source_bytes, inventory, audit
     )
 
 
 def credential_consumer_helpers(audit):
+    """Return the source-binding and witness helpers required by credential-consumer analysis."""
     from .primitive_observation_binding import primitive_binding_helpers
 
     return (

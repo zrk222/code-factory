@@ -40,6 +40,7 @@ def _class_ref(path, node, imports, classes, audit, index=None):
 
 
 def class_chain(index, path, name, imports, classes, audit):
+    """Resolve and memoize a class inheritance chain only while the import, class, and audit views still match."""
     memo = getattr(index, "class_chain_memo", None)
     if memo is None:
         return _uncached_class_chain(index, path, name, imports, classes, audit)
@@ -74,6 +75,7 @@ def _scope_assignments(function):
 
 
 def matches_fact(fact, path, node, index, imports, classes, audit, seen=()):
+    """Match a credential fact to a name or attribute through bounded scope and import resolution; reject cycles and invalid snapshots."""
     if id(node) in seen or len(seen) > 8 or not index.validate(path):
         return False
     function, owner = _scope(node, index, path)
@@ -146,6 +148,7 @@ def _match_attribute(fact, path, node, owner, index, imports, classes, audit):
 
 
 def url_use(fact, record, evidence, publications):
+    """Record URL user-info as an authentication use, matched publications as sanitized witnesses, and unmatched URLs as unknown links."""
     parsed = urlsplit(fact._literal)
     if parsed.username and parsed.password:
         record["slot"] = "http_url_userinfo"
@@ -183,6 +186,7 @@ def _literal_target(node):
 
 
 def auth_constructor_password(call, path, aliases):
+    """Return the password expression only for the supported requests or httpx basic-auth constructor forms."""
     from .security_configuration import _canonical
 
     if _canonical(call, aliases[path]) not in {
@@ -201,6 +205,7 @@ def auth_constructor_password(call, path, aliases):
 
 
 def candidate_facts(index, snapshots, sink_rows, publications):
+    """Collect literal declaration facts whose member names or values occur in sink expressions or endpoint publications."""
     names = {
         part
         for _, _, _, _, expr, *_ in sink_rows

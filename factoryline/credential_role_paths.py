@@ -73,6 +73,7 @@ def _context_identity(context, owner, call, receiver, aliases):
 
 
 def session_request_context(call, index, path, aliases):
+    """Recognize a request call under a synchronous context manager that binds the same receiver; reject async or nested scopes."""
     if not (
         isinstance(call.func, ast.Attribute)
         and call.func.attr == "request"
@@ -288,6 +289,7 @@ def record_use(
     integrity,
     aliases=None,
 ):
+    """Record a validated direct or indirect credential use with source and sink hashes and any available hops; return None without a complete current-source route."""
     paths = [[]]
     if not matches_fact(fact, path, expression, index, imports, classes, audit):
         hops = constructor_url_hops(

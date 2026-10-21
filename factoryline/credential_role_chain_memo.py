@@ -84,6 +84,7 @@ def _helper_epoch_key(epoch):
 
 
 def helper_epochs_valid(epochs):
+    """Check that cached helper epochs still match the current helper snapshots."""
     return all(
         snapshot is not None and _same_helper_epoch(_helper_snapshot(epoch), snapshot)
         for epoch, snapshot in epochs.values()
@@ -153,6 +154,7 @@ class ClassChainMemo:
             )
 
     def defers_validation(self, index, imports, classes, audit):
+        """Allow batched analysis to defer validation only for the memo's matching index and current source views."""
         return bool(
             self._analysis_batch is not None
             and index is self.index
@@ -160,6 +162,7 @@ class ClassChainMemo:
         )
 
     def matches(self, imports, classes, audit):
+        """Confirm that the memo still references the same import, class, audit, name-resolution, and root objects."""
         return (
             imports is self.imports
             and classes is self.classes
@@ -169,6 +172,7 @@ class ClassChainMemo:
         )
 
     def resolve(self, path, name, resolver):
+        """Resolve a class chain once per path and name, caching successful tuples and failed lookups."""
         key = path, name
         if key not in self.entries:
             result = resolver()
@@ -176,6 +180,7 @@ class ClassChainMemo:
         return self.entries[key]
 
     def valid(self):
+        """Revalidate memo inputs and every previously validated source path against a fresh bounded snapshot index."""
         if (
             not self.matches(self.imports, self.classes, self.audit)
             or _view(self.imports, self.classes) != self.view
@@ -194,6 +199,7 @@ class ClassChainMemo:
 
 
 def resolve_class_chain(index, path, name, imports, classes, audit):
+    """Resolve a class MRO to source class nodes, returning None when the inheritance chain is incomplete or ambiguous."""
     keys = _class_mro(index, (path, name), imports, classes, audit, set(), {})
     if keys is None:
         return None

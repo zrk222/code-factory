@@ -110,6 +110,7 @@ def _source_closed_class_spec(module, fixture, spec, audit):
 
 
 def direct_mock_return(module, fixture, aliases, audit):
+    """Confirm a fixture directly returns a supported mock constructor with a closed autospec class when required."""
     body = fixture.body
     if len(body) != 1 or not isinstance(body[0], ast.Return):
         return False
@@ -132,6 +133,7 @@ def direct_mock_return(module, fixture, aliases, audit):
 
 
 def inert_assertion_methods(module, fixture, audit):
+    """Return assertion method names only for a source-closed local class whose methods do nothing."""
     body = fixture.body
     value = (
         body[0].value if len(body) == 1 and isinstance(body[0], ast.Return) else None
@@ -167,6 +169,7 @@ def inert_assertion_methods(module, fixture, audit):
 
 
 def fixture_registration(decorator, function_name, aliases, audit):
+    """Resolve a pytest.fixture decorator to its literal name, marking dynamic or unsupported names as unproven."""
     target = decorator.func if isinstance(decorator, ast.Call) else decorator
     if audit._resolved_ast_name(target, aliases) != "pytest.fixture":
         return None, False
@@ -184,6 +187,7 @@ def fixture_registration(decorator, function_name, aliases, audit):
 
 
 def fixture_bindings_for_source(tree):
+    """Index source fixtures and record closed mock-provider and inert-assertion evidence for each fixture name."""
     from . import review_audits as audit
 
     aliases = audit._scope_security_aliases(audit._module_security_aliases(tree), tree)
@@ -224,6 +228,7 @@ def fixture_bindings_for_source(tree):
 
 
 def fixtures_for_file(path: Path, sources: dict[Path, dict[str, dict]]):
+    """Combine applicable ancestor conftest fixtures with the file's own fixtures, letting the nearer file entries override."""
     parents = sorted(
         (
             p
@@ -240,12 +245,14 @@ def fixtures_for_file(path: Path, sources: dict[Path, dict[str, dict]]):
 
 
 def fixture_is_mock(module, name):
+    """Report whether the source-bound fixture profile marks the named fixture as a mock."""
     mapping = getattr(module, "_oracle_mock_fixture_provenance", {})
     profile = mapping.get(name, {}) if isinstance(mapping, dict) else {}
     return isinstance(profile, dict) and profile.get("mock") is True
 
 
 def inert_fixture_assertion_reason(call, aliases):
+    """Explain an assertion call as inert only when its fixture's source-proven profile lists that method."""
     if (
         not isinstance(call, ast.Call)
         or not isinstance(call.func, ast.Attribute)
@@ -267,6 +274,7 @@ def inert_fixture_assertion_reason(call, aliases):
 
 
 def inert_fixture_assertions(nodes, aliases):
+    """Return the fixture assertion calls whose source-bound implementations are inert."""
     return [
         (node, reason)
         for node in nodes
@@ -1620,6 +1628,7 @@ def _django_model_binding_rebound(function, name, binding):
 
 
 def django_test_secret_evidence(index, path, line, value):
+    """Build Django test-secret evidence only from a closed runner, canonical client fixture, stable credential binding, and fixture-role witness."""
     if not isinstance(index, dict) or not index.get("runner_valid"):
         return _django_unknown("captured runner/source index unavailable")
     candidate, reason = _django_candidate_binding(index, path, line, value)
@@ -1953,6 +1962,7 @@ def _jwt_test_owner(
 
 
 def module_for(node):
+    """Find the owning AST module by following the review-audit parent chain."""
     owner = node
     while (parent := _review_audit()._security_parent(owner)) is not None:
         owner = parent

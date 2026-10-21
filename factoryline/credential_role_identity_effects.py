@@ -80,6 +80,7 @@ class _Analyzer:
         self.strict_calls = strict_calls
 
     def run(self, function, path, roots, depth, active):
+        """Analyze a captured function within depth and state budgets; return explicit unknown effects when validation is incomplete."""
         out = _Effects()
         if self.fields is None:
             out.unknowns.add("invalid initial field identity graph")

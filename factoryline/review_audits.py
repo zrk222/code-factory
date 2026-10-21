@@ -4575,6 +4575,7 @@ def _tenant_contract_bindings(
 def load_tenant_read_contract(
     root: Path, path: str = ".factory/tenant-read-contract.json"
 ) -> tuple[tuple[str, ...], tuple[str, ...], dict[str, Any]]:
+    """Load and validate the tenant-read contract through the shared runtime checker, propagating its validation failures."""
     return runtime_audit_integrity.load_tenant_read_contract(
         sys.modules[__name__], root, path
     )

@@ -2519,6 +2519,7 @@ def bound_sink_argument(call, position, keywords=()):
 
 
 def parsed_host_allowlist(call, aliases, call_name, proven_callee):
+    """Confirm a URL host allowlist guard uses a proven urlparse or urlsplit call on the same sink URL without intervening effects."""
     guard = getattr(call, "_security_flow_statement", None)
     if not isinstance(guard, ast.If) or not _url_guard_has_direct_sink(guard, call):
         return False
@@ -2592,6 +2593,7 @@ def _url_expr_same(left, right):
 
 
 def unsafe_request_url(call, name, tainted, aliases, is_tainted, allowed):
+    """Identify a tainted URL passed to a supported requests verb when no accepted guard proves it safe."""
     if name not in {
         "requests." + verb
         for verb in ("get", "post", "put", "patch", "delete", "head", "options")
@@ -5954,6 +5956,7 @@ def literal_exec_rejected(node):
 
 
 def unsafe_open(call, requests, aliases, is_tainted, proven_callee):
+    """Identify a tainted path passed to the unshadowed open builtin unless a fixed-root filename proof applies."""
     from .review_audits import _call_name
 
     path = bound_sink_argument(call, 0, ("file",))

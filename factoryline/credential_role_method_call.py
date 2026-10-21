@@ -6,6 +6,7 @@ from .credential_role_method_contracts import verified_instance_receiver
 
 
 def trace_call(flow, expression, function, path, seen, depth, bindings=None):
+    """Trace values through verified typing casts, declared setting defaults, or return-call flow, adding source hops only along a bounded path."""
     from .semantic_credential_sensor import _provider_identity_uncertain
 
     from .credential_role_method_contracts import cast_value
@@ -46,6 +47,7 @@ def trace_return(
     caller_bindings=None,
     callee_bindings=None,
 ):
+    """Trace returned method values through a bound caller parameter or the accepted string-format receiver path."""
     from .credential_role_scope_bindings import scope_class
     from .credential_role_method_contracts import format_receiver, returned_parameter
 
@@ -114,6 +116,7 @@ def _callee_bindings(flow, call, function, caller, caller_path, caller_bindings)
 
 
 def call_argument(flow, name, function, seen, depth):
+    """Trace a method parameter back through candidate calls, preserving verified decorator and argument-binding hops."""
     for path, caller, call in _candidate_calls(flow, function):
         choice = ("caller", id(call))
         try:

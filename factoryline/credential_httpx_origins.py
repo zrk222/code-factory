@@ -242,6 +242,7 @@ request_client_origin = _request_client_origin
 def factory_fixture_consumer_status(
     graph, path, fixture, source, caller, app_consumers_closed, route_lookup_only
 ):
+    """Classify a fixture consumer only when its binding and use shape are closed; return false for unsupported local use and None when ownership is unknown."""
     if not isinstance(caller, (ast.FunctionDef, ast.AsyncFunctionDef)):
         return None
     parameters = [

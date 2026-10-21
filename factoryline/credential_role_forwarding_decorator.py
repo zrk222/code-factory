@@ -6,6 +6,7 @@ from .credential_role_scope_bindings import effective_method
 
 
 def method_rows(chain, index, imports):
+    """Collect effective inherited methods and proof records only for methods with stable forwarding decorators."""
     rows, proofs = {}, {}
     for path, _, owner in chain:
         for node in owner.body:
@@ -66,6 +67,7 @@ def _consumer_module_binding_stable(path, name, index, imports):
 
 
 def forwarding_definition(path, decorator, index, imports):
+    """Resolve an imported forwarding decorator to its source definition only when the import binding is stable."""
     if not isinstance(decorator, ast.Name):
         return None
     if not _consumer_module_binding_stable(path, decorator.id, index, imports):

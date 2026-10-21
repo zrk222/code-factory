@@ -11,6 +11,7 @@ from .review_integrity import bind_source_call
 
 
 def class_binding(owner, name, parents):
+    """Resolve a unique direct class binding to its name or attribute expression; return None when absent and false when ambiguous."""
     bindings = binding_occurrences(owner.body, name)
     if not bindings:
         return None
@@ -31,6 +32,7 @@ def class_binding(owner, name, parents):
 
 
 def init_override(owner, parents):
+    """Report whether a class defines exactly one direct __init__ method, distinguishing absence from an unsafe override."""
     bindings = binding_occurrences(owner.body, "__init__")
     if not bindings:
         return None
@@ -44,6 +46,7 @@ def init_override(owner, parents):
 def capture_holder_instances(
     tree, parents, aliases, owners, roots, path, filtered, field_aliases, resolve
 ):
+    """Track holder instances and class aliases into provider roots; stop when a holder escapes or its selector use is ambiguous."""
     for node, target in _single_name_assignments(tree):
         name, parent = target.id, parents.get(id(node))
         value = node.value
@@ -110,6 +113,7 @@ def _capture_class_alias(tree, parent, name, holder, aliases, fields, resolve):
 
 
 def instance_selector_edges(tree, aliases, owners, roots, path, filtered, resolve):
+    """Record unique captured client_class assignments and extend the provider roots and owner set."""
     selected = []
     for node in ast.walk(tree):
         if not isinstance(node, (ast.Assign, ast.AnnAssign)):
@@ -135,6 +139,7 @@ def instance_selector_edges(tree, aliases, owners, roots, path, filtered, resolv
 
 
 def field_alias_path(provider, aliases):
+    """Rewrite a provider path through the longest matching captured field alias, preserving unmatched paths."""
     return next(
         (
             owner + provider[len(alias) :]
@@ -146,10 +151,12 @@ def field_alias_path(provider, aliases):
 
 
 def owner_path(node, aliases, fields):
+    """Resolve a node's canonical provider name through imports and captured field aliases."""
     return field_alias_path(_resolved_ast_name(node, aliases), fields)
 
 
 def class_index(index, aliases_by_path):
+    """Index top-level classes by resolved name across validated snapshots, omitting names that cannot be resolved."""
     rows = {}
     for path, tree in index.snapshots.items():
         aliases = aliases_by_path[path]
@@ -160,6 +167,7 @@ def class_index(index, aliases_by_path):
 
 
 def constructor_provider_provenance_epoch():
+    """Return the functions and binding helpers used to invalidate constructor-provider provenance caches."""
     return (
         class_binding,
         init_override,
@@ -196,6 +204,7 @@ def source_owner_consumer(
     builtin_stable,
     aliases_by_path=None,
 ):
+    """Return a consumer method name only when the captured owner call maps to a safe class method and ordinary type operand."""
     call = parents.get(id(node))
     if (
         _resolved_ast_name(node, aliases) not in owners
@@ -371,6 +380,7 @@ def _is_safe_isinstance_value(node, tree, parents, builtin_stable, ordinary_type
 def ordinary_type_operand(
     node, tree, parents, index, classes, aliases, owners, aliases_by_path
 ):
+    """Confirm that a name or attribute denotes a stable ordinary class whose type metadata is not provider-controlled."""
     if not isinstance(node, (ast.Name, ast.Attribute)):
         return False
     root = node

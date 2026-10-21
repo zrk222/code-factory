@@ -12,6 +12,7 @@ from . import type_intent_provider_provenance as provider
 def captured_provider_context_closed(
     module, relative, selected_test, canonical, noop_write
 ) -> bool:
+    """Confirm a provider context is closed only when source hashes, captured closure, owner imports, and no-op effects all match."""
     context = getattr(module, "_security_oracle_context", None)
     source = getattr(module, "_security_source_context", None)
     if (
@@ -260,6 +261,7 @@ def _vacuous_unittest_call(node):
 
 
 def source_proven_unittest_vacuity(node):
+    """Recognize unittest vacuity only for a test tied to a source-closed unittest.TestCase owner and method."""
     if not isinstance(node, ast.FunctionDef) or not node.name.startswith("test_"):
         return False
     module = getattr(node, "_oracle_module", None)
@@ -279,6 +281,7 @@ def source_proven_unittest_vacuity(node):
 
 
 def obviously_empty_test_body(node: ast.AST) -> bool:
+    """Combine inert-test, registered-callback, and source-proven unittest checks to identify an obviously empty test body."""
     from .test_callback_closure import inert_registered_callback_body
     from .test_oracle_misuse import inert_test_body
 
@@ -299,6 +302,7 @@ def inert_type_assertion_only_oracle(
     relative,
     provider_context_closed,
 ) -> bool:
+    """Identify a test whose only meaningful oracle is a closed typing.assert_type call and whose provider context is source-closed."""
     if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
         return False
     module = getattr(node, "_oracle_module", None)

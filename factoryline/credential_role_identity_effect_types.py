@@ -34,6 +34,7 @@ class IdentityEffectSummary:
 
     @property
     def preserves_class_identity(self):
+        """Report preserved class identity only for the no-class-effect summary status."""
         return self.status == "NO_CLASS_EFFECT"
 
 
@@ -55,10 +56,12 @@ class _Effects:
     field_writes: set[str] = field(default_factory=set)
 
     def merge(self, other):
+        """Merge class writes, escapes, unknowns, and field writes from another effect accumulator."""
         for name in ("class_writes", "escapes", "unknowns", "field_writes"):
             getattr(self, name).update(getattr(other, name))
 
     def freeze(self):
+        """Freeze effect sets into a deterministically sorted summary, prioritizing unknowns, then writes, then escapes."""
         status = (
             "UNKNOWN"
             if self.unknowns
@@ -78,6 +81,7 @@ CallResolver = Callable[[ast.Call, object], ResolvedIdentityCall | None]
 
 
 def contains_tracked(value):
+    """Report whether an identity value contains any tracked roots, uncertainty, or nested items."""
     return bool(
         value.roots
         or value.class_roots
@@ -88,6 +92,7 @@ def contains_tracked(value):
 
 
 def tracked_roots(value):
+    """Collect direct and recursively nested tracked roots from an identity value."""
     roots = set(value.roots | value.class_roots)
     for _, item in value.items:
         roots.update(tracked_roots(item))
@@ -103,6 +108,7 @@ def _has_unknown_content(value):
 
 
 def maps_each_actual_once(actuals, arguments):
+    """Confirm each resolved formal maps to one distinct actual expression by AST identity."""
     expressions = tuple(arguments.values())
     return all(isinstance(expr, ast.expr) for expr in expressions) and sorted(
         map(id, expressions)

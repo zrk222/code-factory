@@ -41,6 +41,7 @@ class RecordProjectionIndex:
         self.provider_valid = not _provider_binding_uncertain(tree, aliases)
 
     def kind(self, node):
+        """Return a cached projection kind only while provider evidence and the bounded projection index remain valid."""
         if self.remaining <= 0 or len(self.pending) > 32:
             self.bounded = False
         if (
@@ -262,6 +263,7 @@ class RecordProjectionIndex:
         return any(arg.arg == name for arg in parameters)
 
     def closed(self):
+        """Confirm every capability-bearing projection use is closed while the provider and analysis budget remain valid."""
         if not self.bounded or not self.provider_valid:
             return False
         complete = all(

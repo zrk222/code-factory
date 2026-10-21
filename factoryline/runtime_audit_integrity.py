@@ -749,6 +749,7 @@ def workspace_builtin_profile(snapshots, files):
 
 
 def workspace_builtin_helpers():
+    """Return workspace builtin and source-analysis helpers used by fixed-program and literal-input proofs."""
     return (
         _workspace_namespace_hazard,
         _workspace_dynamic_exec_risk,
@@ -1405,6 +1406,7 @@ def _oracle_bound_names(statement):
 
 
 def native_execution_helpers():
+    """Return helpers that analyze native test execution and correlated source-bound calls."""
     return (
         assigned_sync_function_call,
         _oracle_call_candidates,
@@ -1421,6 +1423,7 @@ def native_execution_helpers():
 
 
 def credential_validation_helpers():
+    """Collect callable validators from the credential-related analysis modules while excluding imported callables."""
     from . import credential_httpx_origins, credential_json_assertions
     from . import credential_router_publication, credential_role_scope_bindings
     from . import provider_mutations, semantic_credential_sensor
@@ -1442,6 +1445,7 @@ def credential_validation_helpers():
 
 
 def finite_template_input_helpers():
+    """Return the finite-template capture and provider-closure helpers used by source analysis."""
     return (
         credential_validation_helpers,
         *credential_validation_helpers(),
@@ -2038,6 +2042,7 @@ class _LiteralConsumers(_FiniteInputCapture):
         self.ignore_blocked = False
 
     def resolve(self, path, parts, seen=()):
+        """Resolve a bounded source name through captured classes, functions, values, and imports; return None on cycles, blocked names, or budget exhaustion."""
         if not self._tick():
             return None
         if not parts or (path, parts) in seen or len(seen) > 16:
@@ -2778,6 +2783,7 @@ class _LiteralConsumers(_FiniteInputCapture):
         )
 
     def public(self, path, node, seen=()):
+        """Determine whether a value appears in a public assertion, response, detail field, or top-level assignment according to the captured AST."""
         if not self._tick():
             return False
         if id(node) in seen or len(seen) > 16:
@@ -3202,6 +3208,7 @@ class _LiteralConsumers(_FiniteInputCapture):
         )
 
     def witnesses(self):
+        """Collect consumer witnesses only when source analysis is complete and every relevant reference is public; return no witnesses for incomplete evidence."""
         if not self.complete:
             return {}
         result = {}
@@ -3261,6 +3268,7 @@ class _LiteralConsumers(_FiniteInputCapture):
 
 
 def finite_eval_binding(finding, valid_source_span):
+    """Validate finite-eval evidence fields, bounded domain size, digest, profile, and source spans; runtime execution remains unproven."""
     facts = finding.get("facts", {})
     return (
         isinstance(facts, dict)
@@ -3723,6 +3731,7 @@ def _single_local_pickle_bytes_flow(scope, name, dump_statement, load_call):
 
 
 def tenant_scope_read(audit, call: str, bindings: dict) -> dict:
+    """Build a tenant-read contract row and raise ReviewAuditError when a call has multiple bindings."""
     values = bindings.get(call, ())
     if not isinstance(values, (tuple, list)) or len(values) > 1:
         raise audit.ReviewAuditError("Each scoped call requires at most one binding.")
@@ -3793,6 +3802,7 @@ def load_tenant_read_contract(
 
 
 def tenant_contract_helpers(audit):
+    """Return the tenant-contract loader, source reader, path checks, and binding validators used by audit reports."""
     return (
         load_tenant_read_contract,
         audit.Path,

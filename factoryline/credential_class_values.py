@@ -11,6 +11,7 @@ _REFLECTION = set(
 
 
 def unresolved(reason):
+    """Create an unresolved member-read result with no read records and the supplied explanation."""
     return {"reads": [], "unresolved_reason": reason}
 
 
@@ -72,6 +73,7 @@ def _class_refs_mutated(graph, chain, member, methods):
 
 
 def mutated(graph, chain, member, methods):
+    """Report mutation when the source graph is incomplete or class/member writes and reflective changes are found."""
     return (
         not graph.complete
         or any(
@@ -83,6 +85,7 @@ def mutated(graph, chain, member, methods):
 
 
 def direct_class_reads(graph, chain, member):
+    """Collect direct class-member reads across the owner chain; return no reads when writes, transformations, or escapes make access ambiguous."""
     reads, classes = [], [owner for _, _, owner in chain]
     for owner_path, owner_name, _ in chain:
         for use_path, node, tail in graph.refs.get(
@@ -130,6 +133,7 @@ def _one_method_reads(graph, path, name, method, member):
 
 
 def method_reads(graph, methods, member):
+    """Collect reads from validated methods and stop with an unresolved reason when any method's access cannot be closed."""
     reads = []
     for path, name, method in methods.values():
         found, reason = _one_method_reads(graph, path, name, method, member)
@@ -206,6 +210,7 @@ def _methods(chain, audit):
 
 
 def source_member(graph, path, class_name, member):
+    """Locate a literal class-member declaration only when its inheritance chain and methods are unmutated; otherwise return no source fact."""
     if not isinstance(member, str) or not member.isidentifier():
         return None
     try:
@@ -251,6 +256,7 @@ def source_member(graph, path, class_name, member):
 
 
 def member_reads(graph, path, class_name, member):
+    """Return deduplicated class-member reads only when declaration, mutation analysis, and source graph are complete; otherwise explain the unresolved state."""
     if source_member(graph, path, class_name, member) is None:
         return unresolved("source_member_unresolved")
     chain = _class_chain(graph, path, class_name)

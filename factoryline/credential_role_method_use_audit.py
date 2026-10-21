@@ -230,6 +230,7 @@ def _result(allowed, unknown):
 
 
 def audit_value_closure(traces, nodes, index, unknown):
+    """Audit trace value closure through local bindings, parameter uses, and aliases, appending unresolved cases to the supplied ledger."""
     _bindings(traces, nodes, index, unknown)
     _parameter_uses(traces, nodes, index, unknown)
     alias_uses(traces, nodes, index, unknown)
@@ -347,6 +348,8 @@ def _audit_parameter_target(row, target, sinks, traces, nodes, index, unknown):
 
 
 def absolute_path(index, relative):
+    """Resolve one validated absolute source path for a relative name, using the class-chain memo when available."""
+
     def derive():
         rows = {}
         for path in index.snapshots:
@@ -369,6 +372,7 @@ def absolute_path(index, relative):
 
 
 def ancestor(node, index, relative, types):
+    """Find the nearest ancestor matching the requested AST node types in a validated source tree."""
     path, current = absolute_path(index, relative), node
     while path and current:
         if isinstance(current, types):
@@ -378,10 +382,12 @@ def ancestor(node, index, relative, types):
 
 
 def coordinates(node):
+    """Return an AST node's start and end line and column coordinates."""
     return (node.lineno, node.col_offset, node.end_lineno, node.end_col_offset)
 
 
 def span_key(row):
+    """Extract the stable path, source span, digest, and role fields used to identify an evidence record."""
     return tuple(
         row.get(key)
         for key in (
@@ -397,6 +403,7 @@ def span_key(row):
 
 
 def public_span(row):
+    """Project a trace row onto its allowlisted span identity fields."""
     return dict(
         zip(
             (
@@ -414,6 +421,7 @@ def public_span(row):
 
 
 def alias_uses(traces, nodes, index, unknown):
+    """Validate traced aliases against one local assignment and audit their reads; append concrete unknown reasons for unsupported shapes."""
     for trace in traces:
         for row in trace:
             if row.get("role") != "unique_local_alias":
@@ -481,6 +489,7 @@ def _audit_alias_reads(function, target, name, row, traces, nodes, unknown):
 
 
 def covered_value_edge(node, path, traces, nodes):
+    """Confirm a node is covered by an accepted trace edge such as argument binding, aliasing, URL sink, return, format input, or cast."""
     for trace in traces:
         for row in trace:
             if row.get("path") != path:
@@ -543,6 +552,7 @@ def _cast_value(parent):
 
 
 def url_argument(call):
+    """Return a URL value from the second positional argument or the url keyword when present."""
     if len(call.args) > 1:
         return call.args[1]
     return next(
@@ -551,6 +561,7 @@ def url_argument(call):
 
 
 def argument_call(actual, index, relative):
+    """Find the nearest enclosing call that uses the expression directly as a positional or keyword argument."""
     path, current = absolute_path(index, relative), actual
     while path and current:
         parent = index.parents[path].get(id(current))
@@ -564,6 +575,7 @@ def argument_call(actual, index, relative):
 
 
 def maps(call, actual, name, function):
+    """Match one actual argument to a formal name only for a direct self.method call with a self receiver."""
     positional = [*function.args.posonlyargs, *function.args.args]
     target = call.func
     if (

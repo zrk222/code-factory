@@ -425,6 +425,7 @@ def _safe_isinstance_type(node, tree, parents, builtin_stable, ordinary_type=Non
 
 
 def constructor_provider_model(selected, index, imports, source_aliases, capture_guard):
+    """Construct the provider model only when every source snapshot and selector, inheritance, alias, and capture guard is complete."""
     from .review_audits import _resolved_ast_name
 
     roots, owners, shared = set(selected), set(), set()
@@ -574,6 +575,7 @@ def _instance_aliases(
 
 
 def constructor_provider_model_helper_epoch():
+    """Return the helper functions that determine constructor-provider model cache epochs."""
     from .review_audits import _resolved_ast_name
 
     return (

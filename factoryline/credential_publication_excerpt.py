@@ -11,6 +11,7 @@ PROFILE = "REVIEWED_PROTOCOL_PUBLICATION_V1"
 
 
 def digest(value):
+    """Compute a stable SHA-256 digest for JSON-compatible evidence using sorted keys and compact separators."""
     return hashlib.sha256(
         json.dumps(
             value, sort_keys=True, separators=(",", ":"), ensure_ascii=False

@@ -11,6 +11,7 @@ from .credential_role_identity_value_model import (
 
 
 def record_opaque_call(call, aliases, involved, out, *, strict_calls=False):
+    """Record tracked roots as escaping when an opaque call receives them; otherwise mark the call as unresolved."""
     if call_argument_roots(call, aliases, strict_calls=strict_calls):
         out.escapes.update(involved)
     else:
@@ -100,6 +101,7 @@ def _protocol_operands(node):
 
 
 def implicit_protocol_roots(node, aliases, *, strict_calls=False):
+    """Collect tracked roots used by iteration, context management, comparisons, operators, awaits, and comprehension iteration."""
     expressions = []
     if isinstance(node, (ast.For, ast.AsyncFor)):
         expressions.append(node.iter)
@@ -132,6 +134,7 @@ def implicit_protocol_roots(node, aliases, *, strict_calls=False):
 
 
 def super_reference(node):
+    """Recognize a loaded AST name spelled super, without inferring its runtime binding."""
     return (
         isinstance(node, ast.Name)
         and node.id == "super"
@@ -140,11 +143,13 @@ def super_reference(node):
 
 
 def tracks_receiver(function, aliases):
+    """Check whether the function's first positional receiver is present in the tracked alias map."""
     params = [*function.args.posonlyargs, *function.args.args]
     return bool(params and params[0].arg in aliases)
 
 
 def record_implicit_effects(node, function, aliases, effects, *, strict_calls=False):
+    """Mark unknown effects for implicit super dispatch, tracked special-method operations, or unresolved descriptor reads."""
     if tracks_receiver(function, aliases) and super_reference(node):
         effects.unknowns.add("super uses implicit or reflective receiver")
     if implicit_protocol_roots(node, aliases, strict_calls=strict_calls):

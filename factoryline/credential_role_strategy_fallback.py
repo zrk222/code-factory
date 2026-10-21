@@ -12,6 +12,7 @@ def _doc(node):
 
 
 def fallback_method(function):
+    """Recognize the exact un-decorated settings fallback method shape and return its lookup nodes only when names and branches are stable."""
     if function is None or function.decorator_list:
         return None
     if [arg.arg for arg in function.args.args][:3] != ["self", "name", "default"]:

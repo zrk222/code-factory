@@ -432,6 +432,7 @@ def security_scan_report(
     database_context: dict | None = None,
     tenant_policy_applies: bool = False,
 ) -> dict[str, Any]:
+    """Assemble and seal the bounded Python security scan report with coverage, source bindings, findings, and its non-runtime, non-approval limits."""
     audit_coverage = audit._security_scan_coverage(
         files, outcomes, audit.MAX_SECURITY_SOURCE_FILES
     )

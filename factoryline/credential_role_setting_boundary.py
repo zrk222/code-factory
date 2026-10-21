@@ -204,6 +204,7 @@ def setting_boundary_nodes(index, snapshots, settings_path, owner, aliases):
 
 
 def module_path(index, module):
+    """Resolve a dotted module name to a captured .py or package initializer path."""
     stem = module.replace(".", "/")
     for suffix in (".py", "/__init__.py"):
         path = index.root / (stem + suffix)
@@ -213,6 +214,7 @@ def module_path(index, module):
 
 
 def module_name(index, path):
+    """Convert a captured source path to a dotted module name, returning None for paths outside the root."""
     relative = index.relative(path)
     if not relative:
         return None
@@ -220,6 +222,7 @@ def module_name(index, path):
 
 
 def source_hop(index, path, node, role):
+    """Build source-hashed provenance for a validated node and role, returning None for missing or stale source."""
     if node is None or not index.validate(path):
         return None
     return {

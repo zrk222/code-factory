@@ -4,6 +4,7 @@ import ast
 
 
 def source_scope(node, parents):
+    """Find the nearest enclosing function and class for a source node."""
     function = owner = None
     while node is not None:
         if (
@@ -19,6 +20,7 @@ def source_scope(node, parents):
 
 
 def within(node, span):
+    """Check whether a node's complete source span lies within the supplied span."""
     return (span[0], span[1]) <= (node.lineno, node.col_offset) and (
         node.end_lineno,
         node.end_col_offset,
@@ -26,6 +28,7 @@ def within(node, span):
 
 
 def value_spans(row, index, imports, classes):
+    """Collect value spans and constructor field names that are linked to credential-use witnesses."""
     spans, fields = {}, {}
     for witness in row["url_witnesses"]:
         if witness.get("value_span"):
@@ -69,6 +72,7 @@ def _selected_carrier(witness, index, imports, classes):
 
 
 def alias_is_closed(node, function, parents, spans):
+    """Accept a local alias only when it is assigned once and every use is covered by the supplied evidence spans."""
     assignment = parents.get(id(node))
     if not (
         isinstance(assignment, ast.Assign)
@@ -118,6 +122,7 @@ def inherited_fields(fields, index, imports, classes, audit):
 
 
 def related_owners(fact, index, imports, classes, audit):
+    """Return the origin class and its validated descendants from the captured class graph."""
     from .credential_role_bindings import class_chain
 
     origin = (index.root / fact.path, fact.owner)
@@ -134,6 +139,7 @@ def related_owners(fact, index, imports, classes, audit):
 
 
 def reflective_member_use(node, fields, aliases=None):
+    """Recognize supported reflective member access and return its receiver expression; return None for unrelated or ambiguous calls."""
     if isinstance(node, ast.Attribute) and node.attr in {
         "__dict__",
         "__getattribute__",

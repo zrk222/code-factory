@@ -8,6 +8,7 @@ def _class_binding_statements(owner, name):
 
 
 def effective_method(chain, name, allowed_decorators=()):
+    """Return the first effective inherited method with exactly the permitted decorator set."""
     allowed = set(allowed_decorators)
     for path, _, owner in chain:
         bindings = _class_binding_statements(owner, name)
@@ -46,6 +47,7 @@ def _decorator_name(node):
 
 
 def class_attribute(chain, name):
+    """Resolve a unique simple class attribute from the first class in the inheritance chain that binds it."""
     for path, _, owner in chain:
         bindings = _class_binding_statements(owner, name)
         if not bindings:
@@ -70,6 +72,7 @@ def class_attribute(chain, name):
 
 
 def resolve_class(path, expression, imports, classes):
+    """Resolve a class name or one-level imported class attribute from the current source and import maps."""
     if isinstance(expression, ast.Name):
         imported = imports.get(path, {}).get(expression.id)
         if imported:
@@ -83,6 +86,7 @@ def resolve_class(path, expression, imports, classes):
 
 
 def scope_class(node, index, path):
+    """Find the nearest enclosing class node through the validated parent map."""
     current = node
     while current is not None:
         current = index.parents[path].get(id(current))
@@ -139,6 +143,7 @@ def _binds(node, name):
 
 
 def binding_occurrences(statements, name):
+    """Collect name bindings while respecting nested scopes and named-expression targets in comprehensions."""
     found, pending = [], list(statements)
     while pending:
         node = pending.pop()
@@ -158,6 +163,7 @@ def binding_occurrences(statements, name):
 
 
 def function_bindings(function, name, audit):
+    """Return local binding statements unless a function parameter already shadows the requested name."""
     args = [*function.args.posonlyargs, *function.args.args, *function.args.kwonlyargs]
     args.extend(item for item in (function.args.vararg, function.args.kwarg) if item)
     if any(argument.arg == name for argument in args):
@@ -167,6 +173,7 @@ def function_bindings(function, name, audit):
 
 
 def module_literal_binding(fact, path, index, node, audit):
+    """Confirm that a source fact is the unique matching module-level literal declaration and that the name refers to it."""
     if (
         fact.owner != "<module>"
         or fact.source_role != "module_literal"
@@ -190,6 +197,7 @@ def module_literal_binding(fact, path, index, node, audit):
 
 
 def import_is_stable(path, name, index, audit):
+    """Confirm a name has exactly one top-level import binding."""
     tree = index.snapshots.get(path)
     if not isinstance(tree, ast.Module):
         return False
@@ -200,6 +208,7 @@ def import_is_stable(path, name, index, audit):
 
 
 def match_name(fact, path, node, function, index, imports, classes, audit, seen):
+    """Match a source fact through module literals, local aliases, or stable imports, returning false for rebinding or ambiguity."""
     from .credential_role_bindings import matches_fact
 
     if function is None and module_literal_binding(fact, path, index, node, audit):
@@ -240,10 +249,12 @@ def match_name(fact, path, node, function, index, imports, classes, audit, seen)
 
 
 def binding_statements(statements, name):
+    """Return top-level statements that bind the requested name."""
     return [s for s in statements if binding_occurrences([s], name)]
 
 
 def declared_origins(path, node, index, imports, classes, seen=()):
+    """Resolve declared class origins through local and imported bindings."""
     key = (path, id(node))
     if key in seen or len(seen) > 12 or not index.validate(path):
         return set()

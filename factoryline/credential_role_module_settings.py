@@ -34,6 +34,7 @@ def _hook_return(node):
 
 
 def settings_module_bridge(snapshots, settings_path, owner, module_binding):
+    """Prove the module-level AppSettings and _app_settings bridge shape, returning its hook and assignment or None."""
     tree = snapshots.get(settings_path)
     if not isinstance(tree, ast.Module) or owner.name != "AppSettings":
         return None
@@ -97,6 +98,7 @@ def settings_module_bridge(snapshots, settings_path, owner, module_binding):
 
 
 def module_binding(tree, name, kind):
+    """Return the unique top-level binding statement of the requested kind, or None when absent or ambiguous."""
     from .credential_role_scope_bindings import binding_statements
 
     rows = binding_statements(tree.body, name)

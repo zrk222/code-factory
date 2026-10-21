@@ -436,6 +436,7 @@ def _track_credential_request_collection(
 
 
 def flask_upload_expression(node, aliases, scope, flow_statement, collection):
+    """Recognize Flask file access through a files collection subscript or get call."""
     if isinstance(node, ast.Subscript):
         return collection(node.value, aliases, scope, flow_statement, "files")
     return (
@@ -456,6 +457,7 @@ def password_comparison_finding(
     password_source,
     literal_valid,
 ):
+    """Create a critical hardcoded-secret finding when a request-derived password is compared with a valid literal using equality."""
     from . import review_audits as audit
 
     if not isinstance(test, ast.Compare) or len(test.ops) != 1:
@@ -484,6 +486,7 @@ def password_comparison_finding(
 def flask_request_collection(
     node, aliases, scope, flow_statement, collection, request_aliases
 ):
+    """Recognize an aliased Flask request collection only when it resolves to flask.request and the requested collection."""
     from .review_audits import _name
 
     if not isinstance(node, ast.Attribute) or node.attr != collection:
@@ -499,6 +502,7 @@ def flask_request_collection(
 def django_request_parameter(
     node, aliases, scope, flow_statement, request_alias_reader
 ):
+    """Recognize request.GET only for an unshadowed Django request parameter in a function with a proven Django request alias."""
     from . import review_audits as audit
     from .review_audits import _name
 

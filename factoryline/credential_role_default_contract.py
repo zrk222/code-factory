@@ -7,6 +7,7 @@ from .credential_role_scope_bindings import binding_occurrences
 
 
 def useful_body(function):
+    """Return executable statements while excluding string-expression docstrings from a function body."""
     return [
         n
         for n in function.body
@@ -19,11 +20,13 @@ def useful_body(function):
 
 
 def single_return(function):
+    """Check whether the function body contains exactly one non-docstring statement and that it is a return."""
     body = useful_body(function)
     return len(body) == 1 and isinstance(body[0], ast.Return)
 
 
 def default_getter(call):
+    """Recognize the exact settings getter lambda shape used to fetch ALLAUTH_SETTING_GETTER with a default."""
     if not (
         isinstance(call.func, ast.Name)
         and call.func.id == "getattr"
@@ -60,6 +63,7 @@ def default_getter(call):
 
 
 def getter_environment(tree, function):
+    """Confirm the module uses the expected Django settings and import helpers without rebinding their names."""
     if function.decorator_list:
         return False
     if any(binding_occurrences(tree.body, name) for name in ("getattr", "callable")):
@@ -114,6 +118,7 @@ def _callable_bridge(function):
 
 
 def property_default(owner):
+    """Recognize an adapter property that returns a dotted setting name through self._setting and return its source nodes."""
     if owner.decorator_list or owner.keywords:
         return None
     row = effective_method([(None, owner.name, owner)], "ADAPTER", {"property"})

@@ -98,6 +98,7 @@ def _container_value(node, aliases, *, strict_calls=False):
 
 
 def call_has_unknown_value(call, aliases, *, strict_calls=False):
+    """Detect unknown content among a call's arguments and method receiver."""
     args = [*call.args, *(item.value for item in call.keywords)]
     if isinstance(call.func, ast.Attribute):
         args.append(call.func.value)
@@ -108,6 +109,7 @@ def call_has_unknown_value(call, aliases, *, strict_calls=False):
 
 
 def call_argument_roots(call, aliases, *, strict_calls=False):
+    """Collect tracked roots from positional and keyword call arguments."""
     args = [*call.args, *(item.value for item in call.keywords)]
     return set().union(
         *(
@@ -118,6 +120,7 @@ def call_argument_roots(call, aliases, *, strict_calls=False):
 
 
 def call_tracked_roots(call, aliases, *, strict_calls=False):
+    """Collect tracked roots from call arguments and, for method or constructor expressions, the receiver identity."""
     roots = call_argument_roots(call, aliases, strict_calls=strict_calls)
     if isinstance(call.func, ast.Attribute):
         roots.update(
@@ -133,6 +136,7 @@ def call_tracked_roots(call, aliases, *, strict_calls=False):
 
 
 def assignment_target(node):
+    """Return the sole assignment target for a simple assignment or annotated assignment; reject multi-target assignments."""
     if isinstance(node, ast.Assign):
         return node.targets[0] if len(node.targets) == 1 else None
     return getattr(node, "target", None)
@@ -141,6 +145,7 @@ def assignment_target(node):
 def nested_capture_roots(
     function, path, aliases, index, *, strict_calls=False, effects=None
 ):
+    """Collect tracked roots captured by nested scopes and mark unresolved captures as unknown in strict mode."""
     from .credential_role_identity_call_model import _definition_effects_unknown
 
     captured, tracked = set(), set(aliases)
@@ -166,6 +171,7 @@ def nested_capture_roots(
 
 
 def record_write(target, value, aliases, effects, *, strict_calls=False):
+    """Record attribute or container writes, including escaped roots and unresolved stored values where strict analysis requires it."""
     if isinstance(target, ast.Attribute):
         return _record_attribute_write(
             target, value, aliases, effects, strict_calls=strict_calls
@@ -180,6 +186,7 @@ def record_write(target, value, aliases, effects, *, strict_calls=False):
 
 
 def record_escape(node, aliases, effects, reason, *, strict_calls=False):
+    """Record escaped roots and mark the supplied effect unknown when the escaping value has unresolved content."""
     value = identity_value(node, aliases, strict_calls=strict_calls)
     effects.escapes.update(tracked_roots(value))
     if value.unknown or (strict_calls and _has_unknown_content(value)):

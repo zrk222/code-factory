@@ -6,6 +6,7 @@ import re
 
 
 def fixed_primitive_binding(finding, sources, bindings, integrity):
+    """Validate a critical hardcoded-secret finding against recognized static test, fixture, endpoint, symbolic, or finite-input evidence and its source hashes."""
     from .provenance import public_symbolic_binding, finite_template_binding
     from .credential_endpoint_evidence import endpoint_binding
 
@@ -213,6 +214,7 @@ def _current_primitive_binding(finding, core, bindings, audit):
 
 
 def annotate_application_fixture(finding, node):
+    """Attach hashed application-fixture evidence only to eligible findings, leaving preclassified findings and unsupported literals unchanged."""
     from . import review_integrity as integrity
 
     if finding.get("facts", {}).get("disposition"):
@@ -256,6 +258,7 @@ def annotate_application_fixture(finding, node):
 
 
 def application_fixture_binding(finding, sources, bindings):
+    """Validate application-fixture evidence, source/configuration hashes, spans, and proof fields without claiming runtime isolation."""
     facts = finding.get("facts", {})
     evidence = facts.get("fixture_evidence", {})
     if not isinstance(evidence, dict):
@@ -508,6 +511,7 @@ def django_fixture_binding(finding, sources, bindings):
 
 
 def closed_declaration_binding(finding, audit):
+    """Validate a closed declaration witness, grammar profile, program digest, and contained source spans; execution remains unperformed."""
     facts = finding.get("facts", {})
     span = facts.get("call_span")
     return (
@@ -531,6 +535,7 @@ def closed_declaration_binding(finding, audit):
 
 
 def valid_source_span(span):
+    """Check that a source span contains four ordered integer coordinates with a positive starting line."""
     return (
         isinstance(span, list)
         and len(span) == 4
@@ -542,12 +547,14 @@ def valid_source_span(span):
 
 
 def finite_eval_binding(finding, audit):
+    """Delegate finite-eval proof validation to the shared runtime checker with this module's span validator."""
     from .runtime_audit_integrity import finite_eval_binding as bind
 
     return bind(finding, audit._valid_source_span)
 
 
 def fixed_program_builtin_identity(audit, node, module, call_name):
+    """Confirm exec or eval resolves to an unshadowed builtin without module-level indirection through sensitive builtin names."""
     if not isinstance(node.func, audit.ast.Name) or node.func.id not in {
         "exec",
         "eval",
@@ -693,6 +700,7 @@ def fixed_program_witness(audit, relative, node, call_name):
 def bind_fixed_program_workspace(
     audit, root, contexts, snapshots, files, source_bytes=None, imports=None
 ):
+    """Bind the workspace builtin profile and source digest into each context, adding credential consumers only for complete snapshots."""
     import json
 
     from .runtime_audit_integrity import workspace_builtin_profile
@@ -730,6 +738,7 @@ def bind_fixed_program_workspace(
 
 
 def fixed_program_workspace_helpers(audit):
+    """Return the source and validator helpers used to construct fixed-program workspace evidence."""
     from . import runtime_audit_integrity as runtime
 
     return (
@@ -756,6 +765,7 @@ def fixed_program_workspace_helpers(audit):
 
 
 def primitive_binding_helpers():
+    """Return primitive-binding validators for endpoint, fixture, declaration, finite-eval, workspace, and symbolic-identifier evidence."""
     from .credential_endpoint_evidence import endpoint_evidence_helpers
     from .credential_endpoint_admission import endpoint_admission_helpers
     from . import credential_publication_catalog
@@ -794,6 +804,7 @@ def primitive_binding_helpers():
 
 
 def credential_context_cache_schema():
+    """Return the versioned oracle-context cache key derived from the current publication catalog digest."""
     from .credential_publication_catalog import catalog_content_digest
 
     return "factory.security-oracle-context-cache.v7:" + catalog_content_digest()

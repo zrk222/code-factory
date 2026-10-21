@@ -50,6 +50,7 @@ class _Flow:
     def trace(
         self, expression, function, path, seen=frozenset(), depth=0, bindings=None
     ):
+        """Trace an expression through declared facts, aliases, calls, and boolean branches with a depth limit and validated snapshots."""
         if depth > 8 or not self.index.validate(path):
             return None
         marker = (path, id(function), id(expression))

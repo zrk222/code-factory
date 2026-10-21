@@ -6,6 +6,7 @@ import hashlib
 
 
 def enclosing_function(node, index, path):
+    """Find the nearest enclosing function or async function through the validated parent index."""
     while node is not None:
         node = index.parents[path].get(id(node))
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -14,6 +15,7 @@ def enclosing_function(node, index, path):
 
 
 def is_parameter(function, name):
+    """Confirm a name is a formal parameter with no competing binding in the function body."""
     from .credential_role_scope_bindings import binding_occurrences
 
     args = function.args
@@ -40,6 +42,7 @@ def returned_parameter(function, expression):
 
 
 def method_returns(function, index, path):
+    """Return only the small supported set of direct, conditional, or try-body method returns."""
     rows = [node for node in ast.walk(function) if isinstance(node, ast.Return)]
     accepted = []
     for row in rows:
@@ -95,6 +98,7 @@ def _exception_metadata_assignment(statement, name):
 
 
 def format_receiver(expression):
+    """Return the receiver only for a keyword-expanded string format call with no positional arguments."""
     if not isinstance(expression, ast.Call) or not isinstance(
         expression.func, ast.Attribute
     ):
@@ -110,6 +114,7 @@ def format_receiver(expression):
 
 
 def verified_instance_receiver(node, function, owner, index, path, verified):
+    """Validate an instance receiver directly, or require a proven decorated method with an unshadowed self parameter."""
     from .credential_role_scope_bindings import instance_receiver
 
     if not function.decorator_list:
@@ -176,6 +181,7 @@ def cast_value(expression, path, aliases):
 
 
 def source_current(index, path):
+    """Check the cached source-current result for a path, recomputing it when the path has not been memoized."""
     memo = getattr(index, "class_chain_memo", None)
     checks = getattr(memo, "method_flow_source_checks", None)
     if memo is not None and callable(getattr(memo, "valid", None)):
@@ -206,6 +212,7 @@ def _source_current(index, path):
 
 
 def source_span(index, path, node, role):
+    """Build a source-hop record from the indexed relative path, AST span, source digest, and role; this helper does not validate the path itself."""
     return {
         "path": index.relative(path),
         "line": node.lineno,

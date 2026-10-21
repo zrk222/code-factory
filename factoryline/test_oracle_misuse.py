@@ -34,6 +34,7 @@ def _static_expression(node: ast.AST) -> bool:
 
 
 def always_truthy_assertion_reason(node: ast.AST, constant_truth) -> str | None:
+    """Explain an assertion that is statically always truthy without checking expected behavior, or return None."""
     if isinstance(node, (ast.Tuple, ast.List, ast.Set)) and any(
         not isinstance(item, ast.Starred) for item in node.elts
     ):
@@ -48,6 +49,7 @@ def always_truthy_assertion_reason(node: ast.AST, constant_truth) -> str | None:
 
 
 def discarded_comparison_reason(statement: ast.AST) -> str | None:
+    """Explain a discarded comparison expression that never asserts or stores its result."""
     if isinstance(statement, ast.Expr) and isinstance(statement.value, ast.Compare):
         return (
             "comparison result is discarded instead of being asserted "
@@ -57,6 +59,7 @@ def discarded_comparison_reason(statement: ast.AST) -> str | None:
 
 
 def retain_local_oracle_diagnostics(weak):
+    """Retain only the selected local weak-oracle diagnostics from the broader weak-finding list."""
     prefixes = (
         "nonempty container assertion",
         "nonempty mapping assertion",
@@ -68,6 +71,7 @@ def retain_local_oracle_diagnostics(weak):
 
 
 def weak_assertion_reason(node, aliases, universal_type_check, mock_argument_oracle):
+    """Explain statically weak assertions, self-comparisons, universal type checks, or delegated weak calls; return None when no weakness is proven."""
     reason = always_truthy_assertion_reason(node, _constant_truth_value)
     if reason:
         return reason
@@ -1830,6 +1834,7 @@ def _inert_suite(statements, context, known=None, helpers=None):
 
 
 def inert_test_completion(node):
+    """Classify bounded test completion as NORMAL, RETURN, RAISE, or UNKNOWN after excluding local bindings from inherited context."""
     if (
         not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
         or sum(1 for _ in ast.walk(node)) > 512
@@ -1857,6 +1862,7 @@ def inert_test_completion(node):
 
 
 def inert_test_body(node):
+    """Report an inert test body only when completion analysis proves normal fallthrough or return."""
     return inert_test_completion(node)[0] in {"NORMAL", "RETURN"}
 
 

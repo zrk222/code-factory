@@ -80,6 +80,7 @@ def _callback_is_referenced(nodes, callback):
 
 
 def uninvoked_callback_reason(test, is_command, has_oracle):
+    """Return the local command callback and a reason when assertion-bearing code is never invoked or only reached through unreachable code."""
     for callback in test.body:
         if not isinstance(callback, (ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
@@ -157,6 +158,7 @@ def _default_click_command(callback, aliases, audits):
 
 
 def uninvoked_click_callback(test, aliases, helper_names):
+    """Apply the callback check only to source-closed Click command callbacks with meaningful assertions and no provider escape."""
     from . import review_audits as audits
 
     def eligible(callback):

@@ -16,6 +16,7 @@ from .credential_role_identity_value_model import (
 
 
 def identity_fields(fields, index):
+    """Normalize field identities only for bounded mappings with valid owner/member keys and source-backed or literal roots."""
     if fields is None:
         return {}
     if not isinstance(fields, Mapping) or len(fields) > 64:
@@ -50,6 +51,7 @@ def _source_literal(root, index):
 
 
 def literal_dict_update(call, aliases, *, strict_calls=False):
+    """Recognize a one-argument dict update only when both receiver and input are inert dictionaries."""
     if not (
         isinstance(call.func, ast.Attribute)
         and call.func.attr == "update"
@@ -65,6 +67,7 @@ def literal_dict_update(call, aliases, *, strict_calls=False):
 
 
 def mapped_call_values(call, aliases, involved, resolved, out, *, strict_calls=False):
+    """Bind each call actual to exactly one resolved formal parameter; record uncertainty and return no mapping on ambiguity."""
     if any(isinstance(arg, ast.Starred) for arg in call.args) or any(
         keyword.arg is None for keyword in call.keywords
     ):
@@ -186,6 +189,7 @@ def summarize_identity_call(
 
 
 def captured_function_valid(function, path, index):
+    """Confirm a function node belongs to a validated captured source snapshot."""
     return bool(
         isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef))
         and index.validate(path)
@@ -194,6 +198,7 @@ def captured_function_valid(function, path, index):
 
 
 def own_function_nodes(function, path, index):
+    """Return nodes owned by the function itself while excluding nested function, lambda, and class scopes."""
     parents, scopes, result = (
         index.parents[path],
         (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef),

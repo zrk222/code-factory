@@ -4,6 +4,7 @@ from types import MappingProxyType
 
 
 def native_import_profile(file_count):
+    """Select a bounded static import profile or return an unsupported profile for invalid file counts."""
     if type(file_count) is not int or not 0 <= file_count <= 2000:
         return {"id": "unsupported", "bindings": 0, "characters": 0}
     expanded = file_count > 460
@@ -15,6 +16,7 @@ def native_import_profile(file_count):
 
 
 def new_import_views(file_count):
+    """Create an empty resolved-import view with counters and the profile selected for the source inventory size."""
     return {
         "resolved": {},
         "bindings": 0,
@@ -24,6 +26,7 @@ def new_import_views(file_count):
 
 
 def import_configuration(identity, collection, file_count):
+    """Combine import identity and collection metadata with the selected native import-context profile."""
     return {
         **identity,
         "pytest_collection": collection or {"state": "default"},
@@ -32,6 +35,7 @@ def import_configuration(identity, collection, file_count):
 
 
 def import_context_metadata(files, edges, configuration):
+    """Describe the one-hop AST import model, resolved edges, configuration sources, and inventory-sized profile."""
     return {
         "mode": "one_local_import_hop_ast_only",
         "resolved_edges": edges,

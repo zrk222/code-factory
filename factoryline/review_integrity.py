@@ -34,6 +34,7 @@ source_signature, bind_source_call = _package_source_binding_helpers()
 
 
 def source_binding_helpers():
+    """Return the deduplicated package source-binding helpers plus source-call signature and binding utilities."""
     return tuple(
         dict.fromkeys(
             (*_package_source_binding_helpers(), source_signature, bind_source_call)
@@ -4785,6 +4786,7 @@ def _discarded_builtin_assertion_error(statement):
 
 
 def fixed_program_witness(relative, node, call_name):
+    """Build a fixed-program witness through the shared primitive-observation validator."""
     import sys
 
     from .primitive_observation_binding import fixed_program_witness as witness
@@ -4795,6 +4797,7 @@ def fixed_program_witness(relative, node, call_name):
 def bind_fixed_program_workspace(
     root, contexts, snapshots, files, source_bytes=None, imports=None
 ):
+    """Populate fixed-program workspace evidence through the shared source and consumer binders."""
     import sys
 
     from .primitive_observation_binding import (
@@ -4807,6 +4810,7 @@ def bind_fixed_program_workspace(
 
 
 def fixed_program_workspace_helpers():
+    """Expose the helper functions used to build fixed-program and credential-consumer workspace evidence."""
     import sys
 
     from .primitive_observation_binding import (
@@ -4847,6 +4851,7 @@ def _fixed_primitive_binding(finding, sources, bindings):
 def bind_credential_consumers(
     root, snapshots, imports, contexts, source_bytes, *, inventory
 ):
+    """Bind credential-consumer evidence through the shared provenance analyzer using this module as its audit context."""
     import sys
     from .provenance import bind_credential_consumers as bind
 
@@ -4862,6 +4867,7 @@ def bind_credential_consumers(
 
 
 def credential_consumer_helpers():
+    """Expose the source-binding and evidence helpers required by credential-consumer analysis."""
     import sys
     from .provenance import credential_consumer_helpers as helpers
 
@@ -4869,6 +4875,7 @@ def credential_consumer_helpers():
 
 
 def credential_context_cache_schema():
+    """Return the credential-context cache schema version selected from the publication catalog."""
     from .primitive_observation_binding import credential_context_cache_schema as schema
 
     return schema()

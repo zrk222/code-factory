@@ -1,11 +1,6 @@
 """Deterministic, bounded context packets for fast agent hand-offs.
 
-The packet is a read-only view of already-authorized local sources.  It is not a
-gate, an approval token, or an instruction to execute anything.  Sources are
-content-addressed and re-checked before use; cache reuse is exact and the token
-figure is explicitly an estimate (four UTF-8 bytes per token), never a usage
-claim.
-"""
+The packet is a read-only view of already-authorized local sources. It is not a gate, an approval token, or an instruction to execute anything. Sources are content-addressed and re-checked before use; cache reuse is exact and the token figure is explicitly an estimate (four UTF-8 bytes per token), never a usage claim."""
 
 from __future__ import annotations
 
@@ -207,6 +202,7 @@ def _provider_package_initializers(root, sources, eligible):
 
 
 def oracle_context_cache_context(item, decode_structural_context):
+    """Rehydrate cached oracle context fields, decoding structural context and restoring source-relative import bindings."""
     return {
         "helpers": set(item["helpers"]),
         "weak_helpers": set(item["weak_helpers"]),
@@ -233,6 +229,7 @@ def oracle_context_cache_context(item, decode_structural_context):
 
 
 def oracle_context_cache_record(path, context, encode_structural_context):
+    """Serialize oracle context fields deterministically for caching, including captured imports and encoded structural context."""
     return {
         "path": path.as_posix(),
         "helpers": sorted(context["helpers"]),
@@ -289,6 +286,7 @@ def cached_import_bindings(value):
 
 
 def typecheck_cache_helpers(contracts):
+    """Return the callable typecheck contract helpers whose implementations affect analysis reuse."""
     return tuple(
         value
         for name, value in vars(contracts).items()
@@ -297,6 +295,7 @@ def typecheck_cache_helpers(contracts):
 
 
 def application_profile_configuration(root, read_source, limit):
+    """Read bounded requirements.txt bytes and return their hash binding; distinguish missing, read-error, and oversized input states."""
     name = "requirements.txt"
     try:
         raw = read_source(root, name)
@@ -345,6 +344,7 @@ def bind_application_fixture_context(
     source_inventory=None,
     imports=None,
 ):
+    """Bind eligible application-fixture evidence to the captured source inventory and hashed configuration without asserting runtime isolation."""
     from . import mock_fixture_provenance as fixture
     from .credential_role_sources import SourceSnapshotIndex, PresentationRoleIndex
     from collections.abc import Mapping

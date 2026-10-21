@@ -56,6 +56,7 @@ def _captured_closure_closed(root, sources, closure):
 
 
 def dynamic_provider_capability(tree, local_imports=()):
+    """Report dynamic provider capability when imports, bindings, or module effects escape the modeled inert subset."""
     if not isinstance(tree, ast.Module):
         return True
     local, sys_names, typing_names, type_names = set(local_imports), set(), set(), set()
@@ -98,6 +99,7 @@ def dynamic_provider_capability(tree, local_imports=()):
 def owner_module_effects_closed(
     tree, selected_test, canonical, noop_write=None, local_imports=()
 ):
+    """Confirm the provider module is closed after removing the selected assert_type test and any proven no-op write."""
     if (
         canonical != "typing.assert_type"
         or not isinstance(tree, ast.Module)
@@ -405,6 +407,7 @@ def provider_source_inventory(root, source_bytes, manifest, output=None):
 
 
 def bind_provider_inventory(contexts, inventory):
+    """Bind inventory completeness, capable paths, and a deterministic digest into each context, then return whether the inventory is complete."""
     complete = bool(inventory) and all(
         row.get("state") == "read" and row.get("retained") is True for row in inventory
     )
@@ -424,6 +427,7 @@ def bind_provider_inventory(contexts, inventory):
 
 
 def provider_cache_fields(context):
+    """Return the provider capability paths, inventory digest, and captured source-closure fields from an oracle context."""
     return {
         "mock_provider_capability_paths": context.get("mock_provider_capability_paths"),
         "mock_provider_inventory_sha256": context.get("mock_provider_inventory_sha256"),

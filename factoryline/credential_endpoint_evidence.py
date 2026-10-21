@@ -94,6 +94,7 @@ def endpoint_binding(finding, sources, bindings):
 
 
 def endpoint_evidence_helpers():
+    """Expose the endpoint evidence digest, identity, native-facts, minting, and binding helpers as one helper tuple."""
     return (
         _digest,
         _identity,

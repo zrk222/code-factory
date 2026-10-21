@@ -27,6 +27,7 @@ class SourceSnapshotIndex:
         )
 
     def validate(self, path):
+        """Validate captured source bytes against the snapshot digest and AST, enforcing the one-megabyte source limit."""
         if path in self.validated:
             return self.validated[path]
         tree, raw = self.snapshots.get(path), self.source_bytes.get(path)
@@ -56,6 +57,7 @@ class SourceSnapshotIndex:
         return valid
 
     def relative(self, path):
+        """Return a source-relative POSIX path only when the path is inside the snapshot root."""
         try:
             candidate = Path(path)
             if self._relative_root != self.root:
@@ -71,6 +73,7 @@ class SourceSnapshotIndex:
 
 
 def source_session_factories(tree, aliases):
+    """Find top-level functions that create and return the same requests.Session local name."""
     from .security_configuration import _canonical
 
     rows = {}
@@ -116,6 +119,7 @@ class DeclarationFact:
     _literal: str = field(repr=False)
 
     def public_facts(self):
+        """Expose allowlisted declaration provenance fields while omitting literal values."""
         return {
             key: getattr(self, key)
             for key in (
@@ -273,6 +277,7 @@ class PresentationRoleIndex:
                     self.reflected_members.add(node.args[1].value)
 
     def evidence(self, path, node):
+        """Classify a declaration as presentation metadata only when source-linked schema or masking uses are proven; runtime and downstream security remain unassessed."""
         fact = declaration_fact(self.source, path, node) if self.complete else None
         if fact is None:
             return {"eligible": False, "reason": "unbound or incomplete declaration"}

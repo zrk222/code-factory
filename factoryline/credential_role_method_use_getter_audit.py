@@ -18,6 +18,7 @@ from .credential_role_scope_bindings import binding_occurrences
 def audit_getter_uses(
     traces, nodes, index, unknown, *, context=None, related_owners=None
 ):
+    """Audit getter candidates across validated snapshots and record unresolved class or snapshot evidence instead of claiming closure."""
     witnessed, names, owners, fields = _trace_context(
         traces, nodes, index, related_owners
     )
@@ -239,6 +240,7 @@ def _witnessed_call(parent, node, relative, witnessed):
 
 
 def parameter_linked(path, receiver, calls, index, imports, classes, owners):
+    """Link a getter receiver to a declared owner only through proven parameter origins or related method-self bindings."""
     function = ancestor(
         receiver, index, index.relative(path), (ast.FunctionDef, ast.AsyncFunctionDef)
     )
@@ -390,6 +392,7 @@ def _scope_aliases(statements):
 
 
 def class_identity(node, index, path):
+    """Find the nearest lexical class identity as a relative source path and class name."""
     owner = node
     while owner is not None:
         if isinstance(owner, ast.ClassDef):
@@ -492,6 +495,7 @@ def audit_reflective(
     unknown,
     link_receiver,
 ):
+    """Record reflective getter use as unknown when receiver linkage is unresolved or when a relevant getter use is found."""
     receiver = _reflective_receiver(node)
     lexical = class_identity(node, index, path)
     stable = _stable_self(receiver, index, path, context)
@@ -532,10 +536,12 @@ def _unknown(reason, relative, node):
 
 
 def owner_keys(index, owners):
+    """Convert absolute owner identities into relative path and class-name keys."""
     return {(index.relative(path), name) for path, name in owners or ()}
 
 
 def candidate_getter_fields(traces, nodes, index):
+    """Associate traced member reads and preceding literals with self-method names as candidate getter fields."""
     result = {}
     for trace in traces:
         members = []
@@ -567,6 +573,7 @@ def candidate_getter_fields(traces, nodes, index):
 def different_field_origin(
     owner, getter, getter_fields, index, imports, classes, audit
 ):
+    """Report a different field origin only when both the owner chain and declared getter origin resolve exactly."""
     fields = getter_fields.get(getter, ())
     if owner is None or not fields or audit is None:
         return False
@@ -726,6 +733,7 @@ def _literal_field_identity(literal, member, row):
 
 
 def snapshot_candidates(index):
+    """Return cached attribute and call candidates only for source snapshots that still validate."""
     signature = tuple(
         (path, index.inventory.get(path), id(tree))
         for path, tree in index.snapshots.items()
