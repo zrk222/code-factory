@@ -11,8 +11,9 @@ Only remaining work is listed below. Order: accuracy, speed, simplicity.
   sample with at least 30 decided candidate alerts. Report the Wilson 95%
   interval, primitive match rate, unclear count and positive retention separately.
   The later target remains 90%; no score is promised by this plan.
-- The owner authorized AI labeling for the current pass; Claude's second
-  independent labels are pending. Report reviewer kind and disagreements.
+- The owner authorized AI labeling for the current pass; two independently
+  blinded AI submissions now exist and Claude's cross-provider review is pending.
+  Report reviewer kind and disagreements.
   Preserve the original human-plus-AI protocol and disclose that its human
   requirement was not met; do not describe AI review as human validation.
 - Keep all genuine positives at their justified severity. UNKNOWN is not HOLLOW;
@@ -90,13 +91,24 @@ production deadlines and the complete test inventory; no timeout-to-PASS retry.
 ### A6 — Repair after the failed study, then preregister a successor
 
 Study180 has executed and failed: 0 actionable TP, 41 FP and 6 unclear from
-47 independently AI-labeled alerts; Wilson 95% interval 0–8.57%. The scanner
-and original labels remain frozen. This cohort is now exposed, so every repair
-replay on it is development evidence. Claude's second labels are pending.
+47 independently AI-labeled alerts; Wilson 95% interval 0–8.57% per reviewer.
+Both blinded AI submissions have those aggregate counts, but disagree on two
+specific actionable labels. Consensus keeps disagreements unclear: 0 TP, 40 FP,
+7 unclear; Wilson 95% interval 0–8.76%. Seven primitive disagreements also remain
+unclear. The scanner and original labels remain frozen. This cohort is now
+exposed, so every repair replay is development evidence. Claude review is pending.
 The original human-plus-AI protocol is not satisfied. Only 22 of 24 planned
 scans completed; two errored, so declared repository coverage is incomplete.
-Complete the outstanding error accounting and report disagreements without relabeling away the
-failure. No second study has run. Before a successor, resolve the highest-yield
+Development replay at `4465aa3` completes all 12 repositories, including the
+original SQL-tokenizer failures, but removes none of the selected 47 alerts.
+The next shell-operation candidate removes five agreed false positives from
+actionable findings while preserving source-bound primitive observations; the
+fixed sample still contains zero actionable TP. This is development cleanup,
+not evidence of an improved precision percentage. The final frozen candidate
+has independent ECC PASS, 173 passing tests, complete 12-repository replay,
+13/13 historical positive controls and healthy architecture (429/133).
+Keep the original errors and label disagreements without relabeling away the
+failure. No second fresh study has run. Before a successor, resolve the highest-yield
 families using general source/consumer models, stabilize the candidate, and
 preregister a new untouched cohort under the boundaries below.
 
@@ -160,21 +172,36 @@ improvements.
 
 ## Current measurements and remaining limits
 
-- Detection integration `26b5080`: exposed old60 replay removed 15 labeled
-  false positives, versus 9 before this repair; 45 remain, with no severity
-  changes. All 13 separate historical positive controls remain at their original
-  severity. This all-FP cohort cannot establish positive precision or recall.
+- Detection integration `4465aa3`: exposed old60 replay removed 23 labeled
+  false positives cumulatively, versus 15 before this repair; 37 remain, with no
+  previously removed labeled alert returning and no severity changes. All 13
+  separate historical positive controls remain at their original severity.
+  Same26file PyJWT inventory has45→20 hardcoded-secret alerts:27removed and2new
+  unlabelled alerts recorded separately. This all-FP cohort cannot establish
+  positive precision or recall. Independent final source review passes within
+  the supported provider boundary; see `docs/evidence/local-crypto-operation199.json`.
 - Separate exposed development result: 2 TP, 6 FP, 2 unclear; 25% decided,
   Wilson 95% 7.15–59.07%. Do not combine it with the old60 denominator.
 - Study180 frozen candidate `c05034e`: 0/41 actionable decided, 6 unclear;
   0% with Wilson 95% 0–8.57%. It was fresh when run, is now exposed, and has
-one independent AI submission. There is no improved fresh-study score yet.
+  two independently blinded AI submissions with identical aggregate counts,
+  45/47 actionable label agreement and two unresolved disagreements.
+  Shell-operation development replay removes five agreed FP rows: first-reviewer
+  retained labels are 0 TP / 36 FP / 6 unclear; two-AI consensus is 0 TP / 35 FP /
+  7 unclear. Precision remains 0%; this is five fewer actionable false alarms,
+  with visible primitive observations, not a generalization score gain.
+  All 12 repositories completed and all 13 separate historical TP controls retain
+  severity. Independent ECC final review PASS; 173 tests pass. Evidence:
+  `docs/evidence/closed-shell-operation207.json`.
+  There is no improved fresh-study score yet. See
+  `docs/evidence/study180-two-ai-assessment204.json`.
 - Current architecture candidate: 429 Python files / 133 core modules; the
   unchanged architecture gate passes after physical module absorption. Evidence:
   `docs/evidence/core-module-target-133-184.json`. Historical full-suite failures
-  at `26b5080` are 90 failed, 8,085 passed and 12 skipped on Ubuntu Python 3.11.
-  Two canonical regressions were subsequently fixed in separate source and
-  inventory commits (`c16c2bb`, `b4676d9`); a current full rerun is still needed.
+  at `4465aa3` are66failed,8,157passed and12skipped on Ubuntu Python3.11.
+  Four raising partial-callback expectation migrations are isolated in
+  `1a63c57`; the unawaited partial-callback HOLLOW control is unchanged and still
+  fails. A new full rerun is required after the next source batch.
 - Evaluation-local JWT memoization: an isolated alternating pair on the same
   26-file snapshot measured 16.806s baseline median versus 14.819s candidate
   median (11.82% lower), with equal canonical finding digests and coverage.

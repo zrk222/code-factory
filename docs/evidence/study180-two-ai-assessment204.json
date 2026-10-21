@@ -1,0 +1,702 @@
+{
+  "schema": "factory.study180.two-ai-assessment.v1",
+  "state": "UNQUALIFIED_AI_ONLY_CLAUDE_PENDING",
+  "original_study_scanner": "c05034e5b12071781eed22d2182b4d83c34b0724",
+  "current_development_replay_scanner": "4465aa3e1e003510828117909f2954ddcff200d2",
+  "actionable": {
+    "TP": 0,
+    "FP": 40,
+    "UNCLEAR": 7,
+    "precision": 0.0,
+    "wilson95": [
+      0,
+      0.08762160119728664
+    ],
+    "reviewer_agreement": 45,
+    "reviewer_disagreement": 2,
+    "disagreement_ids": [
+      "S180-006",
+      "S180-036"
+    ],
+    "per_reviewer_counts": [
+      {
+        "FP": 41,
+        "UNCLEAR": 6
+      },
+      {
+        "FP": 41,
+        "UNCLEAR": 6
+      }
+    ]
+  },
+  "primitive": {
+    "first_reviewer": {
+      "TP": 46,
+      "FP": 1
+    },
+    "second_reviewer": {
+      "TP": 39,
+      "FP": 8
+    },
+    "disagreement_ids": [
+      "S180-002",
+      "S180-013",
+      "S180-015",
+      "S180-025",
+      "S180-027",
+      "S180-028",
+      "S180-031"
+    ],
+    "consensus_unclear_on_disagreement": {
+      "TP": 39,
+      "UNCLEAR": 7,
+      "FP": 1
+    }
+  },
+  "current_development_coverage": {
+    "repositories_completed": 12,
+    "repositories_planned": 12,
+    "selected_measured": 47,
+    "selected_removed": 0,
+    "severity_changes": 0,
+    "original_errors_preserved": 2,
+    "new_error_recovery_is_not_precision_gain": true
+  },
+  "reviewers": [
+    {
+      "identity": "Codex independent blinded AI reviewer (/root/study180_blinded_ai)",
+      "timestamp": "2026-10-21T09:27:28Z",
+      "submission": ".factory/study180/blinded-packets/ai/submission.json",
+      "sha256": "e0781c475a84f98e99ed6a145b81647092e4fb2d92214361c3a2237f4737db7f",
+      "kind": "ai"
+    },
+    {
+      "identity": "gpt-6.1-sol; reasoning_effort=high; agent=/root/study180_second_ai204; model and effort confirmed by parent dispatch metadata, not independently introspected",
+      "timestamp": "2026-10-21T14:13:10.5750014Z",
+      "submission": ".factory/precision203/second-ai-submission.json",
+      "sha256": "bd21cae441fb58f84c282062aa2a8751294c28a01c12831b8df5396c2e0ec646",
+      "kind": "ai"
+    }
+  ],
+  "rows": [
+    {
+      "packet_id": "S180-001",
+      "actionable_labels": [
+        "FP",
+        "FP"
+      ],
+      "actionable_consensus": "FP",
+      "primitive_labels": [
+        "TP",
+        "TP"
+      ],
+      "primitive_consensus": "TP"
+    },
+    {
+      "packet_id": "S180-002",
+      "actionable_labels": [
+        "FP",
+        "FP"
+      ],
+      "actionable_consensus": "FP",
+      "primitive_labels": [
+        "TP",
+        "FP"
+      ],
+      "primitive_consensus": "UNCLEAR"
+    },
+    {
+      "packet_id": "S180-003",
+      "actionable_labels": [
+        "FP",
+        "FP"
+      ],
+      "actionable_consensus": "FP",
+      "primitive_labels": [
+        "TP",
+        "TP"
+      ],
+      "primitive_consensus": "TP"
+    },
+    {
+      "packet_id": "S180-004",
+      "actionable_labels": [
+        "FP",
+        "FP"
+      ],
+      "actionable_consensus": "FP",
+      "primitive_labels": [
+        "TP",
+        "TP"
+      ],
+      "primitive_consensus": "TP"
+    },
+    {
+      "packet_id": "S180-005",
+      "actionable_labels": [
+        "FP",
+        "FP"
+      ],
+      "actionable_consensus": "FP",
+      "primitive_labels": [
+        "TP",
+        "TP"
+      ],
+      "primitive_consensus": "TP"
+    },
+    {
+      "packet_id": "S180-006",
+      "actionable_labels": [
+        "UNCLEAR",
+        "FP"
+      ],
+      "actionable_consensus": "UNCLEAR",
+      "primitive_labels": [
+        "TP",
+        "TP"
+      ],
+      "primitive_consensus": "TP"
+    },
+    {
+      "packet_id": "S180-007",
+      "actionable_labels": [
+        "FP",
+        "FP"
+      ],
+      "actionable_consensus": "FP",
+      "primitive_labels": [
+        "TP",
+        "TP"
+      ],
+      "primitive_consensus": "TP"
+    },
+    {
+      "packet_id": "S180-008",
+      "actionable_labels": [
+        "FP",
+        "FP"
+      ],
+      "actionable_consensus": "FP",
+      "primitive_labels": [
+        "TP",
+        "TP"
+      ],
+      "primitive_consensus": "TP"
+    },
+    {
+      "packet_id": "S180-009",
+      "actionable_labels": [
+        "FP",
+        "FP"
+      ],
+      "actionable_consensus": "FP",
+      "primitive_labels": [
+        "TP",
+        "TP"
+      ],
+      "primitive_consensus": "TP"
+    },
+    {
+      "packet_id": "S180-010",
+      "actionable_labels": [
+        "FP",
+        "FP"
+      ],
+      "actionable_consensus": "FP",
+      "primitive_labels": [
+        "TP",
+        "TP"
+      ],
+      "primitive_consensus": "TP"
+    },
+    {
+      "packet_id": "S180-011",
+      "actionable_labels": [
+        "FP",
+        "FP"
+      ],
+      "actionable_consensus": "FP",
+      "primitive_labels": [
+        "TP",
+        "TP"
+      ],
+      "primitive_consensus": "TP"
+    },
+    {
+      "packet_id": "S180-012",
+      "actionable_labels": [
+        "FP",
+        "FP"
+      ],
+      "actionable_consensus": "FP",
+      "primitive_labels": [
+        "TP",
+        "TP"
+      ],
+      "primitive_consensus": "TP"
+    },
+    {
+      "packet_id": "S180-013",
+      "actionable_labels": [
+        "FP",
+        "FP"
+      ],
+      "actionable_consensus": "FP",
+      "primitive_labels": [
+        "TP",
+        "FP"
+      ],
+      "primitive_consensus": "UNCLEAR"
+    },
+    {
+      "packet_id": "S180-014",
+      "actionable_labels": [
+        "FP",
+        "FP"
+      ],
+      "actionable_consensus": "FP",
+      "primitive_labels": [
+        "TP",
+        "TP"
+      ],
+      "primitive_consensus": "TP"
+    },
+    {
+      "packet_id": "S180-015",
+      "actionable_labels": [
+        "FP",
+        "FP"
+      ],
+      "actionable_consensus": "FP",
+      "primitive_labels": [
+        "TP",
+        "FP"
+      ],
+      "primitive_consensus": "UNCLEAR"
+    },
+    {
+      "packet_id": "S180-016",
+      "actionable_labels": [
+        "FP",
+        "FP"
+      ],
+      "actionable_consensus": "FP",
+      "primitive_labels": [
+        "TP",
+        "TP"
+      ],
+      "primitive_consensus": "TP"
+    },
+    {
+      "packet_id": "S180-017",
+      "actionable_labels": [
+        "FP",
+        "FP"
+      ],
+      "actionable_consensus": "FP",
+      "primitive_labels": [
+        "TP",
+        "TP"
+      ],
+      "primitive_consensus": "TP"
+    },
+    {
+      "packet_id": "S180-018",
+      "actionable_labels": [
+        "FP",
+        "FP"
+      ],
+      "actionable_consensus": "FP",
+      "primitive_labels": [
+        "TP",
+        "TP"
+      ],
+      "primitive_consensus": "TP"
+    },
+    {
+      "packet_id": "S180-019",
+      "actionable_labels": [
+        "FP",
+        "FP"
+      ],
+      "actionable_consensus": "FP",
+      "primitive_labels": [
+        "TP",
+        "TP"
+      ],
+      "primitive_consensus": "TP"
+    },
+    {
+      "packet_id": "S180-020",
+      "actionable_labels": [
+        "FP",
+        "FP"
+      ],
+      "actionable_consensus": "FP",
+      "primitive_labels": [
+        "TP",
+        "TP"
+      ],
+      "primitive_consensus": "TP"
+    },
+    {
+      "packet_id": "S180-021",
+      "actionable_labels": [
+        "FP",
+        "FP"
+      ],
+      "actionable_consensus": "FP",
+      "primitive_labels": [
+        "TP",
+        "TP"
+      ],
+      "primitive_consensus": "TP"
+    },
+    {
+      "packet_id": "S180-022",
+      "actionable_labels": [
+        "FP",
+        "FP"
+      ],
+      "actionable_consensus": "FP",
+      "primitive_labels": [
+        "TP",
+        "TP"
+      ],
+      "primitive_consensus": "TP"
+    },
+    {
+      "packet_id": "S180-023",
+      "actionable_labels": [
+        "FP",
+        "FP"
+      ],
+      "actionable_consensus": "FP",
+      "primitive_labels": [
+        "TP",
+        "TP"
+      ],
+      "primitive_consensus": "TP"
+    },
+    {
+      "packet_id": "S180-024",
+      "actionable_labels": [
+        "UNCLEAR",
+        "UNCLEAR"
+      ],
+      "actionable_consensus": "UNCLEAR",
+      "primitive_labels": [
+        "TP",
+        "TP"
+      ],
+      "primitive_consensus": "TP"
+    },
+    {
+      "packet_id": "S180-025",
+      "actionable_labels": [
+        "FP",
+        "FP"
+      ],
+      "actionable_consensus": "FP",
+      "primitive_labels": [
+        "TP",
+        "FP"
+      ],
+      "primitive_consensus": "UNCLEAR"
+    },
+    {
+      "packet_id": "S180-026",
+      "actionable_labels": [
+        "FP",
+        "FP"
+      ],
+      "actionable_consensus": "FP",
+      "primitive_labels": [
+        "TP",
+        "TP"
+      ],
+      "primitive_consensus": "TP"
+    },
+    {
+      "packet_id": "S180-027",
+      "actionable_labels": [
+        "FP",
+        "FP"
+      ],
+      "actionable_consensus": "FP",
+      "primitive_labels": [
+        "TP",
+        "FP"
+      ],
+      "primitive_consensus": "UNCLEAR"
+    },
+    {
+      "packet_id": "S180-028",
+      "actionable_labels": [
+        "FP",
+        "FP"
+      ],
+      "actionable_consensus": "FP",
+      "primitive_labels": [
+        "TP",
+        "FP"
+      ],
+      "primitive_consensus": "UNCLEAR"
+    },
+    {
+      "packet_id": "S180-029",
+      "actionable_labels": [
+        "FP",
+        "FP"
+      ],
+      "actionable_consensus": "FP",
+      "primitive_labels": [
+        "TP",
+        "TP"
+      ],
+      "primitive_consensus": "TP"
+    },
+    {
+      "packet_id": "S180-030",
+      "actionable_labels": [
+        "FP",
+        "FP"
+      ],
+      "actionable_consensus": "FP",
+      "primitive_labels": [
+        "TP",
+        "TP"
+      ],
+      "primitive_consensus": "TP"
+    },
+    {
+      "packet_id": "S180-031",
+      "actionable_labels": [
+        "FP",
+        "FP"
+      ],
+      "actionable_consensus": "FP",
+      "primitive_labels": [
+        "TP",
+        "FP"
+      ],
+      "primitive_consensus": "UNCLEAR"
+    },
+    {
+      "packet_id": "S180-032",
+      "actionable_labels": [
+        "FP",
+        "FP"
+      ],
+      "actionable_consensus": "FP",
+      "primitive_labels": [
+        "TP",
+        "TP"
+      ],
+      "primitive_consensus": "TP"
+    },
+    {
+      "packet_id": "S180-033",
+      "actionable_labels": [
+        "FP",
+        "FP"
+      ],
+      "actionable_consensus": "FP",
+      "primitive_labels": [
+        "FP",
+        "FP"
+      ],
+      "primitive_consensus": "FP"
+    },
+    {
+      "packet_id": "S180-034",
+      "actionable_labels": [
+        "UNCLEAR",
+        "UNCLEAR"
+      ],
+      "actionable_consensus": "UNCLEAR",
+      "primitive_labels": [
+        "TP",
+        "TP"
+      ],
+      "primitive_consensus": "TP"
+    },
+    {
+      "packet_id": "S180-035",
+      "actionable_labels": [
+        "FP",
+        "FP"
+      ],
+      "actionable_consensus": "FP",
+      "primitive_labels": [
+        "TP",
+        "TP"
+      ],
+      "primitive_consensus": "TP"
+    },
+    {
+      "packet_id": "S180-036",
+      "actionable_labels": [
+        "FP",
+        "UNCLEAR"
+      ],
+      "actionable_consensus": "UNCLEAR",
+      "primitive_labels": [
+        "TP",
+        "TP"
+      ],
+      "primitive_consensus": "TP"
+    },
+    {
+      "packet_id": "S180-037",
+      "actionable_labels": [
+        "FP",
+        "FP"
+      ],
+      "actionable_consensus": "FP",
+      "primitive_labels": [
+        "TP",
+        "TP"
+      ],
+      "primitive_consensus": "TP"
+    },
+    {
+      "packet_id": "S180-038",
+      "actionable_labels": [
+        "FP",
+        "FP"
+      ],
+      "actionable_consensus": "FP",
+      "primitive_labels": [
+        "TP",
+        "TP"
+      ],
+      "primitive_consensus": "TP"
+    },
+    {
+      "packet_id": "S180-039",
+      "actionable_labels": [
+        "FP",
+        "FP"
+      ],
+      "actionable_consensus": "FP",
+      "primitive_labels": [
+        "TP",
+        "TP"
+      ],
+      "primitive_consensus": "TP"
+    },
+    {
+      "packet_id": "S180-040",
+      "actionable_labels": [
+        "UNCLEAR",
+        "UNCLEAR"
+      ],
+      "actionable_consensus": "UNCLEAR",
+      "primitive_labels": [
+        "TP",
+        "TP"
+      ],
+      "primitive_consensus": "TP"
+    },
+    {
+      "packet_id": "S180-041",
+      "actionable_labels": [
+        "UNCLEAR",
+        "UNCLEAR"
+      ],
+      "actionable_consensus": "UNCLEAR",
+      "primitive_labels": [
+        "TP",
+        "TP"
+      ],
+      "primitive_consensus": "TP"
+    },
+    {
+      "packet_id": "S180-042",
+      "actionable_labels": [
+        "FP",
+        "FP"
+      ],
+      "actionable_consensus": "FP",
+      "primitive_labels": [
+        "TP",
+        "TP"
+      ],
+      "primitive_consensus": "TP"
+    },
+    {
+      "packet_id": "S180-043",
+      "actionable_labels": [
+        "FP",
+        "FP"
+      ],
+      "actionable_consensus": "FP",
+      "primitive_labels": [
+        "TP",
+        "TP"
+      ],
+      "primitive_consensus": "TP"
+    },
+    {
+      "packet_id": "S180-044",
+      "actionable_labels": [
+        "FP",
+        "FP"
+      ],
+      "actionable_consensus": "FP",
+      "primitive_labels": [
+        "TP",
+        "TP"
+      ],
+      "primitive_consensus": "TP"
+    },
+    {
+      "packet_id": "S180-045",
+      "actionable_labels": [
+        "UNCLEAR",
+        "UNCLEAR"
+      ],
+      "actionable_consensus": "UNCLEAR",
+      "primitive_labels": [
+        "TP",
+        "TP"
+      ],
+      "primitive_consensus": "TP"
+    },
+    {
+      "packet_id": "S180-046",
+      "actionable_labels": [
+        "FP",
+        "FP"
+      ],
+      "actionable_consensus": "FP",
+      "primitive_labels": [
+        "TP",
+        "TP"
+      ],
+      "primitive_consensus": "TP"
+    },
+    {
+      "packet_id": "S180-047",
+      "actionable_labels": [
+        "FP",
+        "FP"
+      ],
+      "actionable_consensus": "FP",
+      "primitive_labels": [
+        "TP",
+        "TP"
+      ],
+      "primitive_consensus": "TP"
+    }
+  ],
+  "limits": [
+    "Both submissions are AI-only, separate blinded contexts; no human validation or statistically independent error assumption.",
+    "First frozen study remains failed with its two native errors; successful12repo later replay does not rewrite original outcomes.",
+    "Current replay uses exposed data and establishes no fresh generalization gain. All47selected findings remain.",
+    "Two actionable and seven primitive disagreements remain UNCLEAR; original labels are preserved without adjudication by the tuning agent.",
+    "Claude review remains pending; the original human-plus-AI protocol is unmet under the user-authorized AI route.",
+    "13/13historicalTPcontrolretention and23/60knownFPremovals are separate development measurements, never combined into this score."
+  ]
+}
