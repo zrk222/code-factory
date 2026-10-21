@@ -1,0 +1,63 @@
+{
+  "schema": "factory.integrated-accuracy-efficiency-plan.v1",
+  "state": "AUTHORIZED_PLAN_IMPLEMENTATION_INCOMPLETE",
+  "parent_commit": "1df111a08cb246350a551b30617625f3f7493bb5",
+  "authorization": "User: proceed with plan as part of the integrated goal;2026-10-21.",
+  "goal": "COMPLETE FULLY AS",
+  "scope": "Extension of full existing CF/ForgeLine/SpecLine goal; no requirement removed or declared complete.",
+  "plan": {
+    "path": "plans/accuracy-efficiency174.md",
+    "sha256": "5e7fd84190b65e325c493cd54cd1d548e146fd01662c0a61f481165f59afa5c9"
+  },
+  "review": {
+    "model": "gpt-6-astra",
+    "reasoning": "high",
+    "one_run_complete": true,
+    "report_path": ".factory/astra174/senior-engineering-plan.md",
+    "report_sha256": "b578e90c6178f12c6d42a86f4c575d378da04630d994e2e8bc6159756fa338a4",
+    "evidence_path": ".factory/astra174/evidence.json",
+    "evidence_sha256": "8c3a2f7268503597c81023aa5c65a713a26e7d9a698cb270066d69cd3fe50b6f"
+  },
+  "remaining_packets": [
+    "current-candidate-ledger",
+    "semantic-family-adjudication",
+    "shared-operation-witness",
+    "bounded-completion-transfer",
+    "architecture-and-native-quality",
+    "measured-performance",
+    "fresh-preregistered-evaluation",
+    "finding-ledger-and-companion-handoff",
+    "full-suite-and-release-stability"
+  ],
+  "active_work": {
+    "role172": "24module absorptions into3existingowners; independent review required.",
+    "completion175": "Shared existing completion-model repair for26async/12exception/9localtruth historical failures; semantic adjudication required."
+  },
+  "accuracy": {
+    "fresh_heldout": "NOT_MEASURED",
+    "exposed_development_only": {
+      "TP": 2,
+      "FP": 6,
+      "unclear": 2,
+      "decided_precision": 0.25,
+      "wilson95": [
+        0.071479212752109,
+        0.5907245696898311
+      ]
+    },
+    "target": 0.8,
+    "later_target": 0.9,
+    "new_precision_gain": null
+  },
+  "architecture": {
+    "python_files": 463,
+    "core_modules": 165,
+    "caps": [
+      464,
+      140
+    ],
+    "state": "BLOCKED"
+  },
+  "implementation_complete": false,
+  "release_or_merge_approval": false
+}
