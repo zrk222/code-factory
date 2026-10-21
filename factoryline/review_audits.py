@@ -4010,11 +4010,11 @@ def _project_oracle_context(
         source_bytes=source_bytes,
         source_inventory=source_hashes,
     )
+    resolved = contracts._project_import_views(import_views, snapshots)
     bind_application_fixture_context(
         root, snapshots, contexts, config_bindings, _security_source_bytes, MAX_BYTES,
-        source_bytes=source_bytes, source_inventory=source_hashes,
+        source_bytes=source_bytes, source_inventory=source_hashes, imports=resolved,
     )
-    resolved = contracts._project_import_views(import_views, snapshots)
     integrity.bind_fixed_program_workspace(
         root, contexts, snapshots, files, source_bytes, resolved
     )

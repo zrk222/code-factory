@@ -1,0 +1,308 @@
+{
+  "schema": "factory.precision.repair.v1",
+  "change": "Source-bound inherited schema annotation and masking sentinel roles reuse captured snapshot, imports and primitive evidence. Conflicting or stale uses remain active CRITICAL.",
+  "candidate": {
+    "factoryline/credential_role_sources.py": "d792f82dbf7dc7eb9c023e99bcb40dd8efcfa70cfd6538883e07416fd380726b",
+    "factoryline/context_efficiency.py": "1b7d4d1f412ed305c587e3a93aef2cd45bcb820d7bc279769a88e119c308364a",
+    "factoryline/primitive_observation_binding.py": "f28e5e5f5666be39e55ebf83bd3e77d20f1ebf607498635ab105bc00e76174be",
+    "factoryline/review_audits.py": "d68c7a662869e46def50964a49e07ab0fd9cd240ee262c6858c2a7150dfb2e13",
+    "tests/test_mock_fixture_provenance.py": "ad158b552bf558c7c695e9aedde11e6bc66c2716588b068ad550ae1f61cd9afc"
+  },
+  "clean_base_commit": "42ee03f3636c876ff1af0c4b3007e584956381f8",
+  "clean_scanner_freeze_sha256": "3f898107ab4b6300adbb61842c1e1f4b8bd1384fbf877aebdd3ea8574fe4d841",
+  "source_state": {
+    "base_commit": "42ee03f3636c876ff1af0c4b3007e584956381f8",
+    "candidate": {
+      "factoryline/credential_role_sources.py": "d792f82dbf7dc7eb9c023e99bcb40dd8efcfa70cfd6538883e07416fd380726b",
+      "factoryline/context_efficiency.py": "1b7d4d1f412ed305c587e3a93aef2cd45bcb820d7bc279769a88e119c308364a",
+      "factoryline/primitive_observation_binding.py": "f28e5e5f5666be39e55ebf83bd3e77d20f1ebf607498635ab105bc00e76174be",
+      "factoryline/review_audits.py": "d68c7a662869e46def50964a49e07ab0fd9cd240ee262c6858c2a7150dfb2e13",
+      "tests/test_mock_fixture_provenance.py": "ad158b552bf558c7c695e9aedde11e6bc66c2716588b068ad550ae1f61cd9afc"
+    },
+    "untouched_archive_files": 588,
+    "baseline_comparison": "Git blob SHA1 after Windows CRLF-to-LF normalization; candidate and replay SHA256 bind actual bytes.",
+    "unchanged_legacy_test_definitions": 43,
+    "scope": "CLEAN_COMMIT_BASE_PLUS_FIVE_REVIEW_FILES"
+  },
+  "focused_checks": {
+    "clean": 474,
+    "integrated": 474,
+    "legacy_test_definitions_unchanged": 43,
+    "expectations_changed": 0
+  },
+  "independent_ecc_review": {
+    "schema": "factory.metadata150.scoped-ecc-review.v1",
+    "state": "PASS_SCOPED_SOURCE_ROLE_AND_NATIVE_BINDING",
+    "candidate_hashes": {
+      "factoryline/credential_role_sources.py": "d792f82dbf7dc7eb9c023e99bcb40dd8efcfa70cfd6538883e07416fd380726b",
+      "factoryline/context_efficiency.py": "1b7d4d1f412ed305c587e3a93aef2cd45bcb820d7bc279769a88e119c308364a",
+      "factoryline/primitive_observation_binding.py": "f28e5e5f5666be39e55ebf83bd3e77d20f1ebf607498635ab105bc00e76174be",
+      "factoryline/review_audits.py": "d68c7a662869e46def50964a49e07ab0fd9cd240ee262c6858c2a7150dfb2e13",
+      "tests/test_mock_fixture_provenance.py": "ad158b552bf558c7c695e9aedde11e6bc66c2716588b068ad550ae1f61cd9afc"
+    },
+    "observations": {
+      "actual_projection_positives": 4,
+      "exact_source_mutations_rejected": 20,
+      "projection_reused_with_exact_unchanged_helper_sha256": true,
+      "independent_native_controls_repeated": 16,
+      "source_snapshot_and_fact_code_mutation_warm_cold_controls": 2,
+      "required_method_membership_controls": 5,
+      "scanner_owned_metadata_tests_passed": 47
+    },
+    "evidence": [
+      {
+        "path": ".factory\\repair-family119\\metadata143-review\\projection-review147.json",
+        "sha256": "2f104701b51082ccb8e481b0833938f2ce24dd96687cd36b88f66b2d1780f413"
+      },
+      {
+        "path": ".factory\\repair-family119\\metadata143-review\\native-review150.json",
+        "sha256": "644d40768727b057fdd3bc8c9e2ea3022566aaa35a39df5051aef0177f0a6dac"
+      },
+      {
+        "path": ".factory\\repair-family119\\metadata143-review\\native150.xml",
+        "sha256": "0608c2dabed5fdf68f88281f5ff08e5d00a0d863684de97b3b20bf64f79d72ac"
+      },
+      {
+        "path": ".factory\\repair-family119\\metadata143-review\\source-method-epoch150.json",
+        "sha256": "cfbb86358cacb245f3e17033e73a4a04dc613d239e0c0e01a0c2b6ff92ee2657"
+      },
+      {
+        "path": ".factory\\repair-family119\\metadata143-review\\fact-method-epoch150.json",
+        "sha256": "d436f5697ce54edc4b1df7eda49a5d74b84017ceecf62ea9fa1dd670c25bd019"
+      },
+      {
+        "path": ".factory\\repair-family119\\metadata143-review\\method-membership150.json",
+        "sha256": "799ec6319ddee5866a32ec6e06ea54194df34eb2721e91d262dd35e8ee5a7527"
+      }
+    ],
+    "supersedes_rejected": "final-review149.json (preserved)",
+    "cache_repair": "Existing producer epoch now enumerates current callable methods of PresentationRoleIndex, SourceSnapshotIndex and DeclarationFact. Both exact validate=False and public_facts={} warm/cold controls restore active CRITICAL. Required __init__/validate/relative/public_facts identity and current code presence verified.",
+    "limits": [
+      "Scoped approval of declared source-intent profiles and native integration of exact five files only.",
+      "No target execution, safe-masking/downstream/runtime-isolation/non-exfiltration guarantee.",
+      "No fullsuite/architecture/release/generalization/fresh-heldout/second-labeller claim. Parent owns clean replay and integration receipt."
+    ]
+  },
+  "review_sha256": "666d431b2aa1b9a5c14ce3b5f0a8c218940ce177b9c5c0182cc373250e90492e",
+  "application_development_retest": {
+    "original": {
+      "TP": 2,
+      "FP": 17,
+      "unclear": 2,
+      "decided": 19,
+      "actionable_precision": 0.10526315789473684
+    },
+    "previous_commit": {
+      "TP": 2,
+      "FP": 10,
+      "unclear": 2,
+      "decided": 12,
+      "actionable_precision": 0.16666666666666666
+    },
+    "after": {
+      "TP": 2,
+      "FP": 6,
+      "unclear": 2,
+      "decided": 8,
+      "actionable_precision": 0.25,
+      "descriptive_wilson95": [
+        0.071479212752109,
+        0.5907245696898311
+      ]
+    },
+    "percentage_point_gain_from_previous_commit": 8.333333333333334,
+    "additional_removed_FP": 4,
+    "cumulative_removed_FP": 11,
+    "new_unlabelled_alerts": 0,
+    "retained_severity_changes": 0,
+    "labels_sha256": "44e6fd6ae9e885e19538961a17cb3de2eeaf129902b320ce3bb51504c5409918",
+    "packet_sha256": "7263ba0a5cc46bfeadd83faea28f1a6bf54210c60cd390823dc0c3450c838a31",
+    "paired_report_sha256": "3d90b081707336293f23c6bbe05eb2519bb2f2c4cb42382b58d4c2a7082ca2d5",
+    "reviewers": "One independent AI labeller. ECC implementation reviewer is not a second labeller.",
+    "fresh_held_out": false,
+    "minimum30_decided_met": false
+  },
+  "primitive_label_rate": {
+    "TP": 21,
+    "total": 21,
+    "rate": 1.0,
+    "scope": "Original source-pattern truth, separate from actionability."
+  },
+  "newly_partitioned_FP_primitives": [
+    {
+      "id": "A-e9991ea7abd2ab6d9efe",
+      "repository": "getredash/redash",
+      "path": "redash/query_runner/__init__.py",
+      "line": 367,
+      "rule": "SECURITY_HARDCODED_SECRET",
+      "actionable_label": "FP",
+      "state": "REMOVED",
+      "baseline_severity": "CRITICAL",
+      "candidate_severity": null,
+      "primitive_severity": "CRITICAL",
+      "disposition": "SOURCE_PRESENTATION_METADATA"
+    },
+    {
+      "id": "A-8db04b6010a39e00d587",
+      "repository": "getredash/redash",
+      "path": "redash/query_runner/drill.py",
+      "line": 72,
+      "rule": "SECURITY_HARDCODED_SECRET",
+      "actionable_label": "FP",
+      "state": "REMOVED",
+      "baseline_severity": "CRITICAL",
+      "candidate_severity": null,
+      "primitive_severity": "CRITICAL",
+      "disposition": "SOURCE_PRESENTATION_METADATA"
+    },
+    {
+      "id": "A-404972684b478e0df9e2",
+      "repository": "getredash/redash",
+      "path": "redash/query_runner/jql.py",
+      "line": 158,
+      "rule": "SECURITY_HARDCODED_SECRET",
+      "actionable_label": "FP",
+      "state": "REMOVED",
+      "baseline_severity": "CRITICAL",
+      "candidate_severity": null,
+      "primitive_severity": "CRITICAL",
+      "disposition": "SOURCE_PRESENTATION_METADATA"
+    },
+    {
+      "id": "A-3c6333e39d9ae9cb4845",
+      "repository": "getredash/redash",
+      "path": "redash/utils/configuration.py",
+      "line": 9,
+      "rule": "SECURITY_HARDCODED_SECRET",
+      "actionable_label": "FP",
+      "state": "REMOVED",
+      "baseline_severity": "CRITICAL",
+      "candidate_severity": null,
+      "primitive_severity": "CRITICAL",
+      "disposition": "SOURCE_PRESENTATION_METADATA"
+    }
+  ],
+  "historical_TP_retention": {
+    "retained": 13,
+    "total": 13,
+    "same_severity": true,
+    "sha256": "de28eb6fb36153a3721411876e0f98a65da687d70756fbbe91b71dde564f65a6",
+    "scope": "Separate exact historical source-file controls; excluded from precision denominator."
+  },
+  "coverage": [
+    {
+      "path": ".factory/repair-family119/application-paired150/archivy--archivy.json",
+      "sha256": "03f5f036f6a1a24a9005a055e1c6b16d6a28126436b536ad137f888f0e0a392a",
+      "coverage": {
+        "language": "Python",
+        "files_discovered": 35,
+        "files_attempted": 35,
+        "files_audited": 35,
+        "audit_rate": 1.0,
+        "rate_defined": true,
+        "inventory_complete": true,
+        "measurement_state": "complete",
+        "complete": true,
+        "limit": 2000
+      },
+      "seconds": 4.499018100003013
+    },
+    {
+      "path": ".factory/repair-family119/application-paired150/benbusby--whoogle-search.json",
+      "sha256": "4309393e0a52a1ec651b53a22fed052edfc4a72ce1434123dbbe31ac50f82d91",
+      "coverage": {
+        "language": "Python",
+        "files_discovered": 39,
+        "files_attempted": 39,
+        "files_audited": 39,
+        "audit_rate": 1.0,
+        "rate_defined": true,
+        "inventory_complete": true,
+        "measurement_state": "complete",
+        "complete": true,
+        "limit": 2000
+      },
+      "seconds": 5.570208400007687
+    },
+    {
+      "path": ".factory/repair-family119/application-paired150/dgtlmoon--changedetection.io.json",
+      "sha256": "65d9647131cff4b8e891bd5332c2c6321ab2614b02ae3e5266f936d0832151e6",
+      "coverage": {
+        "language": "Python",
+        "files_discovered": 337,
+        "files_attempted": 337,
+        "files_audited": 337,
+        "audit_rate": 1.0,
+        "rate_defined": true,
+        "inventory_complete": true,
+        "measurement_state": "complete",
+        "complete": true,
+        "limit": 2000
+      },
+      "seconds": 54.141119799998705
+    },
+    {
+      "path": ".factory/repair-family119/application-paired150/django-helpdesk--django-helpdesk.json",
+      "sha256": "0fbb3953361f44bc564f023b941ff40f84b708f9386d76763c1e2f012407d363",
+      "coverage": {
+        "language": "Python",
+        "files_discovered": 172,
+        "files_attempted": 172,
+        "files_audited": 172,
+        "audit_rate": 1.0,
+        "rate_defined": true,
+        "inventory_complete": true,
+        "measurement_state": "complete",
+        "complete": true,
+        "limit": 2000
+      },
+      "seconds": 21.82436100000632
+    },
+    {
+      "path": ".factory/repair-family119/application-paired150/etesync--server.json",
+      "sha256": "19a9210156ea62df7d7b3593c0db6a1f94f28f6a5f50b99e3a53353ec79b9992",
+      "coverage": {
+        "language": "Python",
+        "files_discovered": 91,
+        "files_attempted": 91,
+        "files_audited": 91,
+        "audit_rate": 1.0,
+        "rate_defined": true,
+        "inventory_complete": true,
+        "measurement_state": "complete",
+        "complete": true,
+        "limit": 2000
+      },
+      "seconds": 5.552129999996396
+    },
+    {
+      "path": ".factory/repair-family119/application-paired150/getredash--redash.json",
+      "sha256": "e58e0d70e7df7908fded78fbb9cadbce2341d4e6814eb497d441f12886a204ce",
+      "coverage": {
+        "language": "Python",
+        "files_discovered": 291,
+        "files_attempted": 291,
+        "files_audited": 291,
+        "audit_rate": 1.0,
+        "rate_defined": true,
+        "inventory_complete": true,
+        "measurement_state": "complete",
+        "complete": true,
+        "limit": 2000
+      },
+      "seconds": 41.12655369999993
+    }
+  ],
+  "tracked_python_files": 488,
+  "new_modules": 0,
+  "new_dependencies": 0,
+  "architecture_gate": "UNRESOLVED_CAPS_NOT_RAISED",
+  "limits": [
+    "Exposed development cohort after tuning; not fresh held-out, global precision, recall or generalization.",
+    "Only8 decided retained alerts; descriptive confidence interval is wide and does not validate post-tuning generalization.",
+    "No human or Claude second labeller supplied.",
+    "Presentation source role only: no safe-masking, runtime, isolation or downstream-consumer security guarantee.",
+    "Full-suite, architecture, merge, release and multi-release stability remain unresolved.",
+    "Rejected143-149 source/native/cache receipts remain preserved; final150 independently retakes the cache repair."
+  ]
+}

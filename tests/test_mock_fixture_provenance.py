@@ -1021,3 +1021,226 @@ def test_application_direct_returns_use_captured_source_index(tmp_path):
     source = SourceSnapshotIndex(tmp_path, {path: tree}, {path: raw}, {path: digest})
     returns = _app_direct_returns({'source': source}, path, tree.body[0])
     assert len(returns) == 1 and returns[0].value.value == 7
+
+
+_METADATA143_SCHEMA = """class Root:
+    password_caption = "Credential label"
+    @classmethod
+    def schema(cls):
+        return {"type": "object", "properties": {"password": {"type": "string", "title": cls.password_caption}}}
+
+class Child(Root):
+    password_caption = "Child label"
+"""
+
+_METADATA143_MASK = """SECRET_SENTINEL = "visible-mask"
+class Holder:
+    def masked(self):
+        config = self._config.copy()
+        for key in config:
+            if key in self.schema["secret"]:
+                config[key] = SECRET_SENTINEL
+        return config
+    def update(self, incoming):
+        config = {}
+        for k, v in incoming.items():
+            if k in self.schema.get("secret", []) and v == SECRET_SENTINEL:
+                config[k] = self[k]
+            else:
+                config[k] = v
+        self._config = config
+"""
+
+
+def _metadata143_projection(tmp_path, text, member, owner=None, extras=None, stale=False):
+    from factoryline import review_audits as audit
+    from factoryline.credential_role_sources import SourceSnapshotIndex, PresentationRoleIndex
+    path = tmp_path / 'sample.py'
+    files = {path: text.encode()}
+    files.update({tmp_path / name: value.encode() for name, value in (extras or {}).items()})
+    snapshots, inventory = {}, {}
+    for target, raw in files.items():
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(raw)
+        tree = ast.parse(raw)
+        tree._oracle_source_sha256 = hashlib.sha256(raw).hexdigest()
+        snapshots[target], inventory[target] = tree, tree._oracle_source_sha256
+    tree = snapshots[path]
+    scope = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == owner) if owner else tree
+    declaration = next(node for node in scope.body if isinstance(node, ast.Assign)
+                       and isinstance(node.targets[0], ast.Name) and node.targets[0].id == member)
+    if stale:
+        files[path] += b'\n# changed'
+    source = SourceSnapshotIndex(tmp_path, snapshots, files, inventory)
+    imports = {target: audit._oracle_imports(tmp_path, target, node, {p: p for p in files})
+               for target, node in snapshots.items()}
+    return PresentationRoleIndex(source, imports, audit).evidence(path, declaration)
+
+
+@pytest.mark.parametrize('owner', ['Root', 'Child'])
+def test_metadata143_schema_label_and_inherited_label(tmp_path, owner):
+    evidence = _metadata143_projection(tmp_path, _METADATA143_SCHEMA, 'password_caption', owner)
+    assert evidence['eligible'] is True
+    assert evidence['profile'] == 'JSON_SCHEMA_ANNOTATION'
+    assert evidence['runtime_assurance'] == 'INCOMPLETE'
+    assert evidence['transport_role'] == 'UNASSESSED'
+    assert {row['role'] for row in evidence['uses']} == {'SCHEMA_TITLE'}
+
+
+@pytest.mark.parametrize(('old', 'new'), [
+    ('"title": cls.password_caption', '"default": cls.password_caption'),
+    ('"type": "object"', '"type": "unknown"'),
+    ('@classmethod', '@staticmethod'),
+    ('def schema(cls):', 'def schema(cls):\n        cls = replacement'),
+    ('class Child(Root):', 'class Child(UnknownRoot):'),
+    ('    password_caption = "Child label"', '    password_caption = "Child label"\n    password_caption = "second"'),
+    ('class Child(Root):', 'class Child(Root):\n    def authenticate(self): return self.password_caption'),
+    ('class Child(Root):', 'class Child(Root, UnknownMixin):'),
+])
+def test_metadata143_ambiguous_schema_keeps_credential_unknown(tmp_path, old, new):
+    evidence = _metadata143_projection(tmp_path, _METADATA143_SCHEMA.replace(old, new), 'password_caption', 'Child')
+    assert evidence['eligible'] is False
+
+
+def test_metadata143_mask_requires_output_and_previous_value_roles(tmp_path):
+    evidence = _metadata143_projection(tmp_path, _METADATA143_MASK, 'SECRET_SENTINEL')
+    assert evidence['eligible'] is True
+    assert evidence['profile'] == 'MASKING_SENTINEL'
+    assert {row['role'] for row in evidence['uses']} == {'MASK_OUTPUT', 'PRESERVE_PREVIOUS_VALUE'}
+
+
+@pytest.mark.parametrize(('old', 'new'), [
+    ('self._config.copy()', 'self._config'),
+    ('config[k] = self[k]', 'config[k] = "replacement-password"'),
+    ('v == SECRET_SENTINEL', 'v != SECRET_SENTINEL'),
+    ('key in self.schema["secret"]', 'key in self.schema["public"]'),
+    ('k in self.schema.get("secret", [])', 'k in self.schema.get("public", [])'),
+    ('        self._config = config', '        self._config = config\n        authenticate(SECRET_SENTINEL)'),
+    ('        return config', '        return SECRET_SENTINEL'),
+])
+def test_metadata143_mask_conflicts_keep_credential_unknown(tmp_path, old, new):
+    evidence = _metadata143_projection(tmp_path, _METADATA143_MASK.replace(old, new), 'SECRET_SENTINEL')
+    assert evidence['eligible'] is False
+
+
+@pytest.mark.parametrize('text,member,owner', [
+    (_METADATA143_SCHEMA, 'password_caption', 'Child'),
+    (_METADATA143_MASK, 'SECRET_SENTINEL', None),
+])
+def test_metadata143_stale_source_rejects_projection(tmp_path, text, member, owner):
+    assert _metadata143_projection(tmp_path, text, member, owner, stale=True)['eligible'] is False
+
+
+
+@pytest.mark.parametrize('extra', [
+    '        authenticate(password=schema["properties"]["password"]["title"])',
+    '        schema["properties"]["password"]["default"] = schema["properties"]["password"].pop("title")',
+    '        schema = foreign_schema',
+    '        forwarded = schema\n        publish(forwarded)',
+    '        return {}',
+])
+def test_metadata143_schema_escape_or_rebind_is_not_a_label_proof(tmp_path, extra):
+    source = _METADATA143_SCHEMA.replace('        return {"type":', '        schema = {"type":', 1)
+    source = source.replace('\n\nclass Child', '\n' + extra + '\n        return schema\n\nclass Child', 1)
+    assert _metadata143_projection(tmp_path, source, 'password_caption', 'Child')['eligible'] is False
+
+
+@pytest.mark.parametrize('foreign', [
+    'import sample\nauthenticate(sample.SECRET_SENTINEL)\n',
+    'from sample import SECRET_SENTINEL as forwarded\nauthenticate(forwarded)\n',
+])
+def test_metadata143_cross_module_credential_use_blocks_mask_projection(tmp_path, foreign):
+    evidence = _metadata143_projection(tmp_path, _METADATA143_MASK, 'SECRET_SENTINEL', extras={'consumer.py': foreign})
+    assert evidence['eligible'] is False
+
+
+
+def test_metadata143_restored_map_publication_cannot_be_overwritten(tmp_path):
+    source = _METADATA143_MASK.replace('        self._config = config',
+        '        self._config = config\n        self._config = incoming')
+    assert _metadata143_projection(tmp_path, source, 'SECRET_SENTINEL')['eligible'] is False
+
+
+@pytest.mark.parametrize('mutation', [
+    'self._config["password"] = incoming["password"]',
+    'self._config.update(incoming)',
+    'alias = self._config\n        alias.update(incoming)',
+    'mutate(self._config)',
+])
+def test_metadata143_published_storage_cannot_escape_or_mutate(tmp_path, mutation):
+    source = _METADATA143_MASK + '\n        ' + mutation + '\n'
+    assert _metadata143_projection(tmp_path, source, 'SECRET_SENTINEL')['eligible'] is False
+
+
+@pytest.mark.parametrize('source,expected', [(_METADATA143_SCHEMA, 2), (_METADATA143_MASK, 1)])
+def test_metadata143_native_metadata_partition_retains_critical_primitive(tmp_path, source, expected):
+    _write(tmp_path, 'sample.py', source)
+    first = security_scan(tmp_path)
+    second = security_scan(tmp_path)
+    for report in (first, second):
+        primitives = [row for row in report.get('primitive_observations', [])
+                      if row.get('facts', {}).get('disposition') == 'SOURCE_PRESENTATION_METADATA']
+        assert len(primitives) == expected
+        assert not [row for row in report['findings'] if row['code'] == 'SECURITY_HARDCODED_SECRET']
+        for finding in primitives:
+            assert finding['severity'] == 'CRITICAL'
+            assert finding['facts']['runtime_assurance'] == 'INCOMPLETE'
+            assert finding['facts']['downstream_consumer_security'] == 'UNASSESSED'
+
+
+@pytest.mark.parametrize('mutation', ['schema', 'disposition', 'witness', 'roles', 'duplicate', 'declaration', 'consumer', 'source'])
+def test_metadata143_rehashed_invalid_witness_restores_critical_alert(tmp_path, mutation):
+    import copy
+    import json
+    from factoryline import primitive_observation_binding as binding
+    from factoryline import review_audits as audit
+    _write(tmp_path, 'sample.py', _METADATA143_MASK)
+    report = security_scan(tmp_path, cache_enabled=False)
+    finding = next(row for row in report['primitive_observations']
+                   if row['facts'].get('disposition') == 'SOURCE_PRESENTATION_METADATA')
+    altered = copy.deepcopy(finding)
+    facts = altered['facts']
+    evidence = facts['fixture_evidence']
+    if mutation in {'schema', 'disposition'}:
+        facts[mutation] = 'factory.application-test-credential.v1' if mutation == 'schema' else 'TEST_OWNED_APPLICATION_CREDENTIAL'
+    elif mutation == 'witness':
+        evidence['uses'][0]['sha256'] = '0' * 64
+    elif mutation == 'roles':
+        evidence['uses'] = [row for row in evidence['uses'] if row['role'] != 'PRESERVE_PREVIOUS_VALUE']
+    elif mutation == 'duplicate':
+        evidence['uses'].append(copy.deepcopy(evidence['uses'][0]))
+    elif mutation == 'declaration':
+        evidence['declaration']['source_role'] = 'local_literal'
+    elif mutation == 'consumer':
+        evidence['downstream_consumer_security'] = facts['downstream_consumer_security'] = 'PROVEN_SAFE'
+    else:
+        evidence['source_sha256'] = '0' * 64
+    unsigned = {key: value for key, value in facts.items() if key != 'proof_facts_sha256'}
+    facts['proof_facts_sha256'] = hashlib.sha256(json.dumps(unsigned, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+    core = {'sources': [{'path': 'sample.py', 'sha256': hashlib.sha256((tmp_path / 'sample.py').read_bytes()).hexdigest()}],
+            'findings': [], 'primitive_observations': [altered], 'audit_coverage': {'complete': True}}
+    binding.partition_proven_primitive_observations(core, audit.integrity)
+    assert not core['primitive_observations']
+    assert len(core['findings']) == 1 and core['findings'][0]['severity'] == 'CRITICAL'
+
+
+@pytest.mark.parametrize('member', ['evidence', '_schema_uses', '_mask_uses'])
+def test_metadata143_runtime_projection_method_replacement_invalidates_cache(tmp_path, monkeypatch, member):
+    from factoryline import credential_role_sources as roles
+    _write(tmp_path, 'sample.py', _METADATA143_SCHEMA if member == '_schema_uses' else _METADATA143_MASK)
+    assert security_scan(tmp_path).get('primitive_observations')
+    monkeypatch.setattr(roles.PresentationRoleIndex, member, lambda *args, **kw: {'eligible': False} if member == 'evidence' else None)
+    report = security_scan(tmp_path)
+    assert [row for row in report['findings'] if row['code'] == 'SECURITY_HARDCODED_SECRET' and row['severity'] == 'CRITICAL']
+
+
+@pytest.mark.parametrize('owner,member', [('SourceSnapshotIndex', 'validate'), ('DeclarationFact', 'public_facts')])
+def test_metadata143_shared_source_method_code_change_invalidates_cache(tmp_path, monkeypatch, owner, member):
+    from factoryline import credential_role_sources as roles
+    _write(tmp_path, 'sample.py', _METADATA143_MASK)
+    assert security_scan(tmp_path).get('primitive_observations')
+    method = getattr(getattr(roles, owner), member)
+    replacement = (lambda self, path: False) if member == 'validate' else (lambda self: {})
+    monkeypatch.setattr(method, '__code__', replacement.__code__)
+    for report in (security_scan(tmp_path), security_scan(tmp_path, cache_enabled=False)):
+        assert [row for row in report['findings'] if row['code'] == 'SECURITY_HARDCODED_SECRET' and row['severity'] == 'CRITICAL']

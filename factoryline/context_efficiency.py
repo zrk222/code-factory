@@ -329,8 +329,10 @@ def _application_profile_bytes(root, bindings, read_source, limit):
 
 
 def bind_application_fixture_context(root, snapshots, contexts, bindings, read_source,
-                                     limit, *, source_bytes=None, source_inventory=None):
+                                     limit, *, source_bytes=None, source_inventory=None, imports=None):
     from . import mock_fixture_provenance as fixture
+    from .credential_role_sources import SourceSnapshotIndex, PresentationRoleIndex
+    from collections.abc import Mapping
     from . import review_audits as audit
     if not isinstance(source_bytes, dict) or not isinstance(source_inventory, dict):
         return
@@ -340,8 +342,8 @@ def bind_application_fixture_context(root, snapshots, contexts, bindings, read_s
     captured = {path: source_bytes.get(path) for path in snapshots}
     inventory = {path: source_inventory.get(path) for path in snapshots}
     index = fixture.application_test_index(root, snapshots, captured, inventory, configs)
-    if index is None:
-        return
+    source = index['source'] if index is not None else SourceSnapshotIndex(root, snapshots, captured, inventory)
+    presentation = PresentationRoleIndex(source, imports, audit) if isinstance(imports, Mapping) else None
     manifest = {path.relative_to(root).as_posix(): digest for path, digest in inventory.items()}
     config_hashes = {name: hashlib.sha256(raw).hexdigest() for name, raw in configs.items()}
     manifest.update(config_hashes)
@@ -357,12 +359,24 @@ def bind_application_fixture_context(root, snapshots, contexts, bindings, read_s
                 continue
             if not audit._SECRET_ASSIGNMENT.search(targets[0].id):
                 continue
-            item = fixture.application_test_secret_evidence(index, path, node.value.lineno, literal)
-            if item.get('eligible') is True and item.get('witness_sources'):
+            item = _application_literal_evidence(fixture, index, presentation, path, node, literal)
+            if item.get('eligible') is True:
                 evidence[f'{node.lineno}:{node.col_offset}:{targets[0].id}'] = {
                     **item, 'inventory_sha256': digest, 'configuration_sha256': config_hashes,
                 }
         contexts[path]['application_fixture_evidence'] = evidence
+
+
+def _application_literal_evidence(fixture, index, presentation, path, node, literal):
+    item = fixture.application_test_secret_evidence(index, path, node.value.lineno, literal) if index is not None else {}
+    if item.get('eligible') is not True and presentation is not None:
+        item = presentation.evidence(path, node)
+        if item.get('eligible') is True:
+            source = presentation.source
+            item = {**item, 'source': source.relative(path), 'source_sha256': source.inventory[path],
+                    'declaration_span': [node.lineno, node.col_offset, node.end_lineno, node.end_col_offset],
+                    'isolation_assurance': 'UNASSESSED'}
+    return item
 
 
 def bind_django_fixture_context(
@@ -436,7 +450,12 @@ def _captured_fixture_configuration(root, bindings, read_source, limit):
 
 def provider_context_cache_helpers(contracts):
     """Return the source inventory and cache helpers in the cache epoch."""
+    from . import credential_role_sources as roles
     return (
+        roles.PresentationRoleIndex,
+        *(value for name, value in vars(roles).items() if name.startswith("_presentation_")),
+        *(value for owner in (roles.PresentationRoleIndex, roles.SourceSnapshotIndex, roles.DeclarationFact)
+          for value in vars(owner).values() if callable(value)),
         provider_context_cache_helpers,
         bind_provider_inventory,
         bind_provider_context,
@@ -449,6 +468,7 @@ def provider_context_cache_helpers(contracts):
         cached_import_bindings,
         bind_django_fixture_context,
         bind_application_fixture_context,
+        _application_literal_evidence,
         application_profile_configuration,
         _application_profile_bytes,
         _captured_fixture_configuration,
