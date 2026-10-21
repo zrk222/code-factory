@@ -13,11 +13,11 @@
   },
   "budgets": {
     "max_markdown_files": 659,
-    "max_python_files": 460,
+    "max_python_files": 464,
     "max_markdown_python_ratio": 1.7,
     "max_cli_lines": 4977,
     "max_cli_command_declarations": 184,
-    "max_core_modules": 129
+    "max_core_modules": 140
   },
   "file_size_guard": {
     "required": true,
@@ -263,9 +263,9 @@
       "target": "factoryline/audit_log_flow.py",
       "outcome": "Keep log input and exception-state analysis in one bounded verification module rather than expanding receipt controls or already-full scanner modules.",
       "acceptance": [
-        "All prior ceilings remain unchanged",
+        "Per-file size ceilings remain unchanged; inventory caps require recorded human approval",
         "Dedicated module remains within 400 lines and 18000 bytes",
-        "460 Python files maximum",
+        "464 Python files maximum",
         "Native Hypothesis test AST and node coverage preserved in related runtime lane tests",
         "New source/sink and negative controls have exact execution evidence"
       ]

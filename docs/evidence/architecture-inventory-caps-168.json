@@ -1,0 +1,29 @@
+{
+  "schema": "factory.architecture-decision.v1",
+  "decision": "Owner-approved inventory caps: 464 Python files, 140 core modules.",
+  "status": "ACCEPTED_BY_EXPLICIT_USER_INSTRUCTION",
+  "authorization": {
+    "source": "Direct user message in this chat",
+    "quote": "New cap is 464 files and 140 modules"
+  },
+  "previous": {
+    "max_python_files": 460,
+    "max_core_modules": 129
+  },
+  "approved": {
+    "max_python_files": 464,
+    "max_core_modules": 140
+  },
+  "observed_before": {
+    "python_files": 477,
+    "core_modules": 179
+  },
+  "remaining_reduction": {
+    "python_files": 13,
+    "core_modules": 39
+  },
+  "decision_scope": "Existing tracked Python-file and architecture core-module metrics. Boundary classification, per-file ceilings, other budgets and enforcement logic are unchanged.",
+  "consequence": "Current footprint still exceeds both approved caps. Prior gate failures and historical reports remain preserved. No architecture pass, precision improvement, merge or release approval is implied.",
+  "scanner_runtime_file_cap": "Unchanged: this decision changes repository architecture inventory budgets only.",
+  "required_evidence": "Independent review, architecture module tests, exact observed health report and hash-bound workflow audit."
+}
