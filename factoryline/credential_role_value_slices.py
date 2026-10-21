@@ -51,7 +51,7 @@ def value_spans(row, index, imports, classes):
 
 
 def _selected_carrier(witness, index, imports, classes):
-    from .credential_role_class_binding import resolve_class
+    from .credential_role_scope_bindings import resolve_class
 
     for hop in witness.get("hops", []):
         if hop["role"] != "client_class_selection":
@@ -98,7 +98,7 @@ def inherited_fields(fields, index, imports, classes, audit):
     """Retain MAY-origin fields through each declared client descendant."""
     from .credential_role_bindings import class_chain
 
-    from .credential_role_class_binding import effective_method
+    from .credential_role_scope_bindings import effective_method
 
     origins = {key: set(names) for key, names in fields.items()}
     for origin, names in origins.items():

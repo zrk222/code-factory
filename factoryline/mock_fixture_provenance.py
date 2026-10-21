@@ -995,7 +995,7 @@ def _django_provider_object(index, path, provider):
         or _class_has_binding(provider_class, "__setattr__")
     ):
         return False
-    from .credential_role_class_binding import effective_method
+    from .credential_role_scope_bindings import effective_method
 
     chain = [(path, provider_class.name, provider_class)]
     getter = effective_method(chain, "__getattr__")
@@ -1202,7 +1202,7 @@ def _django_model_field(index, path, model_chain, manager):
         field_chain, _FIELD_AUTHORITY_HOOKS
     ):
         return None
-    from .credential_role_class_binding import effective_method
+    from .credential_role_scope_bindings import effective_method
 
     method = effective_method(field_chain, "pre_save")
     if (
@@ -4191,7 +4191,7 @@ def _app_source_symbol(index, path, expression, function=None, seen=()):
 
 
 def _app_effective_method(chain, name, decorators=()):
-    from .credential_role_class_binding import effective_method
+    from .credential_role_scope_bindings import effective_method
 
     return effective_method(chain, name, allowed_decorators=decorators)
 

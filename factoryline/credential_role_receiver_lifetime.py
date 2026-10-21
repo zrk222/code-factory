@@ -2,10 +2,10 @@
 
 import ast
 
-from . import credential_role_class_binding as _class_binding
+from . import credential_role_scope_bindings as _class_binding
 from . import credential_role_identity_effects as _identity_effects
 from . import credential_role_scope_bindings as _scope_bindings
-from .credential_role_class_binding import effective_method
+from .credential_role_scope_bindings import effective_method
 from .credential_role_identity_effects import summarize_identity_effect
 from .credential_role_scope_bindings import binding_occurrences
 

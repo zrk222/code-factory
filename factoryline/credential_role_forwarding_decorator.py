@@ -2,7 +2,7 @@
 
 import ast
 
-from .credential_role_class_binding import effective_method
+from .credential_role_scope_bindings import effective_method
 
 
 def method_rows(chain, index, imports):

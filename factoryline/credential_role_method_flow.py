@@ -2,7 +2,7 @@
 
 import ast
 from .credential_role_bindings import class_chain, matches_fact
-from .credential_role_class_binding import (
+from .credential_role_scope_bindings import (
     effective_method,
     scope_class,
 )
@@ -12,7 +12,7 @@ from .credential_role_method_contracts import (
     source_span as _span,
 )
 from .credential_role_forwarding_decorator import method_rows
-from .credential_role_method_return import (
+from .credential_role_method_contracts import (
     enclosing_function,
     is_parameter,
     method_returns,

@@ -8,7 +8,7 @@ from factoryline.credential_role_method_use_getter_audit import (
     exact_local_receiver_relation,
 )
 from factoryline.credential_role_sources import SourceSnapshotIndex
-from factoryline.credential_role_session_calls import session_request_context
+from factoryline.credential_role_paths import session_request_context
 from factoryline.credential_role_scope_bindings import declared_origins
 from factoryline import review_audits as audit
 from factoryline.credential_session_forwarding import session_factory_witness

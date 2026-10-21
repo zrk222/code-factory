@@ -6,7 +6,7 @@ from urllib.parse import urlsplit
 from .credential_role_sources import (
     declaration_fact,
 )
-from .credential_role_class_binding import instance_receiver
+from .credential_role_scope_bindings import instance_receiver
 from .credential_role_chain_memo import _import_binding_is_exact
 from .credential_role_scope_bindings import match_name
 

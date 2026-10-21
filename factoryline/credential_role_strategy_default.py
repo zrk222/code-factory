@@ -3,7 +3,7 @@
 import ast
 from importlib.util import resolve_name
 
-from .credential_role_class_binding import effective_method
+from .credential_role_scope_bindings import effective_method
 from .credential_role_strategy_fallback import fallback_method
 
 

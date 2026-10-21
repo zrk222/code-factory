@@ -3,7 +3,7 @@
 import ast
 import hashlib
 
-from .credential_role_class_binding import effective_method
+from .credential_role_scope_bindings import effective_method
 from .credential_role_default_contract import (
     default_getter as _default_getter,
     getter_environment,

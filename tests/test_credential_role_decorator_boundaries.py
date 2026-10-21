@@ -10,7 +10,7 @@ from factoryline.credential_role_adapter_selection import _property_default
 from factoryline.credential_role_setting_boundary import _setting_getter_shape
 from factoryline.review_audits import security_scan
 import textwrap
-from factoryline.credential_role_method_return import method_returns
+from factoryline.credential_role_method_contracts import method_returns
 
 
 def _index(tmp_path, client, decorators):

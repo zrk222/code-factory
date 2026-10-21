@@ -7,7 +7,7 @@ import ast
 from types import SimpleNamespace
 from factoryline.credential_role_bindings import class_chain
 from factoryline.credential_role_chain_memo import ClassChainMemo
-from factoryline.credential_role_class_binding import effective_method
+from factoryline.credential_role_scope_bindings import effective_method
 from factoryline.credential_role_sources import SourceSnapshotIndex
 from factoryline.review_audits import security_scan
 from factoryline.credential_role_method_flow import method_url_hops

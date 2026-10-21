@@ -364,7 +364,7 @@ class PresentationRoleIndex:
         return _presentation_literal_matches(chain, fact, self.source.root)
 
     def _reflection_conflict(self, fact, keys=()):
-        from .credential_role_class_binding import resolve_class
+        from .credential_role_scope_bindings import resolve_class
 
         for path, call in self.calls:
             if path not in self.reflective_paths or not call.args:

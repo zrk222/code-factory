@@ -2,7 +2,7 @@
 
 import ast
 
-from .credential_role_method_return import verified_instance_receiver
+from .credential_role_method_contracts import verified_instance_receiver
 
 
 def trace_call(flow, expression, function, path, seen, depth, bindings=None):
@@ -46,8 +46,8 @@ def trace_return(
     caller_bindings=None,
     callee_bindings=None,
 ):
-    from .credential_role_class_binding import scope_class
-    from .credential_role_method_return import format_receiver, returned_parameter
+    from .credential_role_scope_bindings import scope_class
+    from .credential_role_method_contracts import format_receiver, returned_parameter
 
     returned = row.value
     parameter_name, aliases = returned_parameter(function, returned)

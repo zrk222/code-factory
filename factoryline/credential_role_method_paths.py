@@ -1,9 +1,9 @@
 """Enumerate bounded, separate source-flow routes to one HTTP URL slot."""
 
-from .credential_role_class_binding import effective_method, scope_class
+from .credential_role_scope_bindings import effective_method, scope_class
 from .credential_role_method_contracts import source_current, source_span
 from .credential_role_method_flow import _Flow
-from .credential_role_method_return import enclosing_function
+from .credential_role_method_contracts import enclosing_function
 from .credential_role_forwarding_decorator import method_rows
 
 _MAX_STATES = 128

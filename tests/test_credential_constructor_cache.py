@@ -6,7 +6,7 @@ from factoryline import credential_role_constructor_provider as provider
 from factoryline import credential_role_constructor_provider_provenance as type_effects
 from factoryline import provider_mutations
 from factoryline.credential_role_bindings import class_chain
-from factoryline.credential_role_transfer_guards import constructor_bindings_inert
+from factoryline.credential_role_constructor_flow import constructor_bindings_inert
 from factoryline import credential_httpx_origins as httpx
 from factoryline import credential_json_assertions as assertions
 from factoryline import credential_role_scope_bindings as roles
@@ -17,7 +17,7 @@ from types import SimpleNamespace
 from factoryline import credential_role_adapter_selection as selection
 import hashlib
 from factoryline.credential_role_bindings import auth_constructor_password
-from factoryline.credential_role_session_calls import session_request_context
+from factoryline.credential_role_paths import session_request_context
 from factoryline.credential_role_sources import (
     SourceSnapshotIndex,
     source_session_factories,

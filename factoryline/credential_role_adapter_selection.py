@@ -2,7 +2,7 @@
 
 import ast
 from .credential_role_default_contract import property_default as _property_default
-from .credential_role_class_binding import effective_method
+from .credential_role_scope_bindings import effective_method
 from .credential_session_forwarding import session_factory_witness
 from .credential_role_setting_boundary import (
     _setting_getter_shape,

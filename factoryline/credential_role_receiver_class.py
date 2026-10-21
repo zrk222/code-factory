@@ -2,7 +2,7 @@
 
 import ast
 
-from .credential_role_class_binding import resolve_class
+from .credential_role_scope_bindings import resolve_class
 from .credential_role_scope_bindings import binding_occurrences
 
 

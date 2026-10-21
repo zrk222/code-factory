@@ -1,7 +1,7 @@
 """Finite default-getter contracts; reject arbitrary code around a matching return."""
 
 import ast
-from .credential_role_class_binding import effective_method
+from .credential_role_scope_bindings import effective_method
 
 from .credential_role_scope_bindings import binding_occurrences
 

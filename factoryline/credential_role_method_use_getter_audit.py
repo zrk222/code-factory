@@ -3,9 +3,9 @@
 import ast
 
 from .credential_role_bindings import class_chain
-from .credential_role_class_binding import instance_receiver
+from .credential_role_scope_bindings import instance_receiver
 from .credential_role_forwarding_decorator import method_rows
-from .credential_role_method_return import verified_instance_receiver
+from .credential_role_method_contracts import verified_instance_receiver
 from .credential_role_method_use_audit import (
     ancestor,
     coordinates,
@@ -617,7 +617,7 @@ def exact_local_receiver_relation(
         return "UNKNOWN"
     if len(candidate_methods) != 1:
         return "UNKNOWN"
-    from .credential_role_class_binding import effective_method
+    from .credential_role_scope_bindings import effective_method
 
     candidate_identity = next(iter(candidate_methods))
     effective = effective_method(chain, getter)
@@ -629,7 +629,7 @@ def exact_local_receiver_relation(
 
 def _candidate_getter_methods(candidates, getter, index, imports, classes, audit):
     from .credential_role_bindings import class_chain
-    from .credential_role_class_binding import effective_method
+    from .credential_role_scope_bindings import effective_method
 
     methods = set()
     for _, candidate in candidates:
