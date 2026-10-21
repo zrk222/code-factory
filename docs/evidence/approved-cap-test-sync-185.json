@@ -1,0 +1,30 @@
+{
+  "schema": "factory.approved-policy-test-sync.v1",
+  "parent_commit": "1877325c04e9a0d9c9d08dea4ab2a46fefd44c39",
+  "state": "SCOPED_PASS_GLOBAL_GATES_INCOMPLETE",
+  "cause": "NativeparityCI contained two stale460file teststrings afterownerapproved464file policy andcorrespondingCI guard changed in a5febf0.",
+  "change": "Changeonlythose twoexistingteststrings to464; no policy/workflow/attributionfloor/detector changes.",
+  "source_sha256": {
+    "tests/test_assembly_process.py": "f31d6a24d5f349969e06905f3b1daf16471a73ba0b5f49f496d3a8beec59303b"
+  },
+  "tests": {
+    "passed": 80,
+    "skipped": 2,
+    "skip_reason": "POSIX-onlynativeparity cases onWindows",
+    "failed": 0
+  },
+  "scope_proof_sha256": "17a5a420a98f8cd61b0f0d523bc01114a93ce5915c394f32b39a188939df07e9",
+  "policy_caps": {
+    "python": 464,
+    "core": 133
+  },
+  "architecture_inventory": {
+    "python": 429,
+    "core": 133
+  },
+  "limits": [
+    "ActualLinux/macOSnativeCIrerun remainsrequired;localWindows skips arenot aPOSIXPASS.",
+    "No detectorbehavior orprecisiongain;frozenstudy c050 AI-only0TP/41FP/6unclear,Claude pending.",
+    "Historicalfullsuiteredgates remainindependent."
+  ]
+}
