@@ -603,7 +603,7 @@ def exact_local_receiver_relation(
     candidates = fields.get(getter, ())
     if not candidates:
         return "UNKNOWN"
-    from .credential_role_receiver_class import exact_receiver_class
+    from .credential_role_identity_effects import exact_receiver_class
 
     class_ref = exact_receiver_class(path, receiver, index, imports, classes, audit)
     if class_ref is None:
@@ -613,7 +613,7 @@ def exact_local_receiver_relation(
     chain = class_chain(index, class_ref[0], class_ref[1], imports, classes, audit)
     if not chain:
         return "UNKNOWN"
-    from .credential_role_receiver_lifetime import local_receiver_stable
+    from .credential_role_identity_effects import local_receiver_stable
 
     if not local_receiver_stable(path, receiver, getter, chain, index):
         return "UNKNOWN"

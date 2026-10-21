@@ -3781,7 +3781,7 @@ def _app_captured_call_preserves(index, path, function, call, tracked):
 
 
 def _app_direct_returns(index, path, function):
-    from .credential_role_identity_call_model import own_function_nodes
+    from .credential_role_identity_effects import own_function_nodes
 
     if not index["source"].validate(path):
         return []
@@ -4420,7 +4420,7 @@ def _app_factory_call_user(index, profile, expression):
 
 
 def _app_wrapper_data_projection(index, path, method):
-    from .credential_role_identity_call_model import own_function_nodes
+    from .credential_role_identity_effects import own_function_nodes
 
     parents = index["source"].parents[path]
     for node in own_function_nodes(method, path, index["source"]):

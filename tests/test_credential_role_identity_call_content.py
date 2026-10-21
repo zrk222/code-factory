@@ -4,17 +4,17 @@ import ast
 import hashlib
 from pathlib import Path
 import pytest
-from factoryline.credential_role_identity_effect_types import (
+from factoryline.credential_role_identity_effects import (
     ResolvedIdentityCall,
     _Value,
 )
 from factoryline.credential_role_identity_effects import summarize_identity_effect
-from factoryline.credential_role_identity_value_model import (
+from factoryline.credential_role_identity_effects import (
     identity_value,
     tracked_roots,
 )
 from factoryline.credential_role_sources import SourceSnapshotIndex
-from factoryline.credential_role_identity_effect_types import SourceFieldLiteral
+from factoryline.credential_role_identity_effects import SourceFieldLiteral
 
 
 def _analyze(

@@ -464,7 +464,7 @@ def test_source_model_cache_cannot_admit_late_mutation(tmp_path):
 
 
 def test_receiver_identity_summary_reused_only_inside_batch(tmp_path, monkeypatch):
-    from factoryline import credential_role_receiver_lifetime as lifetime
+    from factoryline import credential_role_identity_effects as lifetime
 
     path, memo = _memo(tmp_path)
     memo.index.class_chain_memo = memo
@@ -492,7 +492,7 @@ def test_receiver_identity_summary_reused_only_inside_batch(tmp_path, monkeypatc
 def test_helper_epoch_replacement_rejects_batch_after_fresh_negative(
     tmp_path, monkeypatch
 ):
-    from factoryline import credential_role_receiver_lifetime as lifetime
+    from factoryline import credential_role_identity_effects as lifetime
 
     path, memo = _memo(tmp_path)
     memo.index.class_chain_memo = memo
