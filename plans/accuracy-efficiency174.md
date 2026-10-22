@@ -7,6 +7,12 @@ Only remaining work is listed below. Order: accuracy, speed, simplicity.
 
 ## Acceptance boundaries
 
+- PR #255 merge threshold: at least 35% actionable precision, authorized by the
+  owner on 2026-10-22. This is an intermediate gate; the publication target below
+  remains 80%+. Use the same preregistration, minimum 30 decided alerts,
+  independent reviewer disclosures, Wilson interval, uncertainty reporting and
+  positive-retention requirements. An exposed development replay cannot be
+  relabeled as a fresh held-out result. All other merge gates remain required.
 - Publication target: at least 80% actionable precision on a fresh preregistered
   sample with at least 30 decided candidate alerts. Report the Wilson 95%
   interval, primitive match rate, unclear count and positive retention separately.
@@ -25,6 +31,22 @@ Only remaining work is listed below. Order: accuracy, speed, simplicity.
 - Repository scan target is below 180 seconds on the declared standard profile,
   with unchanged coverage and canonical findings. Full-suite time is separate.
 - Missing, FAIL or BLOCKED checks prevent a completion, merge or release claim.
+
+### Immediate P0 execution
+
+Prioritize native security finding changes over additional oracle capability
+work: credential lifecycle/selector roles and serialization producer-to-consumer
+provenance, following the one-run Astra audit in
+`.factory/precision215/astra-p0-review.md`. Each repair must show a native
+before/after finding delta on captured source, independent verification, and
+retention of genuine positives at their justified severity. Keep source/profile
+changes separate from scanner changes. Record zero gains as zero; do not replace
+actionable precision with primitive matches, passing tests or reduced alert count.
+
+Until the canonical 24 failures are integrated and resolved, run only their
+remaining failed cases; then run the full suite once. Explicitly requested native
+precision measurements remain a separate task. Commercial/design-partner work
+stays near the end and is not a merge blocker.
 
 ## Remaining execution packets
 
