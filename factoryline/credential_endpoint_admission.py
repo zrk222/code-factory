@@ -8,6 +8,7 @@ from importlib import resources
 import json
 import re
 import threading
+from pathlib import Path
 from urllib.parse import urlsplit
 
 
@@ -40,7 +41,7 @@ def _source_bindings(root, sources):
     return bindings
 
 
-def _derive(root, sources, bindings, integrity):
+def _derive(root, sources, bindings, integrity, captured=False):
     from . import review_audits as audit
     from .credential_role_paths import endpoint_role_evidence
 
@@ -56,9 +57,14 @@ def _derive(root, sources, bindings, integrity):
         tree._oracle_source_sha256 = digest
         integrity.bind_security_call_scopes(tree)
         snapshots[path], python_bytes[path], inventory[path] = tree, raw, digest
-    eligible = {path.resolve(): path for path in snapshots}
+    if captured:
+        from .import_context import CapturedImportInventory
+
+        eligible = CapturedImportInventory(root, tuple(snapshots))
+    else:
+        eligible = {path.resolve(): path for path in snapshots}
     imports = {
-        path: audit._oracle_imports(root, path, tree, eligible)
+        path: audit._oracle_imports(root, path, tree, eligible, captured=captured)
         for path, tree in snapshots.items()
     }
     return endpoint_role_evidence(
@@ -66,19 +72,32 @@ def _derive(root, sources, bindings, integrity):
     )
 
 
-def _workspace_roles(root, sources, bindings, integrity):
+def _workspace_roles(root, sources, bindings, integrity, *, purpose="producer"):
     from . import review_audits as audit
 
-    epoch = audit._oracle_context_cache_key(root, [], {"endpoint": USE_AUDIT_PROFILE})
-    key = (str(root), tuple(sorted(bindings.items())), catalog_content_digest(), epoch)
+    native = purpose == "native-revalidation"
+    epoch = audit._oracle_context_cache_key(
+        root, [], {"endpoint": USE_AUDIT_PROFILE}, captured=native
+    )
+    key = (
+        purpose,
+        str(root),
+        tuple(sorted(bindings.items())),
+        catalog_content_digest(),
+        epoch,
+    )
     with _LOCK:
         if key not in _WORKSPACES:
-            rows = _derive(root, sources, bindings, integrity)
+            rows = (
+                _derive(root, sources, bindings, integrity, True)
+                if native
+                else _derive(root, sources, bindings, integrity)
+            )
             _WORKSPACES[key] = deepcopy(rows)
             while len(_WORKSPACES) > 2:
                 _WORKSPACES.popitem(last=False)
         _WORKSPACES.move_to_end(key)
-        return _WORKSPACES[key]
+        return deepcopy(_WORKSPACES[key])
 
 
 def _admissible(row):
@@ -176,6 +195,11 @@ def endpoint_admission_helpers():
         "deepcopy",
         "_digest",
         "_source_bindings",
+        "_captured_endpoint_binding",
+        "_endpoint_captured_inventory",
+        "_endpoint_captured_source_row",
+        "_endpoint_captured_source_binding",
+        "_endpoint_captured_claim",
         "_endpoint_annotation_source",
         "_derive",
         "_workspace_roles",
@@ -379,8 +403,20 @@ def mint_endpoint_facts(facts, finding, required_bindings):
     return _NativeEndpointFacts(facts, finding, required_bindings, _ISSUER)
 
 
-def endpoint_binding(finding, sources, bindings):
+def endpoint_binding(finding, sources, bindings, source_bytes=None):
     """Check native derivation and current publication/source bindings, not safety."""
+    if source_bytes is not None:
+        try:
+            return _captured_endpoint_binding(finding, sources, bindings, source_bytes)
+        except (
+            AttributeError,
+            KeyError,
+            TypeError,
+            ValueError,
+            UnicodeError,
+            RecursionError,
+        ):
+            return False
     facts = finding.get("facts")
     if type(facts) is not _NativeEndpointFacts:
         return False
@@ -408,6 +444,108 @@ def endpoint_binding(finding, sources, bindings):
         )
     except (AttributeError, KeyError, TypeError, ValueError, UnicodeError):
         return False
+
+
+def _endpoint_captured_inventory(sources, bindings, source_bytes):
+    """Bind a complete canonical byte inventory before any native derivation."""
+    if (
+        not isinstance(source_bytes, dict)
+        or len(source_bytes) > 2000
+        or not isinstance(sources, (list, tuple))
+        or not isinstance(bindings, dict)
+    ):
+        return None
+    if len(sources) != len(bindings) or set(source_bytes) != set(bindings):
+        return None
+    captured = {}
+    for row in sources:
+        bound = _endpoint_captured_source_row(row, bindings, source_bytes)
+        if bound is None:
+            return None
+        path, raw = bound
+        captured[path] = raw
+    return captured if _source_bindings(Path("."), captured) == bindings else None
+
+
+def _endpoint_captured_source_row(row, bindings, source_bytes):
+    """Validate one canonical source path and its declared byte binding."""
+    from .import_context import captured_import_path
+
+    if not isinstance(row, dict):
+        return None
+    name = row.get("path")
+    if not isinstance(name, str):
+        return None
+    path = Path(name)
+    if (
+        not captured_import_path(Path("."), path)
+        or path.as_posix() != name
+        or path.suffix != ".py"
+    ):
+        return None
+    raw = source_bytes.get(name)
+    return (
+        (path, raw) if _endpoint_captured_source_binding(row, raw, bindings) else None
+    )
+
+
+def _endpoint_captured_source_binding(row, raw, bindings):
+    """Require exact producer lengths and hashes; content hashing follows once."""
+    return (
+        isinstance(raw, bytes)
+        and type(row.get("bytes")) is int
+        and len(raw) == row["bytes"]
+        and len(raw) <= 1_000_000
+        and bindings.get(row["path"]) == row.get("sha256")
+    )
+
+
+def _endpoint_captured_claim(finding, facts):
+    """Keep copied proof claims at the original native literal-finding identity."""
+    return (
+        isinstance(facts, dict)
+        and isinstance(finding.get("path"), str)
+        and isinstance(facts.get("name"), str)
+        and finding.get("severity") == "CRITICAL"
+        and finding.get("message")
+        == "Credential-like material is assigned as a source literal."
+        and _endpoint_claim_profile_matches(
+            finding, facts, _endpoint_evidence_digest(facts)
+        )
+    )
+
+
+def _captured_endpoint_binding(finding, sources, bindings, source_bytes):
+    """Regenerate a copied claim from current bytes; supplied facts grant no trust."""
+    from . import review_integrity as integrity
+
+    captured = _endpoint_captured_inventory(sources, bindings, source_bytes)
+    if captured is None:
+        return False
+    facts = finding.get("facts", {})
+    if not _endpoint_captured_claim(finding, facts):
+        return False
+    publication = facts.get("publication", {})
+    if not isinstance(publication, dict):
+        return False
+    current = endpoint_publication(publication.get("value"))
+    if current is None or current != publication:
+        return False
+    rows = _workspace_roles(
+        Path("."), captured, bindings, integrity, purpose="native-revalidation"
+    )
+    relative, name = finding.get("path"), facts.get("name")
+    row = rows.get((relative, finding.get("line"), name), {})
+    if not _admissible(row):
+        return False
+    node = ast.Constant(
+        value=None, lineno=finding.get("line"), col_offset=finding.get("column")
+    )
+    regenerated = {**finding, "facts": {"name": name}}
+    _attach(regenerated, row, current, bindings, relative, node)
+    return type(regenerated["facts"]) is _NativeEndpointFacts and dict(
+        regenerated["facts"]
+    ) == dict(facts)
 
 
 def endpoint_evidence_helpers():

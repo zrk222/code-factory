@@ -45,10 +45,12 @@ Historical regression and matrix observations remain in
 `docs/evidence/integrated-regressions226.json`,
 `docs/evidence/python-matrix230.json` and
 `docs/evidence/native-quality235.json`; they do not certify current bytes.
-Close current matching-source CI after the concrete CLI profile-stub and public
-condition-inventory mismatches are repaired. Keep metadata/expectation updates
-separate from scanner behavior. The source inventory is now 88 lane-specific
-plus 97 cross-cutting conditions (185 total); this is not a test or precision score.
+The CLI profile-stub and condition-inventory corrections are committed separately.
+At600b42c9 all9 Python CI jobs passed; candidate-quality remained red. The
+reviewed native endpoint-copy/reseal and coordinator repair is recorded in
+`docs/evidence/native-endpoint246.json`. Its38 focused checks prove bounded
+wiring behavior, not a natural precision gain. Run matching CI on the next
+committed candidate; do not reuse old green jobs for changed bytes.
 
 Close the remaining native candidate-quality gate. Reproduce only failed cases;
 do not rerun passing unit suites. After source integration resolves the current

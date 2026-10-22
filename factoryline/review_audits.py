@@ -3475,54 +3475,32 @@ def _oracle_import_source(
     module: str,
     eligible: set[Path] | dict[Path, Path],
     imported: str | None = None,
+    *,
+    captured: bool = False,
 ) -> Path | None:
-    root_abs = root.resolve()
-    eligible_abs = (
-        eligible if isinstance(eligible, dict) else {p.resolve(): p for p in eligible}
+    from .import_context import resolve_import_source
+
+    return resolve_import_source(
+        root,
+        path,
+        node,
+        module,
+        eligible,
+        imported,
+        captured=captured,
     )
-    parts = module.split(".") if module else []
-    if isinstance(node, ast.ImportFrom) and node.level:
-        base = path.parent
-        for _ in range(node.level - 1):
-            base = base.parent
-        bases = [base]
-    else:
-        bases = [path.parent, root, root / "src"]
-    child_matches = set()
-    package_matches = set()
-    for base in bases:
-        target = base.joinpath(*parts)
-        child_choices = []
-        if isinstance(node, ast.ImportFrom) and imported and imported != "*":
-            child = target / imported
-            child_choices.extend([child.with_suffix(".py"), child / "__init__.py"])
-        package_choices = (
-            [target.with_suffix(".py"), target / "__init__.py"]
-            if parts
-            else [target / "__init__.py"]
-        )
-        for choice in child_choices + package_choices:
-            if not choice.is_file():
-                continue
-            resolved = choice.resolve()
-            if (
-                resolved.is_relative_to(root_abs)
-                and resolved in eligible_abs
-                and choice.is_file()
-                and not choice.is_symlink()
-            ):
-                target_set = (
-                    child_matches if choice in child_choices else package_matches
-                )
-                target_set.add(eligible_abs[resolved])
-    if child_matches:
-        return next(iter(child_matches)) if len(child_matches) == 1 else None
-    return next(iter(package_matches)) if len(package_matches) == 1 else None
 
 
 def _oracle_imports(
-    root: Path, path: Path, tree: ast.Module, eligible: set[Path] | dict[Path, Path]
+    root: Path,
+    path: Path,
+    tree: ast.Module,
+    eligible: set[Path] | dict[Path, Path],
+    *,
+    captured=False,
 ) -> dict:
+    from .import_context import import_source_symbol
+
     imports = {}
     for node in tree.body:
         if not isinstance(node, (ast.ImportFrom, ast.Import)):
@@ -3540,13 +3518,22 @@ def _oracle_imports(
                 module,
                 eligible,
                 item.name if isinstance(node, ast.ImportFrom) else None,
+                captured=captured,
             )
             if source is None:
                 continue
             alias = item.asname or item.name
             imports[alias] = (
                 source,
-                item.name if isinstance(node, ast.ImportFrom) else None,
+                import_source_symbol(
+                    root,
+                    path,
+                    node,
+                    module,
+                    item.name if isinstance(node, ast.ImportFrom) else None,
+                    source,
+                    captured=captured,
+                ),
             )
     return imports
 
@@ -3595,11 +3582,14 @@ def _declared_typecheck_sources(
     )
 
 
-def _oracle_context_cache_key(root: Path, manifest: list, config_identity: dict) -> str:
+def _oracle_context_cache_key(
+    root: Path, manifest: list, config_identity: dict, *, captured: bool = False
+) -> str:
     import builtins
     from . import test_oracle_misuse as oracle_misuse
     from . import test_callback_closure
     from . import mock_fixture_provenance
+    from .import_context import import_resolution_helpers
     from .context_efficiency import (
         _consume_security_snapshots,
         _module_has_dynamic_capability_access,
@@ -3650,6 +3640,7 @@ def _oracle_context_cache_key(root: Path, manifest: list, config_identity: dict)
         _ty_assertion_helpers,
         _oracle_imports,
         _oracle_import_source,
+        *import_resolution_helpers(),
         _imported_oracle_helpers,
         _imported_weak_oracle_helpers,
         _imported_oracle_helper_sets,
@@ -3730,7 +3721,7 @@ def _oracle_context_cache_key(root: Path, manifest: list, config_identity: dict)
     )
     identity = {
         "schema": integrity.credential_context_cache_schema(),
-        "root": root.resolve().as_posix(),
+        "root": root.as_posix() if captured else root.resolve().as_posix(),
         "sources": manifest,
         "config": config_identity,
         "source_limit": MAX_BYTES,

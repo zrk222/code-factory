@@ -78,7 +78,7 @@ def fixed_primitive_binding(finding, sources, bindings, integrity, source_bytes=
     }:
         return application_fixture_binding(finding, sources, bindings, source_bytes)
     if facts.get("disposition") == "ENDPOINT_DECLARATION_ROLE_PROVEN":
-        return endpoint_binding(finding, sources, bindings)
+        return endpoint_binding(finding, sources, bindings, source_bytes)
     if facts.get("disposition") == "PROVEN_PUBLIC_SYMBOLIC_IDENTIFIER":
         return public_symbolic_binding(finding, sources, bindings)
     if facts.get("disposition") == "PROVEN_FINITE_TEMPLATE_INPUT":

@@ -4267,72 +4267,33 @@ def full_repository_workspace_scan_batch(
         "audit_coverage": {"complete": False, "files_processed": 0},
     }
 
-    eligible = {item.resolve(): item for item in files if not item.is_symlink()}
-    context_findings, bindings, outcomes = [], [], Counter()
-    captured = []
-    for path in selected:
-        engine._full_repository_check_soft_deadline(deadline_monotonic)
-        scanned = rows.get(path)
-        tree = trees.get(path)
-        if scanned is None:
-            raw, findings, status, tree = engine._full_repository_native_scan(
-                root,
-                path,
-                source_by_name[path.relative_to(root).as_posix()],
-                generation["patterns"],
-                audit,
-            )
-            rows[path] = (raw, findings, status)
-            if tree is not None:
-                trees[path] = tree
-        else:
-            raw, findings, status = scanned
-            tree = _full_repository_workspace_dependency_tree(
-                engine,
-                audit,
-                root,
-                path,
-                source_by_name[path.relative_to(root).as_posix()],
-                source_bytes.get(path),
-                raw,
-                status,
-            )
-        if raw is not None:
-            bindings.append(raw)
-        context_findings.extend(findings)
-        outcomes[status] += 1
-        captured.append(
-            engine._full_repository_primary(
-                root,
-                path,
-                source_by_name[path.relative_to(root).as_posix()],
-                generation["patterns"],
-                audit,
-                eligible,
-                (raw, findings, status, tree),
-            )
-        )
-    for index, previous in enumerate(results):
-        if captured[index] != previous:
-            raise RuntimeAuditError(
-                "INVALID_CHECKPOINT",
-                "saved raw row differs under current workspace context",
-            )
+    captured, bindings, context_findings = _full_repository_workspace_primary_rows(
+        engine,
+        generation,
+        audit,
+        root,
+        files,
+        selected,
+        source_by_name,
+        rows,
+        trees,
+        source_bytes,
+        results,
+        deadline_monotonic,
+    )
     batch = captured[start:]
     generation["workspace_checkpoint_rows_recomputed_and_matched"] = (
         0 if cached_prefix is not None else start
     )
-    if byte_capture_complete and len(captured) == stop and len(rows) == stop:
-        generation["workspace_prefix_raw_rows"] = [
-            {
-                "path": path.relative_to(root).as_posix(),
-                "binding": copy.deepcopy(rows[path][0]),
-                "findings": copy.deepcopy(rows[path][1]),
-                "status": rows[path][2],
-            }
-            for path in selected
-            if path in rows
-        ]
+    _full_repository_workspace_cache_raw_rows(
+        generation,
+        root,
+        selected,
+        captured,
+        rows,
+        byte_capture_complete,
+        stop,
+    )
 
     (
         observations,
@@ -4397,6 +4358,87 @@ def full_repository_workspace_scan_batch(
     )
     engine._full_repository_check_soft_deadline(deadline_monotonic)
     return batch
+
+
+def _full_repository_workspace_cache_raw_rows(
+    generation, root, selected, captured, rows, byte_capture_complete, stop
+):
+    if not byte_capture_complete or len(captured) != stop or len(rows) != stop:
+        return
+    generation["workspace_prefix_raw_rows"] = [
+        {
+            "path": path.relative_to(root).as_posix(),
+            "binding": copy.deepcopy(rows[path][0]),
+            "findings": copy.deepcopy(rows[path][1]),
+            "status": rows[path][2],
+        }
+        for path in selected
+        if path in rows
+    ]
+
+
+def _full_repository_workspace_primary_rows(
+    engine,
+    generation,
+    audit,
+    root,
+    files,
+    selected,
+    source_by_name,
+    rows,
+    trees,
+    source_bytes,
+    results,
+    deadline_monotonic,
+):
+    """Rebuild the selected primary prefix and compare trusted checkpoint rows."""
+    eligible = {item.resolve(): item for item in files if not item.is_symlink()}
+    captured, bindings, context_findings = [], [], []
+    for path in selected:
+        engine._full_repository_check_soft_deadline(deadline_monotonic)
+        scanned = rows.get(path)
+        tree = trees.get(path)
+        source = source_by_name[path.relative_to(root).as_posix()]
+        if scanned is None:
+            raw, findings, status, tree = engine._full_repository_native_scan(
+                root, path, source, generation["patterns"], audit
+            )
+            rows[path] = (raw, findings, status)
+            if tree is not None:
+                trees[path] = tree
+        else:
+            raw, findings, status = scanned
+            tree = _full_repository_workspace_dependency_tree(
+                engine,
+                audit,
+                root,
+                path,
+                source,
+                source_bytes.get(path),
+                raw,
+                status,
+            )
+        if raw is not None:
+            bindings.append(raw)
+        context_findings.extend(findings)
+        captured.append(
+            engine._full_repository_primary(
+                root,
+                path,
+                source,
+                generation["patterns"],
+                audit,
+                eligible,
+                (raw, findings, status, tree),
+            )
+        )
+    for index, previous in enumerate(results):
+        if captured[index] != previous:
+            raise RuntimeAuditError(
+                "INVALID_CHECKPOINT",
+                "saved raw row differs under current workspace context",
+            )
+    return captured, bindings, context_findings
 
 
 def _full_repository_workspace_partition(

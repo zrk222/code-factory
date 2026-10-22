@@ -422,6 +422,7 @@ def _captured_application_source_bytes(workspace, findings, bindings, source_byt
         in {
             "PROVEN_LOCAL_CRYPTO_TEST_PRIMITIVE",
             "PROVEN_CLOSED_OPERATION_COMMAND_SYNTAX",
+            "ENDPOINT_DECLARATION_ROLE_PROVEN",
         }
     ]
     if jwt_findings:

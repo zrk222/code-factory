@@ -969,3 +969,117 @@ def test_application_parameter_helper_mutation_invalidates_native_context(
     else:
         monkeypatch.setattr(effects._argument_names, "__code__", unsafe_names.__code__)
     assert audit._oracle_context_cache_key(tmp_path, [], {}) != before
+
+
+@pytest.mark.parametrize(
+    "paths,statement,expected",
+    [
+        (["pkg.py"], "import pkg", "pkg.py"),
+        (["src/pkg.py"], "import pkg", "src/pkg.py"),
+        (["pkg.py", "src/pkg.py"], "import pkg", None),
+        (["pkg.py", "pkg/__init__.py"], "import pkg", None),
+        (["pkg/child.py", "pkg/__init__.py"], "from pkg import child", None),
+        (["pkg/child.py"], "from pkg import child", "pkg/child.py"),
+        (["pkg/child.py", "src/pkg.py"], "from pkg import child", None),
+        (["pkg.py"], "from ..repository import pkg", None),
+    ],
+)
+def test_captured_import_resolution_uses_exact_lexical_inventory(
+    monkeypatch, paths, statement, expected
+):
+    root, caller = Path("repository"), Path("repository/consumer.py")
+    inventory = capture.CapturedImportInventory(
+        root, [caller, *(root / p for p in paths)]
+    )
+    node = ast.parse(statement).body[0]
+    imported = node.names[0].name if isinstance(node, ast.ImportFrom) else None
+    module = node.module if isinstance(node, ast.ImportFrom) else node.names[0].name
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("captured import resolution probed filesystem")
+
+    with monkeypatch.context() as patch:
+        for method in ("resolve", "is_file", "is_symlink", "exists", "stat"):
+            patch.setattr(Path, method, forbidden)
+        resolved = audit._oracle_import_source(
+            root, caller, node, module, inventory, imported, captured=True
+        )
+    assert resolved == (root / expected if expected else None)
+
+
+def test_captured_import_inventory_is_owned_and_requires_current_caller():
+    root, caller, target = (
+        Path("repository"),
+        Path("repository/consumer.py"),
+        Path("repository/pkg.py"),
+    )
+    paths = [target]
+    inventory = capture.CapturedImportInventory(root, paths)
+    paths.append(caller)
+    node = ast.parse("import pkg").body[0]
+    assert (
+        audit._oracle_import_source(root, caller, node, "pkg", inventory, captured=True)
+        is None
+    )
+    with pytest.raises(TypeError):
+        inventory.paths[caller] = caller
+
+
+@pytest.mark.parametrize("name", ["../outside.py", "/outside.py", "a/../outside.py"])
+def test_captured_import_inventory_rejects_escaping_paths(name):
+    with pytest.raises(ValueError):
+        capture.CapturedImportInventory(Path("repository"), [Path(name)])
+
+
+def test_captured_from_import_does_not_assume_package_export_authority(tmp_path):
+    package = tmp_path / "pkg"
+    package.mkdir()
+    initializer, child, caller = (
+        package / "__init__.py",
+        package / "child.py",
+        tmp_path / "caller.py",
+    )
+    initializer.write_text("child = supplied\n", encoding="utf-8")
+    child.write_text("class Provider: pass\n", encoding="utf-8")
+    caller.write_text("from pkg import child\n", encoding="utf-8")
+    inventory = capture.CapturedImportInventory(tmp_path, [caller, initializer, child])
+    node = ast.parse(caller.read_bytes()).body[0]
+    assert (
+        audit._oracle_import_source(
+            tmp_path, caller, node, "pkg", inventory, "child", captured=True
+        )
+        is None
+    )
+
+
+@pytest.mark.parametrize("prefix", ["", "src/"])
+def test_captured_dotted_import_rejects_nonpackage_ancestor(prefix):
+    root, caller = Path("repository"), Path("repository/consumer.py")
+    inventory = capture.CapturedImportInventory(
+        root, [caller, root / "pkg.py", root / (prefix + "pkg/child.py")]
+    )
+    node = ast.parse("import pkg.child").body[0]
+    assert (
+        audit._oracle_import_source(
+            root, caller, node, "pkg.child", inventory, captured=True
+        )
+        is None
+    )
+
+
+@pytest.mark.parametrize("child_module", [False, True])
+def test_captured_import_views_distinguish_child_modules_from_exported_symbols(
+    child_module,
+):
+    root, caller = Path("repository"), Path("repository/consumer.py")
+    target = root / "pkg/child.py"
+    tree = ast.parse(
+        "from pkg import child" if child_module else "from pkg.child import Provider"
+    )
+    inventory = capture.CapturedImportInventory(root, [caller, target])
+    views = audit._oracle_imports(root, caller, tree, inventory, captured=True)
+    assert views == (
+        {"child": (target, None)}
+        if child_module
+        else {"Provider": (target, "Provider")}
+    )

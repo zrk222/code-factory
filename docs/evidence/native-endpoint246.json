@@ -1,0 +1,173 @@
+{
+  "schema": "factory.scoped-repair.v1",
+  "scope": "native-endpoint246",
+  "recorded_at": "2026-10-22T23:41:12.697158+00:00",
+  "base_commit": "600b42c9d18e5e7ff225018859aafeca6f1b7917",
+  "change": "Revalidate existing endpoint observations from complete captured current source bytes across native workspace scans, copied reports, resealing and resume; preserve module/export identity and reject ambiguous imports. Simplify the existing workspace coordinator without changing semantics.",
+  "sources": [
+    {
+      "path": "factoryline/import_context.py",
+      "sha256": "2f606ba22a4bc202b3f6851cc444e1f6e32378f581c72c7076e1620e28f8ef28",
+      "kind": "code"
+    },
+    {
+      "path": "factoryline/review_audits.py",
+      "sha256": "3910839de7da4c411785abeab2359862a978a0843fb1e28f83a9f0b5158680e8",
+      "kind": "code"
+    },
+    {
+      "path": "factoryline/credential_endpoint_admission.py",
+      "sha256": "38729b234af272ad4ec73f407bf96cbc2c021f8ab0e66c1a45ac820c986f526b",
+      "kind": "code"
+    },
+    {
+      "path": "factoryline/primitive_observation_binding.py",
+      "sha256": "957e908ac261213a92853834f3af1593a7f513a402fe661f810781557a39331b",
+      "kind": "code"
+    },
+    {
+      "path": "factoryline/audit_action_refs.py",
+      "sha256": "0faabab843f8589249100476b018f05f45916fbf473e2fa39b8afc4141b58fe5",
+      "kind": "code"
+    },
+    {
+      "path": "factoryline/runtime_audit_integrity.py",
+      "sha256": "e81dd51948a2d73ebbb3aed794c9d2267cf86be9de233012176ffe78791b10eb",
+      "kind": "code"
+    },
+    {
+      "path": "tests/test_credential_endpoint_scanner.py",
+      "sha256": "b2f01b61452ecb943e36c99d7d0dcc8c6f4a9fde197eeef5fc55a7b3710dada3",
+      "kind": "test"
+    },
+    {
+      "path": "tests/test_import_context_profiles.py",
+      "sha256": "e713282066a840873e9e13d4fb2ea8faf36946db3a9ed1db45cd89e48e7798bf",
+      "kind": "test"
+    }
+  ],
+  "review": {
+    "path": ".factory/precision246/ecc-endpoint-v5-review.json",
+    "sha256": "b545c6145226c7940a6e4bc15fb11cb73827397b4f25e958da9f1de8545b07ec",
+    "kind": "review"
+  },
+  "manifest": {
+    "path": ".factory/precision246/manifest-v5.json",
+    "sha256": "8990b0bc98df31fa1cf366e12b6cc01a9381612cc2f9b380f85b9d18f519830d",
+    "kind": "evidence"
+  },
+  "focused_tests": {
+    "passed": 38,
+    "failed": 0,
+    "seconds": 24.0,
+    "receipt": {
+      "path": ".factory/precision241/targeted/endpoint246-native-v5-combined/receipt.json",
+      "sha256": "e37df01b4fab9d0e70ee32a40047eb3ecc740342dae222a5262e383461e7d0ba",
+      "kind": "receipt"
+    },
+    "before": {
+      "path": ".factory/precision241/targeted/endpoint246-native-before-fixed-harness/receipt.json",
+      "sha256": "45ea503af84ba25bc6db4b099883892bff5aeadfa4ec30b5143b7b2848bbf4ba",
+      "kind": "receipt"
+    },
+    "baseline_failures": 7,
+    "full_suite_rerun": false
+  },
+  "synthetic_behavior": {
+    "baseline_active": 1,
+    "baseline_observations": 0,
+    "candidate_active": 0,
+    "candidate_observations": 1,
+    "mixed_secret_and_mutation_controls": "retain CRITICAL",
+    "natural_false_positive_removals": null
+  },
+  "architecture": {
+    "decision": "HEALTHY",
+    "python_files": 429,
+    "core_modules": 133,
+    "caps": {
+      "python_files": 464,
+      "core_modules": 133
+    },
+    "caps_changed": false,
+    "artifact": {
+      "path": ".factory/precision246/live-gates/architecture.json",
+      "sha256": "016e0bfc47de261380f4c57715e4cc80804272c133560ffd86adf2146269318f",
+      "kind": "evidence"
+    }
+  },
+  "quality": {
+    "passed": false,
+    "violations": 89,
+    "types": [
+      "QA_COMPLEXITY"
+    ],
+    "composite": 70.2,
+    "max_complexity": 44,
+    "artifact": {
+      "path": ".factory/precision246/live-gates/quality.json",
+      "sha256": "e55b452ed22d120d879c787c4465aaff04d7cae322e76945fc0670331881c59d",
+      "kind": "evidence"
+    },
+    "execution": {
+      "command": [
+        "forge",
+        "qa",
+        "--repo-wide",
+        "--root",
+        ".",
+        "--strict"
+      ],
+      "exit_code": 1,
+      "wall_seconds": 96.01600000000326,
+      "recorded_at": "2026-10-22T18:50:03.141684+00:00",
+      "stdout_sha256": "3e53da3fceafa07db7497cf234c87c5c00c6411c18aeeee4054504359ae01112",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "limits": "Local Forge0.10.8+local.881df561; workspace includes unrelated preserved edits. Not clean committed-candidate CI."
+  },
+  "complexity": {
+    "full_repository_workspace_scan_batch": {
+      "before": 17,
+      "after": 8
+    },
+    "_oracle_import_source": {
+      "before": 21,
+      "after": 1
+    },
+    "worker_evidence": {
+      "path": ".factory/precision246/native-complexity-worker-evidence.json",
+      "sha256": "fe9eff611b0451b3dfffb00f68b2fee4e2a6839e78d4048d78cdb2de21329fa8",
+      "kind": "evidence"
+    }
+  },
+  "base_ci": {
+    "head": "600b42c9d18e5e7ff225018859aafeca6f1b7917",
+    "run_id": 39829900138,
+    "python_jobs_passed": 9,
+    "candidate_quality": "FAIL",
+    "new_candidate_ci": "NOT_RUN"
+  },
+  "precision": {
+    "last_fresh_study": "study225",
+    "tp": 0,
+    "fp": 49,
+    "unclear": 8,
+    "decided_precision_percent": 0.0,
+    "wilson95_percent": [
+      0.0,
+      7.269781922
+    ],
+    "reviewers": "Two same-model AI contexts; no human validation",
+    "candidate_precision": null,
+    "new_measurement": "NOT_RUN",
+    "gain_claim": false,
+    "merge_threshold_percent": 35
+  },
+  "remaining": [
+    "Natural actionable precision qualification",
+    "Native quality violations",
+    "Complete large-repository scan below180seconds",
+    "Matching candidate CI"
+  ]
+}

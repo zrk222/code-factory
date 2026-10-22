@@ -18,6 +18,160 @@ from factoryline.credential_endpoint_admission import (
 ENDPOINT = "https://appleid.apple.com/auth/token"
 
 
+def test_native_workspace_retains_complete_endpoint_role_across_resume(tmp_path):
+    from factoryline.deep_audit_io import full_repository_scan
+
+    _write(tmp_path)
+    first = full_repository_scan(tmp_path, context_profile="workspace-v2")
+    resumed = full_repository_scan(
+        tmp_path, context_profile="workspace-v2", resume=True
+    )
+    for report in (first, resumed):
+        workspace = report["workspace_evidence"]
+        assert workspace["audit_coverage"]["complete"] is True
+        assert not _secrets(workspace)
+        assert len(_secrets(workspace, primitive=True)) == 1
+        assert _secrets(workspace, primitive=True)[0]["severity"] == "CRITICAL"
+        assert workspace["primitive_partition"]["state"] == "VALIDATED"
+
+
+def test_source_bound_endpoint_copy_reseals_from_captured_bytes(tmp_path):
+    from factoryline import review_audits as audit
+
+    _write(tmp_path)
+    original = security_scan(tmp_path, cache_enabled=False)
+    assert len(_secrets(original, primitive=True)) == 1
+    copied = copy.deepcopy(original)
+    resealed = audit._seal_security_scan(copied)
+    assert not _secrets(resealed)
+    assert _secrets(resealed, primitive=True) == _secrets(original, primitive=True)
+    assert "_primitive_source_bytes" not in json.dumps(resealed)
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "none",
+        "source",
+        "claim",
+        "missing",
+        "extra",
+        "severity",
+        "message",
+        "facts",
+        "witness",
+        "length",
+        "duplicate",
+        "helper",
+        "catalog",
+    ],
+)
+def test_endpoint_plain_facts_require_current_complete_source_recomputation(
+    tmp_path, monkeypatch, mutation
+):
+    from pathlib import Path
+
+    _write(tmp_path)
+    original = security_scan(tmp_path, cache_enabled=False)
+    finding = json.loads(json.dumps(_secrets(original, primitive=True)[0]))
+    sources = copy.deepcopy(original["sources"])
+    bindings = {row["path"]: row["sha256"] for row in sources}
+    captured = {"client.py": (tmp_path / "client.py").read_bytes()}
+    if mutation == "source":
+        captured["client.py"] += b"consume(Client.ACCESS_TOKEN_URL)\n"
+    elif mutation == "claim":
+        finding["line"] += 1
+    elif mutation == "missing":
+        captured.clear()
+    elif mutation == "extra":
+        captured["unregistered.py"] = b"consume(Client.ACCESS_TOKEN_URL)\n"
+    elif mutation == "severity":
+        finding["severity"] = "INFO"
+    elif mutation == "message":
+        finding["message"] = "forged"
+    elif mutation == "facts":
+        finding["facts"]["name"] = []
+    elif mutation == "witness":
+        finding["facts"]["url_witnesses"] = []
+    elif mutation == "length":
+        sources[0]["bytes"] += 1
+    elif mutation == "duplicate":
+        sources.append(copy.deepcopy(sources[0]))
+    elif mutation == "helper":
+        monkeypatch.setattr(evidence, "_derive", lambda *args, **kwargs: {})
+    elif mutation == "catalog":
+        monkeypatch.setattr(evidence, "endpoint_publication", lambda *args: None)
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("captured native endpoint validation probed filesystem")
+
+    with monkeypatch.context() as patch:
+        for method in ("resolve", "is_file", "is_symlink", "stat", "exists"):
+            patch.setattr(Path, method, forbidden)
+        result = evidence.endpoint_binding(finding, sources, bindings, captured)
+    assert result is (mutation == "none")
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        "    def auth(self):\n        requests.get('https://example.test', auth=('u', self.ACCESS_TOKEN_URL))\n",
+        "requests.get = supplied\n",
+    ],
+)
+def test_native_workspace_endpoint_rejects_auth_use_and_provider_mutation(
+    tmp_path, extra
+):
+    from factoryline.deep_audit_io import full_repository_scan
+
+    _write(tmp_path, extra)
+    report = full_repository_scan(tmp_path, context_profile="workspace-v2")
+    workspace = report["workspace_evidence"]
+    assert workspace["audit_coverage"]["complete"] is True
+    assert not _secrets(workspace, primitive=True)
+    assert len(_secrets(workspace)) == 1
+    assert _secrets(workspace)[0]["severity"] == "CRITICAL"
+
+
+def test_cli_endpoint_partition_matches_native_api_and_resume(tmp_path, capsys):
+    from factoryline.cli import main
+
+    _write(tmp_path)
+    args = [
+        "audit",
+        "security",
+        "--root",
+        str(tmp_path),
+        "--full-repository",
+        "--context-profile",
+        "workspace-v2",
+        "--json",
+    ]
+    assert main(args) == 1  # Semantic qualification remains incomplete.
+    first = json.loads(capsys.readouterr().out)
+    assert main([*args, "--resume"]) == 1
+    resumed = json.loads(capsys.readouterr().out)
+    for report in (first, resumed):
+        workspace = report["workspace_evidence"]
+        assert not _secrets(workspace)
+        assert len(_secrets(workspace, primitive=True)) == 1
+        assert report["global_consumer_closure_verified"] is False
+    assert first["scan_sha256"] == resumed["scan_sha256"]
+
+
+def test_incomplete_workspace_cannot_admit_endpoint_observations(tmp_path):
+    from factoryline.deep_audit_io import full_repository_scan
+
+    _write(tmp_path)
+    (tmp_path / "broken.py").write_text("def invalid(:\n", encoding="utf-8")
+    report = full_repository_scan(tmp_path, context_profile="workspace-v2")
+    workspace = report["workspace_evidence"]
+    assert workspace["audit_coverage"]["complete"] is False
+    assert not _secrets(workspace, primitive=True)
+    assert len(_secrets(workspace)) == 1
+    assert _secrets(workspace)[0]["severity"] == "CRITICAL"
+
+
 def _write(root, extra=""):
     (root / "client.py").write_text(
         "import requests\n"
