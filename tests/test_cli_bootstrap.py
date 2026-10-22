@@ -478,7 +478,10 @@ def test_full_repository_security_cli_resumes_into_distinct_schema(
         },
     ]
 
-    def scan(root, *, resume=False):
+    def scan(root, *, resume=False, context_profile, deadline_monotonic):
+        assert root == tmp_path
+        assert context_profile == "isolated-v1"
+        assert deadline_monotonic is None
         calls.append(resume)
         return reports[len(calls) - 1]
 

@@ -77,8 +77,9 @@ def test_public_audit_condition_count_is_recomputed_from_source():
     assert "runtime_audit_process.py" in module.CROSSCUT_MODULES
     assert not module.NON_CONDITION_MODULES
     assert process_codes <= set(result["crosscutting_condition_codes"])
-    assert result["crosscutting_rejection_conditions"] == 96
-    assert result["total_coded_rejection_conditions"] == 184
+    assert "E_CONTEXT_CONFIG" in result["crosscutting_condition_codes"]
+    assert result["crosscutting_rejection_conditions"] == 97
+    assert result["total_coded_rejection_conditions"] == 185
     claim = module.public_claim(result)
     breakdown = module.public_breakdown(result)
     for relative in ("docs/LLM_PRODUCT_CARD.md", "docs/AUDIT_CONDITION_INVENTORY.md"):

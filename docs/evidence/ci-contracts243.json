@@ -1,0 +1,86 @@
+{
+  "schema": "factory.scoped-repair.v1",
+  "scope": "ci-contracts243",
+  "recorded_at": "2026-10-22T17:44:26.974995+00:00",
+  "base_commit": "e9b160f4de75ec80903ce0967b9e29f745e546eb",
+  "sources": [
+    {
+      "path": "tests/test_cli_bootstrap.py",
+      "sha256": "6e4b0283d1af21460d9d17e18b656eb311b8570907e4d97b483c49e3c2756cf5"
+    },
+    {
+      "path": "tests/test_publication_metadata.py",
+      "sha256": "7ad54b74fd5ce3a08724e76512818a1db91254a809b8a731844a4231172c2abb"
+    },
+    {
+      "path": "docs/AUDIT_CONDITION_INVENTORY.md",
+      "sha256": "9bd1ac2bd62e7b5a0e76393522b00382e8c6be124cc172174ba642db21296653"
+    },
+    {
+      "path": "docs/LLM_PRODUCT_CARD.md",
+      "sha256": "00f1405512af0026a7c44e34da7dcfadf7018a5a2bbd9731d9ff79a53894a31e"
+    }
+  ],
+  "before": {
+    "path": ".factory/precision241/targeted/ci243-two-failed-before/receipt.json",
+    "sha256": "0ad172e9a36f75cb09c840d550a8d536f035390ce62567a74bca0996f6bed1c6",
+    "state": "FINISHED",
+    "exit_code": 1,
+    "seconds": 4.5,
+    "registration_sha256": "13d3e6f2a8eadf17eabd3eb997568998dcf43f69bbdfc08882a2edddb0bd6589",
+    "inputs_unchanged": true,
+    "log_sha256": "ad1b3ea26d31c3c0816703d8e32ba0062e437cf57e66b02dd58bbc5c6976cba9",
+    "xml_sha256": "9ae3ddea8c932f2ea5e519c0017a90fee1c583c497fc9331b2ad05baaf53453f",
+    "precision_claim": null
+  },
+  "after": {
+    "path": ".factory/precision241/targeted/ci243-two-failed-after/receipt.json",
+    "sha256": "6c658e62a87bcdc0a745424df370fa1a6acec3579b5ac8030a117c847ac28c9f",
+    "state": "FINISHED",
+    "exit_code": 0,
+    "seconds": 3.782,
+    "registration_sha256": "f9516122c4621f5ca4abb1b8397f83165916db436dfd7d1198c4d9af56071d94",
+    "inputs_unchanged": true,
+    "log_sha256": "a1ebe8050bc41c12d47186f81e319ae661fad93f1d5ac4e85af74077af075086",
+    "xml_sha256": "0107e49e0b709ce0b0b5c4d200bb2a7e9dbea13b1b3f5dc55359eacc0f1f396b",
+    "precision_claim": null
+  },
+  "passed_controls": 2,
+  "review": {
+    "path": ".factory/precision243/ecc-two-ci-corrections.json",
+    "sha256": "72de817600c8b4b6ebb68625ca6e1909ba68f5b623a4015db28bfb126b4c94c9"
+  },
+  "architecture": {
+    "decision": "HEALTHY",
+    "files": 429,
+    "core_modules": 133,
+    "caps_unchanged": true,
+    "sha256": "42f5c8245df38ea5df50eed1eb926fa46d26e608373a52339be79505ba51827d"
+  },
+  "workflow": {
+    "state": "INCOMPLETE",
+    "receipt_path": ".factory/precision244/workflow-ci-contracts243/receipt.json",
+    "remaining": [
+      "Large-repository performance",
+      "Global matching-source CI and fresh independent precision"
+    ]
+  },
+  "precision_gain_claim": null,
+  "merge_release_approved": false,
+  "corrections": [
+    "Legacy CLI stub now explicitly checks forwarded root, isolated-v1 profile and absent deadline; resume/schema assertions retained.",
+    "Source inventory adds E_CONTEXT_CONFIG only; counts88lane+97crosscut=185. Current docs updated, historical release notes unchanged. No scanner severity or assertion-outcome behavior changed."
+  ],
+  "source_count_delta": {
+    "schema": "factory.condition-count243.change.v1",
+    "before_source_commit": "724df1c",
+    "added_runtime_conditions": [
+      "E_CONTEXT_CONFIG"
+    ],
+    "removed_runtime_conditions": [],
+    "current_lane_conditions": 88,
+    "current_crosscut_conditions": 97,
+    "current_total_conditions": 185,
+    "meaning": "Source marker inventory only, not executed checks or detector precision."
+  }
+}
