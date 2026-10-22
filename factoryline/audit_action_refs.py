@@ -437,10 +437,35 @@ def _captured_application_source_bytes(workspace, findings, bindings, source_byt
     }
 
 
+class _SourceBoundSecurityReport(dict):
+    """Keep captured bytes outside the serializable report for local revalidation."""
+
+    __slots__ = ("_captured_sources",)
+
+    def copy(self):
+        """Copy public fields while retaining the immutable source capture."""
+        result = _SourceBoundSecurityReport(self)
+        result._captured_sources = self._captured_sources
+        return result
+
+
 def seal_security_scan(audit, core: dict[str, Any]) -> dict[str, Any]:
-    """Seal a scan while resolving compatibility hooks through its audit module."""
-    audit.integrity.partition_proven_primitive_observations(core)
-    core.pop("_primitive_source_bytes", None)
+    """Revalidate local captures on every seal; never serialize their source bytes."""
+    prior_state, prior_summary = core.get("state"), core.get("action_summary")
+    captured = core.pop("_primitive_source_bytes", None)
+    if captured is None and type(core) is _SourceBoundSecurityReport:
+        captured = dict(core._captured_sources)
+    if captured is not None:
+        core["_primitive_source_bytes"] = captured
+    try:
+        audit.integrity.partition_proven_primitive_observations(core)
+    finally:
+        core.pop("_primitive_source_bytes", None)
+    if prior_state == "INCOMPLETE" and core.get("state") == "CLEAN":
+        core["state"] = "INCOMPLETE"
+        core["action_summary"] = prior_summary or audit._security_scan_action_summary(
+            "INCOMPLETE"
+        )
     candidate = sha256(
         json.dumps(
             audit._security_scan_report_candidate_payload(core),
@@ -458,6 +483,10 @@ def seal_security_scan(audit, core: dict[str, Any]) -> dict[str, Any]:
             core, ensure_ascii=False, sort_keys=True, separators=(",", ":")
         ).encode("utf-8")
     ).hexdigest()
+    if captured:
+        result = _SourceBoundSecurityReport(core)
+        result._captured_sources = tuple(captured.items())
+        return result
     return core
 
 

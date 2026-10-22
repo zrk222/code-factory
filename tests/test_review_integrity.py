@@ -6654,3 +6654,51 @@ def test_oracle_cache_tracks_live_credential_consumer_facade(tmp_path, monkeypat
         integrity, "bind_credential_consumers", lambda *args, **kwargs: None
     )
     assert module._oracle_context_cache_key(tmp_path, [], {}) != before
+
+
+@pytest.mark.parametrize("route", ["copy", "deepcopy", "prepare", "cli"])
+def test_security_resealing_preserves_source_backed_observations(
+    tmp_path, capsys, route
+):
+    from copy import deepcopy
+
+    from factoryline.mission_control_status import (
+        prepare_security_scan_receipt_report,
+        security_scan_pytest_collection_snapshot,
+    )
+    from factoryline.review_audits import _seal_security_scan, security_scan
+
+    marker = "PRIVATE_SOURCE_RESEAL_SENTINEL"
+    (tmp_path / "build.py").write_text(
+        'import os\nos.system("brew --prefix openssl")\n# ' + marker + "\n",
+        encoding="utf-8",
+    )
+    report = security_scan(tmp_path, cache_enabled=False)
+    assert report["primitive_observation_count"] == 1
+    assert not report["findings"]
+    if route == "cli":
+        # A missing tenant declaration remains incomplete after proof revalidation.
+        assert main(["audit", "security", "--root", str(tmp_path), "--json"]) == 1
+        result = json.loads(capsys.readouterr().out)
+        assert result["state"] == "INCOMPLETE"
+    elif route == "prepare":
+        result = prepare_security_scan_receipt_report(
+            tmp_path, report, security_scan_pytest_collection_snapshot(tmp_path)
+        )
+    else:
+        copied = report.copy() if route == "copy" else deepcopy(report)
+        result = _seal_security_scan(copied)
+    assert result["primitive_observation_count"] == 1
+    assert not result["findings"]
+    assert marker not in json.dumps(result)
+
+    # JSON is evidence, not an in-process capture or permission to trust a proof.
+    untrusted = _seal_security_scan(json.loads(json.dumps(result)))
+    assert not untrusted["primitive_observations"]
+    assert untrusted["findings"][0]["severity"] == "HIGH"
+    if route != "cli":
+        changed = deepcopy(result)
+        changed["sources"][0]["sha256"] = "0" * 64
+        rejected = _seal_security_scan(changed)
+        assert not rejected["primitive_observations"]
+        assert rejected["findings"][0]["severity"] == "HIGH"

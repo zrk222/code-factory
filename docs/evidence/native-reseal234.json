@@ -1,0 +1,213 @@
+{
+  "schema": "factory.native-reseal-repair234.v1",
+  "status": "SCOPED_REPAIR_VERIFIED_FULL_CI_PENDING",
+  "tested_parent": "7c288e1daac921c299f449023191f6356a9e7224",
+  "source": {
+    "path": "factoryline/audit_action_refs.py",
+    "sha256": "b3c332ede370b2c6c3559f6b478002345daea1e9dfb614020ce4993c222a7861",
+    "net_lines": 29,
+    "new_modules": 0
+  },
+  "tests": {
+    "path": "tests/test_review_integrity.py",
+    "sha256": "7b5c52e33e274ec1176552aec3c601dd3a0b2ca628f3e9c830bd40d08358f83e",
+    "baseline": {
+      "failed": 4,
+      "passed": 0,
+      "seconds": 2.32
+    },
+    "after": {
+      "failed": 0,
+      "passed": 4,
+      "seconds": 1.62
+    },
+    "scope": "Only four newly reproduced failures rerun; no passing local suite rerun. Plugin-autoload bootstrap failure preserved separately."
+  },
+  "root_cause": "First seal discarded captured source bytes. Later CLI and receipt preparation re-seals recomputed semantic proof without them and rejected valid observations.",
+  "repair": "Non-serializable dict attribute retains immutable source capture in process; every reseal independently revalidates captured bytes and proofs. Plain/JSON reports still lack capture and reject raw-backed proofs; INCOMPLETE cannot be overwritten by CLEAN.",
+  "independent_ecc": {
+    "status": "PASS_SCOPED_RESEAL_FIX_GLOBAL_QUALIFICATION_INCOMPLETE",
+    "path": ".factory/precision234/ecc-review.json",
+    "sha256": "1c1d003c42e7aac641f811bed73493cd48288281b1e063a0e39ca35f9e55bd7b",
+    "kind": "Separate Sol6.1 AI context; source review and existing root receipts, no reviewer execution"
+  },
+  "native_development_delta": {
+    "schema": "factory.exposed-native-delta234.v1",
+    "repository": "genotrance/px",
+    "profile": "Actual publicCLI; full exposed development repository; no target execution",
+    "source_count": 29,
+    "before_coverage": {
+      "audit_rate": 1.0,
+      "complete": true,
+      "files_attempted": 29,
+      "files_audited": 29,
+      "files_discovered": 29,
+      "inventory_complete": true,
+      "language": "Python",
+      "limit": 460,
+      "measurement_state": "complete",
+      "rate_defined": true
+    },
+    "after_coverage": {
+      "audit_rate": 1.0,
+      "complete": true,
+      "files_attempted": 29,
+      "files_audited": 29,
+      "files_discovered": 29,
+      "inventory_complete": true,
+      "language": "Python",
+      "limit": 460,
+      "measurement_state": "complete",
+      "rate_defined": true
+    },
+    "active_security_before": 25,
+    "active_security_after": 20,
+    "observations_retained": 5,
+    "remaining_security_findings_exactly_equal": true,
+    "nonsecurity_findings_exactly_equal": true,
+    "changed": [
+      {
+        "identity": {
+          "code": "SECURITY_OS_COMMAND",
+          "path": "tools.py",
+          "line": 270,
+          "column": 12
+        },
+        "before_severity": "HIGH",
+        "observation_severity": "INFO",
+        "disposition": "PROVEN_CLOSED_OPERATION_COMMAND_SYNTAX",
+        "hypothesis": "SOURCE_COMMAND_INJECTION",
+        "runtime_assurance": "INCOMPLETE",
+        "command": null
+      },
+      {
+        "identity": {
+          "code": "SECURITY_OS_COMMAND",
+          "path": "tools.py",
+          "line": 273,
+          "column": 16
+        },
+        "before_severity": "HIGH",
+        "observation_severity": "INFO",
+        "disposition": "PROVEN_CLOSED_OPERATION_COMMAND_SYNTAX",
+        "hypothesis": "SOURCE_COMMAND_INJECTION",
+        "runtime_assurance": "INCOMPLETE",
+        "command": null
+      },
+      {
+        "identity": {
+          "code": "SECURITY_OS_COMMAND",
+          "path": "tools.py",
+          "line": 275,
+          "column": 12
+        },
+        "before_severity": "HIGH",
+        "observation_severity": "INFO",
+        "disposition": "PROVEN_CLOSED_OPERATION_COMMAND_SYNTAX",
+        "hypothesis": "SOURCE_COMMAND_INJECTION",
+        "runtime_assurance": "INCOMPLETE",
+        "command": null
+      },
+      {
+        "identity": {
+          "code": "SECURITY_OS_COMMAND",
+          "path": "tools.py",
+          "line": 420,
+          "column": 8
+        },
+        "before_severity": "HIGH",
+        "observation_severity": "INFO",
+        "disposition": "PROVEN_CLOSED_OPERATION_COMMAND_SYNTAX",
+        "hypothesis": "SOURCE_COMMAND_INJECTION",
+        "runtime_assurance": "INCOMPLETE",
+        "command": null
+      },
+      {
+        "identity": {
+          "code": "SECURITY_SHELL_COMMAND",
+          "path": "tools.py",
+          "line": 263,
+          "column": 19
+        },
+        "before_severity": "HIGH",
+        "observation_severity": "INFO",
+        "disposition": "PROVEN_CLOSED_OPERATION_COMMAND_SYNTAX",
+        "hypothesis": "SOURCE_COMMAND_INJECTION",
+        "runtime_assurance": "INCOMPLETE",
+        "command": null
+      }
+    ],
+    "before_seconds": 14.75,
+    "after_seconds": 17.985000000015134,
+    "speedup_claim": null,
+    "fresh_heldout": false,
+    "precision_gain_claim": null,
+    "paired_receipt_sha256": "008a063708043f5916bfdda051aee154bb092aa9d65c66eca8340c79b723bed5"
+  },
+  "adversarial_controls": {
+    "schema": "factory.reseal234.adversarial.v1",
+    "rows": [
+      {
+        "case": "request_shell",
+        "source_sha256": "c574846ce2ad4ce14ffbafc1cdaa2dc3c1ea54c525744bfb2e0a99f1da959e33",
+        "active_code": "SECURITY_OS_COMMAND",
+        "severity": "HIGH",
+        "observation_count": 0
+      },
+      {
+        "case": "unknown_command",
+        "source_sha256": "8cc2fcb5ac71a28caa8c2ca9afdd98c2aa38371c619230c0b1657def938c1909",
+        "active_code": "SECURITY_OS_COMMAND",
+        "severity": "HIGH",
+        "observation_count": 0
+      },
+      {
+        "case": "mixed_command",
+        "source_sha256": "a271770f99295c7848d1b381b45bbc320de0b5996748231ae31beffbd3cfb842",
+        "active_code": "SECURITY_OS_COMMAND",
+        "severity": "HIGH",
+        "observation_count": 0
+      }
+    ],
+    "exception_cleans_transient_capture": true,
+    "target_execution": false,
+    "precision_gain_claim": null
+  },
+  "architecture": {
+    "decision": "HEALTHY",
+    "python_files": 429,
+    "core_modules": 133,
+    "markdown_files": 643,
+    "caps": [
+      464,
+      133
+    ],
+    "duplicate_prose_consolidated": "native-matrix233.md merged into python-matrix230.md; all JSON/raw evidence retained"
+  },
+  "limits": [
+    "Exposed development replay, not a fresh held-out precision estimate.",
+    "No independent full false-negative/true-positive retention qualification in this repair.",
+    "No speedup: paired CLI 14.75s baseline vs17.985s candidate on29files.",
+    "Fresh Study225 remains0TP49FP8unclear/0%decided;35%merge80%publication unmet.",
+    "Native Forge quality remains a separate gate; matching-source full CI pending.",
+    "Large229/232proofcandidates not admitted."
+  ],
+  "artifacts": {
+    ".factory/precision234/baseline-regression.xml": "7c220a54b6374ede3c8d6327d53902534170025aa8d98df099bc6bcf7436a0aa",
+    ".factory/precision234/repaired-regression.xml": "753870cb579316ca19510b7b16c3af654dbd91d3f46b27e0a29d7c3b2a3d29db",
+    ".factory/precision234/baseline-checks.json": "46ce92a351f985874e908b4a9b489483d2925bd03c737089366d04603fd8a0d8",
+    ".factory/precision234/candidate-v1-checks.json": "9bbb24ceaf4cc42a6bcf67ef4fbfe53b09c699fc9af0ab140b15c2dd41b1f8f1",
+    ".factory/precision234/px-native-paired.json": "008a063708043f5916bfdda051aee154bb092aa9d65c66eca8340c79b723bed5",
+    ".factory/precision234/adversarial-controls.json": "5bb9c991b160edf2eb20f6d4271bfdaa2106e79db430cd5b0334c41d679c4f80",
+    ".factory/precision234/architecture-after-consolidation.json": "73601d16e9eb1774786a446c16c2702db57064b94c23607c2aeea01d654a6e03"
+  },
+  "native_quality": {
+    "grade": "C",
+    "passed": false,
+    "before_count": 90,
+    "after_count": 90,
+    "added": [],
+    "removed": [],
+    "full_quality_gate": "FAIL"
+  }
+}

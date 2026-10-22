@@ -93,6 +93,13 @@ configuration, import/callable origin and relevant consumer context. A standalon
 helper or custom projection is not full CF integration. Version profile changes
 separately from detector changes; do not rewrite frozen studies.
 
+The shared CLI resealing repair preserves captured-byte revalidation through
+copies and receipt preparation. Four new regressions pass, and an exposed
+29-file public-CLI replay changes 25 active security alerts to 20 while retaining
+five primitive observations and every unchanged alert. See
+`docs/evidence/native-reseal234.json`. This is completed development evidence;
+fresh precision, broader retention and matching-source full CI remain pending.
+
 Finish `specs/full-source-coverage211.md` and
 `plans/full-source-coverage211.md`: account for every eligible file, capture
 read/parse/size failures, and use bounded resumable shared discovery/hash/AST and
