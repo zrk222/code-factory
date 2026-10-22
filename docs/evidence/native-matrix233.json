@@ -1,0 +1,184 @@
+{
+  "schema": "factory.python-matrix-and-triage233.v1",
+  "head": "ffcac7960d33fce39da63e9ebd96106521c92ae9",
+  "run_id": 39765104022,
+  "execution": "Existing GitHub Actions run downloaded/read; no test job rerun",
+  "jobs": [
+    {
+      "name": "test (macos-latest, 3.10)",
+      "job_id": 119778483064,
+      "conclusion": "success"
+    },
+    {
+      "name": "test (macos-latest, 3.11)",
+      "job_id": 119778483207,
+      "conclusion": "success"
+    },
+    {
+      "name": "test (windows-latest, 3.12)",
+      "job_id": 119778483208,
+      "conclusion": "success"
+    },
+    {
+      "name": "test (ubuntu-latest, 3.10)",
+      "job_id": 119778483273,
+      "conclusion": "success"
+    },
+    {
+      "name": "test (ubuntu-latest, 3.11)",
+      "job_id": 119778483304,
+      "conclusion": "success"
+    },
+    {
+      "name": "test (ubuntu-latest, 3.12)",
+      "job_id": 119778483422,
+      "conclusion": "success"
+    },
+    {
+      "name": "test (windows-latest, 3.11)",
+      "job_id": 119778483435,
+      "conclusion": "success"
+    },
+    {
+      "name": "test (macos-latest, 3.12)",
+      "job_id": 119778483461,
+      "conclusion": "success"
+    },
+    {
+      "name": "test (windows-latest, 3.10)",
+      "job_id": 119778483559,
+      "conclusion": "success"
+    }
+  ],
+  "reports": [
+    {
+      "path": ".factory/precision231/native-ci-tests/pytest-macos-latest-3.10/pytest-results.xml",
+      "sha256": "a3a165369930e8d1d98353b0d7d1de2b70fd988db2bedafbb6d2ee8d66f24dd3",
+      "total": 8364,
+      "passed": 8352,
+      "skipped": 12,
+      "failed_or_error": 0
+    },
+    {
+      "path": ".factory/precision231/native-ci-tests/pytest-macos-latest-3.11/pytest-results.xml",
+      "sha256": "7e431e8b96de8852b78928347005479bf472315fdd1e2d40c82c5d244d3d56cb",
+      "total": 8364,
+      "passed": 8352,
+      "skipped": 12,
+      "failed_or_error": 0
+    },
+    {
+      "path": ".factory/precision231/native-ci-tests/pytest-macos-latest-3.12/pytest-results.xml",
+      "sha256": "7b077c8b5e4597806b3c77f07c5bd9e0d87cbc16a3be8d487e83e2ad664e3181",
+      "total": 8364,
+      "passed": 8352,
+      "skipped": 12,
+      "failed_or_error": 0
+    },
+    {
+      "path": ".factory/precision231/native-ci-tests/pytest-ubuntu-latest-3.10/pytest-results.xml",
+      "sha256": "894de79d9e1ba32a41bb9465913366f0d41454c45e4eb1c44fab20d5e26eb1ab",
+      "total": 8364,
+      "passed": 8352,
+      "skipped": 12,
+      "failed_or_error": 0
+    },
+    {
+      "path": ".factory/precision231/native-ci-tests/pytest-ubuntu-latest-3.11/pytest.xml",
+      "sha256": "e06ff63b85a6751377246f4925e05284069f6a4645f571e3cd06c2ba8459f39e",
+      "total": 8364,
+      "passed": 8352,
+      "skipped": 12,
+      "failed_or_error": 0
+    },
+    {
+      "path": ".factory/precision231/native-ci-tests/pytest-ubuntu-latest-3.12/pytest-results.xml",
+      "sha256": "453ee3791389c590c73b4080915e9414aa7ab97636456341ffc345626888a0d1",
+      "total": 8364,
+      "passed": 8352,
+      "skipped": 12,
+      "failed_or_error": 0
+    },
+    {
+      "path": ".factory/precision231/native-ci-tests/pytest-windows-latest-3.10/pytest-results.xml",
+      "sha256": "db19bec1350ae7859214dac972aeac513427cb09d669fda62e34dfecf3c2803a",
+      "total": 8364,
+      "passed": 8348,
+      "skipped": 16,
+      "failed_or_error": 0
+    },
+    {
+      "path": ".factory/precision231/native-ci-tests/pytest-windows-latest-3.11/pytest-results.xml",
+      "sha256": "7641f29fca4d301465692d0b81348880b7436d22030a0256bc0e7b69e713a474",
+      "total": 8364,
+      "passed": 8348,
+      "skipped": 16,
+      "failed_or_error": 0
+    },
+    {
+      "path": ".factory/precision231/native-ci-tests/pytest-windows-latest-3.12/pytest-results.xml",
+      "sha256": "85e3267d76ce4b143f14916ce2e23a3d8cf92ff6235c6ac905139c9a56699943",
+      "total": 8364,
+      "passed": 8348,
+      "skipped": 16,
+      "failed_or_error": 0
+    }
+  ],
+  "matrix_pass": true,
+  "overall_ci_conclusion": "failure",
+  "global_quality_gate": "FAIL",
+  "precision_gain_claim": null,
+  "latest_fresh_actionable_precision": {
+    "study": "Study225",
+    "TP": 0,
+    "FP": 49,
+    "UNCLEAR": 8,
+    "decided": 49,
+    "precision_percent": 0,
+    "wilson_95_percent": [
+      0,
+      7.269781922
+    ],
+    "merge_bar_met": false
+  },
+  "codeql_alert_triage": {
+    "alert_ids": [
+      87,
+      88
+    ],
+    "state": "dismissed",
+    "reason": "false positive",
+    "review": "Root plus separate Sol6.1 ECC source review. Analyzed merge Git blobs match local HEAD. Specific diagnostic-return paths contain fixed metadata, not password values.",
+    "review_receipt_sha256": "d46dfa203506a9f15e6a8c1349c0e662f5a1b9104160ca6f565b8aa4f9801229",
+    "remote_state_readback": [
+      {
+        "dismissed_comment": "Reviewed trace returns fixed diagnostic metadata, not password bytes: semantic_credential_sensor.py:476-483 -> review_audits.py:1377-1389. Source Git blobs match analyzed merge5a1d04c. Root + ECC review; applies only to alerts87/88. No scanner or score change.",
+        "dismissed_reason": "false positive",
+        "number": 87,
+        "state": "dismissed"
+      },
+      {
+        "dismissed_comment": "Reviewed trace returns fixed diagnostic metadata, not password bytes: semantic_credential_sensor.py:476-483 -> review_audits.py:1377-1389. Source Git blobs match analyzed merge5a1d04c. Root + ECC review; applies only to alerts87/88. No scanner or score change.",
+        "dismissed_reason": "false positive",
+        "number": 88,
+        "state": "dismissed"
+      }
+    ],
+    "not_a_cf_precision_gain": true
+  },
+  "native_quality": {
+    "state": "FAIL",
+    "finding_count": 90,
+    "source": "docs/evidence/endpoint-validation231.json"
+  },
+  "architecture": {
+    "python_files": 429,
+    "core_modules": 133,
+    "caps": [
+      464,
+      133
+    ],
+    "state": "HEALTHY",
+    "ci_run": "https://github.com/zrk222/code-factory/actions/runs/39765104461"
+  }
+}
