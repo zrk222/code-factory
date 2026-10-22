@@ -160,10 +160,39 @@ controls retained at their original severity. Architecture remains healthy at
 429 Python files / 133 core modules. Evidence is recorded in
 docs/evidence/full-source-coverage211.json. This completes the bounded source
 accounting slice only; semantic consumer closure and actionable precision remain
-incomplete. Continue the declaration-scoped credential-role repair, then score
-the changed outputs without altering the original frozen panels. The current
+incomplete. Follow the repair order below, then score the changed outputs
+without altering the original frozen panels. The current
 comparable actionable result remains 1 TP / 10 FP / 22 unclear (9.09% decided
 precision); no gain follows from the file-coverage result.
+
+#### Accepted one-time Astra High repair order (215)
+
+1. Freeze the current module/callable-origin repair with its complete controls
+   and any budget failure retained. Then generalize existing fresh allocation,
+   credential enrollment and same-identity local-request lineage across the six
+   exposed credential fixtures. Require one independently verified native false
+   positive reduction before broadening; enumerate all six outcomes.
+2. In parallel, bind the four exposed YAML round-trips through the existing
+   source index and serialization owners. Start with the exact producer,
+   in-memory buffer and data member chain. Require one native false positive
+   reduction before adding metadata-selected object members. Unknown custom
+   tags/hooks, external writes, provider replacement and ambiguous aliases block.
+3. Handle the four settings/header selectors next. Keep the target-specific
+   two-header protocol candidate unqualified; stop expanding its global proof.
+   Defer shell-template work until an additional admissible source case is
+   established before implementing more machinery.
+
+Native admission must preserve the original primitive inventory, source
+coordinates and evaluation units. Unsafe or mixed use dominates a benign role;
+unknown relevant consumers retain the active finding and severity. Only a
+complete, independently recomputed source predicate contradicting the specific
+defect claim permits a changed disposition. Final source/helper/profile/budget
+validation must revoke provisional changes on drift or exhaustion. Renaming
+application symbols must preserve positive controls. Record all old/new claims,
+severities, missing/added alerts and retained historical positives; these exposed
+replays are development evidence, not new held-out precision. Reuse existing
+modules and bounds. After stabilization, run the unchanged fresh qualification
+below; the audit itself establishes no precision gain.
 
 Before a successor, resolve the highest-yield families using general source and
 consumer models, stabilize the candidate, and preregister a new untouched cohort
@@ -263,7 +292,11 @@ improvements.
   at `4465aa3` are66failed,8,157passed and12skipped on Ubuntu Python3.11.
   Four raising partial-callback expectation migrations are isolated in
   `1a63c57`; the unawaited partial-callback HOLLOW control is unchanged and still
-  fails. A new full rerun is required after the next source batch.
+  fails. The newer full CI run at `0c567d0` reports 53 failed, 8,266 passed and
+  12 skipped on Ubuntu Python 3.11 in 330.03 seconds. All 53 failures are in
+  `test_review_audits.py`; full CI and merge qualification remain failed. This
+  full-suite time is separate from the per-repository scan target. Rerun after
+  the next independently reviewed family batch; scoped tests cannot replace it.
 - Evaluation-local JWT memoization: an isolated alternating pair on the same
   26-file snapshot measured 16.806s baseline median versus 14.819s candidate
   median (11.82% lower), with equal canonical finding digests and coverage.
