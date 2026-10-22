@@ -283,6 +283,41 @@ subsequent releases; this cannot be established by one local test run. Record
 time to first justified action and human triage cost before claiming user-value
 improvements.
 
+## Commercial path after precision qualification
+
+Scheduling: near-end business milestones, outside merge admission. Design
+partner recruitment, partner adoption and either commercial route are not
+prerequisites for committing or merging engineering changes. Keep the existing
+engineering checks and evidence requirements; this addition creates no new
+merge blocker.
+
+Owner-added sequence: prove precision, secure two or three design partners
+using CF as a real merge gate, then evaluate selling the capability to a
+platform or growing a focused commercial layer. Precision remains P0; these
+milestones do not replace the acceptance, integration or release requirements.
+
+1. **Prove precision.** Meet the preregistered qualification above, including
+   at least 30 decided alerts, at least 80% actionable precision and a Wilson
+   95% lower bound of at least 60%. Disclose uncertainty, coverage, reviewer
+   kind, true-positive retention and trusted versus experimental rule scope.
+2. **Establish two or three design partners.** Each partner chooses a bounded
+   real repository and enables an owned required merge check for the supported
+   trusted core. Record the enabled rule/configuration and source versions,
+   actual check runs, merge-blocking behavior, false alarms, justified repairs,
+   latency, reviewer effort and any overrides. A trial, letter of interest or
+   advisory report alone does not establish merge-gate adoption. CF supplies
+   evidence; the partner retains approval, override and release authority.
+3. **Choose the commercial route from partner evidence.** Prepare a capability
+   and integration packet for a platform acquisition discussion, or validate a
+   narrow commercial offer around the repeatedly used workflow. Record actual
+   buyer needs, adoption, operating costs and willingness to pay. Platform
+   interest, revenue, acquisition terms and valuation remain unproven until
+   independently supported; this goal sets no invented financial outcome.
+
+Partner outreach, contact-data sharing, commercial commitments and changes to
+external repositories require their own authorization. This plan addition
+does not send messages or enable merge gates for anyone.
+
 ## Current measurements and remaining limits
 
 - Detection integration `4465aa3`: exposed old60 replay removed 23 labeled
