@@ -1,0 +1,1472 @@
+{
+  "schema": "factory.paired-heldout.two-ai-assessment.v1",
+  "study": "study209",
+  "created_at": "2026-10-22T00:33:15.778001+00:00",
+  "scanner_commits": {
+    "baseline": "9886fbc88bce85d8572f745ecd595c2dfd809151",
+    "candidate": "07f0bdd3ca968cb90d54d925d6471bba5e8e5e01"
+  },
+  "registration": {
+    "path": ".factory/study209/preregistered/registration.json",
+    "sha256": "67f7a4570c04edb83353b347f03d42036cbe5edbfc338ec6ce8d2d41a04e9da7"
+  },
+  "selection": {
+    "path": ".factory/study209/private-selection.json",
+    "sha256": "47ebb90739ad130a7331e4dcc8e16d34bedfda40e54a645cbde8cdcc9ce8613f",
+    "union_units": 11,
+    "invalid": 0,
+    "unselected": 0
+  },
+  "review_inputs": [
+    {
+      "path": ".factory/study209/reviews/label-a.json",
+      "sha256": "472a8c21b0f3dc89bd7e59f46fb781e1d9dcb0204263f53bc10f4b45e096735b",
+      "reviewer": {
+        "identity": "label-a",
+        "kind": "independent AI security labeler",
+        "model": "gpt-6.1-sol",
+        "effort": "high",
+        "human_validation": false
+      }
+    },
+    {
+      "path": ".factory/study209/reviews/label-b.json",
+      "sha256": "712676341fd0d2f6e5db85f2be20a4dd175cc519fc021e7f8812f29ad7963c71",
+      "reviewer": {
+        "id": "label-b",
+        "identity": "independent AI reviewer B",
+        "model": "gpt-6.1-sol",
+        "effort": "high",
+        "validation_type": "Independent AI labels; not human or external security validation"
+      }
+    }
+  ],
+  "versions": {
+    "baseline": {
+      "selected_present": 11,
+      "primitive_rate": {
+        "TP": 9,
+        "FP": 2,
+        "UNCLEAR": 0,
+        "decided": 11,
+        "precision": 0.8181818181818182,
+        "wilson95": [
+          0.523019438039156,
+          0.9486323102539149
+        ],
+        "unclear_inclusive": 0.8181818181818182
+      },
+      "actionable_precision": {
+        "TP": 0,
+        "FP": 10,
+        "UNCLEAR": 1,
+        "decided": 10,
+        "precision": 0.0,
+        "wilson95": [
+          0.0,
+          0.2775327998628892
+        ],
+        "unclear_inclusive": 0.0
+      },
+      "single_ai": {
+        "label-a": {
+          "primitive": {
+            "TP": 9,
+            "FP": 2,
+            "UNCLEAR": 0,
+            "decided": 11,
+            "precision": 0.8181818181818182,
+            "wilson95": [
+              0.523019438039156,
+              0.9486323102539149
+            ],
+            "unclear_inclusive": 0.8181818181818182
+          },
+          "actionable": {
+            "TP": 0,
+            "FP": 10,
+            "UNCLEAR": 1,
+            "decided": 10,
+            "precision": 0.0,
+            "wilson95": [
+              0.0,
+              0.2775327998628892
+            ],
+            "unclear_inclusive": 0.0
+          }
+        },
+        "label-b": {
+          "primitive": {
+            "TP": 9,
+            "FP": 2,
+            "UNCLEAR": 0,
+            "decided": 11,
+            "precision": 0.8181818181818182,
+            "wilson95": [
+              0.523019438039156,
+              0.9486323102539149
+            ],
+            "unclear_inclusive": 0.8181818181818182
+          },
+          "actionable": {
+            "TP": 0,
+            "FP": 11,
+            "UNCLEAR": 0,
+            "decided": 11,
+            "precision": 0.0,
+            "wilson95": [
+              0.0,
+              0.2588329669680317
+            ],
+            "unclear_inclusive": 0.0
+          }
+        }
+      }
+    },
+    "candidate": {
+      "selected_present": 11,
+      "primitive_rate": {
+        "TP": 9,
+        "FP": 2,
+        "UNCLEAR": 0,
+        "decided": 11,
+        "precision": 0.8181818181818182,
+        "wilson95": [
+          0.523019438039156,
+          0.9486323102539149
+        ],
+        "unclear_inclusive": 0.8181818181818182
+      },
+      "actionable_precision": {
+        "TP": 0,
+        "FP": 10,
+        "UNCLEAR": 1,
+        "decided": 10,
+        "precision": 0.0,
+        "wilson95": [
+          0.0,
+          0.2775327998628892
+        ],
+        "unclear_inclusive": 0.0
+      },
+      "single_ai": {
+        "label-a": {
+          "primitive": {
+            "TP": 9,
+            "FP": 2,
+            "UNCLEAR": 0,
+            "decided": 11,
+            "precision": 0.8181818181818182,
+            "wilson95": [
+              0.523019438039156,
+              0.9486323102539149
+            ],
+            "unclear_inclusive": 0.8181818181818182
+          },
+          "actionable": {
+            "TP": 0,
+            "FP": 10,
+            "UNCLEAR": 1,
+            "decided": 10,
+            "precision": 0.0,
+            "wilson95": [
+              0.0,
+              0.2775327998628892
+            ],
+            "unclear_inclusive": 0.0
+          }
+        },
+        "label-b": {
+          "primitive": {
+            "TP": 9,
+            "FP": 2,
+            "UNCLEAR": 0,
+            "decided": 11,
+            "precision": 0.8181818181818182,
+            "wilson95": [
+              0.523019438039156,
+              0.9486323102539149
+            ],
+            "unclear_inclusive": 0.8181818181818182
+          },
+          "actionable": {
+            "TP": 0,
+            "FP": 11,
+            "UNCLEAR": 0,
+            "decided": 11,
+            "precision": 0.0,
+            "wilson95": [
+              0.0,
+              0.2588329669680317
+            ],
+            "unclear_inclusive": 0.0
+          }
+        }
+      }
+    }
+  },
+  "paired_actionable_precision_delta": 0.0,
+  "actionable_tp_retention": {
+    "baseline_TP": 0,
+    "retained_TP": 0,
+    "rate": null,
+    "not_recall": true
+  },
+  "consensus_labels": [
+    {
+      "id": "S209-001",
+      "primitive": "FP",
+      "actionable": "FP"
+    },
+    {
+      "id": "S209-002",
+      "primitive": "TP",
+      "actionable": "FP"
+    },
+    {
+      "id": "S209-003",
+      "primitive": "FP",
+      "actionable": "FP"
+    },
+    {
+      "id": "S209-004",
+      "primitive": "TP",
+      "actionable": "FP"
+    },
+    {
+      "id": "S209-005",
+      "primitive": "TP",
+      "actionable": "FP"
+    },
+    {
+      "id": "S209-006",
+      "primitive": "TP",
+      "actionable": "UNCLEAR"
+    },
+    {
+      "id": "S209-007",
+      "primitive": "TP",
+      "actionable": "FP"
+    },
+    {
+      "id": "S209-008",
+      "primitive": "TP",
+      "actionable": "FP"
+    },
+    {
+      "id": "S209-009",
+      "primitive": "TP",
+      "actionable": "FP"
+    },
+    {
+      "id": "S209-010",
+      "primitive": "TP",
+      "actionable": "FP"
+    },
+    {
+      "id": "S209-011",
+      "primitive": "TP",
+      "actionable": "FP"
+    }
+  ],
+  "disagreements": [
+    {
+      "id": "S209-006",
+      "field": "actionable",
+      "a": "UNCLEAR",
+      "b": "FP"
+    }
+  ],
+  "cohort_source_errors": [
+    {
+      "repository": "courtlistener/courtlistener",
+      "state": "SOURCE_CAPTURE_ERROR",
+      "error": {
+        "repository": "courtlistener/courtlistener",
+        "phase": "REF_RESOLUTION",
+        "error": "Response status code does not indicate success: 404 (Not Found).",
+        "at_utc": "2026-10-21T23:57:20.3806185Z"
+      }
+    }
+  ],
+  "label_evidence_hashes_verified": true,
+  "target_execution": false,
+  "independent_human_validation": false,
+  "publication_minimum_decided": 30,
+  "publication_target_met": false,
+  "limits": [
+    "Two separate AI instances of the same model/harness, not external or human validation.",
+    "Three captured repositories; fourth selected source returned404 and was not replaced.",
+    "Bounded file sample under native460cap; missing dependencies and syntax/runtime profile may limit analysis.",
+    "Not recall, not production safety, not release or merge approval.",
+    "Unclear labels and disagreements retained; sample too small for requested publication threshold.",
+    "Cohort now exposed to root after labels; future label-informed fixes are development replays.",
+    "Single paired timing run per repository; order/machine contention prevents causal speed claims.",
+    "These supplementary bounded studies are not completion of integrated A6 original12repository/60unit qualification; no posthoc substitution for that requirement."
+  ],
+  "selected_adjudications": [
+    {
+      "id": "S209-001",
+      "repository": "getsentry/sentry",
+      "source_commit": "8334b09671aef9cfb2c0fd25b0300a2812377bdf",
+      "source_path": "src/social_auth/backends/visualstudio.py",
+      "source_sha256": "0ab95c5734c74eb67d4c2cc540de2c281df3c1d5c73986eb60c8d2bd2ca1b84f",
+      "claims": [
+        {
+          "code": "SECURITY_HARDCODED_SECRET",
+          "column": 4,
+          "facts": {
+            "name": "SETTINGS_CLIENT_SECRET_NAME"
+          },
+          "line": 45,
+          "message": "Credential-like material is assigned as a source literal.",
+          "path": "src/social_auth/backends/visualstudio.py",
+          "severity": "CRITICAL"
+        }
+      ],
+      "labels": [
+        {
+          "reviewer": "label-a",
+          "id": "S209-001",
+          "primitive": "FP",
+          "actionable": "FP",
+          "severity_justified": "NO",
+          "rationale": "src/social_auth/backends/visualstudio.py:45 assigns the configuration identifier VISUALSTUDIO_CLIENT_SECRET, not credential bytes. Lines 65-68 and 76-80 resolve the actual credential using setting(self/cls.SETTINGS_CLIENT_SECRET_NAME) and only then send it as client_assertion. No hardcoded credential is established by this assignment, so CRITICAL is unsupported.",
+          "repair": null,
+          "missing_facts": [],
+          "evidence": [
+            {
+              "source_path": "src/social_auth/backends/visualstudio.py",
+              "lines": [
+                [
+                  43,
+                  45
+                ],
+                [
+                  64,
+                  80
+                ]
+              ],
+              "observation": "Literal setting name and runtime lookup of its value.",
+              "path": "C:\\Users\\rkatz\\Documents\\Codex\\cf-gate-consolidation162\\.factory\\study209\\targets\\getsentry--sentry\\src\\social_auth\\backends\\visualstudio.py",
+              "sha256": "0ab95c5734c74eb67d4c2cc540de2c281df3c1d5c73986eb60c8d2bd2ca1b84f"
+            }
+          ]
+        },
+        {
+          "reviewer": "independent AI reviewer B",
+          "id": "S209-001",
+          "packet_sha256": "700a3570f80591bd4721d6b61d5f4746fa143fb9d495bc51c327e39cb5506802",
+          "primitive": "FP",
+          "actionable": "FP",
+          "severity_justified": "NO",
+          "rationale": "The literal at visualstudio.py:45 names a Django setting; it is not credential material. auth_complete_params and refresh_token_params resolve that name through setting() before transmitting the returned value. social_auth/utils.py:61-63 implements the lookup with getattr(settings, name, default). No embedded client secret or CRITICAL exposure is established.",
+          "repair": "No security repair justified for this assignment; preserve the setting identifier and keep actual credentials in deployment settings.",
+          "missing_facts": [],
+          "evidence": [
+            {
+              "path": "C:/Users/rkatz/Documents/Codex/cf-gate-consolidation162/.factory/study209/targets/getsentry--sentry/src/social_auth/backends/visualstudio.py",
+              "line_start": 43,
+              "line_end": 45,
+              "sha256": "0ab95c5734c74eb67d4c2cc540de2c281df3c1d5c73986eb60c8d2bd2ca1b84f",
+              "observation": "Setting-name constants."
+            },
+            {
+              "path": "C:/Users/rkatz/Documents/Codex/cf-gate-consolidation162/.factory/study209/targets/getsentry--sentry/src/social_auth/backends/visualstudio.py",
+              "line_start": 64,
+              "line_end": 80,
+              "sha256": "0ab95c5734c74eb67d4c2cc540de2c281df3c1d5c73986eb60c8d2bd2ca1b84f",
+              "observation": "Credential values are resolved from settings at use sites."
+            },
+            {
+              "path": "C:/Users/rkatz/Documents/Codex/cf-gate-consolidation162/.factory/study209/targets/getsentry--sentry/src/social_auth/utils.py",
+              "line_start": 61,
+              "line_end": 63,
+              "sha256": "05e3380288a26b80e8a47e6a9a0935ff647e5e4d99e55dbb422e03f1a61faf95",
+              "observation": "Name-to-setting lookup."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S209-002",
+      "repository": "getsentry/sentry",
+      "source_commit": "8334b09671aef9cfb2c0fd25b0300a2812377bdf",
+      "source_path": "tests/acceptance/test_auth_react.py",
+      "source_sha256": "5ac1cd343137cac257cdd48ccf38ef28de4ee014c94c5aeec08d84876738d4ba",
+      "claims": [
+        {
+          "code": "SECURITY_HARDCODED_SECRET",
+          "column": 0,
+          "facts": {
+            "name": "PASSWORD"
+          },
+          "line": 23,
+          "message": "Credential-like material is assigned as a source literal.",
+          "path": "tests/acceptance/test_auth_react.py",
+          "severity": "CRITICAL"
+        }
+      ],
+      "labels": [
+        {
+          "reviewer": "label-a",
+          "id": "S209-002",
+          "primitive": "TP",
+          "actionable": "FP",
+          "severity_justified": "NO",
+          "rationale": "tests/acceptance/test_auth_react.py:23 contains a literal password and lines 184-189 install it on a user created by the test helper, using a test-method-derived example.com email. Lines 297-307 submit correct and incorrect credentials in authentication tests; lines 28-42 also use the literal for a test-created registration. This substantiates credential material as a narrow primitive, while its demonstrated lifecycle is an intentional test fixture rather than an exposed production credential. The source does not justify CRITICAL or secret rotation.",
+          "repair": null,
+          "missing_facts": [],
+          "evidence": [
+            {
+              "source_path": "tests/acceptance/test_auth_react.py",
+              "lines": [
+                [
+                  23,
+                  27
+                ],
+                [
+                  28,
+                  44
+                ],
+                [
+                  184,
+                  189
+                ],
+                [
+                  297,
+                  312
+                ]
+              ],
+              "observation": "Password is installed on test-created users and exercised by authentication tests.",
+              "path": "C:\\Users\\rkatz\\Documents\\Codex\\cf-gate-consolidation162\\.factory\\study209\\targets\\getsentry--sentry\\tests\\acceptance\\test_auth_react.py",
+              "sha256": "5ac1cd343137cac257cdd48ccf38ef28de4ee014c94c5aeec08d84876738d4ba"
+            }
+          ]
+        },
+        {
+          "reviewer": "independent AI reviewer B",
+          "id": "S209-002",
+          "packet_sha256": "8abccc97e2e7d6e9449a71750dd53a24269e0c7bb325c0082d03fc22d1ef1ad3",
+          "primitive": "TP",
+          "actionable": "FP",
+          "severity_justified": "NO",
+          "rationale": "PASSWORD at test_auth_react.py:23 is actual literal password material, not a setting identifier: create_login_user sets it on a newly created test user at lines 184-191, and test_password_authentication submits it at lines 297-302. The registration test similarly creates a new example.com account in its browser flow. This establishes an intentional test credential, not an exposed existing production account or a CRITICAL security defect. The finding's location alone is not the basis for rejection; the fixture creation and consumption establish its role.",
+          "repair": "No credential rotation or removal is justified by this evidence. Retain a deterministic test password unless evidence shows it is reused by deployed accounts.",
+          "missing_facts": [
+            "Production account reuse or a deployed import/use of this test constant would be required to support the asserted defect; neither is shown."
+          ],
+          "evidence": [
+            {
+              "path": "C:/Users/rkatz/Documents/Codex/cf-gate-consolidation162/.factory/study209/targets/getsentry--sentry/tests/acceptance/test_auth_react.py",
+              "line_start": 23,
+              "line_end": 44,
+              "sha256": "5ac1cd343137cac257cdd48ccf38ef28de4ee014c94c5aeec08d84876738d4ba",
+              "observation": "Literal credential used in test-created registration."
+            },
+            {
+              "path": "C:/Users/rkatz/Documents/Codex/cf-gate-consolidation162/.factory/study209/targets/getsentry--sentry/tests/acceptance/test_auth_react.py",
+              "line_start": 184,
+              "line_end": 191,
+              "sha256": "5ac1cd343137cac257cdd48ccf38ef28de4ee014c94c5aeec08d84876738d4ba",
+              "observation": "Creates a user for the current test and assigns the password."
+            },
+            {
+              "path": "C:/Users/rkatz/Documents/Codex/cf-gate-consolidation162/.factory/study209/targets/getsentry--sentry/tests/acceptance/test_auth_react.py",
+              "line_start": 297,
+              "line_end": 310,
+              "sha256": "5ac1cd343137cac257cdd48ccf38ef28de4ee014c94c5aeec08d84876738d4ba",
+              "observation": "Positive and negative password test requests."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S209-003",
+      "repository": "getsentry/sentry",
+      "source_commit": "8334b09671aef9cfb2c0fd25b0300a2812377bdf",
+      "source_path": "src/social_auth/backends/visualstudio.py",
+      "source_sha256": "0ab95c5734c74eb67d4c2cc540de2c281df3c1d5c73986eb60c8d2bd2ca1b84f",
+      "claims": [
+        {
+          "code": "SECURITY_HARDCODED_SECRET",
+          "column": 4,
+          "facts": {
+            "name": "SETTINGS_SECRET_NAME"
+          },
+          "line": 44,
+          "message": "Credential-like material is assigned as a source literal.",
+          "path": "src/social_auth/backends/visualstudio.py",
+          "severity": "CRITICAL"
+        }
+      ],
+      "labels": [
+        {
+          "reviewer": "label-a",
+          "id": "S209-003",
+          "primitive": "FP",
+          "actionable": "FP",
+          "severity_justified": "NO",
+          "rationale": "src/social_auth/backends/visualstudio.py:44 assigns the setting identifier VISUALSTUDIO_APP_SECRET to SETTINGS_SECRET_NAME. Its adjacent SETTINGS_KEY_NAME and SETTINGS_CLIENT_SECRET_NAME declarations at lines 43-45 are names for configuration, not secret values. The file explicitly resolves a configuration name at lines 65 and 76 for the separate client credential. No credential disclosure is established at the claimed line, and CRITICAL is unsupported.",
+          "repair": null,
+          "missing_facts": [],
+          "evidence": [
+            {
+              "source_path": "src/social_auth/backends/visualstudio.py",
+              "lines": [
+                [
+                  40,
+                  47
+                ],
+                [
+                  64,
+                  80
+                ]
+              ],
+              "observation": "Setting-name declaration, distinguishable from runtime credential lookup.",
+              "path": "C:\\Users\\rkatz\\Documents\\Codex\\cf-gate-consolidation162\\.factory\\study209\\targets\\getsentry--sentry\\src\\social_auth\\backends\\visualstudio.py",
+              "sha256": "0ab95c5734c74eb67d4c2cc540de2c281df3c1d5c73986eb60c8d2bd2ca1b84f"
+            }
+          ]
+        },
+        {
+          "reviewer": "independent AI reviewer B",
+          "id": "S209-003",
+          "packet_sha256": "7ad9ec3dc3d7ca55bebee63aa1bb5ce8695307011a25e506ac811245c146381a",
+          "primitive": "FP",
+          "actionable": "FP",
+          "severity_justified": "NO",
+          "rationale": "SETTINGS_SECRET_NAME at visualstudio.py:44 contains VISUALSTUDIO_APP_SECRET, a configuration key. OAuthAuth.get_key_and_secret uses setting(cls.SETTINGS_SECRET_NAME) at social_auth/backends/__init__.py:390-394, and setting performs a getattr lookup in utils.py:61-63. The alleged hardcoded secret is an identifier for a separately configured value. No credential disclosure or CRITICAL defect is established.",
+          "repair": "No security repair justified for this setting-name constant.",
+          "missing_facts": [],
+          "evidence": [
+            {
+              "path": "C:/Users/rkatz/Documents/Codex/cf-gate-consolidation162/.factory/study209/targets/getsentry--sentry/src/social_auth/backends/visualstudio.py",
+              "line_start": 37,
+              "line_end": 45,
+              "sha256": "0ab95c5734c74eb67d4c2cc540de2c281df3c1d5c73986eb60c8d2bd2ca1b84f",
+              "observation": "Backend declares configuration key names."
+            },
+            {
+              "path": "C:/Users/rkatz/Documents/Codex/cf-gate-consolidation162/.factory/study209/targets/getsentry--sentry/src/social_auth/backends/__init__.py",
+              "line_start": 374,
+              "line_end": 399,
+              "sha256": "9d99723d0da52947052116a5089c260e2de7b53fb8714f54273873efd71a7db2",
+              "observation": "Base OAuth implementation resolves the named setting."
+            },
+            {
+              "path": "C:/Users/rkatz/Documents/Codex/cf-gate-consolidation162/.factory/study209/targets/getsentry--sentry/src/social_auth/utils.py",
+              "line_start": 61,
+              "line_end": 63,
+              "sha256": "05e3380288a26b80e8a47e6a9a0935ff647e5e4d99e55dbb422e03f1a61faf95",
+              "observation": "Lookup returns configuration value rather than treating key as credential."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S209-004",
+      "repository": "indico/indico",
+      "source_commit": "682ed22f6da60d35fee6a089add8700b9663ac02",
+      "source_path": "indico/modules/events/export_test.py",
+      "source_sha256": "8f8510f0816556c1f95233fcd9c67b3231195e7b425421e012d4d67962adcb5d",
+      "claims": [
+        {
+          "code": "SECURITY_UNSAFE_YAML",
+          "column": 15,
+          "facts": {
+            "call": "yaml.unsafe_load"
+          },
+          "line": 98,
+          "message": "YAML is loaded without an explicit reviewed Loader.",
+          "path": "indico/modules/events/export_test.py",
+          "severity": "HIGH"
+        }
+      ],
+      "labels": [
+        {
+          "reviewer": "label-a",
+          "id": "S209-004",
+          "primitive": "TP",
+          "actionable": "FP",
+          "severity_justified": "NO",
+          "rationale": "indico/modules/events/export_test.py:98 directly calls yaml.unsafe_load(data_file), confirming the unsafe-loader primitive. Within test_event_attachment_export, lines 85-94 construct fixture objects, allocate a fresh BytesIO, and fill it through export_event(dummy_event, f); lines 96-98 extract data.yaml from that same in-memory output. This is a self-produced test archive, with no external YAML input shown at this sink. A HIGH security defect and concrete security repair are not established merely by this test assertion helper.",
+          "repair": null,
+          "missing_facts": [],
+          "evidence": [
+            {
+              "source_path": "indico/modules/events/export_test.py",
+              "lines": [
+                [
+                  85,
+                  100
+                ]
+              ],
+              "observation": "Unsafe YAML operation receives data.yaml from the export generated in the same fixture-based test.",
+              "path": "C:\\Users\\rkatz\\Documents\\Codex\\cf-gate-consolidation162\\.factory\\study209\\targets\\indico--indico\\indico\\modules\\events\\export_test.py",
+              "sha256": "8f8510f0816556c1f95233fcd9c67b3231195e7b425421e012d4d67962adcb5d"
+            }
+          ]
+        },
+        {
+          "reviewer": "independent AI reviewer B",
+          "id": "S209-004",
+          "packet_sha256": "97b1563c9b02c1371e3fcf3bf001e702541481b7fa4df2f171f58dc7883c4bb7",
+          "primitive": "TP",
+          "actionable": "FP",
+          "severity_justified": "NO",
+          "rationale": "export_test.py:98 calls yaml.unsafe_load without a restricted loader. Its input is data.yaml read from the in-memory BytesIO archive that the same test just created with export_event(dummy_event, f) at lines 85-97. The serializer generates metadata via backend.dump at export.py:296-318, with YAML dumping at lines 69-74. The source establishes a dangerous parser primitive applied to locally generated fixture output, with no attacker-authored YAML path for this call. That does not establish the claimed HIGH defect.",
+          "repair": "No security repair is required for this test call on the supplied evidence. A restricted loader would require review of the export format's supported YAML types; do not blindly replace it and assume compatibility.",
+          "missing_facts": [
+            "An attacker-controlled archive or malicious object-tag path reaching this exact test call would be needed to establish the claimed HIGH defect."
+          ],
+          "evidence": [
+            {
+              "path": "C:/Users/rkatz/Documents/Codex/cf-gate-consolidation162/.factory/study209/targets/indico--indico/indico/modules/events/export_test.py",
+              "line_start": 85,
+              "line_end": 100,
+              "sha256": "8f8510f0816556c1f95233fcd9c67b3231195e7b425421e012d4d67962adcb5d",
+              "observation": "Test generates archive into a fresh BytesIO and loads its metadata."
+            },
+            {
+              "path": "C:/Users/rkatz/Documents/Codex/cf-gate-consolidation162/.factory/study209/targets/indico--indico/indico/modules/events/export.py",
+              "line_start": 69,
+              "line_end": 74,
+              "sha256": "8bb9437d709f39436216e795fd0c768f97c19e2e3d9cf873a95d4c495ec33d01",
+              "observation": "YAML serialization implementation."
+            },
+            {
+              "path": "C:/Users/rkatz/Documents/Codex/cf-gate-consolidation162/.factory/study209/targets/indico--indico/indico/modules/events/export.py",
+              "line_start": 296,
+              "line_end": 318,
+              "sha256": "8bb9437d709f39436216e795fd0c768f97c19e2e3d9cf873a95d4c495ec33d01",
+              "observation": "Metadata and object files are dumped into the archive."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S209-005",
+      "repository": "indico/indico",
+      "source_commit": "682ed22f6da60d35fee6a089add8700b9663ac02",
+      "source_path": "indico/modules/events/export_test.py",
+      "source_sha256": "8f8510f0816556c1f95233fcd9c67b3231195e7b425421e012d4d67962adcb5d",
+      "claims": [
+        {
+          "code": "SECURITY_UNSAFE_YAML",
+          "column": 15,
+          "facts": {
+            "call": "yaml.unsafe_load"
+          },
+          "line": 79,
+          "message": "YAML is loaded without an explicit reviewed Loader.",
+          "path": "indico/modules/events/export_test.py",
+          "severity": "HIGH"
+        }
+      ],
+      "labels": [
+        {
+          "reviewer": "label-a",
+          "id": "S209-005",
+          "primitive": "TP",
+          "actionable": "FP",
+          "severity_justified": "NO",
+          "rationale": "indico/modules/events/export_test.py:79 directly calls yaml.unsafe_load on tarf.extractfile('data.yaml'), confirming the primitive. Lines 61-74 create fixed dummy-event/session/contribution state, allocate a new BytesIO, and export that event into it; lines 77-80 open that same buffer and compare its decoded metadata with a snapshot. The source demonstrates locally generated test data rather than a trust boundary carrying attacker-supplied YAML. HIGH is not justified for this call.",
+          "repair": null,
+          "missing_facts": [],
+          "evidence": [
+            {
+              "source_path": "indico/modules/events/export_test.py",
+              "lines": [
+                [
+                  61,
+                  82
+                ]
+              ],
+              "observation": "data.yaml originates from the test's own in-memory export.",
+              "path": "C:\\Users\\rkatz\\Documents\\Codex\\cf-gate-consolidation162\\.factory\\study209\\targets\\indico--indico\\indico\\modules\\events\\export_test.py",
+              "sha256": "8f8510f0816556c1f95233fcd9c67b3231195e7b425421e012d4d67962adcb5d"
+            }
+          ]
+        },
+        {
+          "reviewer": "independent AI reviewer B",
+          "id": "S209-005",
+          "packet_sha256": "17f979579545d692d8a685291b9da3eb1bd5b6bf5a5ce67144ee9527e3588063",
+          "primitive": "TP",
+          "actionable": "FP",
+          "severity_justified": "NO",
+          "rationale": "export_test.py:79 uses yaml.unsafe_load. The test constructs dummy event state, writes its export to a fresh BytesIO, rewinds it, and extracts data.yaml at lines 61-80. The YAML is generated through export_event and backend.dump, not read from an uploaded archive or raw user-provided YAML. The untrusted deserialization primitive exists, but the required untrusted input/security boundary for a HIGH repository defect is not established.",
+          "repair": "No security repair justified for this fixture assertion. A move to a restricted YAML format would need a separately scoped format review.",
+          "missing_facts": [
+            "Evidence that an attacker can control serialized YAML structure, rather than ordinary fixture values, at this specific call."
+          ],
+          "evidence": [
+            {
+              "path": "C:/Users/rkatz/Documents/Codex/cf-gate-consolidation162/.factory/study209/targets/indico--indico/indico/modules/events/export_test.py",
+              "line_start": 61,
+              "line_end": 80,
+              "sha256": "8f8510f0816556c1f95233fcd9c67b3231195e7b425421e012d4d67962adcb5d",
+              "observation": "Controlled fixture setup, archive production, rewind, and metadata load."
+            },
+            {
+              "path": "C:/Users/rkatz/Documents/Codex/cf-gate-consolidation162/.factory/study209/targets/indico--indico/indico/modules/events/export.py",
+              "line_start": 69,
+              "line_end": 74,
+              "sha256": "8bb9437d709f39436216e795fd0c768f97c19e2e3d9cf873a95d4c495ec33d01",
+              "observation": "YAML output is produced by the dumper."
+            },
+            {
+              "path": "C:/Users/rkatz/Documents/Codex/cf-gate-consolidation162/.factory/study209/targets/indico--indico/indico/modules/events/export.py",
+              "line_start": 296,
+              "line_end": 318,
+              "sha256": "8bb9437d709f39436216e795fd0c768f97c19e2e3d9cf873a95d4c495ec33d01",
+              "observation": "Generated metadata is serialized into data.yaml."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S209-006",
+      "repository": "indico/indico",
+      "source_commit": "682ed22f6da60d35fee6a089add8700b9663ac02",
+      "source_path": "indico/core/emails.py",
+      "source_sha256": "0abefbcf633028ad8c504074ae8ce9a91a10686a84f45238d423fcd21010b9de",
+      "claims": [
+        {
+          "code": "SECURITY_UNSAFE_DESERIALIZATION",
+          "column": 30,
+          "facts": {
+            "call": "pickle.load"
+          },
+          "line": 154,
+          "message": "Pickle-like deserialization can execute attacker-controlled code.",
+          "path": "indico/core/emails.py",
+          "severity": "HIGH"
+        }
+      ],
+      "labels": [
+        {
+          "reviewer": "label-a",
+          "id": "S209-006",
+          "primitive": "TP",
+          "actionable": "UNCLEAR",
+          "severity_justified": "UNCLEAR",
+          "rationale": "indico/core/emails.py:153-154 opens the supplied path and pickle.load deserializes its bytes before validation, substantiating a code-capable deserialization primitive. Lines 142-147 show the intended producer uses tempfile.mkstemp and pickle.dump for failed mail; lines 162-165 pass command paths into the resend helper. This file does not establish that an adversary can supply or replace the file consumed by an operator, nor that all callers enforce the intended trusted-file boundary. Without callers, file/directory ownership and permissions, and the operational path-selection contract, a HIGH repository defect cannot be confirmed or dismissed.",
+          "repair": "If an untrusted producer or writable recovery-file boundary exists, replace the pickle recovery format with a non-executable, schema-validated representation covering the actual email and attachment types, and reject untrusted legacy files. If files are intentionally trusted operator artifacts, enforce and document that boundary and verify ownership/permissions before loading; a blanket format substitution is not justified from this file alone.",
+          "missing_facts": [
+            "Whether any caller or operator workflow can select attacker-supplied recovery files.",
+            "Who can create, replace, or modify recovery paths and their parent directories, including TEMP_DIR.",
+            "Whether recovery records are authenticated or constrained by callers beyond the supplied source."
+          ],
+          "evidence": [
+            {
+              "source_path": "indico/core/emails.py",
+              "lines": [
+                [
+                  37,
+                  55
+                ],
+                [
+                  142,
+                  165
+                ]
+              ],
+              "observation": "Secure temporary-file producer, unrestricted path argument at the local helper, and pickle.load sink; caller trust remains unproven.",
+              "path": "C:\\Users\\rkatz\\Documents\\Codex\\cf-gate-consolidation162\\.factory\\study209\\targets\\indico--indico\\indico\\core\\emails.py",
+              "sha256": "0abefbcf633028ad8c504074ae8ce9a91a10686a84f45238d423fcd21010b9de"
+            }
+          ]
+        },
+        {
+          "reviewer": "independent AI reviewer B",
+          "id": "S209-006",
+          "packet_sha256": "db889818cf3e491c45cc18cf61ed0a2c8d241622905f376768c4e18cc6742535",
+          "primitive": "TP",
+          "actionable": "FP",
+          "severity_justified": "NO",
+          "rationale": "emails.py:153-154 really unpickles bytes from a caller-supplied path, so executable deserialization is present. The matching producer stores failed-email data with tempfile.mkstemp and pickle.dump at lines 142-147. The only discovered in-tree call to resend_failed_email is resend_failed_emails_cmd at lines 162-165, reached from the local Click recovery command at cli/core.py:101-115, where the operator supplies file paths. No remote input route, attacker-controlled pickle bytes, elevated execution relative to that operator, or adversarial write capability over recovery files is established. Ordinary email text serialized with pickle.dump is not itself a way to inject pickle opcodes. The dangerous primitive alone does not justify a HIGH security defect in this recovery workflow.",
+          "repair": "No mandatory security repair is justified by the supplied trust boundary. If recovery files must cross an untrusted boundary, replace pickle with a versioned, validated data-only representation and restrict recovery file ownership/path handling; that requirement is not established here.",
+          "missing_facts": [
+            "A less-trusted actor's ability to choose or alter bytes that a more-privileged recovery operator will load.",
+            "Actual recovery directory ownership/permissions and any operational policy accepting externally supplied recovery files."
+          ],
+          "evidence": [
+            {
+              "path": "C:/Users/rkatz/Documents/Codex/cf-gate-consolidation162/.factory/study209/targets/indico--indico/indico/core/emails.py",
+              "line_start": 37,
+              "line_end": 55,
+              "sha256": "0abefbcf633028ad8c504074ae8ce9a91a10686a84f45238d423fcd21010b9de",
+              "observation": "Failed send task invokes internal recovery-file producer."
+            },
+            {
+              "path": "C:/Users/rkatz/Documents/Codex/cf-gate-consolidation162/.factory/study209/targets/indico--indico/indico/core/emails.py",
+              "line_start": 142,
+              "line_end": 165,
+              "sha256": "0abefbcf633028ad8c504074ae8ce9a91a10686a84f45238d423fcd21010b9de",
+              "observation": "mkstemp producer, pickle.load consumer, and local wrapper."
+            },
+            {
+              "path": "C:/Users/rkatz/Documents/Codex/cf-gate-consolidation162/.factory/study209/targets/indico--indico/indico/cli/core.py",
+              "line_start": 101,
+              "line_end": 115,
+              "sha256": "a932329c2b3a5466d2305511cef6665e58d19a5da0ad3223a738d06d419fd1a6",
+              "observation": "Local command accepts operator-supplied existing file paths."
+            },
+            {
+              "path": "C:/Users/rkatz/Documents/Codex/cf-gate-consolidation162/.factory/study209/targets/indico--indico/indico/core/config.py",
+              "line_start": 125,
+              "line_end": 129,
+              "sha256": "cbee340ef092bca8833378733eddcee897a38fa2ced59b92077e14d7973b00e3",
+              "observation": "Default configured temporary directory; actual deployed permissions are not supplied."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S209-007",
+      "repository": "indico/indico",
+      "source_commit": "682ed22f6da60d35fee6a089add8700b9663ac02",
+      "source_path": "indico/modules/events/export_test.py",
+      "source_sha256": "8f8510f0816556c1f95233fcd9c67b3231195e7b425421e012d4d67962adcb5d",
+      "claims": [
+        {
+          "code": "SECURITY_UNSAFE_YAML",
+          "column": 18,
+          "facts": {
+            "call": "yaml.unsafe_load"
+          },
+          "line": 81,
+          "message": "YAML is loaded without an explicit reviewed Loader.",
+          "path": "indico/modules/events/export_test.py",
+          "severity": "HIGH"
+        }
+      ],
+      "labels": [
+        {
+          "reviewer": "label-a",
+          "id": "S209-007",
+          "primitive": "TP",
+          "actionable": "FP",
+          "severity_justified": "NO",
+          "rationale": "indico/modules/events/export_test.py:81 calls yaml.unsafe_load on objects-1.yaml, confirming the primitive. The tar handle is opened at line 77 over the fresh BytesIO produced at lines 64-74 from fixed fixture event/session/contribution state. Lines 81-82 decode this self-generated object metadata for snapshot comparison. No untrusted YAML source is established at the claimed test sink, so HIGH and a security-motivated repair are unsupported.",
+          "repair": null,
+          "missing_facts": [],
+          "evidence": [
+            {
+              "source_path": "indico/modules/events/export_test.py",
+              "lines": [
+                [
+                  61,
+                  82
+                ]
+              ],
+              "observation": "Object YAML is read from the test's own export archive for snapshot comparison.",
+              "path": "C:\\Users\\rkatz\\Documents\\Codex\\cf-gate-consolidation162\\.factory\\study209\\targets\\indico--indico\\indico\\modules\\events\\export_test.py",
+              "sha256": "8f8510f0816556c1f95233fcd9c67b3231195e7b425421e012d4d67962adcb5d"
+            }
+          ]
+        },
+        {
+          "reviewer": "independent AI reviewer B",
+          "id": "S209-007",
+          "packet_sha256": "84e3a6dd65bb619fec9d07e2a3685c459bd1630c8c21bbf07de8990fbf129e4b",
+          "primitive": "TP",
+          "actionable": "FP",
+          "severity_justified": "NO",
+          "rationale": "export_test.py:81 calls yaml.unsafe_load on objects-1.yaml. The archive is the test's own in-memory output of export_event after creating a dummy event, session, and contributions at lines 61-78. export.py:310-314 produces object files with backend.dump. This is a real unrestricted YAML loader but an intentional fixture round-trip, with no attacker-created YAML reaching this call or established HIGH defect.",
+          "repair": "No security repair justified for this fixture assertion. Any restricted-loader change must account for the export format's data types.",
+          "missing_facts": [
+            "An attacker-controlled YAML-structure path reaching this specific test load, or use of this call in a deployed trust boundary."
+          ],
+          "evidence": [
+            {
+              "path": "C:/Users/rkatz/Documents/Codex/cf-gate-consolidation162/.factory/study209/targets/indico--indico/indico/modules/events/export_test.py",
+              "line_start": 61,
+              "line_end": 82,
+              "sha256": "8f8510f0816556c1f95233fcd9c67b3231195e7b425421e012d4d67962adcb5d",
+              "observation": "Constructed fixture archive and exact objects load."
+            },
+            {
+              "path": "C:/Users/rkatz/Documents/Codex/cf-gate-consolidation162/.factory/study209/targets/indico--indico/indico/modules/events/export.py",
+              "line_start": 69,
+              "line_end": 74,
+              "sha256": "8bb9437d709f39436216e795fd0c768f97c19e2e3d9cf873a95d4c495ec33d01",
+              "observation": "Dumping implementation."
+            },
+            {
+              "path": "C:/Users/rkatz/Documents/Codex/cf-gate-consolidation162/.factory/study209/targets/indico--indico/indico/modules/events/export.py",
+              "line_start": 296,
+              "line_end": 318,
+              "sha256": "8bb9437d709f39436216e795fd0c768f97c19e2e3d9cf873a95d4c495ec33d01",
+              "observation": "Object files are dumped by the exporter."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S209-008",
+      "repository": "indico/indico",
+      "source_commit": "682ed22f6da60d35fee6a089add8700b9663ac02",
+      "source_path": "indico/modules/events/export_test.py",
+      "source_sha256": "8f8510f0816556c1f95233fcd9c67b3231195e7b425421e012d4d67962adcb5d",
+      "claims": [
+        {
+          "code": "SECURITY_UNSAFE_YAML",
+          "column": 15,
+          "facts": {
+            "call": "yaml.unsafe_load"
+          },
+          "line": 100,
+          "message": "YAML is loaded without an explicit reviewed Loader.",
+          "path": "indico/modules/events/export_test.py",
+          "severity": "HIGH"
+        }
+      ],
+      "labels": [
+        {
+          "reviewer": "label-a",
+          "id": "S209-008",
+          "primitive": "TP",
+          "actionable": "FP",
+          "severity_justified": "NO",
+          "rationale": "indico/modules/events/export_test.py:100 calls yaml.unsafe_load(objects_file), confirming the primitive. Lines 91-98 create an in-memory export from dummy_event and decode its data.yaml; line 99 selects an object file named by that same generated metadata. The object-file indirection does not introduce an external input in this test's demonstrated flow. The loaded objects are then inspected as test assertions at lines 101-119. HIGH is not established by this intentional fixture flow.",
+          "repair": null,
+          "missing_facts": [],
+          "evidence": [
+            {
+              "source_path": "indico/modules/events/export_test.py",
+              "lines": [
+                [
+                  85,
+                  119
+                ]
+              ],
+              "observation": "Object YAML and its filename both originate from the same newly generated fixture export.",
+              "path": "C:\\Users\\rkatz\\Documents\\Codex\\cf-gate-consolidation162\\.factory\\study209\\targets\\indico--indico\\indico\\modules\\events\\export_test.py",
+              "sha256": "8f8510f0816556c1f95233fcd9c67b3231195e7b425421e012d4d67962adcb5d"
+            }
+          ]
+        },
+        {
+          "reviewer": "independent AI reviewer B",
+          "id": "S209-008",
+          "packet_sha256": "265f435c10f0ad46fd4c0990a55f5b814efe39285694483b5c2716205d843a3f",
+          "primitive": "TP",
+          "actionable": "FP",
+          "severity_justified": "NO",
+          "rationale": "export_test.py:100 calls yaml.unsafe_load on an archive object file named in data['object_files'][0]. That metadata and archive were just generated by export_event(dummy_event, f) on a fresh in-memory buffer in this test at lines 85-99. The producer at export.py:310-316 generates the object filename and corresponding metadata together. The data-dependent filename does not establish attacker-controlled YAML; the asserted HIGH defect is unsupported at this site.",
+          "repair": "No security repair justified for this fixture inspection. A data-only restricted loader could be evaluated as format hardening only after compatibility review.",
+          "missing_facts": [
+            "Evidence of attacker-authored metadata or YAML bytes reaching this exact load, beyond controlled fixture output."
+          ],
+          "evidence": [
+            {
+              "path": "C:/Users/rkatz/Documents/Codex/cf-gate-consolidation162/.factory/study209/targets/indico--indico/indico/modules/events/export_test.py",
+              "line_start": 85,
+              "line_end": 101,
+              "sha256": "8f8510f0816556c1f95233fcd9c67b3231195e7b425421e012d4d67962adcb5d",
+              "observation": "Fresh export, metadata load, object selection, and unrestricted loader."
+            },
+            {
+              "path": "C:/Users/rkatz/Documents/Codex/cf-gate-consolidation162/.factory/study209/targets/indico--indico/indico/modules/events/export.py",
+              "line_start": 69,
+              "line_end": 74,
+              "sha256": "8bb9437d709f39436216e795fd0c768f97c19e2e3d9cf873a95d4c495ec33d01",
+              "observation": "YAML generation uses dump."
+            },
+            {
+              "path": "C:/Users/rkatz/Documents/Codex/cf-gate-consolidation162/.factory/study209/targets/indico--indico/indico/modules/events/export.py",
+              "line_start": 310,
+              "line_end": 318,
+              "sha256": "8bb9437d709f39436216e795fd0c768f97c19e2e3d9cf873a95d4c495ec33d01",
+              "observation": "Object filename and metadata are generated together."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S209-009",
+      "repository": "getsentry/sentry",
+      "source_commit": "8334b09671aef9cfb2c0fd25b0300a2812377bdf",
+      "source_path": "tests/sentry/seer/endpoints/test_superuser_viewer_context.py",
+      "source_sha256": "298949b5458c99097453a0cba966c9a8733e9dd20e1f6585c6a6325d4394e271",
+      "claims": [
+        {
+          "code": "SECURITY_HARDCODED_SECRET",
+          "column": 0,
+          "facts": {
+            "name": "SECRET"
+          },
+          "line": 15,
+          "message": "Credential-like material is assigned as a source literal.",
+          "path": "tests/sentry/seer/endpoints/test_superuser_viewer_context.py",
+          "severity": "CRITICAL"
+        }
+      ],
+      "labels": [
+        {
+          "reviewer": "label-a",
+          "id": "S209-009",
+          "primitive": "TP",
+          "actionable": "FP",
+          "severity_justified": "NO",
+          "rationale": "tests/sentry/seer/endpoints/test_superuser_viewer_context.py:15 contains a literal signing secret; lines 26-37 and 77-78 use it to sign viewer-context credentials. Lines 18-24 explicitly override SEER_API_SHARED_SECRET for the APITestCase and create its employee/organization fixtures. Lines 42-60 patch outbound calls and lines 106-121 exercise access-control behavior using APIClient. This establishes an intentional test signing key, with no demonstrated production key exposure; CRITICAL and rotation of a real credential are unsupported.",
+          "repair": null,
+          "missing_facts": [],
+          "evidence": [
+            {
+              "source_path": "tests/sentry/seer/endpoints/test_superuser_viewer_context.py",
+              "lines": [
+                [
+                  15,
+                  37
+                ],
+                [
+                  42,
+                  60
+                ],
+                [
+                  77,
+                  85
+                ],
+                [
+                  106,
+                  121
+                ]
+              ],
+              "observation": "Test-scoped setting override and signing of local API-client test credentials.",
+              "path": "C:\\Users\\rkatz\\Documents\\Codex\\cf-gate-consolidation162\\.factory\\study209\\targets\\getsentry--sentry\\tests\\sentry\\seer\\endpoints\\test_superuser_viewer_context.py",
+              "sha256": "298949b5458c99097453a0cba966c9a8733e9dd20e1f6585c6a6325d4394e271"
+            }
+          ]
+        },
+        {
+          "reviewer": "independent AI reviewer B",
+          "id": "S209-009",
+          "packet_sha256": "ef1df59922e4678e2aebd4220e3eedd269e278bdfbb18b7c6a275f7c627e68f2",
+          "primitive": "TP",
+          "actionable": "FP",
+          "severity_justified": "NO",
+          "rationale": "SECRET at test_superuser_viewer_context.py:15 is literal signing-key material: it is passed as key=SECRET to encode_viewer_context at lines 26-36. The same value is installed via override_settings on this APITestCase at lines 18-24, and the test creates its own employee and organization. Calls use the test APIClient and mock the outbound chat request at lines 42-60. This establishes a synthetic test signing key, not a production credential leak; CRITICAL severity is unsupported.",
+          "repair": "No production secret rotation or removal justified. Preserve the fixture key unless evidence shows a deployed configuration reuses it.",
+          "missing_facts": [
+            "A deployed configuration or account accepting this fixture key would be needed to support the claimed security defect; none is shown."
+          ],
+          "evidence": [
+            {
+              "path": "C:/Users/rkatz/Documents/Codex/cf-gate-consolidation162/.factory/study209/targets/getsentry--sentry/tests/sentry/seer/endpoints/test_superuser_viewer_context.py",
+              "line_start": 15,
+              "line_end": 36,
+              "sha256": "298949b5458c99097453a0cba966c9a8733e9dd20e1f6585c6a6325d4394e271",
+              "observation": "Literal key, scoped settings override, created test entities, and signing use."
+            },
+            {
+              "path": "C:/Users/rkatz/Documents/Codex/cf-gate-consolidation162/.factory/study209/targets/getsentry--sentry/tests/sentry/seer/endpoints/test_superuser_viewer_context.py",
+              "line_start": 42,
+              "line_end": 60,
+              "sha256": "298949b5458c99097453a0cba966c9a8733e9dd20e1f6585c6a6325d4394e271",
+              "observation": "Outbound service request mocked in test flow."
+            },
+            {
+              "path": "C:/Users/rkatz/Documents/Codex/cf-gate-consolidation162/.factory/study209/targets/getsentry--sentry/tests/sentry/seer/endpoints/test_superuser_viewer_context.py",
+              "line_start": 94,
+              "line_end": 121,
+              "sha256": "298949b5458c99097453a0cba966c9a8733e9dd20e1f6585c6a6325d4394e271",
+              "observation": "Test client exercises access denial and expiry cases."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S209-010",
+      "repository": "getsentry/sentry",
+      "source_commit": "8334b09671aef9cfb2c0fd25b0300a2812377bdf",
+      "source_path": "tests/sentry/integrations/jira/test_installed.py",
+      "source_sha256": "b16c8124277b30af4b2d8238659fd6c587378b0ab5102923b2fcf13e129c151d",
+      "claims": [
+        {
+          "code": "SECURITY_HARDCODED_SECRET",
+          "column": 4,
+          "facts": {
+            "name": "shared_secret"
+          },
+          "line": 37,
+          "message": "Credential-like material is assigned as a source literal.",
+          "path": "tests/sentry/integrations/jira/test_installed.py",
+          "severity": "CRITICAL"
+        }
+      ],
+      "labels": [
+        {
+          "reviewer": "label-a",
+          "id": "S209-010",
+          "primitive": "TP",
+          "actionable": "FP",
+          "severity_justified": "NO",
+          "rationale": "tests/sentry/integrations/jira/test_installed.py:37 assigns a literal to shared_secret and lines 64-70 place it into the sharedSecret field of a simulated Jira installation body, confirming credential material in the narrow sense. Lines 31-38 define an APITestCase; lines 73-78 stub the key CDN response, and lines 223-235 use that stubbed installation request to assert a test Integration becomes ACTIVE. The visible use is intentional fixture data, not a leaked live Jira secret. CRITICAL is not justified.",
+          "repair": null,
+          "missing_facts": [],
+          "evidence": [
+            {
+              "source_path": "tests/sentry/integrations/jira/test_installed.py",
+              "lines": [
+                [
+                  31,
+                  38
+                ],
+                [
+                  61,
+                  78
+                ],
+                [
+                  223,
+                  235
+                ]
+              ],
+              "observation": "Literal sharedSecret is used in mocked installation requests within an API test.",
+              "path": "C:\\Users\\rkatz\\Documents\\Codex\\cf-gate-consolidation162\\.factory\\study209\\targets\\getsentry--sentry\\tests\\sentry\\integrations\\jira\\test_installed.py",
+              "sha256": "b16c8124277b30af4b2d8238659fd6c587378b0ab5102923b2fcf13e129c151d"
+            }
+          ]
+        },
+        {
+          "reviewer": "independent AI reviewer B",
+          "id": "S209-010",
+          "packet_sha256": "39c1c1ecb26ed17f77271592896960998dcac104660f43e19860c27e5a3ebe5c",
+          "primitive": "TP",
+          "actionable": "FP",
+          "severity_justified": "NO",
+          "rationale": "shared_secret='garden' at test_installed.py:37 is literal credential material: body() places it in sharedSecret at lines 64-70. The consumer is an APITestCase using self.get_success_response and a mocked key-fetch response at lines 73-78 and 223-235, with a test signing key imported from tests.sentry.utils.test_jwt. These data flows establish a test installation payload, not hardcoded production authentication or exposure of an existing Jira tenant credential. CRITICAL severity is not justified.",
+          "repair": "No credential rotation or replacement with environment secrets justified for this synthetic payload. Keep actual deployment secrets separate.",
+          "missing_facts": [
+            "Evidence that the value authenticates a deployed tenant or is reused outside test-created integration data."
+          ],
+          "evidence": [
+            {
+              "path": "C:/Users/rkatz/Documents/Codex/cf-gate-consolidation162/.factory/study209/targets/getsentry--sentry/tests/sentry/integrations/jira/test_installed.py",
+              "line_start": 25,
+              "line_end": 38,
+              "sha256": "b16c8124277b30af4b2d8238659fd6c587378b0ab5102923b2fcf13e129c151d",
+              "observation": "Test class and literal shared-secret field."
+            },
+            {
+              "path": "C:/Users/rkatz/Documents/Codex/cf-gate-consolidation162/.factory/study209/targets/getsentry--sentry/tests/sentry/integrations/jira/test_installed.py",
+              "line_start": 61,
+              "line_end": 78,
+              "sha256": "b16c8124277b30af4b2d8238659fd6c587378b0ab5102923b2fcf13e129c151d",
+              "observation": "Test private-key reference, constructed sharedSecret payload, mocked key response."
+            },
+            {
+              "path": "C:/Users/rkatz/Documents/Codex/cf-gate-consolidation162/.factory/study209/targets/getsentry--sentry/tests/sentry/integrations/jira/test_installed.py",
+              "line_start": 223,
+              "line_end": 235,
+              "sha256": "b16c8124277b30af4b2d8238659fd6c587378b0ab5102923b2fcf13e129c151d",
+              "observation": "Test request creates and inspects its integration."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "S209-011",
+      "repository": "getsentry/sentry",
+      "source_commit": "8334b09671aef9cfb2c0fd25b0300a2812377bdf",
+      "source_path": "tests/sentry/users/api/endpoints/test_user_regions.py",
+      "source_sha256": "35e0cc86f1c2fdea0ba58e11a2bab40f5a9df471fb15778fa0afb906f82a8376",
+      "claims": [
+        {
+          "code": "SECURITY_HARDCODED_SECRET",
+          "column": 0,
+          "facts": {
+            "name": "SECRET"
+          },
+          "line": 13,
+          "message": "Credential-like material is assigned as a source literal.",
+          "path": "tests/sentry/users/api/endpoints/test_user_regions.py",
+          "severity": "CRITICAL"
+        }
+      ],
+      "labels": [
+        {
+          "reviewer": "label-a",
+          "id": "S209-011",
+          "primitive": "TP",
+          "actionable": "FP",
+          "severity_justified": "NO",
+          "rationale": "tests/sentry/users/api/endpoints/test_user_regions.py:13 contains a literal shared signing secret. Lines 108-117 override SEER_API_SHARED_SECRET for one test and create an agent token for a fixture user and organization; lines 119-125 send the token to the local test client and assert its request is rejected with 403. Lines 9-12 define testserver cell URLs and lines 24-30 establish APITestCase-created users. The credential material is deliberately introduced for this test and does not establish a live secret exposure or CRITICAL defect.",
+          "repair": null,
+          "missing_facts": [],
+          "evidence": [
+            {
+              "source_path": "tests/sentry/users/api/endpoints/test_user_regions.py",
+              "lines": [
+                [
+                  9,
+                  13
+                ],
+                [
+                  24,
+                  30
+                ],
+                [
+                  108,
+                  125
+                ]
+              ],
+              "observation": "Method-scoped shared-secret override signs an agent token used only in a fixture-based denial test.",
+              "path": "C:\\Users\\rkatz\\Documents\\Codex\\cf-gate-consolidation162\\.factory\\study209\\targets\\getsentry--sentry\\tests\\sentry\\users\\api\\endpoints\\test_user_regions.py",
+              "sha256": "35e0cc86f1c2fdea0ba58e11a2bab40f5a9df471fb15778fa0afb906f82a8376"
+            }
+          ]
+        },
+        {
+          "reviewer": "independent AI reviewer B",
+          "id": "S209-011",
+          "packet_sha256": "e223b86f2b9f27e1eef6f1261081619923058c68c5c51d9aad366a9f9ff6457a",
+          "primitive": "TP",
+          "actionable": "FP",
+          "severity_justified": "NO",
+          "rationale": "SECRET at test_user_regions.py:13 is literal credential material: override_settings installs it as SEER_API_SHARED_SECRET at line 109 and the test signs an agent token at lines 112-117. The APITestCase creates the user and organization at lines 28-30 and 111 and submits the token through the test response helper at lines 119-125. Its role is a scoped synthetic signing fixture exercising a denied request; no production credential exposure or CRITICAL defect is established.",
+          "repair": "No production credential rotation justified. Retain the scoped test signing fixture unless deployed reuse is demonstrated.",
+          "missing_facts": [
+            "Evidence that a deployed service uses this test key or imports this fixture as production configuration."
+          ],
+          "evidence": [
+            {
+              "path": "C:/Users/rkatz/Documents/Codex/cf-gate-consolidation162/.factory/study209/targets/getsentry--sentry/tests/sentry/users/api/endpoints/test_user_regions.py",
+              "line_start": 9,
+              "line_end": 30,
+              "sha256": "35e0cc86f1c2fdea0ba58e11a2bab40f5a9df471fb15778fa0afb906f82a8376",
+              "observation": "Test cells, literal secret, APITestCase, and test-created user."
+            },
+            {
+              "path": "C:/Users/rkatz/Documents/Codex/cf-gate-consolidation162/.factory/study209/targets/getsentry--sentry/tests/sentry/users/api/endpoints/test_user_regions.py",
+              "line_start": 108,
+              "line_end": 125,
+              "sha256": "35e0cc86f1c2fdea0ba58e11a2bab40f5a9df471fb15778fa0afb906f82a8376",
+              "observation": "Settings override, generated token, test request, and denied response assertion."
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "preregistration_record": {
+    "schema": "factory.paired-heldout.preregistered.v1",
+    "created_at": "2026-10-22T00:20:46.109916+00:00",
+    "predictions_generated": false,
+    "labels_seen": false,
+    "base_protocol": {
+      "path": ".factory/study209/preregistered/protocol-source.md",
+      "sha256": "2470dfb29026fb0f64019a6a7a6b492b0a6a165b52e241a1628493f0a80d2aec"
+    },
+    "prospective_clarifications": {
+      "precedence": "This frozen machine-readable record supersedes stale UNFROZEN and complete-span wording in base_protocol before any scanner evaluation.",
+      "reason": "Native scanner blocks entire repositories over460sources; prospective unbiased file sampling retains native production cap. Native alert schema guarantees a start coordinate, not a complete end span.",
+      "scope": "frozen bounded file sample; no complete-repository, recall, production-safety, human-validation or release-approval claim",
+      "selection": "fixed source paths before predictions; no rule/content/severity tuning",
+      "unit": [
+        "repository",
+        "rule_code",
+        "relative_posix_path",
+        "start_line",
+        "start_column"
+      ]
+    },
+    "cohort_manifest": {
+      "path": ".factory/study209/projection-manifest.json",
+      "sha256": "28164d69845dfa9eb036c1139c585d659434babf2ca24dfd8f592af3c50f41c9",
+      "cohort_inventory_digest": "92b48cbb61b8747fe2a7d44348b50fd91e3be9f8a553fc6caa1b7420640d5150"
+    },
+    "scanner_manifest": {
+      "path": ".factory/study209/scanners/freeze.json",
+      "sha256": "c9f0cc44846c4d4b3e30f02e6112a2a4399868dcbe8d1723389964ade559248b",
+      "commits": {
+        "baseline": "9886fbc88bce85d8572f745ecd595c2dfd809151",
+        "candidate": "07f0bdd3ca968cb90d54d925d6471bba5e8e5e01"
+      }
+    },
+    "profile": {
+      "cache_enabled": false,
+      "source_cap": 460,
+      "target_execution": false,
+      "concurrent_workers": 2,
+      "wall_budget_seconds_per_scan": 180,
+      "timeout_policy": "kill only the budget-exceeded scanner subprocess; preserve errors/partiallogs and report incomplete, noautomaticretry orreplacement"
+    },
+    "selection": {
+      "primary_rules": "SECURITY_*",
+      "baseline_candidate_union": true,
+      "exact_key": "compactUTF8JSON(repository,rule,path,line,column)",
+      "max_label_units": 100,
+      "rank": "SHA256(UTF8(study209-v1+NUL+cohort_inventory_digest+NUL+unit_key)), tie unit_key",
+      "invalid_start": "separate unresolved by scanner and raw ordinal; not silently collapsed"
+    },
+    "labels": {
+      "independent_ai_instances": 2,
+      "human": false,
+      "blinded_to": [
+        "scanner_version",
+        "presence_lane",
+        "other_labels",
+        "target_score",
+        "implementation_rationale"
+      ],
+      "primitive": [
+        "TP",
+        "FP",
+        "UNCLEAR"
+      ],
+      "actionable": [
+        "TP",
+        "FP",
+        "UNCLEAR"
+      ],
+      "actionable_TP_requires": [
+        "sourcecontextsupportsdefect",
+        "severityjustified",
+        "concretejustifiedrepair"
+      ],
+      "disagreements": "UNCLEAR while original labels preserved"
+    },
+    "analysis": {
+      "precision": "TP/(TP+FP)",
+      "unclear_inclusive": "TP/(TP+FP+UNCLEAR)",
+      "confidence": "Wilson95%,z=1.959963984540054",
+      "paired_delta": "candidate minus baseline on same sampled union and version presence",
+      "tp_retention": "separate from precision and recall",
+      "publication_target": {
+        "minimum_candidate_decided": 30,
+        "actionable_precision": 0.8
+      },
+      "failures": "all four selected members, including courtlistener404, reported; allerrorsandmissingcoverageexplicit; no unqualified completion on missingevidence"
+    }
+  },
+  "per_repository_execution": [
+    {
+      "repository": "getsentry/sentry",
+      "state": "FROZEN_PROJECTION",
+      "commit": "8334b09671aef9cfb2c0fd25b0300a2812377bdf",
+      "original_python_files": 8353,
+      "sampled_python_files": 400,
+      "projection_python_files": 460,
+      "error": null
+    },
+    {
+      "repository": "indico/indico",
+      "state": "FROZEN_PROJECTION",
+      "commit": "682ed22f6da60d35fee6a089add8700b9663ac02",
+      "original_python_files": 1299,
+      "sampled_python_files": 400,
+      "projection_python_files": 460,
+      "error": null
+    },
+    {
+      "repository": "doccano/doccano",
+      "state": "FROZEN_PROJECTION",
+      "commit": "ab6b765ea326d07b2b806a4280cd097565e62321",
+      "original_python_files": 315,
+      "sampled_python_files": 315,
+      "projection_python_files": 315,
+      "error": null
+    },
+    {
+      "repository": "courtlistener/courtlistener",
+      "state": "SOURCE_CAPTURE_ERROR",
+      "commit": null,
+      "original_python_files": null,
+      "sampled_python_files": null,
+      "projection_python_files": null,
+      "error": {
+        "repository": "courtlistener/courtlistener",
+        "phase": "REF_RESOLUTION",
+        "error": "Response status code does not indicate success: 404 (Not Found).",
+        "at_utc": "2026-10-21T23:57:20.3806185Z"
+      }
+    }
+  ],
+  "scan_observations": [
+    {
+      "repository": "doccano/doccano",
+      "lane": "baseline",
+      "state": "COMPLETE",
+      "controller_seconds": 15.411569299991243,
+      "files_scanned": 315,
+      "raw_findings": 432,
+      "raw_security_findings": 0,
+      "source_inventory_sha256": "ed2efe02200314d83a439cbf9a09e022e560b77c07fbde6a2f213c5340873237",
+      "raw_report_sha256": "916db436fb3daf747498760416fe7d29da8ad5cbcc1963da9cb4e5637d1bb5db",
+      "target_modules_loaded": []
+    },
+    {
+      "repository": "doccano/doccano",
+      "lane": "candidate",
+      "state": "COMPLETE",
+      "controller_seconds": 22.0073217000172,
+      "files_scanned": 315,
+      "raw_findings": 432,
+      "raw_security_findings": 0,
+      "source_inventory_sha256": "ed2efe02200314d83a439cbf9a09e022e560b77c07fbde6a2f213c5340873237",
+      "raw_report_sha256": "ef1348977eb9ae6a827cefa494829410f194212bd0e051200e7cad5614f4812c",
+      "target_modules_loaded": []
+    },
+    {
+      "repository": "getsentry/sentry",
+      "lane": "candidate",
+      "state": "COMPLETE",
+      "controller_seconds": 46.56133660001797,
+      "files_scanned": 460,
+      "raw_findings": 43,
+      "raw_security_findings": 6,
+      "source_inventory_sha256": "3f6f8e336fbf8c0e1cb7ceb30c6989fa7ccd9c6c40b2eb06c2a9a864cf31ecd9",
+      "raw_report_sha256": "290a268797e5393a10262165d3836510eb0cba77c86d6a3fbb36506b66caf300",
+      "target_modules_loaded": []
+    },
+    {
+      "repository": "indico/indico",
+      "lane": "baseline",
+      "state": "COMPLETE",
+      "controller_seconds": 60.16253780000261,
+      "files_scanned": 457,
+      "raw_findings": 61,
+      "raw_security_findings": 5,
+      "source_inventory_sha256": "15ae56c80898b1b31e68f385e3e18a5ee558e478df602456f912573cb065e454",
+      "raw_report_sha256": "920fc3977ff2a786cf85b92c03cf76079611e1c3835f5110d9f2884b1b8c3411",
+      "target_modules_loaded": []
+    },
+    {
+      "repository": "getsentry/sentry",
+      "lane": "baseline",
+      "state": "COMPLETE",
+      "controller_seconds": 111.27894339998602,
+      "files_scanned": 460,
+      "raw_findings": 43,
+      "raw_security_findings": 6,
+      "source_inventory_sha256": "3f6f8e336fbf8c0e1cb7ceb30c6989fa7ccd9c6c40b2eb06c2a9a864cf31ecd9",
+      "raw_report_sha256": "676d919d0461a71a2b7667231aca53c34fec63203fe88235b9a822f321a84106",
+      "target_modules_loaded": []
+    },
+    {
+      "repository": "indico/indico",
+      "lane": "candidate",
+      "state": "COMPLETE",
+      "controller_seconds": 62.38486639998155,
+      "files_scanned": 457,
+      "raw_findings": 61,
+      "raw_security_findings": 5,
+      "source_inventory_sha256": "15ae56c80898b1b31e68f385e3e18a5ee558e478df602456f912573cb065e454",
+      "raw_report_sha256": "6ad76944d9cebf965d5402b684dc84e1aa31a0ff33eb82383ae877f81d7e9133",
+      "target_modules_loaded": []
+    }
+  ]
+}
