@@ -67,6 +67,22 @@ def add_parser(sub: Any) -> None:
     )
     code_audit.add_argument("--json", action="store_true")
     code_audit.add_argument(
+        "--full-repository",
+        action="store_true",
+        help="use the separate bounded full-repository source profile (security only)",
+    )
+    code_audit.add_argument(
+        "--resume",
+        action="store_true",
+        help="resume and revalidate the full-repository checkpoint (requires --full-repository)",
+    )
+    code_audit.add_argument(
+        "--max-batches",
+        type=int,
+        default=1,
+        help="maximum 460-source batches for this invocation (full-repository only)",
+    )
+    code_audit.add_argument(
         "--oracle-evidence",
         help="workspace-relative DSSE per-test mutation attestation (security only)",
     )
@@ -149,7 +165,118 @@ def _security_receipt_error_message(error: Exception) -> str:
     return str(error)
 
 
+def _security_mode_option_error(args: Any) -> str | None:
+    """Validate opt-in full-profile controls before selecting an engine."""
+    full_repository = bool(getattr(args, "full_repository", False))
+    resume = bool(getattr(args, "resume", False))
+    max_batches = getattr(args, "max_batches", 1)
+    if resume and not full_repository:
+        return "--resume requires --full-repository"
+    if (
+        not isinstance(max_batches, int)
+        or isinstance(max_batches, bool)
+        or not 1 <= max_batches <= 64
+        or (max_batches != 1 and not full_repository)
+    ):
+        return "--max-batches must be 1..64 and requires --full-repository"
+    return None
+
+
+def _full_security_unsupported_options(args: Any) -> bool:
+    fields = (
+        "out",
+        "baseline",
+        "oracle_evidence",
+        "oracle_trust_root",
+        "oracle_trust_sha256",
+        "oracle_environment_sha256",
+        "tenant_read_call",
+        "tenant_read_binding",
+    )
+    return any(getattr(args, field, None) for field in fields) or (
+        getattr(args, "tenant_contract", ".factory/tenant-read-contract.json")
+        != ".factory/tenant-read-contract.json"
+    )
+
+
+def _print_full_security(args: Any, result: dict) -> None:
+    """Keep native findings visible alongside source-accounting progress."""
+    if args.json:
+        print(json.dumps(result, indent=2, sort_keys=True))
+        return
+    print(
+        f"Full repository security profile: {result['source_accounting_state']} ({result['files_audited']}/{result['files_discovered']} audited)"
+    )
+    for row in result.get("primary_results", []):
+        for finding in row.get("findings", []):
+            print(
+                f"{finding['severity']} {finding['code']}: {finding['path']}:{finding['line']} — {finding['message']}"
+            )
+    print("Semantic coverage: INCOMPLETE; global consumer closure is not verified.")
+
+
+def _run_full_security(args: Any) -> int:
+    from .deep_audit_io import RuntimeAuditError, full_repository_scan
+
+    if _full_security_unsupported_options(args):
+        print(
+            json.dumps(
+                {
+                    "state": "INVALID",
+                    "code": "E_FULL_REPOSITORY_OPTIONS",
+                    "message": "full-repository mode does not accept legacy receipt, tenant-read, or oracle options",
+                }
+            ),
+            file=sys.stderr,
+        )
+        return 2
+    try:
+        result = full_repository_scan(
+            Path(args.root), resume=getattr(args, "resume", False)
+        )
+        completed_batches = 1
+        max_batches = getattr(args, "max_batches", 1)
+        while result["pending_count"] and completed_batches < max_batches:
+            result = full_repository_scan(Path(args.root), resume=True)
+            completed_batches += 1
+        result["invocation"] = {
+            "batches": completed_batches,
+            "max_batches": max_batches,
+            "batch_primary_limit": 460,
+        }
+    except (RuntimeAuditError, OSError, ValueError) as error:
+        print(
+            json.dumps(
+                {
+                    "state": "INVALID",
+                    "code": getattr(error, "code", "E_FULL_REPOSITORY"),
+                    "message": str(error),
+                }
+            ),
+            file=sys.stderr,
+        )
+        return 2
+    _print_full_security(args, result)
+    # File accounting is not a clean security result while semantic coverage is incomplete.
+    return 1
+
+
 def _run_security(args: Any) -> int:
+    if error := _security_mode_option_error(args):
+        print(
+            json.dumps(
+                {
+                    "state": "INVALID",
+                    "code": "E_FULL_REPOSITORY_OPTIONS",
+                    "message": error,
+                }
+            ),
+            file=sys.stderr,
+        )
+        return 2
+    if getattr(args, "full_repository", False):
+        return _run_full_security(args)
+
     from .review_audits import (
         ReviewAuditError,
         _seal_security_scan,
@@ -296,6 +423,23 @@ def _run_code(args: Any) -> int:
 def run(args: Any) -> int:
     """Run one audit command, importing the engine only after selection."""
     from .review_audits import ReviewAuditError
+
+    if args.tool != "security" and (
+        getattr(args, "full_repository", False)
+        or getattr(args, "resume", False)
+        or getattr(args, "max_batches", 1) != 1
+    ):
+        print(
+            json.dumps(
+                {
+                    "state": "INVALID",
+                    "code": "E_FULL_REPOSITORY_OPTIONS",
+                    "message": "full-repository options are valid only for audit security",
+                }
+            ),
+            file=sys.stderr,
+        )
+        return 2
 
     handlers = {
         "evals": _run_evals,

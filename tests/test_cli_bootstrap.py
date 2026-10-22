@@ -449,3 +449,93 @@ def test_issues_routes_named_linear_and_explicit_jira_expert(monkeypatch):
     args.provider, args.connection, args.expert_token = "jira", None, True
     assert cli._run_issues(args) == 0
     assert selected == ["work"]
+
+
+def test_full_repository_security_cli_resumes_into_distinct_schema(
+    tmp_path, monkeypatch, capsys
+):
+    from factoryline import deep_audit_io
+    from factoryline import review_audits, mission_control_status
+    from factoryline.cli import main as cli_main
+
+    calls = []
+    reports = [
+        {
+            "schema": deep_audit_io.FULL_REPOSITORY_SCAN_SCHEMA,
+            "source_accounting_state": "PENDING",
+            "semantic_coverage": "INCOMPLETE",
+            "pending_count": 1,
+            "files_audited": 1,
+            "files_discovered": 2,
+        },
+        {
+            "schema": deep_audit_io.FULL_REPOSITORY_SCAN_SCHEMA,
+            "source_accounting_state": "COMPLETE",
+            "semantic_coverage": "INCOMPLETE",
+            "pending_count": 0,
+            "files_audited": 2,
+            "files_discovered": 2,
+        },
+    ]
+
+    def scan(root, *, resume=False):
+        calls.append(resume)
+        return reports[len(calls) - 1]
+
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("full-repository mode must bypass the legacy receipt path")
+
+    monkeypatch.setattr(deep_audit_io, "full_repository_scan", scan)
+    monkeypatch.setattr(review_audits, "security_scan", forbidden)
+    monkeypatch.setattr(
+        mission_control_status, "write_security_scan_receipt", forbidden
+    )
+    assert (
+        cli_main(
+            [
+                "audit",
+                "security",
+                "--root",
+                str(tmp_path),
+                "--full-repository",
+                "--max-batches",
+                "2",
+                "--json",
+            ]
+        )
+        == 1
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert calls == [False, True]
+    assert payload["schema"] == "factory.full-repository-scan.v1"
+    assert payload["invocation"]["batches"] == 2
+    assert payload["semantic_coverage"] == "INCOMPLETE"
+
+
+def test_full_repository_security_cli_rejects_legacy_oracle_options(
+    tmp_path, monkeypatch, capsys
+):
+    from factoryline import deep_audit_io
+    from factoryline.cli import main as cli_main
+
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("invalid options must fail before scanning")
+
+    monkeypatch.setattr(deep_audit_io, "full_repository_scan", forbidden)
+    assert (
+        cli_main(
+            [
+                "audit",
+                "security",
+                "--root",
+                str(tmp_path),
+                "--full-repository",
+                "--oracle-evidence",
+                "evidence.json",
+                "--json",
+            ]
+        )
+        == 2
+    )
+    payload = json.loads(capsys.readouterr().err)
+    assert payload["code"] == "E_FULL_REPOSITORY_OPTIONS"

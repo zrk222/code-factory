@@ -108,9 +108,45 @@ not evidence of an improved precision percentage. The final frozen candidate
 has independent ECC PASS, 173 passing tests, complete 12-repository replay,
 13/13 historical positive controls and healthy architecture (429/133).
 Keep the original errors and label disagreements without relabeling away the
-failure. No second fresh study has run. Before a successor, resolve the highest-yield
-families using general source/consumer models, stabilize the candidate, and
-preregister a new untouched cohort under the boundaries below.
+failure. Two supplementary preregistered studies have now run on frozen baseline
+9886fbc and candidate 07f0bdd. Study209 produced 0 TP / 10 FP / 1 unclear: 0% actionable
+precision, Wilson 95% interval 0–27.75%. Study210 produced 1 TP / 10 FP / 22 unclear:
+9.09% on 11 decided, Wilson 95% interval 1.62–37.74%. Both scanner versions emitted identical selected alerts;
+the paired precision gain is zero. Two blinded AI contexts labeled each panel;
+these are not human validation and neither reaches 30 decided. The original A6
+qualification below remains unmet. Preserve every capture/exclusion/parse gap.
+These panels are now exposed; subsequent label-informed replays are development.
+
+At 917c156, the shared consumer index accounts for all 410 frozen Pyload sources
+without exhausting its unchanged numeric limits. Semantic-node accounting omits
+only standalone AST marker leaves; full source ASTs and mutation checks remain.
+The 8-repository replay leaves all 44 security claims and severities unchanged:
+zero measured precision gain. Full semantic closure remains incomplete.
+
+The owner selected full eligible-repository coverage for accuracy and user value.
+Complete the separate specs/full-source-coverage211.md and
+plans/full-source-coverage211.md profile. The current 8-repository source captures
+contain 11,714 Python files; only 2,772 were projected and 2,769 native-discovered in the
+earlier panels. Six parse failures remain visible. Consolidate shared inventory,
+dependency and analysis indexes; bounded/resumable execution must account for
+every eligible file. Missing cross-batch consumer closure cannot clear an alert.
+Keep full-profile results separate from the original frozen sample metrics.
+
+The source-coverage implementation is locally qualified: 583/583 eligible Pyload
+Python files audited in two batches in 48.19 seconds, no pending files or
+parse/read/size errors, 1,332 scoped tests passed, and 13/13 historical positive
+controls retained at their original severity. Architecture remains healthy at
+429 Python files / 133 core modules. Evidence is recorded in
+docs/evidence/full-source-coverage211.json. This completes the bounded source
+accounting slice only; semantic consumer closure and actionable precision remain
+incomplete. Continue the declaration-scoped credential-role repair, then score
+the changed outputs without altering the original frozen panels. The current
+comparable actionable result remains 1 TP / 10 FP / 22 unclear (9.09% decided
+precision); no gain follows from the file-coverage result.
+
+Before a successor, resolve the highest-yield families using general source and
+consumer models, stabilize the candidate, and preregister a new untouched cohort
+under the boundaries below.
 
 Use a non-tuning evaluation custodian. Freeze the rule/maturity scope, labeling
 rubric and acceptance thresholds before viewing outputs: at least 30 decided

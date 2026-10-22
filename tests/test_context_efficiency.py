@@ -3926,3 +3926,208 @@ def test_protocol_context_uses_invocation_resolver_with_standalone_fallback(
     assert calls == [source, source]
     with pytest.raises(ValueError, match="outside its captured generation"):
         resolver(tmp_path, source, ast.parse(source.read_text()), eligible)
+
+
+def test_full_repository_accounts_461_sources_and_preserves_cross_batch_risk(
+    tmp_path, monkeypatch
+):
+    from factoryline import context_efficiency as engine
+    from factoryline.deep_audit_io import digest, full_repository_scan
+
+    (tmp_path / "a_risk.py").write_text('API_KEY = "risk-literal"\n', encoding="utf-8")
+    for index in range(459):
+        (tmp_path / f"m{index:03}.py").write_text(
+            f"VALUE_{index} = {index}\n", encoding="utf-8"
+        )
+    (tmp_path / "z_consumer.py").write_text("print(API_KEY)\n", encoding="utf-8")
+    original = engine._scan_security_source
+    contexts = []
+
+    def observe(*args, **kwargs):
+        contexts.append(args[4] if len(args) > 4 else kwargs.get("oracle_context"))
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(engine, "_scan_security_source", observe)
+    first = full_repository_scan(tmp_path)
+    assert first["batch"]["primary_results"] == 460
+    assert first["pending_count"] == 1
+    assert first["source_accounting_state"] == "PENDING"
+    assert first["audit_coverage"]["audit_rate"] < 1
+    final = full_repository_scan(tmp_path, resume=True)
+    paths = [item["path"] for item in final["primary_results"]]
+    assert len(paths) == len(set(paths)) == 461
+    assert len(final["inventory"]) == 461
+    assert digest(final["inventory"]) == final["inventory_sha256"]
+    assert final["pending_count"] == 0
+    assert final["files_audited"] == 461
+    assert final["audit_coverage"]["audit_rate"] == 1
+    assert final["batch"]["primary_results"] == 1
+    assert final["batch"]["checkpoint_cache_hit"] is True
+    assert final["batch"]["checkpoint_revalidated"] == 0
+    assert final["semantic_coverage"] == "INCOMPLETE"
+    assert final["global_consumer_closure_verified"] is False
+    assert final["target_execution"] is False
+    assert all(context is None for context in contexts)
+    risk = [
+        finding
+        for row in final["primary_results"]
+        for finding in row["findings"]
+        if finding["code"] == "SECURITY_HARDCODED_SECRET"
+    ]
+    assert risk and risk[0]["severity"] == "CRITICAL"
+    repeat = full_repository_scan(tmp_path, resume=True)
+    assert repeat["batch"]["primary_results"] == 0
+    assert repeat["scan_sha256"] == final["scan_sha256"]
+
+
+def test_full_repository_syntax_error_is_accounted_but_not_audited(tmp_path):
+    from factoryline.deep_audit_io import full_repository_scan
+
+    (tmp_path / "valid.py").write_text("VALUE = 1\n", encoding="utf-8")
+    (tmp_path / "z_invalid.py").write_text("def broken(:\n", encoding="utf-8")
+    result = full_repository_scan(tmp_path)
+    assert result["files_discovered"] == 2
+    assert result["files_audited"] == 1
+    assert result["syntax_errors"] == 1
+    assert result["audit_coverage"]["audit_rate"] == 0.5
+    assert result["audit_coverage"]["complete"] is False
+    assert result["semantic_coverage"] == "INCOMPLETE"
+
+
+def test_full_repository_resume_rejects_source_and_configuration_drift(tmp_path):
+    from factoryline.deep_audit_io import RuntimeAuditError, full_repository_scan
+
+    source = tmp_path / "module.py"
+    source.write_text("VALUE = 1\n", encoding="utf-8")
+    full_repository_scan(tmp_path)
+    source.write_text("VALUE = 2\n", encoding="utf-8")
+    with pytest.raises(RuntimeAuditError, match="SOURCE_DRIFT"):
+        full_repository_scan(tmp_path, resume=True)
+
+    other = tmp_path / "config-drift"
+    other.mkdir()
+    (other / "module.py").write_text("VALUE = 1\n", encoding="utf-8")
+    (other / "pyproject.toml").write_text(
+        "[project]\nname='sample'\n", encoding="utf-8"
+    )
+    full_repository_scan(other)
+    (other / "pyproject.toml").write_text(
+        "[project]\nname='changed'\n", encoding="utf-8"
+    )
+    with pytest.raises(RuntimeAuditError, match="SOURCE_DRIFT"):
+        full_repository_scan(other, resume=True)
+
+
+def test_full_repository_resume_rejects_rehashed_native_result_tamper(tmp_path):
+    from factoryline.deep_audit_io import (
+        RuntimeAuditError,
+        canonical_bytes,
+        digest,
+        full_repository_scan,
+    )
+
+    (tmp_path / "module.py").write_text("VALUE = 1\n", encoding="utf-8")
+    full_repository_scan(tmp_path)
+    checkpoint_path = (
+        tmp_path / ".factory/deep-runs/f2110000000000000000000000000001/checkpoint.json"
+    )
+    checkpoint = json.loads(checkpoint_path.read_text(encoding="utf-8"))
+    checkpoint["primary_results"][0]["findings"].append(
+        {"code": "FORGED", "severity": "LOW"}
+    )
+    checkpoint["result_digest"] = digest(checkpoint["primary_results"])
+    checkpoint["sha256"] = digest(
+        {key: value for key, value in checkpoint.items() if key != "sha256"}
+    )
+    checkpoint_path.write_bytes(canonical_bytes(checkpoint))
+    with pytest.raises(RuntimeAuditError, match="INVALID_CHECKPOINT"):
+        full_repository_scan(tmp_path, resume=True)
+
+
+def test_full_repository_resume_rejects_live_native_helper_replacement(
+    tmp_path, monkeypatch
+):
+    from factoryline import context_efficiency as engine
+    from factoryline.deep_audit_io import RuntimeAuditError, full_repository_scan
+
+    (tmp_path / "module.py").write_text("VALUE = 1\n", encoding="utf-8")
+    full_repository_scan(tmp_path)
+    original = engine._scan_security_source
+
+    def replacement(*args, **kwargs):
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(engine, "_scan_security_source", replacement)
+    with pytest.raises(RuntimeAuditError, match="SCANNER_DRIFT"):
+        full_repository_scan(tmp_path, resume=True)
+
+
+def test_full_repository_symlink_source_is_explicitly_unreadable(tmp_path):
+    import os
+
+    from factoryline.deep_audit_io import full_repository_scan
+
+    target = tmp_path / "target.py"
+    target.write_text("VALUE = 1\n", encoding="utf-8")
+    link = tmp_path / "linked.py"
+    try:
+        os.symlink(target, link)
+    except OSError:
+        pytest.skip("symlink creation is unavailable on this platform")
+    result = full_repository_scan(tmp_path)
+    row = next(
+        item for item in result["primary_results"] if item["path"] == "linked.py"
+    )
+    assert row["input_state"] == "unreadable"
+    assert row["status"] == "unreadable"
+    assert result["files_audited"] == 1
+    assert result["audit_coverage"]["audit_rate"] < 1
+
+
+def test_full_repository_runtime_epoch_covers_every_profile_helper(
+    tmp_path, monkeypatch
+):
+    from factoryline import deep_audit_io, review_audits
+
+    epoch = deep_audit_io._full_repository_runtime_epoch
+    before = epoch(tmp_path, "fixed-configuration", review_audits)
+    helpers = {
+        name: helper
+        for name, helper in vars(deep_audit_io).items()
+        if name.startswith("_full_repository_") and callable(helper)
+    }
+    assert "_full_repository_scanner_file_identity" in helpers
+    for name in helpers:
+        with monkeypatch.context() as patch:
+            patch.setattr(deep_audit_io, name, lambda *args, **kwargs: None)
+            assert epoch(tmp_path, "fixed-configuration", review_audits) != before, name
+        assert epoch(tmp_path, "fixed-configuration", review_audits) == before, name
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            deep_audit_io, "_full_repository_future_helper", lambda: None, raising=False
+        )
+        assert epoch(tmp_path, "fixed-configuration", review_audits) != before
+
+
+def test_full_repository_scanner_identity_rejects_package_symlinks(
+    tmp_path, monkeypatch
+):
+    import os
+
+    from factoryline import review_audits
+    from factoryline.deep_audit_io import (
+        RuntimeAuditError,
+        _full_repository_scanner_identity,
+    )
+
+    package = tmp_path / "factoryline"
+    package.mkdir()
+    target = tmp_path / "outside.py"
+    target.write_text("def scanner(): return None\n", encoding="utf-8")
+    try:
+        os.symlink(target, package / "scanner.py")
+    except OSError:
+        pytest.skip("symlink creation is unavailable on this platform")
+    monkeypatch.setattr(review_audits, "__file__", str(package / "review_audits.py"))
+    with pytest.raises(RuntimeAuditError, match="SCANNER_DRIFT"):
+        _full_repository_scanner_identity()

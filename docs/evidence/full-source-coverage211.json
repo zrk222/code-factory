@@ -1,0 +1,169 @@
+{
+  "schema": "factory.full-source-coverage-evidence.v1",
+  "parent": "917c156a706254e76ff91bae6191ec5280cc49f8",
+  "scope": "Opt-in bounded/resumable eligible Python source coverage. No credential-role admission or measured precision improvement.",
+  "source_sha256": {
+    "factoryline/deep_audit_io.py": "8c1a55b99a84e9a3c43adff7e6e20b441f5f3aff29f2dbb7c5a3c55d11207e1f",
+    "factoryline/cli_audit.py": "0889c94fff488f1d44d4dc0efdb93f690df4e4be2fc07be20b30cf24b25ec37d",
+    "tests/test_context_efficiency.py": "50c844f5d3f2f71bc3674ac32bd7bb89e89e0c481d91e1f9cfb0126e38fe88aa",
+    "tests/test_cli_bootstrap.py": "2b3ca326d924fb896bece0d0b26ea281f531b3f5dd45900a699c9ce70ed12a22"
+  },
+  "commands": [
+    "factory audit security --full-repository --max-batches 64 --json",
+    "factory audit security --full-repository --resume --json"
+  ],
+  "native_behavior": {
+    "primary_batch_limit": 460,
+    "global_consumer_closure_verified": false,
+    "semantic_coverage": "INCOMPLETE",
+    "cli_exit_code": 1,
+    "native_completion_receipt": false,
+    "checkpoint_is_untrusted": true,
+    "new_production_modules": 0
+  },
+  "real_source_measurement": {
+    "repository": "pyload/pyload",
+    "source_commit": "4a6106a7b5fa76f5df6da1cc15687caae0a27fec",
+    "source_files_verified": 739,
+    "python_files_discovered": 583,
+    "python_files_audited": 583,
+    "batches": [
+      460,
+      123
+    ],
+    "pending": 0,
+    "parse_read_size_analysis_errors": 0,
+    "source_accounting_rate": 1.0,
+    "seconds": 48.19427180002094,
+    "full_report_sha256": "48a6458da00611714d9ac2be2fef50db7cfcfc2e20fb9e252083721b5ad9b717",
+    "scan_sha256": "53087607906a707968d7129941905aeeb194055a91e60ebab23c6ea26a372c05",
+    "target_execution": false,
+    "target_source_bytes_post_verified": true
+  },
+  "qualification": {
+    "tests": {
+      "profile-tests": 356,
+      "existing-deep-tests": 617,
+      "existing-contract-tests": 359
+    },
+    "total_passing": 1332,
+    "retained_historical_TP_at_original_severity": "13/13",
+    "ruff": "PASS",
+    "format": "PASS",
+    "C901": "PASS",
+    "new_native_function_complexity_max": 10,
+    "architecture": {
+      "decision": "HEALTHY",
+      "python_files": 429,
+      "core_modules": 133,
+      "caps": [
+        464,
+        133
+      ]
+    },
+    "independent_implementation_review": "Sol 6.1 high in separate ECC reviewer context; not external or human validation"
+  },
+  "unchanged_actionable_precision": {
+    "study209": {
+      "TP": 0,
+      "FP": 10,
+      "UNCLEAR": 1,
+      "precision": 0.0
+    },
+    "study210": {
+      "TP": 1,
+      "FP": 10,
+      "UNCLEAR": 22,
+      "decided": 11,
+      "precision": 0.09090909090909091,
+      "wilson_95_interval": [
+        0.01623217288588482,
+        0.3773584364515957
+      ]
+    },
+    "gain_established_by_this_change": false,
+    "old_panels_now_exposed": true,
+    "qualification_80_percent_and_30_decided": "NOT_MET"
+  },
+  "limits": [
+    "Full eligible-source accounting does not establish semantic completeness, recall or absence of vulnerabilities.",
+    "One exposed real repository was measured, not all repositories or languages.",
+    "Resume rejects changed source/config/scanner identity; new-process checkpoint reuse replays native saved results.",
+    "The existing bounded checkpoint-size limit still applies; exceeding it must remain incomplete.",
+    "No causal speed improvement is claimed; execution time is a single candidate observation.",
+    "Frozen precision inputs and labels are unchanged. This source-coverage result is not a new held-out precision result.",
+    "Full CI and global native quality remain red; PR255 remains draft and unmerged."
+  ],
+  "artifacts": [
+    {
+      "path": ".factory/coverage211-final3/checks.json",
+      "sha256": "27f9f624ac39a5be70f98907fa48e565b31c8915fb660298bdb38b1739d8061f",
+      "kind": "receipt"
+    },
+    {
+      "path": ".factory/coverage211-final3/native-complexity.json",
+      "sha256": "089b114a8dd441594515855d1c8fe81236d8ac187df7d8bda817c15369b1e4e4",
+      "kind": "receipt"
+    },
+    {
+      "path": ".factory/coverage211-final3/ecc-review.json",
+      "sha256": "5d5229b4383e2cf11c35fa64bd02dabaf204558cc0aa3c485a44fc3583aaec35",
+      "kind": "review"
+    },
+    {
+      "path": ".factory/coverage211-real-pyload4/freeze.json",
+      "sha256": "a3fcf85014ae8a7ad7b54781f5510424f85c8329116abc9f91ea774a608bfacb",
+      "kind": "receipt"
+    },
+    {
+      "path": ".factory/coverage211-real-pyload4/process.json",
+      "sha256": "37b82dfdd08ec51df700da5ca866e7b3845c6d4191415afa3257fa0d699a477a",
+      "kind": "receipt"
+    },
+    {
+      "path": ".factory/coverage211-real-pyload4/full-report.json",
+      "sha256": "48a6458da00611714d9ac2be2fef50db7cfcfc2e20fb9e252083721b5ad9b717",
+      "kind": "receipt"
+    },
+    {
+      "path": ".factory/coverage211-final3/architecture.log",
+      "sha256": "ef4979f154c22016bf0fd25a46701f6f49cdfe93ce43ec2c7306b4fc9c5d9677",
+      "kind": "receipt"
+    },
+    {
+      "path": ".factory/coverage211-final3/retained-tp/result.json",
+      "sha256": "504c954aaa710c237b44b6d329c100b9ed73e2ad8b656dd3d74166a158b32821",
+      "kind": "test"
+    },
+    {
+      "path": ".factory/coverage211-final3/profile-tests.log",
+      "sha256": "cd95a04086aac5bc6da86898125f3394816ab1f947552455fcb2d135c2d37244",
+      "kind": "test"
+    },
+    {
+      "path": ".factory/coverage211-final3/profile-tests.xml",
+      "sha256": "055f1e89a3268c1682faf0ec49b30f2d4349247133467ad75914983913bf8141",
+      "kind": "test"
+    },
+    {
+      "path": ".factory/coverage211-final3/existing-deep-tests.log",
+      "sha256": "8defb14370483f108a45b497492b5a7af9b6d9ed5e93c6c5acfd727dc230bfd6",
+      "kind": "test"
+    },
+    {
+      "path": ".factory/coverage211-final3/existing-deep-tests.xml",
+      "sha256": "39f4b856299f70956d14f47e57e2e7fab8611fabd688378773003bbda9f8bbf7",
+      "kind": "test"
+    },
+    {
+      "path": ".factory/coverage211-final3/existing-contract-tests.log",
+      "sha256": "f793c9c326307d28c84e864d96f20fc092ddf69b7ef49820a542e2a08a44d5a6",
+      "kind": "test"
+    },
+    {
+      "path": ".factory/coverage211-final3/existing-contract-tests.xml",
+      "sha256": "c0a8ea107f6658a39406b417a02016c44f5082b2e5beee9f2cf5ee883f180405",
+      "kind": "test"
+    }
+  ]
+}
