@@ -2975,6 +2975,8 @@ def _callback_argument(call, function, parameter):
 
 
 def _source_callback_parameters(function, methods, depth=0, aliases=None):
+    from . import test_oracle_misuse as oracle_misuse
+
     """Resolve bounded first-party callback paths, excluding swallowed calls."""
     if depth >= 4 or function.decorator_list:
         return set()
@@ -2987,6 +2989,8 @@ def _source_callback_parameters(function, methods, depth=0, aliases=None):
         function, methods, nodes, depth, aliases or {}
     )
     for call in (item for item in nodes if isinstance(item, ast.Call)):
+        if not oracle_misuse.source_node_reachable(call):
+            continue
         if not _in_current_test_body(call) or not _effective_assertion(call, aliases):
             continue
         if isinstance(call.func, ast.Name) and call.func.id in parameters:
@@ -3182,49 +3186,6 @@ def _source_methods_are_stable(methods):
     return True
 
 
-def _source_callback_invokers(imports, snapshots, summaries=None):
-    invokers = {}
-    summaries = {} if summaries is None else summaries
-    for local, (source, symbol) in imports.items():
-        tree = snapshots.get(source)
-        if tree is None or symbol is None:
-            continue
-        key = (source, symbol)
-        if key in summaries:
-            if summaries[key] is not None:
-                invokers[local] = summaries[key]
-            continue
-        summaries[key] = None
-        declarations = [
-            item
-            for item in tree.body
-            if isinstance(item, ast.ClassDef) and item.name == symbol
-        ]
-        if len(declarations) != 1:
-            continue
-        methods = _inherited_source_methods(declarations[0], tree)
-        if not _source_methods_are_stable(methods):
-            continue
-        function = methods.get("__call__")
-        if not isinstance(function, ast.AsyncFunctionDef):
-            continue
-        parameters = [
-            item.arg for item in [*function.args.posonlyargs, *function.args.args][1:]
-        ]
-        invoked = _source_callback_parameters(
-            function, methods, aliases=_module_security_aliases(tree)
-        )
-        invokers[local] = {
-            "parameters": parameters,
-            "invoked": sorted(invoked),
-            "source": source.as_posix(),
-            "symbol": symbol,
-            "virtual_dispatch": integrity.virtual_dispatch_defaults(
-                methods, _module_security_aliases(tree), _effective_assertion
-            ),
-        }
-        summaries[key] = invokers[local]
-    return invokers
 
 
 def _source_invoked_callbacks(test, invokers, strong, aliases):
@@ -3704,7 +3665,6 @@ def _oracle_context_cache_key(root: Path, manifest: list, config_identity: dict)
         contracts._declared_typecheck_sources,
         *type_intent_hollow.CACHE_HELPERS,
         *type_intent_provider_provenance.CACHE_HELPERS,
-        _source_callback_invokers,
         _source_methods_are_stable,
         _source_callback_parameters,
         _forwarded_callback_names,
@@ -4263,7 +4223,8 @@ def _build_oracle_context(
         contexts[path].update(
             integrity._structural_oracle_context(tree, imports, snapshots)
         )
-        contexts[path]["callback_invokers"] = _source_callback_invokers(
+        from . import test_oracle_misuse as oracle_misuse
+        contexts[path]["callback_invokers"] = oracle_misuse.source_callback_invokers(
             imports, snapshots, callback_summaries
         )
         contexts[path]["helpers"], contexts[path]["weak_helpers"] = (
@@ -4468,6 +4429,7 @@ def _hollow_test_finding(
         return None
     from .review_integrity import structural_oracle_finding
     from .context_efficiency import _protocol_annotate_finding
+    from . import test_oracle_misuse as oracle_misuse
 
     oracle = structural_oracle_finding(node, relative, oracle_context or {})
     if _test_oracle_exempt(node, aliases) or oracle is True:
@@ -4503,6 +4465,7 @@ def _hollow_test_finding(
                 type_intent_hollow.captured_provider_context_closed
             ),
         )
+        or oracle_misuse.source_hollow_completion(node, oracle_context or {})
     ):
         return _security_finding(
             "QUALITY_HOLLOW_TEST",

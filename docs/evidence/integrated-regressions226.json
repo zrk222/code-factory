@@ -1,0 +1,99 @@
+{
+  "schema": "factory.integrated-regression-qualification226.v1",
+  "source_sha256": {
+    "factoryline/test_oracle_misuse.py": "6250683193187d996aa5bdc36ed8c803bb7a75caffe403e8c739933b6ea046cc",
+    "factoryline/review_audits.py": "7a4ade351f8e190816f68e6b0e4dbce1571e770a4592b65bbc979259c2c6f8e1",
+    "factoryline/context_efficiency.py": "767575dcf9f9ada6d19ecedb0034bb82ea0e4b60f3945732b8981b2c9579a8c3"
+  },
+  "initial_integrated_full_run": {
+    "exit_code": 1,
+    "seconds": 1473.326,
+    "total": 8364,
+    "passed": 8343,
+    "failed": 6,
+    "skipped": 15,
+    "sources_unchanged": true,
+    "changed_paths": [],
+    "state": "FAIL",
+    "failed_cases": [
+      {
+        "classname": "tests.test_context_efficiency",
+        "name": "test_protocol_context_transfer_has_no_assertion_or_finding_suppression_side_effect"
+      },
+      {
+        "classname": "tests.test_capability_evidence",
+        "name": "test_evidence_changed_during_verification_is_blocked"
+      },
+      {
+        "classname": "tests.test_publication_metadata",
+        "name": "test_every_public_function_and_method_has_a_meaningful_docstring"
+      },
+      {
+        "classname": "tests.test_review_integrity",
+        "name": "test_unknown_policy_forged_protocol_metadata_cannot_change_classification[WEAK_PROTOCOL]"
+      },
+      {
+        "classname": "tests.test_review_integrity",
+        "name": "test_unknown_policy_forged_protocol_metadata_cannot_change_classification[CHECKED_WEAK]"
+      },
+      {
+        "classname": "tests.test_review_integrity",
+        "name": "test_unknown_policy_forged_protocol_metadata_cannot_change_classification[STRICT_DEFICIENCY]"
+      }
+    ],
+    "precision_claim": null,
+    "global_ci_qualification": "NOT_RUN"
+  },
+  "original24": {
+    "passed": 24,
+    "failed": 0,
+    "skipped": 0
+  },
+  "subsequent_failed_only_run": {
+    "passed": 6,
+    "failed": 0,
+    "seconds": 9.18,
+    "xml_sha256": "803ab323ec0ddf8805704b333ee24a13af3f91e9b3727b283f69719a659076e6"
+  },
+  "final_delta": {
+    "detached_ast_guard": "Return False unless the function has a captured ast.Module; never infer closed callback completion from a detached AST.",
+    "public_docstrings": [
+      "source_callback_invokers",
+      "source_callback_snapshot_state",
+      "source_callback_snapshot_context"
+    ],
+    "capability_evidence": "No source or test change. Original isolated child timed out at30.15s; isolated rerun passes. Resource-dependent timeout remains a qualification limitation."
+  },
+  "architecture": {
+    "decision": "HEALTHY",
+    "python_files": 429,
+    "core_modules": 133,
+    "artifact_sha256": "b3c3934db9dc23aa96d947c0741d0be3e5ac0d7b7f03ee45f199ae468b233511"
+  },
+  "source_review": {
+    "approved_predecessor": "0ea50afa74afaa1ad4230534dc53af6c8b99b4a0591d3e530293f42fce6713a3",
+    "final_delta_independent_ecc": "PENDING_ACCOUNT_USAGE_LIMIT"
+  },
+  "full_run_on_final_bytes": "NOT_RUN",
+  "full_ci_green": false,
+  "quality": "New helpers<=10, but11 changed existing functions remain above native10; global native-quality gate is not green.",
+  "fresh_actionable_precision": {
+    "study": "study225",
+    "TP": 0,
+    "FP": 49,
+    "UNCLEAR": 8,
+    "decided_precision": 0.0,
+    "wilson95": [
+      0.0,
+      0.07269781922049637
+    ],
+    "gain_claim": null
+  },
+  "merge_bar_met": false,
+  "release_approved": false,
+  "limits": [
+    "One full Windows CPython3.11.9 regression run, then only its six failures rerun.",
+    "24.5-minute full-suite duration is not a per-repository scan latency measurement.",
+    "Study225 labels remain frozen; development diagnosis and test-quality repairs do not establish an actionable security gain."
+  ]
+}

@@ -212,7 +212,6 @@ def oracle_context_cache_context(item, decode_structural_context):
         "typecheck": item["typecheck"],
         "negative_typecheck": item.get("negative_typecheck", False),
         "flask_apps": set(item.get("flask_apps", [])),
-        "callback_invokers": item.get("callback_invokers", {}),
         "codspeed_benchmark": item.get("codspeed_benchmark", False),
         "async_runner_fixtures": item.get("async_runner_fixtures", {}),
         "mock_fixture_provenance": item.get("mock_fixture_provenance", {}),
@@ -240,7 +239,6 @@ def oracle_context_cache_record(path, context, encode_structural_context):
         "typecheck": bool(context["typecheck"]),
         "negative_typecheck": bool(context.get("negative_typecheck", False)),
         "flask_apps": sorted(context.get("flask_apps", set())),
-        "callback_invokers": context.get("callback_invokers", {}),
         "codspeed_benchmark": context.get("codspeed_benchmark", False),
         "async_runner_fixtures": context.get("async_runner_fixtures", {}),
         "mock_fixture_provenance": context.get("mock_fixture_provenance", {}),
@@ -585,6 +583,8 @@ def _consume_security_snapshots(
 ):
     """Consume producer-owned trees synchronously and clear their sidecar map."""
     rows = {}
+    from . import test_oracle_misuse as oracle
+    source_tree_index, callback_summaries = oracle.source_callback_snapshot_state(snapshots, fingerprints)
     try:
         for path in files:
             tree = snapshots.pop(path, None)
@@ -600,6 +600,7 @@ def _consume_security_snapshots(
                 "_tenant_policy_applies": scope.get("_policy_applies", False),
                 "_security_source_context": (workspace, retained),
             }
+            source_context.update(oracle.source_callback_snapshot_context(source_context.get("captured_imports", {}), workspace, source_tree_index, callback_summaries))
             rows[path] = scan_snapshot(
                 workspace,
                 path,

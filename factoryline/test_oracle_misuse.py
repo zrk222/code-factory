@@ -15,6 +15,9 @@ def _exception_names():
         "AssertionError",
         "ValueError",
         "TypeError",
+        "Warning",
+        "UserWarning",
+        "DeprecationWarning",
     )
 
 
@@ -306,6 +309,8 @@ def _builtins_completion_context():
     bases.update(
         {name: "builtins.Exception" for name in names.values() if name not in bases}
     )
+    for name in ("UserWarning", "DeprecationWarning"):
+        bases[f"builtins.{name}"] = "builtins.Warning"
     names["range"] = "builtins.range"
     return names, bases
 
@@ -333,7 +338,13 @@ def _module_bindings(module):
         if isinstance(item, ast.ImportFrom):
             for alias in item.names:
                 if alias.name == "*":
-                    for name in (*_exception_names(), "range"):
+                    exports = _closed_star_exports(module, item)
+                    if exports is not None:
+                        imports.update(
+                            {name: [target] for name, target in exports.items()}
+                        )
+                        continue
+                    for name in {*_exception_names(), "range", *imports}:
                         definitions[name] = definitions.get(name, 0) + 1
                     continue
                 target = f"{item.module}.{alias.name}"
@@ -346,78 +357,222 @@ def _module_bindings(module):
     return definitions, imports
 
 
-def _module_provider_aliases(module, test, module_name, attrs):
-    module_imports = [item for item in module.body if isinstance(item, ast.Import)]
-    if not any(
-        alias.name == module_name or alias.name.startswith(f"{module_name}.")
-        for item in module_imports
-        for alias in item.names
+def _captured_star_module_unambiguous(root, sources, name, selected):
+    for path in sources:
+        if path == selected:
+            continue
+        if path.name == name + ".py" or name in path.relative_to(root).parts[:-1]:
+            return False
+    return True
+
+
+def _closed_star_import_source(module, statement):
+    source = getattr(module, "_security_source_context", None)
+    profile = getattr(module, "_security_oracle_context", {})
+    if not source or not profile.get("provider_source_inventory_complete"):
+        return None
+    if statement.level or not (statement.module or "").isidentifier():
+        return None
+    root, sources = source
+    # Admit a captured top-level module only; package initializers need their
+    # own effect proof and are not silently treated as this simple case.
+    path = root / (statement.module + ".py")
+    if path not in sources or not _captured_star_module_unambiguous(
+        root, sources, statement.module, path
     ):
-        return {}
-    definitions, imports = _module_bindings(module)
+        return None
+    return sources[path]
+
+
+def _canonical_star_export(statement):
+    if not isinstance(statement, ast.ImportFrom) or statement.level:
+        return None
+    if statement.module != "contextlib":
+        return None
+    exports = {}
+    for alias in statement.names:
+        name = alias.asname or alias.name
+        if alias.name != "nullcontext" or name.startswith("_") or name in exports:
+            return None
+        exports[name] = "contextlib.nullcontext"
+    return exports
+
+
+def _closed_star_exports(module, statement):
+    raw = _closed_star_import_source(module, statement)
+    if not isinstance(raw, bytes) or not _completion_provider_captured(
+        module, "contextlib"
+    ):
+        return None
+    try:
+        tree = ast.parse(raw)
+    except (SyntaxError, ValueError, UnicodeDecodeError, RecursionError):
+        return None
+    exports = {}
+    for item in tree.body:
+        if _docstring(item) or isinstance(item, ast.Pass):
+            continue
+        selected = _canonical_star_export(item)
+        if selected is None or exports.keys() & selected.keys():
+            return None
+        exports.update(selected)
+    return exports
+
+
+def _provider_transfer_target(statement):
+    if not isinstance(statement, ast.Assign) or len(statement.targets) != 1:
+        return None
+    target = statement.targets[0]
+    return target if isinstance(target, ast.Name) else None
+
+
+def _provider_transfer_implicit_binding(node, name):
+    if isinstance(node, (ast.ExceptHandler, ast.MatchAs, ast.MatchStar)):
+        return node.name == name
+    if isinstance(node, ast.MatchMapping):
+        return node.rest == name
+    if isinstance(node, (ast.Global, ast.Nonlocal)):
+        return name in node.names
+    return False
+
+
+def _provider_transfer_rebound(node, target, statement):
+    if _provider_transfer_implicit_binding(node, target.id):
+        return True
+    if isinstance(node, ast.Name) and node.id == target.id:
+        return isinstance(node.ctx, (ast.Store, ast.Del)) and node is not target
+    if isinstance(node, ast.arg):
+        return node.arg == target.id
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        return node.name == target.id
+    if isinstance(node, ast.alias):
+        bound = node.asname or node.name.split(".", 1)[0]
+        return bound == target.id and node.lineno > statement.lineno
+    return False
+
+
+def _provider_transfer_load_closed(node, parents, statement):
+    call = parents.get(node)
+    owner = parents.get(call)
+    return (
+        node.lineno > statement.lineno
+        and isinstance(call, ast.Call)
+        and call.func is node
+        and isinstance(owner, ast.withitem)
+        and owner.context_expr is call
+    )
+
+
+def _provider_transfer_closed(statement, module):
+    target = _provider_transfer_target(statement)
+    if target is None:
+        return False
+    parents = {
+        child: node for node in ast.walk(module) for child in ast.iter_child_nodes(node)
+    }
+    for node in ast.walk(module):
+        if _provider_transfer_rebound(node, target, statement):
+            return False
+        if (
+            isinstance(node, ast.Name)
+            and node.id == target.id
+            and isinstance(node.ctx, ast.Load)
+        ):
+            if not _provider_transfer_load_closed(node, parents, statement):
+                return False
+    return True
+
+
+def _completion_module_imports(module, provider):
+    aliases = [
+        alias
+        for item in module.body
+        if isinstance(item, ast.Import)
+        for alias in item.names
+    ]
+    if any(alias.name.startswith(provider + ".") for alias in aliases):
+        return None
+    return [alias for alias in aliases if alias.name == provider]
+
+
+def _provider_star_imports_closed(module, bound):
+    for item in ast.walk(module):
+        if not isinstance(item, ast.ImportFrom):
+            continue
+        if not any(alias.name == "*" for alias in item.names):
+            continue
+        exports = _closed_star_exports(module, item)
+        if exports is None or bound in exports:
+            return False
+    return True
+
+
+def _builtin_provider_reference_closed(outer, attr, in_test):
+    if isinstance(outer, ast.ClassDef):
+        return attr in outer.bases
+    slots = {ast.Call: "func", ast.Raise: "exc", ast.ExceptHandler: "type"}
+    return in_test and any(
+        isinstance(outer, kind) and getattr(outer, slot) is attr
+        for kind, slot in slots.items()
+    )
+
+
+def _provider_reference_transfer_closed(provider, attr, outer, module):
+    return (
+        provider == "contextlib"
+        and attr.attr == "nullcontext"
+        and isinstance(outer, ast.Assign)
+        and outer.value is attr
+        and _provider_transfer_closed(outer, module)
+    )
+
+
+def _provider_reference_closed(ref, parents, test_nodes, provider, attrs, module):
+    attr = parents.get(ref)
+    if (
+        not isinstance(attr, ast.Attribute)
+        or attr.value is not ref
+        or attr.attr not in attrs
+    ):
+        return False
+    outer = parents.get(attr)
+    in_test = id(ref) in test_nodes
+    if provider == "builtins":
+        return _builtin_provider_reference_closed(outer, attr, in_test)
+    direct = in_test and isinstance(outer, ast.Call) and outer.func is attr
+    return direct or _provider_reference_transfer_closed(provider, attr, outer, module)
+
+
+def _module_provider_aliases(module, test, module_name, attrs):
+    imported = _completion_module_imports(module, module_name)
+    if imported is None:
+        return None
     parents = {
         child: parent
         for parent in ast.walk(module)
         for child in ast.iter_child_nodes(parent)
     }
     test_nodes = {id(child) for child in ast.walk(test)}
-    stores = _stored_names(module)
     aliases = {}
-    for item in module_imports:
-        for alias in item.names:
-            if alias.name.startswith(f"{module_name}."):
-                return None
-            if alias.name != module_name:
-                continue
-            bound = alias.asname or alias.name.split(".", 1)[0]
-            if (
-                bound in stores
-                or definitions.get(bound)
-                or imports.get(bound) != [None]
-            ):
-                return None
-            refs = [
-                node
-                for node in ast.walk(module)
-                if isinstance(node, ast.Name) and node.id == bound
-            ]
-            for ref in refs:
-                attr = parents.get(ref)
-                outer = parents.get(attr)
-                safe = (
-                    id(ref) in test_nodes
-                    and isinstance(attr, ast.Attribute)
-                    and attr.value is ref
-                    and attr.attr in attrs
-                    and isinstance(outer, ast.Call)
-                    and outer.func is attr
-                )
-                if module_name == "builtins" and isinstance(attr, ast.Attribute):
-                    safe = (
-                        attr.value is ref
-                        and attr.attr in attrs
-                        and (
-                            (
-                                id(ref) in test_nodes
-                                and isinstance(outer, ast.Call)
-                                and outer.func is attr
-                            )
-                            or (
-                                id(ref) in test_nodes
-                                and isinstance(outer, ast.Raise)
-                                and outer.exc is attr
-                            )
-                            or (
-                                id(ref) in test_nodes
-                                and isinstance(outer, ast.ExceptHandler)
-                                and outer.type is attr
-                            )
-                            or (isinstance(outer, ast.ClassDef) and attr in outer.bases)
-                        )
-                    )
-                if not safe:
-                    return None
-            aliases[bound] = module_name
+    for alias in imported:
+        bound = alias.asname or alias.name
+        if _module_binding_conflict(
+            module, bound, alias
+        ) or not _provider_star_imports_closed(module, bound):
+            return None
+        refs = [
+            node
+            for node in ast.walk(module)
+            if isinstance(node, ast.Name) and node.id == bound
+        ]
+        if not all(
+            _provider_reference_closed(
+                ref, parents, test_nodes, module_name, attrs, module
+            )
+            for ref in refs
+        ):
+            return None
+        aliases[bound] = module_name
     return aliases
 
 
@@ -691,6 +846,8 @@ def _module_helper_kind(function):
             return "stub"
         if _callback_helper_parameter(function) is not None:
             return "callback"
+        if _inert_helper_signature(function):
+            return "source"
     if _inert_coroutine_signature(function):
         return "coroutine"
     return None
@@ -1168,6 +1325,12 @@ def _literal_lambda_binding_closed(
     )
 
 
+def _canonical_completion_import(statement, providers):
+    return isinstance(statement, ast.Import) and all(
+        providers.get(alias.name, False) for alias in statement.names
+    )
+
+
 def _class_creation_context_closed(module, providers, stores):
     return (
         providers["builtins"]
@@ -1179,10 +1342,13 @@ def _class_creation_context_closed(module, providers, stores):
             and _inert_definition(item)
             or _docstring(item)
             or isinstance(item, ast.Pass)
+            or _canonical_completion_import(item, providers)
             for item in module.body
         )
-        and not any(
-            isinstance(item, (ast.Import, ast.ImportFrom)) for item in ast.walk(module)
+        and all(
+            _canonical_completion_import(item, providers)
+            for item in ast.walk(module)
+            if isinstance(item, (ast.Import, ast.ImportFrom))
         )
     )
 
@@ -1217,6 +1383,7 @@ def _completion_context(test):
             "literal_functions": {},
             "literal_calls": {},
             "active_helpers": (),
+            "swallowed_function_projections": {},
         }
     namespace_closed = _module_namespace_access_closed(module)
     stores = _stored_names(module)
@@ -1227,6 +1394,9 @@ def _completion_context(test):
         "contextlib": _module_provider_aliases(
             module, test, "contextlib", {"nullcontext", "suppress"}
         ),
+        "warnings": _module_provider_aliases(
+            module, test, "warnings", {"catch_warnings", "simplefilter"}
+        ),
     }
     providers = {
         provider: namespace_closed
@@ -1236,6 +1406,7 @@ def _completion_context(test):
         for provider, allowed in (
             ("builtins", {*_exception_names(), "range"}),
             ("contextlib", {"nullcontext", "suppress"}),
+            ("warnings", {"catch_warnings", "simplefilter"}),
         )
     }
     providers["builtins"] = providers["builtins"] and not any(
@@ -1261,7 +1432,7 @@ def _completion_context(test):
     for name, (function, value) in literal_functions.items():
         if function in module.body:
             literal_calls[name] = value
-    return {
+    context = {
         "names": names,
         "bases": bases,
         "namespace_closed": namespace_closed,
@@ -1274,13 +1445,51 @@ def _completion_context(test):
         "active_helpers": (),
         "mock_constructors": mock_constructors,
         "mock_instances": {},
+        "swallowed_function_projections": {},
         "modules": (
             {
                 **(module_aliases["builtins"] if providers["builtins"] else {}),
                 **(module_aliases["contextlib"] if providers["contextlib"] else {}),
+                **(module_aliases["warnings"] if providers["warnings"] else {}),
             }
         ),
     }
+    context["module"] = module
+    context["names"].update(_module_manager_names(module, context))
+    return context
+
+
+def _manager_transfer(statement, context, known):
+    module = context.get("module")
+    if not isinstance(module, ast.Module):
+        return None
+    target = _provider_transfer_target(statement)
+    if target is None or not _provider_transfer_closed(statement, module):
+        return None
+    identity = _completion_name(statement.value, context, known)
+    return (target.id, identity) if identity == "contextlib.nullcontext" else None
+
+
+def _module_manager_names(module, context):
+    result = {}
+    for statement in module.body:
+        transfer = _manager_transfer(statement, context, {})
+        if transfer is None:
+            continue
+        root = (
+            statement.value.value.id
+            if isinstance(statement.value, ast.Attribute)
+            else None
+        )
+        if not any(
+            isinstance(item, ast.Import)
+            and item.lineno < statement.lineno
+            and any((alias.asname or alias.name) == root for alias in item.names)
+            for item in module.body
+        ):
+            continue
+        result[transfer[0]] = transfer[1]
+    return result
 
 
 def _mock_constructor_kind(node, context):
@@ -1356,6 +1565,8 @@ def _completion_name(node, context, known):
         provider = context.get("modules", {}).get(node.value.id)
         if provider == "contextlib" and node.attr in {"nullcontext", "suppress"}:
             return f"contextlib.{node.attr}"
+        if provider == "warnings" and node.attr in {"catch_warnings", "simplefilter"}:
+            return f"warnings.{node.attr}"
         if provider == "builtins" and (
             f"builtins.{node.attr}" in context["bases"]
             or f"builtins.{node.attr}" in context["names"].values()
@@ -1511,11 +1722,51 @@ def _run_inert_helper(helper, context, helpers):
     return ("NORMAL", None) if result[0] == "RETURN" else result
 
 
+def _inert_warning_filter(node, known, context):
+    if node.keywords or not 1 <= len(node.args) <= 2:
+        return False
+    closed, action = _inert_literal(node.args[0], known, context.get("literal_calls"))
+    if not closed or type(action) is not str:
+        return False
+    if action not in {"error", "ignore", "always", "default", "module", "once"}:
+        return False
+    return len(node.args) == 1 or _completion_name(node.args[1], context, known) in {
+        "builtins.Warning",
+        "builtins.UserWarning",
+        "builtins.DeprecationWarning",
+    }
+
+
+def _uncalled_mock_method_lookup(node, context):
+    if not isinstance(node, ast.Attribute) or not isinstance(node.value, ast.Name):
+        return False
+    state = context.get("mock_instances", {}).get(node.value.id)
+    if state is None or state[0] not in {"Mock", "AsyncMock"}:
+        return False
+    return node.attr in {
+        "assert_called",
+        "assert_called_once",
+        "assert_called_with",
+        "assert_called_once_with",
+        "assert_any_call",
+        "assert_has_calls",
+        "assert_not_called",
+    }
+
+
+def _inert_created_expression(node, known, context):
+    return (
+        _uncalled_mock_method_lookup(node, context)
+        or (isinstance(node, ast.Lambda) and _inert_definition(node))
+        or (
+            isinstance(node, ast.GeneratorExp)
+            and _inert_empty_generator_creation(node, known, context)
+        )
+    )
+
+
 def _inert_expression(node, known, helpers, context):
-    if (isinstance(node, ast.Lambda) and _inert_definition(node)) or (
-        isinstance(node, ast.GeneratorExp)
-        and _inert_empty_generator_creation(node, known, context)
-    ):
+    if _inert_created_expression(node, known, context):
         return "NORMAL", None
     if not isinstance(node, ast.Call):
         return (
@@ -1545,7 +1796,15 @@ def _inert_expression(node, known, helpers, context):
         return "NORMAL", None
     if _inert_literal_call(node, context.get("literal_calls"), known) is not None:
         return "NORMAL", None
+    return _canonical_call_completion(node, known, context)
+
+
+def _canonical_call_completion(node, known, context):
     identity = _completion_name(node.func, context, known)
+    if identity == "warnings.simplefilter" and _inert_warning_filter(
+        node, known, context
+    ):
+        return "NORMAL", None
     args = (*node.args, *(kw.value for kw in node.keywords))
     return (
         ("NORMAL", None)
@@ -1579,7 +1838,7 @@ def _simple_completion(stmt, known, helpers, context):
     if isinstance(stmt, ast.Pass):
         return "NORMAL", None
     if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-        return _definition_completion(stmt, context)
+        return _function_definition_completion(stmt, helpers, context)
     if isinstance(stmt, ast.Expr):
         return _inert_expression(stmt.value, known, helpers, context)
     if isinstance(stmt, ast.Assert):
@@ -1623,6 +1882,8 @@ def _raise_completion(stmt, known, context):
 
 
 def _assignment_completion(stmt, known, context):
+    if _manager_transfer(stmt, context, known) is not None:
+        return "NORMAL", None
     targets = getattr(stmt, "targets", ()) or (stmt.target,)
     closed = all(isinstance(target, ast.Name) for target in targets)
     if (
@@ -1779,6 +2040,8 @@ def _with_completion(stmt, known, helpers, context):
     if not isinstance(item, ast.Call) or item.keywords:
         return "UNKNOWN", None
     manager = _completion_name(item.func, context, known)
+    if manager == "warnings.catch_warnings" and not item.args:
+        return _inert_suite(stmt.body, context, known, helpers)
     if manager == "contextlib.nullcontext" and _nullcontext_arguments_closed(
         item.args, known, context
     ):
@@ -1796,7 +2059,56 @@ def _with_completion(stmt, known, helpers, context):
     return result
 
 
+def _captured_noop_import(statement, context):
+    if not isinstance(statement, ast.ImportFrom) or len(statement.names) != 1:
+        return None
+    alias = statement.names[0]
+    if alias.name == "*":
+        return None
+    module = context.get("module")
+    if not isinstance(module, ast.Module):
+        return None
+    raw = _closed_star_import_source(module, statement)
+    function = _captured_noop_definition(raw, alias.name)
+    return (alias.asname or alias.name, function) if function is not None else None
+
+
+def _captured_noop_definition(raw, symbol):
+    if not isinstance(raw, bytes):
+        return None
+    try:
+        tree = ast.parse(raw)
+    except (SyntaxError, ValueError, UnicodeDecodeError, RecursionError):
+        return None
+    if len(tree.body) != 1:
+        return None
+    function = tree.body[0]
+    if not _inert_helper_signature(function) or function.name != symbol:
+        return None
+    return function if _inert_helper_stub(function) else None
+
+
+def _noop_import_completion(stmt, known, helpers, context):
+    imported = _captured_noop_import(stmt, context)
+    if imported is None:
+        return "UNKNOWN", None
+    name, function = imported
+    helpers[name] = function
+    known.pop(name, None)
+    for key in (
+        "names",
+        "modules",
+        "literal_calls",
+        "mock_constructors",
+        "mock_instances",
+    ):
+        context[key].pop(name, None)
+    return "NORMAL", None
+
+
 def _inert_statement(stmt, known, helpers, context):
+    if isinstance(stmt, ast.ImportFrom):
+        return _noop_import_completion(stmt, known, helpers, context)
     if isinstance(
         stmt,
         (
@@ -1830,6 +2142,7 @@ def _inert_statement(stmt, known, helpers, context):
 def _track_inert_definition(stmt, known, helpers, context):
     if not isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
         return
+    stmt = context.get("swallowed_function_projections", {}).pop(id(stmt), stmt)
     helpers[stmt.name] = stmt
     known.pop(stmt.name, None)
     context["mock_instances"].pop(stmt.name, None)
@@ -1840,6 +2153,14 @@ def _track_inert_definition(stmt, known, helpers, context):
 
 def _track_inert_assignment(stmt, known, helpers, context):
     if not isinstance(stmt, (ast.Assign, ast.AnnAssign)) or stmt.value is None:
+        return
+    transfer = _manager_transfer(stmt, context, known)
+    if transfer is not None:
+        name, identity = transfer
+        context["names"][name] = identity
+        known.pop(name, None)
+        helpers.pop(name, None)
+        context["literal_calls"].pop(name, None)
         return
     for target in getattr(stmt, "targets", ()) or (stmt.target,):
         if not isinstance(target, ast.Name):
@@ -1896,6 +2217,7 @@ def _inert_suite(statements, context, known=None, helpers=None):
     caller_context = context
     context = {
         **context,
+        "names": dict(context.get("names", {})),
         "literal_calls": dict(context.get("literal_calls", {})),
         "mock_instances": dict(context.get("mock_instances", {})),
     }
@@ -1953,7 +2275,1521 @@ def inert_test_body(node):
     return inert_test_completion(node)[0] in {"NORMAL", "RETURN"}
 
 
+def _source_profile_tree(profile, context):
+    from pathlib import Path
+
+    captured = context.get("_security_source_context")
+    if not isinstance(captured, tuple) or len(captured) != 2:
+        return None
+    root, sources = captured
+    source = Path(profile.get("source", "")).resolve()
+    entry = context.get("_callback_source_trees", {}).get(source.as_posix())
+    if not isinstance(entry, tuple) or len(entry) != 2:
+        return None
+    tree, snapshot_fingerprint = entry
+    if not isinstance(tree, ast.Module):
+        return None
+    key = source if source in sources else root / source
+    raw = sources.get(key)
+    return (
+        tree
+        if _source_profile_identity_closed(tree, raw, snapshot_fingerprint, profile)
+        else None
+    )
+
+def _source_none_guard(test, parameters):
+    return (
+        isinstance(test, ast.Compare)
+        and isinstance(test.left, ast.Name)
+        and test.left.id in parameters
+        and len(test.ops) == 1
+        and isinstance(test.ops[0], ast.Is)
+        and len(test.comparators) == 1
+        and isinstance(test.comparators[0], ast.Constant)
+        and test.comparators[0].value is None
+    )
+
+def _source_virtual_call_is_hollow(
+    invoke, overrides, call_method, call_statement, call, instance, node, audit
+):
+    if not isinstance(call_statement.value, ast.Await):
+        return True
+    if "__call__" in overrides:
+        return _source_virtual_empty_body(call_method)
+    if _source_virtual_dead_dispatch(invoke):
+        return True
+    if _source_virtual_dispatched_without_await(invoke, overrides, audit):
+        return True
+    if _source_virtual_guard_returns(
+        invoke, call_statement, call, call_method, instance, node, audit
+    ):
+        return True
+    return _source_virtual_weak_assertion(invoke, overrides, audit)
+
+def _source_callback_if(
+    statement, function, methods, aliases, bindings, result, depth, active, integrity
+):
+    closed, selected = _inert_literal(statement.test, {})
+    if not closed:
+        return False
+    branch = statement.body if selected else statement.orelse
+    return _source_callback_suite(
+        branch, function, methods, aliases, bindings, result, depth, active, integrity
+    )
+
+def _source_virtual_test_case(node, subclass, init, audit):
+    constructors = _source_virtual_constructors(node, subclass.name)
+    calls = _source_virtual_test_calls(node)
+    if len(constructors) != 1 or len(calls) != 1:
+        return None
+    constructor_row, (call_statement, call) = constructors[0], calls[0]
+    constructor, instance = constructor_row[0], constructor_row[1]
+    if not _source_virtual_test_shape(
+        node, subclass, constructor, call_statement, call, instance
+    ):
+        return None
+    if _source_name_rebound(node, instance, constructor.lineno, call.lineno, audit):
+        return None
+    if not _source_virtual_constructor_bound(constructor_row, init, instance, audit):
+        return None
+    return constructor_row, instance, call_statement, call
+
+def _source_method_completion(
+    call,
+    awaited,
+    target,
+    caller,
+    methods,
+    aliases,
+    bindings,
+    result,
+    depth,
+    active,
+    integrity,
+):
+    if not _source_method_reference_closed(call, target):
+        return False
+    try:
+        actuals = integrity.bind_source_call(
+            call, target, receiver=ast.Name(id="self"), apply_defaults=False
+        )
+    except (TypeError, ValueError):
+        return False
+    actual_bindings = _source_forwarded_bindings(actuals, caller, bindings)
+    if isinstance(target, ast.AsyncFunctionDef) and not awaited:
+        return True
+    child = source_callback_flow_summary(target, methods, aliases, depth + 1, active)
+    if child is None:
+        return False
+    for parameter, sites in child["calls"].items():
+        forwarded = actual_bindings.get(parameter)
+        if forwarded is not None:
+            result["calls"].setdefault(forwarded, []).extend(sites)
+    return True
+
+def _source_scope_mapping_assignment(statement, name, mapping):
+    target = statement.targets[0]
+    if isinstance(target, ast.Name) and target.id == name:
+        result = _source_literal_string_mapping(statement.value)
+        return result is not None and mapping is None, result
+    if _source_scope_item_target(target, name) and mapping is not None:
+        closed, result = _inert_literal(statement.value, {})
+        if not closed:
+            return False, None
+        mapping[target.slice.value] = result
+    return True, mapping
+
+def _source_self_method(value):
+    return (
+        value.attr
+        if isinstance(value, ast.Attribute)
+        and isinstance(value.value, ast.Name)
+        and value.value.id == "self"
+        else None
+    )
+
+def _source_virtual_base_closed(tree, profile, methods, init, invoke, audit):
+    if not _source_virtual_base_structure(tree, profile, methods):
+        return False
+    if not isinstance(init, ast.FunctionDef) or not isinstance(
+        invoke, ast.AsyncFunctionDef
+    ):
+        return False
+    return _source_init_completion_closed(
+        init, methods
+    ) and _source_virtual_init_bindings_closed(methods, init, invoke, audit)
+
+def _source_test_call_values_closed(call, node):
+    functions = {
+        item.name: item
+        for item in node.body
+        if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and item.end_lineno < call.lineno
+    }
+    values = [*call.args, *(item.value for item in call.keywords)]
+    return all(
+        _inert_literal(value, {})[0]
+        or isinstance(value, ast.Name)
+        and value.id in functions
+        and _inert_definition(functions[value.id])
+        for value in values
+    )
+
+def _source_callback_profile(source, symbol, tree, audit):
+    from hashlib import sha256
+    from . import review_integrity as integrity
+
+    classes = [
+        item
+        for item in tree.body
+        if isinstance(item, ast.ClassDef) and item.name == symbol
+    ]
+    if len(classes) != 1:
+        return None
+    methods = audit._inherited_source_methods(classes[0], tree)
+    function = methods.get("__call__")
+    if not audit._source_methods_are_stable(methods) or not isinstance(
+        function, ast.AsyncFunctionDef
+    ):
+        return None
+    aliases = audit._module_security_aliases(tree)
+    return {
+        "parameters": [
+            item.arg for item in [*function.args.posonlyargs, *function.args.args][1:]
+        ],
+        "invoked": sorted(
+            audit._source_callback_parameters(function, methods, aliases=aliases)
+        ),
+        "call_method": "__call__",
+        "source": source.as_posix(),
+        "source_sha256": getattr(tree, "_oracle_source_sha256", None),
+        "source_ast_sha256": sha256(
+            ast.dump(tree, include_attributes=True).encode("utf-8")
+        ).hexdigest(),
+        "symbol": symbol,
+        "virtual_dispatch": integrity.virtual_dispatch_defaults(
+            methods, aliases, audit._effective_assertion
+        ),
+    }
+
+def _source_virtual_init_bindings_closed(methods, init, invoke, audit):
+    if not audit.integrity._virtual_init_supported(init, invoke):
+        return False
+    arguments = [*init.args.posonlyargs, *init.args.args][1:]
+    defaults = {
+        item.arg
+        for item, value in zip(
+            arguments[-len(init.args.defaults) :], init.args.defaults
+        )
+        if isinstance(value, ast.Constant) and value.value is None
+    }
+    bindings, invalid = audit.integrity._virtual_init_bindings(init, defaults)
+    return (
+        "dispatch" in defaults
+        and not invalid
+        and bindings.get("self.dispatch_func") == "dispatch"
+        and not audit.integrity._virtual_binding_mutations(methods, bindings)
+        and _source_virtual_signatures_closed(methods)
+    )
+
+def _source_module_creation_closed(tree, consumer):
+    names = set()
+    for statement in tree.body:
+        if _docstring(statement) or isinstance(statement, ast.Pass):
+            continue
+        if isinstance(statement, ast.ImportFrom) and not _completion_provider_captured(
+            consumer, "functools"
+        ):
+            return False
+        bound = _source_module_statement_names(statement)
+        if bound is None or names.intersection(bound):
+            return False
+        names.update(bound)
+    return True
+
+def source_hollow_completion(node, context):
+    """Prove a closed source callback cannot execute the test's local assertion."""
+    if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return False
+    module = getattr(node, "_oracle_module", None)
+    if not isinstance(module, ast.Module):
+        return False
+    from . import review_audits as audit
+
+    aliases = audit._scope_security_aliases(
+        audit._module_security_aliases(module), node
+    )
+    return any(
+        _source_callback_profile_hollow(node, local, profile, aliases, audit, context)
+        for local, profile in context.get("callback_invokers", {}).items()
+    )
+
+def _source_callback_signature_closed(callback):
+    args = callback.args
+    return not any(
+        (
+            callback.decorator_list,
+            getattr(callback, "type_params", ()),
+            args.vararg,
+            args.kwarg,
+            args.kwonlyargs,
+            args.defaults,
+            args.kw_defaults,
+            callback.returns is not None,
+            any(arg.annotation is not None for arg in _source_arguments(callback)),
+        )
+    )
+
+def _source_import_rebinding(item, local):
+    if isinstance(item, ast.Name) and item.id == local:
+        return isinstance(item.ctx, (ast.Store, ast.Del))
+    if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        return item.name == local
+    if isinstance(item, (ast.Import, ast.ImportFrom)):
+        return any(
+            (alias.asname or alias.name.split(".")[0]) == local for alias in item.names
+        )
+    return isinstance(item, (ast.Global, ast.Nonlocal)) and local in item.names
+
+def source_callback_invokers(imports, snapshots, summaries=None):
+    """Derive callback profiles from captured imported class definitions."""
+    from . import review_audits as audit
+
+    summaries = {} if summaries is None else summaries
+    invokers = {}
+    for local, (source, symbol) in imports.items():
+        if source not in snapshots or symbol is None:
+            continue
+        key = (source, symbol)
+        if key in summaries:
+            profile = summaries[key]
+        else:
+            profile = _source_callback_profile(source, symbol, snapshots[source], audit)
+            summaries[key] = profile
+        if profile is not None:
+            invokers[local] = profile
+    return invokers
+
+def _source_partial_binding(
+    statement, function, methods, aliases, bindings, result, integrity
+):
+    if not _source_partial_shape(statement, aliases, bindings):
+        return False
+    name = statement.targets[0].id
+    target_expr = statement.value.args[0]
+    method_name = _source_self_method(target_expr)
+    target = methods.get(method_name)
+    if not method_name or not isinstance(
+        target, (ast.FunctionDef, ast.AsyncFunctionDef)
+    ):
+        return False
+    actuals = statement.value.args[1:]
+    if not all(_source_safe_value(value, function, bindings) for value in actuals):
+        return False
+    try:
+        probe = ast.Call(func=ast.Name(id=method_name), args=list(actuals), keywords=[])
+        integrity.bind_source_call(
+            probe, target, receiver=ast.Name(id="self"), apply_defaults=False
+        )
+    except (TypeError, ValueError):
+        return False
+    bound = {
+        arg.id: bindings.get(arg.id) for arg in actuals if isinstance(arg, ast.Name)
+    }
+    bindings[name] = (target, tuple(actuals), bound)
+    return True
+
+def _source_callback_suite(
+    statements, function, methods, aliases, bindings, result, depth, active, integrity
+):
+    for statement in statements:
+        if isinstance(statement, ast.Pass) or _docstring(statement):
+            continue
+        if isinstance(statement, ast.If):
+            if not _source_callback_if(
+                statement,
+                function,
+                methods,
+                aliases,
+                bindings,
+                result,
+                depth,
+                active,
+                integrity,
+            ):
+                return False
+            continue
+        if isinstance(statement, ast.Assign):
+            if not _source_partial_binding(
+                statement, function, methods, aliases, bindings, result, integrity
+            ):
+                return False
+            continue
+        if not _source_callback_expression(
+            statement,
+            function,
+            methods,
+            aliases,
+            bindings,
+            result,
+            depth,
+            active,
+            integrity,
+        ):
+            return False
+    return True
+
+def source_callback_snapshot_state(snapshots, fingerprints):
+    """Retain captured callback trees with their source fingerprints."""
+    return (
+        {
+            path.resolve(): (tree, fingerprints.get(path))
+            for path, tree in snapshots.items()
+        },
+        {},
+    )
+
+def _source_profile_import_bound(node, local, profile):
+    from pathlib import Path
+    from hashlib import sha256
+
+    if profile.get("call_method") != "__call__":
+        return False
+    module = getattr(node, "_oracle_module", None)
+    statement = _source_single_import(module, local, profile.get("symbol"))
+    if statement is None:
+        return False
+    raw = _closed_star_import_source(module, statement)
+    context = getattr(module, "_security_source_context", None)
+    if not isinstance(raw, bytes) or not context:
+        return False
+    expected = context[0] / (statement.module + ".py")
+    return expected.resolve() == Path(profile.get("source", "")).resolve() and sha256(
+        raw
+    ).hexdigest() == profile.get("source_sha256")
+
+def _source_import_binding_closed(node, local):
+    if not _source_test_import_closed(node, local):
+        return False
+    arguments = [*_source_arguments(node), *node.args.kwonlyargs]
+    arguments.extend(arg for arg in (node.args.vararg, node.args.kwarg) if arg)
+    if any(arg.arg == local for arg in arguments):
+        return False
+    for item in ast.walk(node):
+        if _source_import_rebinding(item, local):
+            return False
+    return True
+
+def _source_forwarded_bindings(actuals, caller, bindings):
+    names = {arg.arg for arg in _source_arguments(caller)}
+    return {
+        parameter: bindings.get(value.id)
+        if isinstance(value, ast.Name) and value.id in names
+        else None
+        for parameter, value in actuals.items()
+    }
+
+def _source_call_actuals_closed(call, function, bindings):
+    return not call.keywords and all(
+        _source_safe_value(value, function, bindings) for value in call.args
+    )
+
+def _source_virtual_dispatch_stmt(statement):
+    return (
+        isinstance(statement, ast.Expr)
+        and isinstance(statement.value, ast.Await)
+        and isinstance(statement.value.value, ast.Call)
+        and _source_self_method(statement.value.value.func) == "dispatch_func"
+    )
+
+def _source_callback_instance(node, local, aliases, audit):
+    constructors = [
+        statement
+        for statement in node.body
+        if isinstance(statement, (ast.Assign, ast.AnnAssign))
+        and _source_assignment_target(statement) is not None
+        and isinstance(getattr(statement, "value", None), ast.Call)
+        and isinstance(statement.value.func, ast.Name)
+        and statement.value.func.id == local
+    ]
+    if (
+        len(constructors) != 1
+        or constructors[0].value.args
+        or constructors[0].value.keywords
+    ):
+        return None
+    name = _source_assignment_target(constructors[0])
+    return (name, constructors[0]) if isinstance(name, str) else None
+
+def _source_callback_test_shape(node, constructor, call, body_nodes):
+    operations = [
+        statement
+        for statement in node.body
+        if statement is not constructor
+        and not isinstance(statement, ast.AsyncFunctionDef)
+        and not _docstring(statement)
+    ]
+    if len(operations) != 1 or not isinstance(operations[0], ast.Expr):
+        return False
+    if constructor.end_lineno >= call.lineno:
+        return False
+    if node.body[-1] is not operations[0]:
+        return False
+    value = operations[0].value
+    return (
+        value is call or isinstance(value, ast.Await) and value.value is call
+    ) and not any(isinstance(item, ast.Assert) for item in body_nodes)
+
+def _source_callback_targets_closed(
+    actuals, method, flow, node, aliases, audit, context
+):
+    callback_names = {
+        item.arg: actuals.get(item.arg)
+        for item in [*method.args.posonlyargs, *method.args.args][1:]
+        if isinstance(actuals.get(item.arg), ast.Name)
+    }
+    definitions = {
+        item.name: item for item in node.body if isinstance(item, ast.AsyncFunctionDef)
+    }
+    sites = flow.get("calls", {})
+    if any(site.get("awaited") for values in sites.values() for site in values):
+        return False
+    hollow = False
+    for parameter, actual in callback_names.items():
+        calls = sites.get(parameter, ())
+        callback = definitions.get(actual.id) if isinstance(actual, ast.Name) else None
+        if not calls and callback is None:
+            continue
+        if callback is None or not _source_callback_target_closed(
+            callback, calls, aliases, audit, context
+        ):
+            return False
+        hollow = True
+    return hollow
+
+def _source_scope_item_target(target, name):
+    return (
+        isinstance(target, ast.Subscript)
+        and isinstance(target.value, ast.Name)
+        and target.value.id == name
+        and isinstance(target.slice, ast.Constant)
+        and isinstance(target.slice.value, str)
+    )
+
+def _source_callback_class_closed(node, methods, audit):
+    names = {name for name in methods if not name.startswith("__")}
+    names.update({"__call__", "__init__"})
+    return (
+        not node.bases
+        and not node.keywords
+        and not node.decorator_list
+        and not getattr(node, "type_params", ())
+        and _source_class_methods(node, names) is not None
+        and audit._source_methods_are_stable(methods)
+    )
+
+def _source_method_signature_closed(function):
+    args = function.args
+    return (
+        not function.decorator_list
+        and not getattr(function, "type_params", ())
+        and not args.vararg
+        and not args.kwarg
+        and not args.kwonlyargs
+        and _source_formals_unique(function)
+        and not function.returns
+        and all(arg.annotation is None for arg in _source_arguments(function))
+        and _source_method_defaults_closed(args)
+    )
+
+def _source_virtual_order_closed(
+    node, subclass, constructor, call_statement, call, instance
+):
+    return (
+        _source_test_definitions_closed(node)
+        and isinstance(call.func, ast.Name)
+        and call.func.id == instance
+        and not call.keywords
+        and subclass.end_lineno < constructor.lineno
+        and constructor.end_lineno < call_statement.lineno
+        and node.body[-1] is call_statement
+    )
+
+def _source_virtual_constructors(node, class_name):
+    rows = []
+    for statement in node.body:
+        value = getattr(statement, "value", None)
+        target = (
+            _source_assignment_target(statement)
+            if isinstance(statement, (ast.Assign, ast.AnnAssign))
+            else None
+        )
+        if (
+            target
+            and isinstance(value, ast.Call)
+            and isinstance(value.func, ast.Name)
+            and value.func.id == class_name
+        ):
+            rows.append((statement, target, value))
+    return rows
+
+def _source_partial_shape(statement, aliases, bindings):
+    return not (
+        len(statement.targets) != 1
+        or not isinstance(statement.targets[0], ast.Name)
+        or not isinstance(statement.value, ast.Call)
+        or not isinstance(statement.value.func, ast.Name)
+        or statement.value.func.id in bindings
+        or aliases.get(statement.value.func.id) != "functools.partial"
+        or len(statement.value.args) < 1
+        or statement.value.keywords
+    )
+
+def _source_class_methods(node, allowed):
+    functions = [
+        item
+        for item in node.body
+        if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+    ]
+    names = [item.name for item in functions]
+    if len(names) != len(set(names)) or set(names) - allowed:
+        return None
+    if not all(_inert_definition(item) for item in functions):
+        return None
+    if not all(
+        isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Pass))
+        or _docstring(item)
+        for item in node.body
+    ):
+        return None
+    return {item.name: item for item in functions}
+
+def source_callback_snapshot_context(captured_imports, root, index, summaries=None):
+    """Rebuild callback context using the captured in-workspace imports."""
+    from pathlib import Path
+
+    root = Path(root).resolve()
+    imports = {}
+    for local, value in captured_imports.items():
+        if (
+            not isinstance(value, (tuple, list))
+            or len(value) != 2
+            or not isinstance(value[0], str)
+        ):
+            continue
+        source = (root / value[0]).resolve()
+        if source in index and source.is_relative_to(root):
+            imports[local] = (source, value[1])
+    trees = {path: row[0] for path, row in index.items()}
+    invokers = source_callback_invokers(imports, trees, summaries)
+    return {
+        "callback_invokers": invokers,
+        "_callback_source_trees": {
+            Path(profile["source"]).resolve().as_posix(): index[
+                Path(profile["source"]).resolve()
+            ]
+            for profile in invokers.values()
+        },
+    }
+
+def _source_assignment_target(statement):
+    targets = (
+        statement.targets if isinstance(statement, ast.Assign) else [statement.target]
+    )
+    return (
+        targets[0].id
+        if len(targets) == 1 and isinstance(targets[0], ast.Name)
+        else None
+    )
+
+def _source_test_import_closed(node, local):
+    module = getattr(node, "_oracle_module", None)
+    if not isinstance(module, ast.Module) or not _module_namespace_access_closed(
+        module
+    ):
+        return False
+    definitions = []
+    providers = []
+    for statement in module.body:
+        if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            definitions.append(statement)
+        elif isinstance(statement, ast.ImportFrom):
+            providers.extend(_source_plain_import_names(statement))
+        elif not _docstring(statement) and not isinstance(statement, ast.Pass):
+            return False
+    return definitions == [node] and providers == [local]
+
+def _source_literal_string_mapping(value):
+    closed, result = _inert_literal(value, {})
+    if not closed or not isinstance(result, dict):
+        return None
+    return result if all(isinstance(key, str) for key in result) else None
+
+def _source_virtual_call_binds(call, target, caller, audit):
+    try:
+        audit.integrity.bind_source_call(
+            call, target, receiver=ast.Name(id="instance"), apply_defaults=False
+        )
+    except (TypeError, ValueError):
+        return False
+    caller_names = {item.arg for item in _source_arguments(caller)}
+    return not call.keywords and all(
+        _inert_literal(value, {})[0]
+        or isinstance(value, ast.Name)
+        and value.id in caller_names
+        for value in call.args
+    )
+
+def _source_profile_identity_closed(tree, raw, snapshot_fingerprint, profile):
+    from hashlib import sha256
+
+    digest = sha256(ast.dump(tree, include_attributes=True).encode("utf-8")).hexdigest()
+    return (
+        isinstance(raw, bytes)
+        and sha256(raw).hexdigest() == profile.get("source_sha256")
+        and digest == profile.get("source_ast_sha256")
+        and digest == snapshot_fingerprint
+    )
+
+def _source_virtual_test_flow(
+    node, subclass, overrides, profile, tree, methods, aliases, audit
+):
+    init, invoke = methods.get("__init__"), methods.get("__call__")
+    if not _source_virtual_base_closed(tree, profile, methods, init, invoke, audit):
+        return False
+    if "__init__" in overrides:
+        return False
+    call_method = overrides.get("__call__", invoke)
+    case = _source_virtual_test_case(node, subclass, init, audit)
+    if case is None:
+        return False
+    constructor_row, instance, call_statement, call = case
+    if not _source_virtual_call_binding(call, call_method, instance, audit):
+        return False
+    return _source_virtual_call_is_hollow(
+        invoke, overrides, call_method, call_statement, call, instance, node, audit
+    )
+
+def _source_virtual_dead_dispatch(invoke):
+    statements = [item for item in invoke.body if not _docstring(item)]
+    if len(statements) != 1 or not isinstance(statements[0], ast.If):
+        return False
+    closed, selected = _inert_literal(statements[0].test, {})
+    return closed and not selected and not statements[0].orelse
+
+def _source_virtual_class_closed(node, audit):
+    methods = _source_class_methods(node, {"dispatch", "__call__"})
+    return (
+        not node.decorator_list
+        and not node.keywords
+        and not getattr(node, "type_params", ())
+        and methods is not None
+        and all(isinstance(item, ast.AsyncFunctionDef) for item in methods.values())
+        and _source_virtual_signatures_closed(methods)
+        and audit._source_methods_are_stable(methods)
+    )
+
+def _source_class_creation_shape(statement):
+    return isinstance(statement, ast.ClassDef) and not any(
+        (
+            statement.bases,
+            statement.keywords,
+            statement.decorator_list,
+            getattr(statement, "type_params", ()),
+        )
+    )
+
+def _source_method_reference_closed(call, target):
+    if not isinstance(target, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return False
+    if isinstance(call.func, ast.Attribute):
+        return _source_self_method(call.func) == target.name
+    return isinstance(call.func, ast.Name) and call.func.id == target.name
+
+def _source_callback_call(
+    call,
+    awaited,
+    function,
+    methods,
+    aliases,
+    bindings,
+    result,
+    depth,
+    active,
+    integrity,
+):
+    if not _source_call_actuals_closed(call, function, bindings):
+        return False
+    partial = bindings.get(call.func.id) if isinstance(call.func, ast.Name) else None
+    if isinstance(partial, tuple):
+        target, prefix, captured = partial
+        if call.args or not isinstance(target, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            return False
+        probe = ast.Call(
+            func=ast.Name(id=target.name),
+            args=list(prefix) + list(call.args),
+            keywords=[],
+        )
+        return _source_method_completion(
+            probe,
+            awaited,
+            target,
+            function,
+            methods,
+            aliases,
+            captured,
+            result,
+            depth,
+            active,
+            integrity,
+        )
+    if isinstance(call.func, ast.Name) and call.func.id in {
+        arg.arg for arg in _source_arguments(function)
+    }:
+        root = bindings.get(call.func.id)
+        if root is None:
+            return False
+        result["calls"].setdefault(root, []).append(
+            {"positional": len(call.args), "keywords": (), "awaited": awaited}
+        )
+        return True
+    method_name = _source_self_method(call.func)
+    target = methods.get(method_name) if method_name else None
+    return _source_method_completion(
+        call,
+        awaited,
+        target,
+        function,
+        methods,
+        aliases,
+        bindings,
+        result,
+        depth,
+        active,
+        integrity,
+    )
+
+def _source_virtual_call_binding(call, call_method, instance, audit):
+    if not isinstance(call_method, ast.AsyncFunctionDef):
+        return False
+    try:
+        audit.integrity.bind_source_call(
+            call, call_method, receiver=ast.Name(id=instance), apply_defaults=False
+        )
+    except (TypeError, ValueError):
+        return False
+    return True
+
+def _source_virtual_dispatched_without_await(invoke, overrides, audit):
+    call = _source_virtual_dispatch_call(invoke)
+    target = overrides.get("dispatch")
+    return (
+        isinstance(call, ast.Call)
+        and not isinstance(invoke.body[0].value, ast.Await)
+        and _source_self_method(call.func) == "dispatch_func"
+        and isinstance(target, ast.AsyncFunctionDef)
+        and _source_virtual_signatures_closed({"dispatch": target})
+        and _source_virtual_call_binds(call, target, invoke, audit)
+    )
+
+def _source_arguments(function):
+    return [*function.args.posonlyargs, *function.args.args]
+
+def _source_safe_value(value, function, bindings):
+    if isinstance(value, ast.Name):
+        return value.id in bindings or value.id in {
+            arg.arg for arg in _source_arguments(function)
+        }
+    return _inert_literal(value, {})[0]
+
+def _source_virtual_hollow_test(
+    node, local, profile, tree, base_methods, aliases, audit
+):
+    classes = [
+        item
+        for item in node.body
+        if isinstance(item, ast.ClassDef)
+        and len(item.bases) == 1
+        and isinstance(item.bases[0], ast.Name)
+        and item.bases[0].id == local
+    ]
+    if len(classes) != 1 or not _source_virtual_class_closed(classes[0], audit):
+        return False
+    subclass = classes[0]
+    overrides = {
+        item.name: item
+        for item in subclass.body
+        if isinstance(item, ast.AsyncFunctionDef)
+    }
+    if len(overrides) != sum(
+        isinstance(item, ast.AsyncFunctionDef) for item in subclass.body
+    ):
+        return False
+    return _source_virtual_test_flow(
+        node, subclass, overrides, profile, tree, base_methods, aliases, audit
+    )
+
+def _source_callback_test(node, local, flow, method, aliases, audit, context):
+    if (
+        not isinstance(flow, dict)
+        or not flow.get("closed")
+        or not isinstance(method, ast.AsyncFunctionDef)
+        or not _source_formals_unique(method)
+    ):
+        return False
+    instance = _source_callback_instance(node, local, aliases, audit)
+    if instance is None:
+        return False
+    name, constructor = instance
+    call = _source_callback_invocation(node, name, constructor, aliases, audit)
+    if call is None:
+        return False
+    try:
+        actuals = audit.integrity.bind_source_call(
+            call, method, receiver=ast.Name(id=name), apply_defaults=False
+        )
+    except (TypeError, ValueError):
+        return False
+    return _source_callback_targets_closed(
+        actuals, method, flow, node, aliases, audit, context
+    )
+
+def _source_callback_invocation(node, name, constructor, aliases, audit):
+    if any(
+        item.name == name
+        for item in node.body
+        if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+    ):
+        return None
+    body_nodes = audit._test_oracle_body_nodes(node, aliases)
+    calls = [
+        call
+        for call in body_nodes
+        if isinstance(call, ast.Call) and audit._name(call.func) == name
+    ]
+    if (
+        len(calls) != 1
+        or not _source_callback_test_shape(node, constructor, calls[0], body_nodes)
+        or not _source_test_definitions_closed(node)
+        or not _source_test_call_values_closed(calls[0], node)
+        or audit._name_rebound(body_nodes, name, constructor.lineno, calls[0].lineno)
+    ):
+        return None
+    return calls[0]
+
+def _source_virtual_guard_mismatch(node, call_statement, value, guard):
+    mapping = _source_virtual_scope_mapping(node, call_statement, value)
+    if mapping is None:
+        return False
+    return mapping.get(guard["key"]) != guard["value"]
+
+def _source_callback_method_flow(method, methods, aliases):
+    if isinstance(method, ast.AsyncFunctionDef) and "__init__" not in methods:
+        return source_callback_flow_summary(method, methods, aliases)
+    return None
+
+def _source_init_completion_closed(init, methods):
+    parameters = _source_arguments(init)
+    if not parameters or parameters[0].arg != "self":
+        return False
+    names = {item.arg for item in parameters[1:]}
+    fields = set()
+    for statement in init.body:
+        if isinstance(statement, ast.Pass) or _docstring(statement):
+            continue
+        if not _source_init_assignment_closed(statement, names, fields, methods):
+            return False
+    return True
+
+def source_node_reachable(node):
+    """Exclude calls in a branch whose literal condition proves it cannot run."""
+    for parent, child in getattr(node, "_oracle_ancestors", ()):
+        if not isinstance(parent, ast.If):
+            continue
+        closed, selected = _inert_literal(parent.test, {})
+        if closed and (
+            child in parent.body and not selected or child in parent.orelse and selected
+        ):
+            return False
+    return True
+
+def _source_virtual_test_shape(
+    node, subclass, constructor, call_statement, call, instance
+):
+    if not _source_virtual_order_closed(
+        node, subclass, constructor, call_statement, call, instance
+    ):
+        return False
+    scope_names = {item.id for item in call.args if isinstance(item, ast.Name)}
+    bound_scopes = set()
+    for statement in node.body:
+        if statement is call_statement:
+            return _source_virtual_call_values_closed(call, bound_scopes)
+        if statement in (subclass, constructor) or _docstring(statement):
+            continue
+        if isinstance(statement, ast.AsyncFunctionDef):
+            continue
+        if not _source_virtual_scope_assignment(statement, scope_names, bound_scopes):
+            return False
+    return False
+
+def source_callback_flow_summary(function, methods, aliases, depth=0, active=()):
+    """Summarize a closed source callback flow without executing source methods."""
+    from . import review_integrity as integrity
+
+    if (
+        depth >= 4
+        or id(function) in active
+        or not _source_method_signature_closed(function)
+    ):
+        return None
+    lexical_names = _local_bindings(function)
+    aliases = {name: value for name, value in aliases.items() if name not in lexical_names}
+    parameters = {arg.arg: arg.arg for arg in _source_arguments(function)}
+    result = {"closed": False, "calls": {}}
+    if _source_callback_suite(
+        function.body,
+        function,
+        methods,
+        aliases,
+        parameters,
+        result,
+        depth,
+        (*active, id(function)),
+        integrity,
+    ):
+        result["closed"] = True
+        return result
+    return None
+
+def _source_init_value_closed(value, parameters, methods):
+    if isinstance(value, ast.Name):
+        return value.id in parameters
+    if not isinstance(value, ast.IfExp):
+        return _inert_literal(value, {})[0]
+    test = value.test
+    if not _source_none_guard(test, parameters):
+        return False
+    return (
+        isinstance(value.orelse, ast.Name)
+        and value.orelse.id == test.left.id
+        and _source_self_method(value.body) in methods
+    )
+
+def _source_callback_expression(
+    statement, function, methods, aliases, bindings, result, depth, active, integrity
+):
+    if not isinstance(statement, ast.Expr):
+        return False
+    expression = statement.value
+    awaited = isinstance(expression, ast.Await)
+    call = expression.value if awaited else expression
+    return isinstance(call, ast.Call) and _source_callback_call(
+        call,
+        awaited,
+        function,
+        methods,
+        aliases,
+        bindings,
+        result,
+        depth,
+        active,
+        integrity,
+    )
+
+def _source_test_definitions_closed(node):
+    definitions = [
+        item
+        for item in node.body
+        if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+    ]
+    names = [item.name for item in definitions]
+    return (
+        _inert_definition(node)
+        and len(names) == len(set(names))
+        and all(_inert_definition(item) for item in definitions)
+    )
+
+def _source_virtual_signatures_closed(methods):
+    for name, method in methods.items():
+        if (
+            not _inert_definition(method)
+            or not _source_formals_unique(method)
+            or method.args.vararg
+            or method.args.kwarg
+            or method.args.kwonlyargs
+        ):
+            return False
+    return True
+
+def _source_plain_import_names(statement):
+    if statement.level or statement.module is None:
+        return [None]
+    return [
+        None if alias.name == "*" else alias.asname or alias.name
+        for alias in statement.names
+    ]
+
+def _source_virtual_scope_binding(value, name, bound_scopes):
+    closed, mapping = _inert_literal(value, {})
+    if not closed or not isinstance(mapping, dict) or name in bound_scopes:
+        return False
+    if any(not isinstance(key, str) for key in mapping):
+        return False
+    bound_scopes.add(name)
+    return True
+
+def _source_virtual_dispatch_call(invoke):
+    statements = [item for item in invoke.body if not _docstring(item)]
+    if len(statements) != 1 or not isinstance(statements[0], ast.Expr):
+        return None
+    value = statements[0].value
+    call = value.value if isinstance(value, ast.Await) else value
+    return call if isinstance(call, ast.Call) else None
+
+def _source_name_rebound(node, name, start, end, audit):
+    return audit._name_rebound(
+        audit._test_oracle_body_nodes(node, {}), name, start, end
+    )
+
+def _source_virtual_scope_assignment(statement, scope_names, bound_scopes):
+    if not isinstance(statement, ast.Assign) or len(statement.targets) != 1:
+        return False
+    target = statement.targets[0]
+    if isinstance(target, ast.Name) and target.id in scope_names:
+        return _source_virtual_scope_binding(statement.value, target.id, bound_scopes)
+    return _source_virtual_scope_item_write(
+        statement, target, scope_names, bound_scopes
+    )
+
+def _source_formals_unique(function):
+    args = function.args
+    names = [item.arg for item in (*args.posonlyargs, *args.args, *args.kwonlyargs)]
+    names.extend(item.arg for item in (args.vararg, args.kwarg) if item is not None)
+    return len(names) == len(set(names))
+
+def _source_default_closed(value):
+    return _inert_literal(value, {})[0]
+
+def _source_virtual_weak_assertion(invoke, overrides, audit):
+    call = _source_virtual_dispatch_call(invoke)
+    target = overrides.get("dispatch")
+    return (
+        isinstance(call, ast.Call)
+        and isinstance(invoke.body[0].value, ast.Await)
+        and _source_self_method(call.func) == "dispatch_func"
+        and isinstance(target, ast.AsyncFunctionDef)
+        and len(target.body) == 1
+        and isinstance(target.body[0], ast.Assert)
+        and isinstance(target.body[0].test, ast.Constant)
+        and target.body[0].test.value is True
+        and _source_virtual_call_binds(call, target, invoke, audit)
+    )
+
+def _source_virtual_constructor_bound(constructor, init, instance, audit):
+    statement, _, call = constructor
+    try:
+        bound = audit.integrity.bind_source_call(
+            call, init, receiver=ast.Name(id=instance), apply_defaults=True
+        )
+    except (TypeError, ValueError):
+        return False
+    return (
+        all(
+            name == "self" or _inert_literal(value, {})[0]
+            for name, value in bound.items()
+        )
+        and isinstance(bound.get("dispatch"), ast.Constant)
+        and bound["dispatch"].value is None
+    )
+
+def _source_method_defaults_closed(args):
+    return all(_source_default_closed(value) for value in args.defaults) and all(
+        value is None or _source_default_closed(value) for value in args.kw_defaults
+    )
+
+def _source_virtual_empty_body(method):
+    return all(isinstance(item, ast.Pass) or _docstring(item) for item in method.body)
+
+def _source_single_import(module, local, symbol):
+    if not isinstance(module, ast.Module):
+        return None
+    for statement in module.body:
+        if not isinstance(statement, ast.ImportFrom) or len(statement.names) != 1:
+            continue
+        (alias,) = statement.names
+        if alias.name == symbol and (alias.asname or alias.name) == local:
+            return statement
+    return None
+
+def _source_virtual_call_values_closed(call, bound_scopes):
+    return all(
+        _inert_literal(value, {})[0]
+        or isinstance(value, ast.Name)
+        and value.id in bound_scopes
+        for value in call.args
+    )
+
+def _source_callback_target_closed(callback, sites, aliases, audit, context):
+    if not _source_callback_signature_closed(callback):
+        return False
+    if not audit._strong_local_assertion(
+        callback, aliases, set(context.get("helpers", ()))
+    ):
+        return False
+    from . import review_integrity as integrity
+
+    try:
+        for site in sites:
+            probe = ast.Call(
+                func=ast.Name(id=callback.name),
+                args=[ast.Constant(value=None)] * site["positional"],
+                keywords=[
+                    ast.keyword(arg=name, value=ast.Constant(value=None))
+                    for name in site["keywords"]
+                ],
+            )
+            integrity.bind_source_call(probe, callback, apply_defaults=False)
+    except (KeyError, TypeError, ValueError):
+        return False
+    return True
+
+def _source_virtual_scope_item_write(statement, target, scope_names, bound_scopes):
+    return (
+        isinstance(target, ast.Subscript)
+        and isinstance(target.value, ast.Name)
+        and target.value.id in scope_names
+        and target.value.id in bound_scopes
+        and isinstance(target.slice, ast.Constant)
+        and isinstance(target.slice.value, str)
+        and _inert_literal(statement.value, {})[0]
+    )
+
+def _source_virtual_test_calls(node):
+    return [
+        (
+            statement,
+            statement.value.value
+            if isinstance(statement.value, ast.Await)
+            else statement.value,
+        )
+        for statement in node.body
+        if isinstance(statement, ast.Expr)
+        and isinstance(statement.value, (ast.Call, ast.Await))
+        and isinstance(
+            statement.value.value
+            if isinstance(statement.value, ast.Await)
+            else statement.value,
+            ast.Call,
+        )
+        and isinstance(
+            (
+                statement.value.value
+                if isinstance(statement.value, ast.Await)
+                else statement.value
+            ).func,
+            ast.Name,
+        )
+    ]
+
+def _source_virtual_return_branch(branch):
+    if not isinstance(branch, ast.If) or branch.orelse or len(branch.body) != 1:
+        return False
+    return isinstance(branch.body[0], ast.Return) and branch.body[0].value is None
+
+def _source_virtual_base_structure(tree, profile, methods):
+    declarations = [
+        item
+        for item in tree.body
+        if isinstance(item, ast.ClassDef) and item.name == profile.get("symbol")
+    ]
+    if len(declarations) != 1:
+        return False
+    declaration = declarations[0]
+    source_methods = _source_class_methods(
+        declaration, {"__init__", "__call__", "dispatch"}
+    )
+    if (
+        declaration.bases
+        or declaration.decorator_list
+        or declaration.keywords
+        or getattr(declaration, "type_params", ())
+        or source_methods is None
+        or set(methods) - {"__init__", "__call__", "dispatch"}
+    ):
+        return False
+    return True
+
+def _source_virtual_guard_returns(
+    invoke, call_statement, call, call_method, instance, node, audit
+):
+    guards = audit.integrity._virtual_scope_guards(invoke)
+    if not guards or len(invoke.body) != 2:
+        return False
+    branch, dispatch = invoke.body
+    if not _source_virtual_return_branch(branch) or not _source_virtual_dispatch_stmt(
+        dispatch
+    ):
+        return False
+    try:
+        bound = audit.integrity.bind_source_call(
+            call, call_method, receiver=ast.Name(id=instance), apply_defaults=False
+        )
+    except (TypeError, ValueError):
+        return False
+    return any(
+        _source_virtual_guard_mismatch(
+            node, call_statement, bound.get(guard["parameter"]), guard
+        )
+        for guard in guards
+    )
+
+def _source_module_statement_names(statement):
+    if isinstance(statement, ast.ImportFrom):
+        if statement.level or statement.module != "functools":
+            return None
+        if any(alias.name != "partial" for alias in statement.names):
+            return None
+        return {alias.asname or alias.name for alias in statement.names}
+    if not _source_class_creation_shape(statement):
+        return None
+    methods = {
+        item.name
+        for item in statement.body
+        if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    if _source_class_methods(statement, methods) is None:
+        return None
+    return {statement.name}
+
+def _source_callback_profile_hollow(node, local, profile, aliases, audit, context):
+    if not _source_profile_import_bound(node, local, profile):
+        return False
+    tree = _source_profile_tree(profile, context)
+    if (
+        tree is None
+        or not _source_module_creation_closed(
+            tree, getattr(node, "_oracle_module", None)
+        )
+        or not _source_import_binding_closed(node, local)
+    ):
+        return False
+    classes = [
+        item
+        for item in tree.body
+        if isinstance(item, ast.ClassDef) and item.name == profile.get("symbol")
+    ]
+    if len(classes) != 1:
+        return False
+    methods = audit._inherited_source_methods(classes[0], tree)
+    if not _source_callback_class_closed(classes[0], methods, audit):
+        return False
+    method = methods.get("__call__")
+    source_aliases = audit._module_security_aliases(tree)
+    flow = _source_callback_method_flow(method, methods, source_aliases)
+    return _source_callback_test(
+        node, local, flow, method, aliases, audit, context
+    ) or (
+        _source_virtual_hollow_test(node, local, profile, tree, methods, aliases, audit)
+    )
+
+def _source_virtual_scope_mapping(node, call_statement, value):
+    if isinstance(value, ast.Dict):
+        return _source_literal_string_mapping(value)
+    if not isinstance(value, ast.Name):
+        return None
+    mapping = None
+    for statement in node.body:
+        if statement is call_statement:
+            break
+        if not isinstance(statement, ast.Assign) or len(statement.targets) != 1:
+            continue
+        valid, mapping = _source_scope_mapping_assignment(statement, value.id, mapping)
+        if not valid:
+            return None
+    return mapping
+
+def _source_init_assignment_closed(statement, parameters, fields, methods):
+    if not isinstance(statement, ast.Assign) or len(statement.targets) != 1:
+        return False
+    target = statement.targets[0]
+    if not _source_self_method(target):
+        return False
+    name = target.attr
+    if name.startswith("_") or name in fields or name in methods:
+        return False
+    if not _source_init_value_closed(statement.value, parameters, methods):
+        return False
+    fields.add(name)
+    return True
+
+
+def _project_swallowed_function(function, helpers):
+    if not isinstance(function, ast.FunctionDef) or len(function.decorator_list) != 1:
+        return None
+    if _own_scope_yield(function) or not _plain_zero_arg_signature(function, decorated=True):
+        return None
+    decorator = function.decorator_list[0]
+    if not isinstance(decorator, ast.Name):
+        return None
+    wrapper = helpers.get(decorator.id)
+    attempt = _swallower_try(wrapper) if wrapper is not None else None
+    if attempt is None:
+        return None
+    projected = _swallowed_function_projection(function, attempt)
+    return projected if _inert_definition(projected) else None
+
+def _swallower_handler(attempt):
+    if len(attempt.handlers) != 1 or attempt.orelse or attempt.finalbody:
+        return False
+    handler, = attempt.handlers
+    if handler.name is not None or not isinstance(handler.type, ast.Name):
+        return False
+    if handler.type.id != "AssertionError" or len(handler.body) != 1:
+        return False
+    return isinstance(handler.body[0], ast.Pass)
+
+def _own_scope_yield(function):
+    pending = list(function.body)
+    while pending:
+        node = pending.pop()
+        if isinstance(node, (ast.Yield, ast.YieldFrom)):
+            return True
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
+            continue
+        pending.extend(ast.iter_child_nodes(node))
+    return False
+
+def _swallower_try(wrapper):
+    attempt = _wrapper_attempt(wrapper)
+    if attempt is None:
+        return None
+    callback = wrapper.args.args[0].arg
+    inner = wrapper.body[0]
+    if inner.name == callback or callback == "AssertionError":
+        return None
+    return attempt if _swallower_call(attempt, callback) and _swallower_handler(attempt) else None
+
+def _single_callback_function(function):
+    if not isinstance(function, ast.FunctionDef) or not _inert_definition(function):
+        return False
+    args = function.args
+    return (
+        len(args.args) == 1
+        and not any((args.posonlyargs, args.vararg, args.kwonlyargs, args.kwarg,
+                     args.defaults, args.kw_defaults))
+        and args.args[0].annotation is None
+    )
+
+def _wrapper_attempt(wrapper):
+    if not _single_callback_function(wrapper) or len(wrapper.body) != 2:
+        return None
+    inner, returned = wrapper.body
+    if not _plain_zero_arg_signature(inner) or len(inner.body) != 1:
+        return None
+    if not _returns_named_function(returned, inner):
+        return None
+    attempt = inner.body[0]
+    return attempt if isinstance(attempt, ast.Try) else None
+
+def _returns_named_function(statement, function):
+    return (
+        isinstance(statement, ast.Return)
+        and isinstance(statement.value, ast.Name)
+        and statement.value.id == function.name
+    )
+
+def _plain_zero_arg_signature(function, *, decorated=False):
+    if not isinstance(function, ast.FunctionDef):
+        return False
+    args = function.args
+    return not any(
+        (
+            function.decorator_list if not decorated else (),
+            getattr(function, "type_params", ()),
+            function.returns,
+            args.posonlyargs,
+            args.args,
+            args.vararg,
+            args.kwonlyargs,
+            args.kwarg,
+            args.defaults,
+            args.kw_defaults,
+            function.type_comment,
+        )
+    )
+
+def _function_definition_completion(stmt, helpers, context):
+    if _swallow_projection_statement(stmt, helpers, context):
+        return "NORMAL", None
+    return _definition_completion(stmt, context)
+
+def _swallowed_function_projection(function, attempt):
+    fields = {
+        name: getattr(function, name)
+        for name in function._fields
+        if name not in {"body", "decorator_list"}
+    }
+    fields["body"] = [
+        ast.Try(
+            body=list(function.body),
+            handlers=attempt.handlers,
+            orelse=attempt.orelse,
+            finalbody=attempt.finalbody,
+        )
+    ]
+    fields["decorator_list"] = []
+    projected = ast.FunctionDef(**fields)
+    for name in function._attributes:
+        setattr(projected, name, getattr(function, name, None))
+    return projected
+
+def _swallow_projection_statement(statement, helpers, context):
+    if not isinstance(statement, ast.FunctionDef) or not statement.decorator_list:
+        return False
+    projected = _project_swallowed_function(statement, helpers)
+    if projected is None:
+        return False
+    context["swallowed_function_projections"][id(statement)] = projected
+    return True
+
+def _swallower_call(attempt, callback):
+    if len(attempt.body) != 1:
+        return False
+    statement = attempt.body[0]
+    if not isinstance(statement, ast.Expr) or not isinstance(statement.value, ast.Call):
+        return False
+    call = statement.value
+    if not isinstance(call.func, ast.Name) or call.func.id != callback:
+        return False
+    return not call.args and not call.keywords
+
+
 INERT_BODY_HELPERS = (
+    _captured_noop_definition,
+    _captured_noop_import,
+    _noop_import_completion,
+    _inert_created_expression,
+    _uncalled_mock_method_lookup,
+    _canonical_call_completion,
+    _captured_star_module_unambiguous,
+    _completion_module_imports,
+    _provider_star_imports_closed,
+    _builtin_provider_reference_closed,
+    _provider_reference_transfer_closed,
+    _provider_reference_closed,
+    _provider_transfer_implicit_binding,
+    _closed_star_import_source,
+    _canonical_star_export,
+    _closed_star_exports,
+    _provider_transfer_target,
+    _provider_transfer_rebound,
+    _provider_transfer_load_closed,
+    _provider_transfer_closed,
+    _manager_transfer,
+    _module_manager_names,
+    _canonical_completion_import,
+    _inert_warning_filter,
     _completion_provider_captured,
     _nullcontext_arguments_closed,
     _exception_names,
@@ -2032,6 +3868,105 @@ INERT_BODY_HELPERS = (
     _inert_suite,
     inert_test_completion,
     inert_test_body,
+    _source_profile_import_bound,
+    _source_single_import,
+    _source_test_import_closed,
+    _source_plain_import_names,
+    _source_callback_if,
+    _source_callback_expression,
+    _source_partial_shape,
+    _source_call_actuals_closed,
+    _source_method_reference_closed,
+    _source_forwarded_bindings,
+    _source_profile_identity_closed,
+    _source_callback_signature_closed,
+    _source_literal_string_mapping,
+    _source_scope_mapping_assignment,
+    _source_scope_item_target,
+    _source_class_creation_shape,
+    _source_virtual_order_closed,
+    _source_import_binding_closed,
+    _source_import_rebinding,
+    _source_module_creation_closed,
+    _source_module_statement_names,
+    _source_init_completion_closed,
+    _source_init_assignment_closed,
+    _source_init_value_closed,
+    _source_none_guard,
+    source_callback_flow_summary,
+    source_callback_invokers,
+    source_callback_snapshot_context,
+    source_callback_snapshot_state,
+    _source_arguments,
+    _source_formals_unique,
+    _source_method_signature_closed,
+    _source_method_defaults_closed,
+    _source_default_closed,
+    _source_callback_profile,
+    _source_callback_suite,
+    _source_partial_binding,
+    _source_callback_call,
+    _source_method_completion,
+    _source_safe_value,
+    _source_self_method,
+    source_node_reachable,
+    source_hollow_completion,
+    _source_callback_profile_hollow,
+    _source_callback_method_flow,
+    _source_profile_tree,
+    _source_callback_class_closed,
+    _source_callback_test,
+    _source_callback_instance,
+    _source_callback_invocation,
+    _source_callback_targets_closed,
+    _source_assignment_target,
+    _source_test_definitions_closed,
+    _source_test_call_values_closed,
+    _source_callback_test_shape,
+    _source_callback_target_closed,
+    _source_virtual_hollow_test,
+    _source_virtual_class_closed,
+    _source_virtual_test_flow,
+    _source_virtual_test_case,
+    _source_virtual_call_binding,
+    _source_virtual_call_is_hollow,
+    _source_virtual_base_closed,
+    _source_virtual_base_structure,
+    _source_virtual_init_bindings_closed,
+    _source_virtual_signatures_closed,
+    _source_class_methods,
+    _source_virtual_constructors,
+    _source_virtual_test_calls,
+    _source_virtual_test_shape,
+    _source_virtual_scope_assignment,
+    _source_virtual_scope_binding,
+    _source_virtual_scope_item_write,
+    _source_virtual_call_values_closed,
+    _source_name_rebound,
+    _source_virtual_constructor_bound,
+    _source_virtual_empty_body,
+    _source_virtual_dispatch_call,
+    _source_virtual_dispatched_without_await,
+    _source_virtual_dead_dispatch,
+    _source_virtual_call_binds,
+    _source_virtual_guard_returns,
+    _source_virtual_return_branch,
+    _source_virtual_dispatch_stmt,
+    _source_virtual_guard_mismatch,
+    _source_virtual_scope_mapping,
+    _source_virtual_weak_assertion,
+    _swallowed_function_projection,
+    _function_definition_completion,
+    _plain_zero_arg_signature,
+    _single_callback_function,
+    _returns_named_function,
+    _wrapper_attempt,
+    _swallower_call,
+    _swallower_handler,
+    _swallower_try,
+    _own_scope_yield,
+    _project_swallowed_function,
+    _swallow_projection_statement,
 )
 
 
