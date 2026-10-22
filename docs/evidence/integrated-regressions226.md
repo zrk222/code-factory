@@ -6,6 +6,7 @@
 - The evidence-verification test passed unchanged in isolation after its original30-second child timeout. That timeout remains recorded.
 - Architecture: **HEALTHY,429 Python files /133 core modules**, unchanged caps.
 - Final source delta and both execution records passed independent ECC review. Final exact bytes have not had another full run. Global CI/native-quality qualification remains incomplete.
+- CI's three-file formatting failure is repaired with passing Ruff format and unchanged caps. Audit/oracle ASTs are identical; the local context-loop cleanup has separate ECC equivalence review. Passing tests were not rerun for formatting.
 - Fresh actionable security precision remains **0/49 decided,8 unclear**, Wilson95%0–7.27%. No precision gain or35% merge-bar claim.
 
 The machine-readable companion binds source hashes and execution receipts. Scoped repair evidence does not mean zero failing full CI, successful publication, or merge approval.

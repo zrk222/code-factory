@@ -3186,8 +3186,6 @@ def _source_methods_are_stable(methods):
     return True
 
 
-
-
 def _source_invoked_callbacks(test, invokers, strong, aliases):
     nodes = _test_oracle_body_nodes(test, aliases)
     constructors = {
@@ -4224,6 +4222,7 @@ def _build_oracle_context(
             integrity._structural_oracle_context(tree, imports, snapshots)
         )
         from . import test_oracle_misuse as oracle_misuse
+
         contexts[path]["callback_invokers"] = oracle_misuse.source_callback_invokers(
             imports, snapshots, callback_summaries
         )

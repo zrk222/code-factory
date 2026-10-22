@@ -2297,6 +2297,7 @@ def _source_profile_tree(profile, context):
         else None
     )
 
+
 def _source_none_guard(test, parameters):
     return (
         isinstance(test, ast.Compare)
@@ -2308,6 +2309,7 @@ def _source_none_guard(test, parameters):
         and isinstance(test.comparators[0], ast.Constant)
         and test.comparators[0].value is None
     )
+
 
 def _source_virtual_call_is_hollow(
     invoke, overrides, call_method, call_statement, call, instance, node, audit
@@ -2326,6 +2328,7 @@ def _source_virtual_call_is_hollow(
         return True
     return _source_virtual_weak_assertion(invoke, overrides, audit)
 
+
 def _source_callback_if(
     statement, function, methods, aliases, bindings, result, depth, active, integrity
 ):
@@ -2336,6 +2339,7 @@ def _source_callback_if(
     return _source_callback_suite(
         branch, function, methods, aliases, bindings, result, depth, active, integrity
     )
+
 
 def _source_virtual_test_case(node, subclass, init, audit):
     constructors = _source_virtual_constructors(node, subclass.name)
@@ -2353,6 +2357,7 @@ def _source_virtual_test_case(node, subclass, init, audit):
     if not _source_virtual_constructor_bound(constructor_row, init, instance, audit):
         return None
     return constructor_row, instance, call_statement, call
+
 
 def _source_method_completion(
     call,
@@ -2387,6 +2392,7 @@ def _source_method_completion(
             result["calls"].setdefault(forwarded, []).extend(sites)
     return True
 
+
 def _source_scope_mapping_assignment(statement, name, mapping):
     target = statement.targets[0]
     if isinstance(target, ast.Name) and target.id == name:
@@ -2399,6 +2405,7 @@ def _source_scope_mapping_assignment(statement, name, mapping):
         mapping[target.slice.value] = result
     return True, mapping
 
+
 def _source_self_method(value):
     return (
         value.attr
@@ -2407,6 +2414,7 @@ def _source_self_method(value):
         and value.value.id == "self"
         else None
     )
+
 
 def _source_virtual_base_closed(tree, profile, methods, init, invoke, audit):
     if not _source_virtual_base_structure(tree, profile, methods):
@@ -2418,6 +2426,7 @@ def _source_virtual_base_closed(tree, profile, methods, init, invoke, audit):
     return _source_init_completion_closed(
         init, methods
     ) and _source_virtual_init_bindings_closed(methods, init, invoke, audit)
+
 
 def _source_test_call_values_closed(call, node):
     functions = {
@@ -2434,6 +2443,7 @@ def _source_test_call_values_closed(call, node):
         and _inert_definition(functions[value.id])
         for value in values
     )
+
 
 def _source_callback_profile(source, symbol, tree, audit):
     from hashlib import sha256
@@ -2472,6 +2482,7 @@ def _source_callback_profile(source, symbol, tree, audit):
         ),
     }
 
+
 def _source_virtual_init_bindings_closed(methods, init, invoke, audit):
     if not audit.integrity._virtual_init_supported(init, invoke):
         return False
@@ -2492,6 +2503,7 @@ def _source_virtual_init_bindings_closed(methods, init, invoke, audit):
         and _source_virtual_signatures_closed(methods)
     )
 
+
 def _source_module_creation_closed(tree, consumer):
     names = set()
     for statement in tree.body:
@@ -2506,6 +2518,7 @@ def _source_module_creation_closed(tree, consumer):
             return False
         names.update(bound)
     return True
+
 
 def source_hollow_completion(node, context):
     """Prove a closed source callback cannot execute the test's local assertion."""
@@ -2524,6 +2537,7 @@ def source_hollow_completion(node, context):
         for local, profile in context.get("callback_invokers", {}).items()
     )
 
+
 def _source_callback_signature_closed(callback):
     args = callback.args
     return not any(
@@ -2540,6 +2554,7 @@ def _source_callback_signature_closed(callback):
         )
     )
 
+
 def _source_import_rebinding(item, local):
     if isinstance(item, ast.Name) and item.id == local:
         return isinstance(item.ctx, (ast.Store, ast.Del))
@@ -2550,6 +2565,7 @@ def _source_import_rebinding(item, local):
             (alias.asname or alias.name.split(".")[0]) == local for alias in item.names
         )
     return isinstance(item, (ast.Global, ast.Nonlocal)) and local in item.names
+
 
 def source_callback_invokers(imports, snapshots, summaries=None):
     """Derive callback profiles from captured imported class definitions."""
@@ -2569,6 +2585,7 @@ def source_callback_invokers(imports, snapshots, summaries=None):
         if profile is not None:
             invokers[local] = profile
     return invokers
+
 
 def _source_partial_binding(
     statement, function, methods, aliases, bindings, result, integrity
@@ -2598,6 +2615,7 @@ def _source_partial_binding(
     }
     bindings[name] = (target, tuple(actuals), bound)
     return True
+
 
 def _source_callback_suite(
     statements, function, methods, aliases, bindings, result, depth, active, integrity
@@ -2639,6 +2657,7 @@ def _source_callback_suite(
             return False
     return True
 
+
 def source_callback_snapshot_state(snapshots, fingerprints):
     """Retain captured callback trees with their source fingerprints."""
     return (
@@ -2648,6 +2667,7 @@ def source_callback_snapshot_state(snapshots, fingerprints):
         },
         {},
     )
+
 
 def _source_profile_import_bound(node, local, profile):
     from pathlib import Path
@@ -2668,6 +2688,7 @@ def _source_profile_import_bound(node, local, profile):
         raw
     ).hexdigest() == profile.get("source_sha256")
 
+
 def _source_import_binding_closed(node, local):
     if not _source_test_import_closed(node, local):
         return False
@@ -2680,6 +2701,7 @@ def _source_import_binding_closed(node, local):
             return False
     return True
 
+
 def _source_forwarded_bindings(actuals, caller, bindings):
     names = {arg.arg for arg in _source_arguments(caller)}
     return {
@@ -2689,10 +2711,12 @@ def _source_forwarded_bindings(actuals, caller, bindings):
         for parameter, value in actuals.items()
     }
 
+
 def _source_call_actuals_closed(call, function, bindings):
     return not call.keywords and all(
         _source_safe_value(value, function, bindings) for value in call.args
     )
+
 
 def _source_virtual_dispatch_stmt(statement):
     return (
@@ -2701,6 +2725,7 @@ def _source_virtual_dispatch_stmt(statement):
         and isinstance(statement.value.value, ast.Call)
         and _source_self_method(statement.value.value.func) == "dispatch_func"
     )
+
 
 def _source_callback_instance(node, local, aliases, audit):
     constructors = [
@@ -2721,6 +2746,7 @@ def _source_callback_instance(node, local, aliases, audit):
     name = _source_assignment_target(constructors[0])
     return (name, constructors[0]) if isinstance(name, str) else None
 
+
 def _source_callback_test_shape(node, constructor, call, body_nodes):
     operations = [
         statement
@@ -2739,6 +2765,7 @@ def _source_callback_test_shape(node, constructor, call, body_nodes):
     return (
         value is call or isinstance(value, ast.Await) and value.value is call
     ) and not any(isinstance(item, ast.Assert) for item in body_nodes)
+
 
 def _source_callback_targets_closed(
     actuals, method, flow, node, aliases, audit, context
@@ -2767,6 +2794,7 @@ def _source_callback_targets_closed(
         hollow = True
     return hollow
 
+
 def _source_scope_item_target(target, name):
     return (
         isinstance(target, ast.Subscript)
@@ -2775,6 +2803,7 @@ def _source_scope_item_target(target, name):
         and isinstance(target.slice, ast.Constant)
         and isinstance(target.slice.value, str)
     )
+
 
 def _source_callback_class_closed(node, methods, audit):
     names = {name for name in methods if not name.startswith("__")}
@@ -2787,6 +2816,7 @@ def _source_callback_class_closed(node, methods, audit):
         and _source_class_methods(node, names) is not None
         and audit._source_methods_are_stable(methods)
     )
+
 
 def _source_method_signature_closed(function):
     args = function.args
@@ -2802,6 +2832,7 @@ def _source_method_signature_closed(function):
         and _source_method_defaults_closed(args)
     )
 
+
 def _source_virtual_order_closed(
     node, subclass, constructor, call_statement, call, instance
 ):
@@ -2814,6 +2845,7 @@ def _source_virtual_order_closed(
         and constructor.end_lineno < call_statement.lineno
         and node.body[-1] is call_statement
     )
+
 
 def _source_virtual_constructors(node, class_name):
     rows = []
@@ -2833,6 +2865,7 @@ def _source_virtual_constructors(node, class_name):
             rows.append((statement, target, value))
     return rows
 
+
 def _source_partial_shape(statement, aliases, bindings):
     return not (
         len(statement.targets) != 1
@@ -2844,6 +2877,7 @@ def _source_partial_shape(statement, aliases, bindings):
         or len(statement.value.args) < 1
         or statement.value.keywords
     )
+
 
 def _source_class_methods(node, allowed):
     functions = [
@@ -2863,6 +2897,7 @@ def _source_class_methods(node, allowed):
     ):
         return None
     return {item.name: item for item in functions}
+
 
 def source_callback_snapshot_context(captured_imports, root, index, summaries=None):
     """Rebuild callback context using the captured in-workspace imports."""
@@ -2892,6 +2927,7 @@ def source_callback_snapshot_context(captured_imports, root, index, summaries=No
         },
     }
 
+
 def _source_assignment_target(statement):
     targets = (
         statement.targets if isinstance(statement, ast.Assign) else [statement.target]
@@ -2901,6 +2937,7 @@ def _source_assignment_target(statement):
         if len(targets) == 1 and isinstance(targets[0], ast.Name)
         else None
     )
+
 
 def _source_test_import_closed(node, local):
     module = getattr(node, "_oracle_module", None)
@@ -2919,11 +2956,13 @@ def _source_test_import_closed(node, local):
             return False
     return definitions == [node] and providers == [local]
 
+
 def _source_literal_string_mapping(value):
     closed, result = _inert_literal(value, {})
     if not closed or not isinstance(result, dict):
         return None
     return result if all(isinstance(key, str) for key in result) else None
+
 
 def _source_virtual_call_binds(call, target, caller, audit):
     try:
@@ -2940,6 +2979,7 @@ def _source_virtual_call_binds(call, target, caller, audit):
         for value in call.args
     )
 
+
 def _source_profile_identity_closed(tree, raw, snapshot_fingerprint, profile):
     from hashlib import sha256
 
@@ -2950,6 +2990,7 @@ def _source_profile_identity_closed(tree, raw, snapshot_fingerprint, profile):
         and digest == profile.get("source_ast_sha256")
         and digest == snapshot_fingerprint
     )
+
 
 def _source_virtual_test_flow(
     node, subclass, overrides, profile, tree, methods, aliases, audit
@@ -2970,12 +3011,14 @@ def _source_virtual_test_flow(
         invoke, overrides, call_method, call_statement, call, instance, node, audit
     )
 
+
 def _source_virtual_dead_dispatch(invoke):
     statements = [item for item in invoke.body if not _docstring(item)]
     if len(statements) != 1 or not isinstance(statements[0], ast.If):
         return False
     closed, selected = _inert_literal(statements[0].test, {})
     return closed and not selected and not statements[0].orelse
+
 
 def _source_virtual_class_closed(node, audit):
     methods = _source_class_methods(node, {"dispatch", "__call__"})
@@ -2989,6 +3032,7 @@ def _source_virtual_class_closed(node, audit):
         and audit._source_methods_are_stable(methods)
     )
 
+
 def _source_class_creation_shape(statement):
     return isinstance(statement, ast.ClassDef) and not any(
         (
@@ -2999,12 +3043,14 @@ def _source_class_creation_shape(statement):
         )
     )
 
+
 def _source_method_reference_closed(call, target):
     if not isinstance(target, (ast.FunctionDef, ast.AsyncFunctionDef)):
         return False
     if isinstance(call.func, ast.Attribute):
         return _source_self_method(call.func) == target.name
     return isinstance(call.func, ast.Name) and call.func.id == target.name
+
 
 def _source_callback_call(
     call,
@@ -3069,6 +3115,7 @@ def _source_callback_call(
         integrity,
     )
 
+
 def _source_virtual_call_binding(call, call_method, instance, audit):
     if not isinstance(call_method, ast.AsyncFunctionDef):
         return False
@@ -3079,6 +3126,7 @@ def _source_virtual_call_binding(call, call_method, instance, audit):
     except (TypeError, ValueError):
         return False
     return True
+
 
 def _source_virtual_dispatched_without_await(invoke, overrides, audit):
     call = _source_virtual_dispatch_call(invoke)
@@ -3092,8 +3140,10 @@ def _source_virtual_dispatched_without_await(invoke, overrides, audit):
         and _source_virtual_call_binds(call, target, invoke, audit)
     )
 
+
 def _source_arguments(function):
     return [*function.args.posonlyargs, *function.args.args]
+
 
 def _source_safe_value(value, function, bindings):
     if isinstance(value, ast.Name):
@@ -3101,6 +3151,7 @@ def _source_safe_value(value, function, bindings):
             arg.arg for arg in _source_arguments(function)
         }
     return _inert_literal(value, {})[0]
+
 
 def _source_virtual_hollow_test(
     node, local, profile, tree, base_methods, aliases, audit
@@ -3129,6 +3180,7 @@ def _source_virtual_hollow_test(
         node, subclass, overrides, profile, tree, base_methods, aliases, audit
     )
 
+
 def _source_callback_test(node, local, flow, method, aliases, audit, context):
     if (
         not isinstance(flow, dict)
@@ -3154,6 +3206,7 @@ def _source_callback_test(node, local, flow, method, aliases, audit, context):
         actuals, method, flow, node, aliases, audit, context
     )
 
+
 def _source_callback_invocation(node, name, constructor, aliases, audit):
     if any(
         item.name == name
@@ -3177,16 +3230,19 @@ def _source_callback_invocation(node, name, constructor, aliases, audit):
         return None
     return calls[0]
 
+
 def _source_virtual_guard_mismatch(node, call_statement, value, guard):
     mapping = _source_virtual_scope_mapping(node, call_statement, value)
     if mapping is None:
         return False
     return mapping.get(guard["key"]) != guard["value"]
 
+
 def _source_callback_method_flow(method, methods, aliases):
     if isinstance(method, ast.AsyncFunctionDef) and "__init__" not in methods:
         return source_callback_flow_summary(method, methods, aliases)
     return None
+
 
 def _source_init_completion_closed(init, methods):
     parameters = _source_arguments(init)
@@ -3201,6 +3257,7 @@ def _source_init_completion_closed(init, methods):
             return False
     return True
 
+
 def source_node_reachable(node):
     """Exclude calls in a branch whose literal condition proves it cannot run."""
     for parent, child in getattr(node, "_oracle_ancestors", ()):
@@ -3212,6 +3269,7 @@ def source_node_reachable(node):
         ):
             return False
     return True
+
 
 def _source_virtual_test_shape(
     node, subclass, constructor, call_statement, call, instance
@@ -3233,6 +3291,7 @@ def _source_virtual_test_shape(
             return False
     return False
 
+
 def source_callback_flow_summary(function, methods, aliases, depth=0, active=()):
     """Summarize a closed source callback flow without executing source methods."""
     from . import review_integrity as integrity
@@ -3244,7 +3303,9 @@ def source_callback_flow_summary(function, methods, aliases, depth=0, active=())
     ):
         return None
     lexical_names = _local_bindings(function)
-    aliases = {name: value for name, value in aliases.items() if name not in lexical_names}
+    aliases = {
+        name: value for name, value in aliases.items() if name not in lexical_names
+    }
     parameters = {arg.arg: arg.arg for arg in _source_arguments(function)}
     result = {"closed": False, "calls": {}}
     if _source_callback_suite(
@@ -3262,6 +3323,7 @@ def source_callback_flow_summary(function, methods, aliases, depth=0, active=())
         return result
     return None
 
+
 def _source_init_value_closed(value, parameters, methods):
     if isinstance(value, ast.Name):
         return value.id in parameters
@@ -3275,6 +3337,7 @@ def _source_init_value_closed(value, parameters, methods):
         and value.orelse.id == test.left.id
         and _source_self_method(value.body) in methods
     )
+
 
 def _source_callback_expression(
     statement, function, methods, aliases, bindings, result, depth, active, integrity
@@ -3297,6 +3360,7 @@ def _source_callback_expression(
         integrity,
     )
 
+
 def _source_test_definitions_closed(node):
     definitions = [
         item
@@ -3310,6 +3374,7 @@ def _source_test_definitions_closed(node):
         and all(_inert_definition(item) for item in definitions)
     )
 
+
 def _source_virtual_signatures_closed(methods):
     for name, method in methods.items():
         if (
@@ -3322,6 +3387,7 @@ def _source_virtual_signatures_closed(methods):
             return False
     return True
 
+
 def _source_plain_import_names(statement):
     if statement.level or statement.module is None:
         return [None]
@@ -3329,6 +3395,7 @@ def _source_plain_import_names(statement):
         None if alias.name == "*" else alias.asname or alias.name
         for alias in statement.names
     ]
+
 
 def _source_virtual_scope_binding(value, name, bound_scopes):
     closed, mapping = _inert_literal(value, {})
@@ -3339,6 +3406,7 @@ def _source_virtual_scope_binding(value, name, bound_scopes):
     bound_scopes.add(name)
     return True
 
+
 def _source_virtual_dispatch_call(invoke):
     statements = [item for item in invoke.body if not _docstring(item)]
     if len(statements) != 1 or not isinstance(statements[0], ast.Expr):
@@ -3347,10 +3415,12 @@ def _source_virtual_dispatch_call(invoke):
     call = value.value if isinstance(value, ast.Await) else value
     return call if isinstance(call, ast.Call) else None
 
+
 def _source_name_rebound(node, name, start, end, audit):
     return audit._name_rebound(
         audit._test_oracle_body_nodes(node, {}), name, start, end
     )
+
 
 def _source_virtual_scope_assignment(statement, scope_names, bound_scopes):
     if not isinstance(statement, ast.Assign) or len(statement.targets) != 1:
@@ -3362,14 +3432,17 @@ def _source_virtual_scope_assignment(statement, scope_names, bound_scopes):
         statement, target, scope_names, bound_scopes
     )
 
+
 def _source_formals_unique(function):
     args = function.args
     names = [item.arg for item in (*args.posonlyargs, *args.args, *args.kwonlyargs)]
     names.extend(item.arg for item in (args.vararg, args.kwarg) if item is not None)
     return len(names) == len(set(names))
 
+
 def _source_default_closed(value):
     return _inert_literal(value, {})[0]
+
 
 def _source_virtual_weak_assertion(invoke, overrides, audit):
     call = _source_virtual_dispatch_call(invoke)
@@ -3385,6 +3458,7 @@ def _source_virtual_weak_assertion(invoke, overrides, audit):
         and target.body[0].test.value is True
         and _source_virtual_call_binds(call, target, invoke, audit)
     )
+
 
 def _source_virtual_constructor_bound(constructor, init, instance, audit):
     statement, _, call = constructor
@@ -3403,13 +3477,16 @@ def _source_virtual_constructor_bound(constructor, init, instance, audit):
         and bound["dispatch"].value is None
     )
 
+
 def _source_method_defaults_closed(args):
     return all(_source_default_closed(value) for value in args.defaults) and all(
         value is None or _source_default_closed(value) for value in args.kw_defaults
     )
 
+
 def _source_virtual_empty_body(method):
     return all(isinstance(item, ast.Pass) or _docstring(item) for item in method.body)
+
 
 def _source_single_import(module, local, symbol):
     if not isinstance(module, ast.Module):
@@ -3422,6 +3499,7 @@ def _source_single_import(module, local, symbol):
             return statement
     return None
 
+
 def _source_virtual_call_values_closed(call, bound_scopes):
     return all(
         _inert_literal(value, {})[0]
@@ -3429,6 +3507,7 @@ def _source_virtual_call_values_closed(call, bound_scopes):
         and value.id in bound_scopes
         for value in call.args
     )
+
 
 def _source_callback_target_closed(callback, sites, aliases, audit, context):
     if not _source_callback_signature_closed(callback):
@@ -3454,6 +3533,7 @@ def _source_callback_target_closed(callback, sites, aliases, audit, context):
         return False
     return True
 
+
 def _source_virtual_scope_item_write(statement, target, scope_names, bound_scopes):
     return (
         isinstance(target, ast.Subscript)
@@ -3464,6 +3544,7 @@ def _source_virtual_scope_item_write(statement, target, scope_names, bound_scope
         and isinstance(target.slice.value, str)
         and _inert_literal(statement.value, {})[0]
     )
+
 
 def _source_virtual_test_calls(node):
     return [
@@ -3492,10 +3573,12 @@ def _source_virtual_test_calls(node):
         )
     ]
 
+
 def _source_virtual_return_branch(branch):
     if not isinstance(branch, ast.If) or branch.orelse or len(branch.body) != 1:
         return False
     return isinstance(branch.body[0], ast.Return) and branch.body[0].value is None
+
 
 def _source_virtual_base_structure(tree, profile, methods):
     declarations = [
@@ -3519,6 +3602,7 @@ def _source_virtual_base_structure(tree, profile, methods):
     ):
         return False
     return True
+
 
 def _source_virtual_guard_returns(
     invoke, call_statement, call, call_method, instance, node, audit
@@ -3544,6 +3628,7 @@ def _source_virtual_guard_returns(
         for guard in guards
     )
 
+
 def _source_module_statement_names(statement):
     if isinstance(statement, ast.ImportFrom):
         if statement.level or statement.module != "functools":
@@ -3561,6 +3646,7 @@ def _source_module_statement_names(statement):
     if _source_class_methods(statement, methods) is None:
         return None
     return {statement.name}
+
 
 def _source_callback_profile_hollow(node, local, profile, aliases, audit, context):
     if not _source_profile_import_bound(node, local, profile):
@@ -3593,6 +3679,7 @@ def _source_callback_profile_hollow(node, local, profile, aliases, audit, contex
         _source_virtual_hollow_test(node, local, profile, tree, methods, aliases, audit)
     )
 
+
 def _source_virtual_scope_mapping(node, call_statement, value):
     if isinstance(value, ast.Dict):
         return _source_literal_string_mapping(value)
@@ -3608,6 +3695,7 @@ def _source_virtual_scope_mapping(node, call_statement, value):
         if not valid:
             return None
     return mapping
+
 
 def _source_init_assignment_closed(statement, parameters, fields, methods):
     if not isinstance(statement, ast.Assign) or len(statement.targets) != 1:
@@ -3627,7 +3715,9 @@ def _source_init_assignment_closed(statement, parameters, fields, methods):
 def _project_swallowed_function(function, helpers):
     if not isinstance(function, ast.FunctionDef) or len(function.decorator_list) != 1:
         return None
-    if _own_scope_yield(function) or not _plain_zero_arg_signature(function, decorated=True):
+    if _own_scope_yield(function) or not _plain_zero_arg_signature(
+        function, decorated=True
+    ):
         return None
     decorator = function.decorator_list[0]
     if not isinstance(decorator, ast.Name):
@@ -3639,15 +3729,17 @@ def _project_swallowed_function(function, helpers):
     projected = _swallowed_function_projection(function, attempt)
     return projected if _inert_definition(projected) else None
 
+
 def _swallower_handler(attempt):
     if len(attempt.handlers) != 1 or attempt.orelse or attempt.finalbody:
         return False
-    handler, = attempt.handlers
+    (handler,) = attempt.handlers
     if handler.name is not None or not isinstance(handler.type, ast.Name):
         return False
     if handler.type.id != "AssertionError" or len(handler.body) != 1:
         return False
     return isinstance(handler.body[0], ast.Pass)
+
 
 def _own_scope_yield(function):
     pending = list(function.body)
@@ -3655,10 +3747,13 @@ def _own_scope_yield(function):
         node = pending.pop()
         if isinstance(node, (ast.Yield, ast.YieldFrom)):
             return True
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
+        if isinstance(
+            node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
+        ):
             continue
         pending.extend(ast.iter_child_nodes(node))
     return False
+
 
 def _swallower_try(wrapper):
     attempt = _wrapper_attempt(wrapper)
@@ -3668,7 +3763,12 @@ def _swallower_try(wrapper):
     inner = wrapper.body[0]
     if inner.name == callback or callback == "AssertionError":
         return None
-    return attempt if _swallower_call(attempt, callback) and _swallower_handler(attempt) else None
+    return (
+        attempt
+        if _swallower_call(attempt, callback) and _swallower_handler(attempt)
+        else None
+    )
+
 
 def _single_callback_function(function):
     if not isinstance(function, ast.FunctionDef) or not _inert_definition(function):
@@ -3676,10 +3776,19 @@ def _single_callback_function(function):
     args = function.args
     return (
         len(args.args) == 1
-        and not any((args.posonlyargs, args.vararg, args.kwonlyargs, args.kwarg,
-                     args.defaults, args.kw_defaults))
+        and not any(
+            (
+                args.posonlyargs,
+                args.vararg,
+                args.kwonlyargs,
+                args.kwarg,
+                args.defaults,
+                args.kw_defaults,
+            )
+        )
         and args.args[0].annotation is None
     )
+
 
 def _wrapper_attempt(wrapper):
     if not _single_callback_function(wrapper) or len(wrapper.body) != 2:
@@ -3692,12 +3801,14 @@ def _wrapper_attempt(wrapper):
     attempt = inner.body[0]
     return attempt if isinstance(attempt, ast.Try) else None
 
+
 def _returns_named_function(statement, function):
     return (
         isinstance(statement, ast.Return)
         and isinstance(statement.value, ast.Name)
         and statement.value.id == function.name
     )
+
 
 def _plain_zero_arg_signature(function, *, decorated=False):
     if not isinstance(function, ast.FunctionDef):
@@ -3719,10 +3830,12 @@ def _plain_zero_arg_signature(function, *, decorated=False):
         )
     )
 
+
 def _function_definition_completion(stmt, helpers, context):
     if _swallow_projection_statement(stmt, helpers, context):
         return "NORMAL", None
     return _definition_completion(stmt, context)
+
 
 def _swallowed_function_projection(function, attempt):
     fields = {
@@ -3744,6 +3857,7 @@ def _swallowed_function_projection(function, attempt):
         setattr(projected, name, getattr(function, name, None))
     return projected
 
+
 def _swallow_projection_statement(statement, helpers, context):
     if not isinstance(statement, ast.FunctionDef) or not statement.decorator_list:
         return False
@@ -3752,6 +3866,7 @@ def _swallow_projection_statement(statement, helpers, context):
         return False
     context["swallowed_function_projections"][id(statement)] = projected
     return True
+
 
 def _swallower_call(attempt, callback):
     if len(attempt.body) != 1:

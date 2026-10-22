@@ -1,9 +1,9 @@
 {
   "schema": "factory.integrated-regression-qualification226.v1",
   "source_sha256": {
-    "factoryline/test_oracle_misuse.py": "6250683193187d996aa5bdc36ed8c803bb7a75caffe403e8c739933b6ea046cc",
-    "factoryline/review_audits.py": "7a4ade351f8e190816f68e6b0e4dbce1571e770a4592b65bbc979259c2c6f8e1",
-    "factoryline/context_efficiency.py": "767575dcf9f9ada6d19ecedb0034bb82ea0e4b60f3945732b8981b2c9579a8c3"
+    "factoryline/test_oracle_misuse.py": "5d6fbc508fe06577d0cc06dc5375be1e8d9c6de011f5f1aafa14753704d9a289",
+    "factoryline/review_audits.py": "07b5cfb15c507ce92dbdda55373715ba93cd4d46bc0e7209d7c458d92db12102",
+    "factoryline/context_efficiency.py": "108d6db1bf39f73fd1dd9e7aff956b019fa9f6339bfa514a6db2daca44aeb533"
   },
   "initial_integrated_full_run": {
     "exit_code": 1,
@@ -73,7 +73,43 @@
   "source_review": {
     "approved_predecessor": "0ea50afa74afaa1ad4230534dc53af6c8b99b4a0591d3e530293f42fce6713a3",
     "final_delta_independent_ecc": "PASS_SCOPED_SOURCE_DELTA_AND_REGRESSION_EVIDENCE_GLOBAL_INCOMPLETE",
-    "final_delta_receipt_sha256": "beb0577ab73ba42d3f04a978ed44e627fd47300c97881a22c4bb2277f69dcf6f"
+    "final_delta_receipt_sha256": "beb0577ab73ba42d3f04a978ed44e627fd47300c97881a22c4bb2277f69dcf6f",
+    "format_cap_review_sha256": "e95a39e99a5c1c81bcd7ec21a8730a8d4a2714a5860e9a05bb42fe43c546fdd5"
+  },
+  "format_successor": {
+    "schema": "factory.format-cap-repair226.v1",
+    "scope": "Whitespace plus local state unpack/renaming in snapshot loop; no proof predicate or output schema changes.",
+    "files": [
+      {
+        "path": "factoryline/context_efficiency.py",
+        "before_sha256": "767575dcf9f9ada6d19ecedb0034bb82ea0e4b60f3945732b8981b2c9579a8c3",
+        "after_sha256": "108d6db1bf39f73fd1dd9e7aff956b019fa9f6339bfa514a6db2daca44aeb533",
+        "ast_identical": false,
+        "lines": 6000
+      },
+      {
+        "path": "factoryline/review_audits.py",
+        "before_sha256": "7a4ade351f8e190816f68e6b0e4dbce1571e770a4592b65bbc979259c2c6f8e1",
+        "after_sha256": "07b5cfb15c507ce92dbdda55373715ba93cd4d46bc0e7209d7c458d92db12102",
+        "ast_identical": true,
+        "lines": 5955
+      },
+      {
+        "path": "factoryline/test_oracle_misuse.py",
+        "before_sha256": "6250683193187d996aa5bdc36ed8c803bb7a75caffe403e8c739933b6ea046cc",
+        "after_sha256": "5d6fbc508fe06577d0cc06dc5375be1e8d9c6de011f5f1aafa14753704d9a289",
+        "ast_identical": true,
+        "lines": 4437
+      }
+    ],
+    "tests_run": false,
+    "precision_gain": null,
+    "context_semantics": [
+      "Same source_callback_snapshot_state called exactly once before try/loop.",
+      "Same two tuple elements passed in same order to source_callback_snapshot_context for each scanned source.",
+      "Callback context helper still resolved afresh for each iteration; no new cross-file helper cache.",
+      "Same context dictionary construction, update and scan_snapshot object; snapshots cleared in same finally."
+    ]
   },
   "full_run_on_final_bytes": "NOT_RUN",
   "full_ci_green": false,

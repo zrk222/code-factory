@@ -582,31 +582,31 @@ def _consume_security_snapshots(
     scan_snapshot,
 ):
     """Consume producer-owned trees synchronously and clear their sidecar map."""
-    rows = {}
     from . import test_oracle_misuse as oracle
-    source_tree_index, callback_summaries = oracle.source_callback_snapshot_state(snapshots, fingerprints)
+
+    rows, state = {}, oracle.source_callback_snapshot_state(snapshots, fingerprints)
     try:
         for path in files:
-            tree = snapshots.pop(path, None)
-            if tree is None:
+            if (tree := snapshots.pop(path, None)) is None:
                 continue
             scope = (scoped_reads or {}).get(
                 path.relative_to(workspace).as_posix(), (scoped_reads or {}).get("", {})
             )
             calls = tuple(sorted(set(tenant_read_calls) | set(scope.get("calls", ()))))
             bindings = {**scope.get("bindings", {}), **tenant_read_bindings}
-            source_context = {
+            context = {
                 **contexts.get(path, {}),
                 "_tenant_policy_applies": scope.get("_policy_applies", False),
                 "_security_source_context": (workspace, retained),
             }
-            source_context.update(oracle.source_callback_snapshot_context(source_context.get("captured_imports", {}), workspace, source_tree_index, callback_summaries))
+            bind = oracle.source_callback_snapshot_context
+            context.update(bind(context.get("captured_imports", {}), workspace, *state))
             rows[path] = scan_snapshot(
                 workspace,
                 path,
                 calls,
                 bindings,
-                source_context,
+                context,
                 test_file_patterns,
                 retained.get(path),
                 tree,
