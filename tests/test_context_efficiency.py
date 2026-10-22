@@ -4125,7 +4125,7 @@ def test_workspace_reconciliation_bounds_and_atomic_partition(
 
 
 @pytest.mark.parametrize(
-    "change", ["untrusted", "tamper", "source", "configuration", "copied_root", "helper"]
+    "change", ["untrusted", "tamper", "source", "configuration", "copied_root", "helper", "snapshot_helper", "fingerprint_helper", "snapshot_code", "fingerprint_code"]
 )
 def test_workspace_checkpoint_revalidates_or_rejects_changed_authority(
     tmp_path, monkeypatch, change
@@ -4178,6 +4178,21 @@ def test_workspace_checkpoint_revalidates_or_rejects_changed_authority(
         )
     elif change == "copied_root":
         root = shutil.copytree(root, tmp_path / "copied")
+    elif change in {"snapshot_helper", "fingerprint_helper", "snapshot_code", "fingerprint_code"}:
+        from factoryline import review_audits as audit
+
+        owner = audit.contracts if change.startswith("snapshot") else audit
+        name = "bound_snapshots" if change.startswith("snapshot") else "_oracle_tree_fingerprint"
+        original_hook = getattr(owner, name)
+
+        def replaced_hook(*args, **kwargs):
+            return original_hook(*args, **kwargs)
+
+        if change.endswith("_code"):
+            monkeypatch.setattr(original_hook, "__code__", original_hook.__code__.replace(co_filename="changed-native-helper.py"))
+        else:
+            monkeypatch.setattr(owner, name, replaced_hook)
+        expected_error = "SCANNER_DRIFT"
     else:
         original = runtime._full_repository_workspace_partition
 
@@ -4306,6 +4321,75 @@ def test_workspace_consume_failure_binds_cleared_context_before_checkpoint(
     # checkpoint must be rejected as source/context drift, never reused.
     with pytest.raises(engine.RuntimeAuditError, match="SOURCE_DRIFT"):
         engine.full_repository_scan(tmp_path, resume=True, context_profile="workspace-v2")
+
+
+
+
+
+
+@pytest.mark.parametrize("mutate_tree", [False, True])
+def test_workspace_native_findings_parse_captured_bytes_without_fingerprints(
+    tmp_path, monkeypatch, mutate_tree
+):
+    import ast
+
+    from factoryline import deep_audit_io as engine
+    from factoryline import review_audits as audit
+    from factoryline import runtime_audit_integrity as runtime
+
+    def fingerprint_forbidden(*args, **kwargs):
+        raise AssertionError("native full-repository path computed a producer fingerprint")
+
+    monkeypatch.setattr(audit, "_oracle_tree_fingerprint", fingerprint_forbidden)
+    original_builder = runtime._full_repository_workspace_security_context
+
+    def changed_snapshot(*args, **kwargs):
+        captured = original_builder(*args, **kwargs)
+        if mutate_tree:
+            tree = captured["snapshots"][tmp_path / "unsafe.py"]
+            call = next(node for node in ast.walk(tree) if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute))
+            call.args = [ast.Constant(value="upx --best px")]
+        return captured
+
+    monkeypatch.setattr(runtime, "_full_repository_workspace_security_context", changed_snapshot)
+    (tmp_path / "build.py").write_text("import os\nos.system('upx --best px')\n", encoding="utf-8")
+    (tmp_path / "unsafe.py").write_text("import os\nos.system(input())\n", encoding="utf-8")
+    report = engine.full_repository_scan(tmp_path, context_profile="workspace-v2")
+    evidence = report["workspace_evidence"]
+    assert evidence["audit_coverage"]["complete"] is True
+    assert any(row["path"] == "unsafe.py" and row["severity"] == "HIGH" for row in evidence["findings"])
+    assert not any(row["path"] == "unsafe.py" for row in evidence["primitive_observations"])
+    assert any(row["path"] == "build.py" for row in evidence["primitive_observations"])
+    assert report["global_consumer_closure_verified"] is False
+
+
+def test_workspace_dependencies_parse_captured_bytes(tmp_path, monkeypatch):
+    import ast
+
+    from factoryline import deep_audit_io as engine
+    from factoryline import runtime_audit_integrity as runtime
+
+    original_builder = runtime._full_repository_workspace_security_context
+
+    def changed_import(*args, **kwargs):
+        captured = original_builder(*args, **kwargs)
+        tree = captured["snapshots"][tmp_path / "consumer.py"]
+        imported = next(node for node in ast.walk(tree) if isinstance(node, ast.Import))
+        imported.names[0].name = "forged"
+        return captured
+
+    monkeypatch.setattr(runtime, "_full_repository_workspace_security_context", changed_import)
+    (tmp_path / "consumer.py").write_text("import actual\n", encoding="utf-8")
+    (tmp_path / "actual.py").write_text("VALUE = 1\n", encoding="utf-8")
+    (tmp_path / "forged.py").write_text("VALUE = 2\n", encoding="utf-8")
+    first = engine.full_repository_scan(tmp_path, context_profile="workspace-v2")
+    resumed = engine.full_repository_scan(tmp_path, resume=True, context_profile="workspace-v2")
+    for report in (first, resumed):
+        consumer = next(row for row in report["primary_results"] if row["path"] == "consumer.py")
+        assert consumer["dependencies"]["edges"] == [
+            {"line": 1, "module": "actual", "name": "actual", "target": "actual.py"}
+        ]
+        assert report["dependency_index"]["closure_verified"] is False
 
 
 def test_full_repository_resume_rejects_source_and_configuration_drift(tmp_path):

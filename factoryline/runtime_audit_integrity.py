@@ -4287,6 +4287,10 @@ def full_repository_workspace_scan_batch(
                 trees[path] = tree
         else:
             raw, findings, status = scanned
+            tree = _full_repository_workspace_dependency_tree(
+                engine, audit, root, path, source_by_name[path.relative_to(root).as_posix()],
+                source_bytes.get(path), raw, status,
+            )
         if raw is not None:
             bindings.append(raw)
         context_findings.extend(findings)
@@ -4563,6 +4567,26 @@ def _full_repository_workspace_consume(
         snapshots.clear()
 
 
+def _full_repository_workspace_dependency_tree(
+    engine, audit, root, path, source, data, binding, status
+):
+    """Derive lexical imports from the same bytes as the audited native row."""
+    if status != "audited":
+        return None
+    if (
+        not isinstance(data, bytes)
+        or len(data) > audit.MAX_BYTES
+        or not isinstance(binding, dict)
+        or engine.sha256_bytes(data) != binding.get("sha256")
+        or binding.get("sha256") != source["sha256"]
+    ):
+        raise RuntimeAuditError("SOURCE_DRIFT", "dependency source differs from audited bytes")
+    try:
+        return audit._measure_parse(audit.ast.parse, data, root, path)
+    except (SyntaxError, UnicodeError, RecursionError) as exc:
+        raise RuntimeAuditError("SOURCE_DRIFT", "audited dependency source no longer parses") from exc
+
+
 def _full_repository_workspace_security_context(engine, generation, audit):
     """Capture a security-only generation without project test-oracle work."""
     from .context_efficiency import bind_application_fixture_context
@@ -4617,8 +4641,9 @@ def _full_repository_workspace_security_context(engine, generation, audit):
         "source_bytes": captured,
         "bindings": bindings + config_bindings,
         "snapshots": snapshots,
-        "fingerprints": {
-            p: audit._oracle_tree_fingerprint(tree) for p, tree in snapshots.items()
-        },
+        # Native consumers parse the current captured bytes afresh. Empty
+        # fingerprints select that existing fail-closed path; no producer AST
+        # can substitute its structure for the byte-bound native scan.
+        "fingerprints": {},
         "config_identity": config_identity,
     }

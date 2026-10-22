@@ -1,0 +1,114 @@
+{
+  "schema": "factory.native-byte-dependency241.scoped-fix.v1",
+  "recorded_at": "2026-10-22T17:22:43.290638+00:00",
+  "base_commit": "4bed6f74e672dacc5bfb8d976be9d12100ac2fb1",
+  "sources": [
+    {
+      "path": "factoryline/deep_audit_io.py",
+      "sha256": "d767821dafbd3795735e53b2528422e7f7a428e8d29ca3fa8a2c5110bf5c5ded"
+    },
+    {
+      "path": "factoryline/runtime_audit_integrity.py",
+      "sha256": "f6b928dbd58d5b43b09f97553dc9c9127d81f95ace6e81b510f8b18d90c72dbe"
+    },
+    {
+      "path": "tests/test_context_efficiency.py",
+      "sha256": "90d476a2968037e890342ea9808da9520a1f630a18510d4e196b4c5eac975d33"
+    }
+  ],
+  "fix": [
+    "Native workspace findings parse captured bytes without eagerly fingerprinting every producer AST.",
+    "Audited dependency ASTs come from fresh captured bytes after size and native-binding/inventory hash checks. Altered producer imports cannot change first-scan or resumed dependency edges.",
+    "Snapshot/fingerprint helper identity and code replacements invalidate checkpoint authority. No new production module or facts-cache subsystem."
+  ],
+  "regression_evidence": {
+    "candidate13-import-negative": {
+      "receipt_sha256": "2fc14b09826f69c1b8acce4a3c840299e79467c0a48d524c7c59c901d295fcb5",
+      "state": "FINISHED",
+      "exit_code": 1,
+      "seconds": 9.375,
+      "registration_sha256": "37da572908356ac78d57df0bd9033de7ec972958c6a7a73de096985451bed7d5",
+      "inputs_unchanged": true,
+      "log_sha256": "0085b5befa2093656a2b3a5b12dbb712210894b10dc2ad78676e8fd26ead9671",
+      "xml_sha256": "ded7fb1cb2c4777ff0ccb59db785ce64583e1eaf6fc29e6f11b89caa45b52bb6",
+      "precision_claim": null
+    },
+    "candidate14-import-and-native": {
+      "receipt_sha256": "ec5a963bdf297030c499e5943b88cbf82ef3d0b40feb6fe5f610c9ea6df001cf",
+      "state": "FINISHED",
+      "exit_code": 0,
+      "seconds": 29.812,
+      "registration_sha256": "ec9f1b64235d134e02a86321e467155a0242c78ab212e1fd71023dd684c2a653",
+      "inputs_unchanged": true,
+      "log_sha256": "80138beac7063918570e84178904897593960c035d354d8a7a18527564a01e55",
+      "xml_sha256": "44cbe4e4201144d576cf96bf2c3b417f1a8a02f3731002c9833f0394d8bf8c02",
+      "precision_claim": null
+    },
+    "candidate14-epoch-negative": {
+      "receipt_sha256": "028fa423729e77b83ddba4103d64e9840f5abc7724082e40ad4354661054c126",
+      "state": "FINISHED",
+      "exit_code": 0,
+      "seconds": 20.25,
+      "registration_sha256": "e0f1aa710dd33bacee6251f962708e4d55327227dd38e63cecc8b59ca31bb628",
+      "inputs_unchanged": true,
+      "log_sha256": "333c37d504d1ca0cf73d551f42285e1bf1aa7b0b40f0674e7c561a29a398db76",
+      "xml_sha256": "8a9899f5e4e9c38b19de164eea457c76bad44e8cbb625745d474e0b6cd751121",
+      "precision_claim": null
+    }
+  },
+  "tests_summary": {
+    "before_fix": "1 reproduced import-mutation failure on immutable generation13.",
+    "after_fix": "9 focused controls passed on immutable generation14:5 native/dependency/failure/syntax controls and4 helper-epoch negatives. No full-suite rerun.",
+    "inputs_unchanged": true
+  },
+  "reviewer": {
+    "path": ".factory/precision241/native-path/ecc-generation-14-review.json",
+    "sha256": "36acf9c589f843f19717453675feedbba17b5f5af6487f03adb5d957f3c04710",
+    "scope": "Independent AI context using ECC; scoped implementation commit only, not human or cross-model adjudication."
+  },
+  "architecture": {
+    "decision": "HEALTHY",
+    "python_files": 429,
+    "core_modules": 133,
+    "caps_unchanged": true,
+    "report_sha256": "d254b7fe9f31e7e71e51a597f183254b6604e57da87aa5bf1acbde7cf1d8affd"
+  },
+  "performance": {
+    "generation13": {
+      "state": "TIMEOUT",
+      "exit_code": null,
+      "elapsed_seconds": 180.391,
+      "input_hashes_match_after": true,
+      "registration_sha256": "26e15e4bdd147b20e6ce45111c8501f0e946fa9e1a2d9e0ce98ff66a1a46a426",
+      "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "precision_claim": null,
+      "report_state": "NO_COMPLETE_JSON_REPORT",
+      "qualification_pass": false
+    },
+    "generation14": "NOT_RUN",
+    "speed_gain_claim": null
+  },
+  "workflow": {
+    "state": "INCOMPLETE",
+    "receipt_sha256": "ed4b8f925c39df7998aca7e0d236c18bfc987ddfc74b41838f97dafe370b41f5",
+    "remaining": [
+      "Large-repository performance",
+      "Global qualification, default migration and fresh independent precision"
+    ]
+  },
+  "last_measured_actionable_precision": {
+    "cohort": "Study225 exact-claim exposed replay238 before these changes",
+    "TP": 0,
+    "FP": 49,
+    "UNCLEAR": 8,
+    "decided_precision_percent": 0,
+    "wilson95_percent": [
+      0,
+      7.269781922
+    ],
+    "fresh_post_fix_measurement": "NOT_RUN",
+    "no_new_precision_claim": true
+  },
+  "merge_release_approved": false
+}
