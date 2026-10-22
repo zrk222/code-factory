@@ -72,7 +72,8 @@
   },
   "source_review": {
     "approved_predecessor": "0ea50afa74afaa1ad4230534dc53af6c8b99b4a0591d3e530293f42fce6713a3",
-    "final_delta_independent_ecc": "PENDING_ACCOUNT_USAGE_LIMIT"
+    "final_delta_independent_ecc": "PASS_SCOPED_SOURCE_DELTA_AND_REGRESSION_EVIDENCE_GLOBAL_INCOMPLETE",
+    "final_delta_receipt_sha256": "beb0577ab73ba42d3f04a978ed44e627fd47300c97881a22c4bb2277f69dcf6f"
   },
   "full_run_on_final_bytes": "NOT_RUN",
   "full_ci_green": false,
