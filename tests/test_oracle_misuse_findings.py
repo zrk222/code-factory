@@ -1182,3 +1182,91 @@ def test_consolidated_fixture_live_helpers_invalidate_native_cache(
     else:
         monkeypatch.setattr(original, "__code__", replacement.__code__)
     assert scanner._oracle_context_cache_key(tmp_path, [], {}) != before
+
+
+@pytest.mark.parametrize(
+    "body,hollow",
+    [
+        ("class Item:\n        pass\n    Item()", True),
+        ("class Item:\n        'placeholder'\n    Item()", True),
+        ("class Item:\n        pass\n    alias = Item\n    alias()", True),
+        ("class Item:\n        pass\n    Item(1)", False),
+        ("class Item:\n        pass\n    Item(value=1)", False),
+        ("class Item(external):\n        pass\n    Item()", False),
+        ("class Item(metaclass=external):\n        pass\n    Item()", False),
+        ("@external\n    class Item:\n        pass\n    Item()", False),
+        ("class Item:\n        external()\n    Item()", False),
+        (
+            "class Item:\n        def __init__(self):\n            raise ValueError\n    Item()",
+            False,
+        ),
+        ("class Item:\n        pass\n    Item.__new__ = external\n    Item()", False),
+        ("class Item:\n        pass\n    external(Item)\n    Item()", False),
+        ("class Item:\n        pass\n    Item = external\n    Item()", False),
+        (
+            "import builtins\n    builtins.__build_class__ = external\n    class Item:\n        pass\n    Item()",
+            False,
+        ),
+        (
+            "class Item:\n        pass\n    class Item:\n        external()\n    Item()",
+            False,
+        ),
+    ],
+)
+def test_local_empty_class_completion_requires_closed_definition_and_call(
+    tmp_path, body, hollow
+):
+    (tmp_path / "test_class.py").write_text(
+        "def test_case():\n    " + body + "\n", encoding="utf-8"
+    )
+    report = security_scan(tmp_path, cache_enabled=False)
+    assert ("QUALITY_HOLLOW_TEST" in report["finding_counts"]) is hollow
+
+
+@pytest.mark.parametrize(
+    "prefix",
+    [
+        "del __name__\n",
+        "__builtins__ = {}\n",
+        "from somewhere import *\n",
+        "import builtins\nbuiltins.__build_class__ = external\n",
+        "try:\n    raise ValueError\nexcept ValueError as __name__:\n    pass\n",
+        "def sabotage():\n    import builtins\n    def broken(*args, **kwargs):\n        raise RuntimeError\n    builtins.__build_class__ = broken\nsabotage()\n",
+        "sabotage()\n",
+        "@external\ndef sibling():\n    pass\n",
+        "def sibling(value=external()):\n    pass\n",
+        "from unrelated import source\n",
+        "def __builtins__():\n    pass\n",
+    ],
+)
+def test_local_empty_class_keeps_implicit_runtime_providers_unverified(
+    tmp_path, prefix
+):
+    (tmp_path / "test_class.py").write_text(
+        prefix + "def test_case():\n    class Item:\n        pass\n    Item()\n",
+        encoding="utf-8",
+    )
+    report = security_scan(tmp_path, cache_enabled=False)
+    assert "QUALITY_HOLLOW_TEST" not in report["finding_counts"]
+
+
+@pytest.mark.parametrize(
+    "name", ["_class_creation_context_closed", "_definition_completion"]
+)
+@pytest.mark.parametrize("mutation", ["binding", "code"])
+def test_local_empty_class_helper_changes_invalidate_cached_observations(
+    tmp_path, monkeypatch, name, mutation
+):
+    from factoryline import review_audits as scanner, test_oracle_misuse as provider
+
+    original = getattr(provider, name)
+    before = scanner._oracle_context_cache_key(tmp_path, [], {})
+
+    def replacement(*args, **kwargs):
+        return False
+
+    if mutation == "binding":
+        monkeypatch.setattr(provider, name, replacement)
+    else:
+        monkeypatch.setattr(original, "__code__", replacement.__code__)
+    assert scanner._oracle_context_cache_key(tmp_path, [], {}) != before

@@ -1,0 +1,106 @@
+{
+  "schema": "factory.local-empty-class-regression.v1",
+  "parent": "0149b7718c93f16a292996738910bb91ff201f95",
+  "source_sha256": {
+    "factoryline/test_oracle_misuse.py": "dc865ffde7876790359bf0dfdba0c056133ab6149eeb5c21b859ffd0b2b19a67",
+    "tests/test_oracle_misuse_findings.py": "5680ccf5cd291a7a4ed997c220757d42aea0253bc4a0abcb8f5329fa4b746da7"
+  },
+  "behavior": "Restore HOLLOW only for normal no-argument instantiation of a source-local empty class under a closed implicit class-creation provider context.",
+  "source_profile": [
+    "No bases, keyword/metaclass arguments, decorators, type parameters, methods or evaluated class-body effects.",
+    "Module initialization contains only inert function definitions, docstrings and pass, with no imports anywhere.",
+    "Module __name__ and __builtins__ non-Name bindings, implicit deletion, direct stores and opaque initialization remain unsupported.",
+    "Sequential helper tracking rejects call arguments, instance/class mutation, escapes and rebinding before a constructor is credited."
+  ],
+  "qualification": {
+    "unit_tests_passed": 228,
+    "paired_existing_cases": 1558,
+    "baseline_failures": 55,
+    "candidate_failures": 54,
+    "new_failures": 0,
+    "resolved_case": "tests.test_review_audits::test_security_scan_tracks_invoked_nested_oracle_helpers[def bar():\\n        assert compute() == 4-class bar:\\n        pass\\n    bar()-True]",
+    "full_audit_green": false,
+    "historical_TP_retention": "13/13 at original severity",
+    "seeded_benchmark": "PASS",
+    "ruff_format_C901": "PASS",
+    "native_complexity": "No existing complexity debt increase; new helpers <=10.",
+    "architecture": {
+      "decision": "HEALTHY",
+      "python_files": 429,
+      "core_modules": 133
+    },
+    "independent_ECC_review": "Separate Sol6.1 high reviewer; source-bound negative probes and qualification inspection."
+  },
+  "precision": {
+    "new_heldout_measurement": false,
+    "gain_established": false,
+    "last_comparable_study210": {
+      "TP": 1,
+      "FP": 10,
+      "UNCLEAR": 22,
+      "precision": 0.09090909090909091,
+      "wilson95": [
+        0.016232,
+        0.377358
+      ]
+    }
+  },
+  "limits": [
+    "This fixes one genuine dead-test family; it does not complete all review-audit failures.",
+    "The 54 pre-existing candidate failures remain explicitly red; the paired check proves only no added failure and one resolved case.",
+    "No test expectations or seeded corpus were changed to fit the scanner.",
+    "No target code execution, runtime completeness, new held-out precision, publication or merge approval is established."
+  ],
+  "artifacts": [
+    {
+      "path": ".factory/coverage211/empty-class-final2/paired-regression.json",
+      "sha256": "5708955eab660ffc739f5d596943adc9e0b4910ce8d8488dc0598bcf1b1f4c76",
+      "kind": "test"
+    },
+    {
+      "path": ".factory/coverage211/empty-class-final2/checks.json",
+      "sha256": "1e62c490a25b14165142376f475729a791bb22cfd0c4401a602e7880f660767f",
+      "kind": "receipt"
+    },
+    {
+      "path": ".factory/coverage211/empty-class-final2/ecc-review.json",
+      "sha256": "623239f997dd132cb744a6da205bbf0f1d8b8f3116aec79c96cc5bfb43fd629c",
+      "kind": "review"
+    },
+    {
+      "path": ".factory/coverage211/empty-class-final-unit3.xml",
+      "sha256": "516b8b10feb57dc909791e165c270c8aee5d66763e5ff8da3f259075bec643cb",
+      "kind": "test"
+    },
+    {
+      "path": ".factory/coverage211/empty-class-final2/baseline.xml",
+      "sha256": "b8921fde321f43c58ec967ab5321739ec0bdbce31beab0dce1bc54dcb2a46beb",
+      "kind": "test"
+    },
+    {
+      "path": ".factory/coverage211/empty-class-final2/candidate.xml",
+      "sha256": "0facfb4ffda12174afe409616a75160711c4a6a26e0406ff169d1551c5ebcb4b",
+      "kind": "test"
+    },
+    {
+      "path": ".factory/coverage211/empty-class-final2/retained-tp/result.json",
+      "sha256": "725953c6bad1644b5d1a096248ea0d9047096cd97c86bd5b8634bba52a8c2c70",
+      "kind": "test"
+    },
+    {
+      "path": ".factory/coverage211/empty-class-final2/architecture.log",
+      "sha256": "2277fadb4fb6d7638d7f253d4dcd8cdf6d2e576612f93adc10dfae2bbf615c42",
+      "kind": "receipt"
+    },
+    {
+      "path": ".factory/coverage211/empty-class-final2/benchmark.log",
+      "sha256": "dc91fb51c41390a735834c622dc66da5b6189a00917280f8c52499c72171cfc6",
+      "kind": "receipt"
+    },
+    {
+      "path": ".factory/coverage211/empty-class-native-complexity.json",
+      "sha256": "124aac8174fa4030bb7d067815a9cf4b96fd3a9cb58ea9615fce51aac138e1a6",
+      "kind": "receipt"
+    }
+  ]
+}

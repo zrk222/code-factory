@@ -268,6 +268,15 @@ def _inert_integer_operation(operation, left, right):
 
 
 def _inert_definition(node):
+    if isinstance(node, ast.ClassDef):
+        return not any(
+            (
+                node.bases,
+                node.keywords,
+                node.decorator_list,
+                getattr(node, "type_params", ()),
+            )
+        ) and all(isinstance(stmt, ast.Pass) or _docstring(stmt) for stmt in node.body)
     args = node.args
     annotations = [
         arg.annotation for arg in (*args.posonlyargs, *args.args, *args.kwonlyargs)
@@ -543,6 +552,8 @@ def _inert_helper_stub(function):
 
 
 def _inert_helper_signature(function):
+    if not isinstance(function, ast.FunctionDef):
+        return False
     args = function.args
     positional = (*args.posonlyargs, *args.args)
     return (
@@ -1150,6 +1161,25 @@ def _literal_lambda_binding_closed(
     )
 
 
+def _class_creation_context_closed(module, providers, stores):
+    return (
+        providers["builtins"]
+        and "__name__" not in stores
+        and not _module_binding_conflict(module, "__name__", None)
+        and not _module_binding_conflict(module, "__builtins__", None)
+        and all(
+            isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and _inert_definition(item)
+            or _docstring(item)
+            or isinstance(item, ast.Pass)
+            for item in module.body
+        )
+        and not any(
+            isinstance(item, (ast.Import, ast.ImportFrom)) for item in ast.walk(module)
+        )
+    )
+
+
 def _completion_context(test):
     names, bases = _builtins_completion_context()
     module = getattr(test, "_oracle_module", None)
@@ -1212,6 +1242,9 @@ def _completion_context(test):
         "names": names,
         "bases": bases,
         "namespace_closed": namespace_closed,
+        "class_creation_closed": _class_creation_context_closed(
+            module, providers, stores
+        ),
         "helpers": helpers,
         "literal_functions": literal_functions,
         "literal_calls": literal_calls,
@@ -1417,7 +1450,9 @@ def _callback_helper(function, call, helpers):
 def _run_inert_helper(helper, context, helpers):
     if not _inert_definition(helper):
         return "UNKNOWN", None
-    if isinstance(helper, ast.AsyncFunctionDef):
+    # Local class helpers are registered only after their definition and its
+    # implicit providers pass _definition_completion in this execution path.
+    if isinstance(helper, (ast.AsyncFunctionDef, ast.ClassDef)):
         return "NORMAL", None
     active = context.get("active_helpers", ())
     identity = id(helper)
@@ -1501,18 +1536,27 @@ def _inert_expression(node, known, helpers, context):
 
 
 def _function_needs_arguments(function):
+    if isinstance(function, ast.ClassDef):
+        return False
     args = function.args
     return len((*args.posonlyargs, *args.args)) > len(args.defaults) or any(
         default is None for default in args.kw_defaults
     )
 
 
+def _definition_completion(stmt, context):
+    supported = _inert_definition(stmt) and (
+        not isinstance(stmt, ast.ClassDef) or context.get("class_creation_closed")
+    )
+    return ("NORMAL", None) if supported else ("UNKNOWN", None)
+
+
 def _simple_completion(stmt, known, helpers, context):
     unknown = ("UNKNOWN", None)
     if isinstance(stmt, ast.Pass):
         return "NORMAL", None
-    if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
-        return ("NORMAL", None) if _inert_definition(stmt) else unknown
+    if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        return _definition_completion(stmt, context)
     if isinstance(stmt, ast.Expr):
         return _inert_expression(stmt.value, known, helpers, context)
     if isinstance(stmt, ast.Assert):
@@ -1723,6 +1767,7 @@ def _inert_statement(stmt, known, helpers, context):
             ast.Pass,
             ast.FunctionDef,
             ast.AsyncFunctionDef,
+            ast.ClassDef,
             ast.Expr,
             ast.Assert,
             ast.Return,
@@ -1747,7 +1792,7 @@ def _inert_statement(stmt, known, helpers, context):
 
 
 def _track_inert_definition(stmt, known, helpers, context):
-    if not isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
+    if not isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
         return
     helpers[stmt.name] = stmt
     known.pop(stmt.name, None)
@@ -1878,6 +1923,7 @@ INERT_BODY_HELPERS = (
     _inert_integer_arithmetic,
     _inert_integer_operation,
     _inert_definition,
+    _class_creation_context_closed,
     _completion_context,
     _completion_name,
     _completion_catches,
@@ -1934,6 +1980,7 @@ INERT_BODY_HELPERS = (
     _inert_expression,
     _function_needs_arguments,
     _simple_completion,
+    _definition_completion,
     _bound_name_identity_assertion,
     _raise_completion,
     _assignment_completion,
