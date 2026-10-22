@@ -174,6 +174,10 @@ def endpoint_admission_helpers():
         "_attach",
         "annotate_endpoint_findings",
         "endpoint_admission_helpers",
+        "_endpoint_claim_profile_matches",
+        "_endpoint_attestation_matches",
+        "_reviewed_capture_matches",
+        "_reviewed_publication_matches",
         "mint_endpoint_facts",
         "catalog_content_digest",
         "endpoint_publication",
@@ -186,6 +190,8 @@ def endpoint_admission_helpers():
         "_excerpt_https",
         "_excerpt_valid",
         "reviewed_excerpt_fact",
+        "_reviewed_capture_matches",
+        "_reviewed_publication_matches",
     )
     protocol_names = (
         "_public_https",
@@ -379,27 +385,17 @@ def endpoint_binding(finding, sources, bindings):
         if len(dict(manifest)) != len(manifest):
             return False
         return bool(
-            finding.get("code") == "SECURITY_HARDCODED_SECRET"
-            and facts.get("schema") == "factory.public-protocol-endpoint.v1"
-            and facts.get("disposition") == "ENDPOINT_DECLARATION_ROLE_PROVEN"
-            and facts.get("flow_profile") == "DECLARED_CLASS_MAY_FLOW"
-            and facts.get("runtime_assurance") == "INCOMPLETE"
-            and facts.get("credential_safety") == "UNASSESSED"
-            and facts.get("known_auth_uses") == []
-            and facts.get("linked_unknown_uses") == []
-            and digest == _endpoint_evidence_digest(facts)
-            and identity == _identity(finding)
-            and current is not None
-            and publication == current
-            and facts.get("workspace_sources_sha256")
-            == _endpoint_evidence_digest(sorted(manifest))
-            and required
-            and all(
-                bindings.get(path) == sha and dict(manifest).get(path) == sha
-                for path, sha in required
+            _endpoint_attestation_matches(
+                finding,
+                bindings,
+                facts,
+                digest,
+                identity,
+                required,
+                publication,
+                current,
+                manifest,
             )
-            and facts.get("source_path") == finding.get("path")
-            and (facts.get("source_path"), facts.get("source_sha256")) in required
         )
     except (AttributeError, KeyError, TypeError, ValueError, UnicodeError):
         return False
@@ -413,6 +409,8 @@ def endpoint_evidence_helpers():
         _NativeEndpointFacts,
         mint_endpoint_facts,
         endpoint_binding,
+        _endpoint_claim_profile_matches,
+        _endpoint_attestation_matches,
     )
 
 
@@ -680,38 +678,22 @@ def reviewed_excerpt_fact(row):
     """
     if not isinstance(row, dict) or row.get("document_profile") != PROFILE:
         return None
-    value, capture, review = row.get("value"), row.get("capture"), row.get("review")
+    value, capture, review = (row.get("value"), row.get("capture"), row.get("review"))
     if (
         not _excerpt_https(value)
         or not isinstance(capture, dict)
-        or not isinstance(review, dict)
+        or (not isinstance(review, dict))
     ):
         return None
     source = capture.get("source_url")
-    if not (
-        _excerpt_https(source)
-        and source == capture.get("final_url")
-        and capture.get("status") == 200
-        and _sha(capture.get("raw_sha256"))
-        and isinstance(capture.get("observed_at"), str)
-        and capture["observed_at"]
-        and capture.get("https_profile") == "urllib_default_certificate_verification"
-        and capture.get("redirect_policy") == "reject_before_follow"
-    ):
+    if not _reviewed_capture_matches(capture, source):
         return None
     if not _excerpt_valid(row.get("excerpt"), value, capture):
         return None
     parsed = urlsplit(source)
     origin = f"{parsed.scheme}://{parsed.netloc}"
     payload = {key: val for key, val in row.items() if key != "review"}
-    if not (
-        review.get("decision") == "ADMITTED_PROTOCOL_ENDPOINT_ONLY"
-        and review.get("publisher_origin") == origin
-        and review.get("fact_sha256") == digest(payload)
-        and _sha(review.get("review_sha256"))
-        and review.get("publisher_and_endpoint_context_checked") is True
-        and review.get("revoked") is False
-    ):
+    if not _reviewed_publication_matches(review, origin, payload):
         return None
     return {
         "schema": "factory.protocol-endpoint-declaration.v1",
@@ -1805,3 +1787,69 @@ def session_factory_witness(path, function, index, aliases):
         "runtime_factory_dispatch": "UNASSESSED",
         "hops": hops,
     }
+
+
+def _endpoint_claim_profile_matches(finding, facts, digest):
+    """Validate the original ordered claim profile and mutation-evident facts digest."""
+    return (
+        finding.get("code") == "SECURITY_HARDCODED_SECRET"
+        and facts.get("schema") == "factory.public-protocol-endpoint.v1"
+        and (facts.get("disposition") == "ENDPOINT_DECLARATION_ROLE_PROVEN")
+        and (facts.get("flow_profile") == "DECLARED_CLASS_MAY_FLOW")
+        and (facts.get("runtime_assurance") == "INCOMPLETE")
+        and (facts.get("credential_safety") == "UNASSESSED")
+        and (facts.get("known_auth_uses") == [])
+        and (facts.get("linked_unknown_uses") == [])
+        and (digest == _endpoint_evidence_digest(facts))
+    )
+
+
+def _endpoint_attestation_matches(
+    finding, bindings, facts, digest, identity, required, publication, current, manifest
+):
+    """Validate the original endpoint attestation and bound source manifest."""
+    return (
+        _endpoint_claim_profile_matches(finding, facts, digest)
+        and identity == _identity(finding)
+        and (current is not None)
+        and (publication == current)
+        and (
+            facts.get("workspace_sources_sha256")
+            == _endpoint_evidence_digest(sorted(manifest))
+        )
+        and required
+        and all(
+            (
+                bindings.get(path) == sha and dict(manifest).get(path) == sha
+                for path, sha in required
+            )
+        )
+        and (facts.get("source_path") == finding.get("path"))
+        and ((facts.get("source_path"), facts.get("source_sha256")) in required)
+    )
+
+
+def _reviewed_capture_matches(capture, source):
+    """Validate the original reviewed HTTPS capture fields in evaluation order."""
+    return (
+        _excerpt_https(source)
+        and source == capture.get("final_url")
+        and (capture.get("status") == 200)
+        and _sha(capture.get("raw_sha256"))
+        and isinstance(capture.get("observed_at"), str)
+        and capture["observed_at"]
+        and (capture.get("https_profile") == "urllib_default_certificate_verification")
+        and (capture.get("redirect_policy") == "reject_before_follow")
+    )
+
+
+def _reviewed_publication_matches(review, origin, payload):
+    """Validate the original publication review and payload binding."""
+    return (
+        review.get("decision") == "ADMITTED_PROTOCOL_ENDPOINT_ONLY"
+        and review.get("publisher_origin") == origin
+        and (review.get("fact_sha256") == digest(payload))
+        and _sha(review.get("review_sha256"))
+        and (review.get("publisher_and_endpoint_context_checked") is True)
+        and (review.get("revoked") is False)
+    )

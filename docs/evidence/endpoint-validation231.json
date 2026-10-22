@@ -1,0 +1,105 @@
+{
+  "schema": "factory.endpoint-validation-refactor231.v1",
+  "status": "SCOPED_STATIC_NATIVE_QUALITY_AND_HELPER_IDENTITY_PASS_GLOBAL_INCOMPLETE",
+  "source_path": "factoryline/credential_endpoint_admission.py",
+  "source_sha256": "7008c116a06cc88f6726f39e42e2cc9ecef97c4979b4e3a4f32751038a4d9842",
+  "parent": "5ef91c9b00d00ad763cffa10feb58c793b6aaea3",
+  "inlined_ast_equal": true,
+  "functions": [
+    {
+      "name": "endpoint_binding",
+      "before": 22,
+      "after": 5
+    },
+    {
+      "name": "reviewed_excerpt_fact",
+      "before": 21,
+      "after": 9
+    }
+  ],
+  "helpers": [
+    {
+      "name": "_endpoint_claim_profile_matches",
+      "complexity": 9,
+      "arguments": [
+        "finding",
+        "facts",
+        "digest"
+      ]
+    },
+    {
+      "name": "_endpoint_attestation_matches",
+      "complexity": 10,
+      "arguments": [
+        "finding",
+        "bindings",
+        "facts",
+        "digest",
+        "identity",
+        "required",
+        "publication",
+        "current",
+        "manifest"
+      ]
+    },
+    {
+      "name": "_reviewed_capture_matches",
+      "complexity": 8,
+      "arguments": [
+        "capture",
+        "source"
+      ]
+    },
+    {
+      "name": "_reviewed_publication_matches",
+      "complexity": 6,
+      "arguments": [
+        "review",
+        "origin",
+        "payload"
+      ]
+    }
+  ],
+  "scope": "Two existing validation functions; four cohesive predicate phases. Original short-circuit order and return operands retained; all call arguments initialized simple locals. No test expectations or authority predicates changed.",
+  "precision_gain": null,
+  "new_modules": 0,
+  "remaining_global_quality": "FAIL",
+  "candidate_sha256": "1bf12096eb03c3de223bdf96eebb7ebd1b67da3d8ff62f565bbfe19fc669cfbc",
+  "first_private_generation_rejected": {
+    "sha256": "167c771a13645a23536feccb5bf2c5232467c112f5d14fc2b41d81f8185dd662",
+    "reason": "Digest argument missing through helper2; local root readback and independent ECC both caught capture bug before live edits."
+  },
+  "native_quality": {
+    "exit_code": 1,
+    "seconds": 89.97733120000339,
+    "grade": "C",
+    "passed": false,
+    "before_findings": 92,
+    "after_findings": 90,
+    "removed": [
+      "QA_COMPLEXITY factoryline/credential_endpoint_admission.py:endpoint_binding complexity 22 > 10; policy=hard",
+      "QA_COMPLEXITY factoryline/credential_endpoint_admission.py:reviewed_excerpt_fact complexity 21 > 10; policy=hard"
+    ],
+    "added": [],
+    "expected_scoped_removed": 2,
+    "global_quality_gate": "FAIL",
+    "precision_gain_claim": null
+  },
+  "architecture": {
+    "decision": "HEALTHY",
+    "python_files": 429,
+    "core_modules": 133
+  },
+  "independent_ecc_sha256": "b6e75c721ee515137d24a4083e7be026aaf0abc5960403b84579a72badad910c",
+  "native_helper_challenge_sha256": "bdbe99589fa9cf6b839eccabe01c7b195afc09c4ea83e152999f542011a7498c",
+  "matching_candidate_full_suite": "NOT_RUN",
+  "previous_exact_source_matrix": "f03ef2c1 ninejobs passed; not promoted to finalsourceverification",
+  "latest_fresh_actionable_precision": {
+    "study": "Study225",
+    "TP": 0,
+    "FP": 49,
+    "UNCLEAR": 8,
+    "decided_precision": 0
+  },
+  "merge_bar_met": false
+}
