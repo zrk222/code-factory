@@ -96,7 +96,14 @@ Both blinded AI submissions have those aggregate counts, but disagree on two
 specific actionable labels. Consensus keeps disagreements unclear: 0 TP, 40 FP,
 7 unclear; Wilson 95% interval 0–8.76%. Seven primitive disagreements also remain
 unclear. The scanner and original labels remain frozen. This cohort is now
-exposed, so every repair replay is development evidence. Claude review is pending.
+exposed, so every repair replay is development evidence. Claude's supplied review
+has now arrived: 0 actionable TP, 42 FP and 5 unclear; 0% on 42 decided alerts,
+Wilson 95% 0–8.38%. It agrees with each prior reviewer on 46/47 actionable
+labels. The original two-reviewer consensus and disagreements remain unchanged;
+no unregistered majority-vote rule is applied. All 47 local packet source hashes
+validate, but Claude's notes supply no reviewed bundle hashes, so exact bundle
+identity and blinding remain self-reported. See
+`docs/evidence/study180-claude-assessment213.json` and the verbatim review.
 The original human-plus-AI protocol is not satisfied. Only 22 of 24 planned
 scans completed; two errored, so declared repository coverage is incomplete.
 Development replay at `4465aa3` completes all 12 repositories, including the
@@ -231,6 +238,11 @@ improvements.
   `docs/evidence/closed-shell-operation207.json`.
   There is no improved fresh-study score yet. See
   `docs/evidence/study180-two-ai-assessment204.json`.
+- Supplied Claude review of the same frozen Study180: 0 TP / 42 FP / 5 unclear,
+  0% actionable precision on 42 decided alerts (Wilson 95% 0–8.38%). Primitive
+  match rate is 39/47 (82.98%), not actionable precision. This does not measure
+  the current head or change the separate Study210 result. Prior consensus is
+  preserved. Evidence: `docs/evidence/study180-claude-assessment213.json`.
 - Current architecture candidate: 429 Python files / 133 core modules; the
   unchanged architecture gate passes after physical module absorption. Evidence:
   `docs/evidence/core-module-target-133-184.json`. Historical full-suite failures

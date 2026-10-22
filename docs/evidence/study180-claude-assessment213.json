@@ -1,0 +1,1135 @@
+{
+  "schema": "factory.study180.supplied-claude-assessment.v1",
+  "state": "AI_LABELS_RECEIVED_FROZEN_STUDY_FAILED_NOT_CURRENT_HEAD_PRECISION",
+  "study": "study180",
+  "frozen_candidate_commit": "c05034e5b12071781eed22d2182b4d83c34b0724",
+  "supplied_review": {
+    "path": "docs/evidence/study180-claude-review213.md",
+    "sha256": "920e9b855394ed4c9b4855c830fe126e2bd40fabc38b547730027d63c49cb0a4",
+    "declared_model": "claude-sonnet-5-5",
+    "declared_submitted_at": "2026-10-22T03:28:44Z",
+    "model_identity_independently_verified": false,
+    "human_validation": false,
+    "blindness": "Self-reported by the supplied review; not independently attested.",
+    "reviewed_bundle_hashes_provided": false
+  },
+  "local_packet_checks": {
+    "unique_ids": 47,
+    "expected_ids": 47,
+    "source_hashes_verified": 47,
+    "submitted_bundle_byte_identity_verified": false,
+    "meaning": "Supplied IDs correspond to local frozen packets whose source hashes are valid; the notes do not attest the exact bundle hashes seen by Claude."
+  },
+  "claude_actionable": {
+    "TP": 0,
+    "FP": 42,
+    "UNCLEAR": 5,
+    "decided": 42,
+    "precision": 0.0,
+    "wilson95": [
+      0.0,
+      0.08379879086570391
+    ],
+    "unclear_inclusive_rate": 0.0
+  },
+  "claude_primitive": {
+    "TP": 39,
+    "FP": 8,
+    "UNCLEAR": 0,
+    "match_rate": 0.8297872340425532,
+    "is_actionable_precision": false
+  },
+  "actionable_by_rule": {
+    "SECURITY_DYNAMIC_EXECUTION": {
+      "FP": 1
+    },
+    "SECURITY_HARDCODED_SECRET": {
+      "FP": 17,
+      "UNCLEAR": 3
+    },
+    "SECURITY_OS_COMMAND": {
+      "FP": 20
+    },
+    "SECURITY_SHELL_COMMAND": {
+      "FP": 4
+    },
+    "SECURITY_UNSAFE_DESERIALIZATION": {
+      "UNCLEAR": 2
+    }
+  },
+  "agreement_with_prior_reviewers": [
+    {
+      "prior_reviewer_index": 0,
+      "actionable_agreement": 46,
+      "primitive_agreement": 40,
+      "actionable_disagreement_ids": [
+        "S180-006"
+      ],
+      "primitive_disagreement_ids": [
+        "S180-002",
+        "S180-013",
+        "S180-015",
+        "S180-025",
+        "S180-027",
+        "S180-028",
+        "S180-031"
+      ]
+    },
+    {
+      "prior_reviewer_index": 1,
+      "actionable_agreement": 46,
+      "primitive_agreement": 47,
+      "actionable_disagreement_ids": [
+        "S180-036"
+      ],
+      "primitive_disagreement_ids": []
+    }
+  ],
+  "prior_consensus_preserved": {
+    "path": "docs/evidence/study180-two-ai-assessment204.json",
+    "sha256": "111e8fc24e059d6d3e1190de9dd8dd603bcc7c735116945d062219dd62075846",
+    "actionable": {
+      "TP": 0,
+      "FP": 40,
+      "UNCLEAR": 7,
+      "precision": 0.0,
+      "wilson95": [
+        0,
+        0.08762160119728664
+      ],
+      "reviewer_agreement": 45,
+      "reviewer_disagreement": 2,
+      "disagreement_ids": [
+        "S180-006",
+        "S180-036"
+      ],
+      "per_reviewer_counts": [
+        {
+          "FP": 41,
+          "UNCLEAR": 6
+        },
+        {
+          "FP": 41,
+          "UNCLEAR": 6
+        }
+      ]
+    },
+    "new_tiebreak_rule_applied": false
+  },
+  "repair_priorities": [
+    {
+      "family": "shell command trust and operation role",
+      "action": "Prove command construction, input roles, caller boundary and relevant mutations. Reuse one bounded summary across all eligible calls; no build/test path whitelist."
+    },
+    {
+      "family": "credential material versus protocol names and placeholders",
+      "action": "Bind declarations to all relevant consumers and source-resolved roles. Never infer safety from a name, value allowlist, or isolated use."
+    },
+    {
+      "family": "test-owned credentials and development settings",
+      "action": "Verify actual fixture construction, configuration selection, isolation and lifecycle. Test/demo labels and DEBUG alone are insufficient."
+    },
+    {
+      "family": "uncertain runtime and external provider boundaries",
+      "action": "Retain unresolved claims and missing evidence explicitly; do not relabel absent evidence as either a proven defect or a safe operation."
+    }
+  ],
+  "limits": [
+    "No scanner was changed or rescanned for this report.",
+    "This exposed study is development evidence for subsequent fixes, not a fresh holdout for the current head.",
+    "No majority-vote adjudication was preregistered or applied; original disagreements and labels remain immutable.",
+    "The source sample has correlated alerts; the Wilson interval does not account for clustering or label error.",
+    "A zero-TP alert set cannot measure positive retention or recall; separate must-stay-flagged controls remain necessary.",
+    "Reviewer statements that an invoker already has a shell, or code is test/build/demo code, require source-boundary verification before detector admission.",
+    "Original scan failures, human protocol limits, current red CI and publication target failure remain unchanged."
+  ],
+  "rows": [
+    {
+      "packet_id": "S180-001",
+      "primitive": "TP",
+      "actionable": "FP",
+      "severity_supported": "NO",
+      "repository": "logamee/lin-cms-flask",
+      "source_path": "tests/conftest.py",
+      "rule": "SECURITY_HARDCODED_SECRET",
+      "packet_sha256": "653225bd3ed82297544c4727d9c28c5377ca344a9483d4247f49710ed8601a4f",
+      "source_sha256": "829cc179a695e6dbd2a12f9da73c2f06c85b0661f31f7f8101c9f2e8386b16b6",
+      "prior_primitive_labels": [
+        "TP",
+        "TP"
+      ],
+      "prior_actionable_labels": [
+        "FP",
+        "FP"
+      ],
+      "prior_actionable_consensus": "FP",
+      "supplied_review_section": "S180-001"
+    },
+    {
+      "packet_id": "S180-002",
+      "primitive": "FP",
+      "actionable": "FP",
+      "severity_supported": "NO",
+      "repository": "Fantomas42/django-blog-zinnia",
+      "source_path": "docs/extensions/settings.py",
+      "rule": "SECURITY_HARDCODED_SECRET",
+      "packet_sha256": "b95255ce791723576855e4a646dd2091c3ce263f34dcb7f1f400ca12c59a3b87",
+      "source_sha256": "1ca24f33737b169c0ec8dfe7a5e8646d73b953716c5fe46817ffb80f510210ed",
+      "prior_primitive_labels": [
+        "TP",
+        "FP"
+      ],
+      "prior_actionable_labels": [
+        "FP",
+        "FP"
+      ],
+      "prior_actionable_consensus": "FP",
+      "supplied_review_section": "S180-002"
+    },
+    {
+      "packet_id": "S180-003",
+      "primitive": "TP",
+      "actionable": "FP",
+      "severity_supported": "NO",
+      "repository": "genotrance/px",
+      "source_path": "tests/helpers.py",
+      "rule": "SECURITY_OS_COMMAND",
+      "packet_sha256": "d2f84a51b749e4ba1c97c992b1a54bd4f1e0dbe8eea9ef06a3a8e51496fd51cc",
+      "source_sha256": "f76ddc436b7ab6f85bd1fc67e9c7d2baeb8553551712f83ec8ecc9782e7dedbb",
+      "prior_primitive_labels": [
+        "TP",
+        "TP"
+      ],
+      "prior_actionable_labels": [
+        "FP",
+        "FP"
+      ],
+      "prior_actionable_consensus": "FP",
+      "supplied_review_section": "S180-003"
+    },
+    {
+      "packet_id": "S180-004",
+      "primitive": "TP",
+      "actionable": "FP",
+      "severity_supported": "NO",
+      "repository": "genotrance/px",
+      "source_path": "tools.py",
+      "rule": "SECURITY_SHELL_COMMAND",
+      "packet_sha256": "0fcb3d28ddc95c263c960b25b02f8fe890cc9d2daab8d6ad390e13d6d2558998",
+      "source_sha256": "344fb3787032acd76e43a6e62384e007a54557dd29e20b3f7ab8e9fb46c86c88",
+      "prior_primitive_labels": [
+        "TP",
+        "TP"
+      ],
+      "prior_actionable_labels": [
+        "FP",
+        "FP"
+      ],
+      "prior_actionable_consensus": "FP",
+      "supplied_review_section": "S180-004"
+    },
+    {
+      "packet_id": "S180-005",
+      "primitive": "TP",
+      "actionable": "FP",
+      "severity_supported": "NO",
+      "repository": "logamee/lin-cms-flask",
+      "source_path": "tests/test_user.py",
+      "rule": "SECURITY_HARDCODED_SECRET",
+      "packet_sha256": "944504648e9407bcba016921e531fd67c1047a89d6bc0b0dca664f8d9bb722d1",
+      "source_sha256": "b4a960a1395e1dfbf2dd93d275c320f342812f2364923e92c2b9a4b6c7a25370",
+      "prior_primitive_labels": [
+        "TP",
+        "TP"
+      ],
+      "prior_actionable_labels": [
+        "FP",
+        "FP"
+      ],
+      "prior_actionable_consensus": "FP",
+      "supplied_review_section": "S180-005"
+    },
+    {
+      "packet_id": "S180-006",
+      "primitive": "TP",
+      "actionable": "FP",
+      "severity_supported": "NO",
+      "repository": "Fantomas42/django-blog-zinnia",
+      "source_path": "demo/settings.py",
+      "rule": "SECURITY_HARDCODED_SECRET",
+      "packet_sha256": "c38f16dbe66c2768b8f1253385dbc7e9ef08290805c3b6574417141212ee9ed0",
+      "source_sha256": "61ceb066b2db9b13b2e2dbfe376b949a25b3e5eb1a60e425a09b4171d03bc5c0",
+      "prior_primitive_labels": [
+        "TP",
+        "TP"
+      ],
+      "prior_actionable_labels": [
+        "UNCLEAR",
+        "FP"
+      ],
+      "prior_actionable_consensus": "UNCLEAR",
+      "supplied_review_section": "S180-006"
+    },
+    {
+      "packet_id": "S180-007",
+      "primitive": "TP",
+      "actionable": "FP",
+      "severity_supported": "NO",
+      "repository": "genotrance/px",
+      "source_path": "tests/helpers.py",
+      "rule": "SECURITY_OS_COMMAND",
+      "packet_sha256": "b7c633779ff3ffed8a3db2e3a66326371f3435e7322550292e5cef46df38acee",
+      "source_sha256": "f76ddc436b7ab6f85bd1fc67e9c7d2baeb8553551712f83ec8ecc9782e7dedbb",
+      "prior_primitive_labels": [
+        "TP",
+        "TP"
+      ],
+      "prior_actionable_labels": [
+        "FP",
+        "FP"
+      ],
+      "prior_actionable_consensus": "FP",
+      "supplied_review_section": "S180-007"
+    },
+    {
+      "packet_id": "S180-008",
+      "primitive": "TP",
+      "actionable": "FP",
+      "severity_supported": "NO",
+      "repository": "genotrance/px",
+      "source_path": "tools.py",
+      "rule": "SECURITY_OS_COMMAND",
+      "packet_sha256": "20b9e0778b0a0939db4f72aba3c767ef4e0f2985aa8225d7dca3db2190e6b5a7",
+      "source_sha256": "344fb3787032acd76e43a6e62384e007a54557dd29e20b3f7ab8e9fb46c86c88",
+      "prior_primitive_labels": [
+        "TP",
+        "TP"
+      ],
+      "prior_actionable_labels": [
+        "FP",
+        "FP"
+      ],
+      "prior_actionable_consensus": "FP",
+      "supplied_review_section": "S180-008"
+    },
+    {
+      "packet_id": "S180-009",
+      "primitive": "TP",
+      "actionable": "FP",
+      "severity_supported": "NO",
+      "repository": "logamee/lin-cms-flask",
+      "source_path": "app/config/test.py",
+      "rule": "SECURITY_HARDCODED_SECRET",
+      "packet_sha256": "d0fa38217ec38220ce8a8b5bfd52aece12dd41a2ae5fec85062e3579c943cf99",
+      "source_sha256": "8422efb6f5c321ee5e63982096f78719fef39cc4cb056b67e9b6cf77edfb6b11",
+      "prior_primitive_labels": [
+        "TP",
+        "TP"
+      ],
+      "prior_actionable_labels": [
+        "FP",
+        "FP"
+      ],
+      "prior_actionable_consensus": "FP",
+      "supplied_review_section": "S180-009"
+    },
+    {
+      "packet_id": "S180-010",
+      "primitive": "TP",
+      "actionable": "FP",
+      "severity_supported": "NO",
+      "repository": "genotrance/px",
+      "source_path": "tools.py",
+      "rule": "SECURITY_OS_COMMAND",
+      "packet_sha256": "34a91cbad11c79b5a99bfb915d9ecfe5d05ff5b415506ec55cd9b48cbf9eefaf",
+      "source_sha256": "344fb3787032acd76e43a6e62384e007a54557dd29e20b3f7ab8e9fb46c86c88",
+      "prior_primitive_labels": [
+        "TP",
+        "TP"
+      ],
+      "prior_actionable_labels": [
+        "FP",
+        "FP"
+      ],
+      "prior_actionable_consensus": "FP",
+      "supplied_review_section": "S180-010"
+    },
+    {
+      "packet_id": "S180-011",
+      "primitive": "TP",
+      "actionable": "FP",
+      "severity_supported": "NO",
+      "repository": "genotrance/px",
+      "source_path": "tools.py",
+      "rule": "SECURITY_OS_COMMAND",
+      "packet_sha256": "42935f5403dda7c5c2faa5ca76af5032888448740f05676a9361e6778664cba8",
+      "source_sha256": "344fb3787032acd76e43a6e62384e007a54557dd29e20b3f7ab8e9fb46c86c88",
+      "prior_primitive_labels": [
+        "TP",
+        "TP"
+      ],
+      "prior_actionable_labels": [
+        "FP",
+        "FP"
+      ],
+      "prior_actionable_consensus": "FP",
+      "supplied_review_section": "S180-011"
+    },
+    {
+      "packet_id": "S180-012",
+      "primitive": "TP",
+      "actionable": "FP",
+      "severity_supported": "NO",
+      "repository": "genotrance/px",
+      "source_path": "tools.py",
+      "rule": "SECURITY_OS_COMMAND",
+      "packet_sha256": "a8b0de43df2ac17ce62366546504c9aaed6a868f2d0d95fba9676fbf4861003f",
+      "source_sha256": "344fb3787032acd76e43a6e62384e007a54557dd29e20b3f7ab8e9fb46c86c88",
+      "prior_primitive_labels": [
+        "TP",
+        "TP"
+      ],
+      "prior_actionable_labels": [
+        "FP",
+        "FP"
+      ],
+      "prior_actionable_consensus": "FP",
+      "supplied_review_section": "S180-012"
+    },
+    {
+      "packet_id": "S180-013",
+      "primitive": "FP",
+      "actionable": "FP",
+      "severity_supported": "NO",
+      "repository": "logamee/lin-cms-flask",
+      "source_path": "app/plugin/oss/config.py",
+      "rule": "SECURITY_HARDCODED_SECRET",
+      "packet_sha256": "2d0d24085055c7a6973637ad2e3bdb9e1c6ae0a24729bebf4311185dfd5401a4",
+      "source_sha256": "adebe344455fc277593aacfeebec207eb387b7bd8037c94ce539abe28deb973a",
+      "prior_primitive_labels": [
+        "TP",
+        "FP"
+      ],
+      "prior_actionable_labels": [
+        "FP",
+        "FP"
+      ],
+      "prior_actionable_consensus": "FP",
+      "supplied_review_section": "S180-013"
+    },
+    {
+      "packet_id": "S180-014",
+      "primitive": "TP",
+      "actionable": "FP",
+      "severity_supported": "NO",
+      "repository": "Fantomas42/django-blog-zinnia",
+      "source_path": "zinnia/tests/implementations/settings.py",
+      "rule": "SECURITY_HARDCODED_SECRET",
+      "packet_sha256": "076e8b0ce69127922daaba0a579eee0ce7d1a0278bbdfc3859fd8f1f2c4f58dd",
+      "source_sha256": "a1c79df5be8a89f3ecfed07bf2e1ce4b5ac80648cf83bd53e61e787022f80624",
+      "prior_primitive_labels": [
+        "TP",
+        "TP"
+      ],
+      "prior_actionable_labels": [
+        "FP",
+        "FP"
+      ],
+      "prior_actionable_consensus": "FP",
+      "supplied_review_section": "S180-014"
+    },
+    {
+      "packet_id": "S180-015",
+      "primitive": "FP",
+      "actionable": "FP",
+      "severity_supported": "NO",
+      "repository": "logamee/lin-cms-flask",
+      "source_path": "app/plugin/qiniu/config.py",
+      "rule": "SECURITY_HARDCODED_SECRET",
+      "packet_sha256": "7b19d5dd3e772e018ac1e348f1378395e7cf0730a134207454b3f584bcb2f0cc",
+      "source_sha256": "c6bb0849f4b2c615cb7bc15ec4586b5b28b5dfde319b1cea7568d1eee7b11938",
+      "prior_primitive_labels": [
+        "TP",
+        "FP"
+      ],
+      "prior_actionable_labels": [
+        "FP",
+        "FP"
+      ],
+      "prior_actionable_consensus": "FP",
+      "supplied_review_section": "S180-015"
+    },
+    {
+      "packet_id": "S180-016",
+      "primitive": "TP",
+      "actionable": "FP",
+      "severity_supported": "NO",
+      "repository": "genotrance/px",
+      "source_path": "tools.py",
+      "rule": "SECURITY_OS_COMMAND",
+      "packet_sha256": "410d4220276d60b5bcd890550d90ca758133b9d372a93539ef68aa9bb9d470b1",
+      "source_sha256": "344fb3787032acd76e43a6e62384e007a54557dd29e20b3f7ab8e9fb46c86c88",
+      "prior_primitive_labels": [
+        "TP",
+        "TP"
+      ],
+      "prior_actionable_labels": [
+        "FP",
+        "FP"
+      ],
+      "prior_actionable_consensus": "FP",
+      "supplied_review_section": "S180-016"
+    },
+    {
+      "packet_id": "S180-017",
+      "primitive": "TP",
+      "actionable": "FP",
+      "severity_supported": "NO",
+      "repository": "logamee/lin-cms-flask",
+      "source_path": "tests/conftest.py",
+      "rule": "SECURITY_HARDCODED_SECRET",
+      "packet_sha256": "b087ee6a64c5e9185d624f502298f9db76b18fd489b0f9842d06c4d3cf114f46",
+      "source_sha256": "829cc179a695e6dbd2a12f9da73c2f06c85b0661f31f7f8101c9f2e8386b16b6",
+      "prior_primitive_labels": [
+        "TP",
+        "TP"
+      ],
+      "prior_actionable_labels": [
+        "FP",
+        "FP"
+      ],
+      "prior_actionable_consensus": "FP",
+      "supplied_review_section": "S180-017"
+    },
+    {
+      "packet_id": "S180-018",
+      "primitive": "TP",
+      "actionable": "FP",
+      "severity_supported": "NO",
+      "repository": "genotrance/px",
+      "source_path": "tools.py",
+      "rule": "SECURITY_OS_COMMAND",
+      "packet_sha256": "30a0c2848321949506955338343259b0635040548e9a908c2bc5fb85d937738e",
+      "source_sha256": "344fb3787032acd76e43a6e62384e007a54557dd29e20b3f7ab8e9fb46c86c88",
+      "prior_primitive_labels": [
+        "TP",
+        "TP"
+      ],
+      "prior_actionable_labels": [
+        "FP",
+        "FP"
+      ],
+      "prior_actionable_consensus": "FP",
+      "supplied_review_section": "S180-018"
+    },
+    {
+      "packet_id": "S180-019",
+      "primitive": "TP",
+      "actionable": "FP",
+      "severity_supported": "NO",
+      "repository": "Fantomas42/django-blog-zinnia",
+      "source_path": "docs/extensions/settings.py",
+      "rule": "SECURITY_HARDCODED_SECRET",
+      "packet_sha256": "4d1840e7d212e1eaf68cc0b8e4c6f6737bd5fa1f19b4d2e1b465191cd2d9e098",
+      "source_sha256": "1ca24f33737b169c0ec8dfe7a5e8646d73b953716c5fe46817ffb80f510210ed",
+      "prior_primitive_labels": [
+        "TP",
+        "TP"
+      ],
+      "prior_actionable_labels": [
+        "FP",
+        "FP"
+      ],
+      "prior_actionable_consensus": "FP",
+      "supplied_review_section": "S180-019"
+    },
+    {
+      "packet_id": "S180-020",
+      "primitive": "TP",
+      "actionable": "FP",
+      "severity_supported": "NO",
+      "repository": "genotrance/px",
+      "source_path": "tools.py",
+      "rule": "SECURITY_OS_COMMAND",
+      "packet_sha256": "7c0f574b0d09fef98bbfba187038295e8c476c9b26b025e2b7b0357bfa677f7c",
+      "source_sha256": "344fb3787032acd76e43a6e62384e007a54557dd29e20b3f7ab8e9fb46c86c88",
+      "prior_primitive_labels": [
+        "TP",
+        "TP"
+      ],
+      "prior_actionable_labels": [
+        "FP",
+        "FP"
+      ],
+      "prior_actionable_consensus": "FP",
+      "supplied_review_section": "S180-020"
+    },
+    {
+      "packet_id": "S180-021",
+      "primitive": "TP",
+      "actionable": "FP",
+      "severity_supported": "NO",
+      "repository": "genotrance/px",
+      "source_path": "tests/test_kerberos.py",
+      "rule": "SECURITY_HARDCODED_SECRET",
+      "packet_sha256": "e0050902725e90de9e3984dcb396584b4cf4aeaffefb6bdf5f44ac84e55b184b",
+      "source_sha256": "58b4d2381d1ac13e22fcf1224c417c8dbf00f6e5f5f8e137ce95dbbceda21836",
+      "prior_primitive_labels": [
+        "TP",
+        "TP"
+      ],
+      "prior_actionable_labels": [
+        "FP",
+        "FP"
+      ],
+      "prior_actionable_consensus": "FP",
+      "supplied_review_section": "S180-021"
+    },
+    {
+      "packet_id": "S180-022",
+      "primitive": "TP",
+      "actionable": "FP",
+      "severity_supported": "NO",
+      "repository": "genotrance/px",
+      "source_path": "tests/test_network.py",
+      "rule": "SECURITY_OS_COMMAND",
+      "packet_sha256": "08247ff49430d7bebe2bbf561de8e574bb0f2f936e11099749cce9f76ec329ba",
+      "source_sha256": "ceeecf408a3c114a93dc9294da1625aa7f0eba13efc34b3d085134591f70035c",
+      "prior_primitive_labels": [
+        "TP",
+        "TP"
+      ],
+      "prior_actionable_labels": [
+        "FP",
+        "FP"
+      ],
+      "prior_actionable_consensus": "FP",
+      "supplied_review_section": "S180-022"
+    },
+    {
+      "packet_id": "S180-023",
+      "primitive": "TP",
+      "actionable": "FP",
+      "severity_supported": "NO",
+      "repository": "genotrance/px",
+      "source_path": "tests/test_config.py",
+      "rule": "SECURITY_SHELL_COMMAND",
+      "packet_sha256": "81450f4e8051e977804455cb07ccadba60bb8dac81a3d5958d12368e056c8ab9",
+      "source_sha256": "335110a4f6e2246f1ef2583e7526d76018880e8bb0de98fb3ca96291415f9d01",
+      "prior_primitive_labels": [
+        "TP",
+        "TP"
+      ],
+      "prior_actionable_labels": [
+        "FP",
+        "FP"
+      ],
+      "prior_actionable_consensus": "FP",
+      "supplied_review_section": "S180-023"
+    },
+    {
+      "packet_id": "S180-024",
+      "primitive": "TP",
+      "actionable": "UNCLEAR",
+      "severity_supported": "UNCLEAR",
+      "repository": "TheAbhijeet/Django_blog",
+      "source_path": "mysite/settings.py",
+      "rule": "SECURITY_HARDCODED_SECRET",
+      "packet_sha256": "2ac6652549c087165deaca343e710920c53515431e903bcd20d703bb402ee3ae",
+      "source_sha256": "d80403a7b15fb7dbc620d87d44d38688694d120e072ccb640c26530136c10b39",
+      "prior_primitive_labels": [
+        "TP",
+        "TP"
+      ],
+      "prior_actionable_labels": [
+        "UNCLEAR",
+        "UNCLEAR"
+      ],
+      "prior_actionable_consensus": "UNCLEAR",
+      "supplied_review_section": "S180-024"
+    },
+    {
+      "packet_id": "S180-025",
+      "primitive": "FP",
+      "actionable": "FP",
+      "severity_supported": "NO",
+      "repository": "Fantomas42/django-blog-zinnia",
+      "source_path": "docs/extensions/settings.py",
+      "rule": "SECURITY_HARDCODED_SECRET",
+      "packet_sha256": "c4d5afbc48639733873f9f23e1016604de2fbb5fb17ae2cebe5eecffe624540b",
+      "source_sha256": "1ca24f33737b169c0ec8dfe7a5e8646d73b953716c5fe46817ffb80f510210ed",
+      "prior_primitive_labels": [
+        "TP",
+        "FP"
+      ],
+      "prior_actionable_labels": [
+        "FP",
+        "FP"
+      ],
+      "prior_actionable_consensus": "FP",
+      "supplied_review_section": "S180-025"
+    },
+    {
+      "packet_id": "S180-026",
+      "primitive": "TP",
+      "actionable": "FP",
+      "severity_supported": "NO",
+      "repository": "genotrance/px",
+      "source_path": "tools.py",
+      "rule": "SECURITY_OS_COMMAND",
+      "packet_sha256": "e33e50df159c4cc4d08103ff29d5a0078f2b62dc6823781d247e219536ea393d",
+      "source_sha256": "344fb3787032acd76e43a6e62384e007a54557dd29e20b3f7ab8e9fb46c86c88",
+      "prior_primitive_labels": [
+        "TP",
+        "TP"
+      ],
+      "prior_actionable_labels": [
+        "FP",
+        "FP"
+      ],
+      "prior_actionable_consensus": "FP",
+      "supplied_review_section": "S180-026"
+    },
+    {
+      "packet_id": "S180-027",
+      "primitive": "FP",
+      "actionable": "FP",
+      "severity_supported": "NO",
+      "repository": "logamee/lin-cms-flask",
+      "source_path": "app/plugin/cos/config.py",
+      "rule": "SECURITY_HARDCODED_SECRET",
+      "packet_sha256": "4ae9ce3753440c220cd11ac3e8f1c0c056743ec39acf4c65ab7217d0de7e0d69",
+      "source_sha256": "39c9454d783309ba36cc3736080ddba5e241c267ddc265ccc4821cef123d4df4",
+      "prior_primitive_labels": [
+        "TP",
+        "FP"
+      ],
+      "prior_actionable_labels": [
+        "FP",
+        "FP"
+      ],
+      "prior_actionable_consensus": "FP",
+      "supplied_review_section": "S180-027"
+    },
+    {
+      "packet_id": "S180-028",
+      "primitive": "FP",
+      "actionable": "FP",
+      "severity_supported": "NO",
+      "repository": "Fantomas42/django-blog-zinnia",
+      "source_path": "docs/extensions/settings.py",
+      "rule": "SECURITY_HARDCODED_SECRET",
+      "packet_sha256": "f645a1af51a2f799fe5eb369e6e62437fd3323f2b4400836bd26ea46492dd496",
+      "source_sha256": "1ca24f33737b169c0ec8dfe7a5e8646d73b953716c5fe46817ffb80f510210ed",
+      "prior_primitive_labels": [
+        "TP",
+        "FP"
+      ],
+      "prior_actionable_labels": [
+        "FP",
+        "FP"
+      ],
+      "prior_actionable_consensus": "FP",
+      "supplied_review_section": "S180-028"
+    },
+    {
+      "packet_id": "S180-029",
+      "primitive": "TP",
+      "actionable": "FP",
+      "severity_supported": "NO",
+      "repository": "genotrance/px",
+      "source_path": "tools.py",
+      "rule": "SECURITY_OS_COMMAND",
+      "packet_sha256": "2a5d14427348c79f7e13c06ba6bef8b163afa57132ee17b2ec8d098be9ec2e17",
+      "source_sha256": "344fb3787032acd76e43a6e62384e007a54557dd29e20b3f7ab8e9fb46c86c88",
+      "prior_primitive_labels": [
+        "TP",
+        "TP"
+      ],
+      "prior_actionable_labels": [
+        "FP",
+        "FP"
+      ],
+      "prior_actionable_consensus": "FP",
+      "supplied_review_section": "S180-029"
+    },
+    {
+      "packet_id": "S180-030",
+      "primitive": "TP",
+      "actionable": "FP",
+      "severity_supported": "NO",
+      "repository": "genotrance/px",
+      "source_path": "tests/fixtures.py",
+      "rule": "SECURITY_HARDCODED_SECRET",
+      "packet_sha256": "52fe1a57e58bbd255683beeafdd35762dbe6f40b9eefc7f7b6eddb8aafe2e389",
+      "source_sha256": "6ba7589e566740562a80329dd1eb51f459c714faf59074da893f70a39fe4cef2",
+      "prior_primitive_labels": [
+        "TP",
+        "TP"
+      ],
+      "prior_actionable_labels": [
+        "FP",
+        "FP"
+      ],
+      "prior_actionable_consensus": "FP",
+      "supplied_review_section": "S180-030"
+    },
+    {
+      "packet_id": "S180-031",
+      "primitive": "FP",
+      "actionable": "FP",
+      "severity_supported": "NO",
+      "repository": "Fantomas42/django-blog-zinnia",
+      "source_path": "docs/extensions/settings.py",
+      "rule": "SECURITY_HARDCODED_SECRET",
+      "packet_sha256": "0d7b9755dd7bc38bdd1583620646114c1a69f83b5a1224393eed98b3ccaa8a04",
+      "source_sha256": "1ca24f33737b169c0ec8dfe7a5e8646d73b953716c5fe46817ffb80f510210ed",
+      "prior_primitive_labels": [
+        "TP",
+        "FP"
+      ],
+      "prior_actionable_labels": [
+        "FP",
+        "FP"
+      ],
+      "prior_actionable_consensus": "FP",
+      "supplied_review_section": "S180-031"
+    },
+    {
+      "packet_id": "S180-032",
+      "primitive": "TP",
+      "actionable": "FP",
+      "severity_supported": "NO",
+      "repository": "genotrance/px",
+      "source_path": "tests/helpers.py",
+      "rule": "SECURITY_SHELL_COMMAND",
+      "packet_sha256": "b8b274702b236d3448cef9d70dd19f3652de6fceb43ba512d46129ec21aa1b87",
+      "source_sha256": "f76ddc436b7ab6f85bd1fc67e9c7d2baeb8553551712f83ec8ecc9782e7dedbb",
+      "prior_primitive_labels": [
+        "TP",
+        "TP"
+      ],
+      "prior_actionable_labels": [
+        "FP",
+        "FP"
+      ],
+      "prior_actionable_consensus": "FP",
+      "supplied_review_section": "S180-032"
+    },
+    {
+      "packet_id": "S180-033",
+      "primitive": "FP",
+      "actionable": "FP",
+      "severity_supported": "NO",
+      "repository": "laoqiu/pypress",
+      "source_path": "pypress/views/account.py",
+      "rule": "SECURITY_HARDCODED_SECRET",
+      "packet_sha256": "3f4e82d4427ec33dddb773b82a96da36cee8b25ec23adb0de51a8bec461fdd15",
+      "source_sha256": "262c2ce299ad093808dc1ab1467686b6072d5316c5c1ca95e9af1e7279a29f49",
+      "prior_primitive_labels": [
+        "FP",
+        "FP"
+      ],
+      "prior_actionable_labels": [
+        "FP",
+        "FP"
+      ],
+      "prior_actionable_consensus": "FP",
+      "supplied_review_section": "S180-033"
+    },
+    {
+      "packet_id": "S180-034",
+      "primitive": "TP",
+      "actionable": "UNCLEAR",
+      "severity_supported": "UNCLEAR",
+      "repository": "JeevansSP/resume-optimizer",
+      "source_path": "app/config.py",
+      "rule": "SECURITY_HARDCODED_SECRET",
+      "packet_sha256": "9abca5a9af2351abe672ac53d39e63a5265f8231da646fdbbd5a75f1bcd14767",
+      "source_sha256": "0013e96ff25d5e6e83d3c4ae368854c35f9c85476e937368ed3f617785a15781",
+      "prior_primitive_labels": [
+        "TP",
+        "TP"
+      ],
+      "prior_actionable_labels": [
+        "UNCLEAR",
+        "UNCLEAR"
+      ],
+      "prior_actionable_consensus": "UNCLEAR",
+      "supplied_review_section": "S180-034"
+    },
+    {
+      "packet_id": "S180-035",
+      "primitive": "TP",
+      "actionable": "FP",
+      "severity_supported": "NO",
+      "repository": "genotrance/px",
+      "source_path": "tools.py",
+      "rule": "SECURITY_OS_COMMAND",
+      "packet_sha256": "51d79f3e01fd52120541dff3a8af092d09043420e4bbd7e7a4019efaf76d1b34",
+      "source_sha256": "344fb3787032acd76e43a6e62384e007a54557dd29e20b3f7ab8e9fb46c86c88",
+      "prior_primitive_labels": [
+        "TP",
+        "TP"
+      ],
+      "prior_actionable_labels": [
+        "FP",
+        "FP"
+      ],
+      "prior_actionable_consensus": "FP",
+      "supplied_review_section": "S180-035"
+    },
+    {
+      "packet_id": "S180-036",
+      "primitive": "TP",
+      "actionable": "FP",
+      "severity_supported": "NO",
+      "repository": "genotrance/px",
+      "source_path": "tools.py",
+      "rule": "SECURITY_OS_COMMAND",
+      "packet_sha256": "ebbd5e43516d885071742f26aef499a153d54800eb8332ef7700829191d67415",
+      "source_sha256": "344fb3787032acd76e43a6e62384e007a54557dd29e20b3f7ab8e9fb46c86c88",
+      "prior_primitive_labels": [
+        "TP",
+        "TP"
+      ],
+      "prior_actionable_labels": [
+        "FP",
+        "UNCLEAR"
+      ],
+      "prior_actionable_consensus": "UNCLEAR",
+      "supplied_review_section": "S180-036"
+    },
+    {
+      "packet_id": "S180-037",
+      "primitive": "TP",
+      "actionable": "FP",
+      "severity_supported": "NO",
+      "repository": "genotrance/px",
+      "source_path": "tools.py",
+      "rule": "SECURITY_OS_COMMAND",
+      "packet_sha256": "36b3c3f6fc78a733ffc38ded48d50d3e2e83dff9a34064f4187df06efb094e9f",
+      "source_sha256": "344fb3787032acd76e43a6e62384e007a54557dd29e20b3f7ab8e9fb46c86c88",
+      "prior_primitive_labels": [
+        "TP",
+        "TP"
+      ],
+      "prior_actionable_labels": [
+        "FP",
+        "FP"
+      ],
+      "prior_actionable_consensus": "FP",
+      "supplied_review_section": "S180-037"
+    },
+    {
+      "packet_id": "S180-038",
+      "primitive": "TP",
+      "actionable": "FP",
+      "severity_supported": "NO",
+      "repository": "genotrance/px",
+      "source_path": "tools.py",
+      "rule": "SECURITY_OS_COMMAND",
+      "packet_sha256": "f4d923f01889b258dbd8969ce9575409c7d27dd10674e9de0670a4fb194a476a",
+      "source_sha256": "344fb3787032acd76e43a6e62384e007a54557dd29e20b3f7ab8e9fb46c86c88",
+      "prior_primitive_labels": [
+        "TP",
+        "TP"
+      ],
+      "prior_actionable_labels": [
+        "FP",
+        "FP"
+      ],
+      "prior_actionable_consensus": "FP",
+      "supplied_review_section": "S180-038"
+    },
+    {
+      "packet_id": "S180-039",
+      "primitive": "TP",
+      "actionable": "FP",
+      "severity_supported": "NO",
+      "repository": "genotrance/px",
+      "source_path": "tools.py",
+      "rule": "SECURITY_OS_COMMAND",
+      "packet_sha256": "d8cc688e47e695227ee34e4ceef4c9ff6723dfae0088b43cc5ab19b99ba304f7",
+      "source_sha256": "344fb3787032acd76e43a6e62384e007a54557dd29e20b3f7ab8e9fb46c86c88",
+      "prior_primitive_labels": [
+        "TP",
+        "TP"
+      ],
+      "prior_actionable_labels": [
+        "FP",
+        "FP"
+      ],
+      "prior_actionable_consensus": "FP",
+      "supplied_review_section": "S180-039"
+    },
+    {
+      "packet_id": "S180-040",
+      "primitive": "TP",
+      "actionable": "UNCLEAR",
+      "severity_supported": "UNCLEAR",
+      "repository": "django/daphne",
+      "source_path": "daphne/testing.py",
+      "rule": "SECURITY_UNSAFE_DESERIALIZATION",
+      "packet_sha256": "6697523f6b961c5f5763050bce37a28215807a214a14525037dcdb28b41c544b",
+      "source_sha256": "53f93161fc20d59683bc52e92afa1593117e2ea1b6ae629f16dc5b2cd0aabd8b",
+      "prior_primitive_labels": [
+        "TP",
+        "TP"
+      ],
+      "prior_actionable_labels": [
+        "UNCLEAR",
+        "UNCLEAR"
+      ],
+      "prior_actionable_consensus": "UNCLEAR",
+      "supplied_review_section": "S180-040"
+    },
+    {
+      "packet_id": "S180-041",
+      "primitive": "TP",
+      "actionable": "UNCLEAR",
+      "severity_supported": "UNCLEAR",
+      "repository": "django/daphne",
+      "source_path": "daphne/testing.py",
+      "rule": "SECURITY_UNSAFE_DESERIALIZATION",
+      "packet_sha256": "4de182f27d33b5b4b9a9561d1eca5e780b9bf53066ba0960837c4fdae202297e",
+      "source_sha256": "53f93161fc20d59683bc52e92afa1593117e2ea1b6ae629f16dc5b2cd0aabd8b",
+      "prior_primitive_labels": [
+        "TP",
+        "TP"
+      ],
+      "prior_actionable_labels": [
+        "UNCLEAR",
+        "UNCLEAR"
+      ],
+      "prior_actionable_consensus": "UNCLEAR",
+      "supplied_review_section": "S180-041"
+    },
+    {
+      "packet_id": "S180-042",
+      "primitive": "TP",
+      "actionable": "FP",
+      "severity_supported": "NO",
+      "repository": "genotrance/px",
+      "source_path": "tools.py",
+      "rule": "SECURITY_OS_COMMAND",
+      "packet_sha256": "e5aae8dd216877ab3ac3ccd5d3a7446ce55615848ee98324f2a153933bfceec8",
+      "source_sha256": "344fb3787032acd76e43a6e62384e007a54557dd29e20b3f7ab8e9fb46c86c88",
+      "prior_primitive_labels": [
+        "TP",
+        "TP"
+      ],
+      "prior_actionable_labels": [
+        "FP",
+        "FP"
+      ],
+      "prior_actionable_consensus": "FP",
+      "supplied_review_section": "S180-042"
+    },
+    {
+      "packet_id": "S180-043",
+      "primitive": "TP",
+      "actionable": "FP",
+      "severity_supported": "NO",
+      "repository": "logamee/lin-cms-flask",
+      "source_path": "app/cli/plugin/init.py",
+      "rule": "SECURITY_SHELL_COMMAND",
+      "packet_sha256": "e4c67aaeeac014d01a9618d90fee97880bc4a36df2d033ab349c39b498be0fe1",
+      "source_sha256": "7d021f5099e19afbb6167f6c620064aef8921d2a66bceeff9312492ab0525e66",
+      "prior_primitive_labels": [
+        "TP",
+        "TP"
+      ],
+      "prior_actionable_labels": [
+        "FP",
+        "FP"
+      ],
+      "prior_actionable_consensus": "FP",
+      "supplied_review_section": "S180-043"
+    },
+    {
+      "packet_id": "S180-044",
+      "primitive": "TP",
+      "actionable": "FP",
+      "severity_supported": "NO",
+      "repository": "catsky/rebang",
+      "source_path": "1/chartnet/requests/packages/urllib3/packages/six.py",
+      "rule": "SECURITY_DYNAMIC_EXECUTION",
+      "packet_sha256": "9a2fbf0c319a50b52477cce6eac99ea19ebb81c17b16b168a9557a54670c7672",
+      "source_sha256": "53eacef9606b152f0fc4779a99297aa242828ea3c5d7c3618996f4a8f67aed73",
+      "prior_primitive_labels": [
+        "TP",
+        "TP"
+      ],
+      "prior_actionable_labels": [
+        "FP",
+        "FP"
+      ],
+      "prior_actionable_consensus": "FP",
+      "supplied_review_section": "S180-044"
+    },
+    {
+      "packet_id": "S180-045",
+      "primitive": "TP",
+      "actionable": "UNCLEAR",
+      "severity_supported": "UNCLEAR",
+      "repository": "codemation/easyauth",
+      "source_path": "docker/server/server.py",
+      "rule": "SECURITY_HARDCODED_SECRET",
+      "packet_sha256": "9361bddb9413b336f781390802847b5b88d87852d7398c5f5d03e0c0b21dcad9",
+      "source_sha256": "218f0748e08d3963694e77b2b25d88e5c748c7b9053250c8d8b49bb48ee13956",
+      "prior_primitive_labels": [
+        "TP",
+        "TP"
+      ],
+      "prior_actionable_labels": [
+        "UNCLEAR",
+        "UNCLEAR"
+      ],
+      "prior_actionable_consensus": "UNCLEAR",
+      "supplied_review_section": "S180-045"
+    },
+    {
+      "packet_id": "S180-046",
+      "primitive": "TP",
+      "actionable": "FP",
+      "severity_supported": "NO",
+      "repository": "genotrance/px",
+      "source_path": "tools.py",
+      "rule": "SECURITY_OS_COMMAND",
+      "packet_sha256": "ff54ec8f3c0731b0b4e0abf1c60866d963b4b502cf07a9b38801f1371de2ec30",
+      "source_sha256": "344fb3787032acd76e43a6e62384e007a54557dd29e20b3f7ab8e9fb46c86c88",
+      "prior_primitive_labels": [
+        "TP",
+        "TP"
+      ],
+      "prior_actionable_labels": [
+        "FP",
+        "FP"
+      ],
+      "prior_actionable_consensus": "FP",
+      "supplied_review_section": "S180-046"
+    },
+    {
+      "packet_id": "S180-047",
+      "primitive": "TP",
+      "actionable": "FP",
+      "severity_supported": "NO",
+      "repository": "genotrance/px",
+      "source_path": "tools.py",
+      "rule": "SECURITY_OS_COMMAND",
+      "packet_sha256": "a8e66612b575bf5acac5a5f61be5a4dc3858acdba1101bb3d551edb0fe3e4a37",
+      "source_sha256": "344fb3787032acd76e43a6e62384e007a54557dd29e20b3f7ab8e9fb46c86c88",
+      "prior_primitive_labels": [
+        "TP",
+        "TP"
+      ],
+      "prior_actionable_labels": [
+        "FP",
+        "FP"
+      ],
+      "prior_actionable_consensus": "FP",
+      "supplied_review_section": "S180-047"
+    }
+  ]
+}
