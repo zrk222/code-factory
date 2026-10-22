@@ -126,6 +126,22 @@ def _attach(finding, row, publication, bindings, relative, node):
     finding["facts"] = mint_endpoint_facts(facts, finding, bindings)
 
 
+def _endpoint_annotation_source(relative, node, integrity):
+    module = integrity._security_module_scope(
+        getattr(node, "_security_lexical_scope", None)
+    )
+    context = getattr(module, "_security_source_context", None)
+    if not isinstance(context, tuple) or len(context) != 2:
+        return None
+    root, sources = context
+    bindings = _source_bindings(root, sources)
+    if not bindings or bindings.get(relative) != getattr(
+        module, "_oracle_source_sha256", None
+    ):
+        return None
+    return root, sources, bindings
+
+
 def annotate_endpoint_findings(relative, node, findings, integrity):
     """Mint local evidence only after fresh-source role and use-audit derivation."""
     value = getattr(node, "value", None)
@@ -136,18 +152,10 @@ def annotate_endpoint_findings(relative, node, findings, integrity):
         f.get("code") == "SECURITY_HARDCODED_SECRET" for f in findings
     ):
         return findings
-    module = integrity._security_module_scope(
-        getattr(node, "_security_lexical_scope", None)
-    )
-    context = getattr(module, "_security_source_context", None)
-    if not isinstance(context, tuple) or len(context) != 2:
+    source_context = _endpoint_annotation_source(relative, node, integrity)
+    if source_context is None:
         return findings
-    root, sources = context
-    bindings = _source_bindings(root, sources)
-    if not bindings or bindings.get(relative) != getattr(
-        module, "_oracle_source_sha256", None
-    ):
-        return findings
+    root, sources, bindings = source_context
     rows = _workspace_roles(root, sources, bindings, integrity)
     for finding in findings:
         if finding.get("code") != "SECURITY_HARDCODED_SECRET":
@@ -168,6 +176,7 @@ def endpoint_admission_helpers():
         "deepcopy",
         "_digest",
         "_source_bindings",
+        "_endpoint_annotation_source",
         "_derive",
         "_workspace_roles",
         "_admissible",

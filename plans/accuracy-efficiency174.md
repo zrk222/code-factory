@@ -47,9 +47,10 @@ in a failed-only follow-up. Preserve the timeout and source-generation limits:
 `docs/evidence/integrated-regressions226.json`. These are completed observations,
 not a claim that current full CI is green.
 
-All nine native CI Python matrix jobs also pass on current source `ffcac796`,
-with zero failures/errors in every 8,364-case report; see
-`docs/evidence/native-matrix233.json`. The earlier exact-head regression
+All nine native CI Python matrix jobs pass on prior exact source `822830e1`,
+with zero failures/errors in every 8,368-case report. The subsequent reviewed
+source-context extraction reduces native quality findings from 90 to 89;
+matching-source CI remains pending. See `docs/evidence/native-quality235.json`. The earlier exact-head regression
 observations remain in `docs/evidence/python-matrix230.json`.
 Close the remaining native candidate-quality gate. Reproduce only failed cases;
 do not rerun passing unit suites. After source integration resolves the current

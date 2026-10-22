@@ -80,3 +80,21 @@ latest fresh actionable result remains 0/49, and merge/publication bars remain
 unmet. Matching-source full CI and broader true-positive retention are pending.
 The account/ChoiceSet prototypes remain unadmitted. See
 [`native-reseal234.json`](native-reseal234.json) for exact source and evidence hashes.
+
+## Native quality repair235 and exact-parent CI
+
+The nine native Python CI jobs passed on `822830e1`: each reports 8,368
+cases with zero failures/errors. Ubuntu/macOS have 8,356 passed and 12 skipped;
+Windows has 8,352 passed and 16 skipped. Overall CI still fails candidate-quality.
+
+A separately ECC-reviewed, behavior-preserving nine-line helper extraction now
+removes one native complexity failure: 90 to 89, with no added findings.
+Architecture remains HEALTHY at 429 Python files / 133 core modules. The prior
+CI matrix qualifies parent `822830e1`; matching-source CI for this extraction
+remains pending. See [native-quality235.json](native-quality235.json).
+
+The exposed Wiki replay audits 209/209 files in each lane and leaves all five
+CRITICAL security alerts unchanged. It adds no precision gain. Study225 remains
+0/49 decided actionable (eight unclear); the private fixture repairs remain
+unadmitted. No passing local unit suite was rerun for this source-equivalent
+refactor.
