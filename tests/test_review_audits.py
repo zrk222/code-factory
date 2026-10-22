@@ -6083,18 +6083,21 @@ def test_security_evals_kill_all_adversarial_fixtures_and_keep_safe_control_clea
 
 
 @pytest.mark.parametrize(
-    "body",
+    "body,expected",
     [
-        "assert True",
-        "compute_value()",
-        "actual = compute_value()\n    assert actual == actual",
-        "assert len(result) >= 0",
+        ("assert True", "QUALITY_HOLLOW_TEST"),
+        ("compute_value()", "QUALITY_UNKNOWN_TEST_ORACLE"),
+        (
+            "actual = compute_value()\n    assert actual == actual",
+            "QUALITY_UNKNOWN_TEST_ORACLE",
+        ),
+        ("assert len(result) >= 0", "QUALITY_UNKNOWN_TEST_ORACLE"),
     ],
 )
-def test_security_scan_detects_local_hollow_test_oracles(tmp_path, body):
+def test_security_scan_detects_local_hollow_test_oracles(tmp_path, body, expected):
     (tmp_path / "test_case.py").write_text("def test_behavior():\n    " + body + "\n")
     result = security_scan(tmp_path)
-    assert result["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+    assert result["finding_counts"] == {expected: 1}
     assert result["findings"][0]["facts"]["symbol"] == "test_behavior"
 
 
@@ -6123,7 +6126,7 @@ def test_security_scan_detects_local_hollow_test_oracles(tmp_path, body):
         ),
         (
             "try:\n        assert compute() == 3\n    except AssertionError:\n        pass",
-            "QUALITY_HOLLOW_TEST",
+            "QUALITY_UNKNOWN_TEST_ORACLE",
         ),
         ("raise AssertionError('natural failure')", None),
     ],
@@ -6140,29 +6143,29 @@ def test_oracle_precision_reported_truth_and_reachability(tmp_path, body, expect
 
 
 @pytest.mark.parametrize(
-    "body,hollow",
+    "body,expected",
     [
-        ("self.assertTrue(True)", True),
-        ("self.assertFalse(False)", True),
-        ("self.assertEqual(1, 1)", True),
-        ("self.assertTupleEqual((1,), (1,))", True),
-        ("self.assertListEqual([1], [1])", True),
-        ("self.assertEqual(value, value)", True),
-        ("self.assertTrue(compute())", False),
-        ("self.assertFalse(compute())", False),
-        ("self.assertEqual(compute(), 1)", False),
-        ("self.assertTupleEqual(compute(), (1,))", False),
-        ("self.assertEqual(obj.value, obj.value)", False),
+        ("self.assertTrue(True)", "QUALITY_HOLLOW_TEST"),
+        ("self.assertFalse(False)", "QUALITY_HOLLOW_TEST"),
+        ("self.assertEqual(1, 1)", "QUALITY_HOLLOW_TEST"),
+        ("self.assertTupleEqual((1,), (1,))", "QUALITY_HOLLOW_TEST"),
+        ("self.assertListEqual([1], [1])", "QUALITY_HOLLOW_TEST"),
+        ("self.assertEqual(value, value)", "QUALITY_UNKNOWN_TEST_ORACLE"),
+        ("self.assertTrue(compute())", None),
+        ("self.assertFalse(compute())", None),
+        ("self.assertEqual(compute(), 1)", None),
+        ("self.assertTupleEqual(compute(), (1,))", None),
+        ("self.assertEqual(obj.value, obj.value)", None),
     ],
 )
-def test_oracle_precision_unittest_vacuity(tmp_path, body, hollow):
+def test_oracle_precision_unittest_vacuity(tmp_path, body, expected):
     (tmp_path / "test_case.py").write_text(
         "import unittest\nclass Checks(unittest.TestCase):\n"
         "    def test_behavior(self):\n        " + body + "\n",
         encoding="utf-8",
     )
     result = security_scan(tmp_path, cache_enabled=False)
-    assert result["finding_counts"] == ({"QUALITY_HOLLOW_TEST": 1} if hollow else {})
+    assert result["finding_counts"] == ({expected: 1} if expected else {})
 
 
 @pytest.mark.parametrize("binding", ["object", "isinstance"])
@@ -6245,19 +6248,24 @@ def test_empty_parameter_set_does_not_change_unittest_method_collection(tmp_path
 
 
 @pytest.mark.parametrize(
-    "body",
+    "body,expected",
     [
-        "expected = 3\n    alias = expected\n    assert alias == expected",
-        "value = value\n    assert value == value",
-        "result = 3\n    assert result == 3",
-        "x = 5\n    x = x + 1\n    assert x == 6",
-        "assert result or True",
+        (
+            "expected = 3\n    alias = expected\n    assert alias == expected",
+            "QUALITY_HOLLOW_TEST",
+        ),
+        ("value = value\n    assert value == value", "QUALITY_UNKNOWN_TEST_ORACLE"),
+        ("result = 3\n    assert result == 3", "QUALITY_HOLLOW_TEST"),
+        ("x = 5\n    x = x + 1\n    assert x == 6", "QUALITY_HOLLOW_TEST"),
+        ("assert result or True", "QUALITY_UNKNOWN_TEST_ORACLE"),
     ],
 )
-def test_security_scan_detects_constant_and_boolean_tautologies(tmp_path, body):
+def test_security_scan_detects_constant_and_boolean_tautologies(
+    tmp_path, body, expected
+):
     (tmp_path / "test_case.py").write_text("def test_behavior():\n    " + body + "\n")
     result = security_scan(tmp_path)
-    assert result["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+    assert result["finding_counts"] == {expected: 1}
 
 
 @pytest.mark.parametrize(
