@@ -30,6 +30,30 @@ from factoryline.review_integrity import bind_source_call
 SOURCE = "class Client: pass\nclass Adapter:\n    client_class = Client\n"
 
 
+@pytest.mark.parametrize(
+    "helper_name", ["_walk", "_index_source_nodes", "_references", "_provider_uses"]
+)
+@pytest.mark.parametrize("mutation", ["binding", "code"])
+def test_shared_consumer_index_changes_invalidate_native_context(
+    tmp_path, monkeypatch, helper_name, mutation
+):
+    from factoryline.runtime_audit_integrity import _LiteralConsumers
+
+    original = getattr(_LiteralConsumers, helper_name)
+    before = audit._oracle_context_cache_key(tmp_path, [], {})
+
+    def changed(*args, **kwargs):
+        return None
+
+    with monkeypatch.context() as patch:
+        if mutation == "binding":
+            patch.setattr(_LiteralConsumers, helper_name, changed)
+        else:
+            patch.setattr(original, "__code__", changed.__code__)
+        assert audit._oracle_context_cache_key(tmp_path, [], {}) != before
+    assert audit._oracle_context_cache_key(tmp_path, [], {}) == before
+
+
 def test_provider_helper_code_change_revokes_batch(tmp_path, monkeypatch):
     _, index, imports, chain, _ = _context(tmp_path, monkeypatch)
 

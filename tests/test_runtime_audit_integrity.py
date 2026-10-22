@@ -785,6 +785,7 @@ def _json_enum_graph(
     extra_sources=None,
     reverse_sources=False,
     stale=False,
+    consumer_type=None,
 ):
     import hashlib
     from factoryline import review_audits, review_integrity
@@ -816,7 +817,7 @@ def _json_enum_graph(
     }
     if stale:
         inventory[root / "common.py"] = "0" * 64
-    return _LiteralConsumers(
+    return (consumer_type or _LiteralConsumers)(
         root,
         trees,
         imports,
@@ -825,6 +826,193 @@ def _json_enum_graph(
         source_bytes=raw,
         inventory=inventory,
     )
+
+
+class _LegacyLiteralConsumers:
+    def __new__(cls, *args, **kwargs):
+        from factoryline.runtime_audit_integrity import _LiteralConsumers
+
+        legacy_type = type(
+            "LegacyLiteralConsumers",
+            (_LiteralConsumers,),
+            {
+                "_walk": cls._walk,
+                "_references": cls._references,
+                "_provider_uses": cls._provider_uses,
+            },
+        )
+        return legacy_type(*args, **kwargs)
+
+    @staticmethod
+    def _walk(self, node):
+        for child in ast.walk(node):
+            if not self._tick():
+                return
+            yield child
+
+    @staticmethod
+    def _references(self):
+        for path, tree in self.trees.items():
+            for node in self._walk(tree):
+                if not isinstance(node, ast.Name) or not isinstance(node.ctx, ast.Load):
+                    continue
+                if self._fixture_parameter_value(path, node.id, node):
+                    continue
+                end = node
+                while (
+                    isinstance(self.parents.get(id(end)), ast.Attribute)
+                    and self._tick()
+                ):
+                    end = self.parents[id(end)]
+                ref = self.resolve(path, tuple(self.audit._name(end).split(".")))
+                if ref is not None:
+                    if ref[0] == "module" and self._relevant_origin(ref[1], None):
+                        self.complete = False
+                    self.refs[ref[:3]].append((path, end, ref[3]))
+
+    @staticmethod
+    def _provider_uses(self):
+        providers = {"enum.Enum", "fastapi.HTTPException", "fastapi.APIRouter"}
+        for path, tree in self.trees.items():
+            aliases = self.audit._module_security_aliases(
+                ast.Module(
+                    body=[
+                        item
+                        for item in self._walk(tree)
+                        if isinstance(item, (ast.Import, ast.ImportFrom))
+                    ],
+                    type_ignores=[],
+                )
+            )
+            for node in self._walk(tree):
+                if not isinstance(node, ast.Name) or not isinstance(node.ctx, ast.Load):
+                    continue
+                api = aliases.get(node.id, "")
+                if api not in providers | {"enum", "fastapi"}:
+                    continue
+                end = node
+                while (
+                    isinstance(self.parents.get(id(end)), ast.Attribute)
+                    and self._tick()
+                ):
+                    end = self.parents[id(end)]
+                tail = self.audit._name(end).split(".")[1:]
+                resolved = ".".join([api, *tail])
+                parent = self.parents.get(id(end))
+                valid = (
+                    resolved == "enum.Enum"
+                    and isinstance(parent, ast.ClassDef)
+                    and end in parent.bases
+                    or resolved in providers - {"enum.Enum"}
+                    and isinstance(parent, ast.Call)
+                    and parent.func is end
+                    or resolved == "fastapi.APIRouter"
+                    and isinstance(parent, (ast.FunctionDef, ast.AsyncFunctionDef))
+                    and parent.returns is end
+                )
+                if not valid:
+                    self.complete = False
+
+
+def _literal_witness_rows(graph):
+    return sorted(
+        (
+            path.relative_to(graph.root).as_posix(),
+            line,
+            member,
+            json.dumps(rows, sort_keys=True, separators=(",", ":")),
+        )
+        for (path, line, member), rows in graph.witnesses().items()
+    )
+
+
+def _literal_reference_rows(graph):
+    return sorted(
+        (
+            origin[0],
+            origin[2],
+            path.relative_to(graph.root).as_posix(),
+            node.lineno,
+            node.col_offset,
+            node.end_lineno,
+            node.end_col_offset,
+            tail,
+        )
+        for origin, refs in graph.refs.items()
+        for path, node, tail in refs
+    )
+
+
+def _literal_blocked_rows(graph):
+    return sorted(
+        (path.relative_to(graph.root).as_posix(), name) for path, name in graph.blocked
+    )
+
+
+def test_literal_consumer_shared_index_matches_legacy_walk_below_caps(tmp_path):
+    import hashlib
+
+    optimized = _json_enum_graph(tmp_path / "optimized")
+    legacy = _json_enum_graph(
+        tmp_path / "legacy", consumer_type=_LegacyLiteralConsumers
+    )
+
+    assert optimized.snapshot_complete == legacy.snapshot_complete is True
+    assert optimized.complete == legacy.complete is True
+    assert _literal_witness_rows(optimized) == _literal_witness_rows(legacy)
+    assert _literal_reference_rows(optimized) == _literal_reference_rows(legacy)
+    assert _literal_blocked_rows(optimized) == _literal_blocked_rows(legacy)
+    assert sorted(
+        (path.relative_to(optimized.root).as_posix(), name)
+        for path, name in optimized.unmodeled_imports
+    ) == sorted(
+        (path.relative_to(legacy.root).as_posix(), name)
+        for path, name in legacy.unmodeled_imports
+    )
+    for path, (_, _, _, load_names, provider_imports) in optimized.file_indexes.items():
+        assert all(isinstance(node.ctx, ast.Load) for node in load_names)
+        assert all(
+            isinstance(node, (ast.Import, ast.ImportFrom)) for node in provider_imports
+        )
+        assert (
+            hashlib.sha256(optimized.source_bytes[path]).hexdigest()
+            == (optimized.inventory[path])
+        )
+
+
+def test_literal_consumer_marker_filter_keeps_budget_exhaustion_fail_closed(
+    tmp_path,
+):
+    import hashlib
+    from factoryline import review_audits, review_integrity
+    from factoryline.runtime_audit_integrity import _LiteralConsumers
+
+    root = tmp_path.resolve()
+    source = "x=foo.bar+foo.baz\n" * 30_000
+    path = root / "large.py"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    raw = source.encode()
+    path.write_bytes(raw)
+    tree = ast.parse(raw)
+    digest = hashlib.sha256(raw).hexdigest()
+    tree._oracle_source_sha256 = digest
+    snapshots = {path: tree}
+    source_bytes = {path: raw}
+    inventory = {path: digest}
+    imports = {path: {}}
+    graph = _LiteralConsumers(
+        root,
+        snapshots,
+        imports,
+        review_audits,
+        review_integrity,
+        source_bytes=source_bytes,
+        inventory=inventory,
+    )
+
+    assert not graph.complete
+    assert not graph.snapshot_complete
+    assert not graph.witnesses()
 
 
 def test_public_enum_json_requires_actual_client_origin(tmp_path):

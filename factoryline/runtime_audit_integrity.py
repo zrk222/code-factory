@@ -1491,6 +1491,7 @@ class _LiteralConsumers(_FiniteInputCapture):
         self.provider_blocked_prefixes = set()
         self.source_profiles = {}
         self.pending_fixture_parameters = []
+        self.file_indexes = {}
         self.complete = True
         self.snapshot_complete = True
         self.source_bytes = source_bytes
@@ -1515,27 +1516,16 @@ class _LiteralConsumers(_FiniteInputCapture):
             path: self.audit._module_security_aliases(tree)
             for path, tree in snapshots.items()
         }
-        file_indexes = {}
         total = 0
         for path, tree in snapshots.items():
             raw = source_bytes[path]
             if not self._snapshot_valid(path, tree, raw):
                 self._snapshot_incomplete()
                 return
-            nodes = []
-            scope_nodes = []
-            for node in self._walk(tree):
-                total += 1
-                if total > 200_000 or not self._tick(4):
-                    self._snapshot_incomplete()
-                    return
-                nodes.append(node)
-                self.node_paths[id(node)] = path
-                if isinstance(node, (ast.arg, ast.Global, ast.Nonlocal)) or (
-                    isinstance(node, ast.Name)
-                    and isinstance(node.ctx, (ast.Store, ast.Del))
-                ):
-                    scope_nodes.append(node)
+            indexed = self._index_source_nodes(path, tree, total)
+            if indexed is None:
+                return
+            total, nodes, scope_nodes, load_names, provider_imports = indexed
             self.parents.update(
                 {id(c): n for n in nodes for c in ast.iter_child_nodes(n)}
             )
@@ -1554,14 +1544,43 @@ class _LiteralConsumers(_FiniteInputCapture):
             scope_nodes = [
                 n for n in scope_nodes if finite_scope_binding_candidate(n, origins)
             ]
-            file_indexes[path] = nodes, scope_nodes, origins
-        for path, (nodes, scope_nodes, origins) in file_indexes.items():
+            self.file_indexes[path] = (
+                nodes,
+                scope_nodes,
+                origins,
+                load_names,
+                provider_imports,
+            )
+        for path, (nodes, scope_nodes, origins, _, _) in self.file_indexes.items():
             self._bindings(path, nodes, scope_nodes, origins)
         self._bind_guarded_script_imports()
         self._finalize_fixture_parameters()
         self._references()
         self._reject_unmodeled_origins()
         self._provider_uses()
+
+    def _index_source_nodes(self, path, tree, total):
+        nodes = []
+        scope_nodes = []
+        load_names = []
+        provider_imports = []
+        for node in self._walk(tree):
+            total += 1
+            if total > 200_000 or not self._tick(4):
+                self._snapshot_incomplete()
+                return None
+            nodes.append(node)
+            self.node_paths[id(node)] = path
+            if isinstance(node, (ast.arg, ast.Global, ast.Nonlocal)) or (
+                isinstance(node, ast.Name)
+                and isinstance(node.ctx, (ast.Store, ast.Del))
+            ):
+                scope_nodes.append(node)
+            if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
+                load_names.append(node)
+            if isinstance(node, (ast.Import, ast.ImportFrom)):
+                provider_imports.append(node)
+        return total, nodes, scope_nodes, load_names, provider_imports
 
     def _snapshot_valid(self, path, tree, raw):
         digest = hashlib.sha256(raw).hexdigest()
@@ -1752,20 +1771,18 @@ class _LiteralConsumers(_FiniteInputCapture):
 
     def _provider_uses(self):
         providers = {"enum.Enum", "fastapi.HTTPException", "fastapi.APIRouter"}
-        for path, tree in self.trees.items():
+        for path, (_, _, _, load_names, provider_imports) in self.file_indexes.items():
+            if not self._tick(len(provider_imports)):
+                return
             aliases = self.audit._module_security_aliases(
                 ast.Module(
-                    body=[
-                        n
-                        for n in self._walk(tree)
-                        if isinstance(n, (ast.Import, ast.ImportFrom))
-                    ],
+                    body=provider_imports,
                     type_ignores=[],
                 )
             )
-            for node in self._walk(tree):
-                if not isinstance(node, ast.Name) or not isinstance(node.ctx, ast.Load):
-                    continue
+            for node in load_names:
+                if not self._tick():
+                    return
                 api = aliases.get(node.id, "")
                 if api not in providers | {"enum", "fastapi"}:
                     continue
@@ -2086,10 +2103,10 @@ class _LiteralConsumers(_FiniteInputCapture):
         return self.resolve(source, (symbol, *tail), seen)
 
     def _references(self):
-        for path, tree in self.trees.items():
-            for node in self._walk(tree):
-                if not isinstance(node, ast.Name) or not isinstance(node.ctx, ast.Load):
-                    continue
+        for path, (_, _, _, load_names, _) in self.file_indexes.items():
+            for node in load_names:
+                if not self._tick():
+                    return
                 if self._fixture_parameter_value(path, node.id, node):
                     continue
                 end = node
@@ -3251,6 +3268,15 @@ class _LiteralConsumers(_FiniteInputCapture):
 
     def _walk(self, node):
         for child in ast.walk(node):
+            # These singleton marker leaves are read through their parent fields
+            # (for example Name.ctx and Compare.ops) and do not carry bindings,
+            # references, or consumers of their own. Keep the original AST intact
+            # for validation while indexing only semantic nodes.
+            if isinstance(
+                child,
+                (ast.expr_context, ast.operator, ast.unaryop, ast.boolop, ast.cmpop),
+            ):
+                continue
             if not self._tick():
                 return
             yield child
