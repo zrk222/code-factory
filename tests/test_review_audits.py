@@ -2006,11 +2006,11 @@ def test_flask_fixture_apps_and_flask_invoked_callbacks_direct_contract():
 @pytest.mark.parametrize(
     ("setup", "expected_findings"),
     [
-        ("alias = app", False),
-        ("alias = app; alias.testing = False", True),
-        ("first = app; second = first; second.testing = False", True),
-        ("alias = app; alias.replace_dispatcher()", True),
-        ("alias = client; alias.get = lambda path: None", True),
+        ("alias = app", None),
+        ("alias = app; alias.testing = False", "QUALITY_HOLLOW_TEST"),
+        ("first = app; second = first; second.testing = False", "QUALITY_HOLLOW_TEST"),
+        ("alias = app; alias.replace_dispatcher()", "QUALITY_UNKNOWN_TEST_ORACLE"),
+        ("alias = client; alias.get = lambda path: None", "QUALITY_HOLLOW_TEST"),
     ],
 )
 def test_flask_dispatch_rejects_mutated_app_and_client_aliases(
@@ -2029,7 +2029,7 @@ def test_flask_dispatch_rejects_mutated_app_and_client_aliases(
     )
     (tmp_path / "test_behavior.py").write_text(fixture + test)
     findings = security_scan(tmp_path, cache_enabled=False)["finding_counts"]
-    assert ("QUALITY_HOLLOW_TEST" in findings) is expected_findings
+    assert findings == ({expected_findings: 1} if expected_findings else {})
 
 
 def test_virtual_dispatch_defaults_direct_contract():
@@ -2621,6 +2621,8 @@ def test_security_scan_external_repository_oracle_regressions(tmp_path, case):
         finding["code"] == "QUALITY_HOLLOW_TEST" for finding in result["findings"]
     )
     assert hollow is case["expected_hollow"], (case["id"], result["findings"])
+    if "expected_finding" in case:
+        assert result["finding_counts"] == {case["expected_finding"]: 1}
 
 
 @pytest.mark.parametrize(
@@ -6104,8 +6106,8 @@ def test_security_scan_detects_local_hollow_test_oracles(tmp_path, body, expecte
 @pytest.mark.parametrize(
     "body,expected",
     [
-        ("assert (compute(), expected)", "QUALITY_HOLLOW_TEST"),
-        ("assert (*values, compute())", "QUALITY_HOLLOW_TEST"),
+        ("assert (compute(), expected)", "QUALITY_WEAK_TEST_ORACLE"),
+        ("assert (*values, compute())", "QUALITY_WEAK_TEST_ORACLE"),
         ("assert isinstance(compute(), object)", "QUALITY_WEAK_TEST_ORACLE"),
         ("while False:\n        assert compute() == 3", "QUALITY_HOLLOW_TEST"),
         ("for item in []:\n        assert compute(item) == 3", "QUALITY_HOLLOW_TEST"),
@@ -6580,15 +6582,20 @@ def test_security_scan_recognizes_assertion_hidden_by_warning_policy(tmp_path):
 
 
 @pytest.mark.parametrize(
-    "filters",
+    "filters,expected",
     [
-        "warnings.simplefilter('error', UserWarning)\n"
-        "warnings.simplefilter('ignore', UserWarning)\n"
-        "emit_user_warning()",
-        "warnings.simplefilter('error', UserWarning)",
+        (
+            "warnings.simplefilter('error', UserWarning)\n"
+            "warnings.simplefilter('ignore', UserWarning)\n"
+            "emit_user_warning()",
+            "QUALITY_UNKNOWN_TEST_ORACLE",
+        ),
+        ("warnings.simplefilter('error', UserWarning)", "QUALITY_HOLLOW_TEST"),
     ],
 )
-def test_security_scan_does_not_trust_inactive_warning_filter(tmp_path, filters):
+def test_security_scan_does_not_trust_inactive_warning_filter(
+    tmp_path, filters, expected
+):
     (tmp_path / "test_case.py").write_text(
         "import warnings\n"
         "def test_warning():\n"
@@ -6597,7 +6604,7 @@ def test_security_scan_does_not_trust_inactive_warning_filter(tmp_path, filters)
         + "\n",
         encoding="utf-8",
     )
-    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+    assert security_scan(tmp_path)["finding_counts"] == {expected: 1}
 
 
 def test_security_scan_does_not_credit_unrelated_call_after_swallowed_warning(tmp_path):
@@ -7476,45 +7483,62 @@ def test_security_scan_ignores_decorator_form_benchmark_with_typed_fixture(tmp_p
 
 
 @pytest.mark.parametrize(
-    "source",
+    "source, expected",
     [
         # No marker or typed fixture: the untyped parameter alone never exempts.
-        "def test_security_invariant(benchmark):\n"
-        "    @benchmark\n"
-        "    def run():\n"
-        "        dangerous_operation()\n",
+        (
+            "def test_security_invariant(benchmark):\n"
+            "    @benchmark\n"
+            "    def run():\n"
+            "        dangerous_operation()\n",
+            "QUALITY_UNKNOWN_TEST_ORACLE",
+        ),
         # Marked, but the nested decorator is not the benchmark fixture.
-        "import pytest\n"
-        "@pytest.mark.benchmark\n"
-        "def test_security_invariant(benchmark):\n"
-        "    @other_decorator\n"
-        "    def run():\n"
-        "        dangerous_operation()\n",
+        (
+            "import pytest\n"
+            "@pytest.mark.benchmark\n"
+            "def test_security_invariant(benchmark):\n"
+            "    @other_decorator\n"
+            "    def run():\n"
+            "        dangerous_operation()\n",
+            "QUALITY_UNKNOWN_TEST_ORACLE",
+        ),
         # Marked, but the decorator is a call to something that only looks similar.
-        "import pytest\n"
-        "@pytest.mark.benchmark\n"
-        "def test_security_invariant(benchmark):\n"
-        "    @benchmarks\n"
-        "    def run():\n"
-        "        dangerous_operation()\n",
+        (
+            "import pytest\n"
+            "@pytest.mark.benchmark\n"
+            "def test_security_invariant(benchmark):\n"
+            "    @benchmarks\n"
+            "    def run():\n"
+            "        dangerous_operation()\n",
+            "QUALITY_UNKNOWN_TEST_ORACLE",
+        ),
         # Marked, but no fixture parameter exists for the decorator to name.
-        "import pytest\n"
-        "@pytest.mark.benchmark\n"
-        "def test_security_invariant():\n"
-        "    @benchmark\n"
-        "    def run():\n"
-        "        dangerous_operation()\n",
+        (
+            "import pytest\n"
+            "@pytest.mark.benchmark\n"
+            "def test_security_invariant():\n"
+            "    @benchmark\n"
+            "    def run():\n"
+            "        dangerous_operation()\n",
+            "QUALITY_UNKNOWN_TEST_ORACLE",
+        ),
         # Marked and decorated, but the decorated function is never the nested one.
-        "import pytest\n"
-        "@pytest.mark.benchmark\n"
-        "def test_security_invariant(benchmark):\n"
-        "    def run():\n"
-        "        dangerous_operation()\n",
+        (
+            "import pytest\n"
+            "@pytest.mark.benchmark\n"
+            "def test_security_invariant(benchmark):\n"
+            "    def run():\n"
+            "        dangerous_operation()\n",
+            "QUALITY_HOLLOW_TEST",
+        ),
     ],
 )
-def test_security_scan_rejects_lookalike_decorator_form_benchmarks(tmp_path, source):
+def test_security_scan_rejects_lookalike_decorator_form_benchmarks(
+    tmp_path, source, expected
+):
     (tmp_path / "test_case.py").write_text(source, encoding="utf-8")
-    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+    assert security_scan(tmp_path)["finding_counts"] == {expected: 1}
 
 
 @pytest.mark.parametrize(
@@ -8732,10 +8756,10 @@ def test_security_scan_keeps_escaping_click_callback_failure_oracles(tmp_path, o
     "fixture_body, expected",
     [
         ("return CliRunner()", {}),
-        ("return fake_runner", {"QUALITY_HOLLOW_TEST": 1}),
+        ("return fake_runner", {"QUALITY_UNKNOWN_TEST_ORACLE": 1}),
         (
             "if arbitrary():\n        return fake_runner\n    return CliRunner()",
-            {"QUALITY_HOLLOW_TEST": 1},
+            {"QUALITY_UNKNOWN_TEST_ORACLE": 1},
         ),
     ],
 )
@@ -8787,7 +8811,7 @@ def test_security_scan_keeps_uninvoked_command_with_recursive_invoke_hollow(tmp_
         "        assert result.output == 'value'\n",
         encoding="utf-8",
     )
-    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+    assert security_scan(tmp_path)["finding_counts"] == {"QUALITY_WEAK_TEST_ORACLE": 1}
 
 
 @pytest.mark.parametrize(
@@ -9129,7 +9153,7 @@ def test_ty_intent_requires_declared_no_target_invocation(tmp_path):
         ("class Custom:\n            pass", {"QUALITY_HOLLOW_TEST": 1}),
         (
             "warnings.simplefilter('ignore')\n        class Custom(base):\n            pass",
-            {"QUALITY_HOLLOW_TEST": 1},
+            {"QUALITY_UNKNOWN_TEST_ORACLE": 1},
         ),
         (
             "return\n        class Custom(base):\n            pass",
@@ -10180,15 +10204,15 @@ def test_source_partial_callback_rejects_rebinding_and_swallowing(
         ("async def wrapped(message):\n            await send(message)", {}),
         (
             "async def wrapped(send):\n            await send({})",
-            {"QUALITY_HOLLOW_TEST": 1},
+            {"QUALITY_UNKNOWN_TEST_ORACLE": 1},
         ),
         (
             "async def wrapped(message):\n            send = noop\n            await send(message)",
-            {"QUALITY_HOLLOW_TEST": 1},
+            {"QUALITY_UNKNOWN_TEST_ORACLE": 1},
         ),
         (
             "async def wrapped(message):\n            try:\n                await send(message)\n            except AssertionError:\n                pass",
-            {"QUALITY_HOLLOW_TEST": 1},
+            {"QUALITY_UNKNOWN_TEST_ORACLE": 1},
         ),
     ],
 )

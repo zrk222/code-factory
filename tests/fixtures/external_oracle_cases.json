@@ -6,11 +6,12 @@
     "path": "tests/test_utils/test_open_file.py",
     "source_file_sha256": "d81cb79dd932f0c19b05a3ba3782f21f02407942b4e116936c53ee4b2143ce26",
     "source": "import os\nimport pathlib\nimport stat\nimport pytest\nimport click\nfrom click._compat import WIN\ndef test_open_file_pathlib_dash(runner):\n\n    @click.command()\n    @click.argument('filename', type=click.Path(allow_dash=True, path_type=pathlib.Path))\n    def cli(filename):\n        click.echo(str(type(filename)))\n        with click.open_file(filename) as f:\n            click.echo(f.read())\n        result = runner.invoke(cli, ['-'], input='value')\n        assert result.exception is None\n        assert result.output == 'pathlib.Path\\nvalue\\n'\n",
-    "expected_hollow": true,
+    "expected_hollow": false,
     "label_basis": "No executed assertion: comparison lacks assert or command never invoked",
     "license_file": "LICENSE.txt",
     "license_text": "Copyright 2014 Pallets\n\nRedistribution and use in source and binary forms, with or without\nmodification, are permitted provided that the following conditions are\nmet:\n\n1.  Redistributions of source code must retain the above copyright\n    notice, this list of conditions and the following disclaimer.\n\n2.  Redistributions in binary form must reproduce the above copyright\n    notice, this list of conditions and the following disclaimer in the\n    documentation and/or other materials provided with the distribution.\n\n3.  Neither the name of the copyright holder nor the names of its\n    contributors may be used to endorse or promote products derived from\n    this software without specific prior written permission.\n\nTHIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS\n\"AS IS\" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT\nLIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A\nPARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT\nHOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,\nSPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED\nTO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR\nPROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF\nLIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING\nNEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS\nSOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.\n",
-    "license_sha256": "757302fe7c41e7026fa46d3315ea8604ed5295fc95c2256d9b38adac43f6fbe5"
+    "license_sha256": "757302fe7c41e7026fa46d3315ea8604ed5295fc95c2256d9b38adac43f6fbe5",
+    "expected_finding": "QUALITY_WEAK_TEST_ORACLE"
   },
   {
     "id": "requests-test_session_close_proxy_clear",
@@ -414,11 +415,12 @@
     "path": "tests/test_console.py",
     "source_file_sha256": "60da0ce519daf0c4ba1a7129d3d34232160e74fef11a66900bd32c4c91c8b4b6",
     "source": "import datetime\nimport io\nimport os\nimport subprocess\nimport sys\nimport tempfile\nfrom typing import Optional, Tuple, Type, Union\nfrom unittest import mock\nimport pytest\nfrom rich import errors\nfrom rich._null_file import NullFile\nfrom rich.color import ColorSystem\nfrom rich.console import CaptureError, Console, ConsoleDimensions, ConsoleOptions, ScreenUpdate, group\nfrom rich.control import Control\nfrom rich.measure import measure_renderables\nfrom rich.padding import Padding\nfrom rich.pager import SystemPager\nfrom rich.panel import Panel\nfrom rich.region import Region\nfrom rich.segment import Segment\nfrom rich.status import Status\nfrom rich.style import Style\nfrom rich.text import Text\ndef test_get_style() -> None:\n    console = Console()\n    console.get_style('repr.brace') == Style(bold=True)\n",
-    "expected_hollow": true,
+    "expected_hollow": false,
     "label_basis": "No executed assertion: comparison lacks assert or command never invoked",
     "license_file": "LICENSE",
     "license_text": "Copyright (c) 2020 Will McGugan\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.\n",
-    "license_sha256": "e7ab77150ff5b5f381f19972f3ad42ad436ac0bb7d39ea498dbca056dd83bd67"
+    "license_sha256": "e7ab77150ff5b5f381f19972f3ad42ad436ac0bb7d39ea498dbca056dd83bd67",
+    "expected_finding": "QUALITY_WEAK_TEST_ORACLE"
   },
   {
     "id": "rich-test_get_style_default",
@@ -427,11 +429,12 @@
     "path": "tests/test_console.py",
     "source_file_sha256": "60da0ce519daf0c4ba1a7129d3d34232160e74fef11a66900bd32c4c91c8b4b6",
     "source": "import datetime\nimport io\nimport os\nimport subprocess\nimport sys\nimport tempfile\nfrom typing import Optional, Tuple, Type, Union\nfrom unittest import mock\nimport pytest\nfrom rich import errors\nfrom rich._null_file import NullFile\nfrom rich.color import ColorSystem\nfrom rich.console import CaptureError, Console, ConsoleDimensions, ConsoleOptions, ScreenUpdate, group\nfrom rich.control import Control\nfrom rich.measure import measure_renderables\nfrom rich.padding import Padding\nfrom rich.pager import SystemPager\nfrom rich.panel import Panel\nfrom rich.region import Region\nfrom rich.segment import Segment\nfrom rich.status import Status\nfrom rich.style import Style\nfrom rich.text import Text\ndef test_get_style_default() -> None:\n    console = Console()\n    console.get_style('foobar', default='red') == Style(color='red')\n",
-    "expected_hollow": true,
+    "expected_hollow": false,
     "label_basis": "No executed assertion: comparison lacks assert or command never invoked",
     "license_file": "LICENSE",
     "license_text": "Copyright (c) 2020 Will McGugan\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.\n",
-    "license_sha256": "e7ab77150ff5b5f381f19972f3ad42ad436ac0bb7d39ea498dbca056dd83bd67"
+    "license_sha256": "e7ab77150ff5b5f381f19972f3ad42ad436ac0bb7d39ea498dbca056dd83bd67",
+    "expected_finding": "QUALITY_WEAK_TEST_ORACLE"
   },
   {
     "license_file": "LICENSE",

@@ -1,0 +1,335 @@
+{
+  "schema": "factory.oracle-family216.v1",
+  "parent": "56d64c23fc59eb676156ab8a0d6d4ea7f2dea1e5",
+  "scope": "Separate expectation-only family corrections. No scanner implementation or frozen held-out label change.",
+  "candidate_sha256": {
+    "tests/test_review_audits.py": "da450c592d4f595ae9b7042e0451d33cf6124107856ed2651f241947d64a0940",
+    "tests/fixtures/external_oracle_cases.json": "4bed8aefb6aa59b7beb76300cdc52b9318d8a94567452ac95d29bec3bd9a5220"
+  },
+  "family_counts": {
+    "UNKNOWN_corrections": 12,
+    "WEAK_corrections": 6
+  },
+  "source_inputs_unchanged": 74,
+  "native_finding_sets_unchanged": 74,
+  "paired_tests": {
+    "before": {
+      "tests": 74,
+      "failures": 24,
+      "errors": 0,
+      "skipped": 0
+    },
+    "after": {
+      "tests": 74,
+      "failures": 6,
+      "errors": 0,
+      "skipped": 0
+    }
+  },
+  "scoped_tests": {
+    "passed": 68,
+    "failed": 0,
+    "unresolved_in_paired_scope": 6
+  },
+  "whole_audit_test_file": {
+    "tests": 1558,
+    "passed": 1530,
+    "failed": 28,
+    "seconds": 121.01,
+    "no_new_failed_cases": true,
+    "boundary": "Not a full-suite pass. The28remaining17HOLLOWcapability and11unresolvedprovider controls are retained."
+  },
+  "independent_review": {
+    "model": "Sol6.1High",
+    "skills": "ECC",
+    "status": "PASS_SCOPED_FAMILY_EXPECTATIONS_GLOBAL_CI_FAILED",
+    "human_validation": false
+  },
+  "changed_expectations": [
+    {
+      "original53_index": 3,
+      "original_ci_case_id": "tests/test_review_audits.py::test_flask_dispatch_rejects_mutated_app_and_client_aliases[alias = app; alias.replace_dispatcher()-True]",
+      "before_case_name": "test_flask_dispatch_rejects_mutated_app_and_client_aliases[alias = app; alias.replace_dispatcher()-True]",
+      "after_case_name": "test_flask_dispatch_rejects_mutated_app_and_client_aliases[alias = app; alias.replace_dispatcher()-QUALITY_UNKNOWN_TEST_ORACLE]",
+      "recommended_code": "QUALITY_UNKNOWN_TEST_ORACLE",
+      "semantic_reason": "alias.replace_dispatcher() is an unresolved eager method call and may raise before dispatch; invalidating the oracle is insufficient to prove HOLLOW.",
+      "source_hashes": {
+        "test_behavior.py": "7c034350f7e90f585cce34bc1eb13eed1fda48cf51a2fb68e9fa976b100d91e9"
+      }
+    },
+    {
+      "original53_index": 9,
+      "original_ci_case_id": "tests/test_review_audits.py::test_oracle_precision_reported_truth_and_reachability[assert (*values, compute())-QUALITY_HOLLOW_TEST]",
+      "before_case_name": "test_oracle_precision_reported_truth_and_reachability[assert (*values, compute())-QUALITY_HOLLOW_TEST]",
+      "after_case_name": "test_oracle_precision_reported_truth_and_reachability[assert (*values, compute())-QUALITY_WEAK_TEST_ORACLE]",
+      "recommended_code": "QUALITY_WEAK_TEST_ORACLE",
+      "semantic_reason": "The final compute() element makes the tuple nonempty after successful eager evaluation, even if values expands empty. Star expansion/name lookup/call may raise. WEAK is conditional, not proof of inert completion.",
+      "source_hashes": {
+        "test_case.py": "185524bfcef0ca6d3cbf1f2455c73d27a954b34bc0935ebaa8b764b059e845c6"
+      }
+    },
+    {
+      "original53_index": 8,
+      "original_ci_case_id": "tests/test_review_audits.py::test_oracle_precision_reported_truth_and_reachability[assert (compute(), expected)-QUALITY_HOLLOW_TEST]",
+      "before_case_name": "test_oracle_precision_reported_truth_and_reachability[assert (compute(), expected)-QUALITY_HOLLOW_TEST]",
+      "after_case_name": "test_oracle_precision_reported_truth_and_reachability[assert (compute(), expected)-QUALITY_WEAK_TEST_ORACLE]",
+      "recommended_code": "QUALITY_WEAK_TEST_ORACLE",
+      "semantic_reason": "A nonempty tuple is truthy after successful eager evaluation. Undefined compute/expected prevent HOLLOW, while the tuple assertion is conditionally structurally weak.",
+      "source_hashes": {
+        "test_case.py": "374f4c9dcdfff2cecce9d91271b60892135f4f01ed3deeca24f0e93a765e26ff"
+      }
+    },
+    {
+      "original53_index": 25,
+      "original_ci_case_id": "tests/test_review_audits.py::test_security_scan_binds_click_runner_fixture_source[return fake_runner-expected1]",
+      "before_case_name": "test_security_scan_binds_click_runner_fixture_source[return fake_runner-expected1]",
+      "after_case_name": "test_security_scan_binds_click_runner_fixture_source[return fake_runner-expected1]",
+      "recommended_code": "QUALITY_UNKNOWN_TEST_ORACLE",
+      "semantic_reason": "Fixture returns undefined fake_runner, so setup has an eager unresolved lookup before invocation.",
+      "source_hashes": {
+        "conftest.py": "b63b56fdbe99323d1c1cffc81af2277a4c890ff199ceb421b665525601c70eaa",
+        "test_case.py": "ad5661f272e0c12d035d6fee10cec2c2f71be3660c3f3e4384f892d70dcf6187"
+      }
+    },
+    {
+      "original53_index": 26,
+      "original_ci_case_id": "tests/test_review_audits.py::test_security_scan_binds_click_runner_fixture_source[if arbitrary():\\n        return fake_runner\\n    return CliRunner()-expected2]",
+      "before_case_name": "test_security_scan_binds_click_runner_fixture_source[if arbitrary():\\n        return fake_runner\\n    return CliRunner()-expected2]",
+      "after_case_name": "test_security_scan_binds_click_runner_fixture_source[if arbitrary():\\n        return fake_runner\\n    return CliRunner()-expected2]",
+      "recommended_code": "QUALITY_UNKNOWN_TEST_ORACLE",
+      "semantic_reason": "Fixture evaluates undefined arbitrary() before branch selection; source cannot establish any stable runner or inert setup.",
+      "source_hashes": {
+        "conftest.py": "c1daf3b413bb8e6eb1537f0a4dc9c4d427c01be2f2849b3fb3539b62f23f970d",
+        "test_case.py": "ad5661f272e0c12d035d6fee10cec2c2f71be3660c3f3e4384f892d70dcf6187"
+      }
+    },
+    {
+      "original53_index": 14,
+      "original_ci_case_id": "tests/test_review_audits.py::test_security_scan_does_not_trust_inactive_warning_filter[warnings.simplefilter('error', UserWarning)\\nwarnings.simplefilter('ignore', UserWarning)\\nemit_user_warning()]",
+      "before_case_name": "test_security_scan_does_not_trust_inactive_warning_filter[warnings.simplefilter('error', UserWarning)\\nwarnings.simplefilter('ignore', UserWarning)\\nemit_user_warning()]",
+      "after_case_name": "test_security_scan_does_not_trust_inactive_warning_filter[warnings.simplefilter('error', UserWarning)\\nwarnings.simplefilter('ignore', UserWarning)\\nemit_user_warning()-QUALITY_UNKNOWN_TEST_ORACLE]",
+      "recommended_code": "QUALITY_UNKNOWN_TEST_ORACLE",
+      "semantic_reason": "The warning filter is reset to ignore and emit_user_warning is undefined. Loss of an active warning oracle does not make its eager lookup inert.",
+      "source_hashes": {
+        "test_case.py": "1ede3799bfed80c4d23d3f7ca048636f475f5a2e675383c851bba59c749542a5"
+      }
+    },
+    {
+      "original53_index": 51,
+      "original_ci_case_id": "tests/test_review_audits.py::test_security_scan_external_repository_oracle_regressions[rich-test_get_style]",
+      "before_case_name": "test_security_scan_external_repository_oracle_regressions[rich-test_get_style]",
+      "after_case_name": "test_security_scan_external_repository_oracle_regressions[rich-test_get_style]",
+      "recommended_code": "QUALITY_WEAK_TEST_ORACLE",
+      "semantic_reason": "Comparison result of get_style(...)==Style(...) is discarded. Existing WEAK diagnostic describes missing enforcement; opaque constructors/calls preclude HOLLOW.",
+      "source_hashes": {
+        "test_external.py": "2e38e20e983cc5450136d398aba4e75322120744b2f9a1eeecd8a5e8e3d84404"
+      }
+    },
+    {
+      "original53_index": 52,
+      "original_ci_case_id": "tests/test_review_audits.py::test_security_scan_external_repository_oracle_regressions[rich-test_get_style_default]",
+      "before_case_name": "test_security_scan_external_repository_oracle_regressions[rich-test_get_style_default]",
+      "after_case_name": "test_security_scan_external_repository_oracle_regressions[rich-test_get_style_default]",
+      "recommended_code": "QUALITY_WEAK_TEST_ORACLE",
+      "semantic_reason": "Same discarded comparison as51 with default argument. WEAK is appropriate; this does not establish non-raising completion.",
+      "source_hashes": {
+        "test_external.py": "7f21dbf88f406de05f28041678f134220de0d9e7f6d81509887112d8358b8bab"
+      }
+    },
+    {
+      "original53_index": 50,
+      "original_ci_case_id": "tests/test_review_audits.py::test_security_scan_external_repository_oracle_regressions[click-test_open_file_pathlib_dash]",
+      "before_case_name": "test_security_scan_external_repository_oracle_regressions[click-test_open_file_pathlib_dash]",
+      "after_case_name": "test_security_scan_external_repository_oracle_regressions[click-test_open_file_pathlib_dash]",
+      "recommended_code": "QUALITY_WEAK_TEST_ORACLE",
+      "semantic_reason": "runner.invoke and assertions are inside an uncalled cli body. The active test only registers a decorated command; existing WEAK uncalled-command diagnostic is supported.",
+      "source_hashes": {
+        "test_external.py": "d4acfdcb8ab42e28d5e9ef983cf98262f5c80671ac16e621eed8127ca600dead"
+      }
+    },
+    {
+      "original53_index": 27,
+      "original_ci_case_id": "tests/test_review_audits.py::test_security_scan_keeps_uninvoked_command_with_recursive_invoke_hollow",
+      "before_case_name": "test_security_scan_keeps_uninvoked_command_with_recursive_invoke_hollow",
+      "after_case_name": "test_security_scan_keeps_uninvoked_command_with_recursive_invoke_hollow",
+      "recommended_code": "QUALITY_WEAK_TEST_ORACLE",
+      "semantic_reason": "The assertions and recursive invoke exist only inside a command never invoked by the test. Existing WEAK diagnostic reports the undelivered command oracle; CliRunner/decorator construction is not inert proof.",
+      "source_hashes": {
+        "test_case.py": "9c6be988d2a27fc0454b270fa836accc715951087d4f3a929e14c8febff1cb1b"
+      }
+    },
+    {
+      "original53_index": 29,
+      "original_ci_case_id": "tests/test_review_audits.py::test_security_scan_recognizes_warning_policy_during_class_construction[warnings.simplefilter('ignore')\\n        class Custom(base):\\n            pass-expected2]",
+      "before_case_name": "test_security_scan_recognizes_warning_policy_during_class_construction[warnings.simplefilter('ignore')\\n        class Custom(base):\\n            pass-expected2]",
+      "after_case_name": "test_security_scan_recognizes_warning_policy_during_class_construction[warnings.simplefilter('ignore')\\n        class Custom(base):\\n            pass-expected2]",
+      "recommended_code": "QUALITY_UNKNOWN_TEST_ORACLE",
+      "semantic_reason": "Class construction uses unconstrained base fixture. Its metaclass/__init_subclass__/__mro_entries__ effects may raise despite ignoring warnings.",
+      "source_hashes": {
+        "test_case.py": "ea54b6439fa78572f71beff83d7bcb9a4a83048146a9526adc512a393bbceb63"
+      }
+    },
+    {
+      "original53_index": 17,
+      "original_ci_case_id": "tests/test_review_audits.py::test_security_scan_rejects_lookalike_decorator_form_benchmarks[import pytest\\n@pytest.mark.benchmark\\ndef test_security_invariant(benchmark):\\n    @other_decorator\\n    def run():\\n        dangerous_operation()\\n]",
+      "before_case_name": "test_security_scan_rejects_lookalike_decorator_form_benchmarks[import pytest\\n@pytest.mark.benchmark\\ndef test_security_invariant(benchmark):\\n    @other_decorator\\n    def run():\\n        dangerous_operation()\\n]",
+      "after_case_name": "test_security_scan_rejects_lookalike_decorator_form_benchmarks[import pytest\\n@pytest.mark.benchmark\\ndef test_security_invariant(benchmark):\\n    @other_decorator\\n    def run():\\n        dangerous_operation()\\n-QUALITY_UNKNOWN_TEST_ORACLE]",
+      "recommended_code": "QUALITY_UNKNOWN_TEST_ORACLE",
+      "semantic_reason": "other_decorator is undefined and is evaluated when defining run. A benchmark marker does not make that lookup inert.",
+      "source_hashes": {
+        "test_case.py": "033311dc6928b573c44ee085b0d6e50e7628cfb9b161c9c55a0f3555dd330247"
+      }
+    },
+    {
+      "original53_index": 16,
+      "original_ci_case_id": "tests/test_review_audits.py::test_security_scan_rejects_lookalike_decorator_form_benchmarks[def test_security_invariant(benchmark):\\n    @benchmark\\n    def run():\\n        dangerous_operation()\\n]",
+      "before_case_name": "test_security_scan_rejects_lookalike_decorator_form_benchmarks[def test_security_invariant(benchmark):\\n    @benchmark\\n    def run():\\n        dangerous_operation()\\n]",
+      "after_case_name": "test_security_scan_rejects_lookalike_decorator_form_benchmarks[def test_security_invariant(benchmark):\\n    @benchmark\\n    def run():\\n        dangerous_operation()\\n-QUALITY_UNKNOWN_TEST_ORACLE]",
+      "recommended_code": "QUALITY_UNKNOWN_TEST_ORACLE",
+      "semantic_reason": "Calling the fixture-supplied benchmark as a decorator is eager and unconstrained; it can execute the nested body or raise.",
+      "source_hashes": {
+        "test_case.py": "3fd21e840d8b4107a98f5668bc5c54f3b4efe10b33ff81a249747db5c53979d8"
+      }
+    },
+    {
+      "original53_index": 19,
+      "original_ci_case_id": "tests/test_review_audits.py::test_security_scan_rejects_lookalike_decorator_form_benchmarks[import pytest\\n@pytest.mark.benchmark\\ndef test_security_invariant():\\n    @benchmark\\n    def run():\\n        dangerous_operation()\\n]",
+      "before_case_name": "test_security_scan_rejects_lookalike_decorator_form_benchmarks[import pytest\\n@pytest.mark.benchmark\\ndef test_security_invariant():\\n    @benchmark\\n    def run():\\n        dangerous_operation()\\n]",
+      "after_case_name": "test_security_scan_rejects_lookalike_decorator_form_benchmarks[import pytest\\n@pytest.mark.benchmark\\ndef test_security_invariant():\\n    @benchmark\\n    def run():\\n        dangerous_operation()\\n-QUALITY_UNKNOWN_TEST_ORACLE]",
+      "recommended_code": "QUALITY_UNKNOWN_TEST_ORACLE",
+      "semantic_reason": "benchmark is not a parameter or defined provider and is evaluated at nested definition time.",
+      "source_hashes": {
+        "test_case.py": "d54a34c2e2b63ee30fe187cb0a8e1832870c0503e624804214fcd76457ffdbbb"
+      }
+    },
+    {
+      "original53_index": 18,
+      "original_ci_case_id": "tests/test_review_audits.py::test_security_scan_rejects_lookalike_decorator_form_benchmarks[import pytest\\n@pytest.mark.benchmark\\ndef test_security_invariant(benchmark):\\n    @benchmarks\\n    def run():\\n        dangerous_operation()\\n]",
+      "before_case_name": "test_security_scan_rejects_lookalike_decorator_form_benchmarks[import pytest\\n@pytest.mark.benchmark\\ndef test_security_invariant(benchmark):\\n    @benchmarks\\n    def run():\\n        dangerous_operation()\\n]",
+      "after_case_name": "test_security_scan_rejects_lookalike_decorator_form_benchmarks[import pytest\\n@pytest.mark.benchmark\\ndef test_security_invariant(benchmark):\\n    @benchmarks\\n    def run():\\n        dangerous_operation()\\n-QUALITY_UNKNOWN_TEST_ORACLE]",
+      "recommended_code": "QUALITY_UNKNOWN_TEST_ORACLE",
+      "semantic_reason": "benchmarks is undefined and evaluated at nested definition time.",
+      "source_hashes": {
+        "test_case.py": "f9f671433f248fa55a4af373bdece2606fa753346ec7efbb9afbdbbfaffa6fd4"
+      }
+    },
+    {
+      "original53_index": 39,
+      "original_ci_case_id": "tests/test_review_audits.py::test_source_callback_wrapper_requires_original_escaping_callback[async def wrapped(message):\\n            try:\\n                await send(message)\\n            except AssertionError:\\n                pass-expected3]",
+      "before_case_name": "test_source_callback_wrapper_requires_original_escaping_callback[async def wrapped(message):\\n            try:\\n                await send(message)\\n            except AssertionError:\\n                pass-expected3]",
+      "after_case_name": "test_source_callback_wrapper_requires_original_escaping_callback[async def wrapped(message):\\n            try:\\n                await send(message)\\n            except AssertionError:\\n                pass-expected3]",
+      "recommended_code": "QUALITY_UNKNOWN_TEST_ORACLE",
+      "semantic_reason": "The original callback reaches undefined expected. Its NameError escapes an AssertionError-only handler; swallowed-assertion reasoning is insufficient.",
+      "source_hashes": {
+        "engine.py": "45615b9e601d5bb29f5b58d6c8ae770eed38186e3902b1dfc52693178aa35d29",
+        "test_case.py": "3f1a41b8ffdad3f4f3492f8067bb3ae1632f5705f5e1b106b36b6bc8f170aa91"
+      }
+    },
+    {
+      "original53_index": 38,
+      "original_ci_case_id": "tests/test_review_audits.py::test_source_callback_wrapper_requires_original_escaping_callback[async def wrapped(message):\\n            send = noop\\n            await send(message)-expected2]",
+      "before_case_name": "test_source_callback_wrapper_requires_original_escaping_callback[async def wrapped(message):\\n            send = noop\\n            await send(message)-expected2]",
+      "after_case_name": "test_source_callback_wrapper_requires_original_escaping_callback[async def wrapped(message):\\n            send = noop\\n            await send(message)-expected2]",
+      "recommended_code": "QUALITY_UNKNOWN_TEST_ORACLE",
+      "semantic_reason": "wrapped evaluates undefined noop before awaiting; the source has an escaping NameError.",
+      "source_hashes": {
+        "engine.py": "53fb1fe114cc056c3a77222561e9ad35390db363921031f8c7a7cf5ed9fadf16",
+        "test_case.py": "3f1a41b8ffdad3f4f3492f8067bb3ae1632f5705f5e1b106b36b6bc8f170aa91"
+      }
+    },
+    {
+      "original53_index": 37,
+      "original_ci_case_id": "tests/test_review_audits.py::test_source_callback_wrapper_requires_original_escaping_callback[async def wrapped(send):\\n            await send({})-expected1]",
+      "before_case_name": "test_source_callback_wrapper_requires_original_escaping_callback[async def wrapped(send):\\n            await send({})-expected1]",
+      "after_case_name": "test_source_callback_wrapper_requires_original_escaping_callback[async def wrapped(send):\\n            await send({})-expected1]",
+      "recommended_code": "QUALITY_UNKNOWN_TEST_ORACLE",
+      "semantic_reason": "wrapped shadows send with its argument {}, then attempts to call that dict. This reaches TypeError; it is not inert callback loss.",
+      "source_hashes": {
+        "engine.py": "e35f32ee10699cb1d152f2cbef436fa7f2f31c32e8570ddb4165e1e0f961bfc0",
+        "test_case.py": "3f1a41b8ffdad3f4f3492f8067bb3ae1632f5705f5e1b106b36b6bc8f170aa91"
+      }
+    }
+  ],
+  "external_regression_fixture": {
+    "source_rows_unchanged": 31,
+    "attribution_license_fields_unchanged": true,
+    "changed_expectation_rows": [
+      "click-test_open_file_pathlib_dash",
+      "rich-test_get_style",
+      "rich-test_get_style_default"
+    ],
+    "change": "Only these3expected_hollow booleans become false, with explicit required WEAK finding code. Original source/provenance/license data preserved."
+  },
+  "architecture": {
+    "decision": "HEALTHY",
+    "python_files": 429,
+    "core_modules": 133
+  },
+  "precision_change": 0,
+  "latest_comparable_precision": {
+    "study": 210,
+    "TP": 1,
+    "FP": 10,
+    "UNCLEAR": 22,
+    "decided_precision": 0.09090909090909091,
+    "wilson95": [
+      0.016232172885884855,
+      0.37735843645159567
+    ],
+    "status": "Unchanged, previously held-out now exposed. Corrections do not establish a detector or generalization gain."
+  },
+  "latest_completed_full_CI": {
+    "head": "56d64c23fc59eb676156ab8a0d6d4ea7f2dea1e5",
+    "passed": 8273,
+    "failed": 46,
+    "skipped": 12,
+    "boundary": "Before this batch; new-head full CI required."
+  },
+  "artifacts": [
+    {
+      "path": ".factory/precision216/family-ecc-review.json",
+      "sha256": "53480370f317b20d3ad4efffe3eaca2beab5c3f98d263c8df7aca8dbfc0fae9b"
+    },
+    {
+      "path": ".factory/precision216/family/pair.json",
+      "sha256": "fbf1edc211af28c0f941343caa3d78e72db86be1148917a3c790fcd2d71d118f"
+    },
+    {
+      "path": ".factory/precision216/family/before-observations.json",
+      "sha256": "9e721757cef2f3b6c60894b6fb86866c788b1f3b3c934d8f83db66910e567d6b"
+    },
+    {
+      "path": ".factory/precision216/family/after-observations.json",
+      "sha256": "149978f1199551ae401e352ad96614186af53994ae30965fc7e9bcbf2cdba7ff"
+    },
+    {
+      "path": ".factory/precision216/family/before.xml",
+      "sha256": "1678e36708deb988ab47624aa9bcd18e2447bf412f643b13391c30d21235d7b9"
+    },
+    {
+      "path": ".factory/precision216/family/after.xml",
+      "sha256": "89fdd72df5e813f9de8ca8977476222a363ef819d1e3cfc0967ffcd5ead3ff9f"
+    },
+    {
+      "path": ".factory/precision216/family/scoped.xml",
+      "sha256": "563728c6d5b356b1cb0fa3e3cf540b83664f028f030805a27750a8f57c1ad0b4"
+    },
+    {
+      "path": ".factory/precision216/family/full-audits.xml",
+      "sha256": "e064ef4762b5bfd47a5183b216032107054e9ec2a7f81ca86ec8cf1424b715a4"
+    },
+    {
+      "path": ".factory/precision216/family/architecture.json",
+      "sha256": "03d7c657902d736bdee01119577bfc4c2f843ae091764b7750ccd44cf0276014"
+    },
+    {
+      "path": ".factory/precision216/family/doctor.json",
+      "sha256": "8c3ded5206ef2a93f77990cde143dc75414ff4bbf63fd1e6d0267b1181bb4856"
+    },
+    {
+      "path": ".factory/precision216/run-family-pair.py",
+      "sha256": "fa8050e24d5ec85cd6783d92c79d4cbef828cad338494735cb07181f683902e0"
+    }
+  ],
+  "global_state": "INCOMPLETE; no merge, release, or precision qualification."
+}

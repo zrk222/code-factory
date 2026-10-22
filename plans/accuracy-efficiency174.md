@@ -43,6 +43,18 @@ the source-grounded reason for any expectation migration. No bulk UNKNOWN edit.
 Keep pass/assertTrue, attrs' genuine docstring-only case, the three Rich
 SHADOWED cases and historical security positives pinned separately.
 
+The exact 53-case CI review is partitioned by source semantics: 19 justified
+UNKNOWN expectation corrections, six WEAK expectation corrections, 17 retained
+HOLLOW capability controls and 11 unresolved provider/framework controls.
+Seven corrections were committed separately in `56d64c2`; the remaining 18
+have independent ECC review and a 74-input paired check with identical native
+findings. All 31 external regression snippets and attribution/license fields
+are preserved; three regression expectations now explicitly require WEAK.
+The local 1,558-case audit file reports 1,530 passed and 28 failed, exactly the
+17 capability controls plus 11 unresolved controls. Those 28 are retained, not
+relabelled into a pass. These expectation corrections establish no detector
+behavior change or precision gain. See `docs/evidence/oracle-family216.json`.
+
 ### A2/A3 — Repair shared operation and completion models
 
 Existing owners: `factoryline/context_efficiency.py`,
@@ -292,11 +304,13 @@ improvements.
   at `4465aa3` are66failed,8,157passed and12skipped on Ubuntu Python3.11.
   Four raising partial-callback expectation migrations are isolated in
   `1a63c57`; the unawaited partial-callback HOLLOW control is unchanged and still
-  fails. The newer full CI run at `0c567d0` reports 53 failed, 8,266 passed and
-  12 skipped on Ubuntu Python 3.11 in 330.03 seconds. All 53 failures are in
-  `test_review_audits.py`; full CI and merge qualification remain failed. This
-  full-suite time is separate from the per-repository scan target. Rerun after
-  the next independently reviewed family batch; scoped tests cannot replace it.
+  fails. The newer full CI run at `56d64c2` reports 46 failed, 8,273 passed and
+  12 skipped on Ubuntu Python 3.11 in 388.05 seconds. Its failure IDs are exactly
+  the prior 53 minus the first seven reviewed expectation corrections; full CI
+  and merge qualification remain failed. The next 18-correction local audit
+  file result is recorded above and needs full CI at its committed head. These
+  full-suite times are separate from the per-repository scan target; scoped
+  tests cannot replace the full gates.
 - Evaluation-local JWT memoization: an isolated alternating pair on the same
   26-file snapshot measured 16.806s baseline median versus 14.819s candidate
   median (11.82% lower), with equal canonical finding digests and coverage.
