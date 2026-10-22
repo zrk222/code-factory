@@ -77,27 +77,9 @@ def test_endpoint_plain_facts_require_current_complete_source_recomputation(
     sources = copy.deepcopy(original["sources"])
     bindings = {row["path"]: row["sha256"] for row in sources}
     captured = {"client.py": (tmp_path / "client.py").read_bytes()}
-    if mutation == "source":
-        captured["client.py"] += b"consume(Client.ACCESS_TOKEN_URL)\n"
-    elif mutation == "claim":
-        finding["line"] += 1
-    elif mutation == "missing":
-        captured.clear()
-    elif mutation == "extra":
-        captured["unregistered.py"] = b"consume(Client.ACCESS_TOKEN_URL)\n"
-    elif mutation == "severity":
-        finding["severity"] = "INFO"
-    elif mutation == "message":
-        finding["message"] = "forged"
-    elif mutation == "facts":
-        finding["facts"]["name"] = []
-    elif mutation == "witness":
-        finding["facts"]["url_witnesses"] = []
-    elif mutation == "length":
-        sources[0]["bytes"] += 1
-    elif mutation == "duplicate":
-        sources.append(copy.deepcopy(sources[0]))
-    elif mutation == "helper":
+    _mutate_endpoint_capture(mutation, captured, sources)
+    _mutate_endpoint_claim(mutation, finding)
+    if mutation == "helper":
         monkeypatch.setattr(evidence, "_derive", lambda *args, **kwargs: {})
     elif mutation == "catalog":
         monkeypatch.setattr(evidence, "endpoint_publication", lambda *args: None)
@@ -110,6 +92,32 @@ def test_endpoint_plain_facts_require_current_complete_source_recomputation(
             patch.setattr(Path, method, forbidden)
         result = evidence.endpoint_binding(finding, sources, bindings, captured)
     assert result is (mutation == "none")
+
+
+def _mutate_endpoint_capture(mutation, captured, sources):
+    if mutation == "source":
+        captured["client.py"] += b"consume(Client.ACCESS_TOKEN_URL)\n"
+    elif mutation == "missing":
+        captured.clear()
+    elif mutation == "extra":
+        captured["unregistered.py"] = b"consume(Client.ACCESS_TOKEN_URL)\n"
+    elif mutation == "length":
+        sources[0]["bytes"] += 1
+    elif mutation == "duplicate":
+        sources.append(copy.deepcopy(sources[0]))
+
+
+def _mutate_endpoint_claim(mutation, finding):
+    if mutation == "claim":
+        finding["line"] += 1
+    elif mutation == "severity":
+        finding["severity"] = "INFO"
+    elif mutation == "message":
+        finding["message"] = "forged"
+    elif mutation == "facts":
+        finding["facts"]["name"] = []
+    elif mutation == "witness":
+        finding["facts"]["url_witnesses"] = []
 
 
 @pytest.mark.parametrize(
