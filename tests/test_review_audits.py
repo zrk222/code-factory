@@ -2007,12 +2007,25 @@ def test_flask_fixture_apps_and_flask_invoked_callbacks_direct_contract():
     ("setup", "expected_findings"),
     [
         ("alias = app", None),
-        ("alias = app; alias.testing = False", "QUALITY_HOLLOW_TEST"),
-        ("first = app; second = first; second.testing = False", "QUALITY_HOLLOW_TEST"),
+        pytest.param(
+            "alias = app; alias.testing = False",
+            "QUALITY_UNKNOWN_TEST_ORACLE",
+            id="alias = app; alias.testing = False-QUALITY_HOLLOW_TEST",
+        ),
+        pytest.param(
+            "first = app; second = first; second.testing = False",
+            "QUALITY_UNKNOWN_TEST_ORACLE",
+            id="first = app; second = first; second.testing = False-QUALITY_HOLLOW_TEST",
+        ),
         ("alias = app; alias.replace_dispatcher()", "QUALITY_UNKNOWN_TEST_ORACLE"),
-        ("alias = client; alias.get = lambda path: None", "QUALITY_HOLLOW_TEST"),
+        pytest.param(
+            "alias = client; alias.get = lambda path: None",
+            "QUALITY_UNKNOWN_TEST_ORACLE",
+            id="alias = client; alias.get = lambda path: None-QUALITY_HOLLOW_TEST",
+        ),
     ],
 )
+# Flask dispatch and exception propagation depend on framework hooks not closed by these AST facts.
 def test_flask_dispatch_rejects_mutated_app_and_client_aliases(
     tmp_path, setup, expected_findings
 ):

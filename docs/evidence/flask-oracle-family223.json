@@ -1,0 +1,66 @@
+{
+  "schema": "factory.flask-oracle-family223.v1",
+  "parent": "9d406ec539729f7f8ff4bb63f180bc0e6d850ea5",
+  "scope": "Expectation-only classification of three mutated Flask alias controls. No detector changes in this commit.",
+  "test_sha256": "d8cf33f3621c6283a7bc3af2e484ecb72e43d141e1d42a19b8e1839501ec56bd",
+  "family_decision": "UNKNOWN: losing dispatch/assertion attribution does not prove the imported Flask fixture, route registration, client creation or lifecycle cannot raise. Same rule already applies to direct app.testing=False controls.",
+  "changed_expectations": 3,
+  "restored_hollow": 0,
+  "generated_source_snippets_unchanged": true,
+  "historical_node_ids": "Explicit old IDs retained solely so the frozen failed-only selection remains exact. HOLLOW text in IDs does not describe the new expected classification.",
+  "measurement": {
+    "selected_original_failures": 3,
+    "passed": 3,
+    "failed": 0,
+    "seconds_xml": 1.442,
+    "seconds_terminal": 1.45
+  },
+  "execution_profile": "Staged audit a6fc7222 with rejected Flask shortcut removed; baseline integrity, live root completion source. Other rejected nested/mock shortcuts were structurally inapplicable. This is not pure-HEAD or full-suite validation.",
+  "independent_AI_review": {
+    "model": "Sol6.1High",
+    "skill": "ECC",
+    "status": "PASS_SCOPED_FLASK_EXPECTATION_CORRECTION_GLOBAL_CI_INCOMPLETE",
+    "human_validation": false
+  },
+  "rejected_candidate": "Earlier six-pass candidate was rejected for unsound absence proofs; preserved security6-ecc-review.json is not approval.",
+  "security_precision_gain": 0,
+  "comparable_actionable_precision": {
+    "study": 210,
+    "TP": 1,
+    "FP": 10,
+    "UNCLEAR": 22,
+    "decided_percent": 9.090909090909092,
+    "wilson95_percent": [
+      1.62,
+      37.74
+    ],
+    "fresh_current_head_qualification": false
+  },
+  "remaining": "Other source repairs, their final-hash qualification, architecture/quality and full CI remain incomplete. No merge/release claim.",
+  "artifacts": [
+    {
+      "path": ".factory/precision222/flask-test-ecc-review.json",
+      "sha256": "598c409f5b8aec8b231d817004b962da0c5a850e5040de881e7090d88ffd77aa"
+    },
+    {
+      "path": ".factory/precision222/security6-run4.xml",
+      "sha256": "b66714affdd0ae6fb998f5d510ef290ea4b358348501c97ca906352879e9b8f1"
+    },
+    {
+      "path": ".factory/precision222/security6-run4.log",
+      "sha256": "ce08d4f2d5c0be4cd28613e200e661c7b750ddfbed678fd44469976c2316ebc7"
+    },
+    {
+      "path": ".factory/precision222/security6-run4-imports.json",
+      "sha256": "6f658a0d705e09c3e2aad3cfa1b271aacaa5bae7ea3b3d4a18af6f5c3c7e5821"
+    },
+    {
+      "path": ".factory/precision222/security6-ecc-review.json",
+      "sha256": "9ac3be0f2ccbae944eb6a2dedc68196af3998a81981e3c70eb454585eabf497c"
+    },
+    {
+      "path": ".factory/precision222/doctor.json",
+      "sha256": "8c3ded5206ef2a93f77990cde143dc75414ff4bbf63fd1e6d0267b1181bb4856"
+    }
+  ]
+}
