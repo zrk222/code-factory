@@ -10,6 +10,128 @@ from factoryline.review_audits import security_scan
 
 
 @pytest.mark.parametrize(
+    "argument",
+    ["", "None", "3", "'payload'", "(1, None)", "ValueError"],
+)
+def test_nullcontext_optional_value_completes_without_calling_it(tmp_path, argument):
+    (tmp_path / "test_context.py").write_text(
+        "from contextlib import nullcontext as enter\n"
+        "def test_behavior():\n"
+        f"    with enter({argument}):\n        pass\n",
+        encoding="utf-8",
+    )
+    for cache in (False, True, True):
+        assert security_scan(tmp_path, cache_enabled=cache)["finding_counts"] == {
+            "QUALITY_HOLLOW_TEST": 1
+        }
+
+
+@pytest.mark.parametrize(
+    "prefix,argument,body,expected",
+    [
+        ("", "missing", "pass", "QUALITY_UNKNOWN_TEST_ORACLE"),
+        ("", "make_value()", "pass", "QUALITY_UNKNOWN_TEST_ORACLE"),
+        ("", "1, 2", "pass", "QUALITY_UNKNOWN_TEST_ORACLE"),
+        ("", "*[1]", "pass", "QUALITY_UNKNOWN_TEST_ORACLE"),
+        ("", "**options", "pass", "QUALITY_UNKNOWN_TEST_ORACLE"),
+        ("", "None", "raise ValueError", "QUALITY_UNKNOWN_TEST_ORACLE"),
+        ("ValueError = missing\n", "ValueError", "pass", "QUALITY_UNKNOWN_TEST_ORACLE"),
+        ("enter = other\n", "None", "pass", "QUALITY_UNKNOWN_TEST_ORACLE"),
+        (
+            "try:\n    raise Exception()\nexcept Exception as ValueError:\n    pass\n",
+            "ValueError",
+            "pass",
+            "QUALITY_UNKNOWN_TEST_ORACLE",
+        ),
+        (
+            "try:\n    raise Exception()\nexcept Exception as enter:\n    pass\n",
+            "1",
+            "pass",
+            "QUALITY_UNKNOWN_TEST_ORACLE",
+        ),
+        (
+            "match 1:\n    case ValueError:\n        pass\n",
+            "ValueError",
+            "pass",
+            "QUALITY_UNKNOWN_TEST_ORACLE",
+        ),
+        (
+            "import contextlib\ncontextlib.nullcontext = other\n",
+            "None",
+            "pass",
+            "QUALITY_UNKNOWN_TEST_ORACLE",
+        ),
+    ],
+)
+def test_nullcontext_optional_value_does_not_hide_raising_or_opaque_inputs(
+    tmp_path, prefix, argument, body, expected
+):
+    (tmp_path / "test_context.py").write_text(
+        "from contextlib import nullcontext as enter\n"
+        + prefix
+        + "def test_behavior():\n"
+        + f"    with enter({argument}):\n        {body}\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path, cache_enabled=False)["finding_counts"] == {
+        expected: 1
+    }
+
+
+@pytest.mark.parametrize("path", ["contextlib.py", "contextlib/__init__.py"])
+def test_nullcontext_optional_value_rejects_captured_provider_shadow(tmp_path, path):
+    provider = tmp_path / path
+    provider.parent.mkdir(parents=True, exist_ok=True)
+    provider.write_text(
+        "def nullcontext(value):\n    raise ValueError('not inert')\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "test_context.py").write_text(
+        "from contextlib import nullcontext as enter\n"
+        "def test_behavior():\n    with enter(1):\n        pass\n",
+        encoding="utf-8",
+    )
+    for cache in (False, True, True):
+        assert security_scan(tmp_path, cache_enabled=cache)["finding_counts"] == {
+            "QUALITY_UNKNOWN_TEST_ORACLE": 1
+        }
+
+
+def test_nullcontext_optional_value_does_not_hide_a_real_assertion(tmp_path):
+    (tmp_path / "test_context.py").write_text(
+        "from contextlib import nullcontext\n"
+        "def test_behavior():\n"
+        "    with nullcontext(ValueError):\n        assert observed() == 3\n",
+        encoding="utf-8",
+    )
+    assert security_scan(tmp_path, cache_enabled=False)["finding_counts"] == {}
+
+
+@pytest.mark.parametrize("kind", ["binding", "code"])
+@pytest.mark.parametrize(
+    "name", ["_nullcontext_arguments_closed", "_completion_provider_captured"]
+)
+def test_nullcontext_argument_helper_binds_native_cache_epoch(
+    tmp_path, monkeypatch, kind, name
+):
+    from factoryline import review_audits as scanner
+    from factoryline import test_oracle_misuse as misuse
+
+    helper = getattr(misuse, name)
+    assert helper in misuse.INERT_BODY_HELPERS
+    before = scanner._oracle_context_cache_key(tmp_path, [], {})
+
+    def replacement(*args, **kwargs):
+        return False
+
+    if kind == "binding":
+        monkeypatch.setattr(misuse, name, replacement)
+    else:
+        monkeypatch.setattr(helper, "__code__", replacement.__code__)
+    assert scanner._oracle_context_cache_key(tmp_path, [], {}) != before
+
+
+@pytest.mark.parametrize(
     "expression,expected",
     [
         ("lambda: callback()", "QUALITY_HOLLOW_TEST"),

@@ -1,0 +1,148 @@
+{
+  "schema": "factory.nullcontext-completion217.v1",
+  "parent": "5fed26561a629fc45eff2fbbf88b4ad1640639bb",
+  "candidate_sha256": {
+    "factoryline/test_oracle_misuse.py": "7254921d3a8f7a11adf2b9f85ef43b71add4ba8e2672c473f5941de1a941f07c",
+    "tests/test_oracle_misuse_findings.py": "35892e346711813013f4727631fc00984429108a1badc03ad3261f79f1ac441c"
+  },
+  "claim": "Canonical nullcontext stores a closed optional value without calling it; its inert body can be source-proven HOLLOW.",
+  "binding_boundary": "Deleted exception-handler names and pattern captures are bindings. Captured local provider files/packages or missing provider inventory prevent canonical-provider completion proof.",
+  "restored_existing_case": "test_security_scan_does_not_trust_imports_from_other_scopes",
+  "existing_test_source_expectations_unchanged": true,
+  "unit_tests": {
+    "passed": 259,
+    "failed": 0,
+    "seconds": 7.491,
+    "scope": "Entire test_oracle_misuse_findings file plus five unchanged bounded-control-flow cases and the unchanged restored review-audits control."
+  },
+  "audit_test_file": {
+    "passed": 1531,
+    "failed": 27,
+    "tests": 1558,
+    "seconds": 94.122,
+    "new_failures": [],
+    "remaining_failed_cases": [
+      "test_flask_dispatch_rejects_mutated_app_and_client_aliases[alias = app; alias.testing = False-QUALITY_HOLLOW_TEST]",
+      "test_flask_dispatch_rejects_mutated_app_and_client_aliases[alias = client; alias.get = lambda path: None-QUALITY_HOLLOW_TEST]",
+      "test_flask_dispatch_rejects_mutated_app_and_client_aliases[first = app; second = first; second.testing = False-QUALITY_HOLLOW_TEST]",
+      "test_inherited_virtual_dispatch_requires_default_binding_and_await[await self.dispatch_func(scope)-async def __call__(self, value):\\n            pass\\n        async def dispatch(self, value):\\n            assert value == expected-Application(None)-await app({})-expected8]",
+      "test_inherited_virtual_dispatch_requires_default_binding_and_await[await self.dispatch_func(scope)-async def dispatch(self, value):\\n            assert True-Application(None)-await app({})-expected4]",
+      "test_inherited_virtual_dispatch_requires_default_binding_and_await[await self.dispatch_func(scope)-async def dispatch(self, value):\\n            assert value == expected-Application(None)-app({})-expected7]",
+      "test_inherited_virtual_dispatch_requires_default_binding_and_await[if False:\\n            await self.dispatch_func(scope)-async def dispatch(self, value):\\n            assert value == expected-Application(None)-await app({})-expected2]",
+      "test_inherited_virtual_dispatch_requires_default_binding_and_await[self.dispatch_func(scope)-async def dispatch(self, value):\\n            assert value == expected-Application(None)-await app({})-expected1]",
+      "test_scan_keeps_finding_if_test_body_changes_after_oracle_binding",
+      "test_scan_keeps_finding_if_test_source_changes_after_oracle_binding",
+      "test_scan_keeps_parameterized_test_without_full_collection_catalog",
+      "test_security_scan_does_not_trust_helper_with_rebound_assertion_alias",
+      "test_security_scan_does_not_trust_inactive_warning_filter[warnings.simplefilter('error', UserWarning)-QUALITY_HOLLOW_TEST]",
+      "test_security_scan_does_not_trust_module_rebound_pytest_alias",
+      "test_security_scan_does_not_trust_rebound_pytest_raises_alias",
+      "test_security_scan_invalidates_oracle_alias_after_module_star_import",
+      "test_security_scan_recognizes_warning_policy_during_class_construction[class Custom:\\n            pass-expected1]",
+      "test_security_scan_recognizes_warning_policy_during_class_construction[return\\n        class Custom(base):\\n            pass-expected3]",
+      "test_security_scan_tracks_invoked_nested_oracle_helpers[def compute():\\n        return 5\\n    def bar():\\n        assert compute() == 4-from somewhere import noop as bar\\n    bar()-True]",
+      "test_security_scan_tracks_invoked_nested_oracle_helpers[def compute():\\n        return 5\\n    def swallow(fn):\\n        def wrapped():\\n            try:\\n                fn()\\n            except AssertionError:\\n                pass\\n        return wrapped\\n    @swallow\\n    def bar():\\n        assert compute() == 4-bar()-True]",
+      "test_source_partial_callback_rejects_rebinding_and_swallowing[run = partial(self.deliver, send)-run()-expected1]",
+      "test_source_resolved_async_callback_requires_escaping_await[if False:\\n            await send(scope)-expected2]",
+      "test_source_resolved_async_callback_requires_escaping_await[send(scope)-expected1]",
+      "test_standalone_uncalled_mock_assertion_attribute_stays_hollow",
+      "test_virtual_dispatch_requires_scope_guard_to_reach_override[await app({'type': 'websocket'})-expected2]",
+      "test_virtual_dispatch_requires_scope_guard_to_reach_override[scope = {'type': 'http'}\\n    scope['type'] = 'websocket'\\n    await app(scope)-expected3]",
+      "test_virtual_dispatch_unsupported_guard_and_same_line_mutation_fail_closed[scope['type'] != 'http'-scope = {'type': 'http'}\\n    scope['type'] = 'websocket'; await app(scope)-expected1]"
+    ]
+  },
+  "remaining_families": {
+    "retained_hollow_capability": 17,
+    "unresolved_provider_framework": 10
+  },
+  "independent_AI_review": {
+    "model": "Sol6.1High",
+    "skill": "ECC",
+    "status": "PASS_SCOPED_NULLCONTEXT_COMPLETION_REPAIR_GLOBAL_CI_FAILED",
+    "human_validation": false,
+    "first_generation_rejected": true
+  },
+  "architecture": {
+    "decision": "HEALTHY",
+    "python_files": 429,
+    "core_modules": 133,
+    "caps_unchanged": true
+  },
+  "latest_completed_full_CI": {
+    "head": "5fed26561a629fc45eff2fbbf88b4ad1640639bb",
+    "passed": 8291,
+    "failed": 28,
+    "skipped": 12,
+    "seconds": 493.69,
+    "boundary": "Pre-repair full CI; new-head full CI required."
+  },
+  "security_actionable_precision_gain": 0,
+  "latest_comparable_precision": {
+    "study": 210,
+    "TP": 1,
+    "FP": 10,
+    "UNCLEAR": 22,
+    "decided_precision": 0.09090909090909091,
+    "wilson95": [
+      0.016232172885884855,
+      0.37735843645159567
+    ],
+    "boundary": "Unchanged, now exposed. This restores test-quality capability; it does not remove a measured security false positive."
+  },
+  "external_targets_executed": false,
+  "artifacts": [
+    {
+      "path": ".factory/precision217/before.xml",
+      "sha256": "e9bc0f4d8c84a20e092e3bbd1406b846257148d84f248f074891df7befdca2af"
+    },
+    {
+      "path": ".factory/precision217/before.log",
+      "sha256": "2d6350cb0ee67a0a14c601d9ae7b052d91dbd5677910a5839e7a2ee5d6d85033"
+    },
+    {
+      "path": ".factory/precision217/ecc-review.json",
+      "sha256": "29822117997d3fb6d168a8f1fb1b0eac223fc0fb0e42ba783d8f2be6ca00c7fd"
+    },
+    {
+      "path": ".factory/precision217/revision2/full-audits.xml",
+      "sha256": "3b104938c2e65bc50f5162cba3852836013b8fa074b06fead92fe1c84b275e66"
+    },
+    {
+      "path": ".factory/precision217/revision2/full-audits.log",
+      "sha256": "3dac114d52a0d4d3403c975807512cbb3ffb39481563cbf4d161e155fe45b54c"
+    },
+    {
+      "path": ".factory/precision217/revision3/unit.xml",
+      "sha256": "24e671ac093025768b5e8c1b178244c5635d0d7ec01d07ebc0f79a95f11c9723"
+    },
+    {
+      "path": ".factory/precision217/revision3/unit.log",
+      "sha256": "a189fefd6ec833ffd168d1ea7aac6b08743ec1bb0c296cab05325eb9730d43ca"
+    },
+    {
+      "path": ".factory/precision217/revision3/full-audits.xml",
+      "sha256": "4428fe966b7e27ebe50be9771df086f26c1233ab8d798ffe4fe9b3b2cbdbe87e"
+    },
+    {
+      "path": ".factory/precision217/revision3/full-audits.log",
+      "sha256": "9982b14a9b673d9526dd154d902581263a5e43e81208a387cf754c123cb99314"
+    },
+    {
+      "path": ".factory/precision217/revision3/architecture.json",
+      "sha256": "d95fe7eab4df3b109314d07b55c0b435b20bcce677e3256f69aebe1a396291f5"
+    },
+    {
+      "path": ".factory/precision217/doctor.json",
+      "sha256": "8c3ded5206ef2a93f77990cde143dc75414ff4bbf63fd1e6d0267b1181bb4856"
+    },
+    {
+      "path": ".factory/precision217/revision3/ecc-review.json",
+      "sha256": "71bde4724634b2d1351e957e0354565a34d9222675bb6812c45ec7b9eace5b67"
+    },
+    {
+      "path": ".factory/precision217/revision3/checks.json",
+      "sha256": "9735bb75a8865368a92c7baec213ec1202851c8df97841126c374aee33189ba1"
+    }
+  ],
+  "global_state": "INCOMPLETE; full CI, native security false-positive reductions and fresh precision qualification remain required."
+}

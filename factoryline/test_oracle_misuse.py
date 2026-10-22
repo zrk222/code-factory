@@ -311,11 +311,18 @@ def _builtins_completion_context():
 
 
 def _stored_names(module):
-    return {
+    stored = {
         n.id
         for n in ast.walk(module)
         if isinstance(n, ast.Name) and isinstance(n.ctx, (ast.Store, ast.Del))
     }
+    for node in ast.walk(module):
+        if isinstance(node, (ast.ExceptHandler, ast.MatchAs, ast.MatchStar)):
+            if node.name:
+                stored.add(node.name)
+        elif isinstance(node, ast.MatchMapping) and node.rest:
+            stored.add(node.rest)
+    return stored
 
 
 def _module_bindings(module):
@@ -1180,6 +1187,20 @@ def _class_creation_context_closed(module, providers, stores):
     )
 
 
+def _completion_provider_captured(module, provider):
+    source = getattr(module, "_security_source_context", None)
+    profile = getattr(module, "_security_oracle_context", {})
+    if source is None and provider == "builtins":
+        return True
+    if not source or not profile.get("provider_source_inventory_complete"):
+        return False
+    root, sources = source
+    return not any(
+        path.name == provider + ".py" or provider in path.relative_to(root).parts[:-1]
+        for path in sources
+    )
+
+
 def _completion_context(test):
     names, bases = _builtins_completion_context()
     module = getattr(test, "_oracle_module", None)
@@ -1208,6 +1229,7 @@ def _completion_context(test):
     }
     providers = {
         provider: namespace_closed
+        and _completion_provider_captured(module, provider)
         and module_aliases[provider] is not None
         and _imported_provider_names_closed(module, test, provider, allowed)
         for provider, allowed in (
@@ -1738,6 +1760,17 @@ def _try_completion(stmt, known, helpers, context):
     return result
 
 
+def _nullcontext_arguments_closed(arguments, known, context):
+    """Prove evaluation of the optional stored enter result without invoking it."""
+    if len(arguments) > 1:
+        return False
+    return all(
+        _inert_literal(argument, known, context.get("literal_calls"))[0]
+        or _completion_name(argument, context, known) in context["bases"]
+        for argument in arguments
+    )
+
+
 def _with_completion(stmt, known, helpers, context):
     if len(stmt.items) != 1 or stmt.items[0].optional_vars is not None:
         return "UNKNOWN", None
@@ -1745,7 +1778,9 @@ def _with_completion(stmt, known, helpers, context):
     if not isinstance(item, ast.Call) or item.keywords:
         return "UNKNOWN", None
     manager = _completion_name(item.func, context, known)
-    if manager == "contextlib.nullcontext" and not item.args:
+    if manager == "contextlib.nullcontext" and _nullcontext_arguments_closed(
+        item.args, known, context
+    ):
         return _inert_suite(stmt.body, context, known, helpers)
     if manager != "contextlib.suppress" or not item.args:
         return "UNKNOWN", None
@@ -1918,6 +1953,8 @@ def inert_test_body(node):
 
 
 INERT_BODY_HELPERS = (
+    _completion_provider_captured,
+    _nullcontext_arguments_closed,
     _exception_names,
     _inert_literal,
     _inert_integer_arithmetic,

@@ -50,10 +50,18 @@ Seven corrections were committed separately in `56d64c2`; the remaining 18
 have independent ECC review and a 74-input paired check with identical native
 findings. All 31 external regression snippets and attribution/license fields
 are preserved; three regression expectations now explicitly require WEAK.
-The local 1,558-case audit file reports 1,530 passed and 28 failed, exactly the
-17 capability controls plus 11 unresolved controls. Those 28 are retained, not
-relabelled into a pass. These expectation corrections establish no detector
-behavior change or precision gain. See `docs/evidence/oracle-family216.json`.
+The expectation-only checkpoint has 17 capability controls plus 11 unresolved
+controls. Its completed Ubuntu Python 3.11 CI reports 8,291 passed, 28 failed
+and 12 skipped at `5fed2656`; see `docs/evidence/oracle-family216.json`.
+The separate native nullcontext completion repair restores one existing control
+without changing its source or expectation. The 1,558-case audit file now has
+1,531 passed and 27 failed, with no new failures: 17 capability controls and
+10 provider/framework controls remain. Its 259 scoped tests pass, including
+deleted-name, provider-shadow, cache-mutation and bounded-control-flow controls.
+The initial unsafe draft and its intermediate AST-only API regression were
+rejected and preserved. Full new-head CI remains required. This is test-quality
+capability restoration, not security precision gain; see
+`docs/evidence/nullcontext-completion217.json`.
 
 ### A2/A3 — Repair shared operation and completion models
 
@@ -304,13 +312,14 @@ improvements.
   at `4465aa3` are66failed,8,157passed and12skipped on Ubuntu Python3.11.
   Four raising partial-callback expectation migrations are isolated in
   `1a63c57`; the unawaited partial-callback HOLLOW control is unchanged and still
-  fails. The newer full CI run at `56d64c2` reports 46 failed, 8,273 passed and
-  12 skipped on Ubuntu Python 3.11 in 388.05 seconds. Its failure IDs are exactly
-  the prior 53 minus the first seven reviewed expectation corrections; full CI
-  and merge qualification remain failed. The next 18-correction local audit
-  file result is recorded above and needs full CI at its committed head. These
-  full-suite times are separate from the per-repository scan target; scoped
-  tests cannot replace the full gates.
+  fails. Full Ubuntu Python 3.11 CI progressed from 46 failed / 8,273 passed /
+  12 skipped at `56d64c2` to 28 failed / 8,291 passed / 12 skipped at `5fed2656`
+  in 493.69 seconds. The reductions are the separately reviewed expectation
+  corrections, not a security detector gain. The native completion repair's
+  local audit-file result is 27 failed / 1,531 passed in 94.35 seconds; current
+  full CI and merge qualification remain failed until new-head verification.
+  These full-suite and test-file times are separate from the per-repository
+  scan target; scoped tests cannot replace the full gates.
 - Evaluation-local JWT memoization: an isolated alternating pair on the same
   26-file snapshot measured 16.806s baseline median versus 14.819s candidate
   median (11.82% lower), with equal canonical finding digests and coverage.
