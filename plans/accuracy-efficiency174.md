@@ -62,6 +62,13 @@ The initial unsafe draft and its intermediate AST-only API regression were
 rejected and preserved. Full new-head CI remains required. This is test-quality
 capability restoration, not security precision gain; see
 `docs/evidence/nullcontext-completion217.json`.
+Full CI at `0ab81437` then reports 8,316 passed, 28 failed and 12 skipped:
+the 27 retained audit cases plus a standalone canonical-provider AST API
+regression. Restore that API assumption only when the native source-context
+marker is absent; explicit missing/incomplete native captures remain blocked.
+All 496 scoped API/oracle checks pass on this correction, with independent ECC
+review and no expectation changes. Current-head full CI remains required; see
+`docs/evidence/ast-native-completion219.json`.
 
 ### A2/A3 — Repair shared operation and completion models
 
@@ -316,8 +323,11 @@ improvements.
   12 skipped at `56d64c2` to 28 failed / 8,291 passed / 12 skipped at `5fed2656`
   in 493.69 seconds. The reductions are the separately reviewed expectation
   corrections, not a security detector gain. The native completion repair's
-  local audit-file result is 27 failed / 1,531 passed in 94.35 seconds; current
-  full CI and merge qualification remain failed until new-head verification.
+  local audit-file result is 27 failed / 1,531 passed in 94.35 seconds. Full CI
+  at `0ab81437` reports 28 failed / 8,316 passed / 12 skipped in 377.56 seconds:
+  27 retained audit cases and one AST-only provider API regression. Its scoped
+  repair passes 496 checks; full CI and merge qualification remain failed
+  until new-head verification.
   These full-suite and test-file times are separate from the per-repository
   scan target; scoped tests cannot replace the full gates.
 - Evaluation-local JWT memoization: an isolated alternating pair on the same

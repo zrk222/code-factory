@@ -9,6 +9,25 @@ import pytest
 from factoryline.review_audits import security_scan
 
 
+@pytest.mark.parametrize("capture", ["ast-only", "missing", "incomplete"])
+def test_nullcontext_completion_separates_ast_contract_from_native_capture(capture):
+    import ast
+
+    from factoryline.test_oracle_misuse import inert_test_completion
+
+    module = ast.parse(
+        "import contextlib as ctx\n"
+        "def test_behavior():\n    with ctx.nullcontext(1):\n        pass\n"
+    )
+    node = module.body[-1]
+    node._oracle_module = module
+    if capture != "ast-only":
+        module._security_source_context = None if capture == "missing" else ()
+        module._security_oracle_context = {}
+    expected = "NORMAL" if capture == "ast-only" else "UNKNOWN"
+    assert inert_test_completion(node) == (expected, None)
+
+
 @pytest.mark.parametrize(
     "argument",
     ["", "None", "3", "'payload'", "(1, None)", "ValueError"],

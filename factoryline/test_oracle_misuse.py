@@ -1188,10 +1188,11 @@ def _class_creation_context_closed(module, providers, stores):
 
 
 def _completion_provider_captured(module, provider):
+    """Keep AST-only provider assumptions separate from native capture proof."""
+    if not hasattr(module, "_security_source_context"):
+        return True
     source = getattr(module, "_security_source_context", None)
     profile = getattr(module, "_security_oracle_context", {})
-    if source is None and provider == "builtins":
-        return True
     if not source or not profile.get("provider_source_inventory_complete"):
         return False
     root, sources = source
