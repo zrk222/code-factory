@@ -9,6 +9,7 @@ import os
 import platform
 import re  # noqa: F401
 import subprocess
+import sys
 import stat
 import threading  # noqa: F401
 import uuid
@@ -581,6 +582,14 @@ def read_run_json(directory: Path, name: str) -> dict:
 FULL_REPOSITORY_SCAN_SCHEMA = "factory.full-repository-scan.v1"
 FULL_REPOSITORY_CHECKPOINT_SCHEMA = "factory.full-repository-scan-checkpoint.v1"
 FULL_REPOSITORY_BATCH_LIMIT = 460
+FULL_REPOSITORY_CONTEXT_PROFILE = "workspace-v2"
+FULL_REPOSITORY_CONTEXT_SCHEMA = "factory.full-repository-context.v2"
+FULL_REPOSITORY_CONTEXT_SCAN_SCHEMA = "factory.full-repository-scan.workspace-v2"
+FULL_REPOSITORY_CONTEXT_CHECKPOINT_SCHEMA = (
+    "factory.full-repository-checkpoint.workspace-v2"
+)
+FULL_REPOSITORY_CONTEXT_RUN_ID = "f2110000000000000000000000000002"
+FULL_REPOSITORY_CONTEXT_DEADLINE_SECONDS = 180
 _FULL_REPOSITORY_RUN_ID = "f2110000000000000000000000000001"
 _FULL_REPOSITORY_GLOBAL_CONSUMER_CLOSURE_VERIFIED = False
 _FULL_REPOSITORY_TRUSTED_CHECKPOINT: tuple[str, str, str] | None = None
@@ -687,6 +696,35 @@ def _full_repository_configuration(root: Path, audit) -> tuple[set[str], dict]:
     return set(patterns), {"selected": collection, "candidates": bindings}
 
 
+def _full_repository_profile_configuration(root: Path, audit, context_profile):
+    try:
+        patterns, frame = _full_repository_configuration(root, audit)
+        return patterns, frame, False
+    except audit.ReviewAuditError:
+        if context_profile != FULL_REPOSITORY_CONTEXT_PROFILE:
+            raise
+        candidates = (
+            "pytest.toml",
+            ".pytest.toml",
+            "pytest.ini",
+            ".pytest.ini",
+            "pyproject.toml",
+            "tox.ini",
+            "setup.cfg",
+        )
+        return (
+            set(audit._TEST_FILE_PATTERNS),
+            {
+                "selected": {"path": None, "state": "unsupported"},
+                "candidates": [
+                    _full_repository_configuration_binding(root, name)
+                    for name in candidates
+                ],
+            },
+            True,
+        )
+
+
 def _full_repository_configuration_binding(root: Path, name: str) -> dict:
     """Bind exact candidate bytes without following links or accepting read drift."""
     try:
@@ -753,19 +791,34 @@ def _full_repository_runtime_epoch(root: Path, configuration: str, audit) -> str
     )
     # Discover profile helpers by their owned namespace so extracting a helper
     # cannot silently omit its live binding from the resume-cache identity.
-    profile_helpers = tuple(
-        helper
-        for name, helper in sorted(globals().items())
-        if name.startswith("_full_repository_") and callable(helper)
-    ) + (
-        _validate_full_repository_checkpoint,
-        full_repository_scan,
-        run_directory,
-        read_run_json,
-        write_run_json,
-        local_file,
-        digest,
-        canonical_bytes,
+    from . import runtime_audit_integrity as workspace_engine
+
+    full_repository_workspace_scan_batch = (
+        workspace_engine.full_repository_workspace_scan_batch
+    )
+
+    profile_helpers = (
+        tuple(
+            helper
+            for name, helper in sorted(globals().items())
+            if name.startswith("_full_repository_") and callable(helper)
+        )
+        + tuple(
+            helper
+            for name, helper in sorted(vars(workspace_engine).items())
+            if name.startswith("_full_repository_workspace_") and callable(helper)
+        )
+        + (
+            full_repository_workspace_scan_batch,
+            _validate_full_repository_checkpoint,
+            full_repository_scan,
+            run_directory,
+            read_run_json,
+            write_run_json,
+            local_file,
+            digest,
+            canonical_bytes,
+        )
     )
     return digest(
         {
@@ -856,8 +909,9 @@ def _full_repository_primary(
     patterns: set[str],
     audit,
     eligible: dict[Path, Path],
+    scan_result=None,
 ) -> dict:
-    binding, findings, status, tree = _full_repository_native_scan(
+    binding, findings, status, tree = scan_result or _full_repository_native_scan(
         root, path, source, patterns, audit
     )
     if (
@@ -964,10 +1018,17 @@ def _full_repository_import_edge(
 
 
 def _validate_full_repository_checkpoint(
-    value: dict, root: Path, scanner: str, configuration: str, inventory: list[dict]
+    value: dict,
+    root: Path,
+    scanner: str,
+    configuration: str,
+    inventory: list[dict],
+    context_profile: str = "isolated-v1",
 ) -> list[dict]:
     """Validate generation identity and the exact saved primary prefix."""
-    _full_repository_checkpoint_identity(value, root, scanner, configuration, inventory)
+    _full_repository_checkpoint_identity(
+        value, root, scanner, configuration, inventory, context_profile
+    )
     results = _full_repository_checkpoint_rows(value, inventory)
     if not all(_full_repository_result_valid(row) for row in results):
         raise RuntimeAuditError(
@@ -977,9 +1038,10 @@ def _validate_full_repository_checkpoint(
 
 
 def _full_repository_checkpoint_identity(
-    value, root, scanner, configuration, inventory
+    value, root, scanner, configuration, inventory, context_profile="isolated-v1"
 ):
-    """Reject altered schema, scanner or source-generation bindings."""
+    """Reject altered profile, schema, scanner or source-generation bindings."""
+    workspace = context_profile == FULL_REPOSITORY_CONTEXT_PROFILE
     keys = {
         "schema",
         "root",
@@ -991,9 +1053,24 @@ def _full_repository_checkpoint_identity(
         "primary_results",
         "result_digest",
     }
+    if workspace:
+        keys.update({"context_profile", "context_generation_sha256"})
+    expected_schema = (
+        FULL_REPOSITORY_CONTEXT_CHECKPOINT_SCHEMA
+        if workspace
+        else FULL_REPOSITORY_CHECKPOINT_SCHEMA
+    )
     if (
         set(value) != keys
-        or value["schema"] != FULL_REPOSITORY_CHECKPOINT_SCHEMA
+        or value["schema"] != expected_schema
+        or (workspace and value["context_profile"] != context_profile)
+        or (
+            workspace
+            and (
+                not isinstance(value["context_generation_sha256"], str)
+                or len(value["context_generation_sha256"]) != 64
+            )
+        )
         or value["batch_primary_limit"] != FULL_REPOSITORY_BATCH_LIMIT
     ):
         raise RuntimeAuditError(
@@ -1084,50 +1161,88 @@ def _full_repository_discovery_policy(audit) -> dict:
 def _full_repository_scan_digest(
     generation, inventory, results, accounting, coverage, dependencies, counts, pending
 ):
-    return digest(
-        {
-            "schema": FULL_REPOSITORY_SCAN_SCHEMA,
-            "inventory": inventory,
-            "inventory_sha256": generation["inventory_hash"],
-            "configuration_sha256": generation["configuration"],
-            "scanner_identity_sha256": generation["scanner"],
-            "discovery": generation["discovery"],
-            "batch_primary_limit": FULL_REPOSITORY_BATCH_LIMIT,
-            "source_accounting_state": accounting,
-            "primary_results_sha256": digest(results),
-            "coverage": coverage,
-            "status_counts": counts,
-            "pending_paths": pending,
-            "dependency_index": dependencies,
-            "semantic_coverage": "INCOMPLETE",
-            "global_consumer_closure_verified": _FULL_REPOSITORY_GLOBAL_CONSUMER_CLOSURE_VERIFIED,
-            "target_execution": False,
-            "target_source_writes": False,
-            "dependency_installation": False,
-            "release_approved": False,
-            "native_completion_receipt": False,
+    payload = {
+        "schema": generation["report_schema"],
+        "inventory": inventory,
+        "inventory_sha256": generation["inventory_hash"],
+        "configuration_sha256": generation["configuration"],
+        "scanner_identity_sha256": generation["scanner"],
+        "discovery": generation["discovery"],
+        "batch_primary_limit": FULL_REPOSITORY_BATCH_LIMIT,
+        "source_accounting_state": accounting,
+        "primary_results_sha256": digest(results),
+        "coverage": coverage,
+        "status_counts": counts,
+        "pending_paths": pending,
+        "dependency_index": dependencies,
+        "semantic_coverage": "INCOMPLETE",
+        "global_consumer_closure_verified": _FULL_REPOSITORY_GLOBAL_CONSUMER_CLOSURE_VERIFIED,
+        "target_execution": False,
+        "target_source_writes": False,
+        "dependency_installation": False,
+        "release_approved": False,
+        "native_completion_receipt": False,
+    }
+    if generation["context_profile"] == FULL_REPOSITORY_CONTEXT_PROFILE:
+        evidence = generation.get("workspace_evidence", {})
+        evidence = {
+            key: value for key, value in evidence.items() if key != "primary_processing"
         }
-    )
+        payload.update(
+            {
+                "context_profile": generation["context_profile"],
+                "context_profile_schema": generation["context_profile_schema"],
+                "context_generation_sha256": generation.get(
+                    "context_generation_sha256"
+                ),
+                "primary_results_authority": "RAW_UNVERIFIED_SOURCE_ANALYSIS",
+                "workspace_evidence_sha256": digest(evidence),
+            }
+        )
+    return digest(payload)
 
 
-def _full_repository_generation(root: Path, audit) -> dict:
+def _full_repository_generation(
+    root: Path, audit, context_profile="isolated-v1"
+) -> dict:
     root = Path(root).resolve()
     files = audit._security_source_files(root)
     inventory = _full_repository_inventory(root, files)
-    patterns, frame = _full_repository_configuration(root, audit)
-    configuration = digest(
-        {
-            "patterns": sorted(patterns),
-            "frame": frame,
-            "tenant_reads": [],
-            "oracle_context": None,
-        }
+    patterns, frame, collection_incomplete = _full_repository_profile_configuration(
+        root, audit, context_profile
     )
+    config_identity = {
+        "patterns": sorted(patterns),
+        "frame": frame,
+        "tenant_reads": [],
+        "oracle_context": None,
+    }
+    if context_profile == FULL_REPOSITORY_CONTEXT_PROFILE:
+        config_identity["context_profile"] = FULL_REPOSITORY_CONTEXT_PROFILE
+        config_identity["context_profile_schema"] = FULL_REPOSITORY_CONTEXT_SCHEMA
+    elif context_profile != "isolated-v1":
+        raise RuntimeAuditError(
+            "E_CONTEXT_PROFILE", "unsupported full-repository context profile"
+        )
+    configuration = digest(config_identity)
     scanner, inventory_hash = _full_repository_scanner_identity(), digest(inventory)
     runtime_epoch = _full_repository_runtime_epoch(root, configuration, audit)
     discovery = _full_repository_discovery_policy(audit)
-    directory = run_directory(root, _FULL_REPOSITORY_RUN_ID, create=True)
-    return locals()
+    workspace = context_profile == FULL_REPOSITORY_CONTEXT_PROFILE
+    context_profile_schema = FULL_REPOSITORY_CONTEXT_SCHEMA if workspace else None
+    report_schema = (
+        FULL_REPOSITORY_CONTEXT_SCAN_SCHEMA
+        if workspace
+        else FULL_REPOSITORY_SCAN_SCHEMA
+    )
+    checkpoint_schema = (
+        FULL_REPOSITORY_CONTEXT_CHECKPOINT_SCHEMA
+        if workspace
+        else FULL_REPOSITORY_CHECKPOINT_SCHEMA
+    )
+    run_id = FULL_REPOSITORY_CONTEXT_RUN_ID if workspace else _FULL_REPOSITORY_RUN_ID
+    directory = run_directory(root, run_id, create=True)
+    return {**locals(), "collection_incomplete": collection_incomplete}
 
 
 def _full_repository_start_generation(generation: dict) -> list[dict]:
@@ -1149,6 +1264,7 @@ def _full_repository_resume_generation(generation: dict, audit):
             generation["scanner"],
             generation["configuration"],
             generation["inventory"],
+            generation["context_profile"],
         )
     except RuntimeAuditError as exc:
         if exc.code in {"SCANNER_DRIFT", "SOURCE_DRIFT", "INVALID_CHECKPOINT"}:
@@ -1160,6 +1276,20 @@ def _full_repository_resume_generation(generation: dict, audit):
         raise RuntimeAuditError(
             "INVALID_CHECKPOINT", "resume checkpoint cannot be read"
         ) from exc
+    if generation["context_profile"] == FULL_REPOSITORY_CONTEXT_PROFILE:
+        generation["saved_context_generation_sha256"] = checkpoint[
+            "context_generation_sha256"
+        ]
+        generation["saved_result_digest"] = checkpoint["result_digest"]
+        cache_hit = _full_repository_checkpoint_cache_hit(generation, checkpoint)
+        if cache_hit:
+            generation["workspace_prefix_cache_key"] = (
+                generation["root"].as_posix(),
+                digest(checkpoint),
+                generation["runtime_epoch"],
+            )
+            return results, 0, True
+        return results, len(results), False
     cache_hit = _full_repository_checkpoint_cache_hit(generation, checkpoint)
     if cache_hit:
         return results, 0, True
@@ -1202,8 +1332,12 @@ def _full_repository_revalidate_results(
 
 
 def _full_repository_scan_batch(
-    generation: dict, audit, results: list[dict]
+    generation: dict, audit, results: list[dict], deadline_monotonic=None
 ) -> list[dict]:
+    if generation["context_profile"] == FULL_REPOSITORY_CONTEXT_PROFILE:
+        return _full_repository_workspace_scan_batch(
+            generation, audit, results, deadline_monotonic
+        )
     start = len(results)
     eligible = {
         item.resolve(): item for item in generation["files"] if not item.is_symlink()
@@ -1219,19 +1353,50 @@ def _full_repository_scan_batch(
     ]
 
 
+def _full_repository_check_soft_deadline(deadline_monotonic):
+    if deadline_monotonic is not None and time.monotonic() > deadline_monotonic:
+        raise RuntimeAuditError(
+            "E_FULL_REPOSITORY_DEADLINE",
+            "workspace-v2 exceeded its shared soft deadline at a phase boundary",
+        )
+
+
+def _full_repository_security_context(generation, audit):
+    """Delegate the security-only generation builder to its existing owner."""
+    from .runtime_audit_integrity import _full_repository_workspace_security_context
+
+    return _full_repository_workspace_security_context(
+        sys.modules[__name__], generation, audit
+    )
+
+
+def _full_repository_workspace_scan_batch(
+    generation, audit, results, deadline_monotonic
+):
+    from . import runtime_audit_integrity
+
+    return runtime_audit_integrity.full_repository_workspace_scan_batch(
+        sys.modules[__name__], generation, audit, results, deadline_monotonic
+    )
+
+
 def _full_repository_verify_generation(generation: dict, audit) -> None:
     root = generation["root"]
     files = audit._security_source_files(root)
     inventory = _full_repository_inventory(root, files)
-    patterns, frame = _full_repository_configuration(root, audit)
-    configuration = digest(
-        {
-            "patterns": sorted(patterns),
-            "frame": frame,
-            "tenant_reads": [],
-            "oracle_context": None,
-        }
+    patterns, frame, _collection_incomplete = _full_repository_profile_configuration(
+        root, audit, generation["context_profile"]
     )
+    config_identity = {
+        "patterns": sorted(patterns),
+        "frame": frame,
+        "tenant_reads": [],
+        "oracle_context": None,
+    }
+    if generation["context_profile"] == FULL_REPOSITORY_CONTEXT_PROFILE:
+        config_identity["context_profile"] = FULL_REPOSITORY_CONTEXT_PROFILE
+        config_identity["context_profile_schema"] = FULL_REPOSITORY_CONTEXT_SCHEMA
+    configuration = digest(config_identity)
     if (
         files != generation["files"]
         or inventory != generation["inventory"]
@@ -1252,8 +1417,9 @@ def _full_repository_verify_generation(generation: dict, audit) -> None:
 
 def _full_repository_store_checkpoint(generation: dict, results: list[dict]) -> None:
     global _FULL_REPOSITORY_TRUSTED_CHECKPOINT
+    workspace = generation["context_profile"] == FULL_REPOSITORY_CONTEXT_PROFILE
     checkpoint = {
-        "schema": FULL_REPOSITORY_CHECKPOINT_SCHEMA,
+        "schema": generation["checkpoint_schema"],
         "root": generation["root"].as_posix(),
         "scanner_identity_sha256": generation["scanner"],
         "configuration_sha256": generation["configuration"],
@@ -1263,12 +1429,29 @@ def _full_repository_store_checkpoint(generation: dict, results: list[dict]) -> 
         "primary_results": results,
         "result_digest": digest(results),
     }
+    if workspace:
+        checkpoint.update(
+            {
+                "context_profile": generation["context_profile"],
+                "context_generation_sha256": generation["context_generation_sha256"],
+            }
+        )
     write_run_json(generation["directory"], "checkpoint.json", checkpoint)
     _FULL_REPOSITORY_TRUSTED_CHECKPOINT = (
         generation["root"].as_posix(),
         digest(checkpoint),
         generation["runtime_epoch"],
     )
+    if workspace and generation.get("workspace_prefix_raw_rows") is not None:
+        from .runtime_audit_integrity import _full_repository_workspace_store_prefix
+
+        _full_repository_workspace_store_prefix(
+            _FULL_REPOSITORY_TRUSTED_CHECKPOINT,
+            checkpoint["result_digest"],
+            checkpoint["context_generation_sha256"],
+            generation["workspace_prefix_raw_rows"],
+            digest,
+        )
 
 
 def _full_repository_dependency_index(results: list[dict]) -> dict:
@@ -1314,8 +1497,8 @@ def _full_repository_report(
         counts,
         pending,
     )
-    return {
-        "schema": FULL_REPOSITORY_SCAN_SCHEMA,
+    report = {
+        "schema": generation["report_schema"],
         "state": "INCOMPLETE",
         "discovery": generation["discovery"],
         "source_accounting_state": accounting,
@@ -1353,13 +1536,43 @@ def _full_repository_report(
         "result_digest": digest(results),
         "scan_sha256": report_digest,
     }
+    if generation["context_profile"] == FULL_REPOSITORY_CONTEXT_PROFILE:
+        evidence = generation["workspace_evidence"]
+        report.update(
+            {
+                "context_profile": generation["context_profile"],
+                "context_profile_schema": generation["context_profile_schema"],
+                "context_profile_state": evidence["oracle_context"]["state"],
+                "context_generation_sha256": generation["context_generation_sha256"],
+                "primary_results_authority": "RAW_UNVERIFIED_SOURCE_ANALYSIS",
+                "workspace_evidence": evidence,
+                "deadline_policy": {
+                    "seconds": FULL_REPOSITORY_CONTEXT_DEADLINE_SECONDS,
+                    "enforcement": "soft phase-boundary checks; synchronous context work is not preempted",
+                },
+            }
+        )
+    return report
 
 
-def full_repository_scan(root: Path, *, resume: bool = False) -> dict:
+def full_repository_scan(
+    root: Path,
+    *,
+    resume: bool = False,
+    context_profile: str = "isolated-v1",
+    deadline_monotonic: float | None = None,
+) -> dict:
     """Run at most 460 new native per-file scans; the distinct profile is non-authoritative."""
     from . import review_audits as audit
 
-    generation = _full_repository_generation(root, audit)
+    started = time.monotonic()
+    if context_profile == FULL_REPOSITORY_CONTEXT_PROFILE:
+        deadline_monotonic = deadline_monotonic or (
+            started + FULL_REPOSITORY_CONTEXT_DEADLINE_SECONDS
+        )
+    generation = _full_repository_generation(root, audit, context_profile)
+    if context_profile == FULL_REPOSITORY_CONTEXT_PROFILE:
+        _full_repository_check_soft_deadline(deadline_monotonic)
     if resume:
         results, validated, cache_hit = _full_repository_resume_generation(
             generation, audit
@@ -1371,9 +1584,11 @@ def full_repository_scan(root: Path, *, resume: bool = False) -> dict:
             False,
         )
     start = len(results)
-    batch = _full_repository_scan_batch(generation, audit, results)
+    batch = _full_repository_scan_batch(generation, audit, results, deadline_monotonic)
     results.extend(batch)
     _full_repository_verify_generation(generation, audit)
+    if context_profile == FULL_REPOSITORY_CONTEXT_PROFILE:
+        _full_repository_check_soft_deadline(deadline_monotonic)
     _full_repository_store_checkpoint(generation, results)
     return _full_repository_report(
         generation, results, batch, start, validated, cache_hit

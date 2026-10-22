@@ -1,9 +1,10 @@
 """Runtime evidence joins, callback reconciliation, and advisory repair routing."""
 
 import ast
+import copy
 import hashlib
 import re
-from collections import defaultdict
+from collections import Counter, defaultdict
 from typing import Any
 from pathlib import Path
 
@@ -16,8 +17,6 @@ from .finite_capture import (
     finite_provider_attribute_write_index,
     finite_blocked_provider_prefixes,
     finite_scope_binding_candidate,
-)
-from .finite_capture import (
     _finite_eval_comprehension,  # noqa: F401
     _finite_eval_domain,  # noqa: F401
     _finite_eval_module_prefix,  # noqa: F401
@@ -26,6 +25,60 @@ from .finite_capture import (
     finite_literal_eval_input_witness,  # noqa: F401
     finite_template_program_hashes,
 )
+
+_FULL_REPOSITORY_WORKSPACE_PREFIX_CACHE = None
+
+
+def _full_repository_workspace_store_prefix(
+    checkpoint_key, result_digest, context_digest, rows, digest
+):
+    global _FULL_REPOSITORY_WORKSPACE_PREFIX_CACHE
+    owned = copy.deepcopy(rows)
+    _FULL_REPOSITORY_WORKSPACE_PREFIX_CACHE = (
+        checkpoint_key,
+        result_digest,
+        context_digest,
+        digest(owned),
+        owned,
+    )
+
+
+def _full_repository_workspace_load_prefix(
+    engine, generation, results, files, source_by_name, context_digest
+):
+    cached = _FULL_REPOSITORY_WORKSPACE_PREFIX_CACHE
+    key = generation.get("workspace_prefix_cache_key")
+    if (
+        cached is None
+        or key is None
+        or cached[0] != key
+        or cached[1] != engine.digest(results)
+        or cached[1] != generation.get("saved_result_digest")
+        or cached[2] != context_digest
+        or cached[2] != generation.get("saved_context_generation_sha256")
+        or cached[3] != engine.digest(cached[4])
+        or len(cached[4]) != len(results)
+    ):
+        return None
+    rows = copy.deepcopy(cached[4])
+    for row, path, primary in zip(rows, files, results):
+        if (
+            not isinstance(row, dict)
+            or set(row) != {"path", "binding", "findings", "status"}
+            or row["path"] != path.relative_to(generation["root"]).as_posix()
+            or row["path"] != primary.get("path")
+            or row["status"] != primary.get("status")
+            or row["findings"] != primary.get("findings")
+        ):
+            return None
+        source = source_by_name.get(row["path"])
+        binding = row["binding"]
+        if binding is not None and (
+            not isinstance(binding, dict)
+            or binding.get("sha256") != (source or {}).get("sha256")
+        ):
+            return None
+    return rows
 
 
 def _closed_declaration_program(node, call_name):
@@ -3959,3 +4012,613 @@ def reconcile_runtime_oracles(
     )
     core["action_summary"] = audit._security_scan_action_summary(core["state"])
     return audit._seal_security_scan(core)
+
+
+def _full_repository_workspace_context_state(
+    engine, generation, audit, files, selected
+):
+    root = generation["root"]
+    context_error = None
+    context = {}
+    try:
+        context = engine._full_repository_security_context(generation, audit)
+        generation["security_config_identity"] = context["config_identity"]
+    except (
+        OSError,
+        ValueError,
+        TypeError,
+        audit.ReviewAuditError,
+        RuntimeAuditError,
+    ) as exc:
+        context_error = type(exc).__name__
+    source_bytes = context.get("source_bytes", {})
+    snapshots = context.get("snapshots", {})
+    snapshot_state = {"paths": set(snapshots)}
+    trees = {path: snapshots[path] for path in selected if path in snapshots}
+    contexts = context.get("contexts", {})
+    context_bindings = context.get("bindings", [])
+    oracle_edges = []
+    source_names = {path.relative_to(root).as_posix() for path in files}
+    retained_names = {
+        path.relative_to(root).as_posix(): engine.sha256_bytes(data)
+        for path, data in source_bytes.items()
+        if isinstance(path, Path) and isinstance(data, bytes)
+    }
+    byte_capture_complete = (
+        context_error is None and set(retained_names) == source_names
+    )
+    source_capture_complete = byte_capture_complete and snapshot_state.get(
+        "paths"
+    ) == set(files)
+    source_profile = {
+        "capture_complete": source_capture_complete,
+        "files_discovered": len(files),
+        "files_bound": len(retained_names),
+        "source_manifest_sha256": engine.digest(sorted(retained_names.items())),
+        "parseable_files": len(snapshot_state.get("paths", ())),
+        "collection_state": generation["frame"].get("selected", {}).get("state"),
+        "context_error": context_error,
+    }
+    context_generation = engine.digest(
+        {
+            "profile_schema": engine.FULL_REPOSITORY_CONTEXT_SCHEMA,
+            "inventory_sha256": generation["inventory_hash"],
+            "configuration_sha256": generation["configuration"],
+            "source_manifest_sha256": source_profile["source_manifest_sha256"],
+            "bindings": context_bindings,
+            "edges": oracle_edges,
+            "security_config_identity": generation.get("security_config_identity", []),
+        }
+    )
+    if generation.get("saved_context_generation_sha256") not in (
+        None,
+        context_generation,
+    ):
+        raise RuntimeAuditError(
+            "SOURCE_DRIFT", "workspace context changed since the saved raw checkpoint"
+        )
+    return {
+        "context": context,
+        "context_error": context_error,
+        "contexts": contexts,
+        "context_bindings": context_bindings,
+        "source_bytes": source_bytes,
+        "snapshots": snapshots,
+        "trees": trees,
+        "snapshot_state": snapshot_state,
+        "oracle_edges": oracle_edges,
+        "source_names": source_names,
+        "retained_names": retained_names,
+        "byte_capture_complete": byte_capture_complete,
+        "source_capture_complete": source_capture_complete,
+        "source_profile": source_profile,
+        "context_generation": context_generation,
+    }
+
+
+def _full_repository_workspace_reset_after_consume_error(
+    engine, generation, state, error
+):
+    state["context_error"] = type(error).__name__
+    state["source_bytes"] = {}
+    state["contexts"] = {}
+    state["context_bindings"] = []
+    state["oracle_edges"] = []
+    state["retained_names"] = {}
+    state["byte_capture_complete"] = False
+    state["source_capture_complete"] = False
+    profile = state["source_profile"]
+    profile.update(
+        {
+            "capture_complete": False,
+            "files_bound": 0,
+            "source_manifest_sha256": engine.digest([]),
+            "context_error": state["context_error"],
+        }
+    )
+    context_generation = engine.digest(
+        {
+            "profile_schema": engine.FULL_REPOSITORY_CONTEXT_SCHEMA,
+            "inventory_sha256": generation["inventory_hash"],
+            "configuration_sha256": generation["configuration"],
+            "source_manifest_sha256": profile["source_manifest_sha256"],
+            "bindings": state["context_bindings"],
+            "edges": state["oracle_edges"],
+            "security_config_identity": generation.get("security_config_identity", []),
+        }
+    )
+    if generation.get("saved_context_generation_sha256") not in (
+        None,
+        context_generation,
+    ):
+        raise RuntimeAuditError(
+            "SOURCE_DRIFT", "workspace context changed since the saved raw checkpoint"
+        )
+    state["context_generation"] = context_generation
+
+
+def _full_repository_workspace_consume_prefix(
+    engine,
+    generation,
+    audit,
+    results,
+    files,
+    selected,
+    start,
+    stop,
+    source_by_name,
+    deadline_monotonic,
+    state,
+    rows,
+    consume_counts,
+):
+    root = generation["root"]
+    cached_prefix = None
+    if start and state["byte_capture_complete"]:
+        cached_prefix = _full_repository_workspace_load_prefix(
+            engine,
+            generation,
+            results,
+            files[:start],
+            source_by_name,
+            state["context_generation"],
+        )
+    if cached_prefix is not None:
+        for item in cached_prefix:
+            rows[root / item["path"]] = (
+                item["binding"],
+                item["findings"],
+                item["status"],
+            )
+        scan_selected = files[start:stop]
+    else:
+        scan_selected = selected
+    generation["workspace_prefix_cache_rows_reused"] = cached_prefix is not None
+    if state["context_error"] is None:
+        try:
+            _full_repository_workspace_consume(
+                engine,
+                generation,
+                audit,
+                root,
+                scan_selected,
+                rows,
+                state["trees"],
+                state["snapshot_state"],
+                consume_counts,
+                deadline_monotonic,
+                state["snapshots"],
+                state["context"]["fingerprints"],
+                state["contexts"],
+                state["source_bytes"],
+            )
+        except (
+            OSError,
+            ValueError,
+            TypeError,
+            audit.ReviewAuditError,
+            RuntimeAuditError,
+        ) as error:
+            rows.clear()
+            state["trees"].clear()
+            cached_prefix = None
+            generation["workspace_prefix_cache_rows_reused"] = False
+            _full_repository_workspace_reset_after_consume_error(
+                engine, generation, state, error
+            )
+    return cached_prefix
+
+
+def full_repository_workspace_scan_batch(
+    engine, generation, audit, results, deadline_monotonic
+):
+    """Rebuild one full source context, then consume only the bounded primary prefix."""
+
+    engine._full_repository_check_soft_deadline(deadline_monotonic)
+    root, files = generation["root"], generation["files"]
+    start = len(results)
+    stop = min(len(files), start + engine.FULL_REPOSITORY_BATCH_LIMIT)
+    selected = files[:stop]
+    rows = {}
+    consume_counts = {"calls": 0, "attempted_rows": 0, "completed_rows": 0}
+    state = _full_repository_workspace_context_state(
+        engine, generation, audit, files, selected
+    )
+    context_generation = state["context_generation"]
+    generation["context_generation_sha256"] = context_generation
+    source_by_name = {row["path"]: row for row in generation["inventory"]}
+    cached_prefix = _full_repository_workspace_consume_prefix(
+        engine,
+        generation,
+        audit,
+        results,
+        files,
+        selected,
+        start,
+        stop,
+        source_by_name,
+        deadline_monotonic,
+        state,
+        rows,
+        consume_counts,
+    )
+    generation["context_generation_sha256"] = state["context_generation"]
+    context_error = state["context_error"]
+    context_bindings = state["context_bindings"]
+    source_bytes = state["source_bytes"]
+    trees = state["trees"]
+    oracle_edges = state["oracle_edges"]
+    source_names = state["source_names"]
+    source_capture_complete = state["source_capture_complete"]
+    byte_capture_complete = state["byte_capture_complete"]
+    source_profile = state["source_profile"]
+    generation["workspace_evidence"] = {
+        "sources": source_profile,
+        "oracle_context": {
+            "state": "captured"
+            if source_capture_complete and not generation["collection_incomplete"]
+            else "INCOMPLETE",
+            "binding_count": len(context_bindings),
+            "edge_count": len(oracle_edges),
+            "global_consumer_closure_verified": False,
+        },
+        "primitive_observations": [],
+        "findings": [],
+        "audit_coverage": {"complete": False, "files_processed": 0},
+    }
+
+    eligible = {item.resolve(): item for item in files if not item.is_symlink()}
+    context_findings, bindings, outcomes = [], [], Counter()
+    captured = []
+    for path in selected:
+        engine._full_repository_check_soft_deadline(deadline_monotonic)
+        scanned = rows.get(path)
+        tree = trees.get(path)
+        if scanned is None:
+            raw, findings, status, tree = engine._full_repository_native_scan(
+                root,
+                path,
+                source_by_name[path.relative_to(root).as_posix()],
+                generation["patterns"],
+                audit,
+            )
+            rows[path] = (raw, findings, status)
+            if tree is not None:
+                trees[path] = tree
+        else:
+            raw, findings, status = scanned
+        if raw is not None:
+            bindings.append(raw)
+        context_findings.extend(findings)
+        outcomes[status] += 1
+        captured.append(
+            engine._full_repository_primary(
+                root,
+                path,
+                source_by_name[path.relative_to(root).as_posix()],
+                generation["patterns"],
+                audit,
+                eligible,
+                (raw, findings, status, tree),
+            )
+        )
+    for index, previous in enumerate(results):
+        if captured[index] != previous:
+            raise RuntimeAuditError(
+                "INVALID_CHECKPOINT",
+                "saved raw row differs under current workspace context",
+            )
+    batch = captured[start:]
+    generation["workspace_checkpoint_rows_recomputed_and_matched"] = (
+        0 if cached_prefix is not None else start
+    )
+    if byte_capture_complete and len(captured) == stop and len(rows) == stop:
+        generation["workspace_prefix_raw_rows"] = [
+            {
+                "path": path.relative_to(root).as_posix(),
+                "binding": copy.deepcopy(rows[path][0]),
+                "findings": copy.deepcopy(rows[path][1]),
+                "status": rows[path][2],
+            }
+            for path in selected
+            if path in rows
+        ]
+
+    (
+        observations,
+        active_findings,
+        partition_state,
+        partition_error,
+        all_primaries_assessed,
+    ) = _full_repository_workspace_partition(
+        engine,
+        generation,
+        audit,
+        root,
+        files,
+        stop,
+        captured,
+        bindings,
+        context_findings,
+        source_names,
+        source_bytes,
+        source_capture_complete,
+        context_bindings,
+        oracle_edges,
+        context_error,
+    )
+    generation["workspace_evidence"].update(
+        {
+            "primitive_observations": observations,
+            "primitive_partition": {
+                "state": partition_state,
+                "error_code": partition_error,
+            },
+            "primary_processing": {
+                "checkpoint_rows_requested": start,
+                "checkpoint_rows_reused_verified": start
+                if cached_prefix is not None
+                else 0,
+                "checkpoint_rows_recomputed_and_matched": 0
+                if cached_prefix is not None
+                else start,
+                "new_primary_rows_requested": stop - start,
+                "new_primary_rows_assessed": len(batch),
+                "total_prefix_rows_assessed": len(captured),
+                "consume_call_limit": engine.FULL_REPOSITORY_BATCH_LIMIT,
+                "consume_calls": consume_counts["calls"],
+                "consume_rows_attempted": consume_counts["attempted_rows"],
+                "consume_rows_completed": consume_counts["completed_rows"],
+            },
+            "findings_authority": "native_source_bound_partition"
+            if partition_state == "VALIDATED"
+            else "raw_unverified_source_analysis",
+            "raw_findings": context_findings,
+            "findings": sorted(
+                active_findings,
+                key=lambda item: (item["path"], item.get("line", 0), item["code"]),
+            ),
+            "audit_coverage": {
+                "complete": source_capture_complete and all_primaries_assessed,
+                "files_processed": stop,
+                "files_discovered": len(files),
+            },
+        }
+    )
+    engine._full_repository_check_soft_deadline(deadline_monotonic)
+    return batch
+
+
+def _full_repository_workspace_partition(
+    engine,
+    generation,
+    audit,
+    root,
+    files,
+    stop,
+    captured,
+    bindings,
+    context_findings,
+    source_names,
+    source_bytes,
+    source_capture_complete,
+    context_bindings,
+    oracle_edges,
+    context_error,
+):
+    """Publish a whole partition transaction or retain rejected raw findings."""
+    observations = []
+    from .primitive_observation_binding import rejected_primitive_proof
+
+    active_findings = [
+        rejected_primitive_proof(finding)
+        if (
+            finding.get("facts", {}).get("disposition", "").startswith("PROVEN_")
+            or finding.get("facts", {}).get("disposition")
+            in {
+                "ENDPOINT_DECLARATION_ROLE_PROVEN",
+                "TEST_OWNED_LOCAL_FIXTURE",
+                "TEST_OWNED_APPLICATION_CREDENTIAL",
+                "SOURCE_PRESENTATION_METADATA",
+            }
+        )
+        else finding
+        for finding in context_findings
+    ]
+    partition_state = "INCOMPLETE"
+    partition_error = (
+        "SOURCE_CONTEXT_ERROR"
+        if context_error
+        else "COLLECTION_CONFIG_UNSUPPORTED"
+        if generation["collection_incomplete"]
+        else "SOURCE_CAPTURE_INCOMPLETE"
+        if not source_capture_complete
+        else "PRIMARY_INVENTORY_INCOMPLETE"
+    )
+    primary_paths = {row["path"] for row in bindings}
+    all_primaries_assessed = (
+        stop == len(files)
+        and len(captured) == len(files)
+        and len(bindings) == len(source_names)
+        and primary_paths == source_names
+        and all(row["status"] == "audited" for row in captured)
+    )
+    if (
+        source_capture_complete
+        and all_primaries_assessed
+        and not generation["collection_incomplete"]
+    ):
+        try:
+            current_configs = [
+                engine._full_repository_configuration_binding(root, row["path"])
+                for row in generation.get("security_config_identity", [])
+            ]
+            if current_configs != generation.get("security_config_identity", []):
+                raise RuntimeAuditError(
+                    "SOURCE_DRIFT", "security config generation changed"
+                )
+            database = None
+            audit._verify_security_bindings(root, context_bindings + bindings)
+            configuration_bindings = [
+                row for row in context_bindings if row["path"] not in source_names
+            ]
+            partitioned_findings = []
+            for offset in range(0, len(captured), engine.FULL_REPOSITORY_BATCH_LIMIT):
+                group = captured[offset : offset + engine.FULL_REPOSITORY_BATCH_LIMIT]
+                group_findings = [
+                    finding for row in group for finding in row["findings"]
+                ]
+                group_outcomes = {
+                    key: sum(row["status"] == key for row in group)
+                    for key in ("syntax_error", "unreadable", "too_large", "audited")
+                }
+                group_paths = [root / row["path"] for row in group]
+                primitive_bytes = audit._app_source_bytes(
+                    root, group_findings, bindings, source_bytes
+                )
+                quality = audit._security_scan_report(
+                    group_paths,
+                    group_findings,
+                    bindings,
+                    dict(Counter(item["code"] for item in group_findings)),
+                    group_outcomes,
+                    (),
+                    {},
+                    oracle_edges,
+                    configuration_bindings,
+                    database,
+                    False,
+                    primitive_bytes,
+                )
+                observations.extend(quality.get("primitive_observations", []))
+                partitioned_findings.extend(quality["findings"])
+            active_findings = partitioned_findings
+            partition_state, partition_error = "VALIDATED", None
+        except (
+            OSError,
+            ValueError,
+            TypeError,
+            audit.ReviewAuditError,
+            RuntimeAuditError,
+        ) as exc:
+            observations = []
+            partition_state, partition_error = "ERROR", type(exc).__name__
+    return (
+        observations,
+        active_findings,
+        partition_state,
+        partition_error,
+        all_primaries_assessed,
+    )
+
+
+def _full_repository_workspace_consume(
+    engine,
+    generation,
+    audit,
+    root,
+    selected,
+    rows,
+    trees,
+    snapshot_state,
+    consume_counts,
+    deadline_monotonic,
+    snapshots,
+    fingerprints,
+    captured_contexts,
+    retained,
+):
+    """Consume captured security trees synchronously in bounded chunks."""
+    snapshot_state["paths"] = set(snapshots)
+    trees.update({path: snapshots[path] for path in selected if path in snapshots})
+    try:
+        for offset in range(0, len(selected), engine.FULL_REPOSITORY_BATCH_LIMIT):
+            engine._full_repository_check_soft_deadline(deadline_monotonic)
+            group = selected[offset : offset + engine.FULL_REPOSITORY_BATCH_LIMIT]
+            consume_counts["calls"] += 1
+            consume_counts["attempted_rows"] += len(group)
+            group_rows = {}
+            for path in group:
+                tree = snapshots.get(path)
+                if tree is None:
+                    continue
+                context = {
+                    **captured_contexts.get(path, {}),
+                    "_security_source_context": (root, retained),
+                }
+                group_rows[path] = audit._security_scan_file_snapshot(
+                    root,
+                    path,
+                    (),
+                    {},
+                    context,
+                    generation["patterns"],
+                    retained.get(path),
+                    tree,
+                    fingerprints.get(path),
+                )
+            rows.update(group_rows)
+            consume_counts["completed_rows"] += len(group_rows)
+    finally:
+        snapshots.clear()
+
+
+def _full_repository_workspace_security_context(engine, generation, audit):
+    """Capture a security-only generation without project test-oracle work."""
+    from .context_efficiency import bind_application_fixture_context
+
+    root, files = generation["root"], generation["files"]
+    captured, bindings, _manifest, _cacheable = audit._oracle_source_inputs(root, files)
+    snapshots = audit.contracts.bound_snapshots(root, files, captured, bindings)
+    hashes = {root / row["path"]: row["sha256"] for row in bindings}
+    contexts = {path: {} for path in snapshots}
+    config_bindings = []
+    config_bytes = {}
+    # Bind selected, competing and absent security config separately from Python.
+    names = {row["path"] for row in generation["frame"]["candidates"]}
+    names.add("requirements.txt")
+    config_identity = []
+    for name in sorted(names):
+        row = engine._full_repository_configuration_binding(root, name)
+        config_identity.append(row)
+        if row.get("state") != "read":
+            if row.get("state") != "absent":
+                raise RuntimeAuditError(
+                    "E_CONTEXT_CONFIG", "security config unavailable"
+                )
+            continue
+        raw = audit._security_source_bytes(root, name)
+        if len(raw) > audit.MAX_BYTES or engine.sha256_bytes(raw) != row["sha256"]:
+            raise RuntimeAuditError("SOURCE_DRIFT", "captured security config changed")
+        config_bytes[name] = raw
+        config_bindings.append(
+            {"path": name, "sha256": row["sha256"], "bytes": len(raw)}
+        )
+
+    def captured_config(_root, name):
+        if name not in config_bytes:
+            raise FileNotFoundError(name)
+        return config_bytes[name]
+
+    # Existing fixture queries resolve their own captured providers. No new
+    # imported symbolic/metadata role is admitted without its resolver contract.
+    bind_application_fixture_context(
+        root,
+        snapshots,
+        contexts,
+        config_bindings,
+        captured_config,
+        audit.MAX_BYTES,
+        source_bytes=captured,
+        source_inventory=hashes,
+    )
+    return {
+        "contexts": contexts,
+        "source_bytes": captured,
+        "bindings": bindings + config_bindings,
+        "snapshots": snapshots,
+        "fingerprints": {
+            p: audit._oracle_tree_fingerprint(tree) for p, tree in snapshots.items()
+        },
+        "config_identity": config_identity,
+    }

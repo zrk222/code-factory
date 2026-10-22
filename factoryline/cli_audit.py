@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -70,6 +71,12 @@ def add_parser(sub: Any) -> None:
         "--full-repository",
         action="store_true",
         help="use the separate bounded full-repository source profile (security only)",
+    )
+    code_audit.add_argument(
+        "--context-profile",
+        choices=["isolated-v1", "workspace-v2"],
+        default="isolated-v1",
+        help="source-context profile for --full-repository (workspace-v2 is opt-in)",
     )
     code_audit.add_argument(
         "--resume",
@@ -170,6 +177,11 @@ def _security_mode_option_error(args: Any) -> str | None:
     full_repository = bool(getattr(args, "full_repository", False))
     resume = bool(getattr(args, "resume", False))
     max_batches = getattr(args, "max_batches", 1)
+    context_profile = getattr(args, "context_profile", "isolated-v1")
+    if context_profile != "isolated-v1" and not full_repository:
+        return "--context-profile requires --full-repository"
+    if context_profile not in {"isolated-v1", "workspace-v2"}:
+        return "--context-profile must be isolated-v1 or workspace-v2"
     if resume and not full_repository:
         return "--resume requires --full-repository"
     if (
@@ -200,19 +212,76 @@ def _full_security_unsupported_options(args: Any) -> bool:
 
 
 def _print_full_security(args: Any, result: dict) -> None:
-    """Keep native findings visible alongside source-accounting progress."""
+    """Keep raw findings and source-bound observations visibly distinct."""
     if args.json:
         print(json.dumps(result, indent=2, sort_keys=True))
         return
+    workspace_profile = result.get("context_profile") == "workspace-v2"
     print(
         f"Full repository security profile: {result['source_accounting_state']} ({result['files_audited']}/{result['files_discovered']} audited)"
     )
-    for row in result.get("primary_results", []):
-        for finding in row.get("findings", []):
+    if workspace_profile:
+        authority = result.get("workspace_evidence", {}).get("findings_authority")
+        print(
+            "Active findings use the native source-bound partition; raw primary findings remain in JSON."
+            if authority == "native_source_bound_partition"
+            else "Partition incomplete; active findings retain unverified execution or credential risk."
+        )
+    _print_full_security_findings(result, workspace_profile)
+    if workspace_profile:
+        evidence = result.get("workspace_evidence", {})
+        observations = evidence.get("primitive_observations", [])
+        if not isinstance(observations, list):
+            observations = []
+        partition = evidence.get("primitive_partition", {})
+        if not isinstance(partition, dict):
+            partition = {}
+        processing = evidence.get("primary_processing", {})
+        if not isinstance(processing, dict):
+            processing = {}
+        print(
+            f"Primitive partition: {partition.get('state', 'INCOMPLETE')} "
+            f"(error={partition.get('error_code') or 'none'}); observations are not clearances."
+        )
+        print(
+            f"Primary accounting: {processing.get('checkpoint_rows_recomputed_and_matched', 0)} "
+            f"saved rows reconciled; {processing.get('new_primary_rows_assessed', 0)} new rows assessed; "
+            f"{processing.get('consume_calls', 0)} consume chunks, limit "
+            f"{processing.get('consume_call_limit', 460)} each."
+        )
+        print(f"Source-bound primitive observations: {len(observations)}.")
+        for observation in observations:
+            if not isinstance(observation, dict):
+                continue
+            facts = observation.get("facts", {})
+            if not isinstance(facts, dict):
+                facts = {}
+            disposition = facts.get("disposition", "source-bound")
             print(
-                f"{finding['severity']} {finding['code']}: {finding['path']}:{finding['line']} — {finding['message']}"
+                f"  {disposition}: {observation.get('path', '?')}:{observation.get('line', '?')} [{observation.get('code', '?')}]"
             )
+        print(
+            f"Workspace context: {evidence.get('oracle_context', {}).get('state', 'INCOMPLETE')}; "
+            f"full primary inventory assessed: {evidence.get('audit_coverage', {}).get('complete', False)}."
+        )
     print("Semantic coverage: INCOMPLETE; global consumer closure is not verified.")
+
+
+def _print_full_security_findings(result, workspace_profile):
+    """Render active partition rows while JSON retains raw source history."""
+    findings = (
+        result.get("workspace_evidence", {}).get("findings", [])
+        if workspace_profile
+        else [
+            finding
+            for row in result.get("primary_results", [])
+            for finding in row.get("findings", [])
+        ]
+    )
+    for finding in findings:
+        print(
+            f"{finding['severity']} {finding['code']}: {finding['path']}:{finding['line']} — {finding['message']}"
+        )
 
 
 def _run_full_security(args: Any) -> int:
@@ -231,19 +300,36 @@ def _run_full_security(args: Any) -> int:
         )
         return 2
     try:
+        context_profile = getattr(args, "context_profile", "isolated-v1")
+        deadline = time.monotonic() + 180 if context_profile == "workspace-v2" else None
         result = full_repository_scan(
-            Path(args.root), resume=getattr(args, "resume", False)
+            Path(args.root),
+            resume=getattr(args, "resume", False),
+            context_profile=context_profile,
+            deadline_monotonic=deadline,
         )
         completed_batches = 1
         max_batches = getattr(args, "max_batches", 1)
         while result["pending_count"] and completed_batches < max_batches:
-            result = full_repository_scan(Path(args.root), resume=True)
+            result = full_repository_scan(
+                Path(args.root),
+                resume=True,
+                context_profile=context_profile,
+                deadline_monotonic=deadline,
+            )
             completed_batches += 1
         result["invocation"] = {
             "batches": completed_batches,
             "max_batches": max_batches,
             "batch_primary_limit": 460,
         }
+        if context_profile != "isolated-v1":
+            result["invocation"].update(
+                {
+                    "context_profile": context_profile,
+                    "shared_deadline_seconds": 180,
+                }
+            )
     except (RuntimeAuditError, OSError, ValueError) as error:
         print(
             json.dumps(

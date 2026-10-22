@@ -3994,6 +3994,320 @@ def test_full_repository_syntax_error_is_accounted_but_not_audited(tmp_path):
     assert result["semantic_coverage"] == "INCOMPLETE"
 
 
+@pytest.mark.parametrize("invalid_source", [False, True])
+def test_full_repository_workspace_profile_verifies_native_inputs(
+    tmp_path, invalid_source
+):
+    from factoryline.deep_audit_io import full_repository_scan
+
+    (tmp_path / "build.py").write_text(
+        "import os\nos.system('upx --best px')\n", encoding="utf-8"
+    )
+    (tmp_path / "unsafe.py").write_text(
+        "import os\nos.system(input())\n", encoding="utf-8"
+    )
+    if invalid_source:
+        (tmp_path / "invalid.py").write_text("def broken(:\n", encoding="utf-8")
+    result = full_repository_scan(tmp_path, context_profile="workspace-v2")
+    assert result["context_profile"] == "workspace-v2"
+    assert result["semantic_coverage"] == "INCOMPLETE"
+    assert result["global_consumer_closure_verified"] is False
+    assert result["target_execution"] is False
+    evidence = result["workspace_evidence"]
+    assert evidence["audit_coverage"]["complete"] is (not invalid_source)
+    assert any(
+        row["path"] == "unsafe.py" and row["severity"] == "HIGH"
+        for row in evidence["findings"]
+        if row["code"].startswith("SECURITY_")
+    )
+    observations = evidence["primitive_observations"]
+    if invalid_source:
+        assert result["syntax_errors"] == 1
+        assert observations == []
+        assert any(
+            row["path"] == "build.py" and row["severity"] == "HIGH"
+            for row in evidence["findings"]
+        )
+    else:
+        assert any(row["path"] == "build.py" for row in observations)
+
+
+def test_workspace_context_avoids_test_oracle_pipeline(tmp_path, monkeypatch):
+    from factoryline import review_audits as audit
+    from factoryline import test_oracle_misuse as oracle
+    from factoryline.deep_audit_io import full_repository_scan
+
+    def reject_unrelated_pipeline(*args, **kwargs):
+        raise AssertionError("security context invoked unrelated test-oracle work")
+
+    monkeypatch.setattr(audit, "_project_oracle_context", reject_unrelated_pipeline)
+    monkeypatch.setattr(
+        oracle, "source_callback_snapshot_context", reject_unrelated_pipeline
+    )
+    monkeypatch.setattr(
+        oracle, "source_callback_snapshot_state", reject_unrelated_pipeline
+    )
+    (tmp_path / "build.py").write_text(
+        "import os\nos.system('upx --best px')\n", encoding="utf-8"
+    )
+    (tmp_path / "unsafe.py").write_text(
+        "import os\nos.system(input())\n", encoding="utf-8"
+    )
+    result = full_repository_scan(tmp_path, context_profile="workspace-v2")
+    evidence = result["workspace_evidence"]
+    assert evidence["audit_coverage"]["complete"] is True
+    assert any(row["path"] == "build.py" for row in evidence["primitive_observations"])
+    assert any(
+        row["path"] == "unsafe.py" and row["severity"] == "HIGH"
+        for row in evidence["findings"]
+        if row["code"].startswith("SECURITY_")
+    )
+    assert result["global_consumer_closure_verified"] is False
+
+
+@pytest.mark.parametrize("partition_failure", [False, True])
+def test_workspace_reconciliation_bounds_and_atomic_partition(
+    tmp_path, monkeypatch, partition_failure
+):
+    from factoryline import review_audits as audit
+    from factoryline.deep_audit_io import full_repository_scan
+
+    for index in range(459):
+        (tmp_path / f"empty_{index:03}.py").write_text("pass\n", encoding="utf-8")
+    (tmp_path / "build.py").write_text(
+        "import os\nos.system('upx --best px')\n", encoding="utf-8"
+    )
+    (tmp_path / "unsafe.py").write_text(
+        "import os\nos.system(input())\n", encoding="utf-8"
+    )
+    if partition_failure:
+        original = audit._security_scan_report
+        calls = []
+
+        def reject_second_group(*args, **kwargs):
+            calls.append(1)
+            if len(calls) == 2:
+                raise ValueError("synthetic independent binder failure")
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(audit, "_security_scan_report", reject_second_group)
+    # Install the stable failing binder before capture; replacing it between
+    # batches is scanner drift, a separate negative control.
+    first = full_repository_scan(tmp_path, context_profile="workspace-v2")
+    assert first["workspace_evidence"]["primitive_observations"] == []
+    assert first["workspace_evidence"]["primitive_partition"]["state"] == "INCOMPLETE"
+    assert any(
+        row["path"] == "build.py" and row["severity"] == "HIGH"
+        for row in first["workspace_evidence"]["findings"]
+    )
+    assert first["workspace_evidence"]["primary_processing"]["consume_rows_completed"] == 460
+    resumed = full_repository_scan(tmp_path, resume=True, context_profile="workspace-v2")
+    evidence = resumed["workspace_evidence"]
+    processing = evidence["primary_processing"]
+    assert processing["checkpoint_rows_recomputed_and_matched"] == 0
+    assert processing["checkpoint_rows_reused_verified"] == 460
+    assert processing["new_primary_rows_assessed"] == 1
+    assert processing["consume_call_limit"] == 460
+    assert processing["consume_calls"] == 1
+    assert processing["consume_rows_completed"] == 1
+    assert evidence["audit_coverage"]["complete"] is True
+    assert resumed["global_consumer_closure_verified"] is False
+    if partition_failure:
+        assert evidence["primitive_partition"] == {"state": "ERROR", "error_code": "ValueError"}
+        assert evidence["primitive_observations"] == []
+        assert any(
+            row["path"] == "build.py" and row["severity"] == "HIGH"
+            for row in evidence["findings"]
+        )
+    else:
+        assert evidence["primitive_partition"]["state"] == "VALIDATED"
+        assert any(row["path"] == "build.py" for row in evidence["primitive_observations"])
+
+
+@pytest.mark.parametrize(
+    "change", ["untrusted", "tamper", "source", "configuration", "copied_root", "helper"]
+)
+def test_workspace_checkpoint_revalidates_or_rejects_changed_authority(
+    tmp_path, monkeypatch, change
+):
+    import shutil
+
+    from factoryline import deep_audit_io as engine
+    from factoryline import runtime_audit_integrity as runtime
+
+    root = tmp_path / "original"
+    root.mkdir()
+    source = root / "build.py"
+    source.write_text("import os\nos.system('upx --best px')\n", encoding="utf-8")
+    (root / "unsafe.py").write_text(
+        "import os\nos.system(input())\n", encoding="utf-8"
+    )
+    first = engine.full_repository_scan(root, context_profile="workspace-v2")
+    assert first["workspace_evidence"]["primitive_partition"]["state"] == "VALIDATED"
+    checkpoint_path = root / (
+        ".factory/deep-runs/f2110000000000000000000000000002/checkpoint.json"
+    )
+    expected_error = "SOURCE_DRIFT"
+    if change == "untrusted":
+        monkeypatch.setattr(engine, "_FULL_REPOSITORY_TRUSTED_CHECKPOINT", None)
+        result = engine.full_repository_scan(
+            root, resume=True, context_profile="workspace-v2"
+        )
+        evidence = result["workspace_evidence"]
+        assert evidence["primary_processing"]["checkpoint_rows_recomputed_and_matched"] == 2
+        assert evidence["findings"] == first["workspace_evidence"]["findings"]
+        assert evidence["primitive_observations"] == first["workspace_evidence"]["primitive_observations"]
+        assert result["global_consumer_closure_verified"] is False
+        return
+    if change == "tamper":
+        checkpoint = json.loads(checkpoint_path.read_text(encoding="utf-8"))
+        checkpoint["primary_results"][0]["findings"].append(
+            {"code": "FORGED", "severity": "LOW"}
+        )
+        checkpoint["result_digest"] = engine.digest(checkpoint["primary_results"])
+        checkpoint["sha256"] = engine.digest(
+            {key: value for key, value in checkpoint.items() if key != "sha256"}
+        )
+        checkpoint_path.write_bytes(engine.canonical_bytes(checkpoint))
+        expected_error = "INVALID_CHECKPOINT"
+    elif change == "source":
+        source.write_text("import os\nos.system(input())\n", encoding="utf-8")
+    elif change == "configuration":
+        (root / "pyproject.toml").write_text(
+            "[project]\nname='changed'\n", encoding="utf-8"
+        )
+    elif change == "copied_root":
+        root = shutil.copytree(root, tmp_path / "copied")
+    else:
+        original = runtime._full_repository_workspace_partition
+
+        def replaced(*args, **kwargs):
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(runtime, "_full_repository_workspace_partition", replaced)
+        expected_error = "SCANNER_DRIFT"
+    with pytest.raises(engine.RuntimeAuditError, match=expected_error):
+        engine.full_repository_scan(root, resume=True, context_profile="workspace-v2")
+
+
+def test_workspace_resume_does_not_trust_mutated_returned_report(tmp_path):
+    from factoryline.deep_audit_io import full_repository_scan
+
+    (tmp_path / "build.py").write_text(
+        "import os\nos.system('upx --best px')\n", encoding="utf-8"
+    )
+    (tmp_path / "unsafe.py").write_text(
+        "import os\nos.system(input())\n", encoding="utf-8"
+    )
+    first = full_repository_scan(tmp_path, context_profile="workspace-v2")
+    for primary in first["primary_results"]:
+        primary["findings"].clear()
+    first["workspace_evidence"]["findings"].clear()
+    first["workspace_evidence"]["raw_findings"].clear()
+    first["workspace_evidence"]["primitive_observations"].clear()
+    resumed = full_repository_scan(tmp_path, resume=True, context_profile="workspace-v2")
+    evidence = resumed["workspace_evidence"]
+    assert evidence["primitive_partition"]["state"] == "VALIDATED"
+    assert any(
+        row["path"] == "unsafe.py" and row["severity"] == "HIGH"
+        for row in evidence["findings"]
+    )
+    assert any(row["path"] == "build.py" for row in evidence["primitive_observations"])
+    assert resumed["global_consumer_closure_verified"] is False
+
+
+def test_workspace_scan_hash_excludes_verified_reuse_telemetry(tmp_path, monkeypatch):
+    from factoryline import deep_audit_io as engine
+
+    (tmp_path / "build.py").write_text(
+        "import os\nos.system('upx --best px')\n", encoding="utf-8"
+    )
+    (tmp_path / "unsafe.py").write_text(
+        "import os\nos.system(input())\n", encoding="utf-8"
+    )
+    first = engine.full_repository_scan(tmp_path, context_profile="workspace-v2")
+    resumed = engine.full_repository_scan(tmp_path, resume=True, context_profile="workspace-v2")
+    assert resumed["workspace_evidence"]["primary_processing"]["checkpoint_rows_reused_verified"] == 2
+    assert resumed["scan_sha256"] == first["scan_sha256"]
+    assert resumed["workspace_evidence"]["findings"] == first["workspace_evidence"]["findings"]
+    monkeypatch.setattr(engine, "_FULL_REPOSITORY_TRUSTED_CHECKPOINT", None)
+    revalidated = engine.full_repository_scan(tmp_path, resume=True, context_profile="workspace-v2")
+    assert revalidated["workspace_evidence"]["primary_processing"]["checkpoint_rows_recomputed_and_matched"] == 2
+    assert revalidated["scan_sha256"] == first["scan_sha256"]
+    assert revalidated["workspace_evidence"]["primitive_observations"] == first["workspace_evidence"]["primitive_observations"]
+
+
+def test_workspace_reuses_raw_prefix_without_promoting_syntax_gaps(tmp_path):
+    from factoryline.deep_audit_io import full_repository_scan
+
+    for index in range(459):
+        (tmp_path / f"empty_{index:03}.py").write_text("pass\n", encoding="utf-8")
+    (tmp_path / "a_invalid.py").write_text("def broken(:\n", encoding="utf-8")
+    (tmp_path / "z_unsafe.py").write_text(
+        "import os\nos.system(input())\n", encoding="utf-8"
+    )
+    first = full_repository_scan(tmp_path, context_profile="workspace-v2")
+    assert first["pending_count"] == 1
+    assert first["syntax_errors"] == 1
+    resumed = full_repository_scan(tmp_path, resume=True, context_profile="workspace-v2")
+    evidence = resumed["workspace_evidence"]
+    assert evidence["primary_processing"]["checkpoint_rows_reused_verified"] == 460
+    assert evidence["primary_processing"]["checkpoint_rows_recomputed_and_matched"] == 0
+    assert evidence["primary_processing"]["consume_rows_attempted"] == 1
+    assert resumed["files_audited"] == 460
+    assert resumed["syntax_errors"] == 1
+    assert resumed["pending_count"] == 0
+    assert evidence["audit_coverage"]["complete"] is False
+    assert evidence["primitive_observations"] == []
+    assert any(
+        row["path"] == "z_unsafe.py" and row["severity"] == "HIGH"
+        for row in evidence["findings"]
+    )
+    assert resumed["global_consumer_closure_verified"] is False
+
+
+def test_workspace_consume_failure_binds_cleared_context_before_checkpoint(
+    tmp_path, monkeypatch
+):
+    import inspect
+
+    from factoryline import deep_audit_io as engine
+    from factoryline import review_audits as audit
+    from factoryline import runtime_audit_integrity as runtime
+
+    original_scan = audit._security_scan_file_snapshot
+    original_consume = runtime._full_repository_workspace_consume_prefix
+    attempts, observed = [], {}
+
+    def fail_once(*args, **kwargs):
+        attempts.append(1)
+        if len(attempts) == 1:
+            raise ValueError("synthetic native consumer failure")
+        return original_scan(*args, **kwargs)
+
+    def observe_reset(*args, **kwargs):
+        result = original_consume(*args, **kwargs)
+        state = inspect.signature(original_consume).bind(*args, **kwargs).arguments["state"]
+        observed["context_generation"] = state["context_generation"]
+        return result
+
+    monkeypatch.setattr(audit, "_security_scan_file_snapshot", fail_once)
+    monkeypatch.setattr(runtime, "_full_repository_workspace_consume_prefix", observe_reset)
+    (tmp_path / "build.py").write_text(
+        "import os\nos.system('upx --best px')\n", encoding="utf-8"
+    )
+    report = engine.full_repository_scan(tmp_path, context_profile="workspace-v2")
+    evidence = report["workspace_evidence"]
+    assert evidence["sources"]["context_error"] == "ValueError"
+    assert evidence["primitive_observations"] == []
+    assert any(row["path"] == "build.py" and row["severity"] == "HIGH" for row in evidence["findings"])
+    assert report["context_generation_sha256"] == observed["context_generation"]
+    # A recovered context differs from the cleared failed generation. Its old
+    # checkpoint must be rejected as source/context drift, never reused.
+    with pytest.raises(engine.RuntimeAuditError, match="SOURCE_DRIFT"):
+        engine.full_repository_scan(tmp_path, resume=True, context_profile="workspace-v2")
+
+
 def test_full_repository_resume_rejects_source_and_configuration_drift(tmp_path):
     from factoryline.deep_audit_io import RuntimeAuditError, full_repository_scan
 

@@ -1,0 +1,126 @@
+{
+  "schema": "factory.native-workspace-context241.scoped-fix.v1",
+  "recorded_at": "2026-10-22T16:33:45.455385+00:00",
+  "base_commit": "724df1c53b3ed1f266e7d9ecdf86bd4adbcbd8a6",
+  "candidate_manifest_sha256": "081b3c35e14bf83d361cc02d9b5c7e51718ba7e593caeef27b8de2fb63ef3ea3",
+  "source_files": [
+    {
+      "path": "factoryline/cli_audit.py",
+      "sha256": "82d34490ace703a5b7bdef4562f96764e20c0dc4d56bdeeb6144b3788d60b14f",
+      "lines": 550,
+      "bytes": 20998
+    },
+    {
+      "path": "factoryline/deep_audit_io.py",
+      "sha256": "618a2f2caceddfab486277eb154b1b67ca9214a0ce730ab63fd1e84c5ff46f49",
+      "lines": 1999,
+      "bytes": 72581
+    },
+    {
+      "path": "factoryline/runtime_audit_integrity.py",
+      "sha256": "49b881c6e618ad08b30ded67185d8787abaeecc947207cdac0ecf7f344c2f68a",
+      "lines": 4624,
+      "bytes": 177882
+    }
+  ],
+  "test_file": {
+    "path": "tests/test_context_efficiency.py",
+    "sha256": "503e08c2fe79cf79ecdac5b5929c84fe23a13ee1b659d60ac3c5da91de05c0e1"
+  },
+  "implementation": [
+    "Security-only workspace context reaches native full-repository capture, independent partition and API/CLI output. Existing isolated-v1 remains default pending full migration qualification.",
+    "Resume reuses independently owned raw prefix rows only under exact same-process checkpoint/runtime/scanner/source/config/context bindings. Recapture full current context and rebuild partition; never cache verdicts.",
+    "Parsing gaps permit raw computation reuse while completeness remains false and primitive observations remain empty.",
+    "Semantic scan digest excludes primary-processing telemetry; findings, context and source evidence remain hash-bound.",
+    "Native consume failure synchronizes the cleared context digest before checkpoint storage."
+  ],
+  "focused_execution": {
+    "candidate9-helper-drift": {
+      "receipt_sha256": "09630e8d917fbb4e2ea62d323aca60467e9914ce5812a898b650570f6623662d",
+      "receipt": {
+        "state": "FINISHED",
+        "exit_code": 0,
+        "seconds": 7.891,
+        "registration_sha256": "6c8e4999d0c6a804120f06bdab36f4dd3f21e942fa2b837d5bbbc76e0fb735aa",
+        "inputs_unchanged": true,
+        "log_sha256": "c916fc3d3c865d7e2d11d3825efba3f5db24f8722cfc4ec479db80194232b4cf",
+        "xml_sha256": "81a933188d0fcd868f11eb3fc42e9a7428c3c3277cb2c5487eee8aee3996f31f",
+        "precision_claim": null
+      }
+    },
+    "candidate9-resume-contracts": {
+      "receipt_sha256": "91f1beee36b3b61e160f2e592468b9e8d78491fc0e50870e305914bb56cd8e18",
+      "receipt": {
+        "state": "FINISHED",
+        "exit_code": 0,
+        "seconds": 78.14,
+        "registration_sha256": "d4f65965d93de271c17ed73459b2bf815f5cfb2495d88c581ada08ef6f9054fd",
+        "inputs_unchanged": true,
+        "log_sha256": "dadfaee0167fc506ff3dd32523c1c12d5d28f5f1d56af8ba55ac0fd849dd863f",
+        "xml_sha256": "6d37e2c8dd93ce1c8f263a2182d4a721e19522036de7714111bdfabe3861ca6d",
+        "precision_claim": null
+      }
+    },
+    "candidate10-native-consume-error": {
+      "receipt_sha256": "7c570b04e20d96d5affd35e3a5976c2b344c5ac9794be8f34b4aca8bb3938ecc",
+      "receipt": {
+        "state": "FINISHED",
+        "exit_code": 0,
+        "seconds": 7.437,
+        "registration_sha256": "c7bf71755c454aa7afadfff4f1e376a49df61edd5f61d3d412b9adccb7e7fdcc",
+        "inputs_unchanged": true,
+        "log_sha256": "c62125f560b9a8752611821cb77f25f8f5c17458b6b3db82742ca0c60d0cd5ce",
+        "xml_sha256": "bd4e1eff9cd6545e7269bca62ab3942873529c1d82564916dcee97fbd5c93d38",
+        "precision_claim": null
+      }
+    }
+  },
+  "execution_qualification": "11 successful controls ran against immutable generation9. Generation10 differs by one post-consume context-digest synchronization assignment only; ECC approved relevance reuse for those unchanged successful branches. The reproduced-failing consume-error control ran and passed on generation10. No claim all12 were rerun on generation10.",
+  "review": {
+    "path": ".factory/precision241/native-path/ecc-generation-10-review.json",
+    "sha256": "30e67f85ba3a1ed337afd2ca01b2f3ab4b9efb650fc10f40d3fad0aa3c46e38c",
+    "approval": "Scoped code commit only; full qualification remains incomplete."
+  },
+  "last_measured_actionable_precision": {
+    "scanner_commit": "724df1c53b3ed1f266e7d9ecdf86bd4adbcbd8a6",
+    "cohort": "Study225 exact-claim exposed replay238",
+    "TP": 0,
+    "FP": 49,
+    "UNCLEAR": 8,
+    "decided_precision": 0.0,
+    "wilson95": [
+      0.0,
+      0.07269781922
+    ],
+    "fresh_post_fix_measurement": "NOT_RUN",
+    "no_new_precision_claim": true
+  },
+  "prior_exposed_wiring_measurement": {
+    "generation": 7,
+    "scope": "PX29Pythonfiles; not fresh heldout",
+    "baseline_active": 25,
+    "candidate_api_active": 20,
+    "candidate_cli_active": 20,
+    "primitive_observations": 5,
+    "unsafe_control_HIGH_retention": "5/5 API and5/5 CLI",
+    "current_generation_rerun": "NOT_YET_RUN"
+  },
+  "failed_performance_retained": {
+    "state": "TIMEOUT",
+    "exit_code": null,
+    "elapsed_seconds": 180.937,
+    "input_hashes_match_after": true,
+    "stdout_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "precision_claim": null,
+    "report_state": "NO_COMPLETE_JSON_REPORT"
+  },
+  "remaining": [
+    "Full current large-repository performance qualification",
+    "Full current API/CLI compatibility and default migration",
+    "Credential-fixture family qualification",
+    "Global CI and prospective heldout precision"
+  ],
+  "module_caps_changed": false,
+  "merge_approved": false
+}
