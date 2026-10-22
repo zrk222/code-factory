@@ -9568,8 +9568,9 @@ def test_scan_keeps_constant_assertion_despite_runtime_receipt(tmp_path, monkeyp
     assert result["runtime_oracles"]["reconciled_count"] == 0
 
 
+@pytest.mark.parametrize("receipt_version", [None, 1, 2, 3])
 def test_scan_keeps_parameterized_test_without_full_collection_catalog(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, receipt_version
 ):
     import factoryline.runtime_attestation as attestation
 
@@ -9586,13 +9587,22 @@ def test_scan_keeps_parameterized_test_without_full_collection_catalog(
     ).hexdigest()
     for run in ("baseline", "mutation"):
         row[run]["case_ids"] = ["test_app.py::test_validate[1]"]
+    verified = {"tests": [row]}
+    if receipt_version is not None:
+        verified["schema"] = f"factory.test-oracle-verification.v{receipt_version}"
     monkeypatch.setattr(
-        attestation, "verify_signed_test_oracles", lambda *a, **k: {"tests": [row]}
+        attestation, "verify_signed_test_oracles", lambda *a, **k: verified
     )
     result = security_scan(tmp_path, **kwargs)
-    assert result["finding_counts"]["QUALITY_HOLLOW_TEST"] == 1
+    # Incomplete collection cannot resolve the imported call's unknown oracle.
+    assert result["finding_counts"] == {"QUALITY_UNKNOWN_TEST_ORACLE": 1}
     assert result["runtime_oracles"]["reconciled_count"] == 0
-    assert result["findings"][0]["facts"]["runtime_case_coverage"]["eligible"] is False
+    facts = result["findings"][0]["facts"]
+    if receipt_version == 3:
+        assert facts["runtime_case_coverage"]["eligible"] is False
+    else:
+        # Legacy receipts cannot authorize reconciliation of UNKNOWN findings.
+        assert "runtime_case_coverage" not in facts
 
 
 @pytest.mark.parametrize("complete", [True, False])
@@ -9731,76 +9741,104 @@ def test_scan_v3_oracle_cannot_bypass_callback_check_for_unparameterized_smoke(
     assert result["findings"][0]["facts"]["runtime_case_coverage"]["eligible"] is False
 
 
+@pytest.mark.parametrize("drift", [False, True])
 def test_scan_keeps_finding_if_test_source_changes_after_oracle_binding(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, drift
 ):
     import factoryline.review_audits as audit
     import factoryline.runtime_attestation as attestation
 
     _module, row, kwargs = _runtime_oracle_scan_fixture(tmp_path)
     core = security_scan(tmp_path)
+    assert core["finding_counts"] == {"QUALITY_UNKNOWN_TEST_ORACLE": 1}
+    expected_counts = dict(core["finding_counts"])
     original_read = audit._security_source_bytes
+    original_coverage = audit.integrity.runtime_callback_coverage
     test_reads = 0
+    coverage_calls = 0
+
+    def observe_coverage(*args, **kwargs):
+        nonlocal coverage_calls
+        coverage_calls += 1
+        return original_coverage(*args, **kwargs)
 
     def drift_after_binding(workspace, relative):
         nonlocal test_reads
         if relative == row["path"]:
             test_reads += 1
-            if test_reads == 3:
+            if drift and test_reads == 3:
                 return b"def test_replaced():\n    pass\n"
         return original_read(workspace, relative)
 
     monkeypatch.setattr(audit, "_security_source_bytes", drift_after_binding)
+    monkeypatch.setattr(audit.integrity, "runtime_callback_coverage", observe_coverage)
     monkeypatch.setattr(
         attestation,
         "verify_signed_test_oracles",
         lambda *args, **values: {
-            "schema": attestation.TEST_ORACLE_VERIFICATION_SCHEMA_V2,
+            "schema": attestation.TEST_ORACLE_VERIFICATION_SCHEMA_V3,
             "tests": [row],
         },
     )
 
     result = audit._reconcile_runtime_oracles(tmp_path, core, tuple(kwargs.values()))
 
-    assert result["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+    # Source drift must retain the original finding; it cannot prove inertness.
+    assert result["finding_counts"] == expected_counts
     assert result["runtime_oracles"]["reconciled_count"] == 0
+    assert test_reads == 3
+    assert coverage_calls == int(not drift)
 
 
+@pytest.mark.parametrize("drift", [False, True])
 def test_scan_keeps_finding_if_test_body_changes_after_oracle_binding(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, drift
 ):
     import factoryline.review_audits as audit
     import factoryline.runtime_attestation as attestation
 
     _module, row, kwargs = _runtime_oracle_scan_fixture(tmp_path)
     core = security_scan(tmp_path)
+    assert core["finding_counts"] == {"QUALITY_UNKNOWN_TEST_ORACLE": 1}
+    expected_counts = dict(core["finding_counts"])
     original_read = audit._security_source_bytes
+    original_coverage = audit.integrity.runtime_callback_coverage
     test_reads = 0
+    coverage_calls = 0
+
+    def observe_coverage(*args, **kwargs):
+        nonlocal coverage_calls
+        coverage_calls += 1
+        return original_coverage(*args, **kwargs)
 
     def drift_after_binding(workspace, relative):
         nonlocal test_reads
         if relative == row["path"]:
             test_reads += 1
-            if test_reads == 3:
+            if drift and test_reads == 3:
                 return (
                     b"from app import validate\ndef test_validate():\n    validate(6)\n"
                 )
         return original_read(workspace, relative)
 
     monkeypatch.setattr(audit, "_security_source_bytes", drift_after_binding)
+    monkeypatch.setattr(audit.integrity, "runtime_callback_coverage", observe_coverage)
     monkeypatch.setattr(
         attestation,
         "verify_signed_test_oracles",
         lambda *args, **values: {
-            "schema": attestation.TEST_ORACLE_VERIFICATION_SCHEMA_V2,
+            "schema": attestation.TEST_ORACLE_VERIFICATION_SCHEMA_V3,
             "tests": [row],
         },
     )
 
     result = audit._reconcile_runtime_oracles(tmp_path, core, tuple(kwargs.values()))
 
-    assert result["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
+    # Body drift must retain the original finding; it cannot prove inertness.
+    assert result["finding_counts"] == expected_counts
     assert result["runtime_oracles"]["reconciled_count"] == 0
+    assert test_reads == 3
+    assert coverage_calls == int(not drift)
 
 
 def test_scan_rejects_partial_runtime_evidence_configuration(tmp_path):
