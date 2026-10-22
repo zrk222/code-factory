@@ -41,17 +41,15 @@ and independent ECC review bound to the same candidate. Keep scanner changes,
 expectation migrations and mechanical consolidation in separate reviewable
 commits. Preserve unrelated edits and frozen studies.
 
-All original24 failed cases passed in the integrated full regression run. That
-run recorded8,343passed/6failed/15skipped; its six failures subsequently passed
-in a failed-only follow-up. Preserve the timeout and source-generation limits:
-`docs/evidence/integrated-regressions226.json`. These are completed observations,
-not a claim that current full CI is green.
+Historical regression and matrix observations remain in
+`docs/evidence/integrated-regressions226.json`,
+`docs/evidence/python-matrix230.json` and
+`docs/evidence/native-quality235.json`; they do not certify current bytes.
+Close current matching-source CI after the concrete CLI profile-stub and public
+condition-inventory mismatches are repaired. Keep metadata/expectation updates
+separate from scanner behavior. The source inventory is now 88 lane-specific
+plus 97 cross-cutting conditions (185 total); this is not a test or precision score.
 
-All nine native CI Python matrix jobs pass on prior exact source `822830e1`,
-with zero failures/errors in every 8,368-case report. The subsequent reviewed
-source-context extraction reduces native quality findings from 90 to 89;
-matching-source CI remains pending. See `docs/evidence/native-quality235.json`. The earlier exact-head regression
-observations remain in `docs/evidence/python-matrix230.json`.
 Close the remaining native candidate-quality gate. Reproduce only failed cases;
 do not rerun passing unit suites. After source integration resolves the current
 failures, run one full matching-candidate suite. Retain first failures and exact
@@ -59,8 +57,11 @@ platform/job identities. Ruff/C901 success does not satisfy native Forge quality
 
 ## A1 — Deliver source-proven security finding changes
 
-Continue the accepted repair order from `.factory/precision215/astra-p0-review.md`
-using existing owners and shared source indexes:
+Follow the latest one-run audit `.factory/precision240/astra-detection-audit.md`
+and the bounded follow-up `.factory/precision242/ecc-minimal-next-plan.json`, using
+existing owners and shared source indexes. The largest exposed family is
+44 hardcoded-secret FPs: 29 fixture/local-development, 9 endpoint/sentinel and
+6 selector/metadata observations. These counts identify work, not promised removals:
 
 1. Credential lifecycle, allocation/enrollment and same-identity local request
    lineage. Cover the coherent account-fixture families before adding unrelated
@@ -82,10 +83,20 @@ adversarial controls. Source drift, helper drift, budget exhaustion or relevant
 unknown consumers must revoke provisional clearances. No value/path allowlists,
 broad severity demotion or new per-pattern production module tree.
 
-The staged selector227 and account-fixture229 candidates remain unadmitted until
-exact frozen bytes, native replay and independent ECC review agree. Rejected
-drafts do not contribute wins or measured precision. Report every family outcome,
-including retained alerts and unproven cases.
+Keep selector227/account229 and oversized class-fixture242v3 unadmitted.
+Replace the latter's exact-member grammar rather than extending it. Reuse the
+existing identity-effect owner for demanded declaration/account/client effects,
+source-resolved helper calls and proven disjoint fields. Resolve the selected
+model/client/configuration authority; unknown relevant effects retain severity.
+A bounded returned-mapping-key query may exclude irrelevant settings keys only;
+opaque values and callee effects remain unassessed. It grants no fixture clearance.
+
+First prove one unchanged real fixture declaration through producer, byte-bound
+native admission, API, report partition and CLI; then a second independent shape.
+Require alpha-renaming, protected-field writes, alias/receiver escapes, unknown
+keys, provider mutation, source drift and helper-epoch controls. If selected effects
+remain UNKNOWN, stop that expansion and expose the missing edge. Do not build
+another per-project resolver or framework-wide lifecycle engine.
 
 ## A2 — Wire the same evidence through real product profiles
 
@@ -94,12 +105,12 @@ configuration, import/callable origin and relevant consumer context. A standalon
 helper or custom projection is not full CF integration. Version profile changes
 separately from detector changes; do not rewrite frozen studies.
 
-The shared CLI resealing repair preserves captured-byte revalidation through
-copies and receipt preparation. Four new regressions pass, and an exposed
-29-file public-CLI replay changes 25 active security alerts to 20 while retaining
-five primitive observations and every unchanged alert. See
-`docs/evidence/native-reseal234.json`. This is completed development evidence;
-fresh precision, broader retention and matching-source full CI remain pending.
+Qualify the pushed `workspace-v2` profile and its byte-derived native findings,
+dependency edges, atomic partition and exact trusted resume. `isolated-v1` remains
+the default until compatibility and complete large-target qualification pass.
+The completed narrow wiring records in `docs/evidence/native-workspace-context241.json`
+and `docs/evidence/native-byte-dependency241.json` do not establish fixture-family
+precision, global closure or readiness to migrate the default profile.
 
 Finish `specs/full-source-coverage211.md` and
 `plans/full-source-coverage211.md`: account for every eligible file, capture
@@ -133,6 +144,13 @@ severity, evidence, unknown and coverage equality. Stop on hidden retries,
 missing findings or cache disagreement. The observed full-suite worker imbalance
 and repeated distribution hashing are investigation leads, not measured speedups.
 Do not weaken production deadlines or treat timeout retries as timing assurance.
+
+The preserved generation13 Nautobot run timed out at 180.391 seconds, with a
+920-row checkpoint and no complete JSON report. Generation14 large-target timing
+is NOT_RUN. Eager fingerprint construction was removed, but no speed gain was
+established. Attribute repeated capture/index/primary/partition costs before
+adding another cache; any cache must retain exact source/config/helper identity,
+owned copies and independent current-byte native validation.
 
 ## A5 — Freeze and run the next qualification study
 

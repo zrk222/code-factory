@@ -2,6 +2,7 @@
 
 import ast
 
+from collections import deque
 from collections.abc import Callable, Mapping
 
 from dataclasses import dataclass, field as _dataclass_field
@@ -684,21 +685,24 @@ def captured_function_valid(function, path, index):
 
 
 def own_function_nodes(function, path, index):
-    """Return nodes owned by the function itself while excluding nested function, lambda, and class scopes."""
-    parents, scopes, result = (
-        index.parents[path],
-        (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef),
-        [],
-    )
-    for node in ast.walk(function):
-        parent, nested = parents.get(id(node)), False
-        while parent is not None and parent is not function:
-            if isinstance(parent, scopes):
-                nested = True
-                break
-            parent = parents.get(id(parent))
-        if not nested:
-            result.append(node)
+    """Walk lexical bodies and eager nested headers without trusting parent metadata."""
+    scopes = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)
+    pending, result = deque([function]), []
+    while pending:
+        node = pending.popleft()
+        result.append(node)
+        if node is function or not isinstance(node, scopes):
+            pending.extend(ast.iter_child_nodes(node))
+            continue
+        # A nested body has its own scope. Defaults, decorators, annotations,
+        # bases and keywords are evaluated while defining it in the outer scope.
+        for field, value in ast.iter_fields(node):
+            if field == "body":
+                continue
+            if isinstance(value, ast.AST):
+                pending.append(value)
+            elif isinstance(value, list):
+                pending.extend(child for child in value if isinstance(child, ast.AST))
     return result
 
 

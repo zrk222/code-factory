@@ -434,3 +434,71 @@ def test_super_calls_and_reflection_are_unknown_for_tracked_receiver():
         result = _summarize(source, name, {"self": "b"})
         assert result.status == "UNKNOWN"
         assert "super uses implicit or reflective receiver" in result.unknowns
+
+
+@pytest.mark.parametrize(
+    "header",
+    [
+        "    def inner(value=(yield 1)): pass\n",
+        "    async def inner(value=(yield 1)): pass\n",
+        "    @(yield 1)\n    def inner(): pass\n",
+        "    class Inner((yield 1)): pass\n",
+        "    factory = lambda value=(yield 1): None\n",
+    ],
+)
+def test_own_scope_includes_eager_nested_header_suspension(header):
+    from types import CodeType
+    from factoryline.credential_role_identity_effects import own_function_nodes
+
+    raw = ("def outer():\n" + header + "    return {'key': 1}\n").encode()
+    path, tree = Path("scope.py"), ast.parse(raw)
+    digest = hashlib.sha256(raw).hexdigest()
+    tree._oracle_source_sha256 = digest
+    index = SourceSnapshotIndex(Path("."), {path: tree}, {path: raw}, {path: digest})
+    assert index.validate(path)
+    code = next(
+        item
+        for item in compile(raw, str(path), "exec").co_consts
+        if isinstance(item, CodeType)
+    )
+    assert code.co_flags & 0x20  # CPython independently identifies the outer generator.
+    assert any(
+        isinstance(node, ast.Yield)
+        for node in own_function_nodes(tree.body[0], path, index)
+    )
+
+
+@pytest.mark.parametrize(
+    "body,status",
+    [("value.__class__ = Other", "CLASS_WRITE"), ("opaque(value)", "ESCAPE")],
+)
+def test_own_scope_effects_ignore_forged_parent_metadata(body, status):
+    raw = ("def mutate(value):\n    " + body + "\n").encode()
+    path, tree = Path("scope.py"), ast.parse(raw)
+    digest = hashlib.sha256(raw).hexdigest()
+    tree._oracle_source_sha256 = digest
+    index = SourceSnapshotIndex(Path("."), {path: tree}, {path: raw}, {path: digest})
+    function = tree.body[0]
+    assert index.validate(path)
+    index.parents[path][id(function.body[0])] = ast.parse(
+        "lambda: None", mode="eval"
+    ).body
+    result = summarize_identity_effect(function, path, index, {"value": "account"})
+    assert result.status == status
+
+
+def test_own_scope_excludes_nested_bodies_but_keeps_definition_headers():
+    from factoryline.credential_role_identity_effects import own_function_nodes
+
+    raw = b"def outer():\n    def inner(value=header_call()):\n        body_call()\n    return 1\n"
+    path, tree = Path("scope.py"), ast.parse(raw)
+    digest = hashlib.sha256(raw).hexdigest()
+    tree._oracle_source_sha256 = digest
+    index = SourceSnapshotIndex(Path("."), {path: tree}, {path: raw}, {path: digest})
+    assert index.validate(path)
+    calls = [
+        node.func.id
+        for node in own_function_nodes(tree.body[0], path, index)
+        if isinstance(node, ast.Call)
+    ]
+    assert calls == ["header_call"]

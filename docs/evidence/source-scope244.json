@@ -1,0 +1,79 @@
+{
+  "schema": "factory.scoped-repair.v1",
+  "scope": "source-scope244",
+  "recorded_at": "2026-10-22T17:44:26.974995+00:00",
+  "base_commit": "e9b160f4de75ec80903ce0967b9e29f745e546eb",
+  "sources": [
+    {
+      "path": "factoryline/credential_role_identity_effects.py",
+      "sha256": "f4ef0933e12934c23df005b40eadab86d1128557d208fdcda4a9bacd2f518f38"
+    },
+    {
+      "path": "tests/test_credential_role_identity_fields.py",
+      "sha256": "2ff4985a446c7f5eb8b27d6acd9ed2686715a48b630355875788715d52110058"
+    },
+    {
+      "path": "plans/accuracy-efficiency174.md",
+      "sha256": "b123a99d07fe7f0c3f24b43a639103db1c69c50dcc0915ceb837ec99529888f9"
+    }
+  ],
+  "before": {
+    "path": ".factory/precision241/targeted/scope244-durable-before/receipt.json",
+    "sha256": "df61df13e426e99c37539b983721a55df6ab5fcb8b5e6073eb92ce2460f2b9d9",
+    "state": "FINISHED",
+    "exit_code": 1,
+    "seconds": 2.797,
+    "registration_sha256": "b5ab5d541bb64835f75dfd05253dc87a9d0ca3cd60c7ea6e41b47a163bd76efb",
+    "inputs_unchanged": true,
+    "log_sha256": "374389f1dddeb2f1b3da5c6d6df77239ed15b836b0fdbd06c06849ad9e945002",
+    "xml_sha256": "20281498541fdb7dd956bc9425c51deee926db95b28e38ff2ba5306007a26182",
+    "precision_claim": null
+  },
+  "after": {
+    "path": ".factory/precision241/targeted/scope244-durable-after/receipt.json",
+    "sha256": "0bd74435150e21012d93931a4a839b0c2c4b151388409db0b45d0e3b22a0fcff",
+    "state": "FINISHED",
+    "exit_code": 0,
+    "seconds": 2.562,
+    "registration_sha256": "603a42a5b94777773108bebb5c377d454be47224a15ebddc4d20560d5c61f4cf",
+    "inputs_unchanged": true,
+    "log_sha256": "118541d62e4711957dfb1542063fc3b073eed8ff8ae1a0a4836ec0011d39d149",
+    "xml_sha256": "4ab2cec99c96fa81f66d8a0642b63939985b916c6f841763f0d37957ee0fd37d",
+    "precision_claim": null
+  },
+  "passed_controls": 113,
+  "review": {
+    "path": ".factory/precision244/ecc-walk-only-review.json",
+    "sha256": "aeaeedcd3bba09355647154c9fa74603f3da1cfa29a385940c29ac5ece430a61"
+  },
+  "architecture": {
+    "decision": "HEALTHY",
+    "files": 429,
+    "core_modules": 133,
+    "caps_unchanged": true,
+    "sha256": "42f5c8245df38ea5df50eed1eb926fa46d26e608373a52339be79505ba51827d"
+  },
+  "workflow": {
+    "state": "INCOMPLETE",
+    "receipt_path": ".factory/precision244/workflow-source-scope244/receipt.json",
+    "remaining": [
+      "Large-repository performance",
+      "Global matching-source CI and fresh independent precision"
+    ]
+  },
+  "precision_gain_claim": null,
+  "merge_release_approved": false,
+  "fix": [
+    "Walk actual AST children; mutable parent metadata can no longer hide class writes or receiver escapes.",
+    "Include eager nested-definition defaults/decorators/class bases/keywords while excluding deferred nested bodies.",
+    "Eight durable regressions failed before,113failed/affected checks passed after. Private returned-key query is excluded from this commit."
+  ],
+  "last_measured_precision": {
+    "scope": "Study225 exposed replay before these changes",
+    "TP": 0,
+    "FP": 49,
+    "UNCLEAR": 8,
+    "percent_decided": 0,
+    "post_fix": "NOT_RUN"
+  }
+}
