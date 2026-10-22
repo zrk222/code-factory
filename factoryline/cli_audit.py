@@ -276,7 +276,11 @@ def _run_security(args: Any) -> int:
         return 2
     if getattr(args, "full_repository", False):
         return _run_full_security(args)
+    return _run_bounded_security(args)
 
+
+def _run_bounded_security(args: Any) -> int:
+    """Run the existing bounded scan after shared option/profile dispatch."""
     from .review_audits import (
         ReviewAuditError,
         _seal_security_scan,
