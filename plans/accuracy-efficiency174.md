@@ -11,9 +11,10 @@ Only remaining work is listed below. Order: accuracy, speed, simplicity.
   sample with at least 30 decided candidate alerts. Report the Wilson 95%
   interval, primitive match rate, unclear count and positive retention separately.
   The later target remains 90%; no score is promised by this plan.
-- The owner authorized AI labeling for the current pass; two independently
-  blinded AI submissions now exist and Claude's cross-provider review is pending.
-  Report reviewer kind and disagreements.
+- The owner authorized AI labeling for the current pass. Two prior blinded
+  Codex submissions and Claude's supplied cross-provider review are recorded.
+  Claude review is received; its exact bundle identity and blinding are
+  self-reported. Report reviewer kind and disagreements.
   Preserve the original human-plus-AI protocol and disclose that its human
   requirement was not met; do not describe AI review as human validation.
 - Keep all genuine positives at their justified severity. UNKNOWN is not HOLLOW;
@@ -104,6 +105,19 @@ no unregistered majority-vote rule is applied. All 47 local packet source hashes
 validate, but Claude's notes supply no reviewed bundle hashes, so exact bundle
 identity and blinding remain self-reported. See
 `docs/evidence/study180-claude-assessment213.json` and the verbatim review.
+The 41 FP / 6 unclear counts belong to the two earlier Codex submissions, not
+Claude. The separate submissions are:
+
+| Study180 reviewer | TP | FP | Unclear | S180-006 | S180-036 |
+| --- | --- | --- | --- | --- | --- |
+| Prior Codex reviewer A | 0 | 41 | 6 | UNCLEAR | FP |
+| Prior Codex reviewer B | 0 | 41 | 6 | FP | UNCLEAR |
+| Supplied Claude review | 0 | 42 | 5 | FP | FP |
+
+The pending status in `study180-two-ai-assessment204.json` is a historical
+snapshot predating Claude's delivery, superseded for review-receipt status by
+`study180-claude-assessment213.json`. Its original labels and consensus remain
+unchanged; it must not be presented as Claude's submission or current status.
 The original human-plus-AI protocol is not satisfied. Only 22 of 24 planned
 scans completed; two errored, so declared repository coverage is incomplete.
 Development replay at `4465aa3` completes all 12 repositories, including the
