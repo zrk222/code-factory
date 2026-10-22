@@ -1,0 +1,90 @@
+{
+  "schema": "factory.format-only-regression243.v1",
+  "base_commit": "c1aa44495e0a4c3c76e140c8766482c1420a98a1",
+  "change": "Ruff formatting and comment condensation only; no PythonAST semantic delta.",
+  "sources": [
+    {
+      "path": "factoryline/deep_audit_io.py",
+      "before_sha256": "2e32ccf0a1f32d1d3b7edeafb61ff4cf061873291da51acdfaececa918a5592e",
+      "after_sha256": "313313d145da8004b6eacd16f71798c7fe3de69c25fbcfef4deea6a9c1c63bf8",
+      "semantic_AST_sha256": "7d4f848c2f4b368d13dcb5f31f621fb36b7809e593c097afeb5be0faf51f372f",
+      "equal_AST_excluding_locations": true,
+      "lines": 2000
+    },
+    {
+      "path": "factoryline/runtime_audit_integrity.py",
+      "before_sha256": "f6b928dbd58d5b43b09f97553dc9c9127d81f95ace6e81b510f8b18d90c72dbe",
+      "after_sha256": "3494baac0321d70fdab6dc1fa7fe8665ec0b818aa1f6599d54bee10211af0863",
+      "semantic_AST_sha256": "ea1d11e8c5ddf6fee6c2ceb02d2e94f92467e062f485e18cb2b2a057af3ac096",
+      "equal_AST_excluding_locations": true,
+      "lines": 4659
+    },
+    {
+      "path": "tests/test_context_efficiency.py",
+      "before_sha256": "ab1528ef72e6762984e31845cd7c38c49555fd3ded663a1c728b67ceebbaa859",
+      "after_sha256": "90e506baef2cfdc3ad0d40c90a155db7bf5e69df9e907ab1e62e1368c0921c0c",
+      "semantic_AST_sha256": "653e88d81812ee90c813082ce2db37521acbfd7d8cbbad25cc66880a91222cfa",
+      "equal_AST_excluding_locations": true,
+      "lines": 4622
+    }
+  ],
+  "checks": [
+    {
+      "command": [
+        "C:\\Users\\rkatz\\AppData\\Local\\Programs\\Python\\Python311\\python.exe",
+        "-m",
+        "ruff",
+        "format",
+        "--check",
+        "factoryline/deep_audit_io.py",
+        "factoryline/runtime_audit_integrity.py",
+        "tests/test_context_efficiency.py"
+      ],
+      "exit_code": 0,
+      "log": ".factory/precision243/formatting/check-0.txt",
+      "log_sha256": "81e0708af79a682467b0ecbd3453a0a33cfcbbe2812201b4d4f405f78ded2976"
+    },
+    {
+      "command": [
+        "C:\\Users\\rkatz\\AppData\\Local\\Programs\\Python\\Python311\\python.exe",
+        "-m",
+        "ruff",
+        "check",
+        "factoryline/deep_audit_io.py",
+        "factoryline/runtime_audit_integrity.py",
+        "tests/test_context_efficiency.py",
+        "--select",
+        "E4,E7,E9,F,C901"
+      ],
+      "exit_code": 0,
+      "log": ".factory/precision243/formatting/check-1.txt",
+      "log_sha256": "a4443afdcfb6d7363adb285762515ccf7cf50473b1a05c20c1a50f6bed4d26b0"
+    },
+    {
+      "command": [
+        "C:\\Users\\rkatz\\AppData\\Local\\Programs\\Python\\Python311\\python.exe",
+        "-m",
+        "factoryline.cli",
+        "architecture",
+        "health",
+        "--root",
+        "C:\\Users\\rkatz\\Documents\\Codex\\cf-gate-consolidation162",
+        "--json"
+      ],
+      "exit_code": 0,
+      "log": ".factory/precision243/formatting/check-2.txt",
+      "log_sha256": "49a3a907dd43d79d110627f50326ea70ad62702e732499bd1d4e5573a4924097"
+    }
+  ],
+  "runtime_tests_rerun": false,
+  "reused_runtime_evidence": "generation14 nine focusedPASS; same ASTsemantics, locations changed by format. No global/performance/precision readiness claim.",
+  "review": {
+    "path": ".factory/precision243/formatting/ecc-review.json",
+    "sha256": "b289bb2d108f0da794b32c8920227a164e3f799f780577cae64adb168e94a0a8"
+  },
+  "workflow": {
+    "state": "INCOMPLETE",
+    "reason": "Program performance andglobalqualification remainopen; no merge/releaseclaim.",
+    "sha256": "d8668b086739e4f0e6f01766fadc381ed3e5f32baa93c9fd1ae82abbc8a6e0af"
+  }
+}

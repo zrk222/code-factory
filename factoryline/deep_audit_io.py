@@ -788,10 +788,10 @@ def _full_repository_runtime_epoch(root: Path, configuration: str, audit) -> str
         audit._security_scan_tree,
         audit._pytest_collection_config,
         audit._oracle_import_source,
-        audit.contracts.bound_snapshots, audit._oracle_tree_fingerprint,
+        audit.contracts.bound_snapshots,
+        audit._oracle_tree_fingerprint,
     )
-    # Discover profile helpers by their owned namespace so extracting a helper
-    # cannot silently omit its live binding from the resume-cache identity.
+    # Owned profile helpers retain their live binding in the resume-cache identity.
     from . import runtime_audit_integrity as workspace_engine
 
     full_repository_workspace_scan_batch = (

@@ -4288,8 +4288,14 @@ def full_repository_workspace_scan_batch(
         else:
             raw, findings, status = scanned
             tree = _full_repository_workspace_dependency_tree(
-                engine, audit, root, path, source_by_name[path.relative_to(root).as_posix()],
-                source_bytes.get(path), raw, status,
+                engine,
+                audit,
+                root,
+                path,
+                source_by_name[path.relative_to(root).as_posix()],
+                source_bytes.get(path),
+                raw,
+                status,
             )
         if raw is not None:
             bindings.append(raw)
@@ -4580,11 +4586,15 @@ def _full_repository_workspace_dependency_tree(
         or engine.sha256_bytes(data) != binding.get("sha256")
         or binding.get("sha256") != source["sha256"]
     ):
-        raise RuntimeAuditError("SOURCE_DRIFT", "dependency source differs from audited bytes")
+        raise RuntimeAuditError(
+            "SOURCE_DRIFT", "dependency source differs from audited bytes"
+        )
     try:
         return audit._measure_parse(audit.ast.parse, data, root, path)
     except (SyntaxError, UnicodeError, RecursionError) as exc:
-        raise RuntimeAuditError("SOURCE_DRIFT", "audited dependency source no longer parses") from exc
+        raise RuntimeAuditError(
+            "SOURCE_DRIFT", "audited dependency source no longer parses"
+        ) from exc
 
 
 def _full_repository_workspace_security_context(engine, generation, audit):
