@@ -2,7 +2,7 @@
   "schema": "factory.integrated-regression-qualification226.v1",
   "source_sha256": {
     "factoryline/test_oracle_misuse.py": "5d6fbc508fe06577d0cc06dc5375be1e8d9c6de011f5f1aafa14753704d9a289",
-    "factoryline/review_audits.py": "07b5cfb15c507ce92dbdda55373715ba93cd4d46bc0e7209d7c458d92db12102",
+    "factoryline/review_audits.py": "171e0369a030a2b754a3d4ad73f387f92cb93b56817b284e0c1c90cbcd21afc4",
     "factoryline/context_efficiency.py": "108d6db1bf39f73fd1dd9e7aff956b019fa9f6339bfa514a6db2daca44aeb533"
   },
   "initial_integrated_full_run": {
@@ -74,7 +74,8 @@
     "approved_predecessor": "0ea50afa74afaa1ad4230534dc53af6c8b99b4a0591d3e530293f42fce6713a3",
     "final_delta_independent_ecc": "PASS_SCOPED_SOURCE_DELTA_AND_REGRESSION_EVIDENCE_GLOBAL_INCOMPLETE",
     "final_delta_receipt_sha256": "beb0577ab73ba42d3f04a978ed44e627fd47300c97881a22c4bb2277f69dcf6f",
-    "format_cap_review_sha256": "e95a39e99a5c1c81bcd7ec21a8730a8d4a2714a5860e9a05bb42fe43c546fdd5"
+    "format_cap_review_sha256": "e95a39e99a5c1c81bcd7ec21a8730a8d4a2714a5860e9a05bb42fe43c546fdd5",
+    "c901_guard_review_sha256": "82480cb0331f3e7935807dd625c4dfb77d3d469745008c45f8e2e4607cfce8ce"
   },
   "format_successor": {
     "schema": "factory.format-cap-repair226.v1",
@@ -110,6 +111,22 @@
       "Callback context helper still resolved afresh for each iteration; no new cross-file helper cache.",
       "Same context dictionary construction, update and scan_snapshot object; snapshots cleared in same finally."
     ]
+  },
+  "c901_guard_successor": {
+    "schema": "factory.c901-guard-equivalence226.v1",
+    "source": "factoryline\\review_audits.py",
+    "before_sha256": "07b5cfb15c507ce92dbdda55373715ba93cd4d46bc0e7209d7c458d92db12102",
+    "after_sha256": "171e0369a030a2b754a3d4ad73f387f92cb93b56817b284e0c1c90cbcd21afc4",
+    "normalized_module_ast_identical": true,
+    "guard_order": [
+      "source_node_reachable",
+      "_in_current_test_body",
+      "_effective_assertion"
+    ],
+    "effects": "Identical ordered short-circuit checks and continue; no eligibility expansion.",
+    "prior_commit_message_correction": "efac329a claimed C901PASS prematurely; recorded command actually found11>10. This successor repairs that gate; global native quality remains incomplete.",
+    "tests_run": false,
+    "precision_gain": null
   },
   "full_run_on_final_bytes": "NOT_RUN",
   "full_ci_green": false,

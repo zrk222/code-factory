@@ -2989,9 +2989,11 @@ def _source_callback_parameters(function, methods, depth=0, aliases=None):
         function, methods, nodes, depth, aliases or {}
     )
     for call in (item for item in nodes if isinstance(item, ast.Call)):
-        if not oracle_misuse.source_node_reachable(call):
-            continue
-        if not _in_current_test_body(call) or not _effective_assertion(call, aliases):
+        if (
+            not oracle_misuse.source_node_reachable(call)
+            or not _in_current_test_body(call)
+            or not _effective_assertion(call, aliases)
+        ):
             continue
         if isinstance(call.func, ast.Name) and call.func.id in parameters:
             if isinstance(
