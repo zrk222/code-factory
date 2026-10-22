@@ -386,7 +386,7 @@ def django_test_secret_index(
     if any(not isinstance(raw, bytes) for raw in configs.values()):
         return None
     try:
-        import tomllib
+        from .review_audits import tomllib
 
         pyproject = tomllib.loads(configs["pyproject.toml"].decode("utf-8"))
         tox = configparser.ConfigParser()
