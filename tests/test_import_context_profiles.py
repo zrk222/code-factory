@@ -902,3 +902,70 @@ def test_proven_inert_bodies_are_not_unknown_guidance_fixtures(tmp_path, source)
     report = audit.security_scan(tmp_path, cache_enabled=False)
     assert report["finding_counts"] == {"QUALITY_HOLLOW_TEST": 1}
     assert report["findings"][0]["severity"] == "MEDIUM"
+
+
+def _application_import_binding(signature, asynchronous, attribute):
+    """Build a hash-bound source slice without importing the synthetic provider."""
+    import hashlib
+    from factoryline import mock_fixture_provenance as fixtures
+
+    statement = (
+        "import provider as client"
+        if attribute
+        else "from provider import api as client"
+    )
+    expression = "client.api" if attribute else "client"
+    source = (
+        f"{statement}\n{'async ' if asynchronous else ''}def exercise({signature}):\n"
+        f"    return {expression}()\n"
+    ).encode()
+    path, tree = Path("repository/test_api.py"), ast.parse(source)
+    digest = hashlib.sha256(source).hexdigest()
+    tree._oracle_source_sha256 = digest
+    index = fixtures.application_test_index(
+        Path("repository"), {path: tree}, {path: source}, {path: digest}
+    )
+    function = tree.body[1]
+    expression = function.body[0].value.func
+    return fixtures._app_expression_name(index, path, expression, function)
+
+
+@pytest.mark.parametrize(
+    "signature", ["client", "client, /", "*, client", "*client", "**client"]
+)
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.parametrize("attribute", [False, True])
+def test_application_provider_import_is_not_a_shadowing_parameter(
+    signature, asynchronous, attribute
+):
+    assert _application_import_binding(signature, asynchronous, attribute) is None
+
+
+@pytest.mark.parametrize("signature", ["", "*other", "**other", "*, other=None"])
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.parametrize("attribute", [False, True])
+def test_application_provider_import_survives_unrelated_parameters(
+    signature, asynchronous, attribute
+):
+    assert (
+        _application_import_binding(signature, asynchronous, attribute)
+        == "provider.api"
+    )
+
+
+@pytest.mark.parametrize("mutation", ["binding", "code"])
+def test_application_parameter_helper_mutation_invalidates_native_context(
+    tmp_path, monkeypatch, mutation
+):
+    from factoryline import credential_role_identity_effects as effects
+
+    before = audit._oracle_context_cache_key(tmp_path, [], {})
+
+    def unsafe_names(function):
+        return set()
+
+    if mutation == "binding":
+        monkeypatch.setattr(effects, "_argument_names", unsafe_names)
+    else:
+        monkeypatch.setattr(effects._argument_names, "__code__", unsafe_names.__code__)
+    assert audit._oracle_context_cache_key(tmp_path, [], {}) != before

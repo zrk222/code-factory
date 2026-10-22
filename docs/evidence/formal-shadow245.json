@@ -1,0 +1,139 @@
+{
+  "schema": "factory.scoped-repair.v1",
+  "scope": "formal-shadow245",
+  "recorded_at": "2026-10-22T18:16:03.683370+00:00",
+  "base_commit": "5828e8cae0225718c735a6000395d2560a719344",
+  "change": "Resolve application provider aliases only when no parameter of any kind shadows the imported name. Reuse the existing shared all-parameter helper.",
+  "sources": [
+    {
+      "path": "factoryline/mock_fixture_provenance.py",
+      "sha256": "14dc34bcd4af620bb4200fce330b4095f75406e9480e1eb0177e64805962a75b",
+      "kind": "code"
+    },
+    {
+      "path": "tests/test_import_context_profiles.py",
+      "sha256": "3456f428fd01fdd772ca6090b6c3c059befff4dbfb7d65333b9c1dcc73b0c457",
+      "kind": "test"
+    }
+  ],
+  "receipts": {
+    "before": {
+      "path": ".factory/precision241/targeted/import245-formal-shadow-before/receipt.json",
+      "sha256": "c4af93e8f0ea6faf24bdd622d5768a088c4ab5d2a4caf6e59312c050864e3a02",
+      "kind": "receipt",
+      "state": "FINISHED",
+      "exit_code": 1,
+      "seconds": 2.578,
+      "registration_sha256": "2691ac7d60b939d8e4e5befe1770ff49efcbdad2a9a9050cbbae78ad514e8d8b",
+      "inputs_unchanged": true,
+      "log_sha256": "78902205ef8d70bc953f4af654b8b9cf11f5ac4684aa59b292ba1e4a6037af78",
+      "xml_sha256": "fccf5e9fb26c9bac67b61d350f64bda18d7fb413d5b32e8190e305fc28062a15",
+      "precision_claim": null
+    },
+    "after": {
+      "path": ".factory/precision241/targeted/import245-formal-shadow-after/receipt.json",
+      "sha256": "eea0b59152abdd029669b940041bc555b77f96a0543e3a8943e2e4ec8f1d0b67",
+      "kind": "receipt",
+      "state": "FINISHED",
+      "exit_code": 0,
+      "seconds": 2.282,
+      "registration_sha256": "c105093d906938801bb5a32e5b4b1c4e56ad3ae10b1a244aadcf440e71fff152",
+      "inputs_unchanged": true,
+      "log_sha256": "72fbe8dedaf4d5d5f6fa717b678bcb16570fc55617180034c98073b09ae7cd60",
+      "xml_sha256": "05ebf5007bddebbcca9a0be384c9132616cba054a0cb32842992499413c65be2",
+      "precision_claim": null
+    },
+    "cache": {
+      "path": ".factory/precision241/targeted/import245-formal-shadow-cache/receipt.json",
+      "sha256": "39d6041c4aed6b0a6690ceb0b6e768114725a3aefd2b373adeb6744bd867a3f9",
+      "kind": "receipt",
+      "state": "FINISHED",
+      "exit_code": 0,
+      "seconds": 2.657,
+      "registration_sha256": "50f2a724055f87013353cdcbe1435347ffea85a0f7cdd6ecb51ea6613d10de50",
+      "inputs_unchanged": true,
+      "log_sha256": "15353778da4b03e53afb97e76cc2e981e279219f116e101414093ae0fb4fe47a",
+      "xml_sha256": "cd77e50db51c0ca2ac2de48e2a4837900ec01846f409b418876e2abb7c941477",
+      "precision_claim": null
+    }
+  },
+  "tests": {
+    "before": {
+      "failed": 8,
+      "passed": 28
+    },
+    "after": {
+      "passed": 36
+    },
+    "additional_cache_controls": {
+      "passed": 2
+    },
+    "full_suite_rerun": false
+  },
+  "review": {
+    "path": ".factory/precision245/ecc-formal-shadow-review.json",
+    "sha256": "02dcf16b85010e139c09b2b73f1b526684076ad642435669b538b862ce14c514",
+    "kind": "review"
+  },
+  "gates": [
+    {
+      "path": ".factory/precision245/formal-shadow-gates/architecture.log",
+      "sha256": "76b7a0d2ad7cf589b1a4c97493437cd5bcc82aab1cea4874923bbd3e5b01fd2a",
+      "kind": "log"
+    },
+    {
+      "path": ".factory/precision245/formal-shadow-gates/lint.log",
+      "sha256": "a4443afdcfb6d7363adb285762515ccf7cf50473b1a05c20c1a50f6bed4d26b0",
+      "kind": "log"
+    },
+    {
+      "path": ".factory/precision245/formal-shadow-gates/format.log",
+      "sha256": "97d85b4b6c185a05396e2d09a3c304ff0f7cc77f8b7b7bb7989ec6cd875b3898",
+      "kind": "log"
+    }
+  ],
+  "architecture": {
+    "decision": "HEALTHY",
+    "files": 429,
+    "core_modules": 133,
+    "caps": {
+      "files": 464,
+      "core_modules": 133
+    },
+    "caps_changed": false
+  },
+  "source_line_delta": -4,
+  "new_production_modules": 0,
+  "excluded_private_prototype": "Configured captured-import consumer v4 remains rejected and is not integrated.",
+  "base_ci": {
+    "head": "5828e8cae0225718c735a6000395d2560a719344",
+    "python_jobs_passed": 9,
+    "candidate_ci": "NOT_RUN",
+    "record": {
+      "path": ".factory/precision245/ci-matrix/report.json",
+      "sha256": "e7507512967e6964e0a4396150d34be2615895872d705e3bf24331eb3f395ab9",
+      "kind": "evidence"
+    }
+  },
+  "precision": {
+    "candidate_actionable_precision": null,
+    "new_held_out_run": "NOT_RUN",
+    "last_frozen_study": "study225",
+    "tp": 0,
+    "fp": 49,
+    "unclear": 8,
+    "decided_precision_percent": 0.0,
+    "wilson_95_percent": [
+      0.0,
+      7.269781922
+    ],
+    "labelers": "Two same-model AI contexts; no human adjudication",
+    "evidence_path": "docs/evidence/fresh-heldout-study225.json",
+    "gain_claim": false
+  },
+  "remaining": [
+    "Actionable precision >=35% on >=30 decided held-out alerts for merge",
+    "Full-program quality and large-repository <=180s qualification",
+    "No release or merge approval from this scoped fix"
+  ]
+}

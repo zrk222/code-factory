@@ -3896,6 +3896,7 @@ def application_test_index(
 def _app_expression_name(index, path, node, function=None):
     """Resolve only the requested binding; unrelated shadowing is irrelevant."""
     from .credential_role_constructor_provider import binding_occurrences
+    from .credential_role_identity_effects import _argument_names
 
     if isinstance(node, ast.Attribute):
         base = _app_expression_name(index, path, node.value, function)
@@ -3917,14 +3918,9 @@ def _app_expression_name(index, path, node, function=None):
     bindings = binding_occurrences(scope.body, node.id)
     if len(bindings) != 1 or not isinstance(bindings[0], (ast.Import, ast.ImportFrom)):
         return None
-    if isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)) and any(
-        arg.arg == node.id
-        for arg in [
-            *function.args.posonlyargs,
-            *function.args.args,
-            *function.args.kwonlyargs,
-        ]
-    ):
+    if isinstance(
+        function, (ast.FunctionDef, ast.AsyncFunctionDef)
+    ) and node.id in _argument_names(function):
         return None
     rows = _django_import_rows(bindings[0], package)
     return next((target for name, target in rows or () if name == node.id), None)
