@@ -10076,9 +10076,9 @@ def test_registered_flask_callback_requires_dispatch_and_propagation(
         ("if False:\n            await send(scope)", {"QUALITY_HOLLOW_TEST": 1}),
         (
             "try:\n            await send(scope)\n        except AssertionError:\n            pass",
-            {"QUALITY_HOLLOW_TEST": 1},
+            {"QUALITY_UNKNOWN_TEST_ORACLE": 1},
         ),
-        ("send = noop\n        await send(scope)", {"QUALITY_HOLLOW_TEST": 1}),
+        ("send = noop\n        await send(scope)", {"QUALITY_UNKNOWN_TEST_ORACLE": 1}),
     ],
 )
 def test_source_resolved_async_callback_requires_escaping_await(
@@ -10265,7 +10265,7 @@ def test_source_callback_rejects_constructor_method_override(tmp_path, mutation)
             "async def dispatch(self, value):\n            assert value == expected",
             "Application(None)",
             "await app({})",
-            {"QUALITY_HOLLOW_TEST": 1},
+            {"QUALITY_UNKNOWN_TEST_ORACLE": 1},
         ),
         (
             "await self.dispatch_func(scope)",
@@ -10279,14 +10279,14 @@ def test_source_callback_rejects_constructor_method_override(tmp_path, mutation)
             "async def dispatch(self, value):\n            assert value == expected",
             "Application(None, dispatch=noop)",
             "await app({})",
-            {"QUALITY_HOLLOW_TEST": 1},
+            {"QUALITY_UNKNOWN_TEST_ORACLE": 1},
         ),
         (
             "await self.dispatch_func(scope)",
             "async def dispatch(self, value):\n            assert value == expected",
             "Application(None)",
             "app.dispatch_func = noop\n    await app({})",
-            {"QUALITY_HOLLOW_TEST": 1},
+            {"QUALITY_UNKNOWN_TEST_ORACLE": 1},
         ),
         (
             "await self.dispatch_func(scope)",
@@ -10307,7 +10307,7 @@ def test_source_callback_rejects_constructor_method_override(tmp_path, mutation)
             "async def dispatch(self, value):\n            assert value == expected\n        dispatch = noop",
             "Application(None)",
             "await app({})",
-            {"QUALITY_HOLLOW_TEST": 1},
+            {"QUALITY_UNKNOWN_TEST_ORACLE": 1},
         ),
     ],
 )
@@ -10391,7 +10391,7 @@ def test_virtual_dispatch_rejects_class_and_source_mutations(
         ),
         (
             "scope = {'type': 'http'}\n    mutate(scope)\n    await app(scope)",
-            {"QUALITY_HOLLOW_TEST": 1},
+            {"QUALITY_UNKNOWN_TEST_ORACLE": 1},
         ),
     ],
 )
@@ -10409,17 +10409,22 @@ def test_virtual_dispatch_requires_scope_guard_to_reach_override(
 
 
 @pytest.mark.parametrize(
-    "guard,operation",
+    "guard,operation,expected",
     [
-        ("scope[b'type'] != b'http'", "await app({b'type': b'http'})"),
+        (
+            "scope[b'type'] != b'http'",
+            "await app({b'type': b'http'})",
+            {"QUALITY_UNKNOWN_TEST_ORACLE": 1},
+        ),
         (
             "scope['type'] != 'http'",
             "scope = {'type': 'http'}\n    scope['type'] = 'websocket'; await app(scope)",
+            {"QUALITY_HOLLOW_TEST": 1},
         ),
     ],
 )
 def test_virtual_dispatch_unsupported_guard_and_same_line_mutation_fail_closed(
-    tmp_path, guard, operation
+    tmp_path, guard, operation, expected
 ):
     test_inherited_virtual_dispatch_requires_default_binding_and_await(
         tmp_path,
@@ -10429,7 +10434,7 @@ def test_virtual_dispatch_unsupported_guard_and_same_line_mutation_fail_closed(
         "async def dispatch(self, value):\n            assert value == expected",
         "Application(None)",
         operation,
-        {"QUALITY_HOLLOW_TEST": 1},
+        expected,
     )
 
 
