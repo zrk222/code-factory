@@ -3,7 +3,7 @@
     {
       "name": "proof-reuse-behavior",
       "kind": "python",
-      "run": "from pathlib import Path; from tempfile import TemporaryDirectory; from factoryline.proof_reuse import proof_key; t=TemporaryDirectory(); r=Path(t.name); p=r/'input.txt'; p.write_text('green', encoding='utf-8'); g={'name':'unit','command':['python','-m','pytest'],'inputs':['input.txt'],'outputs':[],'read_only':True,'toolchain':{'python':'3.11'},'environment':{'os':'smoke'}}; k=proof_key(r,g); assert len(k)==64 and k==proof_key(r,g); p.write_text('changed', encoding='utf-8'); assert proof_key(r,g)!=k",
+      "run": "from pathlib import Path\nfrom tempfile import TemporaryDirectory\nfrom factoryline.proof_reuse import proof_key\nt = TemporaryDirectory()\nr = Path(t.name)\np = r / 'input.txt'\np.write_text('green', encoding='utf-8')\ng = {'name': 'unit', 'command': ['python', '-m', 'pytest'], 'inputs': ['input.txt'], 'outputs': [], 'read_only': True, 'toolchain': {'python': '3.11'}, 'environment': {'os': 'smoke'}}\nk = proof_key(r, g)\nassert len(k) == 64 and k == proof_key(r, g)\np.write_text('changed', encoding='utf-8')\nassert proof_key(r, g) != k\n",
       "expect_exit": 0,
       "timeout_s": 60,
       "must_fail_on_stub": true

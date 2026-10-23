@@ -41,7 +41,7 @@ ADOPTION_JOURNEYS = (
         "verification": [
             "tests/test_oracle_firewall.py",
             "tests/test_evidence_supply_line.py",
-            "tests/test_control_plane.py",
+            "tests/test_continuity.py",
         ],
         "expected_local_evidence": "A source-bound intent chain, observed file delta, independent validation, and explicit review state.",
         "next_safe_action": "Seal the original intent before the next coding run, then observe that admitted run with factory wrap.",

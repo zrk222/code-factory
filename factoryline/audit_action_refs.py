@@ -362,6 +362,8 @@ def _security_scan_state(
 ) -> str:
     if any(item["severity"] in {"CRITICAL", "HIGH"} for item in findings):
         return "BLOCKED"
+    if any(item.get("code") == "QUALITY_UNKNOWN_TEST_ORACLE" for item in findings):
+        return "INCOMPLETE"
     if database_context and database_context.get("status") not in {
         "COMPLETE",
         "NOT_APPLICABLE",
@@ -391,6 +393,208 @@ def _security_scan_action_summary(state: str) -> str:
     if state == "CLEAN":
         return "No high-risk static security or quality patterns found."
     return "Resolve each listed finding and rerun this deterministic scan before release review."
+
+
+def _application_configuration_hashes(class_profiles):
+    """Select only bounded configuration digests from explicit class profiles."""
+    config_hashes = {}
+    for evidence in class_profiles:
+        configured = evidence.get("configuration_sha256", {})
+        if not isinstance(configured, dict):
+            continue
+        for name, digest in configured.items():
+            if (
+                name in {"pyproject.toml", "requirements.txt", "tox.ini"}
+                and isinstance(digest, str)
+                and len(digest) == 64
+            ):
+                config_hashes[name] = digest
+    return config_hashes
+
+
+def _captured_application_source_bytes(workspace, findings, bindings, source_bytes):
+    paths = {
+        finding.get("path")
+        for finding in findings
+        if finding.get("facts", {}).get("disposition")
+        in {
+            "TEST_OWNED_APPLICATION_CREDENTIAL",
+            "PROVEN_CLOSED_OPERATION_COMMAND_SYNTAX",
+        }
+    }
+    for finding in findings:
+        evidence = finding.get("facts", {}).get("fixture_evidence", {})
+        closure = evidence.get("consumer_use_closure", {})
+        if evidence.get("classification") == "APPLICATION_TEST_CREDENTIAL_ROLE":
+            paths.update(
+                row.get("path")
+                for row in closure.get("operations", [])
+                if isinstance(row, dict)
+            )
+    hashes = {row["path"]: row["sha256"] for row in bindings}
+    class_profiles = [
+        finding.get("facts", {}).get("fixture_evidence", {})
+        for finding in findings
+        if finding.get("facts", {}).get("fixture_evidence", {}).get("profile")
+        == "DJANGO_CLASS_LOCAL_ACCOUNT_ENROLLMENT"
+    ]
+    config_hashes = _application_configuration_hashes(class_profiles)
+    if class_profiles:
+        # Class evidence requires the whole captured Python inventory.
+        paths.update(name for name in hashes if name.endswith(".py"))
+    paths.update(config_hashes)
+    hashes.update(config_hashes)
+    jwt_findings = [
+        finding
+        for finding in findings
+        if finding.get("facts", {}).get("disposition")
+        in {
+            "PROVEN_LOCAL_CRYPTO_TEST_PRIMITIVE",
+            "PROVEN_CLOSED_OPERATION_COMMAND_SYNTAX",
+            "ENDPOINT_DECLARATION_ROLE_PROVEN",
+        }
+    ]
+    if jwt_findings:
+        # Revalidation uses the complete current source inventory, including
+        # imported initializers and shadows; selective capture would omit risks.
+        paths.update(hashes)
+    captured = {}
+    for relative in paths:
+        if not isinstance(relative, str):
+            continue
+        data = source_bytes.get(workspace / relative)
+        if relative in config_hashes and not isinstance(data, bytes):
+            try:
+                data = (workspace / relative).read_bytes()
+            except OSError:
+                continue
+        if (
+            isinstance(data, bytes)
+            and len(data) <= 1_000_000
+            and sha256(data).hexdigest() == hashes.get(relative)
+        ):
+            captured[relative] = data
+    return captured
+
+
+class _SourceBoundSecurityReport(dict):
+    """Keep captured bytes outside the serializable report for local revalidation."""
+
+    __slots__ = ("_captured_sources",)
+
+    def copy(self):
+        """Copy public fields while retaining the immutable source capture."""
+        result = _SourceBoundSecurityReport(self)
+        result._captured_sources = self._captured_sources
+        return result
+
+
+def seal_security_scan(audit, core: dict[str, Any]) -> dict[str, Any]:
+    """Revalidate local captures on every seal; never serialize their source bytes."""
+    prior_state, prior_summary = core.get("state"), core.get("action_summary")
+    captured = core.pop("_primitive_source_bytes", None)
+    if captured is None and type(core) is _SourceBoundSecurityReport:
+        captured = dict(core._captured_sources)
+    if captured is not None:
+        core["_primitive_source_bytes"] = captured
+    try:
+        audit.integrity.partition_proven_primitive_observations(core)
+    finally:
+        core.pop("_primitive_source_bytes", None)
+    if prior_state == "INCOMPLETE" and core.get("state") == "CLEAN":
+        core["state"] = "INCOMPLETE"
+        core["action_summary"] = prior_summary or audit._security_scan_action_summary(
+            "INCOMPLETE"
+        )
+    candidate = sha256(
+        json.dumps(
+            audit._security_scan_report_candidate_payload(core),
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    core["candidate_sha256"] = candidate
+    core["agent_actions"] = [
+        audit.audit_remediation_packet(candidate, item) for item in core["findings"]
+    ]
+    core.pop("audit_sha256", None)
+    core["audit_sha256"] = sha256(
+        json.dumps(
+            core, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode("utf-8")
+    ).hexdigest()
+    if captured:
+        result = _SourceBoundSecurityReport(core)
+        result._captured_sources = tuple(captured.items())
+        return result
+    return core
+
+
+def security_scan_report(
+    audit,
+    files: list[Path],
+    findings: list[dict[str, Any]],
+    bindings: list[dict[str, Any]],
+    counts: dict[str, int],
+    outcomes: dict[str, int],
+    tenant_read_calls: tuple[str, ...],
+    tenant_read_bindings: dict[str, tuple[str, ...]],
+    oracle_edges: list[dict[str, Any]],
+    oracle_configuration: list[dict[str, Any]],
+    database_context: dict | None = None,
+    tenant_policy_applies: bool = False,
+    primitive_source_bytes: dict[str, bytes] | None = None,
+) -> dict[str, Any]:
+    """Assemble and seal the bounded Python security scan report with coverage, source bindings, findings, and its non-runtime, non-approval limits."""
+    audit_coverage = audit._security_scan_coverage(
+        files, outcomes, audit.MAX_SECURITY_SOURCE_FILES
+    )
+    state = audit._security_scan_state(
+        files, findings, database_context, audit_coverage
+    )
+    core: dict[str, Any] = {
+        "schema": audit.SECURITY_SCHEMA,
+        "marker": "SECURITY_AUDIT_COMPLETE",
+        "state": state,
+        "files_scanned": len(bindings),
+        "parse_errors": outcomes["syntax_error"],
+        "unreadable_sources": outcomes["unreadable"],
+        "oversized_sources": outcomes["too_large"],
+        "audit_coverage": audit_coverage,
+        "tenant_read_contract": audit._tenant_read_contract(
+            tenant_read_calls, tenant_read_bindings, tenant_policy_applies
+        ),
+        "oracle_context": audit.contracts.import_context_metadata(
+            files, oracle_edges, oracle_configuration
+        ),
+        "sources": bindings,
+        "_primitive_source_bytes": primitive_source_bytes or {},
+        "database_context": database_context or {},
+        "findings": findings,
+        "finding_counts": dict(sorted(counts.items())),
+        "governance": "human_controlled",
+        "authority": {
+            "execution": False,
+            "approval": False,
+            "publication": False,
+            "deployment": False,
+        },
+        "claim_boundary": "Bounded Python AST pattern scan only. Declared tenant argument bindings verify syntactic pass-through, not tenant identity, authorization, or access isolation; this is not a penetration test, runtime exploit proof, dependency advisory, or release approval.",
+    }
+    core["source_manifest_sha256"] = audit.sha256(
+        json.dumps(
+            {
+                "sources": bindings,
+                "oracle_context": core["oracle_context"],
+                "database_context": core["database_context"],
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        ).encode("utf-8")
+    ).hexdigest()
+    core["action_summary"] = audit._security_scan_action_summary(state)
+    return audit._seal_security_scan(core)
 
 
 def _security_scan_coverage(

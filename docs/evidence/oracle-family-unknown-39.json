@@ -1,0 +1,419 @@
+{
+  "schema": "factory.oracle-family-expectation-reconciliation.v1",
+  "scope": "Expectation-only reconciliation for26 whole families/39 cases; scanner and embedded fixture source unchanged",
+  "criterion": "HOLLOW requires proved inert/nonraising completion; an undefined call or unresolved provider may raise and remains UNKNOWN.",
+  "families": {
+    "test_virtual_dispatch_rejects_class_and_source_mutations": 4,
+    "test_security_scan_rejects_rebound_benchmark_decorator": 3,
+    "test_security_scan_detects_suppress_context_for_assertion": 2,
+    "test_security_scan_does_not_execute_nested_warning_filter_syntax": 2,
+    "test_security_scan_does_not_trust_captured_pytest_raises_alias": 2,
+    "test_security_scan_rejects_helper_swallowing_broad_assertion": 2,
+    "test_security_scan_rejects_lookalike_benchmark_signals": 2,
+    "test_security_scan_rejects_unrelated_benchmark_imports": 2,
+    "test_source_callback_rejects_aliased_assertion_handler": 2,
+    "test_source_callback_rejects_constructor_method_override": 2,
+    "test_callback_oracle_requires_direct_invocation_not_callback_passing": 1,
+    "test_flask_fixture_rejects_positional_config_update": 1,
+    "test_import_behavior_does_not_exempt_unrelated_test_name": 1,
+    "test_security_scan_does_not_credit_nested_helper_before_definition": 1,
+    "test_security_scan_does_not_credit_unrelated_call_after_swallowed_warning": 1,
+    "test_security_scan_does_not_skip_untyped_benchmark_named_security_test": 1,
+    "test_security_scan_does_not_trust_assertion_alias_call_inside_comprehension": 1,
+    "test_security_scan_does_not_trust_imported_noop_helper": 1,
+    "test_security_scan_does_not_trust_imported_production_function": 1,
+    "test_security_scan_does_not_trust_local_noop_unittest_named_method": 1,
+    "test_security_scan_does_not_trust_unused_assertion_callback": 1,
+    "test_security_scan_invalidates_oracle_alias_after_branch_star_import": 1,
+    "test_security_scan_keeps_negative_callback_and_import_alias_controls": 1,
+    "test_security_scan_nearer_fixture_override_invalidates_click_runner": 1,
+    "test_security_scan_rejects_assertion_swallowed_by_finally_return": 1,
+    "test_security_scan_rejects_imported_helper_that_swallows_assertion": 1
+  },
+  "cases": [
+    {
+      "case": "test_import_behavior_does_not_exempt_unrelated_test_name",
+      "family": "test_import_behavior_does_not_exempt_unrelated_test_name",
+      "decision": "KEEP_UNKNOWN",
+      "rationale": "Uncaptured product import may execute unresolved initializer/import effects, or source contains forbidden function-local star import; no complete nonraising proof.",
+      "captured_source_sha256": {
+        "test_interfaces.py": "c72f61ee6accdb46d312132f13e65cbc08fc8161a16699949bc8d108436fc3c6"
+      }
+    },
+    {
+      "case": "test_security_scan_does_not_credit_nested_helper_before_definition",
+      "family": "test_security_scan_does_not_credit_nested_helper_before_definition",
+      "decision": "KEEP_UNKNOWN",
+      "rationale": "bar is a function-local binding called before its definition: UnboundLocalError, not a nonraising empty test.",
+      "captured_source_sha256": {
+        "test_behavior.py": "e6b7a685d3fb66a3620d8394ca317ff12a0c5713733b4861df18e5193e930557"
+      }
+    },
+    {
+      "case": "test_callback_oracle_requires_direct_invocation_not_callback_passing",
+      "family": "test_callback_oracle_requires_direct_invocation_not_callback_passing",
+      "decision": "KEEP_UNKNOWN",
+      "rationale": "Only conditional/swallowed/registered callbacks are the failed assertions. Their unresolved enabled/compute/register names prevent HOLLOW; preserve the two existing direct invocation positives.",
+      "captured_source_sha256": {
+        "test_callback.py": "6530097888f22eced0db156288386bcf8d4062867901543687e08b367f7424ec"
+      }
+    },
+    {
+      "case": "test_security_scan_rejects_imported_helper_that_swallows_assertion",
+      "family": "test_security_scan_rejects_imported_helper_that_swallows_assertion",
+      "decision": "KEEP_UNKNOWN",
+      "rationale": "An undefined value/callee is evaluated before any claimed vacuous assertion or inside a handler that does not catch its NameError. No whole-body nonraising proof.",
+      "captured_source_sha256": {
+        "helpers.py": "23d217ae048204753bf8160aa1ad9c163c43b7e05920887c77e36e1dec50a429",
+        "test_case.py": "ce3097a03bf2d62d1efb6be1517328dd463a98e27144876463623c6c4327a5e2"
+      }
+    },
+    {
+      "case": "test_security_scan_does_not_credit_unrelated_call_after_swallowed_warning",
+      "family": "test_security_scan_does_not_credit_unrelated_call_after_swallowed_warning",
+      "decision": "KEEP_UNKNOWN",
+      "rationale": "The warning is caught but a later undefined compute() escapes.",
+      "captured_source_sha256": {
+        "test_case.py": "19353dff105bc1aa4be307b51e3cff0285a3ef8817577bad529fecff05778077"
+      }
+    },
+    {
+      "case": "test_security_scan_does_not_execute_nested_warning_filter_syntax[if False:\\n            warnings.simplefilter('error')]",
+      "family": "test_security_scan_does_not_execute_nested_warning_filter_syntax",
+      "decision": "KEEP_UNKNOWN",
+      "rationale": "An undefined value/callee is evaluated before any claimed vacuous assertion or inside a handler that does not catch its NameError. No whole-body nonraising proof.",
+      "captured_source_sha256": {
+        "test_case.py": "5578cdaf6ae52e56d32caa8656a401111607152bab3e651e0fe1ec98de7910ea"
+      }
+    },
+    {
+      "case": "test_security_scan_does_not_execute_nested_warning_filter_syntax[def configure():\\n            warnings.simplefilter('error')]",
+      "family": "test_security_scan_does_not_execute_nested_warning_filter_syntax",
+      "decision": "KEEP_UNKNOWN",
+      "rationale": "An undefined value/callee is evaluated before any claimed vacuous assertion or inside a handler that does not catch its NameError. No whole-body nonraising proof.",
+      "captured_source_sha256": {
+        "test_case.py": "6cb6043927b96f06629ac3a4080966f2bf8150088a5e36294d1c5a7546341164"
+      }
+    },
+    {
+      "case": "test_security_scan_rejects_helper_swallowing_broad_assertion[Exception]",
+      "family": "test_security_scan_rejects_helper_swallowing_broad_assertion",
+      "decision": "KEEP_UNKNOWN",
+      "rationale": "An undefined value/callee is evaluated before any claimed vacuous assertion or inside a handler that does not catch its NameError. No whole-body nonraising proof.",
+      "captured_source_sha256": {
+        "helpers.py": "0cedbfa36ffbd63118e07cdc6e34d88d8a42304dec9eba37cc69f3348f0345ee",
+        "test_case.py": "ce3097a03bf2d62d1efb6be1517328dd463a98e27144876463623c6c4327a5e2"
+      }
+    },
+    {
+      "case": "test_security_scan_rejects_helper_swallowing_broad_assertion[(AssertionError, ValueError)]",
+      "family": "test_security_scan_rejects_helper_swallowing_broad_assertion",
+      "decision": "KEEP_UNKNOWN",
+      "rationale": "An undefined value/callee is evaluated before any claimed vacuous assertion or inside a handler that does not catch its NameError. No whole-body nonraising proof.",
+      "captured_source_sha256": {
+        "helpers.py": "9322767f3a7677eb1f00c4afd061020172a34f95e00c130ba709610a75090038",
+        "test_case.py": "ce3097a03bf2d62d1efb6be1517328dd463a98e27144876463623c6c4327a5e2"
+      }
+    },
+    {
+      "case": "test_security_scan_detects_suppress_context_for_assertion[from contextlib import suppress as ignore\\n-ignore]",
+      "family": "test_security_scan_detects_suppress_context_for_assertion",
+      "decision": "KEEP_UNKNOWN",
+      "rationale": "An undefined value/callee is evaluated before any claimed vacuous assertion or inside a handler that does not catch its NameError. No whole-body nonraising proof.",
+      "captured_source_sha256": {
+        "test_case.py": "036c611f70804ceeea9909d17a0b1669efb8760ba149886eed169ad8f15bd42a"
+      }
+    },
+    {
+      "case": "test_security_scan_detects_suppress_context_for_assertion[import contextlib as context\\n-context.suppress]",
+      "family": "test_security_scan_detects_suppress_context_for_assertion",
+      "decision": "KEEP_UNKNOWN",
+      "rationale": "An undefined value/callee is evaluated before any claimed vacuous assertion or inside a handler that does not catch its NameError. No whole-body nonraising proof.",
+      "captured_source_sha256": {
+        "test_case.py": "df954964580babe2ca39179b4d21f123bba7ddb5245553e6edb7c578e38c80db"
+      }
+    },
+    {
+      "case": "test_security_scan_rejects_assertion_swallowed_by_finally_return",
+      "family": "test_security_scan_rejects_assertion_swallowed_by_finally_return",
+      "decision": "KEEP_UNKNOWN",
+      "rationale": "Undefined compute is evaluated in caller before entering the imported assertion helper; helper finally return cannot suppress that failure.",
+      "captured_source_sha256": {
+        "helpers.py": "24b96bf0beef6b3c058871c98c6fc197c3c39be01d9b8c621e916b2ec9ea80aa",
+        "test_case.py": "ce3097a03bf2d62d1efb6be1517328dd463a98e27144876463623c6c4327a5e2"
+      }
+    },
+    {
+      "case": "test_security_scan_does_not_trust_imported_production_function",
+      "family": "test_security_scan_does_not_trust_imported_production_function",
+      "decision": "KEEP_UNKNOWN",
+      "rationale": "An undefined value/callee is evaluated before any claimed vacuous assertion or inside a handler that does not catch its NameError. No whole-body nonraising proof.",
+      "captured_source_sha256": {
+        "library.py": "f76f2ae707922f55675fc501c456ca3283a2d55329939c5bc5f2d427494c9fec",
+        "test_case.py": "caf8a591f49c3d3dec489941695c348b49f5e6a34005d1a5df6276356a77428a"
+      }
+    },
+    {
+      "case": "test_security_scan_does_not_trust_imported_noop_helper",
+      "family": "test_security_scan_does_not_trust_imported_noop_helper",
+      "decision": "KEEP_UNKNOWN",
+      "rationale": "An undefined value/callee is evaluated before any claimed vacuous assertion or inside a handler that does not catch its NameError. No whole-body nonraising proof.",
+      "captured_source_sha256": {
+        "helpers.py": "33d084cda47a12b0ef1d69eebd1c321a1ad82937834f72ada89ab3a8141d6b5a",
+        "test_case.py": "52cbcb16def1c2746c5213db39495026a8b2c0ad90f04392e27c3c4da50d55ee"
+      }
+    },
+    {
+      "case": "test_security_scan_rejects_rebound_benchmark_decorator[benchmark = other_decorator]",
+      "family": "test_security_scan_rejects_rebound_benchmark_decorator",
+      "decision": "KEEP_UNKNOWN",
+      "rationale": "An arbitrary benchmark fixture/decorator/import, missing name or rebound provider can execute/raise. Naming, a mark, or absent assertion credit cannot prove nonraising completion.",
+      "captured_source_sha256": {
+        "test_case.py": "6c00cdf352a90895c6048743a5dbfe9b3b8a4ed5b71fff915aca7c7c2e9a6edc"
+      }
+    },
+    {
+      "case": "test_security_scan_rejects_rebound_benchmark_decorator[import other_decorator as benchmark]",
+      "family": "test_security_scan_rejects_rebound_benchmark_decorator",
+      "decision": "KEEP_UNKNOWN",
+      "rationale": "An arbitrary benchmark fixture/decorator/import, missing name or rebound provider can execute/raise. Naming, a mark, or absent assertion credit cannot prove nonraising completion.",
+      "captured_source_sha256": {
+        "test_case.py": "9ae715ea386aea1bbb13fe8f1c707aa975d88f5eaa72c8e30455650e2c91d830"
+      }
+    },
+    {
+      "case": "test_security_scan_rejects_rebound_benchmark_decorator[if flag:\\n        benchmark = other_decorator]",
+      "family": "test_security_scan_rejects_rebound_benchmark_decorator",
+      "decision": "KEEP_UNKNOWN",
+      "rationale": "An arbitrary benchmark fixture/decorator/import, missing name or rebound provider can execute/raise. Naming, a mark, or absent assertion credit cannot prove nonraising completion.",
+      "captured_source_sha256": {
+        "test_case.py": "f2de94b76924f90f2b55b6ded07b8266f8712ad1539f6ec9bdc67018e472a526"
+      }
+    },
+    {
+      "case": "test_security_scan_does_not_skip_untyped_benchmark_named_security_test",
+      "family": "test_security_scan_does_not_skip_untyped_benchmark_named_security_test",
+      "decision": "KEEP_UNKNOWN",
+      "rationale": "An arbitrary benchmark fixture/decorator/import, missing name or rebound provider can execute/raise. Naming, a mark, or absent assertion credit cannot prove nonraising completion.",
+      "captured_source_sha256": {
+        "test_case.py": "7817e183945c255f7d46a96984e2e9f7ff5e094847522a0239e429fc7f7f7324"
+      }
+    },
+    {
+      "case": "test_security_scan_rejects_lookalike_benchmark_signals[def test_security_invariant(benchmark: NotBenchmarkFixture):]",
+      "family": "test_security_scan_rejects_lookalike_benchmark_signals",
+      "decision": "KEEP_UNKNOWN",
+      "rationale": "An arbitrary benchmark fixture/decorator/import, missing name or rebound provider can execute/raise. Naming, a mark, or absent assertion credit cannot prove nonraising completion.",
+      "captured_source_sha256": {
+        "test_case.py": "57e754b3c322a29f0e1694db33aab87246f5e10195ad562322a7bb92d2cf1212"
+      }
+    },
+    {
+      "case": "test_security_scan_rejects_lookalike_benchmark_signals[@pytest.mark.benchmarking\\ndef test_security_invariant(benchmark):]",
+      "family": "test_security_scan_rejects_lookalike_benchmark_signals",
+      "decision": "KEEP_UNKNOWN",
+      "rationale": "An arbitrary benchmark fixture/decorator/import, missing name or rebound provider can execute/raise. Naming, a mark, or absent assertion credit cannot prove nonraising completion.",
+      "captured_source_sha256": {
+        "test_case.py": "db8a700cbf3a5a19e86a8e85e1aa04ad1bf6a0fc98c8f6f805fbfd9c098d829d"
+      }
+    },
+    {
+      "case": "test_security_scan_rejects_unrelated_benchmark_imports[import custom_benchmarks]",
+      "family": "test_security_scan_rejects_unrelated_benchmark_imports",
+      "decision": "KEEP_UNKNOWN",
+      "rationale": "An arbitrary benchmark fixture/decorator/import, missing name or rebound provider can execute/raise. Naming, a mark, or absent assertion credit cannot prove nonraising completion.",
+      "captured_source_sha256": {
+        "test_case.py": "8f93794130dd8d692e2e0066dedbb9bf2374cbe6992adb3351115de2d0933988"
+      }
+    },
+    {
+      "case": "test_security_scan_rejects_unrelated_benchmark_imports[from pytest_benchmark import plugin]",
+      "family": "test_security_scan_rejects_unrelated_benchmark_imports",
+      "decision": "KEEP_UNKNOWN",
+      "rationale": "An arbitrary benchmark fixture/decorator/import, missing name or rebound provider can execute/raise. Naming, a mark, or absent assertion credit cannot prove nonraising completion.",
+      "captured_source_sha256": {
+        "test_case.py": "647db6e5495e4d5e42fd9b2ccc70811eed0aaac00cc73b702824800f23fcbf30"
+      }
+    },
+    {
+      "case": "test_security_scan_does_not_trust_local_noop_unittest_named_method",
+      "family": "test_security_scan_does_not_trust_local_noop_unittest_named_method",
+      "decision": "KEEP_UNKNOWN",
+      "rationale": "NoOp.assertEqual is pass, but undefined load_value() is evaluated first.",
+      "captured_source_sha256": {
+        "test_case.py": "b232d5fd737751423c38ed6820eea20713a4c5d9a787ddee298c5d3c785bc530"
+      }
+    },
+    {
+      "case": "test_security_scan_keeps_negative_callback_and_import_alias_controls",
+      "family": "test_security_scan_keeps_negative_callback_and_import_alias_controls",
+      "decision": "KEEP_UNKNOWN",
+      "rationale": "Keep current strong pytest-raises handling independent. The failed no-read callback control has undefined store/compute and opaque fixture effects; no whole-body nonraising proof.",
+      "captured_source_sha256": {
+        "test_controls.py": "4e7597abb9b57dcba8257cc61c2b40346437b7b9179f29a9dcc1bf8203211851"
+      }
+    },
+    {
+      "case": "test_security_scan_does_not_trust_assertion_alias_call_inside_comprehension",
+      "family": "test_security_scan_does_not_trust_assertion_alias_call_inside_comprehension",
+      "decision": "KEEP_UNKNOWN",
+      "rationale": "Undefined factories is evaluated to initialize the comprehension.",
+      "captured_source_sha256": {
+        "test_case.py": "5cf18b1deee598478c7c42ce9e7d4f5c8bafa83911b88737deddbc1a9e2e4301"
+      }
+    },
+    {
+      "case": "test_security_scan_invalidates_oracle_alias_after_branch_star_import",
+      "family": "test_security_scan_invalidates_oracle_alias_after_branch_star_import",
+      "decision": "KEEP_UNKNOWN",
+      "rationale": "USE_HELPERS is undefined during module initialization; conditional star import does not establish a nonraising selected provider.",
+      "captured_source_sha256": {
+        "helpers.py": "60cc608621331928c011362d24b0af1d5707768b6794c194d9725b4aea11762d",
+        "test_case.py": "55b7e923e46253b2607c75b32bf25dbc31b6de33289cbaa240cce42eb6e2d6eb"
+      }
+    },
+    {
+      "case": "test_security_scan_does_not_trust_captured_pytest_raises_alias[try:\\n    compute_value()\\nexcept Exception as expect_error:\\n    pass]",
+      "family": "test_security_scan_does_not_trust_captured_pytest_raises_alias",
+      "decision": "KEEP_UNKNOWN",
+      "rationale": "An exception-target local binding is deleted after except. expect_error is unbound at the with statement.",
+      "captured_source_sha256": {
+        "test_case.py": "c24ce2c77e7441379cf5c2b087704798f97da1aa315b7483cdc527a360f05903"
+      }
+    },
+    {
+      "case": "test_security_scan_does_not_trust_captured_pytest_raises_alias[match event:\\n    case {'error': expect_error}:\\n        pass]",
+      "family": "test_security_scan_does_not_trust_captured_pytest_raises_alias",
+      "decision": "KEEP_UNKNOWN",
+      "rationale": "Fixture event can capture arbitrary expect_error, or leave the local unbound; no exact context-manager identity.",
+      "captured_source_sha256": {
+        "test_case.py": "b32dd767786308cbd1dd7ad668a7bcbc5bf576f2c4e440ddebb883dc8c622acf"
+      }
+    },
+    {
+      "case": "test_security_scan_does_not_trust_unused_assertion_callback",
+      "family": "test_security_scan_does_not_trust_unused_assertion_callback",
+      "decision": "KEEP_UNKNOWN",
+      "rationale": "An unused assertion callback does not suppress the subsequent undefined compute_value call.",
+      "captured_source_sha256": {
+        "test_case.py": "ad80435b84342e2757845d80eb61695c6589c34dac087f43aa7069eadaf8abce"
+      }
+    },
+    {
+      "case": "test_security_scan_nearer_fixture_override_invalidates_click_runner",
+      "family": "test_security_scan_nearer_fixture_override_invalidates_click_runner",
+      "decision": "KEEP_UNKNOWN",
+      "rationale": "No source-proven complete nonraising execution under the current strict contract; keep UNKNOWN pending a separate bounded proof.",
+      "captured_source_sha256": {
+        "conftest.py": "5a5e5009b847adcfc6a9836ad006aba22cda6b7c85e10a0601c1a89a4835da81",
+        "nested/conftest.py": "5a7ba9122afa9675eb6f4281ca2972a8d4bc3e2f10339f38b12f8d4de60abf73",
+        "nested/test_case.py": "1ba59996ad854b8e7c99d034c861cedcad92b819f74a3297871ebb5a6a32264b"
+      }
+    },
+    {
+      "case": "test_flask_fixture_rejects_positional_config_update",
+      "family": "test_flask_fixture_rejects_positional_config_update",
+      "decision": "KEEP_UNKNOWN",
+      "rationale": "Flask construction/decorators/client dispatch and mutated app/client state are unresolved provider effects. Failure to credit an assertion is not proof of inert completion.",
+      "captured_source_sha256": {
+        "conftest.py": "fb850dfe32dcc21f904d3942772ff3f4aac4f8ec56bbbf4e3c865ad2bb8bc7a8",
+        "test_case.py": "0c1441da46bae868388efc351656ba537a4f52b32d4d2c51e8f192f9169e087a"
+      }
+    },
+    {
+      "case": "test_source_callback_rejects_aliased_assertion_handler[False]",
+      "family": "test_source_callback_rejects_aliased_assertion_handler",
+      "decision": "KEEP_UNKNOWN",
+      "rationale": "Canonical AssertionError alias does not catch undefined expected NameError.",
+      "captured_source_sha256": {
+        "engine.py": "8f81871d030258f005bb9b2ca7d011f98a396499c9cb53eba2bcaccd1f27d83d",
+        "test_case.py": "a7ce85b484bdadd91207832ee6bd38b0f14fd9cc76d9039e7334fb061223b5d1"
+      }
+    },
+    {
+      "case": "test_source_callback_rejects_aliased_assertion_handler[True]",
+      "family": "test_source_callback_rejects_aliased_assertion_handler",
+      "decision": "KEEP_UNKNOWN",
+      "rationale": "Closure wrapper catches AssertionError, not undefined expected NameError.",
+      "captured_source_sha256": {
+        "engine.py": "b44523ffedba9ed18ec6e45103fee653784c251e037d7af5e1359d0e2ff89753",
+        "test_case.py": "a7ce85b484bdadd91207832ee6bd38b0f14fd9cc76d9039e7334fb061223b5d1"
+      }
+    },
+    {
+      "case": "test_source_callback_rejects_constructor_method_override[self.deliver = noop]",
+      "family": "test_source_callback_rejects_constructor_method_override",
+      "decision": "KEEP_UNKNOWN",
+      "rationale": "Constructor self.deliver=noop evaluates undefined noop.",
+      "captured_source_sha256": {
+        "engine.py": "dab9f8f2c7bdab85d3dec985d6e0f8812b33b2c417bb781936d528ddd4e1f962",
+        "test_case.py": "a7ce85b484bdadd91207832ee6bd38b0f14fd9cc76d9039e7334fb061223b5d1"
+      }
+    },
+    {
+      "case": "test_source_callback_rejects_constructor_method_override[setattr(self, 'deliver', noop)]",
+      "family": "test_source_callback_rejects_constructor_method_override",
+      "decision": "KEEP_UNKNOWN",
+      "rationale": "Constructor setattr arguments evaluate undefined noop.",
+      "captured_source_sha256": {
+        "engine.py": "9b69784b9af0a50aa261f95c6e5c2ddd2596eb08c3d5159f3b2bf93eb7c65caf",
+        "test_case.py": "a7ce85b484bdadd91207832ee6bd38b0f14fd9cc76d9039e7334fb061223b5d1"
+      }
+    },
+    {
+      "case": "test_virtual_dispatch_rejects_class_and_source_mutations[self.dispatch_func = noop\\n        await self.dispatch_func(scope)-async def dispatch(self, value):\\n            assert value == expected-await app({})]",
+      "family": "test_virtual_dispatch_rejects_class_and_source_mutations",
+      "decision": "KEEP_UNKNOWN",
+      "rationale": "Undefined noop method-field replacement raises when awaited body executes.",
+      "captured_source_sha256": {
+        "engine.py": "5818952c033b82e3516495bd55a42c333ec5918df896486d5063cad29428d046",
+        "test_case.py": "a2f7100bf9bb76ba3837a3a9d18cc1907ab9350b32f5fef99f2a50fa2f964159"
+      }
+    },
+    {
+      "case": "test_virtual_dispatch_rejects_class_and_source_mutations[await self.dispatch_func(scope)-Base.__init__ = noop\\n        async def dispatch(self, value):\\n            assert value == expected-await app({})]",
+      "family": "test_virtual_dispatch_rejects_class_and_source_mutations",
+      "decision": "KEEP_UNKNOWN",
+      "rationale": "Class body Base.__init__ replacement evaluates undefined noop.",
+      "captured_source_sha256": {
+        "engine.py": "7b9819680cc831fa6867caa5615e8f620396eab8a31e47bb9a485754f96acf69",
+        "test_case.py": "95e17e16971e357cc54dc4274c8aab230ecebfa9c5cf0793376829f7f138688a"
+      }
+    },
+    {
+      "case": "test_virtual_dispatch_rejects_class_and_source_mutations[await self.dispatch_func(scope)-setattr(Base, '__init__', noop)\\n        async def dispatch(self, value):\\n            assert value == expected-await app({})]",
+      "family": "test_virtual_dispatch_rejects_class_and_source_mutations",
+      "decision": "KEEP_UNKNOWN",
+      "rationale": "Class body setattr arguments evaluate undefined noop.",
+      "captured_source_sha256": {
+        "engine.py": "7b9819680cc831fa6867caa5615e8f620396eab8a31e47bb9a485754f96acf69",
+        "test_case.py": "f83e651207b13506c8fe9b3e11603e9d717b67b07574e35cd493397468dfdd43"
+      }
+    },
+    {
+      "case": "test_virtual_dispatch_rejects_class_and_source_mutations[await self.dispatch_func(scope)-async def dispatch(self, value):\\n            assert value == expected-Application.dispatch = noop\\n    await app({})]",
+      "family": "test_virtual_dispatch_rejects_class_and_source_mutations",
+      "decision": "KEEP_UNKNOWN",
+      "rationale": "Class method replacement evaluates undefined noop.",
+      "captured_source_sha256": {
+        "engine.py": "7b9819680cc831fa6867caa5615e8f620396eab8a31e47bb9a485754f96acf69",
+        "test_case.py": "a44538f37d07144acbdadcc9059c3d680119b3a65bd74fc91a6ed0fb581035ad"
+      }
+    }
+  ],
+  "before_file_sha256": "2348820cccd61adb98ec9b9a9831c2d4140e67ebab3450dbb7da12a01753ab74",
+  "after_file_sha256": "c5e663784d86d9704d3bfb2ee320641e80063c0301cad87734101df32f78f920",
+  "checks": {
+    "expected_code_literals_changed": 26,
+    "other_test_ast_changed": false,
+    "fixture_source_changed": false,
+    "tests_removed_or_skipped": false,
+    "focused_cases_passed": 39,
+    "protected_positive_cases_passed": 6
+  },
+  "limits": [
+    "Not a detection improvement or precisionmeasurement",
+    "No mixed parameter family was altered",
+    "Remaining source-repair and provider-proof cases are unchanged"
+  ]
+}

@@ -1,0 +1,315 @@
+{
+  "project": "cf-exception-expectation-family195",
+  "parent": "0ec17fbaa2e306d269bbec4ab30e5383a9976d8a",
+  "source_sha256": {
+    "tests/test_review_audits.py": "8d310eea5307035907bf788189fc7f534f6e9b66d3b7f1db2d3eb87124b747e6"
+  },
+  "counts": {
+    "before_failed": 15,
+    "before_passed": 8,
+    "after_passed": 23,
+    "independent_retention_passed": 11
+  },
+  "family_decisions": [
+    {
+      "affected_symbols": [
+        "test_warning"
+      ],
+      "baseline_observed_tiers": [
+        "QUALITY_UNKNOWN_TEST_ORACLE"
+      ],
+      "new_expected_tiers": [
+        "QUALITY_UNKNOWN_TEST_ORACLE"
+      ],
+      "new_test_nodeid": "tests/test_review_audits.py::test_security_scan_rejects_warning_swallowed_outside_context[UserWarning-QUALITY_UNKNOWN_TEST_ORACLE]",
+      "old_expected_tiers": [
+        "QUALITY_HOLLOW_TEST"
+      ],
+      "old_test_nodeid": "tests/test_review_audits.py::test_security_scan_rejects_warning_swallowed_outside_context[UserWarning]",
+      "reason": "warnings.warn is observable; the fixture does not source-close its effects.",
+      "test_payload_sha256": "5f61910c0fc067c15a44f1fd37c9adacf76b2c4ec6ffca5afce8fb4554b48ebd"
+    },
+    {
+      "affected_symbols": [
+        "test_warning"
+      ],
+      "baseline_observed_tiers": [
+        "QUALITY_UNKNOWN_TEST_ORACLE"
+      ],
+      "new_expected_tiers": [
+        "QUALITY_UNKNOWN_TEST_ORACLE"
+      ],
+      "new_test_nodeid": "tests/test_review_audits.py::test_security_scan_rejects_warning_swallowed_outside_context[Warning-QUALITY_UNKNOWN_TEST_ORACLE]",
+      "old_expected_tiers": [
+        "QUALITY_HOLLOW_TEST"
+      ],
+      "old_test_nodeid": "tests/test_review_audits.py::test_security_scan_rejects_warning_swallowed_outside_context[Warning]",
+      "reason": "warnings.warn is observable; the fixture does not source-close its effects.",
+      "test_payload_sha256": "0de21368e7ba510a758a16eaa78d5712ac83f35abf79f5c69a037f613dfbdf6e"
+    },
+    {
+      "affected_symbols": [
+        "test_warning"
+      ],
+      "baseline_observed_tiers": [
+        "QUALITY_UNKNOWN_TEST_ORACLE"
+      ],
+      "new_expected_tiers": [
+        "QUALITY_UNKNOWN_TEST_ORACLE"
+      ],
+      "new_test_nodeid": "tests/test_review_audits.py::test_security_scan_rejects_warning_swallowed_outside_context[(ValueError, UserWarning)-QUALITY_UNKNOWN_TEST_ORACLE]",
+      "old_expected_tiers": [
+        "QUALITY_HOLLOW_TEST"
+      ],
+      "old_test_nodeid": "tests/test_review_audits.py::test_security_scan_rejects_warning_swallowed_outside_context[(ValueError, UserWarning)]",
+      "reason": "warnings.warn is observable; the fixture does not source-close its effects.",
+      "test_payload_sha256": "7e2b1a65771ef6887df9cd09c4391b44bd1b18f34cf9ed2abf0cd56bb16b1bea"
+    },
+    {
+      "affected_symbols": [
+        "test_behavior"
+      ],
+      "baseline_observed_tiers": [
+        "QUALITY_UNKNOWN_TEST_ORACLE"
+      ],
+      "new_expected_tiers": [
+        "QUALITY_UNKNOWN_TEST_ORACLE"
+      ],
+      "new_test_nodeid": "tests/test_review_audits.py::test_security_scan_rejects_unbounded_expected_exception_shapes[broad-exception-else-raise]",
+      "old_expected_tiers": [
+        "QUALITY_HOLLOW_TEST"
+      ],
+      "old_test_nodeid": "tests/test_review_audits.py::test_security_scan_rejects_unbounded_expected_exception_shapes[    try:\\n        operation()\\n    except Exception:\\n        pass\\n    else:\\n        raise RuntimeError\\n]",
+      "reason": "The local operation is pass-only, so the else RuntimeError is reached; this is a deterministic failing path, not an inert test.",
+      "test_payload_sha256": "28136b4b276790fa821b832b1d65fd868369f30bcee969ea01bc17f6b2624bbf"
+    },
+    {
+      "affected_symbols": [
+        "test_behavior"
+      ],
+      "baseline_observed_tiers": [
+        "QUALITY_UNKNOWN_TEST_ORACLE"
+      ],
+      "new_expected_tiers": [
+        "QUALITY_UNKNOWN_TEST_ORACLE"
+      ],
+      "new_test_nodeid": "tests/test_review_audits.py::test_security_scan_rejects_unbounded_expected_exception_shapes[tuple-broad-catch-else-raise]",
+      "old_expected_tiers": [
+        "QUALITY_HOLLOW_TEST"
+      ],
+      "old_test_nodeid": "tests/test_review_audits.py::test_security_scan_rejects_unbounded_expected_exception_shapes[    try:\\n        operation()\\n    except (CustomError, Exception):\\n        pass\\n    else:\\n        raise RuntimeError\\n]",
+      "reason": "The local operation is pass-only, so the else RuntimeError is reached; this is a deterministic failing path, not an inert test.",
+      "test_payload_sha256": "96fc614667b0e271611d7eec24f90b596a9b18faeedf340d6d8fae7a6580e14d"
+    },
+    {
+      "affected_symbols": [
+        "test_behavior"
+      ],
+      "baseline_observed_tiers": [
+        "QUALITY_UNKNOWN_TEST_ORACLE"
+      ],
+      "new_expected_tiers": [
+        "QUALITY_UNKNOWN_TEST_ORACLE"
+      ],
+      "new_test_nodeid": "tests/test_review_audits.py::test_security_scan_rejects_unbounded_expected_exception_shapes[unconditional-runtime-error]",
+      "old_expected_tiers": [
+        "QUALITY_HOLLOW_TEST"
+      ],
+      "old_test_nodeid": "tests/test_review_audits.py::test_security_scan_rejects_unbounded_expected_exception_shapes[    raise RuntimeError\\n]",
+      "reason": "Unconditional RuntimeError escapes; the test is deterministically failing, not nonraising/inert.",
+      "test_payload_sha256": "8d1aeafb558b52865d2ed49bea81c7257bfe638587ccea0716ecca1cc5c53031"
+    },
+    {
+      "affected_symbols": [
+        "test_behavior"
+      ],
+      "baseline_observed_tiers": [
+        "QUALITY_UNKNOWN_TEST_ORACLE"
+      ],
+      "new_expected_tiers": [
+        "QUALITY_UNKNOWN_TEST_ORACLE"
+      ],
+      "new_test_nodeid": "tests/test_review_audits.py::test_security_scan_rejects_unbounded_expected_exception_shapes[nested-def-else-raise]",
+      "old_expected_tiers": [
+        "QUALITY_HOLLOW_TEST"
+      ],
+      "old_test_nodeid": "tests/test_review_audits.py::test_security_scan_rejects_unbounded_expected_exception_shapes[    try:\\n        def nested():\\n            operation()\\n    except CustomError:\\n        pass\\n    else:\\n        raise RuntimeError\\n]",
+      "reason": "Defining nested() does not raise, so the else RuntimeError is reached; deterministic failure.",
+      "test_payload_sha256": "721b27bb09d65e3eca7e282435aed06fc7b72cf959c31b5629ef5d16eaea66e2"
+    },
+    {
+      "affected_symbols": [
+        "test_behavior"
+      ],
+      "baseline_observed_tiers": [
+        "QUALITY_UNKNOWN_TEST_ORACLE"
+      ],
+      "new_expected_tiers": [
+        "QUALITY_UNKNOWN_TEST_ORACLE"
+      ],
+      "new_test_nodeid": "tests/test_review_audits.py::test_security_scan_rejects_unbounded_expected_exception_shapes[nested-catch-outer-else-raise]",
+      "old_expected_tiers": [
+        "QUALITY_HOLLOW_TEST"
+      ],
+      "old_test_nodeid": "tests/test_review_audits.py::test_security_scan_rejects_unbounded_expected_exception_shapes[    try:\\n        operation()\\n        try:\\n            raise CustomError()\\n        except CustomError:\\n            pass\\n    except CustomError:\\n        pass\\n    else:\\n        raise RuntimeError\\n]",
+      "reason": "The inner CustomError is caught; outer try completes and reaches else RuntimeError; deterministic failure.",
+      "test_payload_sha256": "10f253c0a887c70936c75e720852bdf9e6b8a24e212c83936692b46b59c5cdae"
+    },
+    {
+      "affected_symbols": [
+        "test_behavior"
+      ],
+      "baseline_observed_tiers": [
+        "QUALITY_UNKNOWN_TEST_ORACLE"
+      ],
+      "new_expected_tiers": [
+        "QUALITY_UNKNOWN_TEST_ORACLE"
+      ],
+      "new_test_nodeid": "tests/test_review_audits.py::test_security_scan_detects_aliased_exception_catch[from builtins import BaseException as Ignore\\n-Ignore-QUALITY_UNKNOWN_TEST_ORACLE]",
+      "old_expected_tiers": [
+        "QUALITY_HOLLOW_TEST"
+      ],
+      "old_test_nodeid": "tests/test_review_audits.py::test_security_scan_detects_aliased_exception_catch[from builtins import BaseException as Ignore\\n-Ignore]",
+      "reason": "compute() is unresolved and may have effects; swallowed assertion/exception alone does not prove inertness.",
+      "test_payload_sha256": "e59e09619d52ae9a0cf18223dc381343e1edb48213197ed9c7fc5d5c44ea365f"
+    },
+    {
+      "affected_symbols": [
+        "test_behavior"
+      ],
+      "baseline_observed_tiers": [
+        "QUALITY_UNKNOWN_TEST_ORACLE"
+      ],
+      "new_expected_tiers": [
+        "QUALITY_UNKNOWN_TEST_ORACLE"
+      ],
+      "new_test_nodeid": "tests/test_review_audits.py::test_security_scan_detects_aliased_exception_catch[from builtins import Exception as Ignore\\n-Ignore-QUALITY_UNKNOWN_TEST_ORACLE]",
+      "old_expected_tiers": [
+        "QUALITY_HOLLOW_TEST"
+      ],
+      "old_test_nodeid": "tests/test_review_audits.py::test_security_scan_detects_aliased_exception_catch[from builtins import Exception as Ignore\\n-Ignore]",
+      "reason": "compute() is unresolved and may have effects; swallowed assertion/exception alone does not prove inertness.",
+      "test_payload_sha256": "72c5ea1da021b8ae5e74f018343f8a41ae513adc576a6e3abffb7afd33bb2c69"
+    },
+    {
+      "affected_symbols": [
+        "test_behavior"
+      ],
+      "baseline_observed_tiers": [
+        "QUALITY_UNKNOWN_TEST_ORACLE"
+      ],
+      "new_expected_tiers": [
+        "QUALITY_UNKNOWN_TEST_ORACLE"
+      ],
+      "new_test_nodeid": "tests/test_review_audits.py::test_security_scan_detects_aliased_exception_catch[import builtins as bi\\n-bi.BaseException-QUALITY_UNKNOWN_TEST_ORACLE]",
+      "old_expected_tiers": [
+        "QUALITY_HOLLOW_TEST"
+      ],
+      "old_test_nodeid": "tests/test_review_audits.py::test_security_scan_detects_aliased_exception_catch[import builtins as bi\\n-bi.BaseException]",
+      "reason": "compute() is unresolved and may have effects; swallowed assertion/exception alone does not prove inertness.",
+      "test_payload_sha256": "41b0b45a8f82f06f3a27582d874682c08436ebf034fc0cdd0fe9d2e6a084e34c"
+    },
+    {
+      "affected_symbols": [
+        "test_behavior"
+      ],
+      "baseline_observed_tiers": [
+        "QUALITY_UNKNOWN_TEST_ORACLE"
+      ],
+      "new_expected_tiers": [
+        "QUALITY_UNKNOWN_TEST_ORACLE"
+      ],
+      "new_test_nodeid": "tests/test_review_audits.py::test_security_scan_detects_assertion_suppressed_in_finally",
+      "old_expected_tiers": [
+        "QUALITY_HOLLOW_TEST"
+      ],
+      "old_test_nodeid": "tests/test_review_audits.py::test_security_scan_detects_assertion_suppressed_in_finally",
+      "reason": "compute() is unresolved and may have effects; swallowed assertion/exception alone does not prove inertness.",
+      "test_payload_sha256": "13170642c49abda7a77d0482cac25f7e4da5107d1908a13d266a330c021d21bb"
+    },
+    {
+      "affected_symbols": [
+        "test_behavior"
+      ],
+      "baseline_observed_tiers": [
+        "QUALITY_UNKNOWN_TEST_ORACLE"
+      ],
+      "new_expected_tiers": [
+        "QUALITY_UNKNOWN_TEST_ORACLE"
+      ],
+      "new_test_nodeid": "tests/test_review_audits.py::test_security_scan_does_not_trust_assertion_caught_in_nested_try",
+      "old_expected_tiers": [
+        "QUALITY_HOLLOW_TEST"
+      ],
+      "old_test_nodeid": "tests/test_review_audits.py::test_security_scan_does_not_trust_assertion_caught_in_nested_try",
+      "reason": "compute() is unresolved and may have effects; swallowed assertion/exception alone does not prove inertness.",
+      "test_payload_sha256": "92e1682e101ae9a0177e18f04e9c386842f60cb16fb1679e73608dc19ed08832"
+    },
+    {
+      "affected_symbols": [
+        "test_alias",
+        "test_finally"
+      ],
+      "baseline_observed_tiers": [
+        "QUALITY_UNKNOWN_TEST_ORACLE",
+        "QUALITY_UNKNOWN_TEST_ORACLE"
+      ],
+      "new_expected_tiers": [
+        "QUALITY_UNKNOWN_TEST_ORACLE",
+        "QUALITY_UNKNOWN_TEST_ORACLE"
+      ],
+      "new_test_nodeid": "tests/test_review_audits.py::test_security_scan_rejects_builtin_exception_alias_and_finally_return",
+      "old_expected_tiers": [
+        "QUALITY_HOLLOW_TEST",
+        "QUALITY_HOLLOW_TEST"
+      ],
+      "old_test_nodeid": "tests/test_review_audits.py::test_security_scan_rejects_builtin_exception_alias_and_finally_return",
+      "reason": "compute() is unresolved and may have effects; swallowed assertion/exception alone does not prove inertness.",
+      "test_payload_sha256": "8cdf8021c2ebab0602058a8c3b57203e285e5dd1f6925a48fcf85f87ecee2feb"
+    },
+    {
+      "affected_symbols": [
+        "test_suppress",
+        "test_unreachable"
+      ],
+      "baseline_observed_tiers": [
+        "QUALITY_UNKNOWN_TEST_ORACLE",
+        "QUALITY_HOLLOW_TEST"
+      ],
+      "new_expected_tiers": [
+        "QUALITY_UNKNOWN_TEST_ORACLE",
+        "QUALITY_HOLLOW_TEST"
+      ],
+      "new_test_nodeid": "tests/test_review_audits.py::test_security_scan_rejects_contextlib_suppress_and_unreachable_manual_raise",
+      "old_expected_tiers": [
+        "QUALITY_HOLLOW_TEST",
+        "QUALITY_HOLLOW_TEST"
+      ],
+      "old_test_nodeid": "tests/test_review_audits.py::test_security_scan_rejects_contextlib_suppress_and_unreachable_manual_raise",
+      "reason": "compute() is unresolved and may have effects inside suppress; the companion unreachable raise is separately proven HOLLOW.",
+      "test_payload_sha256": "161a2caf1f883de60b0d2155f34bd658b7b8b1cec0122fa95c63aae3e871a649"
+    }
+  ],
+  "preserved_hollow_controls": [
+    "custom-only-catch",
+    "suppress-known-raise",
+    "finally-return",
+    "unreachable-else-raise",
+    "discarded-runtime-error-call",
+    "caught-custom-error",
+    "caught-conditional-custom-error",
+    "caught-nullcontext-error",
+    "test_unreachable in test_security_scan_rejects_contextlib_suppress_and_unreachable_manual_raise"
+  ],
+  "independent_review": {
+    "path": ".factory/exception195/independent-review.json",
+    "sha256": "371eaf09f092182ae76d846041fc1bc7c197db1ce52bb79cae172ad409759c67"
+  },
+  "boundaries": [
+    "Test expectation migration only; scanner source and generated fixture payloads unchanged.",
+    "15 cases stay UNKNOWN because unresolved calls have effects or the fixture deterministically raises; 8 known-inert shapes stay HOLLOW.",
+    "23 targeted cases and 11 separate retained-behavior controls pass.",
+    "Unrelated existing unittest-vacuity expectation remains failing; no whole-file or full-CI pass claimed.",
+    "No detector improvement or held-out precision gain from this migration."
+  ]
+}

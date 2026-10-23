@@ -1,0 +1,22 @@
+{
+  "schema": "factory.measurement-result-seal249.v1",
+  "sealed_at": "2026-10-23T01:42:04.128037+00:00",
+  "files": {
+    "score.json": "71f37fc3f17720f8bd393d25dbbcd9b8f4a129bf564aa49d89ffec103808f444",
+    "RESULTS.md": "f2c5bfeaacd5e4c9f1ee85fa3d49d2c1d16f838cad24dc6b7e6f9effb0316d4c",
+    "labels-a.json": "1fa610199c47450e12634b126bd8806766354691c3f9267179206398f547809b",
+    "labels-b.json": "eaa6d95c7aa3e4d4c96935cd03baccd19ddefd9be2ee942609b08c2bcba506f0",
+    "blinded-packets/manifest.json": "73ad4bea6f5b04b91cc1e38f599e4c569954be9f7364074bb2b040bc5fd2ddb5",
+    "blinded-packets/private-membership.json": "36536cbd5e2961c2adbaabdf7b06cb0ae484668dda0620c6adfb062c87a8b83e",
+    "measure.py": "e9d782e84753dd25b104b7b26badba5fef7fdee6402da2c8ff199aec9aca72a0",
+    "scoring-addendum.md": "e17f3c43692382c72c7271541617e7d950aeb4d35b78863612503471a3375975",
+    "candidate-scanner-freeze.json": "33f2392b11cb571d132a952aadcf847fe1e90551e2834e06762d4a511bdbf729",
+    "predictions/baseline/summary.json": "45871b115f747b6ec79cbbc5b15f0e4a9193ca822bc0c8267d06ab5375504ac5",
+    "predictions/candidate/summary.json": "7a4e1300ad98f6bb38f5af5017a122d619a1921d13235f970b292c0fea252c4a"
+  },
+  "state": "MEASURED_AI_ONLY_PARTIAL_COHORT",
+  "actionable_precision": 0.55,
+  "merge_check": false,
+  "measured_rise": false,
+  "subsequent_tuning": "This cohort is now exposed development data"
+}

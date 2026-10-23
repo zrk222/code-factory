@@ -1,0 +1,48 @@
+{
+  "schema": "factory.precision.repair.v1",
+  "change": "Recognize captured function-local synthetic Django test authority; retain unresolved authority as active CRITICAL findings.",
+  "source_sha256": {
+    "factoryline/mock_fixture_provenance.py": "4565bd971d36588ff076494e28874dff39256ea96767837cf5063242dde2441d",
+    "factoryline/context_efficiency.py": "9fec44e99db01c4494eec15984523b1caa2995b52fcab2052c56932d488ad272",
+    "factoryline/review_audits.py": "5ab6c41f34c19ec2baab67722268c66ea24732daa8513bb233edd2f8ed5a6079",
+    "factoryline/primitive_observation_binding.py": "c8789ed88c5cc52c8b85e05b014362712c76dd123a36e6bdf12bb4f05ccf0b47"
+  },
+  "focused_checks_passed": 177,
+  "independent_ecc_review": {
+    "state": "PASS",
+    "sha256": "b0ec588fb16f8a00ea02a07c1f63de91870f920c771cd57f8367d7a94538daff"
+  },
+  "known_false_positive_replay": {
+    "before": 60,
+    "after": 55,
+    "removed": 5,
+    "severity_changes": 0,
+    "actionable_precision": 0.0,
+    "sha256": "a198ec90ed5cbe6cc632a81f8a8815cecde5aa30a9f075afdfcfe668dd840547"
+  },
+  "historical_true_positive_source_controls": {
+    "retained": 13,
+    "total": 13,
+    "sha256": "78b0719020b401813c0995ee18556990a7aaa0c0f23c60b52c9c0c513356ad12"
+  },
+  "independent_ai_application_retest": {
+    "before_precision": 0.10526315789473684,
+    "after_precision": 0.10526315789473684,
+    "TP": 2,
+    "FP": 17,
+    "unclear": 2,
+    "wilson95": [
+      0.02935856029887013,
+      0.31394082711109006
+    ],
+    "sha256": "79bb56ba44d44d9b566483ff0548b7289710dd219d7a79670f67408662915d6d",
+    "gain_established": false,
+    "minimum30_decided_met": false
+  },
+  "limits": [
+    "Exposed development sample, all60 previously labelled FP; no held-out precision gain established.",
+    "Historical13 TP controls are separate and are not added to the precision denominator.",
+    "Full-suite and architecture gates remain unresolved; this is not merge or release approval.",
+    "Authority classification does not establish transport safety or runtime correctness."
+  ]
+}

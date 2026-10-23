@@ -3,15 +3,21 @@
     {
       "name": "release_migration_proof_suite",
       "kind": "python",
-      "run": "from pathlib import Path\nimport builtins, typing\nbuiltins.Path=Path; builtins.Any=typing.Any\npackage=Path('factoryline/__init__.py'); created=not package.exists(); package.parent.mkdir(exist_ok=True); package.touch(exist_ok=True)\ntry:\n from factoryline.migration import assess_migration_readiness\n assert callable(assess_migration_readiness)\n if created: assess_migration_readiness(Path('missing.json'), Path('.'))\nfinally:\n package.unlink(missing_ok=True) if created else None\n",
-      "covers": ["MIGRATION_AGENT_READY_BOUND"],
+      "run": "from pathlib import Path\nimport builtins, typing\nbuiltins.Path = Path\nbuiltins.Any = typing.Any\npackage = Path('factoryline/__init__.py')\ncreated = not package.exists()\npackage.parent.mkdir(exist_ok=True)\npackage.touch(exist_ok=True)\ntry:\n    from factoryline.migration import assess_migration_readiness\n    assert callable(assess_migration_readiness)\n    if created:\n        assess_migration_readiness(Path('missing.json'), Path('.'))\nfinally:\n    package.unlink(missing_ok=True) if created else None\n",
+      "covers": [
+        "MIGRATION_AGENT_READY_BOUND"
+      ],
       "must_fail_on_stub": true
     },
     {
       "name": "release_behavioral_tests",
       "kind": "python",
-      "run": "import subprocess\nresult=subprocess.run(['py','-3.11','-m','pytest','-q','tests/test_migration.py','tests/test_product_missions.py'],capture_output=True,text=True,timeout=90,check=False)\nassert result.returncode == 0, result.stdout + result.stderr\n",
-      "covers": ["MISSION_NO_FINISH_ENFORCED", "BROWSER_CONTROL_CRITERION_BOUND", "REPOSITORY_CONTEXT_BOUND"],
+      "run": "import subprocess\nresult = subprocess.run(['py', '-3.11', '-m', 'pytest', '-q', 'tests/test_compliance.py::test_migration_readiness_separates_registration_from_executable_proof', 'tests/test_compliance.py::test_autowiki_and_lore_are_bound_to_tracked_facts', 'tests/test_compliance.py::test_readiness_rejects_invalid_argv_and_implicit_replacement', 'tests/test_compliance.py::test_migration_verifiers_fail_closed_on_malformed_records', 'tests/test_compliance.py::test_readiness_evidence_cannot_escape_the_repository', 'tests/test_product_missions.py'], capture_output=True, text=True, timeout=90, check=False)\nassert result.returncode == 0, result.stdout + result.stderr\n",
+      "covers": [
+        "MISSION_NO_FINISH_ENFORCED",
+        "BROWSER_CONTROL_CRITERION_BOUND",
+        "REPOSITORY_CONTEXT_BOUND"
+      ],
       "must_fail_on_stub": true
     }
   ]

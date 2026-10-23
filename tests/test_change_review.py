@@ -13,7 +13,7 @@ from factoryline.change_review import (
     review_change,
     write_review_artifacts,
 )
-from factoryline.coverage import requirement_coverage
+from factoryline.attribution import requirement_coverage
 from factoryline.proof import git_changed_paths
 from factoryline.cli import main
 from factoryline.proof_reuse import record_proof
@@ -32,7 +32,7 @@ from factoryline.full_stack_ux_harness import (
 )
 from factoryline.mcp_mrt import evaluate_release_gate
 from factoryline.migration import RepositoryHistoryError, git_lines
-from factoryline.output_map import OUTPUT_MAP_MARKER, write_output_map
+from factoryline.app_builder import OUTPUT_MAP_MARKER, write_output_map
 from factoryline.proof import execute_replay, load_trace
 from factoryline.signed_receipts import SignedReceiptError, ci_receipt_main
 from factoryline.deep_audit import cancel_deep_run, deep_run_status, scan_deep_audit

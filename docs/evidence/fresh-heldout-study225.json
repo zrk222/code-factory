@@ -1,0 +1,908 @@
+{
+  "schema": "factory.fresh-full-repository.two-ai-assessment225.v1",
+  "study": "study225",
+  "created_at": "2026-10-22T08:27:33.176121+00:00",
+  "state": "MEASURED_FIXED_FRESH_SAMPLE",
+  "registration_sha256": "827f11f7110eca6d0c5aad96379af5aea9422771a0ec10915892bb88cced021f",
+  "clarification_sha256": "f59f11d74342cdf8593ce9c759641955a4d17587a80e679c49d4025da92441fe",
+  "scanner_manifest_sha256": "9e819b2e3d53233f56ff0b5e3a01d043713bea469c848355415a082a8d38d127",
+  "content_freeze_sha256": "4adbbe3e44176c142cc8d8d6e5cbcfdef7f7501cf39d4c58d04882bd4b1b2367",
+  "selection_sha256": "ca98b2df6b8d09878e2af9693b441a4e7197b46aa2c345592bc937142dc5c8bb",
+  "preregistered_review_sha256": "2bd577c22d1d4330137c4dbdef8e1dc8954b7ccf6875481308c3a6757743900f",
+  "reviews": [
+    {
+      "path": ".factory/study225/reviews/label-a.json",
+      "sha256": "798421d4381cafc8cecfa83b98d0a2d57259b42078783445f601296ac85b61f9",
+      "reviewer": {
+        "identity": "label-a",
+        "model": "gpt-6.1-sol",
+        "effort": "high",
+        "human_validation": false,
+        "prior_exposure": "Only this assignment, review README, the fixed packets and allowed frozen target source context were consulted. Inherited general workspace instructions contain no study labels.",
+        "limits": [
+          "Static source review only; no target imports or execution, installs, network, credential tests or provider checks.",
+          "No other reviewers, registrations, scanner implementation, prior panels or aggregate scores were read.",
+          "Deployment and provider facts absent from the allowed source cannot be verified."
+        ]
+      }
+    },
+    {
+      "path": ".factory/study225/reviews/label-b.json",
+      "sha256": "359a1bd773e1aa3550f68d136f6aaad067322db0353c584211ca956afc30f547",
+      "reviewer": {
+        "identity": "label-b",
+        "model": "gpt-6.1-sol",
+        "effort": "high",
+        "human_validation": false,
+        "prior_exposure": "Fresh independent source adjudication. Saw only the assignment and general workspace instructions before the allowed README, packets and frozen source; no other reviewer labels, scanner implementation, study registration, older panels or score reports read.",
+        "limits": [
+          "Static source review only; no target imports, execution, dependency installation, credential/provider checks or network.",
+          "Runtime deployment and filesystem authority are not independently verified."
+        ]
+      }
+    }
+  ],
+  "sampled_units": 57,
+  "raw_unique_units": 57,
+  "actionable_precision": {
+    "TP": 0,
+    "FP": 49,
+    "UNCLEAR": 8,
+    "decided": 49,
+    "precision": 0.0,
+    "wilson95": [
+      6.938893903907228e-18,
+      0.07269781922049637
+    ],
+    "unclear_inclusive": 0.0
+  },
+  "primitive_match_rate": {
+    "TP": 41,
+    "FP": 15,
+    "UNCLEAR": 1,
+    "decided": 56,
+    "precision": 0.7321428571428571,
+    "wilson95": [
+      0.6040544407084484,
+      0.8304269458149828
+    ],
+    "unclear_inclusive": 0.7192982456140351,
+    "is_actionable_precision": false
+  },
+  "single_ai": {
+    "label-a": {
+      "primitive": {
+        "TP": 42,
+        "FP": 15,
+        "UNCLEAR": 0,
+        "decided": 57,
+        "precision": 0.7368421052631579,
+        "wilson95": [
+          0.6102342073651618,
+          0.8335421340202692
+        ],
+        "unclear_inclusive": 0.7368421052631579
+      },
+      "actionable": {
+        "TP": 0,
+        "FP": 49,
+        "UNCLEAR": 8,
+        "decided": 49,
+        "precision": 0.0,
+        "wilson95": [
+          6.938893903907228e-18,
+          0.07269781922049637
+        ],
+        "unclear_inclusive": 0.0
+      }
+    },
+    "label-b": {
+      "primitive": {
+        "TP": 41,
+        "FP": 16,
+        "UNCLEAR": 0,
+        "decided": 57,
+        "precision": 0.7192982456140351,
+        "wilson95": [
+          0.5916980132395605,
+          0.8192060065617645
+        ],
+        "unclear_inclusive": 0.7192982456140351
+      },
+      "actionable": {
+        "TP": 0,
+        "FP": 54,
+        "UNCLEAR": 3,
+        "decided": 54,
+        "precision": 0.0,
+        "wilson95": [
+          0,
+          0.0664135880908964
+        ],
+        "unclear_inclusive": 0.0
+      }
+    }
+  },
+  "actionable_by_rule": {
+    "SECURITY_HARDCODED_SECRET": {
+      "TP": 0,
+      "FP": 44,
+      "UNCLEAR": 4,
+      "decided": 44,
+      "precision": 0.0,
+      "wilson95": [
+        0,
+        0.08029560375848066
+      ],
+      "unclear_inclusive": 0.0
+    },
+    "SECURITY_DYNAMIC_EXECUTION": {
+      "TP": 0,
+      "FP": 1,
+      "UNCLEAR": 2,
+      "decided": 1,
+      "precision": 0.0,
+      "wilson95": [
+        0,
+        0.7934506856227626
+      ],
+      "unclear_inclusive": 0.0
+    },
+    "SECURITY_SHELL_COMMAND": {
+      "TP": 0,
+      "FP": 2,
+      "UNCLEAR": 0,
+      "decided": 2,
+      "precision": 0.0,
+      "wilson95": [
+        0,
+        0.6576197724933469
+      ],
+      "unclear_inclusive": 0.0
+    },
+    "SECURITY_UNSAFE_DESERIALIZATION": {
+      "TP": 0,
+      "FP": 0,
+      "UNCLEAR": 2,
+      "decided": 0,
+      "precision": null,
+      "wilson95": null,
+      "unclear_inclusive": 0.0
+    },
+    "SECURITY_OS_COMMAND": {
+      "TP": 0,
+      "FP": 1,
+      "UNCLEAR": 0,
+      "decided": 1,
+      "precision": 0.0,
+      "wilson95": [
+        0,
+        0.7934506856227626
+      ],
+      "unclear_inclusive": 0.0
+    },
+    "SECURITY_LOG_INJECTION": {
+      "TP": 0,
+      "FP": 1,
+      "UNCLEAR": 0,
+      "decided": 1,
+      "precision": 0.0,
+      "wilson95": [
+        0,
+        0.7934506856227626
+      ],
+      "unclear_inclusive": 0.0
+    }
+  },
+  "actionable_by_repository": {
+    "nautobot/nautobot": {
+      "TP": 0,
+      "FP": 12,
+      "UNCLEAR": 1,
+      "decided": 12,
+      "precision": 0.0,
+      "wilson95": [
+        2.7755575615628914e-17,
+        0.24249400665524085
+      ],
+      "unclear_inclusive": 0.0
+    },
+    "liberapay/liberapay.com": {
+      "TP": 0,
+      "FP": 12,
+      "UNCLEAR": 2,
+      "decided": 12,
+      "precision": 0.0,
+      "wilson95": [
+        2.7755575615628914e-17,
+        0.24249400665524085
+      ],
+      "unclear_inclusive": 0.0
+    },
+    "modoboa/modoboa": {
+      "TP": 0,
+      "FP": 8,
+      "UNCLEAR": 2,
+      "decided": 8,
+      "precision": 0.0,
+      "wilson95": [
+        0,
+        0.32440756488388023
+      ],
+      "unclear_inclusive": 0.0
+    },
+    "awesto/django-shop": {
+      "TP": 0,
+      "FP": 3,
+      "UNCLEAR": 0,
+      "decided": 3,
+      "precision": 0.0,
+      "wilson95": [
+        5.551115123125783e-17,
+        0.5614970317550454
+      ],
+      "unclear_inclusive": 0.0
+    },
+    "carltongibson/django-filter": {
+      "TP": 0,
+      "FP": 1,
+      "UNCLEAR": 0,
+      "decided": 1,
+      "precision": 0.0,
+      "wilson95": [
+        0,
+        0.7934506856227626
+      ],
+      "unclear_inclusive": 0.0
+    },
+    "django-wiki/django-wiki": {
+      "TP": 0,
+      "FP": 4,
+      "UNCLEAR": 1,
+      "decided": 4,
+      "precision": 0.0,
+      "wilson95": [
+        0,
+        0.4898908364545973
+      ],
+      "unclear_inclusive": 0.0
+    },
+    "carltongibson/neapolitan": {
+      "TP": 0,
+      "FP": 1,
+      "UNCLEAR": 0,
+      "decided": 1,
+      "precision": 0.0,
+      "wilson95": [
+        0,
+        0.7934506856227626
+      ],
+      "unclear_inclusive": 0.0
+    },
+    "InvenTree/InvenTree": {
+      "TP": 0,
+      "FP": 6,
+      "UNCLEAR": 0,
+      "decided": 6,
+      "precision": 0.0,
+      "wilson95": [
+        2.7755575615628914e-17,
+        0.3903342879021653
+      ],
+      "unclear_inclusive": 0.0
+    },
+    "django/daphne": {
+      "TP": 0,
+      "FP": 0,
+      "UNCLEAR": 2,
+      "decided": 0,
+      "precision": null,
+      "wilson95": null,
+      "unclear_inclusive": 0.0
+    },
+    "jazzband/django-taggit": {
+      "TP": 0,
+      "FP": 2,
+      "UNCLEAR": 0,
+      "decided": 2,
+      "precision": 0.0,
+      "wilson95": [
+        0,
+        0.6576197724933469
+      ],
+      "unclear_inclusive": 0.0
+    }
+  },
+  "consensus_labels": [
+    {
+      "id": "S225-001",
+      "primitive": "FP",
+      "actionable": "FP"
+    },
+    {
+      "id": "S225-002",
+      "primitive": "TP",
+      "actionable": "FP"
+    },
+    {
+      "id": "S225-003",
+      "primitive": "TP",
+      "actionable": "FP"
+    },
+    {
+      "id": "S225-004",
+      "primitive": "FP",
+      "actionable": "FP"
+    },
+    {
+      "id": "S225-005",
+      "primitive": "TP",
+      "actionable": "FP"
+    },
+    {
+      "id": "S225-006",
+      "primitive": "TP",
+      "actionable": "FP"
+    },
+    {
+      "id": "S225-007",
+      "primitive": "TP",
+      "actionable": "FP"
+    },
+    {
+      "id": "S225-008",
+      "primitive": "TP",
+      "actionable": "FP"
+    },
+    {
+      "id": "S225-009",
+      "primitive": "FP",
+      "actionable": "FP"
+    },
+    {
+      "id": "S225-010",
+      "primitive": "TP",
+      "actionable": "FP"
+    },
+    {
+      "id": "S225-011",
+      "primitive": "TP",
+      "actionable": "FP"
+    },
+    {
+      "id": "S225-012",
+      "primitive": "FP",
+      "actionable": "FP"
+    },
+    {
+      "id": "S225-013",
+      "primitive": "TP",
+      "actionable": "UNCLEAR"
+    },
+    {
+      "id": "S225-014",
+      "primitive": "TP",
+      "actionable": "FP"
+    },
+    {
+      "id": "S225-015",
+      "primitive": "TP",
+      "actionable": "UNCLEAR"
+    },
+    {
+      "id": "S225-016",
+      "primitive": "TP",
+      "actionable": "FP"
+    },
+    {
+      "id": "S225-017",
+      "primitive": "FP",
+      "actionable": "FP"
+    },
+    {
+      "id": "S225-018",
+      "primitive": "TP",
+      "actionable": "FP"
+    },
+    {
+      "id": "S225-019",
+      "primitive": "TP",
+      "actionable": "UNCLEAR"
+    },
+    {
+      "id": "S225-020",
+      "primitive": "FP",
+      "actionable": "FP"
+    },
+    {
+      "id": "S225-021",
+      "primitive": "TP",
+      "actionable": "UNCLEAR"
+    },
+    {
+      "id": "S225-022",
+      "primitive": "TP",
+      "actionable": "FP"
+    },
+    {
+      "id": "S225-023",
+      "primitive": "TP",
+      "actionable": "FP"
+    },
+    {
+      "id": "S225-024",
+      "primitive": "TP",
+      "actionable": "UNCLEAR"
+    },
+    {
+      "id": "S225-025",
+      "primitive": "TP",
+      "actionable": "FP"
+    },
+    {
+      "id": "S225-026",
+      "primitive": "FP",
+      "actionable": "FP"
+    },
+    {
+      "id": "S225-027",
+      "primitive": "TP",
+      "actionable": "UNCLEAR"
+    },
+    {
+      "id": "S225-028",
+      "primitive": "TP",
+      "actionable": "FP"
+    },
+    {
+      "id": "S225-029",
+      "primitive": "FP",
+      "actionable": "FP"
+    },
+    {
+      "id": "S225-030",
+      "primitive": "FP",
+      "actionable": "FP"
+    },
+    {
+      "id": "S225-031",
+      "primitive": "TP",
+      "actionable": "UNCLEAR"
+    },
+    {
+      "id": "S225-032",
+      "primitive": "TP",
+      "actionable": "FP"
+    },
+    {
+      "id": "S225-033",
+      "primitive": "TP",
+      "actionable": "FP"
+    },
+    {
+      "id": "S225-034",
+      "primitive": "TP",
+      "actionable": "FP"
+    },
+    {
+      "id": "S225-035",
+      "primitive": "TP",
+      "actionable": "FP"
+    },
+    {
+      "id": "S225-036",
+      "primitive": "TP",
+      "actionable": "FP"
+    },
+    {
+      "id": "S225-037",
+      "primitive": "TP",
+      "actionable": "FP"
+    },
+    {
+      "id": "S225-038",
+      "primitive": "FP",
+      "actionable": "FP"
+    },
+    {
+      "id": "S225-039",
+      "primitive": "TP",
+      "actionable": "FP"
+    },
+    {
+      "id": "S225-040",
+      "primitive": "TP",
+      "actionable": "FP"
+    },
+    {
+      "id": "S225-041",
+      "primitive": "UNCLEAR",
+      "actionable": "FP"
+    },
+    {
+      "id": "S225-042",
+      "primitive": "TP",
+      "actionable": "FP"
+    },
+    {
+      "id": "S225-043",
+      "primitive": "FP",
+      "actionable": "FP"
+    },
+    {
+      "id": "S225-044",
+      "primitive": "FP",
+      "actionable": "FP"
+    },
+    {
+      "id": "S225-045",
+      "primitive": "TP",
+      "actionable": "UNCLEAR"
+    },
+    {
+      "id": "S225-046",
+      "primitive": "FP",
+      "actionable": "FP"
+    },
+    {
+      "id": "S225-047",
+      "primitive": "FP",
+      "actionable": "FP"
+    },
+    {
+      "id": "S225-048",
+      "primitive": "TP",
+      "actionable": "FP"
+    },
+    {
+      "id": "S225-049",
+      "primitive": "TP",
+      "actionable": "FP"
+    },
+    {
+      "id": "S225-050",
+      "primitive": "FP",
+      "actionable": "FP"
+    },
+    {
+      "id": "S225-051",
+      "primitive": "TP",
+      "actionable": "FP"
+    },
+    {
+      "id": "S225-052",
+      "primitive": "TP",
+      "actionable": "FP"
+    },
+    {
+      "id": "S225-053",
+      "primitive": "TP",
+      "actionable": "FP"
+    },
+    {
+      "id": "S225-054",
+      "primitive": "TP",
+      "actionable": "FP"
+    },
+    {
+      "id": "S225-055",
+      "primitive": "TP",
+      "actionable": "FP"
+    },
+    {
+      "id": "S225-056",
+      "primitive": "TP",
+      "actionable": "FP"
+    },
+    {
+      "id": "S225-057",
+      "primitive": "TP",
+      "actionable": "FP"
+    }
+  ],
+  "disagreements": [
+    {
+      "id": "S225-015",
+      "field": "actionable",
+      "label-a": "UNCLEAR",
+      "label-b": "FP"
+    },
+    {
+      "id": "S225-021",
+      "field": "actionable",
+      "label-a": "UNCLEAR",
+      "label-b": "FP"
+    },
+    {
+      "id": "S225-024",
+      "field": "actionable",
+      "label-a": "UNCLEAR",
+      "label-b": "FP"
+    },
+    {
+      "id": "S225-027",
+      "field": "actionable",
+      "label-a": "UNCLEAR",
+      "label-b": "FP"
+    },
+    {
+      "id": "S225-031",
+      "field": "actionable",
+      "label-a": "UNCLEAR",
+      "label-b": "FP"
+    },
+    {
+      "id": "S225-041",
+      "field": "primitive",
+      "label-a": "TP",
+      "label-b": "FP"
+    }
+  ],
+  "coverage": [
+    {
+      "repository": "nautobot/nautobot",
+      "capture_state": "ACQUIRED",
+      "state": "INCOMPLETE",
+      "worker_state": "FINISHED",
+      "coverage": {
+        "audit_rate": 0.9984152139461173,
+        "complete": false,
+        "files_attempted": 1262,
+        "files_audited": 1260,
+        "files_discovered": 1262,
+        "measurement_state": "incomplete",
+        "rate_defined": true
+      },
+      "pending_count": 0,
+      "syntax_errors": 2,
+      "unreadable_sources": 0,
+      "oversized_sources": 0,
+      "analysis_errors": 0,
+      "report_sha256": "9add17f031c3ee1d65c6fd36ec9237ee663778f5339e26f0634ad296548f50ff"
+    },
+    {
+      "repository": "InvenTree/InvenTree",
+      "capture_state": "ACQUIRED",
+      "state": "INCOMPLETE",
+      "worker_state": "FINISHED",
+      "coverage": {
+        "audit_rate": 1.0,
+        "complete": true,
+        "files_attempted": 643,
+        "files_audited": 643,
+        "files_discovered": 643,
+        "measurement_state": "complete",
+        "rate_defined": true
+      },
+      "pending_count": 0,
+      "syntax_errors": 0,
+      "unreadable_sources": 0,
+      "oversized_sources": 0,
+      "analysis_errors": 0,
+      "report_sha256": "bab92ec5a6cff1c7b07e092b2f63105536a568ce7cd054c264f09442e6b0753e"
+    },
+    {
+      "repository": "liberapay/liberapay.com",
+      "capture_state": "ACQUIRED",
+      "state": "INCOMPLETE",
+      "worker_state": "FINISHED",
+      "coverage": {
+        "audit_rate": 1.0,
+        "complete": true,
+        "files_attempted": 116,
+        "files_audited": 116,
+        "files_discovered": 116,
+        "measurement_state": "complete",
+        "rate_defined": true
+      },
+      "pending_count": 0,
+      "syntax_errors": 0,
+      "unreadable_sources": 0,
+      "oversized_sources": 0,
+      "analysis_errors": 0,
+      "report_sha256": "5b4839789403fdc2b88e0bbbe66300e27809db412ce8791e39f81a72d72ec06f"
+    },
+    {
+      "repository": "doccano/doccano",
+      "capture_state": "ACQUIRED",
+      "state": "INCOMPLETE",
+      "worker_state": "FINISHED",
+      "coverage": {
+        "audit_rate": 1.0,
+        "complete": true,
+        "files_attempted": 315,
+        "files_audited": 315,
+        "files_discovered": 315,
+        "measurement_state": "complete",
+        "rate_defined": true
+      },
+      "pending_count": 0,
+      "syntax_errors": 0,
+      "unreadable_sources": 0,
+      "oversized_sources": 0,
+      "analysis_errors": 0,
+      "report_sha256": "44f127c0b0db7079a38859484376d8819d494a5deb3cc66037f781f802702721"
+    },
+    {
+      "repository": "modoboa/modoboa",
+      "capture_state": "ACQUIRED",
+      "state": "INCOMPLETE",
+      "worker_state": "FINISHED",
+      "coverage": {
+        "audit_rate": 1.0,
+        "complete": true,
+        "files_attempted": 680,
+        "files_audited": 680,
+        "files_discovered": 680,
+        "measurement_state": "complete",
+        "rate_defined": true
+      },
+      "pending_count": 0,
+      "syntax_errors": 0,
+      "unreadable_sources": 0,
+      "oversized_sources": 0,
+      "analysis_errors": 0,
+      "report_sha256": "e2b3b6351a865639914d6893e0f2c46a2942e9d4cd25913878bf77f5a8797b07"
+    },
+    {
+      "repository": "django-wiki/django-wiki",
+      "capture_state": "ACQUIRED",
+      "state": "INCOMPLETE",
+      "worker_state": "FINISHED",
+      "coverage": {
+        "audit_rate": 1.0,
+        "complete": true,
+        "files_attempted": 209,
+        "files_audited": 209,
+        "files_discovered": 209,
+        "measurement_state": "complete",
+        "rate_defined": true
+      },
+      "pending_count": 0,
+      "syntax_errors": 0,
+      "unreadable_sources": 0,
+      "oversized_sources": 0,
+      "analysis_errors": 0,
+      "report_sha256": "de2ad3e0fef6ef752567566ba571ad48d66dd0d05c66d356ac526c6d36d3cf8a"
+    },
+    {
+      "repository": "awesto/django-shop",
+      "capture_state": "ACQUIRED",
+      "state": "INCOMPLETE",
+      "worker_state": "FINISHED",
+      "coverage": {
+        "audit_rate": 1.0,
+        "complete": true,
+        "files_attempted": 166,
+        "files_audited": 166,
+        "files_discovered": 166,
+        "measurement_state": "complete",
+        "rate_defined": true
+      },
+      "pending_count": 0,
+      "syntax_errors": 0,
+      "unreadable_sources": 0,
+      "oversized_sources": 0,
+      "analysis_errors": 0,
+      "report_sha256": "d7e4f57051902934fa340a23e4a304b2c05c661ddb79b3a8107ffab3701102ba"
+    },
+    {
+      "repository": "openwisp/openwisp-controller",
+      "capture_state": "ACQUIRED",
+      "state": null,
+      "worker_state": "FAILED",
+      "coverage": null,
+      "pending_count": null,
+      "syntax_errors": null,
+      "unreadable_sources": null,
+      "oversized_sources": null,
+      "analysis_errors": null,
+      "report_sha256": "69c8e6537e27efc725378ff503fc1d4d54dfbf3dd9eee9c74c45b960357a1ffe"
+    },
+    {
+      "repository": "jazzband/django-taggit",
+      "capture_state": "ACQUIRED",
+      "state": "INCOMPLETE",
+      "worker_state": "FINISHED",
+      "coverage": {
+        "audit_rate": 1.0,
+        "complete": true,
+        "files_attempted": 63,
+        "files_audited": 63,
+        "files_discovered": 63,
+        "measurement_state": "complete",
+        "rate_defined": true
+      },
+      "pending_count": 0,
+      "syntax_errors": 0,
+      "unreadable_sources": 0,
+      "oversized_sources": 0,
+      "analysis_errors": 0,
+      "report_sha256": "5b119a829ccba24728998ebddabac22464d7aa3b05adc421dc4ae1d210104294"
+    },
+    {
+      "repository": "carltongibson/django-filter",
+      "capture_state": "ACQUIRED",
+      "state": "INCOMPLETE",
+      "worker_state": "FINISHED",
+      "coverage": {
+        "audit_rate": 1.0,
+        "complete": true,
+        "files_attempted": 39,
+        "files_audited": 39,
+        "files_discovered": 39,
+        "measurement_state": "complete",
+        "rate_defined": true
+      },
+      "pending_count": 0,
+      "syntax_errors": 0,
+      "unreadable_sources": 0,
+      "oversized_sources": 0,
+      "analysis_errors": 0,
+      "report_sha256": "f785908b79786581b5ae89f56f6856a600fa2cfbcee523edc34874b06649a6c0"
+    },
+    {
+      "repository": "carltongibson/neapolitan",
+      "capture_state": "ACQUIRED",
+      "state": "INCOMPLETE",
+      "worker_state": "FINISHED",
+      "coverage": {
+        "audit_rate": 1.0,
+        "complete": true,
+        "files_attempted": 16,
+        "files_audited": 16,
+        "files_discovered": 16,
+        "measurement_state": "complete",
+        "rate_defined": true
+      },
+      "pending_count": 0,
+      "syntax_errors": 0,
+      "unreadable_sources": 0,
+      "oversized_sources": 0,
+      "analysis_errors": 0,
+      "report_sha256": "dfb372efcc5b807441a3dd72284af8a7c71a531ac694bdd29b40f721d6684cce"
+    },
+    {
+      "repository": "django/daphne",
+      "capture_state": "ACQUIRED",
+      "state": "INCOMPLETE",
+      "worker_state": "FINISHED",
+      "coverage": {
+        "audit_rate": 1.0,
+        "complete": true,
+        "files_attempted": 26,
+        "files_audited": 26,
+        "files_discovered": 26,
+        "measurement_state": "complete",
+        "rate_defined": true
+      },
+      "pending_count": 0,
+      "syntax_errors": 0,
+      "unreadable_sources": 0,
+      "oversized_sources": 0,
+      "analysis_errors": 0,
+      "report_sha256": "3cab3237628edb0f61427205144bdb3e6fa97644cf7d77dbae2dedebf6276eaf"
+    }
+  ],
+  "all_eligible_source_inventories_audited": false,
+  "semantic_coverage": "INCOMPLETE nativefullprofile; not universal correctness evidence.",
+  "merge_score_met": false,
+  "publication_score_met": false,
+  "merge_approved": false,
+  "human_validation": false,
+  "paired_improvement_vs_prior_panels": null,
+  "retention": {
+    "historical_control_count": 13,
+    "current_run": "NOT_RERUN; separate from natural freshsample precision.",
+    "not_recall": true
+  },
+  "limits": [
+    "Separate AI contexts, not human validation or independent model architectures.",
+    "Fresh means no recorded CFstudy exposure in checked metadata, not proof of no previous modeltraining/exposure.",
+    "Different repositories and fullsourceprofile from25%development/9.09%Study210: not a paired regression or improvement.",
+    "Fixedsample of emittedalerts only; incomplete sources/unclearlabels explicit, no recall or allbugs claim.",
+    "Wilson interval is nominal alert-unit interval; within-repository clustering may reduce generalizability.",
+    "Source now exposed after this report; label-informed future repairs are development replays.",
+    "GlobalCI/integration/retention gates remain separate; scorealone doesnot approve merge."
+  ]
+}

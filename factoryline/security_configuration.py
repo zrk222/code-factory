@@ -14,12 +14,22 @@ _DEFERRED_TYPES = tuple(
 )
 
 
-def _canonical(node, aliases):
-    from .review_integrity import _security_flow_bindings
-    from .review_audits import _call_name
+def _canonical(node, aliases, expression=None):
+    from .review_integrity import (
+        _security_flow_bindings,
+        _security_scope_request_aliases,
+    )
+    from .review_audits import _name
 
-    resolved, _ = _security_flow_bindings(node, aliases)
-    raw = _call_name(node)
+    if expression is None:
+        resolved, _ = _security_flow_bindings(node, aliases)
+    else:
+        resolved = _security_scope_request_aliases(
+            getattr(node, "_security_lexical_scope", None),
+            aliases,
+            getattr(node, "_security_flow_statement", None),
+        )
+    raw = _name(node.func if expression is None else expression)
     head, _, tail = raw.partition(".")
     if head not in resolved or _relative_binding(node, head):
         return ""
@@ -74,6 +84,28 @@ def _keyword(call, name, position=None):
 def _literal_bool(node):
     value = getattr(node, "value", None)
     return value if type(value) is bool else None
+
+
+def yaml_safe_loader(call, aliases):
+    """Credit only a canonical safe loader in an unambiguous argument slot."""
+    if _expanded(call) or len(call.args) > 2:
+        return False
+    keywords = [item for item in call.keywords if item.arg == "Loader"]
+    if len(keywords) > 1 or (len(call.args) == 2 and keywords):
+        return False
+    loader = _keyword(call, "Loader", 1)
+    if loader is None:
+        return False
+    return _canonical(call, aliases, loader) in {
+        "yaml.SafeLoader",
+        "yaml.CSafeLoader",
+        "yaml.BaseLoader",
+        "yaml.CBaseLoader",
+        "yaml.loader.SafeLoader",
+        "yaml.loader.BaseLoader",
+        "yaml.cyaml.CSafeLoader",
+        "yaml.cyaml.CBaseLoader",
+    }
 
 
 def _environment_autoescape(call):
@@ -239,61 +271,14 @@ def configuration_findings(tree, aliases, relative="<source>"):
 
 
 def legacy_tls_verification_risk(call, node, aliases=None):
-    """Recognize client use of ssl.wrap_socket with omitted or CERT_NONE checks."""
-    aliases = aliases or {}
-    if (
-        call != "ssl.wrap_socket"
-        or _expanded(node)
-        or _canonical(node, aliases) != call
-    ):
-        return False
-    server = _keyword(node, "server_side", 3)
-    if _literal_bool(server) is True or (
-        server is not None and _literal_bool(server) is None
-    ):
-        return False
-    verification = _keyword(node, "cert_reqs", 4)
-    if verification is None:
-        return True
-    from .review_integrity import _security_scope_request_aliases
-    from .review_audits import _name
+    """Delegate canonical client TLS configuration analysis to the semantic lane."""
+    from .semantic_credential_sensor import legacy_tls_verification_risk as analyze
 
-    bindings = _security_scope_request_aliases(
-        getattr(node, "_security_lexical_scope", None),
-        aliases,
-        getattr(node, "_security_flow_statement", None),
-    )
-    raw = _name(verification)
-    head, _, tail = raw.partition(".")
-    return bindings.get(head, "") + ("." + tail if tail else "") == "ssl.CERT_NONE"
+    return analyze(call, node, aliases)
 
 
 def tls_finding(call, relative, node, aliases=None):
-    """Preserve request TLS findings and add conditional legacy client findings."""
-    from .review_audits import _security_finding
-    from .review_integrity import tls_verification_disabled
+    """Preserve the existing TLS finding entry point and live helper identity."""
+    from .semantic_credential_sensor import tls_finding as analyze
 
-    if tls_verification_disabled(call, node):
-        return _security_finding(
-            "SECURITY_TLS_VERIFY_DISABLED",
-            relative,
-            node,
-            "TLS certificate verification is disabled for an outbound request.",
-            "HIGH",
-            call=call,
-        )
-    if not legacy_tls_verification_risk(call, node, aliases):
-        return None
-    return _security_finding(
-        "SECURITY_TLS_VERIFY_DISABLED",
-        relative,
-        node,
-        "Legacy client TLS configuration omits or disables certificate verification; runtime availability and hostname behavior are not established.",
-        "MEDIUM",
-        call=call,
-        configuration="legacy_CERT_NONE",
-        role="client",
-        runtime_availability="unknown",
-        hostname_verification="not_established",
-        trust_or_exploitability="unknown",
-    )
+    return analyze(call, relative, node, aliases)

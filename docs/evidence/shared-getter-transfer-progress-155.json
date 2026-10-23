@@ -1,0 +1,107 @@
+{
+  "schema": "factory.shared-getter-transfer.progress.v1",
+  "state": "REVIEWED_IMPLEMENTATION_PROGRESS_PRECISION_GOAL_INCOMPLETE",
+  "base_commit": "7def1e6b83301e93d508000b3a8ef8680458b04b",
+  "source_and_test_hashes": {
+    "factoryline/credential_role_getter_records.py": "822fe7239a5c38e7ec13cbddbaead4973484cbf85b2b581d5e04c56da9c3fe96",
+    "factoryline/credential_role_getter_consumers.py": "6c5a45d0d72650a7ce3ab26bce1c0c0bf91e66c8b081b6c84c83d8d4ee31efe7",
+    "factoryline/credential_role_value_slices.py": "c8e3b2a025155f87ad5d723d59176f2695adb9b4074fdae3370459af709204b2",
+    "tests/test_credential_role_getter_consumers.py": "1ee3c8c72640fde6eafd49dfc44e8f17055f37f56912972dd397331d4cc36bd3",
+    "tests/test_mock_fixture_provenance.py": "ad158b552bf558c7c695e9aedde11e6bc66c2716588b068ad550ae1f61cd9afc",
+    "factoryline/credential_endpoint_admission.py": "41bc81976e09b4b9e7e7cae10ff0a8a8b4be7b8cdcd5480efe7aeca6d3a4ecc4"
+  },
+  "changes": [
+    "One shared bounded record projection replaces narrow duplicate URL matching.",
+    "Finite tuple-held getter invocations require exact unpacking, zero arguments and discarded results.",
+    "Provider/builtin namespace mutations and lexical shadowing reject provenance claims.",
+    "Live semantic methods participate in existing source-model and scanner cache epochs."
+  ],
+  "verification": {
+    "adjacent_tests_passed": 1248,
+    "historical_TP_retained": 13,
+    "historical_TP_total": 13,
+    "historical_TP_scope": "Exact existing source slices at original severity, not global recall.",
+    "independent_review": "Sol6.1high ECC bounded source correctness PASS; not a second labeller.",
+    "old_test_definitions_unchanged": {
+      "tests/test_mock_fixture_provenance.py": 57,
+      "tests/test_credential_role_getter_consumers.py": 4
+    },
+    "namespace_boundary": "Old helper accepted both namespace-write repros; candidate rejects both and retains canonical control.",
+    "native_exact38": {
+      "active": 38,
+      "cleared": 0,
+      "unmatched": 0,
+      "files_audited": 376,
+      "files_discovered": 376,
+      "seconds": 139.3024599999917,
+      "candidate_cache_enabled": false
+    },
+    "pytest_reported_seconds": 58.35,
+    "adjacent_process_wall_seconds": 59.44278109999141,
+    "application_census": {
+      "all21_measured": true,
+      "six_repositories_complete": true,
+      "new_security_alerts": 0,
+      "severity_changes": 0,
+      "decided_precision": 0.25,
+      "unclear_inclusive": 0.2
+    }
+  },
+  "source_diagnostic": {
+    "scope": "One exact ArcGIS declaration; source-only diagnostic, not precision.",
+    "getter_unknown_before": 48,
+    "getter_unknown_after": 25,
+    "other_member_unknown_before": 1,
+    "other_member_unknown_after": 1,
+    "URL_witnesses": 4,
+    "known_auth_uses": 0
+  },
+  "current_application_score": {
+    "TP": 2,
+    "FP": 6,
+    "unclear": 2,
+    "decided_precision": 0.25,
+    "unclear_inclusive_rate": 0.2,
+    "new_precision_gain": 0,
+    "fresh_held_out": false,
+    "new_adjudication": false
+  },
+  "footprint": {
+    "new_python_modules": 0,
+    "new_dependencies": 0,
+    "tracked_python_files": 488,
+    "final_frozen_architecture_gate": "INCOMPLETE; no cap increase or green claim."
+  },
+  "remaining": [
+    "Resolve the25 remaining source-consumer/receiver blockers; all38 native alerts remain open.",
+    "Prefer comparison7, URL-prefixhelper4 and tuplecomparison4; reuse exact source binding rather than3392line fixture subsystem.",
+    "Complete fresh preregistered>=30-alert independent adjudication with confidence interval.",
+    "Clear full regression and frozen architecture gates; establish real main/release stability."
+  ],
+  "local_evidence_sha256": {
+    "contract.json": "fab91937579fdfd090d7c2df534f64697f88f7ad6f8ff75d59d79303b5c4411b",
+    "adversarial-review-v5.json": "f1076540e811327da71f15a3868684274f49615bfaa42517284631b871800858",
+    "adversarial-probes-v5.json": "5a98a0d63f288c25d0531c6d049b27f80f12db111d593d105011bf1ac1b009e6",
+    "builtin-adversarial-probes-v5.json": "4b5d985af65a1743475dee06cd5d21fb2f4981441cef84932e6e41ffe6af366f",
+    "comprehension-builtin-probes-v5.json": "d5a7ba974f7d33cb171500b08442677cffc20fc1339cd9311c2707d05326e1b1",
+    "class-builtin-probes-v5.json": "75463097a94c08fb879339d3a85904cbe5c31c1ca32118f05dade1d3c5adfd60",
+    "cache-adversarial-probes-v5.json": "5d1435f193b4038c8d194bf3898074d03c4b579eb1209f6a9f477377f6bc21f3",
+    "related-tests.json": "de4aeb9f14a6571100342db5fad61b0d6441d5c7b8e388dc816ef06c78b32a5c",
+    "related-tests.txt": "f68e448b8a3a267a9dea995f70576658d2b4b9c64fb3756ddfded9e449844adc",
+    "native-freeze.json": "4a5ee6ac3548d4dcfdad99d25397bdf70dbad659599b572cd642d7ef2836c30a",
+    "native-result.json": "73aa6e4eb80c3b0ded1749f226c868490229ddce26bf7e4009b2e4cba93112f5",
+    "native-process.json": "e68af82fe6369a754f1f91603e369129a034ed567f915d3197946a9611c0f658",
+    "old-boundary.json": "4e7d0ef3f8ee4ee5399d759d54bfe76b88fa0975e597146e8657c6fef6fbce5d",
+    "new-boundary.json": "130b578789f760a1f451df115456d7aa55f17843259142b58bd538d5977be4f3",
+    "current-declaration-diagnostic.json": "10510799aef0a54c41c235d813e6c7670002ee849c37c6064a4653d38ed4c43e",
+    "reuse-next-action.json": "836a148ca27ef7da697460ff1a3586cacd9ac6bb01240365d480ab809d0af5e2",
+    "tp-retention.json": "91aecac97b5bce557442c98267d8e09d554cfac0d266e59c7efa9e55e8ea1292",
+    "application-census.json": "c81a8e8d51a381f46bb8f03ae6c3072ce1c4d3461c02ae8c09e05e344548d0f7",
+    "application-paired-report.json": "21309d86305e90130db8772cbb7fa01f772a475c92925813b5140a0fc211d5d4"
+  },
+  "limits": [
+    "No new held-out precision, native clearance, global recall, speedup, merge or release claim.",
+    "Source diagnostic is already exposed development data.",
+    "Canonical dirty worktree preserved; this clean worktree carries only reviewed source bytes."
+  ]
+}

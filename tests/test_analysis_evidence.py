@@ -1,12 +1,9 @@
 from __future__ import annotations
-
 import json
 import hashlib
 import subprocess
 from pathlib import Path
-
 import pytest
-
 from factoryline.analysis_evidence import (
     AnalysisEvidenceError,
     assess_review_reuse,
@@ -20,6 +17,21 @@ from factoryline.analysis_evidence import (
     validate_review_evidence,
 )
 from factoryline.audit_trace import build_audit_trace
+from factoryline.cli import main
+from factoryline.external_evidence import (
+    ExternalEvidenceError,
+    diff_external_runtime_receipts,
+    import_external_runtime_bundle,
+    verify_external_runtime_receipt,
+)
+from datetime import datetime, timedelta, timezone
+from factoryline.loop_passport import build_loop_passport, init_loop
+from factoryline.run_admission import (
+    AdmissionError,
+    prepare_admission,
+    verify_admission,
+)
+from test_intake_admission import _intake
 
 
 def _implementation_findings(
@@ -1017,3 +1029,389 @@ def test_execution_packet_binds_persisted_six_lane_evidence(tmp_path: Path) -> N
     state_file.write_text("{}", encoding="utf-8")
     with pytest.raises(AnalysisEvidenceError, match="does not match returned state"):
         build_execution_review_evidence(state, {"lanes": plan_lanes}, state_file)
+
+
+def _sha(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _write_bundle(
+    root: Path,
+    run_id: str,
+    *,
+    test_id: str = "checkout-approval",
+    artifact_name: str = "runtime.txt",
+    verdict: str = "failed",
+    failure_kind: str = "assertion",
+) -> Path:
+    artifact = root / artifact_name
+    artifact.write_text(f"{run_id}:{verdict}\n", encoding="utf-8")
+    bundle = {
+        "schema": "factory.external-runtime-bundle.v1",
+        "provider": "testsprite",
+        "project_id": "approval-tracker",
+        "test_id": test_id,
+        "run_id": run_id,
+        "snapshot_id": f"snapshot-{run_id}",
+        "code_version": f"commit-{run_id}",
+        "environment": {"fingerprint": "linux-node-22", "label": "ci"},
+        "verdict": verdict,
+        "failure_kind": failure_kind,
+        "first_failed_step": {
+            "index": 2 if verdict == "failed" else None,
+            "label": "submit" if verdict == "failed" else None,
+        },
+        "hypothesis": "The approval transition is not persisted."
+        if verdict == "failed"
+        else "",
+        "recommended_fix": "Check the transaction boundary."
+        if verdict == "failed"
+        else "",
+        "artifacts": [
+            {"path": artifact_name, "sha256": _sha(artifact), "kind": "runtime-log"}
+        ],
+        "observed_at": "2026-08-24T12:00:00Z",
+    }
+    path = root / f"bundle-{run_id}.json"
+    path.write_text(json.dumps(bundle, indent=2) + "\n", encoding="utf-8")
+    return path
+
+
+def test_testsprite_import_is_hash_bound_and_idempotent(tmp_path: Path):
+    bundle = _write_bundle(tmp_path, "run-1")
+
+    first = import_external_runtime_bundle(tmp_path, bundle, "testsprite")
+    second = import_external_runtime_bundle(tmp_path, bundle, "testsprite")
+    receipt_path = tmp_path / first["path"]
+
+    assert first["status"] == "written"
+    assert second["status"] == "idempotent"
+    assert receipt_path.is_file()
+    verified = verify_external_runtime_receipt(tmp_path, receipt_path)
+    receipt = verified["receipt"]
+    assert receipt["provider"] == "testsprite"
+    assert receipt["trust"] == "observed_external"
+    assert all(value is False for value in receipt["authority"].values())
+    assert receipt["source_bundle"]["sha256"] == _sha(bundle)
+
+
+def test_tampered_artifact_fails_closed_without_receipt(tmp_path: Path):
+    bundle = _write_bundle(tmp_path, "run-tampered")
+    (tmp_path / "runtime.txt").write_text("tampered\n", encoding="utf-8")
+
+    with pytest.raises(ExternalEvidenceError) as error:
+        import_external_runtime_bundle(tmp_path, bundle, "testsprite")
+
+    assert error.value.code == "EXTERNAL_EVIDENCE_ARTIFACT_STALE"
+    assert not (tmp_path / ".factory" / "external-evidence").exists()
+
+
+def test_diff_reports_deterministic_deltas_and_rejects_cross_test(tmp_path: Path):
+    left_bundle = _write_bundle(tmp_path, "run-left", artifact_name="left.txt")
+    right_bundle = _write_bundle(
+        tmp_path,
+        "run-right",
+        artifact_name="right.txt",
+        verdict="passed",
+        failure_kind="none",
+    )
+    left = import_external_runtime_bundle(
+        tmp_path,
+        left_bundle,
+        "testsprite",
+        tmp_path / ".factory" / "external-evidence" / "left.json",
+    )
+    right = import_external_runtime_bundle(
+        tmp_path,
+        right_bundle,
+        "testsprite",
+        tmp_path / ".factory" / "external-evidence" / "right.json",
+    )
+
+    diff = diff_external_runtime_receipts(
+        tmp_path, Path(left["path"]), Path(right["path"])
+    )
+    assert diff["marker"] == "EXTERNAL_DIFF_COMPARABLE"
+    assert diff["comparable"] is True
+    assert diff["deltas"]["verdict"]["changed"] is True
+    assert diff["deltas"]["artifacts"]["added"] == ["right.txt"]
+    assert diff["deltas"]["artifacts"]["removed"] == ["left.txt"]
+    assert all(value is False for value in diff["authority"].values())
+
+    other_bundle = _write_bundle(
+        tmp_path, "run-other", test_id="different-test", artifact_name="other.txt"
+    )
+    other = import_external_runtime_bundle(
+        tmp_path,
+        other_bundle,
+        "testsprite",
+        tmp_path / ".factory" / "external-evidence" / "other.json",
+    )
+    incomparable = diff_external_runtime_receipts(
+        tmp_path, Path(left["path"]), Path(other["path"])
+    )
+    assert incomparable["marker"] == "EXTERNAL_DIFF_INCOMPARABLE"
+    assert incomparable["comparable"] is False
+
+
+def test_cli_import_and_diff_use_stable_status_codes(tmp_path: Path, capsys):
+    left = _write_bundle(tmp_path, "cli-left", artifact_name="cli-left.txt")
+    right = _write_bundle(
+        tmp_path,
+        "cli-right",
+        artifact_name="cli-right.txt",
+        verdict="passed",
+        failure_kind="none",
+    )
+    out_left = tmp_path / ".factory" / "external-evidence" / "left.json"
+    out_right = tmp_path / ".factory" / "external-evidence" / "right.json"
+
+    assert (
+        main(
+            [
+                "external",
+                "import",
+                str(left),
+                "--root",
+                str(tmp_path),
+                "--provider",
+                "testsprite",
+                "--out",
+                str(out_left),
+                "--json",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    assert (
+        main(
+            [
+                "external",
+                "import",
+                str(right),
+                "--root",
+                str(tmp_path),
+                "--provider",
+                "testsprite",
+                "--out",
+                str(out_right),
+                "--json",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    assert (
+        main(
+            [
+                "external",
+                "diff",
+                str(out_left),
+                str(out_right),
+                "--root",
+                str(tmp_path),
+                "--json",
+            ]
+        )
+        == 0
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["marker"] == "EXTERNAL_DIFF_COMPARABLE"
+
+
+def _passport(tmp_path: Path) -> Path:
+    manifest = Path(init_loop(tmp_path, "dependency-audit", "platform-team")["path"])
+    return Path(build_loop_passport(tmp_path, manifest)["paths"]["json"])
+
+
+def _request(tmp_path: Path, *, action: str = "read_repository") -> Path:
+    path = tmp_path / "request.json"
+    path.write_text(
+        json.dumps(
+            {
+                "schema": "factory.run-admission.request.v1",
+                "id": "dependency-audit-run-1",
+                "valid_until": (
+                    datetime.now(timezone.utc) + timedelta(minutes=30)
+                ).isoformat(),
+                "trigger": {"type": "manual"},
+                "actions": [action],
+                "paths": ["."],
+                "budget": {
+                    "max_iterations": 1,
+                    "max_wall_seconds": 900,
+                    "max_tokens": 0,
+                    "max_cost_usd": 0,
+                },
+                "approvals": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_admission_seals_then_revalidates_without_external_authority(tmp_path: Path):
+    packet = prepare_admission(tmp_path, _passport(tmp_path), _request(tmp_path))
+    verified = verify_admission(tmp_path, Path(packet["path"]))
+
+    assert packet["verdict"] == "SEALED"
+    assert packet["markers"] == [
+        "ADMISSION_PACKET_SEALED",
+        "ADMISSION_EXTERNAL_EFFECTS_DENIED",
+    ]
+    assert verified["marker"] == "ADMISSION_READY"
+    assert all(value is False for value in verified["authority"].values())
+
+
+def test_admission_rejects_undeclared_action_without_writing_packet(tmp_path: Path):
+    with pytest.raises(AdmissionError) as raised:
+        prepare_admission(
+            tmp_path, _passport(tmp_path), _request(tmp_path, action="publish")
+        )
+
+    assert raised.value.code == "ADMISSION_ACTION_UNDECLARED"
+    assert not (tmp_path / ".factory" / "admissions").exists()
+
+
+def test_admission_becomes_stale_when_workspace_changes(tmp_path: Path):
+    source = tmp_path / "source.txt"
+    source.write_text("before", encoding="utf-8")
+    packet = prepare_admission(tmp_path, _passport(tmp_path), _request(tmp_path))
+    source.write_text("after", encoding="utf-8")
+
+    verified = verify_admission(tmp_path, Path(packet["path"]))
+
+    assert verified["marker"] == "ADMISSION_STALE"
+    assert verified["reason"] == "workspace_or_graph_changed"
+
+
+def test_admission_rejects_expired_or_overlong_validity_before_writing_packet(
+    tmp_path: Path,
+):
+    request = _request(tmp_path)
+    payload = json.loads(request.read_text(encoding="utf-8"))
+    payload["valid_until"] = (
+        datetime.now(timezone.utc) - timedelta(seconds=1)
+    ).isoformat()
+    request.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(AdmissionError) as raised:
+        prepare_admission(tmp_path, _passport(tmp_path), request)
+
+    assert raised.value.code == "ADMISSION_EXPIRED"
+    assert not (tmp_path / ".factory" / "admissions").exists()
+
+
+def test_admission_blocks_a_tampered_packet_with_the_public_marker(tmp_path: Path):
+    packet = prepare_admission(tmp_path, _passport(tmp_path), _request(tmp_path))
+    path = Path(packet["path"])
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["request"]["actions"] = ["publish"]
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    verified = verify_admission(tmp_path, path)
+
+    assert verified["marker"] == "ADMISSION_PACKET_BLOCKED"
+    assert verified["reason"] == "packet_sha256_mismatch"
+
+
+def test_admission_cli_seals_then_reports_a_ready_packet(tmp_path: Path, capsys):
+    passport, request = _passport(tmp_path), _request(tmp_path)
+    code = main(
+        [
+            "admission",
+            "prepare",
+            str(passport),
+            str(request),
+            "--root",
+            str(tmp_path),
+            "--json",
+        ]
+    )
+    sealed = json.loads(capsys.readouterr().out)
+    verify_code = main(
+        ["admission", "verify", sealed["path"], "--root", str(tmp_path), "--json"]
+    )
+    ready = json.loads(capsys.readouterr().out)
+
+    assert code == 0
+    assert sealed["markers"][0] == "ADMISSION_PACKET_SEALED"
+    assert verify_code == 0
+    assert ready["marker"] == "ADMISSION_READY"
+
+
+def test_strict_admission_binds_authoritative_intake_parameters(tmp_path: Path):
+    source = tmp_path / "source.txt"
+    source.write_text("source", encoding="utf-8")
+    intake_path, _ = _intake(tmp_path, scope=["source.txt"], mode="human_controlled")
+    passport = _passport(tmp_path)
+    request = _request(tmp_path)
+    payload = json.loads(request.read_text(encoding="utf-8"))
+    payload["paths"] = ["source.txt"]
+    payload["budget"] = {
+        "max_iterations": 1,
+        "max_wall_seconds": 100,
+        "max_tokens": 0,
+        "max_cost_usd": 0,
+    }
+    intake = json.loads(intake_path.read_text(encoding="utf-8"))
+    payload["intake_parameters"] = {
+        "path": intake_path.relative_to(tmp_path).as_posix(),
+        "parameter_sha256": intake["parameter_sha256"],
+    }
+    request.write_text(json.dumps(payload), encoding="utf-8")
+
+    packet = prepare_admission(tmp_path, passport, request, require_intake=True)
+    verified = verify_admission(tmp_path, Path(packet["path"]))
+    assert packet["intake_parameters"]["parameter_sha256"] == intake["parameter_sha256"]
+    assert verified["marker"] == "ADMISSION_READY"
+
+
+def test_strict_admission_rejects_missing_intake_binding(tmp_path: Path):
+    with pytest.raises(AdmissionError) as raised:
+        prepare_admission(
+            tmp_path, _passport(tmp_path), _request(tmp_path), require_intake=True
+        )
+    assert raised.value.code == "E_INTAKE_BINDING_REQUIRED"
+
+
+def test_checkpoint_fix_is_bound_to_scope_patch_and_human_approval(tmp_path: Path):
+    source = tmp_path / "source.txt"
+    source.write_text("source", encoding="utf-8")
+    patch = tmp_path / "checkpoint.patch"
+    patch.write_text("diff --git a/source.txt b/source.txt\n", encoding="utf-8")
+    intake_path, _ = _intake(tmp_path, scope=["source.txt"], mode="human_controlled")
+    passport = _passport(tmp_path)
+    request = _request(tmp_path)
+    payload = json.loads(request.read_text(encoding="utf-8"))
+    payload["actions"] = ["read_repository", "write_workspace"]
+    payload["paths"] = ["source.txt"]
+    payload["budget"] = {
+        "max_iterations": 1,
+        "max_wall_seconds": 100,
+        "max_tokens": 0,
+        "max_cost_usd": 0,
+    }
+    intake = json.loads(intake_path.read_text(encoding="utf-8"))
+    payload["intake_parameters"] = {
+        "path": intake_path.relative_to(tmp_path).as_posix(),
+        "parameter_sha256": intake["parameter_sha256"],
+    }
+    payload["checkpoint_fix"] = {
+        "checkpoint_id": "verify-1",
+        "patch_path": "checkpoint.patch",
+        "patch_sha256": __import__("hashlib").sha256(patch.read_bytes()).hexdigest(),
+        "paths": ["source.txt"],
+        "reason": "Repair the verified checkpoint defect before retrying the lane.",
+        "approved_by": "Rick Katz",
+        "approval_expires_at": payload["valid_until"],
+    }
+    request.write_text(json.dumps(payload), encoding="utf-8")
+
+    packet = prepare_admission(tmp_path, passport, request, require_intake=True)
+    verified = verify_admission(tmp_path, Path(packet["path"]))
+
+    assert packet["request"]["checkpoint_fix"]["checkpoint_id"] == "verify-1"
+    assert verified["checkpoint_fix"]["state"] == "BOUND_FOR_EXTERNAL_HARNESS"

@@ -1,8 +1,178 @@
+import hashlib
+from factoryline import review_audits
+from factoryline import runtime_audit_integrity as runtime
 import pytest
 from factoryline.runtime_audit import evaluate_runtime_audit
 from factoryline.runtime_audit_integrity import index_executions, repair_guidance
 from factoryline.runtime_audit_common import RuntimeAuditError
 from test_runtime_audit import _plan, _command
+import ast
+import json
+from factoryline.runtime_audit_integrity import closed_declaration_input_witness
+from factoryline.runtime_audit_integrity import finite_literal_eval_input_witness
+from factoryline.runtime_audit_integrity import source_generated_eval_input_witness
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "brew --prefix openssl",
+        "brew --prefix libfoo@3",
+        "upx --best app",
+        "upx --best --force-macos program",
+        "upx --best python3*.dll libcrypto*.dll",
+        "upx --best app.exe python3*.dll",
+    ],
+)
+def test_closed_shell_operations_keep_bound_primitive(tmp_path, command):
+    from factoryline.review_audits import security_scan
+
+    (tmp_path / "build.py").write_text(
+        f"import os\nos.system({command!r})\n", encoding="utf-8"
+    )
+    report = security_scan(tmp_path, cache_enabled=False)
+    assert not report["findings"]
+    assert report["primitive_observation_count"] == 1
+    proof = report["primitive_observations"][0]["facts"]
+    assert proof["hypothesis"] == "SOURCE_COMMAND_INJECTION"
+    assert proof["filesystem_assurance"] == "UNASSESSED"
+    assert proof["runtime_assurance"] == "INCOMPLETE"
+    assert (
+        security_scan(tmp_path)["primitive_observations"]
+        == report["primitive_observations"]
+    )
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "rm -rf /",
+        "curl https://example.com/install | sh",
+        "python get-pip.py",
+        "unknown --best app",
+        "upx --best --unknown app",
+        "upx --best /usr/bin/app",
+        "upx --best ../app",
+        "upx --best -evil",
+        "upx --best *",
+        "upx --best app;evil",
+        "upx --best app && evil",
+        "upx --best app || evil",
+        "upx --best $(evil)",
+        "upx --best `evil`",
+        "upx --best $APP",
+        "upx --best ~user/app",
+        "upx --best app > out",
+        "upx --best app\nevil",
+        "brew --prefix -evil",
+        "brew --prefix openssl/../other",
+        "upx --best app%EVIL%",
+    ],
+)
+def test_unsupported_shell_operations_retain_high(tmp_path, command):
+    from factoryline.review_audits import security_scan
+
+    (tmp_path / "build.py").write_text(
+        f"import os\nos.system({command!r})\n", encoding="utf-8"
+    )
+    report = security_scan(tmp_path, cache_enabled=False)
+    assert [(row["code"], row["severity"]) for row in report["findings"]] == [
+        ("SECURITY_OS_COMMAND", "HIGH")
+    ]
+    assert not report.get("primitive_observations")
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "import os\nos.system(input())\n",
+        "import subprocess\nsubprocess.run('upx --best app', shell=True, executable='sh')\n",
+        "import os\nother = os\nother.system = lambda x: None\nos.system('upx --best app')\n",
+        "import os\nsetattr(os, 'system', lambda x: None)\nos.system('upx --best app')\n",
+        "import os\ndef f(os):\n    os.system('upx --best app')\n",
+    ],
+)
+def test_closed_shell_provider_and_input_ambiguity_stays_unproved(tmp_path, source):
+    from factoryline.review_audits import security_scan
+
+    (tmp_path / "build.py").write_text(source, encoding="utf-8")
+    report = security_scan(tmp_path, cache_enabled=False)
+    assert not report.get("primitive_observations")
+
+
+def test_closed_shell_source_binding_rejects_forgery_and_shadow(tmp_path):
+    from factoryline.review_audits import security_scan
+    from factoryline.primitive_observation_binding import closed_shell_binding
+
+    path = tmp_path / "build.py"
+    path.write_text("import os\nos.system('upx --best app')\n", encoding="utf-8")
+    report = security_scan(tmp_path, cache_enabled=False)
+    finding = report["primitive_observations"][0]
+    sources = report["sources"]
+    bindings = {row["path"]: row["sha256"] for row in sources}
+    raw = {"build.py": path.read_bytes()}
+    assert closed_shell_binding(finding, sources, bindings, raw)
+    forged = json.loads(json.dumps(finding))
+    forged["facts"]["operation_role"] = "safe"
+    assert not closed_shell_binding(forged, sources, bindings, raw)
+    raw["build.py"] = b"import os\nos.system('rm -rf /')\n"
+    assert not closed_shell_binding(finding, sources, bindings, raw)
+    (tmp_path / "os.py").write_text("pass\n", encoding="utf-8")
+    assert not security_scan(tmp_path, cache_enabled=False).get(
+        "primitive_observations"
+    )
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "os.__dict__['system'] = replacement",
+        "lookup(os, '__dict__')['system'] = replacement",
+        "mutate(os)",
+        "os.system = replacement",
+        "__import__('os').system = replacement",
+        "loader = __import__; loader('os').system = replacement",
+        "globals()['os'].system = replacement",
+        "namespace = globals(); namespace['os'].system = replacement",
+        "from importlib import import_module as load; load('os').system = replacement",
+        "__import__('importlib').import_module('os').system = replacement",
+        "os.system = replacement\ndef unused():\n    import harmless as os",
+        "from importlib import import_module as loader\nloader('os').system = replacement\ndef unused():\n    import harmless as loader",
+    ],
+)
+def test_closed_shell_imported_provider_changes_remain_findings(tmp_path, mutation):
+    from factoryline.review_audits import security_scan
+
+    (tmp_path / "app.py").write_text(
+        "import helper\nimport os\nos.system('upx --best app')\n", encoding="utf-8"
+    )
+    (tmp_path / "helper.py").write_text(
+        "import os\nfrom builtins import getattr as lookup\n"
+        "def replacement(value):\n    pass\n"
+        "def mutate(value):\n    value.system = replacement\n" + mutation + "\n",
+        encoding="utf-8",
+    )
+    report = security_scan(tmp_path, cache_enabled=False)
+    assert not report.get("primitive_observations")
+    assert any(
+        row["code"] == "SECURITY_OS_COMMAND" and row["severity"] == "HIGH"
+        for row in report["findings"]
+    )
+
+
+def test_closed_shell_cached_changes_cannot_reuse_proof(tmp_path):
+    from factoryline.review_audits import security_scan
+
+    path = tmp_path / "app.py"
+    for command in ["upx --best app", "rm -rf /", "upx --best app"]:
+        path.write_text(f"import os\nos.system({command!r})\n", encoding="utf-8")
+        result = security_scan(tmp_path)
+        if command.startswith("rm"):
+            assert result["findings"][0]["severity"] == "HIGH"
+            assert not result.get("primitive_observations")
+        else:
+            assert len(result["primitive_observations"]) == 1
+            assert not result["findings"]
 
 
 @pytest.mark.parametrize(
@@ -10,31 +180,42 @@ from test_runtime_audit import _plan, _command
 )
 def test_ambiguous_join_is_rejected(tmp_path, mutation):
     lane = _plan()["lanes"][0]
+
     entry = {
         "id": lane["id"],
         "kind": lane["kind"],
         "target": _command(lane["kind"]),
         "known_bad": _command(lane["kind"], True),
     }
+
     rows = [entry]
+
     if mutation == "duplicate":
         rows.append(dict(entry))
+
     elif mutation == "unknown":
         entry["id"] = "unapproved"
+
     elif mutation == "kind":
         entry["kind"] = "tenant_isolation"
+
     elif mutation == "malformed":
         rows.append(None)
+
     else:
         rows *= 7
+
     with pytest.raises(RuntimeAuditError) as error:
         evaluate_runtime_audit(_plan(), {"executions": rows}, tmp_path)
+
     assert error.value.code == "E_AUDIT_EXECUTION_SET"
 
 
 def test_missing_evidence_stays_incomplete(tmp_path):
     result = evaluate_runtime_audit(_plan(), {"executions": []}, tmp_path)
+
     assert result["decision"] == "BLOCKED"
+
     assert all(
         lane["repair_guidance"]["repair_target"] == "audit_evidence"
         for lane in result["lanes"]
@@ -44,10 +225,15 @@ def test_missing_evidence_stays_incomplete(tmp_path):
 @pytest.mark.parametrize("lane", _plan()["lanes"])
 def test_all_six_lanes_get_exact_replay_and_no_authority(lane):
     result = repair_guidance({"state": "FAIL", "finding": "REAL_DEFECT"}, lane)
+
     assert result["repair_target"] == "application_behavior"
+
     assert result["negative_argv"] == lane["known_bad_argv"]
+
     assert result["expected_negative_code"] == lane["expected_negative_code"]
+
     assert result["authority"] == "none"
+
     assert (
         repair_guidance({"state": "FAIL", "finding": "HOLLOW_RUNTIME_AUDIT"}, lane)[
             "repair_target"
@@ -58,6 +244,1422 @@ def test_all_six_lanes_get_exact_replay_and_no_authority(lane):
 
 def test_duplicate_plan_lane_cannot_claim_six_lane_coverage():
     plan = _plan()
+
     plan["lanes"][-1] = plan["lanes"][0]
+
     with pytest.raises(RuntimeAuditError):
         index_executions(plan, {"executions": []})
+
+
+def _witness(source, source_bytes=None):
+    tree = ast.parse(source)
+    source_bytes = source.encode("utf-8") if source_bytes is None else source_bytes
+    calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "exec"
+        and len(node.args) == 3
+    ]
+    assert len(calls) == 1
+    return closed_declaration_input_witness(
+        calls[0],
+        "exec",
+        source_bytes=source_bytes,
+        source_path="case.py",
+    )
+
+
+def test_closed_declaration_input_witness_accepts_exact_alias_declaration():
+    witness = _witness(
+        "def run():\n    ctx = {}\n    exec('type Alias = int', ctx, None)\n"
+    )
+
+    assert witness["schema"] == "factory.closed-declaration-input.v1"
+    assert witness["disposition"] == "PROVEN_CLOSED_DECLARATION_INPUT"
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        pytest.param(
+            "def run():\n"
+            "    ctx = {}\n"
+            "    exec('type Alias = int\\nmarker = 1', ctx, None)\n",
+            id="extra-statement",
+        ),
+        pytest.param(
+            "def run():\n    ctx = {}\n    exec('type Alias = int\\n', ctx, None)\n",
+            id="newline-in-input",
+        ),
+        pytest.param(
+            "def run():\n"
+            "    ctx = {}\n"
+            "    exec('type Alias[T] = list[T]', ctx, None)\n",
+            id="type-parameters",
+        ),
+        pytest.param(
+            "def run():\n"
+            "    ctx = {}\n"
+            "    exec('type Alias = build_type()', ctx, None)\n",
+            id="computed-rhs",
+        ),
+        pytest.param(
+            "def run(custom_ctx):\n"
+            "    ctx = {}\n"
+            "    exec('type Alias = int', custom_ctx, None)\n",
+            id="custom-namespace",
+        ),
+        pytest.param(
+            "def run():\n"
+            "    ctx = {}\n"
+            "    ctx['extra'] = 1\n"
+            "    exec('type Alias = int', ctx, None)\n",
+            id="precall-context-mutation",
+        ),
+        pytest.param(
+            "def run():\n"
+            "    ctx = {}\n"
+            "    retain(ctx)\n"
+            "    exec('type Alias = int', ctx, None)\n",
+            id="context-escape",
+        ),
+        pytest.param(
+            "def run():\n"
+            "    exec = replacement\n"
+            "    ctx = {}\n"
+            "    exec('type Alias = int', ctx, None)\n",
+            id="shadowed-exec",
+        ),
+        pytest.param(
+            "__builtins__['exec'] = replacement\n"
+            "def run():\n"
+            "    ctx = {}\n"
+            "    exec('type Alias = int', ctx, None)\n",
+            id="builtins-exec-mutation",
+        ),
+        pytest.param(
+            "import builtins\n"
+            "builtins.__dict__['exec'] = replacement\n"
+            "def run():\n"
+            "    ctx = {}\n"
+            "    exec('type Alias = int', ctx, None)\n",
+            id="builtins-dict-exec-mutation",
+        ),
+        pytest.param(
+            "import builtins\n"
+            "mutate = setattr\n"
+            "mutate(builtins, 'exec', replacement)\n"
+            "def run():\n"
+            "    ctx = {}\n"
+            "    exec('type Alias = int', ctx, None)\n",
+            id="builtins-exec-mutated-through-setter-alias",
+        ),
+        pytest.param(
+            "import builtins\n"
+            "builtins.__setattr__('exec', replacement)\n"
+            "def run():\n"
+            "    ctx = {}\n"
+            "    exec('type Alias = int', ctx, None)\n",
+            id="builtins-exec-mutated-through-module-setattr",
+        ),
+        pytest.param(
+            "from builtins import setattr as mutate\n"
+            "import builtins\n"
+            "mutate(builtins, 'exec', replacement)\n"
+            "def run():\n"
+            "    ctx = {}\n"
+            "    exec('type Alias = int', ctx, None)\n",
+            id="imported-setattr-mutates-builtins-exec",
+        ),
+        pytest.param(
+            "from builtins import __dict__ as namespace\n"
+            "namespace['exec'] = replacement\n"
+            "def run():\n"
+            "    ctx = {}\n"
+            "    exec('type Alias = int', ctx, None)\n",
+            id="imported-builtins-dict-mutates-exec",
+        ),
+        pytest.param(
+            "exec('exec = replacement')\n"
+            "def run():\n"
+            "    ctx = {}\n"
+            "    exec('type Alias = int', ctx, None)\n",
+            id="exec-rebinds-exec-before-candidate",
+        ),
+        pytest.param(
+            "from builtins import exec as rewrite\n"
+            "rewrite('exec = replacement')\n"
+            "def run():\n"
+            "    ctx = {}\n"
+            "    exec('type Alias = int', ctx, None)\n",
+            id="imported-exec-rebinds-exec-before-candidate",
+        ),
+        pytest.param(
+            "def run(value):\n"
+            "    match value:\n"
+            "        case exec:\n"
+            "            pass\n"
+            "    ctx = {}\n"
+            "    exec('type Alias = int', ctx, None)\n",
+            id="match-capture-binds-exec",
+        ),
+        pytest.param(
+            "def run(value):\n"
+            "    match value:\n"
+            "        case ctx:\n"
+            "            pass\n"
+            "    ctx = {}\n"
+            "    exec('type Alias = int', ctx, None)\n",
+            id="match-capture-binds-namespace",
+        ),
+        pytest.param(
+            "def run():\n"
+            "    import math as ctx\n"
+            "    ctx = {}\n"
+            "    exec('type Alias = int', ctx, None)\n",
+            id="import-binds-namespace",
+        ),
+        pytest.param(
+            "def run():\n"
+            "    ctx = {}\n"
+            "    try:\n"
+            "        raise ValueError\n"
+            "    except Exception as ctx:\n"
+            "        pass\n"
+            "    exec('type Alias = int', ctx, None)\n",
+            id="except-binds-namespace",
+        ),
+        pytest.param(
+            "def run(source):\n    ctx = {}\n    exec(source, ctx, None)\n",
+            id="nonliteral-input",
+        ),
+        pytest.param(
+            "def run():\n    ctx = {}\n    exec('type __Alias = int', ctx, None)\n",
+            id="dunder-identifier",
+        ),
+    ],
+)
+def test_closed_declaration_input_witness_rejects_unproven_variants(source):
+    assert _witness(source) == {}
+
+
+def test_closed_declaration_input_witness_rejects_stale_source_bytes():
+    source = "def run():\n    ctx = {}\n    exec('type Alias = int', ctx, None)\n"
+    changed = source.replace("type Alias = int", "type Alias = str")
+
+    assert _witness(source, changed.encode("utf-8")) == {}
+
+
+def test_security_scan_keeps_declaration_exec_as_hash_bound_incomplete_observation(
+    tmp_path,
+):
+    import copy
+    import hashlib
+
+    from factoryline.review_integrity import partition_proven_primitive_observations
+    from factoryline.review_audits import security_scan
+
+    source = "def run():\n    ctx = {}\n    exec('type Alias = int', ctx, None)\n"
+    source_path = tmp_path / "app.py"
+    source_path.write_text(source, encoding="utf-8")
+
+    report = security_scan(tmp_path, cache_enabled=False)
+    finding = next(
+        row
+        for row in report["primitive_observations"]
+        if row["code"] == "SECURITY_DYNAMIC_EXECUTION"
+    )
+
+    assert finding["severity"] == "INFO"
+    assert finding["facts"]["schema"] == "factory.closed-declaration-input.v1"
+    assert finding["facts"]["disposition"] == "PROVEN_CLOSED_DECLARATION_INPUT"
+    assert finding["facts"]["runtime_assurance"] == "INCOMPLETE"
+    assert (
+        finding["facts"]["source_sha256"]
+        == hashlib.sha256(source_path.read_bytes()).hexdigest()
+    )
+
+    for mutate in (
+        lambda facts: facts.__setitem__("source_sha256", "0" * 64),
+        lambda facts: facts.__setitem__(
+            "literal_span",
+            [
+                facts["call_span"][2],
+                facts["call_span"][3] + 1,
+                facts["call_span"][2],
+                facts["call_span"][3] + 2,
+            ],
+        ),
+    ):
+        tampered = copy.deepcopy(report)
+        tampered_finding = tampered["primitive_observations"][0]
+        mutate(tampered_finding["facts"])
+        partition_proven_primitive_observations(tampered)
+
+        assert tampered["primitive_observations"] == []
+        rejected = tampered["findings"][0]
+        assert rejected["severity"] == "HIGH"
+        assert rejected["facts"]["disposition"] == "UNVERIFIED_FIXED_PROGRAM"
+        assert rejected["facts"]["proof_rejection"] == "SOURCE_BINDING_MISMATCH"
+
+
+SOURCE = 'types = [(eval(tp), expected) for tp, expected in [("list[Person]", True), ("tuple[Person, ...]", False)]]\n'
+
+
+def witness(source, raw=None):
+    tree = ast.parse(source)
+    call = next(
+        n
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Call)
+        and isinstance(n.func, ast.Name)
+        and n.func.id == "eval"
+    )
+    return finite_literal_eval_input_witness(
+        call, "eval", source_bytes=raw or source.encode(), source_path="case.py"
+    )
+
+
+def test_finite_eval_literal_domain_records_input_only():
+    facts = witness(SOURCE)
+    assert facts["domain_size"] == 2
+    assert facts["runtime_assurance"] == "INCOMPLETE"
+    assert facts["target_execution"] == "not_performed"
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        SOURCE.replace('"list[Person]"', "payload"),
+        SOURCE.replace('"list[Person]"', '"factory()"'),
+        SOURCE.replace('"list[Person]"', '"Person.attr"'),
+        SOURCE.replace(
+            "for tp, expected in", "for tp, expected in supplied for unused in"
+        ),
+        SOURCE.replace("eval(tp)", "eval(tp, supplied)"),
+        SOURCE.replace("eval(tp)", "eval((tp := supplied))"),
+        SOURCE.replace("eval(tp)", "eval(tp + supplied)"),
+        SOURCE.replace("eval(tp)", "eval(tp) if expected else expose(tp)"),
+        "eval = replacement\n" + SOURCE,
+        'from builtins import exec as rewrite\nrewrite("eval = replacement")\n'
+        + SOURCE,
+        SOURCE.replace('"list[Person]"', '"[x for x in source]"'),
+        SOURCE.replace('[("list[Person]", True), ("tuple[Person, ...]", False)]', "[]"),
+    ],
+)
+def test_finite_eval_rejects_open_or_executable_inputs(source):
+    assert witness(source) == {}
+
+
+def test_finite_eval_rejects_stale_ast():
+    assert witness(SOURCE, SOURCE.replace("eval(tp)", "eval(other)").encode()) == {}
+
+
+def test_finite_eval_recomputes_changed_domain_from_current_bytes():
+    old = witness(SOURCE)
+    new = witness(SOURCE, SOURCE.replace("Person", "Other").encode())
+    assert old["source_sha256"] != new["source_sha256"]
+    assert old["program_sha256"] != new["program_sha256"]
+
+
+def test_finite_eval_ignores_later_uninvoked_function_effects():
+    assert (
+        witness(SOURCE + '\ndef later():\n    delattr(NoParams, "__parameters__")\n')[
+            "domain_size"
+        ]
+        == 2
+    )
+
+
+def test_finite_eval_rejects_prior_function_invocation():
+    source = 'def rewrite():\n    globals()["eval"] = replacement\nrewrite()\n' + SOURCE
+    assert witness(source) == {}
+
+
+def test_finite_eval_native_scan_retains_primitive(tmp_path):
+    from factoryline.review_audits import security_scan
+
+    (tmp_path / "app.py").write_text(SOURCE)
+    report = security_scan(tmp_path, cache_enabled=False)
+    assert not report["findings"]
+    assert (
+        report["primitive_observations"][0]["facts"]["disposition"]
+        == "PROVEN_FINITE_LITERAL_EVAL_INPUT"
+    )
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        'types = [(lambda tp: eval(tp)) for tp, expected in [("list[Person]", True)]]\n',
+        "from arbitrary import eval\n" + SOURCE,
+        "from arbitrary import replacement as eval\n" + SOURCE,
+        SOURCE.replace('"list[Person]", True', '"list[Person]", rewrite()'),
+    ],
+)
+def test_finite_eval_rejects_shadowed_or_effectful_table(source):
+    assert witness(source) == {}
+
+
+def test_finite_eval_partition_rejects_unrelated_domain_span(tmp_path):
+    from factoryline.review_audits import security_scan
+    from factoryline.review_integrity import partition_proven_primitive_observations
+
+    (tmp_path / "app.py").write_text(SOURCE)
+    report = security_scan(tmp_path, cache_enabled=False)
+    report["primitive_observations"][0]["facts"]["domain_span"] = [999, 0, 999, 1]
+    partition_proven_primitive_observations(report)
+    assert not report["primitive_observations"]
+    assert report["findings"][0]["severity"] == "HIGH"
+
+
+_SOURCE_GENERATED_TEMPLATE = """from sqlalchemy import Index
+from sqlalchemy import text
+
+def build(config):
+    return [
+        (
+            eval(f'lambda t: Index("idx", text({conn!r}), _table=t)'),
+            eval(f'lambda t: Index("idx", text({meta!r}), _table=t)'),
+            config.requirements.reflects_indexes_column_sorting,
+        )
+        for meta, conn in __DOMAIN__
+    ]
+"""
+_SOURCE_GENERATED_ROWS = """(
+    ("z nulls first", "z nulls first"),
+    ("z nulls last", "z"),
+)"""
+_SOURCE_GENERATED = _SOURCE_GENERATED_TEMPLATE.replace(
+    "__DOMAIN__", _SOURCE_GENERATED_ROWS
+)
+
+
+def _source_generated_facts(source=_SOURCE_GENERATED, *, identity=True):
+    tree = ast.parse(source)
+    calls = [
+        item
+        for item in ast.walk(tree)
+        if isinstance(item, ast.Call)
+        and isinstance(item.func, ast.Name)
+        and item.func.id == "eval"
+    ]
+    return [
+        source_generated_eval_input_witness(
+            call,
+            "eval",
+            source_bytes=source.encode(),
+            source_path="tests/test_autogen_indexes.py",
+            builtin_identity_proven=identity,
+        )
+        for call in calls
+    ]
+
+
+def test_source_generated_eval_proves_bounded_literal_rows_only():
+    facts = _source_generated_facts()
+    assert len(facts) == 2
+    assert all(item["domain_size"] == 2 for item in facts)
+    assert all(
+        item["scope_profile"] == "single-comprehension-source-template"
+        and item["input_effect"] == "CLOSED_SOURCE_GENERATED_STRINGS"
+        and item["runtime_assurance"] == "INCOMPLETE"
+        and item["target_execution"] == "not_performed"
+        for item in facts
+    )
+    assert len({item["program_sha256"] for item in facts}) == 2
+    assert _source_generated_facts(identity=False) == [{}, {}]
+
+
+def test_source_generated_eval_obeys_domain_and_rendered_byte_caps():
+    domain_overflow = (
+        "(" + ",".join(f'("meta-{index}", "conn-{index}")' for index in range(65)) + ")"
+    )
+    value = "x" * 1100
+    rendered_byte_overflow = (
+        "(" + ",".join(f"({value!r}, {value!r})" for _ in range(9)) + ")"
+    )
+    assert _source_generated_facts(
+        _SOURCE_GENERATED_TEMPLATE.replace("__DOMAIN__", domain_overflow)
+    ) == [{}, {}]
+    assert _source_generated_facts(
+        _SOURCE_GENERATED_TEMPLATE.replace("__DOMAIN__", rendered_byte_overflow)
+    ) == [{}, {}]
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        _SOURCE_GENERATED_TEMPLATE.replace("__DOMAIN__", "supplied_rows"),
+        _SOURCE_GENERATED_TEMPLATE.replace(
+            "__DOMAIN__", "(" + _SOURCE_GENERATED_ROWS + " if config.enabled else ())"
+        ),
+        _SOURCE_GENERATED_TEMPLATE.replace(
+            "__DOMAIN__", '((provider(), "z"), ("meta", "conn"))'
+        ),
+        _SOURCE_GENERATED.replace("{conn!r}", "{config.value!r}"),
+        _SOURCE_GENERATED.replace("{conn!r}", "{(conn := config.value)!r}"),
+    ],
+)
+def test_source_generated_eval_rejects_alias_branch_provider_and_external_values(
+    source,
+):
+    assert _source_generated_facts(source) == [{}, {}]
+
+
+def test_source_generated_eval_native_scan_keeps_builtin_alias_high(tmp_path):
+    from factoryline.review_audits import security_scan
+
+    (tmp_path / "app.py").write_text("eval = replacement\n" + _SOURCE_GENERATED)
+    report = security_scan(tmp_path, cache_enabled=False)
+    assert report.get("primitive_observations", []) == []
+    assert len(report["findings"]) == 2
+    assert all(item["severity"] == "HIGH" for item in report["findings"])
+
+
+def test_source_generated_eval_native_scan_partitions_both_closed_calls(tmp_path):
+    from factoryline.review_audits import security_scan
+
+    (tmp_path / "app.py").write_text(_SOURCE_GENERATED)
+    report = security_scan(tmp_path, cache_enabled=False)
+    assert not report["findings"]
+    assert len(report["primitive_observations"]) == 2
+    assert all(
+        item["facts"]["disposition"] == "PROVEN_FINITE_LITERAL_EVAL_INPUT"
+        and item["facts"]["input_effect"] == "CLOSED_SOURCE_GENERATED_STRINGS"
+        for item in report["primitive_observations"]
+    )
+
+
+def test_source_generated_eval_partition_rejects_tampered_effect(tmp_path):
+    from factoryline.review_audits import security_scan
+    from factoryline.review_integrity import partition_proven_primitive_observations
+
+    (tmp_path / "app.py").write_text(_SOURCE_GENERATED)
+    report = security_scan(tmp_path, cache_enabled=False)
+    for item in report["primitive_observations"]:
+        item["facts"]["input_effect"] = "USER_CONTROLLED"
+    partition_proven_primitive_observations(report)
+    assert report["primitive_observations"] == []
+    assert len(report["findings"]) == 2
+    assert all(item["severity"] == "HIGH" for item in report["findings"])
+
+
+_JSON_ENUM = """from enum import Enum
+class ErrorCode(str, Enum):
+    REGISTER_INVALID_PASSWORD = "REGISTER_INVALID_PASSWORD"
+"""
+_JSON_CLIENT = """import pytest
+import httpx
+from asgi_lifespan import LifespanManager
+@pytest.fixture
+def get_test_client():
+    async def make_client(app):
+        async with LifespanManager(app):
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app), base_url="http://test") as client:
+                yield client
+    return make_client
+"""
+_JSON_TEST = """from typing import Any, cast
+import pytest_asyncio
+from fastapi import FastAPI
+from common import ErrorCode
+@pytest_asyncio.fixture
+async def app_client(get_test_client):
+    app = FastAPI()
+    async for client in get_test_client(app):
+        yield client
+async def test_invalid_password(app_client):
+    response = await app_client.post("/register", json={})
+    assert response.status_code == 400
+    data = cast(dict[str, Any], response.json())
+    assert data["detail"] == {"code": ErrorCode.REGISTER_INVALID_PASSWORD}
+"""
+
+
+def _json_enum_graph(
+    tmp_path,
+    *,
+    test_source=_JSON_TEST,
+    client_source=_JSON_CLIENT,
+    enum_source=_JSON_ENUM,
+    extra_sources=None,
+    reverse_sources=False,
+    stale=False,
+    consumer_type=None,
+):
+    import hashlib
+    from factoryline import review_audits, review_integrity
+    from factoryline.runtime_audit_integrity import _LiteralConsumers
+
+    root = tmp_path.resolve()
+    root.mkdir(parents=True, exist_ok=True)
+    sources = {
+        "common.py": enum_source,
+        "conftest.py": client_source,
+        "test_api.py": test_source,
+    }
+    sources.update(extra_sources or {})
+    if reverse_sources:
+        sources = dict(reversed(tuple(sources.items())))
+    raw = {root / name: source.encode() for name, source in sources.items()}
+    for path, source in raw.items():
+        path.write_bytes(source)
+    trees = {path: ast.parse(source) for path, source in raw.items()}
+    inventory = {
+        path: hashlib.sha256(source).hexdigest() for path, source in raw.items()
+    }
+    for path, tree in trees.items():
+        tree._oracle_source_sha256 = inventory[path]
+    eligible = {path.resolve(): path for path in trees}
+    imports = {
+        path: review_audits._oracle_imports(root, path, tree, eligible)
+        for path, tree in trees.items()
+    }
+    if stale:
+        inventory[root / "common.py"] = "0" * 64
+    return (consumer_type or _LiteralConsumers)(
+        root,
+        trees,
+        imports,
+        review_audits,
+        review_integrity,
+        source_bytes=raw,
+        inventory=inventory,
+    )
+
+
+class _LegacyLiteralConsumers:
+    def __new__(cls, *args, **kwargs):
+        from factoryline.runtime_audit_integrity import _LiteralConsumers
+
+        legacy_type = type(
+            "LegacyLiteralConsumers",
+            (_LiteralConsumers,),
+            {
+                "_walk": cls._walk,
+                "_references": cls._references,
+                "_provider_uses": cls._provider_uses,
+            },
+        )
+        return legacy_type(*args, **kwargs)
+
+    @staticmethod
+    def _walk(self, node):
+        for child in ast.walk(node):
+            if not self._tick():
+                return
+            yield child
+
+    @staticmethod
+    def _references(self):
+        for path, tree in self.trees.items():
+            for node in self._walk(tree):
+                if not isinstance(node, ast.Name) or not isinstance(node.ctx, ast.Load):
+                    continue
+                if self._fixture_parameter_value(path, node.id, node):
+                    continue
+                end = node
+                while (
+                    isinstance(self.parents.get(id(end)), ast.Attribute)
+                    and self._tick()
+                ):
+                    end = self.parents[id(end)]
+                ref = self.resolve(path, tuple(self.audit._name(end).split(".")))
+                if ref is not None:
+                    if ref[0] == "module" and self._relevant_origin(ref[1], None):
+                        self.complete = False
+                    self.refs[ref[:3]].append((path, end, ref[3]))
+
+    @staticmethod
+    def _provider_uses(self):
+        providers = {"enum.Enum", "fastapi.HTTPException", "fastapi.APIRouter"}
+        for path, tree in self.trees.items():
+            aliases = self.audit._module_security_aliases(
+                ast.Module(
+                    body=[
+                        item
+                        for item in self._walk(tree)
+                        if isinstance(item, (ast.Import, ast.ImportFrom))
+                    ],
+                    type_ignores=[],
+                )
+            )
+            for node in self._walk(tree):
+                if not isinstance(node, ast.Name) or not isinstance(node.ctx, ast.Load):
+                    continue
+                api = aliases.get(node.id, "")
+                if api not in providers | {"enum", "fastapi"}:
+                    continue
+                end = node
+                while (
+                    isinstance(self.parents.get(id(end)), ast.Attribute)
+                    and self._tick()
+                ):
+                    end = self.parents[id(end)]
+                tail = self.audit._name(end).split(".")[1:]
+                resolved = ".".join([api, *tail])
+                parent = self.parents.get(id(end))
+                valid = (
+                    resolved == "enum.Enum"
+                    and isinstance(parent, ast.ClassDef)
+                    and end in parent.bases
+                    or resolved in providers - {"enum.Enum"}
+                    and isinstance(parent, ast.Call)
+                    and parent.func is end
+                    or resolved == "fastapi.APIRouter"
+                    and isinstance(parent, (ast.FunctionDef, ast.AsyncFunctionDef))
+                    and parent.returns is end
+                )
+                if not valid:
+                    self.complete = False
+
+
+def _literal_witness_rows(graph):
+    return sorted(
+        (
+            path.relative_to(graph.root).as_posix(),
+            line,
+            member,
+            json.dumps(rows, sort_keys=True, separators=(",", ":")),
+        )
+        for (path, line, member), rows in graph.witnesses().items()
+    )
+
+
+def _literal_reference_rows(graph):
+    return sorted(
+        (
+            origin[0],
+            origin[2],
+            path.relative_to(graph.root).as_posix(),
+            node.lineno,
+            node.col_offset,
+            node.end_lineno,
+            node.end_col_offset,
+            tail,
+        )
+        for origin, refs in graph.refs.items()
+        for path, node, tail in refs
+    )
+
+
+def _literal_blocked_rows(graph):
+    return sorted(
+        (path.relative_to(graph.root).as_posix(), name) for path, name in graph.blocked
+    )
+
+
+def test_literal_consumer_shared_index_matches_legacy_walk_below_caps(tmp_path):
+    import hashlib
+
+    optimized = _json_enum_graph(tmp_path / "optimized")
+    legacy = _json_enum_graph(
+        tmp_path / "legacy", consumer_type=_LegacyLiteralConsumers
+    )
+
+    assert optimized.snapshot_complete == legacy.snapshot_complete is True
+    assert optimized.complete == legacy.complete is True
+    assert _literal_witness_rows(optimized) == _literal_witness_rows(legacy)
+    assert _literal_reference_rows(optimized) == _literal_reference_rows(legacy)
+    assert _literal_blocked_rows(optimized) == _literal_blocked_rows(legacy)
+    assert sorted(
+        (path.relative_to(optimized.root).as_posix(), name)
+        for path, name in optimized.unmodeled_imports
+    ) == sorted(
+        (path.relative_to(legacy.root).as_posix(), name)
+        for path, name in legacy.unmodeled_imports
+    )
+    for path, (_, _, _, load_names, provider_imports) in optimized.file_indexes.items():
+        assert all(isinstance(node.ctx, ast.Load) for node in load_names)
+        assert all(
+            isinstance(node, (ast.Import, ast.ImportFrom)) for node in provider_imports
+        )
+        assert (
+            hashlib.sha256(optimized.source_bytes[path]).hexdigest()
+            == (optimized.inventory[path])
+        )
+
+
+def test_literal_consumer_marker_filter_keeps_budget_exhaustion_fail_closed(
+    tmp_path,
+):
+    import hashlib
+    from factoryline import review_audits, review_integrity
+    from factoryline.runtime_audit_integrity import _LiteralConsumers
+
+    root = tmp_path.resolve()
+    source = "x=foo.bar+foo.baz\n" * 30_000
+    path = root / "large.py"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    raw = source.encode()
+    path.write_bytes(raw)
+    tree = ast.parse(raw)
+    digest = hashlib.sha256(raw).hexdigest()
+    tree._oracle_source_sha256 = digest
+    snapshots = {path: tree}
+    source_bytes = {path: raw}
+    inventory = {path: digest}
+    imports = {path: {}}
+    graph = _LiteralConsumers(
+        root,
+        snapshots,
+        imports,
+        review_audits,
+        review_integrity,
+        source_bytes=source_bytes,
+        inventory=inventory,
+    )
+
+    assert not graph.complete
+    assert not graph.snapshot_complete
+    assert not graph.witnesses()
+
+
+def test_public_enum_json_requires_actual_client_origin(tmp_path):
+    graph = _json_enum_graph(tmp_path)
+    result = graph.witnesses()
+    assert graph.complete
+    assert (tmp_path.resolve() / "common.py", 3, "REGISTER_INVALID_PASSWORD") in result
+
+
+def test_provider_mutation_index_precedes_fixture_decisions(tmp_path):
+    fixture = (
+        "import pytest\n"
+        "@pytest.fixture\ndef client(): pass\n"
+        "def test_client(client): pass\n"
+    )
+    mutations = (
+        "import pytest\npytest.fixture = supplied\n",
+        "import pytest as pt\npt = supplied\n",
+        "import pytest\npytest.fixture.__code__ = supplied\n",
+        "import pytest\npytest.fixture.nested.attribute = supplied\n",
+    )
+    for reverse in (False, True):
+        for index, mutation in enumerate(mutations):
+            case = tmp_path / f"case_{reverse}_{index}"
+            graph = _json_enum_graph(
+                case,
+                extra_sources={"a_fixture.py": fixture, "z_mutation.py": mutation},
+                reverse_sources=reverse,
+            )
+            assert not graph._provider_is_unmodified("pytest", {"fixture"})
+            assert not graph.witnesses()
+
+
+def test_public_enum_witness_is_snapshot_order_independent(tmp_path):
+    graph = _json_enum_graph(tmp_path, reverse_sources=True)
+    assert graph.complete
+    assert (
+        tmp_path.resolve() / "common.py",
+        3,
+        "REGISTER_INVALID_PASSWORD",
+    ) in graph.witnesses()
+
+
+def test_public_enum_json_accepts_scalar_detail_comparison(tmp_path):
+    source = _JSON_TEST.replace(
+        '{"code": ErrorCode.REGISTER_INVALID_PASSWORD}',
+        "ErrorCode.REGISTER_INVALID_PASSWORD",
+    )
+    graph = _json_enum_graph(tmp_path, test_source=source)
+    assert graph.complete
+    assert (
+        tmp_path.resolve() / "common.py",
+        3,
+        "REGISTER_INVALID_PASSWORD",
+    ) in graph.witnesses()
+
+
+def test_public_enum_scalar_json_retains_signing_consumer(tmp_path):
+    source = _JSON_TEST.replace(
+        '{"code": ErrorCode.REGISTER_INVALID_PASSWORD}',
+        "ErrorCode.REGISTER_INVALID_PASSWORD",
+    )
+    enum_source = (
+        _JSON_ENUM + "\nsigned = signer(ErrorCode.REGISTER_INVALID_PASSWORD)\n"
+    )
+    graph = _json_enum_graph(tmp_path, test_source=source, enum_source=enum_source)
+    assert graph.complete
+    assert not graph.witnesses()
+
+
+def test_public_enum_scalar_json_rejects_custom_equality(tmp_path):
+    source = _JSON_TEST.replace(
+        '{"code": ErrorCode.REGISTER_INVALID_PASSWORD}',
+        "ErrorCode.REGISTER_INVALID_PASSWORD",
+    )
+    enum_source = _JSON_ENUM + "    def __eq__(self, other):\n        return True\n"
+    graph = _json_enum_graph(tmp_path, test_source=source, enum_source=enum_source)
+    assert graph.complete
+    assert not graph.witnesses()
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "    __eq__ = replacement\n",
+        "\nErrorCode.__eq__ = replacement\n",
+    ],
+)
+def test_public_enum_scalar_json_rejects_equality_binding_mutation(tmp_path, mutation):
+    source = _JSON_TEST.replace(
+        '{"code": ErrorCode.REGISTER_INVALID_PASSWORD}',
+        "ErrorCode.REGISTER_INVALID_PASSWORD",
+    )
+    graph = _json_enum_graph(
+        tmp_path, test_source=source, enum_source=_JSON_ENUM + mutation
+    )
+    assert graph.complete
+    assert not graph.witnesses()
+
+
+def test_public_enum_scalar_json_native_observation_is_source_bound(tmp_path):
+    from factoryline.review_audits import security_scan
+
+    source = _JSON_TEST.replace(
+        '{"code": ErrorCode.REGISTER_INVALID_PASSWORD}',
+        "ErrorCode.REGISTER_INVALID_PASSWORD",
+    )
+    _json_enum_graph(tmp_path, test_source=source)
+    report = security_scan(tmp_path, cache_enabled=False)
+    assert report["audit_coverage"]["complete"]
+    assert not any(
+        row["code"] == "SECURITY_HARDCODED_SECRET" for row in report["findings"]
+    )
+    observations = report.get("primitive_observations", [])
+    assert len(observations) == 1
+    assert (
+        observations[0]["facts"]["disposition"] == "PROVEN_PUBLIC_SYMBOLIC_IDENTIFIER"
+    )
+    assert observations[0]["facts"]["runtime_assurance"] == "INCOMPLETE"
+
+
+@pytest.mark.parametrize("escape", [None, "test_app", "schema"])
+def test_returned_app_tracks_keyword_only_fixture_consumers(tmp_path, escape):
+    source = _JSON_TEST.replace(
+        "async def app_client(get_test_client):\n    app = FastAPI()",
+        "def test_app():\n    app = FastAPI()\n    return app\n"
+        "@pytest_asyncio.fixture\nasync def app_client(test_app, get_test_client):",
+    ).replace("get_test_client(app):", "get_test_client(test_app):")
+    source += (
+        "\n@pytest_asyncio.fixture\ndef schema(test_app):\n    return test_app.openapi()\n"
+        "def test_schema(schema):\n    route = schema['paths']['/register']['post']\n"
+        "    assert list(route['responses'].keys()) == ['400']\n"
+    )
+    if escape:
+        source += f"\ndef test_opaque(*, {escape}):\n    opaque({escape})\n"
+    graph = _json_enum_graph(tmp_path, test_source=source)
+    path = tmp_path.resolve() / "test_api.py"
+    fixture = next(
+        node
+        for node in graph.trees[path].body
+        if getattr(node, "name", None) == "test_app"
+    )
+    assert graph._returned_app_fixture_closed(path, fixture, "app") is (escape is None)
+
+
+def test_public_enum_native_cold_warm_and_source_invalidation(tmp_path):
+    from factoryline.review_audits import security_scan
+
+    _json_enum_graph(tmp_path)
+    for cache in (False, True, True):
+        report = security_scan(tmp_path, cache_enabled=cache)
+        assert not any(
+            row["code"] == "SECURITY_HARDCODED_SECRET" for row in report["findings"]
+        )
+        observations = report.get("primitive_observations", [])
+        assert len(observations) == 1
+        assert (
+            observations[0]["facts"]["disposition"]
+            == "PROVEN_PUBLIC_SYMBOLIC_IDENTIFIER"
+        )
+        assert observations[0]["facts"]["runtime_assurance"] == "INCOMPLETE"
+    with (tmp_path / "common.py").open("a") as stream:
+        stream.write("signed = signer(ErrorCode.REGISTER_INVALID_PASSWORD)\n")
+    report = security_scan(tmp_path, cache_enabled=True)
+    assert any(row["code"] == "SECURITY_HARDCODED_SECRET" for row in report["findings"])
+    assert not report.get("primitive_observations")
+
+
+def test_public_enum_native_incomplete_source_denies_admission(tmp_path):
+    from factoryline.review_audits import security_scan
+
+    _json_enum_graph(tmp_path)
+    (tmp_path / "missing_flow.py").write_text("def broken(:\n")
+    report = security_scan(tmp_path, cache_enabled=False)
+    assert any(row["code"] == "SECURITY_HARDCODED_SECRET" for row in report["findings"])
+    assert not report.get("primitive_observations")
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("declaration_span", [3, 4, 999, 1]),
+        ("name", "OTHER_PASSWORD"),
+        ("source_profiles", [{"invocation": "invented"}]),
+    ],
+)
+def test_public_enum_receipt_rejects_changed_facts(tmp_path, field, value):
+    from factoryline.review_audits import security_scan
+    from factoryline.review_integrity import partition_proven_primitive_observations
+
+    _json_enum_graph(tmp_path)
+    report = security_scan(tmp_path, cache_enabled=False)
+    report["primitive_observations"][0]["facts"][field] = value
+    partition_proven_primitive_observations(report)
+    assert not report["primitive_observations"]
+    assert any(row["code"] == "SECURITY_HARDCODED_SECRET" for row in report["findings"])
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "signing",
+        "client_rebind",
+        "data_rebind",
+        "json_replacement",
+        "client_hooks",
+        "provider_rebind",
+        "stale_source",
+        "client_import",
+        "client_except",
+        "client_match",
+        "client_method",
+        "client_escape",
+        "response_escape",
+        "class_fixture_override",
+        "helper_rebind",
+        "yield_client_escape",
+        "response_setattr",
+        "module_fixture_alias",
+        "provider_fixture_alias",
+        "local_httpx_shadow",
+        "local_manager_shadow",
+    ],
+)
+def test_public_enum_json_retains_unproven_consumers(tmp_path, mutation):
+    source, client, enum = _JSON_TEST, _JSON_CLIENT, _JSON_ENUM
+    source_replacements = {
+        "client_rebind": (
+            "    response =",
+            "    app_client = replacement\n    response =",
+        ),
+        "data_rebind": ("    assert data[", "    data = replacement\n    assert data["),
+        "json_replacement": (
+            "    data =",
+            "    response.json = replacement\n    data =",
+        ),
+        "helper_rebind": ("    app =", "    get_test_client = replacement\n    app ="),
+        "yield_client_escape": (
+            "        yield client",
+            "        opaque(client)\n        yield client",
+        ),
+        "response_setattr": (
+            "    data =",
+            "    response.__setattr__('json', replacement)\n    data =",
+        ),
+    }
+    client_replacements = {
+        "client_hooks": (
+            'base_url="http://test"',
+            'base_url="http://test", event_hooks={"response": [replacement]}',
+        ),
+        "local_httpx_shadow": (
+            "        async with",
+            "        httpx = replacement\n        async with",
+        ),
+        "local_manager_shadow": (
+            "    async def make_client",
+            "    LifespanManager = replacement\n    async def make_client",
+        ),
+    }
+    client += {
+        "provider_rebind": "httpx.AsyncClient = replacement\n",
+        "provider_fixture_alias": "\n@pytest.fixture(name='get_test_client')\ndef override():\n    return replacement\n",
+    }.get(mutation, "")
+    source += {
+        "module_fixture_alias": "\n@pytest_asyncio.fixture(name='app_client')\nasync def override():\n    yield replacement\n"
+    }.get(mutation, "")
+    enum += {"signing": "signed = signer(ErrorCode.REGISTER_INVALID_PASSWORD)\n"}.get(
+        mutation, ""
+    )
+    if mutation in source_replacements:
+        source = source.replace(*source_replacements[mutation])
+    elif mutation in client_replacements:
+        client = client.replace(*client_replacements[mutation], 1)
+    elif mutation in {
+        "client_import",
+        "client_except",
+        "client_match",
+        "client_method",
+        "client_escape",
+        "response_escape",
+    }:
+        statements = {
+            "client_import": "    import arbitrary as app_client\n",
+            "client_except": "    try:\n        pass\n    except Exception as app_client:\n        pass\n",
+            "client_match": '    match replacement:\n        case {"client": app_client}:\n            pass\n',
+            "client_method": "    app_client.post = replacement\n",
+            "client_escape": "    opaque(app_client)\n",
+            "response_escape": "    opaque(response)\n",
+        }
+        anchor = "    data =" if mutation == "response_escape" else "    response ="
+        source = source.replace(anchor, statements[mutation] + anchor)
+    elif mutation == "class_fixture_override":
+        prefix, body = source.split("async def test_invalid_password", 1)
+        override = (
+            "class TestOverride:\n    @pytest_asyncio.fixture\n"
+            "    async def app_client(self):\n        yield replacement\n"
+        )
+        method = "async def test_invalid_password" + body
+        method = method.replace(
+            "test_invalid_password(app_client)",
+            "test_invalid_password(self, app_client)",
+        )
+        source = (
+            prefix + override + "\n".join("    " + line for line in method.splitlines())
+        )
+    graph = _json_enum_graph(
+        tmp_path,
+        test_source=source,
+        client_source=client,
+        enum_source=enum,
+        stale=mutation == "stale_source",
+    )
+    assert not graph.witnesses()
+    if mutation != "stale_source":
+        from factoryline.review_audits import security_scan
+
+        report = security_scan(tmp_path, cache_enabled=False)
+        assert any(
+            row["code"] == "SECURITY_HARDCODED_SECRET" for row in report["findings"]
+        )
+        assert not report.get("primitive_observations")
+
+
+@pytest.mark.parametrize(
+    "target,domain",
+    [
+        ("value", "((1,),)"),
+        ("(value,)", "(b'x',)"),
+        ("(value,)", "('x',)"),
+        ("(value,)", "(1,)"),
+        ("(value,value)", "((1,2),)"),
+    ],
+)
+def test_source_generated_eval_rejects_mismatched_unpacking(target, domain):
+    source = f"items = [(eval(f'lambda: {{value!r}}'),) for {target} in {domain}]\n"
+    assert _source_generated_facts(source) == [{}]
+
+
+def test_source_generated_eval_receipt_hash_matches_exact_rendered_strings():
+    import hashlib
+    import json
+
+    source = "items = [(eval(f'lambda: {value!r}'),) for value in ('a', 'b')]\n"
+    facts = _source_generated_facts(source)[0]
+    programs = ["lambda: 'a'", "lambda: 'b'"]
+    assert (
+        facts["program_sha256"]
+        == hashlib.sha256(
+            json.dumps(programs, separators=(",", ":")).encode()
+        ).hexdigest()
+    )
+
+
+@pytest.mark.parametrize("field", ["scope_profile", "input_effect"])
+@pytest.mark.parametrize("value", [[], {}, 3, None])
+def test_source_generated_eval_partition_rejects_unhashable_or_wrong_fact_types(
+    tmp_path, field, value
+):
+    from factoryline.review_audits import security_scan
+    from factoryline.review_integrity import partition_proven_primitive_observations
+
+    (tmp_path / "app.py").write_text(_SOURCE_GENERATED, encoding="utf-8")
+    report = security_scan(tmp_path, cache_enabled=False)
+    assert len(report["primitive_observations"]) == 2
+    report["primitive_observations"][0]["facts"][field] = value
+    partition_proven_primitive_observations(report)
+    assert len(report["primitive_observations"]) == 1
+    assert len(report["findings"]) == 1
+    assert report["findings"][0]["severity"] == "HIGH"
+
+
+@pytest.mark.parametrize(
+    "prefix",
+    [
+        "import builtins\nbuiltins.eval = replacement\n",
+        "exec('eval = replacement')\n",
+        "saved = eval\n",
+    ],
+)
+def test_source_generated_eval_rejects_provider_mutation_or_escape(tmp_path, prefix):
+    from factoryline.review_audits import security_scan
+
+    (tmp_path / "app.py").write_text(prefix + _SOURCE_GENERATED, encoding="utf-8")
+    report = security_scan(tmp_path, cache_enabled=False)
+    assert not report.get("primitive_observations")
+    assert (
+        sum(
+            item["code"] == "SECURITY_DYNAMIC_EXECUTION" and item["severity"] == "HIGH"
+            for item in report["findings"]
+        )
+        >= 2
+    )
+
+
+def test_source_generated_helpers_are_included_in_verifier_source_identity():
+    from factoryline import runtime_audit_integrity as runtime
+
+    helpers = set(runtime.workspace_builtin_helpers())
+    expected = {
+        value
+        for name, value in vars(runtime).items()
+        if name.startswith("_source_eval_") and callable(value)
+    }
+    assert expected <= helpers
+    assert runtime.finite_eval_binding in helpers
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "_exact_source_call",
+        "_source_span",
+        "_closed_declaration_source_call",
+        "_fixed_program_call_context",
+        "_fixed_program_literal_span",
+        "_source_generated_eval_capture",
+        "_source_eval_call_shape",
+        "_source_eval_source_bound",
+        "_finite_eval_profile",
+        "_finite_eval_domain_digest",
+        "_finite_eval_spans",
+    ],
+)
+@pytest.mark.parametrize("mutation", ["binding", "code"])
+def test_extracted_runtime_helpers_invalidate_native_cache(
+    tmp_path, monkeypatch, name, mutation
+):
+    from factoryline import review_audits as audit
+    from factoryline import runtime_audit_integrity as runtime
+
+    original = getattr(runtime, name)
+    assert original in runtime.workspace_builtin_helpers()
+    before = audit._oracle_context_cache_key(tmp_path, [], {})
+
+    def replacement(*args, **kwargs):
+        return None
+
+    with monkeypatch.context() as patch:
+        if mutation == "binding":
+            patch.setattr(runtime, name, replacement)
+        else:
+            patch.setattr(original, "__code__", replacement.__code__)
+        assert audit._oracle_context_cache_key(tmp_path, [], {}) != before
+    assert audit._oracle_context_cache_key(tmp_path, [], {}) == before
+
+
+def test_tenant_scope_read_retains_unique_binding_and_rejects_ambiguity():
+    row = runtime.tenant_scope_read(
+        review_audits, "Tenant.get", {"Tenant.get": ["tenant_id"]}
+    )
+    assert row == {"call": "Tenant.get", "binding": "tenant_id"}
+    assert runtime.tenant_scope_read(review_audits, "Tenant.list", {}) == {
+        "call": "Tenant.list"
+    }
+    with pytest.raises(review_audits.ReviewAuditError, match="at most one binding"):
+        runtime.tenant_scope_read(
+            review_audits, "Tenant.get", {"Tenant.get": ["a", "b"]}
+        )
+
+
+def test_validate_tenant_scopes_revalidates_and_returns_scoped_reads(tmp_path):
+    (tmp_path / "app.py").write_text(
+        "class Tenant:\n    pass\ndef load(tenant_id):\n    return Tenant.get(tenant_id=tenant_id)\n",
+        encoding="utf-8",
+    )
+    scopes = {
+        "app.py": {
+            "calls": ["Tenant.get"],
+            "bindings": {"Tenant.get": ["keyword:tenant_id:tenant_id"]},
+        }
+    }
+    result = runtime.validate_tenant_scopes(review_audits, tmp_path, scopes)
+    assert result["app.py"]["calls"] == ("Tenant.get",)
+    assert result["app.py"]["bindings"] == {
+        "Tenant.get": ("keyword:tenant_id:tenant_id",)
+    }
+    with pytest.raises(review_audits.ReviewAuditError):
+        runtime.validate_tenant_scopes(
+            review_audits, tmp_path, {"../escape.py": scopes["app.py"]}
+        )
+
+
+def test_fixed_literal_program_witness_binds_literal_bytes_and_refuses_mutation():
+    raw = b"exec('answer = 42')\n"
+    call = next(node for node in ast.walk(ast.parse(raw)) if isinstance(node, ast.Call))
+    witness = runtime.fixed_literal_program_witness(
+        call,
+        "exec",
+        source_bytes=raw,
+        builtin_identity_proven=True,
+        source_path="app.py",
+        scope_profile="module",
+    )
+    assert witness["disposition"] == "PROVEN_FIXED_LITERAL_PROGRAM"
+    assert witness["source_sha256"] == hashlib.sha256(raw).hexdigest()
+    assert witness["profile"]["target_execution"] == "not_performed"
+    dynamic = b"exec(input())\n"
+    dynamic_call = next(
+        node for node in ast.walk(ast.parse(dynamic)) if isinstance(node, ast.Call)
+    )
+    assert (
+        runtime.fixed_literal_program_witness(
+            dynamic_call,
+            "exec",
+            source_bytes=dynamic,
+            builtin_identity_proven=True,
+            source_path="app.py",
+        )
+        == {}
+    )
+
+
+def test_workspace_builtin_profile_requires_complete_hashable_snapshot(tmp_path):
+    path = tmp_path / "a.py"
+    tree = ast.parse("value = 1\n")
+    tree._oracle_source_sha256 = hashlib.sha256(
+        path.read_bytes() if path.exists() else b"value = 1\n"
+    ).hexdigest()
+    profile = runtime.workspace_builtin_profile({path: tree}, [path])
+    assert profile["complete"] is True
+    assert profile["namespace_mutation_risk"] is False
+    shadowed = ast.parse("globals()['exec']('x=1')\n")
+    shadowed._oracle_source_sha256 = tree._oracle_source_sha256
+    assert (
+        runtime.workspace_builtin_profile({path: shadowed}, [path])[
+            "namespace_mutation_risk"
+        ]
+        is True
+    )
+
+
+def test_oracle_bound_row_rejects_source_digest_and_test_identity_mismatch(tmp_path):
+    test_path = tmp_path / "test_case.py"
+    raw = b"def test_example():\n    assert 2 == 2\n"
+    test_path.write_bytes(raw)
+    digest = hashlib.sha256(raw).hexdigest()
+    row = {
+        "path": "test_case.py",
+        "test_sha256": digest,
+        "mutation": {"source_path": "app.py", "source_sha256": "source-digest"},
+        "symbol": "test_example",
+        "line": 1,
+        "baseline": {"case_ids": ["test_case.py::test_example"]},
+    }
+    runtime.oracle_bound_row(
+        review_audits,
+        tmp_path,
+        row,
+        {"test_case.py": digest, "app.py": "source-digest"},
+    )
+    with pytest.raises(review_audits.ReviewAuditError, match="source binding"):
+        runtime.oracle_bound_row(
+            review_audits, tmp_path, row, {"test_case.py": digest, "app.py": "wrong"}
+        )
+
+
+def test_native_execution_helper_factory_drives_assertion_probe_from_ast():
+    helpers = runtime.native_execution_helpers()
+    probe_builder = next(
+        helper for helper in helpers if helper.__name__ == "native_test_probe"
+    )
+    test_node = ast.parse(
+        "def test_contract():\n    assert value == 3\n    invoke()\n"
+    ).body[0]
+    probe = probe_builder("tests/test_contract.py", test_node)
+    assert probe["available"] is True
+    assert probe["assertion_lines"] == [2]
+    assert probe["call_available"] is True
+    assert probe["call_lines"] == [3]
+    empty = probe_builder(
+        "tests/test_empty.py", ast.parse("def test_empty():\n    pass\n").body[0]
+    )
+    assert empty["available"] is False and empty["call_available"] is False
+
+
+def test_credential_and_finite_template_helper_factories_return_working_validators():
+    validators = runtime.credential_validation_helpers()
+    operation_check = next(
+        helper for helper in validators if helper.__name__ == "_closed_shell_operation"
+    )
+    assert operation_check("upx --best app") == "executable_packing"
+    assert operation_check("upx --best app; rm -rf /") is None
+    capture_helpers = runtime.finite_template_input_helpers()
+    hash_builder = next(
+        helper
+        for helper in capture_helpers
+        if helper.__name__ == "finite_template_program_hashes"
+    )
+    template = (
+        ast.parse('f"async def run({name}) -> None:\\n    pass\\n"').body[0].value
+    )
+    assert hash_builder(template, "name", ["tenant_id"]) is not None
+    assert hash_builder(template, "other", ["tenant_id"]) is None
+
+
+def test_tenant_contract_helper_factory_loads_real_contract_and_preserves_evidence(
+    tmp_path,
+):
+    (tmp_path / "app.py").write_text(
+        "def read(store):\n    return store.get()\n", encoding="utf-8"
+    )
+    contract = {
+        "schema": "factory.tenant-read-contract.v2",
+        "reads": [
+            {
+                "path": "app.py",
+                "reads": [{"call": "store.get", "binding": "position:0:tenant_id"}],
+            }
+        ],
+    }
+    (tmp_path / ".factory").mkdir()
+    (tmp_path / ".factory" / "tenant-read-contract.json").write_text(
+        json.dumps(contract), encoding="utf-8"
+    )
+    loader = runtime.tenant_contract_helpers(review_audits)[0]
+    calls, bindings, evidence = loader(review_audits, tmp_path)
+    assert calls == () and bindings == ()
+    assert evidence["state"] == "loaded"
+    assert evidence["scoped_reads"]["app.py"]["calls"] == ("store.get",)
+    contract["extra"] = True
+    (tmp_path / ".factory" / "tenant-read-contract.json").write_text(
+        json.dumps(contract), encoding="utf-8"
+    )
+    with pytest.raises(review_audits.ReviewAuditError):
+        loader(review_audits, tmp_path)
+
+
+def test_runtime_oracle_reconciliation_fails_closed_without_signed_evidence(tmp_path):
+    core = {"audit_coverage": {"complete": True}}
+    with pytest.raises(review_audits.ReviewAuditError, match="requires receipt"):
+        runtime.reconcile_runtime_oracles(
+            review_audits, tmp_path, core, (None, None, None, None)
+        )
+
+
+def test_repository_workspace_batch_enforces_deadline_before_consuming_state():
+    class Expired(RuntimeError):
+        pass
+
+    class Engine:
+        def _full_repository_check_soft_deadline(self, deadline):
+            assert deadline == 0
+            raise Expired("soft deadline reached")
+
+    with pytest.raises(Expired, match="soft deadline"):
+        runtime.full_repository_workspace_scan_batch(Engine(), {}, review_audits, [], 0)

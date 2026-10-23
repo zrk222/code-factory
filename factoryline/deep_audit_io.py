@@ -6,8 +6,10 @@ import hashlib  # noqa: F401
 import importlib
 import json
 import os
+import platform
 import re  # noqa: F401
 import subprocess
+import sys
 import stat
 import threading  # noqa: F401
 import uuid
@@ -575,6 +577,1023 @@ def read_run_json(directory: Path, name: str) -> dict:
     if expected != digest(value):
         raise RuntimeAuditError("E_RUN_INTEGRITY", "run state digest mismatch")
     return value
+
+
+FULL_REPOSITORY_SCAN_SCHEMA = "factory.full-repository-scan.v1"
+FULL_REPOSITORY_CHECKPOINT_SCHEMA = "factory.full-repository-scan-checkpoint.v1"
+FULL_REPOSITORY_BATCH_LIMIT = 460
+FULL_REPOSITORY_CONTEXT_PROFILE = "workspace-v2"
+FULL_REPOSITORY_CONTEXT_SCHEMA = "factory.full-repository-context.v2"
+FULL_REPOSITORY_CONTEXT_SCAN_SCHEMA = "factory.full-repository-scan.workspace-v2"
+FULL_REPOSITORY_CONTEXT_CHECKPOINT_SCHEMA = (
+    "factory.full-repository-checkpoint.workspace-v2"
+)
+FULL_REPOSITORY_CONTEXT_RUN_ID = "f2110000000000000000000000000002"
+FULL_REPOSITORY_CONTEXT_DEADLINE_SECONDS = 180
+_FULL_REPOSITORY_RUN_ID = "f2110000000000000000000000000001"
+_FULL_REPOSITORY_GLOBAL_CONSUMER_CLOSURE_VERIFIED = False
+_FULL_REPOSITORY_TRUSTED_CHECKPOINT: tuple[str, str, str] | None = None
+_FULL_REPOSITORY_SCANNER_HELPER_EPOCH = 1
+
+
+def _full_repository_scanner_identity() -> str:
+    """Bind results to the installed native package, helper epoch and runtime."""
+    from . import review_audits
+
+    package = Path(review_audits.__file__).parent
+    parts = []
+    for source in sorted(package.rglob("*")):
+        if "__pycache__" in source.parts:
+            continue
+        try:
+            linked = (
+                source.is_symlink()
+                or getattr(source.lstat(), "st_file_attributes", 0) & 0x400
+            )
+        except OSError as exc:
+            raise RuntimeAuditError(
+                "SCANNER_DRIFT", "scanner package entry is unreadable"
+            ) from exc
+        if linked:
+            raise RuntimeAuditError(
+                "SCANNER_DRIFT", "scanner package contains a linked file"
+            )
+        if not source.is_file():
+            continue
+        parts.append(_full_repository_scanner_file_identity(package, source))
+    return digest(
+        {
+            "package_files": parts,
+            "runtime": {
+                "implementation": platform.python_implementation(),
+                "version": platform.python_version(),
+                "dependencies": _full_repository_runtime_dependencies(),
+            },
+            "helper_epoch": _FULL_REPOSITORY_SCANNER_HELPER_EPOCH,
+        }
+    )
+
+
+def _full_repository_scanner_file_identity(package: Path, source: Path) -> dict:
+    try:
+        with source.open("rb") as stream:
+            before = os.fstat(stream.fileno())
+            raw = stream.read(LIMIT + 1)
+            after = os.fstat(stream.fileno())
+        current = source.stat()
+    except OSError as exc:
+        raise RuntimeAuditError(
+            "SCANNER_DRIFT", "scanner package file is unreadable"
+        ) from exc
+    if not (
+        _full_repository_stat_identity(before)
+        == _full_repository_stat_identity(after)
+        == _full_repository_stat_identity(current)
+        and len(raw) == current.st_size
+    ):
+        raise RuntimeAuditError(
+            "SCANNER_DRIFT", "scanner package changed during identity read"
+        )
+    if len(raw) > LIMIT:
+        raise RuntimeAuditError(
+            "SCANNER_DRIFT", "scanner package file exceeds identity limit"
+        )
+    return {
+        "path": source.relative_to(package).as_posix(),
+        "sha256": sha256_bytes(raw),
+        "bytes": len(raw),
+    }
+
+
+def _full_repository_runtime_dependencies() -> dict[str, str | None]:
+    from importlib.metadata import PackageNotFoundError, version
+
+    packages = ("cryptography", "httpx", "PyYAML", "sqlglot", "pytest")
+    versions = {}
+    for package in packages:
+        try:
+            versions[package] = version(package)
+        except PackageNotFoundError:
+            versions[package] = None
+    return versions
+
+
+def _full_repository_configuration(root: Path, audit) -> tuple[set[str], dict]:
+    """Bind presence and exact bytes of every native pytest config candidate."""
+    patterns, collection = audit._pytest_collection_config(root)
+    candidates = (
+        "pytest.toml",
+        ".pytest.toml",
+        "pytest.ini",
+        ".pytest.ini",
+        "pyproject.toml",
+        "tox.ini",
+        "setup.cfg",
+    )
+    bindings = [
+        _full_repository_configuration_binding(root, name) for name in candidates
+    ]
+    return set(patterns), {"selected": collection, "candidates": bindings}
+
+
+def _full_repository_profile_configuration(root: Path, audit, context_profile):
+    try:
+        patterns, frame = _full_repository_configuration(root, audit)
+        return patterns, frame, False
+    except audit.ReviewAuditError:
+        if context_profile != FULL_REPOSITORY_CONTEXT_PROFILE:
+            raise
+        candidates = (
+            "pytest.toml",
+            ".pytest.toml",
+            "pytest.ini",
+            ".pytest.ini",
+            "pyproject.toml",
+            "tox.ini",
+            "setup.cfg",
+        )
+        return (
+            set(audit._TEST_FILE_PATTERNS),
+            {
+                "selected": {"path": None, "state": "unsupported"},
+                "candidates": [
+                    _full_repository_configuration_binding(root, name)
+                    for name in candidates
+                ],
+            },
+            True,
+        )
+
+
+def _full_repository_configuration_binding(root: Path, name: str) -> dict:
+    """Bind exact candidate bytes without following links or accepting read drift."""
+    try:
+        path = local_file(root, name)
+    except RuntimeAuditError as exc:
+        if exc.code == "E_SOURCE_MISSING":
+            return {"path": name, "state": "absent"}
+        try:
+            info = (root / name).lstat()
+            raw = (
+                os.readlink(root / name).encode("utf-8", errors="surrogatepass")
+                if stat.S_ISLNK(info.st_mode)
+                else b""
+            )
+        except OSError:
+            info, raw = None, b""
+        return {
+            "path": name,
+            "state": "unreadable",
+            "sha256": sha256_bytes(raw),
+            "bytes": info.st_size if info else None,
+        }
+    with path.open("rb") as stream:
+        before = os.fstat(stream.fileno())
+        raw = stream.read(LIMIT + 1)
+        after = os.fstat(stream.fileno())
+    current = local_file(root, name).stat()
+    if not (
+        _full_repository_stat_identity(before)
+        == _full_repository_stat_identity(after)
+        == _full_repository_stat_identity(current)
+        and len(raw) == current.st_size
+    ):
+        raise RuntimeAuditError(
+            "SOURCE_DRIFT", f"configuration changed during identity read: {name}"
+        )
+    if len(raw) > LIMIT:
+        raise RuntimeAuditError(
+            "E_CONFIG_SIZE", f"configuration identity exceeds {LIMIT} bytes: {name}"
+        )
+    return {
+        "path": name,
+        "state": "read",
+        "sha256": sha256_bytes(raw),
+        "bytes": len(raw),
+    }
+
+
+def _full_repository_stat_identity(info) -> tuple[int, int, int, int]:
+    return info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns
+
+
+def _full_repository_runtime_epoch(root: Path, configuration: str, audit) -> str:
+    """Bind only the in-process cache shortcut to live native helper objects."""
+    from .context_efficiency import _scan_security_source
+
+    helpers = (
+        _scan_security_source,
+        audit._security_source_files,
+        audit._security_source_bytes,
+        audit._security_scan_tree,
+        audit._pytest_collection_config,
+        audit._oracle_import_source,
+        audit.contracts.bound_snapshots,
+        audit._oracle_tree_fingerprint,
+    )
+    # Owned profile helpers retain their live binding in the resume-cache identity.
+    from . import runtime_audit_integrity as workspace_engine
+
+    full_repository_workspace_scan_batch = (
+        workspace_engine.full_repository_workspace_scan_batch
+    )
+
+    profile_helpers = (
+        tuple(
+            helper
+            for name, helper in sorted(globals().items())
+            if name.startswith("_full_repository_") and callable(helper)
+        )
+        + tuple(
+            helper
+            for name, helper in sorted(vars(workspace_engine).items())
+            if name.startswith("_full_repository_workspace_") and callable(helper)
+        )
+        + (
+            full_repository_workspace_scan_batch,
+            _validate_full_repository_checkpoint,
+            full_repository_scan,
+            run_directory,
+            read_run_json,
+            write_run_json,
+            local_file,
+            digest,
+            canonical_bytes,
+        )
+    )
+    return digest(
+        {
+            "native_cache_epoch": audit._oracle_context_cache_key(
+                root, [], {"configuration_sha256": configuration}
+            ),
+            "full_profile_helpers": [
+                (id(helper), id(getattr(helper, "__code__", None)))
+                for helper in helpers
+            ],
+            "profile_helpers": [
+                (id(helper), id(getattr(helper, "__code__", None)))
+                for helper in profile_helpers
+            ],
+        }
+    )
+
+
+def _full_repository_inventory(root: Path, files: list[Path]) -> list[dict]:
+    return [_full_repository_inventory_row(root, path) for path in files]
+
+
+def _full_repository_inventory_row(root: Path, path: Path) -> dict:
+    """Account for one path without following links or hiding concurrent edits."""
+    name = path.relative_to(root).as_posix()
+    try:
+        info = path.lstat()
+        if stat.S_ISLNK(info.st_mode):
+            raw = os.readlink(path).encode("utf-8", errors="surrogatepass")
+            return {
+                "path": name,
+                "state": "unreadable",
+                "sha256": sha256_bytes(raw),
+                "bytes": info.st_size,
+            }
+        return _full_repository_regular_inventory_row(root, name)
+    except RuntimeAuditError as exc:
+        if exc.code == "E_INPUT_CHANGED":
+            raise RuntimeAuditError(
+                "SOURCE_DRIFT", "source changed during inventory"
+            ) from exc
+        return _full_repository_unreadable_row(path, name)
+    except (OSError, ValueError):
+        return _full_repository_unreadable_row(path, name)
+
+
+def _full_repository_regular_inventory_row(root: Path, name: str) -> dict:
+    """Hash one bounded-memory regular source and compare its open-file identity."""
+    source = local_file(root, name)
+    hasher, size = hashlib.sha256(), 0
+    with source.open("rb") as stream:
+        before = os.fstat(stream.fileno())
+        while chunk := stream.read(64 * 1024):
+            hasher.update(chunk)
+            size += len(chunk)
+        after = os.fstat(stream.fileno())
+    current = local_file(root, name).stat()
+
+    def identity(item):
+        return item.st_dev, item.st_ino, item.st_size, item.st_mtime_ns
+
+    if (
+        identity(before) != identity(after)
+        or identity(after) != identity(current)
+        or size != current.st_size
+    ):
+        raise RuntimeAuditError("E_INPUT_CHANGED", "source changed during inventory")
+    return {
+        "path": name,
+        "state": "oversized" if size > 1_000_000 else "ready",
+        "sha256": hasher.hexdigest(),
+        "bytes": size,
+    }
+
+
+def _full_repository_unreadable_row(path: Path, name: str) -> dict:
+    try:
+        size = path.lstat().st_size
+    except OSError:
+        size = None
+    return {"path": name, "state": "unreadable", "sha256": None, "bytes": size}
+
+
+def _full_repository_primary(
+    root: Path,
+    path: Path,
+    source: dict,
+    patterns: set[str],
+    audit,
+    eligible: dict[Path, Path],
+    scan_result=None,
+) -> dict:
+    binding, findings, status, tree = scan_result or _full_repository_native_scan(
+        root, path, source, patterns, audit
+    )
+    if (
+        source["state"] == "ready"
+        and status in {"audited", "syntax_error"}
+        and (binding is None or binding.get("sha256") != source["sha256"])
+    ):
+        raise RuntimeAuditError("SOURCE_DRIFT", "source bytes changed after inventory")
+    dependencies = _full_repository_dependency_summary(
+        root, path, tree, status, audit, eligible
+    )
+    return {
+        "path": source["path"],
+        "input_sha256": source["sha256"],
+        "input_state": source["state"],
+        "bytes": binding["bytes"] if binding else source["bytes"],
+        "status": status,
+        "findings": findings,
+        "dependencies": dependencies,
+    }
+
+
+def _full_repository_native_scan(
+    root: Path, path: Path, source: dict, patterns: set[str], audit
+):
+    """Invoke the native single-source engine with no partial-workspace context."""
+    from .context_efficiency import _scan_security_source
+
+    tree = None
+    try:
+        data = audit._security_source_bytes(root, source["path"])
+        if len(data) <= audit.MAX_BYTES:
+            try:
+                tree = audit._measure_parse(audit.ast.parse, data, root, path)
+            except (SyntaxError, UnicodeError, RecursionError):
+                pass
+        fingerprint = audit._oracle_tree_fingerprint(tree) if tree is not None else None
+        binding, findings, status = _scan_security_source(
+            root, path, (), {}, None, patterns, data, tree, fingerprint
+        )
+    except (OSError, UnicodeError, ValueError, RuntimeAuditError):
+        binding, findings, status = _scan_security_source(
+            root, path, (), {}, None, patterns, None
+        )
+    except RecursionError:
+        binding, findings, status = None, [], "unsupported"
+    return binding, findings, status, tree
+
+
+def _full_repository_dependency_summary(
+    root: Path, path: Path, tree, status, audit, eligible
+):
+    empty = {"state": "unavailable", "edges": [], "unresolved_relative_imports": []}
+    if status != "audited" or tree is None:
+        return empty
+    edges, unresolved = [], []
+    try:
+        for node in audit.ast.walk(tree):
+            if isinstance(node, (audit.ast.Import, audit.ast.ImportFrom)):
+                for imported in node.names:
+                    edge, unresolved_row = _full_repository_import_edge(
+                        root, path, node, imported, audit, eligible
+                    )
+                    if edge:
+                        edges.append(edge)
+                    if unresolved_row:
+                        unresolved.append(unresolved_row)
+        return {
+            "state": "lexical",
+            "edges": sorted(
+                edges, key=lambda row: (row["line"], row["target"], row["name"])
+            ),
+            "unresolved_relative_imports": sorted(
+                unresolved, key=lambda row: (row["line"], row["module"], row["name"])
+            ),
+        }
+    except (OSError, ValueError, RecursionError):
+        return {**empty, "state": "incomplete"}
+
+
+def _full_repository_import_edge(
+    root: Path, path: Path, node, imported, audit, eligible
+):
+    is_from = isinstance(node, audit.ast.ImportFrom)
+    module = (node.module or "") if is_from else imported.name
+    target = audit._oracle_import_source(
+        root, path, node, module, eligible, imported.name if is_from else None
+    )
+    if target is not None:
+        return {
+            "line": node.lineno,
+            "module": module,
+            "name": imported.name,
+            "target": target.relative_to(root).as_posix(),
+        }, None
+    if is_from and node.level:
+        return None, {
+            "line": node.lineno,
+            "module": module,
+            "name": imported.name,
+            "level": node.level,
+        }
+    return None, None
+
+
+def _validate_full_repository_checkpoint(
+    value: dict,
+    root: Path,
+    scanner: str,
+    configuration: str,
+    inventory: list[dict],
+    context_profile: str = "isolated-v1",
+) -> list[dict]:
+    """Validate generation identity and the exact saved primary prefix."""
+    _full_repository_checkpoint_identity(
+        value, root, scanner, configuration, inventory, context_profile
+    )
+    results = _full_repository_checkpoint_rows(value, inventory)
+    if not all(_full_repository_result_valid(row) for row in results):
+        raise RuntimeAuditError(
+            "INVALID_CHECKPOINT", "checkpoint primary result is malformed"
+        )
+    return results
+
+
+def _full_repository_checkpoint_identity(
+    value, root, scanner, configuration, inventory, context_profile="isolated-v1"
+):
+    """Reject altered profile, schema, scanner or source-generation bindings."""
+    workspace = context_profile == FULL_REPOSITORY_CONTEXT_PROFILE
+    keys = {
+        "schema",
+        "root",
+        "scanner_identity_sha256",
+        "configuration_sha256",
+        "inventory_sha256",
+        "inventory",
+        "batch_primary_limit",
+        "primary_results",
+        "result_digest",
+    }
+    if workspace:
+        keys.update({"context_profile", "context_generation_sha256"})
+    expected_schema = (
+        FULL_REPOSITORY_CONTEXT_CHECKPOINT_SCHEMA
+        if workspace
+        else FULL_REPOSITORY_CHECKPOINT_SCHEMA
+    )
+    if (
+        set(value) != keys
+        or value["schema"] != expected_schema
+        or (workspace and value["context_profile"] != context_profile)
+        or (
+            workspace
+            and (
+                not isinstance(value["context_generation_sha256"], str)
+                or len(value["context_generation_sha256"]) != 64
+            )
+        )
+        or value["batch_primary_limit"] != FULL_REPOSITORY_BATCH_LIMIT
+    ):
+        raise RuntimeAuditError(
+            "INVALID_CHECKPOINT", "checkpoint fields or schema differ"
+        )
+    if value["scanner_identity_sha256"] != scanner:
+        raise RuntimeAuditError(
+            "SCANNER_DRIFT", "scanner identity changed since checkpoint"
+        )
+    if (
+        value["root"] != root.as_posix()
+        or value["configuration_sha256"] != configuration
+        or value["inventory_sha256"] != digest(inventory)
+        or value["inventory"] != inventory
+    ):
+        raise RuntimeAuditError(
+            "SOURCE_DRIFT", "source inventory or configuration changed since checkpoint"
+        )
+
+
+def _full_repository_checkpoint_rows(value, inventory):
+    """Require an ordered, duplicate-free prefix with an intact result digest."""
+    results = value["primary_results"]
+    if (
+        not isinstance(results, list)
+        or len(results) > len(inventory)
+        or value["result_digest"] != digest(results)
+    ):
+        raise RuntimeAuditError(
+            "INVALID_CHECKPOINT", "checkpoint result digest or list is malformed"
+        )
+    paths = [row["path"] for row in inventory]
+    if (
+        paths != sorted(paths)
+        or [row.get("path") for row in results if isinstance(row, dict)]
+        != paths[: len(results)]
+    ):
+        raise RuntimeAuditError(
+            "INVALID_CHECKPOINT", "checkpoint primary partition differs from inventory"
+        )
+    if len({row.get("path") for row in results if isinstance(row, dict)}) != len(
+        results
+    ):
+        raise RuntimeAuditError(
+            "INVALID_CHECKPOINT", "duplicate checkpoint primary path"
+        )
+    return results
+
+
+def _full_repository_result_valid(row):
+    """Check the saved result shape before any native revalidation or reuse."""
+    return (
+        isinstance(row, dict)
+        and set(row)
+        == {
+            "path",
+            "input_sha256",
+            "input_state",
+            "bytes",
+            "status",
+            "findings",
+            "dependencies",
+        }
+        and row["status"]
+        in {"audited", "syntax_error", "unreadable", "too_large", "unsupported"}
+        and isinstance(row["findings"], list)
+        and isinstance(row["dependencies"], dict)
+    )
+
+
+def _full_repository_discovery_policy(audit) -> dict:
+    constants = audit._security_source_files.__code__.co_consts
+    ignored = next((item for item in constants if isinstance(item, frozenset)), None)
+    pattern = next((item for item in constants if item == "*.py"), None)
+    if ignored is None or pattern is None:
+        raise RuntimeAuditError(
+            "SCANNER_DRIFT", "native source discovery policy is not inspectable"
+        )
+    return {
+        "engine": "native _security_source_files",
+        "include_pattern": pattern,
+        "include": "all discovered Python paths, including untracked files",
+        "ignored_directory_names": sorted(ignored),
+        "symlink_python_paths": "accounted as unreadable; never followed",
+    }
+
+
+def _full_repository_scan_digest(
+    generation, inventory, results, accounting, coverage, dependencies, counts, pending
+):
+    payload = {
+        "schema": generation["report_schema"],
+        "inventory": inventory,
+        "inventory_sha256": generation["inventory_hash"],
+        "configuration_sha256": generation["configuration"],
+        "scanner_identity_sha256": generation["scanner"],
+        "discovery": generation["discovery"],
+        "batch_primary_limit": FULL_REPOSITORY_BATCH_LIMIT,
+        "source_accounting_state": accounting,
+        "primary_results_sha256": digest(results),
+        "coverage": coverage,
+        "status_counts": counts,
+        "pending_paths": pending,
+        "dependency_index": dependencies,
+        "semantic_coverage": "INCOMPLETE",
+        "global_consumer_closure_verified": _FULL_REPOSITORY_GLOBAL_CONSUMER_CLOSURE_VERIFIED,
+        "target_execution": False,
+        "target_source_writes": False,
+        "dependency_installation": False,
+        "release_approved": False,
+        "native_completion_receipt": False,
+    }
+    if generation["context_profile"] == FULL_REPOSITORY_CONTEXT_PROFILE:
+        evidence = generation.get("workspace_evidence", {})
+        evidence = {
+            key: value for key, value in evidence.items() if key != "primary_processing"
+        }
+        payload.update(
+            {
+                "context_profile": generation["context_profile"],
+                "context_profile_schema": generation["context_profile_schema"],
+                "context_generation_sha256": generation.get(
+                    "context_generation_sha256"
+                ),
+                "primary_results_authority": "RAW_UNVERIFIED_SOURCE_ANALYSIS",
+                "workspace_evidence_sha256": digest(evidence),
+            }
+        )
+    return digest(payload)
+
+
+def _full_repository_generation(
+    root: Path, audit, context_profile="isolated-v1"
+) -> dict:
+    root = Path(root).resolve()
+    files = audit._security_source_files(root)
+    inventory = _full_repository_inventory(root, files)
+    patterns, frame, collection_incomplete = _full_repository_profile_configuration(
+        root, audit, context_profile
+    )
+    config_identity = {
+        "patterns": sorted(patterns),
+        "frame": frame,
+        "tenant_reads": [],
+        "oracle_context": None,
+    }
+    if context_profile == FULL_REPOSITORY_CONTEXT_PROFILE:
+        config_identity["context_profile"] = FULL_REPOSITORY_CONTEXT_PROFILE
+        config_identity["context_profile_schema"] = FULL_REPOSITORY_CONTEXT_SCHEMA
+    elif context_profile != "isolated-v1":
+        raise RuntimeAuditError(
+            "E_CONTEXT_PROFILE", "unsupported full-repository context profile"
+        )
+    configuration = digest(config_identity)
+    scanner, inventory_hash = _full_repository_scanner_identity(), digest(inventory)
+    runtime_epoch = _full_repository_runtime_epoch(root, configuration, audit)
+    discovery = _full_repository_discovery_policy(audit)
+    workspace = context_profile == FULL_REPOSITORY_CONTEXT_PROFILE
+    context_profile_schema = FULL_REPOSITORY_CONTEXT_SCHEMA if workspace else None
+    report_schema = (
+        FULL_REPOSITORY_CONTEXT_SCAN_SCHEMA
+        if workspace
+        else FULL_REPOSITORY_SCAN_SCHEMA
+    )
+    checkpoint_schema = (
+        FULL_REPOSITORY_CONTEXT_CHECKPOINT_SCHEMA
+        if workspace
+        else FULL_REPOSITORY_CHECKPOINT_SCHEMA
+    )
+    run_id = FULL_REPOSITORY_CONTEXT_RUN_ID if workspace else _FULL_REPOSITORY_RUN_ID
+    directory = run_directory(root, run_id, create=True)
+    return {**locals(), "collection_incomplete": collection_incomplete}
+
+
+def _full_repository_start_generation(generation: dict) -> list[dict]:
+    checkpoint_path = generation["directory"] / "checkpoint.json"
+    if checkpoint_path.exists() or checkpoint_path.is_symlink():
+        raise RuntimeAuditError(
+            "INVALID_CHECKPOINT", "checkpoint exists; resume it explicitly"
+        )
+    return []
+
+
+def _full_repository_resume_generation(generation: dict, audit):
+    root = generation["root"]
+    try:
+        checkpoint = read_run_json(generation["directory"], "checkpoint.json")
+        results = _validate_full_repository_checkpoint(
+            checkpoint,
+            root,
+            generation["scanner"],
+            generation["configuration"],
+            generation["inventory"],
+            generation["context_profile"],
+        )
+    except RuntimeAuditError as exc:
+        if exc.code in {"SCANNER_DRIFT", "SOURCE_DRIFT", "INVALID_CHECKPOINT"}:
+            raise
+        raise RuntimeAuditError(
+            "INVALID_CHECKPOINT", "resume checkpoint failed integrity validation"
+        ) from exc
+    except (OSError, ValueError, TypeError, AttributeError, KeyError) as exc:
+        raise RuntimeAuditError(
+            "INVALID_CHECKPOINT", "resume checkpoint cannot be read"
+        ) from exc
+    if generation["context_profile"] == FULL_REPOSITORY_CONTEXT_PROFILE:
+        generation["saved_context_generation_sha256"] = checkpoint[
+            "context_generation_sha256"
+        ]
+        generation["saved_result_digest"] = checkpoint["result_digest"]
+        cache_hit = _full_repository_checkpoint_cache_hit(generation, checkpoint)
+        if cache_hit:
+            generation["workspace_prefix_cache_key"] = (
+                generation["root"].as_posix(),
+                digest(checkpoint),
+                generation["runtime_epoch"],
+            )
+            return results, 0, True
+        return results, len(results), False
+    cache_hit = _full_repository_checkpoint_cache_hit(generation, checkpoint)
+    if cache_hit:
+        return results, 0, True
+    validated = _full_repository_revalidate_results(generation, audit, results)
+    return results, validated, False
+
+
+def _full_repository_checkpoint_cache_hit(generation: dict, checkpoint: dict) -> bool:
+    checkpoint_digest = digest(checkpoint)
+    binding = (generation["root"].as_posix(), checkpoint_digest)
+    trusted = _FULL_REPOSITORY_TRUSTED_CHECKPOINT
+    if (
+        trusted is not None
+        and trusted[:2] == binding
+        and trusted[2] != generation["runtime_epoch"]
+    ):
+        raise RuntimeAuditError(
+            "SCANNER_DRIFT", "native helper objects changed since the saved batch"
+        )
+    return trusted == (*binding, generation["runtime_epoch"])
+
+
+def _full_repository_revalidate_results(
+    generation: dict, audit, results: list[dict]
+) -> int:
+    eligible = {
+        item.resolve(): item for item in generation["files"] if not item.is_symlink()
+    }
+    for result, path, source in zip(
+        results, generation["files"], generation["inventory"]
+    ):
+        actual = _full_repository_primary(
+            generation["root"], path, source, generation["patterns"], audit, eligible
+        )
+        if actual != result:
+            raise RuntimeAuditError(
+                "INVALID_CHECKPOINT", "saved result differs from native source analysis"
+            )
+    return len(results)
+
+
+def _full_repository_scan_batch(
+    generation: dict, audit, results: list[dict], deadline_monotonic=None
+) -> list[dict]:
+    if generation["context_profile"] == FULL_REPOSITORY_CONTEXT_PROFILE:
+        return _full_repository_workspace_scan_batch(
+            generation, audit, results, deadline_monotonic
+        )
+    start = len(results)
+    eligible = {
+        item.resolve(): item for item in generation["files"] if not item.is_symlink()
+    }
+    return [
+        _full_repository_primary(
+            generation["root"], path, source, generation["patterns"], audit, eligible
+        )
+        for path, source in zip(
+            generation["files"][start : start + FULL_REPOSITORY_BATCH_LIMIT],
+            generation["inventory"][start : start + FULL_REPOSITORY_BATCH_LIMIT],
+        )
+    ]
+
+
+def _full_repository_check_soft_deadline(deadline_monotonic):
+    if deadline_monotonic is not None and time.monotonic() > deadline_monotonic:
+        raise RuntimeAuditError(
+            "E_FULL_REPOSITORY_DEADLINE",
+            "workspace-v2 exceeded its shared soft deadline at a phase boundary",
+        )
+
+
+def _full_repository_security_context(generation, audit):
+    """Delegate the security-only generation builder to its existing owner."""
+    from .runtime_audit_integrity import _full_repository_workspace_security_context
+
+    return _full_repository_workspace_security_context(
+        sys.modules[__name__], generation, audit
+    )
+
+
+def _full_repository_workspace_scan_batch(
+    generation, audit, results, deadline_monotonic
+):
+    from . import runtime_audit_integrity
+
+    return runtime_audit_integrity.full_repository_workspace_scan_batch(
+        sys.modules[__name__], generation, audit, results, deadline_monotonic
+    )
+
+
+def _full_repository_verify_generation(generation: dict, audit) -> None:
+    root = generation["root"]
+    files = audit._security_source_files(root)
+    inventory = _full_repository_inventory(root, files)
+    patterns, frame, _collection_incomplete = _full_repository_profile_configuration(
+        root, audit, generation["context_profile"]
+    )
+    config_identity = {
+        "patterns": sorted(patterns),
+        "frame": frame,
+        "tenant_reads": [],
+        "oracle_context": None,
+    }
+    if generation["context_profile"] == FULL_REPOSITORY_CONTEXT_PROFILE:
+        config_identity["context_profile"] = FULL_REPOSITORY_CONTEXT_PROFILE
+        config_identity["context_profile_schema"] = FULL_REPOSITORY_CONTEXT_SCHEMA
+    configuration = digest(config_identity)
+    if (
+        files != generation["files"]
+        or inventory != generation["inventory"]
+        or configuration != generation["configuration"]
+    ):
+        raise RuntimeAuditError(
+            "SOURCE_DRIFT", "source inventory or configuration changed during the batch"
+        )
+    if (
+        _full_repository_scanner_identity() != generation["scanner"]
+        or _full_repository_runtime_epoch(root, configuration, audit)
+        != generation["runtime_epoch"]
+    ):
+        raise RuntimeAuditError(
+            "SCANNER_DRIFT", "scanner identity changed during the batch"
+        )
+
+
+def _full_repository_store_checkpoint(generation: dict, results: list[dict]) -> None:
+    global _FULL_REPOSITORY_TRUSTED_CHECKPOINT
+    workspace = generation["context_profile"] == FULL_REPOSITORY_CONTEXT_PROFILE
+    checkpoint = {
+        "schema": generation["checkpoint_schema"],
+        "root": generation["root"].as_posix(),
+        "scanner_identity_sha256": generation["scanner"],
+        "configuration_sha256": generation["configuration"],
+        "inventory_sha256": generation["inventory_hash"],
+        "inventory": generation["inventory"],
+        "batch_primary_limit": FULL_REPOSITORY_BATCH_LIMIT,
+        "primary_results": results,
+        "result_digest": digest(results),
+    }
+    if workspace:
+        checkpoint.update(
+            {
+                "context_profile": generation["context_profile"],
+                "context_generation_sha256": generation["context_generation_sha256"],
+            }
+        )
+    write_run_json(generation["directory"], "checkpoint.json", checkpoint)
+    _FULL_REPOSITORY_TRUSTED_CHECKPOINT = (
+        generation["root"].as_posix(),
+        digest(checkpoint),
+        generation["runtime_epoch"],
+    )
+    if workspace and generation.get("workspace_prefix_raw_rows") is not None:
+        from .runtime_audit_integrity import _full_repository_workspace_store_prefix
+
+        _full_repository_workspace_store_prefix(
+            _FULL_REPOSITORY_TRUSTED_CHECKPOINT,
+            checkpoint["result_digest"],
+            checkpoint["context_generation_sha256"],
+            generation["workspace_prefix_raw_rows"],
+            digest,
+        )
+
+
+def _full_repository_dependency_index(results: list[dict]) -> dict:
+    rows = [item["dependencies"] for item in results]
+    return {
+        "method": "AST lexical local import resolution against the eligible Python inventory; imports are not executed",
+        "sources_indexed": sum(row["state"] == "lexical" for row in rows),
+        "edges": sum(len(row["edges"]) for row in rows),
+        "unresolved_relative_imports": sum(
+            len(row["unresolved_relative_imports"]) for row in rows
+        ),
+        "closure_verified": False,
+    }
+
+
+def _full_repository_report(
+    generation, results, batch, start, checkpoint_revalidated, checkpoint_cache_hit
+):
+    inventory = generation["inventory"]
+    pending = [row["path"] for row in inventory[len(results) :]]
+    states = ("audited", "syntax_error", "unreadable", "too_large", "unsupported")
+    counts = {state: sum(row["status"] == state for row in results) for state in states}
+    discovered, audited = len(inventory), counts["audited"]
+    complete = discovered > 0 and not pending and audited == discovered
+    accounting = "COMPLETE" if complete else "PENDING" if pending else "INCOMPLETE"
+    coverage = {
+        "audit_rate": audited / discovered if discovered else None,
+        "complete": complete,
+        "files_discovered": discovered,
+        "files_attempted": len(results),
+        "files_audited": audited,
+        "measurement_state": "complete" if complete else "incomplete",
+        "rate_defined": discovered > 0,
+    }
+    dependencies = _full_repository_dependency_index(results)
+    report_digest = _full_repository_scan_digest(
+        generation,
+        inventory,
+        results,
+        accounting,
+        coverage,
+        dependencies,
+        counts,
+        pending,
+    )
+    report = {
+        "schema": generation["report_schema"],
+        "state": "INCOMPLETE",
+        "discovery": generation["discovery"],
+        "source_accounting_state": accounting,
+        "inventory": inventory,
+        "inventory_sha256": generation["inventory_hash"],
+        "inventory_path_count": discovered,
+        "batch_primary_limit": FULL_REPOSITORY_BATCH_LIMIT,
+        "configuration_sha256": generation["configuration"],
+        "scanner_identity_sha256": generation["scanner"],
+        "batch": {
+            "number": start // FULL_REPOSITORY_BATCH_LIMIT + 1,
+            "primary_results": len(batch),
+            "checkpoint_revalidated": checkpoint_revalidated,
+            "checkpoint_cache_hit": checkpoint_cache_hit,
+        },
+        "primary_results": results,
+        "files_discovered": discovered,
+        "files_attempted": len(results),
+        "files_audited": audited,
+        "syntax_errors": counts["syntax_error"],
+        "unreadable_sources": counts["unreadable"],
+        "oversized_sources": counts["too_large"],
+        "analysis_errors": counts["unsupported"],
+        "pending_paths": pending,
+        "pending_count": len(pending),
+        "audit_coverage": coverage,
+        "dependency_index": dependencies,
+        "global_consumer_closure_verified": _FULL_REPOSITORY_GLOBAL_CONSUMER_CLOSURE_VERIFIED,
+        "semantic_coverage": "INCOMPLETE",
+        "target_execution": False,
+        "target_source_writes": False,
+        "dependency_installation": False,
+        "release_approved": False,
+        "native_completion_receipt": False,
+        "result_digest": digest(results),
+        "scan_sha256": report_digest,
+    }
+    if generation["context_profile"] == FULL_REPOSITORY_CONTEXT_PROFILE:
+        evidence = generation["workspace_evidence"]
+        report.update(
+            {
+                "context_profile": generation["context_profile"],
+                "context_profile_schema": generation["context_profile_schema"],
+                "context_profile_state": evidence["oracle_context"]["state"],
+                "context_generation_sha256": generation["context_generation_sha256"],
+                "primary_results_authority": "RAW_UNVERIFIED_SOURCE_ANALYSIS",
+                "workspace_evidence": evidence,
+                "deadline_policy": {
+                    "seconds": FULL_REPOSITORY_CONTEXT_DEADLINE_SECONDS,
+                    "enforcement": "soft phase-boundary checks; synchronous context work is not preempted",
+                },
+            }
+        )
+    return report
+
+
+def full_repository_scan(
+    root: Path,
+    *,
+    resume: bool = False,
+    context_profile: str = "isolated-v1",
+    deadline_monotonic: float | None = None,
+) -> dict:
+    """Run at most 460 new native per-file scans; the distinct profile is non-authoritative."""
+    from . import review_audits as audit
+
+    started = time.monotonic()
+    if context_profile == FULL_REPOSITORY_CONTEXT_PROFILE:
+        deadline_monotonic = deadline_monotonic or (
+            started + FULL_REPOSITORY_CONTEXT_DEADLINE_SECONDS
+        )
+    generation = _full_repository_generation(root, audit, context_profile)
+    if context_profile == FULL_REPOSITORY_CONTEXT_PROFILE:
+        _full_repository_check_soft_deadline(deadline_monotonic)
+    if resume:
+        results, validated, cache_hit = _full_repository_resume_generation(
+            generation, audit
+        )
+    else:
+        results, validated, cache_hit = (
+            _full_repository_start_generation(generation),
+            0,
+            False,
+        )
+    start = len(results)
+    batch = _full_repository_scan_batch(generation, audit, results, deadline_monotonic)
+    results.extend(batch)
+    _full_repository_verify_generation(generation, audit)
+    if context_profile == FULL_REPOSITORY_CONTEXT_PROFILE:
+        _full_repository_check_soft_deadline(deadline_monotonic)
+    _full_repository_store_checkpoint(generation, results)
+    return _full_repository_report(
+        generation, results, batch, start, validated, cache_hit
+    )
 
 
 if __name__ == "__main__":

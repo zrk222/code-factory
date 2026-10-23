@@ -1,0 +1,451 @@
+import ast
+import pytest
+from factoryline.review_audits import _security_aliases
+from factoryline.semantic_credential_sensor import (
+    configuration_and_credential_findings,
+    credential_findings,
+)
+from factoryline import review_audits as audit
+from factoryline import semantic_credential_sensor as sensors
+
+
+def _scan(source):
+    tree = ast.parse(source)
+    return credential_findings(
+        tree, _security_aliases(list(ast.walk(tree))), "sample.py"
+    )
+
+
+@pytest.mark.parametrize("mutation", ["", "requests.get = replacement\n"])
+@pytest.mark.parametrize("inventory", [list, tuple, iter])
+def test_reused_inventory_preserves_credentials_and_provider_mutation(
+    monkeypatch, mutation, inventory
+):
+    tree = ast.parse(
+        "import requests\n"
+        + mutation
+        + "requests.get('https://api.test', auth=('name', 'actual-secret'))\n"
+    )
+    nodes = list(ast.walk(tree))
+    aliases = _security_aliases(nodes)
+    expected = credential_findings(tree, aliases, "sample.py")
+
+    def forbidden_walk(_tree):
+        raise AssertionError("reused inventory must avoid another AST walk")
+
+    monkeypatch.setattr(ast, "walk", forbidden_walk)
+    assert (
+        credential_findings(tree, aliases, "sample.py", nodes=inventory(nodes))
+        == expected
+    )
+    assert len(expected) == (0 if mutation else 1)
+
+
+def test_reports_literal_http_auth_and_authorization_without_exposing_values():
+    findings = _scan(
+        "import requests as r\n"
+        "import httpx\n"
+        "r.get('https://api.example.test', auth=('name', 'p@ss-value'))\n"
+        "httpx.Client().post('https://api.example.test', headers={'Authorization': 'Bearer abc-token'})\n"
+        "r.get('https://api.example.test', headers={'authorization': 'Basic QWxwaGE='})\n"
+    )
+    assert len(findings) == 3
+    assert {item["facts"]["consumer_role"] for item in findings} == {
+        "http_auth",
+        "http_header",
+    }
+    assert all(item["severity"] == "MEDIUM" for item in findings)
+    assert all(
+        item["facts"]["source_role"] == "credential_literal" for item in findings
+    )
+    assert all(
+        item["facts"]["proof_scope"] == "local_static_wiring" for item in findings
+    )
+    assert all(
+        "p@ss-value" not in repr(item) and "abc-token" not in repr(item)
+        for item in findings
+    )
+
+
+def test_reports_direct_basic_auth_password_and_ignores_username_only():
+    findings = _scan(
+        "from requests.auth import HTTPBasicAuth as Basic\n"
+        "Basic('user', 'direct-password')\n"
+        "import requests\n"
+        "requests.get('https://host.test', auth=('only-user', ''))\n"
+        "requests.get('https://host.test', auth=('user', 'your-'))\n"
+    )
+    assert len(findings) == 1
+    assert findings[0]["facts"]["credential_slot"] == "password"
+
+
+def test_ignores_urls_schemes_placeholders_and_noncanonical_calls():
+    findings = _scan(
+        "import requests\n"
+        "requests.get('https://host.test', headers={'Authorization': 'Bearer '})\n"
+        "requests.get('https://host.test', headers={'Authorization': 'Bearer ${TOKEN}'})\n"
+        "fake.get('https://host.test', headers={'Authorization': 'Bearer abc-token'})\n"
+        "def send(requests):\n"
+        "    requests.get('https://host.test', auth=('user', 'literal-password'))\n"
+    )
+    assert findings == []
+
+
+def test_detects_http_url_userinfo_without_retaining_the_url_or_password():
+    findings = _scan(
+        "import requests\n"
+        "requests.get('https://name:secret-value@host.test/path')\n"
+        "requests.get('https://host.test/path')\n"
+        "requests.get('https://name@host.test/path')\n"
+        "requests.get('https://:secret-value@host.test/path')\n"
+        "requests.get(dynamic_url)\n"
+        "requests.post(ACCESS_TOKEN_URL)\n"
+        "requests.get('http://[malformed')\n"
+        "fake.get('https://name:secret-value@host.test/path')\n"
+    )
+    assert len(findings) == 1
+    finding = findings[0]
+    assert finding["facts"]["consumer_role"] == "http_url_userinfo"
+    assert finding["facts"]["credential_slot"] == "userinfo_password"
+    assert "host.test" not in repr(finding)
+    assert "secret-value" not in repr(finding)
+
+
+def test_basic_auth_keyword_binding_requires_exact_valid_call_shape():
+    findings = _scan(
+        "from requests.auth import HTTPBasicAuth\n"
+        "HTTPBasicAuth(username='name', password='keyword-password')\n"
+        "HTTPBasicAuth('name', 'positional-password', password='invalid-duplicate')\n"
+        "HTTPBasicAuth(username='name', password='placeholder')\n"
+    )
+    assert len(findings) == 1
+    assert findings[0]["facts"]["credential_slot"] == "password"
+
+
+def test_authorization_header_duplicates_use_python_last_value_and_unknown_expansions():
+    findings = _scan(
+        "import requests\n"
+        "requests.get('https://host.test', headers={'Authorization': 'Bearer old-token', 'authorization': 'Bearer live-token'})\n"
+        "requests.get('https://host.test', headers={'Authorization': 'Bearer hidden-token', 'authorization': dynamic_value})\n"
+        "requests.get('https://host.test', headers={'Authorization': 'Bearer hidden-token', **extra})\n"
+    )
+    assert len(findings) == 1
+    assert findings[0]["facts"]["consumer_role"] == "http_header"
+    assert "old-token" not in repr(findings[0])
+    assert "live-token" not in repr(findings[0])
+
+
+def test_authorization_headers_resolve_exact_dict_keys_before_casefold_merge():
+    findings = _scan(
+        "import requests\n"
+        "requests.get('https://host.test', headers={'Authorization': 'Bearer upper-old', 'authorization': 'Bearer lower-final'})\n"
+        "requests.get('https://host.test', headers={'Authorization': 'Bearer hidden-exact', 'Authorization': dynamic_value})\n"
+        "requests.get('https://host.test', headers={'Authorization': 'Bearer hidden-upper', 'authorization': dynamic_value, 'Authorization': 'Bearer hidden-final'})\n"
+    )
+    assert len(findings) == 1
+    assert findings[0]["line"] == 2
+    assert "upper-old" not in repr(findings[0])
+    assert "lower-final" not in repr(findings[0])
+
+
+def test_shadowed_import_and_parameter_are_not_canonical_http_sinks():
+    findings = _scan(
+        "import requests as client\n"
+        "client = fake\n"
+        "client.get('https://host.test', headers={'Authorization': 'Bearer literal-token'})\n"
+        "def send(requests):\n"
+        "    requests.get('https://host.test', auth=('user', 'literal-password'))\n"
+    )
+    assert findings == []
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "requests.get = fake_get",
+        "setattr(requests.auth, 'HTTPBasicAuth', fake_auth)",
+        "saved_provider = requests",
+        "requests.auth.HTTPBasicAuth = fake_auth",
+        "httpx.Client = FakeClient",
+    ],
+)
+def test_each_provider_mutation_vetoes_http_credential_proof(mutation):
+    findings = _scan(
+        "import requests\n"
+        "import httpx\n"
+        f"{mutation}\n"
+        "def later():\n"
+        "    requests.get('https://host.test', auth=('user', 'literal-password'))\n"
+        "    requests.auth.HTTPBasicAuth('user', 'literal-password')\n"
+        "    httpx.Client().post('https://host.test', headers={'Authorization': 'Bearer token-value'})\n"
+    )
+    assert findings == []
+
+
+def test_your_prefixed_literal_is_not_a_new_placeholder_waiver():
+    findings = _scan(
+        "import requests\n"
+        "requests.get('https://host.test', auth=('user', 'your-password'))\n"
+    )
+    assert len(findings) == 1
+
+
+def test_combined_sensor_returns_configuration_and_credential_findings():
+    tree = ast.parse(
+        "from jinja2 import Environment\n"
+        "env = Environment(autoescape=False)\n"
+        "env.get_template('page.html')\n"
+        "import httpx\n"
+        "httpx.get('https://host.test', auth=('user', 'literal-password'))\n"
+    )
+    findings = configuration_and_credential_findings(
+        tree, _security_aliases(list(ast.walk(tree))), "sample.py"
+    )
+    assert {item["code"] for item in findings} == {
+        "SECURITY_JINJA_AUTOESCAPE_DISABLED",
+        "SECURITY_LITERAL_HTTP_CREDENTIAL",
+    }
+
+
+def test_provider_mutation_index_is_skipped_without_literal_candidate(monkeypatch):
+    import factoryline.finite_capture as mutations
+
+    calls = []
+    original = mutations.finite_provider_mutation_index
+
+    def counted(*args, **kwargs):
+        calls.append(None)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(mutations, "finite_provider_mutation_index", counted)
+    findings = _scan(
+        "import requests\n"
+        "requests.get('https://host.test')\n"
+        "requests.get('https://host.test', auth=('user', dynamic_password))\n"
+        "requests.get('https://host.test', auth=('user', ''))\n"
+        "requests.get('https://host.test', auth=('user', 'placeholder'))\n"
+    )
+    assert findings == []
+    assert calls == []
+
+
+@pytest.mark.parametrize(
+    "mutation, expected",
+    [("", 1), ("requests.get = fake_get\n", 0)],
+)
+def test_provider_mutation_index_runs_once_for_literal_candidate(
+    monkeypatch, mutation, expected
+):
+    import factoryline.finite_capture as mutations
+
+    calls = []
+    original = mutations.finite_provider_mutation_index
+
+    def counted(*args, **kwargs):
+        calls.append(None)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(mutations, "finite_provider_mutation_index", counted)
+    findings = _scan(
+        "import requests\n"
+        + mutation
+        + "requests.get('https://host.test', auth=('user', 'literal-password'))\n"
+    )
+    assert len(findings) == expected
+    assert calls == [None]
+
+
+"""Native semantic sensing preserves existing defects and separates source claims."""
+
+
+@pytest.mark.parametrize(
+    "endpoint",
+    [
+        "https://identity.example.test/oauth/token",
+        "https://api.telegram.org/bot123456789:AAEabcdefghijklmnopqrstuvwxyz0123456789/getMe",
+        "https://user:fixed-value@id.example.test/token",
+        "https://id.example.test/token?key=fixed-value",
+    ],
+)
+def test_target_role_alone_never_suppresses_credential_warning(tmp_path, endpoint):
+    (tmp_path / "config.py").write_text(f"ACCESS_TOKEN_URL = {endpoint!r}\n")
+    (tmp_path / "client.py").write_text(
+        "import requests\nfrom config import ACCESS_TOKEN_URL\nrequests.get(ACCESS_TOKEN_URL)\n"
+    )
+    report = audit.security_scan(tmp_path, cache_enabled=False)
+    [secret] = [
+        f for f in report["findings"] if f["code"] == "SECURITY_HARDCODED_SECRET"
+    ]
+    assert secret["severity"] == "CRITICAL"
+    assert not report.get("primitive_observations")
+
+
+def test_native_unnamed_auth_literal_and_original_secret_survive_cold_warm(tmp_path):
+    (tmp_path / "app.py").write_text(
+        "import requests\nPASSWORD='hunter2'\n"
+        "def send(url):\n"
+        "    return requests.post(url, auth=('someone', 'literal-for-auth'))\n"
+    )
+    audit._oracle_context_cache_clear()
+    cold = audit.security_scan(tmp_path)
+    warm = audit.security_scan(tmp_path)
+    assert cold["findings"] == warm["findings"]
+    assert audit._oracle_context_cache_info()["hits"] >= 1
+    by_code = {f["code"]: f for f in cold["findings"]}
+    assert by_code["SECURITY_HARDCODED_SECRET"]["severity"] == "CRITICAL"
+    sensor = by_code["SECURITY_LITERAL_HTTP_CREDENTIAL"]
+    assert sensor["facts"]["consumer_role"] == "http_auth"
+    assert sensor["facts"]["credential_validity"] == "not_established"
+    assert sensor["facts"]["claim_boundary"] == "static_not_runtime"
+    assert "literal-for-auth" not in repr(cold)
+    assert "hunter2" not in repr(cold)
+
+
+def test_native_public_url_target_and_unknown_runtime_auth_add_no_sensor_alert(
+    tmp_path,
+):
+    (tmp_path / "app.py").write_text(
+        "import httpx\n"
+        "httpx.get('https://id.example.test/token')\n"
+        "def send(url, supplied):\n"
+        "    return httpx.get(url, auth=supplied)\n"
+    )
+    assert audit.security_scan(tmp_path, cache_enabled=False)["findings"] == []
+
+
+@pytest.mark.parametrize("name", ["credential_findings", "_auth_literal_nodes"])
+def test_semantic_validator_replacement_invalidates_native_cache(
+    tmp_path, monkeypatch, name
+):
+    before = audit._oracle_context_cache_key(tmp_path, [], {})
+    original = getattr(sensors, name)
+
+    def replacement(*args, **kwargs):
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(sensors, name, replacement)
+    assert before != audit._oracle_context_cache_key(tmp_path, [], {})
+
+
+@pytest.mark.parametrize("explicit_scope", [False, True])
+def test_django_request_parameter_passes_resolved_scope_to_alias_reader(explicit_scope):
+    function = ast.parse("def view(request):\n    return request.GET\n").body[0]
+    node = function.body[0].value
+    function._security_parameter_names = {"request"}
+    node._security_lexical_scope = function
+    received = []
+
+    def reader(scope, aliases, flow_statement):
+        received.append((scope, aliases, flow_statement))
+        return {"request": "django.http.HttpRequest"} if scope is function else {}
+
+    assert (
+        sensors.django_request_parameter(
+            node, {}, function if explicit_scope else None, function.body[0], reader
+        )
+        is True
+    )
+    assert received == [(function, {}, function.body[0])]
+
+
+def test_precision257_semantic_sensor_request_upload_and_password_comparison():
+    import ast
+    from factoryline import semantic_credential_sensor as sensor
+
+    assert sensor.validation_modules() == (sensor,)
+    scope = ast.parse(
+        "from flask import request as req\nfiles = req.files\nfiles.get('upload')"
+    )
+    statement = scope.body[1]
+    expression = ast.parse("req.files['upload']", mode="eval").body
+
+    def collection(node, aliases, _scope, _statement, name):
+        return (
+            isinstance(node, ast.Attribute)
+            and node.attr == name
+            and aliases.get(node.value.id) == "flask.request"
+        )
+
+    assert (
+        sensor.flask_upload_expression(
+            expression, {"req": "flask.request"}, scope, statement, collection
+        )
+        is True
+    )
+    assert (
+        sensor.flask_upload_expression(
+            ast.parse("req.args['upload']", mode="eval").body,
+            {"req": "flask.request"},
+            scope,
+            statement,
+            collection,
+        )
+        is False
+    )
+    request_files = ast.parse("flask.request.files", mode="eval").body
+    assert (
+        sensor.flask_request_collection(
+            request_files,
+            {"flask": "flask"},
+            scope,
+            statement,
+            "files",
+            lambda *_: {"flask": "flask"},
+        )
+        is True
+    )
+    assert (
+        sensor.flask_request_collection(
+            ast.parse("flask.request.args", mode="eval").body,
+            {"flask": "flask"},
+            scope,
+            statement,
+            "files",
+            lambda *_: {"flask": "flask"},
+        )
+        is False
+    )
+    comparison = ast.parse("password == 'hardcoded-secret'", mode="eval").body
+
+    def password_source(node, _fields, *_):
+        return isinstance(node, ast.Name) and node.id == "password"
+
+    def literal_valid(node):
+        return isinstance(node, ast.Constant) and node.value == "hardcoded-secret"
+
+    finding = sensor.password_comparison_finding(
+        "app.py",
+        comparison,
+        {"password"},
+        {},
+        scope,
+        statement,
+        password_source,
+        literal_valid,
+    )
+    assert finding is not None and finding["severity"] == "CRITICAL"
+    safe = ast.parse("password != 'hardcoded-secret'", mode="eval").body
+    assert (
+        sensor.password_comparison_finding(
+            "app.py",
+            safe,
+            {"password"},
+            {},
+            scope,
+            statement,
+            password_source,
+            literal_valid,
+        )
+        is None
+    )
+    assert (
+        sensor.flask_request_collection(
+            ast.parse("flask.request.files", mode="eval").body,
+            {},
+            scope,
+            statement,
+            "files",
+            lambda *_: {},
+        )
+        is False
+    )

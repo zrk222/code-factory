@@ -1,0 +1,36 @@
+{
+  "schema": "factory.precision.development-checkpoint.v1",
+  "scope": "Baseline native-scanner regression controls; detector implementation remains isolated and unadmitted.",
+  "tests": {
+    "passed": 31,
+    "new_must_retain_critical_cases": 21,
+    "existing_functions_unchanged": 12,
+    "source_sha256": "731ff154837e3b286daa8e9caf3e6a181877a4efde903e0e20ecc58a6a5f9a64",
+    "result_sha256": "31cbf2cff5c008a0e1f034f15f1d904dc99d5397c9732bc0df023baa73ffc1ce"
+  },
+  "baseline_measured_actionable_precision": {
+    "TP": 0,
+    "FP": 60,
+    "precision": 0.0
+  },
+  "isolated_candidate_replay": {
+    "freeze_sha256": "73ea2494d3dd5cdd2d2d4dbb22dec0b51dd0d81be2cfa23e7646943c055b8f03",
+    "sample_size": 60,
+    "measured": 60,
+    "retained": 53,
+    "removed": 7,
+    "severity_changes": 0,
+    "retained_labels": {
+      "TP": 0,
+      "FP": 53,
+      "precision": 0.0
+    }
+  },
+  "isolated_replay_sha256": "b43eee826af449717d6effd169aab8f0d19af730adb615c5991808be8c2bc2ae",
+  "claim_limits": [
+    "Seven removals are an 11.67 percent decrease in the exposed sample false-positive count. Actionable precision remains zero.",
+    "One AI label pass; second reviewer and fresh held-out measurement remain pending.",
+    "This commit adds no detector clearance, severity demotion, package release or merge approval.",
+    "The full suite and architecture gates remain unresolved; this scoped result does not make PR255 mergeable."
+  ]
+}

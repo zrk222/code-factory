@@ -29,8 +29,17 @@ import re
 import json
 import logging
 import threading
-from types import MappingProxyType
 from typing import Any
+
+from .import_context import (
+    capture_project_imports as _capture_project_imports,
+    project_import_views as _project_import_views,
+    import_configuration as import_configuration,
+    new_import_views as new_import_views,
+    import_context_metadata as import_context_metadata,
+    native_import_profile as native_import_profile,
+)
+
 
 try:
     import tomllib
@@ -68,6 +77,22 @@ from .implementation_audit import (  # noqa: F401
     bound_snapshots,
     click_group_container,
     intentional_implementation_contract,
+)
+
+from .semantic_credential_sensor import (
+    _credential_get_source_key as _credential_get_source_key,
+    _credential_request_collection as _credential_request_collection,
+    _new_security_request_alias_memo as _new_security_request_alias_memo,
+    _security_request_alias_module_bindings as _security_request_alias_module_bindings,
+    _security_scope_request_aliases as _security_scope_request_aliases,
+    _security_scope_request_aliases_uncached as _security_scope_request_aliases_uncached,
+    _security_store_request_alias_bindings as _security_store_request_alias_bindings,
+    _track_credential_request_collection as _track_credential_request_collection,
+    credential_password_request_value as credential_password_request_value,
+    django_request_parameter as django_request_parameter,
+    flask_request_collection as flask_request_collection,
+    flask_upload_expression as flask_upload_expression,
+    password_comparison_finding as password_comparison_finding,
 )
 
 
@@ -242,111 +267,6 @@ _SECURITY_REQUEST_ALIAS_MAX_PAIRS = 8192
 _SECURITY_REQUEST_ALIAS_MAX_BYTES = 524288
 
 
-def _new_security_request_alias_memo(tree):
-    """Create bounded, invocation-local request alias caches for one AST."""
-    return {"tree": tree, "values": {}, "pairs": 0, "bytes": 0}
-
-
-def _security_scope_request_aliases(scope, aliases, flow_statement=None):
-    """Resolve request aliases, reusing only exact-prefix results in one scan."""
-    from . import review_integrity
-    from . import review_audits as audit
-
-    memo = _SECURITY_REQUEST_ALIAS_MEMO.get()
-    module = review_integrity._security_module_scope(scope) if scope else None
-    if not memo or module is None or module is not memo["tree"]:
-        return _security_scope_request_aliases_uncached(scope, aliases, flow_statement)
-    alias_items = tuple(sorted(aliases.items()))
-    key = (module, scope, flow_statement, alias_items)
-    cached = memo["values"].get(key)
-    if cached is not None:
-        return dict(cached)
-    if isinstance(scope, ast.Module):
-        resolved = _security_request_alias_module_bindings(
-            module, alias_items, flow_statement
-        )
-    elif isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)):
-        resolved = _security_request_alias_module_bindings(module, alias_items, None)
-        local_names = set(getattr(scope, "_security_local_names", set()))
-        local_names.update(getattr(scope, "_security_parameter_names", set()))
-        for name in local_names:
-            resolved.pop(name, None)
-        resolved = review_integrity._security_apply_import_bindings(
-            scope.body, resolved, flow_statement, audit
-        )
-    else:
-        resolved = _security_scope_request_aliases_uncached(
-            scope, aliases, flow_statement
-        )
-    _security_store_request_alias_bindings(memo, key, alias_items, resolved)
-    return dict(resolved)
-
-
-def _security_scope_request_aliases_uncached(scope, aliases, flow_statement):
-    """Run the compatibility alias walk without consulting an invocation memo."""
-    from . import review_audits as audit
-    from .review_integrity import (
-        _security_apply_import_bindings,
-        _security_module_scope,
-    )
-
-    module = _security_module_scope(scope) if scope is not None else None
-    if module is None:
-        resolved = dict(aliases)
-    else:
-        module_stop = flow_statement if scope is module else None
-        resolved = _security_apply_import_bindings(module.body, {}, module_stop, audit)
-    if isinstance(scope, ast.Module):
-        return resolved
-    if not isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)):
-        return resolved
-    local_names = set(getattr(scope, "_security_local_names", set()))
-    local_names.update(getattr(scope, "_security_parameter_names", set()))
-    for name in local_names:
-        resolved.pop(name, None)
-    return _security_apply_import_bindings(scope.body, resolved, flow_statement, audit)
-
-
-def _security_request_alias_module_bindings(module, alias_items, stop):
-    """Return full or exact-prefix module bindings in the active invocation."""
-    from . import review_audits as audit
-    from .review_integrity import _security_apply_import_bindings
-
-    memo = _SECURITY_REQUEST_ALIAS_MEMO.get()
-    key = (module, module, stop, alias_items)
-    cached = memo["values"].get(key)
-    if cached is not None:
-        return dict(cached)
-    resolved = _security_apply_import_bindings(module.body, {}, stop, audit)
-    _security_store_request_alias_bindings(memo, key, alias_items, resolved)
-    return dict(resolved)
-
-
-def _security_store_request_alias_bindings(memo, key, alias_items, resolved):
-    """Store a defensive alias copy only while all invocation budgets allow it."""
-    if key in memo["values"]:
-        return
-    value = dict(resolved)
-    pair_count = len(alias_items) + len(value)
-    byte_count = sum(
-        len(str(k).encode("utf-8")) + len(str(v).encode("utf-8"))
-        for k, v in alias_items
-    )
-    byte_count += sum(
-        len(str(k).encode("utf-8")) + len(str(v).encode("utf-8"))
-        for k, v in value.items()
-    )
-    if len(memo["values"]) >= _SECURITY_REQUEST_ALIAS_MAX_ENTRIES:
-        return
-    if memo["pairs"] + pair_count > _SECURITY_REQUEST_ALIAS_MAX_PAIRS:
-        return
-    if memo["bytes"] + byte_count > _SECURITY_REQUEST_ALIAS_MAX_BYTES:
-        return
-    memo["values"][key] = value
-    memo["pairs"] += pair_count
-    memo["bytes"] += byte_count
-
-
 _SQL_CONNECTORS = {
     "mysql.connector.connect": "mysql.connector",
     "psycopg.connect": "psycopg",
@@ -513,84 +433,6 @@ def track_sql_assignment(
     for name in _sql_assignment_names(statement):
         clear_sql_provenance(connections, cursors, {name})
         bind_sql_provenance(connections, cursors, name, driver, cursor)
-
-
-def credential_password_request_value(
-    node,
-    password_fields,
-    aliases,
-    scope,
-    flow_statement,
-    flask_collection,
-    django_request,
-):
-    """Recognize password fields read from proven Flask or Django request sources."""
-    if isinstance(node, ast.Call):
-        parts = _credential_get_source_key(node)
-    elif isinstance(node, ast.Subscript):
-        parts = node.value, node.slice
-    else:
-        return False
-    if parts is None:
-        return False
-    request_value, key = parts
-    if (
-        not isinstance(key, ast.Constant)
-        or not isinstance(key.value, str)
-        or key.value.casefold() != "password"
-    ):
-        return False
-    return _credential_request_collection(
-        request_value,
-        password_fields,
-        flask_collection,
-        aliases,
-        scope,
-        flow_statement,
-    ) or django_request(request_value, aliases, scope, flow_statement)
-
-
-def _credential_get_source_key(call):
-    if not isinstance(call.func, ast.Attribute) or call.func.attr != "get":
-        return None
-    if not 1 <= len(call.args) <= 2 or len(call.keywords) > 1:
-        return None
-    if any(keyword.arg != "default" for keyword in call.keywords):
-        return None
-    if len(call.args) == 2 and call.keywords:
-        return None
-    return call.func.value, call.args[0]
-
-
-def _credential_request_collection(
-    node, password_fields, resolve_flask_collection, aliases, scope, flow_statement
-):
-    if isinstance(node, ast.Name):
-        marker = f"request-collection:{node.id}:"
-        return any(
-            isinstance(item, str) and item.startswith(marker)
-            for item in password_fields
-        )
-    return resolve_flask_collection(node, aliases, scope, flow_statement)
-
-
-def _track_credential_request_collection(
-    bindings, statement, password_fields, collection
-):
-    password_fields.difference_update(
-        item
-        for item in tuple(password_fields)
-        if isinstance(item, str)
-        and item.startswith("request-collection:")
-        and item.split(":", 2)[1] in bindings
-    )
-    if collection:
-        targets = getattr(statement, "targets", None) or [statement.target]
-        password_fields.update(
-            f"request-collection:{target.id}:source"
-            for target in targets
-            if isinstance(target, ast.Name)
-        )
 
 
 def _sql_assignment_kinds(value, aliases, helpers, driver, cursor, helper_call):
@@ -2443,7 +2285,9 @@ def _canary_reference(node, aliases):
 
 def _canary_reference_binding(context, head, aliases):
     """Return a standard import still bound at one call or assignment site."""
-    from .review_integrity import _security_scope_request_aliases
+    from .review_integrity import (
+        _security_scope_request_aliases as resolve_request_aliases,
+    )
     from .security_configuration import _relative_binding
 
     scope = getattr(context, "_security_lexical_scope", None)
@@ -2454,7 +2298,7 @@ def _canary_reference_binding(context, head, aliases):
         if isinstance(context, ast.Call)
         else context
     )
-    binding = _security_scope_request_aliases(scope, aliases, flow_statement).get(head)
+    binding = resolve_request_aliases(scope, aliases, flow_statement).get(head)
     if (
         binding is None
         or binding != aliases.get(head)
@@ -2664,6 +2508,214 @@ def sqlalchemy_with_findings(
         cursors.update(old_cursors)
 
 
+def bound_sink_argument(call, position, keywords=()):
+    """Select one declared argument slot; reject ambiguous stars or duplicates."""
+    selected = [item.value for item in call.keywords if item.arg in keywords]
+    if any(isinstance(item, ast.Starred) for item in call.args[: position + 1]):
+        return None
+    if len(call.args) > position:
+        return None if selected else call.args[position]
+    return selected[0] if len(selected) == 1 else None
+
+
+def _parsed_host_parser(call, aliases, call_name, proven_callee):
+    guard = getattr(call, "_security_flow_statement", None)
+    if not isinstance(guard, ast.If) or not _url_guard_has_direct_sink(guard, call):
+        return None
+    test = _url_host_allowlist_test(guard.test)
+    if test is None:
+        return None
+    hostname = test.left
+    if not isinstance(hostname, ast.Attribute) or hostname.attr != "hostname":
+        return None
+    parser = hostname.value
+    if not isinstance(parser, ast.Call) or not parser.args:
+        return None
+    parser_name = call_name(parser, aliases)
+    if parser_name not in {"urllib.parse.urlparse", "urllib.parse.urlsplit"}:
+        return None
+    return guard, parser, parser_name
+
+
+def _url_guard_has_no_intervening_effect(call):
+    return not any(
+        node is not call
+        and isinstance(
+            node, (ast.Call, ast.NamedExpr, ast.Await, ast.Yield, ast.YieldFrom)
+        )
+        for node in ast.walk(call)
+    )
+
+
+def parsed_host_allowlist(call, aliases, call_name, proven_callee):
+    """Confirm the parsed URL guard matches the sink without intervening effects."""
+    parsed = _parsed_host_parser(call, aliases, call_name, proven_callee)
+    if parsed is None:
+        return False
+    _guard, parser, parser_name = parsed
+    return (
+        _url_guard_has_no_intervening_effect(call)
+        and proven_callee(parser, aliases, parser_name)
+        and _url_expr_same(parser.args[0], bound_sink_argument(call, 0, ("url",)))
+    )
+
+
+def _url_host_allowlist_test(test):
+    return (
+        test
+        if isinstance(test, ast.Compare)
+        and len(test.ops) == 1
+        and isinstance(test.ops[0], ast.In)
+        and _url_literal_host_allowlist(test.comparators[0])
+        else None
+    )
+
+
+def _url_guard_has_direct_sink(guard, call):
+    if len(guard.body) != 1:
+        return False
+    statement = guard.body[0]
+    value = getattr(statement, "value", None)
+    return (
+        isinstance(statement, (ast.Expr, ast.Assign, ast.AnnAssign, ast.Return))
+        and value is call
+    )
+
+
+def _url_literal_host_allowlist(node):
+    return (
+        isinstance(node, (ast.Set, ast.Tuple, ast.List))
+        and bool(node.elts)
+        and all(
+            isinstance(item, ast.Constant)
+            and isinstance(item.value, str)
+            and item.value
+            for item in node.elts
+        )
+    )
+
+
+def _url_expr_same(left, right):
+    return ast.dump(left, include_attributes=False) == ast.dump(
+        right, include_attributes=False
+    )
+
+
+def unsafe_request_url(call, name, tainted, aliases, is_tainted, allowed):
+    """Identify a tainted URL passed to a supported requests verb when no accepted guard proves it safe."""
+    if name not in {
+        "requests." + verb
+        for verb in ("get", "post", "put", "patch", "delete", "head", "options")
+    }:
+        return False
+    argument = bound_sink_argument(call, 0, ("url",))
+    return is_tainted(argument, tainted, set(), aliases) and not allowed(call, aliases)
+
+
+def _fixed_absolute_path_root(root):
+    return (
+        isinstance(root, ast.Constant)
+        and isinstance(root.value, str)
+        and re.match(r"^(?:/|[A-Za-z]:[\\/]|\\\\)", root.value) is not None
+    )
+
+
+def _secure_filename_leaf(leaf, requests, aliases, proven):
+    if isinstance(leaf, ast.Name):
+        return ("secure-upload-leaf", leaf.id) in requests
+    return isinstance(leaf, ast.Call) and proven(
+        leaf, aliases, "werkzeug.utils.secure_filename"
+    )
+
+
+def fixed_root_filename_path(node, requests, aliases, proven):
+    """A basename barrier proves lexical traversal only, not filesystem safety."""
+    if not isinstance(node, ast.Call) or not proven(node, aliases, "os.path.join"):
+        return False
+    if (
+        len(node.args) < 2
+        or node.keywords
+        or not _fixed_absolute_path_root(node.args[0])
+    ):
+        return False
+    return all(
+        _secure_filename_leaf(leaf, requests, aliases, proven) for leaf in node.args[1:]
+    )
+
+
+def _sanitizer_capture_allowed(node, call, head, expected, aliases, audit):
+    if isinstance(node, ast.Assign):
+        targets, value = node.targets, node.value
+    elif isinstance(node, ast.AnnAssign):
+        targets, value = ([node.target] if node.simple else []), node.value
+    else:
+        return True
+    return not (
+        len(targets) == 1
+        and isinstance(targets[0], ast.Name)
+        and isinstance(call.func, ast.Name)
+        and targets[0].id == head
+        and isinstance(value, (ast.Name, ast.Attribute))
+        and audit._resolved_ast_name(value, aliases) == expected
+    )
+
+
+def _sanitizer_path_overlaps(path, attribute, expected):
+    changed = path if attribute == "*" else path + "." + attribute
+    return (
+        changed == expected
+        or expected.startswith(changed + ".")
+        or changed.startswith(expected + ".")
+    )
+
+
+def _sanitizer_provider_mutated(module, call, aliases, expected, head, audit):
+    from types import SimpleNamespace
+
+    from . import finite_capture
+
+    nodes = list(ast.walk(module))
+    parents = {
+        id(child): node for node in nodes for child in ast.iter_child_nodes(node)
+    }
+    mutations = finite_capture.finite_provider_mutation_index(
+        nodes,
+        aliases,
+        SimpleNamespace(_resolved_ast_name=audit._resolved_ast_name),
+        parents,
+        capture_predicate=lambda node: _sanitizer_capture_allowed(
+            node, call, head, expected, aliases, audit
+        ),
+    )
+    return any(
+        _sanitizer_path_overlaps(path, attribute, expected)
+        for path, attribute in mutations
+    )
+
+
+def sanitizer_provider_unchanged(call, aliases, expected, module_for):
+    """Reuse a cached provider mutation index for guards in one captured AST."""
+    from . import review_audits as audit
+    from .review_integrity import _security_flow_bindings
+
+    module = module_for(getattr(call, "_security_lexical_scope", None))
+    if module is None:
+        return False
+    flow, _ = _security_flow_bindings(call, aliases)
+    name = audit._name(call.func)
+    head, _, tail = name.partition(".")
+    if flow.get(head, "") + ("." + tail if tail else "") != expected:
+        return False
+    key = (expected, name, tuple(sorted(aliases.items())))
+    cache = getattr(module, "_security_sanitizer_provider_cache", {})
+    if key not in cache:
+        cache[key] = _sanitizer_provider_mutated(
+            module, call, aliases, expected, head, audit
+        )
+        module._security_sanitizer_provider_cache = cache
+    return not cache[key]
+
+
 def unsafe_sql_driver(
     call,
     requests,
@@ -2763,7 +2815,6 @@ def sql_sink_driver(
         not isinstance(call, ast.Call)
         or not isinstance(call.func, ast.Attribute)
         or call.func.attr != "execute"
-        or not call.args
     ):
         return None
     receiver = call.func.value
@@ -2791,7 +2842,13 @@ def sql_sink_driver(
 
 def sql_statement_argument(call, driver, aliases, resolve_call):
     """Unwrap only SQLAlchemy text() around the SQL statement argument."""
-    statement = call.args[0]
+    names = {
+        "psycopg": ("query",),
+        "django": ("sql",),
+        "sqlalchemy": ("statement",),
+        "mysql.connector": ("operation",),
+    }
+    statement = bound_sink_argument(call, 0, names.get(driver, ()))
     if (
         driver == "sqlalchemy"
         and isinstance(statement, ast.Call)
@@ -2908,7 +2965,11 @@ def sql_injection_finding(make_finding, relative, call, driver):
 
 def project_contract_helpers():
     """Include every contract resolver in process-local cache identity."""
+    from .semantic_credential_sensor import literal_exec_rejected as exec_sensor
+
     return (
+        exec_sensor,
+        literal_exec_rejected,
         bind_project_contracts,
         _capture_project_imports,
         _project_import_views,
@@ -2985,6 +3046,9 @@ def _declared_typecheck_sources(
             max_bytes,
             max_paths,
         )
+        identity["negative_typecheck_selected"] = _ty_negative_expectation_sources(
+            root, files, tools.get("pyright"), local_file, source_error, max_paths
+        )
         identity["ty"] = ty_identity
         if ty_identity.get("invocation"):
             bindings.append(ty_identity["invocation"])
@@ -3008,6 +3072,36 @@ def _declared_typecheck_sources(
     except (OSError, ValueError, UnicodeError, AttributeError, TypeError):
         identity.update(state="unreadable", ty={"state": "unknown"})
         return set(), bindings, identity, False
+
+
+def _ty_negative_expectation_sources(
+    root, files, config, local_file, source_error, limit
+):
+    """Select explicit negative-error checks; alternate checker configs earn no credit."""
+    if not isinstance(config, dict) or config.get("extends"):
+        return []
+    report = config.get("reportUnnecessaryTypeIgnoreComment")
+    if report is not True and report != "error":
+        return []
+    if config.get("enableTypeIgnoreComments", True) is not True:
+        return []
+    for name in ("pyrightconfig.json", "basedpyrightconfig.json"):
+        try:
+            local_file(root, name)
+        except source_error as exc:
+            if getattr(exc, "code", None) != "E_SOURCE_MISSING":
+                return []
+            continue
+        return []
+    included = _ty_paths(root, config.get("include"), limit)
+    excluded = _ty_paths(root, config.get("exclude", []), limit)
+    ignored = _ty_paths(root, config.get("ignore", []), limit)
+    if included is None or excluded is None or ignored is None:
+        return []
+    return sorted(
+        path.relative_to(root).as_posix()
+        for path in _ty_selected_paths(root, files, included, excluded + ignored, {})
+    )
 
 
 def _ty_sources(
@@ -3394,33 +3488,6 @@ def _ty_assertion_provider_mutated(module, aliases):
     )
 
 
-def _capture_project_imports(views, path, imports, eligible):
-    """Retain bounded, immutable maps only for the current context build."""
-    if not views:
-        return
-    views.setdefault("eligible", MappingProxyType(eligible))
-    views["bindings"] += len(imports)
-    views["characters"] += sum(
-        len(alias) + len(str(source)) + len(symbol or "")
-        for alias, (source, symbol) in imports.items()
-    )
-    if views["bindings"] > 4096 or views["characters"] > 1048576:
-        views.clear()
-        return
-    views["resolved"][path] = MappingProxyType(dict(imports))
-
-
-def _project_import_views(views, snapshots):
-    """Select a whole captured view only for the identical resolver inventory."""
-    if (
-        views
-        and views.get("eligible") == {p.resolve(): p for p in snapshots}
-        and views["resolved"].keys() == snapshots.keys()
-    ):
-        return MappingProxyType(dict(views["resolved"]))
-    return None
-
-
 # Native database context is a static projection only.  Its cache stores canonical
 # JSON bytes (never parser objects or source text) so callers cannot mutate entries.
 _DB_CACHE: dict[str, bytes] = {}
@@ -3437,33 +3504,6 @@ def _nested_async_runner_invocations(test, definitions, targets, aliases):
     return prove(test, definitions, targets, aliases)
 
 
-def _mock_parameter_annotation(scope, name, aliases):
-    """Recognize a MagicMock annotation only through an intact imported binding."""
-    from . import review_audits as audit
-
-    module = getattr(scope, "_oracle_module", None)
-    if not isinstance(module, ast.Module):
-        return False
-    aliases = audit._scope_security_aliases(aliases, scope)
-    parameters = [
-        *scope.args.posonlyargs,
-        *scope.args.args,
-        *scope.args.kwonlyargs,
-        *([scope.args.vararg] if scope.args.vararg else []),
-        *([scope.args.kwarg] if scope.args.kwarg else []),
-    ]
-    return any(
-        item.arg == name
-        and aliases.get(audit._name(item.annotation).split(".", 1)[0])
-        in {"unittest", "unittest.mock", "unittest.mock.MagicMock"}
-        and audit._resolved_ast_name(item.annotation, aliases)
-        == "unittest.mock.MagicMock"
-        and _mock_provider_uses_are_annotations(module, audit)
-        for item in parameters
-        if item.annotation is not None
-    )
-
-
 def _mock_scope_binding(nodes, name, endpoint, aliases):
     """Recognize an unchanged local mock-constructor binding."""
     from . import review_audits as audit
@@ -3477,29 +3517,6 @@ def _mock_scope_binding(nodes, name, endpoint, aliases):
         and not audit._name_rebound(nodes, name, 0, statement.lineno)
         and not audit._name_rebound(nodes, name, statement.lineno, endpoint_line)
         for statement in nodes
-    )
-
-
-def _mock_provider_uses_are_annotations(module, audit):
-    """Reject runtime mutation or escape of imported mock type providers."""
-    providers = {
-        name
-        for node in ast.walk(module)
-        if isinstance(node, (ast.Import, ast.ImportFrom))
-        for name, target in audit._security_aliases([node]).items()
-        if target == "unittest" or target.startswith("unittest.mock")
-    }
-    annotations = {
-        id(child)
-        for item in ast.walk(module)
-        if isinstance(item, ast.arg) and item.annotation is not None
-        for child in ast.walk(item.annotation)
-    }
-    return not any(
-        isinstance(node, ast.Name)
-        and node.id in providers
-        and id(node) not in annotations
-        for node in ast.walk(module)
     )
 
 
@@ -3848,6 +3865,7 @@ def _db_code_identity(inspect, digest_fn):
         _db_merge_python_column,
         _db_table_name,
         _db_ident,
+        _db_index_name,
         _db_read_statement,
         _db_empty_table,
         _db_valid_create_items,
@@ -4188,7 +4206,7 @@ def _db_read_sql(
 ):
     try:
         statements = _db_parse_sql(sqlglot, text, dialect)
-    except sqlglot.errors.ParseError:
+    except (sqlglot.errors.ParseError, sqlglot.errors.TokenError):
         gaps.append("sql_parse_error:" + path)
         return
     if len(statements) > 2000:
@@ -4369,22 +4387,23 @@ def _db_python_declarations(
 
 
 def _db_python_symbols(tree):
+    nodes = tuple(ast.walk(tree))
     symbols, seen, import_counts = {}, {}, {}
     for node in tree.body:
         for local, qualified in _db_import_bindings(node):
             seen[local] = seen.get(local, 0) + 1
             symbols[local] = qualified
-    for node in ast.walk(tree):
+    for node in nodes:
         for local in _db_python_import_names(node):
             import_counts[local] = import_counts.get(local, 0) + 1
     bound = set()
     if any(
         isinstance(node, ast.ImportFrom)
         and any(alias.name == "*" for alias in node.names)
-        for node in ast.walk(tree)
+        for node in nodes
     ):
         bound.update(symbols)
-    for node in ast.walk(tree):
+    for node in nodes:
         if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
             bound.add(node.id)
         elif isinstance(node, ast.arg):
@@ -5482,7 +5501,7 @@ def _db_python_execute(
         return
     try:
         statements = _db_parse_sql(sqlglot, query_text, dialect)
-    except sqlglot.errors.ParseError:
+    except (sqlglot.errors.ParseError, sqlglot.errors.TokenError):
         gaps.append("python_sql_parse_error:" + path)
         return
     for index, statement in enumerate(statements, 1):
@@ -5543,6 +5562,16 @@ def _db_ident(identifier, dialect):
     return identifier.sql(dialect=dialect, normalize=False, pretty=False)
 
 
+def _db_index_name(index, exp, path, dialect, gaps):
+    """Retain absent index identity as a gap while preserving other schema facts."""
+    name = index.this
+    if isinstance(name, exp.Identifier) and name.name:
+        return _db_ident(name, dialect)
+    reason = "index_name_omitted" if name is None else "malformed_index_name"
+    gaps.append(reason + ":" + path)
+    return None
+
+
 def _db_read_statement(
     statement, exp, path, digest, index, dialect, tables, operations, queries, gaps
 ):
@@ -5551,17 +5580,22 @@ def _db_read_statement(
         gaps.append("sql_command_fallback:" + path)
     elif isinstance(statement, exp.Create):
         if statement.kind == "INDEX" and isinstance(statement.this, exp.Index):
-            table_name = _db_table_name(statement.this.args.get("table"), dialect)
+            index = statement.this
+            index_name = _db_index_name(index, exp, path, dialect, gaps)
+
+            table_name = _db_table_name(index.args.get("table"), dialect)
             if table_name not in tables:
                 gaps.append("index_table_unresolved:" + str(table_name))
             else:
                 tables[table_name]["indexes"].append(
                     {
-                        "name": _db_ident(statement.this.this, dialect),
-                        "unique": bool(statement.this.args.get("unique")),
+                        "name": index_name,
+                        "unique": bool(
+                            statement.args.get("unique") or index.args.get("unique")
+                        ),
                         "columns": sorted(
                             _db_ident(c.this, dialect)
-                            for c in statement.this.find_all(exp.Column)
+                            for c in index.find_all(exp.Column)
                         ),
                     }
                 )
@@ -5939,4 +5973,24 @@ def _db_query(statement, exp, dialect, loc, queries, gaps):
             "columns": sorted(columns, key=lambda x: (x["table"], x["name"])),
             "source": loc,
         }
+    )
+
+
+def literal_exec_rejected(node):
+    """Preserve the public source-bound syntax sensor entry point."""
+    from .semantic_credential_sensor import literal_exec_rejected as analyze
+
+    return analyze(node)
+
+
+def unsafe_open(call, requests, aliases, is_tainted, proven_callee):
+    """Identify a tainted path passed to the unshadowed open builtin unless a fixed-root filename proof applies."""
+    from .review_audits import _call_name
+
+    path = bound_sink_argument(call, 0, ("file",))
+    return (
+        _call_name(call) == "open"
+        and "open" not in getattr(call, "_security_shadowed_names", set())
+        and is_tainted(path, requests, set(), aliases)
+        and not fixed_root_filename_path(path, requests, aliases, proven_callee)
     )

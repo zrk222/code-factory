@@ -1,9 +1,7 @@
 import hashlib
 import json
 import sys
-
 import pytest
-
 from factoryline.senior_assurance import (
     ActivationHookRegistry,
     INCIDENT_TRIAGE_SCHEMA,
@@ -20,6 +18,16 @@ from factoryline.senior_assurance import (
     triage_incident_events,
     validate_replay_manifest,
 )
+from factoryline.benchmark_lab import SCHEMA as BENCHMARK_SCHEMA
+from factoryline.cli import main
+from factoryline.incremental_scheduler import SCHEMA as SCHEDULE_SCHEMA
+from factoryline.benchmark_lab import load_benchmark_json
+from factoryline.incremental_scheduler import load_schedule_json
+from pathlib import Path
+from factoryline.graph_ops import graph_ops_snapshot
+from factoryline.incremental_scheduler import plan_incremental
+from factoryline.runtime_attestation import capture_supervised_attestation
+from factoryline.senior_engineering import senior_engineering_projection
 
 
 def _sha_bytes(raw: bytes) -> str:
@@ -758,3 +766,259 @@ def test_failure_brief_links_finding_to_receipt_and_surfaces_uncertainty():
     assert brief["what_broke"][0]["evidence"] == _sha_bytes(b"receipt")
     assert brief["reproduce"]["argv"]
     assert brief["uncertainty"]
+
+
+def test_runtime_audit_run_cli_exposes_bounded_parallelism(capsys):
+    import pytest
+
+    with pytest.raises(SystemExit) as error:
+        main(
+            [
+                "runtime-audit",
+                "run",
+                "plan.json",
+                "--trust-root",
+                "trust.json",
+                "--trust-root-sha256",
+                "a" * 64,
+                "--environment-sha256",
+                "b" * 64,
+                "--max-parallelism",
+                "9",
+            ]
+        )
+    assert error.value.code == 2
+
+
+def _digest(seed: str) -> str:
+    return hashlib.sha256(seed.encode()).hexdigest()
+
+
+def test_senior_schedule_cli_emits_json(tmp_path, capsys):
+    manifest = {
+        "schema": SCHEDULE_SCHEMA,
+        "plan_id": "cli-plan",
+        "assurance_level": "isolated_worker",
+        "changed_paths": ["src/a.py"],
+        "dependency_closure": {"lint": ["src/a.py"]},
+        "gates": [
+            {"id": "lint", "depends_on": [], "side_effects": False, "proof": None}
+        ],
+    }
+    path = tmp_path / "schedule.json"
+    path.write_text(json.dumps(manifest), encoding="utf-8")
+    assert main(["senior", "schedule", str(path), "--root", str(tmp_path)]) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["marker"] == "INCREMENTAL_PLAN_COMPACT"
+    assert result["findings"]["lint"]["disposition"] == "RUN"
+
+
+def test_senior_benchmark_cli_blocks_bad_observation(tmp_path, capsys):
+    manifest = {
+        "schema": BENCHMARK_SCHEMA,
+        "benchmark_id": "cli",
+        "version": "1",
+        "cases": [
+            {
+                "id": "bug",
+                "category": "failure_recovery",
+                "source": "fixtures/bug",
+                "source_sha256": _digest("a"),
+                "expected_finding": "timeout",
+                "replay_argv": ["pytest", "tests/bug.py"],
+                "buggy_sha256": _digest("b"),
+                "fixed_sha256": _digest("c"),
+            }
+        ],
+    }
+    observations = {
+        "bug": {
+            "buggy": {"state": "PASS", "finding": ""},
+            "fixed": {"state": "PASS", "finding": ""},
+        }
+    }
+    manifest_path = tmp_path / "manifest.json"
+    observations_path = tmp_path / "observations.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    observations_path.write_text(json.dumps(observations), encoding="utf-8")
+    assert (
+        main(
+            [
+                "senior",
+                "benchmark",
+                str(manifest_path),
+                "--observations",
+                str(observations_path),
+            ]
+        )
+        == 1
+    )
+    result = json.loads(capsys.readouterr().out)
+    assert result["decision"] == "BLOCKED"
+
+
+def test_senior_json_loaders_are_bounded_cli_inputs(tmp_path):
+    benchmark = tmp_path / "benchmark.json"
+    schedule = tmp_path / "schedule.json"
+    benchmark.write_text(json.dumps({"schema": BENCHMARK_SCHEMA}), encoding="utf-8")
+    schedule.write_text(json.dumps({"schema": SCHEDULE_SCHEMA}), encoding="utf-8")
+    assert load_benchmark_json(benchmark)["schema"] == BENCHMARK_SCHEMA
+    assert load_schedule_json(schedule)["schema"] == SCHEDULE_SCHEMA
+
+
+def test_senior_brief_cli_emits_actionable_evidence(tmp_path, capsys):
+    receipt = tmp_path / "failed.json"
+    receipt.write_text(
+        json.dumps(
+            {
+                "schema": "factory.replay-receipt.v1",
+                "state": "FAIL",
+                "failure_reason": "EXIT_MISMATCH",
+                "source_root": "src",
+                "argv": ["python", "run.py"],
+                "receipt_sha256": _digest("receipt"),
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert main(["senior", "brief", str(receipt)]) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["marker"] == "FAILURE_BRIEF_EVIDENCE_LINKED"
+    assert result["what_broke"][0]["evidence"] == _digest("receipt")
+
+
+def test_senior_reuse_cli_explains_missing_evidence_as_run(tmp_path, capsys):
+    request = tmp_path / "reuse.json"
+    request.write_text(
+        json.dumps(
+            {
+                "schema": REUSE_REQUEST_SCHEMA,
+                "request_id": "r",
+                "policy_sha256": _digest("policy"),
+                "dependencies_sha256": _digest("deps"),
+                "gates": [{"id": "lint", "read_only": True, "side_effects": False}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    assert main(["senior", "reuse", str(request), "--root", str(tmp_path)]) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["gates"][0]["decision"] == "RUN"
+    assert result["gates"][0]["reason"] == "UNKNOWN_INPUT_REQUIRES_EXECUTION"
+
+
+def _manifest():
+    return {
+        "schema": "factory.incremental-plan.v1",
+        "plan_id": "graph-plan",
+        "assurance_level": "isolated_worker",
+        "changed_paths": ["src/app.py"],
+        "dependency_closure": {"lint": ["src/app.py"]},
+        "gates": [
+            {"id": "lint", "depends_on": [], "side_effects": False, "proof": None}
+        ],
+    }
+
+
+def test_empty_projection_is_explicitly_review_only(tmp_path: Path):
+    result = senior_engineering_projection(tmp_path)
+    assert result["receipt_count"] == 0
+    assert result["authority_false"] is True
+    assert result["authority"]["publication"] is False
+    assert result["errors"] == []
+
+
+def test_graph_ops_projects_valid_plan_and_fails_closed_on_tamper(tmp_path: Path):
+    output = tmp_path / ".factory" / "senior" / "incremental.json"
+    plan_incremental(tmp_path, _manifest(), out=output)
+    snapshot = graph_ops_snapshot(tmp_path)
+    assert snapshot["facts"]["senior_engineering_receipt_count"] == 1
+    assert snapshot["facts"]["senior_engineering_invalid_count"] == 0
+    assert "GRAPH_OPS_SENIOR_ENGINEERING_READ_ONLY" in snapshot["markers"]
+    assert any(
+        node["kind"] == "senior_engineering_evidence" for node in snapshot["nodes"]
+    )
+
+    payload = json.loads(output.read_text(encoding="utf-8"))
+    payload["counts"]["RUN"] = 99
+    output.write_text(json.dumps(payload), encoding="utf-8")
+    tampered = graph_ops_snapshot(tmp_path)
+    assert tampered["facts"]["senior_engineering_invalid_count"] == 1
+    assert "GRAPH_OPS_SENIOR_ENGINEERING_REVIEW_REQUIRED" in tampered["markers"]
+    assert tampered["recommendation"]["action"] == "review_senior_engineering_evidence"
+
+
+def test_projection_rejects_receipts_that_claim_authority(tmp_path: Path):
+    directory = tmp_path / ".factory" / "senior"
+    directory.mkdir(parents=True)
+    (directory / "authority.json").write_text(
+        json.dumps(
+            {
+                "schema": "factory.incremental-shadow.v1",
+                "authority": "publication",
+                "shadow_equivalent": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+    result = senior_engineering_projection(tmp_path)
+    assert result["invalid_count"] == 1
+    assert result["errors"][0]["code"] == "AUTHORITY_NOT_NONE"
+
+
+def test_projection_reads_failure_brief_as_review_only_evidence(tmp_path: Path):
+    directory = tmp_path / ".factory" / "senior"
+    directory.mkdir(parents=True)
+    brief = {
+        "schema": "factory.failure-brief.v1",
+        "marker": "FAILURE_BRIEF_EVIDENCE_LINKED",
+        "state": "ACTION_REQUIRED",
+        "what_broke": [{"id": "x", "summary": "broken", "evidence": "a"}],
+        "affected": ["src"],
+        "reproduce": {"argv": ["python", "run.py"]},
+        "next_fix": "repair",
+        "uncertainty": ["owner unknown"],
+        "evidence": [{"receipt_sha256": "a"}],
+        "authority": "none",
+        "release_approval": False,
+    }
+    brief["brief_sha256"] = hashlib.sha256(
+        json.dumps(
+            {key: value for key, value in brief.items() if key != "brief_sha256"},
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
+    (directory / "brief.json").write_text(json.dumps(brief), encoding="utf-8")
+    result = senior_engineering_projection(tmp_path)
+    assert result["receipt_count"] == 1
+    assert result["invalid_count"] == 0
+    assert result["receipts"][0]["schema"] == "factory.failure-brief.v1"
+
+
+def test_projection_surfaces_runtime_boundary_attestation_and_detects_tamper(
+    tmp_path: Path,
+):
+    directory = tmp_path / ".factory" / "senior"
+    directory.mkdir(parents=True)
+    attestation = capture_supervised_attestation(
+        attestation_id="boundary-graph-001",
+        candidate_sha256=hashlib.sha256(b"candidate").hexdigest(),
+        plan_sha256=hashlib.sha256(b"plan").hexdigest(),
+        environment_sha256=hashlib.sha256(b"environment").hexdigest(),
+    )
+    path = directory / "runtime-boundary.json"
+    path.write_text(json.dumps(attestation), encoding="utf-8")
+    result = senior_engineering_projection(tmp_path)
+    assert result["invalid_count"] == 0
+    assert result["receipts"][0]["status"] == "SUPERVISED_ONLY"
+    assert (
+        result["receipts"][0]["attestation_sha256"] == attestation["attestation_sha256"]
+    )
+
+    tampered = json.loads(path.read_text(encoding="utf-8"))
+    tampered["observations"]["platform"] = "tampered"
+    path.write_text(json.dumps(tampered), encoding="utf-8")
+    failed = senior_engineering_projection(tmp_path)
+    assert failed["invalid_count"] == 1
+    assert failed["errors"][0]["code"] == "SELF_HASH_MISMATCH"

@@ -341,8 +341,8 @@ def test_graph_ops_marks_stale_proof_and_prioritizes_rerun_without_execution(
 
 
 def test_graph_ops_projects_proof_delta_no_gain_halt_telemetry(tmp_path: Path):
-    from test_mission_graph import _pipeline
-    from test_proof_delta import _candidate as make_candidate, _failure
+    from test_continuity import _pipeline
+    from test_plan_proof_review import _candidate as make_candidate, _failure
     from factoryline.proof_delta import create_proof_delta, verify_proof_delta
     from factoryline.proof_delta_telemetry import build_proof_delta_telemetry
 
@@ -1262,7 +1262,7 @@ def test_graph_ops_visual_template_is_accessible_and_uses_text_nodes_only():
 def test_graph_ops_projects_sealed_admission_without_changing_its_base_graph(
     tmp_path: Path,
 ):
-    from test_run_admission import _passport, _request
+    from test_analysis_evidence import _passport, _request
 
     before = graph_ops_snapshot(tmp_path)
     packet = prepare_admission(tmp_path, _passport(tmp_path), _request(tmp_path))
@@ -1280,7 +1280,7 @@ def test_graph_ops_projects_sealed_admission_without_changing_its_base_graph(
 def test_graph_ops_exposes_verified_proofsearch_winner_and_candidate_controls(
     tmp_path: Path,
 ):
-    from test_proofsearch import _candidate, _plan, _request
+    from test_continuous_proof import _candidate, _plan, _request
     from factoryline.proofsearch import evaluate_proofsearch
 
     plan = _plan(tmp_path)
@@ -1356,7 +1356,7 @@ def test_graph_ops_projects_a_verified_evidence_frontier_without_execution(
 def test_graph_ops_projects_a_supervised_reality_check_without_rerunning_it(
     tmp_path: Path,
 ):
-    from test_reality_check import _write
+    from test_first_lap import _write
     from factoryline.reality_check import run_reality_check
 
     receipt = run_reality_check(tmp_path, _write(tmp_path))
@@ -1418,8 +1418,8 @@ def test_graph_ops_projects_survival_cards_without_running_or_signing_them(
 def test_graph_ops_projects_counterexamples_guardrails_and_temporal_resilience_read_only(
     tmp_path: Path,
 ):
-    from test_counterexample import _source as counterexample_source
-    from test_guardrails import (
+    from test_audit_rule_search import _source as counterexample_source
+    from test_audit_rule_search import (
         _manifest as guardrail_manifest,
         _principal as guardrail_principal,
         _store as guardrail_store,

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -66,6 +67,28 @@ def add_parser(sub: Any) -> None:
         "--out", help="optional workspace-contained fingerprint receipt path"
     )
     code_audit.add_argument("--json", action="store_true")
+    code_audit.add_argument(
+        "--full-repository",
+        action="store_true",
+        help="use the separate bounded full-repository source profile (security only)",
+    )
+    code_audit.add_argument(
+        "--context-profile",
+        choices=["isolated-v1", "workspace-v2"],
+        default="isolated-v1",
+        help="source-context profile for --full-repository (workspace-v2 is opt-in)",
+    )
+    code_audit.add_argument(
+        "--resume",
+        action="store_true",
+        help="resume and revalidate the full-repository checkpoint (requires --full-repository)",
+    )
+    code_audit.add_argument(
+        "--max-batches",
+        type=int,
+        default=1,
+        help="maximum 460-source batches for this invocation (full-repository only)",
+    )
     code_audit.add_argument(
         "--oracle-evidence",
         help="workspace-relative DSSE per-test mutation attestation (security only)",
@@ -149,7 +172,201 @@ def _security_receipt_error_message(error: Exception) -> str:
     return str(error)
 
 
+def _security_mode_option_error(args: Any) -> str | None:
+    """Validate opt-in full-profile controls before selecting an engine."""
+    full_repository = bool(getattr(args, "full_repository", False))
+    resume = bool(getattr(args, "resume", False))
+    max_batches = getattr(args, "max_batches", 1)
+    context_profile = getattr(args, "context_profile", "isolated-v1")
+    if context_profile != "isolated-v1" and not full_repository:
+        return "--context-profile requires --full-repository"
+    if context_profile not in {"isolated-v1", "workspace-v2"}:
+        return "--context-profile must be isolated-v1 or workspace-v2"
+    if resume and not full_repository:
+        return "--resume requires --full-repository"
+    if (
+        not isinstance(max_batches, int)
+        or isinstance(max_batches, bool)
+        or not 1 <= max_batches <= 64
+        or (max_batches != 1 and not full_repository)
+    ):
+        return "--max-batches must be 1..64 and requires --full-repository"
+    return None
+
+
+def _full_security_unsupported_options(args: Any) -> bool:
+    fields = (
+        "out",
+        "baseline",
+        "oracle_evidence",
+        "oracle_trust_root",
+        "oracle_trust_sha256",
+        "oracle_environment_sha256",
+        "tenant_read_call",
+        "tenant_read_binding",
+    )
+    return any(getattr(args, field, None) for field in fields) or (
+        getattr(args, "tenant_contract", ".factory/tenant-read-contract.json")
+        != ".factory/tenant-read-contract.json"
+    )
+
+
+def _print_full_security(args: Any, result: dict) -> None:
+    """Keep raw findings and source-bound observations visibly distinct."""
+    if args.json:
+        print(json.dumps(result, indent=2, sort_keys=True))
+        return
+    workspace_profile = result.get("context_profile") == "workspace-v2"
+    print(
+        f"Full repository security profile: {result['source_accounting_state']} ({result['files_audited']}/{result['files_discovered']} audited)"
+    )
+    if workspace_profile:
+        authority = result.get("workspace_evidence", {}).get("findings_authority")
+        print(
+            "Active findings use the native source-bound partition; raw primary findings remain in JSON."
+            if authority == "native_source_bound_partition"
+            else "Partition incomplete; active findings retain unverified execution or credential risk."
+        )
+    _print_full_security_findings(result, workspace_profile)
+    if workspace_profile:
+        evidence = result.get("workspace_evidence", {})
+        observations = evidence.get("primitive_observations", [])
+        if not isinstance(observations, list):
+            observations = []
+        partition = evidence.get("primitive_partition", {})
+        if not isinstance(partition, dict):
+            partition = {}
+        processing = evidence.get("primary_processing", {})
+        if not isinstance(processing, dict):
+            processing = {}
+        print(
+            f"Primitive partition: {partition.get('state', 'INCOMPLETE')} "
+            f"(error={partition.get('error_code') or 'none'}); observations are not clearances."
+        )
+        print(
+            f"Primary accounting: {processing.get('checkpoint_rows_recomputed_and_matched', 0)} "
+            f"saved rows reconciled; {processing.get('new_primary_rows_assessed', 0)} new rows assessed; "
+            f"{processing.get('consume_calls', 0)} consume chunks, limit "
+            f"{processing.get('consume_call_limit', 460)} each."
+        )
+        print(f"Source-bound primitive observations: {len(observations)}.")
+        for observation in observations:
+            if not isinstance(observation, dict):
+                continue
+            facts = observation.get("facts", {})
+            if not isinstance(facts, dict):
+                facts = {}
+            disposition = facts.get("disposition", "source-bound")
+            print(
+                f"  {disposition}: {observation.get('path', '?')}:{observation.get('line', '?')} [{observation.get('code', '?')}]"
+            )
+        print(
+            f"Workspace context: {evidence.get('oracle_context', {}).get('state', 'INCOMPLETE')}; "
+            f"full primary inventory assessed: {evidence.get('audit_coverage', {}).get('complete', False)}."
+        )
+    print("Semantic coverage: INCOMPLETE; global consumer closure is not verified.")
+
+
+def _print_full_security_findings(result, workspace_profile):
+    """Render active partition rows while JSON retains raw source history."""
+    findings = (
+        result.get("workspace_evidence", {}).get("findings", [])
+        if workspace_profile
+        else [
+            finding
+            for row in result.get("primary_results", [])
+            for finding in row.get("findings", [])
+        ]
+    )
+    for finding in findings:
+        print(
+            f"{finding['severity']} {finding['code']}: {finding['path']}:{finding['line']} — {finding['message']}"
+        )
+
+
+def _run_full_security(args: Any) -> int:
+    from .deep_audit_io import RuntimeAuditError, full_repository_scan
+
+    if _full_security_unsupported_options(args):
+        print(
+            json.dumps(
+                {
+                    "state": "INVALID",
+                    "code": "E_FULL_REPOSITORY_OPTIONS",
+                    "message": "full-repository mode does not accept legacy receipt, tenant-read, or oracle options",
+                }
+            ),
+            file=sys.stderr,
+        )
+        return 2
+    try:
+        context_profile = getattr(args, "context_profile", "isolated-v1")
+        deadline = time.monotonic() + 180 if context_profile == "workspace-v2" else None
+        result = full_repository_scan(
+            Path(args.root),
+            resume=getattr(args, "resume", False),
+            context_profile=context_profile,
+            deadline_monotonic=deadline,
+        )
+        completed_batches = 1
+        max_batches = getattr(args, "max_batches", 1)
+        while result["pending_count"] and completed_batches < max_batches:
+            result = full_repository_scan(
+                Path(args.root),
+                resume=True,
+                context_profile=context_profile,
+                deadline_monotonic=deadline,
+            )
+            completed_batches += 1
+        result["invocation"] = {
+            "batches": completed_batches,
+            "max_batches": max_batches,
+            "batch_primary_limit": 460,
+        }
+        if context_profile != "isolated-v1":
+            result["invocation"].update(
+                {
+                    "context_profile": context_profile,
+                    "shared_deadline_seconds": 180,
+                }
+            )
+    except (RuntimeAuditError, OSError, ValueError) as error:
+        print(
+            json.dumps(
+                {
+                    "state": "INVALID",
+                    "code": getattr(error, "code", "E_FULL_REPOSITORY"),
+                    "message": str(error),
+                }
+            ),
+            file=sys.stderr,
+        )
+        return 2
+    _print_full_security(args, result)
+    # File accounting is not a clean security result while semantic coverage is incomplete.
+    return 1
+
+
 def _run_security(args: Any) -> int:
+    if error := _security_mode_option_error(args):
+        print(
+            json.dumps(
+                {
+                    "state": "INVALID",
+                    "code": "E_FULL_REPOSITORY_OPTIONS",
+                    "message": error,
+                }
+            ),
+            file=sys.stderr,
+        )
+        return 2
+    if getattr(args, "full_repository", False):
+        return _run_full_security(args)
+    return _run_bounded_security(args)
+
+
+def _run_bounded_security(args: Any) -> int:
+    """Run the existing bounded scan after shared option/profile dispatch."""
     from .review_audits import (
         ReviewAuditError,
         _seal_security_scan,
@@ -296,6 +513,23 @@ def _run_code(args: Any) -> int:
 def run(args: Any) -> int:
     """Run one audit command, importing the engine only after selection."""
     from .review_audits import ReviewAuditError
+
+    if args.tool != "security" and (
+        getattr(args, "full_repository", False)
+        or getattr(args, "resume", False)
+        or getattr(args, "max_batches", 1) != 1
+    ):
+        print(
+            json.dumps(
+                {
+                    "state": "INVALID",
+                    "code": "E_FULL_REPOSITORY_OPTIONS",
+                    "message": "full-repository options are valid only for audit security",
+                }
+            ),
+            file=sys.stderr,
+        )
+        return 2
 
     handlers = {
         "evals": _run_evals,

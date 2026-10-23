@@ -1,6 +1,11 @@
+import re as _re_refactor
+from types import SimpleNamespace as _Namespace_refactor
+from factoryline import context_efficiency as _context_refactor
+from factoryline import review_audits as _audit_refactor
+import ast
 import io
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -15,12 +20,14 @@ from factoryline.context_efficiency import (
     build_context_shard_candidate,
     build_selected_context_packet,
     context_efficiency_status,
+    _module_has_dynamic_capability_access,
     review_context_shard_candidate,
     validate_context_shard_candidate,
     verify_context_packet,
 )
 from factoryline.graph_ops import graph_ops_snapshot
 from factoryline.mission_control_status import mission_control_status
+from factoryline.review_audits import security_scan
 
 
 def _request(paths=("README.md",), **overrides):
@@ -38,6 +45,51 @@ def _request(paths=("README.md",), **overrides):
     }
     value.update(overrides)
     return value
+
+
+@pytest.mark.parametrize(
+    "source, expected",
+    [
+        ("from sys import modules as loaded\nloaded['unittest.mock']", True),
+        ("from sys import *", True),
+        ("from importlib import import_module as load\nload('unittest.mock')", True),
+        ("from builtins import __import__ as load\nload('unittest.mock')", True),
+        ("from sys import version as release", False),
+    ],
+    ids=[
+        "sys-modules-alias",
+        "sys-star-import",
+        "importlib-import-module-alias",
+        "builtins-import-alias",
+        "unrelated-sys-import",
+    ],
+)
+def test_dynamic_capability_guard_covers_module_reacquisition_aliases(source, expected):
+    nodes = tuple(ast.walk(ast.parse(source)))
+    assert _module_has_dynamic_capability_access(nodes) is expected
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "from sys import modules as loaded\n"
+        "async def compute():\n    return 3\n"
+        "def fail():\n    raise RuntimeError()\n"
+        "loaded[__name__].compute = fail\n"
+        "def test_behavior():\n    compute()\n",
+        "from sys import modules as loaded\n"
+        "def perform():\n    pass\n"
+        "def fail():\n    raise RuntimeError()\n"
+        "loaded[__name__].perform = fail\n"
+        "def test_behavior():\n    perform()\n",
+    ],
+    ids=["registry-mutated-coroutine", "registry-mutated-pass-stub"],
+)
+def test_registry_mutated_completion_helpers_remain_unknown(tmp_path, source):
+    (tmp_path / "test_registry_completion.py").write_text(source, encoding="utf-8")
+    report = security_scan(tmp_path, cache_enabled=False)
+    assert "QUALITY_HOLLOW_TEST" not in report["finding_counts"]
+    assert report["finding_counts"].get("QUALITY_UNKNOWN_TEST_ORACLE") == 1
 
 
 def _shard_fixture(tmp_path, source="stable rule: keep API local\n"):
@@ -594,7 +646,9 @@ def test_cli_context_shard_build_validate_review_is_bounded_and_nonactivating(
                         "unresolved_action",
                     )
                 },
-                "expires_at": "2026-10-20T00:00:00Z",
+                "expires_at": (
+                    datetime.now(timezone.utc) + timedelta(days=1)
+                ).isoformat(),
             }
         ),
         encoding="utf-8",
@@ -874,7 +928,7 @@ def test_database_oracle_missing_or_corrupt_snapshot_falls_back_to_source(
     import ast
 
     from factoryline import intent_quality, review_audits
-    from factoryline.context_efficiency import _database_workspace_context_from_oracle
+    from factoryline.context_efficiency import _database_workspace_context
 
     source = (
         b"from sqlalchemy import Column, Integer\n"
@@ -897,7 +951,7 @@ def test_database_oracle_missing_or_corrupt_snapshot_falls_back_to_source(
     monkeypatch.setattr(ast, "parse", counted_parse)
     monkeypatch.setattr(intent_quality, "_DB_CACHE", {})
     monkeypatch.setattr(intent_quality, "_DB_CACHE_BYTES", 0)
-    result = _database_workspace_context_from_oracle(
+    result = _database_workspace_context(
         tmp_path,
         {path: source},
         review_audits._security_source_bytes,
@@ -1038,11 +1092,12 @@ def test_security_scan_reuses_oracle_tree_for_database_projection(
     review_audits._oracle_context_cache_clear()
     private_calls = []
     public_calls = []
-    private_projection = context_efficiency._database_workspace_context_from_oracle
+    private_projection = context_efficiency._database_workspace_context
     public_projection = context_efficiency.database_workspace_context
 
     def counted_private(*args, **kwargs):
-        private_calls.append(True)
+        if len(args) > 4 or "oracle_snapshots" in kwargs:
+            private_calls.append(True)
         return private_projection(*args, **kwargs)
 
     def counted_public(*args, **kwargs):
@@ -1050,7 +1105,7 @@ def test_security_scan_reuses_oracle_tree_for_database_projection(
         return public_projection(*args, **kwargs)
 
     monkeypatch.setattr(
-        context_efficiency, "_database_workspace_context_from_oracle", counted_private
+        context_efficiency, "_database_workspace_context", counted_private
     )
     monkeypatch.setattr(
         context_efficiency, "database_workspace_context", counted_public
@@ -1183,7 +1238,7 @@ def test_security_scan_reparses_a_tree_changed_by_an_intermediate_consumer(
 
     parse_calls = len(calls)
     review_audits._oracle_context_cache_clear()
-    project = context_efficiency._database_workspace_context_from_oracle
+    project = context_efficiency._database_workspace_context
     mutated_trees = []
 
     def mutate_after_database_projection(root, sources, reader, inventory, snapshots):
@@ -1195,7 +1250,7 @@ def test_security_scan_reparses_a_tree_changed_by_an_intermediate_consumer(
 
     monkeypatch.setattr(
         context_efficiency,
-        "_database_workspace_context_from_oracle",
+        "_database_workspace_context",
         mutate_after_database_projection,
     )
     actual = review_audits.security_scan(tmp_path, cache_enabled=False)
@@ -1562,3 +1617,3235 @@ def test_select_context_request_returns_only_explicit_bound_sources(tmp_path):
     assert [item["path"] for item in request["sources"]] == ["README.md"]
     assert selection["candidate_count"] == 1
     assert not (tmp_path / ".factory").exists()
+
+
+def _fixture_snapshot(path, source, digest="a" * 64):
+    import ast
+
+    tree = ast.parse(source, filename=str(path))
+    tree._oracle_source_sha256 = digest
+    return tree
+
+
+def _async_runner_sources():
+    return (
+        "import asyncio\n"
+        "import pytest\n"
+        "import trio\n"
+        "def _asyncio_run(async_fn, *args):\n"
+        "    return asyncio.run(async_fn(*args))\n"
+        "@pytest.fixture(params=[_asyncio_run, trio.run], ids=['asyncio', 'trio'])\n"
+        "def run_async_fn(request):\n"
+        "    return request.param\n"
+    )
+
+
+def _fixture_capability(api, binding):
+    return {
+        "status": "CLOSED",
+        "api": api,
+        "binding": binding,
+        "source": "conftest.py",
+        "sha256": "a" * 64,
+        "origin": {"line": 1, "column": 0},
+        "uses": [{"line": 2, "column": 4}],
+    }
+
+
+def test_async_runner_context_resolves_every_inherited_runner_alternative(tmp_path):
+    import ast
+
+    from factoryline.context_efficiency import async_runner_fixture_context
+
+    conftest = tmp_path / "conftest.py"
+    test_file = tmp_path / "tests" / "test_async.py"
+    test_file.parent.mkdir()
+    snapshots = {
+        conftest: _fixture_snapshot(conftest, _async_runner_sources()),
+        test_file: _fixture_snapshot(
+            test_file, "def test_async(run_async_fn):\n    pass\n", "b" * 64
+        ),
+    }
+
+    result = async_runner_fixture_context(tmp_path, list(snapshots), snapshots)
+    summary = result["tests/test_async.py"]
+    fixture = summary["fixtures"]["run_async_fn"]
+
+    assert summary["schema"] == "factory.async-runner-fixture-context.v3"
+    assert summary["module_sha256"] == "b" * 64
+    assert fixture["trusted"] is True
+    assert fixture["source"] == "conftest.py"
+    assert fixture["sha256"] == "a" * 64
+    assert {item["api"] for item in fixture["alternatives"]} == {
+        "asyncio.run",
+        "trio.run",
+    }
+    assert all(
+        item["capability"]["status"] == "CLOSED"
+        and item["capability"]["source"] == "conftest.py"
+        and item["capability"]["sha256"] == "a" * 64
+        and item["capability"]["origin"]
+        and item["capability"]["uses"]
+        for item in fixture["alternatives"]
+    )
+    assert ast.parse(_async_runner_sources())
+
+
+def test_async_runner_context_nearest_conftest_replaces_parent_runner(tmp_path):
+    from factoryline.context_efficiency import async_runner_fixture_context
+
+    root_fixture = tmp_path / "conftest.py"
+    suite = tmp_path / "suite"
+    suite.mkdir()
+    nearest_fixture = suite / "conftest.py"
+    test_file = suite / "test_async.py"
+    snapshots = {
+        root_fixture: _fixture_snapshot(root_fixture, _async_runner_sources()),
+        nearest_fixture: _fixture_snapshot(
+            nearest_fixture, _async_runner_sources(), "c" * 64
+        ),
+        test_file: _fixture_snapshot(
+            test_file, "def test_async(run_async_fn):\n    pass\n", "b" * 64
+        ),
+    }
+
+    result = async_runner_fixture_context(tmp_path, list(snapshots), snapshots)
+
+    fixture = result["suite/test_async.py"]["fixtures"]["run_async_fn"]
+    assert fixture["trusted"] is True
+    assert fixture["source"] == "suite/conftest.py"
+    assert fixture["sha256"] == "c" * 64
+
+
+@pytest.mark.parametrize(
+    "override",
+    [
+        "@pytest.fixture(params=[_asyncio_run, anyio.run])\ndef run_async_fn(request):\n    return request.param\n",
+        "@pytest.fixture(params=[_asyncio_run, trio.run])\ndef run_async_fn(request):\n    return request.param\n\ndef _asyncio_run(async_fn, *args):\n    return asyncio.run(async_fn(*args))\n",
+        "trio.run = replacement\n@pytest.fixture(params=[_asyncio_run, trio.run])\ndef run_async_fn(request):\n    return request.param\n",
+        "import trio as other\nother.run = replacement\n@pytest.fixture(params=[_asyncio_run, trio.run])\ndef run_async_fn(request):\n    return request.param\n",
+        "import trio as other\nsaved_runner = other.run\n@pytest.fixture(params=[_asyncio_run, trio.run])\ndef run_async_fn(request):\n    return request.param\n",
+        "import trio as other\nconsume(other.run)\n@pytest.fixture(params=[_asyncio_run, trio.run])\ndef run_async_fn(request):\n    return request.param\n",
+        "from trio import run as other_run\nsaved_runner = other_run\n@pytest.fixture(params=[_asyncio_run, trio.run])\ndef run_async_fn(request):\n    return request.param\n",
+        "import trio as other\ndel other.run\n@pytest.fixture(params=[_asyncio_run, trio.run])\ndef run_async_fn(request):\n    return request.param\n",
+        "import trio as other\nother.__setattr__('run', noop)\n@pytest.fixture(params=[_asyncio_run, trio.run])\ndef run_async_fn(request):\n    return request.param\n",
+        "import sys\nsys.modules['trio'].run = noop\n@pytest.fixture(params=[_asyncio_run, trio.run])\ndef run_async_fn(request):\n    return request.param\n",
+        "import importlib\nimportlib.import_module('trio').run = noop\n@pytest.fixture(params=[_asyncio_run, trio.run])\ndef run_async_fn(request):\n    return request.param\n",
+        "__import__('trio').run = noop\n@pytest.fixture(params=[_asyncio_run, trio.run])\ndef run_async_fn(request):\n    return request.param\n",
+        "import trio as other\nrunner_module = other\n@pytest.fixture(params=[_asyncio_run, trio.run])\ndef run_async_fn(request):\n    return request.param\n",
+        "asyncio.run = replacement\n@pytest.fixture(params=[_asyncio_run, trio.run])\ndef run_async_fn(request):\n    return request.param\n",
+        "trio.__setattr__('run', noop)\n@pytest.fixture(params=[_asyncio_run, trio.run])\ndef run_async_fn(request):\n    return request.param\n",
+        "from builtins import setattr as change\nchange(trio, 'run', noop)\n@pytest.fixture(params=[_asyncio_run, trio.run])\ndef run_async_fn(request):\n    return request.param\n",
+        "from builtins import *\n@pytest.fixture(params=[_asyncio_run, trio.run])\ndef run_async_fn(request):\n    return request.param\n",
+        "setattr(trio, 'run', noop)\n@pytest.fixture(params=[_asyncio_run, trio.run])\ndef run_async_fn(request):\n    return request.param\n",
+        "getattr(trio, 'run')\n@pytest.fixture(params=[_asyncio_run, trio.run])\ndef run_async_fn(request):\n    return request.param\n",
+        "runner_alias = trio.run\n@pytest.fixture(params=[_asyncio_run, trio.run])\ndef run_async_fn(request):\n    return request.param\n",
+        "exec('trio.run = noop')\n@pytest.fixture(params=[_asyncio_run, trio.run])\ndef run_async_fn(request):\n    return request.param\n",
+        "asyncio.__setattr__('run', noop)\n@pytest.fixture(params=[_asyncio_run, trio.run])\ndef run_async_fn(request):\n    return request.param\n",
+        "asyncio.run.__code__ = replacement\n@pytest.fixture(params=[_asyncio_run, trio.run])\ndef run_async_fn(request):\n    return request.param\n",
+        "@pytest.fixture(name='run_async_fn', params=[_asyncio_run, trio.run])\ndef other(request):\n    return request.param\n",
+        "@pytest.fixture(name=fixture_name, params=[_asyncio_run, trio.run])\ndef other(request):\n    return request.param\n",
+        "@pytest.fixture(params=[_asyncio_run, trio.run])\ndef run_async_fn(request):\n    if request.param:\n        return request.param\n    return None\n",
+        "@pytest.fixture(params=[_asyncio_run, trio.run])\ndef run_async_fn(request):\n    return request.param(*args)\n",
+        "@pytest.fixture(params=[_asyncio_run, trio.run])\nasync def run_async_fn(request):\n    return request.param\n",
+        "@fixture(params=[_asyncio_run, trio.run])\ndef run_async_fn(request):\n    return request.param\n",
+        "from pytest import fixture as fx\n@fx\ndef run_async_fn(request):\n    return request.param\n",
+        "from pytest import fixture as fx\nfx = fake_fixture\n"
+        "@fx(params=[_asyncio_run, trio.run])\n"
+        "def run_async_fn(request):\n    return request.param\n",
+    ],
+)
+def test_async_runner_context_rejects_incomplete_or_unresolved_alternatives(
+    tmp_path, override
+):
+    from factoryline.context_efficiency import async_runner_fixture_context
+
+    conftest = tmp_path / "conftest.py"
+    suite = tmp_path / "suite"
+    test_file = suite / "test_async.py"
+    suite.mkdir()
+    snapshots = {
+        conftest: _fixture_snapshot(conftest, _async_runner_sources()),
+        suite / "conftest.py": _fixture_snapshot(
+            suite / "conftest.py",
+            "import asyncio\nimport pytest\nimport trio\n"
+            "def _asyncio_run(async_fn, *args):\n"
+            "    return asyncio.run(async_fn(*args))\n" + override,
+            "c" * 64,
+        ),
+        test_file: _fixture_snapshot(
+            test_file, "def test_async(run_async_fn):\n    pass\n", "b" * 64
+        ),
+    }
+
+    result = async_runner_fixture_context(tmp_path, list(snapshots), snapshots)
+
+    assert result["suite/test_async.py"]["fixtures"]["run_async_fn"]["trusted"] is False
+
+
+@pytest.mark.parametrize(
+    "fixture_source",
+    [
+        "import asyncio as event_loop\n"
+        "import pytest\n"
+        "from trio import run as trio_run\n"
+        "def _asyncio_run(async_fn, *args):\n"
+        "    return event_loop.run(async_fn(*args))\n"
+        "@pytest.fixture(params=[_asyncio_run, trio_run])\n"
+        "def run_async_fn(request):\n"
+        "    return request.param\n",
+        "import asyncio as loop\n"
+        "import pytest\n"
+        "import trio as task_group\n"
+        "def _asyncio_run(async_fn, *args):\n"
+        "    return loop.run(async_fn(*args))\n"
+        "@pytest.fixture(params=[_asyncio_run, task_group.run])\n"
+        "def run_async_fn(request):\n"
+        "    return request.param\n",
+        "import asyncio as event_loop\n"
+        "import pytest\n"
+        "import trio as provider\n"
+        "import trio as second_provider\n"
+        "@pytest.fixture(params=[_asyncio_run, provider.run])\n"
+        "def run_async_fn(request):\n"
+        "    return request.param\n"
+        "def _asyncio_run(async_fn, *args):\n"
+        "    return event_loop.run(async_fn(*args))\n",
+    ],
+    ids=[
+        "direct-run-import",
+        "renamed-imports",
+        "fixture-before-wrapper-with-equivalent-module-alias",
+    ],
+)
+def test_async_runner_capability_proof_accepts_alias_and_placement_variants(
+    tmp_path, fixture_source
+):
+    from factoryline.context_efficiency import async_runner_fixture_context
+
+    conftest = tmp_path / "conftest.py"
+    test_file = tmp_path / "test_async.py"
+    snapshots = {
+        conftest: _fixture_snapshot(conftest, fixture_source),
+        test_file: _fixture_snapshot(
+            test_file, "def test_async(run_async_fn):\n    pass\n", "b" * 64
+        ),
+    }
+
+    result = async_runner_fixture_context(tmp_path, list(snapshots), snapshots)
+
+    fixture = result["test_async.py"]["fixtures"]["run_async_fn"]
+    assert fixture["trusted"] is True
+    assert {item["api"] for item in fixture["alternatives"]} == {
+        "asyncio.run",
+        "trio.run",
+    }
+    assert all(
+        item["capability"]["status"] == "CLOSED" for item in fixture["alternatives"]
+    )
+
+
+def test_nested_async_callback_uses_source_bound_fixture_context():
+    import ast
+
+    from factoryline.context_efficiency import _nested_async_runner_invocations
+
+    module = ast.parse(
+        "def test_async(run_async_fn):\n"
+        "    async def callback():\n"
+        "        assert 1 == 1\n"
+        "    run_async_fn(callback)\n"
+    )
+    module._oracle_source_sha256 = "b" * 64
+    test = module.body[0]
+    test._oracle_module = module
+    module._oracle_async_runner_fixtures = {
+        "schema": "factory.async-runner-fixture-context.v3",
+        "module_sha256": "b" * 64,
+        "fixtures": {
+            "run_async_fn": {
+                "trusted": True,
+                "source": "conftest.py",
+                "sha256": "a" * 64,
+                "alternatives": [
+                    {
+                        "api": "asyncio.run",
+                        "binding": "_asyncio_run",
+                        "capability": _fixture_capability("asyncio.run", "asyncio"),
+                    },
+                    {
+                        "api": "trio.run",
+                        "binding": "trio",
+                        "capability": _fixture_capability("trio.run", "trio"),
+                    },
+                ],
+            }
+        },
+    }
+    callback = test.body[0]
+
+    accepted = _nested_async_runner_invocations(
+        test, {callback.name: callback}, {callback.name}, {}
+    )
+
+    assert callback.name in accepted
+    assert "run_async_fn" in accepted
+
+    module._oracle_async_runner_fixtures["fixtures"]["run_async_fn"]["alternatives"][0][
+        "capability"
+    ]["sha256"] = "c" * 64
+    stale_witness = _nested_async_runner_invocations(
+        test, {callback.name: callback}, {callback.name}, {}
+    )
+    assert callback.name not in stale_witness
+
+
+def test_async_runner_wrapper_rejects_parameter_shadowing_asyncio():
+    import ast
+
+    from factoryline import review_audits
+    from factoryline.context_efficiency import _async_runner_wrapper_receiver
+
+    baseline = ast.parse(
+        "import asyncio as loop\n"
+        "def runner(async_fn, *args):\n"
+        "    return loop.run(async_fn(*args))\n"
+    )
+    aliases = review_audits._scope_security_aliases(
+        review_audits._module_security_aliases(baseline), baseline
+    )
+    assert (
+        _async_runner_wrapper_receiver(
+            baseline.body[1], baseline, aliases, review_audits
+        )
+        is not None
+    )
+
+    shadowed = ast.parse(
+        "import asyncio\n"
+        "def runner(asyncio, *args):\n"
+        "    return asyncio.run(asyncio(*args))\n"
+    )
+    aliases = review_audits._scope_security_aliases(
+        review_audits._module_security_aliases(shadowed), shadowed
+    )
+    assert (
+        _async_runner_wrapper_receiver(
+            shadowed.body[1], shadowed, aliases, review_audits
+        )
+        is None
+    )
+
+
+@pytest.mark.parametrize(
+    "body, trusted, module_sha, expected",
+    [
+        ("    run_async_fn(callback)\n", True, "b" * 64, True),
+        ("    if enabled:\n        run_async_fn(callback)\n", True, "b" * 64, False),
+        (
+            "    try:\n        run_async_fn(callback)\n    except Exception:\n        pass\n",
+            True,
+            "b" * 64,
+            False,
+        ),
+        (
+            "    run_async_fn = fake\n    run_async_fn(callback)\n",
+            True,
+            "b" * 64,
+            False,
+        ),
+        (
+            "    run_async_fn.__code__ = (lambda *args: None).__code__\n"
+            "    run_async_fn(callback)\n",
+            True,
+            "b" * 64,
+            False,
+        ),
+        (
+            "    setattr(run_async_fn, '__code__', (lambda *args: None).__code__)\n"
+            "    run_async_fn(callback)\n",
+            True,
+            "b" * 64,
+            False,
+        ),
+        (
+            "    delegate(run_async_fn)\n    run_async_fn(callback)\n",
+            True,
+            "b" * 64,
+            False,
+        ),
+        (
+            "    runner_alias = run_async_fn\n    run_async_fn(callback)\n",
+            True,
+            "b" * 64,
+            False,
+        ),
+        ("    run_async_fn(callback)\n", False, "b" * 64, False),
+        ("    run_async_fn(callback)\n", True, "c" * 64, False),
+    ],
+)
+def test_nested_async_fixture_call_fails_closed_on_control_or_shadow(
+    body, trusted, module_sha, expected
+):
+    import ast
+
+    from factoryline.context_efficiency import _nested_async_runner_invocations
+
+    module = ast.parse(
+        "def test_async(run_async_fn):\n"
+        "    async def callback():\n"
+        "        assert 1 == 1\n" + body
+    )
+    module._oracle_source_sha256 = "b" * 64
+    test = module.body[0]
+    test._oracle_module = module
+    module._oracle_async_runner_fixtures = {
+        "schema": "factory.async-runner-fixture-context.v3",
+        "module_sha256": module_sha,
+        "fixtures": {
+            "run_async_fn": {
+                "trusted": trusted,
+                "source": "conftest.py",
+                "sha256": "a" * 64,
+                "alternatives": [
+                    {
+                        "api": "trio.run",
+                        "binding": "trio",
+                        "capability": _fixture_capability("trio.run", "trio"),
+                    }
+                ],
+            }
+        },
+    }
+    callback = test.body[0]
+    actual = _nested_async_runner_invocations(
+        test, {callback.name: callback}, {callback.name}, {}
+    )
+
+    assert (callback.name in actual) is expected
+
+
+def test_async_runner_fixture_source_digest_is_required(tmp_path):
+    from factoryline.context_efficiency import async_runner_fixture_context
+
+    conftest = tmp_path / "conftest.py"
+    test_file = tmp_path / "test_async.py"
+    snapshots = {
+        conftest: _fixture_snapshot(conftest, _async_runner_sources(), "invalid"),
+        test_file: _fixture_snapshot(
+            test_file, "def test_async(run_async_fn):\n    pass\n", "b" * 64
+        ),
+    }
+
+    assert async_runner_fixture_context(tmp_path, list(snapshots), snapshots) == {}
+
+
+def _large_async_runner_test_source(name):
+    return f"def {name}():\n" + "    assert left == right\n" * 5500
+
+
+def test_async_runner_context_node_limit_is_per_module(tmp_path):
+    from factoryline.context_efficiency import async_runner_fixture_context
+
+    fixture_path = tmp_path / "conftest.py"
+    target_path = tmp_path / "tests" / "test_async.py"
+    unrelated_path = tmp_path / "tests" / "test_unrelated.py"
+    target_path.parent.mkdir()
+    snapshots = {
+        fixture_path: _fixture_snapshot(fixture_path, _async_runner_sources()),
+        target_path: _fixture_snapshot(
+            target_path,
+            "def test_async(run_async_fn):\n    pass\n",
+            "b" * 64,
+        ),
+        unrelated_path: _fixture_snapshot(
+            unrelated_path, _large_async_runner_test_source("test_noise"), "c" * 64
+        ),
+    }
+
+    result = async_runner_fixture_context(tmp_path, list(snapshots), snapshots)
+
+    assert result["tests/test_async.py"]["fixtures"]["run_async_fn"]["trusted"]
+    assert result["tests/test_unrelated.py"]["gaps"] == ["TEST_MODULE_NODE_LIMIT"]
+
+
+@pytest.mark.parametrize("oversized_scope", ["test", "conftest"])
+def test_async_runner_context_oversized_scope_is_uncredited_with_gap(
+    tmp_path, oversized_scope
+):
+    from factoryline.context_efficiency import async_runner_fixture_context
+
+    fixture_path = tmp_path / "conftest.py"
+    test_path = tmp_path / "tests" / "test_async.py"
+    test_path.parent.mkdir()
+    fixture_source = _async_runner_sources()
+    test_source = "def test_async(run_async_fn):\n    pass\n"
+    if oversized_scope == "conftest":
+        fixture_source += _large_async_runner_test_source("large_helper")
+    else:
+        test_source = (
+            "def test_async(run_async_fn):\n"
+            "    async def callback():\n"
+            "        assert await fetch_value() == expected_value\n"
+            "    run_async_fn(callback)\n" + "    assert left == right\n" * 5500
+        )
+    snapshots = {
+        fixture_path: _fixture_snapshot(fixture_path, fixture_source),
+        test_path: _fixture_snapshot(test_path, test_source, "b" * 64),
+    }
+
+    summary = async_runner_fixture_context(tmp_path, list(snapshots), snapshots)[
+        "tests/test_async.py"
+    ]
+
+    expected_gap = (
+        "TEST_MODULE_NODE_LIMIT"
+        if oversized_scope == "test"
+        else "ANCESTOR_FIXTURE_SOURCE_NODE_LIMIT"
+    )
+    assert expected_gap in summary["gaps"]
+    assert not summary["fixtures"].get("run_async_fn", {}).get("trusted", False)
+
+
+def _async_test_oracle_rows(report):
+    codes = {
+        "QUALITY_HOLLOW_TEST",
+        "QUALITY_UNKNOWN_TEST_ORACLE",
+        "QUALITY_WEAK_TEST_ORACLE",
+    }
+    return [
+        row
+        for row in report["findings"]
+        if row.get("code") in codes
+        and row.get("path") == "tests/test_async.py"
+        and row.get("facts", {}).get("symbol") == "test_async"
+    ]
+
+
+def _assert_async_oracle_unresolved(report):
+    rows = _async_test_oracle_rows(report)
+    assert len(rows) == 1
+    assert rows[0]["code"] == "QUALITY_UNKNOWN_TEST_ORACLE"
+    assert rows[0]["severity"] == "INFO"
+    assert rows[0]["facts"]["state"] == "INCOMPLETE"
+    assert report["state"] == "INCOMPLETE"
+    return rows
+
+
+def test_security_scan_uses_async_runner_fixture_cold_warm_and_stale_context(
+    tmp_path,
+):
+    from factoryline import review_audits
+
+    conftest = tmp_path / "conftest.py"
+    tests = tmp_path / "tests"
+    tests.mkdir()
+    test_file = tests / "test_async.py"
+    conftest.write_text(_async_runner_sources(), encoding="utf-8")
+    test_file.write_text(
+        "def test_async(run_async_fn):\n"
+        "    async def callback():\n"
+        "        assert await fetch_value() == expected_value\n"
+        "    run_async_fn(callback)\n",
+        encoding="utf-8",
+    )
+    review_audits._oracle_context_cache_clear()
+
+    cold = review_audits.security_scan(tmp_path, cache_enabled=True)
+    cold_hits = review_audits._oracle_context_cache_info()["hits"]
+    cold_target = _async_test_oracle_rows(cold)
+    assert not cold_target
+
+    warm = review_audits.security_scan(tmp_path, cache_enabled=True)
+    warm_info = review_audits._oracle_context_cache_info()
+    assert warm_info["hits"] == cold_hits + 1
+    assert warm["audit_sha256"] == cold["audit_sha256"]
+    assert _async_test_oracle_rows(warm) == cold_target
+
+    conftest.write_text(
+        "import asyncio\nimport pytest\nimport trio\n"
+        "@pytest.fixture(params=[asyncio.run, trio.run], ids=['asyncio', 'trio'])\n"
+        "def run_async_fn(request):\n"
+        "    return request.param if request.config.option.asyncio else None\n",
+        encoding="utf-8",
+    )
+    before_stale = review_audits._oracle_context_cache_info()
+    stale = review_audits.security_scan(tmp_path, cache_enabled=True)
+    after_stale = review_audits._oracle_context_cache_info()
+    stale_target = _assert_async_oracle_unresolved(stale)
+    assert len(stale_target) == 1
+    assert after_stale["hits"] == before_stale["hits"]
+    assert after_stale["misses"] == before_stale["misses"] + 1
+
+
+@pytest.mark.parametrize(
+    "runner_call, bad_backend",
+    [
+        ("", False),
+        ("    return\n    run_async_fn(callback)\n", False),
+        ("    run_async_fn(callback)\n", True),
+    ],
+    ids=["uninvoked-fixture", "unreachable-runner", "one-unrecognized-backend"],
+)
+def test_security_scan_does_not_credit_unproven_async_runner_calls(
+    tmp_path, runner_call, bad_backend
+):
+    from factoryline import review_audits
+
+    conftest = tmp_path / "conftest.py"
+    tests = tmp_path / "tests"
+    tests.mkdir()
+    test_file = tests / "test_async.py"
+    fixture_source = _async_runner_sources()
+    if bad_backend:
+        fixture_source = fixture_source.replace("trio.run", "anyio.run")
+    conftest.write_text(fixture_source, encoding="utf-8")
+    test_file.write_text(
+        "def test_async(run_async_fn):\n"
+        "    async def callback():\n"
+        "        assert await fetch_value() == expected_value\n" + runner_call,
+        encoding="utf-8",
+    )
+
+    result = review_audits.security_scan(tmp_path, cache_enabled=False)
+
+    target = _assert_async_oracle_unresolved(result)
+    assert len(target) == 1
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "run_async_fn.__code__ = (lambda *args: None).__code__\n",
+        "setattr(run_async_fn, '__code__', (lambda *args: None).__code__)\n",
+        "delegate(run_async_fn)\n",
+        "runner_alias = run_async_fn\n",
+    ],
+)
+def test_security_scan_keeps_mutated_async_runner_unresolved(tmp_path, mutation):
+    from factoryline import review_audits
+
+    conftest = tmp_path / "conftest.py"
+    tests = tmp_path / "tests"
+    tests.mkdir()
+    (tests / "test_async.py").write_text(
+        "def test_async(run_async_fn):\n"
+        "    async def callback():\n"
+        "        assert await fetch_value() == expected_value\n"
+        f"    {mutation}"
+        "    run_async_fn(callback)\n",
+        encoding="utf-8",
+    )
+    conftest.write_text(_async_runner_sources(), encoding="utf-8")
+
+    result = review_audits.security_scan(tmp_path, cache_enabled=False)
+
+    target = _assert_async_oracle_unresolved(result)
+    assert len(target) == 1
+
+
+@pytest.mark.parametrize(
+    "parameters, body",
+    [
+        ("[disable(other.run)]", "return request.param"),
+        ("choose([other.run])", "return request.param"),
+        (
+            "[other.run]",
+            "request.param.__code__ = replacement\n    return request.param",
+        ),
+        ("[other.run]", "consume(request.param)\n    return request.param"),
+        ("[other.run, disable()]", "return request.param"),
+    ],
+    ids=[
+        "nested-call",
+        "dynamic-params",
+        "consumer-mutation",
+        "consumer-escape",
+        "effectful-alternative",
+    ],
+)
+def test_async_runner_context_rejects_impure_secondary_fixture_consumer(
+    tmp_path, parameters, body
+):
+    from factoryline.context_efficiency import async_runner_fixture_context
+
+    conftest = tmp_path / "conftest.py"
+    source = (
+        _async_runner_sources() + "import trio as other\n"
+        f"@pytest.fixture(params={parameters})\ndef secondary(request):\n    {body}\n"
+    )
+    tree = _fixture_snapshot(conftest, source)
+    test_file = tmp_path / "test_async.py"
+    snapshots = {
+        conftest: tree,
+        test_file: _fixture_snapshot(
+            test_file, "def test_async(run_async_fn):\n    pass\n"
+        ),
+    }
+    context = async_runner_fixture_context(tmp_path, list(snapshots), snapshots)
+    assert context["test_async.py"]["fixtures"]["run_async_fn"]["trusted"] is False
+
+
+def test_async_runner_context_accepts_pure_secondary_fixture_consumer(tmp_path):
+    from factoryline.context_efficiency import async_runner_fixture_context
+
+    conftest = tmp_path / "conftest.py"
+    source = (
+        _async_runner_sources() + "import trio as other\n"
+        "@pytest.fixture(params=(other.run,))\ndef secondary(request):\n"
+        "    return request.param\n"
+    )
+    tree = _fixture_snapshot(conftest, source)
+    test_file = tmp_path / "test_async.py"
+    snapshots = {
+        conftest: tree,
+        test_file: _fixture_snapshot(
+            test_file, "def test_async(run_async_fn):\n    pass\n"
+        ),
+    }
+    context = async_runner_fixture_context(tmp_path, list(snapshots), snapshots)
+    assert context["test_async.py"]["fixtures"]["run_async_fn"]["trusted"] is True
+    assert context["test_async.py"]["fixtures"]["secondary"]["trusted"] is True
+
+
+def _protocol_source_case(
+    tmp_path, test_source, product=None, *, additional=None, materialize=True, **options
+):
+    import ast
+    import hashlib
+
+    from factoryline.context_efficiency import protocol_call_context
+
+    sources = {
+        "pkg/__init__.py": product
+        or (
+            "from abc import ABC\n"
+            "class Base(ABC):\n"
+            "    def __init__(self):\n        self.value = 3\n"
+            "    def __repr__(self):\n        return f'<value={self.value}>'\n"
+        ),
+        "test_protocol.py": test_source,
+        **(additional or {}),
+    }
+    snapshots = {}
+    for relative, source in sources.items():
+        path = tmp_path / relative
+        if materialize:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(source.encode("utf-8"))
+        tree = ast.parse(source, filename=str(path))
+        tree._oracle_source_sha256 = hashlib.sha256(source.encode()).hexdigest()
+        snapshots[path] = tree
+    # These fixtures test the declared model, not the host interpreter profile.
+    options.setdefault(
+        "python_profile", {"implementation": "cpython", "version": "3.11.9"}
+    )
+    context = protocol_call_context(tmp_path, list(snapshots), snapshots, **options)
+    return context.get("test_protocol.py", {"summaries": [], "gaps": []})
+
+
+def test_protocol_context_requires_materialized_import_source(tmp_path):
+    result = _protocol_source_case(
+        tmp_path,
+        "from pkg import Base\ndef test_protocol():\n    repr(Base())\n",
+        materialize=False,
+    )
+    assert result["summaries"][0]["status"] == "UNKNOWN"
+    assert result["summaries"][0]["unknown_reasons"] == ["IMPORT_SOURCE_UNAVAILABLE"]
+
+
+@pytest.mark.parametrize(
+    "body, expected",
+    [
+        (
+            "    repr(Base())\n    repr(Base())\n",
+            [
+                ("WEAK_PROTOCOL", (), 3),
+                ("UNKNOWN", ("PRECEDING_CONTROL_OR_EFFECT_UNKNOWN",), 4),
+            ],
+        ),
+        (
+            "    yield None\n    repr(Base())\n",
+            [("UNKNOWN", ("DEFERRED_EXECUTION",), 4)],
+        ),
+        (
+            "    import builtins\n    repr(Base())\n",
+            [("UNKNOWN", ("REFLECTIVE_TEST_EFFECTS",), 4)],
+        ),
+    ],
+)
+def test_protocol_context_reuses_one_ordered_test_walk(
+    tmp_path, monkeypatch, body, expected
+):
+    import ast
+    import hashlib
+
+    from factoryline import context_efficiency as efficiency
+
+    sources = {
+        "pkg/__init__.py": (
+            "from abc import ABC\n"
+            "class Base(ABC):\n"
+            "    def __init__(self):\n        self.value = 3\n"
+            "    def __repr__(self):\n        return f'<value={self.value}>'\n"
+        ),
+        "test_protocol.py": "from pkg import Base\ndef test_protocol():\n" + body,
+    }
+    snapshots = {}
+    for relative, source in sources.items():
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(source.encode("utf-8"))
+        tree = ast.parse(source, filename=str(path))
+        tree._oracle_source_sha256 = hashlib.sha256(source.encode()).hexdigest()
+        snapshots[path] = tree
+
+    test_path = tmp_path / "test_protocol.py"
+    test_node = snapshots[test_path].body[1]
+    original_walk = ast.walk
+    test_walks = 0
+
+    def counted_walk(node):
+        nonlocal test_walks
+        if node is test_node:
+            test_walks += 1
+        return original_walk(node)
+
+    monkeypatch.setattr(ast, "walk", counted_walk)
+    result = efficiency.protocol_call_context(
+        tmp_path,
+        list(snapshots),
+        snapshots,
+        python_profile={"implementation": "cpython", "version": "3.11.9"},
+    )
+    summaries = result["test_protocol.py"]["summaries"]
+    observed = [
+        (row["status"], tuple(row["unknown_reasons"]), row["line"]) for row in summaries
+    ]
+    assert observed == expected
+    assert test_walks == 1
+
+
+def test_protocol_context_source_resolves_three_repr_dispatch_shapes(tmp_path):
+    source = (
+        "import pkg as library\n"
+        "from pkg import asyncio as async_backend, tornado as tornado_backend\n"
+        "def test_sync():\n"
+        "    class Concrete(library.Base):\n"
+        "        def __call__(self):\n            pass\n"
+        "    repr(Concrete())\n"
+        "def test_async_backend():\n    repr(async_backend.Async())\n"
+        "def test_tornado_backend():\n    repr(tornado_backend.Tornado())\n"
+    )
+    result = _protocol_source_case(
+        tmp_path,
+        source,
+        additional={
+            "pkg/asyncio/__init__.py": "from pkg import Base\nclass Async(Base):\n    def __init__(self):\n        super().__init__()\n",
+            "pkg/tornado.py": "from pkg import Base\nclass Tornado(Base):\n    def __init__(self):\n        super().__init__()\n",
+        },
+    )
+    assert len(result["summaries"]) == 3
+    for summary in result["summaries"]:
+        assert summary["status"] == "WEAK_PROTOCOL"
+        assert summary["output_checked"] is False
+        assert summary["runtime_observed"] is False
+        assert summary["conditional_on_successful_construction"] is True
+        assert (
+            summary["assumptions"][0]["contract"]
+            == "stdlib.abc-transparent-method-lookup.cpython-3.11.9.v1"
+        )
+        assert {item["role"] for item in summary["dependencies"]} >= {
+            "test",
+            "receiver_class",
+            "protocol_method",
+        }
+        assert all(
+            len(item["sha256"]) == len(item["ast_sha256"]) == 64
+            for item in summary["dependencies"]
+        )
+
+
+@pytest.mark.parametrize(
+    "imports, receiver",
+    [
+        ("from pkg import Base as ChangedName", "ChangedName"),
+        ("import pkg as renamed", "renamed.Base"),
+        ("from pkg import Base\nclass Middle(Base):\n    pass", "Middle"),
+    ],
+)
+def test_protocol_context_resolves_renamed_and_inherited_receivers(
+    tmp_path, imports, receiver
+):
+    result = _protocol_source_case(
+        tmp_path, imports + f"\ndef test_protocol():\n    repr({receiver}())\n"
+    )
+    assert result["summaries"][0]["status"] == "WEAK_PROTOCOL"
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "from pkg import Base\ndef test_protocol():\n    Base.__repr__ = replacement\n    repr(Base())\n",
+        "import pkg as p\nimport pkg as other\nother.Base.__repr__ = replacement\ndef test_protocol():\n    repr(p.Base())\n",
+        "from pkg import Base\nfrom pkg import Base as other\nother.__repr__ = replacement\ndef test_protocol():\n    repr(Base())\n",
+        "import pkg as p\nimport pkg as other\nconsume(other.Base)\ndef test_protocol():\n    repr(p.Base())\n",
+        "from pkg import Base\ndef test_protocol():\n    saved = Base\n    repr(Base())\n",
+        "from pkg import Base\ndef test_protocol():\n    Base = fake\n    repr(Base())\n",
+        "from pkg import Base\ndef test_protocol(repr):\n    repr(Base())\n",
+        "from pkg import Base\nrepr = fake\ndef test_protocol():\n    repr(Base())\n",
+        "from pkg import Base\nimport builtins\nbuiltins.repr = fake\ndef test_protocol():\n    repr(Base())\n",
+        "from pkg import Base\ndef test_protocol():\n    if False:\n        repr(Base())\n",
+        "from pkg import Base\ndef test_protocol():\n    def unused():\n        repr(Base())\n",
+        "from pkg import Base\ndef test_protocol():\n    try:\n        repr(Base())\n    except Exception:\n        pass\n",
+        "from pkg import Base\ndef test_protocol():\n    with suppress(Exception):\n        repr(Base())\n",
+        "from pkg import Base\nasync def test_protocol():\n    repr(Base())\n",
+        "from pkg import Base\ndef test_protocol():\n    repr(Base())\n    yield 1\n",
+        "from pkg import Base\n@xfail\ndef test_protocol():\n    repr(Base())\n",
+        "from pkg import Base\ndef test_protocol():\n    return\n    repr(Base())\n",
+        "from pkg import Base\ndef test_protocol():\n    class Child(Base):\n        Base.__repr__ = replacement\n    repr(Child())\n",
+        "from pkg import Base\ndef test_protocol():\n    class Child(Base, metaclass=Meta):\n        pass\n    repr(Child())\n",
+    ],
+)
+def test_protocol_context_rejects_mutation_escape_shadow_or_nonexecution(
+    tmp_path, source
+):
+    summary = _protocol_source_case(tmp_path, source)["summaries"][0]
+    assert summary["status"] == "UNKNOWN"
+    assert summary["unknown_reasons"]
+    assert summary["output_checked"] is False
+
+
+@pytest.mark.parametrize(
+    "product",
+    [
+        "class Base:\n    pass\n",
+        "class Base:\n    def __repr__(self):\n        return 'constant'\n",
+        "class Base(external.Unknown):\n    def __repr__(self):\n        return f'{self.value}'\n",
+        "class Base(factory()):\n    def __repr__(self):\n        return f'{self.value}'\n",
+        "class Base:\n    def __new__(cls):\n        return other\n    def __repr__(self):\n        return f'{self.value}'\n",
+        "class Base:\n    def __init__(self):\n        self.__class__ = Other\n    def __repr__(self):\n        return f'{self.value}'\n",
+        "class Base:\n    def __init__(self):\n        consume(self)\n    def __repr__(self):\n        return f'{self.value}'\n",
+    ],
+)
+def test_protocol_context_rejects_unresolved_or_constant_protocols(tmp_path, product):
+    summary = _protocol_source_case(
+        tmp_path,
+        "from pkg import Base\ndef test_protocol():\n    repr(Base())\n",
+        product,
+    )["summaries"][0]
+    assert summary["status"] == "UNKNOWN"
+    assert summary["unknown_reasons"]
+
+
+def test_protocol_context_keeps_constant_compute_without_protocol_credit(tmp_path):
+    result = _protocol_source_case(
+        tmp_path,
+        "def compute():\n    return 3\ndef test_never_asserts_anything():\n    compute()\n",
+    )
+    assert result["summaries"] == []
+
+
+def test_protocol_context_rejects_source_drift_budget_and_unknown_abc_profile(tmp_path):
+    source = "from pkg import Base\ndef test_protocol():\n    repr(Base())\n"
+    result = _protocol_source_case(tmp_path, source, source_hashes={})
+    assert result["gaps"] == ["SOURCE_IDENTITY_DRIFT"]
+    result = _protocol_source_case(tmp_path, source, max_nodes=3)
+    assert result["gaps"] == ["AST_NODE_LIMIT"]
+    result = _protocol_source_case(
+        tmp_path,
+        source,
+        python_profile={"implementation": "cpython", "version": "3.14.0"},
+    )
+    assert result["summaries"][0]["unknown_reasons"] == ["ABC_PROFILE_UNSUPPORTED"]
+
+
+@pytest.mark.parametrize(
+    "product",
+    [
+        "from abc import ABC\nimport abc as other\nother.ABCMeta.__call__ = replacement\nclass Base(ABC):\n    def __repr__(self):\n        return f'{self.value}'\n",
+        "class Base:\n    def __init__(self):\n        consume(Base)\n        self.value = 3\n    def __repr__(self):\n        return f'{self.value}'\n",
+        "class Base:\n    def __init__(self):\n        from pkg import Base as alias\n        consume(alias)\n    def __repr__(self):\n        return f'{self.value}'\n",
+        "super = replacement\nclass Parent:\n    pass\nclass Base(Parent):\n    def __init__(self):\n        super().__init__()\n    def __repr__(self):\n        return f'{self.value}'\n",
+        "class Base:\n    def __repr__(self):\n        return 'constant' if True else self.value\n",
+        "class Base:\n    def __repr__(self):\n        return f'{True or self.value}'\n",
+    ],
+)
+def test_protocol_context_transfer_rejects_abc_constructor_and_dead_dependency_controls(
+    tmp_path, product
+):
+    source = "from pkg import Base\ndef test_protocol():\n    repr(Base())\n"
+    summary = _protocol_source_case(tmp_path, source, product)["summaries"][0]
+    assert summary["status"] == "UNKNOWN"
+    assert summary["unknown_reasons"]
+
+
+def test_protocol_context_transfer_records_decorated_method_as_partial_unknown(
+    tmp_path,
+):
+    product = "class Base:\n    @metadata_decorator\n    def __repr__(self):\n        return f'{self.value}'\n"
+    source = "from pkg import Base\ndef test_protocol():\n    repr(Base())\n"
+    summary = _protocol_source_case(tmp_path, source, product)["summaries"][0]
+    assert summary["status"] == "UNKNOWN"
+    assert summary["unknown_reasons"] == ["PROFILE_BINDING_AMBIGUOUS"]
+    assert summary["receiver"]["class"] == "Base"
+    assert summary["method_decorators"] == ["metadata_decorator"]
+    assert any(row["role"] == "protocol_method" for row in summary["dependencies"])
+
+
+def test_protocol_context_transfer_rejects_local_constructor_before_declaration(
+    tmp_path,
+):
+    source = "from pkg import Base\ndef test_protocol():\n    repr(Local())\n    class Local(Base):\n        pass\n"
+    summary = _protocol_source_case(tmp_path, source)["summaries"][0]
+    assert summary["unknown_reasons"] == ["LOCAL_CLASS_NOT_YET_DECLARED"]
+
+
+def test_protocol_context_transfer_unrelated_oversized_source_cannot_poison_valid_summary(
+    tmp_path,
+):
+    source = "from pkg import Base\ndef test_protocol():\n    repr(Base())\n"
+    result = _protocol_source_case(
+        tmp_path,
+        source,
+        additional={"unrelated.py": "unrelated = 3\n" * 500},
+        max_nodes=300,
+    )
+    assert result["summaries"][0]["status"] == "WEAK_PROTOCOL"
+
+
+def test_protocol_context_transfer_has_no_assertion_or_finding_suppression_side_effect(
+    tmp_path,
+):
+    from factoryline.review_audits import _hollow_test_finding
+    import ast
+
+    source = "from pkg import Base\ndef test_protocol():\n    repr(Base())\n"
+    context = _protocol_source_case(tmp_path, source)
+    test = ast.parse(source).body[1]
+    finding = _hollow_test_finding(
+        "test_protocol.py",
+        test,
+        {"Base": "pkg.Base"},
+        oracle_context={"protocol_call_context": context},
+    )
+    baseline = _hollow_test_finding("test_protocol.py", test, {"Base": "pkg.Base"})
+    assert context["summaries"][0]["status"] == "WEAK_PROTOCOL"
+    assert finding == baseline
+    assert finding["code"] == "QUALITY_UNKNOWN_TEST_ORACLE"
+    assert finding["facts"]["state"] == "INCOMPLETE"
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "other.Base = replacement",
+        "del other.Base",
+        "other.Base.__bases__ = (replacement,)",
+    ],
+)
+def test_protocol_context_constructor_replacement_through_equivalent_alias_is_unknown(
+    tmp_path, mutation
+):
+    source = (
+        "import pkg as selected\nimport pkg as other\n"
+        + mutation
+        + "\ndef test_protocol():\n    repr(selected.Base())\n"
+    )
+    summary = _protocol_source_case(tmp_path, source)["summaries"][0]
+    assert summary["status"] == "UNKNOWN"
+    assert summary["unknown_reasons"]
+
+
+def test_protocol_context_dependency_source_drift_invalidates_selected_receiver(
+    tmp_path,
+):
+    import hashlib
+
+    source = "from pkg import Base\ndef test_protocol():\n    repr(Base())\n"
+    hashes = {
+        "test_protocol.py": hashlib.sha256(source.encode()).hexdigest(),
+        "pkg/__init__.py": "b" * 64,
+    }
+    summary = _protocol_source_case(tmp_path, source, source_hashes=hashes)[
+        "summaries"
+    ][0]
+    assert summary["unknown_reasons"] == ["SOURCE_IDENTITY_DRIFT"]
+
+
+def test_protocol_context_dependency_hashes_change_and_helpers_are_exported(tmp_path):
+    from factoryline.context_efficiency import (
+        protocol_call_context,
+        protocol_call_helpers,
+    )
+
+    source = "from pkg import Base\ndef test_protocol():\n    repr(Base())\n"
+    first = _protocol_source_case(tmp_path, source)["summaries"][0]
+    product = "class Base:\n    def __init__(self):\n        self.other = 3\n    def __repr__(self):\n        return f'{self.other}'\n"
+    second = _protocol_source_case(tmp_path, source, product)["summaries"][0]
+    original = next(
+        row for row in first["dependencies"] if row["role"] == "protocol_method"
+    )
+    changed = next(
+        row for row in second["dependencies"] if row["role"] == "protocol_method"
+    )
+    assert first["status"] == second["status"] == "WEAK_PROTOCOL"
+    assert original["sha256"] != changed["sha256"]
+    assert original["ast_sha256"] != changed["ast_sha256"]
+    assert protocol_call_context in protocol_call_helpers()
+
+
+@pytest.mark.parametrize(
+    "name, flag", [("renamed", "__override__"), ("keep_identity", "__final__")]
+)
+def test_protocol_context_metadata_identity_transfer_is_source_bound_and_renamable(
+    tmp_path, name, flag
+):
+    product = f"from .metadata import {name} as annotation\nclass Base:\n    @annotation\n    def __repr__(self):\n        return f'{{self.value}}'\n"
+    decorator = (
+        f"def {name}(function):\n    function.{flag} = True\n    return function\n"
+    )
+    source = "from pkg import Base\ndef test_protocol():\n    repr(Base())\n"
+    summary = _protocol_source_case(
+        tmp_path, source, product, additional={"pkg/metadata.py": decorator}
+    )["summaries"][0]
+    assert summary["status"] == "WEAK_PROTOCOL"
+    assert summary["output_checked"] is False
+    assert any(
+        row["role"] == "identity_decorator" and row["source"] == "pkg/metadata.py"
+        for row in summary["dependencies"]
+    )
+
+
+def _protocol_profile_metadata_source():
+    return (
+        "import typing as types\nimport sys as runtime\nimport contextlib as contexts\n"
+        "if types.TYPE_CHECKING:\n    from missing import identity\n"
+        "elif runtime.version_info >= (3, 12):\n    from typing import override as identity\n"
+        "else:\n    def identity(function):\n"
+        "        with contexts.suppress(AttributeError, TypeError):\n"
+        "            function.__override__ = True\n        return function\n"
+    )
+
+
+def test_protocol_context_metadata_identity_selects_the_declared_runtime_branch(
+    tmp_path,
+):
+    product = "from .metadata import identity\nclass Base:\n    @identity\n    def __repr__(self):\n        return f'{self.value}'\n"
+    source = "from pkg import Base\ndef test_protocol():\n    repr(Base())\n"
+    summary = _protocol_source_case(
+        tmp_path,
+        source,
+        product,
+        additional={"pkg/metadata.py": _protocol_profile_metadata_source()},
+    )["summaries"][0]
+    assert summary["status"] == "WEAK_PROTOCOL"
+    assert any(row["role"] == "identity_decorator" for row in summary["dependencies"])
+
+    assert summary["python_profile"] == {
+        "implementation": "cpython",
+        "version": "3.11.9",
+    }
+    assert any(
+        item["contract"] == "source.metadata-identity-transfer.v1"
+        for item in summary["assumptions"]
+    )
+
+
+@pytest.mark.parametrize(
+    "decorator",
+    [
+        "def identity(function):\n    function.__code__ = True\n    return function\n",
+        "def identity(function):\n    function.__globals__ = True\n    return function\n",
+        "def identity(function):\n    function.__class__ = True\n    return function\n",
+        "def identity(function):\n    return wrapper\n",
+        "def identity(function):\n    consume(function)\n    return function\n",
+        "if unknown_flag:\n    def identity(function):\n        return function\n",
+        "import sys as runtime\nimport sys as other\nother.version_info = (3, 12)\nif runtime.version_info >= (3, 12):\n    def identity(function):\n        return function\nelse:\n    def identity(function):\n        return function\n",
+    ],
+)
+def test_protocol_context_metadata_identity_rejects_execution_replacement_and_unknown_branches(
+    tmp_path, decorator
+):
+    product = "from .metadata import identity\nclass Base:\n    @identity\n    def __repr__(self):\n        return f'{self.value}'\n"
+    source = "from pkg import Base\ndef test_protocol():\n    repr(Base())\n"
+    summary = _protocol_source_case(
+        tmp_path, source, product, additional={"pkg/metadata.py": decorator}
+    )["summaries"][0]
+    assert summary["status"] == "UNKNOWN"
+    assert summary["unknown_reasons"]
+
+
+def test_protocol_context_metadata_identity_rejects_mutation_through_other_import_alias(
+    tmp_path,
+):
+    product = "from .metadata import identity\nfrom .metadata import identity as other\nother.__code__ = replacement\nclass Base:\n    @identity\n    def __repr__(self):\n        return f'{self.value}'\n"
+    source = "from pkg import Base\ndef test_protocol():\n    repr(Base())\n"
+    summary = _protocol_source_case(
+        tmp_path,
+        source,
+        product,
+        additional={
+            "pkg/metadata.py": "def identity(function):\n    return function\n"
+        },
+    )["summaries"][0]
+    assert summary["status"] == "UNKNOWN"
+    assert summary["unknown_reasons"]
+
+
+@pytest.mark.parametrize(
+    "operation", ["saved = helper.__annotations__", "saved = helper.__dict__"]
+)
+def test_protocol_context_metadata_annotation_reflection_cannot_escape_class_identity(
+    tmp_path, operation
+):
+    source = (
+        "from pkg import Base\ndef helper(argument: Base):\n    pass\ndef test_protocol():\n    "
+        + operation
+        + "\n    repr(Base())\n"
+    )
+    summary = _protocol_source_case(tmp_path, source)["summaries"][0]
+    assert summary["status"] == "UNKNOWN"
+
+
+def test_protocol_context_metadata_allows_direct_type_metadata_and_async_identity_decorators(
+    tmp_path,
+):
+    product = "from .metadata import identity\nclass Base:\n    @identity\n    def __repr__(self):\n        return f'{self.value}'\n    @identity\n    async def unrelated(self):\n        pass\n"
+    source = "from pkg import Base\ndef helper(argument: Base) -> Base:\n    pass\nclass Holder:\n    annotation: Base\ndef test_protocol():\n    repr(Base())\n"
+    summary = _protocol_source_case(
+        tmp_path,
+        source,
+        product,
+        additional={
+            "pkg/metadata.py": "def identity(function):\n    function.__override__ = True\n    return function\n"
+        },
+    )["summaries"][0]
+    assert summary["status"] == "WEAK_PROTOCOL"
+
+
+def test_protocol_context_metadata_callable_object_is_not_a_proven_base_class(tmp_path):
+    product = "def factory():\n    return object\nclass Base(factory):\n    def __repr__(self):\n        return f'{self.value}'\n"
+    source = "from pkg import Base\ndef test_protocol():\n    repr(Base())\n"
+    summary = _protocol_source_case(tmp_path, source, product)["summaries"][0]
+    assert summary["status"] == "UNKNOWN"
+
+
+@pytest.mark.parametrize(
+    "product",
+    [
+        "def alter():\n    Base.__repr__ = lambda self: 'constant'\nclass Base:\n    def __init__(self):\n        alter()\n    def __repr__(self):\n        return self.value\n",
+        "def alter():\n    Base.__repr__ = lambda self: 'constant'\ndef intermediate():\n    alter()\nclass Base:\n    def __init__(self):\n        intermediate()\n    def __repr__(self):\n        return self.value\n",
+        "def alter():\n    Base.__repr__ = lambda self: 'constant'\nalias = alter\nclass Base:\n    def __init__(self):\n        alias()\n    def __repr__(self):\n        return self.value\n",
+        "def initialize(self):\n    Base.__repr__ = lambda self: 'constant'\nclass Base:\n    __init__ = initialize\n    def __repr__(self):\n        return self.value\n",
+        "class Base:\n    def __init__(self):\n        self.value = 3\n    def __setattr__(self, name, value):\n        Base.__repr__ = lambda self: 'constant'\n    def __repr__(self):\n        return self.value\n",
+    ],
+)
+def test_protocol_context_constructor_effect_closure_rejects_dispatch_changes(
+    tmp_path, product
+):
+    source = "from pkg import Base\ndef test_protocol():\n    repr(Base())\n"
+    summary = _protocol_source_case(tmp_path, source, product)["summaries"][0]
+    assert summary["status"] == "UNKNOWN"
+    assert summary["unknown_reasons"]
+
+
+def test_protocol_context_constructor_effect_closure_retains_nonmutating_source_helper(
+    tmp_path,
+):
+    product = "def harmless():\n    return 3\nclass Base:\n    def __init__(self):\n        harmless()\n        self.value = 3\n    def __repr__(self):\n        return self.value\n"
+    source = "from pkg import Base\ndef test_protocol():\n    repr(Base())\n"
+    summary = _protocol_source_case(tmp_path, source, product)["summaries"][0]
+    assert summary["status"] == "WEAK_PROTOCOL"
+    assert summary["conditional_on_unchanged_dispatch"] is True
+    assert "conditional" in summary["dispatch"]
+    assert any(
+        d["role"] == "constructor_effect" and d["symbol"] == "harmless"
+        for d in summary["dependencies"]
+    )
+
+
+def test_protocol_context_constructor_unavailable_import_is_conditional_not_dispatch_proof(
+    tmp_path,
+):
+    product = "from opaque_external import operation\nclass Base:\n    def __init__(self):\n        operation()\n        self.value = 3\n    def __repr__(self):\n        return self.value\n"
+    source = "from pkg import Base\ndef test_protocol():\n    repr(Base())\n"
+    summary = _protocol_source_case(tmp_path, source, product)["summaries"][0]
+    assert summary["status"] == "WEAK_PROTOCOL"
+    assert summary["conditional_on_unchanged_dispatch"] is True
+    assert summary["runtime_observed"] is False
+    assert (
+        "CONSTRUCTOR_SUCCESS_AND_EFFECTS_NOT_VERIFIED" in summary["unresolved_effects"]
+    )
+
+
+@pytest.mark.parametrize(
+    "document",
+    [
+        None,
+        {},
+        {"summaries": None},
+        {"summaries": 7},
+        {"summaries": "bad"},
+        {"summaries": [None, 0, "bad", {}]},
+        {"summaries": [{"test": "test_protocol", "dependencies": None}]},
+        {"summaries": [{"test": "test_protocol", "dependencies": 7}]},
+        {
+            "summaries": [
+                {
+                    "test": "test_protocol",
+                    "dependencies": [{"role": "test", "line": True}],
+                }
+            ]
+        },
+    ],
+)
+def test_protocol_context_annotation_consumer_rejects_malformed_documents(
+    tmp_path, document
+):
+    import ast
+    from copy import deepcopy
+    from factoryline.context_efficiency import _protocol_annotate_finding
+
+    node = ast.parse("def test_protocol():\n    pass\n").body[0]
+    finding = {
+        "code": "QUALITY_HOLLOW_TEST",
+        "severity": "MEDIUM",
+        "facts": {"original": True},
+    }
+    before = deepcopy(finding)
+    assert (
+        _protocol_annotate_finding(finding, node, {"protocol_observations": document})
+        == before
+    )
+
+
+def test_protocol_context_annotation_consumer_matches_exact_test_identity_and_preserves_status(
+    tmp_path,
+):
+    import ast
+    from copy import deepcopy
+    from factoryline.context_efficiency import (
+        _protocol_annotate_finding,
+        protocol_call_helpers,
+    )
+
+    node = ast.parse("def test_protocol():\n    pass\n").body[0]
+    selected = {
+        "test": node.name,
+        "status": "UNKNOWN",
+        "dependencies": [{"role": "test", "line": node.lineno}],
+    }
+    second = {**selected, "line": 8}
+    wrong_name = {**selected, "test": "other"}
+    wrong_line = {**selected, "dependencies": [{"role": "test", "line": 99}]}
+    context = {
+        "protocol_observations": {
+            "summaries": [selected, wrong_name, second, wrong_line]
+        }
+    }
+    before = deepcopy(context)
+    finding = {"code": "QUALITY_HOLLOW_TEST", "severity": "MEDIUM"}
+    result = _protocol_annotate_finding(finding, node, context)
+    assert result["code"] == "QUALITY_HOLLOW_TEST" and result["severity"] == "MEDIUM"
+    assert result["facts"]["protocol_observations"]["summaries"] == [selected, second]
+    result["facts"]["protocol_observations"]["summaries"][0]["status"] = "changed"
+    assert context == before
+    assert _protocol_annotate_finding in protocol_call_helpers()
+    assert protocol_call_helpers in protocol_call_helpers()
+
+
+def test_protocol_context_constructor_effect_dependency_drift_is_not_treated_as_opaque_import(
+    tmp_path,
+):
+    import hashlib
+
+    product = "from .effects import operation\nclass Base:\n    def __init__(self):\n        operation()\n        self.value = 3\n    def __repr__(self):\n        return self.value\n"
+    source = "from pkg import Base\ndef test_protocol():\n    repr(Base())\n"
+    hashes = {
+        "test_protocol.py": hashlib.sha256(source.encode()).hexdigest(),
+        "pkg/__init__.py": hashlib.sha256(product.encode()).hexdigest(),
+        "pkg/effects.py": "b" * 64,
+    }
+    summary = _protocol_source_case(
+        tmp_path,
+        source,
+        product,
+        additional={"pkg/effects.py": "def operation():\n    return 3\n"},
+        source_hashes=hashes,
+    )["summaries"][0]
+    assert summary["status"] == "UNKNOWN"
+    assert summary["unknown_reasons"] == ["SOURCE_IDENTITY_DRIFT"]
+
+
+def test_protocol_context_constructor_effect_records_consulted_helper_classes(tmp_path):
+    product = "class Helper:\n    pass\nclass Base:\n    def __init__(self):\n        Helper()\n        self.value = 3\n    def __repr__(self):\n        return self.value\n"
+    source = "from pkg import Base\ndef test_protocol():\n    repr(Base())\n"
+    summary = _protocol_source_case(tmp_path, source, product)["summaries"][0]
+    assert summary["status"] == "WEAK_PROTOCOL"
+    assert any(
+        d["role"] == "constructor_effect_class" and d["symbol"] == "Helper"
+        for d in summary["dependencies"]
+    )
+
+
+_DEMAND_PRODUCT = """class Pipeline:
+    def __init__(self):
+        self.enabled = False
+    def enable(self):
+        self.enabled = True
+    def run(self, text):
+        for item in text:
+            yield item
+def stream(text):
+    stack = Pipeline()
+    stack.enable()
+    return stack.run(text)
+def parse(text):
+    return tuple(stream(text))
+def format(text):
+    stack = Pipeline()
+    return ''.join(stack.run(text))
+"""
+
+
+@pytest.mark.parametrize("consumer", ["tuple", "list", "''.join"])
+def test_protocol_context_demand_consumed_unconsumed_twin(tmp_path, consumer):
+    source = (
+        "import pkg\n"
+        f"def test_consumed():\n    {consumer}(pkg.stream('data'))\n"
+        "def test_created():\n    pkg.stream('data')\n"
+    )
+    rows = _protocol_source_case(tmp_path, source, _DEMAND_PRODUCT)["summaries"]
+    by_test = {row["test"]: row for row in rows}
+    consumed, created = by_test["test_consumed"], by_test["test_created"]
+    assert consumed["status"] == "WEAK_PROTOCOL", consumed
+    assert created["status"] == "CREATED_ONLY", created
+    assert any(s["phase"] == "body_entered" for s in consumed["demand_chain"])
+    assert not any(s["phase"] == "body_entered" for s in created["demand_chain"])
+    assert consumed["output_checked"] is consumed["runtime_observed"] is False
+    assert consumed["item_produced"] is consumed["exhausted"] is None
+    assert consumed["conditional_on_path"] is True
+
+
+@pytest.mark.parametrize("operation", ["parse", "format"])
+def test_protocol_context_demand_source_return_and_local_receiver(tmp_path, operation):
+    source = f"import pkg as renamed\ndef test_operation():\n    renamed.{operation}('data')\n"
+    row = _protocol_source_case(tmp_path, source, _DEMAND_PRODUCT)["summaries"][0]
+    assert row["status"] == "WEAK_PROTOCOL", row
+    assert any(s["phase"] == "forces" for s in row["demand_chain"])
+    assert any(
+        s["phase"] == "body_entered" and s["symbol"] == "run"
+        for s in row["demand_chain"]
+    )
+    assert any(
+        d["role"] == "demand_allocation" and d["symbol"] == "Pipeline"
+        for d in row["dependencies"]
+    )
+
+
+@pytest.mark.parametrize(
+    "body", ["yield 3", "yield from ()", "if False:\n        yield None"]
+)
+def test_protocol_context_demand_constant_empty_keep_body_entry_separate(
+    tmp_path, body
+):
+    product = "def stream(text):\n    " + body + "\n"
+    source = "import pkg\ndef test_operation():\n    tuple(pkg.stream('data'))\n"
+    row = _protocol_source_case(tmp_path, source, product)["summaries"][0]
+    assert row["status"] == "UNKNOWN"
+    assert "CONSTANT_OR_EMPTY_GENERATOR" in row["unknown_reasons"]
+    assert any(s["phase"] == "body_entered" for s in row["demand_chain"])
+    assert row["item_produced"] is row["exhausted"] is None
+
+
+@pytest.mark.parametrize(
+    "prefix", ["tuple = lambda x: x\n", "from pkg import parse as tuple\n"]
+)
+def test_protocol_context_demand_shadowed_consumer_not_credited(tmp_path, prefix):
+    source = (
+        "import pkg\n"
+        + prefix
+        + "def test_operation():\n    tuple(pkg.stream('data'))\n"
+    )
+    rows = _protocol_source_case(tmp_path, source, _DEMAND_PRODUCT)["summaries"]
+    assert not any(r["status"] == "WEAK_PROTOCOL" for r in rows)
+
+
+@pytest.mark.parametrize(
+    "statement", ["next(pkg.stream('data'))", "pkg.stream('data')"]
+)
+def test_protocol_context_demand_partial_or_unconsumed_not_exhaustion(
+    tmp_path, statement
+):
+    source = f"import pkg\ndef test_operation():\n    {statement}\n"
+    rows = _protocol_source_case(tmp_path, source, _DEMAND_PRODUCT)["summaries"]
+    assert not any(r["status"] == "WEAK_PROTOCOL" for r in rows)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "try:\n        yield text\n    except Exception:\n        pass",
+        "try:\n        yield text\n    finally:\n        return",
+    ],
+)
+def test_protocol_context_demand_swallowed_generator_failure_unknown(tmp_path, body):
+    product = "def stream(text):\n    " + body + "\n"
+    source = "import pkg\ndef test_operation():\n    tuple(pkg.stream('data'))\n"
+    row = _protocol_source_case(tmp_path, source, product)["summaries"][0]
+    assert row["status"] == "UNKNOWN"
+    assert "GENERATOR_FAILURE_MAY_BE_SWALLOWED" in row["unknown_reasons"]
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "pkg.Pipeline.run = lambda self, text: iter(())",
+        "alias = pkg.Pipeline\n    alias.run = lambda self, text: iter(())",
+    ],
+)
+def test_protocol_context_demand_mutated_dispatch_unknown(tmp_path, mutation):
+    source = (
+        "import pkg\ndef test_operation():\n    "
+        + mutation
+        + "\n    pkg.parse('data')\n"
+    )
+    rows = _protocol_source_case(tmp_path, source, _DEMAND_PRODUCT)["summaries"]
+    assert not any(r["status"] == "WEAK_PROTOCOL" for r in rows)
+
+
+def test_protocol_context_demand_constant_compute_has_no_body_entry(tmp_path):
+    source = "import pkg\ndef test_operation():\n    pkg.compute()\n"
+    rows = _protocol_source_case(tmp_path, source, "def compute():\n    return 3\n")[
+        "summaries"
+    ]
+    assert not any(r["status"] == "WEAK_PROTOCOL" for r in rows)
+    assert not any(
+        s["phase"] == "body_entered" for r in rows for s in r["demand_chain"]
+    )
+
+
+@pytest.mark.parametrize("prefix", ["return\n    ", "if True:\n        return\n    "])
+def test_protocol_context_demand_unreachable_test_call_has_no_credit(tmp_path, prefix):
+    source = (
+        "import pkg\ndef test_operation():\n    "
+        + prefix
+        + "tuple(pkg.stream('data'))\n"
+    )
+    rows = _protocol_source_case(tmp_path, source, _DEMAND_PRODUCT)["summaries"]
+    assert not any(r["status"] == "WEAK_PROTOCOL" for r in rows)
+
+
+def test_protocol_context_demand_skipped_test_has_no_credit(tmp_path):
+    source = "import pytest\nimport pkg\n@pytest.mark.skip\ndef test_operation():\n    tuple(pkg.stream('data'))\n"
+    rows = _protocol_source_case(tmp_path, source, _DEMAND_PRODUCT)["summaries"]
+    assert not any(r["status"] == "WEAK_PROTOCOL" for r in rows)
+
+
+def test_protocol_context_demand_earlier_wrapper_return_unknown(tmp_path):
+    product = _DEMAND_PRODUCT.replace(
+        "def parse(text):\n", "def parse(text):\n    if True:\n        return ()\n"
+    )
+    rows = _protocol_source_case(
+        tmp_path, "import pkg\ndef test_operation():\n    pkg.parse('data')\n", product
+    )["summaries"]
+    assert not any(r["status"] == "WEAK_PROTOCOL" for r in rows)
+    assert not any(
+        s["phase"] == "body_entered" for r in rows for s in r["demand_chain"]
+    )
+
+
+def test_protocol_context_demand_later_receiver_allocation_not_resolved(tmp_path):
+    product = _DEMAND_PRODUCT.replace(
+        "    stack = Pipeline()\n    stack.enable()\n    return stack.run(text)",
+        "    return stack.run(text)\n    stack = Pipeline()",
+    )
+    rows = _protocol_source_case(
+        tmp_path, "import pkg\ndef test_operation():\n    pkg.parse('data')\n", product
+    )["summaries"]
+    assert not any(r["status"] == "WEAK_PROTOCOL" for r in rows)
+
+
+def test_protocol_context_demand_generator_context_suppression_unknown(tmp_path):
+    product = "import contextlib\ndef stream(text):\n    with contextlib.suppress(Exception):\n        yield text\n"
+    row = _protocol_source_case(
+        tmp_path,
+        "import pkg\ndef test_operation():\n    tuple(pkg.stream('data'))\n",
+        product,
+    )["summaries"][0]
+    assert row["status"] == "UNKNOWN"
+    assert row["unknown_reasons"] == ["GENERATOR_CONTEXT_MANAGER_UNKNOWN"]
+
+
+@pytest.mark.parametrize(
+    "effect",
+    [
+        "stack.run = lambda *_: iter(())",
+        "mutate(stack)",
+        "alias = stack\n    alias.run = replacement",
+    ],
+)
+def test_protocol_context_demand_identity_builder_effects_unknown(tmp_path, effect):
+    product = _DEMAND_PRODUCT.replace(
+        "    return ''.join(stack.run(text))",
+        "    stack = builder(stack, text)\n    return ''.join(stack.run(text))",
+    )
+    product += "\ndef builder(stack, options):\n    " + effect + "\n    return stack\n"
+    rows = _protocol_source_case(
+        tmp_path, "import pkg\ndef test_operation():\n    pkg.format('data')\n", product
+    )["summaries"]
+    assert not any(r["status"] == "WEAK_PROTOCOL" for r in rows)
+
+
+def test_protocol_context_demand_ordered_identity_builder_preserves_input(tmp_path):
+    product = _DEMAND_PRODUCT.replace(
+        "    return ''.join(stack.run(text))",
+        "    stack = renamed(stack, text)\n    return ''.join(stack.run(text))",
+    )
+    product += "\ndef renamed(receiver, options):\n    return receiver\n"
+    row = _protocol_source_case(
+        tmp_path, "import pkg\ndef test_operation():\n    pkg.format('data')\n", product
+    )["summaries"][0]
+    assert row["status"] == "WEAK_PROTOCOL", row
+    assert any(s["phase"] == "body_entered" for s in row["demand_chain"])
+
+
+@pytest.mark.parametrize("star", [False, True])
+def test_protocol_context_demand_parametrize_binding_closure_is_execution_scoped(
+    tmp_path, star
+):
+    source = (
+        "import pytest\nimport pkg\n"
+        + ("from pytest import *\n" if star else "")
+        + "def unrelated(value, name):\n    return getattr(value, name)\n"
+        + "@pytest.mark.parametrize('text', ['data'])\ndef test_operation(text):\n    tuple(pkg.stream(text))\n"
+    )
+    rows = _protocol_source_case(tmp_path, source, _DEMAND_PRODUCT)["summaries"]
+    assert any(r["status"] == "WEAK_PROTOCOL" for r in rows) is not star
+
+
+def test_protocol_context_demand_builder_preserves_checked_data_receiver(tmp_path):
+    product = _DEMAND_PRODUCT.replace(
+        "        self.enabled = False",
+        "        self.enabled = False\n        self.items = []",
+    )
+    product = product.replace(
+        "    return ''.join(stack.run(text))",
+        "    stack = builder(stack, text)\n    return ''.join(stack.run(text))",
+    )
+    product += "\ndef builder(stack, options):\n    stack.enable()\n    stack.items.append(3)\n    return stack\n"
+    row = _protocol_source_case(
+        tmp_path, "import pkg\ndef test_operation():\n    pkg.format('data')\n", product
+    )["summaries"][0]
+    assert row["status"] == "WEAK_PROTOCOL", row
+    assert any(
+        d["role"] == "receiver_effect" and d["symbol"] == "enable"
+        for d in row["dependencies"]
+    )
+
+
+@pytest.mark.parametrize("effect", ["self.run = 'constant'", "self.__class__ = 3"])
+def test_protocol_context_demand_builder_receiver_method_cannot_change_dispatch(
+    tmp_path, effect
+):
+    product = _DEMAND_PRODUCT.replace(
+        "        self.enabled = True", "        " + effect
+    )
+    product = product.replace(
+        "    return ''.join(stack.run(text))",
+        "    stack = builder(stack, text)\n    return ''.join(stack.run(text))",
+    )
+    product += "\ndef builder(stack, options):\n    stack.enable()\n    return stack\n"
+    rows = _protocol_source_case(
+        tmp_path, "import pkg\ndef test_operation():\n    pkg.format('data')\n", product
+    )["summaries"]
+    assert not any(r["status"] == "WEAK_PROTOCOL" for r in rows)
+
+
+def test_protocol_context_demand_builder_early_return_cannot_prove_identity(tmp_path):
+    product = _DEMAND_PRODUCT.replace(
+        "    return ''.join(stack.run(text))",
+        "    stack = builder(stack, text)\n    return ''.join(stack.run(text))",
+    )
+    product += "\ndef builder(stack, options):\n    if options:\n        return object()\n    return stack\n"
+    rows = _protocol_source_case(
+        tmp_path, "import pkg\ndef test_operation():\n    pkg.format('data')\n", product
+    )["summaries"]
+    assert not any(r["status"] == "WEAK_PROTOCOL" for r in rows)
+
+
+def test_protocol_context_demand_builder_append_argument_cannot_escape_receiver(
+    tmp_path,
+):
+    product = _DEMAND_PRODUCT.replace(
+        "        self.enabled = False",
+        "        self.enabled = False\n        self.items = []",
+    )
+    product = product.replace(
+        "    return ''.join(stack.run(text))",
+        "    stack = builder(stack, text)\n    return ''.join(stack.run(text))",
+    )
+    product += "\ndef builder(stack, options):\n    stack.items.append(mutate(stack))\n    return stack\n"
+    rows = _protocol_source_case(
+        tmp_path, "import pkg\ndef test_operation():\n    pkg.format('data')\n", product
+    )["summaries"]
+    assert not any(r["status"] == "WEAK_PROTOCOL" for r in rows)
+
+
+def test_protocol_context_demand_builder_duplicate_receiver_argument_unknown(tmp_path):
+    product = _DEMAND_PRODUCT.replace(
+        "    return ''.join(stack.run(text))",
+        "    stack = builder(stack, stack)\n    return ''.join(stack.run(text))",
+    )
+    product += "\ndef builder(primary, other):\n    other.run = replacement\n    return primary\n"
+    rows = _protocol_source_case(
+        tmp_path, "import pkg\ndef test_operation():\n    pkg.format('data')\n", product
+    )["summaries"]
+    assert not any(r["status"] == "WEAK_PROTOCOL" for r in rows), rows
+
+
+def test_protocol_context_demand_unconditional_raise_prevents_return_demand(tmp_path):
+    product = _DEMAND_PRODUCT.replace(
+        "def parse(text):\n", "def parse(text):\n    raise RuntimeError('stop')\n"
+    )
+    rows = _protocol_source_case(
+        tmp_path, "import pkg\ndef test_operation():\n    pkg.parse('data')\n", product
+    )["summaries"]
+    assert not any(r["status"] == "WEAK_PROTOCOL" for r in rows), rows
+
+
+def test_protocol_context_demand_wrapper_receiver_cannot_replace_selected_method(
+    tmp_path,
+):
+    product = _DEMAND_PRODUCT.replace(
+        "        self.enabled = True", "        self.run = lambda *_: iter(())"
+    )
+    rows = _protocol_source_case(
+        tmp_path, "import pkg\ndef test_operation():\n    pkg.parse('data')\n", product
+    )["summaries"]
+    assert not any(r["status"] == "WEAK_PROTOCOL" for r in rows), rows
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        "pkg.stream()",
+        "pkg.stream('data', text='other')",
+        "pkg.stream(*values)",
+        "pkg.stream(**values)",
+    ],
+)
+def test_protocol_context_demand_invalid_source_binding_never_enters_body(
+    tmp_path, call
+):
+    source = "import pkg\ndef test_operation():\n    tuple(" + call + ")\n"
+    rows = _protocol_source_case(
+        tmp_path, source, "def stream(text):\n    yield text\n"
+    )["summaries"]
+    assert not any(r["status"] == "WEAK_PROTOCOL" for r in rows), rows
+    assert not any(
+        s["phase"] == "body_entered" for r in rows for s in r["demand_chain"]
+    ), rows
+
+
+@pytest.mark.parametrize(
+    "product,call",
+    [
+        ("def stream(text='data'):\n    yield text\n", "pkg.stream()"),
+        ("def stream(*, text):\n    yield text\n", "pkg.stream(text='data')"),
+        ("def stream(text, /):\n    yield text\n", "pkg.stream('data')"),
+    ],
+)
+def test_protocol_context_demand_valid_source_binding_preserves_entry(
+    tmp_path, product, call
+):
+    source = "import pkg\ndef test_operation():\n    tuple(" + call + ")\n"
+    row = _protocol_source_case(tmp_path, source, product)["summaries"][0]
+    assert row["status"] == "WEAK_PROTOCOL", row
+    assert any(s["phase"] == "body_entered" for s in row["demand_chain"])
+
+
+@pytest.mark.parametrize("rebind", [False, True])
+def test_protocol_context_source_kwargs_identity_propagates_until_rebound(
+    tmp_path, monkeypatch, rebind
+):
+    from factoryline import review_integrity
+
+    actual = review_integrity.bind_source_call
+    seen = []
+
+    def capture(call, function, *args, **kwargs):
+        bound = actual(call, function, *args, **kwargs)
+        if function.name == "stream":
+            seen.append(bound["options"])
+        return bound
+
+    monkeypatch.setattr(review_integrity, "bind_source_call", capture)
+    product = (
+        "def stream(options):\n    yield options\ndef format(**options):\n    "
+        + ("options = replacement\n    " if rebind else "")
+        + "return tuple(stream(options))\n"
+    )
+    rows = _protocol_source_case(
+        tmp_path,
+        "import pkg\ndef test_operation():\n    pkg.format(enabled=True)\n",
+        product,
+    )["summaries"]
+    assert rows and seen
+    assert (type(seen[0]) is dict) is not rebind
+    if not rebind:
+        assert seen[0]["enabled"].value is True
+
+
+@pytest.mark.parametrize(
+    "signature,returned,arguments,expected",
+    [
+        ("prefix, /, result", "result", "stack, None", False),
+        ("primary, /, secondary", "primary", "stack, None", True),
+        ("primary, /", "primary", "stack", True),
+    ],
+)
+def test_protocol_context_identity_return_tracks_actual_positional_parameter(
+    tmp_path, signature, returned, arguments, expected
+):
+    product = _DEMAND_PRODUCT.replace(
+        "    return ''.join(stack.run(text))",
+        "    stack = builder(" + arguments + ")\n    return ''.join(stack.run(text))",
+    )
+    product += "\ndef builder(" + signature + "):\n    return " + returned + "\n"
+    rows = _protocol_source_case(
+        tmp_path, "import pkg\ndef test_operation():\n    pkg.format('data')\n", product
+    )["summaries"]
+    assert any(row["status"] == "WEAK_PROTOCOL" for row in rows) is expected, rows
+
+
+@pytest.mark.parametrize(
+    ("body", "severity"),
+    [
+        (
+            "def test_pickle(self):\n"
+            "    objects = select(s for s in Student if s.scholarship > 0).order_by(\n"
+            "        desc(Student.id)\n"
+            "    )\n"
+            "    data = pickle.dumps(objects)\n"
+            "    rollback()\n"
+            "    objects = pickle.loads(data)\n"
+            "    self.assertTrue(objects)\n",
+            "INFO",
+        ),
+        (
+            "def test_pickle():\n"
+            "    packet = {'value': 4}\n"
+            "    serialized = pickle.dumps(packet)\n"
+            "    packet = pickle.loads(serialized)\n"
+            "    assert packet\n",
+            "INFO",
+        ),
+        (
+            "def test_pickle():\n"
+            "    protocol = 4\n"
+            "    packet = {'value': 4}\n"
+            "    serialized = pickle.dumps(packet, protocol=protocol)\n"
+            "    restored = pickle.loads(serialized)\n"
+            "    assert restored == packet\n",
+            "INFO",
+        ),
+        (
+            "def test_pickle():\n"
+            "    objects = []\n"
+            "    data = pickle.dumps(objects)\n"
+            "    objects.append('later generation')\n"
+            "    restored = pickle.loads(data)\n"
+            "    assert restored == []\n",
+            "INFO",
+        ),
+        (
+            "def test_pickle():\n"
+            "    objects = []\n"
+            "    publish(objects)\n"
+            "    data = pickle.dumps(objects)\n"
+            "    restored = pickle.loads(data)\n"
+            "    assert restored\n",
+            "HIGH",
+        ),
+        (
+            "def test_pickle():\n"
+            "    objects = []\n"
+            "    alias = objects\n"
+            "    data = pickle.dumps(objects)\n"
+            "    restored = pickle.loads(data)\n"
+            "    assert restored\n",
+            "HIGH",
+        ),
+        (
+            "def test_pickle():\n"
+            "    objects = []\n"
+            "    objects.clear()\n"
+            "    data = pickle.dumps(objects)\n"
+            "    restored = pickle.loads(data)\n"
+            "    assert restored\n",
+            "HIGH",
+        ),
+        (
+            "def test_pickle():\n"
+            "    objects = []\n"
+            "    def later():\n"
+            "        return objects\n"
+            "    data = pickle.dumps(objects)\n"
+            "    restored = pickle.loads(data)\n"
+            "    assert restored\n",
+            "HIGH",
+        ),
+        (
+            "def test_pickle():\n"
+            "    objects = []\n"
+            "    def later(value=objects):\n"
+            "        return value\n"
+            "    data = pickle.dumps(objects)\n"
+            "    restored = pickle.loads(data)\n"
+            "    assert restored\n",
+            "HIGH",
+        ),
+        (
+            "def test_pickle():\n"
+            "    objects = []\n"
+            "    callback = lambda: objects\n"
+            "    data = pickle.dumps(objects)\n"
+            "    restored = pickle.loads(data)\n"
+            "    assert restored\n",
+            "HIGH",
+        ),
+        (
+            "def test_pickle():\n"
+            "    objects = []\n"
+            "    def unrelated():\n"
+            "        objects = ['local to nested function']\n"
+            "        return objects\n"
+            "    data = pickle.dumps(objects)\n"
+            "    restored = pickle.loads(data)\n"
+            "    assert restored == []\n",
+            "INFO",
+        ),
+        (
+            "def test_pickle():\n"
+            "    objects = []\n"
+            "    objects = make_objects()\n"
+            "    data = pickle.dumps(objects)\n"
+            "    restored = pickle.loads(data)\n"
+            "    assert restored\n",
+            "HIGH",
+        ),
+        (
+            "def test_pickle():\n"
+            "    objects = []\n"
+            "    data = pickle.dumps(objects, protocol=choose_protocol())\n"
+            "    restored = pickle.loads(data)\n"
+            "    assert restored == objects\n",
+            "HIGH",
+        ),
+    ],
+    ids=[
+        "post-dump-rebinding",
+        "name-independent-generation",
+        "known-protocol-option",
+        "post-dump-object-mutation",
+        "opaque-escape-before-dump",
+        "alias-before-dump",
+        "mutation-before-dump",
+        "closure-capture-before-dump",
+        "definition-header-capture-before-dump",
+        "lambda-capture-before-dump",
+        "nested-function-local-write",
+        "rebound-before-dump",
+        "side-effecting-protocol-option",
+    ],
+)
+def test_security_scan_tracks_pickle_value_generation_at_dump(tmp_path, body, severity):
+    from factoryline.review_audits import security_scan
+
+    (tmp_path / "test_pickle.py").write_text("import pickle\n" + body, encoding="utf-8")
+    findings = [
+        finding
+        for finding in security_scan(tmp_path, cache_enabled=False)["findings"]
+        if finding["code"] == "SECURITY_UNSAFE_DESERIALIZATION"
+    ]
+    assert len(findings) == 1
+    assert findings[0]["severity"] == severity
+    if severity == "INFO":
+        assert findings[0]["facts"]["input_provenance"] == "direct_local_serialization"
+
+
+@pytest.mark.parametrize(
+    "prefix,setup,option,severity",
+    [
+        ("def test_roundtrip(protocol):\n", "", "protocol", "HIGH"),
+        ("def test_roundtrip():\n", "    protocol = 4\n", "protocol", "INFO"),
+        ("def test_roundtrip():\n", "    protocol = -1\n", "protocol", "INFO"),
+        ("def test_roundtrip():\n", "    protocol = True\n", "protocol", "HIGH"),
+        ("def test_roundtrip():\n", "    protocol = 'invalid'\n", "protocol", "HIGH"),
+        ("def test_roundtrip():\n", "    protocol = Protocol()\n", "protocol", "HIGH"),
+        (
+            "def test_roundtrip():\n",
+            "    protocol = 4\n    protocol = supplied\n",
+            "protocol",
+            "HIGH",
+        ),
+        (
+            "def test_roundtrip():\n",
+            "    global protocol\n    protocol = 4\n",
+            "protocol",
+            "HIGH",
+        ),
+        ("def test_roundtrip():\n", "", "4", "INFO"),
+        ("def test_roundtrip():\n", "", "choose_protocol()", "HIGH"),
+        (
+            "@pytest.mark.parametrize('protocol', [3, 4])\ndef test_roundtrip(protocol):\n",
+            "",
+            "protocol",
+            "INFO",
+        ),
+        (
+            "@pytest.mark.parametrize('protocol', [3, supplied])\ndef test_roundtrip(protocol):\n",
+            "",
+            "protocol",
+            "HIGH",
+        ),
+        (
+            "@pytest.mark.parametrize('protocol', [3, 4], indirect=True)\ndef test_roundtrip(protocol):\n",
+            "",
+            "protocol",
+            "HIGH",
+        ),
+        (
+            "pytest.mark.parametrize = replacement\n@pytest.mark.parametrize('protocol', [3, 4])\ndef test_roundtrip(protocol):\n",
+            "",
+            "protocol",
+            "HIGH",
+        ),
+    ],
+)
+def test_pickle_protocol_requires_closed_integer_domain(
+    tmp_path, prefix, setup, option, severity
+):
+    from factoryline.review_audits import security_scan
+
+    source = (
+        "import pickle\nimport pytest\n"
+        + prefix
+        + setup
+        + "    local = {'value': 1}\n"
+        + f"    data = pickle.dumps(local, protocol={option})\n"
+        + "    restored = pickle.loads(data)\n    assert restored == local\n"
+    )
+    (tmp_path / "test_protocol.py").write_text(source, encoding="utf-8")
+    findings = security_scan(tmp_path, cache_enabled=False)["findings"]
+    unsafe = [
+        item for item in findings if item["code"] == "SECURITY_UNSAFE_DESERIALIZATION"
+    ]
+    assert len(unsafe) == 1
+    assert unsafe[0]["severity"] == severity
+
+
+@pytest.mark.parametrize(
+    "reuse",
+    [
+        "def test_reentry():\n    test_roundtrip(Protocol())\n",
+        "alias = test_roundtrip\ndef test_reentry():\n    alias(Protocol())\n",
+        "registered = [test_roundtrip]\n",
+        "def test_reentry():\n    globals()['test_roundtrip'](Protocol())\n",
+        "def test_roundtrip(protocol):\n    pass\n",
+        "def test_reentry():\n    module.test_roundtrip(Protocol())\n",
+        "def test_reentry():\n    name = 'test_' + 'roundtrip'\n    globals()[name](Protocol())\n",
+        "def test_reentry():\n    for name, fn in list(globals().items()):\n        if name.startswith('test_round'):\n            fn(Protocol())\n",
+        "namespace = globals\ndef test_reentry():\n    namespace()['test_' + 'roundtrip'](Protocol())\n",
+    ],
+)
+def test_pickle_protocol_parametrize_does_not_close_reused_function(tmp_path, reuse):
+    from factoryline.review_audits import security_scan
+
+    source = (
+        "import pickle\nimport pytest\n"
+        "class Protocol:\n    def __index__(self):\n        return get_protocol()\n"
+        "@pytest.mark.parametrize('protocol', [3, 4])\n"
+        "def test_roundtrip(protocol):\n"
+        "    local = {'value': 1}\n"
+        "    data = pickle.dumps(local, protocol=protocol)\n"
+        "    restored = pickle.loads(data)\n    assert restored == local\n" + reuse
+    )
+    (tmp_path / "test_protocol.py").write_text(source, encoding="utf-8")
+    findings = security_scan(tmp_path, cache_enabled=False)["findings"]
+    unsafe = [
+        item for item in findings if item["code"] == "SECURITY_UNSAFE_DESERIALIZATION"
+    ]
+    assert len(unsafe) == 1
+    assert unsafe[0]["severity"] == "HIGH"
+    assert "input_provenance" not in unsafe[0]["facts"]
+
+
+def test_pickle_protocol_function_name_as_data_is_not_a_callable_escape(tmp_path):
+    from factoryline.review_audits import security_scan
+
+    source = (
+        "import pickle\nimport pytest\n"
+        "@pytest.mark.parametrize('protocol', [3, 4])\n"
+        "def test_roundtrip(protocol):\n"
+        "    local = {'label': 'test_roundtrip'}\n"
+        "    data = pickle.dumps(local, protocol=protocol)\n"
+        "    restored = pickle.loads(data)\n    assert restored == local\n"
+    )
+    (tmp_path / "test_protocol.py").write_text(source, encoding="utf-8")
+    findings = security_scan(tmp_path, cache_enabled=False)["findings"]
+    unsafe = [
+        item for item in findings if item["code"] == "SECURITY_UNSAFE_DESERIALIZATION"
+    ]
+    assert len(unsafe) == 1
+    assert unsafe[0]["severity"] == "INFO"
+    assert unsafe[0]["facts"]["input_provenance"] == "direct_local_serialization"
+
+
+def test_pickle_colocation_uses_current_exact_byte_occurrence_guard(
+    tmp_path, monkeypatch
+):
+    from factoryline import context_efficiency as context
+    from factoryline.review_audits import security_scan
+
+    (tmp_path / "test_roundtrip.py").write_text(
+        "import pickle\ndef test_roundtrip():\n    value = []\n"
+        "    data = pickle.dumps(value)\n    restored = pickle.loads(data)\n"
+        "    assert restored == []\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(context, "_capability_uses_match", lambda *_args: False)
+    findings = security_scan(tmp_path, cache_enabled=False)["findings"]
+    assert any(
+        item["code"] == "SECURITY_UNSAFE_DESERIALIZATION" and item["severity"] == "HIGH"
+        for item in findings
+    )
+
+
+def test_provider_colocation_uses_current_captured_import_closure(
+    monkeypatch, tmp_path
+):
+    from factoryline import context_efficiency as context
+    from factoryline import type_intent_provider_provenance as provider
+
+    context_packet = {}
+    calls = []
+
+    def unresolved(*args):
+        calls.append(args)
+        return [], False
+
+    monkeypatch.setattr(context, "captured_local_import_closure", unresolved)
+    context.bind_provider_context(
+        context_packet, tmp_path, tmp_path / "test_sample.py", {}, {}, {}, None
+    )
+    assert len(calls) == 1
+    assert context_packet["provider_source_closure_complete"] is False
+    assert context.bind_provider_context is provider.bind_provider_context
+    assert provider.bind_provider_context in provider.CACHE_HELPERS
+
+
+def test_pickle_colocation_helpers_participate_in_runtime_proof_identity():
+    from factoryline import context_efficiency as context
+    from factoryline import runtime_audit_integrity as runtime
+
+    helpers = set(runtime.workspace_builtin_helpers())
+    expected = {
+        value
+        for name, value in vars(runtime).items()
+        if (
+            name.startswith("_pickle_")
+            or name.startswith("_local_pickle")
+            or name
+            in {
+                "_test_serialization_roundtrip",
+                "_plain_scope_statement_index",
+                "_simple_scope_assignment",
+                "_prior_pickle_dump",
+                "_single_local_pickle_bytes_flow",
+            }
+        )
+        and callable(value)
+    }
+    assert expected <= helpers
+    assert (
+        context._test_serialization_roundtrip is runtime._test_serialization_roundtrip
+    )
+
+
+@pytest.mark.parametrize("provider", ["builtins", "contextlib"])
+def test_absent_oracle_provider_does_not_walk_descendants(monkeypatch, provider):
+    import ast
+    from factoryline import test_oracle_misuse as misuse
+
+    module = ast.parse(
+        "import json\ndef test_value():\n    value = 1\n    assert value == value\n"
+    )
+    test = module.body[1]
+
+    def forbidden_walk(_):
+        raise AssertionError("absent provider must not walk module descendants")
+
+    monkeypatch.setattr(misuse, "_stored_names", forbidden_walk)
+    assert misuse._module_provider_aliases(module, test, provider, {"ValueError"}) == {}
+    assert (
+        misuse._imported_provider_names_closed(module, test, provider, {"ValueError"})
+        is True
+    )
+
+
+@pytest.mark.parametrize(
+    "provider,symbol", [("builtins", "ValueError"), ("contextlib", "suppress")]
+)
+@pytest.mark.parametrize("form", ["module", "from"])
+def test_present_oracle_provider_still_checks_all_references(provider, symbol, form):
+    import ast
+    from factoryline import test_oracle_misuse as misuse
+
+    declaration = (
+        f"import {provider} as p"
+        if form == "module"
+        else f"from {provider} import {symbol} as operation"
+    )
+    call = f"p.{symbol}()" if form == "module" else "operation()"
+    clean = ast.parse(f"{declaration}\ndef test_value():\n    {call}\n")
+    escaped = ast.parse(
+        f"{declaration}\nleaked = {('p' if form == 'module' else 'operation')}\ndef test_value():\n    {call}\n"
+    )
+    if form == "module":
+        assert misuse._module_provider_aliases(
+            clean, clean.body[-1], provider, {symbol}
+        ) == {"p": provider}
+        assert (
+            misuse._module_provider_aliases(
+                escaped, escaped.body[-1], provider, {symbol}
+            )
+            is None
+        )
+    else:
+        assert (
+            misuse._imported_provider_names_closed(
+                clean, clean.body[-1], provider, {symbol}
+            )
+            is True
+        )
+        assert (
+            misuse._imported_provider_names_closed(
+                escaped, escaped.body[-1], provider, {symbol}
+            )
+            is False
+        )
+
+
+@pytest.mark.parametrize("provider", ["builtins", "contextlib"])
+def test_dotted_oracle_provider_does_not_take_absent_fast_path(provider):
+    import ast
+    from factoryline import test_oracle_misuse as misuse
+
+    module = ast.parse(f"import {provider}.extension\ndef test_value():\n    pass\n")
+    assert (
+        misuse._module_provider_aliases(module, module.body[-1], provider, set())
+        is None
+    )
+
+
+@pytest.mark.parametrize("provider", ["builtins", "contextlib"])
+def test_wildcard_oracle_provider_does_not_take_absent_fast_path(provider):
+    import ast
+    from factoryline import test_oracle_misuse as misuse
+
+    module = ast.parse(f"from {provider} import *\ndef test_value():\n    pass\n")
+    assert (
+        misuse._imported_provider_names_closed(module, module.body[-1], provider, set())
+        is False
+    )
+
+
+def test_absent_inert_module_helper_does_not_build_reference_maps(monkeypatch):
+    import ast
+    from factoryline import test_oracle_misuse as misuse
+
+    module = ast.parse(
+        "def helper():\n    return opaque()\ndef test_value():\n    helper()\n"
+    )
+
+    def forbidden_bindings(_):
+        raise AssertionError("no stub candidate needs module reference maps")
+
+    monkeypatch.setattr(misuse, "_module_bindings", forbidden_bindings)
+    assert misuse._module_pass_helpers(module, set(), module.body[-1]) == {}
+
+
+@pytest.mark.parametrize(
+    "body", ["pass", "...", "return", "return None", '"docstring"']
+)
+def test_present_inert_module_helper_retains_reference_validation(body):
+    import ast
+    from factoryline import test_oracle_misuse as misuse
+
+    clean = ast.parse(f"def helper():\n    {body}\ndef test_value():\n    helper()\n")
+    leaked = ast.parse(
+        f"def helper():\n    {body}\nleaked = helper\ndef test_value():\n    helper()\n"
+    )
+    assert misuse._module_pass_helpers(clean, set(), clean.body[-1]) == {
+        "helper": clean.body[0]
+    }
+    assert misuse._module_pass_helpers(leaked, {"leaked"}, leaked.body[-1]) == {}
+
+
+def test_protocol_context_uses_invocation_resolver_with_standalone_fallback(
+    tmp_path, monkeypatch
+):
+    import ast
+    import hashlib
+    from factoryline import review_audits as scanner
+    from factoryline.context_efficiency import (
+        captured_import_resolver,
+        protocol_call_context,
+    )
+
+    source = tmp_path / "test_case.py"
+    source.write_text("def test_case():\n    pass\n")
+    tree = ast.parse(source.read_text())
+    tree._oracle_source_sha256 = hashlib.sha256(source.read_bytes()).hexdigest()
+    snapshots = {source: tree}
+    eligible = {source.resolve(): source}
+    calls = []
+    original = scanner._oracle_imports
+
+    def observed(*args):
+        calls.append(args[1])
+        return original(*args)
+
+    monkeypatch.setattr(scanner, "_oracle_imports", observed)
+    resolver = captured_import_resolver(tmp_path, snapshots, eligible, observed)
+    assert calls == [source]
+    captured = protocol_call_context(
+        tmp_path, [source], snapshots, import_resolver=resolver, eligible=eligible
+    )
+    assert calls == [source]
+    assert protocol_call_context(tmp_path, [source], snapshots) == captured
+    assert calls == [source, source]
+    with pytest.raises(ValueError, match="outside its captured generation"):
+        resolver(tmp_path, source, ast.parse(source.read_text()), eligible)
+
+
+def test_full_repository_accounts_461_sources_and_preserves_cross_batch_risk(
+    tmp_path, monkeypatch
+):
+    from factoryline import context_efficiency as engine
+    from factoryline.deep_audit_io import digest, full_repository_scan
+
+    (tmp_path / "a_risk.py").write_text('API_KEY = "risk-literal"\n', encoding="utf-8")
+    for index in range(459):
+        (tmp_path / f"m{index:03}.py").write_text(
+            f"VALUE_{index} = {index}\n", encoding="utf-8"
+        )
+    (tmp_path / "z_consumer.py").write_text("print(API_KEY)\n", encoding="utf-8")
+    original = engine._scan_security_source
+    contexts = []
+
+    def observe(*args, **kwargs):
+        contexts.append(args[4] if len(args) > 4 else kwargs.get("oracle_context"))
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(engine, "_scan_security_source", observe)
+    first = full_repository_scan(tmp_path)
+    assert first["batch"]["primary_results"] == 460
+    assert first["pending_count"] == 1
+    assert first["source_accounting_state"] == "PENDING"
+    assert first["audit_coverage"]["audit_rate"] < 1
+    final = full_repository_scan(tmp_path, resume=True)
+    paths = [item["path"] for item in final["primary_results"]]
+    assert len(paths) == len(set(paths)) == 461
+    assert len(final["inventory"]) == 461
+    assert digest(final["inventory"]) == final["inventory_sha256"]
+    assert final["pending_count"] == 0
+    assert final["files_audited"] == 461
+    assert final["audit_coverage"]["audit_rate"] == 1
+    assert final["batch"]["primary_results"] == 1
+    assert final["batch"]["checkpoint_cache_hit"] is True
+    assert final["batch"]["checkpoint_revalidated"] == 0
+    assert final["semantic_coverage"] == "INCOMPLETE"
+    assert final["global_consumer_closure_verified"] is False
+    assert final["target_execution"] is False
+    assert all(context is None for context in contexts)
+    risk = [
+        finding
+        for row in final["primary_results"]
+        for finding in row["findings"]
+        if finding["code"] == "SECURITY_HARDCODED_SECRET"
+    ]
+    assert risk and risk[0]["severity"] == "CRITICAL"
+    repeat = full_repository_scan(tmp_path, resume=True)
+    assert repeat["batch"]["primary_results"] == 0
+    assert repeat["scan_sha256"] == final["scan_sha256"]
+
+
+def test_full_repository_syntax_error_is_accounted_but_not_audited(tmp_path):
+    from factoryline.deep_audit_io import full_repository_scan
+
+    (tmp_path / "valid.py").write_text("VALUE = 1\n", encoding="utf-8")
+    (tmp_path / "z_invalid.py").write_text("def broken(:\n", encoding="utf-8")
+    result = full_repository_scan(tmp_path)
+    assert result["files_discovered"] == 2
+    assert result["files_audited"] == 1
+    assert result["syntax_errors"] == 1
+    assert result["audit_coverage"]["audit_rate"] == 0.5
+    assert result["audit_coverage"]["complete"] is False
+    assert result["semantic_coverage"] == "INCOMPLETE"
+
+
+@pytest.mark.parametrize("invalid_source", [False, True])
+def test_full_repository_workspace_profile_verifies_native_inputs(
+    tmp_path, invalid_source
+):
+    from factoryline.deep_audit_io import full_repository_scan
+
+    (tmp_path / "build.py").write_text(
+        "import os\nos.system('upx --best px')\n", encoding="utf-8"
+    )
+    (tmp_path / "unsafe.py").write_text(
+        "import os\nos.system(input())\n", encoding="utf-8"
+    )
+    if invalid_source:
+        (tmp_path / "invalid.py").write_text("def broken(:\n", encoding="utf-8")
+    result = full_repository_scan(tmp_path, context_profile="workspace-v2")
+    assert result["context_profile"] == "workspace-v2"
+    assert result["semantic_coverage"] == "INCOMPLETE"
+    assert result["global_consumer_closure_verified"] is False
+    assert result["target_execution"] is False
+    evidence = result["workspace_evidence"]
+    assert evidence["audit_coverage"]["complete"] is (not invalid_source)
+    assert any(
+        row["path"] == "unsafe.py" and row["severity"] == "HIGH"
+        for row in evidence["findings"]
+        if row["code"].startswith("SECURITY_")
+    )
+    observations = evidence["primitive_observations"]
+    if invalid_source:
+        assert result["syntax_errors"] == 1
+        assert observations == []
+        assert any(
+            row["path"] == "build.py" and row["severity"] == "HIGH"
+            for row in evidence["findings"]
+        )
+    else:
+        assert any(row["path"] == "build.py" for row in observations)
+
+
+def test_workspace_context_avoids_test_oracle_pipeline(tmp_path, monkeypatch):
+    from factoryline import review_audits as audit
+    from factoryline import test_oracle_misuse as oracle
+    from factoryline.deep_audit_io import full_repository_scan
+
+    def reject_unrelated_pipeline(*args, **kwargs):
+        raise AssertionError("security context invoked unrelated test-oracle work")
+
+    monkeypatch.setattr(audit, "_project_oracle_context", reject_unrelated_pipeline)
+    monkeypatch.setattr(
+        oracle, "source_callback_snapshot_context", reject_unrelated_pipeline
+    )
+    monkeypatch.setattr(
+        oracle, "source_callback_snapshot_state", reject_unrelated_pipeline
+    )
+    (tmp_path / "build.py").write_text(
+        "import os\nos.system('upx --best px')\n", encoding="utf-8"
+    )
+    (tmp_path / "unsafe.py").write_text(
+        "import os\nos.system(input())\n", encoding="utf-8"
+    )
+    result = full_repository_scan(tmp_path, context_profile="workspace-v2")
+    evidence = result["workspace_evidence"]
+    assert evidence["audit_coverage"]["complete"] is True
+    assert any(row["path"] == "build.py" for row in evidence["primitive_observations"])
+    assert any(
+        row["path"] == "unsafe.py" and row["severity"] == "HIGH"
+        for row in evidence["findings"]
+        if row["code"].startswith("SECURITY_")
+    )
+    assert result["global_consumer_closure_verified"] is False
+
+
+@pytest.mark.parametrize("partition_failure", [False, True])
+def test_workspace_reconciliation_bounds_and_atomic_partition(
+    tmp_path, monkeypatch, partition_failure
+):
+    from factoryline import review_audits as audit
+    from factoryline.deep_audit_io import full_repository_scan
+
+    for index in range(459):
+        (tmp_path / f"empty_{index:03}.py").write_text("pass\n", encoding="utf-8")
+    (tmp_path / "build.py").write_text(
+        "import os\nos.system('upx --best px')\n", encoding="utf-8"
+    )
+    (tmp_path / "unsafe.py").write_text(
+        "import os\nos.system(input())\n", encoding="utf-8"
+    )
+    if partition_failure:
+        original = audit._security_scan_report
+        calls = []
+
+        def reject_second_group(*args, **kwargs):
+            calls.append(1)
+            if len(calls) == 2:
+                raise ValueError("synthetic independent binder failure")
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(audit, "_security_scan_report", reject_second_group)
+    # Install the stable failing binder before capture; replacing it between
+    # batches is scanner drift, a separate negative control.
+    first = full_repository_scan(tmp_path, context_profile="workspace-v2")
+    assert first["workspace_evidence"]["primitive_observations"] == []
+    assert first["workspace_evidence"]["primitive_partition"]["state"] == "INCOMPLETE"
+    assert any(
+        row["path"] == "build.py" and row["severity"] == "HIGH"
+        for row in first["workspace_evidence"]["findings"]
+    )
+    assert (
+        first["workspace_evidence"]["primary_processing"]["consume_rows_completed"]
+        == 460
+    )
+    resumed = full_repository_scan(
+        tmp_path, resume=True, context_profile="workspace-v2"
+    )
+    evidence = resumed["workspace_evidence"]
+    processing = evidence["primary_processing"]
+    assert processing["checkpoint_rows_recomputed_and_matched"] == 0
+    assert processing["checkpoint_rows_reused_verified"] == 460
+    assert processing["new_primary_rows_assessed"] == 1
+    assert processing["consume_call_limit"] == 460
+    assert processing["consume_calls"] == 1
+    assert processing["consume_rows_completed"] == 1
+    assert evidence["audit_coverage"]["complete"] is True
+    assert resumed["global_consumer_closure_verified"] is False
+    if partition_failure:
+        assert evidence["primitive_partition"] == {
+            "state": "ERROR",
+            "error_code": "ValueError",
+        }
+        assert evidence["primitive_observations"] == []
+        assert any(
+            row["path"] == "build.py" and row["severity"] == "HIGH"
+            for row in evidence["findings"]
+        )
+    else:
+        assert evidence["primitive_partition"]["state"] == "VALIDATED"
+        assert any(
+            row["path"] == "build.py" for row in evidence["primitive_observations"]
+        )
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        "untrusted",
+        "tamper",
+        "source",
+        "configuration",
+        "copied_root",
+        "helper",
+        "snapshot_helper",
+        "fingerprint_helper",
+        "snapshot_code",
+        "fingerprint_code",
+    ],
+)
+def test_workspace_checkpoint_revalidates_or_rejects_changed_authority(
+    tmp_path, monkeypatch, change
+):
+    import shutil
+
+    from factoryline import deep_audit_io as engine
+    from factoryline import runtime_audit_integrity as runtime
+
+    root = tmp_path / "original"
+    root.mkdir()
+    source = root / "build.py"
+    source.write_text("import os\nos.system('upx --best px')\n", encoding="utf-8")
+    (root / "unsafe.py").write_text("import os\nos.system(input())\n", encoding="utf-8")
+    first = engine.full_repository_scan(root, context_profile="workspace-v2")
+    assert first["workspace_evidence"]["primitive_partition"]["state"] == "VALIDATED"
+    checkpoint_path = root / (
+        ".factory/deep-runs/f2110000000000000000000000000002/checkpoint.json"
+    )
+    expected_error = "SOURCE_DRIFT"
+    if change == "untrusted":
+        monkeypatch.setattr(engine, "_FULL_REPOSITORY_TRUSTED_CHECKPOINT", None)
+        result = engine.full_repository_scan(
+            root, resume=True, context_profile="workspace-v2"
+        )
+        evidence = result["workspace_evidence"]
+        assert (
+            evidence["primary_processing"]["checkpoint_rows_recomputed_and_matched"]
+            == 2
+        )
+        assert evidence["findings"] == first["workspace_evidence"]["findings"]
+        assert (
+            evidence["primitive_observations"]
+            == first["workspace_evidence"]["primitive_observations"]
+        )
+        assert result["global_consumer_closure_verified"] is False
+        return
+    if change == "tamper":
+        checkpoint = json.loads(checkpoint_path.read_text(encoding="utf-8"))
+        checkpoint["primary_results"][0]["findings"].append(
+            {"code": "FORGED", "severity": "LOW"}
+        )
+        checkpoint["result_digest"] = engine.digest(checkpoint["primary_results"])
+        checkpoint["sha256"] = engine.digest(
+            {key: value for key, value in checkpoint.items() if key != "sha256"}
+        )
+        checkpoint_path.write_bytes(engine.canonical_bytes(checkpoint))
+        expected_error = "INVALID_CHECKPOINT"
+    elif change == "source":
+        source.write_text("import os\nos.system(input())\n", encoding="utf-8")
+    elif change == "configuration":
+        (root / "pyproject.toml").write_text(
+            "[project]\nname='changed'\n", encoding="utf-8"
+        )
+    elif change == "copied_root":
+        root = shutil.copytree(root, tmp_path / "copied")
+    elif change in {
+        "snapshot_helper",
+        "fingerprint_helper",
+        "snapshot_code",
+        "fingerprint_code",
+    }:
+        from factoryline import review_audits as audit
+
+        owner = audit.contracts if change.startswith("snapshot") else audit
+        name = (
+            "bound_snapshots"
+            if change.startswith("snapshot")
+            else "_oracle_tree_fingerprint"
+        )
+        original_hook = getattr(owner, name)
+
+        def replaced_hook(*args, **kwargs):
+            return original_hook(*args, **kwargs)
+
+        if change.endswith("_code"):
+            monkeypatch.setattr(
+                original_hook,
+                "__code__",
+                original_hook.__code__.replace(co_filename="changed-native-helper.py"),
+            )
+        else:
+            monkeypatch.setattr(owner, name, replaced_hook)
+        expected_error = "SCANNER_DRIFT"
+    else:
+        original = runtime._full_repository_workspace_partition
+
+        def replaced(*args, **kwargs):
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(runtime, "_full_repository_workspace_partition", replaced)
+        expected_error = "SCANNER_DRIFT"
+    with pytest.raises(engine.RuntimeAuditError, match=expected_error):
+        engine.full_repository_scan(root, resume=True, context_profile="workspace-v2")
+
+
+def test_workspace_resume_does_not_trust_mutated_returned_report(tmp_path):
+    from factoryline.deep_audit_io import full_repository_scan
+
+    (tmp_path / "build.py").write_text(
+        "import os\nos.system('upx --best px')\n", encoding="utf-8"
+    )
+    (tmp_path / "unsafe.py").write_text(
+        "import os\nos.system(input())\n", encoding="utf-8"
+    )
+    first = full_repository_scan(tmp_path, context_profile="workspace-v2")
+    for primary in first["primary_results"]:
+        primary["findings"].clear()
+    first["workspace_evidence"]["findings"].clear()
+    first["workspace_evidence"]["raw_findings"].clear()
+    first["workspace_evidence"]["primitive_observations"].clear()
+    resumed = full_repository_scan(
+        tmp_path, resume=True, context_profile="workspace-v2"
+    )
+    evidence = resumed["workspace_evidence"]
+    assert evidence["primitive_partition"]["state"] == "VALIDATED"
+    assert any(
+        row["path"] == "unsafe.py" and row["severity"] == "HIGH"
+        for row in evidence["findings"]
+    )
+    assert any(row["path"] == "build.py" for row in evidence["primitive_observations"])
+    assert resumed["global_consumer_closure_verified"] is False
+
+
+def test_workspace_scan_hash_excludes_verified_reuse_telemetry(tmp_path, monkeypatch):
+    from factoryline import deep_audit_io as engine
+
+    (tmp_path / "build.py").write_text(
+        "import os\nos.system('upx --best px')\n", encoding="utf-8"
+    )
+    (tmp_path / "unsafe.py").write_text(
+        "import os\nos.system(input())\n", encoding="utf-8"
+    )
+    first = engine.full_repository_scan(tmp_path, context_profile="workspace-v2")
+    resumed = engine.full_repository_scan(
+        tmp_path, resume=True, context_profile="workspace-v2"
+    )
+    assert (
+        resumed["workspace_evidence"]["primary_processing"][
+            "checkpoint_rows_reused_verified"
+        ]
+        == 2
+    )
+    assert resumed["scan_sha256"] == first["scan_sha256"]
+    assert (
+        resumed["workspace_evidence"]["findings"]
+        == first["workspace_evidence"]["findings"]
+    )
+    monkeypatch.setattr(engine, "_FULL_REPOSITORY_TRUSTED_CHECKPOINT", None)
+    revalidated = engine.full_repository_scan(
+        tmp_path, resume=True, context_profile="workspace-v2"
+    )
+    assert (
+        revalidated["workspace_evidence"]["primary_processing"][
+            "checkpoint_rows_recomputed_and_matched"
+        ]
+        == 2
+    )
+    assert revalidated["scan_sha256"] == first["scan_sha256"]
+    assert (
+        revalidated["workspace_evidence"]["primitive_observations"]
+        == first["workspace_evidence"]["primitive_observations"]
+    )
+
+
+def test_workspace_reuses_raw_prefix_without_promoting_syntax_gaps(tmp_path):
+    from factoryline.deep_audit_io import full_repository_scan
+
+    for index in range(459):
+        (tmp_path / f"empty_{index:03}.py").write_text("pass\n", encoding="utf-8")
+    (tmp_path / "a_invalid.py").write_text("def broken(:\n", encoding="utf-8")
+    (tmp_path / "z_unsafe.py").write_text(
+        "import os\nos.system(input())\n", encoding="utf-8"
+    )
+    first = full_repository_scan(tmp_path, context_profile="workspace-v2")
+    assert first["pending_count"] == 1
+    assert first["syntax_errors"] == 1
+    resumed = full_repository_scan(
+        tmp_path, resume=True, context_profile="workspace-v2"
+    )
+    evidence = resumed["workspace_evidence"]
+    assert evidence["primary_processing"]["checkpoint_rows_reused_verified"] == 460
+    assert evidence["primary_processing"]["checkpoint_rows_recomputed_and_matched"] == 0
+    assert evidence["primary_processing"]["consume_rows_attempted"] == 1
+    assert resumed["files_audited"] == 460
+    assert resumed["syntax_errors"] == 1
+    assert resumed["pending_count"] == 0
+    assert evidence["audit_coverage"]["complete"] is False
+    assert evidence["primitive_observations"] == []
+    assert any(
+        row["path"] == "z_unsafe.py" and row["severity"] == "HIGH"
+        for row in evidence["findings"]
+    )
+    assert resumed["global_consumer_closure_verified"] is False
+
+
+def test_workspace_consume_failure_binds_cleared_context_before_checkpoint(
+    tmp_path, monkeypatch
+):
+    import inspect
+
+    from factoryline import deep_audit_io as engine
+    from factoryline import review_audits as audit
+    from factoryline import runtime_audit_integrity as runtime
+
+    original_scan = audit._security_scan_file_snapshot
+    original_consume = runtime._full_repository_workspace_consume_prefix
+    attempts, observed = [], {}
+
+    def fail_once(*args, **kwargs):
+        attempts.append(1)
+        if len(attempts) == 1:
+            raise ValueError("synthetic native consumer failure")
+        return original_scan(*args, **kwargs)
+
+    def observe_reset(*args, **kwargs):
+        result = original_consume(*args, **kwargs)
+        state = (
+            inspect.signature(original_consume).bind(*args, **kwargs).arguments["state"]
+        )
+        observed["context_generation"] = state["context_generation"]
+        return result
+
+    monkeypatch.setattr(audit, "_security_scan_file_snapshot", fail_once)
+    monkeypatch.setattr(
+        runtime, "_full_repository_workspace_consume_prefix", observe_reset
+    )
+    (tmp_path / "build.py").write_text(
+        "import os\nos.system('upx --best px')\n", encoding="utf-8"
+    )
+    report = engine.full_repository_scan(tmp_path, context_profile="workspace-v2")
+    evidence = report["workspace_evidence"]
+    assert evidence["sources"]["context_error"] == "ValueError"
+    assert evidence["primitive_observations"] == []
+    assert any(
+        row["path"] == "build.py" and row["severity"] == "HIGH"
+        for row in evidence["findings"]
+    )
+    assert report["context_generation_sha256"] == observed["context_generation"]
+    # A recovered context differs from the cleared failed generation. Its old
+    # checkpoint must be rejected as source/context drift, never reused.
+    with pytest.raises(engine.RuntimeAuditError, match="SOURCE_DRIFT"):
+        engine.full_repository_scan(
+            tmp_path, resume=True, context_profile="workspace-v2"
+        )
+
+
+@pytest.mark.parametrize("mutate_tree", [False, True])
+def test_workspace_native_findings_parse_captured_bytes_without_fingerprints(
+    tmp_path, monkeypatch, mutate_tree
+):
+    import ast
+
+    from factoryline import deep_audit_io as engine
+    from factoryline import review_audits as audit
+    from factoryline import runtime_audit_integrity as runtime
+
+    def fingerprint_forbidden(*args, **kwargs):
+        raise AssertionError(
+            "native full-repository path computed a producer fingerprint"
+        )
+
+    monkeypatch.setattr(audit, "_oracle_tree_fingerprint", fingerprint_forbidden)
+    original_builder = runtime._full_repository_workspace_security_context
+
+    def changed_snapshot(*args, **kwargs):
+        captured = original_builder(*args, **kwargs)
+        if mutate_tree:
+            tree = captured["snapshots"][tmp_path / "unsafe.py"]
+            call = next(
+                node
+                for node in ast.walk(tree)
+                if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+            )
+            call.args = [ast.Constant(value="upx --best px")]
+        return captured
+
+    monkeypatch.setattr(
+        runtime, "_full_repository_workspace_security_context", changed_snapshot
+    )
+    (tmp_path / "build.py").write_text(
+        "import os\nos.system('upx --best px')\n", encoding="utf-8"
+    )
+    (tmp_path / "unsafe.py").write_text(
+        "import os\nos.system(input())\n", encoding="utf-8"
+    )
+    report = engine.full_repository_scan(tmp_path, context_profile="workspace-v2")
+    evidence = report["workspace_evidence"]
+    assert evidence["audit_coverage"]["complete"] is True
+    assert any(
+        row["path"] == "unsafe.py" and row["severity"] == "HIGH"
+        for row in evidence["findings"]
+    )
+    assert not any(
+        row["path"] == "unsafe.py" for row in evidence["primitive_observations"]
+    )
+    assert any(row["path"] == "build.py" for row in evidence["primitive_observations"])
+    assert report["global_consumer_closure_verified"] is False
+
+
+def test_workspace_dependencies_parse_captured_bytes(tmp_path, monkeypatch):
+    import ast
+
+    from factoryline import deep_audit_io as engine
+    from factoryline import runtime_audit_integrity as runtime
+
+    original_builder = runtime._full_repository_workspace_security_context
+
+    def changed_import(*args, **kwargs):
+        captured = original_builder(*args, **kwargs)
+        tree = captured["snapshots"][tmp_path / "consumer.py"]
+        imported = next(node for node in ast.walk(tree) if isinstance(node, ast.Import))
+        imported.names[0].name = "forged"
+        return captured
+
+    monkeypatch.setattr(
+        runtime, "_full_repository_workspace_security_context", changed_import
+    )
+    (tmp_path / "consumer.py").write_text("import actual\n", encoding="utf-8")
+    (tmp_path / "actual.py").write_text("VALUE = 1\n", encoding="utf-8")
+    (tmp_path / "forged.py").write_text("VALUE = 2\n", encoding="utf-8")
+    first = engine.full_repository_scan(tmp_path, context_profile="workspace-v2")
+    resumed = engine.full_repository_scan(
+        tmp_path, resume=True, context_profile="workspace-v2"
+    )
+    for report in (first, resumed):
+        consumer = next(
+            row for row in report["primary_results"] if row["path"] == "consumer.py"
+        )
+        assert consumer["dependencies"]["edges"] == [
+            {"line": 1, "module": "actual", "name": "actual", "target": "actual.py"}
+        ]
+        assert report["dependency_index"]["closure_verified"] is False
+
+
+def test_full_repository_resume_rejects_source_and_configuration_drift(tmp_path):
+    from factoryline.deep_audit_io import RuntimeAuditError, full_repository_scan
+
+    source = tmp_path / "module.py"
+    source.write_text("VALUE = 1\n", encoding="utf-8")
+    full_repository_scan(tmp_path)
+    source.write_text("VALUE = 2\n", encoding="utf-8")
+    with pytest.raises(RuntimeAuditError, match="SOURCE_DRIFT"):
+        full_repository_scan(tmp_path, resume=True)
+
+    other = tmp_path / "config-drift"
+    other.mkdir()
+    (other / "module.py").write_text("VALUE = 1\n", encoding="utf-8")
+    (other / "pyproject.toml").write_text(
+        "[project]\nname='sample'\n", encoding="utf-8"
+    )
+    full_repository_scan(other)
+    (other / "pyproject.toml").write_text(
+        "[project]\nname='changed'\n", encoding="utf-8"
+    )
+    with pytest.raises(RuntimeAuditError, match="SOURCE_DRIFT"):
+        full_repository_scan(other, resume=True)
+
+
+def test_full_repository_resume_rejects_rehashed_native_result_tamper(tmp_path):
+    from factoryline.deep_audit_io import (
+        RuntimeAuditError,
+        canonical_bytes,
+        digest,
+        full_repository_scan,
+    )
+
+    (tmp_path / "module.py").write_text("VALUE = 1\n", encoding="utf-8")
+    full_repository_scan(tmp_path)
+    checkpoint_path = (
+        tmp_path / ".factory/deep-runs/f2110000000000000000000000000001/checkpoint.json"
+    )
+    checkpoint = json.loads(checkpoint_path.read_text(encoding="utf-8"))
+    checkpoint["primary_results"][0]["findings"].append(
+        {"code": "FORGED", "severity": "LOW"}
+    )
+    checkpoint["result_digest"] = digest(checkpoint["primary_results"])
+    checkpoint["sha256"] = digest(
+        {key: value for key, value in checkpoint.items() if key != "sha256"}
+    )
+    checkpoint_path.write_bytes(canonical_bytes(checkpoint))
+    with pytest.raises(RuntimeAuditError, match="INVALID_CHECKPOINT"):
+        full_repository_scan(tmp_path, resume=True)
+
+
+def test_full_repository_resume_rejects_live_native_helper_replacement(
+    tmp_path, monkeypatch
+):
+    from factoryline import context_efficiency as engine
+    from factoryline.deep_audit_io import RuntimeAuditError, full_repository_scan
+
+    (tmp_path / "module.py").write_text("VALUE = 1\n", encoding="utf-8")
+    full_repository_scan(tmp_path)
+    original = engine._scan_security_source
+
+    def replacement(*args, **kwargs):
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(engine, "_scan_security_source", replacement)
+    with pytest.raises(RuntimeAuditError, match="SCANNER_DRIFT"):
+        full_repository_scan(tmp_path, resume=True)
+
+
+def test_full_repository_symlink_source_is_explicitly_unreadable(tmp_path):
+    import os
+
+    from factoryline.deep_audit_io import full_repository_scan
+
+    target = tmp_path / "target.py"
+    target.write_text("VALUE = 1\n", encoding="utf-8")
+    link = tmp_path / "linked.py"
+    try:
+        os.symlink(target, link)
+    except OSError:
+        pytest.skip("symlink creation is unavailable on this platform")
+    result = full_repository_scan(tmp_path)
+    row = next(
+        item for item in result["primary_results"] if item["path"] == "linked.py"
+    )
+    assert row["input_state"] == "unreadable"
+    assert row["status"] == "unreadable"
+    assert result["files_audited"] == 1
+    assert result["audit_coverage"]["audit_rate"] < 1
+
+
+def test_full_repository_runtime_epoch_covers_every_profile_helper(
+    tmp_path, monkeypatch
+):
+    from factoryline import deep_audit_io, review_audits
+
+    epoch = deep_audit_io._full_repository_runtime_epoch
+    before = epoch(tmp_path, "fixed-configuration", review_audits)
+    helpers = {
+        name: helper
+        for name, helper in vars(deep_audit_io).items()
+        if name.startswith("_full_repository_") and callable(helper)
+    }
+    assert "_full_repository_scanner_file_identity" in helpers
+    for name in helpers:
+        with monkeypatch.context() as patch:
+            patch.setattr(deep_audit_io, name, lambda *args, **kwargs: None)
+            assert epoch(tmp_path, "fixed-configuration", review_audits) != before, name
+        assert epoch(tmp_path, "fixed-configuration", review_audits) == before, name
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            deep_audit_io, "_full_repository_future_helper", lambda: None, raising=False
+        )
+        assert epoch(tmp_path, "fixed-configuration", review_audits) != before
+
+
+def test_full_repository_scanner_identity_rejects_package_symlinks(
+    tmp_path, monkeypatch
+):
+    import os
+
+    from factoryline import review_audits
+    from factoryline.deep_audit_io import (
+        RuntimeAuditError,
+        _full_repository_scanner_identity,
+    )
+
+    package = tmp_path / "factoryline"
+    package.mkdir()
+    target = tmp_path / "outside.py"
+    target.write_text("def scanner(): return None\n", encoding="utf-8")
+    try:
+        os.symlink(target, package / "scanner.py")
+    except OSError:
+        pytest.skip("symlink creation is unavailable on this platform")
+    monkeypatch.setattr(review_audits, "__file__", str(package / "review_audits.py"))
+    with pytest.raises(RuntimeAuditError, match="SCANNER_DRIFT"):
+        _full_repository_scanner_identity()
+
+
+@pytest.mark.parametrize(
+    "value, expected",
+    [
+        ({"x": ["pkg/source.py", None]}, {"x": ("pkg/source.py", None)}),
+        ({"x": ("pkg/source.py", "Member")}, {"x": ("pkg/source.py", "Member")}),
+        ({"x": ["../outside.py", None]}, {}),
+        ({"x": ["/absolute.py", None]}, {}),
+        ({"x": ["C:/absolute.py", None]}, {}),
+        ({"x": ["pkg\\source.py", None]}, {}),
+        ({"x": [[], None]}, {}),
+        ({"x": ["pkg/source.py", []]}, {}),
+        ({"": ["pkg/source.py", None]}, {}),
+        ({"x": ["pkg/source.py"]}, {}),
+    ],
+)
+def test_cached_import_bindings_preserve_scalar_boundary(value, expected):
+    assert _context_refactor.cached_import_bindings(value) == expected
+
+
+def test_cached_import_bindings_preserve_first_invalid_entry_shortcircuit():
+    class Poison(str):
+        def startswith(self, *args, **kwargs):
+            raise AssertionError("later entry was inspected")
+
+    assert (
+        _context_refactor.cached_import_bindings(
+            {"bad": [], "later": [Poison("x.py"), None]}
+        )
+        == {}
+    )
+
+
+def test_cached_import_path_keeps_empty_subclass_shortcircuit():
+    class Empty(str):
+        def startswith(self, *args, **kwargs):
+            raise AssertionError("empty relative path was inspected")
+
+    assert _context_refactor.cached_import_bindings({"x": [Empty(""), None]}) == {}
+
+
+@pytest.mark.parametrize("metadata", [None, {"inventory_sha256": "snapshot"}])
+def test_fixture_collection_preserves_callback_order_and_copy_boundary(metadata):
+    tree = ast.parse(
+        "PASSWORD = 'module'\n"
+        "def test_case():\n"
+        "    SECRET: str = 'annotation'\n"
+        "    OTHER = 'ignored'\n"
+        "    PASSWORD = TOKEN = 'multiple'\n"
+        "    self.PASSWORD = 'attribute'\n"
+        "    PASSWORD = 3\n"
+    )
+    facade = _Namespace_refactor(
+        _SECRET_ASSIGNMENT=_re_refactor.compile(r"PASSWORD|SECRET|TOKEN"),
+        _secret_literal=lambda node: node.value.value
+        if isinstance(node.value, ast.Constant) and isinstance(node.value.value, str)
+        else None,
+    )
+    calls, emitted = [], []
+
+    def resolve(node, literal):
+        calls.append((node.lineno, literal))
+        item = {"eligible": True, "literal": literal}
+        emitted.append(item)
+        return item
+
+    result = _context_refactor._fixture_literal_evidence(
+        tree, facade, resolve, metadata
+    )
+    assert calls == [(1, "module"), (3, "annotation")]
+    assert list(result) == ["1:0:PASSWORD", "3:4:SECRET"]
+    for actual, original in zip(result.values(), emitted):
+        assert (actual is original) is (metadata is None)
+        assert actual == {**original, **(metadata or {})}
+
+
+def test_new_shared_provider_helpers_are_epoch_enrolled():
+    helpers = _context_refactor.provider_context_cache_helpers(
+        _audit_refactor.contracts
+    )
+    assert all(
+        helper in helpers
+        for helper in (
+            _context_refactor._cached_import_binding,
+            _context_refactor._cached_import_path,
+            _context_refactor._fixture_literal_evidence,
+        )
+    )
+
+
+def test_precision257_context_cache_round_trip_and_rejects_missing_fields(tmp_path):
+    from factoryline.context_efficiency import (
+        oracle_context_cache_context,
+        oracle_context_cache_record,
+    )
+
+    context = {
+        "helpers": {"h"},
+        "weak_helpers": set(),
+        "mixins": {"m"},
+        "pytest_inherited": set(),
+        "click_runners": set(),
+        "typecheck": True,
+        "negative_typecheck": True,
+        "flask_apps": {"app"},
+    }
+    encoded = oracle_context_cache_record(
+        tmp_path / "case.py", context, lambda value: {"encoded": value}
+    )
+    assert encoded["path"] == (tmp_path / "case.py").as_posix()
+    assert encoded["helpers"] == ["h"] and encoded["mixins"] == ["m"]
+    assert encoded["typecheck"] is True and encoded["negative_typecheck"] is True
+    decoded = oracle_context_cache_context(encoded, lambda value: value["encoded"])
+    assert decoded["helpers"] == {"h"} and decoded["flask_apps"] == {"app"}
+    assert decoded["negative_typecheck"] is True
+    import pytest
+
+    with pytest.raises(KeyError, match="weak_helpers"):
+        oracle_context_cache_context({"helpers": []}, lambda value: value)
+
+
+def test_precision257_context_profiles_and_fixture_binders_fail_closed():
+    from factoryline.context_efficiency import (
+        application_profile_configuration,
+        bind_application_fixture_context,
+        bind_django_fixture_context,
+        typecheck_cache_helpers,
+        async_runner_fixture_helpers,
+    )
+    from factoryline import intent_quality
+
+    raw = b"requests==2.31.0\n"
+    rows, binding, eligible = application_profile_configuration(
+        "root", lambda _root, name: raw if name == "requirements.txt" else b"", 64
+    )
+    assert rows == [
+        {
+            "path": "requirements.txt",
+            "sha256": __import__("hashlib").sha256(raw).hexdigest(),
+            "bytes": len(raw),
+        }
+    ]
+    assert binding == rows[0] and eligible is True
+    assert application_profile_configuration(
+        "root", lambda *_: (_ for _ in ()).throw(FileNotFoundError()), 64
+    ) == ([], {"path": "requirements.txt", "state": "missing"}, True)
+    assert application_profile_configuration("root", lambda *_: raw, 2) == (
+        [],
+        {"path": "requirements.txt", "state": "oversized"},
+        False,
+    )
+    snapshots, contexts, bindings = {}, {}, []
+    assert (
+        bind_application_fixture_context(
+            "root", snapshots, contexts, bindings, lambda *_: raw, 64
+        )
+        is None
+    )
+    assert (
+        bind_django_fixture_context(
+            "root", snapshots, contexts, bindings, lambda *_: raw, 64
+        )
+        is None
+    )
+    helpers = typecheck_cache_helpers(intent_quality)
+    assert helpers and all(callable(item) for item in helpers)
+    async_helpers = async_runner_fixture_helpers()
+    assert async_helpers and all(callable(item) for item in async_helpers)
+    assert async_helpers[0].__name__ == "_expected_exception_else_failure"
+
+
+def test_precision257_fixture_context_binders_record_empty_evidence_for_valid_capture(
+    tmp_path,
+):
+    import ast
+    import hashlib
+    from pathlib import Path
+    from factoryline.context_efficiency import (
+        bind_application_fixture_context,
+        bind_django_fixture_context,
+    )
+
+    root = Path(tmp_path)
+    source_path = root / "tests" / "test_app.py"
+    source_path.parent.mkdir()
+    raw_source = b"def test_app_configuration():\n    pass\n"
+    tree = ast.parse(raw_source)
+    raw_configs = {
+        "pyproject.toml": b"[tool.pytest.ini_options]\n",
+        "tox.ini": b"[pytest]\n",
+    }
+    bindings = [
+        {"path": name, "sha256": hashlib.sha256(raw).hexdigest()}
+        for name, raw in raw_configs.items()
+    ]
+
+    def read_source(_root, name):
+        return raw_configs[name]
+
+    inventory = {source_path: hashlib.sha256(raw_source).hexdigest()}
+    contexts = {source_path: {}}
+    bind_application_fixture_context(
+        root,
+        {source_path: tree},
+        contexts,
+        bindings,
+        read_source,
+        4096,
+        source_bytes={source_path: raw_source},
+        source_inventory=inventory,
+    )
+    assert contexts[source_path]["application_fixture_evidence"] == {}
+    django_contexts = {source_path: {}}
+    bind_django_fixture_context(
+        root,
+        {source_path: tree},
+        django_contexts,
+        bindings,
+        read_source,
+        4096,
+        source_bytes={source_path: raw_source},
+        source_inventory=inventory,
+    )
+    assert "django_fixture_evidence" not in django_contexts[source_path]

@@ -43,4 +43,4 @@ invariants:
         max_lines: 40
 tests:
   - path: tests/test_continuity.py
-    command: python -m pytest -q tests/test_continuity.py
+    command: python -m pytest -q tests/test_continuity.py::test_continuity_requires_independent_promotion_and_exact_scope_purpose tests/test_continuity.py::test_continuity_rejects_content_store_and_conflicting_idempotency tests/test_continuity.py::test_continuity_rejects_incomplete_metadata_before_any_record_or_audit_write tests/test_continuity.py::test_continuity_record_rolls_back_when_the_audit_append_fails tests/test_continuity.py::test_continuity_promotion_rejects_tenant_purpose_expiry_and_repeat_attempts tests/test_continuity.py::test_continuity_withholds_expired_records_and_detects_audit_tampering tests/test_continuity.py::test_graph_ops_projects_redacted_continuity_metadata_without_writing tests/test_continuity.py::test_continuity_projection_is_bounded_redacted_and_principal_args_normalize tests/test_continuity.py::test_top_level_continuity_adapters_keep_the_store_as_the_single_boundary tests/test_continuity.py::test_cli_continuity_flow_is_local_and_explicit

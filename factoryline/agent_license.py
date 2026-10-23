@@ -19,7 +19,7 @@ from pathlib import Path
 import re
 from typing import Any
 
-from .protocol_enums import AutonomyLevel
+from .protocol import AutonomyLevel
 
 from .attribution import FailureClass
 

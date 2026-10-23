@@ -1,0 +1,49 @@
+{
+  "schema": "factory.family-expectation-migration.v1",
+  "scope": "Eight expectation-only UNKNOWN migrations; no production behavior change",
+  "parent": "07f0bdd3ca968cb90d54d925d6471bba5e8e5e01",
+  "source": {
+    "path": "tests/test_review_audits.py",
+    "sha256": "46c91a95c5f2048f2d069287487f35ee97386880e008f5b8d4163d27c2013034",
+    "before_sha256": "52d0fa6f3b82307326ef2326c1d0b6f1c375e3dcef648bc8dce30cd3299d88c3"
+  },
+  "requirements": [
+    "Exactly eight source-provably raising or opaque fixtures expect QUALITY_UNKNOWN_TEST_ORACLE.",
+    "All 22 generated target fixture cases remain byte-identical; no generated target execution.",
+    "Ten must-restore-HOLLOW cases and four other positive controls retain their expectations.",
+    "No scanner finding, severity or implementation change is included."
+  ],
+  "observations": {
+    "selected_tests": "8 passed, 14 deselected on frozen scanner 07f0bdd3ca968cb90d54d925d6471bba5e8e5e01",
+    "source_integrity": "Independently verified 22 cases / 44 source files byte-identical; entire module AST differs only in authorized expectations and expected-parameter plumbing.",
+    "review": "PASS_SCOPED_EXPECTATION_MIGRATION",
+    "lint_format_diff": "Current exact test source passes Ruff check, format check and git diff check.",
+    "cf_doctor": "Strict doctor installation, workflow and provenance checks passed."
+  },
+  "semantic_basis": [
+    "Four migrated cases eagerly evaluate undefined noop in constructor arguments, instance assignment, class body or callback assignment.",
+    "One migrated case eagerly calls undefined mutate(scope).",
+    "Two migrated awaited callbacks evaluate undefined expected; except AssertionError does not catch NameError.",
+    "The bytes-key guard compares equal for the supplied bytes dictionary, so execution reaches the assertion containing undefined expected. An unsupported catalog guard does not prove inertness."
+  ],
+  "artifacts": {
+    ".factory/precision208/expectations/ecc-verdict.json": "2e03bdc5e6cf8ec68770db766f79acfe31417990de95906c276dce1169e3aee3",
+    ".factory/precision208/expectations/source-integrity.json": "70223cc42e5b43d02a31f625dee0fdc9e481f33d47c464d3b9279d5574a761ec",
+    ".factory/precision208/expectations/scope.json": "d2f967aab35c2068c4976ffa4974b8cb8826d8a9e163656e585e493b2912acbf",
+    ".factory/precision208/expectations/selected-nodeids.json": "bfbf5008c32fd73bdc98b1ee8629cf5ea43872444bdcdaf555e4c375b1e6e32d",
+    ".factory/precision208/expectations/selected.log": "0bd26ac400ec148ce324c0c3f47dde3f82b2b9bbdb59421da4d730a3cfe87684",
+    ".factory/precision208/expectations/selected.xml": "5ebef7294f85c1e4363e8cb2862f61168768a51be77536f4f214cbc30df35656",
+    ".factory/precision208/expectations/doctor.json": "a5c27b75a45e67ac090ea03fc7471909cb58e1632e47cbdb51eb554def60d176",
+    ".factory/precision208/expectations/commit-ruff.log": "a4443afdcfb6d7363adb285762515ccf7cf50473b1a05c20c1a50f6bed4d26b0",
+    ".factory/precision208/expectations/commit-format.log": "7688ae71c60af2e4266827abb3678cc2145655f587daf33dfa649dbac2c619c3",
+    ".factory/precision208/expectations/commit-diff-check.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "limits": [
+    "No production behavior, severity, security precision or detection gain claim.",
+    "The eight selected tests do not establish passing status for the other 14 family cases.",
+    "Full-suite gates remain INCOMPLETE; the diagnostic mutable full run had 62 failures and is not qualification of this commit.",
+    "Concurrent source work is excluded from this test/evidence-only commit.",
+    "No generated target imports/execution; no fresh blinded study predictions or packets inspected.",
+    "Scoped workflow evidence does not grant merge, release or publication approval."
+  ]
+}

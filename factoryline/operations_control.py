@@ -20,7 +20,7 @@ from typing import Any
 
 from .e2e_proof import E2EProofError, validate_e2e_proof_receipt
 from .journey_proof import JourneyProofError, validate_failure_capsule
-from .protocol_enums import OperationsEvidenceTier, OperationsWorkKind
+from .protocol import OperationsEvidenceTier, OperationsWorkKind
 
 
 MANIFEST_SCHEMA = "factory.operations-control-manifest.v1"

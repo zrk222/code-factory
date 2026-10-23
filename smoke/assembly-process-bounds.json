@@ -1,1 +1,18 @@
-{"checks":[{"name":"bounded_cli_behavior","kind":"python","run":"import pytest\nassert pytest.main(['-q','tests/test_assembly_process.py']) == 0\nprint('PROCESS_BOUNDS_PASS')","expect_exit":0,"expect_stdout":"PROCESS_BOUNDS_PASS","timeout_s":60,"must_fail_on_stub":true,"covers":["REQ_OUTPUT","REQ_STOP","REQ_EXIT"]}]}
+{
+  "checks": [
+    {
+      "name": "bounded_cli_behavior",
+      "kind": "python",
+      "run": "import pytest\nassert pytest.main(['-q', 'tests/test_assembly_process.py::test_success_preserves_both_streams', 'tests/test_assembly_process.py::test_detailed_result_contains_cleanup_receipt', 'tests/test_assembly_process.py::test_child_phase_telemetry_preserves_detailed_result', 'tests/test_assembly_process.py::test_child_wait_error_keeps_cleanup_and_hides_error_from_telemetry', 'tests/test_assembly_process.py::test_lifecycle_receipt_overhead_is_measured_outside_receipt', 'tests/test_assembly_process.py::test_detailed_timeout_keeps_cleanup_receipt_explicit', 'tests/test_assembly_process.py::test_detailed_launch_failure_cannot_claim_cleanup', 'tests/test_assembly_process.py::test_cleanup_accepts_later_confirmed_empty_state_after_terminate_failure', 'tests/test_assembly_process.py::test_cleanup_rejects_live_or_unknown_bound_group', 'tests/test_assembly_process.py::test_cleanup_rejects_live_or_unknown_escaped_descendant', 'tests/test_assembly_process.py::test_observed_posix_descendant_outside_cleanup_group_blocks_receipt', 'tests/test_assembly_process.py::test_posix_snapshot_accepts_host_owned_zero_process_group', 'tests/test_assembly_process.py::test_output_overflow_cannot_pass', 'tests/test_assembly_process.py::test_monitor_rechecks_stream_failure_at_completion', 'tests/test_assembly_process.py::test_deadline_and_cancellation_are_bounded', 'tests/test_assembly_process.py::test_nonzero_exit_and_invalid_bytes', 'tests/test_assembly_process.py::test_heartbeat_exception_is_not_success', 'tests/test_assembly_process.py::test_missing_cli_is_failure', 'tests/test_assembly_process.py::test_invalid_deadlines_cannot_disable_bounds', 'tests/test_assembly_process.py::test_inherited_pipe_does_not_hang_caller', 'tests/test_assembly_process.py::test_windows_child_is_bound_before_resume', 'tests/test_assembly_process.py::test_windows_resume_failure_returns_non_success', 'tests/test_assembly_process.py::test_shared_measure_call_facade_preserves_return_and_records_phase']) == 0\nprint('PROCESS_BOUNDS_PASS')\n",
+      "expect_exit": 0,
+      "expect_stdout": "PROCESS_BOUNDS_PASS",
+      "timeout_s": 60,
+      "must_fail_on_stub": true,
+      "covers": [
+        "REQ_OUTPUT",
+        "REQ_STOP",
+        "REQ_EXIT"
+      ]
+    }
+  ]
+}

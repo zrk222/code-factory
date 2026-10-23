@@ -20,7 +20,7 @@ from factoryline.assembly import (
     rollup_receipts,
     _attribution_from_output,
 )
-from factoryline.boundary import (
+from factoryline.refinement import (
     assert_no_attribution_in_artifact,
     assert_build_metadata_locations,
 )
@@ -33,7 +33,7 @@ from factoryline.proof import (
     risk_for_paths,
     verify_trace,
 )
-from factoryline.passport import build_passport, verify_passport
+from factoryline.proof import build_passport, verify_passport
 from factoryline.protocol import (
     CHALLENGE_SCHEMA,
     MINIMUM_VERSIONS,
@@ -1646,7 +1646,7 @@ def test_factory_passport_accepts_distinct_challenge_stages_from_one_brick(tmp_p
 
 
 def test_factoryline_challenge_kills_trace_integrity_mutants(tmp_path):
-    from factoryline.challenge import challenge_trace
+    from factoryline.proof import challenge_trace
 
     trace = _write_proof_fixture(tmp_path)
     payload = challenge_trace(tmp_path / trace["trace_path"], root=tmp_path)
@@ -1956,7 +1956,7 @@ def test_app_builder_direct_and_prd_paths_preserve_blueprint_and_output_map(tmp_
 
 def test_app_builder_requirement_coverage_blocks_uncovered_product_reqs(tmp_path):
     from factoryline.app_builder import app_from_prompt
-    from factoryline.coverage import requirement_coverage
+    from factoryline.attribution import requirement_coverage
 
     app_from_prompt(
         "Build a clinical prior auth portal with patient status and audit logs.",

@@ -17,7 +17,7 @@ import re
 from typing import Any
 
 from .oracle_firewall import OracleFirewallError, verify_oracle_contract
-from .protocol_enums import LifecycleEvent, SessionTraceStage
+from .protocol import LifecycleEvent, SessionTraceStage
 
 
 EVENT_SCHEMA = "factory.lifecycle-event.v1"

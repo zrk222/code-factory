@@ -4337,7 +4337,7 @@ def _dispatch_route_group_37(a, capture_command, p):
             principal = principal_from_args(
                 a.subject, a.tenant, ["reader"], [a.purpose]
             )
-            from .knowledge_handoff import (
+            from .engineering_memory import (
                 create_knowledge_handoff,
                 receive_knowledge_handoff,
             )

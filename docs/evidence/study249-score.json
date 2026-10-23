@@ -1,0 +1,315 @@
+{
+  "schema": "factory.actionable-precision249.v1",
+  "metrics": {
+    "baseline": {
+      "TP": 33,
+      "FP": 10,
+      "UNCLEAR": 0,
+      "decided": 43,
+      "precision": 0.7674418604651163,
+      "wilson95": [
+        0.62255479702191,
+        0.8684632152061552
+      ],
+      "unclear_inclusive": 0.7674418604651163
+    },
+    "candidate": {
+      "TP": 33,
+      "FP": 27,
+      "UNCLEAR": 0,
+      "decided": 60,
+      "precision": 0.55,
+      "wilson95": [
+        0.4249193588533434,
+        0.6690634559324476
+      ],
+      "unclear_inclusive": 0.55
+    }
+  },
+  "delta_percentage_points": -21.744186046511626,
+  "measured_rise": false,
+  "coverage_complete": false,
+  "baseline_tp_retention": 1.0,
+  "primitive_claim_counts": {
+    "PRESENT": 60,
+    "ABSENT": 0,
+    "UNCLEAR": 0
+  },
+  "unit_labels": {
+    "F249-001": {
+      "baseline": "TP",
+      "candidate": "TP"
+    },
+    "F249-002": {
+      "baseline": "TP",
+      "candidate": "TP"
+    },
+    "F249-003": {
+      "baseline": "FP",
+      "candidate": "FP"
+    },
+    "F249-004": {
+      "candidate": "FP"
+    },
+    "F249-005": {
+      "baseline": "TP",
+      "candidate": "TP"
+    },
+    "F249-006": {
+      "baseline": "TP",
+      "candidate": "TP"
+    },
+    "F249-007": {
+      "candidate": "FP"
+    },
+    "F249-008": {
+      "baseline": "TP",
+      "candidate": "TP"
+    },
+    "F249-009": {
+      "baseline": "TP",
+      "candidate": "TP"
+    },
+    "F249-010": {
+      "baseline": "FP",
+      "candidate": "FP"
+    },
+    "F249-011": {
+      "baseline": "TP",
+      "candidate": "TP"
+    },
+    "F249-012": {
+      "baseline": "TP",
+      "candidate": "TP"
+    },
+    "F249-013": {
+      "baseline": "TP",
+      "candidate": "TP"
+    },
+    "F249-014": {
+      "candidate": "FP"
+    },
+    "F249-015": {
+      "baseline": "TP",
+      "candidate": "TP"
+    },
+    "F249-016": {
+      "baseline": "TP",
+      "candidate": "TP"
+    },
+    "F249-017": {
+      "candidate": "FP"
+    },
+    "F249-018": {
+      "baseline": "FP",
+      "candidate": "FP"
+    },
+    "F249-019": {
+      "candidate": "FP"
+    },
+    "F249-020": {
+      "candidate": "FP"
+    },
+    "F249-021": {
+      "baseline": "TP",
+      "candidate": "TP"
+    },
+    "F249-022": {
+      "candidate": "FP"
+    },
+    "F249-023": {
+      "baseline": "TP",
+      "candidate": "TP"
+    },
+    "F249-024": {
+      "baseline": "TP",
+      "candidate": "TP"
+    },
+    "F249-025": {
+      "baseline": "FP",
+      "candidate": "FP"
+    },
+    "F249-026": {
+      "baseline": "TP",
+      "candidate": "TP"
+    },
+    "F249-027": {
+      "baseline": "TP",
+      "candidate": "TP"
+    },
+    "F249-028": {
+      "baseline": "TP",
+      "candidate": "TP"
+    },
+    "F249-029": {
+      "candidate": "FP"
+    },
+    "F249-030": {
+      "baseline": "TP",
+      "candidate": "TP"
+    },
+    "F249-031": {
+      "baseline": "TP",
+      "candidate": "TP"
+    },
+    "F249-032": {
+      "candidate": "FP"
+    },
+    "F249-033": {
+      "baseline": "TP",
+      "candidate": "TP"
+    },
+    "F249-034": {
+      "candidate": "FP"
+    },
+    "F249-035": {
+      "baseline": "FP",
+      "candidate": "FP"
+    },
+    "F249-036": {
+      "baseline": "FP",
+      "candidate": "FP"
+    },
+    "F249-037": {
+      "baseline": "TP",
+      "candidate": "TP"
+    },
+    "F249-038": {
+      "baseline": "TP",
+      "candidate": "TP"
+    },
+    "F249-039": {
+      "baseline": "FP",
+      "candidate": "FP"
+    },
+    "F249-040": {
+      "baseline": "TP",
+      "candidate": "TP"
+    },
+    "F249-041": {
+      "baseline": "TP",
+      "candidate": "TP"
+    },
+    "F249-042": {
+      "candidate": "FP"
+    },
+    "F249-043": {
+      "baseline": "FP",
+      "candidate": "FP"
+    },
+    "F249-044": {
+      "baseline": "TP",
+      "candidate": "TP"
+    },
+    "F249-045": {
+      "baseline": "TP",
+      "candidate": "TP"
+    },
+    "F249-046": {
+      "candidate": "FP"
+    },
+    "F249-047": {
+      "candidate": "FP"
+    },
+    "F249-048": {
+      "baseline": "TP",
+      "candidate": "TP"
+    },
+    "F249-049": {
+      "candidate": "FP"
+    },
+    "F249-050": {
+      "baseline": "TP",
+      "candidate": "TP"
+    },
+    "F249-051": {
+      "baseline": "TP",
+      "candidate": "TP"
+    },
+    "F249-052": {
+      "baseline": "FP",
+      "candidate": "FP"
+    },
+    "F249-053": {
+      "baseline": "TP",
+      "candidate": "TP"
+    },
+    "F249-054": {
+      "candidate": "FP"
+    },
+    "F249-055": {
+      "baseline": "TP",
+      "candidate": "TP"
+    },
+    "F249-056": {
+      "baseline": "TP",
+      "candidate": "TP"
+    },
+    "F249-057": {
+      "baseline": "TP",
+      "candidate": "TP"
+    },
+    "F249-058": {
+      "candidate": "FP"
+    },
+    "F249-059": {
+      "candidate": "FP"
+    },
+    "F249-060": {
+      "baseline": "FP",
+      "candidate": "FP"
+    }
+  },
+  "membership_groups": {
+    "unchanged_exact_claims": {
+      "units": 43,
+      "baseline": {
+        "TP": 33,
+        "FP": 10,
+        "UNCLEAR": 0
+      },
+      "candidate": {
+        "TP": 33,
+        "FP": 10,
+        "UNCLEAR": 0
+      }
+    },
+    "new_candidate_units": {
+      "units": 17,
+      "baseline": {
+        "TP": 0,
+        "FP": 0,
+        "UNCLEAR": 0
+      },
+      "candidate": {
+        "TP": 0,
+        "FP": 17,
+        "UNCLEAR": 0
+      }
+    }
+  },
+  "merge_precision_bar_met": false,
+  "review_type": "AI_ONLY",
+  "reviewers": [
+    {
+      "model": "gpt-6.1-sol",
+      "reasoning": "high",
+      "session_id": "/root/study249_labeler_a",
+      "prompt_sha256": "b6b975b061a333bdf2e4c82b7f1a48a9c032b16f339d692da906f2d08bf90532"
+    },
+    {
+      "model": "gpt-6.1-sol",
+      "reasoning": "high",
+      "session_id": "/root/study249_labeler_b",
+      "prompt_sha256": "2698ae3773e1acccbcb50397b7d0fdd75848d63df9159af3076a06a18296d21f"
+    }
+  ],
+  "input_sha256": {
+    "manifest": "73ad4bea6f5b04b91cc1e38f599e4c569954be9f7364074bb2b040bc5fd2ddb5",
+    "private_membership": "36536cbd5e2961c2adbaabdf7b06cb0ae484668dda0620c6adfb062c87a8b83e",
+    "first_labels": "1fa610199c47450e12634b126bd8806766354691c3f9267179206398f547809b",
+    "second_labels": "eaa6d95c7aa3e4d4c96935cd03baccd19ddefd9be2ee942609b08c2bcba506f0",
+    "scorer": "e9d782e84753dd25b104b7b26badba5fef7fdee6402da2c8ff199aec9aca72a0"
+  },
+  "limits": "Descriptive fixed-sample result; simple binomial Wilson does not model repository clustering. No merge approval or human validation."
+}

@@ -1,0 +1,36 @@
+{
+  "project": "cf-deferred-lambda-creation201",
+  "parent": "2d1c7e78b2843e99ceee8b0ebad34b100d5acccc",
+  "source_sha256": {
+    "factoryline/test_oracle_misuse.py": "da7e4294a184d3f17195c39b8399f83ad0f3bd0d2e9735ebf4eef300fffc4b56",
+    "tests/test_oracle_misuse_findings.py": "1ab13785ea32114dbe15830470990afa9a8da25712baa2a150d34821c0d8caeb"
+  },
+  "observed": {
+    "new_controls_before": {
+      "failed": 6,
+      "passed": 6
+    },
+    "new_controls_after": {
+      "passed": 12
+    },
+    "frozen_regression_passed": 198,
+    "independent_additional_passed": 8,
+    "architecture": {
+      "decision": "HEALTHY",
+      "python_files": 429,
+      "core_modules": 133
+    }
+  },
+  "review": {
+    "path": ".factory/lambda201/independent-review.json",
+    "sha256": "10411a04fd9d86a7a169dd51f7310bcfbd0b46a2207680538f0651f2ba90e233"
+  },
+  "boundaries": [
+    "Six self-contained deferred-creation controls change UNKNOWN to HOLLOW; six eager/invoked controls stay UNKNOWN.",
+    "This repairs a test-quality false negative; no new security precision or fresh held-out gain is claimed.",
+    "Expectation migration in the existing guidance family is a separate commit; original generated payloads remain unchanged.",
+    "Frozen source regression198/198 and independent ECC AI additional8/8 pass; architecture429Python/133core is healthy without new modules or cap changes.",
+    "No target source imported or executed; source snippets are inputs to the native static scanner.",
+    "Failed fresh study remains0TP/41FP/6unclear with95percent Wilson0-8.57percent; full CI and publication remain incomplete."
+  ]
+}

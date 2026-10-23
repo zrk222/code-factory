@@ -1,0 +1,47 @@
+{
+  "project": "cf-jwt-local-memo192",
+  "parent": "b4676d95de5d7df888deaab45c2ddf7b6823d15d",
+  "source_sha256": {
+    "factoryline/mock_fixture_provenance.py": "b0876facc97900d559dbd8664135d899f44beddf4c7443da275c81673fcb7f2d",
+    "tests/test_mock_fixture_provenance.py": "fe84d3943def505de065cf74ceac28cb494d053df8c64129a62be2f76e1a61b1",
+    "plans/accuracy-efficiency174.md": "6cd98b2af9d4804c6d5dcad24e30a0240eee3d9adb567df2f7ebd45d478b915b"
+  },
+  "observed": {
+    "tests": {
+      "role-current.xml": 413,
+      "jwt-current.xml": 74
+    },
+    "independent_focused_cases": 26,
+    "baseline_seconds": [
+      16.652637799998047,
+      16.959159699996235
+    ],
+    "candidate_seconds": [
+      15.171761899997364,
+      14.465793099996517
+    ],
+    "baseline_median_seconds": 16.80589874999714,
+    "candidate_median_seconds": 14.81877749999694,
+    "relative_reduction_percent": 11.823951099315877,
+    "coverage_files": 26,
+    "semantic_finding_digest": "8ffa852572e8972595252168c97baf0a6fe210bb41386b4677acd631c9f8f3fc",
+    "architecture": {
+      "decision": "HEALTHY",
+      "python_files": 429,
+      "core_modules": 133,
+      "caps_raised": false
+    }
+  },
+  "review_receipts": {
+    "independent-review.json": "43b30f7315fc3e2c6d0a914873a9d6cf2dd348819ee58c6e1bde7625ed2ab692",
+    "plan-review.json": "6e8f39326659d6083b51138dbdbf73b3487ffd179906a560bf45e98d68872c21"
+  },
+  "boundaries": [
+    "Only evaluation-local caching; a subsequent call recomputes after AST mutation.",
+    "Four alternating cold-process scans are a bounded local timing comparison, not a whole-product speed claim.",
+    "No detector behavior, severity or precision improvement claimed for memoization.",
+    "Study180 remains 0TP/41FP/6unclear, Wilson95 0 to 8.57 percent; one independent AI label set, original human-plus-AI protocol unmet and coverage incomplete.",
+    "Old60 known false positives removed remain15, including6 removed in26b5080;13 historical TPs retained; exposed data only.",
+    "Canonical source/test fixes are separate commits; full current CI remains incomplete. No merge, release or goal-completion claim."
+  ]
+}

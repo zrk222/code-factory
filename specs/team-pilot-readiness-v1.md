@@ -126,3 +126,5 @@ Scenario: Tampered decision evidence cannot pass a later review
 | 7 | `evidence_digest_state` is `invalid` | return `E_TEAM_PILOT_EVIDENCE_DIGEST` |
 | 8 | `commercial_boundary_state` is `invalid` | return `E_TEAM_PILOT_COMMERCIAL_BOUNDARY` |
 | 9 | `manifest_state`, `evidence_kind_state`, `evidence_path_state`, `evidence_digest_state`, and `commercial_boundary_state` are `valid` | return `TEAM_PILOT_READY_FOR_OWNER_REVIEW` only |
+
+Current test location after consolidation: `tests/test_target_compiler.py` (original test bodies retained).

@@ -14,7 +14,7 @@ import json
 from pathlib import Path
 import math
 import re
-from typing import Any
+from typing import Any, Callable, Mapping
 
 
 class AuditRuleSearchError(ValueError):
@@ -23,6 +23,187 @@ class AuditRuleSearchError(ValueError):
     def __init__(self, message: str, marker: str = "MCP_AUDIT_RULE_SEARCH_INVALID"):
         super().__init__(message)
         self.marker = marker
+
+
+_MAX_JEV_QUERY = 200
+_MAX_JEV_CANDIDATES = 20
+_NO_RELEASE_DECISION = {"authority": "none", "releaseDecision": False}
+
+
+def _candidate_ids(search_payload: Mapping[str, Any]) -> list[str]:
+    from .jev_classifier import JevClassificationError
+
+    rules = search_payload.get("rules")
+    if not isinstance(rules, list) or len(rules) > _MAX_JEV_CANDIDATES:
+        raise JevClassificationError("search payload must contain at most 20 rules")
+    ids = []
+    for rule in rules:
+        if not isinstance(rule, Mapping) or not isinstance(rule.get("ruleId"), str):
+            raise JevClassificationError("search payload contains an invalid rule")
+        ids.append(rule["ruleId"])
+    return ids
+
+
+def build_jev_input(search_payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Build the secret-free advisory request for ranked audit retrieval."""
+    from .jev_classifier import JevClassificationError, JEV_LABELS, _digest
+
+    query = search_payload.get("query")
+    ranking = search_payload.get("ranking")
+    if not isinstance(query, str) or not query or len(query) > _MAX_JEV_QUERY:
+        raise JevClassificationError("search query is missing or too long")
+    if ranking not in {"bm25", "bm25f"}:
+        raise JevClassificationError("Jev handoff requires BM25 or BM25F retrieval")
+    candidate_ids = _candidate_ids(search_payload)
+    context = {
+        "query": query,
+        "ranking": ranking,
+        "ruleIndexSha256": search_payload.get("ruleIndexSha256"),
+        "candidateRuleIds": candidate_ids,
+    }
+    return {
+        "schema": "factory.jev-classification-input.v1",
+        "query": query,
+        "ranking": ranking,
+        "candidateRuleIds": candidate_ids,
+        "contextSha256": _digest(context),
+        "allowedLabels": sorted(JEV_LABELS),
+        "authority": "none",
+        "claimBoundary": "Advisory routing only; deterministic CF gates remain authoritative.",
+    }
+
+
+def _probability(value: object, label: str) -> float:
+    from .jev_classifier import JevClassificationError
+
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise JevClassificationError(f"{label} must be numeric")
+    if not 0.0 <= float(value) <= 1.0:
+        raise JevClassificationError(f"{label} must be between 0 and 1")
+    return round(float(value), 6)
+
+
+def _rule_scores(raw: object, allowed: set[str]) -> dict[str, float]:
+    from .jev_classifier import JevClassificationError
+
+    if not isinstance(raw, Mapping):
+        raise JevClassificationError("ruleScores must be an object")
+    normalized = {}
+    for rule_id, score in raw.items():
+        if rule_id not in allowed:
+            raise JevClassificationError(
+                "Jev scored a rule outside the retrieved candidates"
+            )
+        normalized[rule_id] = _probability(score, "Jev rule score")
+    return normalized
+
+
+def normalize_jev_result(
+    raw: Mapping[str, Any],
+    *,
+    request: Mapping[str, Any],
+    model_id: str = "jev",
+    model_version: str = "unspecified",
+) -> dict[str, Any]:
+    """Validate a typed Jev response and bind it to the exact request context."""
+    from .jev_classifier import JevClassificationError, JEV_LABELS
+
+    if not isinstance(raw, Mapping):
+        raise JevClassificationError("Jev response must be an object")
+    label = raw.get("label")
+    probability = raw.get("probability")
+    context_sha = raw.get("contextSha256")
+    selected = raw.get("selectedRuleIds", [])
+    rule_scores = raw.get("ruleScores", {})
+    if label not in JEV_LABELS:
+        raise JevClassificationError("Jev returned an unsupported label")
+    probability = _probability(probability, "Jev probability")
+    if context_sha != request.get("contextSha256"):
+        raise JevClassificationError("Jev context hash does not match retrieval")
+    if not isinstance(selected, list) or not all(
+        isinstance(item, str) for item in selected
+    ):
+        raise JevClassificationError("selectedRuleIds must be a list of strings")
+    allowed = set(request.get("candidateRuleIds", []))
+    if not set(selected) <= allowed:
+        raise JevClassificationError(
+            "Jev selected a rule outside the retrieved candidates"
+        )
+    return {
+        "schema": "factory.jev-classification-result.v1",
+        "label": label,
+        "probability": probability,
+        "selectedRuleIds": selected,
+        "ruleScores": _rule_scores(rule_scores, allowed),
+        "modelId": model_id,
+        "modelVersion": model_version,
+        "requestId": str(raw.get("requestId", "unassigned")),
+        "contextSha256": request["contextSha256"],
+        "status": "ADVISORY",
+        **_NO_RELEASE_DECISION,
+        "claimBoundary": "Typed classification is advisory and does not prove semantics or authorize execution.",
+    }
+
+
+def _retrieval_fallback(request, model_id, model_version, request_id, reason, boundary):
+    return {
+        "schema": "factory.jev-classification-result.v1",
+        "label": "HUMAN_REVIEW",
+        "probability": 0.0,
+        "selectedRuleIds": request["candidateRuleIds"],
+        "ruleScores": {},
+        "modelId": model_id,
+        "modelVersion": model_version,
+        "requestId": request_id,
+        "contextSha256": request["contextSha256"],
+        "status": "FALLBACK",
+        "fallbackReason": reason,
+        **_NO_RELEASE_DECISION,
+        "claimBoundary": boundary,
+    }
+
+
+def classify_retrieval(
+    search_payload: Mapping[str, Any],
+    *,
+    transport: Callable[[dict[str, Any]], Mapping[str, Any]] | None = None,
+    model_id: str = "jev",
+    model_version: str = "unspecified",
+) -> dict[str, Any]:
+    """Classify BM25/BM25F candidates, failing closed when Jev is unavailable."""
+    from .jev_classifier import (
+        _TRANSPORT_ERRORS,
+        build_jev_input,
+        normalize_jev_result,
+    )
+
+    request = build_jev_input(search_payload)
+    if transport is None:
+        return _retrieval_fallback(
+            request,
+            model_id,
+            model_version,
+            "unavailable",
+            "JEV_UNAVAILABLE",
+            "Jev is optional; human review is required when the classifier is unavailable.",
+        )
+    try:
+        raw = transport(request)
+        return normalize_jev_result(
+            raw,
+            request=request,
+            model_id=model_id,
+            model_version=model_version,
+        )
+    except _TRANSPORT_ERRORS as exc:
+        return _retrieval_fallback(
+            request,
+            model_id,
+            model_version,
+            "fallback",
+            type(exc).__name__,
+            "Invalid or unavailable Jev output fails closed to human review.",
+        )
 
 
 _LANE_SPECS: tuple[tuple[str, str, str], ...] = (

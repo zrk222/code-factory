@@ -236,3 +236,17 @@ An SBOM inventory is not a complete supply-chain audit, and observations on
 declared paths are not coverage of every language or requirement. Receipt files
 found on disk alone never qualify for this projection. This reporting integration
 adds neither scanner rules nor measured precision/recall or release authority.
+
+## Seeded oracle corpus version 2
+
+The public seeded corpus is development evidence, never held-out precision.
+Version 2 retains the three HOLLOW expectations and replaces the undefined
+compute_value() calls in the no-assertion and tautology seeds with
+self-contained local literals. Fixed counterparts now define their callable.
+The original unresolved-call shapes remain separate UNKNOWN-tier controls,
+excluded from defect recall. Version 1 and version 2 scores are not directly
+comparable; retain the corpus hash with every result.
+
+HOLLOW requires a source-proven inert body, including true literal assertions
+and closed local no-op helpers. Opaque calls remain UNKNOWN; a local weak
+assertion does not establish the behavior of an unresolved callee.

@@ -142,6 +142,24 @@ def test_public_seeded_corpus_executes_real_scanner_and_declared_tenant_contract
     assert "not independently held out" in receipt["claim_boundary"]
 
 
+def test_versioned_seeded_corpus_keeps_unresolved_calls_in_unknown_tier(tmp_path):
+    from factoryline.review_audits import security_scan
+
+    corpus_path = (
+        Path(__file__).parents[1] / "factoryline/data/public_defect_corpus.json"
+    )
+    corpus = json.loads(corpus_path.read_text(encoding="utf-8"))
+    assert corpus["version"] == "2"
+    assert corpus["changes_from_version_1"]
+    source = tmp_path / "test_control.py"
+    for case in corpus["unknown_controls"]:
+        source.write_text(case["source"], encoding="utf-8")
+        result = security_scan(tmp_path, cache_enabled=False)
+        assert result["finding_counts"] == {case["expected_finding"]: 1}
+        assert result["findings"][0]["severity"] == "INFO"
+        assert result["state"] == "INCOMPLETE"
+
+
 def _paired_context_observation():
     return {
         "schema": EXPERIMENT_SCHEMA,

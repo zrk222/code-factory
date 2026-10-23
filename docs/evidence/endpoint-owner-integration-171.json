@@ -1,0 +1,123 @@
+{
+  "schema": "factory.reviewed-endpoint-owner-integration.v1",
+  "state": "SCOPED_PASS_GLOBAL_GATES_INCOMPLETE",
+  "parent_commit": "528083a7718d401c023d0f1713c3183ec07879c3",
+  "source_sha256": {
+    "factoryline/credential_endpoint_admission.py": "cbfc7b661069999f0fa2978f2877859e0dd26d00f4f6638c62b5c4118e92d0c9",
+    "factoryline/credential_role_adapter_selection.py": "d02adfd616d00f5564affdefd564a26f0cdff22e96ec4f50c16e39914d25c7a0",
+    "factoryline/credential_role_getter_consumers.py": "301c8453661b1c6905243e30979fd562d6e61f69a8e8a6084c747663d9c7b8fc",
+    "factoryline/credential_role_paths.py": "ec4b1cefde2316be3440e9f97f2e5f5927bf6e6ca5572f8a92e3e06abad094b2",
+    "factoryline/primitive_observation_binding.py": "7d624f093e70a83b3d6f53fe8e13bca94c4422c0ee3a016bd8da8f6ce4df350e",
+    "factoryline/runtime_audit_integrity.py": "400f6d86996b29f52f3fa70098dd4e2ce8393f606e953dcbd34bba05d7519088",
+    "tests/test_credential_constructor_cache.py": "c1aade73af5c7c29b5fd182fb32d6547ad755bb9e82856d0261d8cee07ba0c7a",
+    "tests/test_credential_endpoint_admission.py": "1f8a3485354d8901878248c513fc5e78b05a0433b871c20a0829ca60667844f2",
+    "tests/test_credential_endpoint_scanner.py": "8aa1fdebe2d72ee637c51184237bec9ea6797096d0c7f3dc0e3e7722548385e1",
+    "tests/test_credential_protocol_documents.py": "fbc2088714ca245cbc807e0be3bef25242e40cc15b1896cf2ebde6b6098ca4dd",
+    "tests/test_credential_publication_catalog.py": "9d262fd248339730b9145614fe6a90c09b3dbc16bfb5e5464c4d3706e1c8f184",
+    "tests/test_credential_role_receiver_class.py": "e19c088b9626fd951d57400831388dcea80694b7d367246d3cc608a5c9fe5963"
+  },
+  "context_sha256": {
+    "factoryline/credential_role_identity_effects.py": "488f0a26a3bd40755dbf54445a7c945bf31f2f2643ebf733e5e7ab99d67bf5de",
+    "factoryline/credential_role_method_use_getter_audit.py": "2dc2da7995fc84a4920f137ccd5a97e1aafe0e8623676bd6467cd74d3b39a0dd",
+    "factoryline/mock_fixture_provenance.py": "75f01a3ff39ab2155a4dcd6ecc9a6cf1b218595105315949352638f19baac9d6",
+    "tests/test_credential_role_identity_call_content.py": "b9a85d2a720a5e51a839023f03f599e7ec4ffc254c8a705e71754718d52b4b98"
+  },
+  "deleted": [
+    "factoryline/credential_endpoint_evidence.py",
+    "factoryline/credential_httpx_origins.py",
+    "factoryline/credential_json_assertions.py",
+    "factoryline/credential_protocol_documents.py",
+    "factoryline/credential_publication_catalog.py",
+    "factoryline/credential_publication_excerpt.py",
+    "factoryline/credential_router_publication.py",
+    "factoryline/credential_session_forwarding.py"
+  ],
+  "new_modules": 0,
+  "compatibility_stubs": 0,
+  "expectation_changes": 0,
+  "review_sha256": "45cfe3886d77a1240e4ec5482dcc33fed8a18d9902e03f146cb1a9aaa71ff0f9",
+  "definition_AST_checks": 71,
+  "native_binding_code_mutations": 235,
+  "native_warm_cold_CRITICAL_restoration_controls": 20,
+  "independent_selected_tests": 24,
+  "authoritative_parent_tests": {
+    "passed": 1529,
+    "skipped": 4,
+    "failed": 0,
+    "errors": 0,
+    "pytest_seconds": 63.791,
+    "process_seconds": 65.14918050001143
+  },
+  "historical_security_TP_retention": {
+    "retained": 13,
+    "total": 13,
+    "original_severity": true,
+    "scope": "Historical source controls only, not recall or precision"
+  },
+  "architecture": {
+    "python_files": 463,
+    "python_cap": 464,
+    "core_modules": 165,
+    "core_cap": 140,
+    "state": "BLOCKED",
+    "remaining_core_reduction": 25
+  },
+  "accuracy": {
+    "fresh_heldout": "NOT_MEASURED",
+    "new_precision_gain": null,
+    "exposed_development_only": {
+      "TP": 2,
+      "FP": 6,
+      "unclear": 2,
+      "decided_precision": 0.25,
+      "wilson95": [
+        0.071479212752109,
+        0.5907245696898311
+      ]
+    }
+  },
+  "global_limits": [
+    "Current complete full suite not rerun; historical full run had97failures before later scoped repairs.",
+    "Native Forge quality remains C with92findings at its recorded candidate.",
+    "No precision, merge, release or publication approval.",
+    "Private absorbed module paths intentionally removed; no import or pickle compatibility assurance."
+  ],
+  "artifacts": [
+    {
+      "path": ".factory/consolidation171/independent-review.json",
+      "sha256": "45cfe3886d77a1240e4ec5482dcc33fed8a18d9902e03f146cb1a9aaa71ff0f9"
+    },
+    {
+      "path": ".factory/consolidation171/parent-tests.xml",
+      "sha256": "3db12204c9b49276cf2562f4f315b6aba102f417c1228170449e36605e47af93"
+    },
+    {
+      "path": ".factory/consolidation171/parent-tests.json",
+      "sha256": "60a8342f590ab0e477f4a3a0763f8f0995abef08757764fbf3e9293d940f055a"
+    },
+    {
+      "path": ".factory/consolidation171/results.json",
+      "sha256": "2efce5d230bd0e7958085fedac3bc0e58512c81b403679070fcf35473a6a65c8"
+    },
+    {
+      "path": ".factory/consolidation171/health.json",
+      "sha256": "2f59076fdf150e33bd460cffffc38bbf6a213f0e4f4c9af332dd761d6bec8571"
+    },
+    {
+      "path": ".factory/consolidation171/retention/result.json",
+      "sha256": "56fdd1661f31b7d6c6f5905a0d186d7dfddaff8bd221972bc3c0e5c785c8d5c3"
+    },
+    {
+      "path": ".factory/consolidation171/ast-comparison.json",
+      "sha256": "902025ffe710c01f8ece1f55b05fc38c9e1f4dcaa055a6a013a4d8e71dfac5b1"
+    },
+    {
+      "path": ".factory/consolidation171/integration-to-parent.json",
+      "sha256": "8285775b73111b459a99fcf08f983629dc3214aaa7be67d51b4f265cb147b181"
+    },
+    {
+      "path": ".factory/consolidation171/strict-doctor.json",
+      "sha256": "8c3ded5206ef2a93f77990cde143dc75414ff4bbf63fd1e6d0267b1181bb4856"
+    }
+  ]
+}

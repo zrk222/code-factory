@@ -1,0 +1,78 @@
+{
+  "schema": "factory.precision.preliminary-baseline.v1",
+  "state": "PRELIMINARY_ONE_AI_REVIEWER_BELOW_PUBLICATION_SAMPLE_TARGET",
+  "scope": "Six-application frozen baseline; census of all21 eligible security alerts. Not a paired improvement result and not a publication-qualified score.",
+  "actionable": {
+    "TP": 2,
+    "FP": 17,
+    "unclear": 2,
+    "definite_n": 19,
+    "selected_n": 21,
+    "precision": 0.10526315789473684,
+    "wilson95": [
+      0.02935856029887013,
+      0.31394082711109006
+    ],
+    "uncertainty_inclusive_rate": 0.09523809523809523,
+    "minimum_30_decided_met": false
+  },
+  "primitive": {
+    "TP": 21,
+    "FP": 0,
+    "unclear": 0,
+    "definite_n": 21,
+    "selected_n": 21,
+    "precision": 1.0,
+    "wilson95": [
+      0.8453609810751531,
+      1
+    ],
+    "uncertainty_inclusive_rate": 1.0,
+    "minimum_30_decided_met": false
+  },
+  "coverage": {
+    "repositories_complete": 6,
+    "python_files_audited": 965,
+    "eligible_alerts": 21
+  },
+  "labelling": {
+    "reviewer": "gpt-6.1-sol-high-independent-app125",
+    "independent_AI_submission": true,
+    "second_reviewer_received": false,
+    "human_validation": false,
+    "source_references_verified": 48
+  },
+  "limits": [
+    "Six-application baseline cohort differs from the previous sixty-alert cohort; this is not measured scanner improvement.",
+    "All twenty-one eligible units labelled. Fewer than thirty decided labels; publication sample target unmet.",
+    "Confidence intervals describe sampling uncertainty, not AI label error, model correlation or population-wide accuracy.",
+    "New labels stay unavailable to coding agents. Future changes using these labels cannot claim this cohort as fresh held out.",
+    "RestrictedPython runtime policy/guard dependencies and caller authorization evidence remain missing for uncertain cases."
+  ],
+  "evidence": [
+    {
+      "path": ".factory/human-precision-study/application-ai125/protocol.json",
+      "sha256": "b54e4c9419590962a53e9e76fe9823ee7236be6d2052d7542a4fcaee07158435"
+    },
+    {
+      "path": ".factory/human-precision-study/application-ai125/freeze.json",
+      "sha256": "dcac4405cba690a4c0b7c2dc067e637c4c03d75cd6a2127c473ae8d0b5610ce3"
+    },
+    {
+      "path": ".factory/human-precision-study/application-ai125/protocol-review.json",
+      "sha256": "216ccad7bbbc3dc1ea96bb1c8f151a01fe0cb0ac6e76eeea6e38d838045ae721"
+    },
+    {
+      "path": ".factory/human-precision-study/application-ai125/packet-manifest.json",
+      "sha256": "49f2d637be35c75a34e5ac9cee059cb700236d0c84ff0e70e2b7b147bcfe19eb"
+    },
+    {
+      "path": ".factory/human-precision-study/application-ai125/first-ai-labels.json",
+      "sha256": "44e6fd6ae9e885e19538961a17cb3de2eeaf129902b320ce3bb51504c5409918"
+    },
+    {
+      "path": ".factory/human-precision-study/application-ai125/first-ai-score-report.json",
+      "sha256": "9a6184023cbc6e80f17520aec5542b6ec06e5140b76e031981e2b42daea8d0bb"
+    }
+  ]
+}

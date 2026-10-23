@@ -1,0 +1,69 @@
+{
+  "schema": "factory.scoped-repair.v1",
+  "scope": "endpoint246-test-c901",
+  "base_commit": "19acf29b4e6f6c450a9b240f3d25ecd9730d9f08",
+  "recorded_at": "2026-10-22T23:46:30.623111+00:00",
+  "change": "Extract disjoint capture and finding mutation setup in the existing test. Preserve all13 parameter cases, assertions and forbidden-filesystem boundary. No production source or expectation changes.",
+  "source": {
+    "path": "tests/test_credential_endpoint_scanner.py",
+    "sha256": "8e0863ff94caf4374f62663c5267129ffc71fbcbff0159a5a0ab60ce05769e54",
+    "kind": "test"
+  },
+  "review": {
+    "path": ".factory/precision246/ecc-test-c901-review.json",
+    "sha256": "8fe0b347967261465176df63ed4c2b260003015ab629434732d8d920019e6eb5",
+    "kind": "review"
+  },
+  "before": {
+    "workflow_run_id": 39873623879,
+    "job": "lint",
+    "status": "FAIL",
+    "error": "C901 test_endpoint_plain_facts_require_current_complete_source_recomputation15>10"
+  },
+  "after": {
+    "focused_tests_passed": 13,
+    "receipt": {
+      "path": ".factory/precision241/targeted/endpoint246-test-c901/receipt.json",
+      "sha256": "4af9a8329c43bb0c7e31325024a0d418307be630ea3efd36d89fc54d7af99ca4",
+      "kind": "receipt"
+    },
+    "full_suite_rerun": false,
+    "complexity": {
+      "command": [
+        "python",
+        "-m",
+        "ruff",
+        "check",
+        "--select",
+        "C901",
+        "tests\\test_credential_endpoint_scanner.py"
+      ],
+      "exit_code": 0,
+      "artifact": {
+        "path": ".factory/precision246/workflow-test-c901/complexity.log",
+        "sha256": "a4443afdcfb6d7363adb285762515ccf7cf50473b1a05c20c1a50f6bed4d26b0",
+        "kind": "log"
+      }
+    },
+    "format": {
+      "command": [
+        "python",
+        "-m",
+        "ruff",
+        "format",
+        "--check",
+        "tests\\test_credential_endpoint_scanner.py"
+      ],
+      "exit_code": 0,
+      "artifact": {
+        "path": ".factory/precision246/workflow-test-c901/format.log",
+        "sha256": "7688ae71c60af2e4266827abb3678cc2145655f587daf33dfa649dbac2c619c3",
+        "kind": "log"
+      }
+    }
+  },
+  "precision": {
+    "new_measurement": "NOT_RUN",
+    "gain_claim": false
+  }
+}

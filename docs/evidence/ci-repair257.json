@@ -1,0 +1,88 @@
+{
+  "schema": "factory.ci-repair257.v1",
+  "parent": "51ea778944b3e7346a2c3b7046cbfc16c645b8d2",
+  "created_utc": "2026-10-23T03:27:05.012568+00:00",
+  "source_files": {
+    "factoryline/credential_role_constructor_provider.py": "231343e8002b7eedb36660bcd0356d037ffa7d3cc17aef52baf3b4f83677bfb8",
+    "factoryline/credential_role_method_use_getter_audit.py": "a911650409196fcc1c3b972b3aefe1872e10b5e1464e20bdd342924d4b926f96",
+    "tests/test_context_efficiency.py": "c7fe6f66e6929d908a60ec2c72a4435d71fb749b3d2477b7671ee693e789b66f",
+    "tests/test_credential_constructor_cache.py": "461395acd547e6d1089a8d6e6d5c2f907f65bcaa88f33f9d675456429b605a6e",
+    "tests/test_credential_endpoint_admission.py": "17c964fb00ddcbce9b119ccb1002ed4ac9e7cae261813cd0c2dd9a76dddcf45c",
+    "tests/test_credential_role_identity_call_content.py": "e26d351421a9db467ea1c78332198598f3ff943573bf89ad3fdeee3830ed2fab",
+    "tests/test_credential_role_method_paths.py": "efd17bea396460fd4ab216a9e09c7b9648799b497b9c0644abf1848ad377294c",
+    "tests/test_credential_role_method_use_audit.py": "e869f48ca7f44c9602c9ee9c13999228ab30355cc04956ba40f05fb3758b7898",
+    "tests/test_finite_capture_origins.py": "6fb71fcfa29068057c8994940191fdb6ec4fcd99357142018629e6495888e00f",
+    "tests/test_review_integrity.py": "adc5e58aa7b69aa4664f9b485a2abcfad52bdbd52cc3ad1d03f6c9d5a26b1d89",
+    "tests/test_runtime_audit_integrity.py": "48f82e6e6f468b6fa3f26f599d2fe20e58c8d06a8ae46520e2c5e26eded750f6",
+    "tests/test_semantic_credential_sensor.py": "86bae77c38fead505390dd86e2dd8cf51dbf7c17e67372767dfd90b9e2dfb72b",
+    "tests/test_type_intent_hollow_fallback.py": "6aa656f0fa150e1fad2cda090c5d29e717e6d19418ee03242539d84c7d582bd8"
+  },
+  "changes": [
+    "Invalidate snapshot validation when captured AST/bytes identity, inventory digest or producer digest changes; discard stale parent maps.",
+    "Include captured byte identity and producer digest in getter candidate cache signature.",
+    "Add92new test definitions,136 passing cases, covering previously untested API contracts with real positive and negative observations."
+  ],
+  "quality": {
+    "grade": "A",
+    "composite": 99.1,
+    "attribution_rate": 1.0,
+    "max_complexity": 10,
+    "finding_count": 0,
+    "assessment": "static_name_match",
+    "kind": "STATIC_QUALITY_NOT_DETECTION_PRECISION"
+  },
+  "architecture": {
+    "decision": "HEALTHY",
+    "python_files": 430,
+    "core_modules": 133,
+    "caps_changed": false
+  },
+  "tests": {
+    "new_definitions": 92,
+    "passed": 136,
+    "failed": 0,
+    "wall_seconds": 7.656,
+    "existing_test_functions_unchanged": true,
+    "fixture_helper_exception": [
+      {
+        "file": "tests/test_credential_constructor_cache.py",
+        "class": "_Audit",
+        "change": "old methods unchanged; additive native-audit fixture helper"
+      }
+    ],
+    "full_suite": "GitHub CI required after push; not rerun locally"
+  },
+  "ecc_review": {
+    "path": ".factory/precision257/ecc-review.json",
+    "sha256": "0f9b88d1a65f87d598422530f8fdc1fbf1de9053bee76617aaec48d73aa04283",
+    "kind": "review"
+  },
+  "observations": [
+    {
+      "path": ".factory/precision257/quality-native.json",
+      "sha256": "703939e0d512011459cbf4aadddbdc82d5c6f93857ef41daaae432c963955064",
+      "kind": "evidence"
+    },
+    {
+      "path": ".factory/precision257/targeted/combined-new-contracts/receipt.json",
+      "sha256": "9ba58d3926305151d20ca66df2900aed992a68ff7c7e2df042e13bb20738aef6",
+      "kind": "evidence"
+    },
+    {
+      "path": ".factory/precision257/architecture-result.json",
+      "sha256": "5673973dc07b66a9e24a0b4877ec48460afe9b66cd07946cbaf4ee81823e1073",
+      "kind": "evidence"
+    }
+  ],
+  "measurement_wrapper_erratum": "Native QA report was saved successfully; initial local wrapper then referenced nonexistent QAReport.composite. Validated saved report metrics.composite without re-running the expensive audit. This was a runner postprocessing error, not a native gate failure.",
+  "precision": {
+    "measured_candidate": 0.55,
+    "TP": 33,
+    "FP": 27,
+    "cohort": "Study249 exposed after original frozen evaluation",
+    "new_gain": null,
+    "no_new_precision_claim": true
+  },
+  "publication": "HOLD until higher precision follow-up finished; no publish workflow dispatched",
+  "merge": "Required GitHub CI pending"
+}

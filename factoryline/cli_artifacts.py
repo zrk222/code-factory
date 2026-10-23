@@ -60,7 +60,7 @@ def _run_attest(a) -> int:
 
 
 def _run_passport(a) -> int:
-    from .passport import build_passport
+    from .proof import build_passport
 
     try:
         passport = build_passport(
@@ -82,7 +82,7 @@ def _run_passport(a) -> int:
 
 
 def _run_verify_passport(a) -> int:
-    from .passport import verify_passport
+    from .proof import verify_passport
 
     result = verify_passport(Path(a.passport))
     print(
@@ -92,7 +92,7 @@ def _run_verify_passport(a) -> int:
 
 
 def _run_challenge(a) -> int:
-    from .challenge import challenge_trace
+    from .proof import challenge_trace
 
     payload = challenge_trace(Path(a.trace), root=Path(a.root))
     out = (
@@ -107,7 +107,7 @@ def _run_challenge(a) -> int:
 
 
 def _run_coverage(a) -> int:
-    from .coverage import requirement_coverage
+    from .attribution import requirement_coverage
 
     result = requirement_coverage(Path(a.root))
     if a.json:

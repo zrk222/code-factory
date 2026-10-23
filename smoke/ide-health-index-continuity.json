@@ -3,7 +3,7 @@
     {
       "name": "index_continuity_baseline_compare_and_refusal_contract",
       "kind": "python",
-      "run": "import pytest\nassert pytest.main(['-q', 'tests/test_index_continuity.py']) == 0\n",
+      "run": "import pytest\nassert pytest.main(['-q', 'tests/test_developer_memory.py::test_baseline_is_explicit_local_and_never_stores_source_contents', 'tests/test_developer_memory.py::test_identical_baseline_is_stable_and_does_not_fabricate_a_duration', 'tests/test_developer_memory.py::test_changed_manifest_requires_broad_reanalysis_with_exact_path', 'tests/test_developer_memory.py::test_managed_directory_drift_is_targeted_not_a_corruption_claim', 'tests/test_developer_memory.py::test_tampered_or_invalid_baseline_fails_closed', 'tests/test_developer_memory.py::test_cli_end_to_end_baseline_then_compare']) == 0\n",
       "covers": [
         "INDEX_CONTINUITY_LOCAL_STRUCTURAL_ONLY",
         "INDEX_CONTINUITY_BASELINE_CAPTURED",

@@ -202,7 +202,6 @@ def test_shared_canonical_preserves_bytes_errors_and_deletes_duplicate_bodies(
         ("mcp_mrt", "unicode", "value"),
         ("migration", "ascii", "value"),
         ("oracle_firewall", "unicode", "value"),
-        ("passport", "ascii", "payload"),
         ("plan_proof_review", "unicode", "value"),
         ("prd_grill", "unicode", "value"),
         ("product_missions", "unicode", "value"),

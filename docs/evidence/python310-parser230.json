@@ -1,0 +1,57 @@
+{
+  "schema": "factory.python310-parser-qualification230.v1",
+  "candidate": {
+    "schema": "factory.python310-parser-repair230.v1",
+    "parent": "a36ee0ded6cb5bde0dc5ef62b017e5288c9633d2",
+    "path": "factoryline/mock_fixture_provenance.py",
+    "before_sha256": "6971049dcf41abde0b36653fff66e71b5c1c2a54e1c4db57dc66d5c22b24113a",
+    "after_sha256": "73c4ed07008f50aa7ed1bb8ac6bd52c19de8e5eb69d5c0b0a74ff6d1d41ef842",
+    "requirement": "Reuse existing audited tomli fallback under Python3.10 without changing fixture authority checks or test expectations.",
+    "failed_nodeids": [
+      "tests/test_mock_fixture_provenance.py::test_django_fixture_requires_captured_bytes_and_resolves_local_authority",
+      "tests/test_mock_fixture_provenance.py::test_django_fixture_allows_only_source_bound_literal_model_projections",
+      "tests/test_mock_fixture_provenance.py::test_django_external_transport_is_not_misreported_as_role_guard",
+      "tests/test_mock_fixture_provenance.py::test_django_fixture_scanner_cold_warm_and_config_drift"
+    ]
+  },
+  "review_sha256": "58b30bdd2035c16072bd529e582ee156e9c6db856b43db7316f53dcbd8b64f1c",
+  "profile": "Windows CPython3.11.9 with source-module tomllib import blocked; predeclared tomli fallback selected. Not native Python3.10.",
+  "failed_only": {
+    "passed": 4,
+    "failed": 0,
+    "seconds": 1.59,
+    "xml_sha256": "b75cfd4377dce732dfa4bff981c018b970551f717fc6ade05b142867aa84e8a4"
+  },
+  "original_ci": {
+    "run": 39756793917,
+    "head": "a36ee0ded6cb5bde0dc5ef62b017e5288c9633d2",
+    "ubuntu310_failed": 4,
+    "macos310_failed": 4,
+    "logs": {
+      "ubuntu310.log": "6441ea419e6a3e5f9e7a55359ff96aaf73d442dbc23287fd9fc2851878bbb906",
+      "macos310.log": "d0101b1ecea39c5c7e5e76b358e17b69201679d726e94b4706ed1ce9b9e421af"
+    }
+  },
+  "initial_harness_error": {
+    "sha256": "817af21590f4778280bfd061070686efdb56860272715348a4fb3407e08558e0",
+    "reason": "Overbroad import blocker prevented pytest config loading; no tests executed. Retained, then scoped blocker to product source."
+  },
+  "native_python310_final": "PENDING_CI",
+  "native_candidate_quality": "FAIL_UNRESOLVED",
+  "latest_fresh_actionable_precision": {
+    "study": "Study225",
+    "TP": 0,
+    "FP": 49,
+    "UNCLEAR": 8,
+    "decided_precision": 0,
+    "wilson95": [
+      0,
+      0.07269781922049637
+    ]
+  },
+  "precision_gain_claim": null,
+  "merge_bar_met": false,
+  "new_modules": 0,
+  "test_expectation_changes": 0,
+  "active_plan_sha256": "4122b8561306ea2a0411cdef6d04fb04e415f2cd36f21713698546f8cf3eaacf"
+}

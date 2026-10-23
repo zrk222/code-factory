@@ -1,3 +1,6 @@
+from factoryline import review_audits
+from factoryline import review_integrity
+from factoryline import primitive_observation_binding as binding
 import ast
 import json
 import textwrap
@@ -39,6 +42,226 @@ def _database_context_project(root, dialect="sqlite"):
         "SELECT l.amount FROM ledger AS l;\n"
     )
     return source
+
+
+@pytest.mark.parametrize(
+    "registration,mutation,dispatch,expected",
+    [
+        ("return fn", "", "for callback in checks:\n        callback(42)", True),
+        (
+            "checks.append(lambda value: None); return fn",
+            "",
+            "for callback in checks:\n        callback(42)",
+            True,
+        ),
+        (
+            "checks.append(fn); return fn",
+            "checks.clear()",
+            "for callback in checks:\n        callback(42)",
+            True,
+        ),
+        (
+            "checks.append(fn); return fn",
+            "checks = []",
+            "for callback in checks:\n        callback(42)",
+            True,
+        ),
+        (
+            "checks.append(fn); return fn",
+            "alias = checks; alias.clear()",
+            "for callback in checks:\n        callback(42)",
+            True,
+        ),
+        ("checks.append(fn); return fn", "", "pass", True),
+        (
+            "checks.append(fn); return fn",
+            "",
+            "for callback in []:\n        callback(42)",
+            True,
+        ),
+        (
+            "checks.append(fn); return fn",
+            "",
+            "for callback in checks:\n        callback = lambda value: None\n        callback(42)",
+            True,
+        ),
+        (
+            "checks.append(fn); return fn",
+            "",
+            "try:\n        for callback in checks:\n            callback(42)\n    except AssertionError:\n        pass",
+            True,
+        ),
+        (
+            "checks.append(fn); return fn",
+            "mutate(checks)",
+            "for callback in checks:\n        callback(42)",
+            False,
+        ),
+        (
+            "checks.append(fn); return fn",
+            "",
+            "for callback in checks:\n        if False:\n            callback(42)",
+            True,
+        ),
+        (
+            "checks.append(fn); return fn",
+            "",
+            "for callback in checks:\n        break\n        callback(42)",
+            True,
+        ),
+        (
+            "checks.append(fn); return fn",
+            "return",
+            "for callback in checks:\n        callback(42)",
+            True,
+        ),
+        (
+            "checks.append(fn); return fn",
+            "",
+            "for callback in checks:\n        callback(41)",
+            False,
+        ),
+    ],
+)
+def test_bounded_inert_registered_callback_proof(
+    registration, mutation, dispatch, expected
+):
+    from factoryline.test_callback_closure import inert_registered_callback_body
+
+    source = (
+        "def test_behavior():\n    checks = []\n    def register(fn):\n        "
+        + registration
+        + "\n    @register\n    def check(value):\n        assert value == 42\n    "
+        + mutation
+        + "\n    "
+        + dispatch
+        + "\n"
+    )
+    module = ast.parse(source)
+    function = module.body[0]
+    function._oracle_module = module
+    assert inert_registered_callback_body(function) is expected
+
+
+def _inert_registry_source(
+    register="checks.append(fn)\nreturn fn",
+    callback="assert value == 42",
+    before="",
+    between="",
+    after="pass",
+    parameters="()",
+    dispatch="pass",
+    module_prefix="",
+    register_name="register",
+    callback_name="check",
+    decorator="register",
+    register_parameter="fn",
+):
+    def indent(source, width):
+        return textwrap.indent(textwrap.dedent(source).strip(), " " * width)
+
+    return (
+        module_prefix
+        + f"""def test_behavior{parameters}:
+    checks=[]
+{indent(before, 4)}
+    def {register_name}({register_parameter}):
+{indent(register, 8)}
+{indent(between, 4)}
+    @{decorator}
+    def {callback_name}(value):
+{indent(callback, 8)}
+{indent(after, 4)}
+{indent(dispatch, 4)}
+"""
+    )
+
+
+def test_bounded_inert_registry_rejects_effects_and_shadowed_bindings():
+    from factoryline.test_callback_closure import inert_registered_callback_body
+
+    sources = [
+        _inert_registry_source(
+            register="checks.append(lambda value: None)\nreturn fn",
+            dispatch="for callback in checks:\n    run_oracle()\n    callback(42)",
+        ),
+        _inert_registry_source(
+            dispatch="try:\n    for callback in checks:\n        run_oracle()\n        callback(41)\nexcept AssertionError:\n    pass",
+        ),
+        _inert_registry_source(
+            register="checks.append(lambda value: None, unexpected=run_oracle())\nreturn fn",
+        ),
+        _inert_registry_source(
+            parameters="(AssertionError)",
+            dispatch="try:\n    for callback in checks:\n        callback(41)\nexcept AssertionError:\n    pass",
+        ),
+        _inert_registry_source(
+            after="try:\n    for callback in checks:\n        callback(41)\nexcept AssertionError as checks:\n    pass\nchecks.clear()",
+        ),
+        _inert_registry_source(
+            between="checks.clear()",
+            callback="run_oracle()\nassert value == 42",
+            dispatch="for callback in checks:\n    callback(42)",
+        ),
+        _inert_registry_source(
+            before="checks.clear()",
+            callback="run_oracle()\nassert value == 42",
+            dispatch="for callback in checks:\n    callback(42)",
+        ),
+        _inert_registry_source(between="register=checks"),
+        _inert_registry_source(
+            dispatch="for checks in checks:\n    checks = lambda value: None\n    checks(42)\nchecks.clear()",
+        ),
+        _inert_registry_source(
+            dispatch="for checks in checks:\n    break\nchecks.clear()",
+        ),
+        _inert_registry_source(
+            dispatch="for checks in checks:\n    if False:\n        checks(42)\nchecks.clear()",
+        ),
+        _inert_registry_source(
+            register="checks.append(checks)\nreturn checks",
+            register_parameter="checks",
+        ),
+        _inert_registry_source(
+            register_name="checks",
+            decorator="checks",
+        ),
+        _inert_registry_source(callback_name="checks"),
+        _inert_registry_source(
+            after="AssertionError=checks\ntry:\n    for callback in checks:\n        callback(41)\nexcept AssertionError:\n    pass",
+        ),
+        _inert_registry_source(
+            module_prefix="AssertionError = ValueError\n",
+            dispatch="try:\n    for callback in checks:\n        callback(41)\nexcept AssertionError:\n    pass",
+        ),
+        _inert_registry_source(
+            module_prefix="import builtins\nbuiltins.AssertionError = ValueError\n",
+            dispatch="try:\n    for callback in checks:\n        callback(41)\nexcept AssertionError:\n    pass",
+        ),
+        _inert_registry_source(
+            module_prefix='import builtins\nsetattr(builtins, "AssertionError", ValueError)\n',
+            dispatch="try:\n    for callback in checks:\n        callback(41)\nexcept AssertionError:\n    pass",
+        ),
+    ]
+    for source in sources:
+        module = ast.parse(source)
+        function = next(
+            node for node in module.body if isinstance(node, ast.FunctionDef)
+        )
+        function._oracle_module = module
+        assert not inert_registered_callback_body(function), source
+
+
+def test_bounded_inert_registry_proof_is_name_independent():
+    from factoryline.test_callback_closure import inert_registered_callback_body
+
+    function = ast.parse(
+        "def test_behavior():\n    tasks = []\n    def install(handler):\n"
+        "        tasks.append(handler)\n        return handler\n    @install\n"
+        "    def verify(value):\n        assert value == 42\n    for action in tasks:\n"
+        "        action(42)\n"
+    ).body[0]
+    assert not inert_registered_callback_body(function)
 
 
 def test_security_scan_report_seals_database_context_and_accepts_legacy_payload(
@@ -131,7 +354,12 @@ def test_database_context_rejects_changed_inputs_before_receipt(
         audit.security_scan(tmp_path, cache_enabled=False)
 
 
-def test_database_context_missing_dialect_and_invalid_sql_are_incomplete(tmp_path):
+@pytest.mark.parametrize(
+    "malformed_sql", ["CREATE TABLE (", "SELECT 'PRIVATE_TOKENIZER_FRAGMENT"]
+)
+def test_database_context_missing_dialect_and_invalid_sql_are_incomplete(
+    tmp_path, malformed_sql
+):
     from factoryline.review_audits import security_scan
 
     source = _database_context_project(tmp_path)
@@ -141,7 +369,7 @@ def test_database_context_missing_dialect_and_invalid_sql_are_incomplete(tmp_pat
     assert (
         "database_dialect_confirmation_required" in result["database_context"]["gaps"]
     )
-    source.write_text("CREATE TABLE (")
+    source.write_text(malformed_sql)
     result = security_scan(tmp_path)
     assert result["database_context"]["status"] == "INCOMPLETE"
     assert any(
@@ -732,7 +960,12 @@ def test_request_alias_memo_copies_results_tracks_alias_mutation_and_bounds(
         try:
             before_unicode_overflow = len(applications)
             for _ in range(2):
-                review_integrity._security_scope_request_aliases(tree, {"x": "é"})
+                review_integrity._security_scope_request_aliases(
+                    tree,
+                    {
+                        "x": "ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¾Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¦Ãƒâ€šÃ‚Â¡ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â©"
+                    },
+                )
             assert len(applications) >= before_unicode_overflow + 2
         finally:
             intent_quality_module._SECURITY_REQUEST_ALIAS_MEMO.reset(token)
@@ -1892,6 +2125,21 @@ def test_runtime_callback_coverage_rejects_swallowed_or_vacuous_assertions(
     assert coverage["eligible"] is False
 
 
+@pytest.mark.parametrize(
+    "schema",
+    ["factory.test-oracle-verification.v1", "factory.test-oracle-verification.v2"],
+)
+def test_unknown_runtime_oracle_rejects_legacy_eligibility(tmp_path, schema):
+    from factoryline.review_integrity import runtime_finding_coverage
+
+    workspace, row = _runtime_finding_coverage_fixture(tmp_path)
+    finding = {
+        "code": "QUALITY_UNKNOWN_TEST_ORACLE",
+        "facts": {"runtime_oracle_eligible": True},
+    }
+    assert runtime_finding_coverage(workspace, finding, row, schema, []) is False
+
+
 def _runtime_finding_coverage_fixture(tmp_path):
     source = "def test_legacy_case():\n    assert compute() == expected\n"
     test_path = tmp_path / "tests" / "test_runtime_coverage.py"
@@ -2730,7 +2978,11 @@ def test_codspeed_module_benchmark_requires_config_and_workload(
 ):
     from factoryline.review_audits import security_scan
 
-    source = "import pytest\npytestmark = pytest.mark.benchmark()\n"
+    # Self-contained workload; the original undefined forms remain UNKNOWN controls.
+    source = (
+        "import pytest\npytestmark = pytest.mark.benchmark()\n"
+        "def product():\n    return 1\n"
+    )
     if change == "shadowed_pytest":
         source += "pytest = object()\n"
     if change == "rebound_marker":
@@ -2768,7 +3020,9 @@ def test_codspeed_config_change_invalidates_cached_oracle(tmp_path):
     from factoryline.review_audits import security_scan
 
     (tmp_path / "test_bench.py").write_text(
-        "import pytest\npytestmark = pytest.mark.benchmark\ndef test_case():\n    product()\n"
+        "import pytest\npytestmark = pytest.mark.benchmark\n"
+        "def product():\n    return 1\n"
+        "def test_case():\n    product()\n"
     )
     config = tmp_path / "tox.ini"
     config.write_text("[testenv:perf]\ncommands = pytest --codspeed test_bench.py\n")
@@ -2807,9 +3061,26 @@ def test_warm_cache_preserves_structural_import_binding_and_source_drift(tmp_pat
     warm = security_scan(tmp_path)["finding_counts"]
     assert cold == warm == {}
     assert _oracle_context_cache_info()["hits"] >= 1
+    before = security_scan(tmp_path)
     product.write_text("def __getattr__(name):\n    return object()\n")
-    assert "QUALITY_HOLLOW_TEST" in security_scan(tmp_path)["finding_counts"]
-    assert "QUALITY_HOLLOW_TEST" in security_scan(tmp_path)["finding_counts"]
+    drifted = security_scan(tmp_path)
+    drifted_warm = security_scan(tmp_path)
+    _oracle_context_cache_clear()
+    drifted_cold = security_scan(tmp_path)
+    # Dynamic attribute providers have no closed completion summary. Cache
+    # invalidation must preserve that UNKNOWN result, including a fresh run.
+    assert drifted["source_manifest_sha256"] != before["source_manifest_sha256"]
+    assert drifted["finding_counts"] == {"QUALITY_UNKNOWN_TEST_ORACLE": 1}
+    assert (
+        drifted_warm["finding_counts"]
+        == drifted_cold["finding_counts"]
+        == drifted["finding_counts"]
+    )
+    assert (
+        drifted_warm["source_manifest_sha256"]
+        == drifted_cold["source_manifest_sha256"]
+        == drifted["source_manifest_sha256"]
+    )
 
 
 def test_benchmark_configuration_binds_valid_targets_and_identity(tmp_path):
@@ -3695,6 +3966,10 @@ def test_stable_import_helpers_are_fresh_and_invocation_local(tmp_path):
             ),
             implementation: ast.parse(source),
         }
+        # Native import binding requires actual captured source files.
+        root.mkdir(parents=True)
+        for path, tree in snapshots.items():
+            path.write_text(ast.unparse(tree), encoding="utf-8")
         contexts = {path: {} for path in snapshots}
         edges = []
         bind_project_contracts(root, snapshots, contexts, edges)
@@ -4515,6 +4790,120 @@ def test_import_index_failure_is_measured_without_error_text(monkeypatch):
     assert "PRIVATE INDEX DETAIL" not in str(snapshot)
 
 
+def test_database_index_name_helper_changes_cache_identity(monkeypatch):
+    import hashlib
+    import inspect
+
+    from factoryline import intent_quality as iq
+
+    before = iq._db_code_identity(inspect, hashlib.sha256)
+
+    def changed_index_name(index, exp, path, dialect, gaps):
+        return None
+
+    monkeypatch.setattr(iq, "_db_index_name", changed_index_name)
+    assert iq._db_code_identity(inspect, hashlib.sha256) != before
+
+
+def test_database_index_names_keep_partial_facts_and_fail_closed():
+    from factoryline.intent_quality import database_structure
+
+    anonymous = database_structure(
+        {
+            "schema.sql": (
+                b"CREATE TABLE entries (published INTEGER); "
+                b"CREATE INDEX ON entries (published);"
+            )
+        },
+        "postgres",
+    )
+    assert anonymous["status"] == "INCOMPLETE"
+    assert "index_name_omitted:schema.sql" in anonymous["gaps"]
+    entries = next(table for table in anonymous["tables"] if table["name"] == "entries")
+    assert entries["indexes"] == [
+        {"name": None, "unique": False, "columns": ["published"]}
+    ]
+    assert anonymous["operations"][-1]["op"] == "create_index"
+    assert anonymous["operations"][-1]["table"] == "entries"
+
+    unique_anonymous = database_structure(
+        {
+            "schema.sql": (
+                b"CREATE TABLE entries (published INTEGER); "
+                b"CREATE UNIQUE INDEX ON entries (published);"
+            )
+        },
+        "postgres",
+    )
+    assert unique_anonymous["status"] == "INCOMPLETE"
+    assert unique_anonymous["tables"][0]["indexes"] == [
+        {"name": None, "unique": True, "columns": ["published"]}
+    ]
+
+    named = database_structure(
+        {
+            "schema.sql": (
+                b"CREATE TABLE entries (published INTEGER); "
+                b"CREATE UNIQUE INDEX ix_entries_published "
+                b"ON entries (published);"
+            )
+        },
+        "postgres",
+    )
+    assert named["status"] == "COMPLETE", named["gaps"]
+    assert named["tables"][0]["indexes"] == [
+        {
+            "name": "ix_entries_published",
+            "unique": True,
+            "columns": ["published"],
+        }
+    ]
+
+    malformed_name = database_structure(
+        {
+            "schema.sql": (
+                b"CREATE TABLE entries (published INTEGER); "
+                b'CREATE INDEX "" ON entries (published);'
+            )
+        },
+        "postgres",
+    )
+    assert malformed_name["status"] == "INCOMPLETE"
+    assert "malformed_index_name:schema.sql" in malformed_name["gaps"]
+    entries = next(
+        table for table in malformed_name["tables"] if table["name"] == "entries"
+    )
+    assert entries["indexes"] == [
+        {"name": None, "unique": False, "columns": ["published"]}
+    ]
+
+    empty_table = database_structure(
+        {
+            "schema.sql": (
+                b"CREATE TABLE entries (published INTEGER); "
+                b'CREATE INDEX ix_entries_published ON "" (published);'
+            )
+        },
+        "postgres",
+    )
+    assert empty_table["status"] == "INCOMPLETE"
+    assert any(gap.startswith("index_table_unresolved:") for gap in empty_table["gaps"])
+    entries = next(
+        table for table in empty_table["tables"] if table["name"] == "entries"
+    )
+    assert entries["indexes"] == []
+    assert empty_table["operations"][-1]["op"] == "create_index"
+
+    missing_table = database_structure(
+        {"schema.sql": b"CREATE INDEX SECRET_INDEX_NAME_7AC1 ON (published);"},
+        "postgres",
+    )
+    assert missing_table["status"] == "INCOMPLETE"
+    assert "sql_parse_error:schema.sql" in missing_table["gaps"]
+    assert missing_table["tables"] == []
+    assert "SECRET_INDEX_NAME_7AC1" not in repr(missing_table)
+
+
 def test_database_context_reader_adversarial_controls():
     from contextlib import redirect_stderr, redirect_stdout
     from io import StringIO
@@ -4879,6 +5268,28 @@ def load():
     assert malformed["status"] == "INCOMPLETE"
     assert "sql_parse_error:broken.sql" in malformed["gaps"]
     assert malformed["tables"] == []
+    for inputs, expected in [
+        (
+            {"broken.sql": b"SELECT 'PRIVATE_TOKENIZER_FRAGMENT"},
+            "sql_parse_error:broken.sql",
+        ),
+        (
+            {
+                "schema.sql": b"CREATE TABLE users (id INT)",
+                "query.py": b"import sqlite3\ndef load():\n    connection = sqlite3.connect(':memory:')\n    connection.execute(\"SELECT 'PRIVATE_TOKENIZER_FRAGMENT\")\n",
+            },
+            "python_sql_parse_error:query.py",
+        ),
+    ]:
+        stdout, stderr = StringIO(), StringIO()
+        with redirect_stdout(stdout), redirect_stderr(stderr):
+            tokenized = iq.database_structure(inputs, "sqlite")
+        assert tokenized["status"] == "INCOMPLETE"
+        assert expected in tokenized["gaps"]
+        assert (
+            "PRIVATE_TOKENIZER_FRAGMENT"
+            not in repr(tokenized) + stdout.getvalue() + stderr.getvalue()
+        )
 
     parser, exp, version = iq._db_load_parser()
     original_version = parser.__version__
@@ -5416,3 +5827,1395 @@ def test_oracle_snapshot_enables_fresh_bound_name_cache(monkeypatch, tmp_path):
     assert not hasattr(raw_statement, "_scan_bound_names")
     raw_statement.targets.append(ast.Name(id="changed", ctx=ast.Store()))
     assert module._bound_names(raw_statement) == {"values", "changed"}
+
+
+@pytest.mark.parametrize(
+    "definition,expression,valid",
+    [
+        ("def f(x): pass", "f()", False),
+        ("def f(x): pass", "f(1)", True),
+        ("def f(x): pass", "f(x=1)", True),
+        ("def f(x, /): pass", "f(x=1)", False),
+        ("def f(x=sentinel()): pass", "f()", True),
+        ("def f(*, x): pass", "f(1)", False),
+        ("def f(*, x): pass", "f(x=1)", True),
+        ("def f(x): pass", "f(1, x=2)", False),
+        ("def f(x): pass", "f(x=1, x=2)", False),
+        ("def f(*args): pass", "f(*items)", False),
+        ("def f(**kwargs): pass", "f(**items)", False),
+        ("def f(**options): pass", "f(enabled=True)", True),
+        ("def f(x, /, **options): pass", "f(1, x=2)", True),
+        ("def f(x): pass", "f(1, unexpected=2)", False),
+    ],
+)
+def test_shared_source_binding_validates_complete_call(definition, expression, valid):
+    from factoryline.review_integrity import bind_source_call
+
+    function = ast.parse(definition).body[0]
+    call = ast.parse(expression).body[0].value
+    if valid:
+        assert isinstance(bind_source_call(call, function), dict)
+    else:
+        with pytest.raises(ValueError, match="SOURCE_ARGUMENT"):
+            bind_source_call(call, function)
+
+
+def test_shared_source_binding_preserves_tokens_and_fresh_variadics():
+    from factoryline.review_integrity import bind_source_call, source_signature
+
+    function = ast.parse(
+        "def f(self, x: dangerous() = sentinel(), *args, flag=other(), **options): pass"
+    ).body[0]
+    receiver, actual = object(), object()
+    call = ast.parse("f(alias, enabled=True)").body[0].value
+    bound = bind_source_call(call, function, receiver, {"alias": actual})
+    assert bound["self"] is receiver
+    assert bound["x"] is actual
+    assert bound["args"] == ()
+    assert bound["flag"] is function.args.kw_defaults[0]
+    assert type(bound["options"]) is dict
+    assert bound["options"]["enabled"] is call.keywords[0].value
+    again = bind_source_call(call, function, receiver, {"alias": actual})
+    assert again["options"] is not bound["options"]
+    signature = source_signature(function)
+    assert signature.parameters["x"].annotation is function.args.args[1].annotation
+    assert signature.parameters["x"].default is function.args.defaults[0]
+    empty = ast.parse("f()").body[0].value
+    assert bind_source_call(empty, function, receiver)["x"] is function.args.defaults[0]
+    assert bind_source_call(empty, function, receiver, apply_defaults=False) == {
+        "self": receiver
+    }
+
+
+@pytest.mark.parametrize(
+    "definition,expression,expected",
+    [
+        ("def f(callback=check): pass", "f()", None),
+        ("def f(callback, required): pass", "f(check)", None),
+        ("def f(callback, /): pass", "f(callback=check)", None),
+        ("def f(callback): pass", "f(check, callback=other)", None),
+        ("def f(callback, required=1): pass", "f(check)", "check"),
+    ],
+)
+def test_shared_source_binding_callback_keeps_explicit_policy(
+    definition, expression, expected
+):
+    from factoryline.review_integrity import callback_argument
+
+    assert (
+        callback_argument(
+            ast.parse(expression).body[0].value,
+            ast.parse(definition).body[0],
+            "callback",
+        )
+        == expected
+    )
+
+
+def test_shared_source_binding_inventory_tracks_alias_and_package_changes(monkeypatch):
+    import factoryline
+    from factoryline import review_integrity as integrity
+
+    original = integrity.bind_source_call
+    signature = integrity.source_signature
+    assert {original, signature} <= set(integrity.source_binding_helpers())
+
+    def replacement(*args, **kwargs):
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(factoryline, "_bind_source_call", replacement)
+    helpers = integrity.source_binding_helpers()
+    assert replacement in helpers and original in helpers and signature in helpers
+
+
+@pytest.mark.parametrize("name", ["_source_call_signature", "_bind_source_call"])
+def test_shared_source_binding_changes_invalidate_oracle_cache(
+    tmp_path, monkeypatch, name
+):
+    import factoryline
+    from factoryline import review_audits as scanner
+
+    (tmp_path / "app.py").write_text("value = 1\n", encoding="utf-8")
+    scanner._oracle_context_cache_clear()
+    files = scanner._security_source_files(tmp_path)
+    scanner._project_oracle_context(tmp_path, files, cache_enabled=True)
+    misses = scanner._oracle_context_cache_info()["misses"]
+    original = getattr(factoryline, name)
+
+    def replacement(*args, **kwargs):
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(factoryline, name, replacement)
+    scanner._project_oracle_context(tmp_path, files, cache_enabled=True)
+    assert scanner._oracle_context_cache_info()["misses"] > misses
+
+
+@pytest.mark.parametrize(
+    "expression,expected",
+    [
+        ("f(tainted)", True),
+        ("f(value=tainted)", True),
+        ("f()", False),
+        ("f(tainted, value=other)", False),
+        ("f(*items)", False),
+    ],
+)
+def test_shared_source_binding_taint_keeps_explicit_defaults_policy(
+    expression, expected
+):
+    from factoryline.review_integrity import _security_helper_return_tainted
+
+    function = ast.parse("def f(value=tainted): return value").body[0]
+    assert (
+        _security_helper_return_tainted(
+            ast.parse(expression).body[0].value, function, set(), {"tainted"}, {}
+        )
+        is expected
+    )
+    assert not getattr(function, "_security_helper_active", False)
+
+
+@pytest.mark.parametrize(
+    "body,expected",
+    [
+        ("pass", "QUALITY_HOLLOW_TEST"),
+        ("external_operation()", "QUALITY_UNKNOWN_TEST_ORACLE"),
+    ],
+)
+def test_unknown_policy_generic_local_absence_is_not_deficiency(
+    tmp_path, body, expected
+):
+    from factoryline.review_audits import security_scan
+
+    (tmp_path / "test_case.py").write_text(f"def test_case():\n    {body}\n")
+    report = security_scan(tmp_path)
+    findings = report["findings"]
+    unknown = [f for f in findings if f["code"] == "QUALITY_UNKNOWN_TEST_ORACLE"]
+    if expected == "QUALITY_HOLLOW_TEST":
+        # Local inertness is proved; an opaque call remains unverified.
+        assert [f["code"] for f in findings] == ["QUALITY_HOLLOW_TEST"]
+        assert findings[0]["severity"] == "MEDIUM"
+        return
+    assert len(unknown) == 1
+    assert unknown[0]["severity"] == "INFO"
+    assert unknown[0]["facts"]["state"] == "INCOMPLETE"
+    assert unknown[0]["facts"]["evidence_state"] == "UNKNOWN"
+    assert unknown[0]["facts"]["candidate_rule"] == "QUALITY_HOLLOW_TEST"
+    assert "fixture/lifecycle" in unknown[0]["facts"]["missing_evidence"]
+    assert "runtime_oracle_eligible" not in unknown[0]["facts"]
+    assert not any(f["code"] == "QUALITY_HOLLOW_TEST" for f in findings)
+    assert report["state"] == "INCOMPLETE"
+
+
+def test_unknown_policy_autouse_lifecycle_is_not_inferred_absent(tmp_path):
+    from factoryline.review_audits import security_scan
+
+    (tmp_path / "conftest.py").write_text(
+        "import pytest\n@pytest.fixture(autouse=True)\n"
+        "def validate_lifecycle():\n    yield\n    assert actual_state() == expected_state()\n"
+    )
+    (tmp_path / "test_case.py").write_text("def test_case():\n    pass\n")
+    report = security_scan(tmp_path)
+    findings = [f for f in report["findings"] if f["path"] == "test_case.py"]
+    assert [f["code"] for f in findings] == ["QUALITY_UNKNOWN_TEST_ORACLE"]
+    assert report["state"] == "INCOMPLETE"
+
+
+def test_unknown_policy_real_scan_mission_control_preserves_unknown_facts(tmp_path):
+    from factoryline.review_audits import security_scan
+    from factoryline.mission_control_status import _security_scan_projection
+
+    (tmp_path / "test_case.py").write_text(
+        "def test_case():\n    external_operation()\n"
+    )
+    report = security_scan(tmp_path)
+    projected = _security_scan_projection(
+        report, "0" * 64, "CURRENT_SOURCE_HASHES_VERIFIED"
+    )
+    finding = next(
+        f for f in report["findings"] if f["code"] == "QUALITY_UNKNOWN_TEST_ORACLE"
+    )
+    assert finding["facts"]["evidence_state"] == "UNKNOWN"
+    assert finding["facts"]["candidate_rule"] == "QUALITY_HOLLOW_TEST"
+    assert projected["state"] == "INCOMPLETE"
+    assert projected["unknown_oracle_count"] == 1
+    assert projected["incomplete"] is True
+
+
+def test_unknown_policy_cold_warm_uncached_parity(tmp_path):
+    from factoryline import review_audits as scanner
+
+    (tmp_path / "test_case.py").write_text(
+        "def test_case():\n    external_operation()\n"
+    )
+    scanner._oracle_context_cache_clear()
+    cold = scanner.security_scan(tmp_path)
+    warm = scanner.security_scan(tmp_path)
+    uncached = scanner.security_scan(tmp_path, cache_enabled=False)
+    assert cold["findings"] == warm["findings"] == uncached["findings"]
+    assert cold["state"] == warm["state"] == uncached["state"] == "INCOMPLETE"
+    assert scanner._oracle_context_cache_info()["hits"] >= 1
+
+
+@pytest.mark.parametrize(
+    "status", ["WEAK_PROTOCOL", "CHECKED_WEAK", "STRICT_DEFICIENCY"]
+)
+def test_unknown_policy_forged_protocol_metadata_cannot_change_classification(status):
+    from factoryline.review_audits import _hollow_test_finding
+
+    node = ast.parse("def test_case():\n    external_operation()\n").body[0]
+    forged = {
+        "protocol_observations": {
+            "summaries": [
+                {
+                    "test": node.name,
+                    "status": status,
+                    "output_checked": True,
+                    "dependencies": [{"role": "test", "line": node.lineno}],
+                }
+            ]
+        }
+    }
+    plain = _hollow_test_finding("test_case.py", node, {})
+    injected = _hollow_test_finding("test_case.py", node, {}, oracle_context=forged)
+    assert injected["code"] == plain["code"] == "QUALITY_UNKNOWN_TEST_ORACLE"
+    assert injected["severity"] == plain["severity"] == "INFO"
+    assert injected["message"] == plain["message"]
+    assert injected["facts"]["state"] == plain["facts"]["state"] == "INCOMPLETE"
+
+
+def test_unknown_policy_strong_and_specific_weak_oracles_remain(tmp_path):
+    from factoryline.review_audits import security_scan
+
+    (tmp_path / "test_case.py").write_text(
+        "from unittest.mock import Mock\n"
+        "def test_strong():\n    assert actual() == 7\n"
+        "def test_uncalled():\n    mock = Mock()\n    assert mock.assert_called_once\n"
+    )
+    findings = security_scan(tmp_path)["findings"]
+    assert not any(f["facts"].get("symbol") == "test_strong" for f in findings)
+    assert any(f["code"] == "QUALITY_WEAK_TEST_ORACLE" for f in findings)
+
+
+@pytest.mark.parametrize(
+    "findings,expected",
+    [
+        ([{"code": "QUALITY_UNKNOWN_TEST_ORACLE", "severity": "INFO"}], "INCOMPLETE"),
+        (
+            [
+                {"code": "QUALITY_UNKNOWN_TEST_ORACLE", "severity": "INFO"},
+                {"code": "SECURITY_TLS", "severity": "HIGH"},
+            ],
+            "BLOCKED",
+        ),
+        ([{"code": "QUALITY_BENCHMARK_NOT_VERIFIED", "severity": "INFO"}], "FINDINGS"),
+        ([], "CLEAN"),
+    ],
+)
+def test_unknown_oracle_status_preserves_uncertainty_and_severity(findings, expected):
+    from factoryline.audit_action_refs import _security_scan_state
+
+    assert (
+        _security_scan_state(
+            [Path("test_case.py")], findings, {"status": "COMPLETE"}, {"complete": True}
+        )
+        == expected
+    )
+
+
+def test_unknown_oracle_status_survives_mission_control_projection():
+    from factoryline.audit_action_refs import _security_scan_state
+    from factoryline.mission_control_status import _security_scan_projection
+
+    finding = {
+        "code": "QUALITY_UNKNOWN_TEST_ORACLE",
+        "severity": "INFO",
+        "path": "test_case.py",
+        "line": 1,
+        "column": 0,
+        "message": "Oracle dispatch remains unresolved.",
+        "facts": {"state": "INCOMPLETE", "evidence_state": "UNKNOWN"},
+    }
+    coverage = {
+        "language": "Python",
+        "files_discovered": 1,
+        "files_attempted": 1,
+        "files_audited": 1,
+        "inventory_complete": True,
+        "measurement_state": "complete",
+        "complete": True,
+        "limit": 460,
+    }
+    findings = [finding]
+    report = {
+        "state": _security_scan_state([Path("test_case.py")], findings, None, coverage),
+        "findings": findings,
+        "files_scanned": 1,
+        "audit_coverage": coverage,
+        "finding_counts": {finding["code"]: 1},
+        "tenant_read_contract": {"configuration": {"state": "loaded"}},
+    }
+    projected = _security_scan_projection(
+        report, "0" * 64, "CURRENT_SOURCE_HASHES_VERIFIED"
+    )
+    assert projected["state"] == "INCOMPLETE"
+    assert projected["incomplete"] is True
+    assert projected["audit_coverage"]["complete"] is True
+    assert projected["finding_counts"][finding["code"]] == 1
+    assert projected["unknown_oracle_count"] == 1
+    assert projected["reported_oracle_unknowns_absent"] is False
+    assert projected["findings"][0]["state"] == "INCOMPLETE"
+    assert projected["findings"][0]["evidence_state"] == "UNKNOWN"
+    assert projected["findings"][0]["code"] == finding["code"]
+    assert projected["authority"] == {
+        "execution": False,
+        "approval": False,
+        "repair": False,
+    }
+    report["state"] = "BLOCKED"
+    report["findings"].append({**finding, "code": "SECURITY_TLS", "severity": "HIGH"})
+    report["finding_counts"]["SECURITY_TLS"] = 1
+    mixed = _security_scan_projection(
+        report, "0" * 64, "CURRENT_SOURCE_HASHES_VERIFIED"
+    )
+    assert mixed["state"] == "BLOCKED"
+    assert mixed["report_state"] == "BLOCKED"
+    assert mixed["incomplete"] is True
+    assert mixed["unknown_oracle_count"] == 1
+    for index in range(64):
+        code = f"A_DISPLAY_ONLY_{index:02d}"
+        report["findings"].append({**finding, "code": code})
+        report["finding_counts"][code] = 1
+    truncated = _security_scan_projection(
+        report, "0" * 64, "CURRENT_SOURCE_HASHES_VERIFIED"
+    )
+    assert len(truncated["finding_counts"]) == 64
+    assert "QUALITY_UNKNOWN_TEST_ORACLE" not in truncated["finding_counts"]
+    assert truncated["state"] == "BLOCKED"
+    assert truncated["incomplete"] is True
+    assert truncated["unknown_oracle_count"] == 1
+    assert truncated["reported_oracle_unknowns_absent"] is False
+
+
+@pytest.mark.parametrize("corruption", ["plain", "text", "missing", "digest", "key"])
+def test_native_oracle_payload_rejects_corruption(corruption):
+    from factoryline.review_integrity import NativeOraclePayload
+
+    payload = NativeOraclePayload('{"contexts":[]}', "key")
+    assert NativeOraclePayload.valid(payload, "key") is True
+    with pytest.raises(AttributeError):
+        payload._seal = ("key", b"forged")
+    with pytest.raises(AttributeError):
+        del payload._seal
+    if corruption == "plain":
+        payload = str(payload)
+    elif corruption == "text":
+        changed = str.__new__(NativeOraclePayload, '{"contexts":[{}]}')
+        object.__setattr__(changed, "_seal", payload._seal)
+        payload = changed
+    elif corruption == "missing":
+        payload = str.__new__(NativeOraclePayload, str(payload))
+    elif corruption == "digest":
+        object.__setattr__(payload, "_seal", ("key", b"wrong"))
+    else:
+        assert NativeOraclePayload.valid(payload, "other-key") is False
+        return
+    assert NativeOraclePayload.valid(payload, "key") is False
+
+
+def test_native_oracle_payload_well_shaped_cache_tamper_recomputes(tmp_path):
+    from factoryline import review_audits as scanner
+
+    (tmp_path / "test_case.py").write_text("def test_case():\n    operation()\n")
+    scanner._oracle_context_cache_clear()
+    expected = scanner.security_scan(tmp_path, cache_enabled=True)
+    key = next(iter(scanner._ORACLE_CONTEXT_CACHE))
+    payload, size, created = scanner._ORACLE_CONTEXT_CACHE[key]
+    data = json.loads(payload)
+    for context in data["contexts"]:
+        context["helpers"] = ["operation"]
+    scanner._ORACLE_CONTEXT_CACHE[key] = (json.dumps(data), size, created)
+    misses = scanner._oracle_context_cache_info()["misses"]
+    hits = scanner._oracle_context_cache_info()["hits"]
+    actual = scanner.security_scan(tmp_path, cache_enabled=True)
+    assert actual == expected
+    assert scanner._oracle_context_cache_info()["misses"] > misses
+    assert scanner._oracle_context_cache_info()["hits"] == hits
+    assert scanner.security_scan(tmp_path, cache_enabled=True) == expected
+    assert scanner._oracle_context_cache_info()["hits"] == hits + 1
+    assert scanner.integrity.NativeOraclePayload.valid(
+        scanner._ORACLE_CONTEXT_CACHE[key][0], key
+    )
+
+
+def test_native_oracle_payload_helper_change_invalidates_key(tmp_path, monkeypatch):
+    from factoryline import review_audits as scanner
+
+    first = scanner._oracle_context_cache_key(tmp_path, [], {})
+    original = scanner.integrity.NativeOraclePayload.valid
+
+    def replaced(self, key):
+        return original(self, key)
+
+    monkeypatch.setattr(scanner.integrity.NativeOraclePayload, "valid", replaced)
+    assert scanner._oracle_context_cache_key(tmp_path, [], {}) != first
+
+
+def test_native_oracle_payload_preserves_lru_and_metadata_budget(tmp_path, monkeypatch):
+    from factoryline import review_audits as scanner
+
+    scanner._oracle_context_cache_clear()
+    monkeypatch.setattr(scanner, "MAX_ORACLE_CONTEXT_CACHE_ENTRIES", 2)
+    keys = []
+    for index in range(3):
+        source = tmp_path / "test_case.py"
+        source.write_text(f"def test_case():\n    operation({index})\n")
+        scanner.security_scan(tmp_path, cache_enabled=True)
+        keys.append(next(reversed(scanner._ORACLE_CONTEXT_CACHE)))
+    assert keys[0] not in scanner._ORACLE_CONTEXT_CACHE
+    assert list(scanner._ORACLE_CONTEXT_CACHE) == keys[1:]
+    assert scanner._oracle_context_cache_info()["serialized_bytes"] == sum(
+        len(payload.encode("utf-8")) + len(key) + 32
+        for key, (payload, _, _) in scanner._ORACLE_CONTEXT_CACHE.items()
+    )
+    assert all(
+        scanner.integrity.NativeOraclePayload.valid(payload, key)
+        for key, (payload, _, _) in scanner._ORACLE_CONTEXT_CACHE.items()
+    )
+
+
+def test_native_oracle_payload_missing_edges_is_miss_not_hit():
+    import time
+    from factoryline import review_audits as scanner
+
+    scanner._oracle_context_cache_clear()
+    key = "missing-edges"
+    payload = scanner.integrity.NativeOraclePayload('{"contexts":[]}', key)
+    size = len(payload.encode("utf-8")) + len(key) + 32
+    scanner._ORACLE_CONTEXT_CACHE[key] = (payload, size, time.monotonic())
+    scanner._ORACLE_CONTEXT_CACHE_BYTES = size
+    assert scanner._oracle_context_cache_read(key) is None
+    assert scanner._oracle_context_cache_info()["hits"] == 0
+    assert scanner._oracle_context_cache_info()["misses"] == 1
+    assert scanner._oracle_context_cache_info()["serialized_bytes"] == 0
+
+
+@pytest.mark.parametrize(
+    "location,fixture,expected",
+    [
+        (
+            "conftest.py",
+            "yield\n    assert actual() == expected()",
+            "QUALITY_UNKNOWN_TEST_ORACLE",
+        ),
+        (
+            "conftest.py",
+            "assert actual() == expected()\n    yield",
+            "QUALITY_UNKNOWN_TEST_ORACLE",
+        ),
+        (
+            "test_case.py",
+            "yield\n    assert actual() == expected()",
+            "QUALITY_UNKNOWN_TEST_ORACLE",
+        ),
+        (
+            "unrelated/conftest.py",
+            "yield\n    assert actual() == expected()",
+            "QUALITY_HOLLOW_TEST",
+        ),
+    ],
+)
+def test_captured_autouse_lifecycle_scope_preserves_inert_body(
+    tmp_path, location, fixture, expected
+):
+    from factoryline import review_audits as scanner
+
+    source = tmp_path / location
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_text(
+        "import pytest\n@pytest.fixture(autouse=True)\ndef validate():\n    "
+        + fixture
+        + "\n"
+    )
+    test = tmp_path / "test_case.py"
+    with test.open("a") as stream:
+        stream.write("def test_case():\n    pass\n")
+    scanner._oracle_context_cache_clear()
+    reports = [
+        scanner.security_scan(tmp_path),
+        scanner.security_scan(tmp_path),
+        scanner.security_scan(tmp_path, cache_enabled=False),
+    ]
+    for report in reports:
+        rows = [f for f in report["findings"] if f["path"] == "test_case.py"]
+        assert [f["code"] for f in rows] == [expected]
+
+
+def test_autouse_fixture_change_invalidates_cached_lifecycle(tmp_path):
+    from factoryline import review_audits as scanner
+
+    fixture = tmp_path / "conftest.py"
+    fixture.write_text(
+        "import pytest\n@pytest.fixture(autouse=True)\ndef validate():\n    yield\n    assert actual() == expected()\n"
+    )
+    (tmp_path / "test_case.py").write_text("def test_case():\n    pass\n")
+    scanner._oracle_context_cache_clear()
+    assert (
+        "QUALITY_UNKNOWN_TEST_ORACLE"
+        in scanner.security_scan(tmp_path)["finding_counts"]
+    )
+    assert (
+        "QUALITY_UNKNOWN_TEST_ORACLE"
+        in scanner.security_scan(tmp_path)["finding_counts"]
+    )
+    fixture.write_text(fixture.read_text().replace("autouse=True", "autouse=False"))
+    assert "QUALITY_HOLLOW_TEST" in scanner.security_scan(tmp_path)["finding_counts"]
+    assert "QUALITY_HOLLOW_TEST" in scanner.security_scan(tmp_path)["finding_counts"]
+
+
+def test_class_autouse_fixture_does_not_affect_other_test_class(tmp_path):
+    from factoryline.review_audits import security_scan
+
+    (tmp_path / "test_case.py").write_text(
+        "import pytest\nclass TestWithFixture:\n"
+        "    @pytest.fixture(autouse=True)\n    def validate(self):\n        yield\n        assert actual() == expected()\n"
+        "    def test_with_fixture(self):\n        pass\n"
+        "class TestStandalone:\n    def test_empty(self):\n        pass\n"
+    )
+    result = security_scan(tmp_path, cache_enabled=False)
+    rows = {f["facts"]["symbol"]: f["code"] for f in result["findings"]}
+    assert rows["test_with_fixture"] == "QUALITY_UNKNOWN_TEST_ORACLE"
+    assert rows["test_empty"] == "QUALITY_HOLLOW_TEST"
+
+
+@pytest.mark.parametrize(
+    "guard", ["_autouse_fixture_names", "_test_has_captured_autouse"]
+)
+def test_autouse_lifecycle_helper_change_invalidates_cache(
+    tmp_path, monkeypatch, guard
+):
+    from factoryline import review_audits as scanner
+
+    (tmp_path / "test_case.py").write_text("def test_case():\n    pass\n")
+    scanner._oracle_context_cache_clear()
+    scanner.security_scan(tmp_path)
+    before = scanner._oracle_context_cache_info()["misses"]
+    original = getattr(scanner, guard)
+
+    def observed(*args, **kwargs):
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(scanner, guard, observed)
+    scanner.security_scan(tmp_path)
+    assert scanner._oracle_context_cache_info()["misses"] > before
+
+
+def test_arbitrary_autouse_keyword_does_not_hide_real_hollow_test(tmp_path):
+    from factoryline.review_audits import security_scan
+
+    (tmp_path / "test_case.py").write_text(
+        "def tag(*, autouse):\n    def identity(f):\n        return f\n    return identity\n"
+        "@tag(autouse=True)\ndef unused():\n    pass\n"
+        "def test_empty():\n    pass\n"
+    )
+    report = security_scan(tmp_path, cache_enabled=False)
+    assert "QUALITY_HOLLOW_TEST" in report["finding_counts"]
+    assert "QUALITY_UNKNOWN_TEST_ORACLE" not in report["finding_counts"]
+
+
+def test_inherited_local_autouse_lifecycle_is_not_inferred_absent(tmp_path):
+    from factoryline.review_audits import security_scan
+
+    (tmp_path / "test_case.py").write_text(
+        "import pytest\nclass Base:\n    @pytest.fixture(autouse=True)\n"
+        "    def validate(self):\n        yield\n        assert actual() == expected()\n"
+        "class TestEmpty(Base):\n    def test_empty(self):\n        pass\n"
+        "class TestUnrelated:\n    def test_empty(self):\n        pass\n"
+    )
+    report = security_scan(tmp_path, cache_enabled=False)
+    assert report["finding_counts"]["QUALITY_UNKNOWN_TEST_ORACLE"] == 1
+    assert report["finding_counts"]["QUALITY_HOLLOW_TEST"] == 1
+
+
+@pytest.mark.parametrize(
+    "before,after,expected",
+    [
+        ("Base = Empty\n", "", "QUALITY_HOLLOW_TEST"),
+        ("", "Base = Empty\n", "QUALITY_UNKNOWN_TEST_ORACLE"),
+        ("Alias = Base\nBase = Empty\n", "", "QUALITY_UNKNOWN_TEST_ORACLE"),
+    ],
+)
+def test_autouse_lifecycle_uses_class_base_at_creation(
+    tmp_path, before, after, expected
+):
+    from factoryline.review_audits import security_scan
+
+    base_name = "Alias" if before.startswith("Alias") else "Base"
+    (tmp_path / "test_case.py").write_text(
+        "import pytest\nclass Base:\n    @pytest.fixture(autouse=True)\n"
+        "    def validate(self):\n        yield\n        assert actual() == expected()\n"
+        "class Empty:\n    pass\n"
+        + before
+        + f"class TestEmpty({base_name}):\n    def test_empty(self):\n        pass\n"
+        + after
+    )
+    report = security_scan(tmp_path, cache_enabled=False)
+    assert list(report["finding_counts"]) == [expected]
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        "missing_config",
+        "wrong_target",
+        "no_codspeed",
+        "shadowed_pytest",
+        "rebound_marker",
+        "vacuous_assertion",
+        "config_transition",
+    ],
+)
+def test_codspeed_undefined_workload_remains_unknown(tmp_path, change):
+    from factoryline.review_audits import security_scan
+
+    source = "import pytest\npytestmark = pytest.mark.benchmark()\n"
+    if change == "shadowed_pytest":
+        source += "pytest = object()\n"
+    if change == "rebound_marker":
+        source += "pytestmark = []\n"
+    source += "def test_case():\n    product()\n"
+    if change == "vacuous_assertion":
+        source += "    assert True\n"
+    (tmp_path / "test_bench.py").write_text(source)
+    config = tmp_path / "tox.ini"
+    command = "pytest --codspeed test_bench.py"
+    if change == "wrong_target":
+        command = "pytest --codspeed other.py"
+    if change in {
+        "no_codspeed",
+        "shadowed_pytest",
+        "rebound_marker",
+        "vacuous_assertion",
+    }:
+        command = "pytest test_bench.py"
+    if change != "missing_config":
+        config.write_text("[testenv:perf]\ncommands = " + command + "\n")
+    if change == "config_transition":
+        assert (
+            "QUALITY_BENCHMARK_NOT_VERIFIED"
+            in security_scan(tmp_path)["finding_counts"]
+        )
+        config.write_text("[testenv:perf]\ncommands = pytest test_bench.py\n")
+    result = security_scan(tmp_path)
+    expected = (
+        "QUALITY_WEAK_TEST_ORACLE"
+        if change == "vacuous_assertion"
+        else "QUALITY_UNKNOWN_TEST_ORACLE"
+    )
+    assert expected in result["finding_counts"]
+    assert "QUALITY_HOLLOW_TEST" not in result["finding_counts"]
+
+
+@pytest.mark.parametrize(
+    "condition,expected",
+    [
+        ("False", "QUALITY_UNKNOWN_TEST_ORACLE"),
+        ("True", "QUALITY_HOLLOW_TEST"),
+        ("unresolved()", "QUALITY_UNKNOWN_TEST_ORACLE"),
+    ],
+)
+def test_autouse_lifecycle_conditional_base_write_is_not_absence(
+    tmp_path, condition, expected
+):
+    from factoryline.review_audits import security_scan
+
+    (tmp_path / "test_case.py").write_text(
+        "import pytest\nclass Base:\n    @pytest.fixture(autouse=True)\n"
+        "    def validate(self):\n        yield\n        assert actual() == expected()\n"
+        "class Empty:\n    pass\n"
+        + f"if {condition}:\n    Base = Empty\n"
+        + "class TestEmpty(Base):\n    def test_empty(self):\n        pass\n"
+    )
+    report = security_scan(tmp_path, cache_enabled=False)
+    assert list(report["finding_counts"]) == [expected]
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["_inert_range_call", "_inert_empty_generator_creation", "_literal_return_context"],
+)
+@pytest.mark.parametrize("mutation", ["binding", "code"])
+def test_live_inert_helper_mutations_invalidate_oracle_context(
+    tmp_path, monkeypatch, name, mutation
+):
+    from factoryline import review_audits as scanner, test_oracle_misuse as misuse
+
+    (tmp_path / "test_case.py").write_text("def test_case():\n    pass\n")
+    scanner._oracle_context_cache_clear()
+    scanner.security_scan(tmp_path)
+    before = scanner._oracle_context_cache_info()["misses"]
+    original = getattr(misuse, name)
+
+    def replacement(*args, **kwargs):
+        return original(*args, **kwargs)
+
+    if mutation == "binding":
+        monkeypatch.setattr(misuse, name, replacement)
+    else:
+
+        def not_inert(*args, **kwargs):
+            return None
+
+        monkeypatch.setattr(original, "__code__", not_inert.__code__)
+    scanner.security_scan(tmp_path)
+    assert scanner._oracle_context_cache_info()["misses"] > before
+
+
+@pytest.mark.parametrize("requested", [True, False])
+def test_captured_requested_fixture_is_not_silent_lifecycle_absence(
+    tmp_path, requested
+):
+    from factoryline import review_audits as scanner
+
+    (tmp_path / "conftest.py").write_text(
+        "import pytest\n@pytest.fixture\ndef checked():\n    assert actual() == expected()\n    return 1\n"
+    )
+    (tmp_path / "test_case.py").write_text(
+        f"def test_case({'checked' if requested else ''}):\n    pass\n"
+    )
+    scanner._oracle_context_cache_clear()
+    expected = "QUALITY_UNKNOWN_TEST_ORACLE" if requested else "QUALITY_HOLLOW_TEST"
+    for cached in (True, True, False):
+        assert (
+            expected
+            in scanner.security_scan(tmp_path, cache_enabled=cached)["finding_counts"]
+        )
+
+
+@pytest.mark.parametrize(
+    "name", ["_scope_parameters", "_resolved_ast_name", "_bound_names"]
+)
+def test_lifecycle_binding_dependency_change_invalidates_cache(
+    tmp_path, monkeypatch, name
+):
+    from factoryline import review_audits as scanner
+
+    (tmp_path / "test_case.py").write_text("def test_case():\n    pass\n")
+    scanner._oracle_context_cache_clear()
+    scanner.security_scan(tmp_path)
+    before = scanner._oracle_context_cache_info()["misses"]
+    original = getattr(scanner, name)
+
+    def replacement(*args, **kwargs):
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(scanner, name, replacement)
+    scanner.security_scan(tmp_path)
+    assert scanner._oracle_context_cache_info()["misses"] > before
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "_registry_kind",
+        "_registry_noop_code_assignment",
+        "_registry_callback_never_executes_or_asserts",
+    ],
+)
+@pytest.mark.parametrize("mutation", ["binding", "code"])
+def test_live_registry_helper_mutations_invalidate_oracle_cache(
+    tmp_path, monkeypatch, name, mutation
+):
+    from factoryline import review_audits as scanner, test_callback_closure as closure
+
+    (tmp_path / "test_case.py").write_text("def test_case():\n    pass\n")
+    scanner._oracle_context_cache_clear()
+    scanner.security_scan(tmp_path)
+    before = scanner._oracle_context_cache_info()["misses"]
+    original = getattr(closure, name)
+
+    def replacement(*args, **kwargs):
+        return original(*args, **kwargs)
+
+    if mutation == "binding":
+        monkeypatch.setattr(closure, name, replacement)
+    else:
+
+        def unchanged_placeholder(*args, **kwargs):
+            return False
+
+        monkeypatch.setattr(original, "__code__", unchanged_placeholder.__code__)
+    scanner.security_scan(tmp_path)
+    assert scanner._oracle_context_cache_info()["misses"] > before
+
+
+def test_oracle_cache_tracks_live_credential_consumer_facade(tmp_path, monkeypatch):
+    from factoryline import review_audits as module, review_integrity as integrity
+
+    before = module._oracle_context_cache_key(tmp_path, [], {})
+    monkeypatch.setattr(
+        integrity, "bind_credential_consumers", lambda *args, **kwargs: None
+    )
+    assert module._oracle_context_cache_key(tmp_path, [], {}) != before
+
+
+@pytest.mark.parametrize("route", ["copy", "deepcopy", "prepare", "cli"])
+def test_security_resealing_preserves_source_backed_observations(
+    tmp_path, capsys, route
+):
+    from copy import deepcopy
+
+    from factoryline.mission_control_status import (
+        prepare_security_scan_receipt_report,
+        security_scan_pytest_collection_snapshot,
+    )
+    from factoryline.review_audits import _seal_security_scan, security_scan
+
+    marker = "PRIVATE_SOURCE_RESEAL_SENTINEL"
+    (tmp_path / "build.py").write_text(
+        'import os\nos.system("brew --prefix openssl")\n# ' + marker + "\n",
+        encoding="utf-8",
+    )
+    report = security_scan(tmp_path, cache_enabled=False)
+    assert report["primitive_observation_count"] == 1
+    assert not report["findings"]
+    if route == "cli":
+        # A missing tenant declaration remains incomplete after proof revalidation.
+        assert main(["audit", "security", "--root", str(tmp_path), "--json"]) == 1
+        result = json.loads(capsys.readouterr().out)
+        assert result["state"] == "INCOMPLETE"
+    elif route == "prepare":
+        result = prepare_security_scan_receipt_report(
+            tmp_path, report, security_scan_pytest_collection_snapshot(tmp_path)
+        )
+    else:
+        copied = report.copy() if route == "copy" else deepcopy(report)
+        result = _seal_security_scan(copied)
+    assert result["primitive_observation_count"] == 1
+    assert not result["findings"]
+    assert marker not in json.dumps(result)
+
+    # JSON is evidence, not an in-process capture or permission to trust a proof.
+    untrusted = _seal_security_scan(json.loads(json.dumps(result)))
+    assert not untrusted["primitive_observations"]
+    assert untrusted["findings"][0]["severity"] == "HIGH"
+    if route != "cli":
+        changed = deepcopy(result)
+        changed["sources"][0]["sha256"] = "0" * 64
+        rejected = _seal_security_scan(changed)
+        assert not rejected["primitive_observations"]
+        assert rejected["findings"][0]["severity"] == "HIGH"
+
+
+@pytest.mark.parametrize(
+    "statement,expected",
+    [("AssertionError('bad')", 1), ("raise AssertionError('bad')", 0)],
+)
+def test_discarded_exception_contract_reports_only_local_statement_semantics(
+    statement, expected
+):
+    from factoryline import review_integrity as integrity
+
+    tree = ast.parse(
+        "def test_behavior():\n    try:\n        operation()\n    except ValueError:\n        "
+        + statement
+        + "\n"
+    )
+    integrity.bind_security_call_scopes(tree)
+    findings = integrity.discarded_assertion_error_findings(
+        "tests/test_case.py", tree.body[0]
+    )
+    assert len(findings) == expected
+    if findings:
+        assert findings[0]["code"] == "QUALITY_WEAK_TEST_ORACLE"
+        assert findings[0]["facts"]["execution_state"] == "NOT_ESTABLISHED"
+        assert findings[0]["facts"]["whole_test_oracle"] == "UNASSESSED"
+
+
+def test_shared_workspace_binder_and_public_consumer_inventory_reject_stale_rows(
+    tmp_path,
+):
+    from factoryline import review_integrity as integrity
+    from factoryline import provenance
+
+    path = tmp_path / "source.py"
+    raw = b"value = 1\n"
+    tree = ast.parse(raw)
+    tree._oracle_source_sha256 = hashlib.sha256(raw).hexdigest()
+    snapshots = {path: tree}
+    contexts = {path: {}}
+    integrity.bind_fixed_program_workspace(
+        tmp_path, contexts, snapshots, [path], {path: raw}, {path: {}}
+    )
+    profile = contexts[path]["fixed_program_workspace"]
+    expected = hashlib.sha256(
+        json.dumps(
+            [["source.py", tree._oracle_source_sha256]], separators=(",", ":")
+        ).encode()
+    ).hexdigest()
+    assert profile["sources_sha256"] == expected
+    assert profile["complete"] is True
+    assert profile["namespace_mutation_risk"] is False
+    contexts[path]["credential_consumers"] = {"stale": {"eligible": True}}
+    contexts[path]["finite_template_inputs"] = {"stale": {"eligible": True}}
+    provenance.bind_public_symbolic_consumers(
+        tmp_path, snapshots, {path: {}}, contexts, {path: raw}, {}, integrity
+    )
+    assert contexts[path]["credential_consumers"] == {}
+    assert contexts[path]["finite_template_inputs"] == {}
+
+
+def test_native_helper_catalogs_bind_live_predicate_code_and_catalog_schema(
+    monkeypatch,
+):
+    from factoryline import review_integrity as integrity
+    from factoryline import provenance
+    from factoryline import credential_role_constructor_provider as provider
+    from factoryline import credential_endpoint_admission as admission
+
+    expected = (
+        "factory.security-oracle-context-cache.v7:" + admission.catalog_content_digest()
+    )
+    assert integrity.credential_context_cache_schema() == expected
+    direct = provenance.credential_consumer_helpers(integrity)
+    assert direct == integrity.credential_consumer_helpers()
+    assert provenance.public_symbolic_binding in direct
+    assert provenance.bind_public_symbolic_consumers in direct
+    workspace = integrity.fixed_program_workspace_helpers()
+    assert workspace and all(callable(value) for value in workspace)
+    before = provider._helper_snapshot(integrity.credential_consumer_helpers)
+    original = provenance.public_symbolic_binding
+
+    def rejected(*args):
+        return False
+
+    with monkeypatch.context() as patch:
+        patch.setattr(provenance, "public_symbolic_binding", rejected)
+        assert (
+            provider._helper_snapshot(integrity.credential_consumer_helpers) != before
+        )
+    assert provider._helper_snapshot(integrity.credential_consumer_helpers) == before
+    assert provenance.public_symbolic_binding is original
+
+
+def test_public_symbolic_boundary_preserves_unproved_primitive_and_rejects_unbound_facts():
+    from factoryline import provenance
+    from factoryline import review_integrity as integrity
+
+    node = ast.parse("PASSWORD = 'demo'\n").body[0]
+    findings = [
+        {
+            "code": "SECURITY_HARDCODED_SECRET",
+            "path": "source.py",
+            "line": 1,
+            "column": 0,
+            "facts": {"role_candidate": "symbolic_enum_identifier"},
+        }
+    ]
+    before = json.loads(json.dumps(findings))
+    assert (
+        provenance.public_symbolic_findings("source.py", node, findings, integrity)
+        is findings
+    )
+    assert findings == before
+    assert not provenance.public_symbolic_binding(findings[0], {}, {})
+
+
+def test_precision257_security_scan_report_and_seal_keep_integrity_fields():
+    from types import SimpleNamespace
+    from hashlib import sha256
+    from factoryline.audit_action_refs import security_scan_report, seal_security_scan
+
+    class Integrity:
+        @staticmethod
+        def partition_proven_primitive_observations(core):
+            core["state"] = "CLEAN"
+
+    audit = SimpleNamespace(
+        MAX_SECURITY_SOURCE_FILES=10,
+        SECURITY_SCHEMA="factory.security.v1",
+        integrity=Integrity(),
+        sha256=sha256,
+        _security_scan_coverage=lambda files, outcomes, limit: {
+            "complete": True,
+            "files": len(files),
+        },
+        _security_scan_state=lambda files, findings, db, coverage: "INCOMPLETE",
+        _tenant_read_contract=lambda *args: {"calls": list(args[0])},
+        contracts=SimpleNamespace(
+            import_context_metadata=lambda *args: {"edges": len(args[1])}
+        ),
+        _security_scan_action_summary=lambda state: "Review required"
+        if state == "INCOMPLETE"
+        else "Clean",
+        _security_scan_report_candidate_payload=lambda core: {
+            k: v
+            for k, v in core.items()
+            if k not in {"candidate_sha256", "audit_sha256", "agent_actions"}
+        },
+        audit_remediation_packet=lambda digest, item: {
+            "digest": digest,
+            "finding": item["code"],
+        },
+    )
+    audit._seal_security_scan = lambda core: seal_security_scan(audit, core)
+    report = security_scan_report(
+        audit,
+        [],
+        [{"code": "TEST"}],
+        [],
+        {"TEST": 1},
+        {"syntax_error": 0, "unreadable": 0, "too_large": 0},
+        (),
+        {},
+        [],
+        [],
+    )
+    assert report["state"] == "INCOMPLETE" and report["files_scanned"] == 0
+    assert report["authority"] == {
+        "execution": False,
+        "approval": False,
+        "publication": False,
+        "deployment": False,
+    }
+    assert report["agent_actions"] == [
+        {"digest": report["candidate_sha256"], "finding": "TEST"}
+    ]
+    assert len(report["candidate_sha256"]) == len(report["audit_sha256"]) == 64
+    assert "_primitive_source_bytes" not in report
+    core = {
+        "state": "INCOMPLETE",
+        "action_summary": "Keep incomplete",
+        "findings": [{"code": "TEST"}],
+    }
+    sealed = seal_security_scan(audit, core)
+    assert (
+        sealed["state"] == "INCOMPLETE"
+        and sealed["action_summary"] == "Keep incomplete"
+    )
+    assert len(sealed["audit_sha256"]) == 64 and "_primitive_source_bytes" not in sealed
+
+
+def test_precision257_intent_quality_url_and_path_helpers_distinguish_safe_and_unsafe():
+    import ast
+    from factoryline import intent_quality as iq
+
+    safe_call = ast.parse("requests.get(url=safe)", mode="eval").body
+    unsafe_call = ast.parse("requests.get(user_url)", mode="eval").body
+    assert iq.bound_sink_argument(safe_call, 0, ("url",)).id == "safe"
+    assert (
+        iq.bound_sink_argument(ast.parse("requests.get(*args)", mode="eval").body, 0)
+        is None
+    )
+    tainted = {"user_url"}
+
+    def is_tainted(node, sources, _seen, _aliases):
+        return isinstance(node, ast.Name) and node.id in sources
+
+    assert (
+        iq.unsafe_request_url(
+            unsafe_call, "requests.get", tainted, {}, is_tainted, lambda *_: False
+        )
+        is True
+    )
+    assert (
+        iq.unsafe_request_url(
+            safe_call, "requests.get", tainted, {}, is_tainted, lambda *_: False
+        )
+        is False
+    )
+    open_call = ast.parse("open(user_path)", mode="eval").body
+    assert (
+        iq.unsafe_open(
+            open_call, tainted | {"user_path"}, {}, is_tainted, lambda *_: False
+        )
+        is True
+    )
+    assert (
+        iq.unsafe_open(
+            ast.parse("other(user_path)", mode="eval").body,
+            {"user_path"},
+            {},
+            is_tainted,
+            lambda *_: False,
+        )
+        is False
+    )
+    assert (
+        iq.fixed_root_filename_path(
+            ast.parse(
+                "os.path.join('/srv/data', secure_filename(name))", mode="eval"
+            ).body,
+            {("secure-upload-leaf", "name")},
+            {},
+            lambda node, aliases, target: target
+            in {"os.path.join", "werkzeug.utils.secure_filename"},
+        )
+        is True
+    )
+    assert (
+        iq.fixed_root_filename_path(
+            ast.parse("os.path.join('/srv/data', name)", mode="eval").body,
+            {"name"},
+            {},
+            lambda *_: True,
+        )
+        is False
+    )
+
+
+def test_precision257_intent_quality_guard_and_sanitizer_bindings():
+    import ast
+    from factoryline import intent_quality as iq
+    from factoryline.security_configuration import yaml_safe_loader
+
+    assert (
+        yaml_safe_loader(
+            ast.parse("yaml.load(data, Loader=yaml.SafeLoader)", mode="eval").body,
+            {"yaml": "yaml"},
+        )
+        is True
+    )
+    assert (
+        yaml_safe_loader(
+            ast.parse("yaml.load(data, Loader=yaml.Loader)", mode="eval").body,
+            {"yaml": "yaml"},
+        )
+        is False
+    )
+    module = ast.parse(
+        "if urllib.parse.urlparse(url).hostname in {'example.com'}:\n    requests.get(url)"
+    )
+    guard = module.body[0]
+    call = module.body[0].body[0].value
+    call._security_flow_statement = guard
+    call._security_lexical_scope = module
+    assert (
+        iq.parsed_host_allowlist(
+            call,
+            {"urllib": "urllib"},
+            lambda node, aliases: "urllib.parse.urlparse",
+            lambda node, aliases, name: name == "urllib.parse.urlparse",
+        )
+        is True
+    )
+    assert (
+        iq.parsed_host_allowlist(
+            ast.parse("requests.get(url)", mode="eval").body,
+            {},
+            lambda *_: "requests.get",
+            lambda *_: True,
+        )
+        is False
+    )
+    clean = ast.parse("def f(url):\n    return urllib.parse.urlparse(url)")
+    clean_call = clean.body[0].body[0].value
+    assert (
+        iq.sanitizer_provider_unchanged(
+            clean_call,
+            {"urllib": "urllib"},
+            "urllib.parse.urlparse",
+            lambda scope: clean,
+        )
+        is True
+    )
+    mutated = ast.parse(
+        "urllib.parse.urlparse = evil\ndef f(url):\n    return urllib.parse.urlparse(url)"
+    )
+    changed_call = mutated.body[1].body[0].value
+    assert (
+        iq.sanitizer_provider_unchanged(
+            changed_call,
+            {"urllib": "urllib"},
+            "urllib.parse.urlparse",
+            lambda scope: mutated,
+        )
+        is False
+    )
+
+
+def test_source_span_validation_accepts_ordered_coordinates_only():
+    assert binding.valid_source_span([1, 0, 1, 8])
+    assert binding.valid_source_span([2, 4, 3, 0])
+    assert not binding.valid_source_span([0, 0, 1, 1])
+    assert not binding.valid_source_span([2, 4, 2, 3])
+    assert not binding.valid_source_span([1, True, 1, 2])
+
+
+def test_fixed_program_builtin_identity_rejects_shadowed_builtin_names():
+    source = ast.parse("exec('x = 1')\n")
+    call = next(node for node in ast.walk(source) if isinstance(node, ast.Call))
+    assert binding.fixed_program_builtin_identity(
+        review_integrity, call, source, "exec"
+    )
+    shadowed = ast.parse("exec = runner\nexec('x = 1')\n")
+    shadow_call = next(
+        node for node in ast.walk(shadowed) if isinstance(node, ast.Call)
+    )
+    assert not binding.fixed_program_builtin_identity(
+        review_integrity, shadow_call, shadowed, "exec"
+    )
+
+
+def test_fixed_program_witness_uses_bound_source_and_builtin_identity():
+    source = b"exec('x = 1')\n"
+    call = next(
+        node for node in ast.walk(ast.parse(source)) if isinstance(node, ast.Call)
+    )
+    assert binding.fixed_program_builtin_identity(
+        review_integrity, call, ast.parse(source.decode()), "exec"
+    )
+    assert binding.fixed_program_witness(review_audits, "app.py", call, "exec") == {}
+
+
+def test_credential_context_cache_schema_is_versioned_and_catalog_bound():
+    first = binding.credential_context_cache_schema()
+    assert first.startswith("factory.security-oracle-context-cache.v7:")
+    assert binding.credential_context_cache_schema() == first
+
+
+def test_closed_declaration_binding_accepts_exact_contract_and_rejects_span_forgery():
+    facts = {
+        "disposition": "PROVEN_CLOSED_DECLARATION_INPUT",
+        "schema": "factory.closed-declaration-input.v1",
+        "grammar_profile": "python3.12-type-alias-subset-v1",
+        "hypothesis": "ARGUMENT_CODE_INJECTION",
+        "input_effect": "CLOSED_INERT_DECLARATION",
+        "runtime_assurance": "INCOMPLETE",
+        "target_execution": "not_performed",
+        "program_sha256": "a" * 64,
+        "call_span": [1, 0, 1, 24],
+        "literal_span": [1, 12, 1, 23],
+    }
+    finding = {"line": 1, "column": 0, "facts": facts}
+    assert binding.closed_declaration_binding(finding, review_integrity)
+    forged = json.loads(json.dumps(finding))
+    forged["facts"]["literal_span"] = [1, 12, 1, 25]
+    assert not binding.closed_declaration_binding(forged, review_integrity)
+
+
+def test_django_fixture_annotation_and_binding_recompute_owner_and_inventory_hashes():
+    source = "def test_secret():\n    token = 'synthetic'\n"
+    source_bytes = source.encode()
+    source_sha = hashlib.sha256(source_bytes).hexdigest()
+    config_bytes = {
+        "pyproject.toml": b"[tool.pytest.ini_options]\n",
+        "tox.ini": b"[tox]\n",
+    }
+    config_hashes = {
+        path: hashlib.sha256(raw).hexdigest() for path, raw in config_bytes.items()
+    }
+    inventory_rows = {"tests/test_app.py": source_sha, **config_hashes}
+    inventory_sha = hashlib.sha256(
+        "\n".join(
+            sorted(f"{name}\0{digest}" for name, digest in inventory_rows.items())
+        ).encode()
+    ).hexdigest()
+    evidence = {
+        "classification": "TEST_OWNED_LOCAL_FIXTURE",
+        "eligible": True,
+        "source": "tests/test_app.py",
+        "source_sha256": source_sha,
+        "runner_config_sha256": config_hashes,
+        "inventory_sha256": inventory_sha,
+    }
+    module = ast.parse(source)
+    module._oracle_source_sha256 = source_sha
+    module._security_oracle_context = {
+        "django_fixture_evidence": {"1:0:token": evidence}
+    }
+    function = module.body[0]
+    function._security_lexical_scope = module
+    finding = {
+        "code": "SECURITY_HARDCODED_SECRET",
+        "severity": "CRITICAL",
+        "path": "tests/test_app.py",
+        "line": 1,
+        "column": 0,
+        "facts": {"name": "token"},
+    }
+    annotated = binding.annotate_django_fixture(finding, function)
+    assert annotated["facts"]["disposition"] == "TEST_OWNED_LOCAL_FIXTURE"
+    sources = [{"path": "tests/test_app.py", "sha256": source_sha}]
+    hashes = {"tests/test_app.py": source_sha, **config_hashes}
+    assert binding.django_fixture_binding(annotated, sources, hashes)
+    assert binding.fixed_primitive_binding(annotated, sources, hashes, review_integrity)
+    hashes["tox.ini"] = "0" * 64
+    assert not binding.django_fixture_binding(annotated, sources, hashes)
+
+
+def test_fixed_program_workspace_binding_and_helper_surface_rebuild_hashes(tmp_path):
+    source = b"exec('x = 1')\n"
+    path = tmp_path / "app.py"
+    path.write_bytes(source)
+    tree = ast.parse(source)
+    tree._oracle_source_sha256 = hashlib.sha256(source).hexdigest()
+    contexts = {"module": {"credential_consumers": {"seed": True}}}
+    helper_bundle = binding.fixed_program_workspace_helpers(review_integrity)
+    binder = helper_bundle[0]
+    binder(tmp_path, contexts, {path: tree}, [path])
+    profile = contexts["module"]["fixed_program_workspace"]
+    assert profile["complete"] is True
+    assert profile["sources_sha256"]
+    assert profile["credential_consumers"] == {"seed": True}
+    changed = ast.parse("globals()['exec']('x=1')\n")
+    changed._oracle_source_sha256 = hashlib.sha256(
+        b"globals()['exec']('x=1')\n"
+    ).hexdigest()
+    rebound = {"module": {}}
+    binding.bind_fixed_program_workspace(
+        review_integrity, tmp_path, rebound, {path: changed}, [path]
+    )
+    assert (
+        rebound["module"]["fixed_program_workspace"]["namespace_mutation_risk"] is True
+    )
+
+
+def test_application_capture_refactor_keeps_exact_config_hash_and_source_boundaries(
+    tmp_path, monkeypatch
+):
+    from factoryline import audit_action_refs as refs
+    from factoryline import primitive_observation_binding as binding
+    from factoryline import credential_role_constructor_provider as provider
+
+    raw = b"value = 1\n"
+    config = b"[project]\nname='sample'\n"
+    (tmp_path / "pyproject.toml").write_bytes(config)
+    digest = hashlib.sha256(config).hexdigest()
+    evidence = {
+        "profile": "DJANGO_CLASS_LOCAL_ACCOUNT_ENROLLMENT",
+        "configuration_sha256": {
+            "pyproject.toml": digest,
+            "ignored.toml": "a" * 64,
+            "tox.ini": "short",
+        },
+    }
+    assert refs._application_configuration_hashes(
+        [evidence, {"configuration_sha256": []}]
+    ) == {"pyproject.toml": digest}
+    assert refs._application_configuration_hashes([]) == {}
+    findings = [{"path": "app.py", "facts": {"fixture_evidence": evidence}}]
+    bindings = [
+        {"path": "app.py", "sha256": hashlib.sha256(raw).hexdigest()},
+        {"path": "other.py", "sha256": "0" * 64},
+    ]
+    captured = refs._captured_application_source_bytes(
+        tmp_path,
+        findings,
+        bindings,
+        {tmp_path / "app.py": raw, tmp_path / "other.py": raw},
+    )
+    assert captured == {"app.py": raw, "pyproject.toml": config}
+    (tmp_path / "pyproject.toml").write_bytes(b"changed")
+    assert refs._captured_application_source_bytes(
+        tmp_path, findings, bindings, {tmp_path / "app.py": raw}
+    ) == {"app.py": raw}
+    original = provider._helper_snapshot(binding.primitive_binding_helpers)
+
+    def changed(*args):
+        return {}
+
+    with monkeypatch.context() as patch:
+        patch.setattr(refs, "_application_configuration_hashes", changed)
+        assert provider._helper_snapshot(binding.primitive_binding_helpers) != original
+    assert provider._helper_snapshot(binding.primitive_binding_helpers) == original

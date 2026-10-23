@@ -27,17 +27,30 @@ try:
 except ModuleNotFoundError:  # Python 3.10
     import tomli as tomllib
 from .audit_action_refs import (
-    audit_remediation_packet,
-    _security_scan_report_candidate_payload,
-    _security_scan_coverage,
-    _security_scan_state,
-    _security_scan_action_summary,
+    _captured_application_source_bytes as _app_source_bytes,
+    audit_remediation_packet as audit_remediation_packet,
+    _security_scan_report_candidate_payload as _security_scan_report_candidate_payload,
+    _security_scan_coverage as _security_scan_coverage,
+    _security_scan_state as _security_scan_state,
+    _security_scan_action_summary as _security_scan_action_summary,
 )
+from .finite_capture import closed_shell_finding, shell_execution_calls
 from .deep_audit_io import local_file
 from .ops_telemetry import _measure_hash, _measure_parse
-from .runtime_audit_common import RuntimeAuditError, runtime_config_sources
-from . import review_integrity as integrity, intent_quality as contracts
+from .runtime_audit_common import (
+    RuntimeAuditError,
+    runtime_config_sources as runtime_config_sources,
+)
+from . import (
+    review_integrity as integrity,
+    runtime_audit_integrity,
+    intent_quality as contracts,
+    type_intent_hollow,
+    type_intent_provider_provenance,
+)
 from .review_integrity import security_call_name as security_call_name
+
+_completion_only_oracle = integrity._completion_only_oracle
 
 SCHEMA = "factory.review-audit-policy.v1"
 FINGERPRINT_SCHEMA = "factory.code-review-fingerprint.v1"
@@ -82,12 +95,12 @@ def _oracle_context_cache_info() -> dict[str, int]:
 
 def _oracle_context_cache_read(key: str) -> tuple[dict, list] | None:
     from .review_integrity import decode_structural_context
+    from .context_efficiency import oracle_context_cache_context
 
     global _ORACLE_CONTEXT_CACHE_BYTES, _ORACLE_CONTEXT_CACHE_HITS
     global _ORACLE_CONTEXT_CACHE_MISSES
     with _ORACLE_CONTEXT_CACHE_LOCK:
-        cached = _ORACLE_CONTEXT_CACHE.get(key)
-        if cached is None:
+        if (cached := _ORACLE_CONTEXT_CACHE.get(key)) is None:
             _ORACLE_CONTEXT_CACHE_MISSES += 1
             return None
         payload, size, created = cached
@@ -97,25 +110,20 @@ def _oracle_context_cache_read(key: str) -> tuple[dict, list] | None:
             _ORACLE_CONTEXT_CACHE_MISSES += 1
             return None
         _ORACLE_CONTEXT_CACHE.move_to_end(key)
-        _ORACLE_CONTEXT_CACHE_HITS += 1
     try:
+        if not integrity.NativeOraclePayload.valid(payload, key):
+            raise ValueError("oracle cache payload is not native or current")
         document = json.loads(payload)
         contexts = {
-            Path(item["path"]): {
-                "helpers": set(item["helpers"]),
-                "weak_helpers": set(item["weak_helpers"]),
-                "mixins": set(item["mixins"]),
-                "pytest_inherited": set(item["pytest_inherited"]),
-                "click_runners": set(item["click_runners"]),
-                "typecheck": item["typecheck"],
-                "flask_apps": set(item.get("flask_apps", [])),
-                "callback_invokers": item.get("callback_invokers", {}),
-                "codspeed_benchmark": item.get("codspeed_benchmark", False),
-                **decode_structural_context(item.get("structural_context", {})),
-            }
+            Path(item["path"]): oracle_context_cache_context(
+                item, decode_structural_context
+            )
             for item in document["contexts"]
         }
-        return contexts, document["edges"]
+        edges = document["edges"]
+        with _ORACLE_CONTEXT_CACHE_LOCK:
+            _ORACLE_CONTEXT_CACHE_HITS += 1
+        return contexts, edges
     except (KeyError, TypeError, ValueError, json.JSONDecodeError):
         with _ORACLE_CONTEXT_CACHE_LOCK:
             removed = _ORACLE_CONTEXT_CACHE.pop(key, None)
@@ -127,29 +135,18 @@ def _oracle_context_cache_read(key: str) -> tuple[dict, list] | None:
 
 def _oracle_context_cache_write(key: str, contexts: dict, edges: list) -> None:
     from .review_integrity import encode_structural_context
+    from .context_efficiency import oracle_context_cache_record
 
     global _ORACLE_CONTEXT_CACHE_BYTES
-    rows = []
-    for path, context in sorted(contexts.items(), key=lambda item: str(item[0])):
-        rows.append(
-            {
-                "path": path.as_posix(),
-                "helpers": sorted(context["helpers"]),
-                "weak_helpers": sorted(context["weak_helpers"]),
-                "mixins": sorted(context["mixins"]),
-                "pytest_inherited": sorted(context["pytest_inherited"]),
-                "click_runners": sorted(context["click_runners"]),
-                "typecheck": bool(context["typecheck"]),
-                "flask_apps": sorted(context.get("flask_apps", set())),
-                "callback_invokers": context.get("callback_invokers", {}),
-                "codspeed_benchmark": context.get("codspeed_benchmark", False),
-                "structural_context": encode_structural_context(context),
-            }
-        )
-    payload = json.dumps(
-        {"contexts": rows, "edges": edges}, sort_keys=True, separators=(",", ":")
+    rows = [
+        oracle_context_cache_record(path, context, encode_structural_context)
+        for path, context in sorted(contexts.items(), key=lambda item: str(item[0]))
+    ]
+    document = {"contexts": rows, "edges": edges}
+    payload = integrity.NativeOraclePayload(
+        json.dumps(document, sort_keys=True, separators=(",", ":")), key
     )
-    size = len(payload.encode("utf-8")) + len(key)
+    size = len(payload.encode("utf-8")) + len(key) + 32
     with _ORACLE_CONTEXT_CACHE_LOCK:
         if size > MAX_ORACLE_CONTEXT_CACHE_BYTES:
             return
@@ -849,7 +846,11 @@ def _security_aliases(nodes: list[ast.AST]) -> dict[str, str]:
     for node in nodes:
         if isinstance(node, ast.Import):
             for item in node.names:
-                aliases[item.asname or item.name.split(".")[0]] = item.name
+                if item.asname:
+                    aliases[item.asname] = item.name
+                else:
+                    name = item.name.split(".")[0]
+                    aliases[name] = name
         elif isinstance(node, ast.ImportFrom):
             for item in node.names:
                 if item.name == "*":
@@ -1242,23 +1243,24 @@ def _suppresses_assertion(
 
 def _assertion_nodes(node: ast.AST, aliases: dict[str, str]) -> list[ast.AST]:
     """Collect explicit assertions, raises, and effective warnings-as-errors checks."""
+    from .context_efficiency import _expected_exception_else_failure
+
     nodes = _test_oracle_body_nodes(node, aliases)
-    result = [
+    return [
         child
         for child in nodes
-        if isinstance(child, ast.Assert) and _effective_assertion(child, aliases)
-    ]
-    result.extend(
-        child
-        for child in nodes
-        if isinstance(child, ast.Raise)
+        if isinstance(child, ast.Assert)
+        and _effective_assertion(child, aliases)
+        or isinstance(child, ast.Raise)
         and _effective_assertion(child, aliases)
         and isinstance(child.exc, (ast.Call, ast.Name))
-        and _name(child.exc.func if isinstance(child.exc, ast.Call) else child.exc)
-        in {"AssertionError", "builtins.AssertionError"}
-    )
-    result.extend(child for child in nodes if _warnings_as_errors(child, aliases))
-    return result
+        and (
+            _name(child.exc.func if isinstance(child.exc, ast.Call) else child.exc)
+            in {"AssertionError", "builtins.AssertionError"}
+            or _expected_exception_else_failure(child, aliases)
+        )
+        or _warnings_as_errors(child, aliases)
+    ]
 
 
 def _warnings_as_errors(node: ast.AST, aliases: dict[str, str]) -> bool:
@@ -1391,59 +1393,51 @@ def _dynamic_execution_finding(
 ) -> dict[str, Any] | None:
     if call not in {"eval", "exec", "builtins.eval", "builtins.exec"}:
         return None
+    if fixed := integrity.fixed_program_witness(relative, node, call):
+        return _security_finding(
+            "SECURITY_DYNAMIC_EXECUTION",
+            relative,
+            node,
+            "Closed program input; runtime assurance remains incomplete."
+            if fixed.get("disposition") != "PROVEN_FIXED_LITERAL_PROGRAM"
+            else "Fixed literal-only program; the execution primitive is retained as an observation, not a demonstrated defect.",
+            "INFO",
+            call=call,
+            **fixed,
+        )
+    rejected = contracts.literal_exec_rejected(node)
     return _security_finding(
         "SECURITY_DYNAMIC_EXECUTION",
         relative,
         node,
-        "Dynamic code execution is reachable from source.",
-        "HIGH",
+        "Literal source is rejected by Python syntax compilation; builtin execution primitive remains present."
+        if rejected
+        else "Dynamic code execution is reachable from source.",
+        "INFO" if rejected else "HIGH",
         call=call,
+        **rejected,
     )
 
 
-def _os_command_finding(
-    call: str, relative: str, node: ast.AST
-) -> dict[str, Any] | None:
-    if call != "os.system":
-        return None
-    return _security_finding(
-        "SECURITY_OS_COMMAND",
-        relative,
-        node,
-        "os.system invokes a shell and should be replaced with an argv-based process boundary.",
-        "HIGH",
-    )
-
-
-def _shell_command_finding(
+def _security_call_finding(
     call: str, relative: str, node: ast.Call
 ) -> dict[str, Any] | None:
+    """Dispatch primitive rules once, preserving their specific configuration gates."""
     from .review_integrity import shell_execution_enabled
 
-    if call not in {
-        "subprocess.run",
-        "subprocess.Popen",
-        "subprocess.call",
-        "subprocess.check_call",
-        "subprocess.check_output",
-    }:
-        return None
-    if not shell_execution_enabled(node):
-        return None
-    return _security_finding(
-        "SECURITY_SHELL_COMMAND",
-        relative,
-        node,
-        "subprocess shell execution is enabled; shell metacharacters can cross the command boundary.",
-        "HIGH",
-        call=call,
-    )
-
-
-def _unsafe_deserialization_finding(
-    call: str, relative: str, node: ast.AST
-) -> dict[str, Any] | None:
-    if call not in {
+    if call in {"eval", "exec", "builtins.eval", "builtins.exec"}:
+        return _dynamic_execution_finding(call, relative, node)
+    if call == "os.system":
+        code = "SECURITY_OS_COMMAND"
+        message = "os.system invokes a shell and should be replaced with an argv-based process boundary."
+        facts = {}
+    elif call in shell_execution_calls():
+        if not shell_execution_enabled(node):
+            return None
+        code = "SECURITY_SHELL_COMMAND"
+        message = "subprocess shell execution is enabled; shell metacharacters can cross the command boundary."
+        facts = {"call": call}
+    elif call in {
         "pickle.load",
         "pickle.loads",
         "_pickle.load",
@@ -1451,67 +1445,28 @@ def _unsafe_deserialization_finding(
         "dill.load",
         "dill.loads",
     }:
-        return None
-    return _security_finding(
-        "SECURITY_UNSAFE_DESERIALIZATION",
-        relative,
-        node,
-        "Pickle-like deserialization can execute attacker-controlled code.",
-        "HIGH",
-        call=call,
+        code = "SECURITY_UNSAFE_DESERIALIZATION"
+        message = "Pickle-like deserialization can execute attacker-controlled code."
+        facts = {"call": call}
+    elif call in {"yaml.load", "yaml.unsafe_load", "yaml.full_load"}:
+        from .security_configuration import yaml_safe_loader
+
+        if call == "yaml.load" and yaml_safe_loader(
+            node, getattr(node, "_security_configuration_aliases", {})
+        ):
+            return None
+        code = "SECURITY_UNSAFE_YAML"
+        message = "YAML is loaded without an explicit reviewed Loader."
+        facts = {"call": call}
+    else:
+        from .security_configuration import tls_finding
+
+        return tls_finding(
+            call, relative, node, getattr(node, "_security_configuration_aliases", {})
+        )
+    return closed_shell_finding(call, relative, node) or _security_finding(
+        code, relative, node, message, "HIGH", **facts
     )
-
-
-def _unsafe_yaml_finding(
-    call: str, relative: str, node: ast.Call
-) -> dict[str, Any] | None:
-    if call not in {"yaml.load", "yaml.unsafe_load", "yaml.full_load"}:
-        return None
-    loader = next(
-        (keyword.value for keyword in node.keywords if keyword.arg == "Loader"), None
-    )
-    loader_name = _name(loader) if isinstance(loader, ast.AST) else ""
-    unsafe_loader = loader_name.endswith("UnsafeLoader") or loader_name.endswith(
-        "FullLoader"
-    )
-    if call == "yaml.load" and loader is not None and not unsafe_loader:
-        return None
-    return _security_finding(
-        "SECURITY_UNSAFE_YAML",
-        relative,
-        node,
-        "YAML is loaded without an explicit reviewed Loader.",
-        "HIGH",
-        call=call,
-    )
-
-
-def _disabled_tls_finding(
-    call: str, relative: str, node: ast.Call
-) -> dict[str, Any] | None:
-    from .security_configuration import tls_finding
-
-    return tls_finding(
-        call, relative, node, getattr(node, "_security_configuration_aliases", {})
-    )
-
-
-def _security_call_finding(
-    call: str, relative: str, node: ast.Call
-) -> dict[str, Any] | None:
-    detectors = (
-        _dynamic_execution_finding,
-        _os_command_finding,
-        _shell_command_finding,
-        _unsafe_deserialization_finding,
-        _unsafe_yaml_finding,
-        _disabled_tls_finding,
-    )
-    for detect in detectors:
-        finding = detect(call, relative, node)
-        if finding is not None:
-            return finding
-    return None
 
 
 def _bare_except_finding(
@@ -1548,8 +1503,17 @@ def _url_quoting_charset(value: str) -> bool:
     )
 
 
+def _credential_role_witness(node, target, aliases):
+    """Describe a symbolic declaration; it is not a non-credential exemption."""
+    import sys
+
+    from .provenance import credential_role_witness
+
+    return credential_role_witness(sys.modules[__name__], node, target, aliases)
+
+
 def _literal_assignment_diagnostic(
-    relative: str, node: ast.Assign | ast.AnnAssign, target: ast.expr
+    relative: str, node: ast.Assign | ast.AnnAssign, target: ast.expr, aliases=None
 ) -> dict[str, Any] | None:
     if not isinstance(target, ast.Name) or not _SECRET_ASSIGNMENT.search(target.id):
         return None
@@ -1560,11 +1524,23 @@ def _literal_assignment_diagnostic(
         "Credential-like material is assigned as a source literal.",
         "CRITICAL",
         name=target.id,
+        **_credential_role_witness(node, target, aliases or {}),
     )
 
 
+def _security_parent(node: ast.AST) -> ast.AST | None:
+    return getattr(node, "_security_parent", None)
+
+
+def _module_for_security_node(node: ast.AST) -> ast.Module | None:
+    current = node
+    while (parent := _security_parent(current)) is not None:
+        current = parent
+    return current if isinstance(current, ast.Module) else None
+
+
 def _literal_assignment_diagnostics(
-    relative: str, node: ast.Assign | ast.AnnAssign
+    relative: str, node: ast.Assign | ast.AnnAssign, aliases=None
 ) -> list[dict[str, Any]]:
     value = _secret_literal(node)
     is_test_source = "tests" in Path(relative).parts or Path(relative).name.startswith(
@@ -1582,9 +1558,29 @@ def _literal_assignment_diagnostics(
     targets = node.targets if isinstance(node, ast.Assign) else [node.target]
     findings = []
     for target in targets:
-        finding = _literal_assignment_diagnostic(relative, node, target)
+        from .mock_fixture_provenance import closed_jwt_test_literal
+
+        if proof := closed_jwt_test_literal(relative, node, target):
+            findings.append(
+                _security_finding(
+                    "SECURITY_HARDCODED_SECRET",
+                    relative,
+                    node,
+                    "Source-bound test-owned JWT roundtrip observed; runtime and transport assurance remain incomplete.",
+                    "CRITICAL",
+                    name=target.id if isinstance(target, ast.Name) else "secret",
+                    **proof,
+                )
+            )
+            continue
+        finding = _literal_assignment_diagnostic(relative, node, target, aliases)
         if finding is not None:
-            findings.append(finding)
+            from .primitive_observation_binding import annotate_django_fixture
+
+            finding = annotate_django_fixture(finding, node)
+            from .primitive_observation_binding import annotate_application_fixture
+
+            findings.append(annotate_application_fixture(finding, node))
     return findings
 
 
@@ -2019,28 +2015,9 @@ def _scope_binds_name(scope, name):
 def _mock_fixture_binding(scope, name, module, aliases):
     if name not in _scope_parameters(scope) or _scope_binds_name(scope, name):
         return False
-    fixtures = [
-        node
-        for node in module.body
-        if isinstance(node, ast.FunctionDef)
-        and node.name == name
-        and len(node.decorator_list) == 1
-        and _resolved_ast_name(node.decorator_list[0], aliases) == "pytest.fixture"
-    ]
-    if len(fixtures) != 1 or _module_has_rebinding(module, name, fixtures[0]):
-        return not fixtures and contracts._mock_parameter_annotation(
-            scope, name, aliases
-        )
-    fixture = fixtures[0]
-    fixture_aliases = _scope_security_aliases(aliases, fixture)
-    returns = [item for item in fixture.body if isinstance(item, ast.Return)]
-    return (
-        len(fixture.body) == 1
-        and len(returns) == 1
-        and isinstance(returns[0].value, ast.Call)
-        and _normalized_call_name(returns[0].value, fixture_aliases)
-        in _UNITTEST_MOCK_CONSTRUCTORS
-    )
+    from .mock_fixture_provenance import fixture_is_mock
+
+    return fixture_is_mock(module, name)
 
 
 def _module_has_rebinding(module, name, fixture):
@@ -2998,6 +2975,8 @@ def _callback_argument(call, function, parameter):
 
 
 def _source_callback_parameters(function, methods, depth=0, aliases=None):
+    from . import test_oracle_misuse as oracle_misuse
+
     """Resolve bounded first-party callback paths, excluding swallowed calls."""
     if depth >= 4 or function.decorator_list:
         return set()
@@ -3010,7 +2989,11 @@ def _source_callback_parameters(function, methods, depth=0, aliases=None):
         function, methods, nodes, depth, aliases or {}
     )
     for call in (item for item in nodes if isinstance(item, ast.Call)):
-        if not _in_current_test_body(call) or not _effective_assertion(call, aliases):
+        if (
+            not oracle_misuse.source_node_reachable(call)
+            or not _in_current_test_body(call)
+            or not _effective_assertion(call, aliases)
+        ):
             continue
         if isinstance(call.func, ast.Name) and call.func.id in parameters:
             if isinstance(
@@ -3203,51 +3186,6 @@ def _source_methods_are_stable(methods):
                 if node.args and _name(node.args[0]) == "self":
                     return False
     return True
-
-
-def _source_callback_invokers(imports, snapshots, summaries=None):
-    invokers = {}
-    summaries = {} if summaries is None else summaries
-    for local, (source, symbol) in imports.items():
-        tree = snapshots.get(source)
-        if tree is None or symbol is None:
-            continue
-        key = (source, symbol)
-        if key in summaries:
-            if summaries[key] is not None:
-                invokers[local] = summaries[key]
-            continue
-        summaries[key] = None
-        declarations = [
-            item
-            for item in tree.body
-            if isinstance(item, ast.ClassDef) and item.name == symbol
-        ]
-        if len(declarations) != 1:
-            continue
-        methods = _inherited_source_methods(declarations[0], tree)
-        if not _source_methods_are_stable(methods):
-            continue
-        function = methods.get("__call__")
-        if not isinstance(function, ast.AsyncFunctionDef):
-            continue
-        parameters = [
-            item.arg for item in [*function.args.posonlyargs, *function.args.args][1:]
-        ]
-        invoked = _source_callback_parameters(
-            function, methods, aliases=_module_security_aliases(tree)
-        )
-        invokers[local] = {
-            "parameters": parameters,
-            "invoked": sorted(invoked),
-            "source": source.as_posix(),
-            "symbol": symbol,
-            "virtual_dispatch": integrity.virtual_dispatch_defaults(
-                methods, _module_security_aliases(tree), _effective_assertion
-            ),
-        }
-        summaries[key] = invokers[local]
-    return invokers
 
 
 def _source_invoked_callbacks(test, invokers, strong, aliases):
@@ -3537,51 +3475,32 @@ def _oracle_import_source(
     module: str,
     eligible: set[Path] | dict[Path, Path],
     imported: str | None = None,
+    *,
+    captured: bool = False,
 ) -> Path | None:
-    root_abs = root.resolve()
-    eligible_abs = (
-        eligible if isinstance(eligible, dict) else {p.resolve(): p for p in eligible}
+    from .import_context import resolve_import_source
+
+    return resolve_import_source(
+        root,
+        path,
+        node,
+        module,
+        eligible,
+        imported,
+        captured=captured,
     )
-    parts = module.split(".") if module else []
-    if isinstance(node, ast.ImportFrom) and node.level:
-        base = path.parent
-        for _ in range(node.level - 1):
-            base = base.parent
-        bases = [base]
-    else:
-        bases = [path.parent, root, root / "src"]
-    child_matches = set()
-    package_matches = set()
-    for base in bases:
-        target = base.joinpath(*parts)
-        child_choices = []
-        if isinstance(node, ast.ImportFrom) and imported and imported != "*":
-            child = target / imported
-            child_choices.extend([child.with_suffix(".py"), child / "__init__.py"])
-        package_choices = (
-            [target.with_suffix(".py"), target / "__init__.py"]
-            if parts
-            else [target / "__init__.py"]
-        )
-        for choice in child_choices + package_choices:
-            resolved = choice.resolve()
-            if (
-                resolved.is_relative_to(root_abs)
-                and resolved in eligible_abs
-                and not choice.is_symlink()
-            ):
-                target_set = (
-                    child_matches if choice in child_choices else package_matches
-                )
-                target_set.add(eligible_abs[resolved])
-    if child_matches:
-        return next(iter(child_matches)) if len(child_matches) == 1 else None
-    return next(iter(package_matches)) if len(package_matches) == 1 else None
 
 
 def _oracle_imports(
-    root: Path, path: Path, tree: ast.Module, eligible: set[Path] | dict[Path, Path]
+    root: Path,
+    path: Path,
+    tree: ast.Module,
+    eligible: set[Path] | dict[Path, Path],
+    *,
+    captured=False,
 ) -> dict:
+    from .import_context import import_source_symbol
+
     imports = {}
     for node in tree.body:
         if not isinstance(node, (ast.ImportFrom, ast.Import)):
@@ -3599,13 +3518,22 @@ def _oracle_imports(
                 module,
                 eligible,
                 item.name if isinstance(node, ast.ImportFrom) else None,
+                captured=captured,
             )
             if source is None:
                 continue
             alias = item.asname or item.name
             imports[alias] = (
                 source,
-                item.name if isinstance(node, ast.ImportFrom) else None,
+                import_source_symbol(
+                    root,
+                    path,
+                    node,
+                    module,
+                    item.name if isinstance(node, ast.ImportFrom) else None,
+                    source,
+                    captured=captured,
+                ),
             )
     return imports
 
@@ -3654,32 +3582,65 @@ def _declared_typecheck_sources(
     )
 
 
-def _oracle_context_cache_key(root: Path, manifest: list, config_identity: dict) -> str:
+def _oracle_context_cache_key(
+    root: Path, manifest: list, config_identity: dict, *, captured: bool = False
+) -> str:
+    import builtins
+    from . import test_oracle_misuse as oracle_misuse
+    from . import test_callback_closure
+    from . import mock_fixture_provenance
+    from .import_context import import_resolution_helpers
     from .context_efficiency import (
         _consume_security_snapshots,
+        _module_has_dynamic_capability_access,
+        _capability_reflection_names,
         _populate_oracle_database_context,
         _read_bounded_workspace_source,
         _scan_missing_security_snapshot,
+        async_runner_fixture_helpers,
+        provider_context_cache_helpers,
+        protocol_call_helpers,
     )
 
     helpers = (
         ast.parse,
         _build_oracle_context,
+        _completion_only_oracle,
+        integrity._completion_only_oracle,
+        integrity._builtin_repr_names_shadowed,
+        integrity._security_module_scope,
+        integrity._security_scope_local_names,
         contracts._static_type_edges,
+        contracts.native_import_profile,
+        contracts.import_configuration,
+        contracts.new_import_views,
+        contracts.import_context_metadata,
         _security_source_bytes,
         _read_bounded_workspace_source,
         _consume_security_snapshots,
+        _module_has_dynamic_capability_access,
+        _capability_reflection_names,
         _populate_oracle_database_context,
         _scan_missing_security_snapshot,
         local_file,
         _measure_parse,
+        *provider_context_cache_helpers(contracts),
         RuntimeAuditError,
         _click_runner_fixtures,
+        _autouse_fixture_names,
+        _class_has_captured_autouse,
+        _captured_local_class_bases,
+        _update_captured_class_binding,
+        _scope_parameters,
+        _resolved_ast_name,
+        _bound_names,
+        _test_has_captured_autouse,
         _scope_security_aliases,
         _module_security_aliases,
         _ty_assertion_helpers,
         _oracle_imports,
         _oracle_import_source,
+        *import_resolution_helpers(),
         _imported_oracle_helpers,
         _imported_weak_oracle_helpers,
         _imported_oracle_helper_sets,
@@ -3693,23 +3654,8 @@ def _oracle_context_cache_key(root: Path, manifest: list, config_identity: dict)
         _measure_hash,
         _declared_typecheck_sources,
         contracts._declared_typecheck_sources,
-        contracts._ty_sources,
-        contracts._ty_invocation_profile,
-        contracts._ty_safe_passenv,
-        contracts._ty_external_config_state,
-        contracts._ty_config_scope,
-        contracts._ty_assertion_rules,
-        contracts._ty_selected_paths,
-        contracts._ty_paths,
-        contracts._ty_default_excluded,
-        contracts._ty_assertion_provider_mutated,
-        contracts._ty_global_git_configuration,
-        contracts._ty_ignored_paths,
-        contracts._ty_path_is_ignored,
-        contracts._ty_ignore_file_patterns,
-        contracts._ty_parse_ignore_lines,
-        contracts._ty_matches_ignore,
-        _source_callback_invokers,
+        *type_intent_hollow.CACHE_HELPERS,
+        *type_intent_provider_provenance.CACHE_HELPERS,
         _source_methods_are_stable,
         _source_callback_parameters,
         _forwarded_callback_names,
@@ -3723,10 +3669,48 @@ def _oracle_context_cache_key(root: Path, manifest: list, config_identity: dict)
         _flask_context_apps,
         _local_assertion_helpers,
         _local_weak_assertion_helpers,
+        oracle_misuse._constant_truth_value,
+        oracle_misuse._static_expression,
+        oracle_misuse.always_truthy_assertion_reason,
+        oracle_misuse.discarded_comparison_reason,
+        oracle_misuse.retain_local_oracle_diagnostics,
+        oracle_misuse.weak_assertion_reason,
+        *oracle_misuse.INERT_BODY_HELPERS,
+        *(
+            getattr(oracle_misuse, helper.__name__, None)
+            for helper in oracle_misuse.INERT_BODY_HELPERS
+        ),
         _is_oracle_helper_name,
         _oracle_context_cache_eligible,
         _project_oracle_context,
+        integrity.NativeOraclePayload.__new__,
+        integrity.NativeOraclePayload.valid,
     )
+    helpers += tuple(
+        getattr(module, helper.__name__, None)
+        for module in (type_intent_hollow, type_intent_provider_provenance)
+        for helper in module.CACHE_HELPERS
+    )
+    helpers += test_callback_closure.CACHE_HELPERS
+    helpers += (
+        integrity._lexical_nodes,
+        _body_nodes,
+        builtins.compile,
+        getattr(test_callback_closure, "compile", builtins.compile),
+    )
+    helpers += tuple(
+        getattr(module, helper.__name__, None)
+        for helper in test_callback_closure.CACHE_HELPERS
+        for module in (test_callback_closure, integrity)
+    )
+    helpers += mock_fixture_provenance.CACHE_HELPERS + tuple(
+        getattr(mock_fixture_provenance, helper.__name__, None)
+        for helper in mock_fixture_provenance.CACHE_HELPERS
+    )
+    helpers += async_runner_fixture_helpers() + protocol_call_helpers()
+    helpers += (integrity.source_binding_helpers, *integrity.source_binding_helpers())
+    helpers += integrity.fixed_program_workspace_helpers()
+    helpers += runtime_audit_integrity.tenant_contract_helpers(sys.modules[__name__])
     helpers += contracts.project_contract_helpers() + tuple(
         getattr(integrity, name)
         for name in (
@@ -3736,14 +3720,16 @@ def _oracle_context_cache_key(root: Path, manifest: list, config_identity: dict)
         )
     )
     identity = {
-        "schema": "factory.security-oracle-context-cache.v3",
-        "root": root.resolve().as_posix(),
+        "schema": integrity.credential_context_cache_schema(),
+        "root": root.as_posix() if captured else root.resolve().as_posix(),
         "sources": manifest,
         "config": config_identity,
         "source_limit": MAX_BYTES,
         "source_retention_limit": 16 * 1024 * 1024,
         "python": [sys.implementation.name, *sys.version_info[:3]],
-        "helpers": [id(helper) for helper in helpers],
+        "helpers": [
+            (id(helper), id(getattr(helper, "__code__", None))) for helper in helpers
+        ],
     }
     encoded = json.dumps(identity, sort_keys=True, separators=(",", ":")).encode()
     return sha256(encoded).hexdigest()
@@ -3882,18 +3868,14 @@ def _project_oracle_context(
     source_bytes, source_bindings, manifest, source_cacheable = _oracle_source_inputs(
         root, files
     )
-    retained_paths = {path.relative_to(root).as_posix() for path in source_bytes}
-    python_inventory = [
-        {
-            "path": item["path"],
-            "state": item["state"],
-            "retained": item["path"] in retained_paths,
-        }
-        for item in manifest
-        if item["path"].lower().endswith(".py")
-    ]
-    if python_inventory_out is not None:
-        python_inventory_out.extend(python_inventory)
+    from .context_efficiency import (
+        bind_provider_inventory,
+        provider_source_inventory,
+    )
+
+    python_inventory = provider_source_inventory(
+        root, source_bytes, manifest, python_inventory_out
+    )
     (
         typecheck_sources,
         config_bindings,
@@ -3903,10 +3885,9 @@ def _project_oracle_context(
     ) = integrity.oracle_configuration(
         root, files, _declared_typecheck_sources, _security_source_bytes, MAX_BYTES
     )
-    config_identity = {
-        **config_identity,
-        "pytest_collection": collection_identity or {"state": "default"},
-    }
+    config_identity = contracts.import_configuration(
+        config_identity, collection_identity, len(files)
+    )
     bindings = source_bindings + config_bindings
     cache_key = _oracle_context_cache_key(root, manifest, config_identity)
     if _oracle_context_cache_eligible(
@@ -3915,6 +3896,7 @@ def _project_oracle_context(
         cached = _oracle_context_cache_read(cache_key)
         if cached is not None:
             contexts, edges = cached
+            bind_provider_inventory(contexts, python_inventory)
             return contexts, bindings, edges, source_bytes
     snapshots = contracts.bound_snapshots(root, files, source_bytes, source_bindings)
     file_paths = set(files)
@@ -3956,12 +3938,45 @@ def _project_oracle_context(
     )
     ty_identity = config_identity["typecheck"].get("ty", {})
     ty_sources = {root / item for item in ty_identity.get("selected", [])}
-    import_views = {"resolved": {}, "bindings": 0, "characters": 0}
+    import_views = contracts.new_import_views(len(files))
     contexts, edges = _build_oracle_context(
         root, files, snapshots, typecheck_sources, ty_sources, import_views
     )
+    type_intent_hollow.bind_negative_checker_context(
+        root, contexts, config_identity["typecheck"]
+    )
+    bind_provider_inventory(contexts, python_inventory)
     integrity.bind_benchmark_context(contexts, snapshots, benchmarks)
+    from .context_efficiency import (
+        bind_django_fixture_context,
+        bind_application_fixture_context,
+    )
+
+    bind_django_fixture_context(
+        root,
+        snapshots,
+        contexts,
+        config_bindings,
+        _security_source_bytes,
+        MAX_BYTES,
+        source_bytes=source_bytes,
+        source_inventory=source_hashes,
+    )
     resolved = contracts._project_import_views(import_views, snapshots)
+    bind_application_fixture_context(
+        root,
+        snapshots,
+        contexts,
+        config_bindings,
+        _security_source_bytes,
+        MAX_BYTES,
+        source_bytes=source_bytes,
+        source_inventory=source_hashes,
+        imports=resolved,
+    )
+    integrity.bind_fixed_program_workspace(
+        root, contexts, snapshots, files, source_bytes, resolved
+    )
     contracts.bind_project_contracts(root, snapshots, contexts, edges, resolved)
     edges += contracts._static_type_edges(
         root, typecheck_sources | ty_sources, config_bindings, ty_sources
@@ -3980,6 +3995,97 @@ def _project_oracle_context(
     return contexts, bindings, edges, source_bytes
 
 
+def _autouse_fixture_names(body, aliases, *, autouse_only=True):
+    """Find captured lifecycle candidates; this veto never credits an oracle."""
+    names = []
+    for function in body:
+        if not isinstance(function, _FUNCTION_NODES):
+            continue
+        for decorator in function.decorator_list:
+            target = decorator.func if isinstance(decorator, ast.Call) else decorator
+            if _resolved_ast_name(target, aliases) != "pytest.fixture":
+                continue
+            if not autouse_only:
+                names.append(function.name)
+                continue
+            if not isinstance(decorator, ast.Call):
+                continue
+            for keyword in decorator.keywords:
+                if keyword.arg == "autouse" and not (
+                    isinstance(keyword.value, ast.Constant)
+                    and keyword.value.value is False
+                ):
+                    names.append(function.name)
+    return sorted(set(names))
+
+
+def _update_captured_class_binding(statement, bindings):
+    value = getattr(statement, "value", None)
+    alias = (
+        bindings.get(value.id)
+        if isinstance(statement, (ast.Assign, ast.AnnAssign))
+        and isinstance(value, ast.Name)
+        else None
+    )
+    for name in _bound_names(statement):
+        if name in bindings or alias is not None:
+            bindings[name] = alias
+
+
+def _captured_local_class_bases(module):
+    bindings, bases = {}, {}
+    pending = list(reversed(module.body))
+    while pending:
+        statement = pending.pop()
+        if isinstance(statement, ast.If) and isinstance(statement.test, ast.Constant):
+            pending.extend(
+                reversed(statement.body if statement.test.value else statement.orelse)
+            )
+        elif isinstance(statement, ast.ClassDef):
+            bases[id(statement)] = [
+                bindings[base.id]
+                for base in statement.bases
+                if isinstance(base, ast.Name) and base.id in bindings
+            ]
+            bindings[statement.name] = statement
+        else:
+            _update_captured_class_binding(statement, bindings)
+    return bases
+
+
+def _class_has_captured_autouse(owner, bases, aliases):
+    pending, seen = [owner], set()
+    while pending:
+        current = pending.pop()
+        if current is None:
+            return True
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        if _autouse_fixture_names(current.body, aliases):
+            return True
+        pending.extend(bases.get(id(current), ()))
+    return False
+
+
+def _test_has_captured_autouse(node, context):
+    if context.get("autouse_lifecycle") or set(_scope_parameters(node)) & set(
+        context.get("requested_fixture_lifecycle", ())
+    ):
+        return True
+    module = getattr(node, "_oracle_module", None)
+    if not isinstance(module, ast.Module):
+        return False
+    aliases = _module_security_aliases(module)
+    bases = _captured_local_class_bases(module)
+    return any(
+        isinstance(owner, ast.ClassDef)
+        and node in owner.body
+        and _class_has_captured_autouse(owner, bases, aliases)
+        for owner in module.body
+    )
+
+
 def _build_oracle_context(
     root: Path,
     files: list[Path],
@@ -3988,6 +4094,24 @@ def _build_oracle_context(
     ty_sources: set | None = None,
     import_views: dict | None = None,
 ) -> tuple[dict, list]:
+    from . import mock_fixture_provenance
+    from .context_efficiency import (
+        async_runner_fixture_context,
+        bind_provider_context,
+        captured_import_resolver,
+        protocol_call_context,
+    )
+
+    async_fixtures = async_runner_fixture_context(root, files, snapshots)
+    eligible = {path.resolve(): path for path in files}
+    resolve_imports, initializer_lookup, validate_initializers = (
+        captured_import_resolver(
+            root, snapshots, eligible, _oracle_imports, with_initializers=True
+        )
+    )
+    protocols = protocol_call_context(
+        root, files, snapshots, import_resolver=resolve_imports, eligible=eligible
+    )
     fixture_sources = [
         (
             path,
@@ -3999,21 +4123,66 @@ def _build_oracle_context(
         if path.name == "conftest.py"
     ]
     fixture_sources.sort(key=lambda item: len(item[0].parts))
+    requested_fixture_sources = {
+        path: _autouse_fixture_names(
+            tree.body, _module_security_aliases(tree), autouse_only=False
+        )
+        for path, tree in snapshots.items()
+    }
+    lifecycle_sources = {
+        path: _autouse_fixture_names(tree.body, _module_security_aliases(tree))
+        for path, tree in snapshots.items()
+    }
+    mock_fixture_sources = {
+        path: mock_fixture_provenance.fixture_bindings_for_source(tree)
+        for path, tree in snapshots.items()
+    }
     contexts = {
         path: {
             "helpers": set(),
             "weak_helpers": set(),
             "mixins": set(),
             "pytest_inherited": set(),
+            "credential_consumers": {},
+            "finite_template_inputs": {},
         }
         for path in snapshots
     }
     edges = set()
     callback_summaries = {}
     helper_summaries = {}
-    eligible = {path.resolve(): path for path in files}
     for path, tree in snapshots.items():
+        caller = path.relative_to(root).as_posix()
+        contexts[path]["protocol_observations"] = protocols.get(caller, {})
+        contexts[path]["requested_fixture_lifecycle"] = sorted(
+            {
+                name
+                for source, names in requested_fixture_sources.items()
+                if source == path
+                or (
+                    source.name == "conftest.py"
+                    and path.parent.is_relative_to(source.parent)
+                )
+                for name in names
+            }
+        )
+        contexts[path]["autouse_lifecycle"] = [
+            f"{source.relative_to(root).as_posix()}:{name}"
+            for source, names in lifecycle_sources.items()
+            if source == path
+            or (
+                source.name == "conftest.py"
+                and path.parent.is_relative_to(source.parent)
+            )
+            for name in names
+        ]
         aliases = _scope_security_aliases(_module_security_aliases(tree), tree)
+        contexts[path]["async_runner_fixtures"] = async_fixtures.get(
+            path.relative_to(root).as_posix(), {}
+        )
+        contexts[path]["mock_fixture_provenance"] = (
+            mock_fixture_provenance.fixtures_for_file(path, mock_fixture_sources)
+        )
         fixtures = {}
         for source, declared in fixture_sources:
             if path.parent.is_relative_to(source.parent):
@@ -4026,18 +4195,33 @@ def _build_oracle_context(
             ty_sources or ()
         )
         contexts[path]["flask_apps"] = _flask_context_apps(path, tree, snapshots)
-        imports = _oracle_imports(root, path, tree, eligible)
+        imports = resolve_imports(root, path, tree, eligible)
+        contexts[path]["captured_imports"] = {
+            local: (source.relative_to(root).as_posix(), symbol)
+            for local, (source, symbol) in imports.items()
+        }
+        bind_provider_context(
+            contexts[path],
+            root,
+            path,
+            imports,
+            snapshots,
+            eligible,
+            resolve_imports,
+            initializer_lookup,
+        )
         contracts._capture_project_imports(import_views, path, imports, eligible)
         contexts[path].update(
             integrity._structural_oracle_context(tree, imports, snapshots)
         )
-        contexts[path]["callback_invokers"] = _source_callback_invokers(
+        from . import test_oracle_misuse as oracle_misuse
+
+        contexts[path]["callback_invokers"] = oracle_misuse.source_callback_invokers(
             imports, snapshots, callback_summaries
         )
         contexts[path]["helpers"], contexts[path]["weak_helpers"] = (
             _imported_oracle_helper_sets(imports, snapshots, aliases, helper_summaries)
         )
-        caller = path.relative_to(root).as_posix()
         edges.update(
             (
                 caller,
@@ -4111,45 +4295,18 @@ def _build_oracle_context(
         }
         for caller, target, kind, symbol, strength in sorted(edges)
     ]
+    validate_initializers()
     return contexts, edges
 
 
 def _weak_assertion_reason(
     node: ast.AST, aliases: dict[str, str] | None = None
 ) -> str | None:
-    if isinstance(node, ast.Call):
-        if _universal_type_check(node):
-            return "universal object type check does not verify the expected behavior"
-        from .review_integrity import weak_assertion_call_reason
+    from .test_oracle_misuse import weak_assertion_reason
 
-        return weak_assertion_call_reason(node, aliases or {})
-    if isinstance(node, ast.Compare) and len(node.ops) == 1:
-        if isinstance(node.ops[0], (ast.Eq, ast.Is)) and len(node.comparators) == 1:
-            left = node.left
-            right = node.comparators[0]
-            if (
-                any(isinstance(value, ast.Call) for value in ast.walk(left))
-                and any(isinstance(value, ast.Call) for value in ast.walk(right))
-                and ast.dump(left) == ast.dump(right)
-            ):
-                return "repeated invocation compares a result to itself instead of an independent expected value"
-        if isinstance(node.ops[0], ast.IsNot) and any(
-            isinstance(value, ast.Constant) and value.value is None
-            for value in (node.left, *node.comparators)
-        ):
-            return "non-null assertion does not verify the expected behavior"
-        operands = (node.left, *node.comparators)
-        if any(
-            isinstance(value, ast.Attribute) and value.attr in {"called", "call_count"}
-            for operand in operands
-            for value in ast.walk(operand)
-        ):
-            return "mock invocation state does not verify its result or arguments"
-    if getattr(node, "attr", None) in {"called", "call_count"} or (
-        _mock_argument_oracle(node, aliases or {}, uncalled=True)
-    ):
-        return "mock invocation state does not verify its result or arguments"
-    return None
+    return weak_assertion_reason(
+        node, aliases or {}, _universal_type_check, _mock_argument_oracle
+    )
 
 
 def _universal_type_check(node: ast.Call) -> bool:
@@ -4172,13 +4329,19 @@ def _weak_test_oracle_finding(
     unittest_context: bool = False,
     weak_helper_names: set[str] | None = None,
 ) -> dict[str, Any] | None:
-    if not isinstance(node, _FUNCTION_NODES):
-        return None
-    if not node.name.startswith("test_"):
+    if not isinstance(node, _FUNCTION_NODES) or not node.name.startswith("test_"):
         return None
     if _test_oracle_exempt(node, aliases):
         return None
     nodes = _test_oracle_body_nodes(node, aliases)
+    from . import test_oracle_misuse as oracle_misuse
+    from . import test_callback_closure
+    from . import mock_fixture_provenance
+
+    uninvoked = test_callback_closure.uninvoked_click_callback(
+        node, aliases, helper_names
+    )
+
     weak = [
         (
             child,
@@ -4198,6 +4361,14 @@ def _weak_test_oracle_finding(
         if isinstance(child, ast.Call)
         and _normalized_call_name(child, aliases) in (weak_helper_names or set())
     )
+    weak.extend(
+        (child, reason)
+        for child in nodes
+        if (reason := oracle_misuse.discarded_comparison_reason(child)) is not None
+    )
+    weak.extend(mock_fixture_provenance.inert_fixture_assertions(nodes, aliases))
+    if uninvoked is not None:
+        weak.append(uninvoked)
     weak = [(child, reason) for child, reason in weak if reason]
     strong = bool(
         _local_assertion_nodes(
@@ -4210,7 +4381,7 @@ def _weak_test_oracle_finding(
         )
     )
     if strong:
-        weak = [
+        weak = oracle_misuse.retain_local_oracle_diagnostics(weak) + [
             (child.value, "uninvoked mock assertion attribute")
             for child in nodes
             if isinstance(child, ast.Expr)
@@ -4231,6 +4402,9 @@ def _weak_test_oracle_finding(
         "MEDIUM",
         symbol=node.name,
         reasons=reasons,
+        evidence_scope="local_statement_semantics",
+        execution_state="NOT_ESTABLISHED",
+        whole_test_oracle="UNASSESSED",
     )
 
 
@@ -4243,11 +4417,11 @@ def _hollow_test_finding(
     unittest_context: bool = False,
     oracle_context: dict | None = None,
 ) -> dict[str, Any] | None:
-    if not isinstance(node, _FUNCTION_NODES):
-        return None
-    if not node.name.startswith("test_"):
+    if not isinstance(node, _FUNCTION_NODES) or not node.name.startswith("test_"):
         return None
     from .review_integrity import structural_oracle_finding
+    from .context_efficiency import _protocol_annotate_finding
+    from . import test_oracle_misuse as oracle_misuse
 
     oracle = structural_oracle_finding(node, relative, oracle_context or {})
     if _test_oracle_exempt(node, aliases) or oracle is True:
@@ -4264,42 +4438,50 @@ def _hollow_test_finding(
         for child in _test_oracle_body_nodes(node, aliases)
     ):
         return None
-    return _security_finding(
-        "QUALITY_HOLLOW_TEST",
+    oracle_module = getattr(node, "_oracle_module", None)
+    module_aliases = (
+        _scope_security_aliases(_module_security_aliases(oracle_module), oracle_module)
+        if isinstance(oracle_module, ast.Module)
+        else {}
+    )
+    if not _test_has_captured_autouse(node, oracle_context or {}) and (
+        type_intent_hollow.obviously_empty_test_body(node)
+        or type_intent_hollow.inert_type_assertion_only_oracle(
+            node,
+            aliases,
+            module_aliases=module_aliases,
+            scope_parameters=_scope_parameters(node),
+            provider_mutated=contracts._ty_assertion_provider_mutated,
+            relative=relative,
+            provider_context_closed=(
+                type_intent_hollow.captured_provider_context_closed
+            ),
+        )
+        or oracle_misuse.source_hollow_completion(node, oracle_context or {})
+    ):
+        return _security_finding(
+            "QUALITY_HOLLOW_TEST",
+            relative,
+            node,
+            "Test has no local non-vacuous runtime assertion; type-only intent is not credited without a proven selected checker.",
+            "MEDIUM",
+            symbol=node.name,
+            native_assertion_probe=integrity.native_test_probe(relative, node),
+        )
+    finding = _security_finding(
+        "QUALITY_UNKNOWN_TEST_ORACLE",
         relative,
         node,
-        "Test has no local non-vacuous assertion. Add an independent expected outcome and a negative control; delegated helper checks need separate evidence.",
-        "MEDIUM",
+        "No recognized local oracle; delegated behavior and fixture lifecycle remain unverified.",
+        "INFO",
         symbol=node.name,
-        runtime_oracle_eligible=_completion_only_oracle(node),
-        native_assertion_probe=_native_assertion_probe(relative, node),
+        state="INCOMPLETE",
+        evidence_state="UNKNOWN",
+        candidate_rule="QUALITY_HOLLOW_TEST",
+        native_assertion_probe=integrity.native_test_probe(relative, node),
+        missing_evidence="meaningful oracle and fixture/lifecycle closure",
     )
-
-
-def _native_assertion_probe(relative, node):
-    from .review_integrity import native_test_probe
-
-    return native_test_probe(relative, node)
-
-
-def _completion_only_oracle(node: ast.AST) -> bool:
-    """Runtime mutation evidence may credit calls, never ineffective assertions."""
-    children = list(ast.walk(node))[1:]
-    disallowed = (
-        ast.Assert,
-        ast.Raise,
-        ast.FunctionDef,
-        ast.AsyncFunctionDef,
-        ast.Lambda,
-    )
-    if any(isinstance(child, disallowed) for child in children):
-        return False
-    calls = [child for child in children if isinstance(child, ast.Call)]
-    return bool(calls) and not any(
-        "assert" in ast.unparse(call.func).lower()
-        or "fail" in ast.unparse(call.func).lower()
-        for call in calls
-    )
+    return _protocol_annotate_finding(finding, node, oracle_context or {})
 
 
 def _has_manual_failure(node: ast.AST, aliases: dict[str, str]) -> bool:
@@ -4346,39 +4528,10 @@ def _tenant_contract_bindings(
 def load_tenant_read_contract(
     root: Path, path: str = ".factory/tenant-read-contract.json"
 ) -> tuple[tuple[str, ...], tuple[str, ...], dict[str, Any]]:
-    """Load a bounded, workspace-contained tenant-read declaration for CLI audits."""
-    workspace = Path(root).resolve()
-    relative = _relative_path(path).as_posix()
-    contract_path = (workspace / relative).resolve()
-    if not contract_path.is_relative_to(workspace):
-        raise ReviewAuditError("Tenant-read contract must remain inside the workspace.")
-    if not contract_path.exists():
-        return (), (), {"path": relative, "state": "missing", "policy_applies": False}
-    try:
-        data, evidence = _read(workspace, relative)
-        contract = json.loads(data, object_pairs_hook=_unique_fields)
-    except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
-        raise ReviewAuditError(f"Invalid tenant-read contract: {exc}") from exc
-    if not isinstance(contract, dict) or set(contract) != {"schema", "reads"}:
-        raise ReviewAuditError("Invalid tenant-read contract schema or fields.")
-    if contract.get("schema") == "factory.tenant-read-contract.v2":
-        evidence["scoped_reads"] = _tenant_scoped_entries(workspace, contract["reads"])
-        evidence["policy_applies"] = False
-        evidence["state"] = "loaded"
-        return (), (), evidence
-    if contract.get("schema") != TENANT_CONTRACT_SCHEMA:
-        raise ReviewAuditError("Invalid tenant-read contract schema or fields.")
-    calls, bindings = _tenant_contract_entries(contract["reads"])
-    normalized_calls = _tenant_contract_calls(calls)
-    normalized_bindings = _tenant_contract_bindings(bindings, normalized_calls)
-    flattened = tuple(
-        f"{call}={binding}"
-        for call, values in normalized_bindings.items()
-        for binding in values
+    """Load and validate the tenant-read contract through the shared runtime checker, propagating its validation failures."""
+    return runtime_audit_integrity.load_tenant_read_contract(
+        sys.modules[__name__], root, path
     )
-    evidence["policy_applies"] = True
-    evidence["state"] = "loaded"
-    return normalized_calls, flattened, evidence
 
 
 def _tenant_scoped_entries(workspace: Path, value: Any) -> dict:
@@ -4887,6 +5040,7 @@ def _test_oracle_findings(
             continue
         node._oracle_click_runners = click_runners or set()
         node._oracle_module = nodes[0]
+        findings.extend(integrity.discarded_assertion_error_findings(relative, node))
         node._oracle_async_functions = {
             item.name
             for item in [*nodes[0].body, *node.body]
@@ -4911,8 +5065,6 @@ def _test_oracle_findings(
             unittest_context=is_unittest_method,
             oracle_context=oracle_context,
         )
-        if hollow is not None:
-            findings.append(hollow)
         weak = _weak_test_oracle_finding(
             relative,
             node,
@@ -4921,7 +5073,13 @@ def _test_oracle_findings(
             unittest_context=is_unittest_method,
             weak_helper_names=weak_helper_names,
         )
-        if weak is not None:
+        if hollow is not None and not (
+            weak is not None and hollow["code"] == "QUALITY_UNKNOWN_TEST_ORACLE"
+        ):
+            findings.append(hollow)
+        if weak is not None and not (
+            hollow and hollow["code"] == "QUALITY_HOLLOW_TEST"
+        ):
             findings.append(weak)
     return findings
 
@@ -5177,25 +5335,9 @@ def _security_node_findings(
 
 
 def _test_serialization_roundtrip(relative: str, node: ast.Call, aliases: dict) -> bool:
-    path = Path(relative)
-    if not (
-        "tests" in path.parts
-        or path.name.startswith("test_")
-        or path.name.endswith("_test.py")
-    ):
-        return False
-    if len(node.args) != 1 or node.keywords or not isinstance(node.args[0], ast.Call):
-        return False
-    serialized = node.args[0]
-    loaded_name = _normalized_call_name(node, aliases)
-    return (
-        len(serialized.args) == 1
-        and not isinstance(serialized.args[0], ast.Starred)
-        and _normalized_call_name(serialized, aliases)
-        == loaded_name.removesuffix("loads") + "dumps"
-        and _call_name(serialized).split(".", 1)[0] in aliases
-        and not any(keyword.arg is None for keyword in serialized.keywords)
-    )
+    from .context_efficiency import _test_serialization_roundtrip as check
+
+    return check(relative, node, aliases)
 
 
 def _unmodified_serialization_aliases(nodes: list[ast.AST], aliases: dict) -> dict:
@@ -5245,9 +5387,15 @@ def _security_scan_tree(
     tree._security_source_context = (oracle_context or {}).get(
         "_security_source_context"
     )
+    tree._security_oracle_context = oracle_context or {}
+    tree._fixed_program_workspace = (oracle_context or {}).get(
+        "fixed_program_workspace", {}
+    )
     nodes = list(ast.walk(tree))
     aliases = _security_aliases(nodes)
     for node in nodes:
+        for child in ast.iter_child_nodes(node):
+            child._security_parent = node
         node._scan_bound_names = None
         node._oracle_layout = None
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
@@ -5257,6 +5405,8 @@ def _security_scan_tree(
     )
     oracle_aliases = _scope_security_aliases(_module_security_aliases(tree), tree)
     context = oracle_context or {}
+    tree._oracle_async_runner_fixtures = context.get("async_runner_fixtures", {})
+    tree._oracle_mock_fixture_provenance = context.get("mock_fixture_provenance", {})
     helper_names = _local_assertion_helpers(tree, oracle_aliases) | set(
         context.get("helpers", ())
     )
@@ -5269,7 +5419,9 @@ def _security_scan_tree(
             unittest_methods.update(id(method) for method in cls.body)
     class_helpers = _class_oracle_helpers(tree, oracle_aliases, unittest_methods)
     from .review_integrity import redirect_source_findings
-    from .security_configuration import configuration_findings
+    from .semantic_credential_sensor import (
+        configuration_and_credential_findings as configuration_findings,
+    )
 
     findings = _tenant_read_findings(
         relative, nodes, tenant_read_calls, aliases, tenant_read_bindings or {}
@@ -5309,7 +5461,7 @@ def _security_scan_tree(
         findings.extend(
             _security_node_findings(relative, node, aliases, roundtrip_aliases)
         )
-    findings.extend(configuration_findings(tree, aliases, relative))
+    findings.extend(configuration_findings(tree, aliases, relative, nodes=nodes))
     findings.extend(redirect_source_findings(relative, tree, aliases, nodes))
     return findings
 
@@ -5505,6 +5657,7 @@ def _scan_security_sources(
     cache_enabled: bool = True,
     test_file_patterns: set[str] | None = None,
     database_context: dict | None = None,
+    primitive_source_bytes_out: dict[str, bytes] | None = None,
 ) -> tuple[
     list[dict[str, Any]],
     list[dict[str, Any]],
@@ -5610,30 +5763,21 @@ def _scan_security_sources(
     counts: dict[str, int] = {}
     for finding in findings:
         counts[finding["code"]] = counts.get(finding["code"], 0) + 1
+    if primitive_source_bytes_out is not None:
+        primitive_source_bytes_out.update(
+            _app_source_bytes(workspace, findings, bindings, source_bytes)
+        )
     scanned = {item["path"] for item in bindings}
     extra_bindings = [item for item in context_bindings if item["path"] not in scanned]
     return bindings, findings, counts, outcomes, oracle_edges, extra_bindings
 
 
 def _seal_security_scan(core: dict[str, Any]) -> dict[str, Any]:
-    candidate = sha256(
-        json.dumps(
-            _security_scan_report_candidate_payload(core),
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode("utf-8")
-    ).hexdigest()
-    core["candidate_sha256"] = candidate
-    core["agent_actions"] = [
-        audit_remediation_packet(candidate, item) for item in core["findings"]
-    ]
-    core.pop("audit_sha256", None)
-    core["audit_sha256"] = sha256(
-        json.dumps(
-            core, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-        ).encode("utf-8")
-    ).hexdigest()
-    return core
+    import sys
+
+    from .audit_action_refs import seal_security_scan
+
+    return seal_security_scan(sys.modules[__name__], core)
 
 
 def _security_scan_report(
@@ -5648,184 +5792,53 @@ def _security_scan_report(
     oracle_configuration: list[dict[str, Any]],
     database_context: dict | None = None,
     tenant_policy_applies: bool = False,
+    primitive_source_bytes: dict[str, bytes] | None = None,
 ) -> dict[str, Any]:
-    audit_coverage = _security_scan_coverage(files, outcomes, MAX_SECURITY_SOURCE_FILES)
-    state = _security_scan_state(files, findings, database_context, audit_coverage)
-    core: dict[str, Any] = {
-        "schema": SECURITY_SCHEMA,
-        "marker": "SECURITY_AUDIT_COMPLETE",
-        "state": state,
-        "files_scanned": len(bindings),
-        "parse_errors": outcomes["syntax_error"],
-        "unreadable_sources": outcomes["unreadable"],
-        "oversized_sources": outcomes["too_large"],
-        "audit_coverage": audit_coverage,
-        "tenant_read_contract": _tenant_read_contract(
-            tenant_read_calls, tenant_read_bindings, tenant_policy_applies
-        ),
-        "oracle_context": {
-            "mode": "one_local_import_hop_ast_only",
-            "resolved_edges": oracle_edges,
-            "edge_count": len(oracle_edges),
-            "configuration_sources": oracle_configuration,
-        },
-        "sources": bindings,
-        "database_context": database_context or {},
-        "findings": findings,
-        "finding_counts": dict(sorted(counts.items())),
-        "governance": "human_controlled",
-        "authority": {
-            "execution": False,
-            "approval": False,
-            "publication": False,
-            "deployment": False,
-        },
-        "claim_boundary": "Bounded Python AST pattern scan only. Declared tenant argument bindings verify syntactic pass-through, not tenant identity, authorization, or access isolation; this is not a penetration test, runtime exploit proof, dependency advisory, or release approval.",
-    }
-    core["source_manifest_sha256"] = sha256(
-        json.dumps(
-            {
-                "sources": bindings,
-                "oracle_context": core["oracle_context"],
-                "database_context": core["database_context"],
-            },
-            sort_keys=True,
-            separators=(",", ":"),
-            ensure_ascii=False,
-        ).encode("utf-8")
-    ).hexdigest()
-    core["action_summary"] = _security_scan_action_summary(state)
-    return _seal_security_scan(core)
+    import sys
+
+    from .audit_action_refs import security_scan_report
+
+    return security_scan_report(
+        sys.modules[__name__],
+        files,
+        findings,
+        bindings,
+        counts,
+        outcomes,
+        tenant_read_calls,
+        tenant_read_bindings,
+        oracle_edges,
+        oracle_configuration,
+        database_context,
+        tenant_policy_applies,
+        primitive_source_bytes,
+    )
 
 
 def _oracle_bound_row(workspace: Path, row: dict, sources: dict) -> None:
     """Require both original test and mutated production source in this scan."""
-    for path, digest in (
-        (row["path"], row["test_sha256"]),
-        (row["mutation"]["source_path"], row["mutation"]["source_sha256"]),
-    ):
-        if sources.get(path) != digest:
-            raise ReviewAuditError(
-                "Runtime oracle source binding does not match this scan."
-            )
-    raw = _security_source_bytes(workspace, row["path"])
-    if len(raw) > MAX_BYTES or sha256(raw).hexdigest() != row["test_sha256"]:
-        raise ReviewAuditError(
-            "Runtime oracle test source changed during reconciliation."
-        )
-    tree = ast.parse(raw, filename=row["path"])
-    matches = [
-        node
-        for node in ast.walk(tree)
-        if isinstance(node, _FUNCTION_NODES)
-        and node.name == row["symbol"]
-        and node.lineno == row["line"]
-    ]
-    if len(matches) != 1:
-        raise ReviewAuditError("Runtime oracle test identity does not match this scan.")
-    parents = _oracle_ancestor_map(tree.body).get(id(matches[0]), ())
-    classes = [
-        parent.name for parent, _child in parents if isinstance(parent, ast.ClassDef)
-    ]
-    if any(isinstance(parent, _FUNCTION_NODES) for parent, _child in parents):
-        raise ReviewAuditError(
-            "Runtime oracle cannot credit a nested helper as a collected test."
-        )
-    prefix = "::".join([row["path"], *classes, row["symbol"]])
-    if any(
-        case != prefix and not case.startswith(prefix + "[")
-        for case in row["baseline"]["case_ids"]
-    ):
-        raise ReviewAuditError(
-            "Runtime oracle collected node does not match the qualified test."
-        )
+    import sys
+
+    from .runtime_audit_integrity import oracle_bound_row
+
+    return oracle_bound_row(sys.modules[__name__], workspace, row, sources)
 
 
 def _reconcile_runtime_oracles(workspace: Path, core: dict, evidence: tuple) -> dict:
     """Credit only signed same-test mutation observations, keeping static history."""
-    from .runtime_attestation import RuntimeAttestationError, verify_signed_test_oracles
+    import sys
 
-    receipt, trust_root, trust_sha256, environment_sha256 = evidence
-    if not all(value is not None for value in evidence):
-        raise ReviewAuditError(
-            "Runtime oracle evidence requires receipt, trust root and both pins."
-        )
-    if not core["audit_coverage"]["complete"]:
-        raise ReviewAuditError(
-            "Runtime oracle reconciliation requires a complete source scan."
-        )
-    try:
-        verified = verify_signed_test_oracles(
-            local_file(workspace, receipt),
-            local_file(workspace, trust_root),
-            trust_root_sha256=trust_sha256,
-            source_manifest_sha256=core["source_manifest_sha256"],
-            environment_sha256=environment_sha256,
-        )
-        sources = {item["path"]: item["sha256"] for item in core["sources"]}
-        schema = verified.get("schema", "")
-        manifests = {}
-        for row in verified["tests"]:
-            _oracle_bound_row(workspace, row, sources)
-            manifests[id(row)] = runtime_config_sources(workspace, core, row, schema)
-        bindings = core["sources"] + core["oracle_context"]["configuration_sources"]
-        _verify_security_bindings(workspace, bindings)
-    except (RuntimeAttestationError, RuntimeAuditError, OSError, ValueError) as error:
-        raise ReviewAuditError(
-            "Runtime oracle evidence rejected: " + type(error).__name__
-        ) from error
-    rows = {(row["path"], row["line"], row["symbol"]): row for row in verified["tests"]}
-    from .review_integrity import runtime_finding_coverage
+    from .runtime_audit_integrity import reconcile_runtime_oracles
 
-    retained, reconciled = [], []
-
-    for finding in core["findings"]:
-        key = (finding["path"], finding["line"], finding["facts"].get("symbol"))
-        row = rows.get(key)
-        arguments = (workspace, finding, row, verified.get("schema", ""))
-        config_manifest = manifests.get(id(row), []) if row is not None else []
-        if runtime_finding_coverage(*arguments, config_manifest):
-            reconciled.append({"static_finding": finding, "runtime_evidence": row})
-        else:
-            retained.append(finding)
-    core["findings"] = retained
-    core["finding_counts"] = {
-        code: sum(item["code"] == code for item in retained)
-        for code in sorted({item["code"] for item in retained})
-    }
-    core["runtime_oracles"] = {
-        **{key: value for key, value in verified.items() if key != "tests"},
-        "reconciled": reconciled,
-        "reconciled_count": len(reconciled),
-        "unmatched_evidence_count": len(rows) - len(reconciled),
-        "environment_sha256": environment_sha256,
-    }
-    core["state"] = _security_scan_state(
-        core["sources"], retained, coverage=core.get("audit_coverage")
-    )
-    core["action_summary"] = _security_scan_action_summary(core["state"])
-    return _seal_security_scan(core)
+    return reconcile_runtime_oracles(sys.modules[__name__], workspace, core, evidence)
 
 
 def _validate_tenant_scopes(workspace: Path, scopes: dict | None) -> dict:
-    """Revalidate programmatic declarations through the same contract boundary."""
-    if scopes is None:
-        return {}
-    if not isinstance(scopes, dict) or len(scopes) > MAX_PATHS:
-        raise ReviewAuditError("Invalid tenant read scope map.")
-    rows = []
-    for path, scope in scopes.items():
-        if not isinstance(scope, dict) or set(scope) != {"calls", "bindings"}:
-            raise ReviewAuditError("Invalid scoped tenant calls and bindings.")
-        if not isinstance(scope["calls"], (tuple, list)):
-            raise ReviewAuditError("Scoped calls must be a bounded sequence.")
-        calls = _tenant_contract_calls(tuple(scope["calls"]))
-        bindings = scope["bindings"]
-        if not isinstance(bindings, dict) or set(bindings) - set(calls):
-            raise ReviewAuditError("Scoped bindings must name declared calls.")
-        reads = [_tenant_scope_read(call, bindings) for call in calls]
-        rows.append({"path": path, "reads": reads})
-    return _tenant_scoped_entries(workspace, rows) if rows else {}
+    import sys
+
+    from .runtime_audit_integrity import validate_tenant_scopes
+
+    return validate_tenant_scopes(sys.modules[__name__], workspace, scopes)
 
 
 def _validate_cache_enabled(value: bool) -> bool:
@@ -5835,10 +5848,11 @@ def _validate_cache_enabled(value: bool) -> bool:
 
 
 def _tenant_scope_read(call: str, bindings: dict) -> dict:
-    values = bindings.get(call, ())
-    if not isinstance(values, (tuple, list)) or len(values) > 1:
-        raise ReviewAuditError("Each scoped call requires at most one binding.")
-    return {"call": call, "binding": values[0]} if values else {"call": call}
+    import sys
+
+    from .runtime_audit_integrity import tenant_scope_read
+
+    return tenant_scope_read(sys.modules[__name__], call, bindings)
 
 
 def security_scan(
@@ -5893,6 +5907,7 @@ def security_scan(
             }
         return _seal_security_scan(blocked)
     database_context = {}
+    primitive_source_bytes = {}
     bindings, findings, counts, outcomes, oracle_edges, oracle_configuration = (
         _scan_security_sources(
             workspace,
@@ -5902,6 +5917,7 @@ def security_scan(
             tenant_read_scopes,
             cache_enabled=cache_enabled,
             database_context=database_context,
+            primitive_source_bytes_out=primitive_source_bytes,
         )
     )
     result = _security_scan_report(
@@ -5916,6 +5932,7 @@ def security_scan(
         oracle_configuration,
         database_context,
         tenant_policy_applies,
+        primitive_source_bytes,
     )
     return (
         _reconcile_runtime_oracles(workspace, result, evidence)
@@ -5925,69 +5942,7 @@ def security_scan(
 
 
 def security_evals() -> dict[str, Any]:
-    """Evaluate security rules against fixed adversarial and safe-control fixtures."""
-    fixture_path = Path(__file__).parent / "data" / "security_evals.json"
-    fixtures = json.loads(fixture_path.read_text(encoding="utf-8"))
-    rows: list[dict[str, Any]] = []
-    for item in fixtures:
-        name, source, expected = item["name"], item["source"], set(item["expected"])
-        tree = ast.parse(source, filename=f"{name}.py")
-        calls = _tenant_contract_calls(tuple(item.get("tenant_read_calls", ())))
-        bindings = _tenant_contract_bindings(
-            tuple(item.get("tenant_read_bindings", ())), calls
-        )
-        findings = _security_scan_tree(
-            Path("."), Path(f"{name}.py"), tree, calls, bindings
-        )
-        actual = {item["code"] for item in findings}
-        passed = actual == expected
-        rows.append(
-            {
-                "id": name,
-                "expected": sorted(expected),
-                "observed": sorted(actual),
-                "passed": passed,
-            }
-        )
-    fixture_expectations = [set(item["expected"]) for item in fixtures]
-    attempted = sum(bool(expected) for expected in fixture_expectations)
-    caught = sum(
-        row["passed"] for row, expected in zip(rows, fixture_expectations) if expected
-    )
-    controls = sum(not expected for expected in fixture_expectations)
-    controls_passed = sum(
-        row["passed"]
-        for row, expected in zip(rows, fixture_expectations)
-        if not expected
-    )
-    state = "PASS" if all(row["passed"] for row in rows) else "BLOCKED"
-    result: dict[str, Any] = {
-        "schema": "factory.security-evals.v1",
-        "marker": "SECURITY_EVALS_COMPLETE",
-        "state": state,
-        "fixtures": rows,
-        "mutation_coverage": {
-            "attempted": attempted,
-            "caught": caught,
-            "rate": round(caught / attempted, 4) if attempted else 1.0,
-        },
-        "safe_controls": {"attempted": controls, "passed": controls_passed},
-        "authority": {
-            "execution": False,
-            "approval": False,
-            "publication": False,
-            "deployment": False,
-        },
-        "claim_boundary": "Fixed local AST evaluation of scanner rules only; not a penetration test, runtime exploit proof, dependency advisory, or release approval.",
-    }
-    result["audit_sha256"] = sha256(
-        json.dumps(
-            result, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-        ).encode("utf-8")
-    ).hexdigest()
-    result["action_summary"] = (
-        "All adversarial fixtures were caught and safe controls remained clean."
-        if state == "PASS"
-        else "A scanner rule failed an adversarial fixture or contaminated a safe control; block promotion and repair the evaluator."
-    )
-    return result
+    """Evaluate the same seeded security fixtures through the semantic lane."""
+    from .semantic_credential_sensor import security_evals as evaluate
+
+    return evaluate()

@@ -902,3 +902,9 @@ Durable SpecLine gate receipts for focused feature work.
 - [2026-10-16 11:52] PACKET h1-source-attribution T2 tokens=1296 sha=792b42e96c36cc4b
 - [2026-10-16 11:52] DONE h1-source-attribution T2 verify_pass=true receipt_seal=81a41bc164996f25317e0c52278a5bdf01a9b182bfa56917e608fbdbd0095934
 - [2026-10-16 11:52] GATE plan h1-source-attribution approver=root tasks=2 sha=89e2f5a32ffb86a7
+- [2026-10-19 15:57] GATE plan credential-proof-helper-consolidation-68 approver=/root delegated scope authorization tasks=11 sha=79029067e2584519
+- [2026-10-22 01:33] GATE spec full-source-coverage211 approver=human strict=True sha=3a6957c67e51cad8
+- [2026-10-22 01:36] GATE spec full-source-coverage211 approver=root under explicit owner delegation strict=True sha=07ffa6b02ec23033
+- [2026-10-22 01:37] GATE plan full-source-coverage211 approver=root under explicit owner delegation tasks=3 sha=07ffa6b02ec23033
+- [2026-10-22 01:45] GATE plan full-source-coverage211 approver=root under explicit owner delegation tasks=2 sha=07ffa6b02ec23033
+- Correction for full-source-coverage211: the initial 01:33 `approver=human` value was the CLI default, not an independent human review. The 01:36 gate records the actual root review under explicit owner delegation. Neither gate establishes human precision labeling or release approval.

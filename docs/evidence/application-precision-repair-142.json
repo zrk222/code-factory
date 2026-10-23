@@ -1,0 +1,264 @@
+{
+  "schema": "factory.precision.repair.v1",
+  "change": "Bind test-created application credentials to exact captured enrollment, authority, client and request witnesses. Preserve CRITICAL primitive evidence; unknown/stale authority stays active.",
+  "candidate": {
+    "factoryline/mock_fixture_provenance.py": "bfb477d365d17ffdfa0868b86e965d09811d18b45318aa3b1021082cc976b644",
+    "factoryline/context_efficiency.py": "62a4c200140af8813f842a1bce20768034effa2589cf4ef2a25491abdca01d67",
+    "factoryline/review_integrity.py": "6b727c0ce7f329a6ce5d8b9b636acc3484f8dc15d02d907a140425b084c0f4fd",
+    "factoryline/review_audits.py": "9f29ec095ff43893099d8edcc5791bc56cc3c2e5eb42068c510750391b99f6c0",
+    "factoryline/primitive_observation_binding.py": "9c73b73f8e46482c7f118a26a869c61c54eb3919e18bf000f03ff9448dcf0980",
+    "tests/test_mock_fixture_provenance.py": "b1be0bea2e31db7a55398c3759c8928c04dd36a883a369b4648b6b56a0941579"
+  },
+  "clean_base_commit": "c21f4f56a8fb6da26d38bcef6c879163e0f3268a",
+  "clean_scanner_freeze_sha256": "deff1385bbd6d927bcd3baf9b7034132d35f2a0b8a26bb40178fc38f4ca5023b",
+  "source_state": "CLEAN_COMMIT_BASE_PLUS_EXACT_SIX_FILE_CANDIDATE",
+  "focused_checks": {
+    "clean": 427,
+    "integrated": 427,
+    "expectations_changed": 0
+  },
+  "independent_ecc_review": {
+    "schema": "ecc.application-final142.review.v1",
+    "state": "PASS",
+    "freeze_sha256": "06de64f0ce2fa787dc3eed1ae7e27f7eb072177d49c8173fe6776044077a9ac8",
+    "source_hashes": {
+      "factoryline/mock_fixture_provenance.py": "bfb477d365d17ffdfa0868b86e965d09811d18b45318aa3b1021082cc976b644",
+      "factoryline/context_efficiency.py": "62a4c200140af8813f842a1bce20768034effa2589cf4ef2a25491abdca01d67",
+      "factoryline/review_integrity.py": "6b727c0ce7f329a6ce5d8b9b636acc3484f8dc15d02d907a140425b084c0f4fd",
+      "factoryline/review_audits.py": "9f29ec095ff43893099d8edcc5791bc56cc3c2e5eb42068c510750391b99f6c0",
+      "factoryline/primitive_observation_binding.py": "9c73b73f8e46482c7f118a26a869c61c54eb3919e18bf000f03ff9448dcf0980",
+      "tests/test_mock_fixture_provenance.py": "b1be0bea2e31db7a55398c3759c8928c04dd36a883a369b4648b6b56a0941579"
+    },
+    "clean_candidate": "C:\\Users\\rkatz\\Documents\\Codex\\2026-09-24\\op\\work\\code-factory-review2\\.factory\\harness-efficiency-review\\core-delivery\\.factory\\repair-family119\\application-clean142\\candidate",
+    "base_commit": "c21f4f56a8fb6da26d38bcef6c879163e0f3268a",
+    "independent_checks": {
+      "source_projections": 29,
+      "native_capture_cache_assurance_and_critical_restoration": 18,
+      "runtime_cache_helper_epoch": 4,
+      "direct_return_lazy_and_stale_source_regressions": 2,
+      "baseline_nonoverlay_files_byte_verified": 588,
+      "extra_untracked_noncache_files": 0
+    },
+    "artifacts": {
+      "projections142.json": {
+        "sha256": "c8859044792312bb3d8f38a54fcc8a61146ef408e94f9dd78563a6a4784a4161",
+        "state": "PASS"
+      },
+      "native142.json": {
+        "sha256": "972b21a6d471d6d0f4e9adc4af05c7d7f4b50c54165a0e9507c8a0ee2404351b",
+        "state": "PASS"
+      },
+      "correction141.json": {
+        "sha256": "d8181156dc07b35a23a84486791e18dcd8e0a3633fbad2910cd068eeaa8d7a23",
+        "state": "PASS"
+      },
+      "correction142.json": {
+        "sha256": "3b1b9172f0c24bce212f56bc8bc5d4ba31e3bc01da39337a37822491e98f462a",
+        "state": "PASS"
+      }
+    },
+    "preserved_evidence": "Earlier rejected133-138, invalid reviewer-control expectation correction136, and failed clean140/141 receipts remain preserved. 139 approval covered original dependency snapshot;142 is independently retaken against clean archived dependencies.",
+    "scope": "Scoped approval of exactly six frozen application source-intent role files for integration. All factoryline imports resolved exclusively inside CLEAN142. No target code executed. Existing135 legacy helper definitions and35 pre-application test definitions preserved transitively through139 source review;141/142 corrections touch only new app helper path/index validation and one regression test.",
+    "limits": [
+      "Declared framework/API source-intent role only; CRITICAL primitive remains visible.",
+      "Runtime INCOMPLETE; transport/isolation UNASSESSED.",
+      "Application sample is exposed development data; no fresh-heldout, recall, generalization, full-suite, architecture or release approval.",
+      "Parent-owned full21 replay,427 focused checks,13 historical controls and workflow/actualroot integration receipts are separate; not recast as independently executed here."
+    ]
+  },
+  "review_sha256": "973714d451e620f1a77bd4615e161bd8ead9898e3c261626e2c7c6f2da01331c",
+  "application_development_retest": {
+    "before": {
+      "TP": 2,
+      "FP": 17,
+      "unclear": 2,
+      "decided": 19,
+      "actionable_precision": 0.10526315789473684
+    },
+    "after": {
+      "TP": 2,
+      "FP": 10,
+      "unclear": 2,
+      "decided": 12,
+      "actionable_precision": 0.16666666666666666,
+      "descriptive_wilson95": [
+        0.04696514218385378,
+        0.4480308622529734
+      ]
+    },
+    "percentage_point_gain": 6.140350877192982,
+    "removed_FP": 7,
+    "new_unlabelled_alerts": 0,
+    "retained_severity_changes": 0,
+    "labels_sha256": "44e6fd6ae9e885e19538961a17cb3de2eeaf129902b320ce3bb51504c5409918",
+    "packet_sha256": "7263ba0a5cc46bfeadd83faea28f1a6bf54210c60cd390823dc0c3450c838a31",
+    "paired_report_sha256": "3b3940bb26fab2742ec14980951839e0c5a9750f5bffd77efb1e7929b21f3ff2",
+    "reviewers": "One independent AI labeller; independent ECC implementation reviewer is not a second labeller",
+    "fresh_held_out": false,
+    "minimum30_decided_met": false
+  },
+  "primitive_label_rate": {
+    "TP": 21,
+    "total": 21,
+    "rate": 1.0,
+    "scope": "Primitive source-pattern truth in the original frozen21; separate from actionability."
+  },
+  "removed_actionable_FP_primitives": [
+    {
+      "id": "A-d7446a183625c00643d0",
+      "severity": "CRITICAL",
+      "disposition": "TEST_OWNED_APPLICATION_CREDENTIAL"
+    },
+    {
+      "id": "A-a2f1247b438c94bcc615",
+      "severity": "CRITICAL",
+      "disposition": "TEST_OWNED_APPLICATION_CREDENTIAL"
+    },
+    {
+      "id": "A-04f1cbc814c096818790",
+      "severity": "CRITICAL",
+      "disposition": "TEST_OWNED_APPLICATION_CREDENTIAL"
+    },
+    {
+      "id": "A-4fc0522358a986c18f94",
+      "severity": "CRITICAL",
+      "disposition": "TEST_OWNED_APPLICATION_CREDENTIAL"
+    },
+    {
+      "id": "A-75166f378f2c00e6fae2",
+      "severity": "CRITICAL",
+      "disposition": "TEST_OWNED_APPLICATION_CREDENTIAL"
+    },
+    {
+      "id": "A-7c2dc6281e605e53048f",
+      "severity": "CRITICAL",
+      "disposition": "TEST_OWNED_APPLICATION_CREDENTIAL"
+    },
+    {
+      "id": "A-4e6e191f8c697e192617",
+      "severity": "CRITICAL",
+      "disposition": "TEST_OWNED_APPLICATION_CREDENTIAL"
+    }
+  ],
+  "historical_TP_retention": {
+    "retained": 13,
+    "total": 13,
+    "same_severity": true,
+    "sha256": "8fb2dea9c6b4ad8c2b125dd8d6f5a67a6ba675fc842372dab20ef7ece83cfc8d",
+    "scope": "Separate exact source-file controls, not added to precision denominator or recall."
+  },
+  "coverage": [
+    {
+      "path": ".factory/repair-family119/application-paired142/archivy--archivy.json",
+      "sha256": "b47c12524414010df1e6fa5bb6c8a2d8b42db6f365d588e128de938f3d6e55e3",
+      "coverage": {
+        "language": "Python",
+        "files_discovered": 35,
+        "files_attempted": 35,
+        "files_audited": 35,
+        "audit_rate": 1.0,
+        "rate_defined": true,
+        "inventory_complete": true,
+        "measurement_state": "complete",
+        "complete": true,
+        "limit": 2000
+      },
+      "seconds": 4.204093500004092
+    },
+    {
+      "path": ".factory/repair-family119/application-paired142/benbusby--whoogle-search.json",
+      "sha256": "989610d48265afa419fa86475f024e9f9b4cce8a9d4f40775d228d1a21e6990f",
+      "coverage": {
+        "language": "Python",
+        "files_discovered": 39,
+        "files_attempted": 39,
+        "files_audited": 39,
+        "audit_rate": 1.0,
+        "rate_defined": true,
+        "inventory_complete": true,
+        "measurement_state": "complete",
+        "complete": true,
+        "limit": 2000
+      },
+      "seconds": 5.29048939999484
+    },
+    {
+      "path": ".factory/repair-family119/application-paired142/dgtlmoon--changedetection.io.json",
+      "sha256": "a31eaf6ba5471ed2028a3479e087095db9cfe813181be7fac80e4dd8091d6bf6",
+      "coverage": {
+        "language": "Python",
+        "files_discovered": 337,
+        "files_attempted": 337,
+        "files_audited": 337,
+        "audit_rate": 1.0,
+        "rate_defined": true,
+        "inventory_complete": true,
+        "measurement_state": "complete",
+        "complete": true,
+        "limit": 2000
+      },
+      "seconds": 47.96266929999547
+    },
+    {
+      "path": ".factory/repair-family119/application-paired142/django-helpdesk--django-helpdesk.json",
+      "sha256": "39cca9e4340e8d589e878df24421976e068f9c474c3243830150bcba00cb0fbb",
+      "coverage": {
+        "language": "Python",
+        "files_discovered": 172,
+        "files_attempted": 172,
+        "files_audited": 172,
+        "audit_rate": 1.0,
+        "rate_defined": true,
+        "inventory_complete": true,
+        "measurement_state": "complete",
+        "complete": true,
+        "limit": 2000
+      },
+      "seconds": 19.608995200003847
+    },
+    {
+      "path": ".factory/repair-family119/application-paired142/etesync--server.json",
+      "sha256": "ee567c984a92c332fa3b41d946af5b293446bc8c468c8a5a7168cb2f988ad49b",
+      "coverage": {
+        "language": "Python",
+        "files_discovered": 91,
+        "files_attempted": 91,
+        "files_audited": 91,
+        "audit_rate": 1.0,
+        "rate_defined": true,
+        "inventory_complete": true,
+        "measurement_state": "complete",
+        "complete": true,
+        "limit": 2000
+      },
+      "seconds": 4.705987100001948
+    },
+    {
+      "path": ".factory/repair-family119/application-paired142/getredash--redash.json",
+      "sha256": "21a7cd8c6d358d5b28ddc882c4bbb6bab2500347adb2ec06b9a69aca80fcdd1d",
+      "coverage": {
+        "language": "Python",
+        "files_discovered": 291,
+        "files_attempted": 291,
+        "files_audited": 291,
+        "audit_rate": 1.0,
+        "rate_defined": true,
+        "inventory_complete": true,
+        "measurement_state": "complete",
+        "complete": true,
+        "limit": 2000
+      },
+      "seconds": 38.113233399999444
+    }
+  ],
+  "tracked_python_files": 488,
+  "architecture_gate": "UNRESOLVED_CAPS_NOT_RAISED",
+  "limits": [
+    "Exposed development cohort after tuning; this is not fresh held-out or global scanner precision.",
+    "Only12 decided retained alerts; Wilson interval is descriptive and does not establish generalization after tuning.",
+    "No human/Claude second labeller supplied.",
+    "Declared framework source intent only; runtime INCOMPLETE and transport/isolation UNASSESSED.",
+    "Full-suite, architecture, merge, release and multi-release stability requirements remain unresolved.",
+    "Prior incomplete clean140 replay and failed141 direct-return test retained; final142 fixes source-index precondition."
+  ]
+}

@@ -1,0 +1,91 @@
+{
+  "schema": "factory.structural-oracle-family-migration.v1",
+  "state": "SCOPED_PASS_GLOBAL_GATES_INCOMPLETE",
+  "parent_commit": "4184a9b5f7cef7809c7296fa95eb91bb8b72b7e2",
+  "source_sha256": {
+    "tests/test_review_audits.py": "c18b1a8bd5cf71ae90ead5ac4dbc3a68dbcdbd8a367e1b8fd74951f23ca9ee58"
+  },
+  "production_source_changes": false,
+  "scope": "Three structural oracle expectation families plus source-only adversarial controls; scanner behavior unchanged.",
+  "families": [
+    "test_import_behavior_oracle_requires_direct_complete_body",
+    "test_attribute_access_oracle_requires_import_binding_and_no_dynamic_fallback",
+    "test_annotated_stub_oracle_requires_source_bound_constructor"
+  ],
+  "classification": "Opaque imported or rebound operations remain UNKNOWN; known direct import/attribute/type-intent controls unchanged; inert deferred/after-return/docstring bodies remain HOLLOW; import plus assertTrue remains WEAK.",
+  "unchanged_top_level_function_ASTs": 480,
+  "restored_predecessor_controls": true,
+  "separate_patch_stages": [
+    "expectation-migration.patch",
+    "additive-controls.patch"
+  ],
+  "historical_rejections_preserved": [
+    "inherited-family167-review.json",
+    "rejected-getter170-review.json",
+    "rejected-getter170-source-repair.patch"
+  ],
+  "independent_review_sha256": "1644488dc879b0b5a0919f26cc2daf3d4b14c2124a4d54498921ccb1bd288180",
+  "parent_checks": {
+    "passed": 608,
+    "failed": 0,
+    "skipped": 0,
+    "errors": 0,
+    "process_seconds": 36.0034169999999,
+    "ruff": "PASS",
+    "format": "PASS",
+    "git_diff_check": "PASS"
+  },
+  "accuracy": {
+    "new_precision_gain": null,
+    "fresh_heldout": "NOT_MEASURED",
+    "exposed_development_decided": "2TP/6FP=25%,2unclear separate"
+  },
+  "limits": [
+    "Expectation migration does not improve detector accuracy.",
+    "No current full-suite pass, architecture pass, global Forge quality pass, merge or release approval.",
+    "Windows command-line length exceeded on the initial608-node argv before pytest launched; final equivalent node list passed through a JSON argument file.",
+    "Source-only fixture inspection; target modules not executed."
+  ],
+  "artifacts": [
+    {
+      "path": ".factory/family173/independent-review.json",
+      "sha256": "1644488dc879b0b5a0919f26cc2daf3d4b14c2124a4d54498921ccb1bd288180"
+    },
+    {
+      "path": ".factory/family173/semantic-contract.md",
+      "sha256": "18b161276f527476dd1a92d3a8ea6fae1f22dc547a7b642ce3e1a4bbb6b9dd1e"
+    },
+    {
+      "path": ".factory/family173/expectation-migration.patch",
+      "sha256": "f490dffae8c701b34934ca454d0b514349f86800669e06908e9bb0c57aeb042a"
+    },
+    {
+      "path": ".factory/family173/additive-controls.patch",
+      "sha256": "cc436877d0f6f42aa899213c77a5b6318477ba4f9fcbe306b5cd45b8819dbdd4"
+    },
+    {
+      "path": ".factory/family173/ast-preservation.json",
+      "sha256": "d28f2e74f1bb424cf71f3123132afa7d7878fa481a3c729ad1bf09a943439848"
+    },
+    {
+      "path": ".factory/family173/parent-tests.xml",
+      "sha256": "27bc0a5714f57256d5352c4ee24d921eb9f6ad0861207786313f70448cf6e11e"
+    },
+    {
+      "path": ".factory/family173/parent-tests.json",
+      "sha256": "c26bb2d4de2ae53be63196614775ce79a077408c8e233d76fae197c707bd2ea8"
+    },
+    {
+      "path": ".factory/family173/parent-lint.txt",
+      "sha256": "a4443afdcfb6d7363adb285762515ccf7cf50473b1a05c20c1a50f6bed4d26b0"
+    },
+    {
+      "path": ".factory/family173/parent-format.txt",
+      "sha256": "7688ae71c60af2e4266827abb3678cc2145655f587daf33dfa649dbac2c619c3"
+    },
+    {
+      "path": ".factory/family173/parent-diffcheck.txt",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ]
+}

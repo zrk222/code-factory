@@ -1,0 +1,115 @@
+{
+  "schema": "factory.scoped-repair.v1",
+  "scope": "context-quality248",
+  "recorded_at": "2026-10-23T00:05:22.556576+00:00",
+  "base_commit": "a838cfc924cc2041029049fe6f81b646cf988b8c",
+  "change": "Reuse one fixture-literal evidence walk, retain scalar import-cache validation order, and extract per-source protocol summaries in the same owner. Preserve cache helper enrollment, current-byte identity and source-only behavior.",
+  "sources": [
+    {
+      "path": "factoryline/context_efficiency.py",
+      "sha256": "dc55988af6640daf249fee900d88d30120d9b40bca35cd54661e3e246bf71aeb",
+      "kind": "code"
+    },
+    {
+      "path": "tests/test_context_efficiency.py",
+      "sha256": "a37916b4c0638137bfc670fdf1bb31a1ae4dab168a7bea83c48f48bd734948aa",
+      "kind": "test"
+    }
+  ],
+  "review": {
+    "path": ".factory/precision248/ecc-context-quality-review-final.json",
+    "sha256": "39895036e769d520c09de0b9bca04d786aca734ee711f901752f98c27823f9d9",
+    "kind": "review"
+  },
+  "tests": {
+    "affected_passed": 58,
+    "new_durable_boundary_passed": 15,
+    "affected": {
+      "path": ".factory/precision241/targeted/context248-final-affected/receipt.json",
+      "sha256": "7f8cb304bd0625b06a14a7d6325696ad819670cd9b83e6ee9708658d42f058ae",
+      "kind": "receipt"
+    },
+    "boundaries": {
+      "path": ".factory/precision241/targeted/context248-durable-boundaries/receipt.json",
+      "sha256": "61dd5d0cc9015cb964f9050be27d695d8e195220cb69bc99e5648a82ccc1015f",
+      "kind": "receipt"
+    },
+    "interrupted_broad_module_run": "Not counted; preserved in private worker record",
+    "full_suite_rerun": false
+  },
+  "native_complexity": {
+    "metric": "forgeline.gates.qa_audit._complexity",
+    "metric_source": "C:\\Users\\rkatz\\AppData\\Local\\Programs\\Python\\Python311\\Lib\\site-packages\\forgeline\\gates\\qa_audit.py",
+    "metric_source_sha256": "bbf306e357d74bdaac77569f60db526f738412f7d7932f597e76e247ae944973",
+    "before": {
+      "cached_import_bindings": 16,
+      "bind_application_fixture_context": 15,
+      "bind_django_fixture_context": 15,
+      "async_runner_fixture_context": 11,
+      "protocol_call_context": 15
+    },
+    "after": {
+      "cached_import_bindings": 5,
+      "_cached_import_binding": 8,
+      "_cached_import_path": 6,
+      "bind_application_fixture_context": 7,
+      "bind_django_fixture_context": 7,
+      "_fixture_literal_evidence": 10,
+      "async_runner_fixture_context": 10,
+      "protocol_call_context": 10,
+      "_protocol_context_for_snapshot": 8
+    },
+    "receipt": ".factory/precision248/final-complexity.log",
+    "receipt_sha256": "c82d054f19ecf7246ca92bc342c0cb06f771a8600b29b13eddc3c7761ae16a83"
+  },
+  "architecture": {
+    "decision": "HEALTHY",
+    "files": 429,
+    "core_modules": 133,
+    "caps": {
+      "files": 464,
+      "core_modules": 133
+    },
+    "caps_changed": false,
+    "source_physical_lines": 6000,
+    "source_line_cap": 6000
+  },
+  "gates": [
+    {
+      "path": ".factory/precision248/context-quality-gates/architecture.log",
+      "sha256": "f1c43d31d32faff5c59121095b2e12973bab1ea59c45256d53f83b6926e5b879",
+      "kind": "log"
+    },
+    {
+      "path": ".factory/precision248/context-quality-gates/lint.log",
+      "sha256": "a4443afdcfb6d7363adb285762515ccf7cf50473b1a05c20c1a50f6bed4d26b0",
+      "kind": "log"
+    },
+    {
+      "path": ".factory/precision248/context-quality-gates/format.log",
+      "sha256": "97d85b4b6c185a05396e2d09a3c304ff0f7cc77f8b7b7bb7989ec6cd875b3898",
+      "kind": "log"
+    }
+  ],
+  "global_quality": {
+    "last_full_result": "FAIL",
+    "last_full_violations": 89,
+    "targeted_preexisting_violations_repaired": 5,
+    "new_full_gate": "NOT_RUN",
+    "no_inferred_new_full_count": true
+  },
+  "precision": {
+    "last_fresh_study": "study225",
+    "tp": 0,
+    "fp": 49,
+    "unclear": 8,
+    "decided_percent": 0.0,
+    "wilson95_percent": [
+      0.0,
+      7.269781922
+    ],
+    "new_measurement": "NOT_RUN",
+    "gain_claim": false
+  },
+  "qualification": "Scoped source fix only; native quality, large-target speed, matching CI and>=35% actionable precision remain open."
+}

@@ -3,8 +3,10 @@ from __future__ import annotations
 import json
 import hashlib
 import os
+from contextlib import contextmanager
 from pathlib import Path
 import sys
+import time
 
 import pytest
 
@@ -250,24 +252,111 @@ def test_reader_join_uses_one_cleanup_deadline_and_preserves_unknown_cleanup(
     assert cleanup_calls == [child]
 
 
-def test_process_runner_timeout_is_not_a_pass(tmp_path: Path):
+@contextmanager
+def _ready_timeout_child(root, monkeypatch):
+    """Test output retention after readiness; startup deadline is tested separately."""
+    from factoryline import runtime_audit_process as runtime_process
+
+    ready = root / "child-ready"
+    argv = [
+        sys.executable,
+        "-I",
+        "-S",
+        "-c",
+        "import time; from pathlib import Path; print('started', flush=True); "
+        f"Path({str(ready)!r}).write_text('ready'); time.sleep(30)",
+    ]
+    environment = os.environ.copy()
+    child = runtime_process._launch(argv, root, environment)
+    unit = runtime_process._cleanup_unit(child)
+    handed_off = False
+    try:
+        readiness_deadline = time.monotonic() + 10
+        while not ready.exists() and child.poll() is None:
+            assert time.monotonic() < readiness_deadline, "fixture child never ready"
+            time.sleep(0.01)
+        assert ready.exists() and child.poll() is None
+
+        def handoff(actual, cwd, env):
+            nonlocal handed_off
+            assert actual == argv and cwd == root and env == environment
+            assert not handed_off and child.poll() is None
+            handed_off = True
+            return child
+
+        with monkeypatch.context() as launch_patch:
+            launch_patch.setattr(runtime_process, "_launch", handoff)
+            yield argv
+        assert handed_off
+    finally:
+        # Restore the launch surface before cleaning the real owned process.
+        try:
+            try:
+                if child.poll() is None:
+                    runtime_process._stop(child)
+            finally:
+                child.wait(timeout=10)
+        finally:
+            try:
+                try:
+                    if child.stdout is not None:
+                        child.stdout.close()
+                finally:
+                    if child.stderr is not None:
+                        child.stderr.close()
+            finally:
+                if unit is not None:
+                    unit.close()
+
+
+def test_process_runner_timeout_is_not_a_pass(tmp_path: Path, monkeypatch):
     root = _init(tmp_path)
-    receipt = run_proof(
-        root,
-        [
-            sys.executable,
-            "-c",
-            "import time; print('started', flush=True); time.sleep(10)",
-        ],
-        backend="process",
-        allow_process_boundary=True,
-        timeout_seconds=1,
-    )
+    with _ready_timeout_child(root, monkeypatch) as argv:
+        receipt = run_proof(
+            root,
+            argv,
+            backend="process",
+            allow_process_boundary=True,
+            timeout_seconds=1,
+        )
     assert receipt["status"] == "timeout"
     assert receipt["process_facts"]["timed_out"] is True
     assert receipt["process_facts"]["cleanup_confirmed"] is True
     assert receipt["output"].startswith("started")
     assert receipt["output_complete"] is False
+
+
+def test_process_runner_deadline_is_established_before_launch(tmp_path, monkeypatch):
+    """A slow unprepared launch consumes the signed wall deadline."""
+    from factoryline import enterprise_ops as ops
+    from types import SimpleNamespace
+
+    root = _init(tmp_path)
+    clock = [100.0]
+    child = SimpleNamespace(poll=lambda: 0, stdout=None, stderr=None)
+    argv = [sys.executable, "-c", "pass"]
+    monkeypatch.setattr(ops.time, "monotonic", lambda: clock[0])
+
+    def delayed_launch(actual, cwd, environment):
+        assert actual == argv and cwd == root and environment == os.environ.copy()
+        clock[0] = 102.0
+        return child
+
+    def observe_deadline(
+        actual, facts, timeout, deadline, started, stdout, stderr, cancel
+    ):
+        assert actual is child and timeout == 1 and cancel is None
+        assert deadline == 101.0 and started == 102.0
+        assert deadline < started
+        stdout.close()
+        stderr.close()
+        return {**facts, "timed_out": True, "cleanup_confirmed": True}
+
+    monkeypatch.setattr(ops._runtime_process, "_launch", delayed_launch)
+    monkeypatch.setattr(ops._runtime_process, "_run_child_bounded", observe_deadline)
+    execution = ops._execute_runner(argv, root, timeout_seconds=1)
+    assert execution["facts"]["timed_out"] is True
+    assert execution["capture_cleanup_confirmed"] is True
 
 
 @pytest.mark.parametrize(

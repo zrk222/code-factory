@@ -1,0 +1,166 @@
+{
+  "schema": "factory.shared-consumer-index.v1",
+  "parent": "cc30b1e058798263dd7d09212e812bdf1b719a48",
+  "scope": "Consolidated native source-generation index; no credential-role admission and no detector precision gain.",
+  "source_sha256": {
+    "factoryline/runtime_audit_integrity.py": "034bc5827fb0da5ae1a59833d0f49ee9a29c2482657a3b9e66dfbdf2cf2c619e",
+    "tests/test_runtime_audit_integrity.py": "f35d27128a370a17861a5b24891ea331a34aace005f79d5aa4c6340ae4cf9042",
+    "tests/test_credential_constructor_cache.py": "1f0f3603a0603266a167b9da4a7c37e5336df2f604f55192146797ec8ad6d901"
+  },
+  "changes": [
+    "One shared index supplies binding candidates, Name loads and imports to reference and provider analysis.",
+    "Full AST remains source/hash checked; parent ctx/operator fields are retained.",
+    "Only standalone expr_context/operator/unaryop/boolop/cmpop marker leaves are omitted from the analysis-node index."
+  ],
+  "budget_boundary": {
+    "node_limit": 200000,
+    "work_limit": 1000000,
+    "accounting_changed": "Semantic analysis nodes replace full ast.walk occurrence accounting; effective source capacity expands. Numeric limits do not increase.",
+    "full_ast_occurrences": 219179,
+    "marker_leaf_occurrences": 71791,
+    "indexed_semantic_nodes": 147388
+  },
+  "fixed_pyload_projection": {
+    "files": 410,
+    "bytes": 1560710,
+    "indexed_files": 410,
+    "before": {
+      "snapshot_complete": false,
+      "remaining_work": -1640,
+      "references": 0
+    },
+    "after": {
+      "snapshot_complete": true,
+      "remaining_work": 146664,
+      "references": 1678,
+      "semantic_complete": false,
+      "blocked_names": 15,
+      "unmodeled_import_origins": 19
+    },
+    "role_alerts_reclassified": 0
+  },
+  "validation": {
+    "frozen_tests_passed": 288,
+    "independent_adversarial_equivalence_cases": 8,
+    "cache_identity_mutation_cases": 8,
+    "retained_historical_TP_at_original_severity": "13/13",
+    "ruff": "PASS",
+    "C901": "PASS",
+    "format": "PASS",
+    "architecture": {
+      "decision": "HEALTHY",
+      "python_files": 429,
+      "core_modules": 133
+    },
+    "native_complexity_changes": [
+      {
+        "name": "__init__",
+        "before": 16,
+        "after": 11
+      },
+      {
+        "name": "_index_source_nodes",
+        "before": null,
+        "after": 10
+      },
+      {
+        "name": "_references",
+        "before": 11,
+        "after": 10
+      },
+      {
+        "name": "_walk",
+        "before": 3,
+        "after": 4
+      }
+    ]
+  },
+  "fixed_development_replay": {
+    "repositories": 8,
+    "completed": 8,
+    "timeouts": 0,
+    "errors": 0,
+    "all_44_previously_adjudicated_security_claims_unchanged": true,
+    "study209": {
+      "TP": 0,
+      "FP": 10,
+      "UNCLEAR": 1,
+      "precision": 0.0,
+      "paired_gain": 0.0
+    },
+    "study210": {
+      "TP": 1,
+      "FP": 10,
+      "UNCLEAR": 22,
+      "precision": 0.09090909090909091,
+      "paired_gain": 0.0
+    },
+    "new_unadjudicated_security_alerts": 0,
+    "lost_TP": 0,
+    "changed_severities": 0
+  },
+  "limits": [
+    "This improves source accounting under the existing graph limits, not actionable precision.",
+    "410/410 refers to the frozen Pyload projection; the complete target has583 Python source files.",
+    "Both old panels are exposed development data, not new independent held-out validation.",
+    "No causal wall-time improvement, full semantic coverage, recall, human validation or release authority is established.",
+    "Full-repository profile, global consumer closure, 80% precision qualification, native global quality and full CI remain incomplete."
+  ],
+  "artifacts": [
+    {
+      "path": ".factory/precision208/shared-index-final/checks.json",
+      "sha256": "01b42fc5ae3d9edac9e7181157a31de1f4cb448163aa4dae69fdbe9d5f91b897",
+      "kind": "receipt"
+    },
+    {
+      "path": ".factory/precision208/shared-index-final/tests.xml",
+      "sha256": "48e2c52872b020dda8b834cc3936d5b9fcaeb844828ab6e7492ac19812439394",
+      "kind": "test"
+    },
+    {
+      "path": ".factory/precision208/shared-index-final/pytest.log",
+      "sha256": "d705b59386ae54e5eda1681e4d635e6d0ce0e6f4240b9ed2590d99aac5eba8b2",
+      "kind": "test"
+    },
+    {
+      "path": ".factory/precision208/shared-index-final/retained-tp/result.json",
+      "sha256": "fce5906520c352e2f337178906a1049697670ec8ce988b21358e617abfd402db",
+      "kind": "test"
+    },
+    {
+      "path": ".factory/precision208/shared-index-final/architecture.log",
+      "sha256": "bd9b6a880c64e45f6cc0e1bc3f99d7110160e265ebad4bb0c55c9c7e86a64ca5",
+      "kind": "receipt"
+    },
+    {
+      "path": ".factory/precision208/shared-index-final/native-complexity.json",
+      "sha256": "db2ea54d655894d974ecf44e5d347a053684d94afc5322853227da64145791ad",
+      "kind": "receipt"
+    },
+    {
+      "path": ".factory/precision208/shared-index-final/ecc-review.json",
+      "sha256": "f6dfddb46ecd7f2e26a74380e7b4d7882a8d56f615e0108611699b2b3f5d751d",
+      "kind": "review"
+    },
+    {
+      "path": ".factory/precision208/security-role-index-pilot.json",
+      "sha256": "3417013ae9e03e15a632e5123e21fe5857e9e03cbc8570fce88eba3eea2fc7d7",
+      "kind": "receipt"
+    },
+    {
+      "path": ".factory/precision208/shared-index-replay2/scores.json",
+      "sha256": "5525a577e6cd13b39d22333edc5b84251de019c197cc1db39f903e13ae5d6d78",
+      "kind": "receipt"
+    },
+    {
+      "path": ".factory/precision208/shared-index-replay2/processes.json",
+      "sha256": "7ba67603ab6bb831e4d4b0255c7407fc5726e495a7bfceef29510ade56c0ec6c",
+      "kind": "receipt"
+    },
+    {
+      "path": ".factory/precision208/shared-index-replay2/verified-inputs.json",
+      "sha256": "d475079f1b99c247f181e6204b061765e4b6a43809e81bed0ce7fed72184a5b6",
+      "kind": "receipt"
+    }
+  ]
+}

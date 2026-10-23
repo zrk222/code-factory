@@ -1,0 +1,185 @@
+{
+  "schema": "factory.precision-merge-threshold224.v1",
+  "state": "MERGE_PRECISION_GATE_NOT_MET",
+  "authorization": "Owner2026-10-22:35%+actionable forPR255merge;original80%+continues.",
+  "merge_target": 0.35,
+  "publication_target": 0.8,
+  "minimum_decided": 30,
+  "parent_commit": "b62a115addc212aa2eb57c0e7e021772cf73b191",
+  "candidate": {
+    "freeze_path": ".factory/precision224/measurement/freeze.json",
+    "freeze_sha256": "8543d99d01d4c243de9544174673790344e010b4a97d7971ec67e57bfb64e83c",
+    "identity": "Frozen working candidate, including uncommitted oracle repairs; not pure Git HEAD."
+  },
+  "panel": "Study210 exposed development replay; not a new held-out study.",
+  "actionable": {
+    "TP": 1,
+    "FP": 10,
+    "UNCLEAR": 22,
+    "decided": 11,
+    "precision": 0.09090909090909091,
+    "wilson95": [
+      0.016232172885884855,
+      0.37735843645159567
+    ],
+    "unclear_inclusive": 0.030303030303030304
+  },
+  "primitive_match_rate": {
+    "TP": 31,
+    "FP": 2,
+    "UNCLEAR": 0,
+    "rate": 0.9393939393939394,
+    "is_actionable_precision": false
+  },
+  "native_security_claims_identical": 33,
+  "new_alerts": 0,
+  "missing_selected_alerts": 0,
+  "severity_changes": 0,
+  "actionable_tp_retention": {
+    "retained": 1,
+    "total": 1,
+    "original_severity_retained": true
+  },
+  "actionable_precision_delta": 0,
+  "coverage": [
+    {
+      "repository": "alephdata/aleph",
+      "audit_rate": 1.0,
+      "complete": true,
+      "files_attempted": 180,
+      "files_audited": 180,
+      "files_discovered": 180,
+      "inventory_complete": true,
+      "language": "Python",
+      "limit": 460,
+      "measurement_state": "complete",
+      "rate_defined": true,
+      "parse_errors": 0,
+      "unreadable_sources": 0,
+      "oversized_sources": 0
+    },
+    {
+      "repository": "appdaemon/appdaemon",
+      "audit_rate": 1.0,
+      "complete": true,
+      "files_attempted": 148,
+      "files_audited": 148,
+      "files_discovered": 148,
+      "inventory_complete": true,
+      "language": "Python",
+      "limit": 460,
+      "measurement_state": "complete",
+      "rate_defined": true,
+      "parse_errors": 0,
+      "unreadable_sources": 0,
+      "oversized_sources": 0
+    },
+    {
+      "repository": "bentoml/BentoML",
+      "audit_rate": 1.0,
+      "complete": true,
+      "files_attempted": 404,
+      "files_audited": 404,
+      "files_discovered": 404,
+      "inventory_complete": true,
+      "language": "Python",
+      "limit": 460,
+      "measurement_state": "complete",
+      "rate_defined": true,
+      "parse_errors": 0,
+      "unreadable_sources": 0,
+      "oversized_sources": 0
+    },
+    {
+      "repository": "crossbario/crossbar",
+      "audit_rate": 0.9975,
+      "complete": false,
+      "files_attempted": 395,
+      "files_audited": 394,
+      "files_discovered": 395,
+      "inventory_complete": true,
+      "language": "Python",
+      "limit": 460,
+      "measurement_state": "incomplete",
+      "rate_defined": true,
+      "parse_errors": 1,
+      "unreadable_sources": 0,
+      "oversized_sources": 0
+    },
+    {
+      "repository": "pyload/pyload",
+      "audit_rate": 1.0,
+      "complete": true,
+      "files_attempted": 410,
+      "files_audited": 410,
+      "files_discovered": 410,
+      "inventory_complete": true,
+      "language": "Python",
+      "limit": 460,
+      "measurement_state": "complete",
+      "rate_defined": true,
+      "parse_errors": 0,
+      "unreadable_sources": 0,
+      "oversized_sources": 0
+    }
+  ],
+  "all_repository_coverage_complete": false,
+  "elapsed_seconds": 130.45563300000504,
+  "runtime_comparison": "No speedup claimed; no paired scheduling benchmark.",
+  "human_validation": false,
+  "reviewer_kind": "Two original independentAI source reviews; labels unchanged.",
+  "source_and_label_hashes_revalidated": true,
+  "raw_evidence": [
+    {
+      "repository": "alephdata/aleph",
+      "path": ".factory/precision224/measurement/alephdata--aleph.json",
+      "sha256": "d558f2a51ed8b273748bfa09c527f8ae28e457be7a83d1a403b215b606031f27",
+      "prior_sha256": "8cba49b7068c3e936f79be71848d8f861bc81e136412eee3008ad57944a1f9f4",
+      "source_inventory_sha256": "dc2b10fabf357138c4096bd3609fd4f372a45c30cc0eea8da11bdca45b6b323a",
+      "scanner_seconds": 21.27102109999396
+    },
+    {
+      "repository": "appdaemon/appdaemon",
+      "path": ".factory/precision224/measurement/appdaemon--appdaemon.json",
+      "sha256": "ee16c776ce5ee4509150853dfa0f7fa584e5f693084a32210c647a94c2506229",
+      "prior_sha256": "3cd55a3a780a0c0778b215a2ae10b23d45645f42e4362da6c383d3f8a5ab5a84",
+      "source_inventory_sha256": "3a551cef9f52df90ff6f9a3c86205415e7250e4e71ed3fa71628c2705db66459",
+      "scanner_seconds": 19.8961796000076
+    },
+    {
+      "repository": "bentoml/BentoML",
+      "path": ".factory/precision224/measurement/bentoml--BentoML.json",
+      "sha256": "00c2066d02499e3a99ef3d9ec3746fb01dc3bb23e6f0b47b16b7fc869a636276",
+      "prior_sha256": "c85ebc78740df66b69ec402cc173e063f1e537696ab0087cf23b4171357a2c55",
+      "source_inventory_sha256": "a12aaeb3832e92a937dad1ca0a32c67b8c67b7b5e941dbee0bf450e4f8e92e62",
+      "scanner_seconds": 60.630400199996075
+    },
+    {
+      "repository": "crossbario/crossbar",
+      "path": ".factory/precision224/measurement/crossbario--crossbar.json",
+      "sha256": "ee180271b1a5e7d2d053b62731cd0eb3c47e9c47bda02548fcfc2623b3fa265e",
+      "prior_sha256": "0839040230ca22d97cf5f01756935c3fc31f3e8c23db6d3eab717d69f47537e8",
+      "source_inventory_sha256": "f87b18460a1cd80de8574725c5d48d7d4fe96ba1ea3be1cc7dd639e3cec86929",
+      "scanner_seconds": 58.05183989999932
+    },
+    {
+      "repository": "pyload/pyload",
+      "path": ".factory/precision224/measurement/pyload--pyload.json",
+      "sha256": "762cb5de9a2704043255ad46c3b3a7da7f657944d215e29051bf6e434759fe9e",
+      "prior_sha256": "bf43aea66abe0232b656f40c75a8eb8b4efa49f7f3b08933c9b0c26455183edd",
+      "source_inventory_sha256": "7666ab1be3937acf967a0cb4ab8c4a54f2d774536858b7a32a777bbcc9a589cf",
+      "scanner_seconds": 36.98130329998094
+    }
+  ],
+  "replay_script_sha256": "c5ce635bd565c40b9d4ce48f82ef06398403ba75884ecfd178cdce1127958fb4",
+  "assessment_script_sha256": "41c5fb00bdc6a764a684cd553bf18e86678599d440847d797aabb8ff75af4525",
+  "plan_sha256": "8634c7412a0f4e24191926e8c240f18b18b0f6082985b9cd2ae8ee72dbe4fbb4",
+  "limits": [
+    "No new holdout qualification or>=30decided evidence.",
+    "Crossbar oneunauditedsource remains; process success doesnotmeancomplete nativecoverage.",
+    "Original labels apply only to unchanged claims; changed/new claims require separate review.",
+    "No fullsuite rerun under failed-only instruction; CI/integration remain incomplete.",
+    "35%score, green gates and qualification required beforemerge;80%publication unchanged."
+  ],
+  "merge_approved": false
+}

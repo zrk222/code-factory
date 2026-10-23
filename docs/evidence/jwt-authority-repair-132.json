@@ -1,0 +1,53 @@
+{
+  "schema": "factory.precision.repair.v1",
+  "change": "Recognize captured JWT test round trips under source-bound provider and payload authority; rejected evidence retains active CRITICAL findings.",
+  "source_sha256": {
+    "factoryline/mock_fixture_provenance.py": "62e5d64265bd118f7058db350b25e9bfcb404373497ea4e5ad914e2418d6d264",
+    "factoryline/review_audits.py": "e256142c71faadda9deeb226d4a4ea1fd51e4334859ccf178e9f31a31da52d23",
+    "factoryline/context_efficiency.py": "9cb68fcae0d35376a202292383d0db651b96a64ae3ca24a873984555fa2d8ee2",
+    "factoryline/primitive_observation_binding.py": "e4c3168321d4108b67a8943c498608e46c356bc534f16711d4803d13c9543b0a"
+  },
+  "focused_checks_passed": 124,
+  "tracked_python_files": 488,
+  "architecture_gate": "UNRESOLVED_CAPS_NOT_RAISED",
+  "independent_ecc_review": {
+    "state": "PASS",
+    "sha256": "9e29235f128bc7f6f7e00bb7bd848d9b71086fdb7d0b44782b50b3160f758bad",
+    "integration_sha256": "138abea54eca5e4cb5db7a2fa9314ab2c1f329934e24f950886f221bc9881009"
+  },
+  "known_false_positive_replay": {
+    "original_baseline": 60,
+    "previous_committed": 55,
+    "after": 51,
+    "additional_removed": 4,
+    "total_removed": 9,
+    "severity_changes": 0,
+    "actionable_precision": 0.0,
+    "sha256": "2c681e5d89be4d569ecda438ca3978f5c6a6ad3b932e62843e5bbe304200c7de"
+  },
+  "historical_true_positive_source_controls": {
+    "retained": 13,
+    "total": 13,
+    "sha256": "1f70fbb0a9f4d3cbd13af45820c08ac6eda7e803e86e09cad5732b421ba9efab"
+  },
+  "independent_ai_application_retest": {
+    "before_precision": 0.10526315789473684,
+    "after_precision": 0.10526315789473684,
+    "TP": 2,
+    "FP": 17,
+    "unclear": 2,
+    "wilson95": [
+      0.02935856029887013,
+      0.31394082711109006
+    ],
+    "sha256": "3b693310cfe96b62c2beaed6d418dee9eedc43ec314415fa24130c168268cbf4",
+    "gain_established": false,
+    "minimum30_decided_met": false
+  },
+  "limits": [
+    "Exposed development sample, all60 previously labelled FP; no held-out precision gain established.",
+    "Historical13 TP controls are separate and are not added to the precision denominator.",
+    "Full-suite and architecture gates remain unresolved; this is not merge or release approval.",
+    "Authority classification does not establish transport safety or runtime correctness."
+  ]
+}

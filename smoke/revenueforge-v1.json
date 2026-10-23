@@ -3,21 +3,33 @@
     {
       "name": "revenueforge_contract",
       "kind": "python",
-      "run": "from pathlib import Path\nsource=Path('factoryline/revenueforge.py').read_text(encoding='utf-8')\nrequired=['REVENUEFORGE_MANIFEST_VALIDATED','REVENUEFORGE_BUNDLE_WRITTEN','REVENUEFORGE_SERVER_SCAFFOLD_WRITTEN','REVENUEFORGE_PAYWALL_SCAFFOLD_WRITTEN','REVENUEFORGE_BENCHMARK_WITHHELD']\nassert all(item in source for item in required)\nassert 'requests.post' not in source and '\"app_store_connect_write\": True' not in source\n",
+      "run": "from pathlib import Path\nsource = Path('factoryline/revenueforge.py').read_text(encoding='utf-8')\nrequired = ['REVENUEFORGE_MANIFEST_VALIDATED', 'REVENUEFORGE_BUNDLE_WRITTEN', 'REVENUEFORGE_SERVER_SCAFFOLD_WRITTEN', 'REVENUEFORGE_PAYWALL_SCAFFOLD_WRITTEN', 'REVENUEFORGE_BENCHMARK_WITHHELD']\nassert all((item in source for item in required))\nassert 'requests.post' not in source and '\"app_store_connect_write\": True' not in source\n",
       "expect_exit": 0,
       "timeout_s": 30,
       "must_fail_on_stub": true,
-      "covers": ["REQ-RF-001", "REQ-RF-002", "REQ-RF-003", "REQ-RF-004", "REQ-RF-005", "REQ-RF-007", "REQ-RF-009", "REQ-RF-010"]
+      "covers": [
+        "REQ-RF-001",
+        "REQ-RF-002",
+        "REQ-RF-003",
+        "REQ-RF-004",
+        "REQ-RF-005",
+        "REQ-RF-007",
+        "REQ-RF-009",
+        "REQ-RF-010"
+      ]
     },
     {
       "name": "revenueforge_behavior",
       "kind": "python",
-      "run": "import pytest\nresult=pytest.main(['-q','tests/test_revenueforge.py','tests/test_revenueforge_cli.py'])\nassert result==0\nprint('REVENUEFORGE_PASS')\n",
+      "run": "import pytest\nresult = pytest.main(['-q', 'tests/test_revenue_integrity.py::test_validate_and_build_full_bundle', 'tests/test_revenue_integrity.py::test_repeated_bundle_skips_identical_replacements_and_repairs_changes', 'tests/test_revenue_integrity.py::test_dark_patterns_fail_closed', 'tests/test_revenue_integrity.py::test_missing_restore_blocks_generation', 'tests/test_revenue_integrity.py::test_duplicate_product_id_is_rejected', 'tests/test_revenue_integrity.py::test_phase8_is_bounded_and_human_governed', 'tests/test_revenue_integrity.py::test_four_ppo_treatments_are_rejected', 'tests/test_revenue_integrity.py::test_benchmark_withheld_below_k20_and_published_at_k20', 'tests/test_revenue_integrity.py::test_graph_projection_rejects_tampered_receipt', 'tests/test_revenue_integrity.py::test_paths_cannot_escape_workspace', 'tests/test_revenue_integrity.py::test_purchase_replay_requires_complete_verified_ordered_journey', 'tests/test_revenue_integrity.py::test_testflight_inbox_redacts_identity_and_groups_journey', 'tests/test_revenue_integrity.py::test_failure_matrix_never_promotes_unknown_to_pass', 'tests/test_revenue_integrity.py::test_policy_watch_invalidates_only_impacted_rules', 'tests/test_revenue_integrity.py::test_graph_projection_reads_all_revenue_evidence_receipts', 'tests/test_revenue_integrity.py::test_evidence_memory_requires_sealed_receipt_and_quarantines_contradictions', 'tests/test_revenue_integrity.py::test_revenue_shared_local_preserves_path_and_error_contract', 'tests/test_revenue_integrity.py::test_revenue_dispatch_covers_exactly_registered_commands', 'tests/test_revenue_integrity.py::test_revenue_dispatch_and_private_handlers_stay_bounded', 'tests/test_revenue_integrity.py::test_revenue_validate_and_build_cli', 'tests/test_revenue_integrity.py::test_revenue_evidence_cli_commands'])\nassert result == 0\nprint('REVENUEFORGE_PASS')\n",
       "expect_exit": 0,
       "expect_stdout": "REVENUEFORGE_PASS",
       "timeout_s": 120,
       "must_fail_on_stub": true,
-      "covers": ["REQ-RF-006", "REQ-RF-008"]
+      "covers": [
+        "REQ-RF-006",
+        "REQ-RF-008"
+      ]
     }
   ]
 }

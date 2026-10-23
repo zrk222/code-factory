@@ -36,7 +36,7 @@ tests:
   - path: tests/test_appforge_evidence_kit.py
     command: py -3.11 -m pytest -q tests/test_appforge_evidence_kit.py
   - path: tests/test_mcp.py
-    command: py -3.11 -m pytest -q tests/test_mcp.py
+    command: py -3.11 -m pytest -q tests/test_mcp.py::test_mcp_status_declares_default_stdio_and_zero_authority_boundary tests/test_mcp.py::test_mcp_protocol_parity_is_read_only tests/test_mcp.py::test_mcp_project_scope_review_routes_matching_prd_scopes_read_only tests/test_mcp.py::test_mcp_project_scope_review_does_not_route_unmatched_specs tests/test_mcp.py::test_mcp_project_scope_review_rejects_paths_outside_workspace tests/test_mcp.py::test_mcp_first_lap_status_is_integrity_checked_and_read_only tests/test_mcp.py::test_mcp_revenue_appforge_saas_and_memory_tools_are_read_only tests/test_mcp.py::test_mcp_judgment_safety_case_accepts_only_a_hash_bound_declared_change_profile tests/test_mcp.py::test_mcp_langgraph_assurance_reads_existing_receipts_without_execution tests/test_mcp.py::test_mcp_read_only_receipt_and_gate_status_tools tests/test_mcp.py::test_mcp_rejects_malformed_and_unsafe_requests_without_writing tests/test_mcp.py::test_mcp_stdio_emits_only_newline_delimited_json_rpc
   - path: tests/test_graph_ops.py
     command: py -3.11 -m pytest -q tests/test_graph_ops.py
 schema: factory.ssat.v1

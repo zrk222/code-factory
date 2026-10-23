@@ -1,0 +1,104 @@
+{
+  "schema": "factory.reviewed-identity-owner-consolidation.v1",
+  "state": "SCOPED_PASS_GLOBAL_GATES_INCOMPLETE",
+  "parent_commit": "d99873b4285d4f8fac6ef685dc0844baf1e6f074",
+  "mapping": {
+    "credential_role_identity_call_model": "credential_role_identity_effects",
+    "credential_role_identity_content_guard": "credential_role_identity_effects",
+    "credential_role_identity_effect_types": "credential_role_identity_effects",
+    "credential_role_identity_value_model": "credential_role_identity_effects",
+    "credential_role_receiver_class": "credential_role_identity_effects",
+    "credential_role_receiver_lifetime": "credential_role_identity_effects"
+  },
+  "deleted": [
+    "factoryline/credential_role_identity_call_model.py",
+    "factoryline/credential_role_identity_content_guard.py",
+    "factoryline/credential_role_identity_effect_types.py",
+    "factoryline/credential_role_identity_value_model.py",
+    "factoryline/credential_role_receiver_class.py",
+    "factoryline/credential_role_receiver_lifetime.py"
+  ],
+  "source_sha256": {
+    "factoryline/credential_endpoint_admission.py": "e794b45e7152748bba8d1be205f2b5ee7d0b8501dd36dc7a42b2b3ec6704e2c9",
+    "factoryline/credential_role_identity_effects.py": "5937b710e23df26e4ec2c9534d42b878cc63f456c74dd1b769849ccae870e743",
+    "factoryline/credential_role_method_use_getter_audit.py": "f455279bd37aad9f2fed8d6234b911527376b18ebcde3dcf55eb408df2736cd0",
+    "factoryline/mock_fixture_provenance.py": "d16717c885d6c95be873d5342a93ab414e8a84a4cb9bb1fb18edd9a1943f2d40",
+    "tests/test_credential_constructor_cache.py": "1f06257ec8560858c160a5e52d018b56e1941c439af394faad2f2a97d01ab274",
+    "tests/test_credential_role_identity_call_content.py": "faed61dec13762bf61b84a4a99b114dc3f753fa76e67e78209f2299c1b5f699f"
+  },
+  "review_sha256": "40bf1a4ff6c43876b10529d4bb03a4b8054878dda276ca1f476bf32ff75198d0",
+  "definition_AST_checks": 374,
+  "test_module_AST_checks": 2,
+  "expectation_changes": 0,
+  "net_lines": -92,
+  "new_modules": 0,
+  "compatibility_stubs": 0,
+  "initialization": "Dataclasses, constants and type alias retain dependency order; field alias points to exact same dataclasses.field callable.",
+  "cache": {
+    "formerly_registered_definitions_preserved": 54,
+    "native_binding_code_key_mutations_passed": 102,
+    "receiver_batch_self_module_mutations_passed": 4,
+    "native_warm_cold_failed_proof_restores_CRITICAL": [
+      {
+        "mutation": "binding",
+        "cache_enabled": true,
+        "state": "PASS",
+        "active_severity": "CRITICAL"
+      },
+      {
+        "mutation": "binding",
+        "cache_enabled": false,
+        "state": "PASS",
+        "active_severity": "CRITICAL"
+      },
+      {
+        "mutation": "code",
+        "cache_enabled": true,
+        "state": "PASS",
+        "active_severity": "CRITICAL"
+      },
+      {
+        "mutation": "code",
+        "cache_enabled": false,
+        "state": "PASS",
+        "active_severity": "CRITICAL"
+      }
+    ],
+    "existing_selected_cache_scanner_tests": "6 passed in 0.94s; plugin-autoload-disabled config warning only"
+  },
+  "checks": {
+    "focused_tests": "1471 passed, 4 skipped; 51.14 pytest / 52.33 process seconds",
+    "lint_format_C901_import": "PASS",
+    "historical_TP_source_controls": "13/13 retained at original severity; 1.195 seconds; candidate-origin asserted by parent v2 receipt"
+  },
+  "architecture": {
+    "python_files": 471,
+    "core_modules": 173,
+    "caps": [
+      464,
+      140
+    ],
+    "decision": "BLOCKED"
+  },
+  "retention": {
+    "kind": "EXPOSED_HISTORICAL_SOURCE_CONTROLS_NOT_PRECISION",
+    "retained": 13,
+    "total": 13,
+    "original_severity": true
+  },
+  "accuracy": {
+    "kind": "EXPOSED_DEVELOPMENT_RETEST",
+    "TP": 2,
+    "FP": 6,
+    "unclear": 2,
+    "actionable_decided": 0.25,
+    "Wilson95": [
+      0.071479212752109,
+      0.5907245696898311
+    ],
+    "primitive_match_rate_separate": "21/21 raw alerts",
+    "fresh_held_out_precision": null,
+    "new_precision_gain": 0
+  },
+  "remaining": "Global full-suite regression families, approved architecture caps, native Forge C/37 quality debt, and fresh independently labelled held-out study remain incomplete. No merge or release claim."
+}

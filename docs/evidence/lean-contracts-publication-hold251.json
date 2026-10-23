@@ -1,0 +1,132 @@
+{
+  "schema": "factory.lean-contracts-publication-hold251.v1",
+  "recorded_at": "2026-10-23T02:49:46.772829+00:00",
+  "parent": "14871652f7d1274203983fe77af7e13667c5cd5b",
+  "candidate": {
+    "factoryline/mock_fixture_provenance.py": "b7915b49d419bfe8d7f89407e194658d65659ddb8dc105e47d13d77e63eac14c",
+    "tests/test_mock_fixture_provenance.py": "a9e2dc211a9f4cf3ec06821f75b311495c40a413b309a60749f2ea2973740214",
+    "tests/test_import_context_profiles.py": "017f8b7f357b42e282b3fab22fcc75e8e448edd53bd5630bf082e29f2ae9d478",
+    "tests/test_credential_role_identity_call_content.py": "872acd6e1cf1f6dc1730dfc4008be066fbf510e3e6a91088b52555bd3e095bcd",
+    "docs/AGENT_CONTRACTS.md": "197a57da46d0ab329c4f9cdd7c76b551b2b47296b29d40c1011db21c81a8d48a",
+    "plans/accuracy-efficiency174.md": "f17380168616dd9b5bfa78c4a3022aa6d2f5910840accdf5ee339dcac12bdc8d",
+    "tests/test_agent_ops_reference.py": "d36b0d344cb5c7eefc9c28f959a7e5d9033842837c077a2d7fa68312f9007bd9",
+    "docs/evidence/owner-publication-hold251.json": "6e9fd5ea404c8feba4c544dff8ba1fac7b64c8608cc30cd4691eb844716e2926"
+  },
+  "test_protection": {
+    "tests/test_mock_fixture_provenance.py": {
+      "existing_definitions": 71,
+      "existing_AST_unchanged": true
+    },
+    "tests/test_import_context_profiles.py": {
+      "existing_definitions": 48,
+      "existing_AST_unchanged": true
+    },
+    "tests/test_credential_role_identity_call_content.py": {
+      "existing_definitions": 22,
+      "existing_AST_unchanged": true
+    },
+    "tests/test_agent_ops_reference.py": {
+      "existing_definitions": 1,
+      "existing_AST_unchanged": true
+    }
+  },
+  "checks": {
+    "mock-lean-controls": {
+      "receipt_sha256": "fb391b0807a56da1bf40d70013ba9f0bb4f8492c4526b631719c44328e2a6f46",
+      "receipt": {
+        "state": "FINISHED",
+        "exit_code": 0,
+        "seconds": 2.468,
+        "registration_sha256": "382f68c9f767c0fe10d1c39623ca2f09e5ae599d56046b183bcf6c5535bd8d37",
+        "inputs_unchanged": true,
+        "log_sha256": "b613dfdd2c6b51fa40aa5f8ba0ee1dee66ac39a29ee2ba805c2a58bb5f93c82e",
+        "precision_claim": null
+      }
+    },
+    "identity-portable": {
+      "receipt_sha256": "f2915c76b8fcac7f023901f4845dfbe318af983588f758f6efe4bee8c447cecf",
+      "receipt": {
+        "state": "FINISHED",
+        "exit_code": 0,
+        "seconds": 2.578,
+        "registration_sha256": "ebddc1baa66c8389965cc3626030a663cded284f3129cb8a550543f63fb1e831",
+        "inputs_unchanged": true,
+        "log_sha256": "fecbdae5deaf00a9400f998232a9a82b66b51e674c3cf3567cc0f546944b7770",
+        "precision_claim": null
+      }
+    },
+    "import-source-authority": {
+      "receipt_sha256": "c47f983d0d4b4eaa9d68763d50a48e2a561ae805d8b1539df198b32c419229e3",
+      "receipt": {
+        "state": "FINISHED",
+        "exit_code": 0,
+        "seconds": 5.079,
+        "registration_sha256": "ce58762da0c938ae223435415f09874aaac4da483a37fc79b87d21d5be16f32f",
+        "inputs_unchanged": true,
+        "log_sha256": "b23a88e09904e8876503808e55fd0bac9cb1183fac37de3d51e9ccb45a3b42f5",
+        "precision_claim": null
+      }
+    },
+    "publication-hold": {
+      "receipt_sha256": "22a2ebe38e72136e15b08d97f2fb781fdcd58c7fc9af0183ffe62512422932ee",
+      "receipt": {
+        "state": "FINISHED",
+        "exit_code": 0,
+        "seconds": 3.125,
+        "registration_sha256": "d4488efc3596260d51711d64e80a276e4a27677e61e6b17e26a0cfc4e855908a",
+        "inputs_unchanged": true,
+        "log_sha256": "1fc735ccaba007b4baa50971045cd04444e4dc7c5b1292b36f27847779c70b5b",
+        "precision_claim": null
+      }
+    },
+    "existing_affected_closures": {
+      "passed": 40,
+      "receipt_sha256": "91611f97177a715a4a9dad247c3e646bcd43ca724cbeb546bbe8075ba7ad9fe3",
+      "receipt": {
+        "state": "FINISHED",
+        "exit_code": 0,
+        "seconds": 2.75,
+        "registration_sha256": "e48bd4ae8db1479d63eafb28f1a3e9cfe68151bd49085032464098879b00a614",
+        "inputs_unchanged": true,
+        "log_sha256": "94b6c37b4d729be1b08ca4d989041b8ac14c3bb22b181d9df2f230137d2f502d",
+        "xml_sha256": "4025ecdee4b3f8bb84b235d27968017d40b1f2dd77b4fe4d85fb545cf1dea966",
+        "precision_claim": null
+      }
+    }
+  },
+  "requirements": [
+    "Deduplicate actual evidence projection and direct assignment selection without weakening source guards.",
+    "Preserve opaque/ambiguous cases, exact AST coordinates, fresh lists, profile override precedence and cache invalidation.",
+    "Add direct behavior contracts for source import boundaries and identity effects; preserve old test expectations.",
+    "Record latest human publication hold, permitting PR255 merge after required checks but no publication until higher-precision next PR."
+  ],
+  "architecture": {
+    "decision": "HEALTHY",
+    "regressions": [],
+    "python_files": 430,
+    "core_modules": 133,
+    "caps": [
+      464,
+      133
+    ],
+    "policy_changed": false,
+    "report_sha256": "739f375706b15746a555b1cd36689550512c0ad772febbc848ff0eca644c1faa",
+    "module_lines": 5996,
+    "deduplication": "13 repeated span projections, module/class/app assignment matching and repeated unittest witness construction shared; one unused helper and duplicate hashlib import deleted."
+  },
+  "review_sha256": "3e9b0aabd6478cf49d521e7d27a68f8a54361d81cd49c3fee2c702173749878b",
+  "authority": {
+    "merge": "required CI remains enforced",
+    "publication": "HOLD",
+    "publish_dispatched": false
+  },
+  "precision": {
+    "study": 249,
+    "actionable": 0.55,
+    "TP": 33,
+    "FP": 27,
+    "fresh_gain_for_this_change": null
+  },
+  "global_quality": "Strict CI attribution is unresolved. No full suite or universal coverage claim.",
+  "unrelated_live_worktree_edits": "preserved"
+}

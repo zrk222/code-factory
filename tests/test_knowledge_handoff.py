@@ -1,6 +1,6 @@
 import json
 import pytest
-from factoryline.knowledge_handoff import (
+from factoryline.engineering_memory import (
     create_knowledge_handoff,
     receive_knowledge_handoff,
 )

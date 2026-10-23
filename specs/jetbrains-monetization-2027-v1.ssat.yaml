@@ -14,7 +14,7 @@ modules:
         returns: int
         doc: "Return distinct clear, pending, and unavailable exit codes."
   - name: marketplace_status_tests
-    path: tests/test_jetbrains_marketplace_status.py
+    path: tests/test_codex_metadata.py
     functions:
       - name: test_pending_metadata_is_not_hidden_by_an_approved_version
         args: []

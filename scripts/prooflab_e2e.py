@@ -13,9 +13,9 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from factoryline.contract import Receipt, ensure_layout  # noqa: E402
-from factoryline.passport import build_passport, verify_passport  # noqa: E402
+from factoryline.proof import build_passport, verify_passport  # noqa: E402
 from factoryline.proof import build_trace  # noqa: E402
-from factoryline.challenge import challenge_trace  # noqa: E402
+from factoryline.proof import challenge_trace  # noqa: E402
 
 
 EXAMPLE = ROOT / "examples" / "prooflab"

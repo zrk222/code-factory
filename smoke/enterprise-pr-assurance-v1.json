@@ -3,15 +3,28 @@
     {
       "name": "authenticated_pr_assurance_mutations_are_rejected",
       "kind": "python",
-      "run": "import subprocess,sys\nresult=subprocess.run([sys.executable,'-m','pytest','-q','tests/test_pr_assurance.py'],capture_output=True,text=True,timeout=120,check=False); assert result.returncode==0,result.stdout+result.stderr; assert ' passed' in result.stdout\nprint('PR_ASSURANCE_MUTATIONS_REJECTED')\n",
-      "covers": ["WEBHOOK_SIGNATURE_VERIFIED", "PR_EVENT_BOUND", "DELIVERY_RECORDED", "PR_APPROVAL_SINGLETON", "OIDC_IDENTITY_VERIFIED", "APPROVAL_APPROVED", "APPROVAL_REJECTED", "GITHUB_CHECK_BOUND", "PR_ASSURANCE_MUTATIONS_REJECTED"],
+      "run": "import subprocess, sys\nresult = subprocess.run([sys.executable, '-m', 'pytest', '-q', 'tests/test_audit_rule_search.py::test_authenticated_pr_reaches_independent_approval_and_bound_check', 'tests/test_audit_rule_search.py::test_webhook_signature_is_verified_before_json_and_replay_is_durable', 'tests/test_audit_rule_search.py::test_unbound_installation_is_rejected_before_delivery_reservation', 'tests/test_audit_rule_search.py::test_oidc_signature_mutation_fails_closed', 'tests/test_audit_rule_search.py::test_oidc_pins_audience_and_rejects_jti_replay', 'tests/test_audit_rule_search.py::test_cross_tenant_and_self_approval_leave_request_pending', 'tests/test_audit_rule_search.py::test_rejected_decision_emits_failure_without_network_authority', 'tests/test_audit_rule_search.py::test_github_check_request_rejects_unknown_status', 'tests/test_audit_rule_search.py::test_store_methods_enforce_state_and_lookup_boundaries'], capture_output=True, text=True, timeout=120, check=False)\nassert result.returncode == 0, result.stdout + result.stderr\nassert ' passed' in result.stdout\nprint('PR_ASSURANCE_MUTATIONS_REJECTED')\n",
+      "covers": [
+        "WEBHOOK_SIGNATURE_VERIFIED",
+        "PR_EVENT_BOUND",
+        "DELIVERY_RECORDED",
+        "PR_APPROVAL_SINGLETON",
+        "OIDC_IDENTITY_VERIFIED",
+        "APPROVAL_APPROVED",
+        "APPROVAL_REJECTED",
+        "GITHUB_CHECK_BOUND",
+        "PR_ASSURANCE_MUTATIONS_REJECTED"
+      ],
       "must_fail_on_stub": true
     },
     {
       "name": "authority_boundary_is_offline",
       "kind": "python",
-      "run": "from pathlib import Path\ntext=Path('factoryline/pr_assurance.py').read_text(encoding='utf-8'); forbidden=['requests','httpx','urllib','socket','subprocess','os.system']; assert not any(value in text for value in forbidden); assert 'github_check_request' in text; assert '.post(' not in text and '.request(' not in text\n",
-      "covers": ["AUTHORITY_BOUNDARY_OFFLINE", "PR_ASSURANCE_MUTATIONS_REJECTED"],
+      "run": "from pathlib import Path\ntext = Path('factoryline/pr_assurance.py').read_text(encoding='utf-8')\nforbidden = ['requests', 'httpx', 'urllib', 'socket', 'subprocess', 'os.system']\nassert not any((value in text for value in forbidden))\nassert 'github_check_request' in text\nassert '.post(' not in text and '.request(' not in text\n",
+      "covers": [
+        "AUTHORITY_BOUNDARY_OFFLINE",
+        "PR_ASSURANCE_MUTATIONS_REJECTED"
+      ],
       "must_fail_on_stub": true
     }
   ]

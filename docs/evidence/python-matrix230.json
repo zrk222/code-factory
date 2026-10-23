@@ -1,0 +1,171 @@
+{
+  "schema": "factory.python-matrix-qualification230.v1",
+  "head": "f03ef2c1fb6f9e55482fdf34afab6594aa9b7977",
+  "run_id": 39758730355,
+  "jobs": [
+    {
+      "name": "candidate-quality",
+      "job_id": 119757262017,
+      "status": "completed",
+      "conclusion": "failure"
+    },
+    {
+      "name": "test (windows-latest, 3.10)",
+      "job_id": 119757262224,
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "name": "test (ubuntu-latest, 3.12)",
+      "job_id": 119757262235,
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "name": "test (macos-latest, 3.12)",
+      "job_id": 119757262318,
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "name": "test (macos-latest, 3.10)",
+      "job_id": 119757262385,
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "name": "test (ubuntu-latest, 3.10)",
+      "job_id": 119757262428,
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "name": "test (windows-latest, 3.12)",
+      "job_id": 119757262434,
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "name": "test (windows-latest, 3.11)",
+      "job_id": 119757262473,
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "name": "test (macos-latest, 3.11)",
+      "job_id": 119757262491,
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "name": "test (ubuntu-latest, 3.11)",
+      "job_id": 119757262760,
+      "status": "completed",
+      "conclusion": "success"
+    }
+  ],
+  "reports": [
+    {
+      "path": ".factory/precision230/native-ci-tests/pytest-macos-latest-3.10/pytest-results.xml",
+      "sha256": "75c9202242c1e01461844c40afb2c470f4ce60b1a3023f09a6e843fa51f61e33",
+      "total": 8364,
+      "passed": 8352,
+      "failed_or_error": 0,
+      "skipped": 12,
+      "original_four_passed": 4,
+      "original24_passed": 24
+    },
+    {
+      "path": ".factory/precision230/native-ci-tests/pytest-macos-latest-3.11/pytest-results.xml",
+      "sha256": "8d4ff45266cb05e66d5db4b41b5e0d473a93507697d5d6b17e059899697d4926",
+      "total": 8364,
+      "passed": 8352,
+      "failed_or_error": 0,
+      "skipped": 12,
+      "original_four_passed": 4,
+      "original24_passed": 24
+    },
+    {
+      "path": ".factory/precision230/native-ci-tests/pytest-macos-latest-3.12/pytest-results.xml",
+      "sha256": "1cc2b7b61e1d0dc4e5967041d168c738a3c7b8e032fd4641e5850ad60ce2565a",
+      "total": 8364,
+      "passed": 8352,
+      "failed_or_error": 0,
+      "skipped": 12,
+      "original_four_passed": 4,
+      "original24_passed": 24
+    },
+    {
+      "path": ".factory/precision230/native-ci-tests/pytest-ubuntu-latest-3.10/pytest-results.xml",
+      "sha256": "a0fbc76354fe4ba304d6ccb410ad0b94b99e28f1686d75889a65c36f9eb5990d",
+      "total": 8364,
+      "passed": 8352,
+      "failed_or_error": 0,
+      "skipped": 12,
+      "original_four_passed": 4,
+      "original24_passed": 24
+    },
+    {
+      "path": ".factory/precision230/native-ci-tests/pytest-ubuntu-latest-3.11/pytest.xml",
+      "sha256": "a6e29509b204568c545f0d061d4d8f03ab285e1dd3e9a8d2c39a88e21cbb9bc9",
+      "total": 8364,
+      "passed": 8352,
+      "failed_or_error": 0,
+      "skipped": 12,
+      "original_four_passed": 4,
+      "original24_passed": 24
+    },
+    {
+      "path": ".factory/precision230/native-ci-tests/pytest-ubuntu-latest-3.12/pytest-results.xml",
+      "sha256": "5b5b361ba4a7ca507712b7abaf6599f5ff859e5d9ec8fb27596e7c3b5a4baeb5",
+      "total": 8364,
+      "passed": 8352,
+      "failed_or_error": 0,
+      "skipped": 12,
+      "original_four_passed": 4,
+      "original24_passed": 24
+    },
+    {
+      "path": ".factory/precision230/native-ci-tests/pytest-windows-latest-3.10/pytest-results.xml",
+      "sha256": "acb2c85898ef0f2aa7076dbe6b0a10aa574a0aec56b2f836c2dcc34f7a91f3ba",
+      "total": 8364,
+      "passed": 8348,
+      "failed_or_error": 0,
+      "skipped": 16,
+      "original_four_passed": 4,
+      "original24_passed": 24
+    },
+    {
+      "path": ".factory/precision230/native-ci-tests/pytest-windows-latest-3.11/pytest-results.xml",
+      "sha256": "ad3a633538f087a993fc1e361b0e1b397db780f0c9482d364f4cecf41bb5fc01",
+      "total": 8364,
+      "passed": 8348,
+      "failed_or_error": 0,
+      "skipped": 16,
+      "original_four_passed": 4,
+      "original24_passed": 24
+    },
+    {
+      "path": ".factory/precision230/native-ci-tests/pytest-windows-latest-3.12/pytest-results.xml",
+      "sha256": "ffd169ab056fefaeff420fefae5301301e4128c4d718a1a3e44b3bf148f33d0b",
+      "total": 8364,
+      "passed": 8348,
+      "failed_or_error": 0,
+      "skipped": 16,
+      "original_four_passed": 4,
+      "original24_passed": 24
+    }
+  ],
+  "test_matrix_passed": 9,
+  "test_matrix_failed": 0,
+  "native_quality_gate": "FAIL",
+  "full_ci_green": false,
+  "precision_gain_claim": null,
+  "latest_fresh_actionable_precision": {
+    "study": "Study225",
+    "TP": 0,
+    "FP": 49,
+    "UNCLEAR": 8
+  },
+  "boundary": "Nine exactf03ef2c1 CI test jobs passed; native quality stillfails. Source unchanged by this evidence-only successor. No merge/fullCI/precision qualification."
+}

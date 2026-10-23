@@ -1,0 +1,46 @@
+{
+  "state": "NO_ACTIONABLE_PRECISION_GAIN",
+  "measurement": {
+    "kind": "exposed_development_paired_replay",
+    "baseline_commit": "59dd734d1ede7659f0bdc7144c5a0900a1bd6f75",
+    "candidate_head": "2c3ef93ebd3c21cc8d76f85f27550136460c4488",
+    "candidate_includes_uncommitted_source": true,
+    "candidate_freeze_sha256": "43e2b936319ad915dcb2ab3594dbbaabe4eb4a5ff7e2c86bcf87b1e56dd40641",
+    "repositories_completed": 7,
+    "labelled_alerts_measured": 60,
+    "alerts_retained": 60,
+    "alerts_removed": 0,
+    "severity_changes": 0,
+    "actionable_true_positives": 0,
+    "actionable_false_positives": 60,
+    "actionable_precision": 0.0,
+    "label_source": "One independent AI reviewer; second reviewer pending",
+    "labels_sha256": "e13cb99c9a60e3d27f44528aaa28cff0422c0766cfb24763b24b04db30445ac8"
+  },
+  "yaml_repair": {
+    "scope": "Canonical safe-loader argument resolution; unknown loaders no longer bypass the warning solely because a Loader keyword exists.",
+    "new_regression_cases": 14,
+    "baseline_passed": 4,
+    "candidate_passed": 14,
+    "related_yaml_tls_xml_jinja_cases_passed": 40,
+    "lint": "PASS",
+    "cyclomatic_complexity": "PASS",
+    "workflow_receipt_sha256": "a080b8ad15ba2ec6588be2d52a31601b7b398350d08684c35d047f343be6af7e",
+    "independent_review": "PENDING_PROVIDER_USAGE_LIMIT"
+  },
+  "limits": [
+    "The paired replay precedes the YAML repair; it is not a post-repair held-out precision score.",
+    "Regression-case improvement is not held-out precision improvement.",
+    "No new labels, cohort substitutions, severity threshold, or denominator exclusions were used.",
+    "No proof of arbitrary safe-loader subclasses or external runtime provider mutation.",
+    "Full suite, architecture policy compliance, independent implementation review and merge remain outstanding."
+  ],
+  "local_evidence": [
+    ".factory/repair-family119/current-paired120/freeze.json",
+    ".factory/repair-family119/current-paired120/paired-report.json",
+    ".factory/repair-family119/yaml-baseline120-final.xml",
+    ".factory/repair-family119/yaml120/pytest.xml",
+    ".factory/repair-family119/yaml120/commands.json",
+    ".factory/repair-family119/yaml120/workflow-receipt.json"
+  ]
+}

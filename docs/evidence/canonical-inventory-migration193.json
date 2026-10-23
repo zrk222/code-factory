@@ -1,0 +1,17 @@
+{
+  "scope": "Test-only obsolete physical module inventory migration.",
+  "parent": "c16c2bbbf283dc901a6336f9c4f786a0082c18e2",
+  "source_sha256": {
+    "tests/test_canonical_properties.py": "61ef3d56698dce1a6f902eaa54933aa8cfcd33aa4cebe6a661a47426851a304d"
+  },
+  "change": "Remove deleted passport module row, retain existing proof owner row and all assertions.",
+  "tests": {
+    "passed": 92,
+    "failed": 0
+  },
+  "independent_review": {
+    "path": ".factory/canonical193/inventory-followup-review.json",
+    "sha256": "51518d8e996d801081faf650914a4d81d7c0a378549b46a7a38cbc6bd2b363b4"
+  },
+  "boundary": "No scanner behavior, precision, policy caps or runtime change; no full-CI claim."
+}

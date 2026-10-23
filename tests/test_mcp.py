@@ -1,15 +1,25 @@
 from __future__ import annotations
-
 from factoryline import __version__
-
 from io import StringIO
 import hashlib
 import json
 from pathlib import Path
-
 from factoryline.graph_ops import graph_ops_impact, graph_ops_snapshot
 from factoryline.langgraph_assurance import LangGraphTransitionRecorder
 from factoryline.mcp import MCP_PROTOCOL_VERSION, dispatch, mcp_status, serve_stdio
+import pytest
+import factoryline.mcp as mcp
+from factoryline.mcp_mrt import (
+    McpMrtError,
+    release_gate_completed,
+    release_gate_input_required,
+)
+from factoryline.cli import main
+from factoryline.mcp_setup import (
+    McpSetupError,
+    install_project_mcp_config,
+    mcp_connection_config,
+)
 
 
 def _content(response: dict[str, object]) -> dict[str, object]:
@@ -1468,3 +1478,330 @@ def test_mcp_stdio_emits_only_newline_delimited_json_rpc(tmp_path: Path):
     assert (
         json.loads(lines[1])["error"]["data"]["marker"] == "MCP_INVALID_PARAMS_REJECTED"
     )
+
+
+def test_release_gate_input_required_is_deterministic_and_authority_free() -> None:
+    card = {
+        "feature": "payments",
+        "state": "LOCAL_EVIDENCE_BLOCKED",
+        "classification": "local_evidence_failure",
+        "blockers": [
+            {
+                "source": "strict_release_verification",
+                "code": "RELEASE_CONTRACT_MISSING",
+                "detail": "contract absent",
+            }
+        ],
+        "next_action": {"action": "create_or_restore_release_contract"},
+    }
+    first = release_gate_input_required(card)
+    second = release_gate_input_required(card)
+    assert first == second
+    assert first["type"] == "input_required"
+    assert first["toolCallId"].startswith("release-gate:")
+    assert first["context"]["proofCardHash"].startswith("sha256:")
+    assert first["context"]["hasUnresolvedProofDebt"] is True
+    assert first["context"]["proofDebt"] == ["RELEASE_CONTRACT_MISSING"]
+    assert first["inputSchema"]["required"] == ["decision", "reviewerIdentity"]
+    assert all(value is False for value in first["authority"].values())
+    assert "does not" in first["claim_boundary"]
+
+
+def test_release_gate_input_required_preserves_empty_proof_debt() -> None:
+    card = {
+        "feature": "payments",
+        "state": "EXTERNAL_GATES_UNOBSERVED",
+        "next_action": {"action": "review_external_publish_gates"},
+    }
+    result = release_gate_input_required(card)
+    assert result["context"]["hasUnresolvedProofDebt"] is False
+    assert result["context"]["proofDebt"] == []
+    assert result["context"]["nextFactDerivedAction"] == "review_external_publish_gates"
+
+
+def test_release_gate_input_required_projects_explicit_failed_lane() -> None:
+    card = {
+        "feature": "payments",
+        "state": "LOCAL_EVIDENCE_BLOCKED",
+        "blockers": [
+            {
+                "lane": "authorization_tenant_isolation",
+                "rejectionCondition": "CF-RULE-AUTH-04",
+                "evidenceDigest": "sha256:evidence_456",
+                "riskSeverity": "HIGH",
+                "code": "AUTH_TENANT_SCOPE",
+            }
+        ],
+    }
+    result = release_gate_input_required(card)
+    assert "1 failed audit lane(s)" in result["prompt"]
+    assert result["context"]["failedLanes"] == [
+        {
+            "lane": "authorization_tenant_isolation",
+            "rejectionCondition": "CF-RULE-AUTH-04",
+            "evidenceDigest": "sha256:evidence_456",
+            "riskSeverity": "HIGH",
+        }
+    ]
+
+
+def test_release_gate_completed_is_deterministic_and_authority_free() -> None:
+    card = {"feature": "payments", "state": "EXTERNAL_GATES_UNOBSERVED"}
+    challenge = release_gate_input_required(card)
+    human_input = {
+        "decision": "APPROVE_RELEASE",
+        "reviewerIdentity": "dev-lead@company.com",
+        "reviewerNotes": "Local evidence reviewed.",
+    }
+    first = release_gate_completed(
+        card,
+        human_input,
+        tool_call_id=challenge["toolCallId"],
+        proof_card_hash=challenge["context"]["proofCardHash"],
+    )
+    second = release_gate_completed(
+        card,
+        human_input,
+        tool_call_id=challenge["toolCallId"],
+        proof_card_hash=challenge["context"]["proofCardHash"],
+    )
+    assert first == second
+    assert first["type"] == "completed"
+    assert first["status"] == "RELEASE_APPROVED"
+    assert first["receiptHash"].startswith("sha256:")
+    assert "permanently sealed by dev-lead@company.com" in first["summary"]
+    assert all(value is False for value in first["authority"].values())
+    assert "does not approve" in first["claim_boundary"]
+
+
+def test_release_gate_completed_requires_proof_debt_acknowledgement() -> None:
+    card = {
+        "feature": "payments",
+        "state": "LOCAL_EVIDENCE_BLOCKED",
+        "blockers": [{"code": "RELEASE_CONTRACT_MISSING"}],
+    }
+    challenge = release_gate_input_required(card)
+    with pytest.raises(McpMrtError, match="acknowledgement") as exc_info:
+        release_gate_completed(
+            card,
+            {"decision": "APPROVE_RELEASE", "reviewerIdentity": "lead"},
+            tool_call_id=challenge["toolCallId"],
+            proof_card_hash=challenge["context"]["proofCardHash"],
+        )
+    assert exc_info.value.marker == "MCP2_RELEASE_DEBT_UNACKNOWLEDGED"
+    result = release_gate_completed(
+        card,
+        {
+            "decision": "APPROVE_RELEASE",
+            "reviewerIdentity": "lead",
+            "acknowledgedProofDebt": ["RELEASE_CONTRACT_MISSING"],
+        },
+        tool_call_id=challenge["toolCallId"],
+        proof_card_hash=challenge["context"]["proofCardHash"],
+    )
+    assert result["status"] == "RELEASE_APPROVED"
+
+
+def test_release_gate_completed_rejects_invalid_input_and_binding_mismatch() -> None:
+    card = {"feature": "payments", "state": "EXTERNAL_GATES_UNOBSERVED"}
+    with pytest.raises(McpMrtError, match="decision"):
+        release_gate_completed(
+            card, {"decision": "INVALID", "reviewerIdentity": "lead"}
+        )
+    with pytest.raises(McpMrtError) as exc_info:
+        release_gate_completed(
+            card,
+            {"decision": "REJECT_RELEASE", "reviewerIdentity": "lead"},
+            tool_call_id="release-gate:wrong",
+            proof_card_hash=release_gate_input_required(card)["context"][
+                "proofCardHash"
+            ],
+        )
+    assert exc_info.value.marker == "MCP2_RELEASE_GATE_BINDING_MISMATCH"
+
+
+def test_release_gate_completed_requires_both_stateless_bindings() -> None:
+    card = {"feature": "payments", "state": "EXTERNAL_GATES_UNOBSERVED"}
+    challenge = release_gate_input_required(card)
+    with pytest.raises(McpMrtError) as exc_info:
+        release_gate_completed(
+            card,
+            {"decision": "REJECT_RELEASE", "reviewerIdentity": "lead"},
+            tool_call_id=challenge["toolCallId"],
+        )
+    assert exc_info.value.marker == "MCP2_RELEASE_GATE_BINDING_MISMATCH"
+
+
+def test_factory_release_decision_bridges_both_stateless_mrt_legs(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    card = {"feature": "payments", "state": "EXTERNAL_GATES_UNOBSERVED"}
+    monkeypatch.setattr(mcp, "release_decision_card", lambda _root, _feature: card)
+    challenge = mcp._release_decision_status(tmp_path, {"feature": "payments"})
+    challenge_payload = challenge["mcp2"]
+    completed = mcp._release_decision_status(
+        tmp_path,
+        {
+            "feature": "payments",
+            "tool_call_id": challenge_payload["toolCallId"],
+            "proof_card_hash": challenge_payload["context"]["proofCardHash"],
+            "human_input": {"decision": "REJECT_RELEASE", "reviewerIdentity": "lead"},
+        },
+    )
+    assert challenge["marker"] == "MCP_RELEASE_DECISION_READ_ONLY"
+    assert completed["marker"] == "MCP_RELEASE_DECISION_COMPLETED"
+    assert completed["mcp2"]["status"] == "RELEASE_REJECTED"
+
+
+def test_mcp_setup_renders_copy_only_configs_for_supported_clients(tmp_path: Path):
+    generic = mcp_connection_config(tmp_path)
+    cursor = mcp_connection_config(tmp_path, "cursor")
+    opencode = mcp_connection_config(tmp_path, "opencode")
+    codex = mcp_connection_config(tmp_path, "codex")
+    junie = mcp_connection_config(tmp_path, "junie")
+    copilot = mcp_connection_config(tmp_path, "copilot")
+
+    for payload in (generic, cursor, opencode, codex, junie, copilot):
+        assert payload["schema"] == "factory.mcp.setup.v1"
+        assert payload["marker"] == "FACTORY_MCP_CONFIG_READY"
+        assert payload["markers"] == [
+            "FACTORY_MCP_CONFIG_READY",
+            "MCP_CLIENT_RENDERED",
+            "MCP_COMMAND_BOUND",
+            "MCP_COPY_ONLY",
+            "MCP_CLIENT_CONFIG_COPYABLE",
+        ]
+        assert payload["transport"] == "stdio"
+        assert payload["writes"] is False
+        assert all(value is False for value in payload["authority"].values())
+        assert payload["connection"] == {
+            "command": "factory",
+            "args": ["mcp", "serve", "--root", str(tmp_path.resolve())],
+        }
+
+    assert generic["target"] == "any stdio MCP client"
+    assert cursor["target"] == ".cursor/mcp.json"
+    assert opencode["config"]["mcp"]["code-factory"]["enabled"] is True
+    assert (
+        codex["command_line"]
+        == f"codex mcp add code-factory -- factory mcp serve --root {tmp_path.resolve()}"
+    )
+    assert junie["target"] == ".junie/mcp/mcp.json"
+    assert copilot["target"] == ".github/agents/factoryline-proof.agent.md"
+    assert "mcp-servers:" in copilot["agent_profile"]
+    assert "code-factory/factory.agent_proof_mission" in copilot["agent_profile"]
+
+
+def test_junie_project_install_is_confirmed_idempotent_and_never_overwrites_a_conflict(
+    tmp_path: Path,
+):
+    with pytest.raises(McpSetupError, match="confirmation"):
+        install_project_mcp_config(tmp_path, "junie", "yes")
+    installed = install_project_mcp_config(tmp_path, "junie", "INSTALL Junie MCP")
+    repeated = install_project_mcp_config(tmp_path, "junie", "INSTALL Junie MCP")
+    config = json.loads((tmp_path / ".junie/mcp/mcp.json").read_text(encoding="utf-8"))
+    assert installed["state"] == "installed"
+    assert repeated["state"] == "already_current"
+    assert config["mcpServers"]["code-factory"]["command"] == "factory"
+    assert "factory.junie_taxonomy" in installed["next_action"]
+    assert all(value is False for value in installed["authority"].values())
+
+    config["mcpServers"]["code-factory"]["command"] = "other"
+    (tmp_path / ".junie/mcp/mcp.json").write_text(json.dumps(config), encoding="utf-8")
+    with pytest.raises(McpSetupError, match="no overwrite"):
+        install_project_mcp_config(tmp_path, "junie", "INSTALL Junie MCP")
+
+
+def test_copilot_project_install_is_confirmed_idempotent_and_never_overwrites_a_conflict(
+    tmp_path: Path,
+):
+    with pytest.raises(McpSetupError, match="confirmation"):
+        install_project_mcp_config(tmp_path, "copilot", "yes")
+    installed = install_project_mcp_config(tmp_path, "copilot", "INSTALL Copilot MCP")
+    repeated = install_project_mcp_config(tmp_path, "copilot", "INSTALL Copilot MCP")
+    profile = (tmp_path / ".github/agents/factoryline-proof.agent.md").read_text(
+        encoding="utf-8"
+    )
+    assert installed["marker"] == "FACTORY_COPILOT_MCP_INSTALLED"
+    assert installed["state"] == "installed"
+    assert repeated["state"] == "already_current"
+    assert "target: github-copilot" in profile
+    assert "command: factory" in profile
+    assert "approval" in profile
+    assert all(value is False for value in installed["authority"].values())
+
+    (tmp_path / ".github/agents/factoryline-proof.agent.md").write_text(
+        "owner content\n", encoding="utf-8"
+    )
+    with pytest.raises(McpSetupError, match="no overwrite"):
+        install_project_mcp_config(tmp_path, "copilot", "INSTALL Copilot MCP")
+
+
+def test_mcp_setup_rejects_unknown_clients_and_missing_roots(tmp_path: Path):
+    with pytest.raises(McpSetupError, match="client must be one of") as client_error:
+        mcp_connection_config(tmp_path, "unsafe-hosted")
+    assert client_error.value.marker == "MCP_CLIENT_REJECTED"
+    with pytest.raises(McpSetupError, match="existing directory") as root_error:
+        mcp_connection_config(tmp_path / "missing")
+    assert root_error.value.marker == "MCP_ROOT_REJECTED"
+
+
+def test_mcp_config_cli_prints_a_copy_only_codex_command(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+):
+    assert main(["mcp", "config", "--client", "codex", "--root", str(tmp_path)]) == 0
+    output = capsys.readouterr().out
+    assert "Factory MCP config (codex)" in output
+    assert (
+        f"codex mcp add code-factory -- factory mcp serve --root {tmp_path.resolve()}"
+        in output
+    )
+    assert "read-only local context" in output
+
+
+def test_mcp_install_cli_writes_only_the_confirmed_junie_project_entry(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+):
+    assert (
+        main(
+            [
+                "mcp",
+                "install",
+                "--client",
+                "junie",
+                "--root",
+                str(tmp_path),
+                "--confirmation",
+                "INSTALL Junie MCP",
+                "--json",
+            ]
+        )
+        == 0
+    )
+    result = json.loads(capsys.readouterr().out)
+    assert result["marker"] == "FACTORY_JUNIE_MCP_INSTALLED"
+    assert result["target"] == ".junie/mcp/mcp.json"
+
+
+def test_mcp_install_cli_writes_only_the_confirmed_copilot_agent(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+):
+    assert (
+        main(
+            [
+                "mcp",
+                "install",
+                "--client",
+                "copilot",
+                "--root",
+                str(tmp_path),
+                "--confirmation",
+                "INSTALL Copilot MCP",
+                "--json",
+            ]
+        )
+        == 0
+    )
+    result = json.loads(capsys.readouterr().out)
+    assert result["marker"] == "FACTORY_COPILOT_MCP_INSTALLED"
+    assert result["target"] == ".github/agents/factoryline-proof.agent.md"

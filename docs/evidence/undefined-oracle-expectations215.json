@@ -1,0 +1,153 @@
+{
+  "schema": "factory.undefined-oracle-expectations215.v1",
+  "parent": "0c567d001c09a5410572679ae6fe5989d8a032c6",
+  "scope": "Expectation-only undefined/eager opaque family; no scanner or benchmark change.",
+  "reason": "Undefined loads or unresolved calls can raise before vacuity; swallowing AssertionError does not swallow NameError. These inputs do not establish inert non-raising completion.",
+  "unchanged_input_count": 39,
+  "changed_expectations": [
+    {
+      "family": "test_security_scan_detects_local_hollow_test_oracles",
+      "body": "compute_value()",
+      "source_sha256": "0ec90ae9fadd7af9289469d551f632fee9fa7d1470b428d09f73b1c63c79513f",
+      "old": "QUALITY_HOLLOW_TEST",
+      "new": "QUALITY_UNKNOWN_TEST_ORACLE"
+    },
+    {
+      "family": "test_security_scan_detects_local_hollow_test_oracles",
+      "body": "actual = compute_value()\n    assert actual == actual",
+      "source_sha256": "5d1c64b96a3051b2fea535bb2c5797a2f680edf9c20e7efb15a14d6fbc6f7af6",
+      "old": "QUALITY_HOLLOW_TEST",
+      "new": "QUALITY_UNKNOWN_TEST_ORACLE"
+    },
+    {
+      "family": "test_security_scan_detects_local_hollow_test_oracles",
+      "body": "assert len(result) >= 0",
+      "source_sha256": "dd14641e138912750e5d28d600b675973f955af2b4c642449775795ec98d194d",
+      "old": "QUALITY_HOLLOW_TEST",
+      "new": "QUALITY_UNKNOWN_TEST_ORACLE"
+    },
+    {
+      "family": "test_oracle_precision_reported_truth_and_reachability",
+      "body": "try:\n        assert compute() == 3\n    except AssertionError:\n        pass",
+      "source_sha256": "2d1ddc43d9f5eb06e2ac666ad7404437f8efab8b9d21c1a886c1891f0ced64ea",
+      "old": "QUALITY_HOLLOW_TEST",
+      "new": "QUALITY_UNKNOWN_TEST_ORACLE"
+    },
+    {
+      "family": "test_oracle_precision_unittest_vacuity",
+      "body": "self.assertEqual(value, value)",
+      "source_sha256": "916175bd152bb381da57d4ba00f1fa59cbdfbec53e9254e3dce128fabab51462",
+      "old": "QUALITY_HOLLOW_TEST",
+      "new": "QUALITY_UNKNOWN_TEST_ORACLE"
+    },
+    {
+      "family": "test_security_scan_detects_constant_and_boolean_tautologies",
+      "body": "value = value\n    assert value == value",
+      "source_sha256": "7dc8a31ca9571c92da3eff61f479be821590c88e6c9bbac0eae6c6d2738fdb29",
+      "old": "QUALITY_HOLLOW_TEST",
+      "new": "QUALITY_UNKNOWN_TEST_ORACLE"
+    },
+    {
+      "family": "test_security_scan_detects_constant_and_boolean_tautologies",
+      "body": "assert result or True",
+      "source_sha256": "8916bdf3daafd3837ce5650fcbd5c2c2ba198797ffa4d3ac7de63af80c611a4a",
+      "old": "QUALITY_HOLLOW_TEST",
+      "new": "QUALITY_UNKNOWN_TEST_ORACLE"
+    }
+  ],
+  "unrelated_test_ast_unchanged": true,
+  "before": {
+    "tests": 39,
+    "failures": 9,
+    "errors": 0,
+    "skipped": 0
+  },
+  "after": {
+    "tests": 39,
+    "failures": 2,
+    "errors": 0,
+    "skipped": 0
+  },
+  "remaining": "Two non-empty-tuple cases remain red pending their separate weak-oracle family review.",
+  "precision_change": 0,
+  "precision_boundary": "No scan behavior changed; this is not improved detector precision.",
+  "candidate_sha256": "e6161ee074113381db8948294505db559578db6ae87c6d2ab688124323f4c806",
+  "scope_tests": {
+    "passed": 21,
+    "failed": 0,
+    "errors": 0
+  },
+  "whole_audit_test_file": {
+    "tests": 1558,
+    "passed": 1512,
+    "failed": 46,
+    "seconds": 104.16,
+    "remaining_failure_set_matches_prior_53_minus_reviewed_seven": true,
+    "new_failures": 0,
+    "boundary": "All1558cases in this test file; not a full-suite pass or detector gain."
+  },
+  "independent_review": "Sol 6.1 High using ECC; expectation migration only, not held-out labeling.",
+  "architecture": {
+    "decision": "HEALTHY",
+    "python_files": 429,
+    "core_modules": 133
+  },
+  "latest_full_ci": {
+    "head": "0c567d001c09a5410572679ae6fe5989d8a032c6",
+    "passed": 8266,
+    "failed": 53,
+    "skipped": 12,
+    "boundary": "Before this expectation-only change; no new full-suite pass claimed."
+  },
+  "latest_comparable_precision": {
+    "study": 210,
+    "TP": 1,
+    "FP": 10,
+    "UNCLEAR": 22,
+    "decided_precision": 0.09090909090909091,
+    "wilson95": [
+      0.016232172885884855,
+      0.37735843645159567
+    ],
+    "status": "Previously held-out, now exposed; unchanged by this test-only migration."
+  },
+  "artifacts": [
+    {
+      "path": ".factory/precision215/undefined-family/migration.json",
+      "sha256": "cdfcf24700e954d2bb66e0b1088a9f80bbee58b548f19e92e311980e578ced72"
+    },
+    {
+      "path": ".factory/precision215/undefined-family/before.xml",
+      "sha256": "b7fa4e4ec79f6dc663e87a7d0610b1248d7c6b6c0310b6349c1941f42e9ca0af"
+    },
+    {
+      "path": ".factory/precision215/undefined-family/after.xml",
+      "sha256": "fb09a6d2845dd88662ae74f6e01cf8dbcda7280de761216d1d3e1d7f4c3e0c45"
+    },
+    {
+      "path": ".factory/precision215/undefined-family/scoped.xml",
+      "sha256": "fa19d001296eb31679b64e4edea37de412797e8d8dfd6b70a9bd63b229159ef7"
+    },
+    {
+      "path": ".factory/precision215/undefined-family/full-audits.xml",
+      "sha256": "b5556ccd345cee91bba909974b2ff3018f8f71d8112b46820517c55c70194a35"
+    },
+    {
+      "path": ".factory/precision215/undefined-family/architecture.json",
+      "sha256": "6f105afb2b6e2f86a3f9df966abfe172431fc7da5e4e9dcf03199059a836e974"
+    },
+    {
+      "path": ".factory/precision215/undefined-family/ecc-review.json",
+      "sha256": "ea3d66bfdb534c59cc43dfb419166b4df687fcc2a3017e843994fdaa4cb8d2ce"
+    },
+    {
+      "path": ".factory/precision215/undefined-family/verify-migration.py",
+      "sha256": "82c2539dab90a0a10d02febf345cde329f22c3ce5cefe66b25d4addedfd05ae9"
+    },
+    {
+      "path": ".factory/precision215/doctor.json",
+      "sha256": "8c3ded5206ef2a93f77990cde143dc75414ff4bbf63fd1e6d0267b1181bb4856"
+    }
+  ],
+  "global_state": "INCOMPLETE; detector precision and full CI remain unqualified."
+}

@@ -1,0 +1,172 @@
+{
+  "schema": "factory.native-quality235.v1",
+  "candidate_parent_commit": "822830e12a345375afd49841f567a384eefd8aee",
+  "source": {
+    "factoryline/credential_endpoint_admission.py": "4abc75e9444171a53713796dc9bc3b6fc509a5ec8b8658267cb70ded060a6885"
+  },
+  "scope": "One behavior-preserving source-context helper extraction; no security rule, severity, label or evaluation scope change.",
+  "net_source_lines": 9,
+  "independent_review": {
+    "kind": "separate Sol6.1 ECC AI source context",
+    "status": "PASS_SCOPED_BEHAVIOR_PRESERVING_EXTRACTION_GLOBAL_QUALITY_FAILED",
+    "path": ".factory/precision235/endpoint-quality/ecc-review.json",
+    "sha256": "c3a7e9aaf5bafdd8581151bf1d3d456b868d5899fc3488f29a610eb1fc8e9313"
+  },
+  "native_quality": {
+    "before_count": 90,
+    "after_count": 89,
+    "added": [],
+    "removed": [
+      "QA_COMPLEXITY factoryline/credential_endpoint_admission.py:annotate_endpoint_findings complexity 12 > 10; policy=hard"
+    ],
+    "full_native_quality": "FAIL"
+  },
+  "architecture": {
+    "decision": "HEALTHY",
+    "python_files": 429,
+    "core_modules": 133,
+    "caps_unchanged": true
+  },
+  "previous_exact_source_ci": {
+    "schema": "factory.native-matrix235.v1",
+    "candidate_commit": "822830e12a345375afd49841f567a384eefd8aee",
+    "run_id": 39771934906,
+    "run_conclusion": "failure",
+    "junit": [
+      {
+        "artifact": "pytest-macos-latest-3.10",
+        "path": ".factory/precision235/native-ci-tests/pytest-macos-latest-3.10/pytest-results.xml",
+        "sha256": "3da0dba1db848d76ba1428ee5c119a518cedf19ee9478f9ad657299521a6a1ef",
+        "total": 8368,
+        "passed": 8356,
+        "skipped": 12,
+        "failures": 0,
+        "errors": 0
+      },
+      {
+        "artifact": "pytest-macos-latest-3.11",
+        "path": ".factory/precision235/native-ci-tests/pytest-macos-latest-3.11/pytest-results.xml",
+        "sha256": "94d9221926c30cbe9eaeed7ca46536e346e932821a61a9d31f111bf7e9fcc709",
+        "total": 8368,
+        "passed": 8356,
+        "skipped": 12,
+        "failures": 0,
+        "errors": 0
+      },
+      {
+        "artifact": "pytest-macos-latest-3.12",
+        "path": ".factory/precision235/native-ci-tests/pytest-macos-latest-3.12/pytest-results.xml",
+        "sha256": "224e72df5b243e87263f1821fb81fc0ed9f571fec65e6475fa77450db6d13eee",
+        "total": 8368,
+        "passed": 8356,
+        "skipped": 12,
+        "failures": 0,
+        "errors": 0
+      },
+      {
+        "artifact": "pytest-ubuntu-latest-3.10",
+        "path": ".factory/precision235/native-ci-tests/pytest-ubuntu-latest-3.10/pytest-results.xml",
+        "sha256": "427ffeb1fc2a6879415e70d67dbf39e4f9608fb0d678f04925f87e8c253339f4",
+        "total": 8368,
+        "passed": 8356,
+        "skipped": 12,
+        "failures": 0,
+        "errors": 0
+      },
+      {
+        "artifact": "pytest-ubuntu-latest-3.11",
+        "path": ".factory/precision235/native-ci-tests/pytest-ubuntu-latest-3.11/pytest.xml",
+        "sha256": "320239e54b6dc4688d34d0cfdc9391f830edfb58c24a0fb5fc684bfe656c1423",
+        "total": 8368,
+        "passed": 8356,
+        "skipped": 12,
+        "failures": 0,
+        "errors": 0
+      },
+      {
+        "artifact": "pytest-ubuntu-latest-3.12",
+        "path": ".factory/precision235/native-ci-tests/pytest-ubuntu-latest-3.12/pytest-results.xml",
+        "sha256": "309ce9ef3b255d4d43ba450d69c2ffc63ab2a09bf3789c03beaf175701342267",
+        "total": 8368,
+        "passed": 8356,
+        "skipped": 12,
+        "failures": 0,
+        "errors": 0
+      },
+      {
+        "artifact": "pytest-windows-latest-3.10",
+        "path": ".factory/precision235/native-ci-tests/pytest-windows-latest-3.10/pytest-results.xml",
+        "sha256": "c5601edae5a39d25778c6be0a2d296673e26e4a68a16ea3f821eb685ba178c7a",
+        "total": 8368,
+        "passed": 8352,
+        "skipped": 16,
+        "failures": 0,
+        "errors": 0
+      },
+      {
+        "artifact": "pytest-windows-latest-3.11",
+        "path": ".factory/precision235/native-ci-tests/pytest-windows-latest-3.11/pytest-results.xml",
+        "sha256": "883997e5f97003b6f445c429bdfbe220662669d2062dd7124b67d0bf2a6b9bf6",
+        "total": 8368,
+        "passed": 8352,
+        "skipped": 16,
+        "failures": 0,
+        "errors": 0
+      },
+      {
+        "artifact": "pytest-windows-latest-3.12",
+        "path": ".factory/precision235/native-ci-tests/pytest-windows-latest-3.12/pytest-results.xml",
+        "sha256": "43f0b7e0d3dcb1edb169adb11923337b3b476182def04bda466dcc8d8ca57b8b",
+        "total": 8368,
+        "passed": 8352,
+        "skipped": 16,
+        "failures": 0,
+        "errors": 0
+      }
+    ],
+    "native_matrix_qualified": true,
+    "full_ci_green": false,
+    "failed_jobs": [
+      {
+        "name": "candidate-quality",
+        "url": "https://github.com/zrk222/code-factory/actions/runs/39771934906/job/119801348029"
+      }
+    ],
+    "precision_change_claim": null
+  },
+  "exposed_wiki_replay": {
+    "scope": "Already exposed Study225 repo, static full normalCLI, 209/209 Python files on each lane.",
+    "baseline_security_alerts": 5,
+    "candidate_security_alerts": 5,
+    "same_findings_and_severity": true,
+    "new_primitive_observations": 0,
+    "fresh_precision_claim": null,
+    "review_sha256": "bc798fa423c5e98b9bdf12163bd7179d48e0fca30ebd0d470937792e9d5a0fff"
+  },
+  "latest_fresh_actionable": {
+    "study": 225,
+    "tp": 0,
+    "fp": 49,
+    "unclear": 8,
+    "decided_precision_percent": 0,
+    "wilson95_percent": [
+      0,
+      7.269781922
+    ],
+    "changed_by_this_refactor": false
+  },
+  "boundaries": [
+    "Source-equivalent extraction and failed native quality gate only; passing local unit suites were not rerun.",
+    "Previous nine-platform test matrix qualifies parent822830e1, not these new source bytes.",
+    "Native quality stillFAIL89; PR25535% and publication80% qualification remain unmet.",
+    "Private229 account and232 ChoiceSet candidates remain unadmitted."
+  ],
+  "artifacts": {
+    ".factory\\precision235\\root-doctor.json": "322eadf46dc8fc3b829bee29e49e71477eccfc2d6a9f210ecd21737d47c9f0f2",
+    ".factory\\precision235\\native-quality.json": "c8bd930c3e303cd3380e825b145c5da64a51c051c8321c7842b584f5c7f90eda",
+    ".factory\\precision235\\native-quality-delta.json": "85c03732ef050c6541865b1d7408d3f342bec52004165a6d648779a287617e9d",
+    ".factory\\precision235\\architecture-health.json": "803d08c2c8fafeb60b629eb8323db30d137781ab0a13584fec11281fd3cd785c",
+    ".factory\\precision235\\endpoint-quality\\result.json": "d68920c10ca952d8d9077587017e040328cc71c3efbfdfb00f513c7017231d11",
+    ".factory\\precision235\\endpoint-quality\\native-quality-pair-v2.json": "d0f7a6176b998a034752b94331a39db03cb9f14041d3c2a02d0185167b757299"
+  }
+}

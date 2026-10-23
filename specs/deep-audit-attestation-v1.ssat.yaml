@@ -31,7 +31,7 @@ invariants:
         symbol: compare_deep_audits
         max_lines: 90
 tests:
-  - path: tests/test_deep_audit_attestation.py
-    command: py -3.11 -m pytest -q tests/test_deep_audit_attestation.py
-  - path: tests/test_deep_audit_loop.py
-    command: py -3.11 -m pytest -q tests/test_deep_audit_loop.py
+  - path: tests/test_deep_audit_surfaces.py
+    command: py -3.11 -m pytest -q tests/test_deep_audit_surfaces.py::test_fresh_independent_attestation_verifies tests/test_deep_audit_surfaces.py::test_future_or_stale_attestation_fails_closed tests/test_deep_audit_surfaces.py::test_attestation_validity_window_and_clock_policy_are_bounded tests/test_deep_audit_surfaces.py::test_analyzer_self_attestation_and_coverage_mismatch_are_rejected tests/test_deep_audit_surfaces.py::test_signature_and_receipt_binding_fail_closed tests/test_deep_audit_surfaces.py::test_strict_comparison_requires_and_reports_attestations tests/test_deep_audit_surfaces.py::test_cli_attestation_returns_verified_receipt
+  - path: tests/test_deep_audit_surfaces.py
+    command: py -3.11 -m pytest -q tests/test_deep_audit_surfaces.py::test_same_receipt_stagnates_without_authority tests/test_deep_audit_surfaces.py::test_changed_policy_blocks tests/test_deep_audit_surfaces.py::test_lost_coverage_blocks tests/test_deep_audit_surfaces.py::test_new_finding_and_new_blocker_regress tests/test_deep_audit_surfaces.py::test_reduction_then_human_only_closure tests/test_deep_audit_surfaces.py::test_invalid_and_escaping_inputs_block tests/test_deep_audit_surfaces.py::test_graph_has_six_non_authorizing_stages tests/test_deep_audit_surfaces.py::test_projection_bound_and_stale_observation tests/test_deep_audit_surfaces.py::test_compare_cli tests/test_deep_audit_surfaces.py::test_run_details_retains_trace_observations_and_missing_bindings tests/test_deep_audit_surfaces.py::test_trace_display_is_bounded_without_hiding_counts tests/test_deep_audit_surfaces.py::test_trace_projection_rejects_noncanonical_paths tests/test_deep_audit_surfaces.py::test_trace_error_remains_visible_without_invented_observations tests/test_deep_audit_surfaces.py::test_trace_projection_never_matches_replay_with_changed_identity
