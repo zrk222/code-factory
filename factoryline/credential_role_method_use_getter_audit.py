@@ -2674,7 +2674,13 @@ def _literal_field_identity(literal, member, row):
 def snapshot_candidates(index):
     """Return cached attribute and call candidates only for source snapshots that still validate."""
     signature = tuple(
-        (path, index.inventory.get(path), id(tree))
+        (
+            path,
+            index.inventory.get(path),
+            id(tree),
+            id(index.source_bytes.get(path)),
+            getattr(tree, "_oracle_source_sha256", None),
+        )
         for path, tree in index.snapshots.items()
     )
     cached = getattr(index, "_credential_method_getter_candidates", None)

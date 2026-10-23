@@ -740,3 +740,50 @@ def test_exact_receiver_class_resolves_only_unique_local_constructor(tmp_path):
         identity.exact_receiver_class(path, other_receiver, index, {}, classes, None)
         is None
     )
+
+
+def test_module_fixture_evidence_requires_selected_settings_and_exact_module_owner(
+    tmp_path,
+):
+    path, tree, source = _captured_identity_source(
+        tmp_path,
+        "PASSWORD = 'local-fixture'\ndef helper():\n    PASSWORD = 'nested-fixture'\n",
+    )
+    assert source.validate(path)
+    index = {"source": source, "modules": {path: tree}, "configuration_bytes": {}}
+    assert (
+        identity.module_fixture_credential_evidence(
+            index, path, tree.body[0], "PASSWORD"
+        )
+        is None
+    )
+    assert (
+        identity.module_fixture_evidence_for_binding(
+            index, path, tree.body[0], "PASSWORD"
+        )
+        is None
+    )
+    assert (
+        identity.module_fixture_evidence_for_binding(
+            index, path, tree.body[1].body[0], "PASSWORD"
+        )
+        is None
+    )
+
+
+def test_module_fixture_predicate_epoch_tracks_native_code_replacement(monkeypatch):
+    from factoryline import credential_role_constructor_provider as provider
+
+    epoch = identity.module_fixture_helper_epoch()
+    assert identity.module_fixture_evidence_for_binding in epoch
+    assert identity.module_fixture_credential_evidence in epoch
+    before = provider._helper_snapshot(identity.module_fixture_helper_epoch)
+    original = identity.module_fixture_evidence_for_binding
+
+    def changed(*args):
+        return None
+
+    with monkeypatch.context() as patch:
+        patch.setattr(original, "__code__", changed.__code__)
+        assert provider._helper_snapshot(identity.module_fixture_helper_epoch) != before
+    assert provider._helper_snapshot(identity.module_fixture_helper_epoch) == before

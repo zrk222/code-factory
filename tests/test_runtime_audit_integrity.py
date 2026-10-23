@@ -1,3 +1,6 @@
+import hashlib
+from factoryline import review_audits
+from factoryline import runtime_audit_integrity as runtime
 import pytest
 from factoryline.runtime_audit import evaluate_runtime_audit
 from factoryline.runtime_audit_integrity import index_executions, repair_guidance
@@ -1458,3 +1461,205 @@ def test_extracted_runtime_helpers_invalidate_native_cache(
             patch.setattr(original, "__code__", replacement.__code__)
         assert audit._oracle_context_cache_key(tmp_path, [], {}) != before
     assert audit._oracle_context_cache_key(tmp_path, [], {}) == before
+
+
+def test_tenant_scope_read_retains_unique_binding_and_rejects_ambiguity():
+    row = runtime.tenant_scope_read(
+        review_audits, "Tenant.get", {"Tenant.get": ["tenant_id"]}
+    )
+    assert row == {"call": "Tenant.get", "binding": "tenant_id"}
+    assert runtime.tenant_scope_read(review_audits, "Tenant.list", {}) == {
+        "call": "Tenant.list"
+    }
+    with pytest.raises(review_audits.ReviewAuditError, match="at most one binding"):
+        runtime.tenant_scope_read(
+            review_audits, "Tenant.get", {"Tenant.get": ["a", "b"]}
+        )
+
+
+def test_validate_tenant_scopes_revalidates_and_returns_scoped_reads(tmp_path):
+    (tmp_path / "app.py").write_text(
+        "class Tenant:\n    pass\ndef load(tenant_id):\n    return Tenant.get(tenant_id=tenant_id)\n",
+        encoding="utf-8",
+    )
+    scopes = {
+        "app.py": {
+            "calls": ["Tenant.get"],
+            "bindings": {"Tenant.get": ["keyword:tenant_id:tenant_id"]},
+        }
+    }
+    result = runtime.validate_tenant_scopes(review_audits, tmp_path, scopes)
+    assert result["app.py"]["calls"] == ("Tenant.get",)
+    assert result["app.py"]["bindings"] == {
+        "Tenant.get": ("keyword:tenant_id:tenant_id",)
+    }
+    with pytest.raises(review_audits.ReviewAuditError):
+        runtime.validate_tenant_scopes(
+            review_audits, tmp_path, {"../escape.py": scopes["app.py"]}
+        )
+
+
+def test_fixed_literal_program_witness_binds_literal_bytes_and_refuses_mutation():
+    raw = b"exec('answer = 42')\n"
+    call = next(node for node in ast.walk(ast.parse(raw)) if isinstance(node, ast.Call))
+    witness = runtime.fixed_literal_program_witness(
+        call,
+        "exec",
+        source_bytes=raw,
+        builtin_identity_proven=True,
+        source_path="app.py",
+        scope_profile="module",
+    )
+    assert witness["disposition"] == "PROVEN_FIXED_LITERAL_PROGRAM"
+    assert witness["source_sha256"] == hashlib.sha256(raw).hexdigest()
+    assert witness["profile"]["target_execution"] == "not_performed"
+    dynamic = b"exec(input())\n"
+    dynamic_call = next(
+        node for node in ast.walk(ast.parse(dynamic)) if isinstance(node, ast.Call)
+    )
+    assert (
+        runtime.fixed_literal_program_witness(
+            dynamic_call,
+            "exec",
+            source_bytes=dynamic,
+            builtin_identity_proven=True,
+            source_path="app.py",
+        )
+        == {}
+    )
+
+
+def test_workspace_builtin_profile_requires_complete_hashable_snapshot(tmp_path):
+    path = tmp_path / "a.py"
+    tree = ast.parse("value = 1\n")
+    tree._oracle_source_sha256 = hashlib.sha256(
+        path.read_bytes() if path.exists() else b"value = 1\n"
+    ).hexdigest()
+    profile = runtime.workspace_builtin_profile({path: tree}, [path])
+    assert profile["complete"] is True
+    assert profile["namespace_mutation_risk"] is False
+    shadowed = ast.parse("globals()['exec']('x=1')\n")
+    shadowed._oracle_source_sha256 = tree._oracle_source_sha256
+    assert (
+        runtime.workspace_builtin_profile({path: shadowed}, [path])[
+            "namespace_mutation_risk"
+        ]
+        is True
+    )
+
+
+def test_oracle_bound_row_rejects_source_digest_and_test_identity_mismatch(tmp_path):
+    test_path = tmp_path / "test_case.py"
+    raw = b"def test_example():\n    assert 2 == 2\n"
+    test_path.write_bytes(raw)
+    digest = hashlib.sha256(raw).hexdigest()
+    row = {
+        "path": "test_case.py",
+        "test_sha256": digest,
+        "mutation": {"source_path": "app.py", "source_sha256": "source-digest"},
+        "symbol": "test_example",
+        "line": 1,
+        "baseline": {"case_ids": ["test_case.py::test_example"]},
+    }
+    runtime.oracle_bound_row(
+        review_audits,
+        tmp_path,
+        row,
+        {"test_case.py": digest, "app.py": "source-digest"},
+    )
+    with pytest.raises(review_audits.ReviewAuditError, match="source binding"):
+        runtime.oracle_bound_row(
+            review_audits, tmp_path, row, {"test_case.py": digest, "app.py": "wrong"}
+        )
+
+
+def test_native_execution_helper_factory_drives_assertion_probe_from_ast():
+    helpers = runtime.native_execution_helpers()
+    probe_builder = next(
+        helper for helper in helpers if helper.__name__ == "native_test_probe"
+    )
+    test_node = ast.parse(
+        "def test_contract():\n    assert value == 3\n    invoke()\n"
+    ).body[0]
+    probe = probe_builder("tests/test_contract.py", test_node)
+    assert probe["available"] is True
+    assert probe["assertion_lines"] == [2]
+    assert probe["call_available"] is True
+    assert probe["call_lines"] == [3]
+    empty = probe_builder(
+        "tests/test_empty.py", ast.parse("def test_empty():\n    pass\n").body[0]
+    )
+    assert empty["available"] is False and empty["call_available"] is False
+
+
+def test_credential_and_finite_template_helper_factories_return_working_validators():
+    validators = runtime.credential_validation_helpers()
+    operation_check = next(
+        helper for helper in validators if helper.__name__ == "_closed_shell_operation"
+    )
+    assert operation_check("upx --best app") == "executable_packing"
+    assert operation_check("upx --best app; rm -rf /") is None
+    capture_helpers = runtime.finite_template_input_helpers()
+    hash_builder = next(
+        helper
+        for helper in capture_helpers
+        if helper.__name__ == "finite_template_program_hashes"
+    )
+    template = (
+        ast.parse('f"async def run({name}) -> None:\\n    pass\\n"').body[0].value
+    )
+    assert hash_builder(template, "name", ["tenant_id"]) is not None
+    assert hash_builder(template, "other", ["tenant_id"]) is None
+
+
+def test_tenant_contract_helper_factory_loads_real_contract_and_preserves_evidence(
+    tmp_path,
+):
+    (tmp_path / "app.py").write_text(
+        "def read(store):\n    return store.get()\n", encoding="utf-8"
+    )
+    contract = {
+        "schema": "factory.tenant-read-contract.v2",
+        "reads": [
+            {
+                "path": "app.py",
+                "reads": [{"call": "store.get", "binding": "position:0:tenant_id"}],
+            }
+        ],
+    }
+    (tmp_path / ".factory").mkdir()
+    (tmp_path / ".factory" / "tenant-read-contract.json").write_text(
+        json.dumps(contract), encoding="utf-8"
+    )
+    loader = runtime.tenant_contract_helpers(review_audits)[0]
+    calls, bindings, evidence = loader(review_audits, tmp_path)
+    assert calls == () and bindings == ()
+    assert evidence["state"] == "loaded"
+    assert evidence["scoped_reads"]["app.py"]["calls"] == ("store.get",)
+    contract["extra"] = True
+    (tmp_path / ".factory" / "tenant-read-contract.json").write_text(
+        json.dumps(contract), encoding="utf-8"
+    )
+    with pytest.raises(review_audits.ReviewAuditError):
+        loader(review_audits, tmp_path)
+
+
+def test_runtime_oracle_reconciliation_fails_closed_without_signed_evidence(tmp_path):
+    core = {"audit_coverage": {"complete": True}}
+    with pytest.raises(review_audits.ReviewAuditError, match="requires receipt"):
+        runtime.reconcile_runtime_oracles(
+            review_audits, tmp_path, core, (None, None, None, None)
+        )
+
+
+def test_repository_workspace_batch_enforces_deadline_before_consuming_state():
+    class Expired(RuntimeError):
+        pass
+
+    class Engine:
+        def _full_repository_check_soft_deadline(self, deadline):
+            assert deadline == 0
+            raise Expired("soft deadline reached")
+
+    with pytest.raises(Expired, match="soft deadline"):
+        runtime.full_repository_workspace_scan_batch(Engine(), {}, review_audits, [], 0)

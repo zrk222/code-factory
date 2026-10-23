@@ -895,6 +895,10 @@ class _Audit:
     def _name(node):
         return ast.unparse(node)
 
+    @staticmethod
+    def _bound_names(node):
+        return audit._bound_names(node)
+
 
 def _snapshot(tmp_path, sources):
     snapshots, source_bytes, inventory, paths = {}, {}, {}, {}
@@ -1081,3 +1085,701 @@ def test_constructor_epoch_tracks_extracted_snapshot_validation(monkeypatch, mut
     assert provider._constructor_provider_epoch() != before
     monkeypatch.undo()
     assert provider._constructor_provider_epoch() == before
+
+
+@pytest.mark.parametrize(
+    "source,aliases,expected",
+    [
+        (
+            "import requests as rq\ndef build():\n s = rq.Session()\n return s\n",
+            {"rq": "requests"},
+            {"build"},
+        ),
+        (
+            "import requests as rq\ndef build():\n s = rq.Session()\n return other\n",
+            {"rq": "requests"},
+            set(),
+        ),
+        (
+            "import requests as rq\ndef build():\n s = rq.Session()\n return s\n",
+            {"rq": "unmodeled"},
+            set(),
+        ),
+    ],
+)
+def test_source_session_factory_returns_only_the_created_canonical_session(
+    source, aliases, expected
+):
+    assert source_session_factories(ast.parse(source), aliases) == expected
+
+
+@pytest.mark.parametrize(
+    "expression,aliases,expected",
+    [
+        (
+            "requests.auth.HTTPBasicAuth('user', secret)",
+            {"requests": "requests"},
+            "secret",
+        ),
+        (
+            "httpx.BasicAuth(username='user', password=secret)",
+            {"httpx": "httpx"},
+            "secret",
+        ),
+        (
+            "requests.auth.HTTPBasicAuth('user', secret, mode)",
+            {"requests": "requests"},
+            None,
+        ),
+        (
+            "foreign.HTTPBasicAuth('user', secret)",
+            {"requests": "requests"},
+            None,
+        ),
+    ],
+)
+def test_auth_constructor_password_slot_is_exact(expression, aliases, expected):
+    from pathlib import Path
+
+    path = Path("auth.py")
+    call = ast.parse(expression).body[0].value
+    result = auth_constructor_password(call, path, {path: aliases})
+    assert (ast.unparse(result) if result is not None else None) == expected
+
+
+@pytest.mark.parametrize(
+    "sources,imports,expected",
+    [
+        (
+            {
+                "base.py": "class Root: pass\nclass Middle(Root): pass\n",
+                "leaf.py": "from base import Middle\nclass Leaf(Middle): pass\n",
+            },
+            "imported",
+            [("leaf.py", "Leaf"), ("base.py", "Middle"), ("base.py", "Root")],
+        ),
+        (
+            {"leaf.py": "class Leaf(MissingBase): pass\n"},
+            "unresolved",
+            None,
+        ),
+    ],
+)
+def test_class_chain_resolves_captured_c3_and_rejects_unknown_base(
+    tmp_path, sources, imports, expected
+):
+    index, paths = _snapshot(tmp_path, sources)
+    classes = {
+        (path, node.name): node
+        for path, tree in index.snapshots.items()
+        for node in tree.body
+        if isinstance(node, ast.ClassDef)
+    }
+    import_map = {path: {} for path in index.snapshots}
+    if imports == "imported":
+        import_map[paths["leaf.py"]]["Middle"] = (paths["base.py"], "Middle")
+    chain = class_chain(index, paths["leaf.py"], "Leaf", import_map, classes, _Audit())
+    if expected is None:
+        assert chain is None
+        return
+    assert [
+        (path.relative_to(tmp_path).as_posix(), name) for path, name, _ in chain
+    ] == expected
+
+
+@pytest.mark.parametrize(
+    "source,expected",
+    [
+        (
+            "class Client:\n def send(self):\n  return self.request(url)\n",
+            True,
+        ),
+        (
+            "class Client:\n @staticmethod\n def send(self):\n  return self.request(url)\n",
+            False,
+        ),
+        (
+            "class Client:\n def send(this):\n  return this.request(url)\n",
+            False,
+        ),
+    ],
+)
+def test_instance_receiver_contract_requires_direct_instance_method(
+    tmp_path, source, expected
+):
+    path = tmp_path / "receiver.py"
+    raw = source.encode()
+    digest = hashlib.sha256(raw).hexdigest()
+    tree = ast.parse(raw)
+    tree._oracle_source_sha256 = digest
+    index = SourceSnapshotIndex(tmp_path, {path: tree}, {path: raw}, {path: digest})
+    assert index.validate(path)
+    owner = tree.body[0]
+    function = (
+        owner.body[-1]
+        if source.startswith("class Client:\n @staticmethod")
+        else owner.body[0]
+    )
+    call = next(node for node in ast.walk(function) if isinstance(node, ast.Call))
+    from factoryline.credential_role_constructor_provider import instance_receiver
+
+    assert instance_receiver(call, function, owner, index, path) is expected
+
+
+@pytest.mark.parametrize(
+    "source,name,expected_lines",
+    [
+        ("endpoint = first\nendpoint = second\n", "endpoint", [1, 2]),
+        ("def nested():\n    endpoint = hidden\n", "endpoint", []),
+        ("if ready:\n    endpoint = value\n", "endpoint", [2]),
+    ],
+)
+def test_binding_occurrences_contract_respects_real_scope_and_statement_rows(
+    source, name, expected_lines
+):
+    from factoryline.credential_role_constructor_provider import binding_occurrences
+
+    tree = ast.parse(source)
+    rows = binding_occurrences(tree.body, name)
+    assert sorted(row.lineno for row in rows) == expected_lines
+
+
+@pytest.mark.parametrize(
+    "constructor,client_call,expected_roles",
+    [
+        (
+            "self.endpoint = endpoint",
+            'sess.request("POST", url)',
+            [
+                "declared_literal",
+                "client_class_selection",
+                "constructor_argument",
+                "constructor_parameter",
+                "constructor_field_binding",
+                "canonical_http_url_consumer",
+            ],
+        ),
+        ("self.endpoint = transform(endpoint)", 'sess.request("POST", url)', None),
+        ("self.endpoint = endpoint", 'sess.request("POST", other_url)', None),
+    ],
+)
+def test_constructor_url_hops_contract_preserves_only_exact_transfer(
+    tmp_path, constructor, client_call, expected_roles
+):
+    hops = _case(tmp_path, client_call, constructor)
+    if expected_roles is None:
+        assert hops is None
+        return
+    assert [hop["role"] for hop in hops] == expected_roles
+    assert all(len(hop["source_sha256"]) == 64 for hop in hops)
+    assert all({"path", "line", "column"} <= hop.keys() for hop in hops)
+
+
+def test_captured_name_and_scope_helpers_resolve_exact_source_rows(tmp_path):
+    from factoryline.credential_role_constructor_provider import (
+        binding_statements,
+        class_binding,
+        function_bindings,
+        import_is_stable,
+        match_name,
+        module_literal_binding,
+        resolve_class,
+        resolve_class_chain,
+        scope_class,
+    )
+
+    index, paths = _snapshot(
+        tmp_path,
+        {
+            "base.py": "class Base: pass\n",
+            "use.py": (
+                "from base import Base as Parent\n"
+                "TOKEN = 'https://example.invalid/token'\n"
+                "class Client(Parent):\n"
+                "    endpoint = TOKEN\n"
+                "    def send(self, value):\n"
+                "        local = value\n"
+                "        return self.endpoint, local\n"
+            ),
+        },
+    )
+    base, use = paths["base.py"], paths["use.py"]
+    classes = {
+        (path, node.name): node
+        for path, tree in index.snapshots.items()
+        for node in tree.body
+        if isinstance(node, ast.ClassDef)
+    }
+    imports = {base: {}, use: {"Parent": (base, "Base")}}
+    tree = index.snapshots[use]
+    owner = next(node for node in tree.body if isinstance(node, ast.ClassDef))
+    method = next(node for node in owner.body if isinstance(node, ast.FunctionDef))
+    local = next(
+        node
+        for node in ast.walk(method)
+        if isinstance(node, ast.Name)
+        and node.id == "local"
+        and isinstance(node.ctx, ast.Store)
+    )
+    token = tree.body[1]
+    token_name = (
+        next(
+            node
+            for node in ast.walk(method)
+            if isinstance(node, ast.Name)
+            and node.id == "TOKEN"
+            and isinstance(node.ctx, ast.Load)
+        )
+        if any(
+            isinstance(node, ast.Name) and node.id == "TOKEN"
+            for node in ast.walk(method)
+        )
+        else next(
+            node
+            for node in ast.walk(owner)
+            if isinstance(node, ast.Name) and node.id == "TOKEN"
+        )
+    )
+
+    assert resolve_class(use, ast.Name("Parent"), imports, classes) == (base, "Base")
+    chain = resolve_class_chain(index, use, "Client", imports, classes, _Audit())
+    assert [(path, name) for path, name, _ in chain] == [
+        (use, "Client"),
+        (base, "Base"),
+    ]
+    assert scope_class(method, index, use) is owner
+    assert class_binding(owner, "endpoint", index.parents[use]) is not None
+    assert binding_statements(method.body, "local") == [method.body[0]]
+    assert function_bindings(method, "value", _Audit()) is None
+    assert function_bindings(method, "local", _Audit()) == [method.body[0]]
+    assert import_is_stable(use, "Parent", index, _Audit())
+    fact = declaration_fact(index, use, token)
+    assert fact is not None
+    module_token = next(
+        node
+        for node in ast.walk(token)
+        if isinstance(node, ast.Name) and node.id == "TOKEN"
+    )
+    assert module_literal_binding(fact, use, index, module_token, _Audit())
+    assert match_name(
+        fact, use, module_token, None, index, imports, classes, _Audit(), ()
+    )
+    assert local is not None and token_name is not None
+
+
+def test_provider_selector_and_field_alias_helpers_apply_source_edges(tmp_path):
+    from factoryline.credential_role_constructor_provider import (
+        capture_holder_instances,
+        class_index,
+        field_alias_path,
+        init_override,
+        instance_selector_edges,
+    )
+
+    index, paths = _snapshot(
+        tmp_path,
+        {
+            "adapter.py": "class Adapter: pass\nclass Client: pass\nadapter = Client()\n",
+            "base.py": "class Base:\n    def __init__(self, endpoint):\n        self.endpoint = endpoint\n",
+        },
+    )
+    assert all(index.validate(path) for path in index.snapshots)
+    adapter = paths["adapter.py"]
+    tree = index.snapshots[adapter]
+    aliases = {}
+    owners = {"captured_Client"}
+    roots = set()
+    filtered = {}
+    fields = {}
+
+    def resolve(node, known):
+        name = ast.unparse(node)
+        return {"Client": "captured_Client", "adapter": "captured_Adapter"}.get(
+            name, known.get(name, name)
+        )
+
+    assert capture_holder_instances(
+        tree,
+        index.parents[adapter],
+        aliases,
+        owners,
+        roots,
+        adapter,
+        filtered,
+        fields,
+        resolve,
+    )
+    assert aliases["adapter"] == "captured_Client"
+    assert "captured_Client.client_class" in roots
+    holder_tree = ast.parse("holder.client_class = selected.client_class\n")
+    selector_roots = {"captured_Client.client_class"}
+    selector_owners = set()
+    selector_filtered = {}
+
+    # Use a directly parsed mapping callback to exercise the selector edge contract.
+    def selector_resolve(node, _aliases):
+        return {
+            "holder": "captured_Adapter",
+            "selected.client_class": "captured_Client.client_class",
+        }.get(ast.unparse(node))
+
+    assert instance_selector_edges(
+        holder_tree,
+        {},
+        selector_owners,
+        selector_roots,
+        paths["base.py"],
+        selector_filtered,
+        selector_resolve,
+    )
+    assert selector_owners == {"captured_Adapter"}
+    assert "captured_Adapter.client_class" in selector_roots
+    assert (
+        field_alias_path(
+            "captured_Adapter.client_class",
+            {"captured_Adapter.client_class": "captured_Client.client_class"},
+        )
+        == "captured_Client.client_class"
+    )
+    base_tree = index.snapshots[paths["base.py"]]
+    base_owner = next(node for node in base_tree.body if isinstance(node, ast.ClassDef))
+    assert init_override(base_owner, index.parents[paths["base.py"]]) is True
+    class_aliases = {
+        path: {
+            node.name: "captured_" + node.name
+            for node in module.body
+            if isinstance(node, ast.ClassDef)
+        }
+        for path, module in index.snapshots.items()
+    }
+    assert class_index(index, class_aliases)["captured_Adapter"][0] == adapter
+    assert class_index(index, {path: {} for path in index.snapshots}) == {}
+
+
+def test_constructor_provider_epochs_and_candidate_selection_are_live(tmp_path):
+    from factoryline.credential_role_constructor_provider import (
+        _helper_snapshot,
+        candidate_facts,
+        constructor_provider_helper_epoch,
+        constructor_provider_model,
+        constructor_provider_model_helper_epoch,
+        constructor_provider_provenance_epoch,
+        helper_epochs_valid,
+        url_use,
+    )
+
+    index, paths = _snapshot(
+        tmp_path,
+        {"source.py": "TOKEN = 'https://user:password@example.invalid/token'\n"},
+    )
+    path = paths["source.py"]
+    tree = index.snapshots[path]
+    fact = declaration_fact(index, path, tree.body[0])
+    sink_expression = ast.parse("TOKEN").body[0].value
+    candidates = candidate_facts(
+        index, index.snapshots, [(None, None, None, None, sink_expression)], set()
+    )
+    assert candidates == [fact]
+    evidence = {"known_auth_uses": [], "url_witnesses": [], "linked_unknown_uses": []}
+    url_use(fact, {"source": "consumer"}, evidence, set())
+    assert evidence["known_auth_uses"] == [
+        {"source": "consumer", "slot": "http_url_userinfo"}
+    ]
+    selected_model = constructor_provider_model(
+        set(),
+        index,
+        {path: {}},
+        lambda _path, _tree, _imports, _index: {},
+        lambda *_args: False,
+    )
+    assert selected_model is not None and selected_model[0] == set()
+    for epoch in (
+        constructor_provider_provenance_epoch,
+        constructor_provider_model_helper_epoch,
+        constructor_provider_helper_epoch,
+    ):
+        values = epoch()
+        assert isinstance(values, tuple) and values
+        assert helper_epochs_valid({id(epoch): (epoch, _helper_snapshot(epoch))})
+
+
+def test_factory_and_parameter_helpers_require_exact_direct_transfer(tmp_path):
+    from factoryline.credential_role_constructor_provider import (
+        build_hops,
+        direct_factory_call,
+        exact_parameter_field,
+    )
+
+    index, paths = _snapshot(
+        tmp_path,
+        {
+            "adapter.py": "TOKEN = 'https://example.invalid/token'\n",
+            "client.py": (
+                "class Client:\n"
+                "    def __init__(self, endpoint):\n"
+                "        self.endpoint = endpoint\n"
+                "    def build(self):\n"
+                "        return Client(self.TOKEN)\n"
+                "    def send(self, session):\n"
+                "        return session.request('POST', self.endpoint)\n"
+            ),
+        },
+    )
+    assert all(index.validate(path) for path in index.snapshots)
+    client_path = paths["client.py"]
+    client = index.snapshots[client_path].body[0]
+    ctor, factory, send = client.body
+    assignment = ctor.body[0]
+    return_call = factory.body[0].value
+    assert direct_factory_call(return_call, factory, index, client_path)
+    assert exact_parameter_field(ctor, assignment, "endpoint", index, client_path)
+    assert not exact_parameter_field(ctor, assignment, "missing", index, client_path)
+    fact = declaration_fact(
+        index, paths["adapter.py"], index.snapshots[paths["adapter.py"]].body[0]
+    )
+    sink = send.body[0].value
+    hops = build_hops(
+        fact,
+        index,
+        client_path,
+        return_call.func,
+        (client_path, return_call.func),
+        return_call,
+        factory,
+        ctor,
+        assignment,
+        sink,
+        "endpoint",
+        client_path,
+        client_path,
+        client_path,
+    )
+    assert [hop["role"] for hop in hops] == [
+        "declared_literal",
+        "client_class_selection",
+        "constructor_argument",
+        "constructor_parameter",
+        "constructor_field_binding",
+        "canonical_http_url_consumer",
+    ]
+    assert hops[0]["path"] == "adapter.py"
+    assert all(hop["path"] == "client.py" for hop in hops[1:])
+    assert hops[-1]["line"] == sink.lineno
+    assert all(len(hop["source_sha256"]) == 64 for hop in hops)
+
+
+@pytest.mark.parametrize(
+    "expression,tail,reason",
+    [
+        ("Client.endpoint", ("endpoint",), None),
+        ("Client.endpoint = foreign", ("endpoint",), "member_write_or_unknown_access"),
+        (
+            "Client.endpoint.lower()",
+            ("endpoint", "lower"),
+            "member_transform_or_unknown_tail",
+        ),
+        ("opaque(Client)", (), "class_escape_or_reflection"),
+    ],
+)
+def test_direct_class_reads_retains_exact_member_and_rejects_ambiguous_edges(
+    expression, tail, reason
+):
+    tree = ast.parse("class Client: pass\n" + expression + "\n")
+    owner = tree.body[0]
+    parents = {
+        id(child): parent
+        for parent in ast.walk(tree)
+        for child in ast.iter_child_nodes(parent)
+    }
+    if tail:
+        node = next(
+            n
+            for n in ast.walk(tree.body[1])
+            if isinstance(n, ast.Attribute) and n.attr == tail[-1]
+        )
+    else:
+        node = tree.body[1].value.args[0]
+    graph = SimpleNamespace(
+        refs={("class", "source.py", "Client"): [("source.py", node, tail)]},
+        parents=parents,
+    )
+    reads, actual = provider.direct_class_reads(
+        graph, [("source.py", "Client", owner)], "endpoint"
+    )
+    assert actual == reason
+    assert reads == (
+        [] if reason else [("source.py", node, "source.py", "Client", None)]
+    )
+
+
+@pytest.mark.parametrize(
+    "method_source,reason",
+    [
+        ("def endpoint(self):\n    return self.endpoint", None),
+        ("def endpoint(self):\n    return opaque(self)", "receiver_escape_or_alias"),
+        (
+            "@property\ndef endpoint(self):\n    return self.endpoint",
+            "decorated_method_access",
+        ),
+    ],
+)
+def test_method_reads_preserves_direct_receiver_and_rejects_escape(
+    method_source, reason
+):
+    tree = ast.parse(method_source)
+    method = tree.body[0]
+    parents = {
+        id(child): parent
+        for parent in ast.walk(tree)
+        for child in ast.iter_child_nodes(parent)
+    }
+    graph = SimpleNamespace(parents=parents, _walk=ast.walk)
+    reads, actual = provider.method_reads(
+        graph, {"endpoint": ("source.py", "Client", method)}, "endpoint"
+    )
+    assert actual == reason
+    if reason:
+        assert reads == []
+    else:
+        assert reads == [
+            ("source.py", method.body[0].value, "source.py", "Client", "endpoint")
+        ]
+
+
+@pytest.mark.parametrize(
+    "contracts,accepted",
+    [
+        ({"external.Base": "caller-reviewed terminal"}, True),
+        ({}, False),
+        ({"external.Base": ""}, False),
+        ({"Base": "unqualified"}, False),
+    ],
+)
+def test_external_terminal_resolution_requires_exact_explicit_contract(
+    tmp_path, contracts, accepted
+):
+    index, paths = _snapshot(
+        tmp_path, {"source.py": "from external import Base\nclass Client(Base): pass\n"}
+    )
+    path = paths["source.py"]
+    owner = index.snapshots[path].body[1]
+    result = provider.resolve_class_chain_with_terminals(
+        index,
+        path,
+        "Client",
+        {path: {}},
+        {(path, "Client"): owner},
+        audit,
+        contracts,
+    )
+    if accepted:
+        assert result == {
+            "chain": [(path, "Client", owner)],
+            "terminal_assumptions": [
+                {"canonical": "external.Base", "contract": "caller-reviewed terminal"}
+            ],
+        }
+    else:
+        assert result is None
+
+
+@pytest.mark.parametrize(
+    "declaration,suffix,accepted",
+    [
+        ("class Client: pass", "isinstance(value, Client)", True),
+        ("class Client(metaclass=opaque): pass", "isinstance(value, Client)", False),
+        (
+            "class Client: pass",
+            "Client.__bases__ = supplied\nisinstance(value, Client)",
+            False,
+        ),
+        (
+            "class Client: pass",
+            "def probe(Client):\n    return isinstance(value, Client)",
+            False,
+        ),
+    ],
+)
+def test_ordinary_type_operand_requires_captured_stable_class(
+    tmp_path, declaration, suffix, accepted
+):
+    index, paths = _snapshot(
+        tmp_path, {"source.py": declaration + "\n" + suffix + "\n"}
+    )
+    path = paths["source.py"]
+    assert index.validate(path)
+    tree = index.snapshots[path]
+    aliases = {"Client": "source.Client"}
+    classes = {"source.Client": (path, tree.body[0], aliases, tree)}
+    operand = next(
+        n
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Call)
+        and isinstance(n.func, ast.Name)
+        and n.func.id == "isinstance"
+    ).args[1]
+    assert (
+        provider.ordinary_type_operand(
+            operand,
+            tree,
+            index.parents[path],
+            index,
+            classes,
+            aliases,
+            {"source.Client"},
+            {path: aliases},
+        )
+        is accepted
+    )
+    assert not provider.ordinary_type_operand(
+        ast.Constant(1),
+        tree,
+        index.parents[path],
+        index,
+        classes,
+        aliases,
+        {"source.Client"},
+        {path: aliases},
+    )
+
+
+@pytest.mark.parametrize(
+    "body,stable,accepted",
+    [
+        ("return None", True, True),
+        ("return opaque(value)", True, False),
+        ("return None", False, False),
+    ],
+)
+def test_source_owner_consumer_requires_closed_classmethod_effects(
+    tmp_path, body, stable, accepted
+):
+    source = (
+        "class Value: pass\nclass Consumer:\n    @classmethod\n    def inspect(cls, value):\n        "
+        + body
+        + "\nConsumer.inspect(Value)\n"
+    )
+    index, paths = _snapshot(tmp_path, {"source.py": source})
+    path = paths["source.py"]
+    assert index.validate(path)
+    tree = index.snapshots[path]
+    aliases = {"Value": "source.Value", "Consumer": "source.Consumer"}
+    classes = {
+        "source." + node.name: (path, node, aliases, tree)
+        for node in tree.body
+        if isinstance(node, ast.ClassDef)
+    }
+    node = tree.body[-1].value.args[0]
+    result = provider.source_owner_consumer(
+        node,
+        path,
+        tree,
+        index.parents[path],
+        index,
+        aliases,
+        classes,
+        {"source.Value"},
+        stable,
+        {path: aliases},
+    )
+    assert result == ("source.Consumer.inspect" if accepted else None)

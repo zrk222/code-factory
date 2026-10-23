@@ -346,3 +346,106 @@ def test_django_request_parameter_passes_resolved_scope_to_alias_reader(explicit
         is True
     )
     assert received == [(function, {}, function.body[0])]
+
+
+def test_precision257_semantic_sensor_request_upload_and_password_comparison():
+    import ast
+    from factoryline import semantic_credential_sensor as sensor
+
+    assert sensor.validation_modules() == (sensor,)
+    scope = ast.parse(
+        "from flask import request as req\nfiles = req.files\nfiles.get('upload')"
+    )
+    statement = scope.body[1]
+    expression = ast.parse("req.files['upload']", mode="eval").body
+
+    def collection(node, aliases, _scope, _statement, name):
+        return (
+            isinstance(node, ast.Attribute)
+            and node.attr == name
+            and aliases.get(node.value.id) == "flask.request"
+        )
+
+    assert (
+        sensor.flask_upload_expression(
+            expression, {"req": "flask.request"}, scope, statement, collection
+        )
+        is True
+    )
+    assert (
+        sensor.flask_upload_expression(
+            ast.parse("req.args['upload']", mode="eval").body,
+            {"req": "flask.request"},
+            scope,
+            statement,
+            collection,
+        )
+        is False
+    )
+    request_files = ast.parse("flask.request.files", mode="eval").body
+    assert (
+        sensor.flask_request_collection(
+            request_files,
+            {"flask": "flask"},
+            scope,
+            statement,
+            "files",
+            lambda *_: {"flask": "flask"},
+        )
+        is True
+    )
+    assert (
+        sensor.flask_request_collection(
+            ast.parse("flask.request.args", mode="eval").body,
+            {"flask": "flask"},
+            scope,
+            statement,
+            "files",
+            lambda *_: {"flask": "flask"},
+        )
+        is False
+    )
+    comparison = ast.parse("password == 'hardcoded-secret'", mode="eval").body
+
+    def password_source(node, _fields, *_):
+        return isinstance(node, ast.Name) and node.id == "password"
+
+    def literal_valid(node):
+        return isinstance(node, ast.Constant) and node.value == "hardcoded-secret"
+
+    finding = sensor.password_comparison_finding(
+        "app.py",
+        comparison,
+        {"password"},
+        {},
+        scope,
+        statement,
+        password_source,
+        literal_valid,
+    )
+    assert finding is not None and finding["severity"] == "CRITICAL"
+    safe = ast.parse("password != 'hardcoded-secret'", mode="eval").body
+    assert (
+        sensor.password_comparison_finding(
+            "app.py",
+            safe,
+            {"password"},
+            {},
+            scope,
+            statement,
+            password_source,
+            literal_valid,
+        )
+        is None
+    )
+    assert (
+        sensor.flask_request_collection(
+            ast.parse("flask.request.files", mode="eval").body,
+            {},
+            scope,
+            statement,
+            "files",
+            lambda *_: {},
+        )
+        is False
+    )

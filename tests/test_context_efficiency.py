@@ -4713,3 +4713,139 @@ def test_new_shared_provider_helpers_are_epoch_enrolled():
             _context_refactor._fixture_literal_evidence,
         )
     )
+
+
+def test_precision257_context_cache_round_trip_and_rejects_missing_fields(tmp_path):
+    from factoryline.context_efficiency import (
+        oracle_context_cache_context,
+        oracle_context_cache_record,
+    )
+
+    context = {
+        "helpers": {"h"},
+        "weak_helpers": set(),
+        "mixins": {"m"},
+        "pytest_inherited": set(),
+        "click_runners": set(),
+        "typecheck": True,
+        "negative_typecheck": True,
+        "flask_apps": {"app"},
+    }
+    encoded = oracle_context_cache_record(
+        tmp_path / "case.py", context, lambda value: {"encoded": value}
+    )
+    assert encoded["path"] == (tmp_path / "case.py").as_posix()
+    assert encoded["helpers"] == ["h"] and encoded["mixins"] == ["m"]
+    assert encoded["typecheck"] is True and encoded["negative_typecheck"] is True
+    decoded = oracle_context_cache_context(encoded, lambda value: value["encoded"])
+    assert decoded["helpers"] == {"h"} and decoded["flask_apps"] == {"app"}
+    assert decoded["negative_typecheck"] is True
+    import pytest
+
+    with pytest.raises(KeyError, match="weak_helpers"):
+        oracle_context_cache_context({"helpers": []}, lambda value: value)
+
+
+def test_precision257_context_profiles_and_fixture_binders_fail_closed():
+    from factoryline.context_efficiency import (
+        application_profile_configuration,
+        bind_application_fixture_context,
+        bind_django_fixture_context,
+        typecheck_cache_helpers,
+        async_runner_fixture_helpers,
+    )
+    from factoryline import intent_quality
+
+    raw = b"requests==2.31.0\n"
+    rows, binding, eligible = application_profile_configuration(
+        "root", lambda _root, name: raw if name == "requirements.txt" else b"", 64
+    )
+    assert rows == [
+        {
+            "path": "requirements.txt",
+            "sha256": __import__("hashlib").sha256(raw).hexdigest(),
+            "bytes": len(raw),
+        }
+    ]
+    assert binding == rows[0] and eligible is True
+    assert application_profile_configuration(
+        "root", lambda *_: (_ for _ in ()).throw(FileNotFoundError()), 64
+    ) == ([], {"path": "requirements.txt", "state": "missing"}, True)
+    assert application_profile_configuration("root", lambda *_: raw, 2) == (
+        [],
+        {"path": "requirements.txt", "state": "oversized"},
+        False,
+    )
+    snapshots, contexts, bindings = {}, {}, []
+    assert (
+        bind_application_fixture_context(
+            "root", snapshots, contexts, bindings, lambda *_: raw, 64
+        )
+        is None
+    )
+    assert (
+        bind_django_fixture_context(
+            "root", snapshots, contexts, bindings, lambda *_: raw, 64
+        )
+        is None
+    )
+    helpers = typecheck_cache_helpers(intent_quality)
+    assert helpers and all(callable(item) for item in helpers)
+    async_helpers = async_runner_fixture_helpers()
+    assert async_helpers and all(callable(item) for item in async_helpers)
+    assert async_helpers[0].__name__ == "_expected_exception_else_failure"
+
+
+def test_precision257_fixture_context_binders_record_empty_evidence_for_valid_capture(
+    tmp_path,
+):
+    import ast
+    import hashlib
+    from pathlib import Path
+    from factoryline.context_efficiency import (
+        bind_application_fixture_context,
+        bind_django_fixture_context,
+    )
+
+    root = Path(tmp_path)
+    source_path = root / "tests" / "test_app.py"
+    source_path.parent.mkdir()
+    raw_source = b"def test_app_configuration():\n    pass\n"
+    tree = ast.parse(raw_source)
+    raw_configs = {
+        "pyproject.toml": b"[tool.pytest.ini_options]\n",
+        "tox.ini": b"[pytest]\n",
+    }
+    bindings = [
+        {"path": name, "sha256": hashlib.sha256(raw).hexdigest()}
+        for name, raw in raw_configs.items()
+    ]
+
+    def read_source(_root, name):
+        return raw_configs[name]
+
+    inventory = {source_path: hashlib.sha256(raw_source).hexdigest()}
+    contexts = {source_path: {}}
+    bind_application_fixture_context(
+        root,
+        {source_path: tree},
+        contexts,
+        bindings,
+        read_source,
+        4096,
+        source_bytes={source_path: raw_source},
+        source_inventory=inventory,
+    )
+    assert contexts[source_path]["application_fixture_evidence"] == {}
+    django_contexts = {source_path: {}}
+    bind_django_fixture_context(
+        root,
+        {source_path: tree},
+        django_contexts,
+        bindings,
+        read_source,
+        4096,
+        source_bytes={source_path: raw_source},
+        source_inventory=inventory,
+    )
+    assert "django_fixture_evidence" not in django_contexts[source_path]

@@ -1994,3 +1994,82 @@ def test_negative_type_expectation_config_and_source_changes_invalidate_cache(tm
     )
     source.write_text("def test_negative():\n    pass\n", encoding="utf-8")
     assert security_scan(tmp_path)["finding_counts"].get("QUALITY_HOLLOW_TEST") == 1
+
+
+@pytest.mark.parametrize(
+    "body,expected", [("pass", True), ("assert True", True), ("opaque()", False)]
+)
+def test_obvious_empty_body_contract_keeps_opaque_calls_unresolved(body, expected):
+    from factoryline import type_intent_hollow as proof
+
+    node = ast.parse("def test_behavior():\n    " + body + "\n").body[0]
+    assert proof.obviously_empty_test_body(node) is expected
+
+
+def test_provider_capture_and_sole_type_oracle_require_current_closed_source():
+    from factoryline import type_intent_provider_provenance as provider
+
+    source = "from typing import assert_type\ndef test_behavior():\n    assert_type(1, int)\n"
+    proof, module, node, root, raw = _bound_unittest_test_node(source)
+    relative = "tests/test_fixture.py"
+    aliases = {"assert_type": "typing.assert_type"}
+    assert provider.owner_module_effects_closed(module, node, "typing.assert_type")
+    assert not provider.owner_module_effects_closed(
+        module, node, "typing_extensions.assert_type"
+    )
+    assert proof.captured_provider_context_closed(
+        module, relative, node, "typing.assert_type", None
+    )
+    assert proof.inert_type_assertion_only_oracle(
+        node,
+        aliases,
+        module_aliases=aliases,
+        scope_parameters=set(),
+        provider_mutated=lambda *_: False,
+        relative=relative,
+        provider_context_closed=proof.captured_provider_context_closed,
+    )
+    module._security_source_context[1][root / relative] = raw + b"opaque()\n"
+    assert not proof.captured_provider_context_closed(
+        module, relative, node, "typing.assert_type", None
+    )
+    assert not proof.inert_type_assertion_only_oracle(
+        node,
+        aliases,
+        module_aliases=aliases,
+        scope_parameters=set(),
+        provider_mutated=lambda *_: False,
+        relative=relative,
+        provider_context_closed=proof.captured_provider_context_closed,
+    )
+
+
+@pytest.mark.parametrize(
+    "comment,declared,expected",
+    [
+        ("# type: ignore", True, True),
+        ("# type: ignore", False, False),
+        ("# unrelated", True, False),
+    ],
+)
+def test_negative_checker_scope_is_exact_path_and_explicit_comment(
+    comment, declared, expected
+):
+    from factoryline import type_intent_hollow as proof
+
+    root = Path("C:/captured")
+    selected = root / "tests/negative.py"
+    other = root / "tests/other.py"
+    contexts = {selected: {}, other: {"negative_typecheck": True}}
+    proof.bind_negative_checker_context(
+        root,
+        contexts,
+        {"negative_typecheck_selected": ["tests/negative.py"] if declared else []},
+    )
+    assert contexts[other]["negative_typecheck"] is False
+    source = "def test_behavior():\n    value: str = 1 " + comment + "\n"
+    module = ast.parse(source)
+    module._oracle_source_lines = source.splitlines()
+    node = module.body[0]
+    node._oracle_module = module
+    assert proof.negative_type_expectation(node, contexts[selected]) is expected

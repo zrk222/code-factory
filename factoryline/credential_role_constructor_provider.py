@@ -736,6 +736,7 @@ class SourceSnapshotIndex:
             inventory,
         )
         self.validated, self.parents = {}, {}
+        self._validation_inputs = {}
         self._relative_root, self._relative_paths = self.root, {}
         self.bounded = (
             isinstance(inventory, dict)
@@ -747,12 +748,19 @@ class SourceSnapshotIndex:
 
     def validate(self, path):
         """Validate captured source bytes against the snapshot digest and AST, enforcing the one-megabyte source limit."""
-        if path in self.validated:
-            return self.validated[path]
         tree, raw = self.snapshots.get(path), self.source_bytes.get(path)
+        signature = (
+            self.inventory.get(path),
+            getattr(tree, "_oracle_source_sha256", None),
+        )
+        cached = self._validation_inputs.get(path)
+        if cached and cached[0] is tree and cached[1] is raw and cached[2] == signature:
+            return self.validated[path]
         digest = hashlib.sha256(raw).hexdigest() if isinstance(raw, bytes) else None
         valid = self._matches_snapshot(path, tree, raw, digest)
         self.validated[path] = valid
+        self._validation_inputs[path] = tree, raw, signature
+        self.parents.pop(path, None)
         if valid:
             self.parents[path] = {
                 id(child): node
