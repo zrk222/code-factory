@@ -260,27 +260,35 @@ def cached_import_bindings(value):
         return {}
     result = {}
     for name, binding in value.items():
-        if (
-            not isinstance(name, str)
-            or not name
-            or not isinstance(binding, (list, tuple))
-            or len(binding) != 2
-        ):
+        normalized = _cached_import_binding(name, binding)
+        if normalized is None:
             return {}
-        relative, symbol = binding
-        if (
-            not isinstance(relative, str)
-            or not relative
-            or relative.startswith("/")
-            or "\\" in relative
-            or ":" in relative
-            or ".." in relative.split("/")
-        ):
-            return {}
-        if symbol is not None and not isinstance(symbol, str):
-            return {}
-        result[name] = (relative, symbol)
+        result[name] = normalized
     return result
+
+
+def _cached_import_binding(name, binding):
+    if not isinstance(name, str) or not name:
+        return None
+    if not isinstance(binding, (list, tuple)) or len(binding) != 2:
+        return None
+    relative, symbol = binding
+    if not _cached_import_path(relative) or (
+        symbol is not None and not isinstance(symbol, str)
+    ):
+        return None
+    return relative, symbol
+
+
+def _cached_import_path(relative):
+    return (
+        isinstance(relative, str)
+        and bool(relative)
+        and not relative.startswith("/")
+        and "\\" not in relative
+        and ":" not in relative
+        and ".." not in relative.split("/")
+    )
 
 
 def typecheck_cache_helpers(contracts):
@@ -381,30 +389,14 @@ def bind_application_fixture_context(
         ).encode()
     ).hexdigest()
     for path, tree in snapshots.items():
-        evidence = {}
-        for node in ast.walk(tree):
-            if not isinstance(node, (ast.Assign, ast.AnnAssign)):
-                continue
-            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
-            literal = audit._secret_literal(node)
-            if (
-                len(targets) != 1
-                or literal is None
-                or not isinstance(targets[0], ast.Name)
-            ):
-                continue
-            if not audit._SECRET_ASSIGNMENT.search(targets[0].id):
-                continue
-            item = _application_literal_evidence(
+        contexts[path]["application_fixture_evidence"] = _fixture_literal_evidence(
+            tree,
+            audit,
+            lambda node, literal: _application_literal_evidence(
                 fixture, index, presentation, path, node, literal
-            )
-            if item.get("eligible") is True:
-                evidence[f"{node.lineno}:{node.col_offset}:{targets[0].id}"] = {
-                    **item,
-                    "inventory_sha256": digest,
-                    "configuration_sha256": config_hashes,
-                }
-        contexts[path]["application_fixture_evidence"] = evidence
+            ),
+            {"inventory_sha256": digest, "configuration_sha256": config_hashes},
+        )
 
 
 def _application_literal_evidence(fixture, index, presentation, path, node, literal):
@@ -462,24 +454,34 @@ def bind_django_fixture_context(
     if index is None:
         return
     for path, tree in snapshots.items():
-        evidence = {}
-        for node in ast.walk(tree):
-            if not isinstance(node, (ast.Assign, ast.AnnAssign)):
-                continue
-            literal = audit._secret_literal(node)
-            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
-            if literal is None or len(targets) != 1:
-                continue
-            if not isinstance(
-                targets[0], ast.Name
-            ) or not audit._SECRET_ASSIGNMENT.search(targets[0].id):
-                continue
-            item = fixture.django_test_secret_evidence(
+        contexts[path]["django_fixture_evidence"] = _fixture_literal_evidence(
+            tree,
+            audit,
+            lambda node, literal: fixture.django_test_secret_evidence(
                 index, path, node.value.lineno, literal
-            )
-            if item.get("eligible") is True:
-                evidence[f"{node.lineno}:{node.col_offset}:{targets[0].id}"] = item
-        contexts[path]["django_fixture_evidence"] = evidence
+            ),
+        )
+
+
+def _fixture_literal_evidence(tree, audit, resolve, metadata=None):
+    evidence = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.Assign, ast.AnnAssign)):
+            continue
+        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+        literal = audit._secret_literal(node)
+        target = targets[0] if len(targets) == 1 else None
+        if (
+            literal is None
+            or not isinstance(target, ast.Name)
+            or not audit._SECRET_ASSIGNMENT.search(target.id)
+        ):
+            continue
+        item = resolve(node, literal)
+        if item.get("eligible") is True:
+            key = f"{node.lineno}:{node.col_offset}:{target.id}"
+            evidence[key] = {**item, **metadata} if metadata else item
+    return evidence
 
 
 def _captured_fixture_configuration(root, bindings, read_source, limit):
@@ -534,8 +536,11 @@ def provider_context_cache_helpers(contracts):
         oracle_context_cache_context,
         oracle_context_cache_record,
         cached_import_bindings,
+        _cached_import_binding,
+        _cached_import_path,
         bind_django_fixture_context,
         bind_application_fixture_context,
+        _fixture_literal_evidence,
         _application_literal_evidence,
         application_profile_configuration,
         _application_profile_bytes,
@@ -1333,7 +1338,7 @@ def async_runner_fixture_context(root, files, snapshots):
             fixtures.update(local)
         if "*" in fixtures:
             fixtures = {name: {"trusted": False} for name in fixtures}
-        if fixtures or gaps:
+        if any((fixtures, gaps)):
             result[path.relative_to(root).as_posix()] = {
                 "schema": _ASYNC_RUNNER_CONTEXT_SCHEMA,
                 "module_sha256": source_sha,
@@ -5066,51 +5071,46 @@ def protocol_call_context(
         "audit": audit,
     }
     result = {}
-    for path, tree in snapshots.items():
+    for path in snapshots:
         relative = path.relative_to(root).as_posix()
-        try:
-            record = _protocol_source_record(path, state)
-        except ValueError as exc:
-            result[relative] = {
-                "schema": "factory.protocol-context.v1",
-                "summaries": [],
-                "gaps": [str(exc)],
-            }
-            continue
-        tests = [
-            n
-            for n in record["nodes"]
-            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
-            and n.name.startswith("test_")
-        ]
-        summaries = []
-        for test in tests:
-            test_nodes = list(ast.walk(test))
-            state["active_test_nodes"] = (
-                test,
-                test_nodes,
-                any(isinstance(n, (ast.Yield, ast.YieldFrom)) for n in test_nodes),
-            )
-            summaries.extend(
-                summary
-                for call in test_nodes
-                if isinstance(call, ast.Call)
-                if (
-                    summary := (
-                        _protocol_call_summary
-                        if isinstance(call.func, ast.Name) and call.func.id == "repr"
-                        else _protocol_demand_summary
-                    )(path, test, call, state)
-                )
-                is not None
-            )
-        if summaries:
-            result[relative] = {
-                "schema": "factory.protocol-context.v1",
-                "summaries": summaries,
-                "gaps": [],
-            }
+        summary = _protocol_context_for_snapshot(path, state)
+        if summary is not None:
+            result[relative] = summary
     return result
+
+
+def _protocol_context_for_snapshot(path, state):
+    try:
+        record = _protocol_source_record(path, state)
+    except ValueError as exc:
+        return dict(schema="factory.protocol-context.v1", summaries=[], gaps=[str(exc)])
+    summaries = []
+    for test in record["nodes"]:
+        is_function = isinstance(test, (ast.FunctionDef, ast.AsyncFunctionDef))
+        if not is_function or not test.name.startswith("test_"):
+            continue
+        test_nodes = list(ast.walk(test))
+        state["active_test_nodes"] = (
+            test,
+            test_nodes,
+            any(isinstance(node, (ast.Yield, ast.YieldFrom)) for node in test_nodes),
+        )
+        summaries.extend(
+            summary
+            for call in test_nodes
+            if isinstance(call, ast.Call)
+            if (
+                summary := (
+                    _protocol_call_summary
+                    if isinstance(call.func, ast.Name) and call.func.id == "repr"
+                    else _protocol_demand_summary
+                )(path, test, call, state)
+            )
+            is not None
+        )
+    if not summaries:
+        return None
+    return dict(schema="factory.protocol-context.v1", summaries=summaries, gaps=[])
 
 
 def _protocol_source_record(path, state):

@@ -1,3 +1,7 @@
+import re as _re_refactor
+from types import SimpleNamespace as _Namespace_refactor
+from factoryline import context_efficiency as _context_refactor
+from factoryline import review_audits as _audit_refactor
 import ast
 import io
 import json
@@ -4620,3 +4624,92 @@ def test_full_repository_scanner_identity_rejects_package_symlinks(
     monkeypatch.setattr(review_audits, "__file__", str(package / "review_audits.py"))
     with pytest.raises(RuntimeAuditError, match="SCANNER_DRIFT"):
         _full_repository_scanner_identity()
+
+
+@pytest.mark.parametrize(
+    "value, expected",
+    [
+        ({"x": ["pkg/source.py", None]}, {"x": ("pkg/source.py", None)}),
+        ({"x": ("pkg/source.py", "Member")}, {"x": ("pkg/source.py", "Member")}),
+        ({"x": ["../outside.py", None]}, {}),
+        ({"x": ["/absolute.py", None]}, {}),
+        ({"x": ["C:/absolute.py", None]}, {}),
+        ({"x": ["pkg\\source.py", None]}, {}),
+        ({"x": [[], None]}, {}),
+        ({"x": ["pkg/source.py", []]}, {}),
+        ({"": ["pkg/source.py", None]}, {}),
+        ({"x": ["pkg/source.py"]}, {}),
+    ],
+)
+def test_cached_import_bindings_preserve_scalar_boundary(value, expected):
+    assert _context_refactor.cached_import_bindings(value) == expected
+
+
+def test_cached_import_bindings_preserve_first_invalid_entry_shortcircuit():
+    class Poison(str):
+        def startswith(self, *args, **kwargs):
+            raise AssertionError("later entry was inspected")
+
+    assert (
+        _context_refactor.cached_import_bindings(
+            {"bad": [], "later": [Poison("x.py"), None]}
+        )
+        == {}
+    )
+
+
+def test_cached_import_path_keeps_empty_subclass_shortcircuit():
+    class Empty(str):
+        def startswith(self, *args, **kwargs):
+            raise AssertionError("empty relative path was inspected")
+
+    assert _context_refactor.cached_import_bindings({"x": [Empty(""), None]}) == {}
+
+
+@pytest.mark.parametrize("metadata", [None, {"inventory_sha256": "snapshot"}])
+def test_fixture_collection_preserves_callback_order_and_copy_boundary(metadata):
+    tree = ast.parse(
+        "PASSWORD = 'module'\n"
+        "def test_case():\n"
+        "    SECRET: str = 'annotation'\n"
+        "    OTHER = 'ignored'\n"
+        "    PASSWORD = TOKEN = 'multiple'\n"
+        "    self.PASSWORD = 'attribute'\n"
+        "    PASSWORD = 3\n"
+    )
+    facade = _Namespace_refactor(
+        _SECRET_ASSIGNMENT=_re_refactor.compile(r"PASSWORD|SECRET|TOKEN"),
+        _secret_literal=lambda node: node.value.value
+        if isinstance(node.value, ast.Constant) and isinstance(node.value.value, str)
+        else None,
+    )
+    calls, emitted = [], []
+
+    def resolve(node, literal):
+        calls.append((node.lineno, literal))
+        item = {"eligible": True, "literal": literal}
+        emitted.append(item)
+        return item
+
+    result = _context_refactor._fixture_literal_evidence(
+        tree, facade, resolve, metadata
+    )
+    assert calls == [(1, "module"), (3, "annotation")]
+    assert list(result) == ["1:0:PASSWORD", "3:4:SECRET"]
+    for actual, original in zip(result.values(), emitted):
+        assert (actual is original) is (metadata is None)
+        assert actual == {**original, **(metadata or {})}
+
+
+def test_new_shared_provider_helpers_are_epoch_enrolled():
+    helpers = _context_refactor.provider_context_cache_helpers(
+        _audit_refactor.contracts
+    )
+    assert all(
+        helper in helpers
+        for helper in (
+            _context_refactor._cached_import_binding,
+            _context_refactor._cached_import_path,
+            _context_refactor._fixture_literal_evidence,
+        )
+    )
