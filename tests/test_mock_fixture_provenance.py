@@ -1940,3 +1940,33 @@ def test_crypto_literal_namespace_guard_follows_local_function_objects(
         )
         is closed
     )
+
+
+def test_application_fixture_consumer_rows_keep_inventory_independent_order():
+    from pathlib import Path
+    from types import SimpleNamespace
+    from factoryline.credential_role_identity_effects import (
+        _fixture_order_consumer_rows,
+    )
+
+    def row(path, line):
+        call = ast.parse("login(secret)").body[0].value
+        ast.increment_lineno(call, line - 1)
+        return (Path(path), call.args[0], None, call, False, object())
+
+    declaration = row("tests/base.py", 45)
+    first_login = row("tests/views.py", 157)
+    second_login = row("tests/views.py", 968)
+    # Preserve duplicate witnesses as well as the original AST/object identities.
+    rows = [second_login, declaration, first_login, first_login]
+    before = list(rows)
+    source = SimpleNamespace(relative=lambda path: path.as_posix())
+    index = {"source": source}
+    ordered = _fixture_order_consumer_rows(index, rows)
+    reversed_ordered = _fixture_order_consumer_rows(index, list(reversed(rows)))
+    assert rows == before
+    assert ordered == reversed_ordered
+    assert len(ordered) == 4
+    assert ordered[0] is declaration
+    assert ordered[1] is first_login and ordered[2] is first_login
+    assert ordered[3] is second_login

@@ -1971,12 +1971,31 @@ def _fixture_role_pair(rows, index):
     return creators[0], logins
 
 
+def _fixture_order_consumer_rows(index, rows):
+    """Keep complete consumer rows deterministic across captured inventory order."""
+    return sorted(
+        rows,
+        key=lambda row: (
+            index["source"].relative(row[0]),
+            row[1].lineno,
+            row[1].col_offset,
+            row[1].end_lineno,
+            row[1].end_col_offset,
+            row[3].lineno,
+            row[3].col_offset,
+            row[3].end_lineno,
+            row[3].end_col_offset,
+        ),
+    )
+
+
 def module_fixture_credential_evidence(index, path, statement, secret):
     """Demand a module binding's finite enrollment/login roles under explicit Django contracts."""
     role_rows = _fixture_role_rows(index, path, statement, secret)
     if role_rows is None:
         return None
     rows, model, settings = role_rows
+    rows = _fixture_order_consumer_rows(index, rows)
     pair = _fixture_role_pair(rows, index)
     if pair is None:
         return None
@@ -2083,6 +2102,7 @@ def module_fixture_helper_epoch():
         _fixture_role_rows,
         _fixture_declaration_target_node,
         _fixture_role_pair,
+        _fixture_order_consumer_rows,
         provider.resolve_class_chain_with_terminals,
         provider.SourceSnapshotIndex.validate,
         provider.binding_occurrences,
