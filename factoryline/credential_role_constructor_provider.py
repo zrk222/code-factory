@@ -1766,9 +1766,56 @@ def resolve_class_chain(index, path, name, imports, classes, audit):
     ]
 
 
-def _class_mro(index, key, imports, classes, audit, active, memo):
-    from .credential_role_constructor_provider import _class_ref
+def resolve_class_chain_with_terminals(
+    index, path, name, imports, classes, audit, terminal_contracts
+):
+    """Resolve captured owners and disclose caller-contracted external C3 terminals."""
+    contracts = _terminal_contracts(terminal_contracts)
+    if contracts is None:
+        return None
+    memo = {(None, canonical): [(None, canonical)] for canonical in contracts}
+    keys = _class_mro(
+        index, (path, name), imports, classes, audit, set(), memo, contracts
+    )
+    if keys is None:
+        return None
+    return {
+        "chain": [
+            (class_path, class_name, classes[(class_path, class_name)])
+            for class_path, class_name in keys
+            if class_path is not None
+        ],
+        "terminal_assumptions": [
+            {"canonical": canonical, "contract": contracts[canonical]}
+            for source_path, canonical in keys
+            if source_path is None
+        ],
+    }
 
+
+def _terminal_contracts(value):
+    if not isinstance(value, dict) or not value or len(value) > 16:
+        return None
+    contracts = {}
+    for canonical, contract in value.items():
+        if not _valid_terminal_contract(canonical, contract):
+            return None
+        contracts[canonical] = contract
+    return contracts
+
+
+def _valid_terminal_contract(canonical, contract):
+    if not isinstance(canonical, str) or not isinstance(contract, str):
+        return False
+    if not contract or len(contract) > 200 or not contract.isprintable():
+        return False
+    parts = canonical.split(".")
+    return 2 <= len(parts) <= 16 and all(part.isidentifier() for part in parts)
+
+
+def _class_mro(
+    index, key, imports, classes, audit, active, memo, terminal_contracts=None
+):
     if key in memo:
         return memo[key]
     if key in active or len(active) >= 16:
@@ -1780,7 +1827,9 @@ def _class_mro(index, key, imports, classes, audit, active, memo):
     active.add(key)
     bases = []
     for expression in owner.bases:
-        base = _class_ref(path, expression, imports, classes, audit, index)
+        base = _class_base_reference(
+            index, path, expression, imports, classes, audit, terminal_contracts
+        )
         if base is None or base in bases:
             active.remove(key)
             return None
@@ -1789,7 +1838,9 @@ def _class_mro(index, key, imports, classes, audit, active, memo):
         result = [key]
     else:
         base_mros = [
-            _class_mro(index, base, imports, classes, audit, active, memo)
+            _class_mro(
+                index, base, imports, classes, audit, active, memo, terminal_contracts
+            )
             for base in bases
         ]
         if any(mro is None for mro in base_mros):
@@ -1805,6 +1856,365 @@ def _class_mro(index, key, imports, classes, audit, active, memo):
         return None
     memo[key] = result
     return result
+
+
+def _class_base_reference(index, path, expression, imports, classes, audit, contracts):
+    from .credential_role_constructor_provider import _class_ref
+
+    base = _class_ref(path, expression, imports, classes, audit, index)
+    if base is None and contracts:
+        return _external_class_terminal(
+            index, path, expression, imports, audit, contracts
+        )
+    return base
+
+
+def _external_class_terminal(index, path, expression, imports, audit, contracts):
+    if not isinstance(expression, ast.Name) or not index.validate(path):
+        return None
+    alias = expression.id
+    if alias in imports.get(path, {}):
+        return None
+    imported = _direct_terminal_import(index, path, alias)
+    if imported is None:
+        return None
+    canonical, statement = imported
+    if (
+        statement.lineno >= expression.lineno
+        or canonical not in contracts
+        or _captured_module_shadows_terminal(index, path, statement, canonical)
+    ):
+        return None
+    if _captured_terminal_provider_mutation(index, audit, canonical):
+        return None
+    return None, canonical
+
+
+def _direct_terminal_import(index, path, alias):
+    statement = _direct_terminal_import_statement(index, path, alias)
+    if statement is None or not _terminal_alias_unmodified(
+        index.snapshots[path], alias
+    ):
+        return None
+    selected = statement.names[0]
+    return f"{statement.module}.{selected.name}", statement
+
+
+def _direct_terminal_import_statement(index, path, alias):
+    from .credential_role_constructor_provider import binding_occurrences
+
+    rows = binding_occurrences(index.snapshots[path].body, alias)
+    if len(rows) != 1 or not isinstance(rows[0], ast.ImportFrom):
+        return None
+    statement = rows[0]
+    if (
+        index.parents[path].get(id(statement)) is not index.snapshots[path]
+        or statement.level
+        or not statement.module
+        or len(statement.names) != 1
+    ):
+        return None
+    selected = statement.names[0]
+    if (selected.asname or selected.name) != alias or selected.name == "*":
+        return None
+    return statement
+
+
+def _terminal_alias_unmodified(tree, alias):
+    nodes = ast.walk(tree)
+    if any(
+        isinstance(node, ast.Name)
+        and node.id == alias
+        and isinstance(node.ctx, (ast.Store, ast.Del))
+        for node in nodes
+    ):
+        return False
+    return not any(
+        isinstance(node, ast.Global) and alias in node.names for node in ast.walk(tree)
+    )
+
+
+def _captured_module_shadows_terminal(index, path, statement, canonical):
+    try:
+        from .import_context import import_source_bases
+
+        module_parts = canonical.rpartition(".")[0].split(".")
+        captured = set(index.snapshots)
+        for base in import_source_bases(index.root, path, statement):
+            for size in range(1, len(module_parts) + 1):
+                target = base.joinpath(*module_parts[:size])
+                if target.with_suffix(".py") in captured:
+                    return True
+                if target.joinpath("__init__.py") in captured:
+                    return True
+        return False
+    except (AttributeError, TypeError, ValueError):
+        return True
+
+
+def _captured_terminal_provider_mutation(index, audit, canonical):
+    for path, tree in index.snapshots.items():
+        if not index.validate(path):
+            return True
+        aliases = audit._module_security_aliases(tree)
+        nodes = list(ast.walk(tree))
+        if _terminal_registry_mutation(nodes, aliases, audit, canonical):
+            return True
+        if not any(
+            isinstance(value, str) and _terminal_provider_related(value, canonical)
+            for value in aliases.values()
+        ):
+            continue
+        parents = {
+            id(child): node for node in nodes for child in ast.iter_child_nodes(node)
+        }
+        mutations = finite_provider_mutation_index(nodes, aliases, audit, parents)
+        if any(
+            _terminal_mutation_overlaps(provider, attribute, canonical)
+            for provider, attribute in mutations
+        ):
+            return True
+    return False
+
+
+def _terminal_registry_mutation(nodes, aliases, audit, canonical):
+    from .finite_capture import _provider_alias_bindings
+    from .finite_capture import _provider_paths
+
+    bindings = _provider_alias_bindings(nodes)
+    parents = {
+        id(child): node for node in nodes for child in ast.iter_child_nodes(node)
+    }
+    for node in nodes:
+        if _terminal_registry_augmented_alias(node, aliases, audit, bindings):
+            return True
+        if _terminal_registry_node_targets(node, aliases, audit, bindings, canonical):
+            return True
+        if isinstance(node, ast.Call) and _terminal_registry_call(
+            node, aliases, audit, bindings, canonical
+        ):
+            return True
+        if isinstance(node, (ast.Name, ast.Attribute)) and _terminal_registry_escape(
+            node, parents, aliases, audit, bindings, canonical, _provider_paths
+        ):
+            return True
+    return False
+
+
+def _terminal_registry_augmented_alias(node, aliases, audit, bindings):
+    if not isinstance(node, ast.AugAssign) or not isinstance(node.target, ast.Name):
+        return False
+    paths, _ = finite_capture._provider_paths(node.target, aliases, audit, bindings)
+    return _terminal_registry_paths(paths)
+
+
+def _terminal_registry_node_targets(node, aliases, audit, bindings, canonical):
+    targets = getattr(node, "targets", None)
+    if targets is None:
+        target = getattr(node, "target", None)
+        targets = (target,) if target is not None else ()
+    return any(
+        _terminal_registry_target(target, aliases, audit, bindings, canonical)
+        or _terminal_registry_store_value_escape(
+            node, target, aliases, audit, bindings, canonical
+        )
+        for target in targets
+    )
+
+
+def _terminal_registry_target(target, aliases, audit, bindings, canonical):
+    if not isinstance(target, (ast.Subscript, ast.Attribute)) or not isinstance(
+        target.ctx, (ast.Store, ast.Del)
+    ):
+        return False
+    return _terminal_registry_target_paths(target, aliases, audit, bindings, canonical)
+
+
+def _terminal_registry_target_paths(target, aliases, audit, bindings, canonical):
+    from .finite_capture import _provider_paths
+
+    target_paths, _ = _provider_paths(target, aliases, audit, bindings)
+    if isinstance(target, ast.Attribute) and _terminal_registry_paths(target_paths):
+        return True
+    receiver = target.value
+    while isinstance(receiver, ast.Subscript):
+        receiver = receiver.value
+    paths, unresolved = _provider_paths(receiver, aliases, audit, bindings)
+    if not _terminal_registry_paths(paths):
+        return False
+    if unresolved or not isinstance(target, ast.Subscript):
+        return True
+    key = target.slice
+    if not isinstance(key, ast.Constant) or type(key.value) is not str:
+        return True
+    return _terminal_registry_key_related(key.value, canonical)
+
+
+def _terminal_registry_paths(paths):
+    return any(
+        path == "sys.modules" or path.startswith("sys.modules.") for path in paths
+    )
+
+
+def _terminal_registry_call(call, aliases, audit, bindings, canonical):
+    from .finite_capture import _provider_paths
+
+    if not isinstance(call.func, ast.Attribute):
+        return False
+    paths, unresolved = _provider_paths(call.func.value, aliases, audit, bindings)
+    if not _terminal_registry_paths(paths):
+        return False
+    if unresolved:
+        return True
+    items = _terminal_registry_call_items(call)
+    if items is None:
+        return True
+    keys, values = items
+    if any(_terminal_registry_key_related(key, canonical) for key in keys):
+        return True
+    return _terminal_registry_values_escape(values, aliases, audit, bindings, canonical)
+
+
+def _terminal_registry_call_items(call):
+    result = _terminal_registry_call_operands(call)
+    if result is None:
+        return None
+    keys, values = result
+    if any(
+        not isinstance(key, ast.Constant) or type(key.value) is not str for key in keys
+    ):
+        return None
+    return [key.value for key in keys], values
+
+
+def _terminal_registry_call_operands(call):
+    method = call.func.attr
+    if method in {"get", "__getitem__"} and len(call.args) == 1 and not call.keywords:
+        return [call.args[0]], []
+    if (
+        method in {"pop", "setdefault"}
+        and 1 <= len(call.args) <= 2
+        and not call.keywords
+    ):
+        return call.args[:1], call.args[1:]
+    if method != "update":
+        return None
+    return _terminal_registry_update_items(call)
+
+
+def _terminal_registry_update_items(call):
+    if len(call.args) > 1:
+        return None
+    keys, values = [], []
+    if call.args:
+        mapping = call.args[0]
+        if not isinstance(mapping, ast.Dict) or any(
+            key is None for key in mapping.keys
+        ):
+            return None
+        keys.extend(mapping.keys)
+        values.extend(mapping.values)
+    for keyword in call.keywords:
+        if keyword.arg is None:
+            return None
+        keys.append(ast.Constant(value=keyword.arg))
+        values.append(keyword.value)
+    if not keys:
+        return None
+    return keys, values
+
+
+def _terminal_registry_values_escape(values, aliases, audit, bindings, canonical):
+    from .finite_capture import _provider_paths
+
+    for value in values:
+        for item in ast.walk(value):
+            if not isinstance(item, (ast.Name, ast.Attribute)):
+                continue
+            paths, unresolved = _provider_paths(item, aliases, audit, bindings)
+            if _terminal_registry_paths(paths) or unresolved and paths:
+                return True
+            if any(_terminal_provider_related(path, canonical) for path in paths):
+                return True
+    return False
+
+
+def _terminal_registry_escape(
+    node, parents, aliases, audit, bindings, canonical, provider_paths
+):
+    if not isinstance(node.ctx, ast.Load):
+        return False
+    parent = parents.get(id(node))
+    if isinstance(parent, ast.Attribute) and parent.value is node:
+        return False
+    paths, unresolved = provider_paths(node, aliases, audit, bindings)
+    if not _terminal_registry_paths(paths):
+        return False
+    if unresolved:
+        return True
+    return _terminal_registry_escape_use(
+        node, parent, paths, aliases, audit, bindings, canonical
+    )
+
+
+def _terminal_registry_escape_use(
+    node, parent, paths, aliases, audit, bindings, canonical
+):
+    if isinstance(parent, ast.Subscript) and parent.value is node:
+        return False
+    if _terminal_registry_alias_assignment(parent, node, paths):
+        return False
+    if isinstance(parent, ast.Call) and parent.func is node:
+        return _terminal_registry_call(parent, aliases, audit, bindings, canonical)
+    return True
+
+
+def _terminal_registry_alias_assignment(parent, node, paths):
+    if paths != {"sys.modules"}:
+        return False
+    if isinstance(parent, ast.Assign) and parent.value is node:
+        return all(isinstance(target, ast.Name) for target in parent.targets)
+    if isinstance(parent, ast.AnnAssign) and parent.value is node:
+        return isinstance(parent.target, ast.Name)
+    return False
+
+
+def _terminal_registry_store_value_escape(
+    node, target, aliases, audit, bindings, canonical
+):
+    if not isinstance(target, ast.Subscript) or not isinstance(target.ctx, ast.Store):
+        return False
+    receiver = target.value
+    while isinstance(receiver, ast.Subscript):
+        receiver = receiver.value
+    paths, unresolved = finite_capture._provider_paths(
+        receiver, aliases, audit, bindings
+    )
+    if not _terminal_registry_paths(paths) or unresolved:
+        return False
+    value = getattr(node, "value", None)
+    return value is not None and _terminal_registry_values_escape(
+        [value], aliases, audit, bindings, canonical
+    )
+
+
+def _terminal_registry_key_related(key, canonical):
+    module = canonical.rpartition(".")[0]
+    key_parts, module_parts = key.split("."), module.split(".")
+    return bool(
+        key_parts
+        and len(key_parts) <= len(module_parts)
+        and module_parts[: len(key_parts)] == key_parts
+    )
+
+
+def _terminal_provider_related(provider, canonical):
+    return _overlaps(provider, canonical) or _overlaps(canonical, provider)
+
+
+def _terminal_mutation_overlaps(provider, attribute, canonical):
+    target = provider if attribute == "*" else provider + "." + attribute
+    return _terminal_provider_related(target, canonical)
 
 
 def _class_binding_is_exact(index, path, name, owner):
@@ -2729,6 +3139,42 @@ def _owner_container_paths(nodes, aliases, audit, parents, mutations):
 def constructor_provider_helper_epoch():
     """Return semantic helper identities for batch-cache freshness checks."""
     from .credential_role_constructor_provider import _import_binding_is_exact
+    from .credential_role_constructor_provider import _terminal_contracts
+    from .credential_role_constructor_provider import _valid_terminal_contract
+    from .credential_role_constructor_provider import _class_base_reference
+    from .credential_role_constructor_provider import _external_class_terminal
+    from .credential_role_constructor_provider import _direct_terminal_import
+    from .credential_role_constructor_provider import _direct_terminal_import_statement
+    from .credential_role_constructor_provider import _terminal_alias_unmodified
+    from .credential_role_constructor_provider import _captured_module_shadows_terminal
+    from .credential_role_constructor_provider import (
+        _captured_terminal_provider_mutation,
+    )
+    from .credential_role_constructor_provider import _terminal_provider_related
+    from .credential_role_constructor_provider import _terminal_mutation_overlaps
+    from .credential_role_constructor_provider import _terminal_registry_mutation
+    from .credential_role_constructor_provider import _terminal_registry_node_targets
+    from .credential_role_constructor_provider import _terminal_registry_augmented_alias
+    from .credential_role_constructor_provider import _terminal_registry_target
+    from .credential_role_constructor_provider import _terminal_registry_target_paths
+    from .credential_role_constructor_provider import _terminal_registry_paths
+    from .credential_role_constructor_provider import _terminal_registry_call
+    from .credential_role_constructor_provider import _terminal_registry_call_items
+    from .credential_role_constructor_provider import _terminal_registry_call_operands
+    from .credential_role_constructor_provider import _terminal_registry_update_items
+    from .credential_role_constructor_provider import _terminal_registry_values_escape
+    from .credential_role_constructor_provider import _terminal_registry_escape
+    from .credential_role_constructor_provider import _terminal_registry_escape_use
+    from .credential_role_constructor_provider import (
+        _terminal_registry_alias_assignment,
+    )
+    from .credential_role_constructor_provider import (
+        _terminal_registry_store_value_escape,
+    )
+    from .credential_role_constructor_provider import _terminal_registry_key_related
+    from .finite_capture import _provider_alias_bindings
+    from .finite_capture import _provider_paths
+    from .import_context import import_source_bases
     from .finite_capture import _provider_call_argument
     from .review_audits import _resolved_ast_name
 
@@ -2740,6 +3186,38 @@ def constructor_provider_helper_epoch():
         _captured_mutations_inert,
         finite_provider_mutation_index,
         _import_binding_is_exact,
+        resolve_class_chain_with_terminals,
+        _terminal_contracts,
+        _valid_terminal_contract,
+        _class_mro,
+        _class_base_reference,
+        _external_class_terminal,
+        _direct_terminal_import,
+        _direct_terminal_import_statement,
+        _terminal_alias_unmodified,
+        _captured_module_shadows_terminal,
+        _captured_terminal_provider_mutation,
+        _terminal_provider_related,
+        _terminal_mutation_overlaps,
+        _terminal_registry_mutation,
+        _terminal_registry_node_targets,
+        _terminal_registry_augmented_alias,
+        _terminal_registry_target,
+        _terminal_registry_target_paths,
+        _terminal_registry_paths,
+        _terminal_registry_call,
+        _terminal_registry_call_items,
+        _terminal_registry_call_operands,
+        _terminal_registry_update_items,
+        _terminal_registry_values_escape,
+        _terminal_registry_escape,
+        _terminal_registry_escape_use,
+        _terminal_registry_alias_assignment,
+        _terminal_registry_store_value_escape,
+        _terminal_registry_key_related,
+        _provider_alias_bindings,
+        _provider_paths,
+        import_source_bases,
         _resolved_ast_name,
         _overlaps,
         _mutation_overlaps,

@@ -415,6 +415,30 @@ def _captured_application_source_bytes(workspace, findings, bindings, source_byt
                 if isinstance(row, dict)
             )
     hashes = {row["path"]: row["sha256"] for row in bindings}
+    class_profiles = [
+        finding.get("facts", {}).get("fixture_evidence", {})
+        for finding in findings
+        if finding.get("facts", {}).get("fixture_evidence", {}).get("profile")
+        == "DJANGO_CLASS_LOCAL_ACCOUNT_ENROLLMENT"
+    ]
+    config_hashes = {}
+    if class_profiles:
+        # Class evidence is recomputed against the whole Python inventory and
+        # the exact configuration bytes used by its source-index producer.
+        paths.update(name for name in hashes if name.endswith(".py"))
+        for evidence in class_profiles:
+            configured = evidence.get("configuration_sha256", {})
+            if not isinstance(configured, dict):
+                continue
+            for name, digest in configured.items():
+                if (
+                    name in {"pyproject.toml", "requirements.txt", "tox.ini"}
+                    and isinstance(digest, str)
+                    and len(digest) == 64
+                ):
+                    config_hashes[name] = digest
+                    paths.add(name)
+    hashes.update(config_hashes)
     jwt_findings = [
         finding
         for finding in findings
@@ -429,13 +453,23 @@ def _captured_application_source_bytes(workspace, findings, bindings, source_byt
         # Revalidation uses the complete current source inventory, including
         # imported initializers and shadows; selective capture would omit risks.
         paths.update(hashes)
-    return {
-        relative: data
-        for relative in paths
-        if isinstance(relative, str)
-        and isinstance((data := source_bytes.get(workspace / relative)), bytes)
-        and sha256(data).hexdigest() == hashes.get(relative)
-    }
+    captured = {}
+    for relative in paths:
+        if not isinstance(relative, str):
+            continue
+        data = source_bytes.get(workspace / relative)
+        if relative in config_hashes and not isinstance(data, bytes):
+            try:
+                data = (workspace / relative).read_bytes()
+            except OSError:
+                continue
+        if (
+            isinstance(data, bytes)
+            and len(data) <= 1_000_000
+            and sha256(data).hexdigest() == hashes.get(relative)
+        ):
+            captured[relative] = data
+    return captured
 
 
 class _SourceBoundSecurityReport(dict):

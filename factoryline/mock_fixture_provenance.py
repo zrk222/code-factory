@@ -5864,6 +5864,11 @@ def application_test_secret_evidence(index, path, line, value):
     if candidate is None:
         return _django_unknown(reason)
     literal, assignment, secret = candidate
+    from .credential_role_identity_effects import module_fixture_evidence_for_binding
+
+    result = module_fixture_evidence_for_binding(index, path, assignment, secret)
+    if result is not None:
+        return result
     parents = index["source"].parents[path]
     function = parents.get(id(assignment))
     if (
@@ -5958,9 +5963,10 @@ def _app_witness_sources(index, witness):
 
 
 def _app_known_credential_cache_dependencies():
-    from .intent_quality import _looks_like_known_credential
+    from .intent_quality import _looks_like_known_credential as looks
+    from .credential_role_identity_effects import module_fixture_helper_epoch as epoch
 
-    return (_looks_like_known_credential, _APP_SECRET_INVENTORY_CACHE_TOKEN)
+    return looks, _APP_SECRET_INVENTORY_CACHE_TOKEN, *epoch()
 
 
 class _AppSecretInventoryCacheToken:

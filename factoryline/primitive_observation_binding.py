@@ -465,6 +465,10 @@ def application_fixture_binding(finding, sources, bindings, source_bytes=None):
         and (
             _presentation_witness_bindings(evidence, bindings, facts)
             if evidence.get("classification") == "PRESENTATION_METADATA_ROLE"
+            else _application_class_role_recomputes(
+                evidence, bindings, facts.get("name"), source_bytes
+            )
+            if evidence.get("profile") == "DJANGO_CLASS_LOCAL_ACCOUNT_ENROLLMENT"
             else _application_witness_bindings(evidence, bindings)
             and _application_use_closure_binding(
                 evidence, bindings, facts.get("name"), source_bytes
@@ -475,6 +479,113 @@ def application_fixture_binding(finding, sources, bindings, source_bytes=None):
             json.dumps(unsigned, sort_keys=True, separators=(",", ":")).encode()
         ).hexdigest()
     )
+
+
+def _application_class_source_inputs(source_bytes, bindings, configs):
+    """Validate current full-source and selected configuration bytes before rebuilding class facts."""
+    if (
+        not isinstance(source_bytes, dict)
+        or not isinstance(bindings, dict)
+        or not isinstance(configs, dict)
+        or set(source_bytes) != set(bindings)
+        or len(source_bytes) > 2003
+    ):
+        return None
+    for name, raw in source_bytes.items():
+        if not isinstance(name, str) or not isinstance(raw, bytes):
+            return None
+        path = Path(name)
+        if (
+            not name
+            or len(name) > 4096
+            or "\\" in name
+            or ":" in name
+            or path.is_absolute()
+            or ".." in path.parts
+            or path.as_posix() != name
+        ):
+            return None
+    python_names = {name for name in bindings if name.endswith(".py")}
+    if (
+        not python_names
+        or len(python_names) > 2000
+        or set(bindings) - python_names != set(configs)
+        or not set(configs) <= {"pyproject.toml", "requirements.txt", "tox.ini"}
+        or sum(map(len, source_bytes.values())) > 32 * 1024 * 1024
+        or any(len(source_bytes[name]) > 1_000_000 for name in python_names)
+    ):
+        return None
+    return _jwt_bound_source_inventory(source_bytes, bindings)
+
+
+def _application_class_role_recomputes(evidence, bindings, secret_name, source_bytes):
+    """Rebuild class-role evidence from current byte-bound Python and config inputs."""
+    closure = evidence.get("consumer_use_closure", {})
+    if not isinstance(closure, dict) or closure.get("schema") != (
+        "factory.application-consumer-use-closure.v2"
+    ):
+        return False
+    configs = evidence.get("configuration_sha256")
+    captured = _application_class_source_inputs(source_bytes, bindings, configs)
+    if captured is None:
+        return False
+    from .mock_fixture_provenance import (
+        application_test_index,
+        application_test_secret_evidence,
+    )
+
+    try:
+        modules, python_bytes, inventory = {}, {}, {}
+        for path, raw in captured.items():
+            if path.suffix != ".py":
+                continue
+            tree = ast.parse(raw, filename=path.as_posix())
+            tree._oracle_source_sha256 = bindings[path.as_posix()]
+            modules[path], python_bytes[path] = tree, raw
+            inventory[path] = tree._oracle_source_sha256
+        path = Path(evidence.get("source", ""))
+        if path not in modules:
+            return False
+        targets = _jwt_declaration_targets(
+            modules[path],
+            {"name": secret_name, "declaration_span": evidence.get("declaration_span")},
+        )
+        if len(targets) != 1:
+            return False
+        literal = targets[0][0].value
+        if not isinstance(literal, ast.Constant) or type(literal.value) is not str:
+            return False
+        index = application_test_index(
+            Path("."),
+            modules,
+            python_bytes,
+            inventory,
+            {name: source_bytes[name] for name in configs},
+        )
+        regenerated = application_test_secret_evidence(
+            index, path, literal.lineno, literal.value
+        )
+        return bool(
+            regenerated.get("eligible") is True
+            and regenerated.get("profile") == "DJANGO_CLASS_LOCAL_ACCOUNT_ENROLLMENT"
+            and evidence
+            == {
+                **regenerated,
+                "inventory_sha256": evidence.get("inventory_sha256"),
+                "configuration_sha256": configs,
+            }
+        )
+    except (
+        SyntaxError,
+        UnicodeError,
+        ValueError,
+        TypeError,
+        AttributeError,
+        KeyError,
+        RecursionError,
+        MemoryError,
+    ):
+        return False
 
 
 def _application_use_closure_binding(
@@ -1190,6 +1301,7 @@ def fixed_program_workspace_helpers(audit):
 
 def primitive_binding_helpers():
     """Return primitive-binding validators for endpoint, fixture, declaration, finite-eval, workspace, and symbolic-identifier evidence."""
+    from .audit_action_refs import _captured_application_source_bytes
     from .credential_endpoint_admission import endpoint_evidence_helpers
     from .credential_endpoint_admission import endpoint_admission_helpers
     from .credential_endpoint_admission import catalog_callable_helpers
@@ -1208,6 +1320,9 @@ def primitive_binding_helpers():
         django_fixture_binding,
         annotate_application_fixture,
         application_fixture_binding,
+        _application_class_source_inputs,
+        _application_class_role_recomputes,
+        _captured_application_source_bytes,
         _application_role_binding,
         _application_witness_bindings,
         _application_use_closure_binding,

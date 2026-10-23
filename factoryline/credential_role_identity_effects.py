@@ -1242,3 +1242,1022 @@ class _Analyzer:
             return
 
         out.merge(self.run(resolved.function, resolved.path, mapped, depth + 1, active))
+
+
+def _fixture_symbol(index, path, expression, function=None):
+    from . import mock_fixture_provenance as fixture
+
+    return fixture._app_source_symbol(index, path, expression, function)
+
+
+def _fixture_constant(index, path, expression, function=None):
+    selected = _fixture_symbol(index, path, expression, function)
+    if selected is None:
+        return None
+    owner_path, statement = selected
+    if not isinstance(statement, (ast.Assign, ast.AnnAssign)):
+        return None
+    if not isinstance(statement.value, ast.Constant):
+        return None
+    return owner_path, statement
+
+
+def _fixture_scope(index, path, node, kind):
+    current = node
+    parents = index["source"].parents[path]
+    while current is not None and not isinstance(current, kind):
+        current = parents.get(id(current))
+    return current
+
+
+def _fixture_class_maps(index):
+    classes, imports = {}, {}
+    for path, tree in index["modules"].items():
+        if not index["source"].validate(path):
+            return None
+        imports[path] = {}
+        for owner in tree.body:
+            if not isinstance(owner, ast.ClassDef):
+                continue
+            classes[path, owner.name] = owner
+            for base in owner.bases:
+                if not isinstance(base, ast.Name):
+                    continue
+                selected = _fixture_symbol(index, path, base)
+                if selected is not None and isinstance(selected[1], ast.ClassDef):
+                    if selected[0] != path:
+                        imports[path][base.id] = selected[0], selected[1].name
+    return classes, imports
+
+
+def _fixture_chain(index, path, owner, maps, terminal, contract):
+    from . import review_audits as audit
+
+    return _class_binding.resolve_class_chain_with_terminals(
+        index["source"],
+        path,
+        owner.name,
+        maps[1],
+        maps[0],
+        audit,
+        {terminal: contract},
+    )
+
+
+def _fixture_literal_setting(tree, name):
+    from . import mock_fixture_provenance as fixture
+
+    rows = fixture._django_assignment(tree, name)
+    if len(rows) != 1:
+        return None
+    try:
+        return ast.literal_eval(rows[0][1])
+    except (ValueError, TypeError, RecursionError):
+        return None
+
+
+def _fixture_pytest_options(index):
+    from .review_audits import tomllib
+
+    raw = index["configuration_bytes"].get("pyproject.toml")
+    if not isinstance(raw, bytes):
+        return None
+    try:
+        options = tomllib.loads(raw.decode("utf8"))["tool"]["pytest"]["ini_options"]
+    except (UnicodeError, ValueError, KeyError, TypeError):
+        return None
+    return options if isinstance(options, dict) else None
+
+
+def _fixture_settings(index):
+    from . import mock_fixture_provenance as fixture
+
+    options = _fixture_pytest_options(index)
+    if options is None or options.get("django_find_project") is not False:
+        return None
+    selected = options.get("DJANGO_SETTINGS_MODULE")
+    if (
+        not isinstance(selected, str)
+        or not selected
+        or not all(part.isidentifier() for part in selected.split("."))
+    ):
+        return None
+    path, tree = fixture._django_mod(index, selected)
+    if tree is None or binding_occurrences(tree.body, "AUTHENTICATION_BACKENDS"):
+        return None
+    databases = _fixture_literal_setting(tree, "DATABASES")
+    if not _fixture_database_is_local(databases):
+        return None
+    return path, tree
+
+
+def _fixture_database_is_local(databases):
+    if not isinstance(databases, dict) or set(databases) != {"default"}:
+        return False
+    default = databases["default"]
+    if (
+        not isinstance(default, dict)
+        or default.get("ENGINE") != "django.db.backends.sqlite3"
+    ):
+        return False
+    if (
+        set(default) - {"ENGINE", "NAME"}
+        or default.get("NAME", ":memory:") != ":memory:"
+    ):
+        return False
+    return True
+
+
+def _fixture_selected_user_model(index, settings, fixture):
+    selected = _fixture_literal_setting(settings[1], "AUTH_USER_MODEL")
+    apps = _fixture_literal_setting(settings[1], "INSTALLED_APPS")
+    if (
+        not isinstance(selected, str)
+        or selected.count(".") != 1
+        or not isinstance(apps, list)
+    ):
+        return None
+    label, name = selected.split(".")
+    modules = [
+        app for app in apps if isinstance(app, str) and app.rsplit(".", 1)[-1] == label
+    ]
+    if len(modules) != 1:
+        return None
+    path, tree = fixture._django_mod(index, modules[0] + ".models")
+    return (path, name, tree) if tree is not None else None
+
+
+def _fixture_user_model(index, settings, maps):
+    from . import mock_fixture_provenance as fixture
+
+    selected = _fixture_selected_user_model(index, settings, fixture)
+    if selected is None:
+        return None
+    path, name, _ = selected
+    owner = maps[0].get((path, name))
+    if owner is None:
+        return None
+    chain = _fixture_chain(
+        index,
+        path,
+        owner,
+        maps,
+        "django.contrib.auth.models.AbstractUser",
+        "django.AbstractUser.default-manager-password.v1",
+    )
+    if chain is None or not chain["terminal_assumptions"]:
+        return None
+    protected = {
+        "objects",
+        "USERNAME_FIELD",
+        "EMAIL_FIELD",
+        "REQUIRED_FIELDS",
+        "password",
+        "set_password",
+        "check_password",
+        "save",
+        "__getattr__",
+        "__getattribute__",
+        "__setattr__",
+        "__new__",
+        "__init__",
+    }
+    if any(
+        binding_occurrences(node.body, key)
+        for _, _, node in chain["chain"]
+        for key in protected
+    ):
+        return None
+    return chain
+
+
+def _fixture_test_chain(index, path, function, maps):
+    owner = index["source"].parents[path].get(id(function))
+    if not isinstance(owner, ast.ClassDef) or function.decorator_list:
+        return None
+    chain = _fixture_chain(
+        index,
+        path,
+        owner,
+        maps,
+        "django.test.TestCase",
+        "django.TestCase.transactional-local-client.v1",
+    )
+    if chain is None or not chain["terminal_assumptions"]:
+        return None
+    protected = {
+        "client",
+        "client_class",
+        "__getattr__",
+        "__getattribute__",
+        "__setattr__",
+        "__delattr__",
+        "__new__",
+        "__init__",
+        "setUpClass",
+        "_pre_setup",
+        "_fixture_setup",
+        "run",
+        "__call__",
+    }
+    if any(
+        binding_occurrences(node.body, key)
+        for _, _, node in chain["chain"]
+        for key in protected
+    ):
+        return None
+    return chain
+
+
+def _fixture_create_user_provider(call):
+    if not isinstance(call.func, ast.Attribute) or call.func.attr != "create_user":
+        return None
+    manager = call.func.value
+    if not isinstance(manager, ast.Attribute) or manager.attr != "objects":
+        return None
+    return manager.value
+
+
+def _fixture_resolve_user_model_provider(index, path, function, provider, fixture):
+    if isinstance(provider, ast.Name):
+        rows = binding_occurrences(function.body, provider.id)
+        if len(rows) != 1 or not isinstance(rows[0], ast.Name):
+            return None
+        assignment = index["source"].parents[path].get(id(rows[0]))
+        if not isinstance(assignment, ast.Assign) or len(assignment.targets) != 1:
+            return None
+        if not _fixture_model_alias_closed(index, path, function, provider, assignment):
+            return None
+        provider = assignment.value
+    if not isinstance(provider, ast.Call) or provider.args or provider.keywords:
+        return None
+    if (
+        fixture._app_expression_name(index, path, provider.func, function)
+        != "django.contrib.auth.get_user_model"
+    ):
+        return None
+    if not _fixture_user_model_getter_use_closed(
+        index, path, function, provider, fixture
+    ):
+        return None
+    return True
+
+
+def _fixture_user_model_getter_use_closed(index, path, function, selected, fixture):
+    canonical = "django.contrib.auth.get_user_model"
+    if (
+        not isinstance(selected, ast.Call)
+        or selected.args
+        or selected.keywords
+        or fixture._app_expression_name(index, path, selected.func, function)
+        != canonical
+    ):
+        return False
+    parents = index["source"].parents[path]
+    references = []
+    for node in ast.walk(function):
+        if not isinstance(node, (ast.Name, ast.Attribute)):
+            continue
+        if not isinstance(node.ctx, ast.Load):
+            continue
+        if fixture._app_expression_name(index, path, node, function) != canonical:
+            continue
+        if (
+            _fixture_scope(index, path, node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            is not function
+        ):
+            return False
+        call = parents.get(id(node))
+        if (
+            not isinstance(call, ast.Call)
+            or call.func is not node
+            or call is not selected
+        ):
+            return False
+        references.append(node)
+    return len(references) == 1 and references[0] is selected.func
+
+
+def _fixture_model_alias_closed(index, path, function, selected, assignment):
+    """Keep a fresh model provider alias within its exact local manager-call role."""
+    if (assignment.end_lineno, assignment.end_col_offset) >= (
+        selected.lineno,
+        selected.col_offset,
+    ):
+        return False
+    for node in ast.walk(function):
+        if (
+            not isinstance(node, ast.Name)
+            or node.id != selected.id
+            or node is assignment.targets[0]
+        ):
+            continue
+        if not _fixture_model_alias_use(index, path, function, node):
+            return False
+    return True
+
+
+def _fixture_model_alias_use(index, path, function, node):
+    """Reject provider writes, escapes and aliases before granting enrollment identity."""
+    if (
+        not isinstance(node.ctx, ast.Load)
+        or _fixture_scope(index, path, node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        is not function
+    ):
+        return False
+    parents = index["source"].parents[path]
+    manager = parents.get(id(node))
+    if not isinstance(manager, ast.Attribute) or manager.attr != "objects":
+        return False
+    method = parents.get(id(manager))
+    if not isinstance(manager.ctx, ast.Load) or not isinstance(method, ast.Attribute):
+        return False
+    call = parents.get(id(method))
+    return bool(
+        method.attr == "create_user"
+        and isinstance(method.ctx, ast.Load)
+        and isinstance(call, ast.Call)
+        and call.func is method
+    )
+
+
+def _fixture_create_user_username(call):
+    args = {item.arg: item.value for item in call.keywords}
+    if None in args or len(args) != len(call.keywords):
+        return None
+    return args.get("username") if not call.args else call.args[0]
+
+
+def _fixture_creation_username(index, path, function, call):
+    from . import mock_fixture_provenance as fixture
+
+    provider = _fixture_create_user_provider(call)
+    if provider is None or not _fixture_resolve_user_model_provider(
+        index, path, function, provider, fixture
+    ):
+        return None
+    return _fixture_create_user_username(call)
+
+
+def _fixture_creator(index, path, function, call, use):
+    from . import mock_fixture_provenance as fixture
+
+    if function.name != "setUp" or function.decorator_list:
+        return None
+    username = _fixture_creation_username(index, path, function, call)
+    password = (
+        {item.arg: item.value for item in call.keywords}.get("password")
+        if not call.args
+        else call.args[2]
+        if len(call.args) == 3
+        else None
+    )
+    if password is not use or not fixture._app_active_call(index, path, function, call):
+        return None
+    identity = _fixture_constant(index, path, username, function)
+    return identity if identity is not None else None
+
+
+def _fixture_login(index, path, function, call, use, maps):
+    from . import mock_fixture_provenance as fixture
+
+    if not function.name.startswith("test_") or function.decorator_list:
+        return None
+    if fixture._app_member_chain(call.func) != ["self", "client", "login"] or call.args:
+        return None
+    receiver = call.func.value.value
+    owner = index["source"].parents[path].get(id(function))
+    if not _class_binding.instance_receiver(
+        receiver, function, owner, index["source"], path
+    ):
+        return None
+    args = {item.arg: item.value for item in call.keywords}
+    if (
+        set(args) != {"username", "password"}
+        or len(call.keywords) != 2
+        or args["password"] is not use
+    ):
+        return None
+    chain = _fixture_test_chain(index, path, function, maps)
+    identity = _fixture_constant(index, path, args["username"], function)
+    if chain is None or identity is None:
+        return None
+    if not fixture._app_active_call(index, path, function, call):
+        return None
+    if not fixture._app_capability_interval(index, path, function, call.lineno):
+        return None
+    if not _fixture_receiver_interval_clear(index, path, function, call):
+        return None
+    return identity, chain
+
+
+def _fixture_imports_secret(index, path, tree, origin_path, statement, secret):
+    from . import mock_fixture_provenance as fixture
+
+    origin_module = fixture._django_name(index, origin_path)
+    for node in tree.body:
+        if not isinstance(node, (ast.Import, ast.ImportFrom)):
+            continue
+        if isinstance(node, ast.ImportFrom) and any(
+            alias.name == "*" for alias in node.names
+        ):
+            return True
+        rows = fixture._django_import_rows(
+            node, fixture._django_name(index, path).rpartition(".")[0]
+        )
+        for name, target in rows or ():
+            if _fixture_symbol(index, path, ast.Name(id=name, ctx=ast.Load())) == (
+                origin_path,
+                statement,
+            ) or target in {origin_module, f"{origin_module}.{secret}"}:
+                return True
+    return False
+
+
+def _fixture_reflective_uses(index, origin_path, statement, secret):
+    from . import mock_fixture_provenance as fixture
+
+    dynamic = {
+        "globals",
+        "locals",
+        "vars",
+        "getattr",
+        "setattr",
+        "delattr",
+        "eval",
+        "exec",
+        "compile",
+        "__import__",
+        "_getframe",
+        "currentframe",
+        "stack",
+        "walk_stack",
+        "__getattribute__",
+        "__getattr__",
+        "__dict__",
+        "__globals__",
+    }
+    for path, tree in index["modules"].items():
+        if path != origin_path and not _fixture_imports_secret(
+            index, path, tree, origin_path, statement, secret
+        ):
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call):
+                scope = (
+                    _fixture_scope(
+                        index, path, node, (ast.FunctionDef, ast.AsyncFunctionDef)
+                    )
+                    or tree
+                )
+                if fixture._app_dynamic_callable(
+                    index, path, scope, node.func, dynamic
+                ):
+                    return True
+    return False
+
+
+def _fixture_secret_aliases(index, path, statement):
+    from . import mock_fixture_provenance as fixture
+
+    aliases = {}
+    for source_path in index["modules"]:
+        selected = fixture._django_imports(index, source_path)
+        aliases[source_path] = {
+            name
+            for name in (selected or {})
+            if _fixture_symbol(index, source_path, ast.Name(id=name, ctx=ast.Load()))
+            == (path, statement)
+        }
+    return aliases
+
+
+def _fixture_module_aliases(index, origin_path):
+    from . import mock_fixture_provenance as fixture
+
+    origin = fixture._django_name(index, origin_path)
+    aliases = {}
+    for path, tree in index["modules"].items():
+        package = fixture._django_name(index, path).rpartition(".")[0]
+        selected = {
+            name
+            for node in tree.body
+            if isinstance(node, (ast.Import, ast.ImportFrom))
+            for name, target in (fixture._django_import_rows(node, package) or ())
+            if target == origin
+        }
+        if any(
+            isinstance(node, ast.ImportFrom)
+            and any(alias.name == "*" for alias in node.names)
+            for node in tree.body
+        ):
+            selected.add("*")
+        aliases[path] = selected
+    return aliases
+
+
+def _fixture_module_alias_use_supported(index, path, node, aliases, secret):
+    if (
+        isinstance(node, ast.Name)
+        and isinstance(node.ctx, ast.Load)
+        and node.id == secret
+        and "*" in aliases[path]
+    ):
+        return False
+    if not (
+        isinstance(node, ast.Name)
+        and isinstance(node.ctx, ast.Load)
+        and node.id in aliases[path]
+    ):
+        return True
+    parent = index["source"].parents[path].get(id(node))
+    return bool(
+        isinstance(parent, ast.Attribute)
+        and parent.value is node
+        and parent.attr == secret
+        and isinstance(parent.ctx, ast.Load)
+    )
+
+
+def _fixture_declaration_target(path, use_path, statement, node):
+    if use_path != path:
+        return False
+    targets = (
+        statement.targets if isinstance(statement, ast.Assign) else [statement.target]
+    )
+    return any(node is item for target in targets for item in ast.walk(target))
+
+
+def _fixture_consumer_row(index, path, statement, maps, use_path, use):
+    function = _fixture_scope(
+        index, use_path, use, (ast.FunctionDef, ast.AsyncFunctionDef)
+    )
+    if _fixture_symbol(index, use_path, use, function) != (path, statement):
+        return ()
+    if not isinstance(use.ctx, ast.Load):
+        return None
+    parents = index["source"].parents[use_path]
+    parent = parents.get(id(use))
+    call = parents.get(id(parent)) if isinstance(parent, ast.keyword) else parent
+    if not isinstance(function, ast.FunctionDef) or not isinstance(call, ast.Call):
+        return None
+    creator = _fixture_creator(index, use_path, function, call, use)
+    login = (
+        None if creator else _fixture_login(index, use_path, function, call, use, maps)
+    )
+    if creator is None and login is None:
+        return None
+    return use_path, use, function, call, creator, login
+
+
+def _fixture_consumers(index, path, statement, maps):
+    secret = (
+        statement.targets[0].id
+        if isinstance(statement, ast.Assign)
+        else statement.target.id
+    )
+    aliases = _fixture_secret_aliases(index, path, statement)
+    module_aliases = _fixture_module_aliases(index, path)
+    rows = []
+    for use_path, tree in index["modules"].items():
+        found = _fixture_consumers_in_tree(
+            index,
+            path,
+            statement,
+            maps,
+            secret,
+            aliases,
+            module_aliases,
+            use_path,
+            tree,
+        )
+        if found is None:
+            return None
+        rows.extend(found)
+    return None if _fixture_reflective_uses(index, path, statement, secret) else rows
+
+
+def _fixture_consumers_in_tree(
+    index, path, statement, maps, secret, aliases, module_aliases, use_path, tree
+):
+    rows = []
+    for use in ast.walk(tree):
+        if not _fixture_module_alias_use_supported(
+            index, use_path, use, module_aliases, secret
+        ):
+            return None
+        if not isinstance(use, (ast.Name, ast.Attribute)):
+            continue
+        if not _fixture_candidate_use(use, aliases[use_path], secret):
+            continue
+        if _fixture_declaration_target(path, use_path, statement, use):
+            continue
+        row = _fixture_consumer_row(index, path, statement, maps, use_path, use)
+        if row is None:
+            return None
+        if row:
+            rows.append(row)
+    return rows
+
+
+def _fixture_candidate_use(use, imported_aliases, secret):
+    return (
+        isinstance(use, ast.Name)
+        and use.id in imported_aliases | {secret}
+        or isinstance(use, ast.Attribute)
+        and use.attr == secret
+    )
+
+
+def _fixture_setup_reaches(index, login, creation):
+    from . import mock_fixture_provenance as fixture
+
+    chain = login[5][1]["chain"]
+    creator_path, _, creator_function = creation[:3]
+    owners = [node for _, _, node in chain]
+    creator_owner = index["source"].parents[creator_path].get(id(creator_function))
+    if creator_owner not in owners:
+        return False
+    for path, _, owner in chain:
+        methods = binding_occurrences(owner.body, "setUp")
+        if not methods:
+            continue
+        if len(methods) != 1 or not isinstance(methods[0], ast.FunctionDef):
+            return False
+        method = methods[0]
+        if method.decorator_list or not method.body:
+            return False
+        first = method.body[0]
+        if not isinstance(first, ast.Expr) or not isinstance(first.value, ast.Call):
+            return False
+        if ast.dump(first.value, include_attributes=False) != ast.dump(
+            ast.parse("super().setUp()", mode="eval").body, include_attributes=False
+        ):
+            return False
+        if not fixture._django_builtins_unshadowed(index, path, {"super"}):
+            return False
+        if not _fixture_setup_super_unique(index, path, method, first.value):
+            return False
+        if not _fixture_setup_client_lifetime(index, path, method):
+            return False
+    return True
+
+
+def _fixture_demanded_providers_clear(index, rows):
+    from . import mock_fixture_provenance as fixture
+
+    providers = {
+        "django.contrib.auth.get_user_model",
+        "django.contrib.auth.models.AbstractUser",
+        "django.test.TestCase",
+        "django.test.Client",
+    }
+    for path, _, function, _, _, _ in rows:
+        if not all(
+            fixture._app_provider_unchanged(index, path, function, key)
+            for key in providers
+        ):
+            return False
+        if not all(
+            fixture._app_provider_unchanged(index, path, index["modules"][path], key)
+            for key in providers
+        ):
+            return False
+    return True
+
+
+def _fixture_role_rows(index, path, statement, secret):
+    if index["source"].parents[path].get(id(statement)) is not index["modules"][path]:
+        return None
+    target = _fixture_declaration_target_node(statement)
+    if target is None or binding_occurrences(index["modules"][path].body, secret) != [
+        target
+    ]:
+        return None
+    settings = _fixture_settings(index)
+    if settings is None:
+        return None
+    maps = _fixture_class_maps(index)
+    if maps is None:
+        return None
+    model = _fixture_user_model(index, settings, maps)
+    if model is None:
+        return None
+    rows = _fixture_consumers(index, path, statement, maps)
+    return (rows, model, settings) if rows is not None else None
+
+
+def _fixture_declaration_target_node(statement):
+    if isinstance(statement, ast.Assign) and statement.targets:
+        return statement.targets[0]
+    if isinstance(statement, ast.AnnAssign):
+        return statement.target
+    return None
+
+
+def _fixture_role_pair(rows, index):
+    if not rows or not _fixture_demanded_providers_clear(index, rows):
+        return None
+    creators = [row for row in rows if row[4] is not None]
+    logins = [row for row in rows if row[5] is not None]
+    if len(creators) != 1 or not logins:
+        return None
+    creator = creators[0]
+    if any(
+        row[5][0] != creator[4] or not _fixture_setup_reaches(index, row, creator)
+        for row in logins
+    ):
+        return None
+    return creators[0], logins
+
+
+def module_fixture_credential_evidence(index, path, statement, secret):
+    """Demand a module binding's finite enrollment/login roles under explicit Django contracts."""
+    role_rows = _fixture_role_rows(index, path, statement, secret)
+    if role_rows is None:
+        return None
+    rows, model, settings = role_rows
+    pair = _fixture_role_pair(rows, index)
+    if pair is None:
+        return None
+    creator, logins = pair
+    source = index["source"]
+
+    def source_row(selected_path, node, role):
+        return {
+            "path": source.relative(selected_path),
+            "sha256": source.inventory[selected_path],
+            "span": [
+                node.lineno,
+                node.col_offset,
+                node.end_lineno,
+                node.end_col_offset,
+            ],
+            "role": role,
+        }
+
+    span = [
+        statement.lineno,
+        statement.col_offset,
+        statement.end_lineno,
+        statement.end_col_offset,
+    ]
+    return {
+        "eligible": True,
+        "classification": "APPLICATION_TEST_CREDENTIAL_ROLE",
+        "source": source.relative(path),
+        "source_sha256": source.inventory[path],
+        "declaration_span": span,
+        "profile": "DJANGO_CLASS_LOCAL_ACCOUNT_ENROLLMENT",
+        "runtime_assurance": "INCOMPLETE",
+        "transport_role": "UNASSESSED",
+        "target_execution": "not_performed",
+        "isolation_assurance": "UNASSESSED",
+        "external_api_assumptions": model["terminal_assumptions"]
+        + logins[0][5][1]["terminal_assumptions"],
+        "settings": source_row(
+            settings[0], settings[1].body[0], "selected_configuration_module"
+        ),
+        "consumer_use_closure": {
+            "schema": "factory.application-consumer-use-closure.v2",
+            "complete": True,
+            "assignments": [source_row(path, statement, "credential_declaration")],
+            "uses": [
+                source_row(
+                    row[0],
+                    row[1],
+                    "fresh_enrollment" if row[4] else "local_client_login",
+                )
+                for row in rows
+            ],
+            "operations": [
+                source_row(
+                    row[0],
+                    row[3],
+                    "fresh_enrollment" if row[4] else "local_client_login",
+                )
+                for row in rows
+            ],
+        },
+    }
+
+
+def module_fixture_helper_epoch():
+    """Bind every captured module-role predicate and its reused source resolver."""
+    from . import mock_fixture_provenance as fixture
+    from . import credential_role_constructor_provider as provider
+
+    return (
+        module_fixture_evidence_for_binding,
+        module_fixture_credential_evidence,
+        _fixture_symbol,
+        _fixture_constant,
+        _fixture_scope,
+        _fixture_class_maps,
+        _fixture_chain,
+        _fixture_literal_setting,
+        _fixture_settings,
+        _fixture_user_model,
+        _fixture_test_chain,
+        _fixture_creator,
+        _fixture_creation_username,
+        _fixture_login,
+        _fixture_imports_secret,
+        _fixture_reflective_uses,
+        _fixture_secret_aliases,
+        _fixture_module_aliases,
+        _fixture_module_alias_use_supported,
+        _fixture_declaration_target,
+        _fixture_consumer_row,
+        _fixture_consumers,
+        _fixture_setup_reaches,
+        _fixture_demanded_providers_clear,
+        _fixture_pytest_options,
+        _fixture_selected_user_model,
+        _fixture_create_user_provider,
+        _fixture_resolve_user_model_provider,
+        _fixture_create_user_username,
+        _fixture_database_is_local,
+        _fixture_consumers_in_tree,
+        _fixture_candidate_use,
+        _fixture_role_rows,
+        _fixture_declaration_target_node,
+        _fixture_role_pair,
+        provider.resolve_class_chain_with_terminals,
+        provider.SourceSnapshotIndex.validate,
+        provider.binding_occurrences,
+        fixture._app_source_symbol,
+        fixture._app_provider_unchanged,
+        fixture._app_dynamic_callable,
+        fixture._django_imports,
+        fixture._django_import_rows,
+        fixture._django_mod,
+        _fixture_setup_super_unique,
+        _fixture_setup_client_use,
+        _fixture_setup_client_surface,
+        _fixture_setup_client_lifetime,
+        _class_binding.instance_receiver,
+        _fixture_receiver_interval_clear,
+        _fixture_prefix_receiver_use,
+        _fixture_prefix_client_call,
+        _fixture_user_model_getter_use_closed,
+        _fixture_model_alias_closed,
+        _fixture_model_alias_use,
+    )
+
+
+def module_fixture_evidence_for_binding(index, path, assignment, secret):
+    if index["source"].parents[path].get(id(assignment)) is not index["modules"][path]:
+        return None
+    return module_fixture_credential_evidence(index, path, assignment, secret)
+
+
+def _fixture_setup_super_unique(index, path, method, call):
+    from . import mock_fixture_provenance as fixture
+
+    nodes = own_function_nodes(method, path, index["source"])
+    names = [
+        node
+        for node in nodes
+        if isinstance(node, ast.Name)
+        and node.id == "super"
+        and isinstance(node.ctx, ast.Load)
+    ]
+    return (
+        len(names) == 1
+        and isinstance(call.func, ast.Attribute)
+        and isinstance(call.func.value, ast.Call)
+        and names[0] is call.func.value.func
+        and fixture._django_builtins_unshadowed(index, path, {"super"})
+    )
+
+
+def _fixture_setup_client_use(index, path, method, node):
+    from . import mock_fixture_provenance as fixture
+
+    parents = index["source"].parents[path]
+    chain = fixture._app_member_chain(node)
+    if chain == ["self", "client"]:
+        login = parents.get(id(node))
+        if not isinstance(login, ast.Attribute) or login.value is not node:
+            return False
+    elif chain == ["self", "client", "login"]:
+        login = node
+    else:
+        return False
+    if isinstance(node.ctx, (ast.Store, ast.Del)):
+        return False
+    call = parents.get(id(login))
+    if not isinstance(login, ast.Attribute) or login.attr != "login":
+        return False
+    if not isinstance(call, ast.Call) or call.func is not login or call.args:
+        return False
+    args = {item.arg: item.value for item in call.keywords}
+    if None in args or len(call.keywords) != 2 or set(args) != {"username", "password"}:
+        return False
+    receiver = node.value if chain == ["self", "client"] else node.value.value
+    owner = parents.get(id(method))
+    return _class_binding.instance_receiver(
+        receiver, method, owner, index["source"], path
+    )
+
+
+def _fixture_setup_client_surface(index, path, method):
+    from . import mock_fixture_provenance as fixture
+
+    nodes = own_function_nodes(method, path, index["source"])
+    parents = index["source"].parents[path]
+    for node in nodes:
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "self"
+        ):
+            return False
+        if (
+            isinstance(node, ast.Name)
+            and node.id == "self"
+            and isinstance(node.ctx, ast.Load)
+        ):
+            parent = parents.get(id(node))
+            if not isinstance(parent, ast.Attribute) or parent.value is not node:
+                return False
+            if parent.attr.startswith("__"):
+                return False
+        if not isinstance(node, ast.Attribute):
+            continue
+        if (fixture._app_member_chain(node) or [])[:2] != ["self", "client"]:
+            continue
+        if not _fixture_setup_client_use(index, path, method, node):
+            return False
+    return True
+
+
+def _fixture_setup_client_lifetime(index, path, method):
+    """Close explicit selected-client writes and receiver escapes in captured setup."""
+    from . import mock_fixture_provenance as fixture
+
+    if _class_binding._receiver(method) != "self" or binding_occurrences(
+        method.body, "self"
+    ):
+        return False
+    if not _fixture_setup_client_surface(index, path, method):
+        return False
+    nodes = own_function_nodes(method, path, index["source"])
+    end = max((getattr(node, "end_lineno", 0) for node in nodes), default=0) + 1
+    return fixture._app_capability_interval(index, path, method, end)
+
+
+def _fixture_receiver_interval_clear(index, path, function, invocation):
+    """Keep the selected instance unescaped before a modeled local-client call."""
+    parents = index["source"].parents[path]
+    before = (invocation.lineno, invocation.col_offset)
+    for node in own_function_nodes(function, path, index["source"]):
+        if not isinstance(node, ast.Name) or node.id != "self":
+            continue
+        if (node.lineno, node.col_offset) >= before:
+            continue
+        if not _fixture_prefix_receiver_use(parents, node):
+            return False
+    return True
+
+
+def _fixture_prefix_receiver_use(parents, node):
+    """Reject prefix receiver escapes, reflective access and client capability changes."""
+    member = parents.get(id(node))
+    if not isinstance(member, ast.Attribute) or member.value is not node:
+        return False
+    if member.attr.startswith("__") or not isinstance(member.ctx, ast.Load):
+        return False
+    selected = member
+    while isinstance(parents.get(id(selected)), (ast.Attribute, ast.Subscript)):
+        selected = parents[id(selected)]
+        if not isinstance(selected.ctx, ast.Load):
+            return False
+    call = parents.get(id(selected))
+    if member.attr == "client":
+        return _fixture_prefix_client_call(member, selected, call)
+    return not isinstance(call, ast.Call) or call.func is not selected
+
+
+def _fixture_prefix_client_call(member, selected, call):
+    """Recognize the modeled local Client API, without admitting stored method aliases."""
+    methods = {
+        "get",
+        "post",
+        "put",
+        "patch",
+        "delete",
+        "head",
+        "options",
+        "login",
+        "logout",
+    }
+    return bool(
+        isinstance(selected, ast.Attribute)
+        and selected.value is member
+        and selected.attr in methods
+        and isinstance(call, ast.Call)
+        and call.func is selected
+    )
