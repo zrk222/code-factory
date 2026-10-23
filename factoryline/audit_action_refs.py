@@ -395,6 +395,23 @@ def _security_scan_action_summary(state: str) -> str:
     return "Resolve each listed finding and rerun this deterministic scan before release review."
 
 
+def _application_configuration_hashes(class_profiles):
+    """Select only bounded configuration digests from explicit class profiles."""
+    config_hashes = {}
+    for evidence in class_profiles:
+        configured = evidence.get("configuration_sha256", {})
+        if not isinstance(configured, dict):
+            continue
+        for name, digest in configured.items():
+            if (
+                name in {"pyproject.toml", "requirements.txt", "tox.ini"}
+                and isinstance(digest, str)
+                and len(digest) == 64
+            ):
+                config_hashes[name] = digest
+    return config_hashes
+
+
 def _captured_application_source_bytes(workspace, findings, bindings, source_bytes):
     paths = {
         finding.get("path")
@@ -421,23 +438,11 @@ def _captured_application_source_bytes(workspace, findings, bindings, source_byt
         if finding.get("facts", {}).get("fixture_evidence", {}).get("profile")
         == "DJANGO_CLASS_LOCAL_ACCOUNT_ENROLLMENT"
     ]
-    config_hashes = {}
+    config_hashes = _application_configuration_hashes(class_profiles)
     if class_profiles:
-        # Class evidence is recomputed against the whole Python inventory and
-        # the exact configuration bytes used by its source-index producer.
+        # Class evidence requires the whole captured Python inventory.
         paths.update(name for name in hashes if name.endswith(".py"))
-        for evidence in class_profiles:
-            configured = evidence.get("configuration_sha256", {})
-            if not isinstance(configured, dict):
-                continue
-            for name, digest in configured.items():
-                if (
-                    name in {"pyproject.toml", "requirements.txt", "tox.ini"}
-                    and isinstance(digest, str)
-                    and len(digest) == 64
-                ):
-                    config_hashes[name] = digest
-                    paths.add(name)
+    paths.update(config_hashes)
     hashes.update(config_hashes)
     jwt_findings = [
         finding

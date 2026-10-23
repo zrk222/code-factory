@@ -737,7 +737,8 @@ def test_trace_edge_and_alias_closure_require_exact_nodes_and_all_uses(tmp_path)
         getter.span_key(row): next(
             n
             for n in ast.walk(index.snapshots[path])
-            if isinstance(n, (ast.stmt, ast.expr, ast.arg)) and getter.coordinates(n)
+            if isinstance(n, (ast.stmt, ast.expr, ast.arg))
+            and getter.coordinates(n)
             == tuple(row[key] for key in ("line", "column", "end_line", "end_column"))
         )
         for row in trace

@@ -1,0 +1,80 @@
+{
+  "schema": "factory.python-quality-repair257.v1",
+  "parent": "9c38d06dc15c1dfab8ba086466cc619c7d5cdd19",
+  "source_files": {
+    "factoryline/audit_action_refs.py": "2e485c90a69d0bf5d2c5cda023db70b482ba33ce7565ab4bbf4ba9ca64e20ed4",
+    "factoryline/primitive_observation_binding.py": "ce5cae947c1582ae8f996733a8298ec77c0c73ea74f1ec3f46d9ef5635547e4a",
+    "factoryline/credential_role_identity_effects.py": "cc32df9f22ad294ac7f69baa4d6180ececdc2dabca6d143838e99ffff768661b",
+    "factoryline/provenance.py": "faaab311b92db79f316a41b89957566cc766a11a6ef1a198083731958273ffb8",
+    "tests/test_mock_fixture_provenance.py": "56f345bd5481a0cf3ad80e3247128472f9724f2b7bcf95f6128f0f70dc8449be",
+    "tests/test_review_integrity.py": "1b9d4db7da58859d17b3f5b0c80ad75da12b0e74d7cd3eb40d66327f2f2b305d",
+    "tests/test_credential_role_method_use_audit.py": "51670de3c5b85e0378ca733aee2e0b9f130de6f122e64945fc69529f24ba5e9a"
+  },
+  "native_quality": {
+    "grade": "A",
+    "composite": 99.1,
+    "attribution": 1.0,
+    "max_complexity": 10
+  },
+  "checks": [
+    {
+      "command": [
+        "C:\\Users\\rkatz\\AppData\\Local\\Programs\\Python\\Python311\\python.exe",
+        "-m",
+        "ruff",
+        "check",
+        "factoryline",
+        "tests"
+      ],
+      "exit_code": 0,
+      "seconds": 0.3289999999979045,
+      "output": "All checks passed!\n"
+    },
+    {
+      "command": [
+        "C:\\Users\\rkatz\\AppData\\Local\\Programs\\Python\\Python311\\python.exe",
+        "-m",
+        "ruff",
+        "format",
+        "--check",
+        "factoryline",
+        "tests"
+      ],
+      "exit_code": 0,
+      "seconds": 0.32800000000861473,
+      "output": "412 files already formatted\n"
+    },
+    {
+      "command": [
+        "C:\\Users\\rkatz\\AppData\\Local\\Programs\\Python\\Python311\\python.exe",
+        "-m",
+        "ruff",
+        "check",
+        "--select",
+        "C901",
+        "factoryline",
+        "tests"
+      ],
+      "exit_code": 0,
+      "seconds": 0.3279999999795109,
+      "output": "All checks passed!\n"
+    }
+  ],
+  "targeted_tests": {
+    "passed": 13,
+    "failed": 0,
+    "receipt": {
+      "path": ".factory/precision257/targeted/python-quality-source-capture/receipt.json",
+      "sha256": "9476777150a9fc99d133e958615353eb8ee99c4ae8bb7378139562047170c322",
+      "kind": "evidence"
+    }
+  },
+  "architecture": "HEALTHY; caps unchanged",
+  "review": {
+    "path": ".factory/precision257/lint-followup/root-review.json",
+    "sha256": "11a33a2af1e6c28ffe514ac1ea0424769734cdfb5e0135e942d230f2459b6a0a",
+    "kind": "review"
+  },
+  "precision": "Unchanged Study249 55% actionable; no new precision measurement.",
+  "publication": "HOLD; merge only after required checks."
+}

@@ -2040,7 +2040,10 @@ def test_shared_assignment_selection_preserves_class_rows_and_module_binding_gua
 
     tree = ast.parse(source)
     rows = fixtures._direct_named_assignments(tree, "secret")
-    render = lambda value: ast.unparse(value) if value is not None else None
+
+    def render(value):
+        return ast.unparse(value) if value is not None else None
+
     assert [render(value) for _, value in rows] == values
     assert all(
         statement in tree.body and value is statement.value for statement, value in rows

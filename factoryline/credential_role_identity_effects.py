@@ -156,8 +156,10 @@ def _identity_call_value(node, aliases, *, strict_calls=False):
         receiver = identity_value(node.func.value, aliases, strict_calls=strict_calls)
         if contains_tracked(receiver):
             return _Value(unknown=True)
-    return _Value(content_unknown=True) if strict_calls else _unknown_expression(
-        node, aliases, strict_calls=strict_calls
+    return (
+        _Value(content_unknown=True)
+        if strict_calls
+        else _unknown_expression(node, aliases, strict_calls=strict_calls)
     )
 
 
@@ -268,7 +270,15 @@ def nested_capture_roots(
     captured, tracked = set(), set(aliases)
     for node in ast.walk(function):
         _capture_nested_scope(
-            node, function, path, tracked, aliases, index, strict_calls, effects, captured
+            node,
+            function,
+            path,
+            tracked,
+            aliases,
+            index,
+            strict_calls,
+            effects,
+            captured,
         )
     return captured
 
@@ -532,7 +542,9 @@ def identity_fields(fields, index):
 
 
 def _identity_field_value(key, root, index):
-    literal = _source_literal(root, index) if isinstance(root, SourceFieldLiteral) else None
+    literal = (
+        _source_literal(root, index) if isinstance(root, SourceFieldLiteral) else None
+    )
     if not _identity_field_key_valid(key, root, literal):
         return None
     return literal if literal is not None else _Value(roots=frozenset({root}))
@@ -788,7 +800,9 @@ def exact_receiver_class(path, receiver, index, imports, classes, audit):
     )
 
 
-def _exact_receiver_class_for_function(path, receiver, index, imports, classes, audit, parents):
+def _exact_receiver_class_for_function(
+    path, receiver, index, imports, classes, audit, parents
+):
     function = _enclosing_function(receiver, parents)
     constructor = _local_constructor(receiver, function, parents) if function else None
     if constructor is None or _root_name(constructor.func) is None:

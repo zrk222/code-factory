@@ -7169,3 +7169,53 @@ def test_fixed_program_workspace_binding_and_helper_surface_rebuild_hashes(tmp_p
     assert (
         rebound["module"]["fixed_program_workspace"]["namespace_mutation_risk"] is True
     )
+
+
+def test_application_capture_refactor_keeps_exact_config_hash_and_source_boundaries(
+    tmp_path, monkeypatch
+):
+    from factoryline import audit_action_refs as refs
+    from factoryline import primitive_observation_binding as binding
+    from factoryline import credential_role_constructor_provider as provider
+
+    raw = b"value = 1\n"
+    config = b"[project]\nname='sample'\n"
+    (tmp_path / "pyproject.toml").write_bytes(config)
+    digest = hashlib.sha256(config).hexdigest()
+    evidence = {
+        "profile": "DJANGO_CLASS_LOCAL_ACCOUNT_ENROLLMENT",
+        "configuration_sha256": {
+            "pyproject.toml": digest,
+            "ignored.toml": "a" * 64,
+            "tox.ini": "short",
+        },
+    }
+    assert refs._application_configuration_hashes(
+        [evidence, {"configuration_sha256": []}]
+    ) == {"pyproject.toml": digest}
+    assert refs._application_configuration_hashes([]) == {}
+    findings = [{"path": "app.py", "facts": {"fixture_evidence": evidence}}]
+    bindings = [
+        {"path": "app.py", "sha256": hashlib.sha256(raw).hexdigest()},
+        {"path": "other.py", "sha256": "0" * 64},
+    ]
+    captured = refs._captured_application_source_bytes(
+        tmp_path,
+        findings,
+        bindings,
+        {tmp_path / "app.py": raw, tmp_path / "other.py": raw},
+    )
+    assert captured == {"app.py": raw, "pyproject.toml": config}
+    (tmp_path / "pyproject.toml").write_bytes(b"changed")
+    assert refs._captured_application_source_bytes(
+        tmp_path, findings, bindings, {tmp_path / "app.py": raw}
+    ) == {"app.py": raw}
+    original = provider._helper_snapshot(binding.primitive_binding_helpers)
+
+    def changed(*args):
+        return {}
+
+    with monkeypatch.context() as patch:
+        patch.setattr(refs, "_application_configuration_hashes", changed)
+        assert provider._helper_snapshot(binding.primitive_binding_helpers) != original
+    assert provider._helper_snapshot(binding.primitive_binding_helpers) == original

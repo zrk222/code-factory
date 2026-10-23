@@ -1477,7 +1477,10 @@ def fixed_program_workspace_helpers(audit):
 
 def primitive_binding_helpers():
     """Return primitive-binding validators for endpoint, fixture, declaration, finite-eval, workspace, and symbolic-identifier evidence."""
-    from .audit_action_refs import _captured_application_source_bytes
+    from .audit_action_refs import (
+        _captured_application_source_bytes,
+        _application_configuration_hashes,
+    )
     from .credential_endpoint_admission import endpoint_evidence_helpers
     from .credential_endpoint_admission import endpoint_admission_helpers
     from .credential_endpoint_admission import catalog_callable_helpers
@@ -1514,6 +1517,7 @@ def primitive_binding_helpers():
         _application_class_source_inputs,
         _application_class_role_recomputes,
         _captured_application_source_bytes,
+        _application_configuration_hashes,
         _application_role_binding,
         _application_witness_bindings,
         _application_use_closure_binding,

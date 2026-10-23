@@ -570,12 +570,7 @@ def _credential_enum_class(scope, audit):
 
 
 def _credential_enum_literal(node, target, audit):
-    if (
-        len(
-            node.targets if isinstance(node, audit.ast.Assign) else [node.target]
-        )
-        != 1
-    ):
+    if len(node.targets if isinstance(node, audit.ast.Assign) else [node.target]) != 1:
         return False
     if not isinstance(target, audit.ast.Name):
         return False
