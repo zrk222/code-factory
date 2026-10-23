@@ -1997,3 +1997,126 @@ def test_annotated_enum_literal_with_matching_value_is_supported():
         audit, declaration, declaration.target, {"Enum": "enum.Enum"}
     )
     assert witness["role_candidate"] == "symbolic_enum_identifier"
+
+
+def test_shared_evidence_span_keeps_exact_coordinates_and_new_list_identity():
+    from factoryline import mock_fixture_provenance as fixtures
+
+    tree = ast.parse("def run():\n    return receiver.send('value')\n")
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.stmt, ast.expr)):
+            continue
+        expected = [node.lineno, node.col_offset, node.end_lineno, node.end_col_offset]
+        actual = fixtures._evidence_node_span(node)
+        assert actual == expected
+        assert actual is not fixtures._evidence_node_span(node)
+        actual[0] = -1
+        assert fixtures._evidence_node_span(node) == expected
+    with pytest.raises(AttributeError):
+        fixtures._evidence_node_span(ast.Module(body=[], type_ignores=[]))
+
+
+@pytest.mark.parametrize(
+    "source,values,module_accepts",
+    [
+        ("secret = 'first'", ["'first'"], True),
+        ("secret: str = 'first'", ["'first'"], True),
+        ("secret: str", [None], True),
+        ("secret = 'first'\nsecret: str = 'second'", ["'first'", "'second'"], True),
+        ("secret = other = 'first'", [], False),
+        ("secret, other = 'first', 'second'", [], False),
+        ("if ready:\n    secret = 'nested'", [], False),
+        ("secret = 'first'\nif ready:\n    secret = 'nested'", ["'first'"], False),
+        ("def secret():\n    pass", [], False),
+        ("other = 'different'", [], True),
+        ("secret += 'more'", [], False),
+        ("del secret", [], False),
+    ],
+)
+def test_shared_assignment_selection_preserves_class_rows_and_module_binding_guard(
+    source, values, module_accepts
+):
+    from factoryline import mock_fixture_provenance as fixtures
+
+    tree = ast.parse(source)
+    rows = fixtures._direct_named_assignments(tree, "secret")
+    render = lambda value: ast.unparse(value) if value is not None else None
+    assert [render(value) for _, value in rows] == values
+    assert all(
+        statement in tree.body and value is statement.value for statement, value in rows
+    )
+    assert [
+        render(value)
+        for value in fixtures._django_assignment_from_class(tree, "secret")
+    ] == values
+    expected = rows if module_accepts else []
+    assert fixtures._django_assignment(tree, "secret") == expected
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["_evidence_node_span", "_direct_named_assignments", "_app_unittest_witness"],
+)
+@pytest.mark.parametrize("mutation", ["binding", "code"])
+def test_shared_mock_projection_helpers_invalidate_native_proof_cache(
+    tmp_path, monkeypatch, name, mutation
+):
+    from factoryline import mock_fixture_provenance as fixtures
+    from factoryline import review_audits as audit
+
+    original = getattr(fixtures, name)
+    assert original in fixtures.CACHE_HELPERS
+    before = audit._oracle_context_cache_key(tmp_path, [], {})
+
+    def replacement(*args, **kwargs):
+        return []
+
+    with monkeypatch.context() as patch:
+        if mutation == "binding":
+            patch.setattr(fixtures, name, replacement)
+        else:
+            patch.setattr(original, "__code__", replacement.__code__)
+        assert audit._oracle_context_cache_key(tmp_path, [], {}) != before
+    assert audit._oracle_context_cache_key(tmp_path, [], {}) == before
+
+
+@pytest.mark.parametrize(
+    "source,expected",
+    [
+        ("secret = 'first'", True),
+        ("secret: str = 'first'", False),
+        ("secret = 'first'\nsecret = 'second'", False),
+        ("secret = 'first'\nif ready:\n    secret = 'nested'", False),
+        ("secret = other = 'first'", False),
+        ("secret += 'more'", False),
+    ],
+)
+def test_application_local_assignment_keeps_only_unique_plain_binding(source, expected):
+    from factoryline import mock_fixture_provenance as fixtures
+
+    tree = ast.parse(source)
+    result = fixtures._app_local_assignment(tree, "secret")
+    assert result is (tree.body[0] if expected else None)
+
+
+@pytest.mark.parametrize(
+    "witness,expected",
+    [
+        ({"request": "call"}, "UNITTEST_FACTORY_USER_ENROLLMENT"),
+        (
+            {"token": "value", "request": "call"},
+            "UNITTEST_FACTORY_INVITATION_ENROLLMENT",
+        ),
+        ({"token": "value", "profile": "preserved"}, "preserved"),
+    ],
+)
+def test_unittest_witness_projection_keeps_classification_and_override_precedence(
+    witness, expected
+):
+    from factoryline import mock_fixture_provenance as fixtures
+
+    before = dict(witness)
+    result = fixtures._app_unittest_witness(witness)
+    assert result["profile"] == expected
+    assert witness == before and result is not witness
+    assert result == {"profile": expected, **witness}

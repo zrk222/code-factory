@@ -34,3 +34,28 @@ def test_operations_reference_reaches_shared_taxonomy_and_generated_junie(tmp_pa
         assert reference["path"].encode() in generated
     assert audit.__file__.startswith(str(overlay))
     assert junie.__file__.startswith(str(overlay))
+
+
+def test_current_owner_publication_hold_is_distinct_from_merge_and_historical_score():
+    import json
+
+    root = Path(__file__).parents[1]
+    decision = json.loads(
+        (root / "docs/evidence/owner-publication-hold251.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    operations = (root / "docs/AGENT_CONTRACTS.md").read_text(encoding="utf-8")
+    plan = (root / "plans/accuracy-efficiency174.md").read_text(encoding="utf-8")
+    assert decision["publication"] == "HOLD"
+    assert decision["current_measured_actionable_precision"] == 0.55
+    assert decision["next_precision_target"] == 0.8
+    assert decision["publish_dispatched"] is False
+    assert decision["score_and_labels_unchanged"] is True
+    assert (
+        decision["pr255_merge"] == "authorized after required engineering checks pass"
+    )
+    assert "supersedes that publication authorization" in operations
+    assert "hold publication until the next" in operations
+    assert "Superseding publication hold" in plan
+    assert "Do not dispatch the publish workflow" in operations

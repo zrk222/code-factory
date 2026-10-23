@@ -111,12 +111,18 @@ precision guarantee or universal coverage claim.
   not fresh evidence for later tuning claims. The baseline timed out on 17
   candidate-only sampled alerts; those unmatched alerts do not show paired
   gains or regressions.
-- The release owner accepts the observed 55% result for the current bounded
-  release decision and separately authorizes publication. This owner decision
-  does not waive technical checks or establish that publication occurred or
-  provider checks passed. The current technical checks remain enforced. The
-  next accuracy PR targets at least 80% on a new decided sample; do not claim
-  that target has been reached without new evidence.
+- The release owner previously accepted the observed 55% result for the
+  current bounded release decision and authorized publication. The latest owner
+  instruction **supersedes that publication authorization**: finish the PR #255
+  merge after its required checks pass, then **hold publication until the next
+  precision PR (requested as PR #256) is completed with higher measured scores**.
+  Its target remains at least 80% actionable precision on a new prospectively
+  frozen, sufficiently decided sample. PR #256 was not yet present at the time
+  this hold was recorded. Do not dispatch the publish workflow, create a public
+  release, or upload packages for PR #255 while this hold applies.
+  Owner acceptance does not establish that publication occurred or provider
+  checks passed. The current technical checks remain enforced. Do not claim
+  the higher target has been reached without its own evidence.
 - Keep the configured caps at 464 Python files and 133 core modules. Prioritize
   precision, speed, and simplicity. Preserve finding IDs, severity, and test
   expectations. Reproduce actual failures, misses, and false positives; do

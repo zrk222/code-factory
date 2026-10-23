@@ -12,7 +12,7 @@ Completed execution history is retained in `docs/evidence/`, not as open tasks.
 - PR255 merge bar: **35%+ actionable precision**, at least **30 decided
   candidate alerts**, preregistration, Wilson interval, uncertainty, reviewer
   disclosures and genuine-positive retention, plus all engineering gates.
-- Current release threshold, subsequently approved by the human owner: **55% actionable precision** on the sealed Study249 result. The owner validated the reported results and explicitly authorized publishing at55%, with the **next PR targeting80%+**. Required engineering, signed-artifact, cadence and provider gates remain enforced. The study still shows no common-claim gain, incomplete coverage, two AI labelers and concentrated TPs; owner approval does not rewrite those measurements.
+- Current merge decision: the human owner accepts the sealed Study249 **55% actionable precision** result for PR #255, subject to the required technical checks. **Publication is on hold** under the later instruction below until the next precision PR, requested as PR #256, is completed with higher measured scores; its target is **80%+**. Original score, coverage limits and label provenance remain unchanged.
 - Next-PR target: **80%+** on a new prospectively frozen cohort, at least30 decided candidate alerts, confidence interval, coverage and reviewer disclosure, then90% later. No score is promised by this plan.
 - AI labeling is owner-authorized for this pass. Disclose reviewer kind,
   model/prompt separation, packet identity and disagreements. Do not call AI
@@ -280,3 +280,19 @@ separate human packet-label submission was received. The owner-requested merge
 and publication still require the existing technical and provider checks.
 The original pre-registered study result and its unmet full-coverage condition
 remain preserved above; the subsequent release decision is a separate authority.
+
+
+## Superseding publication hold and next precision PR
+
+The owner subsequently instructed: “AFTER COMPLETED MERGE DO NOT YET PUBLISH PR
+255 UNTIL WE FINISH PR 256 WITH THE HIGHER PRECION SCORES.” This supersedes the
+earlier permission to publish at 55%. Continue required-check repairs and merge
+PR #255 when green, then hold its publication. No publish dispatch, public
+release, or package upload is authorized by the earlier 55% decision while the
+hold applies. The named PR #256 is planned and was not yet present when checked.
+
+A one-time Astra High senior security precision engineer review will produce
+the implementation plan for the next PR's 80%+ focus. It must prioritize
+actionable defects, retain known TPs, close coverage gaps, and use a new
+prospectively frozen evaluation after exposed-data development. The report
+and the target do not constitute a measured gain or release approval.
