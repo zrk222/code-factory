@@ -165,3 +165,8 @@ scheduler, or network deployment is included. Every effect remains bound to
 the exact candidate, source, environment, policy, run, and current owner epoch;
 local evidence does not establish authenticated identity, correctness, merge,
 release, or production status.
+
+For the current scoped accuracy operations and owner decision, Junie and other
+adapters use the shared [`AGENT_CONTRACTS.md` Study249 reference](AGENT_CONTRACTS.md#current-accuracy-operations-study249).
+Generated Junie guidance links to the same reference; it does not embed a
+separate copy of the mutable measurements.

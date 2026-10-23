@@ -163,9 +163,18 @@ def main(argv=None) -> int:
 
 def public_symbolic_findings(relative, node, findings, integrity):
     """Attach native source proofs; preserve the original primitive observation."""
-    import hashlib
-    import json
+    context = _symbolic_finding_context(relative, node, integrity)
+    if context is None:
+        return findings
+    raw, profile = context
+    for finding in findings:
+        _attach_symbolic_finding(relative, node, finding, raw, profile)
+    from .credential_endpoint_admission import annotate_endpoint_findings
 
+    return annotate_endpoint_findings(relative, node, findings, integrity)
+
+
+def _symbolic_finding_context(relative, node, integrity):
     module = integrity._security_module_scope(
         getattr(node, "_security_lexical_scope", None)
     )
@@ -176,50 +185,55 @@ def public_symbolic_findings(relative, node, findings, integrity):
         or len(context) != 2
         or not isinstance(profile, dict)
     ):
-        return findings
+        return None
     root, sources = context
     raw = sources.get(root / relative) if isinstance(sources, dict) else None
     if not isinstance(raw, bytes) or hashlib.sha256(raw).hexdigest() != getattr(
         module, "_oracle_source_sha256", None
     ):
-        return findings
-    for finding in findings:
-        facts = finding.get("facts", {})
-        if (
-            finding.get("code") != "SECURITY_HARDCODED_SECRET"
-            or facts.get("role_candidate") != "symbolic_enum_identifier"
-        ):
-            continue
-        evidence = profile.get("credential_consumers", {}).get(
-            f"{node.lineno}:{facts.get('name')}"
-        )
-        if not isinstance(evidence, dict) or not evidence.get("consumers"):
-            continue
-        finding["facts"] = {
-            **facts,
-            **evidence,
-            "schema": "factory.public-symbolic-identifier.v1",
-            "disposition": "PROVEN_PUBLIC_SYMBOLIC_IDENTIFIER",
-            "source_path": relative,
-            "source_sha256": hashlib.sha256(raw).hexdigest(),
-            "workspace_sources_sha256": profile.get("sources_sha256"),
-            "declaration_span": [
-                node.lineno,
-                node.col_offset,
-                node.end_lineno,
-                node.end_col_offset,
-            ],
-            "runtime_assurance": "INCOMPLETE",
-            "target_execution": "not_performed",
-            "evidence_scope": "source-snapshot-publication-boundary",
-            "downstream_consumer_security": "UNASSESSED",
-        }
-        finding["facts"]["proof_facts_sha256"] = hashlib.sha256(
-            json.dumps(finding["facts"], sort_keys=True, separators=(",", ":")).encode()
-        ).hexdigest()
-    from .credential_endpoint_admission import annotate_endpoint_findings
+        return None
+    return raw, profile
 
-    return annotate_endpoint_findings(relative, node, findings, integrity)
+
+def _attach_symbolic_finding(relative, node, finding, raw, profile):
+    facts = finding.get("facts", {})
+    if (
+        finding.get("code") != "SECURITY_HARDCODED_SECRET"
+        or facts.get("role_candidate") != "symbolic_enum_identifier"
+    ):
+        return
+    evidence = profile.get("credential_consumers", {}).get(
+        f"{node.lineno}:{facts.get('name')}"
+    )
+    if not isinstance(evidence, dict) or not evidence.get("consumers"):
+        return
+    proof = _symbolic_finding_facts(relative, node, facts, evidence, raw, profile)
+    proof["proof_facts_sha256"] = hashlib.sha256(
+        json.dumps(proof, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    finding["facts"] = proof
+
+
+def _symbolic_finding_facts(relative, node, facts, evidence, raw, profile):
+    return {
+        **facts,
+        **evidence,
+        "schema": "factory.public-symbolic-identifier.v1",
+        "disposition": "PROVEN_PUBLIC_SYMBOLIC_IDENTIFIER",
+        "source_path": relative,
+        "source_sha256": hashlib.sha256(raw).hexdigest(),
+        "workspace_sources_sha256": profile.get("sources_sha256"),
+        "declaration_span": [
+            node.lineno,
+            node.col_offset,
+            node.end_lineno,
+            node.end_col_offset,
+        ],
+        "runtime_assurance": "INCOMPLETE",
+        "target_execution": "not_performed",
+        "evidence_scope": "source-snapshot-publication-boundary",
+        "downstream_consumer_security": "UNASSESSED",
+    }
 
 
 def public_symbolic_binding(finding, sources, bindings):
@@ -230,8 +244,25 @@ def public_symbolic_binding(finding, sources, bindings):
 
     facts = finding.get("facts", {})
     consumers, profiles = facts.get("consumers"), facts.get("source_profiles")
+    if not _symbolic_binding_header(
+        finding, facts, consumers, profiles, bindings, _valid_source_span
+    ):
+        return False
+    if not _symbolic_consumer_rows(consumers, profiles, bindings):
+        return False
+    digest, workspace, proof = _symbolic_binding_digests(
+        consumers, profiles, sources, facts, hashlib, json
+    )
+    return (
+        facts.get("consumer_evidence_sha256") == digest
+        and facts.get("workspace_sources_sha256") == workspace
+        and facts.get("proof_facts_sha256") == proof
+    )
+
+
+def _symbolic_binding_header(finding, facts, consumers, profiles, bindings, valid_span):
     span = facts.get("declaration_span")
-    if not (
+    return bool(
         finding.get("code") == "SECURITY_HARDCODED_SECRET"
         and facts.get("schema") == "factory.public-symbolic-identifier.v1"
         and facts.get("disposition") == "PROVEN_PUBLIC_SYMBOLIC_IDENTIFIER"
@@ -240,14 +271,16 @@ def public_symbolic_binding(finding, sources, bindings):
         and facts.get("target_execution") == "not_performed"
         and facts.get("source_path") == finding.get("path")
         and facts.get("source_sha256") == bindings.get(finding.get("path"))
-        and _valid_source_span(span)
+        and valid_span(span)
         and span[:2] == [finding.get("line"), finding.get("column")]
         and isinstance(consumers, list)
         and 0 < len(consumers) <= 200_000
         and isinstance(profiles, list)
         and len(profiles) <= 2000
-    ):
-        return False
+    )
+
+
+def _symbolic_consumer_rows(consumers, profiles, bindings):
     if any(
         not isinstance(row, dict)
         or row.get("source_sha256") != bindings.get(row.get("path"))
@@ -264,6 +297,10 @@ def public_symbolic_binding(finding, sources, bindings):
         for row in profiles
     ):
         return False
+    return True
+
+
+def _symbolic_binding_digests(consumers, profiles, sources, facts, hashlib, json):
     digest = hashlib.sha256(
         json.dumps(
             {"consumers": consumers, "source_profiles": profiles},
@@ -284,11 +321,7 @@ def public_symbolic_binding(finding, sources, bindings):
             separators=(",", ":"),
         ).encode()
     ).hexdigest()
-    return (
-        facts.get("consumer_evidence_sha256") == digest
-        and facts.get("workspace_sources_sha256") == workspace
-        and facts.get("proof_facts_sha256") == proof
-    )
+    return digest, workspace, proof
 
 
 def bind_public_symbolic_consumers(
@@ -364,23 +397,34 @@ def bind_public_symbolic_consumers(
 
 def finite_template_witness(relative, node, call_name, root, sources, profile):
     """Read native finite-input evidence; never evaluate generated target code."""
+    facts = _finite_template_facts(relative, node, call_name, profile)
+    if facts is None:
+        return {}
+    return dict(facts) if _finite_template_sources_match(facts, root, sources) else {}
+
+
+def _finite_template_facts(relative, node, call_name, profile):
     import ast
 
     if call_name not in {"exec", "builtins.exec"} or not isinstance(node, ast.Call):
-        return {}
+        return None
     ledger = profile.get("finite_template_inputs", {})
     if not isinstance(ledger, dict):
-        return {}
+        return None
     facts = ledger.get(f"{node.lineno}:{node.col_offset}")
     if not isinstance(facts, dict) or facts.get("source_path") != relative:
-        return {}
+        return None
     if facts.get("call_span") != [
         node.lineno,
         node.col_offset,
         node.end_lineno,
         node.end_col_offset,
     ]:
-        return {}
+        return None
+    return facts
+
+
+def _finite_template_sources_match(facts, root, sources):
     for path_key, hash_key in (
         ("source_path", "source_sha256"),
         ("capture_path", "capture_sha256"),
@@ -391,8 +435,8 @@ def finite_template_witness(relative, node, call_name, root, sources, profile):
         if not isinstance(raw, bytes) or hashlib.sha256(raw).hexdigest() != facts.get(
             hash_key
         ):
-            return {}
-    return dict(facts)
+            return False
+    return True
 
 
 def finite_template_binding(finding, sources, bindings):
@@ -401,11 +445,24 @@ def finite_template_binding(finding, sources, bindings):
     from .review_integrity import _valid_source_span
 
     facts = finding.get("facts", {})
+    if not _finite_template_header(finding, facts, _valid_source_span, re):
+        return False
+    if not _finite_template_paths_bound(facts, sources, bindings):
+        return False
+    workspace = _source_workspace_digest(sources, hashlib, json)
+    proof = _facts_digest(facts, hashlib, json)
+    return (
+        facts.get("workspace_sources_sha256") == workspace
+        and facts.get("proof_facts_sha256") == proof
+    )
+
+
+def _finite_template_header(finding, facts, valid_span, re):
     if not isinstance(facts, dict):
         return False
     span, template = facts.get("call_span"), facts.get("template_span")
     programs, size = facts.get("program_hashes"), facts.get("domain_size")
-    if not (
+    return bool(
         finding.get("code") == "SECURITY_DYNAMIC_EXECUTION"
         and facts.get("schema") == "factory.finite-template-input.v1"
         and facts.get("disposition") == "PROVEN_FINITE_TEMPLATE_INPUT"
@@ -417,16 +474,16 @@ def finite_template_binding(finding, sources, bindings):
         and facts.get("target_execution") == "not_performed"
         and facts.get("source_path") == finding.get("path")
         and facts.get("capture_path") == finding.get("path")
-        and _valid_source_span(span)
-        and _valid_source_span(template)
+        and valid_span(span)
+        and valid_span(template)
         and span[:2] == [finding.get("line"), finding.get("column")]
         and tuple(span[:2])
         <= tuple(template[:2])
         <= tuple(template[2:])
         <= tuple(span[2:])
-        and _valid_source_span(facts.get("capture_span"))
+        and valid_span(facts.get("capture_span"))
         and tuple(facts["capture_span"][2:]) <= tuple(span[:2])
-        and _valid_source_span(facts.get("domain_span"))
+        and valid_span(facts.get("domain_span"))
         and type(size) is int
         and 1 <= size <= 64
         and isinstance(programs, list)
@@ -437,8 +494,10 @@ def finite_template_binding(finding, sources, bindings):
         )
         and isinstance(facts.get("template_sha256"), str)
         and re.fullmatch(r"[0-9a-f]{64}", facts["template_sha256"])
-    ):
-        return False
+    )
+
+
+def _finite_template_paths_bound(facts, sources, bindings):
     for path_key, hash_key in (
         ("source_path", "source_sha256"),
         ("capture_path", "capture_sha256"),
@@ -454,54 +513,43 @@ def finite_template_binding(finding, sources, bindings):
             name
         ):
             return False
-    workspace = hashlib.sha256(
+    return True
+
+
+def _source_workspace_digest(sources, hashlib, json):
+    return hashlib.sha256(
         json.dumps(
             sorted((row["path"], row["sha256"]) for row in sources),
             separators=(",", ":"),
         ).encode()
     ).hexdigest()
-    proof = hashlib.sha256(
+
+
+def _facts_digest(facts, hashlib, json):
+    return hashlib.sha256(
         json.dumps(
             {key: value for key, value in facts.items() if key != "proof_facts_sha256"},
             sort_keys=True,
             separators=(",", ":"),
         ).encode()
     ).hexdigest()
-    return (
-        facts.get("workspace_sources_sha256") == workspace
-        and facts.get("proof_facts_sha256") == proof
-    )
 
 
 def credential_role_witness(audit, node, target, aliases):
     """Describe a symbolic declaration; it is not a non-credential exemption."""
     scope = getattr(node, "_security_lexical_scope", None)
-    if (
-        not isinstance(scope, audit.ast.ClassDef)
-        or scope.decorator_list
-        or scope.keywords
-    ):
+    if not _credential_enum_class(scope, audit):
         return {}
     targets = node.targets if isinstance(node, audit.ast.Assign) else [node.target]
     if len(targets) != 1 or not isinstance(target, audit.ast.Name):
         return {}
-    if not isinstance(node.value, audit.ast.Constant) or node.value.value != target.id:
+    if not _credential_enum_literal(node, target, audit):
         return {}
     if audit.integrity._builtin_repr_names_shadowed(node, {"str"}):
         return {}
     from .security_configuration import _relative_binding
 
-    bindings = audit.integrity._security_scope_request_aliases(
-        getattr(scope, "_security_parent_scope", None), aliases, scope
-    )
-    bases = []
-    for base in scope.bases:
-        name = audit._name(base)
-        head, separator, tail = name.partition(".")
-        if _relative_binding(node, head) or (head != "str" and head not in bindings):
-            return {}
-        bases.append(bindings.get(head, head) + (separator + tail if separator else ""))
-    if bases != ["str", "enum.Enum"]:
+    if not _credential_enum_bases(scope, node, aliases, audit, _relative_binding):
         return {}
     return {
         "role_candidate": "symbolic_enum_identifier",
@@ -511,6 +559,41 @@ def credential_role_witness(audit, node, target, aliases):
         "credential_use": "UNVERIFIED",
         "missing_evidence": ["complete_import_reexport_and_consumer_closure"],
     }
+
+
+def _credential_enum_class(scope, audit):
+    return bool(
+        isinstance(scope, audit.ast.ClassDef)
+        and not scope.decorator_list
+        and not scope.keywords
+    )
+
+
+def _credential_enum_literal(node, target, audit):
+    if (
+        len(
+            node.targets if isinstance(node, audit.ast.Assign) else [node.target]
+        )
+        != 1
+    ):
+        return False
+    if not isinstance(target, audit.ast.Name):
+        return False
+    return isinstance(node.value, audit.ast.Constant) and node.value.value == target.id
+
+
+def _credential_enum_bases(scope, node, aliases, audit, relative_binding):
+    bindings = audit.integrity._security_scope_request_aliases(
+        getattr(scope, "_security_parent_scope", None), aliases, scope
+    )
+    bases = []
+    for base in scope.bases:
+        name = audit._name(base)
+        head, separator, tail = name.partition(".")
+        if relative_binding(node, head) or (head != "str" and head not in bindings):
+            return False
+        bases.append(bindings.get(head, head) + (separator + tail if separator else ""))
+    return bases == ["str", "enum.Enum"]
 
 
 def bind_credential_consumers(
@@ -531,10 +614,25 @@ def credential_consumer_helpers(audit):
         bind_credential_consumers,
         bind_public_symbolic_consumers,
         public_symbolic_binding,
+        _symbolic_binding_header,
+        _symbolic_consumer_rows,
+        _symbolic_binding_digests,
         credential_role_witness,
+        _credential_enum_class,
+        _credential_enum_literal,
+        _credential_enum_bases,
         public_symbolic_findings,
+        _symbolic_finding_context,
+        _attach_symbolic_finding,
+        _symbolic_finding_facts,
         finite_template_binding,
+        _finite_template_header,
+        _finite_template_paths_bound,
+        _source_workspace_digest,
+        _facts_digest,
         finite_template_witness,
+        _finite_template_facts,
+        _finite_template_sources_match,
         audit._LiteralConsumers,
         *audit.native_execution_helpers(),
         *primitive_binding_helpers(),

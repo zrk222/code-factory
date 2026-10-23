@@ -38,32 +38,40 @@ def resolve_declared_field_origin(chain, member, index):
         return _field_origin_unknown("invalid_query")
     traversed = []
     for path, _, owner in chain:
-        tree = index.snapshots.get(path)
-        if (
-            not index.validate(path)
-            or not isinstance(owner, ast.ClassDef)
-            or not isinstance(tree, ast.Module)
-            or not any(node is owner for node in tree.body)
-        ):
-            return _field_origin_unknown("class_source_unbound")
-        if any(binding_occurrences(owner.body, hook) for hook in _HOOKS):
-            return _field_origin_unknown("dynamic_attribute_hook")
-        traversed.append((owner, path))
-        bindings = binding_occurrences(owner.body, member)
-        if not bindings:
+        should_continue, result = _field_origin_for_owner(
+            path, owner, member, index, traversed
+        )
+        if should_continue:
             continue
-        if len(bindings) != 1:
-            return _field_origin_unknown("member_binding_ambiguous")
-        declaration = bindings[0]
-        if isinstance(declaration, ast.Name):
-            declaration = index.parents[path].get(id(declaration))
-        result = _literal_binding(declaration, member, owner, index, path)
-        if result is None:
-            return _field_origin_unknown("member_binding_dynamic")
-        if any(_member_mutated(parent, member) for parent, _ in traversed):
-            return _field_origin_unknown("member_mutated_or_reflective")
-        return _origin(index, path, declaration)
+        return result
     return _field_origin_unknown("member_not_declared")
+
+
+def _field_origin_for_owner(path, owner, member, index, traversed):
+    tree = index.snapshots.get(path)
+    if (
+        not index.validate(path)
+        or not isinstance(owner, ast.ClassDef)
+        or not isinstance(tree, ast.Module)
+        or not any(node is owner for node in tree.body)
+    ):
+        return False, _field_origin_unknown("class_source_unbound")
+    if any(binding_occurrences(owner.body, hook) for hook in _HOOKS):
+        return False, _field_origin_unknown("dynamic_attribute_hook")
+    traversed.append((owner, path))
+    bindings = binding_occurrences(owner.body, member)
+    if not bindings:
+        return True, None
+    if len(bindings) != 1:
+        return False, _field_origin_unknown("member_binding_ambiguous")
+    declaration = bindings[0]
+    if isinstance(declaration, ast.Name):
+        declaration = index.parents[path].get(id(declaration))
+    if _literal_binding(declaration, member, owner, index, path) is None:
+        return False, _field_origin_unknown("member_binding_dynamic")
+    if any(_member_mutated(parent, member) for parent, _ in traversed):
+        return False, _field_origin_unknown("member_mutated_or_reflective")
+    return False, _origin(index, path, declaration)
 
 
 def _literal_binding(statement, member, owner, index, path):
@@ -154,6 +162,10 @@ def getter_consumer_role(node, index, path, audit):
         return _discarded_projection_role(node, index, path)
     if result.func is not node or result.args or result.keywords:
         return None
+    return _getter_call_consumer_role(node, result, index, path, audit, parents)
+
+
+def _getter_call_consumer_role(node, result, index, path, audit, parents):
     parent = parents.get(id(result))
     if isinstance(parent, ast.Expr) and parent.value is result:
         return source_span(index, path, result, "verified_discarded_getter_result")
@@ -415,31 +427,7 @@ def method_value_use_audit(witness, index, *, context=None, related_owners=None)
             unknown.append({"reason": "malformed_trace"})
             continue
         for row in trace:
-            node, error = _resolve(row, index)
-            if error:
-                unknown.append({"reason": error, "evidence": public_span(row)})
-                continue
-            nodes[span_key(row)] = node
-            role = row["role"]
-            if role not in _ROLES:
-                unknown.append(
-                    {"reason": "unsupported_role", "evidence": public_span(row)}
-                )
-            elif role == "declared_member_read":
-                allowed.append(public_span(row))
-            elif role == "canonical_http_url_sink":
-                _audit_sink(row, node, allowed, unknown)
-            elif (
-                role == "method_call"
-                and isinstance(node, ast.Call)
-                and (node.args or node.keywords)
-            ):
-                unknown.append(
-                    {
-                        "reason": "getter_call_has_unverified_arguments",
-                        "evidence": public_span(row),
-                    }
-                )
+            _audit_method_value_row(row, index, nodes, allowed, unknown)
     audit_value_closure(traces, nodes, index, unknown)
     _boolean_value_choices(traces, nodes, unknown)
     from .credential_role_method_use_getter_audit import audit_getter_uses
@@ -448,6 +436,32 @@ def method_value_use_audit(witness, index, *, context=None, related_owners=None)
         traces, nodes, index, unknown, context=context, related_owners=related_owners
     )
     return _result(allowed, unknown)
+
+
+def _audit_method_value_row(row, index, nodes, allowed, unknown):
+    node, error = _resolve(row, index)
+    if error:
+        unknown.append({"reason": error, "evidence": public_span(row)})
+        return
+    nodes[span_key(row)] = node
+    role = row["role"]
+    if role not in _ROLES:
+        unknown.append({"reason": "unsupported_role", "evidence": public_span(row)})
+    elif role == "declared_member_read":
+        allowed.append(public_span(row))
+    elif role == "canonical_http_url_sink":
+        _audit_sink(row, node, allowed, unknown)
+    elif (
+        role == "method_call"
+        and isinstance(node, ast.Call)
+        and (node.args or node.keywords)
+    ):
+        unknown.append(
+            {
+                "reason": "getter_call_has_unverified_arguments",
+                "evidence": public_span(row),
+            }
+        )
 
 
 def _traces(witness):
@@ -815,41 +829,39 @@ def alias_uses(traces, nodes, index, unknown):
         for row in trace:
             if row.get("role") != "unique_local_alias":
                 continue
-            assignment = nodes.get(span_key(row))
-            if not isinstance(assignment, (ast.Assign, ast.AnnAssign)):
-                unknown.append(
-                    {"reason": "alias_assignment_unresolved", "span": span_key(row)}
-                )
-                continue
-            targets = (
-                assignment.targets
-                if isinstance(assignment, ast.Assign)
-                else [assignment.target]
-            )
-            if len(targets) != 1 or not isinstance(targets[0], ast.Name):
-                unknown.append(
-                    {"reason": "alias_shape_unsupported", "span": span_key(row)}
-                )
-                continue
-            name = targets[0].id
-            function = ancestor(
-                assignment, index, row["path"], (ast.FunctionDef, ast.AsyncFunctionDef)
-            )
-            if function is None:
-                unknown.append(
-                    {"reason": "alias_function_unresolved", "span": span_key(row)}
-                )
-                continue
-            bindings = binding_occurrences(function.body, name)
-            if len(bindings) != 1 or bindings[0] is not targets[0]:
-                unknown.append(
-                    {
-                        "reason": "alias_name_rebound",
-                        "path": row["path"],
-                        "name": name,
-                    }
-                )
-            _audit_alias_reads(function, targets[0], name, row, traces, nodes, unknown)
+            _audit_alias_row(row, traces, nodes, index, unknown)
+
+
+def _audit_alias_row(row, traces, nodes, index, unknown):
+    assignment = nodes.get(span_key(row))
+    if not isinstance(assignment, (ast.Assign, ast.AnnAssign)):
+        unknown.append({"reason": "alias_assignment_unresolved", "span": span_key(row)})
+        return
+    targets = (
+        assignment.targets
+        if isinstance(assignment, ast.Assign)
+        else [assignment.target]
+    )
+    if len(targets) != 1 or not isinstance(targets[0], ast.Name):
+        unknown.append({"reason": "alias_shape_unsupported", "span": span_key(row)})
+        return
+    name = targets[0].id
+    function = ancestor(
+        assignment, index, row["path"], (ast.FunctionDef, ast.AsyncFunctionDef)
+    )
+    if function is None:
+        unknown.append({"reason": "alias_function_unresolved", "span": span_key(row)})
+        return
+    _record_alias_rebinding(function, targets[0], name, row, unknown)
+    _audit_alias_reads(function, targets[0], name, row, traces, nodes, unknown)
+
+
+def _record_alias_rebinding(function, target, name, row, unknown):
+    bindings = binding_occurrences(function.body, name)
+    if len(bindings) != 1 or bindings[0] is not target:
+        unknown.append(
+            {"reason": "alias_name_rebound", "path": row["path"], "name": name}
+        )
 
 
 def _audit_alias_reads(function, target, name, row, traces, nodes, unknown):
@@ -883,35 +895,23 @@ def covered_value_edge(node, path, traces, nodes):
         for row in trace:
             if row.get("path") != path:
                 continue
-            parent, role = nodes.get(span_key(row)), row.get("role")
-            if role == "method_argument_binding" and parent is node:
-                return True
-            if (
-                role == "unique_local_alias"
-                and isinstance(parent, (ast.Assign, ast.AnnAssign))
-                and parent.value is node
-            ):
-                return True
-            if (
-                role == "canonical_http_url_sink"
-                and isinstance(parent, ast.Call)
-                and url_argument(parent) is node
-            ):
-                return True
-            if (
-                role == "declared_method_return"
-                and isinstance(parent, ast.Return)
-                and parent.value is node
-            ):
-                return True
-            if (
-                role == "declared_string_format_input"
-                and _format_receiver(parent) is node
-            ):
-                return True
-            if role == "typing_cast_value" and _cast_value(parent) is node:
+            if _trace_edge_covers(node, row.get("role"), nodes.get(span_key(row))):
                 return True
     return False
+
+
+def _trace_edge_covers(node, role, parent):
+    if role == "method_argument_binding":
+        return parent is node
+    if role == "unique_local_alias":
+        return isinstance(parent, (ast.Assign, ast.AnnAssign)) and parent.value is node
+    if role == "canonical_http_url_sink":
+        return isinstance(parent, ast.Call) and url_argument(parent) is node
+    if role == "declared_method_return":
+        return isinstance(parent, ast.Return) and parent.value is node
+    if role == "declared_string_format_input":
+        return _format_receiver(parent) is node
+    return role == "typing_cast_value" and _cast_value(parent) is node
 
 
 def _format_receiver(parent):
@@ -976,11 +976,21 @@ def maps(call, actual, name, function):
         or target.attr != function.name
     ):
         return False
+    return _mapped_positional_argument(
+        call, actual, name, positional
+    ) or _mapped_keyword_argument(call, actual, name)
+
+
+def _mapped_positional_argument(call, actual, name, positional):
     for position, value in enumerate(call.args):
         if value is actual:
             return (
                 position + 1 < len(positional) and positional[position + 1].arg == name
             )
+    return False
+
+
+def _mapped_keyword_argument(call, actual, name):
     return any(item.value is actual and item.arg == name for item in call.keywords)
 
 
@@ -1012,26 +1022,34 @@ def value_spans(row, index, imports, classes):
     """Collect value spans and constructor field names that are linked to credential-use witnesses."""
     spans, fields = {}, {}
     for witness in row["url_witnesses"]:
-        if witness.get("value_span"):
-            spans.setdefault(index.root / witness["path"], []).append(
-                witness["value_span"]
-            )
-        carrier = _selected_carrier(witness, index, imports, classes)
-        for hop in witness.get("hops", []):
-            if hop["role"] not in {"constructor_argument", "constructor_field_binding"}:
-                continue
-            path = index.root / hop["path"]
-            span = [hop[k] for k in ("line", "column", "end_line", "end_column")]
-            spans.setdefault(path, []).append(span)
-            if hop["role"] == "constructor_field_binding" and index.validate(path):
-                for node in ast.walk(index.snapshots[path]):
-                    if isinstance(node, ast.Attribute) and within(node, span):
-                        _, owner = source_scope(node, index.parents[path])
-                        if owner:
-                            fields.setdefault(carrier or (path, owner.name), set()).add(
-                                node.attr
-                            )
+        _collect_witness_spans(witness, index, imports, classes, spans, fields)
     return spans, fields
+
+
+def _collect_witness_spans(witness, index, imports, classes, spans, fields):
+    if witness.get("value_span"):
+        spans.setdefault(index.root / witness["path"], []).append(witness["value_span"])
+    carrier = _selected_carrier(witness, index, imports, classes)
+    for hop in witness.get("hops", []):
+        _collect_constructor_hop(hop, carrier, index, spans, fields)
+
+
+def _collect_constructor_hop(hop, carrier, index, spans, fields):
+    if hop["role"] not in {"constructor_argument", "constructor_field_binding"}:
+        return
+    path = index.root / hop["path"]
+    span = [hop[k] for k in ("line", "column", "end_line", "end_column")]
+    spans.setdefault(path, []).append(span)
+    if hop["role"] == "constructor_field_binding" and index.validate(path):
+        _collect_field_attributes(path, span, carrier, index, fields)
+
+
+def _collect_field_attributes(path, span, carrier, index, fields):
+    for node in ast.walk(index.snapshots[path]):
+        if isinstance(node, ast.Attribute) and within(node, span):
+            _, owner = source_scope(node, index.parents[path])
+            if owner:
+                fields.setdefault(carrier or (path, owner.name), set()).add(node.attr)
 
 
 def _selected_carrier(witness, index, imports, classes):
@@ -1066,9 +1084,19 @@ def alias_is_closed(node, function, parents, spans):
     name = assignment.targets[0].id
     from .credential_role_constructor_provider import binding_occurrences
 
-    bindings = binding_occurrences(function.body, name)
-    if len(bindings) != 1 or bindings[0] is not assignment.targets[0]:
+    if not _alias_binding_is_unique(
+        function, assignment.targets[0], name, binding_occurrences
+    ):
         return False
+    return _alias_loads_are_covered(function, name, spans)
+
+
+def _alias_binding_is_unique(function, target, name, binding_occurrences):
+    bindings = binding_occurrences(function.body, name)
+    return len(bindings) == 1 and bindings[0] is target
+
+
+def _alias_loads_are_covered(function, name, spans):
     loads = [
         n
         for n in ast.walk(function)
@@ -1128,40 +1156,36 @@ def reflective_member_use(node, fields, aliases=None):
         return node.value
     if not isinstance(node, ast.Call) or not node.args:
         return None
+    name = _reflective_call_name(node, aliases)
+    if name not in {"getattr", "setattr", "delattr", "vars"}:
+        return None
+    if name != "vars" and len(node.args) > 1:
+        member = node.args[1]
+        if isinstance(member, ast.Constant) and member.value not in fields:
+            return None
+    return node.args[0]
+
+
+def _reflective_call_name(node, aliases):
     from .security_configuration import _canonical
 
     name = _canonical(node, aliases or {})
     if not name and isinstance(node.func, ast.Name):
         name = node.func.id
-    name = name.removeprefix("builtins.")
-    if name not in {"getattr", "setattr", "delattr", "vars"}:
-        return None
-    if name != "vars" and len(node.args) > 1:
-        name = node.args[1]
-        if isinstance(name, ast.Constant) and name.value not in fields:
-            return None
-    return node.args[0]
+    return name.removeprefix("builtins.") if name else None
 
 
 def discarded_callable_projection(node, parents):
     """Follow an exact tuple element through one finite for-unpack invocation."""
-    current, position = node, []
-    parent = parents.get(id(current))
-    while isinstance(parent, ast.Tuple) and isinstance(parent.ctx, ast.Load):
-        position.insert(
-            0, next(i for i, child in enumerate(parent.elts) if child is current)
-        )
-        current, parent = parent, parents.get(id(parent))
-    if not position or not isinstance(parent, ast.For) or parent.iter is not current:
+    projection = _tuple_projection(node, parents)
+    if projection is None:
+        return False
+    current, position, parent = projection
+    if not isinstance(parent, ast.For) or parent.iter is not current:
         return False
     if not _finite_unpack_matches(current, parent.target):
         return False
-    # The outermost index selects an iterator row, not an unpacked target.
-    target = parent.target
-    for selected in position[1:]:
-        if not isinstance(target, ast.Tuple) or selected >= len(target.elts):
-            return False
-        target = target.elts[selected]
+    target = _unpacked_target(parent.target, position)
     if not isinstance(target, ast.Name):
         return False
     function, _ = source_scope(parent, parents)
@@ -1169,6 +1193,35 @@ def discarded_callable_projection(node, parents):
         return False
     from .credential_role_constructor_provider import binding_occurrences
 
+    return _projection_target_uses_discarded(
+        function, target, parent, parents, binding_occurrences
+    )
+
+
+def _tuple_projection(node, parents):
+    current, position = node, []
+    parent = parents.get(id(current))
+    while isinstance(parent, ast.Tuple) and isinstance(parent.ctx, ast.Load):
+        position.insert(
+            0, next(i for i, child in enumerate(parent.elts) if child is current)
+        )
+        current, parent = parent, parents.get(id(parent))
+    if not position:
+        return None
+    return current, position, parent
+
+
+def _unpacked_target(target, position):
+    for selected in position[1:]:
+        if not isinstance(target, ast.Tuple) or selected >= len(target.elts):
+            return None
+        target = target.elts[selected]
+    return target
+
+
+def _projection_target_uses_discarded(
+    function, target, parent, parents, binding_occurrences
+):
     if binding_occurrences(function.body, target.id) != [target]:
         return False
     uses = [
@@ -1863,6 +1916,11 @@ def _capability_helpers():
     return (
         _capability_uses,
         _module_capabilities,
+        alias_is_closed,
+        _alias_binding_is_unique,
+        _alias_loads_are_covered,
+        reflective_member_use,
+        _reflective_call_name,
         *(
             value
             for module in (credential_role_scope_bindings,)
@@ -2112,25 +2170,44 @@ def parameter_linked(path, receiver, calls, index, imports, classes, owners):
     if not possible_parameters:
         return False
     for call in calls:
-        if not _targets_function(call, function, path, index):
-            continue
-        from .review_integrity import bind_source_call
+        if _call_links_parameters(
+            call, function, path, possible_parameters, index, imports, classes, owners
+        ):
+            return True
+    return False
 
-        try:
-            actuals = bind_source_call(call, function, apply_defaults=False)
-        except (TypeError, ValueError):
-            continue
-        from .credential_role_constructor_provider import declared_origins
 
-        for name in possible_parameters:
-            actual = actuals.get(name)
-            if actual is None:
-                continue
-            if declared_origins(path, actual, index, imports, classes) & owners or (
-                isinstance(actual, ast.Name)
-                and _related_method_self(call, actual, index, path, owners)
-            ):
-                return True
+def _call_links_parameters(
+    call, function, path, possible_parameters, index, imports, classes, owners
+):
+    if not _targets_function(call, function, path, index):
+        return False
+    from .review_integrity import bind_source_call
+
+    try:
+        actuals = bind_source_call(call, function, apply_defaults=False)
+    except (TypeError, ValueError):
+        return False
+    return _actual_parameter_links(
+        call, actuals, possible_parameters, path, index, imports, classes, owners
+    )
+
+
+def _actual_parameter_links(
+    call, actuals, possible_parameters, path, index, imports, classes, owners
+):
+    from .credential_role_constructor_provider import declared_origins
+
+    for name in possible_parameters:
+        actual = actuals.get(name)
+        if actual is None:
+            continue
+        if declared_origins(path, actual, index, imports, classes) & owners:
+            return True
+        if isinstance(actual, ast.Name) and _related_method_self(
+            call, actual, index, path, owners
+        ):
+            return True
     return False
 
 

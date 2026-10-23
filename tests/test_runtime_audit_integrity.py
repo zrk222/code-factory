@@ -1419,3 +1419,42 @@ def test_source_generated_helpers_are_included_in_verifier_source_identity():
     }
     assert expected <= helpers
     assert runtime.finite_eval_binding in helpers
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "_exact_source_call",
+        "_source_span",
+        "_closed_declaration_source_call",
+        "_fixed_program_call_context",
+        "_fixed_program_literal_span",
+        "_source_generated_eval_capture",
+        "_source_eval_call_shape",
+        "_source_eval_source_bound",
+        "_finite_eval_profile",
+        "_finite_eval_domain_digest",
+        "_finite_eval_spans",
+    ],
+)
+@pytest.mark.parametrize("mutation", ["binding", "code"])
+def test_extracted_runtime_helpers_invalidate_native_cache(
+    tmp_path, monkeypatch, name, mutation
+):
+    from factoryline import review_audits as audit
+    from factoryline import runtime_audit_integrity as runtime
+
+    original = getattr(runtime, name)
+    assert original in runtime.workspace_builtin_helpers()
+    before = audit._oracle_context_cache_key(tmp_path, [], {})
+
+    def replacement(*args, **kwargs):
+        return None
+
+    with monkeypatch.context() as patch:
+        if mutation == "binding":
+            patch.setattr(runtime, name, replacement)
+        else:
+            patch.setattr(original, "__code__", replacement.__code__)
+        assert audit._oracle_context_cache_key(tmp_path, [], {}) != before
+    assert audit._oracle_context_cache_key(tmp_path, [], {}) == before

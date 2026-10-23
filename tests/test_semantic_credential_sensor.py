@@ -325,3 +325,24 @@ def test_semantic_validator_replacement_invalidates_native_cache(
 
     monkeypatch.setattr(sensors, name, replacement)
     assert before != audit._oracle_context_cache_key(tmp_path, [], {})
+
+
+@pytest.mark.parametrize("explicit_scope", [False, True])
+def test_django_request_parameter_passes_resolved_scope_to_alias_reader(explicit_scope):
+    function = ast.parse("def view(request):\n    return request.GET\n").body[0]
+    node = function.body[0].value
+    function._security_parameter_names = {"request"}
+    node._security_lexical_scope = function
+    received = []
+
+    def reader(scope, aliases, flow_statement):
+        received.append((scope, aliases, flow_statement))
+        return {"request": "django.http.HttpRequest"} if scope is function else {}
+
+    assert (
+        sensors.django_request_parameter(
+            node, {}, function if explicit_scope else None, function.body[0], reader
+        )
+        is True
+    )
+    assert received == [(function, {}, function.body[0])]

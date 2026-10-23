@@ -382,3 +382,71 @@ def test_uncaptured_literal_cannot_prove_heap_shape():
         _run("strategy.data.update({'code': 'known'})", field=True, forged=True).status
         == "UNKNOWN"
     )
+
+
+def test_receiver_helper_code_epoch_invalidates_and_restores_cached_model():
+    from types import SimpleNamespace
+
+    from factoryline import credential_role_identity_effects as identity
+    from factoryline.credential_role_constructor_provider import ClassChainMemo
+
+    enrolled = {
+        identity._identity_call_value,
+        identity._capture_nested_scope,
+        identity._strict_read_is_unknown,
+        identity._identity_field_value,
+        identity._identity_field_key_valid,
+        identity._call_has_expansion,
+        identity._resolved_parameter_names,
+        identity._call_actual_expressions,
+        identity._mapped_formal_value,
+        identity._exact_receiver_class_for_function,
+    }
+    assert enrolled <= set(identity._receiver_helper_epoch())
+
+    memo = SimpleNamespace(
+        defers_validation=lambda *_: True,
+        index=None,
+        imports={},
+        classes={},
+        audit=None,
+        _analysis_batch=SimpleNamespace(helper_epoch={}),
+        source_models={},
+    )
+    helper = identity._capture_nested_scope
+    original_code = helper.__code__
+    calls = []
+
+    def derive():
+        calls.append(object())
+        return calls[-1]
+
+    first = ClassChainMemo.source_model(
+        memo, "receiver", derive, helper_epoch=identity._receiver_helper_epoch
+    )
+    assert (
+        ClassChainMemo.source_model(
+            memo, "receiver", derive, helper_epoch=identity._receiver_helper_epoch
+        )
+        is first
+    )
+    assert len(calls) == 1
+
+    def replacement(*_args, **_kwargs):
+        return set()
+
+    try:
+        helper.__code__ = replacement.__code__
+        changed = ClassChainMemo.source_model(
+            memo, "receiver", derive, helper_epoch=identity._receiver_helper_epoch
+        )
+        assert changed is not first
+        assert len(calls) == 2
+    finally:
+        helper.__code__ = original_code
+
+    restored = ClassChainMemo.source_model(
+        memo, "receiver", derive, helper_epoch=identity._receiver_helper_epoch
+    )
+    assert restored is first
+    assert len(calls) == 2

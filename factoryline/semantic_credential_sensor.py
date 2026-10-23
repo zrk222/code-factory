@@ -499,24 +499,18 @@ def flask_request_collection(
     return canonical == f"flask.request.{collection}"
 
 
-def django_request_parameter(
-    node, aliases, scope, flow_statement, request_alias_reader
-):
-    """Recognize request.GET only for an unshadowed Django request parameter in a function with a proven Django request alias."""
-    from . import review_audits as audit
-    from .review_audits import _name
-
+def _django_request_parameter_name(node, scope, audit):
     if not isinstance(node, ast.Attribute) or node.attr != "GET":
-        return False
+        return None
     request = node.value
     if not isinstance(request, ast.Name):
-        return False
+        return None
     scope = scope or getattr(node, "_security_lexical_scope", None)
     parameters = getattr(scope, "_security_parameter_names", set())
     if request.id not in parameters or not isinstance(
         scope, (ast.FunctionDef, ast.AsyncFunctionDef)
     ):
-        return False
+        return None
     if any(
         isinstance(child, ast.Name)
         and child.id == request.id
@@ -524,6 +518,20 @@ def django_request_parameter(
         for statement in scope.body
         for child in audit._iter_ast_nodes(statement)
     ):
+        return None
+    return request
+
+
+def django_request_parameter(
+    node, aliases, scope, flow_statement, request_alias_reader
+):
+    """Recognize an unshadowed Django request parameter with a proven alias."""
+    from . import review_audits as audit
+    from .review_audits import _name
+
+    scope = scope or getattr(node, "_security_lexical_scope", None)
+    request = _django_request_parameter_name(node, scope, audit)
+    if request is None:
         return False
     request_aliases = request_alias_reader(scope, aliases, flow_statement)
     if not any(value.startswith("django.") for value in request_aliases.values()):
@@ -666,56 +674,81 @@ def security_evals() -> dict[str, Any]:
     return result
 
 
-def literal_exec_rejected(node):
-    """Prove only compilation failure for one source-bound builtin exec literal."""
-    from . import review_integrity as integrity
-    from .context_efficiency import (
-        _bounded_ast_nodes,
-        _module_has_dynamic_capability_access,
-    )
-
+def _exec_literal_call(node):
     match node:
         case ast.Call(
             func=ast.Name(id="exec"),
             args=[ast.Constant(value=str()) as literal],
             keywords=[],
         ):
-            pass
+            return literal
         case _:
-            return {}
+            return None
+
+
+def _exec_literal_namespace_closed(nodes):
+    return not any(
+        isinstance(node, ast.Attribute)
+        and node.attr == "__dict__"
+        or isinstance(node, (ast.Import, ast.ImportFrom))
+        and any(alias.name in {"builtins", "*"} for alias in node.names)
+        or isinstance(node, ast.ImportFrom)
+        and node.module == "builtins"
+        for node in nodes
+    )
+
+
+def _exec_literal_dynamic_access_closed(nodes, call, capability_reader):
+    return not capability_reader([node for node in nodes if node is not call.func])
+
+
+def _exec_literal_module_is_closed(node, integrity):
     if not hasattr(node, "_security_shadowed_names"):
-        return {}
+        return None
     module = integrity._security_module_scope(
         getattr(node, "_security_lexical_scope", None)
     )
     if module is None or integrity._builtin_repr_names_shadowed(node, {"exec"}):
-        return {}
+        return None
+    from .context_efficiency import (
+        _bounded_ast_nodes,
+        _module_has_dynamic_capability_access,
+    )
+
     nodes = _bounded_ast_nodes(module)
-    if nodes is None or _module_has_dynamic_capability_access(
-        [n for n in nodes if n is not node.func]
+    if nodes is None or not _exec_literal_dynamic_access_closed(
+        nodes, node, _module_has_dynamic_capability_access
     ):
-        return {}
-    if any(
-        isinstance(n, ast.Attribute)
-        and n.attr == "__dict__"
-        or isinstance(n, (ast.Import, ast.ImportFrom))
-        and any(a.name in {"builtins", "*"} for a in n.names)
-        or isinstance(n, ast.ImportFrom)
-        and n.module == "builtins"
-        for n in nodes
-    ):
-        return {}
+        return None
+    if not _exec_literal_namespace_closed(nodes):
+        return None
+    return module
+
+
+def _exec_literal_compile_fails(literal):
     try:
         if len(literal.value.encode("utf-8")) > 4096:
-            return {}
+            return False
         ast.parse(literal.value, mode="exec")
     except SyntaxError:
+        return True
+    except (MemoryError, RecursionError, UnicodeError, ValueError):
+        return False
+    return False
+
+
+def literal_exec_rejected(node):
+    """Prove only compilation failure for one source-bound builtin exec literal."""
+    from . import review_integrity as integrity
+
+    literal = _exec_literal_call(node)
+    if literal is None or _exec_literal_module_is_closed(node, integrity) is None:
+        return {}
+    if _exec_literal_compile_fails(literal):
         return dict(
             primitive_present=True,
             source_compilation="REJECTED_SYNTAX",
             execution_of_literal_source=False,
             evidence_scope="exact_builtin_call_literal",
         )
-    except (MemoryError, RecursionError, UnicodeError, ValueError):
-        pass
     return {}

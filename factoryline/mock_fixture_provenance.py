@@ -118,6 +118,10 @@ def direct_mock_return(module, fixture, aliases, audit):
     local_aliases = audit._scope_security_aliases(aliases, fixture)
     if not isinstance(value, ast.Call):
         return False
+    return _direct_mock_call_is_supported(module, fixture, value, local_aliases, audit)
+
+
+def _direct_mock_call_is_supported(module, fixture, value, local_aliases, audit):
     constructor = audit._normalized_call_name(value, local_aliases)
     if constructor not in audit._UNITTEST_MOCK_CONSTRUCTORS:
         return False
@@ -138,34 +142,37 @@ def inert_assertion_methods(module, fixture, audit):
     value = (
         body[0].value if len(body) == 1 and isinstance(body[0], ast.Return) else None
     )
-    if not isinstance(value, ast.Call) or not isinstance(value.func, ast.Name):
+    cls = _inert_assertion_class(module, value, audit)
+    if cls is None:
         return []
+    return [n.name for n in cls.body if n.name in _ASSERTION_METHODS]
+
+
+def _inert_assertion_class(module, value, audit):
+    if not isinstance(value, ast.Call) or not isinstance(value.func, ast.Name):
+        return None
     classes = [
-        n
-        for n in module.body
-        if isinstance(n, ast.ClassDef) and n.name == value.func.id
+        n for n in module.body if isinstance(n, ast.ClassDef) and n.name == value.func.id
     ]
     if len(classes) != 1 or classes[0].bases or classes[0].keywords:
-        return []
+        return None
     cls = classes[0]
     if cls.decorator_list or any(
         s is not cls and cls.name in audit._bound_names(s) for s in module.body
     ):
-        return []
-    if any(
-        not isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) for n in cls.body
-    ):
-        return []
-    if any(
-        n.decorator_list
-        or len(n.body) != 1
-        or not isinstance(n.body[0], (ast.Pass, ast.Return))
-        or isinstance(n.body[0], ast.Return)
-        and n.body[0].value is not None
-        for n in cls.body
-    ):
-        return []
-    return [n.name for n in cls.body if n.name in _ASSERTION_METHODS]
+        return None
+    if not all(isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) for n in cls.body):
+        return None
+    return cls if all(_inert_method_body(method) for method in cls.body) else None
+
+
+def _inert_method_body(method):
+    return (
+        not method.decorator_list
+        and len(method.body) == 1
+        and isinstance(method.body[0], (ast.Pass, ast.Return))
+        and not (isinstance(method.body[0], ast.Return) and method.body[0].value is not None)
+    )
 
 
 def fixture_registration(decorator, function_name, aliases, audit):
@@ -191,6 +198,20 @@ def fixture_bindings_for_source(tree):
     from . import review_audits as audit
 
     aliases = audit._scope_security_aliases(audit._module_security_aliases(tree), tree)
+    fixtures = _source_fixture_declarations(tree, aliases, audit)
+    if not fixtures:
+        return {}
+    mock_provider_safe = _mock_providers_are_closed(tree, aliases, audit)
+    pytest_provider_safe = _pytest_fixture_provider_safe(tree, audit)
+    return {
+        name: _source_fixture_binding(
+            tree, name, items, aliases, audit, mock_provider_safe, pytest_provider_safe
+        )
+        for name, items in fixtures.items()
+    }
+
+
+def _source_fixture_declarations(tree, aliases, audit):
     fixtures = {}
     for node in tree.body:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -198,33 +219,24 @@ def fixture_bindings_for_source(tree):
                 name, supported = fixture_registration(item, node.name, aliases, audit)
                 if name is not None:
                     fixtures.setdefault(name, []).append((node, supported))
-    if not fixtures:
-        return {}
-    mock_provider_safe = _mock_providers_are_closed(tree, aliases, audit)
-    pytest_provider_safe = _pytest_fixture_provider_safe(tree, audit)
-    result = {}
-    for name, items in fixtures.items():
-        fixture, supported_name = items[0] if len(items) == 1 else (None, False)
-        controlled = bool(
-            fixture
-            and supported_name
-            and len(fixture.decorator_list) == 1
-            and not any(
-                s is not fixture and name in audit._bound_names(s) for s in tree.body
-            )
-            and pytest_provider_safe
-        )
-        result[name] = {
-            "mock": bool(
-                controlled
-                and mock_provider_safe
-                and direct_mock_return(tree, fixture, aliases, audit)
-            ),
-            "inert_methods": (
-                inert_assertion_methods(tree, fixture, audit) if controlled else []
-            ),
-        }
-    return result
+    return fixtures
+
+
+def _source_fixture_binding(tree, name, items, aliases, audit, mock_safe, pytest_safe):
+    fixture, supported_name = items[0] if len(items) == 1 else (None, False)
+    controlled = bool(
+        fixture
+        and supported_name
+        and len(fixture.decorator_list) == 1
+        and not any(s is not fixture and name in audit._bound_names(s) for s in tree.body)
+        and pytest_safe
+    )
+    return {
+        "mock": bool(
+            controlled and mock_safe and direct_mock_return(tree, fixture, aliases, audit)
+        ),
+        "inert_methods": inert_assertion_methods(tree, fixture, audit) if controlled else [],
+    }
 
 
 def fixtures_for_file(path: Path, sources: dict[Path, dict[str, dict]]):
@@ -381,9 +393,7 @@ def django_test_secret_index(
     from .credential_role_constructor_provider import SourceSnapshotIndex
 
     source = SourceSnapshotIndex(root, modules, source_bytes, inventory)
-    if not source.bounded or set(configs) != {"pyproject.toml", "tox.ini"}:
-        return None
-    if any(not isinstance(raw, bytes) for raw in configs.values()):
+    if not _django_snapshot_inputs_valid(source, configs):
         return None
     try:
         from .review_audits import tomllib
@@ -393,44 +403,17 @@ def django_test_secret_index(
         tox.read_string(configs["tox.ini"].decode("utf-8"))
     except (ImportError, UnicodeError, ValueError, configparser.Error):
         return None
-    testenv = tox["testenv"] if tox.has_section("testenv") else None
-    if testenv is None or not re.search(
-        r"\bpytest(?:\s|$)", testenv.get("commands", "")
-    ):
+    testenv = _django_test_environment(pyproject, tox)
+    if testenv is None:
         return None
-    if not _django_runner_plugins_safe(pyproject, testenv):
+    runner = _django_settings_module(testenv)
+    if runner is None:
         return None
-    extras = set(testenv.get("extras", "").replace(",", " ").split())
-    optional = pyproject.get("project", {}).get("optional-dependencies", {})
-    test_deps = {
-        re.split(r"[<>=!~\[]", str(item).lower(), maxsplit=1)[0].strip()
-        for key in extras
-        for item in optional.get(key, [])
-    }
-    if "pytest" not in test_deps or "pytest-django" not in test_deps:
-        return None
-    setting_match = re.search(
-        r"(?m)^\s*DJANGO_SETTINGS_MODULE\s*=\s*([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\s*$",
-        testenv.get("setenv", ""),
-    )
-    if setting_match is None:
-        return None
-    runner = setting_match.group(1)
     configs_sha = {
         name: hashlib.sha256(raw).hexdigest() for name, raw in configs.items()
     }
-    rows = {
-        source.relative(path): digest
-        for path, digest in inventory.items()
-        if source.relative(path) is not None
-    }
-    module_paths = {
-        source.relative(path): path for path in modules if source.relative(path)
-    }
-    if len(rows) != len(inventory) or any(
-        _django_provider_root_shadowed(module_paths, root)
-        for root in _DJANGO_CANONICAL_PROVIDER_ROOTS
-    ):
+    rows, module_paths = _django_source_paths(source, modules, inventory)
+    if rows is None or any(_django_provider_root_shadowed(module_paths, root) for root in _DJANGO_CANONICAL_PROVIDER_ROOTS):
         return None
     combined = dict(rows)
     combined.update(configs_sha)
@@ -453,6 +436,50 @@ def django_test_secret_index(
         "model_cache": {},
         "signal_cache": {},
     }
+
+
+def _django_snapshot_inputs_valid(source, configs):
+    return (
+        source.bounded
+        and set(configs) == {"pyproject.toml", "tox.ini"}
+        and all(isinstance(raw, bytes) for raw in configs.values())
+    )
+
+
+def _django_test_environment(pyproject, tox):
+    testenv = tox["testenv"] if tox.has_section("testenv") else None
+    if testenv is None or not re.search(r"\bpytest(?:\s|$)", testenv.get("commands", "")):
+        return None
+    if not _django_runner_plugins_safe(pyproject, testenv):
+        return None
+    extras = set(testenv.get("extras", "").replace(",", " ").split())
+    optional = pyproject.get("project", {}).get("optional-dependencies", {})
+    test_deps = {
+        re.split(r"[<>=!~\[]", str(item).lower(), maxsplit=1)[0].strip()
+        for key in extras
+        for item in optional.get(key, [])
+    }
+    return testenv if {"pytest", "pytest-django"} <= test_deps else None
+
+
+def _django_settings_module(testenv):
+    match = re.search(
+        r"(?m)^\s*DJANGO_SETTINGS_MODULE\s*=\s*([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\s*$",
+        testenv.get("setenv", ""),
+    )
+    return match.group(1) if match is not None else None
+
+
+def _django_source_paths(source, modules, inventory):
+    rows = {
+        source.relative(path): digest
+        for path, digest in inventory.items()
+        if source.relative(path) is not None
+    }
+    module_paths = {
+        source.relative(path): path for path in modules if source.relative(path)
+    }
+    return (rows if len(rows) == len(inventory) else None), module_paths
 
 
 def _django_runner_plugins_safe(pyproject, testenv):
@@ -3763,6 +3790,13 @@ def closed_jwt_test_literal(
     relative: str, node: ast.AST, target: ast.expr
 ) -> dict | None:
     """Prove a local test literal is used only by its in-process JWT fixture."""
+    context = _closed_jwt_test_context(relative, node, target)
+    if context is None:
+        return None
+    return _closed_jwt_test_evidence(relative, node, *context)
+
+
+def _closed_jwt_test_context(relative, node, target):
     value = getattr(node, "value", None)
     if isinstance(value, ast.Constant) and isinstance(value.value, str):
         if _app_known_credential_format(value.value):
@@ -3790,6 +3824,10 @@ def closed_jwt_test_literal(
     )
     if operation is None:
         return None
+    return target, owner, module, fixture, operation
+
+
+def _closed_jwt_test_evidence(relative, node, target, owner, module, fixture, operation):
     import hashlib
     import json
 
@@ -5869,6 +5907,12 @@ def application_test_secret_evidence(index, path, line, value):
     result = module_fixture_evidence_for_binding(index, path, assignment, secret)
     if result is not None:
         return result
+    return _application_test_secret_from_local_binding(
+        index, path, literal, assignment, secret
+    )
+
+
+def _application_test_secret_from_local_binding(index, path, literal, assignment, secret):
     parents = index["source"].parents[path]
     function = parents.get(id(assignment))
     if (
@@ -5889,6 +5933,10 @@ def application_test_secret_evidence(index, path, line, value):
         return _django_unknown(
             "captured framework authority creation and same-client exercise are unresolved"
         )
+    return _application_test_secret_witness(index, path, literal, assignment, function, secret, witness)
+
+
+def _application_test_secret_witness(index, path, literal, assignment, function, secret, witness):
     use_closure = _app_closed_consumer_uses(
         index, path, function, secret, literal.value, witness
     )

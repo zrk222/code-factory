@@ -257,45 +257,63 @@ def _closed_declaration_binding(tree, call):
     return True
 
 
-def closed_declaration_input_witness(node, call_name, *, source_bytes, source_path):
-    """Recognize fixed Python 3.12 alias input without compiling or executing it."""
+def _source_span(node):
+    return [
+        getattr(node, key, None)
+        for key in ("lineno", "col_offset", "end_lineno", "end_col_offset")
+    ]
+
+
+def _exact_source_call(source_bytes, node):
+    """Return the source call only when its complete AST and span match."""
+    try:
+        tree = ast.parse(source_bytes)
+    except (SyntaxError, ValueError, TypeError, RecursionError):
+        return None
+    matches = [
+        item
+        for item in ast.walk(tree)
+        if isinstance(item, ast.Call) and _source_span(item) == _source_span(node)
+    ]
+    if len(matches) != 1 or ast.dump(matches[0]) != ast.dump(node):
+        return None
+    return tree, matches[0]
+
+
+def _closed_declaration_source_call(node, call_name, source_bytes, source_path):
+    """Validate source binding for a fixed declaration input witness."""
     if (
         not isinstance(source_bytes, bytes)
         or not isinstance(source_path, str)
         or not source_path
     ):
-        return {}
+        return None
     alias = _closed_declaration_program(node, call_name)
     if alias is None:
-        return {}
-    try:
-        tree = ast.parse(source_bytes)
-    except (SyntaxError, ValueError, TypeError, RecursionError):
-        return {}
+        return None
+    parsed = _exact_source_call(source_bytes, node)
+    if parsed is None:
+        return None
+    tree, call = parsed
+    if not _closed_declaration_binding(tree, call):
+        return None
+    if not _closed_declaration_namespace(tree, call, alias):
+        return None
+    return call
 
-    def span(n):
-        return [
-            getattr(n, k, None)
-            for k in ("lineno", "col_offset", "end_lineno", "end_col_offset")
-        ]
 
-    matches = [
-        n for n in ast.walk(tree) if isinstance(n, ast.Call) and span(n) == span(node)
-    ]
-    if len(matches) != 1 or ast.dump(matches[0]) != ast.dump(node):
-        return {}
-    call = matches[0]
-    if not _closed_declaration_binding(tree, call) or not _closed_declaration_namespace(
-        tree, call, alias
-    ):
+def closed_declaration_input_witness(node, call_name, *, source_bytes, source_path):
+    """Recognize fixed Python 3.12 alias input without compiling or executing it."""
+    call = _closed_declaration_source_call(node, call_name, source_bytes, source_path)
+    if call is None:
         return {}
     return {
         "schema": "factory.closed-declaration-input.v1",
         "disposition": "PROVEN_CLOSED_DECLARATION_INPUT",
         "source_path": source_path,
         "source_sha256": hashlib.sha256(source_bytes).hexdigest(),
-        "call_span": span(call),
-        "literal_span": span(call.args[0]),
+        "call_span": _source_span(call),
+        "literal_span": _source_span(call.args[0]),
         "program_sha256": hashlib.sha256(call.args[0].value.encode()).hexdigest(),
         "grammar_profile": "python3.12-type-alias-subset-v1",
         "hypothesis": "ARGUMENT_CODE_INJECTION",
@@ -371,16 +389,9 @@ def _fixed_literal_program_kinds(program, normalized, node_limit=1024):
         return None, 0
 
 
-def fixed_literal_program_witness(
-    node,
-    call_name,
-    *,
-    source_bytes,
-    builtin_identity_proven,
-    source_path=None,
-    scope_profile=None,
+def _fixed_program_call_context(
+    node, call_name, source_bytes, builtin_identity_proven, source_path
 ):
-    """Describe a tiny fixed eval/exec program; never execute the target text."""
     call = _fixed_literal_call(node, call_name)
     if (
         call is None
@@ -389,19 +400,22 @@ def fixed_literal_program_witness(
         or not isinstance(source_path, str)
         or not source_path
     ):
-        return {}
+        return None
     normalized, literal = call
     program = literal.value
     try:
         program_bytes = program.encode("utf-8")
     except UnicodeEncodeError:
-        return {}
+        return None
     if len(program_bytes) > 16 * 1024:
-        return {}
+        return None
     statement_kinds, _ = _fixed_literal_program_kinds(program, normalized)
     if statement_kinds is None:
-        return {}
-    source_sha256 = hashlib.sha256(source_bytes).hexdigest()
+        return None
+    return normalized, literal, program_bytes, statement_kinds
+
+
+def _fixed_program_literal_span(literal):
     span = {
         key: getattr(literal, attr, None)
         for key, attr in (
@@ -412,12 +426,34 @@ def fixed_literal_program_witness(
         )
     }
     if any(type(value) is not int or value < 0 for value in span.values()):
+        return None
+    return span
+
+
+def fixed_literal_program_witness(
+    node,
+    call_name,
+    *,
+    source_bytes,
+    builtin_identity_proven,
+    source_path=None,
+    scope_profile=None,
+):
+    """Describe a tiny fixed eval/exec program; never execute the target text."""
+    context = _fixed_program_call_context(
+        node, call_name, source_bytes, builtin_identity_proven, source_path
+    )
+    if context is None:
+        return {}
+    normalized, literal, program_bytes, statement_kinds = context
+    span = _fixed_program_literal_span(literal)
+    if span is None:
         return {}
     return {
         "schema": "factory.fixed-literal-program.v1",
         "disposition": "PROVEN_FIXED_LITERAL_PROGRAM",
         "source_path": source_path,
-        "source_sha256": source_sha256,
+        "source_sha256": hashlib.sha256(source_bytes).hexdigest(),
         "literal_span": span,
         "program_sha256": hashlib.sha256(program_bytes).hexdigest(),
         "statement_kinds": statement_kinds,
@@ -617,32 +653,50 @@ def _source_eval_programs(calls, rows):
     return programs_by_call
 
 
-def source_generated_eval_input_witness(
-    node, call_name, *, source_bytes, source_path, builtin_identity_proven=False
-):
-    """Bind finite source-generated lambda strings; never execute their bodies."""
-    if (
-        call_name != "eval"
-        or not _source_eval_call(node)
-        or builtin_identity_proven is not True
-        or not isinstance(source_bytes, bytes)
-        or len(source_bytes) > 1024 * 1024
-        or not isinstance(source_path, str)
-        or not source_path
+def _source_eval_call_shape(call_name, node):
+    return call_name == "eval" and _source_eval_call(node)
+
+
+def _source_eval_source_bound(proven, source_bytes, source_path):
+    return (
+        proven is True
+        and isinstance(source_bytes, bytes)
+        and len(source_bytes) <= 1024 * 1024
+        and isinstance(source_path, str)
+        and bool(source_path)
+    )
+
+
+def _source_generated_eval_capture(node, call_name, source_bytes, source_path, proven):
+    if not _source_eval_call_shape(call_name, node) or not _source_eval_source_bound(
+        proven, source_bytes, source_path
     ):
-        return {}
+        return None
     captured = _source_eval_tree(node, source_bytes)
     if captured is None:
-        return {}
+        return None
     nodes, parents, call = captured
     comprehension = _source_eval_comprehension(call, parents)
     if comprehension is None:
-        return {}
+        return None
     calls = _source_eval_calls(comprehension, nodes)
     rows = _source_eval_rows(comprehension.generators[0])
     programs = _source_eval_programs(calls, rows) if rows else {}
     if call not in programs:
+        return None
+    return call, comprehension, rows, programs
+
+
+def source_generated_eval_input_witness(
+    node, call_name, *, source_bytes, source_path, builtin_identity_proven=False
+):
+    """Bind finite source-generated lambda strings; never execute their bodies."""
+    captured = _source_generated_eval_capture(
+        node, call_name, source_bytes, source_path, builtin_identity_proven
+    )
+    if captured is None:
         return {}
+    call, comprehension, rows, programs = captured
     import json
 
     return {
@@ -819,6 +873,17 @@ def workspace_builtin_helpers():
         _source_eval_render,
         _source_eval_program,
         _source_eval_programs,
+        _exact_source_call,
+        _source_span,
+        _closed_declaration_source_call,
+        _fixed_program_call_context,
+        _fixed_program_literal_span,
+        _source_generated_eval_capture,
+        _source_eval_call_shape,
+        _source_eval_source_bound,
+        _finite_eval_profile,
+        _finite_eval_domain_digest,
+        _finite_eval_spans,
         source_generated_eval_input_witness,
         finite_eval_binding,
         _test_serialization_roundtrip,
@@ -3346,12 +3411,9 @@ class _LiteralConsumers(_FiniteInputCapture):
         self.complete = False
 
 
-def finite_eval_binding(finding, valid_source_span):
-    """Validate finite-eval evidence fields, bounded domain size, digest, profile, and source spans; runtime execution remains unproven."""
-    facts = finding.get("facts", {})
+def _finite_eval_profile(facts):
     return (
-        isinstance(facts, dict)
-        and type(facts.get("scope_profile")) is str
+        type(facts.get("scope_profile")) is str
         and type(facts.get("input_effect")) is str
         and facts.get("schema") == "factory.finite-eval-input.v1"
         and facts.get("disposition") == "PROVEN_FINITE_LITERAL_EVAL_INPUT"
@@ -3363,20 +3425,45 @@ def finite_eval_binding(finding, valid_source_span):
         }
         and facts.get("runtime_assurance") == "INCOMPLETE"
         and facts.get("target_execution") == "not_performed"
-        and type(facts.get("domain_size")) is int
+    )
+
+
+def _finite_eval_domain_digest(facts):
+    return (
+        type(facts.get("domain_size")) is int
         and 1 <= facts["domain_size"] <= 64
         and isinstance(facts.get("program_sha256"), str)
         and re.fullmatch(r"[0-9a-f]{64}", facts["program_sha256"]) is not None
-        and valid_source_span(facts.get("call_span"))
-        and facts["call_span"][:2] == [finding.get("line"), finding.get("column")]
-        and valid_source_span(facts.get("domain_span"))
-        and valid_source_span(facts.get("comprehension_span"))
-        and tuple(facts["comprehension_span"][:2])
+    )
+
+
+def _finite_eval_spans(finding, facts, valid_source_span):
+    if not valid_source_span(facts.get("call_span")):
+        return False
+    if facts["call_span"][:2] != [finding.get("line"), finding.get("column")]:
+        return False
+    if not valid_source_span(facts.get("domain_span")):
+        return False
+    if not valid_source_span(facts.get("comprehension_span")):
+        return False
+    return (
+        tuple(facts["comprehension_span"][:2])
         <= tuple(facts["call_span"][:2])
         <= tuple(facts["call_span"][2:])
         <= tuple(facts["domain_span"][:2])
         <= tuple(facts["domain_span"][2:])
         <= tuple(facts["comprehension_span"][2:])
+    )
+
+
+def finite_eval_binding(finding, valid_source_span):
+    """Validate finite-eval fields and source spans without implying execution proof."""
+    facts = finding.get("facts", {})
+    return (
+        isinstance(facts, dict)
+        and _finite_eval_profile(facts)
+        and _finite_eval_domain_digest(facts)
+        and _finite_eval_spans(finding, facts, valid_source_span)
     )
 
 
@@ -3823,19 +3910,21 @@ def validate_tenant_scopes(audit, workspace: Path, scopes: dict | None) -> dict:
         return {}
     if not isinstance(scopes, dict) or len(scopes) > audit.MAX_PATHS:
         raise audit.ReviewAuditError("Invalid tenant read scope map.")
-    rows = []
-    for path, scope in scopes.items():
-        if not isinstance(scope, dict) or set(scope) != {"calls", "bindings"}:
-            raise audit.ReviewAuditError("Invalid scoped tenant calls and bindings.")
-        if not isinstance(scope["calls"], (tuple, list)):
-            raise audit.ReviewAuditError("Scoped calls must be a bounded sequence.")
-        calls = audit._tenant_contract_calls(tuple(scope["calls"]))
-        bindings = scope["bindings"]
-        if not isinstance(bindings, dict) or set(bindings) - set(calls):
-            raise audit.ReviewAuditError("Scoped bindings must name declared calls.")
-        reads = [audit._tenant_scope_read(call, bindings) for call in calls]
-        rows.append({"path": path, "reads": reads})
+    rows = [_tenant_scope_row(audit, path, scope) for path, scope in scopes.items()]
     return audit._tenant_scoped_entries(workspace, rows) if rows else {}
+
+
+def _tenant_scope_row(audit, path, scope):
+    if not isinstance(scope, dict) or set(scope) != {"calls", "bindings"}:
+        raise audit.ReviewAuditError("Invalid scoped tenant calls and bindings.")
+    if not isinstance(scope["calls"], (tuple, list)):
+        raise audit.ReviewAuditError("Scoped calls must be a bounded sequence.")
+    calls = audit._tenant_contract_calls(tuple(scope["calls"]))
+    bindings = scope["bindings"]
+    if not isinstance(bindings, dict) or set(bindings) - set(calls):
+        raise audit.ReviewAuditError("Scoped bindings must name declared calls.")
+    reads = [audit._tenant_scope_read(call, bindings) for call in calls]
+    return {"path": path, "reads": reads}
 
 
 def load_tenant_read_contract(
@@ -3898,8 +3987,7 @@ def tenant_contract_helpers(audit):
     )
 
 
-def oracle_bound_row(audit, workspace: Path, row: dict, sources: dict) -> None:
-    """Require both original test and mutated production source in this scan."""
+def _oracle_source_bindings(audit, row, sources):
     for path, digest in (
         (row["path"], row["test_sha256"]),
         (row["mutation"]["source_path"], row["mutation"]["source_sha256"]),
@@ -3908,14 +3996,9 @@ def oracle_bound_row(audit, workspace: Path, row: dict, sources: dict) -> None:
             raise audit.ReviewAuditError(
                 "Runtime oracle source binding does not match this scan."
             )
-    raw = audit._security_source_bytes(workspace, row["path"])
-    if (
-        len(raw) > audit.MAX_BYTES
-        or audit.sha256(raw).hexdigest() != row["test_sha256"]
-    ):
-        raise audit.ReviewAuditError(
-            "Runtime oracle test source changed during reconciliation."
-        )
+
+
+def _oracle_test_identity(audit, raw, row):
     tree = ast.parse(raw, filename=row["path"])
     matches = [
         node
@@ -3936,11 +4019,29 @@ def oracle_bound_row(audit, workspace: Path, row: dict, sources: dict) -> None:
         raise audit.ReviewAuditError(
             "Runtime oracle cannot credit a nested helper as a collected test."
         )
-    prefix = "::".join([row["path"], *classes, row["symbol"]])
-    if any(
+    return "::".join([row["path"], *classes, row["symbol"]])
+
+
+def _oracle_case_ids_match(prefix, row):
+    return not any(
         case != prefix and not case.startswith(prefix + "[")
         for case in row["baseline"]["case_ids"]
+    )
+
+
+def oracle_bound_row(audit, workspace: Path, row: dict, sources: dict) -> None:
+    """Require both original test and mutated production source in this scan."""
+    _oracle_source_bindings(audit, row, sources)
+    raw = audit._security_source_bytes(workspace, row["path"])
+    if (
+        len(raw) > audit.MAX_BYTES
+        or audit.sha256(raw).hexdigest() != row["test_sha256"]
     ):
+        raise audit.ReviewAuditError(
+            "Runtime oracle test source changed during reconciliation."
+        )
+    prefix = _oracle_test_identity(audit, raw, row)
+    if not _oracle_case_ids_match(prefix, row):
         raise audit.ReviewAuditError(
             "Runtime oracle collected node does not match the qualified test."
         )

@@ -112,19 +112,25 @@ def direct_class_reads(graph, chain, member):
         for use_path, node, tail in graph.refs.get(
             ("class", owner_path, owner_name), ()
         ):
+            error = _direct_class_read_error(graph, member, classes, node, tail)
+            if error:
+                return [], error
             if tail == (member,):
-                if not isinstance(node, ast.Attribute) or not isinstance(
-                    node.ctx, ast.Load
-                ):
-                    return [], "member_write_or_unknown_access"
                 reads.append((use_path, node, owner_path, owner_name, None))
-            elif tail and tail[0] == member:
-                return [], "member_transform_or_unknown_tail"
-            elif not tail and isinstance(node, ast.Name):
-                parent = graph.parents.get(id(node))
-                if not isinstance(parent, ast.ClassDef) or parent not in classes:
-                    return [], "class_escape_or_reflection"
     return reads, None
+
+
+def _direct_class_read_error(graph, member, classes, node, tail):
+    if tail == (member,):
+        if not isinstance(node, ast.Attribute) or not isinstance(node.ctx, ast.Load):
+            return "member_write_or_unknown_access"
+    elif tail and tail[0] == member:
+        return "member_transform_or_unknown_tail"
+    elif not tail and isinstance(node, ast.Name):
+        parent = graph.parents.get(id(node))
+        if not isinstance(parent, ast.ClassDef) or parent not in classes:
+            return "class_escape_or_reflection"
+    return None
 
 
 def _one_method_reads(graph, path, name, method, member):
@@ -237,43 +243,56 @@ def source_member(graph, path, class_name, member):
     try:
         chain = _class_chain(graph, path, class_name)
         methods = _methods(chain, graph.audit) if chain else None
-        if not chain or methods is None or mutated(graph, chain, member, methods):
+        if methods is None or mutated(graph, chain, member, methods):
             return None
         for owner_path, _, owner in chain:
-            bindings = [
-                s for s in owner.body if member in _class_bindings(s, graph.audit)
-            ]
-            if len(bindings) > 1:
+            binding = _source_member_binding(owner, member, graph.audit)
+            if binding is False:
                 return None
-            if not bindings:
-                continue
-            statement = bindings[0]
-            if not isinstance(statement, (ast.Assign, ast.AnnAssign)):
-                return None
-            targets = (
-                statement.targets
-                if isinstance(statement, ast.Assign)
-                else [statement.target]
-            )
-            target = next(
-                (t for t in targets if isinstance(t, ast.Name) and t.id == member), None
-            )
-            value = getattr(statement, "value", None)
-            if target is None or not isinstance(value, ast.Constant):
-                return None
-            source_hash = getattr(
-                graph.trees[owner_path], "_oracle_source_sha256", None
-            )
-            return {
-                "node": statement,
-                "member": member,
-                "owner_path": owner_path,
-                "owner_class": owner.name,
-                "source_sha256": source_hash,
-                "line": statement.lineno,
-            }
+            if binding is not None:
+                return _source_member_fact(graph, owner_path, owner, member, binding)
     except Exception:
         return None
+
+
+def _source_member_binding(owner, member, audit):
+    bindings = [s for s in owner.body if member in _class_bindings(s, audit)]
+    if len(bindings) > 1:
+        return False
+    if not bindings:
+        return None
+    statement = bindings[0]
+    if not isinstance(statement, (ast.Assign, ast.AnnAssign)):
+        return False
+    targets = (
+        statement.targets if isinstance(statement, ast.Assign) else [statement.target]
+    )
+    target = next(
+        (
+            target
+            for target in targets
+            if isinstance(target, ast.Name) and target.id == member
+        ),
+        None,
+    )
+    if target is None or not isinstance(
+        getattr(statement, "value", None), ast.Constant
+    ):
+        return False
+    return statement
+
+
+def _source_member_fact(graph, owner_path, owner, member, statement):
+    return {
+        "node": statement,
+        "member": member,
+        "owner_path": owner_path,
+        "owner_class": owner.name,
+        "source_sha256": getattr(
+            graph.trees[owner_path], "_oracle_source_sha256", None
+        ),
+        "line": statement.lineno,
+    }
 
 
 def member_reads(graph, path, class_name, member):
@@ -327,17 +346,21 @@ def effective_method(chain, name, allowed_decorators=()):
         if len(bindings) != 1 or len(rows) != 1 or bindings[0] is not rows[0]:
             return None
         row = rows[0]
-        decorators = {_decorator_name(item) for item in row.decorator_list}
-        if row.decorator_list and (
-            any(not isinstance(item, ast.Name) for item in row.decorator_list)
-            or None in decorators
-            or decorators != allowed
-        ):
-            return None
-        if decorators - allowed:
+        if not _method_decorators_allowed(row, allowed):
             return None
         return path, row
     return None
+
+
+def _method_decorators_allowed(row, allowed):
+    decorators = {_decorator_name(item) for item in row.decorator_list}
+    if row.decorator_list and (
+        any(not isinstance(item, ast.Name) for item in row.decorator_list)
+        or None in decorators
+        or decorators != allowed
+    ):
+        return False
+    return not (decorators - allowed)
 
 
 def _decorator_name(node):
@@ -356,23 +379,28 @@ def class_attribute(chain, name):
         bindings = _class_binding_statements(owner, name)
         if not bindings:
             continue
-        rows = []
-        for statement in owner.body:
-            if isinstance(statement, (ast.Assign, ast.AnnAssign)):
-                targets = (
-                    statement.targets
-                    if isinstance(statement, ast.Assign)
-                    else [statement.target]
-                )
-                if any(
-                    isinstance(target, ast.Name) and target.id == name
-                    for target in targets
-                ):
-                    rows.append(statement.value)
+        rows = _class_attribute_values(owner, name)
         if len(bindings) != 1 or len(rows) != 1 or not isinstance(rows[0], ast.Name):
             return None
         return path, rows[0]
     return None
+
+
+def _class_attribute_values(owner, name):
+    values = []
+    for statement in owner.body:
+        if not isinstance(statement, (ast.Assign, ast.AnnAssign)):
+            continue
+        targets = (
+            statement.targets
+            if isinstance(statement, ast.Assign)
+            else [statement.target]
+        )
+        if any(
+            isinstance(target, ast.Name) and target.id == name for target in targets
+        ):
+            values.append(statement.value)
+    return values
 
 
 def resolve_class(path, expression, imports, classes):
@@ -406,22 +434,32 @@ def instance_receiver(node, function, owner, index, path):
     parents = index.parents[path]
     if parents.get(id(function)) is not owner:
         return False
+    return _direct_instance_method(node, function, parents)
+
+
+def _direct_instance_method(node, function, parents):
     args = function.args
     positional = [*args.posonlyargs, *args.args]
     if not positional or positional[0].arg != "self":
         return False
-
     if function.decorator_list or binding_occurrences(function.body, "self"):
         return False
+    return _node_in_instance_body(node, function, parents) and not _self_keyword_bound(
+        args
+    )
+
+
+def _node_in_instance_body(node, function, parents):
     current = node
     while current is not function:
         current = parents.get(id(current))
-        if current is None or isinstance(
-            current,
-            (ast.Lambda, ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp),
-        ):
+        if current is None or isinstance(current, _COMPREHENSIONS + (ast.Lambda,)):
             return False
-    return not any(item.arg == "self" for item in args.kwonlyargs) and not (
+    return True
+
+
+def _self_keyword_bound(args):
+    return any(item.arg == "self" for item in args.kwonlyargs) or bool(
         (args.vararg and args.vararg.arg == "self")
         or (args.kwarg and args.kwarg.arg == "self")
     )
@@ -513,43 +551,53 @@ def import_is_stable(path, name, index, audit):
 
 def match_name(fact, path, node, function, index, imports, classes, audit, seen):
     """Match a source fact through module literals, local aliases, or stable imports, returning false for rebinding or ambiguity."""
-    from .credential_role_constructor_provider import matches_fact
-
     if function is None and module_literal_binding(fact, path, index, node, audit):
         return True
-    values = []
-    if function is not None:
-        from .credential_role_constructor_provider import _scope_assignments
-
-        values = _scope_assignments(function).get(node.id, ())
-        bindings = function_bindings(function, node.id, audit)
-        if bindings is None:
-            return False
-        if bindings:
-            return bool(
-                len(bindings) == len(values) == 1
-                and bindings[0] is values[0][0]
-                and values[0][0].lineno < node.lineno
-                and matches_fact(
-                    fact,
-                    path,
-                    values[0][1],
-                    index,
-                    imports,
-                    classes,
-                    audit,
-                    (*seen, id(node)),
-                )
-            )
-    if values:
+    local = _local_fact_match(
+        fact, path, node, function, index, imports, classes, audit, seen
+    )
+    if local is not None:
+        return local
+    if function is not None and _scope_assignments_for(function, node.id):
         return False
-    imported = imports.get(path, {}).get(node.id)
-    if imported and import_is_stable(path, node.id, index, audit):
-        return bool(
-            fact.owner == "<module>"
-            and imported == (index.root / fact.path, fact.member)
+    return _imported_fact_match(fact, path, node.id, index, imports, audit)
+
+
+def _scope_assignments_for(function, name):
+    from .credential_role_constructor_provider import _scope_assignments
+
+    return _scope_assignments(function).get(name, ())
+
+
+def _local_fact_match(fact, path, node, function, index, imports, classes, audit, seen):
+    if function is None:
+        return None
+    from .credential_role_constructor_provider import matches_fact
+
+    values = _scope_assignments_for(function, node.id)
+    bindings = function_bindings(function, node.id, audit)
+    if bindings is None:
+        return False
+    if not bindings:
+        return None
+    return bool(
+        len(bindings) == len(values) == 1
+        and bindings[0] is values[0][0]
+        and values[0][0].lineno < node.lineno
+        and matches_fact(
+            fact, path, values[0][1], index, imports, classes, audit, (*seen, id(node))
         )
-    return False
+    )
+
+
+def _imported_fact_match(fact, path, name, index, imports, audit):
+    imported = imports.get(path, {}).get(name)
+    return bool(
+        imported
+        and import_is_stable(path, name, index, audit)
+        and fact.owner == "<module>"
+        and imported == (index.root / fact.path, fact.member)
+    )
 
 
 def binding_statements(statements, name):
@@ -571,6 +619,10 @@ def declared_origins(path, node, index, imports, classes, seen=()):
         return _container_origins(path, node, index, imports, classes, seen)
     if not isinstance(node, ast.Name):
         return set()
+    return _name_origins(path, node, index, imports, classes, seen)
+
+
+def _name_origins(path, node, index, imports, classes, seen):
     scope = _scope_scope_bindings(node, index.parents[path], index.snapshots[path])
     if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
         args = [*scope.args.posonlyargs, *scope.args.args, *scope.args.kwonlyargs]
@@ -655,14 +707,22 @@ def binding_dominates(binding, use, parents, scope):
             and owner is not scope
         ):
             return False
-        for _, field in ast.iter_fields(owner):
-            if isinstance(field, list) and binding in field and current in field:
-                if field.index(binding) < field.index(current):
-                    return True
+        if _binding_precedes_sibling(binding, current, owner):
+            return True
         if owner is scope:
             return False
         current = owner
     return False
+
+
+def _binding_precedes_sibling(binding, use, owner):
+    return any(
+        isinstance(field, list)
+        and binding in field
+        and use in field
+        and field.index(binding) < field.index(use)
+        for _, field in ast.iter_fields(owner)
+    )
 
 
 class SourceSnapshotIndex:
@@ -691,21 +751,7 @@ class SourceSnapshotIndex:
             return self.validated[path]
         tree, raw = self.snapshots.get(path), self.source_bytes.get(path)
         digest = hashlib.sha256(raw).hexdigest() if isinstance(raw, bytes) else None
-        valid = bool(
-            self.bounded
-            and isinstance(tree, ast.Module)
-            and isinstance(raw, bytes)
-            and len(raw) <= 1_000_000
-            and self.inventory.get(path) == digest
-            and getattr(tree, "_oracle_source_sha256", None) == digest
-        )
-        if valid:
-            try:
-                valid = ast.dump(ast.parse(raw), include_attributes=True) == ast.dump(
-                    tree, include_attributes=True
-                )
-            except (SyntaxError, ValueError, TypeError, RecursionError, MemoryError):
-                valid = False
+        valid = self._matches_snapshot(path, tree, raw, digest)
         self.validated[path] = valid
         if valid:
             self.parents[path] = {
@@ -714,6 +760,18 @@ class SourceSnapshotIndex:
                 for child in ast.iter_child_nodes(node)
             }
         return valid
+
+    def _matches_snapshot(self, path, tree, raw, digest):
+        if not (
+            self.bounded
+            and isinstance(tree, ast.Module)
+            and isinstance(raw, bytes)
+            and len(raw) <= 1_000_000
+            and self.inventory.get(path) == digest
+            and getattr(tree, "_oracle_source_sha256", None) == digest
+        ):
+            return False
+        return _ast_matches_source(raw, tree)
 
     def relative(self, path):
         """Return a source-relative POSIX path only when the path is inside the snapshot root."""
@@ -737,30 +795,34 @@ def source_session_factories(tree, aliases):
 
     rows = {}
     for function in tree.body:
-        if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue
-        assigned, returned = [], []
-        for statement in ast.walk(function):
-            if isinstance(statement, (ast.Assign, ast.AnnAssign)):
-                targets = (
-                    statement.targets
-                    if isinstance(statement, ast.Assign)
-                    else [statement.target]
-                )
-                if (
-                    len(targets) == 1
-                    and isinstance(targets[0], ast.Name)
-                    and isinstance(statement.value, ast.Call)
-                ):
-                    if _canonical(statement.value, aliases) == "requests.Session":
-                        assigned.append(targets[0].id)
-            if isinstance(statement, ast.Return) and isinstance(
-                statement.value, ast.Name
-            ):
-                returned.append(statement.value.id)
-        if len(assigned) == len(returned) == 1 and assigned == returned:
-            rows[function.name] = {"requests.Session"}
+        if isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if _returns_created_session(function, aliases, _canonical):
+                rows[function.name] = {"requests.Session"}
     return {name for name, values in rows.items() if values == {"requests.Session"}}
+
+
+def _returns_created_session(function, aliases, canonical):
+    assigned, returned = [], []
+    for statement in ast.walk(function):
+        _record_session_assignment(statement, aliases, canonical, assigned)
+        if isinstance(statement, ast.Return) and isinstance(statement.value, ast.Name):
+            returned.append(statement.value.id)
+    return len(assigned) == len(returned) == 1 and assigned == returned
+
+
+def _record_session_assignment(statement, aliases, canonical, assigned):
+    if not isinstance(statement, (ast.Assign, ast.AnnAssign)):
+        return
+    targets = (
+        statement.targets if isinstance(statement, ast.Assign) else [statement.target]
+    )
+    if (
+        len(targets) == 1
+        and isinstance(targets[0], ast.Name)
+        and isinstance(statement.value, ast.Call)
+        and canonical(statement.value, aliases) == "requests.Session"
+    ):
+        assigned.append(targets[0].id)
 
 
 @dataclass(frozen=True)
@@ -1580,15 +1642,15 @@ def source_model(self, key, derive, *, helper_epoch=None):
     """Reuse a model only while its supplied helper identity epoch stays fixed."""
     if not self.defers_validation(self.index, self.imports, self.classes, self.audit):
         return derive()
+    return _derive_cached_model(self, key, derive, helper_epoch)
+
+
+def _derive_cached_model(self, key, derive, helper_epoch):
     state = self._analysis_batch
     before = _helper_snapshot(helper_epoch) if helper_epoch is not None else ()
     cache_key = key if helper_epoch is None else (key, _helper_epoch_key(before or ()))
-    if helper_epoch is not None:
-        prior = state.helper_epoch.setdefault(key, (helper_epoch, before))
-        if not _same_helper_epoch(prior[1], before) or before is None:
-            state.helper_epoch[key] = (helper_epoch, None)
-        if before is None:
-            return derive()
+    if not _cache_epoch_ready(state, key, helper_epoch, before):
+        return derive()
     if cache_key not in self.source_models:
         self.source_models[cache_key] = (before, derive())
     if helper_epoch is not None and not _same_helper_epoch(
@@ -1596,6 +1658,25 @@ def source_model(self, key, derive, *, helper_epoch=None):
     ):
         state.helper_epoch[key] = (helper_epoch, None)
     return self.source_models[cache_key][1]
+
+
+def _cache_epoch_ready(state, key, helper_epoch, before):
+    if helper_epoch is None:
+        return True
+    prior = state.helper_epoch.setdefault(key, (helper_epoch, before))
+    if not _same_helper_epoch(prior[1], before) or before is None:
+        state.helper_epoch[key] = (helper_epoch, None)
+    return before is not None
+
+
+def _ast_matches_source(raw, tree):
+    try:
+        parsed = ast.parse(raw)
+        return ast.dump(parsed, include_attributes=True) == ast.dump(
+            tree, include_attributes=True
+        )
+    except (SyntaxError, ValueError, TypeError, RecursionError, MemoryError):
+        return False
 
 
 def _helper_snapshot(helper_epoch):
@@ -2325,30 +2406,65 @@ def capture_holder_instances(
 ):
     """Track holder instances and class aliases into provider roots; stop when a holder escapes or its selector use is ambiguous."""
     for node, target in _single_name_assignments(tree):
-        name, parent = target.id, parents.get(id(node))
-        value = node.value
-        if name != "client_class" and isinstance(value, (ast.Name, ast.Attribute)):
-            holder = resolve(value, aliases)
-            if holder in owners:
-                if not _capture_class_alias(
-                    tree, parent, name, holder, aliases, field_aliases, resolve
-                ):
-                    return False
-                filtered.setdefault(path, set()).add(id(node))
-            continue
-        if not isinstance(value, ast.Call):
-            continue
-        holder = resolve(value.func, aliases)
-        if holder not in owners:
-            continue
-        if not isinstance(parent, ast.Module):
-            if not _local_holder_unused_selector(parent, parents, name):
-                return False
-            continue
-        if len(binding_occurrences(tree.body, name)) != 1:
+        if not _capture_holder_assignment(
+            node,
+            target,
+            tree,
+            parents,
+            aliases,
+            owners,
+            roots,
+            path,
+            filtered,
+            field_aliases,
+            resolve,
+        ):
             return False
-        aliases[name] = holder
-        roots.add(holder + ".client_class")
+    return True
+
+
+def _capture_holder_assignment(
+    node,
+    target,
+    tree,
+    parents,
+    aliases,
+    owners,
+    roots,
+    path,
+    filtered,
+    field_aliases,
+    resolve,
+):
+    name, parent, value = target.id, parents.get(id(node)), node.value
+    if name != "client_class" and isinstance(value, (ast.Name, ast.Attribute)):
+        holder = resolve(value, aliases)
+        if holder in owners:
+            if not _capture_class_alias(
+                tree, parent, name, holder, aliases, field_aliases, resolve
+            ):
+                return False
+            filtered.setdefault(path, set()).add(id(node))
+        return True
+    if isinstance(value, ast.Call):
+        return _capture_holder_call(
+            node, name, parent, tree, parents, aliases, owners, roots, resolve
+        )
+    return True
+
+
+def _capture_holder_call(
+    node, name, parent, tree, parents, aliases, owners, roots, resolve
+):
+    holder = resolve(node.value.func, aliases)
+    if holder not in owners:
+        return True
+    if not isinstance(parent, ast.Module):
+        return _local_holder_unused_selector(parent, parents, name)
+    if len(binding_occurrences(tree.body, name)) != 1:
+        return False
+    aliases[name] = holder
+    roots.add(holder + ".client_class")
     return True
 
 
@@ -2391,6 +2507,17 @@ def _capture_class_alias(tree, parent, name, holder, aliases, fields, resolve):
 
 def instance_selector_edges(tree, aliases, owners, roots, path, filtered, resolve):
     """Record unique captured client_class assignments and extend the provider roots and owner set."""
+    selected = _selected_instance_selector_edges(tree, aliases, roots, resolve)
+    for node, owner in selected:
+        if not _unique_selected_owner(owner, selected):
+            return False
+        owners.add(owner)
+        roots.add(owner + ".client_class")
+        filtered.setdefault(path, set()).add(id(node))
+    return True
+
+
+def _selected_instance_selector_edges(tree, aliases, roots, resolve):
     selected = []
     for node in ast.walk(tree):
         if not isinstance(node, (ast.Assign, ast.AnnAssign)):
@@ -2406,13 +2533,11 @@ def instance_selector_edges(tree, aliases, owners, roots, path, filtered, resolv
             and resolve(node.value, aliases) in roots
         ):
             selected.append((node, owner))
-    for node, owner in selected:
-        if sum(item == owner for _, item in selected) != 1:
-            return False
-        owners.add(owner)
-        roots.add(owner + ".client_class")
-        filtered.setdefault(path, set()).add(id(node))
-    return True
+    return selected
+
+
+def _unique_selected_owner(owner, selected):
+    return sum(item == owner for _, item in selected) == 1
 
 
 def field_alias_path(provider, aliases):
@@ -2451,14 +2576,20 @@ def constructor_provider_provenance_epoch():
         class_binding,
         init_override,
         capture_holder_instances,
+        _capture_holder_assignment,
+        _capture_holder_call,
         _capture_class_alias,
         _local_holder_unused_selector,
         _single_name_assignments,
         instance_selector_edges,
+        _selected_instance_selector_edges,
+        _unique_selected_owner,
         field_alias_path,
         owner_path,
         class_index,
         source_owner_consumer,
+        _consumer_method,
+        _safe_consumer_formal,
         _captured_method,
         _classmethod,
         _is_call_argument,
@@ -2491,6 +2622,35 @@ def source_owner_consumer(
         or not isinstance(call.func, ast.Attribute)
     ):
         return None
+    method_row = _consumer_method(call, aliases, classes, builtin_stable)
+    if method_row is None:
+        return None
+    receiver, method_owner_path, method_path, owner, method = method_row
+    try:
+        bound = bind_source_call(call, method, receiver=receiver, apply_defaults=False)
+    except (TypeError, ValueError):
+        return None
+    formals = [name for name, value in bound.items() if value is node]
+    if len(formals) != 1 or not _safe_consumer_formal(
+        formals[0],
+        method,
+        method_path,
+        method_owner_path,
+        index,
+        classes,
+        owners,
+        builtin_stable,
+        aliases_by_path,
+    ):
+        return None
+    if aliases_by_path is None or not ordinary_type_operand(
+        node, tree, parents, index, classes, aliases, owners, aliases_by_path
+    ):
+        return None
+    return method_owner_path + "." + method.name
+
+
+def _consumer_method(call, aliases, classes, builtin_stable):
     receiver = call.func.value
     row = _captured_method(
         _resolved_ast_name(receiver, aliases), call.func.attr, classes, set()
@@ -2500,25 +2660,28 @@ def source_owner_consumer(
     method_owner_path, method_path, owner, method = row
     if not _classmethod(method, owner, classes, builtin_stable):
         return None
-    try:
-        bound = bind_source_call(call, method, receiver=receiver, apply_defaults=False)
-    except (TypeError, ValueError):
-        return None
-    formals = [name for name, value in bound.items() if value is node]
-    if len(formals) != 1 or not _consumer_effect_safe(
+    return receiver, method_owner_path, method_path, owner, method
+
+
+def _safe_consumer_formal(
+    formal,
+    method,
+    method_path,
+    owner_path,
+    index,
+    classes,
+    owners,
+    builtin_stable,
+    aliases_by_path,
+):
+    return _consumer_effect_safe(
         method,
         method_path,
         index,
-        formals[0],
+        formal,
         builtin_stable,
-        (classes, classes[method_owner_path][2], owners, aliases_by_path),
-    ):
-        return None
-    if aliases_by_path is None or not ordinary_type_operand(
-        node, tree, parents, index, classes, aliases, owners, aliases_by_path
-    ):
-        return None
-    return method_owner_path + "." + method.name
+        (classes, classes[owner_path][2], owners, aliases_by_path),
+    )
 
 
 def _captured_method(path, name, classes, seen):
@@ -2954,18 +3117,7 @@ def auth_constructor_password(call, path, aliases):
 
 def candidate_facts(index, snapshots, sink_rows, publications):
     """Collect literal declaration facts whose member names or values occur in sink expressions or endpoint publications."""
-    names = {
-        part
-        for _, _, _, _, expr, *_ in sink_rows
-        for node in ast.walk(expr)
-        for part in (
-            (node.id,)
-            if isinstance(node, ast.Name)
-            else (node.attr,)
-            if isinstance(node, ast.Attribute)
-            else ()
-        )
-    }
+    names = _sink_expression_names(sink_rows)
     facts = []
     for path, tree in snapshots.items():
         if not isinstance(tree, ast.Module):
@@ -2980,6 +3132,21 @@ def candidate_facts(index, snapshots, sink_rows, publications):
             if fact and (fact.member in names or fact._literal in publications):
                 facts.append(fact)
     return facts
+
+
+def _sink_expression_names(sink_rows):
+    return {
+        part
+        for _, _, _, _, expr, *_ in sink_rows
+        for node in ast.walk(expr)
+        for part in (
+            (node.id,)
+            if isinstance(node, ast.Name)
+            else (node.attr,)
+            if isinstance(node, ast.Attribute)
+            else ()
+        )
+    }
 
 
 def constructor_provider_bindings_inert(chain, index, imports):
@@ -3655,6 +3822,8 @@ def _constructor_provider_epoch():
     helpers = (
         constructor_bindings_inert,
         _constructor_provider_epoch,
+        SourceSnapshotIndex._matches_snapshot,
+        _ast_matches_source,
         *_constructor_provider.constructor_provider_helper_epoch(),
         *mutation_helpers,
     )
@@ -3686,13 +3855,23 @@ def exact_parameter_field(ctor, assignment, param, index, path):
     owner = index.parents[path].get(id(ctor))
     if not instance_receiver(target, ctor, owner, index, path):
         return False
+    return (
+        _exact_parameter_read(ctor, assignment, param)
+        and _unique_parameter_field_write(ctor, target)
+        and not any(_reflective_mutation(n, target.attr) for n in ast.walk(ctor))
+    )
+
+
+def _exact_parameter_read(ctor, assignment, param):
     reads = [
         n
         for n in ast.walk(ctor)
         if isinstance(n, ast.Name) and n.id == param and isinstance(n.ctx, ast.Load)
     ]
-    if len(reads) != 1 or reads[0] is not assignment.value:
-        return False
+    return len(reads) == 1 and reads[0] is assignment.value
+
+
+def _unique_parameter_field_write(ctor, target):
     writes = [
         n
         for n in ast.walk(ctor)
@@ -3700,9 +3879,7 @@ def exact_parameter_field(ctor, assignment, param, index, path):
         and n.attr == target.attr
         and isinstance(n.ctx, (ast.Store, ast.Del))
     ]
-    if len(writes) != 1 or writes[0] is not target:
-        return False
-    return not any(_reflective_mutation(n, target.attr) for n in ast.walk(ctor))
+    return len(writes) == 1 and writes[0] is target
 
 
 def _reflective_mutation(node, field):
@@ -3786,6 +3963,53 @@ def constructor_url_hops(
     """Return verified transfer hops, or None when any source binding is ambiguous."""
     if not index.validate(sink_path):
         return None
+    candidate = _constructor_candidate_context(fact, index, imports, classes, audit)
+    if candidate is None:
+        return None
+    candidate_chain, client_path, client_expr, client_attr, client_ref, client_chain = (
+        candidate
+    )
+    transfer = _find_constructor_transfer(
+        fact, candidate_chain, client_chain, index, imports, classes, audit, integrity
+    )
+    if transfer is None:
+        return None
+    ctor_call, factory, ctor, assignment, param, factory_path, ctor_path = transfer
+    sink = _verified_constructor_sink(
+        call,
+        expression,
+        sink_path,
+        ctor,
+        assignment,
+        client_ref,
+        ctor_path,
+        index,
+        imports,
+        classes,
+        audit,
+    )
+    if sink is None:
+        return None
+    sink_function, field = sink
+    return build_hops(
+        fact,
+        index,
+        client_path,
+        client_expr,
+        client_attr,
+        ctor_call,
+        factory,
+        ctor,
+        assignment,
+        call,
+        param,
+        factory_path,
+        ctor_path,
+        sink_path,
+    )
+
+
+def _constructor_candidate_context(fact, index, imports, classes, audit):
     candidate_path = index.root / fact.path
     candidate_chain = class_chain(
         index, candidate_path, fact.owner, imports, classes, audit
@@ -3802,13 +4026,29 @@ def constructor_url_hops(
     client_chain = class_chain(index, *client_ref, imports, classes, audit)
     if not client_chain or not constructor_bindings_inert(client_chain, index, imports):
         return None
-
-    transfer = _find_constructor_transfer(
-        fact, candidate_chain, client_chain, index, imports, classes, audit, integrity
+    return (
+        candidate_chain,
+        client_path,
+        client_expr,
+        client_attr,
+        client_ref,
+        client_chain,
     )
-    if transfer is None:
-        return None
-    ctor_call, factory, ctor, assignment, param, factory_path, ctor_path = transfer
+
+
+def _verified_constructor_sink(
+    call,
+    expression,
+    sink_path,
+    ctor,
+    assignment,
+    client_ref,
+    ctor_path,
+    index,
+    imports,
+    classes,
+    audit,
+):
     sink_owner = scope_class(call, index, sink_path)
     if not _inherits_transfer(
         sink_path,
@@ -3830,23 +4070,7 @@ def constructor_url_hops(
         expression, sink_function, field, call.lineno
     ):
         return None
-
-    return build_hops(
-        fact,
-        index,
-        client_path,
-        client_expr,
-        client_attr,
-        ctor_call,
-        factory,
-        ctor,
-        assignment,
-        call,
-        param,
-        factory_path,
-        ctor_path,
-        sink_path,
-    )
+    return sink_function, field
 
 
 def _inherits_transfer(

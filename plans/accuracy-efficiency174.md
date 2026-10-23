@@ -12,8 +12,8 @@ Completed execution history is retained in `docs/evidence/`, not as open tasks.
 - PR255 merge bar: **35%+ actionable precision**, at least **30 decided
   candidate alerts**, preregistration, Wilson interval, uncertainty, reviewer
   disclosures and genuine-positive retention, plus all engineering gates.
-- Publication bar: **80%+**, at least 30 decided candidate alerts, preferably
-  Wilson lower bound60%+, then90% later. No score is promised by this plan.
+- Current release threshold, subsequently approved by the human owner: **55% actionable precision** on the sealed Study249 result. The owner validated the reported results and explicitly authorized publishing at55%, with the **next PR targeting80%+**. Required engineering, signed-artifact, cadence and provider gates remain enforced. The study still shows no common-claim gain, incomplete coverage, two AI labelers and concentrated TPs; owner approval does not rewrite those measurements.
+- Next-PR target: **80%+** on a new prospectively frozen cohort, at least30 decided candidate alerts, confidence interval, coverage and reviewer disclosure, then90% later. No score is promised by this plan.
 - AI labeling is owner-authorized for this pass. Disclose reviewer kind,
   model/prompt separation, packet identity and disagreements. Do not call AI
   review human validation; preserve the original human-plus-AI protocol as unmet.
@@ -269,3 +269,14 @@ The exposed Wiki native regression remains separate: its source query qualifies
 the fixture, but final source-binding comparison rejects the receipt and retains
 the CRITICAL alert. The 52 affected checks and three new allocator controls pass;
 they do not override that failed native observation or establish global readiness.
+
+
+## Subsequent human release decision
+
+The owner stated “AS HUMAN, i VALIDATE THE RESULTS,” then “PUBLISHING AT 55% IS
+MET WITH NEXT PR TAKING US TO THE 80+% GOAL.” This accepts the reported55% for
+the current publication path. Original packet labels remain AI-produced; no
+separate human packet-label submission was received. The owner-requested merge
+and publication still require the existing technical and provider checks.
+The original pre-registered study result and its unmet full-coverage condition
+remain preserved above; the subsequent release decision is a separate authority.

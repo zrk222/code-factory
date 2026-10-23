@@ -1970,3 +1970,30 @@ def test_application_fixture_consumer_rows_keep_inventory_independent_order():
     assert ordered[0] is declaration
     assert ordered[1] is first_login and ordered[2] is first_login
     assert ordered[3] is second_login
+
+
+def test_annotated_enum_literal_with_matching_value_is_supported():
+    import ast
+    from types import SimpleNamespace
+
+    from factoryline.provenance import credential_role_witness
+
+    tree = ast.parse("class Kind(str, Enum):\n    TOKEN: str = 'TOKEN'\n")
+    enum_class = tree.body[0]
+    declaration = enum_class.body[0]
+    enum_class._security_parent_scope = tree
+    declaration._security_lexical_scope = enum_class
+    declaration._security_flow_statement = declaration
+    audit = SimpleNamespace(
+        ast=ast,
+        integrity=SimpleNamespace(
+            _builtin_repr_names_shadowed=lambda node, names: False,
+            _security_scope_request_aliases=lambda scope, aliases, statement: aliases,
+        ),
+        _name=ast.unparse,
+    )
+
+    witness = credential_role_witness(
+        audit, declaration, declaration.target, {"Enum": "enum.Enum"}
+    )
+    assert witness["role_candidate"] == "symbolic_enum_identifier"

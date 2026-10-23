@@ -442,35 +442,51 @@ def closed_shell_finding(call_name, relative, node):
     )
 
 
+def _finite_membership_reference(use, parent):
+    if not isinstance(parent, ast.Compare) or use not in parent.comparators:
+        return False
+    index = parent.comparators.index(use)
+    return isinstance(parent.ops[index], (ast.In, ast.NotIn))
+
+
+def _finite_container_reference(use, parent, parents):
+    if not isinstance(parent, ast.Starred):
+        return False
+    container = parents.get(id(parent))
+    return isinstance(container, ast.Set) and parent.value is use
+
+
+def _finite_call_reference(use, parent):
+    if not isinstance(parent, ast.Call) or use not in parent.args or parent.keywords:
+        return False
+    target = parent.func
+    if not isinstance(target, ast.Attribute):
+        return False
+    if target.attr == "intersection" and isinstance(
+        target.value, (ast.Set, ast.SetComp)
+    ):
+        return True
+    return (
+        target.attr == "join"
+        and isinstance(target.value, ast.Constant)
+        and type(target.value.value) is str
+    )
+
+
 def finite_domain_reference_allowed(
     path, use, tail, capture_path, capture_name, capture, parents
 ):
-    """Allow a finite-domain reference only in the capture, membership, set, intersection, or literal-string join shapes modeled here."""
+    """Allow only modeled finite-domain capture and read shapes."""
+    parent = parents.get(id(use))
+    if not tail and path == capture_path and use is capture_name:
+        return parent is capture and capture.args[0] is use
     if tail:
         return False
-    parent = parents.get(id(use))
-    if path == capture_path and use is capture_name:
-        return parent is capture and capture.args[0] is use
-    if isinstance(parent, ast.Compare) and use in parent.comparators:
-        index = parent.comparators.index(use)
-        return isinstance(parent.ops[index], (ast.In, ast.NotIn))
-    if isinstance(parent, ast.Starred):
-        container = parents.get(id(parent))
-        return isinstance(container, ast.Set) and parent.value is use
-    if isinstance(parent, ast.Call) and use in parent.args and not parent.keywords:
-        target = parent.func
-        if isinstance(target, ast.Attribute) and use in parent.args:
-            if target.attr == "intersection" and isinstance(
-                target.value, (ast.Set, ast.SetComp)
-            ):
-                return True
-            if (
-                target.attr == "join"
-                and isinstance(target.value, ast.Constant)
-                and type(target.value.value) is str
-            ):
-                return True
-    return False
+    return (
+        _finite_membership_reference(use, parent)
+        or _finite_container_reference(use, parent, parents)
+        or _finite_call_reference(use, parent)
+    )
 
 
 def finite_provider_attribute_write_index(nodes, aliases, audit, parents=None):
@@ -500,8 +516,7 @@ def finite_scope_binding_candidate(node, origins):
     )
 
 
-def finite_template_capture_shape(function, aliases, audit, integrity):
-    """Recognize the single-parameter pytest parametrization shape that captures a sorted finite domain without shadowed builtins."""
+def _finite_capture_decorator(function, aliases, audit):
     if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
         return None
     if len(function.decorator_list) != 1 or len(function.args.args) != 1:
@@ -515,21 +530,42 @@ def finite_template_capture_shape(function, aliases, audit, integrity):
         != "pytest.mark.parametrize"
     ):
         return None
-    capture = decorator.args[1]
+    return decorator
+
+
+def _finite_capture_parameter(function, decorator):
+    if len(function.args.args) != 1 or len(decorator.args) != 2:
+        return None
     if (
         not isinstance(decorator.args[0], ast.Constant)
         or type(decorator.args[0].value) is not str
+        or function.args.args[0].arg != decorator.args[0].value
     ):
         return None
-    if function.args.args[0].arg != decorator.args[0].value:
-        return None
+    return decorator.args[0].value
+
+
+def _finite_sorted_capture(capture, integrity):
     if not isinstance(capture, ast.Call) or not isinstance(capture.func, ast.Name):
         return None
     if capture.func.id != "sorted" or len(capture.args) != 1 or capture.keywords:
         return None
     if integrity._builtin_repr_names_shadowed(capture, {"sorted"}):
         return None
-    return function.args.args[0].arg, capture
+    return capture
+
+
+def finite_template_capture_shape(function, aliases, audit, integrity):
+    """Recognize one pytest parameter capturing a sorted finite domain."""
+    decorator = _finite_capture_decorator(function, aliases, audit)
+    if decorator is None:
+        return None
+    parameter = _finite_capture_parameter(function, decorator)
+    if parameter is None:
+        return None
+    capture = decorator.args[1]
+    capture = _finite_sorted_capture(capture, integrity)
+    return (parameter, capture) if capture is not None else None
 
 
 class _FiniteInputCapture:
@@ -860,8 +896,7 @@ def _finite_eval_module_prefix(tree, comprehension):
     return None
 
 
-def finite_literal_eval_input_witness(node, call_name, *, source_bytes, source_path):
-    """Prove finite source input only, not the effects of resolving type objects."""
+def _finite_eval_source_shape(node, call_name, source_bytes, source_path):
     if (
         call_name != "eval"
         or not isinstance(node, ast.Call)
@@ -873,35 +908,52 @@ def finite_literal_eval_input_witness(node, call_name, *, source_bytes, source_p
         or not isinstance(source_bytes, bytes)
         or not isinstance(source_path, str)
     ):
-        return {}
+        return False
+    return True
+
+
+def _finite_eval_source_call(node, call_name, source_bytes, source_path):
+    if not _finite_eval_source_shape(node, call_name, source_bytes, source_path):
+        return None
     try:
         tree = ast.parse(source_bytes)
     except (SyntaxError, ValueError, TypeError, RecursionError):
-        return {}
-
-    def span(n):
-        return [
-            getattr(n, k, None)
-            for k in ("lineno", "col_offset", "end_lineno", "end_col_offset")
-        ]
+        return None
 
     matches = [
-        n for n in ast.walk(tree) if isinstance(n, ast.Call) and span(n) == span(node)
+        n
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Call)
+        and _finite_source_span(n) == _finite_source_span(node)
     ]
     if len(matches) != 1 or ast.dump(matches[0]) != ast.dump(node):
-        return {}
-    call = matches[0]
+        return None
+    return tree, matches[0]
+
+
+def _finite_source_span(node):
+    return [
+        getattr(node, key, None)
+        for key in ("lineno", "col_offset", "end_lineno", "end_col_offset")
+    ]
+
+
+def _finite_eval_closed_domain(tree, call):
     comprehension = _finite_eval_comprehension(tree, call)
     domain = _finite_eval_domain(comprehension, call)
     if domain is None:
-        return {}
+        return None
     prefix = _finite_eval_module_prefix(tree, comprehension)
     if prefix is None:
-        return {}
+        return None
     from .runtime_audit_integrity import _closed_declaration_binding
 
     if not _closed_declaration_binding(prefix, call):
-        return {}
+        return None
+    return comprehension, domain
+
+
+def _finite_eval_witness_facts(source_bytes, source_path, call, comprehension, domain):
     domain_node, programs = domain
     import json
 
@@ -910,9 +962,9 @@ def finite_literal_eval_input_witness(node, call_name, *, source_bytes, source_p
         "disposition": "PROVEN_FINITE_LITERAL_EVAL_INPUT",
         "source_path": source_path,
         "source_sha256": hashlib.sha256(source_bytes).hexdigest(),
-        "call_span": span(call),
-        "domain_span": span(domain_node),
-        "comprehension_span": span(comprehension),
+        "call_span": _finite_source_span(call),
+        "domain_span": _finite_source_span(domain_node),
+        "comprehension_span": _finite_source_span(comprehension),
         "program_sha256": hashlib.sha256(
             json.dumps(programs, separators=(",", ":")).encode()
         ).hexdigest(),
@@ -923,6 +975,21 @@ def finite_literal_eval_input_witness(node, call_name, *, source_bytes, source_p
         "runtime_assurance": "INCOMPLETE",
         "target_execution": "not_performed",
     }
+
+
+def finite_literal_eval_input_witness(node, call_name, *, source_bytes, source_path):
+    """Prove finite source input only, not the effects of resolving type objects."""
+    source_call = _finite_eval_source_call(node, call_name, source_bytes, source_path)
+    if source_call is None:
+        return {}
+    tree, call = source_call
+    closed_domain = _finite_eval_closed_domain(tree, call)
+    if closed_domain is None:
+        return {}
+    comprehension, domain = closed_domain
+    return _finite_eval_witness_facts(
+        source_bytes, source_path, call, comprehension, domain
+    )
 
 
 def _finite_template_program_hash(program, value):
@@ -966,27 +1033,36 @@ def _finite_template_program_hash(program, value):
     )
 
 
-def finite_template_program_hashes(template, parameter, values):
-    """Hash every bounded rendering after checking one fixed async-function grammar."""
+def _finite_template_piece(item, parameter):
+    if isinstance(item, ast.Constant) and type(item.value) is str:
+        return True, item.value, False
+    if (
+        isinstance(item, ast.FormattedValue)
+        and isinstance(item.value, ast.Name)
+        and item.value.id == parameter
+        and item.conversion == -1
+        and item.format_spec is None
+    ):
+        return True, None, True
+    return False, None, False
+
+
+def _finite_template_skeleton(template, parameter, values):
     if not isinstance(template, ast.JoinedStr) or not isinstance(parameter, str):
         return None
     pieces, holes = [], 0
     for item in template.values:
-        if isinstance(item, ast.Constant) and type(item.value) is str:
-            pieces.append(item.value)
-        elif (
-            isinstance(item, ast.FormattedValue)
-            and isinstance(item.value, ast.Name)
-            and item.value.id == parameter
-            and item.conversion == -1
-            and item.format_spec is None
-        ):
-            pieces.append(None)
-            holes += 1
-        else:
+        valid, piece, is_hole = _finite_template_piece(item, parameter)
+        if not valid:
             return None
+        pieces.append(piece)
+        holes += is_hole
     if holes != 1 or not 1 <= len(values) <= 64:
         return None
+    return pieces
+
+
+def _finite_template_hash_rows(pieces, values):
     hashes, skeleton = [], None
     for value in values:
         program = "".join(value if part is None else part for part in pieces)
@@ -998,6 +1074,32 @@ def finite_template_program_hashes(template, parameter, values):
     return hashlib.sha256(skeleton.encode()).hexdigest(), hashes
 
 
+def finite_template_program_hashes(template, parameter, values):
+    """Hash every bounded rendering after checking one fixed async-function grammar."""
+    pieces = _finite_template_skeleton(template, parameter, values)
+    if pieces is None:
+        return None
+    return _finite_template_hash_rows(pieces, values)
+
+
+def _provider_mutation_for_node(
+    node, aliases, audit, parents, bindings, facts, capture_predicate
+):
+    if isinstance(node, ast.Attribute) and isinstance(node.ctx, (ast.Store, ast.Del)):
+        _record_provider_paths(node.value, node.attr, aliases, audit, bindings, facts)
+    elif isinstance(node, ast.Call):
+        _reflective_provider_write(node, aliases, audit, bindings, facts)
+    elif isinstance(node, (ast.Assign, ast.AnnAssign, ast.NamedExpr)):
+        if capture_predicate is None or capture_predicate(node):
+            _record_provider_capture(node, aliases, audit, bindings, facts)
+    elif isinstance(node, (ast.Name, ast.Attribute)) and _provider_call_argument(
+        node, parents
+    ):
+        _record_provider_paths(node, "*", aliases, audit, bindings, facts)
+    elif isinstance(node, (ast.Return, ast.Yield, ast.YieldFrom)):
+        _record_provider_paths(node.value, "*", aliases, audit, bindings, facts)
+
+
 def finite_provider_mutation_index(
     nodes, aliases, audit, parents, *, capture_predicate=None
 ):
@@ -1005,22 +1107,9 @@ def finite_provider_mutation_index(
     bindings = _provider_alias_bindings(nodes)
     facts = set()
     for node in nodes:
-        if isinstance(node, ast.Attribute) and isinstance(
-            node.ctx, (ast.Store, ast.Del)
-        ):
-            _record_provider_paths(
-                node.value, node.attr, aliases, audit, bindings, facts
-            )
-        elif isinstance(node, ast.Call):
-            _reflective_provider_write(node, aliases, audit, bindings, facts)
-        elif isinstance(node, (ast.Assign, ast.AnnAssign, ast.NamedExpr)):
-            if capture_predicate is None or capture_predicate(node):
-                _record_provider_capture(node, aliases, audit, bindings, facts)
-        elif isinstance(node, (ast.Name, ast.Attribute)):
-            if _provider_call_argument(node, parents):
-                _record_provider_paths(node, "*", aliases, audit, bindings, facts)
-        elif isinstance(node, (ast.Return, ast.Yield, ast.YieldFrom)):
-            _record_provider_paths(node.value, "*", aliases, audit, bindings, facts)
+        _provider_mutation_for_node(
+            node, aliases, audit, parents, bindings, facts, capture_predicate
+        )
     return facts
 
 

@@ -2518,34 +2518,43 @@ def bound_sink_argument(call, position, keywords=()):
     return selected[0] if len(selected) == 1 else None
 
 
-def parsed_host_allowlist(call, aliases, call_name, proven_callee):
-    """Confirm a URL host allowlist guard uses a proven urlparse or urlsplit call on the same sink URL without intervening effects."""
+def _parsed_host_parser(call, aliases, call_name, proven_callee):
     guard = getattr(call, "_security_flow_statement", None)
     if not isinstance(guard, ast.If) or not _url_guard_has_direct_sink(guard, call):
-        return False
+        return None
     test = _url_host_allowlist_test(guard.test)
     if test is None:
-        return False
+        return None
     hostname = test.left
     if not isinstance(hostname, ast.Attribute) or hostname.attr != "hostname":
-        return False
+        return None
     parser = hostname.value
     if not isinstance(parser, ast.Call) or not parser.args:
-        return False
+        return None
     parser_name = call_name(parser, aliases)
-    return (
-        parser_name
-        in {
-            "urllib.parse.urlparse",
-            "urllib.parse.urlsplit",
-        }
-        and not any(
-            n is not call
-            and isinstance(
-                n, (ast.Call, ast.NamedExpr, ast.Await, ast.Yield, ast.YieldFrom)
-            )
-            for n in ast.walk(call)
+    if parser_name not in {"urllib.parse.urlparse", "urllib.parse.urlsplit"}:
+        return None
+    return guard, parser, parser_name
+
+
+def _url_guard_has_no_intervening_effect(call):
+    return not any(
+        node is not call
+        and isinstance(
+            node, (ast.Call, ast.NamedExpr, ast.Await, ast.Yield, ast.YieldFrom)
         )
+        for node in ast.walk(call)
+    )
+
+
+def parsed_host_allowlist(call, aliases, call_name, proven_callee):
+    """Confirm the parsed URL guard matches the sink without intervening effects."""
+    parsed = _parsed_host_parser(call, aliases, call_name, proven_callee)
+    if parsed is None:
+        return False
+    _guard, parser, parser_name = parsed
+    return (
+        _url_guard_has_no_intervening_effect(call)
         and proven_callee(parser, aliases, parser_name)
         and _url_expr_same(parser.args[0], bound_sink_argument(call, 0, ("url",)))
     )
@@ -2603,32 +2612,90 @@ def unsafe_request_url(call, name, tainted, aliases, is_tainted, allowed):
     return is_tainted(argument, tainted, set(), aliases) and not allowed(call, aliases)
 
 
+def _fixed_absolute_path_root(root):
+    return (
+        isinstance(root, ast.Constant)
+        and isinstance(root.value, str)
+        and re.match(r"^(?:/|[A-Za-z]:[\\/]|\\\\)", root.value) is not None
+    )
+
+
+def _secure_filename_leaf(leaf, requests, aliases, proven):
+    if isinstance(leaf, ast.Name):
+        return ("secure-upload-leaf", leaf.id) in requests
+    return isinstance(leaf, ast.Call) and proven(
+        leaf, aliases, "werkzeug.utils.secure_filename"
+    )
+
+
 def fixed_root_filename_path(node, requests, aliases, proven):
     """A basename barrier proves lexical traversal only, not filesystem safety."""
     if not isinstance(node, ast.Call) or not proven(node, aliases, "os.path.join"):
         return False
-    if len(node.args) < 2 or node.keywords:
-        return False
-    root = node.args[0]
-    if not isinstance(root, ast.Constant) or not isinstance(root.value, str):
-        return False
-    if not re.match(r"^(?:/|[A-Za-z]:[\\/]|\\\\)", root.value):
+    if (
+        len(node.args) < 2
+        or node.keywords
+        or not _fixed_absolute_path_root(node.args[0])
+    ):
         return False
     return all(
-        isinstance(leaf, ast.Name)
-        and ("secure-upload-leaf", leaf.id) in requests
-        or isinstance(leaf, ast.Call)
-        and proven(leaf, aliases, "werkzeug.utils.secure_filename")
-        for leaf in node.args[1:]
+        _secure_filename_leaf(leaf, requests, aliases, proven) for leaf in node.args[1:]
+    )
+
+
+def _sanitizer_capture_allowed(node, call, head, expected, aliases, audit):
+    if isinstance(node, ast.Assign):
+        targets, value = node.targets, node.value
+    elif isinstance(node, ast.AnnAssign):
+        targets, value = ([node.target] if node.simple else []), node.value
+    else:
+        return True
+    return not (
+        len(targets) == 1
+        and isinstance(targets[0], ast.Name)
+        and isinstance(call.func, ast.Name)
+        and targets[0].id == head
+        and isinstance(value, (ast.Name, ast.Attribute))
+        and audit._resolved_ast_name(value, aliases) == expected
+    )
+
+
+def _sanitizer_path_overlaps(path, attribute, expected):
+    changed = path if attribute == "*" else path + "." + attribute
+    return (
+        changed == expected
+        or expected.startswith(changed + ".")
+        or changed.startswith(expected + ".")
+    )
+
+
+def _sanitizer_provider_mutated(module, call, aliases, expected, head, audit):
+    from types import SimpleNamespace
+
+    from . import finite_capture
+
+    nodes = list(ast.walk(module))
+    parents = {
+        id(child): node for node in nodes for child in ast.iter_child_nodes(node)
+    }
+    mutations = finite_capture.finite_provider_mutation_index(
+        nodes,
+        aliases,
+        SimpleNamespace(_resolved_ast_name=audit._resolved_ast_name),
+        parents,
+        capture_predicate=lambda node: _sanitizer_capture_allowed(
+            node, call, head, expected, aliases, audit
+        ),
+    )
+    return any(
+        _sanitizer_path_overlaps(path, attribute, expected)
+        for path, attribute in mutations
     )
 
 
 def sanitizer_provider_unchanged(call, aliases, expected, module_for):
-    """Reuse the provider mutation index for guards within one captured AST."""
-    from types import SimpleNamespace
-
+    """Reuse a cached provider mutation index for guards in one captured AST."""
     from . import review_audits as audit
-    from . import finite_capture
     from .review_integrity import _security_flow_bindings
 
     module = module_for(getattr(call, "_security_lexical_scope", None))
@@ -2642,48 +2709,9 @@ def sanitizer_provider_unchanged(call, aliases, expected, module_for):
     key = (expected, name, tuple(sorted(aliases.items())))
     cache = getattr(module, "_security_sanitizer_provider_cache", {})
     if key not in cache:
-        nodes = list(ast.walk(module))
-        parents = {
-            id(child): node for node in nodes for child in ast.iter_child_nodes(node)
-        }
-
-        def include_capture(node):
-            if isinstance(node, ast.Assign):
-                targets = node.targets
-                value = node.value
-            elif isinstance(node, ast.AnnAssign):
-                targets = [node.target] if node.simple else []
-                value = node.value
-            else:
-                return True
-            if (
-                len(targets) == 1
-                and isinstance(targets[0], ast.Name)
-                and isinstance(call.func, ast.Name)
-                and targets[0].id == head
-                and isinstance(value, (ast.Name, ast.Attribute))
-                and audit._resolved_ast_name(value, aliases) == expected
-            ):
-                return False
-            return True
-
-        mutations = finite_capture.finite_provider_mutation_index(
-            nodes,
-            aliases,
-            SimpleNamespace(_resolved_ast_name=audit._resolved_ast_name),
-            parents,
-            capture_predicate=include_capture,
+        cache[key] = _sanitizer_provider_mutated(
+            module, call, aliases, expected, head, audit
         )
-
-        def overlaps(path, attribute):
-            changed = path if attribute == "*" else path + "." + attribute
-            return (
-                changed == expected
-                or expected.startswith(changed + ".")
-                or changed.startswith(expected + ".")
-            )
-
-        cache[key] = any(overlaps(path, attribute) for path, attribute in mutations)
         module._security_sanitizer_provider_cache = cache
     return not cache[key]
 

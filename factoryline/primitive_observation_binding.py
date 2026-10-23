@@ -13,62 +13,10 @@ def fixed_primitive_binding(finding, sources, bindings, integrity, source_bytes=
     from .credential_endpoint_admission import endpoint_binding
 
     facts = finding.get("facts", {})
-    if facts.get("disposition") == "PROVEN_LOCAL_CRYPTO_TEST_PRIMITIVE":
-        workspace_sources = sorted((row["path"], row["sha256"]) for row in sources)
-        workspace_digest = hashlib.sha256(
-            json.dumps(workspace_sources, separators=(",", ":")).encode()
-        ).hexdigest()
-        provider = next(
-            (row for row in sources if row.get("path") == facts.get("provider_path")),
-            None,
-        )
-        span = facts.get("declaration_span")
-        owner_spans = (
-            "test_owner_span",
-            "provider_allocation_span",
-        )
-        common = bool(
-            finding.get("code") == "SECURITY_HARDCODED_SECRET"
-            and finding.get("severity") == "CRITICAL"
-            and facts.get("schema") == "factory.jwt-local-crypto-test-primitive.v1"
-            and facts.get("source_path") == finding.get("path")
-            and facts.get("source_sha256") == bindings.get(finding.get("path"))
-            and facts.get("workspace_sources_sha256") == workspace_digest
-            and provider is not None
-            and facts.get("provider_sha256") == provider.get("sha256")
-            and facts.get("authority_role") == "TEST_OWNED_SYNTHETIC_SIGNING_AUTHORITY"
-            and facts.get("transport_role") == "UNASSESSED"
-            and facts.get("runtime_assurance") == "INCOMPLETE"
-            and facts.get("runtime_executed") is False
-            and isinstance(span, list)
-            and len(span) == 4
-            and span[0] == finding.get("line")
-            and span[1] == finding.get("column")
-            and span[2] >= span[0]
-            and span[3] >= span[1]
-            and all(integrity._valid_source_span(facts.get(key)) for key in owner_spans)
-        )
-        if not common:
-            return False
-        if not _jwt_operation_recomputes_from_sources(
-            finding, facts, source_bytes, workspace_digest, bindings
-        ):
-            return False
-        calls = facts.get("crypto_call_spans")
-        inputs = facts.get("input_source_spans")
-        return bool(
-            facts.get("operation_role") == "test_owned_local_crypto_operation"
-            and facts.get("operation_kind") in {"encode", "decode", "roundtrip"}
-            and isinstance(calls, list)
-            and isinstance(inputs, list)
-            and len(calls) > 0
-            and len(calls) == len(inputs)
-            and all(integrity._valid_source_span(span) for span in calls + inputs)
-            and all(
-                facts["test_owner_span"][:2] <= span[:2]
-                and span[2:] <= facts["test_owner_span"][2:]
-                for span in calls
-            )
+    disposition = facts.get("disposition")
+    if disposition == "PROVEN_LOCAL_CRYPTO_TEST_PRIMITIVE":
+        return _jwt_primitive_binding(
+            finding, facts, sources, bindings, integrity, source_bytes
         )
     if facts.get("disposition") == "TEST_OWNED_LOCAL_FIXTURE":
         return django_fixture_binding(finding, sources, bindings)
@@ -83,6 +31,98 @@ def fixed_primitive_binding(finding, sources, bindings, integrity, source_bytes=
         return public_symbolic_binding(finding, sources, bindings)
     if facts.get("disposition") == "PROVEN_FINITE_TEMPLATE_INPUT":
         return finite_template_binding(finding, sources, bindings)
+    return _fixed_program_binding(finding, facts, sources, bindings, integrity)
+
+
+def _jwt_primitive_binding(finding, facts, sources, bindings, integrity, source_bytes):
+    workspace_sources = sorted((row["path"], row["sha256"]) for row in sources)
+    workspace_digest = hashlib.sha256(
+        json.dumps(workspace_sources, separators=(",", ":")).encode()
+    ).hexdigest()
+    provider = next(
+        (row for row in sources if row.get("path") == facts.get("provider_path")),
+        None,
+    )
+    span = facts.get("declaration_span")
+    owner_spans = ("test_owner_span", "provider_allocation_span")
+    if not _jwt_primitive_common(
+        finding,
+        facts,
+        bindings,
+        integrity,
+        provider,
+        span,
+        owner_spans,
+        workspace_digest,
+    ):
+        return False
+    if not _jwt_operation_recomputes_from_sources(
+        finding, facts, source_bytes, workspace_digest, bindings
+    ):
+        return False
+    return _jwt_operation_spans_valid(facts, integrity)
+
+
+def _jwt_primitive_common(
+    finding, facts, bindings, integrity, provider, span, owner_spans, workspace_digest
+):
+    if not _jwt_primitive_identity(
+        finding, facts, bindings, provider, workspace_digest
+    ):
+        return False
+    if not _jwt_primitive_declared_span(finding, span):
+        return False
+    return all(integrity._valid_source_span(facts.get(key)) for key in owner_spans)
+
+
+def _jwt_primitive_identity(finding, facts, bindings, provider, workspace_digest):
+    return bool(
+        finding.get("code") == "SECURITY_HARDCODED_SECRET"
+        and finding.get("severity") == "CRITICAL"
+        and facts.get("schema") == "factory.jwt-local-crypto-test-primitive.v1"
+        and facts.get("source_path") == finding.get("path")
+        and facts.get("source_sha256") == bindings.get(finding.get("path"))
+        and facts.get("workspace_sources_sha256") == workspace_digest
+        and provider is not None
+        and facts.get("provider_sha256") == provider.get("sha256")
+        and facts.get("authority_role") == "TEST_OWNED_SYNTHETIC_SIGNING_AUTHORITY"
+        and facts.get("transport_role") == "UNASSESSED"
+        and facts.get("runtime_assurance") == "INCOMPLETE"
+        and facts.get("runtime_executed") is False
+    )
+
+
+def _jwt_primitive_declared_span(finding, span):
+    return bool(
+        isinstance(span, list)
+        and len(span) == 4
+        and span[0] == finding.get("line")
+        and span[1] == finding.get("column")
+        and span[2] >= span[0]
+        and span[3] >= span[1]
+    )
+
+
+def _jwt_operation_spans_valid(facts, integrity):
+    calls = facts.get("crypto_call_spans")
+    inputs = facts.get("input_source_spans")
+    return bool(
+        facts.get("operation_role") == "test_owned_local_crypto_operation"
+        and facts.get("operation_kind") in {"encode", "decode", "roundtrip"}
+        and isinstance(calls, list)
+        and isinstance(inputs, list)
+        and len(calls) > 0
+        and len(calls) == len(inputs)
+        and all(integrity._valid_source_span(span) for span in calls + inputs)
+        and all(
+            facts["test_owner_span"][:2] <= span[:2]
+            and span[2:] <= facts["test_owner_span"][2:]
+            for span in calls
+        )
+    )
+
+
+def _fixed_program_binding(finding, facts, sources, bindings, integrity):
     workspace_sources = sorted((row["path"], row["sha256"]) for row in sources)
     workspace_digest = hashlib.sha256(
         json.dumps(workspace_sources, separators=(",", ":")).encode()
@@ -434,22 +474,41 @@ def application_fixture_binding(finding, sources, bindings, source_bytes=None):
         "tox.ini",
     }:
         return False
-    if len(sources) != len({row["path"] for row in sources}):
+    digest = _application_fixture_inventory(sources, bindings, configs)
+    if digest is None:
         return False
+    unsigned = {
+        key: value for key, value in facts.items() if key != "proof_facts_sha256"
+    }
+    if not _application_fixture_claim(finding, facts, evidence, bindings, digest):
+        return False
+    if not _application_fixture_use_proof(evidence, bindings, facts, source_bytes):
+        return False
+    return (
+        facts.get("proof_facts_sha256")
+        == hashlib.sha256(
+            json.dumps(unsigned, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+    )
+
+
+def _application_fixture_inventory(sources, bindings, configs):
+    if len(sources) != len({row["path"] for row in sources}):
+        return None
     manifest = {
         row["path"]: row["sha256"] for row in sources if row["path"].endswith(".py")
     }
     if any(bindings.get(name) != digest for name, digest in configs.items()):
-        return False
+        return None
     manifest.update(configs)
-    digest = hashlib.sha256(
+    return hashlib.sha256(
         "\n".join(
             sorted(f"{name}\0{value}" for name, value in manifest.items())
         ).encode()
     ).hexdigest()
-    unsigned = {
-        key: value for key, value in facts.items() if key != "proof_facts_sha256"
-    }
+
+
+def _application_fixture_claim(finding, facts, evidence, bindings, digest):
     return bool(
         finding.get("code") == "SECURITY_HARDCODED_SECRET"
         and finding.get("severity") == "CRITICAL"
@@ -462,22 +521,20 @@ def application_fixture_binding(finding, sources, bindings, source_bytes=None):
         and facts["declaration_span"][:2]
         == [finding.get("line"), finding.get("column")]
         and _application_assurance_binding(facts, evidence)
-        and (
-            _presentation_witness_bindings(evidence, bindings, facts)
-            if evidence.get("classification") == "PRESENTATION_METADATA_ROLE"
-            else _application_class_role_recomputes(
-                evidence, bindings, facts.get("name"), source_bytes
-            )
-            if evidence.get("profile") == "DJANGO_CLASS_LOCAL_ACCOUNT_ENROLLMENT"
-            else _application_witness_bindings(evidence, bindings)
-            and _application_use_closure_binding(
-                evidence, bindings, facts.get("name"), source_bytes
-            )
+    )
+
+
+def _application_fixture_use_proof(evidence, bindings, facts, source_bytes):
+    if evidence.get("classification") == "PRESENTATION_METADATA_ROLE":
+        return _presentation_witness_bindings(evidence, bindings, facts)
+    if evidence.get("profile") == "DJANGO_CLASS_LOCAL_ACCOUNT_ENROLLMENT":
+        return _application_class_role_recomputes(
+            evidence, bindings, facts.get("name"), source_bytes
         )
-        and facts.get("proof_facts_sha256")
-        == hashlib.sha256(
-            json.dumps(unsigned, sort_keys=True, separators=(",", ":")).encode()
-        ).hexdigest()
+    return _application_witness_bindings(
+        evidence, bindings
+    ) and _application_use_closure_binding(
+        evidence, bindings, facts.get("name"), source_bytes
     )
 
 
@@ -978,23 +1035,43 @@ def django_fixture_binding(finding, sources, bindings):
     configs = evidence.get("runner_config_sha256", {})
     if not isinstance(configs, dict) or set(configs) != {"pyproject.toml", "tox.ini"}:
         return False
+    digest = _django_fixture_inventory(sources, bindings, configs)
+    if digest is None:
+        return False
+    unsigned = {
+        name: value for name, value in facts.items() if name != "proof_facts_sha256"
+    }
+    return _django_fixture_claim(finding, facts, evidence, bindings, digest, unsigned)
+
+
+def _django_fixture_inventory(sources, bindings, configs):
     paths = [row["path"] for row in sources]
     if len(paths) != len(set(paths)):
-        return False
+        return None
     inventory = {
         row["path"]: row["sha256"] for row in sources if row["path"].endswith(".py")
     }
     if any(bindings.get(name) != digest for name, digest in configs.items()):
-        return False
+        return None
     inventory.update(configs)
-    digest = hashlib.sha256(
+    return hashlib.sha256(
         "\n".join(
             sorted(f"{name}\0{value}" for name, value in inventory.items())
         ).encode()
     ).hexdigest()
-    unsigned = {
-        name: value for name, value in facts.items() if name != "proof_facts_sha256"
-    }
+
+
+def _django_fixture_claim(finding, facts, evidence, bindings, digest, unsigned):
+    if not _django_fixture_identity(finding, facts, evidence, bindings):
+        return False
+    if not _django_fixture_hashes(facts, evidence, digest):
+        return False
+    if not _django_fixture_span(finding, facts):
+        return False
+    return facts.get("proof_facts_sha256") == _proof_facts_digest(unsigned)
+
+
+def _django_fixture_identity(finding, facts, evidence, bindings):
     return (
         finding.get("code") == "SECURITY_HARDCODED_SECRET"
         and facts.get("disposition") == "TEST_OWNED_LOCAL_FIXTURE"
@@ -1006,21 +1083,41 @@ def django_fixture_binding(finding, sources, bindings):
         and isinstance(evidence.get("source_sha256"), str)
         and re.fullmatch(r"[0-9a-f]{64}", evidence["source_sha256"]) is not None
         and evidence.get("source_sha256") == bindings.get(finding.get("path"))
-        and evidence.get("inventory_sha256") == digest
-        and valid_source_span(facts.get("declaration_span"))
-        and facts["declaration_span"][:2]
-        == [finding.get("line"), finding.get("column")]
-        and facts.get("proof_facts_sha256")
-        == hashlib.sha256(
-            json.dumps(unsigned, sort_keys=True, separators=(",", ":")).encode()
-        ).hexdigest()
     )
+
+
+def _django_fixture_hashes(facts, evidence, digest):
+    return evidence.get("inventory_sha256") == digest
+
+
+def _django_fixture_span(finding, facts):
+    return valid_source_span(facts.get("declaration_span")) and facts[
+        "declaration_span"
+    ][:2] == [finding.get("line"), finding.get("column")]
+
+
+def _proof_facts_digest(unsigned):
+    return hashlib.sha256(
+        json.dumps(unsigned, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
 
 
 def closed_declaration_binding(finding, audit):
     """Validate a closed declaration witness, grammar profile, program digest, and contained source spans; execution remains unperformed."""
     facts = finding.get("facts", {})
     span = facts.get("call_span")
+    return _closed_declaration_claim(
+        finding, facts, span, audit
+    ) and _closed_declaration_literal(facts, span, audit)
+
+
+def _closed_declaration_claim(finding, facts, span, audit):
+    return _closed_declaration_profile(facts) and _closed_declaration_identity(
+        finding, facts, span, audit
+    )
+
+
+def _closed_declaration_profile(facts):
     return (
         facts.get("disposition") == "PROVEN_CLOSED_DECLARATION_INPUT"
         and facts.get("schema") == "factory.closed-declaration-input.v1"
@@ -1030,14 +1127,22 @@ def closed_declaration_binding(finding, audit):
         and facts.get("runtime_assurance") == "INCOMPLETE"
         and facts.get("target_execution") == "not_performed"
         and isinstance(facts.get("program_sha256"), str)
-        and re.fullmatch(r"[0-9a-f]{64}", facts["program_sha256"]) is not None
+    )
+
+
+def _closed_declaration_identity(finding, facts, span, audit):
+    return (
+        re.fullmatch(r"[0-9a-f]{64}", facts["program_sha256"]) is not None
         and audit._valid_source_span(span)
         and span[:2] == [finding.get("line"), finding.get("column")]
-        and audit._valid_source_span(facts.get("literal_span"))
-        and tuple(span[:2])
-        <= tuple(facts["literal_span"][:2])
-        <= tuple(facts["literal_span"][2:])
-        <= tuple(span[2:])
+    )
+
+
+def _closed_declaration_literal(facts, span, audit):
+    return audit._valid_source_span(facts.get("literal_span")) and tuple(
+        span[:2]
+    ) <= tuple(facts["literal_span"][:2]) <= tuple(facts["literal_span"][2:]) <= tuple(
+        span[2:]
     )
 
 
@@ -1062,15 +1167,23 @@ def finite_eval_binding(finding, audit):
 
 def fixed_program_builtin_identity(audit, node, module, call_name):
     """Confirm exec or eval resolves to an unshadowed builtin without module-level indirection through sensitive builtin names."""
+    if not _fixed_builtin_call_identity(audit, node, call_name):
+        return False
+    return _fixed_builtin_source_unshadowed(audit, node, module)
+
+
+def _fixed_builtin_call_identity(audit, node, call_name):
     if not isinstance(node.func, audit.ast.Name) or node.func.id not in {
         "exec",
         "eval",
     }:
         return False
-    if call_name != node.func.id or audit._builtin_repr_names_shadowed(
+    return call_name == node.func.id and not audit._builtin_repr_names_shadowed(
         node, {node.func.id}
-    ):
-        return False
+    )
+
+
+def _fixed_builtin_source_unshadowed(audit, node, module):
     direct_call_names = {
         call.func
         for call in audit.ast.walk(module)
@@ -1079,46 +1192,56 @@ def fixed_program_builtin_identity(audit, node, module, call_name):
         and getattr(call, "_security_lexical_scope", None)
         is getattr(node, "_security_lexical_scope", None)
     }
+    return _fixed_builtin_nodes_unshadowed(audit, module, node.func, direct_call_names)
+
+
+def _fixed_builtin_nodes_unshadowed(audit, module, selected_func, direct_call_names):
     for item in audit.ast.walk(module):
-        if item is node.func or item in direct_call_names:
+        if item is selected_func or item in direct_call_names:
             continue
-        if isinstance(item, audit.ast.Name) and item.id in {
-            "__builtins__",
-            "globals",
-            "locals",
-            "vars",
-            "getattr",
-            "setattr",
-            "delattr",
-            "__import__",
-            "exec",
-            "eval",
-        }:
-            return False
-        if isinstance(item, audit.ast.Attribute) and item.attr in {
-            "__dict__",
-            "__globals__",
-            "__builtins__",
-            "__getattribute__",
-            "__setattr__",
-            "import_module",
-        }:
-            return False
-        if (
-            isinstance(item, audit.ast.Attribute)
-            and item.attr in {"exec", "eval"}
-            and isinstance(item.ctx, (audit.ast.Store, audit.ast.Del))
-        ):
-            return False
-        if isinstance(item, audit.ast.ImportFrom) and (
-            item.module == "builtins" or any(a.name == "*" for a in item.names)
-        ):
-            return False
-        if isinstance(item, audit.ast.Import) and any(
-            a.name == "builtins" for a in item.names
-        ):
+        if _fixed_builtin_node_is_shadow(audit, item):
             return False
     return True
+
+
+def _fixed_builtin_node_is_shadow(audit, item):
+    if isinstance(item, audit.ast.Name) and item.id in {
+        "__builtins__",
+        "globals",
+        "locals",
+        "vars",
+        "getattr",
+        "setattr",
+        "delattr",
+        "__import__",
+        "exec",
+        "eval",
+    }:
+        return True
+    if isinstance(item, audit.ast.Attribute) and item.attr in {
+        "__dict__",
+        "__globals__",
+        "__builtins__",
+        "__getattribute__",
+        "__setattr__",
+        "import_module",
+    }:
+        return True
+    if (
+        isinstance(item, audit.ast.Attribute)
+        and item.attr in {"exec", "eval"}
+        and isinstance(item.ctx, (audit.ast.Store, audit.ast.Del))
+    ):
+        return True
+    if isinstance(item, audit.ast.ImportFrom) and (
+        item.module == "builtins" or any(a.name == "*" for a in item.names)
+    ):
+        return True
+    if isinstance(item, audit.ast.Import) and any(
+        a.name == "builtins" for a in item.names
+    ):
+        return True
+    return False
 
 
 def fixed_program_witness(audit, relative, node, call_name):
@@ -1139,6 +1262,46 @@ def fixed_program_witness(audit, relative, node, call_name):
     module = audit._security_module_scope(scope)
     workspace_profile = getattr(module, "_fixed_program_workspace", {})
     context = getattr(module, "_security_source_context", None)
+    witness = _fixed_program_native_witness(
+        audit,
+        relative,
+        node,
+        call_name,
+        module,
+        workspace_profile,
+        context,
+        closed_declaration_input_witness,
+        finite_literal_eval_input_witness,
+        source_generated_eval_input_witness,
+        finite_template_witness,
+    )
+    if witness:
+        return witness
+    return _fixed_program_legacy_witness(
+        audit,
+        relative,
+        node,
+        call_name,
+        module,
+        workspace_profile,
+        context,
+        fixed_literal_program_witness,
+    )
+
+
+def _fixed_program_native_witness(
+    audit,
+    relative,
+    node,
+    call_name,
+    module,
+    workspace_profile,
+    context,
+    closed_declaration_input_witness,
+    finite_literal_eval_input_witness,
+    source_generated_eval_input_witness,
+    finite_template_witness,
+):
     if (
         isinstance(context, tuple)
         and len(context) == 2
@@ -1173,6 +1336,19 @@ def fixed_program_witness(audit, relative, node, call_name):
                     "sources_sha256"
                 )
                 return witness
+    return {}
+
+
+def _fixed_program_legacy_witness(
+    audit,
+    relative,
+    node,
+    call_name,
+    module,
+    workspace_profile,
+    context,
+    fixed_literal_program_witness,
+):
     if (
         not isinstance(workspace_profile, dict)
         or workspace_profile.get("complete") is not True
@@ -1308,6 +1484,12 @@ def primitive_binding_helpers():
 
     return (
         fixed_primitive_binding,
+        _jwt_primitive_binding,
+        _jwt_primitive_common,
+        _jwt_primitive_identity,
+        _jwt_primitive_declared_span,
+        _jwt_operation_spans_valid,
+        _fixed_program_binding,
         closed_shell_binding,
         _jwt_operation_recomputes_from_sources,
         _jwt_bound_source_inventory,
@@ -1318,8 +1500,17 @@ def primitive_binding_helpers():
         _current_primitive_binding,
         annotate_django_fixture,
         django_fixture_binding,
+        _django_fixture_inventory,
+        _django_fixture_claim,
+        _django_fixture_identity,
+        _django_fixture_hashes,
+        _django_fixture_span,
+        _proof_facts_digest,
         annotate_application_fixture,
         application_fixture_binding,
+        _application_fixture_inventory,
+        _application_fixture_claim,
+        _application_fixture_use_proof,
         _application_class_source_inputs,
         _application_class_role_recomputes,
         _captured_application_source_bytes,
@@ -1340,10 +1531,24 @@ def primitive_binding_helpers():
         _presentation_witness_row,
         _application_assurance_binding,
         closed_declaration_binding,
+        _closed_declaration_claim,
+        _closed_declaration_profile,
+        _closed_declaration_identity,
+        _closed_declaration_literal,
+        _django_fixture_inventory,
+        _django_fixture_claim,
+        _proof_facts_digest,
+        _fixed_builtin_call_identity,
         valid_source_span,
         finite_eval_binding,
         fixed_program_builtin_identity,
+        _fixed_builtin_call_identity,
+        _fixed_builtin_source_unshadowed,
+        _fixed_builtin_nodes_unshadowed,
+        _fixed_builtin_node_is_shadow,
         fixed_program_witness,
+        _fixed_program_native_witness,
+        _fixed_program_legacy_witness,
         bind_fixed_program_workspace,
         fixed_program_workspace_helpers,
         credential_context_cache_schema,

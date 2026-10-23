@@ -9,47 +9,68 @@ from pathlib import Path
 from . import type_intent_provider_provenance as provider
 
 
-def captured_provider_context_closed(
-    module, relative, selected_test, canonical, noop_write
-) -> bool:
-    """Confirm a provider context is closed only when source hashes, captured closure, owner imports, and no-op effects all match."""
-    context = getattr(module, "_security_oracle_context", None)
-    source = getattr(module, "_security_source_context", None)
-    if (
-        not isinstance(context, dict)
-        or not _valid_relative(relative)
-        or not context.get("provider_source_inventory_complete")
-        or not context.get("provider_source_closure_complete")
-        or not isinstance(context.get("provider_source_closure"), list)
-        or not isinstance(context.get("provider_owner_local_imports"), list)
-        or any(
-            not isinstance(alias, str)
-            for alias in context["provider_owner_local_imports"]
-        )
-        or not isinstance(source, tuple)
-        or len(source) != 2
-        or not isinstance(source[0], Path)
-        or not isinstance(source[1], dict)
+def _provider_context_metadata_closed(context, relative):
+    if not isinstance(context, dict) or not _valid_relative(relative):
+        return False
+    if not context.get("provider_source_inventory_complete"):
+        return False
+    if not context.get("provider_source_closure_complete"):
+        return False
+    if not isinstance(context.get("provider_source_closure"), list):
+        return False
+    if not isinstance(context.get("provider_owner_local_imports"), list):
+        return False
+    if any(
+        not isinstance(alias, str) for alias in context["provider_owner_local_imports"]
     ):
         return False
+    return True
+
+
+def _provider_source_tuple(source):
+    return (
+        isinstance(source, tuple)
+        and len(source) == 2
+        and isinstance(source[0], Path)
+        and isinstance(source[1], dict)
+    )
+
+
+def _provider_context_source(module, relative):
+    context = getattr(module, "_security_oracle_context", None)
+    if not _provider_context_metadata_closed(context, relative):
+        return None
+    source = getattr(module, "_security_source_context", None)
+    if not _provider_source_tuple(source):
+        return None
     root, sources = source
     digest = getattr(module, "_oracle_source_sha256", None)
     raw = sources.get(root / relative)
-    return bool(
-        isinstance(digest, str)
-        and len(digest) == 64
-        and isinstance(raw, bytes)
-        and sha256(raw).hexdigest() == digest
-        and provider.owner_module_effects_closed(
-            module,
-            selected_test,
-            canonical,
-            noop_write,
-            context["provider_owner_local_imports"],
-        )
-        and provider._captured_closure_closed(
-            root, sources, context["provider_source_closure"]
-        )
+    if not isinstance(digest, str) or len(digest) != 64:
+        return None
+    if not isinstance(raw, bytes) or sha256(raw).hexdigest() != digest:
+        return None
+    return context, root, sources
+
+
+def captured_provider_context_closed(
+    module, relative, selected_test, canonical, noop_write
+) -> bool:
+    """Confirm the owner source, imports, effects, and captured closure are complete."""
+    source = _provider_context_source(module, relative)
+    if source is None:
+        return False
+    context, root, sources = source
+    if not provider.owner_module_effects_closed(
+        module,
+        selected_test,
+        canonical,
+        noop_write,
+        context["provider_owner_local_imports"],
+    ):
+        return False
+    return provider._captured_closure_closed(
+        root, sources, context["provider_source_closure"]
     )
 
 
@@ -292,6 +313,31 @@ def obviously_empty_test_body(node: ast.AST) -> bool:
     )
 
 
+def _type_assertion_oracle_call(node, aliases, module_aliases, scope_parameters):
+    if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return None
+    module = getattr(node, "_oracle_module", None)
+    if not isinstance(module, ast.Module):
+        return None
+    source_aliases = dict(module_aliases)
+    source_aliases.update(aliases)
+    body = [statement for statement in node.body if not _ignorable(statement)]
+    call, local_assignment = _test_call(body, scope_parameters)
+    if call is None or not provider._simple_type_call(call):
+        return None
+    canonical = provider._source_name(call.func, source_aliases)
+    if canonical not in {"typing.assert_type", "typing_extensions.assert_type"}:
+        return None
+    lexical = provider._source_name(call.func, aliases)
+    if lexical != canonical and local_assignment is None:
+        return None
+    if not _provider_references_are_closed(
+        module, call, local_assignment, source_aliases, canonical
+    ):
+        return None
+    return module, call, source_aliases, canonical
+
+
 def inert_type_assertion_only_oracle(
     node,
     aliases,
@@ -302,28 +348,13 @@ def inert_type_assertion_only_oracle(
     relative,
     provider_context_closed,
 ) -> bool:
-    """Identify a test whose only meaningful oracle is a closed typing.assert_type call and whose provider context is source-closed."""
-    if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+    """Identify a sole closed typing.assert_type oracle without certifying execution."""
+    candidate = _type_assertion_oracle_call(
+        node, aliases, module_aliases, scope_parameters
+    )
+    if candidate is None:
         return False
-    module = getattr(node, "_oracle_module", None)
-    if not isinstance(module, ast.Module):
-        return False
-    source_aliases = dict(module_aliases)
-    source_aliases.update(aliases)
-    body = [statement for statement in node.body if not _ignorable(statement)]
-    call, local_assignment = _test_call(body, scope_parameters)
-    if call is None or not provider._simple_type_call(call):
-        return False
-    canonical = provider._source_name(call.func, source_aliases)
-    if canonical not in {"typing.assert_type", "typing_extensions.assert_type"}:
-        return False
-    lexical = provider._source_name(call.func, aliases)
-    if lexical != canonical and local_assignment is None:
-        return False
-    if not _provider_references_are_closed(
-        module, call, local_assignment, source_aliases, canonical
-    ):
-        return False
+    module, call, source_aliases, canonical = candidate
     noop_write = None
     if provider_mutated(module, source_aliases):
         noop_write = _single_noop_provider_write(
@@ -467,20 +498,7 @@ def bind_negative_checker_context(root, contexts, identity):
         context["negative_typecheck"] = path.relative_to(root).as_posix() in selected
 
 
-def negative_type_expectation(node, context):
-    """Recognize a declared negative typing check, without certifying its execution."""
-    if not context.get("negative_typecheck") or not isinstance(node, ast.FunctionDef):
-        return False
-    module = getattr(node, "_oracle_module", None)
-    lines = getattr(module, "_oracle_source_lines", None)
-    if not isinstance(lines, list) or any(not isinstance(line, str) for line in lines):
-        return False
-    body = [item for item in node.body if not _ignorable(item)]
-    if len(body) != 1 or not isinstance(body[0], ast.AnnAssign):
-        return False
-    statement = body[0]
-    if not isinstance(statement.target, ast.Name) or statement.value is None:
-        return False
+def _negative_type_ignore_comment(statement, lines):
     from io import StringIO
     import tokenize
 
@@ -502,6 +520,23 @@ def negative_type_expectation(node, context):
         and token.string.strip() == "# type: ignore"
         for token in comments
     )
+
+
+def negative_type_expectation(node, context):
+    """Recognize a declared negative typing check, without certifying its execution."""
+    if not context.get("negative_typecheck") or not isinstance(node, ast.FunctionDef):
+        return False
+    module = getattr(node, "_oracle_module", None)
+    lines = getattr(module, "_oracle_source_lines", None)
+    if not isinstance(lines, list) or any(not isinstance(line, str) for line in lines):
+        return False
+    body = [item for item in node.body if not _ignorable(item)]
+    if len(body) != 1 or not isinstance(body[0], ast.AnnAssign):
+        return False
+    statement = body[0]
+    if not isinstance(statement.target, ast.Name) or statement.value is None:
+        return False
+    return _negative_type_ignore_comment(statement, lines)
 
 
 CACHE_HELPERS = tuple(

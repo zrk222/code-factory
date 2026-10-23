@@ -1060,3 +1060,24 @@ def test_immutable_source_capture_keeps_hash_bound_snapshot_valid(tmp_path):
     index = SourceSnapshotIndex(tmp_path, {path: tree}, {path: raw}, {path: digest})
     assert index.bounded is True
     assert index.validate(path) is True
+
+
+@pytest.mark.parametrize("mutation", ["binding", "code", "ast_helper"])
+def test_constructor_epoch_tracks_extracted_snapshot_validation(monkeypatch, mutation):
+    from factoryline import credential_role_constructor_provider as provider
+
+    before = provider._constructor_provider_epoch()
+    method = provider.SourceSnapshotIndex._matches_snapshot
+    if mutation == "binding":
+        monkeypatch.setattr(
+            provider.SourceSnapshotIndex, "_matches_snapshot", lambda *args: False
+        )
+    elif mutation == "code":
+        monkeypatch.setattr(
+            method, "__code__", (lambda self, path, tree, raw, digest: False).__code__
+        )
+    else:
+        monkeypatch.setattr(provider, "_ast_matches_source", lambda raw, tree: False)
+    assert provider._constructor_provider_epoch() != before
+    monkeypatch.undo()
+    assert provider._constructor_provider_epoch() == before

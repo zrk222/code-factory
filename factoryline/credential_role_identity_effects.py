@@ -147,14 +147,18 @@ def identity_value(node, aliases, *, strict_calls=False):
     if isinstance(node, ast.Subscript):
         return _subscript_value(node, aliases, strict_calls=strict_calls)
     if isinstance(node, ast.Call):
-        if isinstance(node.func, ast.Attribute) and node.func.attr == "__class__":
-            if contains_tracked(
-                identity_value(node.func.value, aliases, strict_calls=strict_calls)
-            ):
-                return _Value(unknown=True)
-        if strict_calls:
-            return _Value(content_unknown=True)
+        return _identity_call_value(node, aliases, strict_calls=strict_calls)
     return _unknown_expression(node, aliases, strict_calls=strict_calls)
+
+
+def _identity_call_value(node, aliases, *, strict_calls=False):
+    if isinstance(node.func, ast.Attribute) and node.func.attr == "__class__":
+        receiver = identity_value(node.func.value, aliases, strict_calls=strict_calls)
+        if contains_tracked(receiver):
+            return _Value(unknown=True)
+    return _Value(content_unknown=True) if strict_calls else _unknown_expression(
+        node, aliases, strict_calls=strict_calls
+    )
 
 
 def _subscript_value(node, aliases, *, strict_calls=False):
@@ -262,25 +266,31 @@ def nested_capture_roots(
     pass
 
     captured, tracked = set(), set(aliases)
-    scopes = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)
     for node in ast.walk(function):
-        if node is function or not isinstance(node, scopes):
-            continue
-        parent = index.parents[path].get(id(node))
-        while parent is not None and parent is not function:
-            parent = index.parents[path].get(id(parent))
-        if parent is not function:
-            continue
-        if strict_calls and _definition_effects_unknown(node):
-            effects.unknowns.add("unmodeled nested definition-time effects")
-        for child in ast.walk(node):
-            if isinstance(child, ast.Name) and child.id in tracked:
-                captured.update(tracked_roots(aliases[child.id]))
-                if strict_calls and _has_unknown_content(aliases[child.id]):
-                    effects.unknowns.add(
-                        "nested scope captures unresolved tracked value"
-                    )
+        _capture_nested_scope(
+            node, function, path, tracked, aliases, index, strict_calls, effects, captured
+        )
     return captured
+
+
+def _capture_nested_scope(
+    node, function, path, tracked, aliases, index, strict_calls, effects, captured
+):
+    scopes = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)
+    if node is function or not isinstance(node, scopes):
+        return
+    parent = index.parents[path].get(id(node))
+    while parent is not None and parent is not function:
+        parent = index.parents[path].get(id(parent))
+    if parent is not function:
+        return
+    if strict_calls and _definition_effects_unknown(node):
+        effects.unknowns.add("unmodeled nested definition-time effects")
+    for child in ast.walk(node):
+        if isinstance(child, ast.Name) and child.id in tracked:
+            captured.update(tracked_roots(aliases[child.id]))
+            if strict_calls and _has_unknown_content(aliases[child.id]):
+                effects.unknowns.add("nested scope captures unresolved tracked value")
 
 
 def record_write(target, value, aliases, effects, *, strict_calls=False):
@@ -370,15 +380,19 @@ def strict_read_effects(node, aliases, parents, out):
     parent = parents.get(id(node))
     if isinstance(parent, ast.Call) and parent.func is node:
         return
+    if _strict_read_is_unknown(node, aliases):
+        out.unknowns.add("unresolved value in strict identity summary")
+
+
+def _strict_read_is_unknown(node, aliases):
     value = identity_value(node, aliases, strict_calls=True)
-    if value.unknown or not (
+    return value.unknown or not (
         value.roots
         or value.class_roots
         or value.inert_kind
         or value.items
         or value.content_unknown
-    ):
-        out.unknowns.add("unresolved value in strict identity summary")
+    )
 
 
 def strict_protocol_effects(node, aliases, parents, out):
@@ -510,24 +524,29 @@ def identity_fields(fields, index):
         return None
     result = {}
     for key, root in fields.items():
-        literal = (
-            _source_literal(root, index)
-            if isinstance(root, SourceFieldLiteral)
-            else None
-        )
-        if not (
-            isinstance(key, tuple)
-            and len(key) == 2
-            and all(isinstance(item, str) and item for item in key)
-            and (literal is not None or isinstance(root, str) and root)
-            and key[1].isidentifier()
-            and not key[1].startswith("__")
-        ):
+        value = _identity_field_value(key, root, index)
+        if value is None:
             return None
-        result[key] = (
-            literal if literal is not None else _Value(roots=frozenset({root}))
-        )
+        result[key] = value
     return result
+
+
+def _identity_field_value(key, root, index):
+    literal = _source_literal(root, index) if isinstance(root, SourceFieldLiteral) else None
+    if not _identity_field_key_valid(key, root, literal):
+        return None
+    return literal if literal is not None else _Value(roots=frozenset({root}))
+
+
+def _identity_field_key_valid(key, root, literal):
+    return (
+        isinstance(key, tuple)
+        and len(key) == 2
+        and all(isinstance(item, str) and item for item in key)
+        and (literal is not None or isinstance(root, str) and root)
+        and key[1].isidentifier()
+        and not key[1].startswith("__")
+    )
 
 
 def _source_literal(root, index):
@@ -555,52 +574,73 @@ def literal_dict_update(call, aliases, *, strict_calls=False):
 
 def mapped_call_values(call, aliases, involved, resolved, out, *, strict_calls=False):
     """Bind each call actual to exactly one resolved formal parameter; record uncertainty and return no mapping on ambiguity."""
-    if any(isinstance(arg, ast.Starred) for arg in call.args) or any(
-        keyword.arg is None for keyword in call.keywords
-    ):
+    if _call_has_expansion(call):
         out.unknowns.add("expanded call arguments are not an exact binding")
         return None
     if not isinstance(resolved, ResolvedIdentityCall):
         out.unknowns.add("invalid exact call binding")
         return None
-    params = {
-        arg.arg
-        for arg in [
-            *resolved.function.args.posonlyargs,
-            *resolved.function.args.args,
-            *resolved.function.args.kwonlyargs,
-        ]
-    }
-    actuals = [*call.args, *(kw.value for kw in call.keywords)]
-    if isinstance(call.func, ast.Attribute):
-        actuals.append(call.func.value)
+    params = _resolved_parameter_names(resolved.function)
+    actuals = _call_actual_expressions(call)
     if not maps_each_actual_once(actuals, resolved.arguments):
         out.unknowns.add("exact call mapping must cover each actual once")
         return None
     mapped = {}
     for formal, expr in resolved.arguments.items():
-        if formal not in params or not any(expr is actual for actual in actuals):
-            out.unknowns.add("call mapping is not an exact parameter binding")
-            return
-        value = identity_value(expr, aliases, strict_calls=strict_calls)
-        roots = tracked_roots(value)
-        if (
-            not isinstance(expr, ast.expr)
-            or value.unknown
-            or (strict_calls and value.content_unknown)
-            or len(roots) > 1
-            or (value.items and roots)
-        ):
-            out.unknowns.add("ambiguous exact call root mapping")
+        value = _mapped_formal_value(
+            formal, expr, params, actuals, aliases, out, strict_calls
+        )
+        if value is None:
             return None
-        else:
-            mapped[formal] = value
+        mapped[formal] = value
     if set().union(*(tracked_roots(value) for value in mapped.values())) != involved:
         out.unknowns.add("exact call mapping omits a tracked root")
         return None
     return _with_inert_defaults(
         resolved.function, mapped, out, strict_calls=strict_calls
     )
+
+
+def _call_has_expansion(call):
+    return any(isinstance(arg, ast.Starred) for arg in call.args) or any(
+        keyword.arg is None for keyword in call.keywords
+    )
+
+
+def _resolved_parameter_names(function):
+    return {
+        arg.arg
+        for arg in [
+            *function.args.posonlyargs,
+            *function.args.args,
+            *function.args.kwonlyargs,
+        ]
+    }
+
+
+def _call_actual_expressions(call):
+    actuals = [*call.args, *(kw.value for kw in call.keywords)]
+    if isinstance(call.func, ast.Attribute):
+        actuals.append(call.func.value)
+    return actuals
+
+
+def _mapped_formal_value(formal, expr, params, actuals, aliases, out, strict_calls):
+    if formal not in params or not any(expr is actual for actual in actuals):
+        out.unknowns.add("call mapping is not an exact parameter binding")
+        return None
+    value = identity_value(expr, aliases, strict_calls=strict_calls)
+    roots = tracked_roots(value)
+    if (
+        not isinstance(expr, ast.expr)
+        or value.unknown
+        or (strict_calls and value.content_unknown)
+        or len(roots) > 1
+        or (value.items and roots)
+    ):
+        out.unknowns.add("ambiguous exact call root mapping")
+        return None
+    return value
 
 
 def _with_inert_defaults(function, mapped, out, *, strict_calls=False):
@@ -743,15 +783,15 @@ def exact_receiver_class(path, receiver, index, imports, classes, audit):
         or path not in index.snapshots
     ):
         return None
-    parents = index.parents[path]
+    return _exact_receiver_class_for_function(
+        path, receiver, index, imports, classes, audit, index.parents[path]
+    )
+
+
+def _exact_receiver_class_for_function(path, receiver, index, imports, classes, audit, parents):
     function = _enclosing_function(receiver, parents)
-    if function is None:
-        return None
-    constructor = _local_constructor(receiver, function, parents)
-    if constructor is None:
-        return None
-    class_name = _root_name(constructor.func)
-    if class_name is None:
+    constructor = _local_constructor(receiver, function, parents) if function else None
+    if constructor is None or _root_name(constructor.func) is None:
         return None
     class_ref = resolve_class(path, constructor.func, imports, classes)
     if class_ref is None or not _class_binding_is_exact(
@@ -912,6 +952,16 @@ def _receiver_helper_epoch():
                 "_method_stable",
                 "_field_writes_safe",
                 "_function",
+                "_identity_call_value",
+                "_capture_nested_scope",
+                "_strict_read_is_unknown",
+                "_identity_field_value",
+                "_identity_field_key_valid",
+                "_call_has_expansion",
+                "_resolved_parameter_names",
+                "_call_actual_expressions",
+                "_mapped_formal_value",
+                "_exact_receiver_class_for_function",
                 "summarize_identity_effect",
                 "effective_method",
                 "binding_occurrences",
@@ -1870,8 +1920,6 @@ def _fixture_candidate_use(use, imported_aliases, secret):
 
 
 def _fixture_setup_reaches(index, login, creation):
-    from . import mock_fixture_provenance as fixture
-
     chain = login[5][1]["chain"]
     creator_path, _, creator_function = creation[:3]
     owners = [node for _, _, node in chain]
@@ -1879,28 +1927,39 @@ def _fixture_setup_reaches(index, login, creation):
     if creator_owner not in owners:
         return False
     for path, _, owner in chain:
-        methods = binding_occurrences(owner.body, "setUp")
-        if not methods:
-            continue
-        if len(methods) != 1 or not isinstance(methods[0], ast.FunctionDef):
-            return False
-        method = methods[0]
-        if method.decorator_list or not method.body:
-            return False
-        first = method.body[0]
-        if not isinstance(first, ast.Expr) or not isinstance(first.value, ast.Call):
-            return False
-        if ast.dump(first.value, include_attributes=False) != ast.dump(
-            ast.parse("super().setUp()", mode="eval").body, include_attributes=False
-        ):
-            return False
-        if not fixture._django_builtins_unshadowed(index, path, {"super"}):
-            return False
-        if not _fixture_setup_super_unique(index, path, method, first.value):
-            return False
-        if not _fixture_setup_client_lifetime(index, path, method):
+        if not _fixture_setup_owner_is_supported(index, path, owner):
             return False
     return True
+
+
+def _fixture_setup_owner_is_supported(index, path, owner):
+    methods = binding_occurrences(owner.body, "setUp")
+    if not methods:
+        return True
+    if len(methods) != 1 or not isinstance(methods[0], ast.FunctionDef):
+        return False
+    method = methods[0]
+    if method.decorator_list or not method.body:
+        return False
+    first = method.body[0]
+    if not isinstance(first, ast.Expr) or not isinstance(first.value, ast.Call):
+        return False
+    return _fixture_setup_call_is_supported(index, path, method, first.value)
+
+
+def _fixture_setup_call_is_supported(index, path, method, call):
+    from . import mock_fixture_provenance as fixture
+
+    expected = ast.parse("super().setUp()", mode="eval").body
+    if ast.dump(call, include_attributes=False) != ast.dump(
+        expected, include_attributes=False
+    ):
+        return False
+    if not fixture._django_builtins_unshadowed(index, path, {"super"}):
+        return False
+    if not _fixture_setup_super_unique(index, path, method, call):
+        return False
+    return _fixture_setup_client_lifetime(index, path, method)
 
 
 def _fixture_demanded_providers_clear(index, rows):
@@ -2090,6 +2149,8 @@ def module_fixture_helper_epoch():
         _fixture_consumer_row,
         _fixture_consumers,
         _fixture_setup_reaches,
+        _fixture_setup_owner_is_supported,
+        _fixture_setup_call_is_supported,
         _fixture_demanded_providers_clear,
         _fixture_pytest_options,
         _fixture_selected_user_model,
@@ -2127,6 +2188,7 @@ def module_fixture_helper_epoch():
 
 
 def module_fixture_evidence_for_binding(index, path, assignment, secret):
+    """Resolve module-level credential evidence only for its captured module binding."""
     if index["source"].parents[path].get(id(assignment)) is not index["modules"][path]:
         return None
     return module_fixture_credential_evidence(index, path, assignment, secret)
