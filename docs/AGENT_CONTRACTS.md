@@ -130,3 +130,12 @@ precision guarantee or universal coverage claim.
 
 Agent taxonomy and generated IDE manifests link here. Keep dated measurements
 in this shared reference instead of copying them into generic agent rules.
+
+
+The follow-up's one-time Astra High plan is recorded in
+[`accuracy-efficiency174.md`](../plans/accuracy-efficiency174.md#next-precision-pr-one-time-astra-high-senior-security-plan)
+and its [source/case census](evidence/astra-precision256-plan.json). Priorities
+are resolved enum/discriminator roles, dominating immutable overwrite inputs,
+and complete local fixture effects. These are planned changes; the current
+measured score remains 55%. Retain all 33 exact TPs, then measure on a new
+prospectively frozen cohort. PR #255 merge does not lift the publication hold.

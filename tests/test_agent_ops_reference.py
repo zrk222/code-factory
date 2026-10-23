@@ -59,3 +59,33 @@ def test_current_owner_publication_hold_is_distinct_from_merge_and_historical_sc
     assert "hold publication until the next" in operations
     assert "Superseding publication hold" in plan
     assert "Do not dispatch the publish workflow" in operations
+
+
+def test_astra_followup_plan_preserves_exact_score_and_disjoint_case_census():
+    import json
+
+    root = Path(__file__).parents[1]
+    plan = json.loads(
+        (root / "docs/evidence/astra-precision256-plan.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    score = json.loads(
+        (root / "docs/evidence/study249-score.json").read_text(encoding="utf-8")
+    )
+    assert plan["measurement"] == "NOT_RUN" and plan["implementation"] == "NOT_RUN"
+    assert plan["release_state"] == "PUBLICATION_HOLD"
+    retained = set(plan["pinned_tp_packet_ids"])
+    assert retained == {
+        key for key, value in score["unit_labels"].items() if value["candidate"] == "TP"
+    }
+    groups = [set(task["packet_ids"]) for task in plan["tasks"]]
+    proposed = set.union(*groups)
+    assert len(retained) == 33
+    assert len(proposed) == sum(map(len, groups)) == 21
+    assert all(score["unit_labels"][key]["candidate"] == "FP" for key in proposed)
+    assert "F249-036" not in proposed
+    assert plan["frozen_metrics"]["candidate"]["precision"] == 0.55
+    assert plan["conditional_arithmetic"]["status"] == "ARITHMETIC_ONLY_NOT_PREDICTION"
+    assert plan["root_review_addendum"]["new_precision"] is None
+    assert "qualification/merge" in plan["root_review_addendum"]["clarification"]
