@@ -115,11 +115,22 @@ def build_finding_tier_report(
             partition_state,
             signing_cache,
         )
+        credential_evidence = _finding_private_key_authentication_evidence(
+            finding,
+            native_rows,
+            bound_source,
+            source_bytes,
+            bindings,
+            coverage_state,
+            partition_state,
+            signing_cache,
+        )
         tier, evidence, evidence_details = _decide_finding_tier(
             finding,
             bound_source,
             native_rows,
             primitive_rows,
+            credential_evidence,
         )
         identity = _tier_sha256(
             {
@@ -164,6 +175,8 @@ def build_finding_tier_report(
             row["missing_premises"] = _finding_missing_premises(finding, bound_source)
         if signing_evidence is not None:
             row["static_consumer_observation"] = signing_evidence
+        if credential_evidence is not None:
+            row["credential_authority_observation"] = credential_evidence
         if evidence_details is not None:
             row["evidence_details"] = evidence_details
         ledger.append(row)
@@ -295,7 +308,37 @@ def _finding_signing_evidence(
     return signing_configuration_evidence(finding, cache["inventory"])
 
 
-def _decide_finding_tier(finding, bound, native_rows, primitives):
+def _finding_private_key_authentication_evidence(
+    finding, native_rows, bound, captured, bindings, coverage, partition, cache
+):
+    if not (
+        bound
+        and finding.get("code") == "SECURITY_HARDCODED_SECRET"
+        and finding.get("severity") == "CRITICAL"
+        and (coverage is True or coverage == "COMPLETE")
+        and partition == "VALIDATED"
+        and _matches_regenerated_finding(finding, native_rows)
+    ):
+        return None
+    from .semantic_credential_sensor import (
+        private_key_authentication_evidence,
+        signing_configuration_inventory,
+    )
+
+    if "inventory" not in cache:
+        cache["inventory"] = signing_configuration_inventory(captured, bindings)
+    return private_key_authentication_evidence(finding, cache["inventory"])
+
+
+def _decide_finding_tier(
+    finding, bound, native_rows, primitives, credential_evidence=None
+):
+    if bound and credential_evidence is not None:
+        return (
+            "SUPPORTED_DEFECT",
+            "source_bound_private_key_http_authentication_flow",
+            None,
+        )
     if bound and _matches_regenerated_precondition_finding(finding, native_rows):
         return "SUPPORTED_DEFECT", "source_bound_native_security_precondition", None
     if bound and _matches_proven_primitive(finding, primitives):

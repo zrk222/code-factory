@@ -14,6 +14,54 @@ from factoryline.runtime_audit_integrity import finite_literal_eval_input_witnes
 from factoryline.runtime_audit_integrity import source_generated_eval_input_witness
 
 
+@pytest.mark.parametrize(
+    "replacement,closed",
+    [
+        ("", True),
+        ("from attacker import blob as payload\n", False),
+        ("import attacker as payload\n", False),
+        ("def payload(): pass\n", False),
+        ("class payload: pass\n", False),
+        ("try:\n    operation()\nexcept Exception as payload:\n    pass\n", False),
+        ("match external:\n    case {'body': payload}:\n        pass\n", False),
+    ],
+)
+def test_pickle_sink_rejects_non_name_payload_rebindings(replacement, closed):
+    source = (
+        "def test_roundtrip():\n"
+        "    payload = pickle.dumps(local)\n"
+        + "".join("    " + line + "\n" for line in replacement.splitlines())
+        + "    pickle.loads(payload)\n"
+    )
+    function = ast.parse(source).body[0]
+    load = function.body[-1].value
+    assert (
+        runtime._single_local_pickle_bytes_flow(
+            function, "payload", function.body[0], load
+        )
+        is closed
+    )
+
+
+def test_pickle_sink_import_rebinding_preserves_raw_security_alert(tmp_path):
+    (tmp_path / "test_roundtrip.py").write_text(
+        "import pickle\n"
+        "def test_roundtrip():\n"
+        "    local = {'value': 1}\n"
+        "    payload = pickle.dumps(local)\n"
+        "    from attacker import blob as payload\n"
+        "    pickle.loads(payload)\n",
+        encoding="utf-8",
+    )
+    findings = review_audits.security_scan(tmp_path)["findings"]
+    sinks = [
+        row for row in findings if row["code"] == "SECURITY_UNSAFE_DESERIALIZATION"
+    ]
+    assert len(sinks) == 1
+    assert sinks[0]["severity"] == "HIGH"
+    assert "input_provenance" not in sinks[0]["facts"]
+
+
 def test_finding_tier_report_keeps_known_format_raw_severity_and_run_scope():
     source = b'GITHUB_TOKEN = "ghp_abcdefghijklmnop"\n'
     finding = {

@@ -57,6 +57,130 @@ def _configuration_files277(runner):
     }
 
 
+def _private_key_auth_tiers(source, findings=None):
+    from hashlib import sha256
+    from factoryline.primitive_observation_binding import build_finding_tier_report
+
+    data = source.encode()
+    findings = _premise_scan(source) if findings is None else findings
+    return build_finding_tier_report(
+        findings,
+        [],
+        [{"path": "application.py", "sha256": sha256(data).hexdigest()}],
+        {"application.py": data},
+        coverage_state=True,
+        partition_state="VALIDATED",
+    )
+
+
+_PRIVATE_KEY_AUTH_SOURCE = '''
+from Crypto.PublicKey import RSA as KeyFactory
+from Crypto.Cipher import PKCS1_v1_5 as Cipher
+import base64
+import json
+from django.views.decorators.http import require_http_methods
+from django.contrib.auth.hashers import check_password
+
+credential_material = '-----BEGIN RSA PRIVATE KEY-----\\nMIICXAIBAAKBgQDPkDtDFKUZbN6vpevpgZIGc5DzH1UB9oK48MxNATjKPxqv+wsWsdxfWGI8awzXaKOB+Iq0LR+O4iM17fko0JHWTYSdUICSdOy28s/W4QKQh8mcPCum5gHak40QqA6tM842wra5tqO5fgP69lwgmSF7Y04xJhlPrx7MOTxBaqg1FwIDAQABAoGAan29afU1n43T0pp2Jx9rJBQ20gXJP3CSMQCaUQfHczxdHNzYG5S1U9Ws0QK7W+k7unsh7r8X6d7r4cduhho8N6KUY1mcXFUyEpx2PD4bQT89oxNKnawmr0BsXavIADNVwPZ9RLhvyEoJHOHsZn+vUky+k6+l+Dcitm4zFsfnXkECQQDnjFl75rz5vzqb6Zhx8NgfrbDYhAH9f/6KNx/tf5hsrn0TScpETLMlwqGt3t76AVJkeR8g/IHSGuul3iERVZ4zAkEA5Xt6eyDDQe97YEXdjkIl10a4hfbRgL8MChmYGu852I83fZ2TvD/Ah4KHjQCDAbFaDpndGooykVgSZGU2+/ahjQJBANbgJgKXQ/O4hJk/lBrY2Je9RgoHpxkq+HonYdeyuy7QVn3Z0nzDeNSn5AZId0AmjeFzjXG9InRqSxioJKPDgoUCQFgkOUMZrmWg6i5sJ1EArzAkhbNOveFJgAJRGk8eG4XGXHXvFFN12SkzRYUu8SKxT/nTt0z+T7XrsgTFq3zTmfECQGNtDLTWUcSJcXZjb/EhFDOec80nR5v/FmvpI1iYI8PoKODDFE31Wvr3r/62rINxXYHP+hahD2RV6FGrPCUCozA=\\n-----END RSA PRIVATE KEY-----\\n'
+
+def decode_secret(ciphertext):
+    key = KeyFactory.import_key(credential_material)
+    cipher = Cipher.new(key)
+    plaintext = cipher.decrypt(base64.b64decode(ciphertext), None)
+    return plaintext.decode("utf-8")
+
+@require_http_methods(["POST"])
+def login(request):
+    body_text = request.body.decode()
+    payload = json.loads(body_text)
+    encrypted = payload.get("password")
+    password = decode_secret(encrypted)
+    if check_password(password, stored_hash):
+        return "ok"
+    return "denied"
+'''
+
+
+def test_private_key_decryption_of_post_password_recomputes_authority():
+    import copy
+
+    report = _private_key_auth_tiers(_PRIVATE_KEY_AUTH_SOURCE)
+    row = next(item for item in report["ledger"] if item["raw_finding"]["code"] == "SECURITY_HARDCODED_SECRET")
+    assert row["tier"] == "SUPPORTED_DEFECT"
+    assert row["evidence"] == "source_bound_private_key_http_authentication_flow"
+    assert row["raw_finding"]["severity"] == "CRITICAL"
+    assert row["raw_finding"] == copy.deepcopy(_premise_scan(_PRIVATE_KEY_AUTH_SOURCE)[0])
+    observation = row["credential_authority_observation"]
+    assert observation["source_role"] == "embedded_private_key"
+    assert observation["consumer_role"] == "django_password_verifier"
+    assert observation["runtime_execution"] == "not_performed"
+    assert observation["deployment"] == "UNASSESSED"
+    assert len(observation["transfers"]) >= 7
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        pytest.param(
+            _PRIVATE_KEY_AUTH_SOURCE.replace('@require_http_methods(["POST"])\n', ""),
+            id="missing-post-route-guard",
+        ),
+        pytest.param(
+            _PRIVATE_KEY_AUTH_SOURCE.replace(
+                "if check_password(password, stored_hash):", "if password:"
+            ),
+            id="crypto-flow-without-auth-consumer",
+        ),
+        pytest.param(
+            _PRIVATE_KEY_AUTH_SOURCE.replace(
+                "\n\ndef decode_secret",
+                "\ncredential_material = opaque_value\n\ndef decode_secret",
+                1,
+            ),
+            id="mutated-private-key-binding",
+        ),
+        pytest.param(
+            _PRIVATE_KEY_AUTH_SOURCE.replace(
+                "\n\ndef decode_secret",
+                "\nKeyFactory = opaque_provider\n\ndef decode_secret",
+                1,
+            ),
+            id="shadowed-crypto-provider",
+        ),
+        pytest.param(
+            _PRIVATE_KEY_AUTH_SOURCE.replace(
+                "key = KeyFactory.import_key(credential_material)",
+                "key = opaque_provider(credential_material)",
+                1,
+            ),
+            id="opaque-crypto-provider",
+        ),
+        pytest.param(
+            _PRIVATE_KEY_AUTH_SOURCE.split('@require_http_methods(["POST"])', 1)[0],
+            id="crypto-only-no-http-consumer",
+        ),
+    ],
+)
+def test_private_key_authority_requires_unmutated_crypto_request_and_auth_flow(source):
+    report = _private_key_auth_tiers(source)
+    row = next(
+        item
+        for item in report["ledger"]
+        if item["raw_finding"]["code"] == "SECURITY_HARDCODED_SECRET"
+    )
+    assert row["tier"] == "NEEDS_CONTEXT"
+    assert "credential_authority_observation" not in row
+
+
+def test_private_key_authority_rejects_stale_string_finding_after_type_change():
+    findings = _premise_scan(_PRIVATE_KEY_AUTH_SOURCE)
+    wrong_type = _PRIVATE_KEY_AUTH_SOURCE.replace(
+        "credential_material = '", "credential_material = b'", 1
+    )
+    report = _private_key_auth_tiers(wrong_type, findings)
+    assert report["tier_counts"]["SUPPORTED_DEFECT"] == 0
+    assert report["ledger"][0]["raw_finding"]["severity"] == "CRITICAL"
+
 @pytest.mark.parametrize(
     "runner",
     [
@@ -1084,3 +1208,50 @@ def test_precision257_semantic_sensor_request_upload_and_password_comparison():
         )
         is False
     )
+
+
+@pytest.mark.parametrize("source", [
+    pytest.param(_PRIVATE_KEY_AUTH_SOURCE.replace("def login(request):", "def login(request, decode_secret=None):"), id="decryptor-parameter-shadow"),
+    pytest.param(_PRIVATE_KEY_AUTH_SOURCE.replace('@require_http_methods(["POST"])', 'decode_secret = opaque_provider\n@require_http_methods(["POST"])'), id="decryptor-module-rebind"),
+    pytest.param(_PRIVATE_KEY_AUTH_SOURCE.replace("def login(request):", "def login(request, check_password=None):"), id="verifier-parameter-shadow"),
+    pytest.param(_PRIVATE_KEY_AUTH_SOURCE.replace("def decode_secret(ciphertext):", "def decode_secret(ciphertext, KeyFactory=None):"), id="key-factory-parameter-shadow"),
+    pytest.param(_PRIVATE_KEY_AUTH_SOURCE.replace("def decode_secret(ciphertext):", "def decode_secret(ciphertext, credential_material=None):"), id="material-parameter-shadow"),
+    pytest.param(_PRIVATE_KEY_AUTH_SOURCE.replace("check_password(password, stored_hash)", "check_password(password)"), id="missing-encoded-verifier-argument"),
+    pytest.param(_PRIVATE_KEY_AUTH_SOURCE.replace("check_password(password, stored_hash)", "check_password(password, stored_hash, *extra)"), id="expanded-verifier-arguments"),
+    pytest.param(_PRIVATE_KEY_AUTH_SOURCE.replace("def decode_secret(ciphertext):\n", "def decode_secret(ciphertext):\n    raise RuntimeError\n"), id="unreachable-decryptor"),
+    pytest.param(_PRIVATE_KEY_AUTH_SOURCE.replace("def login(request):\n", "def login(request):\n    raise RuntimeError\n"), id="unreachable-endpoint-transfer"),
+    pytest.param(_PRIVATE_KEY_AUTH_SOURCE.replace("def login(request):\n", "def login(request):\n    from opaque import decode_secret\n"), id="function-import-shadows-decryptor"),
+    pytest.param(_PRIVATE_KEY_AUTH_SOURCE.replace("def login(request):\n", "def login(request):\n    try:\n        opaque()\n    except Exception as decode_secret:\n        pass\n"), id="except-alias-shadows-decryptor"),
+    pytest.param(_PRIVATE_KEY_AUTH_SOURCE.replace("def decode_secret(ciphertext):\n", "def decode_secret(ciphertext):\n    from opaque import KeyFactory\n"), id="function-import-shadows-provider"),
+    pytest.param(_PRIVATE_KEY_AUTH_SOURCE.replace("    body_text = request.body.decode()\n    payload = json.loads(body_text)", "    payload = json.loads(body_text)\n    body_text = request.body.decode()"), id="body-text-assignment-after-use"),
+    pytest.param(_PRIVATE_KEY_AUTH_SOURCE.replace("    payload = json.loads(body_text)\n    encrypted = payload.get(\"password\")\n    password = decode_secret(encrypted)", "    payload = json.loads(body_text)\n    password = decode_secret(encrypted)\n    encrypted = payload.get(\"password\")"), id="encrypted-assignment-after-use"),
+    pytest.param(_PRIVATE_KEY_AUTH_SOURCE.replace('MIICXAIBAAKBgQDPkDtDFKUZbN6vpevpgZIGc5DzH1UB9oK48MxNATjKPxqv+wsW', "fixture-only"), id="invalid-pem-material-never-imports"),
+])
+def test_private_key_authority_reviewer_adversarial_controls(source):
+    report = _private_key_auth_tiers(source)
+    row = next(r for r in report["ledger"] if r["raw_finding"]["code"] == "SECURITY_HARDCODED_SECRET")
+    assert row["raw_finding"]["severity"] == "CRITICAL"
+    assert row["tier"] == "NEEDS_CONTEXT"
+
+
+def test_private_key_authority_unrelated_zero_argument_call_does_not_crash():
+    source = _PRIVATE_KEY_AUTH_SOURCE.replace("def decode_secret(ciphertext):\n", "def decode_secret(ciphertext):\n    unused = opaque()\n")
+    report = _private_key_auth_tiers(source)
+    assert any(r["raw_finding"]["code"] == "SECURITY_HARDCODED_SECRET" for r in report["ledger"])
+
+
+@pytest.mark.parametrize("source, supported", [
+    (_PRIVATE_KEY_AUTH_SOURCE.replace('    if check_password(password, stored_hash):\n        return "ok"', '    try:\n        if check_password(password, stored_hash):\n            return "ok"\n    except ValueError:\n        return "bad"'), True),
+    (_PRIVATE_KEY_AUTH_SOURCE.replace('    password = decode_secret(encrypted)\n', '    try:\n        password = decode_secret(encrypted)\n    except ValueError:\n        pass\n'), False),
+    (_PRIVATE_KEY_AUTH_SOURCE.replace('    password = decode_secret(encrypted)\n    if check_password(password, stored_hash):\n        return "ok"', '    try:\n        password = decode_secret(encrypted)\n    except ValueError:\n        if check_password(password, stored_hash):\n            return "ok"'), False),
+], ids=["outer-to-try-body", "try-body-to-outside", "try-body-to-handler"])
+def test_private_key_transfer_to_nested_try_body_requires_dominance(source, supported):
+    report = _private_key_auth_tiers(source)
+    row = next(r for r in report["ledger"] if r["raw_finding"]["code"] == "SECURITY_HARDCODED_SECRET")
+    assert (row["tier"] == "SUPPORTED_DEFECT") is supported
+
+
+def test_private_key_authority_rejects_mismatched_pem_labels():
+    source = _PRIVATE_KEY_AUTH_SOURCE.replace("END RSA PRIVATE KEY", "END PRIVATE KEY")
+    report = _private_key_auth_tiers(source)
+    assert all(r["tier"] != "SUPPORTED_DEFECT" for r in report["ledger"])

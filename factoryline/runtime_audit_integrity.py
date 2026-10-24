@@ -2173,6 +2173,7 @@ def _pickle_call_imported(module, scope, call, call_index, aliases, audit):
 def _single_local_pickle_bytes_flow(scope, name, dump_statement, load_call):
     """Reuse exact source-origin occurrence matching for local serializer bytes."""
     from .context_efficiency import _capability_uses_match
+    from .credential_role_constructor_provider import binding_occurrences
 
     target = (
         dump_statement.targets[0]
@@ -2183,6 +2184,7 @@ def _single_local_pickle_bytes_flow(scope, name, dump_statement, load_call):
     return (
         isinstance(target.ctx, ast.Store)
         and isinstance(uses[1].ctx, ast.Load)
+        and binding_occurrences(scope.body, name) == [target]
         and _capability_uses_match(list(ast.walk(scope)), name, uses)
     )
 

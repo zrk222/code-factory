@@ -344,6 +344,597 @@ def signing_configuration_evidence(finding, context):
     return None
 
 
+def private_key_authentication_evidence(finding, context):
+    """Bind a captured private key to HTTP password decryption and verification."""
+    if context is None or finding.get("code") != "SECURITY_HARDCODED_SECRET":
+        return None
+    path = Path(finding.get("path", ""))
+    index = context["index"]
+    tree = index.snapshots.get(path)
+    if tree is None or not index.validate(path):
+        return None
+    declaration = _credential_private_key_declaration(finding, tree)
+    if declaration is None or not _credential_providers_clear(context):
+        return None
+    aliases = context["aliases"][path]
+    decryptors = {
+        node.name: witness
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef)
+        and not node.decorator_list
+        and not _credential_module_rebound(tree, node.name, node)
+        and sum(isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and item.name == node.name for item in ast.walk(tree)) == 1
+        and (witness := _credential_private_key_decryptor(node, declaration, aliases))
+        is not None
+    }
+    for endpoint in tree.body:
+        if not isinstance(endpoint, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        witness = _credential_http_password_consumer(
+            endpoint, decryptors, aliases
+        )
+        if witness is not None:
+            nodes = [declaration[0], *witness["transfers"]]
+            return {
+                "schema": "factory.security.private-key-auth-flow.v1",
+                "source_role": "embedded_private_key",
+                "consumer_role": "django_password_verifier",
+                "transfers": [
+                    _signing_source_span(index, path, node) for node in nodes
+                ],
+                "proof_scope": "captured_same_module_static_wiring",
+                "runtime_execution": "not_performed",
+                "deployment": "UNASSESSED",
+                "credential_validity": "NOT_ESTABLISHED",
+                "claim": "A captured PEM private-key literal feeds RSA decryption of a POST JSON password field whose plaintext reaches a Django password verifier.",
+            }
+    return None
+
+
+def _credential_private_key_declaration(finding, tree):
+    facts = finding.get("facts", {})
+    name = facts.get("name") if isinstance(facts, dict) else None
+    candidates = []
+    for node in tree.body:
+        if not isinstance(node, (ast.Assign, ast.AnnAssign)):
+            continue
+        if (node.lineno, node.col_offset) != (
+            finding.get("line"),
+            finding.get("column", 0),
+        ):
+            continue
+        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+        if len(targets) != 1 or not isinstance(targets[0], ast.Name):
+            continue
+        value = node.value
+        if not isinstance(value, ast.Constant) or type(value.value) is not str:
+            continue
+        if not _credential_pem_private_key(value.value):
+            continue
+        if isinstance(name, str) and name != targets[0].id:
+            continue
+        if _credential_module_rebound(tree, targets[0].id, node):
+            continue
+        writes = [
+            item
+            for item in ast.walk(tree)
+            if isinstance(item, ast.Name)
+            and item.id == targets[0].id
+            and isinstance(item.ctx, (ast.Store, ast.Del))
+        ]
+        if len(writes) == 1:
+            candidates.append((node, targets[0].id))
+    return candidates[0] if len(candidates) == 1 else None
+
+
+def _credential_pem_private_key(value):
+    import base64
+    import binascii
+    from cryptography.hazmat.primitives.serialization import load_der_private_key
+    from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey
+
+    match = re.fullmatch(r"\s*-----BEGIN (?P<label>(?:RSA )?PRIVATE KEY)-----\s+(?P<body>[A-Za-z0-9+/=\s]+)-----END (?P=label)-----\s*", value)
+    if match is None or len(value) > 65536:
+        return False
+    try:
+        raw = base64.b64decode("".join(match["body"].split()), validate=True)
+        return isinstance(load_der_private_key(raw, password=None), RSAPrivateKey)
+    except (ValueError, TypeError, binascii.Error):
+        return False
+
+
+def _credential_private_key_decryptor(function, declaration, aliases):
+    from .review_audits import _resolved_ast_name
+
+    key_name = declaration[1]
+    parameters = [*function.args.posonlyargs, *function.args.args, *function.args.kwonlyargs]
+    provider_names = _credential_provider_alias_names(
+        aliases,
+        ("Crypto.PublicKey.RSA", "Crypto.Cipher.PKCS1_v1_5", "base64.b64decode"),
+    )
+    bound_names = _credential_scope_bound_names(function)
+    if (
+        len(parameters) != 1
+        or function.args.vararg
+        or function.args.kwarg
+        or key_name in bound_names
+        or provider_names & bound_names
+    ):
+        return None
+    assignments = [
+        node
+        for node in function.body
+        if isinstance(node, (ast.Assign, ast.AnnAssign))
+        and isinstance(node.value, ast.Call)
+    ]
+    imported = [
+        (node, target.id)
+        for node in assignments
+        if len(node.targets if isinstance(node, ast.Assign) else [node.target]) == 1
+        and isinstance(
+            (target := (node.targets if isinstance(node, ast.Assign) else [node.target])[0]),
+            ast.Name,
+        )
+        and _resolved_ast_name(node.value.func, aliases)
+        in {
+            "Crypto.PublicKey.RSA.importKey",
+            "Crypto.PublicKey.RSA.import_key",
+        }
+        and len(node.value.args) == 1
+        and not node.value.keywords
+        and isinstance(node.value.args[0], ast.Name)
+        and node.value.args[0].id == key_name
+    ]
+    if len(imported) != 1:
+        return None
+    key_call, rsa_key = imported[0]
+    cipher_assignment = _credential_named_assignment(
+        assignments,
+        lambda call: _resolved_ast_name(call.func, aliases)
+        == "Crypto.Cipher.PKCS1_v1_5.new"
+        and len(call.args) == 1
+        and not call.keywords
+        and isinstance(call.args[0], ast.Name)
+        and call.args[0].id == rsa_key,
+    )
+    if cipher_assignment is None:
+        return None
+    cipher_call, cipher_name = cipher_assignment
+    decrypt = _credential_named_assignment(
+        assignments,
+        lambda call: isinstance(call.func, ast.Attribute)
+        and call.func.attr == "decrypt"
+        and isinstance(call.func.value, ast.Name)
+        and call.func.value.id == cipher_name
+        and len(call.args) == 2
+        and isinstance(call.args[1], ast.Constant)
+        and call.args[1].value is None
+        and not call.keywords
+        and isinstance(call.args[0], ast.Call)
+        and _resolved_ast_name(call.args[0].func, aliases) == "base64.b64decode",
+    )
+    if decrypt is None or not function.args.args:
+        return None
+    decrypt_call, plaintext_name = decrypt
+    input_call = decrypt_call.args[0]
+    if (
+        len(input_call.args) != 1
+        or input_call.keywords
+        or not isinstance(input_call.args[0], ast.Name)
+        or input_call.args[0].id != function.args.args[0].arg
+        or _credential_name_writes(function, function.args.args[0].arg)
+        or any(
+            _credential_name_writes(function, local) != 1
+            for local in (rsa_key, cipher_name, plaintext_name)
+        )
+    ):
+        return None
+    if not (
+        _credential_transfer_precedes(key_call, cipher_call)
+        and _credential_transfer_precedes(cipher_call, decrypt_call)
+    ):
+        return None
+    returns = [
+        node for node in _credential_function_nodes(function) if isinstance(node, ast.Return)
+    ]
+    if not returns or any(
+        not _credential_decoded_return(node.value, plaintext_name)
+        or not _credential_transfer_precedes(decrypt_call, node)
+        for node in returns
+    ) or not all(security_precondition_path_possible(node) for node in [key_call, cipher_call, decrypt_call, *returns]):
+        return None
+    return {
+        "function": function.name,
+        "transfers": [key_call, cipher_call, decrypt_call, *returns],
+    }
+
+
+def _credential_named_assignment(assignments, accepts):
+    matches = []
+    for node in assignments:
+        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+        if len(targets) == 1 and isinstance(targets[0], ast.Name) and accepts(node.value):
+            matches.append((node.value, targets[0].id))
+    return matches[0] if len(matches) == 1 else None
+
+
+def _credential_function_nodes(function):
+    nodes, pending = [], list(function.body)
+    while pending:
+        node = pending.pop()
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
+            continue
+        nodes.append(node)
+        pending.extend(ast.iter_child_nodes(node))
+    return nodes
+
+
+def _credential_name_writes(scope, name):
+    return sum(
+        isinstance(node, ast.Name)
+        and node.id == name
+        and isinstance(node.ctx, (ast.Store, ast.Del))
+        for node in ast.walk(scope)
+    )
+
+
+def _credential_scope_bound_names(scope):
+    from .review_audits import _bound_names
+    from .review_integrity import _implementation_bound_names
+
+    names = _implementation_bound_names(scope)
+    body = getattr(scope, "body", ())
+    statements = body if isinstance(body, (list, tuple)) else [scope]
+    for statement in statements:
+        if isinstance(statement, ast.AST):
+            names.update(_bound_names(statement))
+    return names
+
+
+def _credential_module_rebound(tree, name, declaration):
+    from .review_audits import _bound_names
+
+    return any(
+        name in _bound_names(statement)
+        for statement in tree.body
+        if statement is not declaration
+    )
+
+
+def _credential_provider_alias_names(aliases, roots):
+    return {
+        name
+        for name, canonical in aliases.items()
+        if any(
+            canonical == root
+            or canonical.startswith(root + ".")
+            or root.startswith(canonical + ".")
+            for root in roots
+        )
+    }
+
+
+def _credential_transfer_precedes(source, use):
+    before, after = _credential_control_context(source), _credential_control_context(use)
+    try_bodies = set()
+    child = use
+    while (parent := getattr(child, "_security_parent", None)) is not None:
+        if isinstance(parent, ast.Try) and child in parent.body:
+            try_bodies.add((id(parent), "body", None))
+        child = parent
+    return (
+        (source.lineno, source.col_offset) < (use.lineno, use.col_offset)
+        and after[:len(before)] == before
+        and all(context in try_bodies for context in after[len(before):])
+        and security_precondition_path_possible(source)
+        and security_precondition_path_possible(use)
+    )
+
+
+def _credential_control_context(node):
+    context = []
+    child = node
+    while (parent := getattr(child, "_security_parent", None)) is not None:
+        if isinstance(parent, (ast.If, ast.For, ast.AsyncFor, ast.While, ast.Try, ast.With, ast.AsyncWith, ast.Match)):
+            for field, value in ast.iter_fields(parent):
+                if field not in {"body", "orelse", "finalbody", "handlers", "cases"}:
+                    continue
+                if isinstance(value, list) and child in value:
+                    index = value.index(child) if field in {"handlers", "cases"} else None
+                    context.append((id(parent), field, index))
+                    break
+        elif isinstance(parent, ast.ExceptHandler) and child in parent.body:
+            context.append((id(parent), "body", None))
+        elif isinstance(parent, ast.match_case) and child in parent.body:
+            context.append((id(parent), "body", None))
+        child = parent
+    return tuple(reversed(context))
+
+
+def _credential_decoded_return(value, plaintext_name):
+    return (
+        isinstance(value, ast.Call)
+        and isinstance(value.func, ast.Attribute)
+        and value.func.attr == "decode"
+        and isinstance(value.func.value, ast.Name)
+        and value.func.value.id == plaintext_name
+        and len(value.args) <= 1
+        and not value.keywords
+        and all(isinstance(arg, ast.Constant) and isinstance(arg.value, str) for arg in value.args)
+    )
+
+
+def _credential_providers_clear(context):
+    paths = context["paths"]
+    if any(
+        name.casefold() in {"crypto.py", "django.py", "json.py", "base64.py"}
+        or name.casefold().startswith(
+            ("crypto/", "django/", "json/", "base64/")
+        )
+        for name in paths
+    ):
+        return False
+    roots = (
+        "Crypto.PublicKey.RSA",
+        "Crypto.Cipher.PKCS1_v1_5",
+        "base64.b64decode",
+        "json.loads",
+        "django.views.decorators.http",
+        "django.contrib.auth.authenticate",
+        "django.contrib.auth.hashers.check_password",
+    )
+    for path, tree in context["index"].snapshots.items():
+        aliases = context["aliases"][path]
+        provider_names = {
+            name
+            for name, canonical in aliases.items()
+            if any(
+                canonical == root
+                or canonical.startswith(root + ".")
+                or root.startswith(canonical + ".")
+                for root in roots
+            )
+        }
+        if any(
+            (isinstance(node, ast.Name) and node.id in provider_names and isinstance(node.ctx, (ast.Store, ast.Del)))
+            or (isinstance(node, ast.arg) and node.arg in provider_names)
+            for node in ast.walk(tree)
+        ) or _provider_identity_uncertain(
+            tree,
+            aliases,
+            roots=roots,
+            nodes=list(ast.walk(tree)),
+            selected_paths=True,
+        ):
+            return False
+    return True
+
+
+def _credential_http_password_consumer(function, decryptors, aliases):
+    request_name = _credential_post_request_name(function, aliases)
+    parameters = [*function.args.posonlyargs, *function.args.args, *function.args.kwonlyargs]
+    if request_name is None or function.args.vararg or function.args.kwarg or {p.arg for p in parameters} & set(decryptors):
+        return None
+    provider_names = _credential_provider_alias_names(
+        aliases,
+        (
+            "django.contrib.auth.hashers.check_password",
+            "django.contrib.auth.authenticate",
+            "json.loads",
+        ),
+    )
+    bound_names = _credential_scope_bound_names(function)
+    if set(decryptors) & bound_names or provider_names & bound_names:
+        return None
+    function_nodes = _credential_function_nodes(function)
+    mappings = {
+        node.targets[0].id
+        for node in function_nodes
+        if isinstance(node, ast.Assign)
+        and len(node.targets) == 1
+        and isinstance(node.targets[0], ast.Name)
+        and _credential_json_body_map(node.value, function, aliases, request_name)
+        and _credential_json_mapping_unchanged(function, node.targets[0].id)
+        and security_precondition_path_possible(node)
+    }
+    if not mappings:
+        return None
+    for assignment in function_nodes:
+        if not isinstance(assignment, ast.Assign) or len(assignment.targets) != 1:
+            continue
+        target, value = assignment.targets[0], assignment.value
+        if (
+            not isinstance(target, ast.Name)
+            or not isinstance(value, ast.Call)
+            or not isinstance(value.func, ast.Name)
+            or value.func.id not in decryptors
+            or len(value.args) != 1
+            or value.keywords
+            or not _credential_request_password_value(value.args[0], mappings, function, assignment)
+            or _credential_name_writes(function, target.id) != 1
+            or not security_precondition_path_possible(assignment)
+        ):
+            continue
+        for call in (node for node in function_nodes if isinstance(node, ast.Call)):
+            consumer = _credential_password_consumer(call, target.id, aliases)
+            if (
+                consumer
+                and _credential_transfer_precedes(assignment, call)
+            ):
+                return {
+                    "transfers": [
+                        *decryptors[value.func.id]["transfers"],
+                        assignment.value,
+                        call,
+                    ]
+                }
+    return None
+
+
+def _credential_post_request_name(function, aliases):
+    from .review_audits import _resolved_ast_name
+
+    parameters = [*function.args.posonlyargs, *function.args.args]
+    if not parameters:
+        return None
+    for decorator in function.decorator_list:
+        target = decorator.func if isinstance(decorator, ast.Call) else decorator
+        canonical = _resolved_ast_name(target, aliases)
+        if canonical == "django.views.decorators.http.require_POST":
+            if not isinstance(decorator, ast.Call) or (
+                not decorator.args and not decorator.keywords
+            ):
+                return parameters[0].arg
+        if (
+            canonical == "django.views.decorators.http.require_http_methods"
+            and isinstance(decorator, ast.Call)
+            and len(decorator.args) == 1
+            and not decorator.keywords
+            and isinstance(decorator.args[0], (ast.List, ast.Tuple))
+            and any(
+                isinstance(item, ast.Constant)
+                and item.value == "POST"
+                for item in decorator.args[0].elts
+            )
+        ):
+            return parameters[0].arg
+    return None
+
+
+def _credential_json_body_map(node, function, aliases, request_name):
+    from .review_audits import _resolved_ast_name
+
+    if (
+        not isinstance(node, ast.Call)
+        or _resolved_ast_name(node.func, aliases) != "json.loads"
+        or len(node.args) != 1
+        or node.keywords
+    ):
+        return False
+    value = node.args[0]
+    if isinstance(value, ast.Name):
+        assignments = [
+            item
+            for item in _credential_function_nodes(function)
+            if isinstance(item, ast.Assign)
+            and len(item.targets) == 1
+            and isinstance(item.targets[0], ast.Name)
+            and item.targets[0].id == value.id
+        ]
+        if (
+            len(assignments) != 1
+            or _credential_name_writes(function, value.id) != 1
+            or not _credential_transfer_precedes(assignments[0], node)
+        ):
+            return False
+        value = assignments[0].value
+    if isinstance(value, ast.Call) and isinstance(value.func, ast.Attribute):
+        if (
+            value.func.attr != "decode"
+            or value.args and not all(
+                isinstance(arg, ast.Constant) and isinstance(arg.value, str)
+                for arg in value.args
+            )
+            or value.keywords
+        ):
+            return False
+        value = value.func.value
+    if not isinstance(value, ast.Attribute) or value.attr != "body":
+        return False
+    return (
+        isinstance(value.value, ast.Name)
+        and value.value.id == request_name
+        and _django_http_body_payload(value, function, aliases)
+    )
+
+
+def _credential_json_mapping_unchanged(function, name):
+    parents = {
+        id(child): parent
+        for parent in ast.walk(function)
+        for child in ast.iter_child_nodes(parent)
+    }
+    if _credential_name_writes(function, name) != 1:
+        return False
+    for node in _credential_function_nodes(function):
+        if not isinstance(node, ast.Name) or node.id != name or not isinstance(node.ctx, ast.Load):
+            continue
+        attribute = parents.get(id(node))
+        call = parents.get(id(attribute)) if isinstance(attribute, ast.Attribute) else None
+        if (
+            not isinstance(attribute, ast.Attribute)
+            or attribute.value is not node
+            or attribute.attr != "get"
+            or not isinstance(call, ast.Call)
+            or call.func is not attribute
+            or len(call.args) != 1
+            or call.keywords
+            or not isinstance(call.args[0], ast.Constant)
+            or not isinstance(call.args[0].value, str)
+        ):
+            return False
+    return True
+
+
+def _credential_request_password_value(node, mappings, function, use):
+    if isinstance(node, ast.Name):
+        assignments = [
+            item
+            for item in _credential_function_nodes(function)
+            if isinstance(item, ast.Assign)
+            and len(item.targets) == 1
+            and isinstance(item.targets[0], ast.Name)
+            and item.targets[0].id == node.id
+        ]
+        return (
+            len(assignments) == 1
+            and _credential_name_writes(function, node.id) == 1
+            and _credential_transfer_precedes(assignments[0], use)
+            and _credential_request_password_value(assignments[0].value, mappings, function, assignments[0])
+        )
+    if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+        return False
+    mapping_assignments = [
+        item
+        for item in _credential_function_nodes(function)
+        if isinstance(item, ast.Assign)
+        and len(item.targets) == 1
+        and isinstance(item.targets[0], ast.Name)
+        and item.targets[0].id == node.func.value.id
+    ] if isinstance(node.func.value, ast.Name) else []
+    return (
+        node.func.attr == "get"
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id in mappings
+        and len(mapping_assignments) == 1
+        and _credential_transfer_precedes(mapping_assignments[0], use)
+        and len(node.args) == 1
+        and not node.keywords
+        and isinstance(node.args[0], ast.Constant)
+        and isinstance(node.args[0].value, str)
+        and "password" in node.args[0].value.casefold()
+    )
+
+
+def _credential_password_consumer(call, plaintext_name, aliases):
+    from .review_audits import _resolved_ast_name
+
+    name = _resolved_ast_name(call.func, aliases)
+    if any(isinstance(arg, ast.Starred) for arg in call.args) or any(k.arg is None for k in call.keywords):
+        return False
+    names = [k.arg for k in call.keywords]
+    if len(names) != len(set(names)):
+        return False
+    if name == "django.contrib.auth.hashers.check_password":
+        return (len(call.args) in {2, 3} and not call.keywords
+                and isinstance(call.args[0], ast.Name) and call.args[0].id == plaintext_name)
+    if name == "django.contrib.auth.authenticate":
+        passwords = [item.value for item in call.keywords if item.arg == "password"]
+        return (len(call.args) <= 1 and len(passwords) == 1
+                and isinstance(passwords[0], ast.Name) and passwords[0].id == plaintext_name)
+    return False
+
+
 def _signing_configuration_witness(index, path, declaration, witness):
     return {
         "schema": "factory.security.signing-configuration.v1",
