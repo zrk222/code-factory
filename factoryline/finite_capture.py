@@ -2033,6 +2033,9 @@ def _fixed_eval_nested_interpreter_risk(tree, depth):
             if _fixed_eval_module_scope(tree, node):
                 return True
             continue
+        if isinstance(nested, ast.Expression):
+            expression = ast.copy_location(ast.Expr(value=nested.body), nested.body)
+            nested = ast.Module(body=[expression], type_ignores=[])
         if _fixed_eval_builtin_provider_risk(nested, depth + 1):
             return True
     return False

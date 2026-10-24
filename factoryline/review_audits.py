@@ -5230,7 +5230,13 @@ def _pytest_collection_settings(value=None):
             ),
             "python_classes": list(value.get("python_classes", _TEST_CLASS_PATTERNS)),
         }
-    files = _pytest_pattern_list(value) if value is not None else list(_TEST_FILE_PATTERNS)
+    files = (
+        sorted(value)
+        if isinstance(value, (set, frozenset))
+        else list(_pytest_pattern_list(value))
+        if value is not None
+        else list(_TEST_FILE_PATTERNS)
+    )
     return {
         "python_files": files,
         "python_functions": list(_TEST_FUNCTION_PATTERNS),
