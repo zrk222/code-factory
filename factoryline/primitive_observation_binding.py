@@ -560,6 +560,8 @@ def fixed_primitive_binding(finding, sources, bindings, integrity, source_bytes=
 
     facts = finding.get("facts", {})
     disposition = facts.get("disposition")
+    if _valid_security_precondition(facts.get("security_precondition"), finding):
+        return False
     if disposition == "PROVEN_CLOSED_LITERAL_PICKLE_BYTES":
         return _closed_literal_pickle_binding(finding, sources, bindings, source_bytes)
     if disposition == "PROVEN_LOCAL_CONTROL_LABEL":
@@ -989,6 +991,16 @@ def _jwt_captured_api_imports(tree, captured, test_path):
 def rejected_primitive_proof(finding):
     """Rejected credential proofs preserve the original alert priority/message."""
     facts = finding.get("facts", {})
+    if _valid_security_precondition(facts.get("security_precondition"), finding):
+        return {
+            **finding,
+            "facts": {
+                **facts,
+                "disposition": "UNVERIFIED_CONFLICTING_PRIMITIVE",
+                "state": "INCOMPLETE",
+                "proof_rejection": "CONTRADICTORY_SECURITY_PREMISES",
+            },
+        }
     if facts.get("disposition") == "ENDPOINT_DECLARATION_ROLE_PROVEN":
         return {
             **finding,
@@ -1130,6 +1142,8 @@ def _partition_proven_primitive_observations(core, audit):
 
 
 def _current_primitive_binding(finding, core, bindings, audit):
+    if _valid_security_precondition(finding.get("facts", {}).get("security_precondition"), finding):
+        return False
     sources = core.get("sources", [])
     if (
         finding.get("facts", {}).get("disposition")

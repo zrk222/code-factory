@@ -1,6 +1,7 @@
 import hashlib
 import copy
 from factoryline import review_audits
+from factoryline import review_integrity
 from factoryline import runtime_audit_integrity as runtime
 from factoryline import primitive_observation_binding as primitive
 import pytest
@@ -161,6 +162,60 @@ def _sink_context_index(tmp_path, source):
         and node.func.attr == "loads"
     )
     return path, raw, digest, tree, index, sink
+
+
+def _primitive_admission306_report(tmp_path):
+    raw = b'exec("x = 1")\n'
+    (tmp_path / "app.py").write_bytes(raw)
+    report = review_audits.security_scan(tmp_path, cache_enabled=False)
+    assert report["primitive_observations"]
+    report["_primitive_source_bytes"] = {"app.py": raw}
+    return raw, report
+
+
+def _primitive_admission306_contradiction(finding):
+    return {
+        "schema": "factory.security.precondition.v1", "status": "SUPPORTED",
+        "source_role": "untrusted_request", "consumer_role": "dynamic_execution",
+        "proof_scope": "local_static_wiring", "runtime_execution": "not_performed",
+        "deployment": "UNASSESSED", "sink_span": finding["facts"]["call_span"],
+    }
+
+
+def test_primitive_admission306_conflict_remains_active_not_primitive(tmp_path):
+    raw, report = _primitive_admission306_report(tmp_path)
+    finding = report["primitive_observations"][0]
+    severity = finding["severity"]
+    finding["facts"]["security_precondition"] = _primitive_admission306_contradiction(finding)
+    review_integrity.partition_proven_primitive_observations(report)
+    assert report["primitive_observations"] == []
+    active = next(row for row in report["findings"] if row["code"] == "SECURITY_DYNAMIC_EXECUTION")
+    assert active["severity"] == severity
+    assert active["facts"]["proof_rejection"] == "CONTRADICTORY_SECURITY_PREMISES"
+    assert report["finding_tier_report"]["ledger"][0]["tier"] == "NEEDS_CONTEXT"
+    assert report["_primitive_source_bytes"]["app.py"] == raw
+
+
+def test_primitive_admission306_direct_validator_rejects_conflict(tmp_path):
+    raw, report = _primitive_admission306_report(tmp_path)
+    finding = report["primitive_observations"][0]
+    bindings = {row["path"]: row["sha256"] for row in report["sources"]}
+    assert review_integrity._fixed_primitive_binding(finding, report["sources"], bindings, {"app.py": raw})
+    finding["facts"]["security_precondition"] = _primitive_admission306_contradiction(finding)
+    assert not review_integrity._fixed_primitive_binding(finding, report["sources"], bindings, {"app.py": raw})
+
+
+def test_primitive_admission306_valid_control_and_missing_source_are_distinct(tmp_path):
+    raw, report = _primitive_admission306_report(tmp_path)
+    control = copy.deepcopy(report)
+    review_integrity.partition_proven_primitive_observations(control)
+    assert control["primitive_observations"]
+    assert control["findings"] == []
+    assert control["finding_tier_report"]["ledger"][0]["tier"] == "PROVEN_PRIMITIVE"
+    report["_primitive_source_bytes"] = {"app.py": raw + b"# changed\n"}
+    review_integrity.partition_proven_primitive_observations(report)
+    assert report["primitive_observations"] == []
+    assert report["findings"][0]["facts"]["proof_rejection"] == "SOURCE_BINDING_MISMATCH"
 
 
 def test_sink_context_captures_exact_sink_scope_import_and_local_transfer(tmp_path):
