@@ -349,6 +349,32 @@ def _closed_declaration_source_call(node, call_name, source_bytes, source_path):
     return call
 
 
+def captured_sink_evidence(
+    node,
+    *,
+    source_path,
+    source_sha256,
+    source_index=None,
+    source_bytes=None,
+    tree=None,
+    max_sources=64,
+    max_states=512,
+    max_output_bytes=64000,
+):
+    """Expose the shared captured-source sink ledger to native validators."""
+    return _finite_capture.captured_sink_evidence(
+        node,
+        source_path=source_path,
+        source_sha256=source_sha256,
+        source_index=source_index,
+        source_bytes=source_bytes,
+        tree=tree,
+        max_sources=max_sources,
+        max_states=max_states,
+        max_output_bytes=max_output_bytes,
+    )
+
+
 def closed_declaration_input_witness(node, call_name, *, source_bytes, source_path):
     """Recognize fixed Python 3.12 alias input without compiling or executing it."""
     call = _closed_declaration_source_call(node, call_name, source_bytes, source_path)
@@ -1783,6 +1809,129 @@ def _test_serialization_roundtrip(relative, node, aliases):
             and not any(keyword.arg is None for keyword in serialized.keywords)
         )
     return _local_pickle_roundtrip(node, loaded_name, aliases, audit)
+
+
+def closed_literal_pickle_witness(relative, node, aliases):
+    """Prove only modeled stdlib bytes from an inline, closed builtin literal.
+
+    This excludes arbitrary objects/reducers and does not certify runtime or
+    deployment safety. The partition independently rebuilds this source witness.
+    """
+    from . import review_audits as audit
+    from .review_integrity import _security_module_scope, _security_proven_callee
+
+    if len(node.args) != 1 or node.keywords:
+        return {}
+    dump = node.args[0]
+    if not isinstance(dump, ast.Call) or len(dump.args) != 1 or dump.keywords:
+        return {}
+    literal = dump.args[0]
+    if sum(1 for _ in ast.walk(literal)) > 512 or not _finite_capture._fixed_literal_value(literal):
+        return {}
+    if not all(_security_proven_callee(call, aliases, name) for call, name in (
+        (node, "pickle.loads"), (dump, "pickle.dumps")
+    )):
+        return {}
+    module = _security_module_scope(getattr(node, "_security_lexical_scope", None))
+    context = getattr(module, "_security_source_context", None)
+    if not isinstance(context, tuple) or len(context) != 2:
+        return {}
+    root, sources = context
+    raw = sources.get(root / relative)
+    if not isinstance(raw, bytes) or hashlib.sha256(raw).hexdigest() != getattr(module, "_oracle_source_sha256", None):
+        return {}
+    inventory = _closed_pickle_inventory(root, sources, audit)
+    if inventory is None:
+        return {}
+    return {
+        "schema": "factory.closed-literal-pickle.v1",
+        "disposition": "PROVEN_CLOSED_LITERAL_PICKLE_BYTES",
+        "source_path": relative, "source_sha256": hashlib.sha256(raw).hexdigest(),
+        "workspace_sources_sha256": inventory,
+        "call_span": [node.lineno, node.col_offset, node.end_lineno, node.end_col_offset],
+        "literal_sha256": hashlib.sha256(ast.dump(literal, include_attributes=False).encode()).hexdigest(),
+        "hypothesis": "EXTERNAL_PICKLE_BYTE_INJECTION",
+        "provider_model": "stdlib_pickle_builtin_literal_values",
+        "runtime_assurance": "INCOMPLETE", "target_execution": "not_performed",
+    }
+
+
+def _closed_pickle_inventory(root, sources, audit):
+    """Reject captured provider shadowing and mutation before granting a witness."""
+    import json
+    from itertools import islice
+
+    if not isinstance(sources, dict) or len(sources) > 2000:
+        return None
+    if any(not isinstance(raw, bytes) or len(raw) > 1_000_000 for raw in sources.values()) or sum(map(len, sources.values())) > 32_000_000:
+        return None
+    rows, records, provider_modules = [], [], set()
+    for path, raw in sources.items():
+        relative = path.relative_to(root)
+        if any(part in {"pickle.py", "pickle"} for part in relative.parts):
+            return None
+        try:
+            nodes = list(islice(ast.walk(ast.parse(raw)), 200_001))
+        except (SyntaxError, ValueError, RecursionError):
+            return None
+        if len(nodes) > 200_000 or not _closed_pickle_provider_source(nodes, audit):
+            return None
+        records.append(nodes)
+        provider_modules.update(_pickle_export_modules(relative, nodes, audit))
+        rows.append((relative.as_posix(), hashlib.sha256(raw).hexdigest()))
+    if any(not _pickle_exports_closed(nodes, provider_modules) for nodes in records):
+        return None
+    return hashlib.sha256(json.dumps(sorted(rows), separators=(",", ":")).encode()).hexdigest()
+
+
+def _pickle_export_modules(relative, nodes, audit):
+    aliases = audit._security_aliases(nodes)
+    if not any(origin == "pickle" or origin.startswith("pickle.") for origin in aliases.values()):
+        return set()
+    parts = relative.with_suffix("").parts
+    if parts[-1] == "__init__":
+        parts = parts[:-1]
+    # All suffixes cover source roots such as src/pkg without guessing sys.path.
+    return {".".join(parts[index:]) for index in range(len(parts))}
+
+
+def _pickle_exports_closed(nodes, provider_modules):
+    for node in nodes:
+        if isinstance(node, ast.Import) and any(alias.name in provider_modules for alias in node.names):
+            return False
+        if isinstance(node, ast.ImportFrom):
+            if node.level or any(alias.name == "*" for alias in node.names):
+                return False
+            if node.module in provider_modules or any(f"{node.module}.{alias.name}" in provider_modules for alias in node.names):
+                return False
+    return True
+
+
+def _closed_pickle_provider_source(nodes, audit):
+    from .intent_quality import _sanitizer_provider_mutated
+
+    aliases = _finite_capture._shell_import_aliases(nodes, audit, "pickle")
+    if aliases is None:
+        return False
+    namespace_paths = [audit._resolved_ast_name(node, aliases) for node in nodes if isinstance(node, ast.Attribute)]
+    if any(path == "sys.modules" or path.startswith("pickle.__") for path in namespace_paths):
+        return False
+    parents = {id(child): parent for parent in nodes for child in ast.iter_child_nodes(parent)}
+    if _finite_capture._shell_dynamic_provider_access(nodes, aliases, audit, parents, "pickle") or not _finite_capture._shell_namespace_queries_closed(nodes, aliases, audit, parents, "pickle"):
+        return False
+    module = next(node for node in nodes if isinstance(node, ast.Module))
+    for head, origin in aliases.items():
+        for leaf in ("loads", "dumps"):
+            expected = "pickle." + leaf
+            if origin not in {"pickle", expected}:
+                continue
+            function = ast.Name(id=head, ctx=ast.Load())
+            if origin == "pickle":
+                function = ast.Attribute(value=function, attr=leaf, ctx=ast.Load())
+            call = ast.Call(func=function, args=[], keywords=[])
+            if _sanitizer_provider_mutated(module, call, aliases, expected, head, audit):
+                return False
+    return True
 
 
 def _local_pickle_roundtrip(node, loaded_name, aliases, audit):

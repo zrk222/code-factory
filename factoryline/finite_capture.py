@@ -2140,6 +2140,385 @@ def fixed_eval_workspace_provider_clear(source_bytes, source_rows):
     return True
 
 
+def captured_sink_evidence(node, *, source_path, source_sha256, source_index=None,
+                          source_bytes=None, tree=None, max_sources=64,
+                          max_states=512, max_output_bytes=64000):
+    """Capture a bounded source-linked sink ledger; never certify safety."""
+    import json
+
+    schema = "factory.captured-sink-evidence.v1"
+    ctx = _captured_sink_source(source_path, source_sha256, source_index,
+                                source_bytes, tree, max_sources, max_states,
+                                max_output_bytes, schema)
+    if "error" in ctx:
+        return ctx["error"]
+    located = _captured_sink_location(node, ctx)
+    if "error" in located:
+        return located["error"]
+    node, parents, tree = located["node"], located["parents"], ctx["tree"]
+    base, digest, text, limits = (ctx[k] for k in ("base", "digest", "text", "limits"))
+    truncation = []
+    fact = lambda item, state="OBSERVED": _captured_sink_fact(item, base["source"]["path"], digest, state)
+    excerpt = lambda item: _captured_sink_excerpt(item, text, truncation)
+    scope = _captured_sink_scope(node, parents, fact, limits[1], base)
+    if "error" in scope:
+        return scope["error"]
+    nodes, body, statement = scope["nodes"], scope["body"], scope["statement"]
+    arguments, names, callee_names = _captured_sink_arguments(node, fact, excerpt)
+    imports = _captured_sink_imports(tree, scope["scope"], nodes, parents,
+                                     fact, limits[1], base)
+    if "error" in imports:
+        return imports["error"]
+    values = _captured_sink_values(node, names, scope["scope"], body, statement,
+                                   nodes, parents, tree, fact, excerpt)
+    callers = {"status": "UNKNOWN", "reason": "caller_expansion_not_performed"}
+    states_used = len(nodes) + imports["states_used"]
+    result = {
+        **base, "status": "INCOMPLETE" if truncation else "COMPLETE",
+        "source": {**base["source"], "line_count": len(text.splitlines())},
+        "sink": {"status": "OBSERVED", "call": excerpt(node.func),
+                 "span": _fixed_program_span(node), "arguments": arguments,
+                 **fact(node)},
+        "scope": scope["row"], "imports": imports["rows"], "values": values,
+        "guards": _captured_sink_guards(node, scope["scope"], parents, fact, excerpt),
+        "callee_binding": _captured_sink_callee_binding(
+            callee_names, scope["scope"], body, tree, imports["module_imports"], fact
+        ),
+        "callers": callers,
+        "provider": {"status": "UNKNOWN", "reason": "provider_identity_not_established"},
+        "effects": {"status": "UNKNOWN", "reason": "runtime_effects_not_observed"},
+        "authority": {"status": "UNKNOWN", "reason": "trust_boundary_not_declared"},
+        "budget": {"sources_used": 1, "sources_limit": limits[0],
+                   "states_used": states_used, "states_limit": limits[1],
+                   "source_ast_nodes_examined": located["source_ast_nodes_examined"],
+                   "source_ast_limit": 200_000,
+                   "snapshot_index_reused": ctx["indexed"],
+                   "serialized_bytes_limit": limits[2]},
+        "truncation": truncation,
+    }
+    size = len(json.dumps(result, sort_keys=True, separators=(",", ":")).encode())
+    return result if size <= limits[2] else _captured_sink_failure(
+        schema, "SINK_BUDGET_EXHAUSTED", "max_output_bytes", base
+    )
+
+
+def _captured_sink_failure(schema, code, reason, base=None):
+    return {**(base or {"schema": schema, "status": "INCOMPLETE"}),
+            "code": code, "truncation": [reason]}
+
+
+def _captured_sink_source(path_arg, expected, index, raw, tree, max_sources,
+                          max_states, max_output, schema):
+    import io
+    import tokenize
+
+    limits = (max_sources, max_states, max_output)
+    if any(type(value) is not int or value < 1 for value in limits) or max_output < 256:
+        return {"error": _captured_sink_failure(schema, "SINK_BUDGET_INVALID", "invalid_limit")}
+    limits = tuple(min(value, ceiling) for value, ceiling in zip(limits, (64, 512, 64000)))
+    path = path_arg.as_posix() if hasattr(path_arg, "as_posix") else path_arg
+    tree_supplied = tree is not None
+    indexed = index is not None
+    if indexed:
+        capture = _captured_sink_index(index, path_arg, raw, path, schema)
+        if "error" in capture:
+            return capture
+        raw, tree, parents = capture["raw"], capture["tree"], capture["parents"]
+    else:
+        parents = None
+    if not isinstance(path, str) or not path:
+        return {"error": _captured_sink_failure(schema, "SINK_SOURCE_STALE", "invalid_source_path")}
+    if not isinstance(raw, bytes) or len(raw) > 1_000_000:
+        return {"error": _captured_sink_failure(schema, "SINK_BUDGET_EXHAUSTED", "max_source_bytes")}
+    digest = hashlib.sha256(raw).hexdigest()
+    if not isinstance(expected, str) or expected != digest:
+        return {"error": _captured_sink_failure(schema, "SINK_SOURCE_STALE", "source_hash_mismatch")}
+    if not indexed:
+        capture = _captured_sink_raw_tree(path, raw, tree, schema)
+        if "error" in capture:
+            return capture
+        tree, parents = capture["tree"], capture["parents"]
+    try:
+        encoding, _ = tokenize.detect_encoding(io.BytesIO(raw).readline)
+        text = raw.decode(encoding)
+    except (SyntaxError, UnicodeError, LookupError):
+        return {"error": _captured_sink_failure(schema, "SINK_SOURCE_STALE", "source_encoding_invalid")}
+    base = {"schema": schema, "status": "INCOMPLETE", "source": {
+        "path": path[:1024], "sha256": digest, "bytes": len(raw)}, "source_count": 1}
+    return {"tree": tree, "parents": parents, "text": text, "base": base,
+            "digest": digest, "limits": limits, "indexed": indexed,
+            "tree_supplied": tree_supplied}
+
+
+def _captured_sink_index(index, path_arg, raw, path, schema):
+    inventory = getattr(index, "source_bytes", {})
+    if not isinstance(path, str) or path_arg not in getattr(index, "snapshots", {}):
+        return {"error": _captured_sink_failure(schema, "SINK_SOURCE_STALE", "source_not_indexed")}
+    if sum(len(value) for value in inventory.values() if isinstance(value, bytes)) > 32_000_000:
+        return {"error": _captured_sink_failure(schema, "SINK_BUDGET_EXHAUSTED", "max_inventory_bytes")}
+    captured = inventory.get(path_arg)
+    if raw is not None and raw != captured:
+        return {"error": _captured_sink_failure(schema, "SINK_SOURCE_STALE", "source_bytes_changed")}
+    if not isinstance(captured, bytes) or len(captured) > 1_000_000:
+        return {"error": _captured_sink_failure(schema, "SINK_BUDGET_EXHAUSTED", "max_source_bytes")}
+    validation_inputs = getattr(index, "_validation_inputs", None)
+    if not isinstance(validation_inputs, dict):
+        return {"error": _captured_sink_failure(schema, "SINK_SOURCE_STALE", "source_validation_cache_unavailable")}
+    validation_inputs.pop(path_arg, None)
+    if not index.validate(path_arg):
+        return {"error": _captured_sink_failure(schema, "SINK_SOURCE_STALE", "source_snapshot_invalid")}
+    return {"raw": captured, "tree": index.snapshots[path_arg],
+            "parents": index.parents[path_arg]}
+
+
+def _captured_sink_raw_tree(path, raw, tree, schema):
+    try:
+        parsed = ast.parse(raw, filename=path)
+        if tree is not None and ast.dump(parsed, include_attributes=True) != ast.dump(tree, include_attributes=True):
+            return {"error": _captured_sink_failure(schema, "SINK_SOURCE_STALE", "ast_source_mismatch")}
+        tree = tree or parsed
+    except (SyntaxError, ValueError, TypeError, MemoryError, RecursionError):
+        return {"error": _captured_sink_failure(schema, "SINK_SOURCE_STALE", "source_parse_failed")}
+    return {"tree": tree, "parents": {}}
+
+
+def _captured_sink_location(node, ctx):
+    base, tree, parents = ctx["base"], ctx["tree"], ctx["parents"]
+    schema = base["schema"]
+    span = _fixed_program_span(node) if isinstance(node, ast.AST) else None
+    if span is None:
+        return {"error": _captured_sink_failure(schema, "SINK_LOCATION_UNRESOLVED", "invalid_sink_span", base)}
+    if ctx["indexed"] and isinstance(node, ast.Call) and id(node) in parents:
+        return {"node": node, "parents": parents, "source_ast_nodes_examined": 0}
+    if ctx["indexed"]:
+        return {"error": _captured_sink_failure(schema, "SINK_LOCATION_UNRESOLVED", "sink_not_in_captured_tree", base)}
+    matches = []
+    for count, item in enumerate(ast.walk(tree), 1):
+        if count > 200_000:
+            return {"error": _captured_sink_failure(schema, "SINK_BUDGET_EXHAUSTED", "max_source_ast_nodes", base)}
+        parents.update({id(child): item for child in ast.iter_child_nodes(item)})
+        if isinstance(item, ast.Call) and _fixed_program_span(item) == span and ast.dump(item, include_attributes=True) == ast.dump(node, include_attributes=True):
+            matches.append(item)
+    if ctx["tree_supplied"] and id(node) not in parents:
+        return {"error": _captured_sink_failure(schema, "SINK_LOCATION_UNRESOLVED", "sink_not_in_supplied_tree", base)}
+    if len(matches) == 1:
+        return {"node": matches[0], "parents": parents,
+                "source_ast_nodes_examined": count}
+    return {"error": _captured_sink_failure(schema, "SINK_LOCATION_UNRESOLVED", "sink_span_not_unique", base)}
+
+
+def _captured_sink_fact(item, path, digest, status="OBSERVED"):
+    span = _fixed_program_span(item)
+    return ({"status": status, "source": {"path": path, "sha256": digest, "span": span}}
+            if span is not None else {"status": "UNKNOWN", "reason": "span_unavailable"})
+
+
+def _captured_sink_excerpt(item, text, truncation):
+    excerpt = ast.get_source_segment(text, item)
+    if not isinstance(excerpt, str):
+        return ""
+    if len(excerpt) > 512:
+        if "excerpt_truncated" not in truncation:
+            truncation.append("excerpt_truncated")
+        return excerpt[:512] + "[truncated]"
+    return excerpt
+
+
+def _captured_sink_scope(node, parents, fact, budget, base):
+    scope = node
+    while id(scope) in parents:
+        scope = parents[id(scope)]
+        if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            break
+    else:
+        scope = None
+    row, body, statement = {"status": "UNKNOWN", "reason": "no_enclosing_callable"}, None, None
+    if scope is not None:
+        statement = node
+        while id(statement) in parents and parents[id(statement)] is not scope:
+            statement = parents[id(statement)]
+        if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)) and statement in scope.body:
+            body = scope.body
+            row = {"status": "OBSERVED", "name": scope.name, "kind": type(scope).__name__, **fact(scope)}
+        else:
+            row = {"status": "UNKNOWN", "reason": "sink_outside_callable_body", **fact(scope)}
+    nodes, stack = [], [scope] if body is not None else []
+    while stack:
+        item = stack.pop()
+        nodes.append(item)
+        if len(nodes) > budget:
+            return {"error": _captured_sink_failure(base["schema"], "SINK_BUDGET_EXHAUSTED", "max_states", base)}
+        if item is not scope and isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
+            continue
+        stack.extend(ast.iter_child_nodes(item))
+    return {"scope": scope, "body": body, "statement": statement,
+            "nodes": nodes, "row": row}
+
+
+def _captured_sink_arguments(node, fact, excerpt):
+    arguments, names = [], set()
+    for index, value in enumerate(node.args):
+        arguments.append({"position": index, "kind": "starred" if isinstance(value, ast.Starred) else "positional",
+                          "expression": excerpt(value), "span": _fixed_program_span(value), **fact(value)})
+        names.update(item.id for item in ast.walk(value) if isinstance(item, ast.Name) and isinstance(item.ctx, ast.Load))
+    for keyword in node.keywords:
+        value = keyword.value
+        arguments.append({"keyword": keyword.arg, "kind": "expanded_keyword" if keyword.arg is None else "keyword",
+                          "expression": excerpt(value), "span": _fixed_program_span(value), **fact(value)})
+        names.update(item.id for item in ast.walk(value) if isinstance(item, ast.Name) and isinstance(item.ctx, ast.Load))
+    callees = [item for item in ast.walk(node.func) if isinstance(item, ast.Name) and isinstance(item.ctx, ast.Load)]
+    names.update(item.id for item in callees)
+    return arguments, names, callees
+
+
+def _captured_sink_imports(tree, scope, nodes, parents, fact, budget, base):
+    from .credential_role_constructor_provider import binding_occurrences
+
+    modules = [item for item in tree.body if isinstance(item, (ast.Import, ast.ImportFrom))]
+    if len(nodes) + len(modules) > budget:
+        return {"error": _captured_sink_failure(base["schema"], "SINK_BUDGET_EXHAUSTED", "max_states", base)}
+    rows, params = [], _captured_sink_parameter_names(scope)
+    for item in modules + [row for row in nodes if isinstance(row, (ast.Import, ast.ImportFrom))]:
+        owner = _captured_sink_enclosing_callable(item, parents)
+        if owner not in (None, scope):
+            continue
+        container = owner.body if owner is not None else tree.body
+        for alias in item.names:
+            name = alias.asname or (alias.name.split(".")[0] if isinstance(item, ast.Import) else alias.name)
+            wildcard = isinstance(item, ast.ImportFrom) and alias.name == "*"
+            stable = not wildcard and binding_occurrences(container, name) == [item] and name not in params
+            status = "OBSERVED" if stable else "UNKNOWN"
+            rows.append({"name": name, "module": item.module if isinstance(item, ast.ImportFrom) else alias.name,
+                         "kind": type(item).__name__, "status": status,
+                         "reason": None if stable else "binding_replaced_or_ambiguous",
+                         "span": _fixed_program_span(item), **fact(item, status)})
+    return {"rows": rows, "module_imports": modules,
+            "states_used": sum(len(item.names) for item in modules),
+            "binding_occurrences": binding_occurrences}
+
+
+def _captured_sink_values(node, names, scope, body, statement, nodes, parents, tree, fact, excerpt):
+    from .credential_role_constructor_provider import binding_occurrences
+
+    if body is None:
+        return [{"name": name, "status": "UNKNOWN", "reason": "no_supported_callable_scope",
+                 "origin": "UNRESOLVED", "definitions": [], "replacements": []}
+                for name in sorted(names)]
+    params = _captured_sink_parameter_names(scope)
+    reflective = any(isinstance(row, ast.Call) and isinstance(row.func, ast.Name)
+                     and row.func.id in {"exec", "eval", "globals", "locals", "vars", "setattr", "delattr"}
+                     for row in nodes)
+    pending, visited, result = sorted(names), set(), []
+    while pending:
+        name = pending.pop(0)
+        if name in visited:
+            continue
+        visited.add(name)
+        evidence = _captured_sink_value(name, scope, body, statement, parents,
+                                        tree, params, fact, excerpt, binding_occurrences)
+        value, assignment = evidence["value"], evidence["assignment"]
+        if assignment is not None:
+            pending.extend(row.id for row in ast.walk(assignment.value)
+                            if isinstance(row, ast.Name) and isinstance(row.ctx, ast.Load)
+                            and row.id not in visited and row.id not in pending)
+        if reflective:
+            value.update(status="UNKNOWN", reason="reflective_binding_possible", origin="UNRESOLVED")
+            value["replacements"].append({"kind": "REFLECTIVE_WRITE_POSSIBLE", **fact(node, "UNKNOWN")})
+        result.append(value)
+    return result
+
+
+def _captured_sink_value(name, scope, body, statement, parents, tree, params, fact,
+                         excerpt, binding_occurrences):
+    bindings = binding_occurrences(body, name)
+    rows = []
+    for binding in bindings:
+        statement_node = parents.get(id(binding)) if isinstance(binding, ast.Name) else binding
+        if statement_node is None:
+            statement_node = binding
+        rows.append({"kind": type(binding).__name__,
+                     "binding_span": _fixed_program_span(binding),
+                     "expression": excerpt(statement_node),
+                     **fact(statement_node, "UNKNOWN")})
+    assignment = None
+    if len(bindings) == 1 and isinstance(bindings[0], ast.Name) and isinstance(bindings[0].ctx, ast.Store):
+        candidate = parents.get(id(bindings[0]))
+        targets = candidate.targets if isinstance(candidate, ast.Assign) else [candidate.target] if isinstance(candidate, ast.AnnAssign) else []
+        if candidate in body and body.index(candidate) < body.index(statement) and getattr(candidate, "value", None) is not None and len(targets) == 1 and targets[0] is bindings[0]:
+            assignment = candidate
+    if assignment is not None:
+        value = {"name": name, "status": "INFERRED", "reason": None, "origin": "LOCAL_DEFINITION",
+                 "definitions": [{"expression": excerpt(assignment.value), "span": _fixed_program_span(assignment), **fact(assignment)}], "replacements": []}
+        value["definitions"][0]["target_source"] = fact(
+            assignment.targets[0] if isinstance(assignment, ast.Assign) else assignment.target
+        )
+    elif not bindings and name in params:
+        args = (*scope.args.posonlyargs, *scope.args.args, *scope.args.kwonlyargs,
+                *([scope.args.vararg] if scope.args.vararg else []), *([scope.args.kwarg] if scope.args.kwarg else []))
+        arg = next(row for row in args if row.arg == name)
+        value = {"name": name, "status": "INFERRED", "reason": None, "origin": "CALLABLE_PARAMETER",
+                 "definitions": [{"kind": "PARAMETER", "span": _fixed_program_span(arg), **fact(arg)}], "replacements": []}
+    elif not bindings and any(row in tree.body for row in binding_occurrences(tree.body, name)):
+        module_bindings = binding_occurrences(tree.body, name)
+        if len(module_bindings) == 1 and isinstance(module_bindings[0], (ast.Import, ast.ImportFrom)):
+            value = {"name": name, "status": "INFERRED", "reason": None, "origin": "LEXICAL_IMPORT",
+                     "definitions": [{"kind": type(module_bindings[0]).__name__, "span": _fixed_program_span(module_bindings[0]), **fact(module_bindings[0])}], "replacements": []}
+        else:
+            value = {"name": name, "status": "UNKNOWN", "reason": "module_binding_ambiguous", "origin": "UNRESOLVED", "definitions": [], "replacements": rows}
+    else:
+        value = {"name": name, "status": "UNKNOWN", "reason": "binding_replaced_or_not_straight_line" if bindings else "no_source_definition_or_parameter",
+                 "origin": "UNRESOLVED", "definitions": [], "replacements": rows}
+    return {"value": value, "assignment": assignment}
+
+
+def _captured_sink_guards(node, scope, parents, fact, excerpt):
+    guards, current = [], node
+    control = (ast.If, ast.For, ast.AsyncFor, ast.While, ast.Try, ast.TryStar,
+               ast.With, ast.AsyncWith, ast.Match, ast.Assert)
+    while id(current) in parents and parents[id(current)] is not scope:
+        current = parents[id(current)]
+        if isinstance(current, control):
+            test = getattr(current, "test", None) or getattr(current, "subject", None)
+            guards.append({"kind": type(current).__name__,
+                           "expression": excerpt(test) if test is not None else "",
+                           "semantics": "UNKNOWN", "span": _fixed_program_span(current),
+                           **fact(current)})
+    return guards
+
+
+def _captured_sink_callee_binding(names, scope, body, tree, module_imports, fact):
+    from .credential_role_constructor_provider import binding_occurrences
+
+    name = names[0].id if names else None
+    row = {"status": "UNKNOWN", "reason": "unresolved_callee_binding", "name": name}
+    if name is None or body is None:
+        return row
+    if any(isinstance(item, ast.ImportFrom) and any(alias.name == "*" for alias in item.names) for item in module_imports):
+        row["reason"] = "wildcard_import_may_bind_name"
+    elif not binding_occurrences(body, name) and name not in _captured_sink_parameter_names(scope):
+        bindings = binding_occurrences(tree.body, name)
+        if len(bindings) == 1 and bindings[0] in tree.body and isinstance(bindings[0], (ast.Import, ast.ImportFrom)):
+            row = {"status": "INFERRED", "reason": None, "name": name, "declaration": fact(bindings[0])}
+    return row
+
+def _captured_sink_enclosing_callable(node, parents):
+    current = node
+    while id(current) in parents:
+        current = parents[id(current)]
+        if isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            return current
+    return None
+
+
+def _captured_sink_parameter_names(scope):
+    if not isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+        return set()
+    args = scope.args
+    parameters = [*args.posonlyargs, *args.args, *args.kwonlyargs]
+    parameters.extend(item for item in (args.vararg, args.kwarg) if item is not None)
+    return {item.arg for item in parameters}
+
+
 def _fixed_eval_sink_context(node, call_name, source_bytes, source_path):
     if (
         not isinstance(source_bytes, bytes)

@@ -560,6 +560,8 @@ def fixed_primitive_binding(finding, sources, bindings, integrity, source_bytes=
 
     facts = finding.get("facts", {})
     disposition = facts.get("disposition")
+    if disposition == "PROVEN_CLOSED_LITERAL_PICKLE_BYTES":
+        return _closed_literal_pickle_binding(finding, sources, bindings, source_bytes)
     if disposition == "PROVEN_LOCAL_CRYPTO_TEST_PRIMITIVE":
         return _jwt_primitive_binding(
             finding, facts, sources, bindings, integrity, source_bytes
@@ -580,6 +582,29 @@ def fixed_primitive_binding(finding, sources, bindings, integrity, source_bytes=
     return _fixed_program_binding(
         finding, facts, sources, bindings, integrity, source_bytes
     )
+
+
+def _closed_literal_pickle_binding(finding, sources, bindings, source_bytes):
+    from . import review_audits as audit
+
+    captured = _jwt_bound_source_inventory(source_bytes, bindings) if isinstance(source_bytes, dict) else None
+    if captured is None or len(sources) != len(bindings):
+        return False
+    path = finding.get("path")
+    raw = captured.get(Path(path)) if isinstance(path, str) else None
+    if raw is None:
+        return False
+    try:
+        tree = ast.parse(raw)
+        tree._oracle_source_sha256 = hashlib.sha256(raw).hexdigest()
+        rows = audit._security_scan_tree(Path("."), Path(path), tree, oracle_context={
+            "_security_source_context": (Path("."), captured)
+        })
+    except (SyntaxError, ValueError, TypeError, RecursionError):
+        return False
+    return any(row.get("code") == finding.get("code") and row.get("line") == finding.get("line")
+               and row.get("column") == finding.get("column") and row.get("facts") == finding.get("facts")
+               for row in rows)
 
 
 def _jwt_primitive_binding(finding, facts, sources, bindings, integrity, source_bytes):
@@ -1020,6 +1045,7 @@ def _partition_proven_primitive_observations(core, audit):
             "SOURCE_PRESENTATION_METADATA",
             "PROVEN_LOCAL_CRYPTO_TEST_PRIMITIVE",
             "PROVEN_CLOSED_OPERATION_COMMAND_SYNTAX",
+            "PROVEN_CLOSED_LITERAL_PICKLE_BYTES",
         }:
             retained.append(finding)
             continue

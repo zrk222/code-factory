@@ -1,4 +1,5 @@
 import hashlib
+import copy
 from factoryline import review_audits
 from factoryline import runtime_audit_integrity as runtime
 from factoryline import primitive_observation_binding as primitive
@@ -12,6 +13,295 @@ import json
 from factoryline.runtime_audit_integrity import closed_declaration_input_witness
 from factoryline.runtime_audit_integrity import finite_literal_eval_input_witness
 from factoryline.runtime_audit_integrity import source_generated_eval_input_witness
+
+
+def _sink_context_index(tmp_path, source):
+    from factoryline.credential_role_constructor_provider import SourceSnapshotIndex
+
+    path = tmp_path / "sink.py"
+    raw = source.encode("utf-8")
+    digest = hashlib.sha256(raw).hexdigest()
+    tree = ast.parse(raw, filename=str(path))
+    tree._oracle_source_sha256 = digest
+    index = SourceSnapshotIndex(tmp_path, {path: tree}, {path: raw}, {path: digest})
+    assert index.validate(path)
+    sink = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "loads"
+    )
+    return path, raw, digest, tree, index, sink
+
+
+def test_sink_context_captures_exact_sink_scope_import_and_local_transfer(tmp_path):
+    source = (
+        "import pickle\n"
+        "def invoke(raw):\n"
+        "    return restore(raw)\n"
+        "def restore(data):\n"
+        "    payload = data\n"
+        "    return pickle.loads(payload)\n"
+    )
+    path, raw, digest, tree, index, sink = _sink_context_index(tmp_path, source)
+
+    evidence = runtime.captured_sink_evidence(
+        sink,
+        source_index=index,
+        source_path=path,
+        source_sha256=digest,
+    )
+    supplied_tree = runtime.captured_sink_evidence(
+        sink,
+        source_path=path,
+        source_sha256=digest,
+        source_bytes=raw,
+        tree=tree,
+    )
+
+    assert evidence["status"] == "COMPLETE"
+    assert evidence["source"]["sha256"] == digest
+    assert evidence["budget"]["states_used"] <= evidence["budget"]["states_limit"]
+    assert evidence["budget"]["snapshot_index_reused"] is True
+    assert evidence["budget"]["source_ast_nodes_examined"] <= evidence["budget"]["source_ast_limit"]
+    assert evidence["sink"]["span"] == [6, 11, 6, 32]
+    assert evidence["scope"]["name"] == "restore"
+    assert evidence["imports"][0]["name"] == "pickle"
+    payload = next(row for row in evidence["values"] if row["name"] == "payload")
+    assert payload["status"] == "INFERRED"
+    assert payload["definitions"][0]["expression"] == "data"
+    data = next(row for row in evidence["values"] if row["name"] == "data")
+    assert data["origin"] == "CALLABLE_PARAMETER"
+    assert evidence["authority"]["status"] == "UNKNOWN"
+    assert evidence["callers"] == {
+        "status": "UNKNOWN",
+        "reason": "caller_expansion_not_performed",
+    }
+    assert supplied_tree["status"] == "COMPLETE"
+    assert supplied_tree["budget"]["snapshot_index_reused"] is False
+    assert supplied_tree["budget"]["source_ast_nodes_examined"] > 0
+
+
+@pytest.mark.parametrize(
+    "replacement",
+    [
+        "    payload = other\n",
+        "    from attacker import value as payload\n",
+        "    def payload():\n        return data\n",
+        "    try:\n        pass\n    except Exception as payload:\n        pass\n",
+        "    match other:\n        case payload:\n            pass\n",
+    ],
+)
+def test_sink_context_marks_replaced_local_bindings_unknown(tmp_path, replacement):
+    source = (
+        "import pickle\n"
+        "def restore(data, other):\n"
+        "    payload = data\n"
+        + replacement
+        + "    return pickle.loads(payload)\n"
+    )
+    path, _, digest, _, index, sink = _sink_context_index(tmp_path, source)
+
+    evidence = runtime.captured_sink_evidence(
+        sink,
+        source_index=index,
+        source_path=path,
+        source_sha256=digest,
+    )
+
+    payload = next(row for row in evidence["values"] if row["name"] == "payload")
+    assert payload["status"] == "UNKNOWN"
+    assert payload["replacements"]
+    assert evidence["authority"]["status"] == "UNKNOWN"
+
+
+def test_sink_context_rejects_stale_bytes_and_unresolved_location(tmp_path):
+    path, _, digest, _, index, sink = _sink_context_index(
+        tmp_path, "def restore(data):\n    return pickle.loads(data)\n"
+    )
+    stale = runtime.captured_sink_evidence(
+        sink,
+        source_index=index,
+        source_path=path,
+        source_sha256="0" * 64,
+    )
+    shifted = copy.deepcopy(sink)
+    shifted.lineno += 1
+    shifted.end_lineno += 1
+    unresolved = runtime.captured_sink_evidence(
+        shifted,
+        source_index=index,
+        source_path=path,
+        source_sha256=digest,
+    )
+
+    assert stale["code"] == "SINK_SOURCE_STALE"
+    assert unresolved["code"] == "SINK_LOCATION_UNRESOLVED"
+
+
+def test_sink_context_revalidates_warm_index_after_sink_ast_mutation(tmp_path):
+    path, _, digest, _, index, sink = _sink_context_index(
+        tmp_path,
+        "import pickle\ndef restore(data):\n    payload = data\n    return pickle.loads(payload)\n",
+    )
+    assert index._validation_inputs[path][0] is index.snapshots[path]
+
+    sink.args[0].id = "forged"
+    evidence = runtime.captured_sink_evidence(
+        sink,
+        source_index=index,
+        source_path=path,
+        source_sha256=digest,
+    )
+
+    assert evidence["status"] == "INCOMPLETE"
+    assert evidence["code"] == "SINK_SOURCE_STALE"
+    assert evidence["truncation"] == ["source_snapshot_invalid"]
+
+
+def test_sink_context_budget_exhaustion_is_incomplete_not_complete(tmp_path):
+    path, _, digest, _, index, sink = _sink_context_index(
+        tmp_path,
+        "import pickle\ndef restore(data):\n    payload = data\n    return pickle.loads(payload)\n",
+    )
+
+    evidence = runtime.captured_sink_evidence(
+        sink,
+        source_index=index,
+        source_path=path,
+        source_sha256=digest,
+        max_states=1,
+    )
+
+    assert evidence["status"] == "INCOMPLETE"
+    assert "max_states" in evidence["truncation"]
+
+
+def test_sink_context_bounds_selected_scope_not_unrelated_module_nodes(tmp_path):
+    source = (
+        "import pickle\n"
+        + "".join(f"module_value_{index} = {index}\n" for index in range(600))
+        + "def restore(data):\n    return pickle.loads(data)\n"
+    )
+    path, _, digest, _, index, sink = _sink_context_index(tmp_path, source)
+
+    evidence = runtime.captured_sink_evidence(
+        sink,
+        source_index=index,
+        source_path=path,
+        source_sha256=digest,
+    )
+
+    assert evidence["status"] == "COMPLETE"
+    assert evidence["scope"]["name"] == "restore"
+
+
+def test_sink_context_follows_local_producer_definitions_to_parameter(tmp_path):
+    source = (
+        "import pickle\ndef restore(raw):\n"
+        "    local = {'value': raw}\n"
+        "    payload = pickle.dumps(local)\n"
+        "    return pickle.loads(payload)\n"
+    )
+    path, _, digest, _, index, sink = _sink_context_index(tmp_path, source)
+
+    evidence = runtime.captured_sink_evidence(
+        sink, source_index=index, source_path=path, source_sha256=digest
+    )
+
+    payload = {row["name"]: row for row in evidence["values"]}
+    assert payload["payload"]["definitions"][0]["expression"] == "pickle.dumps(local)"
+    assert payload["local"]["definitions"][0]["expression"] == "{'value': raw}"
+    assert payload["raw"]["origin"] == "CALLABLE_PARAMETER"
+    assert payload["pickle"]["origin"] == "LEXICAL_IMPORT"
+    assert evidence["provider"]["status"] == "UNKNOWN"
+    assert evidence["effects"]["status"] == "UNKNOWN"
+
+
+def test_sink_context_unknowns_reflection_and_wildcard_imports(tmp_path):
+    reflected = (
+        "import pickle\ndef restore(data, code):\n"
+        "    payload = data\n    exec(code)\n    return pickle.loads(payload)\n"
+    )
+    path, _, digest, _, index, sink = _sink_context_index(tmp_path, reflected)
+    evidence = runtime.captured_sink_evidence(
+        sink, source_index=index, source_path=path, source_sha256=digest
+    )
+    payload = next(row for row in evidence["values"] if row["name"] == "payload")
+    assert payload["status"] == "UNKNOWN"
+    assert payload["reason"] == "reflective_binding_possible"
+
+    wildcard = (
+        "from attacker import *\ndef restore(data):\n"
+        "    return pickle.loads(data)\n"
+    )
+    path, _, digest, _, index, sink = _sink_context_index(tmp_path, wildcard)
+    evidence = runtime.captured_sink_evidence(
+        sink, source_index=index, source_path=path, source_sha256=digest
+    )
+    assert evidence["callee_binding"]["status"] == "UNKNOWN"
+    assert evidence["callee_binding"]["reason"] == "wildcard_import_may_bind_name"
+
+
+def test_sink_context_rejects_disconnected_ast_and_invalid_source_encoding(tmp_path):
+    path, raw, digest, _, index, sink = _sink_context_index(
+        tmp_path, "import pickle\ndef restore(data):\n    return pickle.loads(data)\n"
+    )
+    disconnected = copy.deepcopy(sink)
+    detached = runtime.captured_sink_evidence(
+        disconnected,
+        source_index=index,
+        source_path=path,
+        source_sha256=digest,
+    )
+    source_tree = ast.parse(raw, filename=str(path))
+    detached_call = copy.deepcopy(next(
+        item for item in ast.walk(source_tree)
+        if isinstance(item, ast.Call) and isinstance(item.func, ast.Attribute)
+        and item.func.attr == "loads"
+    ))
+    detached_without_index = runtime.captured_sink_evidence(
+        detached_call,
+        source_path=path,
+        source_sha256=digest,
+        source_bytes=raw,
+        tree=source_tree,
+    )
+    invalid = runtime.captured_sink_evidence(
+        sink,
+        source_path=path,
+        source_sha256=hashlib.sha256(b"\xff").hexdigest(),
+        source_bytes=b"\xff",
+    )
+
+    assert detached["code"] == "SINK_LOCATION_UNRESOLVED"
+    assert detached_without_index["code"] == "SINK_LOCATION_UNRESOLVED"
+    assert invalid["code"] == "SINK_SOURCE_STALE"
+
+
+def test_sink_context_stale_index_and_output_budget_fail_closed(tmp_path):
+    path, raw, digest, _, index, sink = _sink_context_index(
+        tmp_path, "import pickle\ndef restore(data):\n    return pickle.loads(data)\n"
+    )
+    index.source_bytes[path] = raw + b"# changed\n"
+    stale = runtime.captured_sink_evidence(
+        sink, source_index=index, source_path=path, source_sha256=digest
+    )
+    _, _, digest, _, index, sink = _sink_context_index(
+        tmp_path, "import pickle\ndef restore(data):\n    return pickle.loads(data)\n"
+    )
+    limited = runtime.captured_sink_evidence(
+        sink,
+        source_index=index,
+        source_path=path,
+        source_sha256=digest,
+        max_output_bytes=256,
+    )
+
+    assert stale["code"] == "SINK_SOURCE_STALE"
+    assert limited["code"] == "SINK_BUDGET_EXHAUSTED"
+    assert limited["truncation"] == ["max_output_bytes"]
 
 
 @pytest.mark.parametrize(
@@ -2811,3 +3101,90 @@ def test_provenance_whole_class_replacement_changes_actual_callee_epoch(monkeypa
     assert Replacement in after
     assert Replacement.changed_member in after
     assert runtime._LiteralConsumers is original
+
+
+def test_pyflow_parity_native_literal_pickle_decision_reaches_real_partition(tmp_path):
+    source = (
+        "import pickle\n"
+        "def direct_external():\n    return eval(input())\n"
+        "def local_roundtrip():\n    return pickle.loads(pickle.dumps({'key': 2}))\n"
+        "def external_pickle():\n    return pickle.loads(input().encode())\n"
+        "def helper(value):\n    return eval(value)\n"
+        "def cross_function():\n    return helper(input())\n"
+    )
+    (tmp_path / "control.py").write_text(source, encoding="utf-8")
+    report = review_audits.security_scan(tmp_path, cache_enabled=False)
+    active = [row for row in report["findings"] if row["code"] in {"SECURITY_DYNAMIC_EXECUTION", "SECURITY_UNSAFE_DESERIALIZATION"}]
+    assert len(active) == 3
+    proved = report["primitive_observations"]
+    assert len(proved) == 1
+    assert proved[0]["line"] == 5
+    assert proved[0]["facts"]["disposition"] == "PROVEN_CLOSED_LITERAL_PICKLE_BYTES"
+    assert report["finding_tier_report"]["raw_diagnostics"]["count"] >= 4
+    assert proved[0]["severity"] == "HIGH"
+
+
+@pytest.mark.parametrize("expression,prefix", [
+    ("pickle.loads(pickle.dumps(value))", ""),
+    ("pickle.loads(pickle.dumps(make_value()))", ""),
+    ("pickle.loads(pickle.dumps({'key': value}))", ""),
+    ("pickle.loads(pickle.dumps({'key': 2}))", "pickle.dumps = replacement\n"),
+    ("pickle.loads(pickle.dumps({'key': 2}))", "pickle.loads = replacement\n"),
+    ("pickle.loads(pickle.dumps({'key': 2}))", "setattr(pickle, 'loads', replacement)\n"),
+    ("pickle.loads(pickle.dumps({'key': 2}))", "pickle = replacement\n"),
+])
+def test_pyflow_parity_nonliteral_or_replaced_provider_not_proven(tmp_path, expression, prefix):
+    (tmp_path / "control.py").write_text(
+        f"import pickle\n{prefix}def decode(value):\n    return {expression}\n", encoding="utf-8"
+    )
+    report = review_audits.security_scan(tmp_path, cache_enabled=False)
+    if prefix != "pickle = replacement\n":
+        assert any(row["code"] == "SECURITY_UNSAFE_DESERIALIZATION" for row in report["findings"])
+    assert not any(row["facts"].get("disposition") == "PROVEN_CLOSED_LITERAL_PICKLE_BYTES" for row in report.get("primitive_observations", []))
+
+
+def test_pyflow_parity_literal_pickle_proof_is_independently_rebuilt(tmp_path):
+    from factoryline.review_integrity import partition_proven_primitive_observations
+
+    (tmp_path / "control.py").write_text(
+        "import pickle\ndef decode():\n    return pickle.loads(pickle.dumps({'key': 2}))\n", encoding="utf-8"
+    )
+    report = review_audits.security_scan(tmp_path, cache_enabled=False)
+    assert len(report["primitive_observations"]) == 1
+    report["primitive_observations"][0]["facts"]["literal_sha256"] = "0" * 64
+    partition_proven_primitive_observations(report)
+    assert not report["primitive_observations"]
+    assert any(row["code"] == "SECURITY_UNSAFE_DESERIALIZATION" for row in report["findings"])
+
+
+@pytest.mark.parametrize("mutator", [
+    "import pickle\nprovider = pickle\nprovider.loads = replacement\n",
+    "import pickle\npickle.__dict__['loads'] = replacement\n",
+    "import sys\nsys.modules['pickle'] = replacement\n",
+    "import sys\nsys.modules[selected] = replacement\n",
+    "import pickle\nmutate(pickle)\n",
+])
+def test_pyflow_parity_cross_source_provider_mutation_stays_active(tmp_path, mutator):
+    (tmp_path / "control.py").write_text(
+        "import pickle\nimport mutator\ndef decode():\n    return pickle.loads(pickle.dumps({'key': 2}))\n", encoding="utf-8"
+    )
+    (tmp_path / "mutator.py").write_text(mutator, encoding="utf-8")
+    report = review_audits.security_scan(tmp_path, cache_enabled=False)
+    assert any(row["code"] == "SECURITY_UNSAFE_DESERIALIZATION" for row in report["findings"])
+    assert not report.get("primitive_observations")
+
+
+@pytest.mark.parametrize("provider,consumer", [
+    ("import pickle\n", "from provider_patch import *\npickle.loads = replacement\n"),
+    ("import pickle as p\n", "from provider_patch import p\np.loads = replacement\n"),
+    ("import pickle as p\n", "import provider_patch\nprovider_patch.p.loads = replacement\n"),
+])
+def test_pyflow_parity_provider_export_cannot_bypass_workspace_binding(tmp_path, provider, consumer):
+    (tmp_path / "control.py").write_text(
+        "import pickle\nimport mutator\ndef decode():\n    return pickle.loads(pickle.dumps({'key': 2}))\n", encoding="utf-8"
+    )
+    (tmp_path / "provider_patch.py").write_text(provider, encoding="utf-8")
+    (tmp_path / "mutator.py").write_text(consumer, encoding="utf-8")
+    report = review_audits.security_scan(tmp_path, cache_enabled=False)
+    assert any(row["code"] == "SECURITY_UNSAFE_DESERIALIZATION" for row in report["findings"])
+    assert not report.get("primitive_observations")

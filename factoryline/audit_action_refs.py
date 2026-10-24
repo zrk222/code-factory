@@ -421,6 +421,7 @@ def _captured_application_source_bytes(workspace, findings, bindings, source_byt
             "PROVEN_FIXED_LITERAL_PROGRAM",
             "TEST_OWNED_APPLICATION_CREDENTIAL",
             "PROVEN_CLOSED_OPERATION_COMMAND_SYNTAX",
+            "PROVEN_CLOSED_LITERAL_PICKLE_BYTES",
         }
         or finding.get("code") == "SECURITY_HARDCODED_SECRET"
         or isinstance(finding.get("facts", {}).get("security_precondition"), dict)
@@ -466,6 +467,7 @@ def _captured_application_source_bytes(workspace, findings, bindings, source_byt
         in {
             "PROVEN_LOCAL_CRYPTO_TEST_PRIMITIVE",
             "PROVEN_CLOSED_OPERATION_COMMAND_SYNTAX",
+            "PROVEN_CLOSED_LITERAL_PICKLE_BYTES",
             "ENDPOINT_DECLARATION_ROLE_PROVEN",
         }
     ]

@@ -5589,6 +5589,11 @@ def _security_node_findings(
         if finding is not None and premise is not None:
             finding["facts"]["security_precondition"] = premise
         if finding and finding["code"] == "SECURITY_UNSAFE_DESERIALIZATION":
+            from .runtime_audit_integrity import closed_literal_pickle_witness
+
+            proof = closed_literal_pickle_witness(relative, node, roundtrip_aliases or {})
+            if proof:
+                finding["facts"].update(proof)
             if _test_serialization_roundtrip(relative, node, roundtrip_aliases or {}):
                 finding["severity"] = "INFO"
                 finding["message"] = (
