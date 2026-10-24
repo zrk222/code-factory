@@ -3547,8 +3547,91 @@ def _facts_digest(facts, hashlib, json):
     ).hexdigest()
 
 
+def _local_control_literal_binding(binding, parents):
+    owner = parents.get(binding)
+    targets = owner.targets if isinstance(owner, ast.Assign) else [owner.target] if isinstance(owner, ast.AnnAssign) else []
+    return (
+        isinstance(binding, ast.Name) and isinstance(binding.ctx, ast.Store)
+        and targets == [binding] and isinstance(owner.value, ast.Constant)
+        and type(owner.value.value) is str
+    )
+
+
+def _local_control_literal_use(reference, scope, parents):
+    comparison = parents.get(reference)
+    if not isinstance(comparison, ast.Compare) or not all(isinstance(op, (ast.Eq, ast.NotEq)) for op in comparison.ops):
+        return False
+    if not all(item is reference or isinstance(item, ast.Constant) and type(item.value) is str for item in [comparison.left, *comparison.comparators]):
+        return False
+    current = reference
+    while current in parents:
+        current = parents[current]
+        if isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef, ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)):
+            return current is scope
+    return False
+
+
+def _local_control_reflection(module, scope_nodes, aliases):
+    reflective = {"eval", "exec", "locals", "globals", "vars", "builtins", "__builtins__", "__import__", "_getframe", "currentframe", "f_locals", "f_globals", "f_back", "gi_frame", "cr_frame", "ag_frame"}
+    for item in ast.walk(module):
+        name = aliases.get(item.id, item.id).split(".")[-1] if isinstance(item, ast.Name) else item.attr if isinstance(item, ast.Attribute) else item.name.split(".")[-1] if isinstance(item, ast.alias) else None
+        if name in reflective:
+            return True
+        if name == "getattr":
+            parent = getattr(item, "_security_parent", None)
+            if item in scope_nodes or not isinstance(parent, ast.Call) or parent.func is not item:
+                return True
+    return False
+
+
+def _local_control_label_witness(audit, node, target, aliases):
+    """Prove only a closed fast-local label, never a supplied-value comparison."""
+    from .credential_role_constructor_provider import binding_occurrences
+    from .finite_capture import _fixed_program_span
+    from .context_efficiency import _SECRET_BYTES
+
+    scope = getattr(node, "_security_lexical_scope", None)
+    if not isinstance(target, ast.Name) or not isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return {}
+    if target.id in audit._scope_parameters(scope):
+        return {}
+    module = audit.integrity._security_module_scope(scope)
+    digest = getattr(module, "_oracle_source_sha256", None)
+    if not isinstance(digest, str) or len(digest) != 64:
+        return {}
+    nodes = list(ast.walk(scope))
+    if len(nodes) > 4096 or any(isinstance(item, (ast.Global, ast.Nonlocal)) and target.id in item.names for item in nodes):
+        return {}
+    if _local_control_reflection(module, set(nodes), aliases):
+        return {}
+    parents = {child: owner for owner in nodes for child in ast.iter_child_nodes(owner)}
+    bindings = binding_occurrences(scope.body, target.id)
+    if not bindings or target not in bindings or not all(_local_control_literal_binding(binding, parents) for binding in bindings):
+        return {}
+    references = [item for item in nodes if isinstance(item, ast.Name) and item.id == target.id and isinstance(item.ctx, ast.Load)]
+    if not references or not all(_local_control_literal_use(item, scope, parents) for item in references):
+        return {}
+    literals = [parents[binding].value for binding in bindings]
+    literals.extend(item for reference in references for item in [parents[reference].left, *parents[reference].comparators] if item is not reference)
+    if any(pattern.search(item.value.encode("utf-8")) for item in literals for pattern in _SECRET_BYTES):
+        return {}
+    return {
+        "schema": "factory.local-control-label.v1",
+        "disposition": "PROVEN_LOCAL_CONTROL_LABEL",
+        "source_sha256": digest,
+        "declaration_span": _fixed_program_span(node),
+        "scope_span": _fixed_program_span(scope),
+        "binding_spans": sorted(_fixed_program_span(binding) for binding in bindings),
+        "use_spans": sorted(_fixed_program_span(reference) for reference in references),
+        "evidence_scope": "source-visible-local-binding-and-literal-comparison-closure",
+        "runtime_assurance": "INCOMPLETE",
+    }
+
+
 def credential_role_witness(audit, node, target, aliases):
     """Describe a symbolic declaration; it is not a non-credential exemption."""
+    if label := _local_control_label_witness(audit, node, target, aliases):
+        return label
     scope = getattr(node, "_security_lexical_scope", None)
     if not _credential_enum_class(scope, audit):
         return {}
@@ -3628,6 +3711,10 @@ def credential_consumer_helpers(audit):
         _symbolic_consumer_rows,
         _symbolic_binding_digests,
         credential_role_witness,
+        _local_control_label_witness,
+        _local_control_literal_binding,
+        _local_control_literal_use,
+        _local_control_reflection,
         _credential_enum_class,
         _credential_enum_literal,
         _credential_enum_bases,

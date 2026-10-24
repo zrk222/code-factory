@@ -562,6 +562,8 @@ def fixed_primitive_binding(finding, sources, bindings, integrity, source_bytes=
     disposition = facts.get("disposition")
     if disposition == "PROVEN_CLOSED_LITERAL_PICKLE_BYTES":
         return _closed_literal_pickle_binding(finding, sources, bindings, source_bytes)
+    if disposition == "PROVEN_LOCAL_CONTROL_LABEL":
+        return _local_control_label_binding(finding, sources, bindings, source_bytes)
     if disposition == "PROVEN_LOCAL_CRYPTO_TEST_PRIMITIVE":
         return _jwt_primitive_binding(
             finding, facts, sources, bindings, integrity, source_bytes
@@ -582,6 +584,34 @@ def fixed_primitive_binding(finding, sources, bindings, integrity, source_bytes=
     return _fixed_program_binding(
         finding, facts, sources, bindings, integrity, source_bytes
     )
+
+
+def _local_control_label_binding(finding, sources, bindings, source_bytes):
+    """Regenerate this module-local proof without rerunning unrelated detectors."""
+    from . import review_audits as audit
+
+    path = finding.get("path")
+    if not isinstance(path, str) or not isinstance(source_bytes, dict):
+        return False
+    relevant = [row for row in sources if row.get("path") == path]
+    if len(relevant) != 1 or relevant[0].get("sha256") != bindings.get(path):
+        return False
+    captured = _jwt_bound_source_inventory({path: source_bytes.get(path)}, {path: bindings.get(path)})
+    if captured is None:
+        return False
+    try:
+        tree = ast.parse(captured[Path(path)])
+        tree._oracle_source_sha256 = bindings[path]
+        audit.integrity.bind_security_call_scopes(tree)
+        nodes = list(ast.walk(tree))
+        for parent in nodes:
+            for child in ast.iter_child_nodes(parent):
+                child._security_parent = parent
+        aliases = audit._security_aliases(nodes)
+        targets = _jwt_declaration_targets(tree, finding.get("facts", {}))
+        return len(targets) == 1 and audit._literal_assignment_diagnostic(path, *targets[0], aliases) == finding
+    except (SyntaxError, ValueError, TypeError, RecursionError):
+        return False
 
 
 def _closed_literal_pickle_binding(finding, sources, bindings, source_bytes):
@@ -1046,6 +1076,7 @@ def _partition_proven_primitive_observations(core, audit):
             "PROVEN_LOCAL_CRYPTO_TEST_PRIMITIVE",
             "PROVEN_CLOSED_OPERATION_COMMAND_SYNTAX",
             "PROVEN_CLOSED_LITERAL_PICKLE_BYTES",
+            "PROVEN_LOCAL_CONTROL_LABEL",
         }:
             retained.append(finding)
             continue
@@ -2374,6 +2405,7 @@ def primitive_binding_helpers():
 
     return (
         fixed_primitive_binding,
+        _local_control_label_binding,
         _jwt_primitive_binding,
         _jwt_primitive_common,
         _jwt_primitive_identity,

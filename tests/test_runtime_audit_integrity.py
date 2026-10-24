@@ -40,6 +40,109 @@ def test_python_source_encoding299_invalid_source_remains_incomplete(tmp_path, r
     assert any(row["code"] in {"SECURITY_SOURCE_UNREADABLE", "QUALITY_SYNTAX_ERROR"} for row in report["findings"])
 
 
+@pytest.mark.parametrize("label", ["secret", "password_origin", "API_KEY_ORIGIN"])
+def test_local_control_label301_retains_raw_but_not_defect(tmp_path, label):
+    source = f"def choose(flag):\n    {label} = 'config'\n    if flag:\n        {label} = 'env'\n    return {label} != 'env'\n"
+    (tmp_path / "app.py").write_text(source, encoding="utf-8")
+    report = review_audits.security_scan(tmp_path, cache_enabled=False)
+    rows = [row for row in report["finding_tier_report"]["ledger"] if row["raw_finding"]["code"] == "SECURITY_HARDCODED_SECRET"]
+    assert rows and all(row["tier"] == "PROVEN_PRIMITIVE" for row in rows)
+    assert all(row["raw_finding"]["severity"] == "CRITICAL" for row in rows)
+    assert not any(row["code"] == "SECURITY_HARDCODED_SECRET" for row in report["findings"])
+
+
+@pytest.mark.parametrize("body", [
+    "return secret == supplied",
+    "return 'env' == secret == supplied",
+    "return secret",
+    "send(secret)\n    return secret == 'env'",
+    "alias = secret\n    return alias == 'env'",
+    "box.secret = secret\n    return secret == 'env'",
+    "secret = supplied\n    return secret == 'env'",
+    "secret += 'suffix'\n    return secret == 'env'",
+    "del secret\n    return secret == 'env'",
+    "from provider import value as secret\n    return secret == 'env'",
+    "if (secret := supplied):\n        pass\n    return secret == 'env'",
+    "try:\n        work()\n    except Exception as secret:\n        pass\n    return secret == 'env'",
+    "match supplied:\n        case {'value': secret}:\n            pass\n    return secret == 'env'",
+    "def captured():\n        return secret\n    return secret == 'env'",
+    "locals()\n    return secret == 'env'",
+    "inspect.currentframe()\n    return secret == 'env'",
+    "eval('secret')\n    return secret == 'env'",
+])
+def test_local_control_label301_unknown_and_authority_uses_stay_active(tmp_path, body):
+    (tmp_path / "app.py").write_text("def choose(supplied):\n    secret = 'config'\n    " + body + "\n", encoding="utf-8")
+    report = review_audits.security_scan(tmp_path, cache_enabled=False)
+    assert any(row["code"] == "SECURITY_HARDCODED_SECRET" and row["line"] == 2 and row["severity"] == "CRITICAL" for row in report["findings"])
+
+
+def test_local_control_label301_requires_independent_current_source_regeneration(tmp_path):
+    import copy
+    from factoryline.primitive_observation_binding import fixed_primitive_binding
+
+    source = b"def choose():\n    secret = 'config'\n    return secret == 'env'\n"
+    (tmp_path / "app.py").write_bytes(source)
+    report = review_audits.security_scan(tmp_path, cache_enabled=False)
+    finding = next(row["raw_finding"] for row in report["finding_tier_report"]["ledger"] if row["raw_finding"]["code"] == "SECURITY_HARDCODED_SECRET")
+    bindings = {row["path"]: row["sha256"] for row in report["sources"]}
+    assert fixed_primitive_binding(finding, report["sources"], bindings, None, {"app.py": source})
+    forged = copy.deepcopy(finding)
+    forged["facts"]["scope_span"][-1] += 1
+    assert not fixed_primitive_binding(forged, report["sources"], bindings, None, {"app.py": source})
+    changed = source.replace(b"return secret == 'env'", b"return secret == supplied")
+    assert not fixed_primitive_binding(finding, report["sources"], bindings, None, {"app.py": changed})
+
+
+@pytest.mark.parametrize("prefix, expected", [
+    ("def unrelated(obj, option):\n    return getattr(obj, option)\n", "PROVEN_PRIMITIVE"),
+    ("lookup = getattr\n", "NEEDS_CONTEXT"),
+    ("from builtins import getattr as lookup\n", "NEEDS_CONTEXT"),
+    ("import sys\nframe = sys._getframe\n", "NEEDS_CONTEXT"),
+])
+def test_local_control_label301_unrelated_getter_and_capability_capture(tmp_path, prefix, expected):
+    source = prefix + "def choose():\n    secret = 'config'\n    return secret == 'env'\n"
+    (tmp_path / "app.py").write_text(source, encoding="utf-8")
+    report = review_audits.security_scan(tmp_path, cache_enabled=False)
+    row = next(row for row in report["finding_tier_report"]["ledger"] if row["raw_finding"]["code"] == "SECURITY_HARDCODED_SECRET")
+    assert row["tier"] == expected
+
+
+@pytest.mark.parametrize("declaration, comparison", [
+    ("ghp_0123456789abcdefghijklmnopqrstuv", "config"),
+    ("config", "ghp_0123456789abcdefghijklmnopqrstuv"),
+])
+def test_local_control_label301_known_credential_material_stays_active(tmp_path, declaration, comparison):
+    source = f"def choose():\n    secret = {declaration!r}\n    return secret == {comparison!r}\n"
+    (tmp_path / "app.py").write_text(source, encoding="utf-8")
+    report = review_audits.security_scan(tmp_path, cache_enabled=False)
+    assert any(row["code"] == "SECURITY_HARDCODED_SECRET" and row["severity"] == "CRITICAL" for row in report["findings"])
+
+
+def test_local_control_label301_regenerates_with_unrelated_repository_sources(tmp_path):
+    (tmp_path / "app.py").write_text("def choose():\n    secret = 'config'\n    return secret == 'env'\n", encoding="utf-8")
+    (tmp_path / "unrelated.py").write_text("def ordinary():\n    return 42\n", encoding="utf-8")
+    report = review_audits.security_scan(tmp_path, cache_enabled=False)
+    assert report["audit_coverage"]["complete"]
+    assert report["audit_coverage"]["files_audited"] == 2
+    row = next(row for row in report["finding_tier_report"]["ledger"] if row["raw_finding"]["code"] == "SECURITY_HARDCODED_SECRET")
+    assert row["tier"] == "PROVEN_PRIMITIVE"
+    assert row["raw_finding"]["severity"] == "CRITICAL"
+
+
+def test_local_control_label301_regeneration_avoids_unrelated_scanner_work(tmp_path, monkeypatch):
+    from factoryline.primitive_observation_binding import fixed_primitive_binding
+
+    raw = b"def choose():\n    secret = 'config'\n    return secret == 'env'\n"
+    (tmp_path / "app.py").write_bytes(raw)
+    report = review_audits.security_scan(tmp_path, cache_enabled=False)
+    finding = next(row["raw_finding"] for row in report["finding_tier_report"]["ledger"] if row["raw_finding"]["code"] == "SECURITY_HARDCODED_SECRET")
+    bindings = {row["path"]: row["sha256"] for row in report["sources"]}
+    def unrelated_scan(*args, **kwargs):
+        raise RuntimeError("A local role proof must not rerun every unrelated detector")
+    monkeypatch.setattr(review_audits, "_security_scan_tree", unrelated_scan)
+    assert fixed_primitive_binding(finding, report["sources"], bindings, None, {"app.py": raw})
+
+
 def _sink_context_index(tmp_path, source):
     from factoryline.credential_role_constructor_provider import SourceSnapshotIndex
 
