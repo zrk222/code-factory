@@ -18,7 +18,7 @@ before any module is run and fails closed on drift or an invalid rail.
 
 ## Tiered model-route receipts
 
-CF’s agent-access plane uses three deterministic routing tiers:
+CFâ€™s agent-access plane uses three deterministic routing tiers:
 `lightweight`, `workhorse`, and `frontier`. `route_model` selects a tier from
 explicit task, risk, latency, and token inputs; it never contacts a provider or
 grants model authority. The returned `factory.model-route.v1` receipt is
@@ -89,3 +89,27 @@ a repair, then obtain separate specialty AI review. Reuse evidence only when
 its complete candidate and execution bindings match; an inventory or stale
 receipt is never a pass. Missing runtime, mutation or language coverage stays
 incomplete. Avoid launching every heavyweight worker for each edit.
+
+## Current audit operations
+
+Keep analysis bound to the exact captured source, execution profile, and reviewed
+policy. Preserve original diagnostics and severity. A source pattern, missing
+context, and a supported defect are distinct outcomes; retain uncertainty and
+missing premises explicitly.
+
+- Preserve the publication hold. Merge authorization does not authorize a
+  release, package upload, deployment, or publication workflow.
+- Keep test-quality collection and security-source coverage separate. Unsupported
+  collection hooks remain unverified; parser, source, and analysis errors remain
+  incomplete and must not be hidden by a successful process exit.
+- Use content-bound cache identities and share stable analysis results. Changed
+  sources, providers, configuration, or execution profiles invalidate reuse.
+- Keep the configured caps at 464 Python files and 133 core modules. Reuse
+  existing modules, remove redundant implementations, and retain adversarial
+  controls for every source-proof family.
+- Commit reviewable code and operating-contract changes independently of result
+  publication. Keep dated study records in their evidence artifacts; operational
+  manifests must not announce an unverified score.
+
+Agent taxonomy and generated Junie guidance use this shared reference. Missing
+execution evidence remains unknown; no adapter grants merge or release authority.
