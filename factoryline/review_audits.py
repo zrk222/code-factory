@@ -1515,8 +1515,16 @@ def _credential_role_witness(node, target, aliases):
 def _literal_assignment_diagnostic(
     relative: str, node: ast.Assign | ast.AnnAssign, target: ast.expr, aliases=None
 ) -> dict[str, Any] | None:
-    if not isinstance(target, ast.Name) or not _SECRET_ASSIGNMENT.search(target.id):
+    if not isinstance(target, ast.Name):
         return None
+    if not _SECRET_ASSIGNMENT.search(target.id):
+        from .context_efficiency import _SECRET_BYTES
+
+        value = _secret_literal(node)
+        if value is None or not any(
+            pattern.search(value.encode("utf-8")) for pattern in _SECRET_BYTES
+        ):
+            return None
     return _security_finding(
         "SECURITY_HARDCODED_SECRET",
         relative,
@@ -1590,11 +1598,6 @@ def _security_source_files(root: Path) -> list[Path]:
         ".factory",
         ".venv",
         "venv",
-        "build",
-        "dist",
-        "tmp",
-        "vendor",
-        "site-packages",
         "__pycache__",
         "node_modules",
     }
@@ -2578,12 +2581,14 @@ def _unconditionally_skipped_test(node: ast.AST) -> bool:
 
 
 def _performance_benchmark_test(
-    node: ast.AST, aliases: dict[str, str] | None = None
+    node: ast.AST,
+    aliases: dict[str, str] | None = None,
+    function_patterns=("test",),
 ) -> bool:
     """Exclude only explicitly typed or marked benchmark bodies."""
     if not isinstance(node, _FUNCTION_NODES):
         return False
-    if not node.name.startswith("test_"):
+    if not _pytest_name_matches(node.name, function_patterns):
         return False
     benchmark_parameter = next(
         (
@@ -3704,7 +3709,7 @@ def _oracle_context_cache_key(
         for module in (test_callback_closure, integrity)
     )
     helpers += mock_fixture_provenance.CACHE_HELPERS + tuple(
-        getattr(mock_fixture_provenance, helper.__name__, None)
+        vars(mock_fixture_provenance).get(helper.__name__)
         for helper in mock_fixture_provenance.CACHE_HELPERS
     )
     helpers += async_runner_fixture_helpers() + protocol_call_helpers()
@@ -3832,7 +3837,7 @@ def _bind_imported_pytest_bases(tree, imports, snapshots, contexts):
         contexts[source]["pytest_inherited"].update(
             f"{symbol}.{method.name}"
             for method in target_class.body
-            if isinstance(method, _FUNCTION_NODES) and method.name.startswith("test_")
+            if isinstance(method, _FUNCTION_NODES)
         )
 
 
@@ -4328,10 +4333,13 @@ def _weak_test_oracle_finding(
     *,
     unittest_context: bool = False,
     weak_helper_names: set[str] | None = None,
+    test_function_patterns=("test",),
 ) -> dict[str, Any] | None:
-    if not isinstance(node, _FUNCTION_NODES) or not node.name.startswith("test_"):
+    if not isinstance(node, _FUNCTION_NODES) or not _pytest_name_matches(
+        node.name, test_function_patterns
+    ):
         return None
-    if _test_oracle_exempt(node, aliases):
+    if _test_oracle_exempt(node, aliases, test_function_patterns):
         return None
     nodes = _test_oracle_body_nodes(node, aliases)
     from . import test_oracle_misuse as oracle_misuse
@@ -4416,15 +4424,18 @@ def _hollow_test_finding(
     *,
     unittest_context: bool = False,
     oracle_context: dict | None = None,
+    test_function_patterns=("test",),
 ) -> dict[str, Any] | None:
-    if not isinstance(node, _FUNCTION_NODES) or not node.name.startswith("test_"):
+    if not isinstance(node, _FUNCTION_NODES) or not _pytest_name_matches(
+        node.name, test_function_patterns
+    ):
         return None
     from .review_integrity import structural_oracle_finding
     from .context_efficiency import _protocol_annotate_finding
     from . import test_oracle_misuse as oracle_misuse
 
     oracle = structural_oracle_finding(node, relative, oracle_context or {})
-    if _test_oracle_exempt(node, aliases) or oracle is True:
+    if _test_oracle_exempt(node, aliases, test_function_patterns) or oracle is True:
         return None
     if isinstance(oracle, dict):
         return oracle
@@ -4491,9 +4502,11 @@ def _has_manual_failure(node: ast.AST, aliases: dict[str, str]) -> bool:
     )
 
 
-def _test_oracle_exempt(node: ast.AST, aliases: dict[str, str]) -> bool:
+def _test_oracle_exempt(
+    node: ast.AST, aliases: dict[str, str], function_patterns=("test",)
+) -> bool:
     return _unconditionally_skipped_test(node) or _performance_benchmark_test(
-        node, aliases
+        node, aliases, function_patterns
     )
 
 
@@ -5000,6 +5013,7 @@ def _test_oracle_findings(
 ) -> list[dict[str, Any]]:
     findings: list[dict[str, Any]] = []
     parents = _oracle_ancestor_map(nodes[0].body)
+    collection_settings = _pytest_collection_settings(test_file_patterns)
     from .review_integrity import test_execution_findings
 
     for node in nodes:
@@ -5014,9 +5028,7 @@ def _test_oracle_findings(
             parents,
             unittest_methods,
             aliases,
-            test_file_patterns
-            if test_file_patterns is not None
-            else set(_TEST_FILE_PATTERNS),
+            collection_settings,
             inherited_pytest_methods or set(),
             nodes,
         ):
@@ -5064,6 +5076,7 @@ def _test_oracle_findings(
             hollow_helpers,
             unittest_context=is_unittest_method,
             oracle_context=oracle_context,
+            test_function_patterns=collection_settings["python_functions"],
         )
         weak = _weak_test_oracle_finding(
             relative,
@@ -5072,6 +5085,7 @@ def _test_oracle_findings(
             helpers,
             unittest_context=is_unittest_method,
             weak_helper_names=weak_helper_names,
+            test_function_patterns=collection_settings["python_functions"],
         )
         if hollow is not None and not (
             weak is not None and hollow["code"] == "QUALITY_UNKNOWN_TEST_ORACLE"
@@ -5095,17 +5109,19 @@ def _collected_test_function(
     nodes,
 ):
     """Match pytest/unittest collection context instead of function spelling alone."""
-    path = Path(relative)
-    pytest_file = any(fnmatchcase(path.name, pattern) for pattern in test_file_patterns)
-    unittest_file = path.name.startswith("test") and path.name.endswith(".py")
-    if not node.name.startswith("test_"):
-        return False
+    settings = _pytest_collection_settings(test_file_patterns)
+    pytest_file = _pytest_file_matches(relative, settings["python_files"])
     inherited = id(node) in inherited_pytest_methods
+    if id(node) in unittest_methods:
+        return node.name.startswith("test")
+    if _pytest_test_disabled(node, parents, nodes):
+        return False
     if (
         not inherited
         and not pytest_file
-        and not (unittest_file and id(node) in unittest_methods)
     ):
+        return False
+    if not _pytest_name_matches(node.name, settings["python_functions"]):
         return False
     if any(
         _resolved_ast_name(
@@ -5125,19 +5141,23 @@ def _collected_test_function(
     ]
     if not enclosing:
         return pytest_file
-    if unittest_file and id(node) in unittest_methods:
-        return True
     cls = enclosing[-1]
     return pytest_file and (
-        _pytest_collects_class(cls, parents)
-        or _pytest_inherited_by_collected_class(cls, nodes)
+        _pytest_collects_class(cls, parents, settings["python_classes"])
+        or _pytest_inherited_by_collected_class(
+            cls, nodes, settings["python_classes"]
+        )
     )
 
 
-def _pytest_collects_class(cls, parents):
-    if not cls.name.startswith("Test") or any(
+def _pytest_collects_class(cls, parents, class_patterns=("Test",)):
+    if (
+        not _pytest_name_matches(cls.name, class_patterns)
+        or _pytest_scope_test_disabled(cls)
+        or any(
         isinstance(member, _FUNCTION_NODES) and member.name == "__init__"
         for member in cls.body
+        )
     ):
         return False
     enclosing = [
@@ -5145,15 +5165,21 @@ def _pytest_collects_class(cls, parents):
         for parent, _child in parents.get(id(cls), ())
         if isinstance(parent, ast.ClassDef)
     ]
-    return not enclosing or _pytest_collects_class(enclosing[-1], parents)
+    return not enclosing or _pytest_collects_class(
+        enclosing[-1], parents, class_patterns
+    )
 
 
-def _pytest_inherited_by_collected_class(base, nodes):
+def _pytest_inherited_by_collected_class(base, nodes, class_patterns=("Test",)):
     classes = {node.name: node for node in nodes if isinstance(node, ast.ClassDef)}
     for child in classes.values():
-        if not child.name.startswith("Test") or any(
+        if (
+            not _pytest_name_matches(child.name, class_patterns)
+            or _pytest_scope_test_disabled(child)
+            or any(
             isinstance(member, _FUNCTION_NODES) and member.name == "__init__"
             for member in child.body
+            )
         ):
             continue
         if _pytest_class_inherits(child, base.name, classes, set()):
@@ -5176,10 +5202,113 @@ def _pytest_class_inherits(cls, target, classes, seen):
 
 
 _TEST_FILE_PATTERNS = ("test_*.py", "*_test.py")
+_TEST_FUNCTION_PATTERNS = ("test",)
+_TEST_CLASS_PATTERNS = ("Test",)
+_PYTEST_COLLECTION_HOOKS = {
+    "pytest_collect_directory",
+    "pytest_collect_file",
+    "pytest_collection",
+    "pytest_collection_finish",
+    "pytest_collection_modifyitems",
+    "pytest_deselected",
+    "pytest_ignore_collect",
+    "pytest_itemcollected",
+    "pytest_make_collect_report",
+    "pytest_pycollect_makeitem",
+    "pytest_pycollect_makemodule",
+}
 _FUNCTION_NODES = (ast.FunctionDef, ast.AsyncFunctionDef)
 
 
-def _pytest_collection_config(root):
+def _pytest_collection_settings(value=None):
+    """Normalize captured pytest file, function, and class patterns."""
+    if isinstance(value, dict):
+        return {
+            "python_files": list(value.get("python_files", _TEST_FILE_PATTERNS)),
+            "python_functions": list(
+                value.get("python_functions", _TEST_FUNCTION_PATTERNS)
+            ),
+            "python_classes": list(value.get("python_classes", _TEST_CLASS_PATTERNS)),
+        }
+    files = _pytest_pattern_list(value) if value is not None else list(_TEST_FILE_PATTERNS)
+    return {
+        "python_files": files,
+        "python_functions": list(_TEST_FUNCTION_PATTERNS),
+        "python_classes": list(_TEST_CLASS_PATTERNS),
+    }
+
+
+def _pytest_name_matches(name, patterns):
+    """Apply pytest's prefix-or-glob rule used for function and class names."""
+    return any(
+        name.startswith(pattern)
+        or (
+            any(marker in pattern for marker in "*?[")
+            and fnmatchcase(name, pattern)
+        )
+        for pattern in patterns
+    )
+
+
+def _pytest_file_matches(relative, patterns):
+    """Match basename globs and slash-containing globs against full paths."""
+    path = Path(relative)
+    normalized = path.as_posix()
+    return any(
+        fnmatchcase(normalized, pattern.replace("\\", "/"))
+        if "/" in pattern or "\\" in pattern
+        else fnmatchcase(path.name, pattern)
+        for pattern in patterns
+    )
+
+
+def _pytest_test_disabled(node, parents, nodes):
+    """Honor statically false module/class/function __test__ markers."""
+    scopes = [nodes[0], *(
+        parent
+        for parent, _child in parents.get(id(node), ())
+        if isinstance(parent, ast.ClassDef)
+    )]
+    return any(_pytest_scope_test_disabled(scope) for scope in scopes) or any(
+        _pytest_function_test_disabled(statement, node.name)
+        for scope in scopes
+        for statement in getattr(scope, "body", ())
+    )
+
+
+def _pytest_scope_test_disabled(scope):
+    for statement in getattr(scope, "body", ()):
+        targets = (
+            statement.targets
+            if isinstance(statement, ast.Assign)
+            else [statement.target]
+            if isinstance(statement, ast.AnnAssign)
+            else []
+        )
+        value = getattr(statement, "value", None)
+        if isinstance(value, ast.Constant) and value.value is False and any(
+            isinstance(target, ast.Name) and target.id == "__test__"
+            for target in targets
+        ):
+            return True
+    return False
+
+
+def _pytest_function_test_disabled(statement, function_name):
+    if not isinstance(statement, ast.Assign) or not (
+        isinstance(statement.value, ast.Constant) and statement.value.value is False
+    ):
+        return False
+    return any(
+        isinstance(target, ast.Attribute)
+        and target.attr == "__test__"
+        and isinstance(target.value, ast.Name)
+        and target.value.id == function_name
+        for target in statement.targets
+    )
+
+
+def _pytest_collection_config(root, source_files=None):
     """Read pytest selected root config; malformed config is incomplete."""
     defaults = set(_TEST_FILE_PATTERNS)
     candidates = (
@@ -5204,8 +5333,87 @@ def _pytest_collection_config(root):
                     f"Cannot determine pytest test collection from {relative}: "
                     f"{result[1]['state']} configuration."
                 )
-            return result
-    return defaults, {"path": None, "state": "missing"}
+            patterns, identity = result
+            identity = _pytest_collection_source_identity(
+                root, identity, source_files
+            )
+            return patterns, identity
+    patterns, identity = defaults, {
+        "path": None,
+        "state": "missing",
+        "python_files": sorted(defaults),
+        "python_functions": list(_TEST_FUNCTION_PATTERNS),
+        "python_classes": list(_TEST_CLASS_PATTERNS),
+    }
+    return patterns, _pytest_collection_source_identity(
+        root, identity, source_files
+    )
+
+
+def _pytest_collection_source_identity(root, identity, source_files=None):
+    """Bind and reject project-local hooks that can change pytest collection."""
+    sources = []
+    hooks = []
+    settings = _pytest_collection_settings(identity)
+    files = _security_source_files(root) if source_files is None else source_files
+    for path in files:
+        relative = path.relative_to(root).as_posix()
+        is_conftest = path.name == "conftest.py"
+        is_test_module = _pytest_file_matches(relative, settings["python_files"])
+        if not is_conftest and not is_test_module:
+            continue
+        try:
+            data = _security_source_bytes(root, relative)
+            tree = ast.parse(data, filename=relative)
+        except (OSError, UnicodeError, SyntaxError, RuntimeAuditError, RecursionError):
+            if is_conftest:
+                raise ReviewAuditError(
+                    f"Cannot determine pytest test collection from {relative}: "
+                    "unreadable or invalid hook source."
+                )
+            continue
+        found = []
+        for node in ast.walk(tree):
+            if not isinstance(node, _FUNCTION_NODES):
+                continue
+            if (is_conftest and node.name in _PYTEST_COLLECTION_HOOKS) or (
+                is_test_module and node.name == "pytest_generate_tests"
+            ):
+                found.append(node.name)
+        plugin_assignment = (is_conftest or is_test_module) and any(
+            isinstance(node, (ast.Assign, ast.AnnAssign))
+            and any(
+                isinstance(target, ast.Name) and target.id == "pytest_plugins"
+                for target in (
+                    node.targets
+                    if isinstance(node, ast.Assign)
+                    else [node.target]
+                )
+            )
+            for node in tree.body
+        )
+        if found or plugin_assignment:
+            hooks.append(
+                {
+                    "path": relative,
+                    "names": sorted(set(found)),
+                    "pytest_plugins": plugin_assignment,
+                }
+            )
+        if is_conftest:
+            sources.append(
+                {
+                    "path": relative,
+                    "sha256": sha256(data).hexdigest(),
+                    "bytes": len(data),
+                }
+            )
+    if hooks:
+        raise ReviewAuditError(
+            "Cannot determine pytest test collection: custom collection hooks "
+            "or pytest plugins are unsupported."
+        )
+    return {**identity, "conftest_sources": sources}
 
 
 def _pytest_config_file(root, relative, section, defaults):
@@ -5244,12 +5452,21 @@ def _pytest_config_data(data, relative, section, defaults):
         return defaults, {**identity, "state": "unsupported"}
     if configured is _ABSENT_PYTEST_SECTION:
         if relative in {"pytest.toml", ".pytest.toml", "pytest.ini", ".pytest.ini"}:
+            identity.update(
+                {
+                    "python_files": sorted(defaults),
+                    "python_functions": list(_TEST_FUNCTION_PATTERNS),
+                    "python_classes": list(_TEST_CLASS_PATTERNS),
+                }
+            )
             return defaults, identity
         return defaults, {**identity, "state": "absent-section"}
-    patterns = set(defaults)
-    if configured is not None:
-        patterns = set(configured)
-    return patterns, identity
+    settings = configured if configured is not None else {
+        "python_files": sorted(defaults),
+        "python_functions": list(_TEST_FUNCTION_PATTERNS),
+        "python_classes": list(_TEST_CLASS_PATTERNS),
+    }
+    return set(settings["python_files"]), {**identity, **settings}
 
 
 def _pytest_pattern_value(text, section):
@@ -5262,8 +5479,9 @@ def _pytest_pattern_value(text, section):
     options = dict(parser.items(section))
     if not _supported_pytest_function_patterns(options):
         return _UNSUPPORTED_PYTEST_CONFIG
-    value = parser.get(section, "python_files", fallback=None)
-    return value.split() if value is not None else None
+    if _pytest_config_uses_custom_collection(options):
+        return _UNSUPPORTED_PYTEST_CONFIG
+    return _pytest_patterns_from_options(options)
 
 
 def _toml_pytest_pattern_value(text, section):
@@ -5280,22 +5498,66 @@ def _toml_pytest_pattern_value(text, section):
         return _INVALID_PYTEST_CONFIG
     if not _supported_pytest_function_patterns(options):
         return _UNSUPPORTED_PYTEST_CONFIG
-    value = options.get("python_files")
-    if isinstance(value, str):
-        return value.split()
-    if isinstance(value, list) and all(isinstance(item, str) for item in value):
-        return value
-    return None if "python_files" not in options else _INVALID_PYTEST_CONFIG
+    if _pytest_config_uses_custom_collection(options):
+        return _UNSUPPORTED_PYTEST_CONFIG
+    return _pytest_patterns_from_options(options)
 
 
 def _supported_pytest_function_patterns(options):
-    functions = options.get("python_functions")
-    classes = options.get("python_classes")
-    if functions is not None and _pytest_pattern_list(functions) != ["test_*"]:
-        return False
-    if classes is not None and _pytest_pattern_list(classes) != ["Test*"]:
-        return False
+    for option in ("python_files", "python_functions", "python_classes"):
+        if option not in options:
+            continue
+        patterns = _pytest_pattern_list(options[option])
+        if not isinstance(patterns, list) or any(
+            not isinstance(pattern, str)
+            or not pattern.strip()
+            or len(pattern) > 256
+            or any(ord(character) < 32 for character in pattern)
+            for pattern in patterns
+        ):
+            return False
+        if len(patterns) > 64:
+            return False
     return True
+
+
+def _pytest_patterns_from_options(options):
+    defaults = {
+        "python_files": list(_TEST_FILE_PATTERNS),
+        "python_functions": list(_TEST_FUNCTION_PATTERNS),
+        "python_classes": list(_TEST_CLASS_PATTERNS),
+    }
+    return {
+        name: _pytest_pattern_list(options[name]) if name in options else values
+        for name, values in defaults.items()
+    }
+
+
+def _pytest_config_uses_custom_collection(options):
+    if "pytest_plugins" in options:
+        return True
+    addopts = options.get("addopts", "")
+    if not isinstance(addopts, str):
+        return True
+    tokens = addopts.split()
+    return any(
+        token == "-p"
+        or token.startswith("-p")
+        or token.split("=", 1)[0]
+        in {
+            "--ignore",
+            "--ignore-glob",
+            "--deselect",
+            "--doctest-modules",
+            "--pyargs",
+            "--confcutdir",
+            "--noconftest",
+            "--collect-in-virtualenv",
+            "--import-mode",
+            "--override-ini",
+        }
+        for token in tokens
+    )
 
 
 def _pytest_pattern_list(value):
@@ -5317,6 +5579,9 @@ def _security_node_findings(
         node._security_configuration_aliases = aliases
         call = integrity.security_call_name(node, aliases)
         finding = _security_call_finding(call, relative, node)
+        premise = getattr(node, "_security_supported_precondition", None)
+        if finding is not None and premise is not None:
+            finding["facts"]["security_precondition"] = premise
         if finding and finding["code"] == "SECURITY_UNSAFE_DESERIALIZATION":
             if _test_serialization_roundtrip(relative, node, roundtrip_aliases or {}):
                 finding["severity"] = "INFO"
@@ -5394,6 +5659,8 @@ def _security_scan_tree(
     nodes = list(ast.walk(tree))
     aliases = _security_aliases(nodes)
     for node in nodes:
+        if isinstance(node, ast.Call):
+            node._security_supported_precondition = None
         for child in ast.iter_child_nodes(node):
             child._security_parent = node
         node._scan_bound_names = None
@@ -5670,12 +5937,13 @@ def _scan_security_sources(
     bindings: list[dict[str, Any]] = []
     outcomes = {"syntax_error": 0, "unreadable": 0, "too_large": 0, "audited": 0}
     if test_file_patterns is None:
-        test_file_patterns, collection_identity = _pytest_collection_config(workspace)
+        test_file_patterns, collection_identity = _pytest_collection_config(
+            workspace, files
+        )
+        test_file_patterns = _pytest_collection_settings(collection_identity)
     else:
-        collection_identity = {
-            "state": "supplied",
-            "patterns": sorted(test_file_patterns),
-        }
+        test_file_patterns = _pytest_collection_settings(test_file_patterns)
+        collection_identity = {"state": "supplied", **test_file_patterns}
     if collection_identity.get("state") in {
         "invalid",
         "oversized",

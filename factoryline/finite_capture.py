@@ -5,6 +5,351 @@ import hashlib
 from collections import defaultdict
 
 
+def captured_value_use_closure(
+    function, node, parents, scope_of, return_callers, consumer, *, max_states=512
+):
+    """Account for every use through captured local aliases and helper returns.
+
+    The caller binds exact functions and terminal consumers; this traversal
+    never establishes their semantics from a spelling or executes source.
+    Unknowns, empty paths, cycles and exhausted budgets decline closure.
+    """
+    pending = [(function, node, frozenset())]
+    seen, sinks, nodes = set(), {}, []
+    while pending:
+        current, value, ancestors = pending.pop()
+        key = (id(current), id(value))
+        if key in ancestors or len(seen) >= max_states:
+            return None
+        if key in seen:
+            continue
+        seen.add(key)
+        nodes.append(value)
+        edge = consumer(current, value)
+        if edge is not None:
+            sinks[id(edge)] = edge
+            continue
+        successors = _captured_value_use_successors(
+            current, value, parents, scope_of, return_callers
+        )
+        if not successors:
+            return None
+        pending.extend((scope, child, ancestors | {key}) for scope, child in successors)
+    return {"sinks": tuple(sinks.values()), "nodes": tuple(nodes)} if sinks else None
+
+
+def _captured_value_use_successors(function, value, parents, scope_of, return_callers):
+    parent = parents.get(id(value))
+    if isinstance(parent, ast.keyword) and parent.value is value and parent.arg:
+        call = parents.get(id(parent))
+        if (
+            isinstance(call, ast.Call)
+            and any(keyword is parent for keyword in call.keywords)
+            and not any(keyword.arg is None for keyword in call.keywords)
+            and not any(isinstance(argument, ast.Starred) for argument in call.args)
+            and scope_of(call) is function
+        ):
+            return [(function, call)]
+        return None
+    if isinstance(parent, (ast.List, ast.Tuple)) and value in parent.elts:
+        return [(function, parent)]
+    if (
+        isinstance(parent, ast.Dict)
+        and value in parent.values
+        and all(isinstance(key, ast.Constant) for key in parent.keys)
+    ):
+        return [(function, parent)]
+    if isinstance(parent, (ast.Assign, ast.AnnAssign)) and parent.value is value:
+        return _captured_value_alias_loads(function, parent, scope_of)
+    if (
+        isinstance(parent, ast.Return)
+        and parent.value is value
+        and scope_of(parent) is function
+    ):
+        return return_callers(function)
+    return None
+
+
+def _captured_value_alias_loads(function, assignment, scope_of):
+    from .credential_role_constructor_provider import binding_occurrences
+
+    targets = (
+        assignment.targets
+        if isinstance(assignment, ast.Assign)
+        else [assignment.target]
+    )
+    if len(targets) != 1 or not isinstance(targets[0], ast.Name):
+        return None
+    name = targets[0].id
+    if binding_occurrences(function.body, name) != targets:
+        return None
+    loads = [
+        node
+        for node in ast.walk(function)
+        if isinstance(node, ast.Name)
+        and node.id == name
+        and isinstance(node.ctx, ast.Load)
+    ]
+    if not loads or any(scope_of(node) is not function for node in loads):
+        return None
+    if any(node.lineno <= assignment.lineno for node in loads):
+        return None
+    return [(function, node) for node in loads]
+
+
+def captured_literal_branch_field_transfer(
+    source, path, constructor, bound, caller_path, caller, field, builtin_stable
+):
+    """Project a selected constructor field under source-bound scalar arguments.
+
+    This is a value-lineage fact, not an admission or an effect-safety proof.
+    Callers still close selected receiver mutations and all downstream uses.
+    """
+    receiver = _captured_projection_receiver(source, path, constructor, bound)
+    if receiver is None:
+        return None
+    known = {}
+    for name, actual in bound.items():
+        value = captured_call_scalar(source, caller_path, caller, actual, path)
+        if value is not None:
+            known[name] = value[0]
+    statements = captured_selected_field_assignments(
+        constructor.body,
+        receiver,
+        field,
+        known,
+        lambda expression, state: captured_scalar_guard(
+            expression, state, builtin_stable
+        ),
+        [512],
+    )
+    if statements is None or len(statements) != 1:
+        return None
+    statement = statements[0]
+    value = statement.value
+    while isinstance(value, ast.IfExp):
+        truth = captured_scalar_guard(value.test, known, builtin_stable)
+        if truth is None:
+            return None
+        value = value.body if truth else value.orelse
+    if not isinstance(value, ast.Name) or value.id not in bound:
+        return None
+    return {
+        "path": path,
+        "constructor": constructor,
+        "statement": statement,
+        "formal": value.id,
+        "actual": bound[value.id],
+        "field": field,
+        "source_sha256": source.inventory[path],
+        "profile": "SOURCE_LITERAL_SELECTED_BRANCH",
+    }
+
+
+def _captured_projection_receiver(source, path, constructor, bound):
+    from .credential_role_constructor_provider import binding_occurrences, DYNAMIC_HOOKS
+    from .credential_role_identity_effects import captured_function_valid
+
+    if not captured_function_valid(constructor, path, source):
+        return None
+    owner = source.parents[path].get(id(constructor))
+    if (
+        not isinstance(owner, ast.ClassDef)
+        or owner.bases
+        or owner.decorator_list
+        or owner.keywords
+    ):
+        return None
+    if any(binding_occurrences(owner.body, name) for name in DYNAMIC_HOOKS):
+        return None
+    formals = [*constructor.args.posonlyargs, *constructor.args.args]
+    if not formals or any(
+        binding_occurrences(constructor.body, name) for name in bound
+    ):
+        return None
+    receiver = formals[0].arg
+    return (
+        receiver
+        if _captured_projection_receiver_closed(source, path, constructor, receiver)
+        else None
+    )
+
+
+def _captured_projection_receiver_closed(source, path, constructor, receiver):
+    parents = source.parents[path]
+    for node in ast.walk(constructor):
+        if isinstance(node, (ast.Return, ast.Yield, ast.YieldFrom)):
+            return False
+        if (
+            not isinstance(node, ast.Name)
+            or node.id != receiver
+            or not isinstance(node.ctx, ast.Load)
+        ):
+            continue
+        parent = parents.get(id(node))
+        if (
+            not isinstance(parent, ast.Attribute)
+            or parent.value is not node
+            or parent.attr.startswith("__")
+        ):
+            return False
+        operation = parents.get(id(parent))
+        if isinstance(operation, ast.Call) and operation.func is parent:
+            return False
+    return True
+
+
+def captured_call_scalar(source, path, caller, expression, default_path=None):
+    if (
+        not source.validate(path)
+        or not isinstance(caller, (ast.FunctionDef, ast.AsyncFunctionDef))
+        or id(caller) not in source.parents[path]
+    ):
+        return None
+    if id(expression) not in source.parents[path]:
+        if default_path is None or not source.validate(default_path):
+            return None
+        if id(expression) not in source.parents[default_path]:
+            return None
+    if isinstance(expression, ast.Name):
+        from .credential_role_constructor_provider import binding_occurrences
+
+        if not source.validate(path):
+            return None
+        rows = [
+            row
+            for row in caller.body
+            if isinstance(row, ast.Assign)
+            and len(row.targets) == 1
+            and isinstance(row.targets[0], ast.Name)
+            and row.targets[0].id == expression.id
+        ]
+        assignment = (
+            rows[0]
+            if len(rows) == 1
+            and len(binding_occurrences(caller.body, expression.id)) == 1
+            else None
+        )
+        if (
+            assignment is None
+            or assignment not in caller.body
+            or assignment.lineno >= expression.lineno
+        ):
+            return None
+        expression = assignment.value
+    if isinstance(expression, ast.Constant) and type(expression.value) in {
+        str,
+        bytes,
+        int,
+        float,
+        bool,
+        type(None),
+    }:
+        if isinstance(expression.value, (str, bytes)) and len(expression.value) > 4096:
+            return None
+        return (expression.value,)
+    return None
+
+
+def captured_scalar_guard(expression, known, builtin_stable):
+    from . import review_audits as audit
+
+    if isinstance(expression, ast.Call):
+        if (
+            not isinstance(expression.func, ast.Name)
+            or expression.func.id != "isinstance"
+            or len(expression.args) != 2
+            or expression.keywords
+            or not isinstance(expression.args[0], ast.Name)
+            or expression.args[0].id not in known
+            or not isinstance(expression.args[1], ast.Name)
+            or expression.args[1].id not in {"str", "bytes", "int", "bool"}
+            or not all(
+                builtin_stable(node) for node in (expression.func, expression.args[1])
+            )
+        ):
+            return None
+        types = {"str": str, "bytes": bytes, "int": int, "bool": bool}
+        return isinstance(known[expression.args[0].id], types[expression.args[1].id])
+    if isinstance(expression, ast.BoolOp):
+        values = [
+            captured_scalar_guard(child, known, builtin_stable)
+            for child in expression.values
+        ]
+        if any(value is None for value in values):
+            return None
+        return all(values) if isinstance(expression.op, ast.And) else any(values)
+    if isinstance(expression, ast.UnaryOp) and isinstance(expression.op, ast.Not):
+        truth = captured_scalar_guard(expression.operand, known, builtin_stable)
+        return None if truth is None else not truth
+    allowed = (
+        ast.Name,
+        ast.Constant,
+        ast.Compare,
+        ast.Load,
+        ast.Eq,
+        ast.NotEq,
+        ast.Is,
+        ast.IsNot,
+    )
+    if any(not isinstance(node, allowed) for node in ast.walk(expression)):
+        return None
+    if isinstance(expression, ast.Compare) and any(
+        isinstance(operator, (ast.Is, ast.IsNot)) for operator in expression.ops
+    ):
+        values = [expression.left, *expression.comparators]
+        if not any(
+            isinstance(value, ast.Constant) and value.value is None for value in values
+        ):
+            return None
+    return audit._constant_truth_value(expression, known)
+
+
+def captured_selected_field_assignments(body, receiver, field, known, guard, budget):
+    rows = []
+    for statement in body:
+        budget[0] -= 1
+        if budget[0] < 0:
+            return None
+        writes = [
+            node
+            for node in ast.walk(statement)
+            if isinstance(node, ast.Attribute)
+            and isinstance(node.value, ast.Name)
+            and node.value.id == receiver
+            and node.attr == field
+            and isinstance(node.ctx, (ast.Store, ast.Del))
+        ]
+        if isinstance(statement, ast.If):
+            truth = guard(statement.test, known)
+            if truth is None:
+                if writes:
+                    return None
+                continue
+            branch = statement.body if truth else statement.orelse
+            selected = captured_selected_field_assignments(
+                branch, receiver, field, known, guard, budget
+            )
+            if selected is None:
+                return None
+            rows.extend(selected)
+        elif writes:
+            targets = (
+                statement.targets
+                if isinstance(statement, ast.Assign)
+                else [statement.target]
+                if isinstance(statement, ast.AnnAssign)
+                else []
+            )
+            target = targets[0] if len(targets) == 1 else None
+            if not isinstance(statement, (ast.Assign, ast.AnnAssign)) or writes != [
+                target
+            ]:
+                return None
+            rows.append(statement)
+    return rows
+
+
 def shell_execution_calls():
     """Return the shared canonical process primitives modeled by this scanner."""
     return (
@@ -442,35 +787,51 @@ def closed_shell_finding(call_name, relative, node):
     )
 
 
+def _finite_membership_reference(use, parent):
+    if not isinstance(parent, ast.Compare) or use not in parent.comparators:
+        return False
+    index = parent.comparators.index(use)
+    return isinstance(parent.ops[index], (ast.In, ast.NotIn))
+
+
+def _finite_container_reference(use, parent, parents):
+    if not isinstance(parent, ast.Starred):
+        return False
+    container = parents.get(id(parent))
+    return isinstance(container, ast.Set) and parent.value is use
+
+
+def _finite_call_reference(use, parent):
+    if not isinstance(parent, ast.Call) or use not in parent.args or parent.keywords:
+        return False
+    target = parent.func
+    if not isinstance(target, ast.Attribute):
+        return False
+    if target.attr == "intersection" and isinstance(
+        target.value, (ast.Set, ast.SetComp)
+    ):
+        return True
+    return (
+        target.attr == "join"
+        and isinstance(target.value, ast.Constant)
+        and type(target.value.value) is str
+    )
+
+
 def finite_domain_reference_allowed(
     path, use, tail, capture_path, capture_name, capture, parents
 ):
-    """Allow a finite-domain reference only in the capture, membership, set, intersection, or literal-string join shapes modeled here."""
+    """Allow only modeled finite-domain capture and read shapes."""
+    parent = parents.get(id(use))
+    if not tail and path == capture_path and use is capture_name:
+        return parent is capture and capture.args[0] is use
     if tail:
         return False
-    parent = parents.get(id(use))
-    if path == capture_path and use is capture_name:
-        return parent is capture and capture.args[0] is use
-    if isinstance(parent, ast.Compare) and use in parent.comparators:
-        index = parent.comparators.index(use)
-        return isinstance(parent.ops[index], (ast.In, ast.NotIn))
-    if isinstance(parent, ast.Starred):
-        container = parents.get(id(parent))
-        return isinstance(container, ast.Set) and parent.value is use
-    if isinstance(parent, ast.Call) and use in parent.args and not parent.keywords:
-        target = parent.func
-        if isinstance(target, ast.Attribute) and use in parent.args:
-            if target.attr == "intersection" and isinstance(
-                target.value, (ast.Set, ast.SetComp)
-            ):
-                return True
-            if (
-                target.attr == "join"
-                and isinstance(target.value, ast.Constant)
-                and type(target.value.value) is str
-            ):
-                return True
-    return False
+    return (
+        _finite_membership_reference(use, parent)
+        or _finite_container_reference(use, parent, parents)
+        or _finite_call_reference(use, parent)
+    )
 
 
 def finite_provider_attribute_write_index(nodes, aliases, audit, parents=None):
@@ -500,8 +861,7 @@ def finite_scope_binding_candidate(node, origins):
     )
 
 
-def finite_template_capture_shape(function, aliases, audit, integrity):
-    """Recognize the single-parameter pytest parametrization shape that captures a sorted finite domain without shadowed builtins."""
+def _finite_capture_decorator(function, aliases, audit):
     if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
         return None
     if len(function.decorator_list) != 1 or len(function.args.args) != 1:
@@ -515,21 +875,42 @@ def finite_template_capture_shape(function, aliases, audit, integrity):
         != "pytest.mark.parametrize"
     ):
         return None
-    capture = decorator.args[1]
+    return decorator
+
+
+def _finite_capture_parameter(function, decorator):
+    if len(function.args.args) != 1 or len(decorator.args) != 2:
+        return None
     if (
         not isinstance(decorator.args[0], ast.Constant)
         or type(decorator.args[0].value) is not str
+        or function.args.args[0].arg != decorator.args[0].value
     ):
         return None
-    if function.args.args[0].arg != decorator.args[0].value:
-        return None
+    return decorator.args[0].value
+
+
+def _finite_sorted_capture(capture, integrity):
     if not isinstance(capture, ast.Call) or not isinstance(capture.func, ast.Name):
         return None
     if capture.func.id != "sorted" or len(capture.args) != 1 or capture.keywords:
         return None
     if integrity._builtin_repr_names_shadowed(capture, {"sorted"}):
         return None
-    return function.args.args[0].arg, capture
+    return capture
+
+
+def finite_template_capture_shape(function, aliases, audit, integrity):
+    """Recognize one pytest parameter capturing a sorted finite domain."""
+    decorator = _finite_capture_decorator(function, aliases, audit)
+    if decorator is None:
+        return None
+    parameter = _finite_capture_parameter(function, decorator)
+    if parameter is None:
+        return None
+    capture = decorator.args[1]
+    capture = _finite_sorted_capture(capture, integrity)
+    return (parameter, capture) if capture is not None else None
 
 
 class _FiniteInputCapture:
@@ -860,8 +1241,7 @@ def _finite_eval_module_prefix(tree, comprehension):
     return None
 
 
-def finite_literal_eval_input_witness(node, call_name, *, source_bytes, source_path):
-    """Prove finite source input only, not the effects of resolving type objects."""
+def _finite_eval_source_shape(node, call_name, source_bytes, source_path):
     if (
         call_name != "eval"
         or not isinstance(node, ast.Call)
@@ -873,35 +1253,52 @@ def finite_literal_eval_input_witness(node, call_name, *, source_bytes, source_p
         or not isinstance(source_bytes, bytes)
         or not isinstance(source_path, str)
     ):
-        return {}
+        return False
+    return True
+
+
+def _finite_eval_source_call(node, call_name, source_bytes, source_path):
+    if not _finite_eval_source_shape(node, call_name, source_bytes, source_path):
+        return None
     try:
         tree = ast.parse(source_bytes)
     except (SyntaxError, ValueError, TypeError, RecursionError):
-        return {}
-
-    def span(n):
-        return [
-            getattr(n, k, None)
-            for k in ("lineno", "col_offset", "end_lineno", "end_col_offset")
-        ]
+        return None
 
     matches = [
-        n for n in ast.walk(tree) if isinstance(n, ast.Call) and span(n) == span(node)
+        n
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Call)
+        and _finite_source_span(n) == _finite_source_span(node)
     ]
     if len(matches) != 1 or ast.dump(matches[0]) != ast.dump(node):
-        return {}
-    call = matches[0]
+        return None
+    return tree, matches[0]
+
+
+def _finite_source_span(node):
+    return [
+        getattr(node, key, None)
+        for key in ("lineno", "col_offset", "end_lineno", "end_col_offset")
+    ]
+
+
+def _finite_eval_closed_domain(tree, call):
     comprehension = _finite_eval_comprehension(tree, call)
     domain = _finite_eval_domain(comprehension, call)
     if domain is None:
-        return {}
+        return None
     prefix = _finite_eval_module_prefix(tree, comprehension)
     if prefix is None:
-        return {}
+        return None
     from .runtime_audit_integrity import _closed_declaration_binding
 
     if not _closed_declaration_binding(prefix, call):
-        return {}
+        return None
+    return comprehension, domain
+
+
+def _finite_eval_witness_facts(source_bytes, source_path, call, comprehension, domain):
     domain_node, programs = domain
     import json
 
@@ -910,9 +1307,9 @@ def finite_literal_eval_input_witness(node, call_name, *, source_bytes, source_p
         "disposition": "PROVEN_FINITE_LITERAL_EVAL_INPUT",
         "source_path": source_path,
         "source_sha256": hashlib.sha256(source_bytes).hexdigest(),
-        "call_span": span(call),
-        "domain_span": span(domain_node),
-        "comprehension_span": span(comprehension),
+        "call_span": _finite_source_span(call),
+        "domain_span": _finite_source_span(domain_node),
+        "comprehension_span": _finite_source_span(comprehension),
         "program_sha256": hashlib.sha256(
             json.dumps(programs, separators=(",", ":")).encode()
         ).hexdigest(),
@@ -923,6 +1320,21 @@ def finite_literal_eval_input_witness(node, call_name, *, source_bytes, source_p
         "runtime_assurance": "INCOMPLETE",
         "target_execution": "not_performed",
     }
+
+
+def finite_literal_eval_input_witness(node, call_name, *, source_bytes, source_path):
+    """Prove finite source input only, not the effects of resolving type objects."""
+    source_call = _finite_eval_source_call(node, call_name, source_bytes, source_path)
+    if source_call is None:
+        return {}
+    tree, call = source_call
+    closed_domain = _finite_eval_closed_domain(tree, call)
+    if closed_domain is None:
+        return {}
+    comprehension, domain = closed_domain
+    return _finite_eval_witness_facts(
+        source_bytes, source_path, call, comprehension, domain
+    )
 
 
 def _finite_template_program_hash(program, value):
@@ -966,27 +1378,36 @@ def _finite_template_program_hash(program, value):
     )
 
 
-def finite_template_program_hashes(template, parameter, values):
-    """Hash every bounded rendering after checking one fixed async-function grammar."""
+def _finite_template_piece(item, parameter):
+    if isinstance(item, ast.Constant) and type(item.value) is str:
+        return True, item.value, False
+    if (
+        isinstance(item, ast.FormattedValue)
+        and isinstance(item.value, ast.Name)
+        and item.value.id == parameter
+        and item.conversion == -1
+        and item.format_spec is None
+    ):
+        return True, None, True
+    return False, None, False
+
+
+def _finite_template_skeleton(template, parameter, values):
     if not isinstance(template, ast.JoinedStr) or not isinstance(parameter, str):
         return None
     pieces, holes = [], 0
     for item in template.values:
-        if isinstance(item, ast.Constant) and type(item.value) is str:
-            pieces.append(item.value)
-        elif (
-            isinstance(item, ast.FormattedValue)
-            and isinstance(item.value, ast.Name)
-            and item.value.id == parameter
-            and item.conversion == -1
-            and item.format_spec is None
-        ):
-            pieces.append(None)
-            holes += 1
-        else:
+        valid, piece, is_hole = _finite_template_piece(item, parameter)
+        if not valid:
             return None
+        pieces.append(piece)
+        holes += is_hole
     if holes != 1 or not 1 <= len(values) <= 64:
         return None
+    return pieces
+
+
+def _finite_template_hash_rows(pieces, values):
     hashes, skeleton = [], None
     for value in values:
         program = "".join(value if part is None else part for part in pieces)
@@ -998,6 +1419,32 @@ def finite_template_program_hashes(template, parameter, values):
     return hashlib.sha256(skeleton.encode()).hexdigest(), hashes
 
 
+def finite_template_program_hashes(template, parameter, values):
+    """Hash every bounded rendering after checking one fixed async-function grammar."""
+    pieces = _finite_template_skeleton(template, parameter, values)
+    if pieces is None:
+        return None
+    return _finite_template_hash_rows(pieces, values)
+
+
+def _provider_mutation_for_node(
+    node, aliases, audit, parents, bindings, facts, capture_predicate
+):
+    if isinstance(node, ast.Attribute) and isinstance(node.ctx, (ast.Store, ast.Del)):
+        _record_provider_paths(node.value, node.attr, aliases, audit, bindings, facts)
+    elif isinstance(node, ast.Call):
+        _reflective_provider_write(node, aliases, audit, bindings, facts)
+    elif isinstance(node, (ast.Assign, ast.AnnAssign, ast.NamedExpr)):
+        if capture_predicate is None or capture_predicate(node):
+            _record_provider_capture(node, aliases, audit, bindings, facts)
+    elif isinstance(node, (ast.Name, ast.Attribute)) and _provider_call_argument(
+        node, parents
+    ):
+        _record_provider_paths(node, "*", aliases, audit, bindings, facts)
+    elif isinstance(node, (ast.Return, ast.Yield, ast.YieldFrom)):
+        _record_provider_paths(node.value, "*", aliases, audit, bindings, facts)
+
+
 def finite_provider_mutation_index(
     nodes, aliases, audit, parents, *, capture_predicate=None
 ):
@@ -1005,22 +1452,9 @@ def finite_provider_mutation_index(
     bindings = _provider_alias_bindings(nodes)
     facts = set()
     for node in nodes:
-        if isinstance(node, ast.Attribute) and isinstance(
-            node.ctx, (ast.Store, ast.Del)
-        ):
-            _record_provider_paths(
-                node.value, node.attr, aliases, audit, bindings, facts
-            )
-        elif isinstance(node, ast.Call):
-            _reflective_provider_write(node, aliases, audit, bindings, facts)
-        elif isinstance(node, (ast.Assign, ast.AnnAssign, ast.NamedExpr)):
-            if capture_predicate is None or capture_predicate(node):
-                _record_provider_capture(node, aliases, audit, bindings, facts)
-        elif isinstance(node, (ast.Name, ast.Attribute)):
-            if _provider_call_argument(node, parents):
-                _record_provider_paths(node, "*", aliases, audit, bindings, facts)
-        elif isinstance(node, (ast.Return, ast.Yield, ast.YieldFrom)):
-            _record_provider_paths(node.value, "*", aliases, audit, bindings, facts)
+        _provider_mutation_for_node(
+            node, aliases, audit, parents, bindings, facts, capture_predicate
+        )
     return facts
 
 
@@ -1118,3 +1552,987 @@ def _reflective_provider_write(call, aliases, audit, bindings, facts):
     facts.update((path, name) for path in paths)
     if uncertain:
         facts.update((path, "*") for path in paths)
+
+
+def _fixed_program_span(node):
+    span = [
+        getattr(node, key, None)
+        for key in ("lineno", "col_offset", "end_lineno", "end_col_offset")
+    ]
+    if (
+        any(type(value) is not int for value in span)
+        or span[0] < 1
+        or min(span[1], span[3]) < 0
+        or tuple(span[:2]) > tuple(span[2:])
+    ):
+        return None
+    return span
+
+
+def _fixed_eval_name_hazard(item, selected_func, sensitive_names):
+    if isinstance(item, ast.Name) and item.id in sensitive_names:
+        return item is not selected_func
+    if isinstance(item, ast.arg) and item.arg in sensitive_names:
+        return True
+    if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        return item.name in sensitive_names
+    return isinstance(item, ast.ExceptHandler) and item.name in sensitive_names
+
+
+def _fixed_eval_import_hazard(item, sensitive_names):
+    if isinstance(item, ast.alias):
+        bound = item.asname or item.name.split(".", 1)[0]
+        return item.name == "builtins" or bound in sensitive_names
+    return isinstance(item, ast.ImportFrom) and (
+        item.module == "builtins" or any(alias.name == "*" for alias in item.names)
+    )
+
+
+def _fixed_eval_attribute_hazard(item):
+    sensitive = {
+        "__dict__",
+        "__globals__",
+        "__builtins__",
+        "__getattribute__",
+        "__setattr__",
+        "import_module",
+    }
+    return isinstance(item, ast.Attribute) and (
+        item.attr in sensitive
+        or (
+            item.attr in {"exec", "eval"} and isinstance(item.ctx, (ast.Store, ast.Del))
+        )
+    )
+
+
+def _fixed_eval_builtin_source_clear(tree, selected_call):
+    names = {
+        "__builtins__",
+        "globals",
+        "locals",
+        "vars",
+        "getattr",
+        "setattr",
+        "delattr",
+        "__import__",
+        "exec",
+        "eval",
+    }
+    selected_func = selected_call.func
+    return not any(
+        _fixed_eval_name_hazard(item, selected_func, names)
+        or _fixed_eval_import_hazard(item, names)
+        or _fixed_eval_attribute_hazard(item)
+        for item in ast.walk(tree)
+    )
+
+
+def _fixed_eval_builtin_aliases(tree):
+    builtins_aliases, importlib_aliases, sys_aliases = set(), set(), set()
+    importer_aliases = {"__import__"}
+    for item in ast.walk(tree):
+        if isinstance(item, ast.Import):
+            destinations = {
+                "builtins": builtins_aliases,
+                "importlib": importlib_aliases,
+                "sys": sys_aliases,
+            }
+            for alias in item.names:
+                if alias.name in destinations:
+                    destinations[alias.name].add(alias.asname or alias.name)
+        if isinstance(item, ast.ImportFrom) and item.module == "builtins":
+            importer_aliases.update(
+                alias.asname or alias.name
+                for alias in item.names
+                if alias.name == "__import__"
+            )
+        if isinstance(item, ast.ImportFrom) and item.module in {
+            "importlib",
+            "importlib.util",
+        }:
+            importer_aliases.update(
+                alias.asname or alias.name
+                for alias in item.names
+                if alias.name == "import_module"
+            )
+    return builtins_aliases, importlib_aliases, sys_aliases, importer_aliases
+
+
+def _fixed_eval_provider_root(node, builtins_aliases, importer_aliases, sys_aliases):
+    if isinstance(node, ast.Name) and node.id in builtins_aliases:
+        return True
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+        return (
+            node.func.id in importer_aliases
+            and bool(node.args)
+            and isinstance(node.args[0], ast.Constant)
+            and node.args[0].value == "builtins"
+        )
+    if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Attribute):
+        key = node.slice.value if isinstance(node.slice, ast.Constant) else None
+        return (
+            node.value.attr == "modules"
+            and key == "builtins"
+            and isinstance(node.value.value, ast.Name)
+            and node.value.value.id in sys_aliases
+        )
+    return False
+
+
+def _fixed_eval_provider_capability(
+    node, builtins_aliases, importer_aliases, sys_aliases
+):
+    if _fixed_eval_provider_root(node, builtins_aliases, importer_aliases, sys_aliases):
+        return True
+    if isinstance(node, ast.Attribute) and node.attr == "modules":
+        return isinstance(node.value, ast.Name) and node.value.id in sys_aliases
+    if isinstance(node, ast.Attribute) and node.attr == "__dict__":
+        return _fixed_eval_provider_root(
+            node.value, builtins_aliases, importer_aliases, sys_aliases
+        )
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "vars"
+        and bool(node.args)
+        and _fixed_eval_provider_root(
+            node.args[0], builtins_aliases, importer_aliases, sys_aliases
+        )
+    )
+
+
+def _fixed_eval_provider_alias_escape(
+    tree, builtins_aliases, importer_aliases, sys_aliases
+):
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and any(
+            _fixed_eval_provider_capability(
+                child, builtins_aliases, importer_aliases, sys_aliases
+            )
+            for arg in [*node.args, *(keyword.value for keyword in node.keywords)]
+            for child in ast.walk(arg)
+        ):
+            return True
+        if isinstance(node, ast.ImportFrom):
+            if node.module in {
+                "builtins",
+                "sys",
+                "importlib",
+                "importlib.util",
+            } and any(
+                alias.name
+                in {"__dict__", "__getattribute__", "__setattr__", "__getattr__"}
+                for alias in node.names
+            ):
+                return True
+            if node.module == "sys" and any(
+                alias.name == "modules" for alias in node.names
+            ):
+                return True
+        value = None
+        targets = []
+        if isinstance(node, ast.Assign):
+            value, targets = node.value, node.targets
+        elif isinstance(node, (ast.AnnAssign, ast.NamedExpr)):
+            value, targets = node.value, [node.target]
+        if value is None:
+            continue
+        binds_name = any(
+            isinstance(child, ast.Name) and isinstance(child.ctx, ast.Store)
+            for target in targets
+            for child in ast.walk(target)
+        )
+        if binds_name and any(
+            _fixed_eval_provider_capability(
+                child, builtins_aliases, importer_aliases, sys_aliases
+            )
+            for child in ast.walk(value)
+        ):
+            return True
+    return False
+
+
+def _fixed_eval_builtin_write(node, builtins_aliases, importer_aliases, sys_aliases):
+    if isinstance(node, ast.Name) and node.id == "__builtins__":
+        return True
+    if (
+        isinstance(node, ast.Name)
+        and node.id in {"eval", "exec"}
+        and isinstance(node.ctx, (ast.Store, ast.Del))
+    ):
+        return True
+    if isinstance(node, ast.Attribute) and node.attr in {"eval", "exec"}:
+        return isinstance(node.ctx, (ast.Store, ast.Del)) and _fixed_eval_provider_root(
+            node.value, builtins_aliases, importer_aliases, sys_aliases
+        )
+    if isinstance(node, ast.Subscript) and isinstance(node.ctx, (ast.Store, ast.Del)):
+        return _fixed_eval_builtin_subscript(
+            node, builtins_aliases, importer_aliases, sys_aliases
+        )
+    return False
+
+
+def _fixed_eval_builtin_subscript(
+    node, builtins_aliases, importer_aliases, sys_aliases
+):
+    if not isinstance(node.value, ast.Attribute) or node.value.attr != "__dict__":
+        return False
+    if not _fixed_eval_provider_root(
+        node.value.value, builtins_aliases, importer_aliases, sys_aliases
+    ):
+        return False
+    key = node.slice.value if isinstance(node.slice, ast.Constant) else None
+    return key in {None, "eval", "exec"}
+
+
+def _fixed_eval_builtin_reflection(
+    node, builtins_aliases, importlib_aliases, importer_aliases, sys_aliases
+):
+    if isinstance(node, ast.Attribute) and node.attr in {"__globals__", "__builtins__"}:
+        return True
+    if isinstance(node, ast.Attribute) and node.attr in {
+        "__dict__",
+        "__getattribute__",
+        "__setattr__",
+        "eval",
+        "exec",
+    }:
+        if _fixed_eval_provider_root(
+            node.value, builtins_aliases, importer_aliases, sys_aliases
+        ):
+            return node.attr in {
+                "__dict__",
+                "__getattribute__",
+                "__setattr__",
+            } or isinstance(node.ctx, (ast.Store, ast.Del))
+    if not isinstance(node, ast.Call):
+        return False
+    func = node.func
+    reflective = isinstance(func, ast.Name) and func.id in {
+        "setattr",
+        "delattr",
+        "getattr",
+    }
+    if isinstance(func, ast.Attribute):
+        reflective |= func.attr in {"setattr", "delattr", "getattr"}
+    return (
+        reflective
+        and bool(node.args)
+        and _fixed_eval_provider_root(
+            node.args[0], builtins_aliases, importer_aliases, sys_aliases
+        )
+    )
+
+
+def _fixed_eval_dynamic_import_risk(node, importlib_aliases, importer_aliases):
+    if not isinstance(node, ast.Call):
+        return False
+    func = node.func
+    direct = isinstance(func, ast.Name) and func.id in importer_aliases
+    imported = (
+        isinstance(func, ast.Attribute)
+        and func.attr == "import_module"
+        and isinstance(func.value, ast.Name)
+        and func.value.id in importlib_aliases
+    )
+    if not (direct or imported):
+        return False
+    if not node.args:
+        return True
+    name = node.args[0]
+    return (
+        not isinstance(name, ast.Constant)
+        or type(name.value) is not str
+        or name.value.split(".", 1)[0] in {"builtins", "sys", "importlib"}
+    )
+
+
+def _fixed_eval_module_alias_escape(tree, aliases):
+    parents = {
+        id(child): node
+        for node in ast.walk(tree)
+        for child in ast.iter_child_nodes(node)
+    }
+    for node in ast.walk(tree):
+        if not (
+            isinstance(node, ast.Name)
+            and node.id in aliases
+            and isinstance(node.ctx, ast.Load)
+        ):
+            continue
+        parent = parents.get(id(node))
+        if (
+            isinstance(parent, ast.Attribute)
+            and parent.value is node
+            and parent.attr
+            not in {"__dict__", "__getattribute__", "__setattr__", "__getattr__"}
+        ):
+            continue
+        return True
+    return False
+
+
+def _fixed_eval_module_scope(tree, target):
+    parents = {
+        id(child): node
+        for node in ast.walk(tree)
+        for child in ast.iter_child_nodes(node)
+    }
+    current = target
+    while id(current) in parents:
+        parent = parents[id(current)]
+        if isinstance(parent, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if current in parent.body:
+                return False
+        elif isinstance(parent, ast.Lambda) and current is parent.body:
+            return False
+        current = parent
+    return True
+
+
+def _fixed_eval_interpreter_aliases(tree):
+    aliases = {"eval", "exec"}
+    aliases.update(
+        alias.asname or alias.name
+        for item in ast.walk(tree)
+        if isinstance(item, ast.ImportFrom) and item.module == "builtins"
+        for alias in item.names
+        if alias.name in {"eval", "exec"}
+    )
+    return aliases
+
+
+def _fixed_eval_interpreter_call(node, aliases):
+    if not isinstance(node, ast.Call):
+        return None
+    function = node.func
+    name = function.id if isinstance(function, ast.Name) else None
+    if name is None and isinstance(function, ast.Attribute):
+        name = function.attr
+    return name if name in aliases else None
+
+
+def _fixed_eval_callable_reaches_risk(node, aliases, risky, unresolved_classes):
+    for item in ast.walk(node):
+        if _fixed_eval_interpreter_call(item, aliases) is not None:
+            return True
+        if (
+            isinstance(item, ast.Call)
+            and isinstance(item.func, ast.Name)
+            and item.func.id in risky | unresolved_classes
+        ):
+            return True
+    return False
+
+
+def _fixed_eval_class_init_hooks(node):
+    hooks = [
+        item
+        for item in node.body
+        if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and item.name in {"__new__", "__init__"}
+    ]
+    unresolved = bool(node.bases or node.keywords or node.decorator_list)
+    return hooks, unresolved
+
+
+def _fixed_eval_local_class_aliases(tree, class_names):
+    aliases = set()
+    for _ in range(len(tree.body) + 1):
+        added = False
+        for node in tree.body:
+            if isinstance(node, ast.Assign) and len(node.targets) == 1:
+                target, value = node.targets[0], node.value
+            elif isinstance(node, ast.AnnAssign):
+                target, value = node.target, node.value
+            else:
+                continue
+            if (
+                isinstance(target, ast.Name)
+                and isinstance(value, ast.Name)
+                and value.id in class_names | aliases
+                and target.id not in class_names | aliases
+            ):
+                aliases.add(target.id)
+                added = True
+        if not added:
+            break
+    return aliases
+
+
+def _fixed_eval_local_function_risks(functions, aliases, risky, constructors):
+    added = False
+    for name, function in functions.items():
+        if name not in risky and _fixed_eval_callable_reaches_risk(
+            function, aliases, risky, constructors
+        ):
+            risky.add(name)
+            added = True
+    return added
+
+
+def _fixed_eval_local_class_risks(classes, aliases, risky, constructors):
+    added = False
+    for name, (hooks, _) in classes.items():
+        if name in risky:
+            continue
+        if any(
+            _fixed_eval_callable_reaches_risk(hook, aliases, risky, constructors)
+            for hook in hooks
+        ):
+            risky.add(name)
+            added = True
+    return added
+
+
+def _fixed_eval_module_init_constructor_call(tree, constructor_names):
+    return any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id in constructor_names
+        and _fixed_eval_module_scope(tree, node)
+        for node in ast.walk(tree)
+    )
+
+
+def _fixed_eval_module_init_risky_reference(tree, risky):
+    return any(
+        isinstance(node, ast.Name)
+        and node.id in risky
+        and isinstance(node.ctx, ast.Load)
+        and _fixed_eval_module_scope(tree, node)
+        for node in ast.walk(tree)
+    )
+
+
+def _fixed_eval_interpreter_payload(node, name):
+    if not node.args or not isinstance(node.args[0], ast.Constant):
+        return None
+    code = node.args[0].value
+    if type(code) is not str:
+        return None
+    try:
+        if len(code.encode("utf-8")) > 16 * 1024:
+            return None
+    except UnicodeEncodeError:
+        return None
+    try:
+        return ast.parse(code, mode="eval" if name == "eval" else "exec")
+    except (SyntaxError, ValueError, TypeError, MemoryError, RecursionError):
+        return None
+
+
+def _fixed_eval_nested_interpreter_risk(tree, depth):
+    aliases = _fixed_eval_interpreter_aliases(tree)
+    for node in ast.walk(tree):
+        name = _fixed_eval_interpreter_call(node, aliases)
+        if name is None:
+            continue
+        nested = _fixed_eval_interpreter_payload(node, name)
+        if nested is None:
+            if _fixed_eval_module_scope(tree, node):
+                return True
+            continue
+        if _fixed_eval_builtin_provider_risk(nested, depth + 1):
+            return True
+    return False
+
+
+def _fixed_eval_local_init_call_risk(tree):
+    functions = {
+        node.name: node
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    classes = {
+        node.name: _fixed_eval_class_init_hooks(node)
+        for node in tree.body
+        if isinstance(node, ast.ClassDef)
+    }
+    if not functions and not classes:
+        return False
+    aliases = _fixed_eval_interpreter_aliases(tree)
+    unresolved_classes = {
+        name for name, (_, unresolved) in classes.items() if unresolved
+    }
+    class_aliases = _fixed_eval_local_class_aliases(tree, unresolved_classes)
+    constructor_names = unresolved_classes | class_aliases
+    risky = set()
+    for _ in range(len(functions) + len(classes) + 1):
+        added = _fixed_eval_local_function_risks(
+            functions, aliases, risky, constructor_names
+        )
+        added |= _fixed_eval_local_class_risks(
+            classes, aliases, risky, constructor_names
+        )
+        if not added:
+            break
+    return _fixed_eval_module_init_constructor_call(
+        tree, constructor_names
+    ) or _fixed_eval_module_init_risky_reference(tree, risky)
+
+
+def _fixed_eval_builtin_provider_risk(tree, depth=0):
+    """Reject source-visible provider writes and opaque module-init eval/exec effects.
+
+    Dynamic sinks inside function bodies remain separate alerts; this source
+    profile does not establish runtime isolation or order across invocations.
+    """
+    if depth > 4:
+        return True
+    builtins_aliases, importlib_aliases, sys_aliases, importer_aliases = (
+        _fixed_eval_builtin_aliases(tree)
+    )
+    if (
+        _fixed_eval_module_alias_escape(tree, builtins_aliases)
+        or _fixed_eval_module_alias_escape(tree, importlib_aliases)
+        or _fixed_eval_module_alias_escape(tree, sys_aliases)
+        or _fixed_eval_provider_alias_escape(
+            tree, builtins_aliases, importer_aliases, sys_aliases
+        )
+    ):
+        return True
+    for node in ast.walk(tree):
+        if _fixed_eval_builtin_write(
+            node, builtins_aliases, importer_aliases, sys_aliases
+        ):
+            return True
+        if _fixed_eval_builtin_reflection(
+            node, builtins_aliases, importlib_aliases, importer_aliases, sys_aliases
+        ):
+            return True
+        if _fixed_eval_dynamic_import_risk(node, importlib_aliases, importer_aliases):
+            return True
+    if _fixed_eval_local_init_call_risk(tree):
+        return True
+    return _fixed_eval_nested_interpreter_risk(tree, depth)
+
+
+def fixed_eval_workspace_provider_clear(source_bytes, source_rows):
+    """Recheck a complete hash-bound workspace for source-visible eval-provider mutation."""
+    if not isinstance(source_bytes, dict) or not isinstance(source_rows, list):
+        return False
+    python_rows = [
+        row
+        for row in source_rows
+        if isinstance(row, dict)
+        and isinstance(row.get("path"), str)
+        and row["path"].endswith(".py")
+    ]
+    if not python_rows:
+        return False
+    expected = {row["path"]: row.get("sha256") for row in python_rows}
+    if len(expected) != len(python_rows):
+        return False
+    for relative, digest in expected.items():
+        raw = source_bytes.get(relative)
+        if not isinstance(raw, bytes) or hashlib.sha256(raw).hexdigest() != digest:
+            return False
+        try:
+            tree = ast.parse(raw, filename=relative)
+        except (SyntaxError, ValueError, TypeError, MemoryError, RecursionError):
+            return False
+        if _fixed_eval_builtin_provider_risk(tree):
+            return False
+    return True
+
+
+def _fixed_eval_sink_context(node, call_name, source_bytes, source_path):
+    if (
+        not isinstance(source_bytes, bytes)
+        or not isinstance(source_path, str)
+        or not source_path
+    ):
+        return None
+    if call_name != "eval" or not isinstance(node, ast.Call):
+        return None
+    span = _fixed_program_span(node)
+    if span is None:
+        return None
+    try:
+        tree = ast.parse(source_bytes, filename=source_path)
+    except (SyntaxError, ValueError, TypeError, MemoryError, RecursionError):
+        return None
+    expected = ast.dump(node, include_attributes=False)
+    calls = [
+        item
+        for item in ast.walk(tree)
+        if isinstance(item, ast.Call)
+        and _fixed_program_span(item) == span
+        and ast.dump(item, include_attributes=False) == expected
+    ]
+    if len(calls) != 1:
+        return None
+    sink = calls[0]
+    if not (isinstance(sink.func, ast.Name) and sink.func.id == "eval"):
+        return None
+    if len(sink.args) != 1 or sink.keywords or not isinstance(sink.args[0], ast.Name):
+        return None
+    scopes = [
+        item
+        for item in ast.walk(tree)
+        if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and item.lineno <= sink.lineno <= item.end_lineno
+        and item.col_offset <= sink.col_offset
+        and (item.end_lineno, item.end_col_offset)
+        >= (sink.end_lineno, sink.end_col_offset)
+    ]
+    if not scopes or not _fixed_eval_builtin_source_clear(tree, sink):
+        return None
+    scope = min(
+        scopes,
+        key=lambda item: (
+            item.end_lineno - item.lineno,
+            item.end_col_offset - item.col_offset,
+        ),
+    )
+    return tree, sink, scope, span
+
+
+def _fixed_eval_control_flow(scope):
+    blocked = (
+        ast.If,
+        ast.For,
+        ast.AsyncFor,
+        ast.While,
+        ast.Try,
+        ast.With,
+        ast.AsyncWith,
+        ast.Lambda,
+        ast.ListComp,
+        ast.SetComp,
+        ast.DictComp,
+        ast.GeneratorExp,
+        ast.NamedExpr,
+        ast.Global,
+        ast.Nonlocal,
+        ast.AugAssign,
+        ast.Delete,
+        ast.Match,
+        ast.TryStar,
+    )
+    nested = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+    return any(
+        isinstance(item, blocked) or (isinstance(item, nested) and item is not scope)
+        for item in ast.walk(scope)
+    )
+
+
+def _fixed_eval_sink_statement(scope, sink):
+    if _fixed_eval_control_flow(scope):
+        return None
+    rows = [
+        (index, statement)
+        for index, statement in enumerate(scope.body)
+        if any(item is sink for item in ast.walk(statement))
+    ]
+    if len(rows) != 1:
+        return None
+    index, statement = rows[0]
+    valid_assignment = (
+        isinstance(statement, ast.Assign)
+        and statement.value is sink
+        and len(statement.targets) == 1
+        and isinstance(statement.targets[0], ast.Name)
+    )
+    valid_value_statement = (
+        isinstance(statement, (ast.Expr, ast.Return)) and statement.value is sink
+    )
+    return index if valid_assignment or valid_value_statement else None
+
+
+def _fixed_eval_parameters(scope):
+    args = (*scope.args.posonlyargs, *scope.args.args, *scope.args.kwonlyargs)
+    names = {argument.arg for argument in args}
+    if scope.args.vararg is not None:
+        names.add(scope.args.vararg.arg)
+    if scope.args.kwarg is not None:
+        names.add(scope.args.kwarg.arg)
+    return names
+
+
+def _fixed_eval_external_state(name):
+    return {
+        "kind": "EXTERNAL_INPUT",
+        "value": None,
+        "trace": [],
+        "names": {name},
+        "origin_span": None,
+        "decode_encoding": None,
+    }
+
+
+def _fixed_eval_row(
+    target, statement, sequence, operation, kind, source_name=None, encoding=None
+):
+    value = statement.value
+    row = {
+        "sequence": sequence,
+        "name": target.id,
+        "operation": operation,
+        "value_kind": kind,
+        "assignment_span": _fixed_program_span(statement),
+        "target_span": _fixed_program_span(target),
+        "value_span": _fixed_program_span(value),
+        "source_name": source_name,
+        "source_use_span": None,
+        "encoding": encoding,
+    }
+    if source_name is not None and isinstance(value, ast.Name):
+        row["source_use_span"] = _fixed_program_span(value)
+    elif source_name is not None and isinstance(value, ast.Attribute):
+        row["source_use_span"] = _fixed_program_span(value.value)
+    elif source_name is not None and isinstance(value, ast.Call):
+        row["source_use_span"] = _fixed_program_span(value.func.value)
+    return row
+
+
+def _fixed_eval_is_bytes_decode(value):
+    return (
+        isinstance(value, ast.Call)
+        and isinstance(value.func, ast.Attribute)
+        and value.func.attr == "decode"
+        and isinstance(value.func.value, ast.Name)
+        and not value.keywords
+        and len(value.args) <= 1
+    )
+
+
+def _fixed_eval_decode_state(target, statement, states, sequence):
+    value = statement.value
+    if not _fixed_eval_is_bytes_decode(value):
+        return None
+    name = value.func.value.id
+    receiver = states.get(name)
+    if receiver is None or receiver["kind"] != "IMMUTABLE_BYTES":
+        return None
+    if value.args:
+        encoding = value.args[0]
+        if not (
+            isinstance(encoding, ast.Constant)
+            and type(encoding.value) is str
+            and encoding.value.casefold() in {"utf-8", "utf8"}
+        ):
+            return None
+    try:
+        decoded = receiver["value"].decode("utf-8")
+    except (UnicodeDecodeError, LookupError, TypeError, ValueError):
+        return None
+    row = _fixed_eval_row(
+        target,
+        statement,
+        sequence,
+        "BUILTIN_BYTES_DECODE",
+        "IMMUTABLE_STRING",
+        name,
+        "utf-8",
+    )
+    state = {
+        "kind": "IMMUTABLE_STRING",
+        "value": decoded,
+        "trace": [*receiver["trace"], row],
+        "names": set(receiver["names"]) | {target.id},
+        "origin_span": receiver["origin_span"],
+        "decode_encoding": "utf-8",
+    }
+    return row, state
+
+
+def _fixed_eval_assignment_state(target, statement, states, parameters, sequence):
+    value = statement.value
+    if isinstance(value, ast.Constant) and type(value.value) in {bytes, str}:
+        kind = "IMMUTABLE_BYTES" if type(value.value) is bytes else "IMMUTABLE_STRING"
+        row = _fixed_eval_row(target, statement, sequence, "LITERAL_ASSIGNMENT", kind)
+        state = {
+            "kind": kind,
+            "value": value.value,
+            "trace": [row],
+            "names": {target.id},
+            "origin_span": _fixed_program_span(value),
+            "decode_encoding": None,
+        }
+        return row, state
+    if isinstance(value, ast.Name):
+        prior = states.get(value.id, _fixed_eval_external_state(value.id))
+        row = _fixed_eval_row(
+            target, statement, sequence, "LOCAL_ALIAS", prior["kind"], value.id
+        )
+        state = {
+            **prior,
+            "trace": [*prior["trace"], row],
+            "names": set(prior["names"]) | {target.id},
+        }
+        return row, state
+    body_read = (
+        isinstance(value, ast.Attribute)
+        and value.attr == "body"
+        and isinstance(value.value, ast.Name)
+        and value.value.id in parameters
+    )
+    if body_read:
+        row = _fixed_eval_row(
+            target,
+            statement,
+            sequence,
+            "EXTERNAL_BODY_READ",
+            "EXTERNAL_INPUT",
+            value.value.id,
+        )
+        return row, {
+            "kind": "EXTERNAL_INPUT",
+            "value": None,
+            "trace": [row],
+            "names": {target.id},
+            "origin_span": None,
+            "decode_encoding": None,
+        }
+    return _fixed_eval_decode_state(target, statement, states, sequence)
+
+
+def _fixed_eval_local_states(scope, sink_index):
+    parameters = _fixed_eval_parameters(scope)
+    states = {name: _fixed_eval_external_state(name) for name in parameters}
+    history = defaultdict(list)
+    sequence = 0
+    for index, statement in enumerate(scope.body[:sink_index]):
+        docstring = (
+            index == 0
+            and isinstance(statement, ast.Expr)
+            and isinstance(statement.value, ast.Constant)
+            and type(statement.value.value) is str
+        )
+        if docstring:
+            continue
+        if not (
+            isinstance(statement, ast.Assign)
+            and len(statement.targets) == 1
+            and isinstance(statement.targets[0], ast.Name)
+        ):
+            return None
+        target = statement.targets[0]
+        if target.id in {"eval", "exec"}:
+            return None
+        sequence += 1
+        result = _fixed_eval_assignment_state(
+            target, statement, states, parameters, sequence
+        )
+        if result is None:
+            return None
+        row, state = result
+        history[target.id].append(row)
+        states[target.id] = state
+    return states, history
+
+
+def _fixed_eval_definition_rows(final_state, history):
+    reaching = final_state["trace"]
+    reaching_sequences = {row["sequence"] for row in reaching}
+    names = final_state["names"]
+    rows = sorted(
+        (row for name in names for row in history.get(name, [])),
+        key=lambda row: row["sequence"],
+    )
+    overwritten = [
+        dict(row) for row in rows if row["sequence"] not in reaching_sequences
+    ]
+    return [dict(row) for row in reaching], overwritten
+
+
+def _fixed_eval_proof(sink, call_span, source_bytes, source_path, states, history):
+    import json
+
+    final = states.get(sink.args[0].id)
+    if final is None or final["kind"] != "IMMUTABLE_STRING":
+        return {}
+    if type(final["value"]) is not str or final["origin_span"] is None:
+        return {}
+    program = final["value"]
+    try:
+        program_bytes = program.encode("utf-8")
+    except UnicodeEncodeError:
+        return {}
+    if len(program_bytes) > 16 * 1024:
+        return {}
+    statement_kinds, _ = _fixed_literal_program_kinds(program, "eval")
+    if statement_kinds is None:
+        return {}
+    reaching, overwritten = _fixed_eval_definition_rows(final, history)
+    proof = {
+        "schema": "factory.fixed-program-local-def-use.v1",
+        "source_path": source_path,
+        "source_sha256": hashlib.sha256(source_bytes).hexdigest(),
+        "call": "eval",
+        "call_span": call_span,
+        "argument_span": _fixed_program_span(sink.args[0]),
+        "program_source_span": final["origin_span"],
+        "program_sha256": hashlib.sha256(program_bytes).hexdigest(),
+        "program_kind": final["kind"],
+        "decode_encoding": final["decode_encoding"],
+        "statement_kinds": statement_kinds,
+        "reaching_definitions": reaching,
+        "overwritten_definitions": overwritten,
+        "target_execution": "not_performed",
+    }
+    proof["def_use_sha256"] = hashlib.sha256(
+        json.dumps(proof, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    return proof
+
+
+def fixed_eval_local_input_witness(node, call_name, *, source_bytes, source_path):
+    """Bind a fixed eval value to straight-line local definitions and source spans."""
+    parsed = _fixed_eval_sink_context(node, call_name, source_bytes, source_path)
+    if parsed is None:
+        return {}
+    _, sink, scope, call_span = parsed
+    sink_index = _fixed_eval_sink_statement(scope, sink)
+    if sink_index is None:
+        return {}
+    states = _fixed_eval_local_states(scope, sink_index)
+    if states is None:
+        return {}
+    return _fixed_eval_proof(sink, call_span, source_bytes, source_path, *states)
+
+
+def _fixed_literal_program_kinds(program, normalized, node_limit=1024):
+    mode = "eval" if normalized == "eval" else "exec"
+    try:
+        tree = ast.parse(program, mode=mode)
+        limit = min(1024, node_limit) if type(node_limit) is int else 0
+        nodes_examined = 0
+        for _ in ast.walk(tree):
+            nodes_examined += 1
+            if nodes_examined > limit:
+                return None, nodes_examined
+        if mode == "eval":
+            kinds = ["Expression"] if _fixed_literal_value(tree.body) else None
+            return kinds, nodes_examined
+        kinds = []
+        for statement in tree.body:
+            if isinstance(statement, ast.Pass):
+                pass
+            elif isinstance(statement, ast.Expr) and _fixed_literal_value(
+                statement.value
+            ):
+                pass
+            elif (
+                isinstance(statement, ast.Assign)
+                and len(statement.targets) == 1
+                and isinstance(statement.targets[0], ast.Name)
+                and statement.targets[0].id != "__builtins__"
+                and _fixed_literal_value(statement.value)
+            ):
+                pass
+            else:
+                return None, nodes_examined
+            kinds.append(type(statement).__name__)
+        return kinds, nodes_examined
+    except (
+        SyntaxError,
+        ValueError,
+        TypeError,
+        MemoryError,
+        RecursionError,
+        OverflowError,
+    ):
+        return None, 0

@@ -517,3 +517,430 @@ def test_reflective_getter_result_is_unrepresented(tmp_path, extra):
     )
     assert len(alerts) == 1
     assert not observations
+
+
+def test_public_trace_identity_projection_retains_only_stable_fields(tmp_path):
+    from factoryline import credential_role_method_use_getter_audit as getter
+
+    result, trace, index = _case(tmp_path, _GOOD)
+    assert result["state"] == "COMPLETE"
+    row = trace[1]
+    decorated = {**row, "private_value": "do-not-export"}
+    expected = tuple(
+        row[key]
+        for key in (
+            "path",
+            "line",
+            "column",
+            "end_line",
+            "end_column",
+            "source_sha256",
+            "role",
+        )
+    )
+    assert getter.span_key(decorated) == expected
+    assert getter.public_span(decorated) == row
+    assert "private_value" not in getter.public_span(decorated)
+    projected = getter.public_span(decorated)
+    projected["role"] = "changed"
+    assert getter.public_span(decorated) == row
+
+
+def test_public_getter_scope_and_argument_navigation_uses_exact_ast_identity(tmp_path):
+    from factoryline import credential_role_method_use_getter_audit as getter
+
+    _, trace, index = _case(tmp_path, _GOOD)
+    path = tmp_path / "client.py"
+    module = index.snapshots[path]
+    owner = next(node for node in module.body if isinstance(node, ast.ClassDef))
+    send = next(
+        node
+        for node in owner.body
+        if isinstance(node, ast.FunctionDef) and node.name == "send"
+    )
+    call = send.body[0].value
+    actual = call.args[0]
+    assert getter.argument_call(actual, index, "client.py") is call
+    assert (
+        getter.argument_call(ast.parse("foreign").body[0].value, index, "client.py")
+        is None
+    )
+    assert getter.source_scope(actual, index.parents[path]) == (send, owner)
+    assert getter.class_identity(actual, index, path) == ("client.py", "Client")
+    assert getter.class_identity(module, index, path) is None
+    assert getter.owner_keys(index, {(path, "Client")}) == {("client.py", "Client")}
+    assert getter.owner_keys(index, None) == set()
+
+
+@pytest.mark.parametrize(
+    "expression,expected",
+    [
+        ("request('GET', selected)", "selected"),
+        ("request(method='GET', url=selected)", "selected"),
+        ("request('GET')", None),
+        ("request('GET', first, url=second)", "first"),
+    ],
+)
+def test_public_url_slot_projection_is_structural_not_a_provider_proof(
+    expression, expected
+):
+    from factoryline import credential_role_method_use_getter_audit as getter
+
+    call = ast.parse(expression).body[0].value
+    actual = getter.url_argument(call)
+    assert (ast.unparse(actual) if actual is not None else None) == expected
+
+
+@pytest.mark.parametrize(
+    "expression,expected",
+    [
+        ("getattr(client, 'ENDPOINT')", True),
+        ("setattr(client, 'ENDPOINT', value)", True),
+        ("getattr(client, 'OTHER')", False),
+        ("opaque(client, 'ENDPOINT')", False),
+        ("vars(client)", True),
+    ],
+)
+def test_public_reflective_member_selection_respects_exact_field(expression, expected):
+    from factoryline import credential_role_method_use_getter_audit as getter
+
+    call = ast.parse(expression).body[0].value
+    actual = getter.reflective_member_use(call, {"ENDPOINT"})
+    assert actual is (call.args[0] if expected else None)
+
+
+def test_snapshot_candidates_cache_only_current_source_inventory_signature(tmp_path):
+    from factoryline import credential_role_method_use_getter_audit as getter
+
+    _, _, index = _case(tmp_path, _GOOD)
+    first = getter.snapshot_candidates(index)
+    assert len(first) == 1
+    path, module, candidates = first[0]
+    expected = [
+        node for node in ast.walk(module) if isinstance(node, (ast.Attribute, ast.Call))
+    ]
+    assert candidates == expected
+    assert getter.snapshot_candidates(index) is first
+    index.inventory[path] = "0" * 64
+    assert getter.snapshot_candidates(index) == []
+
+
+def test_value_closure_and_getter_scan_preserve_a_complete_captured_trace(tmp_path):
+    from factoryline import credential_role_method_use_getter_audit as getter
+
+    result, trace, index = _case(tmp_path, _GOOD)
+    assert result["state"] == "COMPLETE"
+    path = tmp_path / "client.py"
+    by_span = {
+        getter.coordinates(node): node
+        for node in ast.walk(index.snapshots[path])
+        if isinstance(node, (ast.stmt, ast.expr, ast.arg))
+    }
+    nodes = {
+        getter.span_key(row): by_span[
+            tuple(row[key] for key in ("line", "column", "end_line", "end_column"))
+        ]
+        for row in trace
+    }
+    unknown = []
+    getter.audit_value_closure([trace], nodes, index, unknown)
+    assert unknown == []
+    getter.alias_uses([trace], nodes, index, unknown)
+    assert unknown == []
+    getter.audit_getter_uses([trace], nodes, index, unknown)
+    assert unknown == []
+
+
+def test_value_spans_capture_explicit_witness_without_expanding_unrelated_fields(
+    tmp_path,
+):
+    from factoryline import credential_role_method_use_getter_audit as getter
+
+    _, trace, index = _case(tmp_path, _GOOD)
+    row = trace[1]
+    coordinates = [row[key] for key in ("line", "column", "end_line", "end_column")]
+    spans, fields = getter.value_spans(
+        {
+            "url_witnesses": [
+                {"path": "client.py", "value_span": coordinates, "hops": []}
+            ]
+        },
+        index,
+        {},
+        {},
+    )
+    assert spans == {tmp_path / "client.py": [coordinates]}
+    assert fields == {}
+
+
+@pytest.mark.parametrize("mutation", ["bytes", "inventory", "producer", "tree"])
+def test_snapshot_candidate_cache_revalidates_replaced_source_and_recovers(
+    tmp_path, mutation
+):
+    from factoryline import credential_role_method_use_getter_audit as getter
+
+    _, _, index = _case(tmp_path, _GOOD)
+    first = getter.snapshot_candidates(index)
+    path = tmp_path / "client.py"
+    tree, raw, digest = (
+        index.snapshots[path],
+        index.source_bytes[path],
+        index.inventory[path],
+    )
+    assert index.validate(path)
+    if mutation == "bytes":
+        index.source_bytes[path] = b"foreign()\n"
+    elif mutation == "inventory":
+        index.inventory[path] = "0" * 64
+    elif mutation == "producer":
+        tree._oracle_source_sha256 = "0" * 64
+    else:
+        index.snapshots[path] = ast.parse("foreign()\n")
+    assert getter.snapshot_candidates(index) == []
+    assert not index.validate(path)
+    assert path not in index.parents
+    index.snapshots[path], index.source_bytes[path], index.inventory[path] = (
+        tree,
+        raw,
+        digest,
+    )
+    tree._oracle_source_sha256 = digest
+    restored = getter.snapshot_candidates(index)
+    assert restored == first
+    assert index.validate(path)
+    assert index.parents[path]
+
+
+def test_snapshot_validation_reuses_unchanged_bytes_without_reparsing(
+    tmp_path, monkeypatch
+):
+    from factoryline import credential_role_constructor_provider as provider
+
+    _, _, index = _case(tmp_path, _GOOD)
+    path = tmp_path / "client.py"
+    assert index.validate(path)
+
+    def unexpected_parse(*args):
+        raise AssertionError("unchanged captured source was reparsed")
+
+    monkeypatch.setattr(provider, "_ast_matches_source", unexpected_parse)
+    for _ in range(100):
+        assert index.validate(path)
+
+
+def test_trace_edge_and_alias_closure_require_exact_nodes_and_all_uses(tmp_path):
+    from factoryline import credential_role_method_use_getter_audit as getter
+
+    _, trace, index = _case(tmp_path, _GOOD)
+    path = tmp_path / "client.py"
+    nodes = {
+        getter.span_key(row): next(
+            n
+            for n in ast.walk(index.snapshots[path])
+            if isinstance(n, (ast.stmt, ast.expr, ast.arg))
+            and getter.coordinates(n)
+            == tuple(row[key] for key in ("line", "column", "end_line", "end_column"))
+        )
+        for row in trace
+    }
+    row = trace[3]
+    node = nodes[getter.span_key(row)]
+    assert getter.covered_value_edge(node, "client.py", [trace], nodes)
+    assert not getter.covered_value_edge(node, "foreign.py", [trace], nodes)
+    assert not getter.covered_value_edge(
+        ast.parse("foreign").body[0].value, "client.py", [trace], nodes
+    )
+    tree = ast.parse("def use(value):\n    alias = value\n    consume(alias)\n")
+    function = tree.body[0]
+    parents = {
+        id(child): parent
+        for parent in ast.walk(tree)
+        for child in ast.iter_child_nodes(parent)
+    }
+    load = function.body[1].value.args[0]
+    assert getter.alias_is_closed(
+        function.body[0].value, function, parents, [getter.coordinates(load)]
+    )
+    assert not getter.alias_is_closed(function.body[0].value, function, parents, [])
+
+
+def test_getter_owner_inheritance_and_distinct_shadow_origin_are_source_bound(tmp_path):
+    from factoryline import credential_role_method_use_getter_audit as getter
+    from factoryline import review_audits as audit
+
+    source = (
+        _GOOD.replace(
+            "    def endpoint(self):",
+            "    def __init__(self):\n        pass\n    def endpoint(self):",
+        )
+        + "\nclass Derived(Client): pass\nclass Other:\n    ENDPOINT = 'different'\n"
+    )
+    _, _, index = _case(tmp_path, source)
+    path = tmp_path / "client.py"
+    tree = index.snapshots[path]
+    classes = {
+        (path, owner.name): owner
+        for owner in tree.body
+        if isinstance(owner, ast.ClassDef)
+    }
+    imports = {path: {}}
+    owner = classes[(path, "Client")]
+    fact = declaration_fact(index, path, owner.body[0])
+    assert getter.related_owners(fact, index, imports, classes, audit) == {
+        (path, "Client"),
+        (path, "Derived"),
+    }
+    fields = {(path, "Client"): {"ENDPOINT"}}
+    getter.inherited_fields(fields, index, imports, classes, audit)
+    assert fields[(path, "Derived")] == {"ENDPOINT"}
+    other = classes[(path, "Other")].body[0]
+    different = ("client.py", getter.coordinates(other), index.inventory[path])
+    same = ("client.py", getter.coordinates(owner.body[0]), index.inventory[path])
+    assert getter.different_field_origin(
+        ("client.py", "Client"),
+        "endpoint",
+        {"endpoint": [("ENDPOINT", different)]},
+        index,
+        imports,
+        classes,
+        audit,
+    )
+    assert not getter.different_field_origin(
+        ("client.py", "Client"),
+        "endpoint",
+        {"endpoint": [("ENDPOINT", same)]},
+        index,
+        imports,
+        classes,
+        audit,
+    )
+    row = {"url_witnesses": [], "linked_unknown_uses": []}
+    getter.audit_value_uses(fact, row, index, imports, classes, audit)
+    assert row["value_use_audit"]["state"] == "INCOMPLETE"
+    assert row["value_use_audit"]["declared_member_reads"] > 0
+    assert row["linked_unknown_uses"]
+
+
+@pytest.mark.parametrize(
+    "use,expected",
+    [("execute()", True), ("return execute()", False), ("execute(argument)", False)],
+)
+def test_discarded_finite_callable_projection_requires_discarded_zero_arg_use(
+    use, expected
+):
+    from factoryline import credential_role_method_use_getter_audit as getter
+
+    tree = ast.parse(
+        "def run(self):\n    for execute, label in ((self.endpoint, 'label'),):\n        "
+        + use
+        + "\n"
+    )
+    parents = {
+        id(child): parent
+        for parent in ast.walk(tree)
+        for child in ast.iter_child_nodes(parent)
+    }
+    node = next(
+        n
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Attribute) and n.attr == "endpoint"
+    )
+    assert getter.discarded_callable_projection(node, parents) is expected
+
+
+def test_record_projection_uses_captured_response_provider_and_not_unknown_calls(
+    tmp_path,
+):
+    from factoryline import credential_role_method_use_getter_audit as getter
+
+    _, _, index = _case(
+        tmp_path,
+        "import responses\n"
+        + _GOOD
+        + "\nvalue = responses.calls[0].request.url\nother = opaque()\n",
+    )
+    path = tmp_path / "client.py"
+    tree = index.snapshots[path]
+    model = getter.record_projection(
+        index, path, {"responses": "responses", "requests": "requests"}
+    )
+    assert model.kind(tree.body[-2].value) == "url"
+    assert model.kind(tree.body[-1].value) is None
+
+
+def test_parameter_linkage_requires_captured_call_and_known_constructor_origin(
+    tmp_path,
+):
+    from factoryline import credential_role_method_use_getter_audit as getter
+
+    source = (
+        _GOOD
+        + "\ndef inspect(candidate):\n    return candidate.endpoint()\ninspect(Client())\n"
+    )
+    _, _, index = _case(tmp_path, source)
+    path = tmp_path / "client.py"
+    tree = index.snapshots[path]
+    owner = next(n for n in tree.body if isinstance(n, ast.ClassDef))
+    function = next(
+        n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "inspect"
+    )
+    receiver = function.body[0].value.func.value
+    call = tree.body[-1].value
+    classes = {(path, "Client"): owner}
+    assert getter.parameter_linked(
+        path, receiver, [call], index, {path: {}}, classes, {(path, "Client")}
+    )
+    assert not getter.parameter_linked(
+        path, receiver, [], index, {path: {}}, classes, {(path, "Client")}
+    )
+
+
+@pytest.mark.parametrize(
+    "relation,reason",
+    [
+        ("LINKED", "reflective_getter_use"),
+        ("UNKNOWN", "reflective_getter_receiver_unresolved"),
+        ("UNRELATED", None),
+    ],
+)
+def test_reflective_getter_reports_linked_and_unresolved_receivers_without_silent_clear(
+    tmp_path, relation, reason
+):
+    from factoryline import credential_role_method_use_getter_audit as getter
+    from factoryline import review_audits as audit
+
+    source = (
+        _GOOD + "\n    def reflect(self):\n        return getattr(self, 'endpoint')\n"
+    )
+    _, _, index = _case(tmp_path, source)
+    path = tmp_path / "client.py"
+    tree = index.snapshots[path]
+    owner = next(n for n in tree.body if isinstance(n, ast.ClassDef))
+    node = next(
+        n
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Call)
+        and isinstance(n.func, ast.Name)
+        and n.func.id == "getattr"
+    )
+    classes, imports = {(path, "Client"): owner}, {path: {}}
+    unknown = []
+    getter.audit_reflective(
+        node,
+        path,
+        "client.py",
+        [],
+        {(path, "Client")},
+        {"endpoint"},
+        {},
+        index,
+        (imports, classes, audit),
+        {(path, "Client")},
+        imports,
+        classes,
+        audit,
+        {},
+        unknown,
+        lambda *args: relation,
+    )
+    assert [row["reason"] for row in unknown] == ([] if reason is None else [reason])

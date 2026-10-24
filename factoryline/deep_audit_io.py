@@ -678,9 +678,14 @@ def _full_repository_runtime_dependencies() -> dict[str, str | None]:
     return versions
 
 
-def _full_repository_configuration(root: Path, audit) -> tuple[set[str], dict]:
+def _full_repository_configuration(
+    root: Path, audit, source_files=None
+) -> tuple[dict, dict]:
     """Bind presence and exact bytes of every native pytest config candidate."""
-    patterns, collection = audit._pytest_collection_config(root)
+    patterns, collection = audit._pytest_collection_config(root, source_files)
+    settings = audit._pytest_collection_settings(
+        {**collection, "python_files": sorted(patterns)}
+    )
     candidates = (
         "pytest.toml",
         ".pytest.toml",
@@ -693,12 +698,14 @@ def _full_repository_configuration(root: Path, audit) -> tuple[set[str], dict]:
     bindings = [
         _full_repository_configuration_binding(root, name) for name in candidates
     ]
-    return set(patterns), {"selected": collection, "candidates": bindings}
+    return settings, {"selected": collection, "candidates": bindings}
 
 
-def _full_repository_profile_configuration(root: Path, audit, context_profile):
+def _full_repository_profile_configuration(
+    root: Path, audit, context_profile, source_files=None
+):
     try:
-        patterns, frame = _full_repository_configuration(root, audit)
+        patterns, frame = _full_repository_configuration(root, audit, source_files)
         return patterns, frame, False
     except audit.ReviewAuditError:
         if context_profile != FULL_REPOSITORY_CONTEXT_PROFILE:
@@ -713,7 +720,11 @@ def _full_repository_profile_configuration(root: Path, audit, context_profile):
             "setup.cfg",
         )
         return (
-            set(audit._TEST_FILE_PATTERNS),
+            {
+                "python_files": list(audit._TEST_FILE_PATTERNS),
+                "python_functions": list(audit._TEST_FUNCTION_PATTERNS),
+                "python_classes": list(audit._TEST_CLASS_PATTERNS),
+            },
             {
                 "selected": {"path": None, "state": "unsupported"},
                 "candidates": [
@@ -1210,10 +1221,10 @@ def _full_repository_generation(
     files = audit._security_source_files(root)
     inventory = _full_repository_inventory(root, files)
     patterns, frame, collection_incomplete = _full_repository_profile_configuration(
-        root, audit, context_profile
+        root, audit, context_profile, files
     )
     config_identity = {
-        "patterns": sorted(patterns),
+        "collection": patterns,
         "frame": frame,
         "tenant_reads": [],
         "oracle_context": None,
@@ -1386,10 +1397,10 @@ def _full_repository_verify_generation(generation: dict, audit) -> None:
     files = audit._security_source_files(root)
     inventory = _full_repository_inventory(root, files)
     patterns, frame, _collection_incomplete = _full_repository_profile_configuration(
-        root, audit, generation["context_profile"]
+        root, audit, generation["context_profile"], files
     )
     config_identity = {
-        "patterns": sorted(patterns),
+        "collection": patterns,
         "frame": frame,
         "tenant_reads": [],
         "oracle_context": None,

@@ -23,6 +23,11 @@ def audit_log_source_findings(relative, tree, nodes, aliases):
         security_call_name,
     )
 
+    from .semantic_credential_sensor import _provider_identity_uncertain
+
+    tree._security_log_provider_stable = not _provider_identity_uncertain(
+        tree, aliases, roots=("logging",), nodes=nodes
+    )
     findings = []
     for scope in nodes:
         if not isinstance(scope, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -152,6 +157,21 @@ class _LogReader:
                 continue
             name = self._logging_name(call)
             if name and self._unsafe(call, tainted, name):
+                from .semantic_credential_sensor import (
+                    supported_security_precondition,
+                    security_precondition_path_possible,
+                )
+
+                premise = {}
+                if getattr(
+                    self.module_scope(self.scope),
+                    "_security_log_provider_stable",
+                    False,
+                ) and security_precondition_path_possible(call):
+                    premise["security_precondition"] = supported_security_precondition(
+                        call, "untrusted_input", "log_message"
+                    )
+
                 self.findings.append(
                     self.audit._security_finding(
                         "SECURITY_LOG_INJECTION",
@@ -162,6 +182,7 @@ class _LogReader:
                         call=name,
                         source="input_or_request_parameter",
                         cwe="CWE-117",
+                        **premise,
                     )
                 )
 

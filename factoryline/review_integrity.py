@@ -2007,12 +2007,16 @@ def _implementation_scope_chain(
 def _implementation_fixture_scope(
     scope: ast.AST, parents: dict[ast.AST, ast.AST]
 ) -> bool:
+    if not scope.decorator_list:
+        return False
     module: ast.AST = scope
     while module in parents:
         module = parents[module]
-    aliases = _implementation_scope_aliases(
-        module, _implementation_imports(module.body)
+    aliases = _implementation_aliases_for(
+        module, parents, _implementation_imports(module.body), module
     )
+    aliases.setdefault("pytest", "")
+    aliases.setdefault("_pytest", "")
     return bool(
         _implementation_decorator_names(scope, aliases)
         & {"pytest.fixture", "_pytest.fixture"}
@@ -2503,6 +2507,9 @@ def _bind_security_scope_node(node, scope, shadowed, tree, flow_statement=None):
         scope._security_calls_by_statement = calls
     if isinstance(node, (ast.Assign, ast.AnnAssign)):
         node._security_lexical_scope = scope
+    if isinstance(node, ast.Attribute):
+        node._security_lexical_scope = scope
+        node._security_flow_statement = flow_statement
     for child in ast.iter_child_nodes(node):
         direct = child if node is scope else flow_statement
         _bind_security_scope_node(child, scope, shadowed, tree, direct)
@@ -3677,6 +3684,11 @@ def security_source_sink_findings(relative, tree, nodes, aliases):
 def _security_source_sink_findings_bound(relative, tree, nodes, aliases):
     """Analyze one bound tree while its private alias memo is active."""
     from .audit_log_flow import audit_log_source_findings
+    from .semantic_credential_sensor import security_precondition_providers_stable
+
+    tree._security_precondition_providers_stable = (
+        security_precondition_providers_stable(tree, aliases, nodes)
+    )
 
     helpers = _security_connector_cursor_helpers(tree, aliases)
     findings = []
@@ -3921,7 +3933,7 @@ def _security_merge_branch_states(target, branches):
             unsafe_safety = {
                 item
                 for item in merged
-                if isinstance(item, tuple) and item[0] == "secure-upload-leaf"
+                if isinstance(item, tuple) and item[0] in {"secure-upload-leaf", "request-type:bytes", "request-type:text"}
             } - safe
             merged.difference_update(unsafe_safety)
         values.clear()
@@ -3988,6 +4000,44 @@ def _security_statement_call_findings(
             or getattr(call, "_security_lexical_scope", None) is not scope
         ):
             continue
+        from .semantic_credential_sensor import (
+            supported_security_precondition,
+            security_precondition_call_shape,
+            security_precondition_path_possible,
+            request_payload_value_kind,
+        )
+
+        canonical = security_call_name(call, aliases)
+        from . import review_audits as audit
+
+        primitive = audit._security_call_finding(canonical, relative, call)
+        if (
+            getattr(
+                _security_module_scope(scope),
+                "_security_precondition_providers_stable",
+                False,
+            )
+            and primitive is not None
+            and primitive["code"]
+            in {
+                "SECURITY_DYNAMIC_EXECUTION",
+                "SECURITY_OS_COMMAND",
+                "SECURITY_SHELL_COMMAND",
+                "SECURITY_UNSAFE_DESERIALIZATION",
+                "SECURITY_UNSAFE_YAML",
+            }
+            and call.args
+            and security_precondition_call_shape(call, canonical)
+            and security_precondition_path_possible(call)
+            and _security_expr_tainted(call.args[0], requests, set(), aliases)
+            and (
+                canonical not in {"pickle.loads", "_pickle.loads", "dill.loads"}
+                or request_payload_value_kind(call.args[0], requests, aliases, _security_scope_request_aliases) == "bytes"
+            )
+        ):
+            call._security_supported_precondition = supported_security_precondition(
+                call, "untrusted_request", canonical
+            )
         finding = _security_source_sink_call(
             relative, call, aliases, requests, parameters, connections, cursors, helpers
         )
@@ -4292,8 +4342,16 @@ def _security_expr_tainted(node, requests, parameters, aliases):
         return node.id in requests or node.id in parameters
     if isinstance(node, ast.Call):
         return _security_call_source_tainted(node, requests, parameters, aliases)
-    if isinstance(node, ast.Subscript) and _security_request_args(node.value, aliases):
-        return True
+    if isinstance(node, (ast.Attribute, ast.Subscript)):
+        from .semantic_credential_sensor import http_request_payload
+
+        return http_request_payload(
+            node,
+            aliases,
+            getattr(node, "_security_lexical_scope", None),
+            getattr(node, "_security_flow_statement", None),
+            _security_scope_request_aliases,
+        )
     if isinstance(node, ast.JoinedStr):
         return any(
             _security_expr_tainted(value.value, requests, parameters, aliases)
@@ -4311,9 +4369,21 @@ def _security_expr_tainted(node, requests, parameters, aliases):
 
 def _security_call_source_tainted(node, requests, parameters, aliases):
     from .review_audits import _name
+    from .semantic_credential_sensor import http_request_payload, request_payload_value_kind
 
     name = security_call_name(node, aliases) if aliases else ""
-    if name.startswith(("flask.request.args.", "flask.request.form.")):
+    if (
+        isinstance(node.func, ast.Attribute)
+        and node.func.attr in {"decode", "encode"}
+        and not node.args
+        and not node.keywords
+        and request_payload_value_kind(node, requests, aliases, _security_scope_request_aliases) is not None
+    ):
+        return True
+    if http_request_payload(
+        node, aliases, getattr(node, "_security_lexical_scope", None),
+        getattr(node, "_security_flow_statement", None), _security_scope_request_aliases,
+    ):
         return True
     if name in {"os.path.join", "pathlib.Path", "pathlib.PurePath"} or _name(
         node.func
@@ -4446,6 +4516,9 @@ def _security_flow_source_assignment(
     bindings = audit._bound_names(statement)
     scope = getattr(statement, "_security_lexical_scope", None)
     from . import intent_quality
+    from .semantic_credential_sensor import request_payload_value_kind
+
+    value_kind = request_payload_value_kind(value, requests, aliases, _security_scope_request_aliases)
 
     request_collection = intent_quality._credential_request_collection(
         value, password_fields, _security_request_args, aliases, scope, statement
@@ -4495,6 +4568,8 @@ def _security_flow_source_assignment(
     targets = getattr(statement, "targets", None) or [statement.target]
     for target in targets:
         if isinstance(target, ast.Name):
+            if value_kind is not None:
+                requests.add(("request-type:" + value_kind, target.id))
             for tainted, names in zip(flags, known):
                 if tainted:
                     names.add(target.id)

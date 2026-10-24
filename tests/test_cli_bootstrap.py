@@ -7,6 +7,40 @@ from factoryline import provenance as bootstrap
 from factoryline import provenance as provenance_module
 
 
+def test_finding_tier_cli_renders_exact_abstentions_without_clean_claim(capsys):
+    from factoryline.cli_audit import _print_finding_tier_report
+
+    _print_finding_tier_report(
+        {
+            "tier_counts": {
+                "SUPPORTED_DEFECT": 0,
+                "NEEDS_CONTEXT": 1,
+                "PROVEN_PRIMITIVE": 0,
+            },
+            "abstention": {"count": 1, "denominator": 1, "fraction": 1.0},
+            "defect_gate": {"state": "BLOCKED", "reason": "unresolved_context"},
+            "ledger": [
+                {
+                    "tier": "NEEDS_CONTEXT",
+                    "source_identity": {
+                        "code": "SECURITY_DYNAMIC_EXECUTION",
+                        "path": "src/view.py",
+                        "line": 8,
+                    },
+                    "missing_premises": ["untrusted_code_input_or_equivalent_effect"],
+                    "raw_finding": {"severity": "HIGH"},
+                }
+            ],
+        }
+    )
+
+    rendered = capsys.readouterr().out
+    assert "Finding tier defect gate: BLOCKED (unresolved_context)" in rendered
+    assert "no clean result is established" in rendered
+    assert "NEEDS_CONTEXT SECURITY_DYNAMIC_EXECUTION: src/view.py:8 [HIGH]" in rendered
+    assert "missing=untrusted_code_input_or_equivalent_effect" in rendered
+
+
 def test_version_fast_path_does_not_import_command_registry(monkeypatch, capsys):
     original_import = builtins.__import__
 

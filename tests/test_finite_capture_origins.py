@@ -1,5 +1,9 @@
 """Source-only finite-input admission must reject mutable capture origins."""
 
+from factoryline import finite_capture as finite
+from factoryline import review_audits
+from factoryline import review_integrity
+
 import pytest
 from test_runtime_audit_integrity import _json_enum_graph
 import ast
@@ -322,3 +326,166 @@ def test_signed_attestation_verifies_against_local_trust_root(tmp_path):
     )
     with pytest.raises(ExecutionAttestationError, match="E_UNKNOWN_KEY"):
         verify_signed_execution_attestation(receipt, other_root)
+
+
+def test_shell_operation_witness_reconstructs_supported_command_and_rejects_shell_syntax():
+    source = b"import os\nos.system('upx --best app')\n"
+    tree = ast.parse(source)
+    call = next(node for node in ast.walk(tree) if isinstance(node, ast.Call))
+    span = [call.lineno, call.col_offset, call.end_lineno, call.end_col_offset]
+    witness = finite.closed_shell_operation_witness(
+        source, "build.py", span, "os.system"
+    )
+    assert witness["operation_role"] == "executable_packing"
+    assert witness["target_execution"] == "not_performed"
+    unsafe = b"import os\nos.system('upx --best app; evil')\n"
+    unsafe_call = next(
+        node for node in ast.walk(ast.parse(unsafe)) if isinstance(node, ast.Call)
+    )
+    unsafe_span = [
+        unsafe_call.lineno,
+        unsafe_call.col_offset,
+        unsafe_call.end_lineno,
+        unsafe_call.end_col_offset,
+    ]
+    assert (
+        finite.closed_shell_operation_witness(
+            unsafe, "build.py", unsafe_span, "os.system"
+        )
+        == {}
+    )
+
+
+def test_closed_shell_workspace_hashes_clean_inventory_and_rejects_provider_shadow():
+    clean = {"app.py": b"import os\nos.system('upx --best app')\n"}
+    digest = finite.closed_shell_workspace(clean, "os")
+    assert isinstance(digest, str) and len(digest) == 64
+    assert digest == finite.closed_shell_workspace(clean, "os")
+    assert (
+        finite.closed_shell_workspace({"os.py": b"def system(x): pass\n"}, "os") is None
+    )
+
+
+def test_finite_scope_binding_and_blocked_prefixes_preserve_semantics():
+    tree = ast.parse("def run(secret):\n    secret = None\n")
+    args = next(node for node in ast.walk(tree) if isinstance(node, ast.arg))
+    stores = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store)
+    ]
+    assert finite.finite_scope_binding_candidate(args, {"secret"})
+    assert finite.finite_scope_binding_candidate(stores[0], {"secret"})
+    assert not finite.finite_scope_binding_candidate(stores[0], {"other"})
+    prefixes = finite.finite_blocked_provider_prefixes(
+        {("test.py", "client")}, {"test.py": {"client": "provider.api.client"}}
+    )
+    assert prefixes == {"provider", "provider.api", "provider.api.client"}
+
+
+def test_finite_template_program_hashes_only_fixed_async_function_grammar():
+    template = (
+        ast.parse('f"async def run({parameter}) -> None:\\n    pass\\n"').body[0].value
+    )
+    result = finite.finite_template_program_hashes(
+        template, "parameter", ["user_id", "tenant_id"]
+    )
+    assert result is not None
+    skeleton_hash, rows = result
+    assert len(skeleton_hash) == 64
+    assert len(rows) == 2 and all(len(digest) == 64 for digest in rows)
+    assert finite.finite_template_program_hashes(template, "other", ["user_id"]) is None
+
+
+def test_shell_call_catalog_and_source_bound_finding_keep_safe_effect_unassessed(
+    tmp_path,
+):
+    calls = finite.shell_execution_calls()
+    assert {"os.system", "subprocess.run", "subprocess.Popen"}.issubset(calls)
+    raw = b"import os\nos.system('upx --best app')\n"
+    root = tmp_path
+    path = root / "build.py"
+    path.write_bytes(raw)
+    module = ast.parse(raw)
+    module._security_source_context = (root, {path: raw})
+    module._oracle_source_sha256 = __import__("hashlib").sha256(raw).hexdigest()
+    call = next(node for node in ast.walk(module) if isinstance(node, ast.Call))
+    call._security_lexical_scope = module
+    finding = finite.closed_shell_finding("os.system", "build.py", call)
+    assert finding["code"] == "SECURITY_OS_COMMAND"
+    assert finding["facts"]["operation_role"] == "executable_packing"
+    assert finding["facts"]["target_execution"] == "not_performed"
+    assert finite.closed_shell_finding("subprocess.run", "build.py", call) is None
+
+
+def test_finite_domain_reference_rules_distinguish_capture_membership_and_tail():
+    tree = ast.parse("selected = sorted(domain)\nvalid = value in domain\n")
+    capture = next(node for node in ast.walk(tree) if isinstance(node, ast.Call))
+    captured_name = capture.args[0]
+    references = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Name) and node.id == "domain"
+    ]
+    membership_use = references[-1]
+    parents = {
+        id(child): parent
+        for parent in ast.walk(tree)
+        for child in ast.iter_child_nodes(parent)
+    }
+    assert finite.finite_domain_reference_allowed(
+        "tests/test.py",
+        captured_name,
+        (),
+        "tests/test.py",
+        captured_name,
+        capture,
+        parents,
+    )
+    assert finite.finite_domain_reference_allowed(
+        "tests/test.py",
+        membership_use,
+        (),
+        "tests/test.py",
+        captured_name,
+        capture,
+        parents,
+    )
+    assert not finite.finite_domain_reference_allowed(
+        "tests/test.py",
+        membership_use,
+        ("child",),
+        "tests/test.py",
+        captured_name,
+        capture,
+        parents,
+    )
+
+
+def test_finite_provider_attribute_write_index_detects_alias_mutation():
+    tree = ast.parse("client.token = replacement\n")
+    nodes = list(ast.walk(tree))
+    aliases = {"client": "provider.api.client"}
+    writes = finite.finite_provider_attribute_write_index(nodes, aliases, review_audits)
+    assert ("provider.api.client", "token") in writes
+    assert (
+        finite.finite_provider_attribute_write_index([], aliases, review_audits)
+        == set()
+    )
+
+
+def test_finite_template_capture_shape_accepts_only_sorted_parametrize_capture():
+    source = "@pytest.mark.parametrize('program', sorted(programs))\ndef test_program(program):\n    assert program\n"
+    function = ast.parse(source).body[0]
+    shape = finite.finite_template_capture_shape(
+        function, {"pytest": "pytest"}, review_audits, review_integrity
+    )
+    assert shape[0] == "program"
+    assert isinstance(shape[1], ast.Call) and shape[1].func.id == "sorted"
+    wrong = ast.parse(source.replace("sorted(programs)", "programs")).body[0]
+    assert (
+        finite.finite_template_capture_shape(
+            wrong, {"pytest": "pytest"}, review_audits, review_integrity
+        )
+        is None
+    )

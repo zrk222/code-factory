@@ -153,3 +153,90 @@ def test_real_scanner_partition_uses_current_coordinator(
         assert len(observations) == 1
         assert observations[0]["severity"] == "CRITICAL"
         assert observations[0]["facts"]["credential_safety"] == "UNASSESSED"
+
+
+def test_precision257_endpoint_helper_inventory_and_catalog_digest_are_content_bound(
+    monkeypatch,
+):
+    from factoryline import credential_endpoint_admission as endpoint
+
+    catalog_helpers = endpoint.catalog_callable_helpers()
+    validation = endpoint.validation_helpers()
+    evidence = endpoint.endpoint_evidence_helpers()
+    assert len(catalog_helpers) == 14 and all(
+        callable(item) for item in catalog_helpers
+    )
+    assert len(validation) == 35 and all(callable(item) for item in validation)
+    assert len(evidence) == 7 and all(callable(item) for item in evidence)
+    catalog = endpoint._catalog_bytes()
+    assert catalog is not None
+    assert endpoint.catalog_content_digest() == endpoint._catalog_digest(catalog)
+    monkeypatch.setattr(endpoint, "_catalog_bytes", lambda: None)
+    assert endpoint.catalog_content_digest() == "MISSING"
+    finding = {
+        "code": "E",
+        "path": "a.py",
+        "line": 1,
+        "column": 0,
+        "severity": "HIGH",
+        "message": "x",
+    }
+    digest = endpoint._endpoint_evidence_digest({"a": 1})
+    assert digest == endpoint._endpoint_evidence_digest({"a": 1})
+    assert digest != endpoint._endpoint_evidence_digest({"a": 2})
+    assert endpoint._identity(finding) == ("E", "a.py", 1, 0, "HIGH", "x")
+    assert (
+        endpoint.factory_fixture_consumer_status(
+            None, "x", "fixture", "source", ast.parse("pass").body[0], True, True
+        )
+        is None
+    )
+
+
+def test_precision257_fixture_consumer_status_classifies_supported_and_unsupported_calls():
+    import ast
+    from types import SimpleNamespace
+    from factoryline.credential_endpoint_admission import (
+        factory_fixture_consumer_status,
+    )
+
+    def graph_for(source):
+        tree = ast.parse(source)
+        fixture, caller = tree.body
+        parents = {
+            id(child): node
+            for node in ast.walk(tree)
+            for child in ast.iter_child_nodes(node)
+        }
+        graph = SimpleNamespace(
+            parents=parents,
+            _is_pytest_fixture=lambda *_: True,
+            _walk=lambda node: ast.walk(node),
+            _nearest_fixture=lambda _source, name, _caller: (
+                "tests/test_api.py",
+                fixture,
+            )
+            if name == fixture.name
+            else None,
+        )
+        return graph, fixture, caller
+
+    path = "tests/test_api.py"
+    graph, fixture, caller = graph_for(
+        "def client_fixture():\n    pass\ndef consumer(client_fixture):\n    return client_fixture()"
+    )
+    assert (
+        factory_fixture_consumer_status(
+            graph, path, fixture, path, caller, lambda *_: True, lambda *_: True
+        )
+        is True
+    )
+    graph, fixture, caller = graph_for(
+        "def client_fixture():\n    pass\ndef consumer(client_fixture):\n    return client_fixture"
+    )
+    assert (
+        factory_fixture_consumer_status(
+            graph, path, fixture, path, caller, lambda *_: False, lambda *_: True
+        )
+        is False
+    )

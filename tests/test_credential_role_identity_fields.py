@@ -12,7 +12,7 @@ from factoryline.credential_role_constructor_provider import SourceSnapshotIndex
 import textwrap
 
 
-def _summary(source, fields, *, resolve=False):
+def _summary(source, fields, *, resolve=False, role_view=False):
     path, raw = Path("fixture.py"), source.encode()
     tree = ast.parse(raw)
     digest = hashlib.sha256(raw).hexdigest()
@@ -33,6 +33,7 @@ def _summary(source, fields, *, resolve=False):
         {"fixture": "fixture"},
         field_roots=fields,
         resolve_call=resolver if resolve else None,
+        role_view=role_view,
     )
 
 
@@ -112,6 +113,340 @@ def test_field_graph_is_not_inferred_from_annotation():
         {},
     )
     assert result.status == "UNKNOWN"
+
+
+def test_role_events_follow_source_stores_aliases_and_literal_containers():
+    path, tree, index = _index("""
+        def inspect(self, key, logger):
+            self.secret = key
+            self.logger = logger
+            self.carrier = {"owner": self, "key": self.secret}
+            stored_logger = self.logger
+            stored_key = self.carrier["key"]
+            stored_owner = self.carrier["owner"]
+            return stored_key
+    """)
+    result = summarize_identity_effect(
+        _function(tree, "inspect"),
+        path,
+        index,
+        {"self": "owner", "key": "candidate", "logger": "logger"},
+        role_view=True,
+    )
+    stores = {
+        (event.relevant, event.receiver_roots, event.roots)
+        for event in result.role_events
+        if event.kind == "field_store"
+    }
+    assert ("secret", ("owner",), ("candidate",)) in stores
+    assert ("logger", ("owner",), ("logger",)) in stores
+    assert ("carrier", ("owner",), ("candidate", "owner")) in stores
+    reads = {
+        (event.relevant, event.receiver_roots, event.roots)
+        for event in result.role_events
+        if event.kind == "field_read"
+    }
+    assert ("secret", ("owner",), ("candidate",)) in reads
+    assert ("logger", ("owner",), ("logger",)) in reads
+    assert ("carrier", ("owner",), ("candidate", "owner")) in reads
+    assert any(
+        event.kind == "return_escape" and event.roots == ("candidate",)
+        for event in result.role_events
+    )
+    assert result.escapes == ("candidate", "logger", "owner")
+
+
+def test_field_name_does_not_override_the_source_value_role():
+    path, tree, index = _index("""
+        def inspect(self, other):
+            self.secret = other
+            return self.secret
+    """)
+    result = summarize_identity_effect(
+        _function(tree, "inspect"),
+        path,
+        index,
+        {"self": "owner", "other": "ordinary"},
+        role_view=True,
+    )
+    read = next(event for event in result.role_events if event.kind == "field_read")
+    assert read.relevant == "secret"
+    assert read.roots == ("ordinary",)
+    assert read.receiver_roots == ("owner",)
+    assert any(
+        event.kind == "return_escape" and event.roots == ("ordinary",)
+        for event in result.role_events
+    )
+
+
+def test_branch_and_overwrite_field_projections_keep_all_roots_unknown():
+    branch = _summarize("""
+        def inspect(self, key, choose):
+            if choose:
+                self.value = key
+            else:
+                self.value = self
+            return self.value
+    """, "inspect", {"self": "owner", "key": "candidate"}, role_view=True)
+    assert branch.status == "UNKNOWN"
+    branch_read = next(
+        event
+        for event in branch.role_events
+        if event.kind == "field_read" and event.relevant == "value"
+    )
+    assert branch_read.roots == ("candidate", "owner")
+    assert branch_read.uncertain
+    assert set(branch.escapes) == {"candidate", "owner"}
+
+    overwritten = _summarize("""
+        def inspect(self, key):
+            self.value = key
+            self.value = "ordinary"
+            return self.value
+    """, "inspect", {"self": "owner", "key": "candidate"}, role_view=True)
+    assert overwritten.status == "UNKNOWN"
+    assert any(event.kind == "field_store" and event.roots == ("candidate",)
+               for event in overwritten.role_events)
+    assert any(event.kind == "field_read" and event.roots == ("candidate",)
+               and event.uncertain for event in overwritten.role_events)
+    assert "projected field identity overwritten" in overwritten.unknowns
+
+
+def test_unknown_property_and_bound_method_keep_owner_attribution():
+    path, tree, index = _index("""
+        def inspect(self):
+            callback = self.dispatch
+            return self.plugin
+    """)
+    result = summarize_identity_effect(
+        _function(tree, "inspect"),
+        path,
+        index,
+        {"self": "owner"},
+        role_view=True,
+    )
+    assert result.status == "UNKNOWN"
+    assert any(
+        event.kind == "bound_method_or_unknown_property"
+        and event.roots == ("owner",)
+        and event.relevant == "dispatch"
+        for event in result.role_events
+    )
+    assert any(
+        event.kind == "unknown_property_read"
+        and event.roots == ("owner",)
+        and event.relevant == "plugin"
+        for event in result.role_events
+    )
+    assert any(
+        event.kind == "return_escape" and event.roots == ("owner",)
+        for event in result.role_events
+    )
+
+
+def test_legacy_summary_keeps_default_aggregate_and_role_view_is_opt_in():
+    source = "def inspect(self, key): self.value = key; return self.value"
+    legacy = _summarize(source, "inspect", {"self": "owner", "key": "candidate"})
+    roles = _summarize(
+        source, "inspect", {"self": "owner", "key": "candidate"}, role_view=True
+    )
+    assert legacy.role_events == ()
+    assert legacy.status == "UNKNOWN"
+    assert roles.role_events
+    assert roles.status == "UNKNOWN"
+    assert legacy.escapes == ("candidate",)
+    assert roles.escapes == ("candidate",)
+
+
+def test_property_and_dynamic_attribute_hooks_remain_unknown_in_role_view():
+    path, tree, index = _index("""
+        class Owner:
+            @property
+            def secret(self):
+                return self
+
+            def inspect(self, key):
+                self.secret = key
+                return self.secret
+    """)
+    result = summarize_identity_effect(
+        _function(tree, "inspect"),
+        path,
+        index,
+        {"self": "owner", "key": "candidate"},
+        role_view=True,
+    )
+    assert result.status == "UNKNOWN"
+    assert any(
+        event.kind == "attribute_dispatch_unknown"
+        and event.relevant == "secret"
+        and event.uncertain
+        for event in result.role_events
+    )
+
+
+def test_unresolved_calls_with_or_without_tracked_actuals_remain_unknown():
+    path, tree, index = _index("""
+        def inspect(self, logger):
+            logger.info("message")
+            unrelated()
+    """)
+    result = summarize_identity_effect(
+        _function(tree, "inspect"),
+        path,
+        index,
+        {"self": "owner", "logger": "logger"},
+        role_view=True,
+    )
+    assert result.status == "UNKNOWN"
+    assert any(
+        event.kind == "unresolved_method_call" and event.roots == ("logger",)
+        for event in result.role_events
+    )
+    assert any(
+        event.kind == "unresolved_ambient_call"
+        and event.uncertain
+        and event.relevant == "ambient"
+        for event in result.role_events
+    )
+    assert "unresolved ambient call may reach tracked identity" in result.unknowns
+
+
+def test_local_container_is_a_carrier_until_export_and_mutation_stays_unknown():
+    source = """
+        def inspect(key):
+            headers = {"signature": [key]}
+            alias = headers["signature"]
+            return 0
+    """
+    local = _summarize(source, "inspect", {"key": "candidate"}, role_view=True)
+    assert local.status == "NO_CLASS_EFFECT"
+    assert any(
+        event.kind == "local_container" and event.roots == ("candidate",)
+        for event in local.role_events
+    )
+    assert not any(
+        event.kind in {"return_escape", "opaque_call_escape", "unresolved_method_call"}
+        for event in local.role_events
+    )
+
+    returned = _summarize(
+        "def inspect(key): headers = {'signature': [key]}; return headers",
+        "inspect",
+        {"key": "candidate"},
+        role_view=True,
+    )
+    assert returned.status == "ESCAPE"
+    assert "candidate" in returned.escapes
+
+    mutated = _summarize(
+        "def inspect(key): headers = {'signature': [key]}; "
+        "headers['signature'].append('replacement')",
+        "inspect",
+        {"key": "candidate"},
+        role_view=True,
+    )
+    assert mutated.status == "UNKNOWN"
+    assert any(
+        event.kind == "unresolved_method_call" and event.roots == ("candidate",)
+        for event in mutated.role_events
+    )
+
+
+def test_exact_helper_mapping_merges_field_and_backreference_role_events():
+    path, tree, index = _index("""
+        def caller(owner, candidate):
+            helper(owner, candidate)
+
+        def helper(self, key):
+            self.secret = key
+            self.owner = self
+    """)
+    caller = _function(tree, "caller")
+    helper = _function(tree, "helper")
+
+    def resolve(call, call_path):
+        if isinstance(call.func, ast.Name) and call.func.id == "helper":
+            return ResolvedIdentityCall(
+                helper, call_path, {"self": call.args[0], "key": call.args[1]}
+            )
+        return None
+
+    result = summarize_identity_effect(
+        caller,
+        path,
+        index,
+        {"owner": "owner", "candidate": "candidate"},
+        resolve_call=resolve,
+        role_view=True,
+    )
+    assert any(
+        event.kind == "field_store"
+        and event.relevant == "secret"
+        and event.receiver_roots == ("owner",)
+        and event.roots == ("candidate",)
+        for event in result.role_events
+    )
+    assert any(
+        event.kind == "field_store"
+        and event.relevant == "owner"
+        and event.receiver_roots == ("owner",)
+        and event.roots == ("owner",)
+        for event in result.role_events
+    )
+
+
+def test_constructor_role_consumer_requires_exact_store_and_no_related_effects():
+    source = """
+        class Owner:
+            def __init__(self, key):
+                self.secret = key
+    """
+    path, tree, index = _index(source)
+    owner = tree.body[0]
+    constructor = owner.body[0]
+    store = constructor.body[0]
+    result = summarize_identity_effect(
+        constructor,
+        path,
+        index,
+        {"self": "owner", "key": "candidate"},
+        strict_calls=True,
+        role_view=True,
+        ordinary_fields={"secret"},
+    )
+    from factoryline.credential_role_identity_effects import (
+        _app_signing_constructor_role_transfer_closed,
+    )
+
+    assert result.status != "NO_CLASS_EFFECT"
+    assert _app_signing_constructor_role_transfer_closed(
+        result, path, "secret", store
+    )
+
+    back_path, back_tree, back_index = _index("""
+        class Owner:
+            def inspect(self, key):
+                self.secret = key
+                self.owner = self
+    """)
+    back_method = _function(back_tree, "inspect")
+    back_store = back_method.body[0]
+    backreference = summarize_identity_effect(
+        back_method,
+        back_path,
+        back_index,
+        {"self": "owner", "key": "candidate"},
+        strict_calls=True,
+        role_view=True,
+        ordinary_fields={"secret"},
+    )
+    assert not _app_signing_constructor_role_transfer_closed(
+        backreference,
+        back_path,
+        "secret",
+        back_store,
+    )
 
 
 # --- Merged from test_credential_role_identity_defaults.py; test definitions and fixtures retained ---
@@ -215,9 +550,11 @@ def _function(tree, name):
     )
 
 
-def _summarize(source, name, roots):
+def _summarize(source, name, roots, *, role_view=False):
     path, tree, index = _index(source)
-    return summarize_identity_effect(_function(tree, name), path, index, roots)
+    return summarize_identity_effect(
+        _function(tree, name), path, index, roots, role_view=role_view
+    )
 
 
 def test_detects_backend_method_and_initializer_class_replacement():

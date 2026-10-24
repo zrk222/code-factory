@@ -4,6 +4,8 @@ import ast
 import hashlib
 from pathlib import Path
 import pytest
+
+
 from factoryline.credential_role_identity_effects import (
     ResolvedIdentityCall,
     _Value,
@@ -15,6 +17,7 @@ from factoryline.credential_role_identity_effects import (
 )
 from factoryline.credential_role_constructor_provider import SourceSnapshotIndex
 from factoryline.credential_role_identity_effects import SourceFieldLiteral
+from factoryline import credential_role_identity_effects as identity
 
 
 def _analyze(
@@ -382,3 +385,420 @@ def test_uncaptured_literal_cannot_prove_heap_shape():
         _run("strategy.data.update({'code': 'known'})", field=True, forged=True).status
         == "UNKNOWN"
     )
+
+
+def test_receiver_helper_code_epoch_invalidates_and_restores_cached_model():
+    from types import SimpleNamespace
+
+    from factoryline import credential_role_identity_effects as identity
+    from factoryline.credential_role_constructor_provider import ClassChainMemo
+
+    enrolled = {
+        identity._identity_call_value,
+        identity._capture_nested_scope,
+        identity._strict_read_is_unknown,
+        identity._identity_field_value,
+        identity._identity_field_key_valid,
+        identity._call_has_expansion,
+        identity._resolved_parameter_names,
+        identity._call_actual_expressions,
+        identity._mapped_formal_value,
+        identity._exact_receiver_class_for_function,
+        identity._event_span,
+        identity._role_expression_roots,
+        identity._add_role_event,
+        identity._join_field_values,
+        identity._field_projection_value,
+        identity._ordinary_field_dispatch,
+        identity._Analyzer.__init__,
+        identity._Analyzer.run,
+        identity._Analyzer._aliases,
+        identity._Analyzer._visit,
+        identity._Analyzer._assignment,
+        identity._Analyzer._attribute_role,
+        identity._Analyzer._call,
+        identity.record_escape,
+        identity.record_opaque_call,
+    }
+    assert enrolled <= set(identity._receiver_helper_epoch())
+
+    memo = SimpleNamespace(
+        defers_validation=lambda *_: True,
+        index=None,
+        imports={},
+        classes={},
+        audit=None,
+        _analysis_batch=SimpleNamespace(helper_epoch={}),
+        source_models={},
+    )
+    helper = identity._capture_nested_scope
+    original_code = helper.__code__
+    calls = []
+
+    def derive():
+        calls.append(object())
+        return calls[-1]
+
+    first = ClassChainMemo.source_model(
+        memo, "receiver", derive, helper_epoch=identity._receiver_helper_epoch
+    )
+    assert (
+        ClassChainMemo.source_model(
+            memo, "receiver", derive, helper_epoch=identity._receiver_helper_epoch
+        )
+        is first
+    )
+    assert len(calls) == 1
+
+    def replacement(*_args, **_kwargs):
+        return set()
+
+    try:
+        helper.__code__ = replacement.__code__
+        changed = ClassChainMemo.source_model(
+            memo, "receiver", derive, helper_epoch=identity._receiver_helper_epoch
+        )
+        assert changed is not first
+        assert len(calls) == 2
+    finally:
+        helper.__code__ = original_code
+
+    restored = ClassChainMemo.source_model(
+        memo, "receiver", derive, helper_epoch=identity._receiver_helper_epoch
+    )
+    assert restored is first
+    assert len(calls) == 2
+
+
+def _captured_identity_source(tmp_path, source):
+    path = Path(tmp_path) / "captured_identity.py"
+    raw = source.encode("utf-8")
+    tree = ast.parse(raw)
+    digest = hashlib.sha256(raw).hexdigest()
+    tree._oracle_source_sha256 = digest
+    index = SourceSnapshotIndex(
+        Path(tmp_path), {path: tree}, {path: raw}, {path: digest}
+    )
+    assert index.validate(path)
+    return path, tree, index
+
+
+def test_contains_tracked_and_class_identity_property_distinguish_effects():
+    empty = identity._Value()
+    tracked = identity._Value(roots=frozenset({"backend"}))
+    assert not identity.contains_tracked(empty)
+    assert identity.contains_tracked(tracked)
+    assert identity.IdentityEffectSummary("NO_CLASS_EFFECT").preserves_class_identity
+    assert not identity.IdentityEffectSummary("CLASS_WRITE").preserves_class_identity
+
+
+def test_maps_each_actual_once_uses_expression_identity():
+    actuals = ast.parse("helper(backend, value)", mode="eval").body.args
+    assert identity.maps_each_actual_once(
+        actuals, {"backend": actuals[0], "value": actuals[1]}
+    )
+    assert not identity.maps_each_actual_once(
+        actuals, {"backend": actuals[0], "value": actuals[0]}
+    )
+
+
+def test_call_unknown_and_tracked_root_helpers_include_receiver_and_arguments():
+    call = ast.parse("backend.send(opaque)", mode="eval").body
+    aliases = {
+        "backend": identity._Value(roots=frozenset({"backend"})),
+        "opaque": identity._Value(roots=frozenset({"session"}), content_unknown=True),
+    }
+    assert identity.call_has_unknown_value(call, aliases)
+    assert identity.call_argument_roots(call, aliases) == {"session"}
+    assert identity.call_tracked_roots(call, aliases) == {"backend", "session"}
+    assert not identity.call_has_unknown_value(
+        ast.parse("backend.send('ok')", mode="eval").body,
+        {"backend": aliases["backend"]},
+    )
+
+
+def test_assignment_target_accepts_one_target_and_rejects_ambiguous_targets():
+    single, multiple, annotated = ast.parse(
+        "value = source\nleft = right = source\nother: object = source"
+    ).body
+    assert identity.assignment_target(single).id == "value"
+    assert identity.assignment_target(multiple) is None
+    assert identity.assignment_target(annotated).id == "other"
+
+
+def test_nested_capture_roots_uses_validated_lexical_capture(tmp_path):
+    path, tree, index = _captured_identity_source(
+        tmp_path,
+        "def operation():\n    def callback():\n        return backend\n    return callback\n",
+    )
+    operation = tree.body[0]
+    aliases = {"backend": identity._Value(roots=frozenset({"backend"}))}
+    assert identity.nested_capture_roots(operation, path, aliases, index) == {"backend"}
+    clean_path, clean_tree, clean_index = _captured_identity_source(
+        tmp_path / "clean", "def operation():\n    return 1\n"
+    )
+    assert (
+        identity.nested_capture_roots(
+            clean_tree.body[0], clean_path, aliases, clean_index
+        )
+        == set()
+    )
+
+
+def test_record_escape_preserves_root_and_marks_strict_unknown_content():
+    value = ast.parse("backend", mode="eval").body
+    effects = identity._Effects()
+    identity.record_escape(
+        value,
+        {
+            "backend": identity._Value(
+                roots=frozenset({"backend"}), content_unknown=True
+            )
+        },
+        effects,
+        "return",
+        strict_calls=True,
+    )
+    summary = effects.freeze()
+    assert summary.status == "UNKNOWN"
+    assert summary.escapes == ("backend",)
+    assert summary.unknowns == ("return contains unresolved tracked value",)
+
+
+def test_record_opaque_call_marks_argument_escape_or_unresolved_dispatch():
+    escaped = identity._Effects()
+    identity.record_opaque_call(
+        ast.parse("opaque(backend)", mode="eval").body,
+        {"backend": identity._Value(roots=frozenset({"backend"}))},
+        {"backend"},
+        escaped,
+    )
+    assert escaped.freeze().status == "ESCAPE"
+    unresolved = identity._Effects()
+    identity.record_opaque_call(
+        ast.parse("opaque()", mode="eval").body, {}, set(), unresolved
+    )
+    assert "unresolved method call on tracked object" in unresolved.freeze().unknowns
+
+
+def test_strict_read_effects_distinguish_unknown_and_captured_values(tmp_path):
+    path, tree, index = _captured_identity_source(
+        tmp_path, "def operation():\n    return missing.value\n"
+    )
+    unknown = next(node for node in ast.walk(tree) if isinstance(node, ast.Attribute))
+    effects = identity._Effects()
+    identity.strict_read_effects(unknown, {}, index.parents[path], effects)
+    assert "unresolved value in strict identity summary" in effects.freeze().unknowns
+    captured = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Name) and node.id == "missing"
+    )
+    known_effects = identity._Effects()
+    identity.strict_read_effects(
+        captured,
+        {"missing": identity._Value(roots=frozenset({"backend"}))},
+        index.parents[path],
+        known_effects,
+    )
+    assert known_effects.freeze().status == "NO_CLASS_EFFECT"
+
+
+def test_strict_protocol_effects_reject_opaque_operator_but_allow_literals(tmp_path):
+    path, tree, index = _captured_identity_source(
+        tmp_path, "def operation(backend):\n    return backend + 1\n"
+    )
+    operation = tree.body[0]
+    expression = next(
+        node for node in ast.walk(operation) if isinstance(node, ast.BinOp)
+    )
+    effects = identity._Effects()
+    identity.strict_protocol_effects(
+        expression,
+        {"backend": identity._Value(roots=frozenset({"backend"}))},
+        index.parents[path],
+        effects,
+    )
+    assert "unresolved consumer of strict identity content" in effects.freeze().unknowns
+    literal = ast.parse("1 + 2", mode="eval").body
+    literal_effects = identity._Effects()
+    identity.strict_protocol_effects(literal, {}, {}, literal_effects)
+    assert literal_effects.freeze().status == "NO_CLASS_EFFECT"
+
+
+def test_implicit_protocol_roots_tracks_for_iteration_receiver():
+    loop = ast.parse("for item in backend:\n    pass\n").body[0]
+    assert identity.implicit_protocol_roots(
+        loop, {"backend": identity._Value(roots=frozenset({"backend"}))}
+    ) == {"backend"}
+
+
+def test_super_reference_requires_loaded_super_name():
+    loaded = ast.parse("super()", mode="eval").body.func
+    stored = ast.Name(id="super", ctx=ast.Store())
+    assert identity.super_reference(loaded)
+    assert not identity.super_reference(stored)
+
+
+def test_tracks_receiver_requires_first_positional_parameter_in_aliases():
+    method = ast.parse("def call(self, item):\n    return item\n").body[0]
+    assert identity.tracks_receiver(
+        method, {"self": identity._Value(roots=frozenset({"backend"}))}
+    )
+    assert not identity.tracks_receiver(method, {"item": identity._Value()})
+
+
+def test_record_implicit_effects_marks_loaded_super_dispatch_unknown():
+    method = ast.parse("def call(self):\n    super()\n").body[0]
+    super_name = method.body[0].value.func
+    effects = identity._Effects()
+    identity.record_implicit_effects(
+        super_name,
+        method,
+        {"self": identity._Value(roots=frozenset({"backend"}))},
+        effects,
+    )
+    assert "super uses implicit or reflective receiver" in effects.freeze().unknowns
+
+
+def test_identity_fields_accepts_owner_member_roots_and_rejects_invalid_keys():
+    fields = identity.identity_fields({("Strategy", "data"): "strategy"}, None)
+    assert identity.tracked_roots(fields[("Strategy", "data")]) == {"strategy"}
+    assert (
+        identity.identity_fields({("Strategy", "__class__"): "strategy"}, None) is None
+    )
+
+
+def test_literal_dict_update_only_accepts_exact_inert_dictionary_pair():
+    accepted = ast.parse("data.update({'code': 'known'})", mode="eval").body
+    rejected = ast.parse("data.update({'code': opaque})", mode="eval").body
+    aliases = {"data": identity._Value(inert_kind="dict")}
+    assert identity.literal_dict_update(accepted, aliases)
+    assert not identity.literal_dict_update(rejected, aliases)
+
+
+def test_mapped_call_values_requires_exact_actual_to_formal_identity():
+    path, tree, _index = _captured_identity_source(
+        Path.cwd(),
+        "def helper(backend, payload):\n    return payload\n"
+        "def caller(backend):\n    return helper(backend, {})\n",
+    )
+    helper, caller = tree.body
+    call = caller.body[0].value
+    resolved = ResolvedIdentityCall(
+        helper, path, {"backend": call.args[0], "payload": call.args[1]}
+    )
+    out = identity._Effects()
+    mapped = identity.mapped_call_values(
+        call,
+        {"backend": identity._Value(roots=frozenset({"backend"}))},
+        {"backend"},
+        resolved,
+        out,
+    )
+    assert mapped is not None
+    assert identity.tracked_roots(mapped["backend"]) == {"backend"}
+    assert mapped["payload"].inert_kind == "dict"
+    expanded = ast.parse("helper(*values)", mode="eval").body
+    failure = identity._Effects()
+    assert identity.mapped_call_values(expanded, {}, set(), resolved, failure) is None
+    assert (
+        "expanded call arguments are not an exact binding" in failure.freeze().unknowns
+    )
+
+
+def test_summarize_identity_call_reports_captured_opaque_argument_escape(tmp_path):
+    path, tree, index = _captured_identity_source(
+        tmp_path, "def operation(backend):\n    opaque(backend)\n"
+    )
+    call = next(node for node in ast.walk(tree) if isinstance(node, ast.Call))
+    result = identity.summarize_identity_call(
+        call, path, index, {"backend": "backend"}, resolve_call=lambda *_: None
+    )
+    assert result.status == "ESCAPE"
+    assert result.escapes == ("backend",)
+
+
+def test_captured_function_valid_rejects_ast_outside_captured_snapshot(tmp_path):
+    path, tree, index = _captured_identity_source(
+        tmp_path, "def operation():\n    return 1\n"
+    )
+    assert identity.captured_function_valid(tree.body[0], path, index)
+    other = ast.parse("def operation():\n    return 1\n").body[0]
+    assert not identity.captured_function_valid(other, path, index)
+
+
+def test_exported_names_reports_global_and_nonlocal_bindings():
+    tree = ast.parse(
+        "def outer():\n    value = None\n    def inner():\n"
+        "        global session\n        nonlocal value\n"
+    )
+    inner = tree.body[0].body[1]
+    assert identity.exported_names(ast.walk(inner)) == {"session", "value"}
+
+
+def test_exact_receiver_class_resolves_only_unique_local_constructor(tmp_path):
+    path, tree, index = _captured_identity_source(
+        tmp_path,
+        "class Client:\n    pass\n"
+        "def operation():\n    client = Client()\n    client.send()\n"
+        "def unresolved(other):\n    other.send()\n",
+    )
+    client_class = tree.body[0]
+    classes = {(path, "Client"): client_class}
+    client_receiver = tree.body[1].body[1].value.func.value
+    other_receiver = tree.body[2].body[0].value.func.value
+    assert identity.exact_receiver_class(
+        path, client_receiver, index, {}, classes, None
+    ) == (path, "Client")
+    assert (
+        identity.exact_receiver_class(path, other_receiver, index, {}, classes, None)
+        is None
+    )
+
+
+def test_module_fixture_evidence_requires_selected_settings_and_exact_module_owner(
+    tmp_path,
+):
+    path, tree, source = _captured_identity_source(
+        tmp_path,
+        "PASSWORD = 'local-fixture'\ndef helper():\n    PASSWORD = 'nested-fixture'\n",
+    )
+    assert source.validate(path)
+    index = {"source": source, "modules": {path: tree}, "configuration_bytes": {}}
+    assert (
+        identity.module_fixture_credential_evidence(
+            index, path, tree.body[0], "PASSWORD"
+        )
+        is None
+    )
+    assert (
+        identity.module_fixture_evidence_for_binding(
+            index, path, tree.body[0], "PASSWORD"
+        )
+        is None
+    )
+    assert (
+        identity.module_fixture_evidence_for_binding(
+            index, path, tree.body[1].body[0], "PASSWORD"
+        )
+        is None
+    )
+
+
+def test_module_fixture_predicate_epoch_tracks_native_code_replacement(monkeypatch):
+    from factoryline import credential_role_constructor_provider as provider
+
+    epoch = identity.module_fixture_helper_epoch()
+    assert identity.module_fixture_evidence_for_binding in epoch
+    assert identity.module_fixture_credential_evidence in epoch
+    before = provider._helper_snapshot(identity.module_fixture_helper_epoch)
+    original = identity.module_fixture_evidence_for_binding
+
+    def changed(*args):
+        return None
+
+    with monkeypatch.context() as patch:
+        patch.setattr(original, "__code__", changed.__code__)
+        assert provider._helper_snapshot(identity.module_fixture_helper_epoch) != before
+    assert provider._helper_snapshot(identity.module_fixture_helper_epoch) == before

@@ -264,6 +264,7 @@ def _print_full_security(args: Any, result: dict) -> None:
             f"Workspace context: {evidence.get('oracle_context', {}).get('state', 'INCOMPLETE')}; "
             f"full primary inventory assessed: {evidence.get('audit_coverage', {}).get('complete', False)}."
         )
+        _print_finding_tier_report(evidence.get("finding_tiers"))
     print("Semantic coverage: INCOMPLETE; global consumer closure is not verified.")
 
 
@@ -281,6 +282,51 @@ def _print_full_security_findings(result, workspace_profile):
     for finding in findings:
         print(
             f"{finding['severity']} {finding['code']}: {finding['path']}:{finding['line']} — {finding['message']}"
+        )
+
+
+def _print_finding_tier_report(report):
+    """Render additive finding tiers without implying a clean security result."""
+    if not isinstance(report, dict):
+        print("Finding tiers: unavailable; no tier claim is made.")
+        return
+    counts = report.get("tier_counts", {})
+    if not isinstance(counts, dict):
+        counts = {}
+    abstention = report.get("abstention", {})
+    if not isinstance(abstention, dict):
+        abstention = {}
+    fraction = abstention.get("fraction")
+    fraction_text = f"{fraction:.1%}" if isinstance(fraction, (int, float)) else "N/A"
+    gate = report.get("defect_gate", {})
+    if not isinstance(gate, dict):
+        gate = {}
+    print(
+        "Finding tiers: "
+        f"supported={counts.get('SUPPORTED_DEFECT', 0)}, "
+        f"needs_context={counts.get('NEEDS_CONTEXT', 0)}, "
+        f"proven_primitive={counts.get('PROVEN_PRIMITIVE', 0)}."
+    )
+    print(
+        f"Tier abstention: {abstention.get('count', 0)}/{abstention.get('denominator', 0)} "
+        f"({fraction_text}); this-run diagnostics only."
+    )
+    print(
+        f"Finding tier defect gate: {gate.get('state', 'BLOCKED')} "
+        f"({gate.get('reason', 'tier_report_unavailable')}); no clean result is established."
+    )
+    for row in report.get("ledger", []):
+        if not isinstance(row, dict) or row.get("tier") != "NEEDS_CONTEXT":
+            continue
+        source = row.get("source_identity", {})
+        missing = row.get("missing_premises", [])
+        raw = row.get("raw_finding", {})
+        if not isinstance(source, dict) or not isinstance(raw, dict):
+            continue
+        print(
+            f"  NEEDS_CONTEXT {source.get('code', '?')}: "
+            f"{source.get('path', '?')}:{source.get('line', '?')} "
+            f"[{raw.get('severity', '?')}] missing={','.join(str(item) for item in missing)}"
         )
 
 
@@ -446,6 +492,7 @@ def _run_bounded_security(args: Any) -> int:
                 f"{item['severity']} {item['code']}: {item['path']}:{item['line']} — {item['message']}"
             )
         print(result["action_summary"])
+        _print_finding_tier_report(result.get("finding_tier_report"))
     return 0 if result["state"] == "CLEAN" else 2 if result["state"] == "BLOCKED" else 1
 
 

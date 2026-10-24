@@ -1,3 +1,6 @@
+from factoryline import review_audits
+from factoryline import review_integrity
+from factoryline import primitive_observation_binding as binding
 import ast
 import json
 import textwrap
@@ -1339,6 +1342,85 @@ def test_implementation_scope_inventory_is_collected_once(monkeypatch):
         "args",
         "kwargs",
     }
+
+
+def test_fixture_scope_fast_path_skips_alias_reconstruction(monkeypatch):
+    tree = ast.parse("import pytest\ndef provider():\n    return 1\n")
+    scope = tree.body[1]
+    parents = review_integrity._implementation_parents(tree)
+
+    def forbidden(*args):
+        raise AssertionError("An empty decorator set cannot contain a fixture")
+
+    monkeypatch.setattr(review_integrity, "_implementation_scope_aliases", forbidden)
+    assert review_integrity._implementation_fixture_scope(scope, parents) is False
+
+
+@pytest.mark.parametrize(
+    "source,expected",
+    [
+        ("import pytest as pt\n@pt.fixture\ndef provider(): return 1\n", True),
+        ("from pytest import fixture as fx\n@fx()\ndef provider(): return 1\n", True),
+        (
+            "import pytest\npytest = object()\n@pytest.fixture\ndef provider(): return 1\n",
+            False,
+        ),
+        ("@decorator\ndef provider(): return 1\n", False),
+    ],
+)
+def test_fixture_scope_fast_path_preserves_decorated_resolution(source, expected):
+    tree = ast.parse(source)
+    scope = tree.body[-1]
+    parents = review_integrity._implementation_parents(tree)
+    assert review_integrity._implementation_fixture_scope(scope, parents) is expected
+
+
+def test_fixture_scope_fast_path_does_not_keep_mutated_ast_results():
+    tree = ast.parse("import pytest\n@pytest.fixture\ndef provider(): return 1\n")
+    scope = tree.body[-1]
+    parents = review_integrity._implementation_parents(tree)
+    assert review_integrity._implementation_fixture_scope(scope, parents) is True
+    scope.decorator_list.clear()
+    assert review_integrity._implementation_fixture_scope(scope, parents) is False
+
+
+@pytest.mark.parametrize("decorator", ["pytest.fixture", "_pytest.fixture"])
+def test_fixture_scope_requires_bound_canonical_provider(decorator):
+    tree = ast.parse(f"@{decorator}\ndef provider(): return 1\n")
+    assert (
+        review_integrity._implementation_fixture_scope(
+            tree.body[0], review_integrity._implementation_parents(tree)
+        )
+        is False
+    )
+
+
+@pytest.mark.parametrize("decorator,fixture", [("pt.fixture", True), ("other", False)])
+def test_native270_fixture_aliases_reuse_invocation_cache(
+    monkeypatch, decorator, fixture
+):
+    source = (
+        "import pytest as pt\nfrom unittest.mock import Mock\n"
+        + f"@{decorator}\ndef provider():\n"
+        + "    Mock()\n" * 40
+    )
+    tree = ast.parse(source)
+    original = review_integrity._implementation_scope_nodes
+    module_walks = []
+
+    def counted(scope):
+        if scope is tree:
+            module_walks.append(scope)
+        return original(scope)
+
+    monkeypatch.setattr(review_integrity, "_implementation_scope_nodes", counted)
+    findings = review_integrity.implementation_completeness_findings(
+        "app.py", tree, source
+    )
+    assert len(findings) == (0 if fixture else 40)
+    assert all(row["code"] == "QUALITY_PRODUCTION_MOCK" for row in findings)
+    assert len(module_walks) <= 2
+    assert not hasattr(tree, "_implementation_alias_cache")
 
 
 def test_implementation_alias_cache_copies_results_and_binds_alias_inputs(monkeypatch):
@@ -6702,3 +6784,602 @@ def test_security_resealing_preserves_source_backed_observations(
         rejected = _seal_security_scan(changed)
         assert not rejected["primitive_observations"]
         assert rejected["findings"][0]["severity"] == "HIGH"
+
+
+@pytest.mark.parametrize(
+    "statement,expected",
+    [("AssertionError('bad')", 1), ("raise AssertionError('bad')", 0)],
+)
+def test_discarded_exception_contract_reports_only_local_statement_semantics(
+    statement, expected
+):
+    from factoryline import review_integrity as integrity
+
+    tree = ast.parse(
+        "def test_behavior():\n    try:\n        operation()\n    except ValueError:\n        "
+        + statement
+        + "\n"
+    )
+    integrity.bind_security_call_scopes(tree)
+    findings = integrity.discarded_assertion_error_findings(
+        "tests/test_case.py", tree.body[0]
+    )
+    assert len(findings) == expected
+    if findings:
+        assert findings[0]["code"] == "QUALITY_WEAK_TEST_ORACLE"
+        assert findings[0]["facts"]["execution_state"] == "NOT_ESTABLISHED"
+        assert findings[0]["facts"]["whole_test_oracle"] == "UNASSESSED"
+
+
+def test_shared_workspace_binder_and_public_consumer_inventory_reject_stale_rows(
+    tmp_path,
+):
+    from factoryline import review_integrity as integrity
+    from factoryline import provenance
+
+    path = tmp_path / "source.py"
+    raw = b"value = 1\n"
+    tree = ast.parse(raw)
+    tree._oracle_source_sha256 = hashlib.sha256(raw).hexdigest()
+    snapshots = {path: tree}
+    contexts = {path: {}}
+    integrity.bind_fixed_program_workspace(
+        tmp_path, contexts, snapshots, [path], {path: raw}, {path: {}}
+    )
+    profile = contexts[path]["fixed_program_workspace"]
+    expected = hashlib.sha256(
+        json.dumps(
+            [["source.py", tree._oracle_source_sha256]], separators=(",", ":")
+        ).encode()
+    ).hexdigest()
+    assert profile["sources_sha256"] == expected
+    assert profile["complete"] is True
+    assert profile["namespace_mutation_risk"] is False
+    contexts[path]["credential_consumers"] = {"stale": {"eligible": True}}
+    contexts[path]["finite_template_inputs"] = {"stale": {"eligible": True}}
+    provenance.bind_public_symbolic_consumers(
+        tmp_path, snapshots, {path: {}}, contexts, {path: raw}, {}, integrity
+    )
+    assert contexts[path]["credential_consumers"] == {}
+    assert contexts[path]["finite_template_inputs"] == {}
+
+
+def test_native_helper_catalogs_bind_live_predicate_code_and_catalog_schema(
+    monkeypatch,
+):
+    from factoryline import review_integrity as integrity
+    from factoryline import provenance
+    from factoryline import credential_role_constructor_provider as provider
+    from factoryline import credential_endpoint_admission as admission
+
+    expected = (
+        "factory.security-oracle-context-cache.v8:" + admission.catalog_content_digest()
+    )
+    assert integrity.credential_context_cache_schema() == expected
+    direct = provenance.credential_consumer_helpers(integrity)
+    assert direct == integrity.credential_consumer_helpers()
+    assert provenance.public_symbolic_binding in direct
+    assert provenance.bind_public_symbolic_consumers in direct
+    workspace = integrity.fixed_program_workspace_helpers()
+    assert workspace and all(callable(value) for value in workspace)
+    before = provider._helper_snapshot(integrity.credential_consumer_helpers)
+    original = provenance.public_symbolic_binding
+
+    def rejected(*args):
+        return False
+
+    with monkeypatch.context() as patch:
+        patch.setattr(provenance, "public_symbolic_binding", rejected)
+        assert (
+            provider._helper_snapshot(integrity.credential_consumer_helpers) != before
+        )
+    assert provider._helper_snapshot(integrity.credential_consumer_helpers) == before
+    assert provenance.public_symbolic_binding is original
+
+
+def test_public_symbolic_boundary_preserves_unproved_primitive_and_rejects_unbound_facts():
+    from factoryline import provenance
+    from factoryline import review_integrity as integrity
+
+    node = ast.parse("PASSWORD = 'demo'\n").body[0]
+    findings = [
+        {
+            "code": "SECURITY_HARDCODED_SECRET",
+            "path": "source.py",
+            "line": 1,
+            "column": 0,
+            "facts": {"role_candidate": "symbolic_enum_identifier"},
+        }
+    ]
+    before = json.loads(json.dumps(findings))
+    assert (
+        provenance.public_symbolic_findings("source.py", node, findings, integrity)
+        is findings
+    )
+    assert findings == before
+    assert not provenance.public_symbolic_binding(findings[0], {}, {})
+
+
+def test_precision257_security_scan_report_and_seal_keep_integrity_fields():
+    from types import SimpleNamespace
+    from hashlib import sha256
+    from factoryline.audit_action_refs import security_scan_report, seal_security_scan
+
+    class Integrity:
+        @staticmethod
+        def partition_proven_primitive_observations(core):
+            core["state"] = "CLEAN"
+
+    audit = SimpleNamespace(
+        MAX_SECURITY_SOURCE_FILES=10,
+        SECURITY_SCHEMA="factory.security.v1",
+        integrity=Integrity(),
+        sha256=sha256,
+        _security_scan_coverage=lambda files, outcomes, limit: {
+            "complete": True,
+            "files": len(files),
+        },
+        _security_scan_state=lambda files, findings, db, coverage: "INCOMPLETE",
+        _tenant_read_contract=lambda *args: {"calls": list(args[0])},
+        contracts=SimpleNamespace(
+            import_context_metadata=lambda *args: {"edges": len(args[1])}
+        ),
+        _security_scan_action_summary=lambda state: "Review required"
+        if state == "INCOMPLETE"
+        else "Clean",
+        _security_scan_report_candidate_payload=lambda core: {
+            k: v
+            for k, v in core.items()
+            if k not in {"candidate_sha256", "audit_sha256", "agent_actions"}
+        },
+        audit_remediation_packet=lambda digest, item: {
+            "digest": digest,
+            "finding": item["code"],
+        },
+    )
+    audit._seal_security_scan = lambda core: seal_security_scan(audit, core)
+    report = security_scan_report(
+        audit,
+        [],
+        [{"code": "TEST"}],
+        [],
+        {"TEST": 1},
+        {"syntax_error": 0, "unreadable": 0, "too_large": 0},
+        (),
+        {},
+        [],
+        [],
+    )
+    assert report["state"] == "INCOMPLETE" and report["files_scanned"] == 0
+    assert report["authority"] == {
+        "execution": False,
+        "approval": False,
+        "publication": False,
+        "deployment": False,
+    }
+    assert report["agent_actions"] == [
+        {"digest": report["candidate_sha256"], "finding": "TEST"}
+    ]
+    assert len(report["candidate_sha256"]) == len(report["audit_sha256"]) == 64
+    assert "_primitive_source_bytes" not in report
+    core = {
+        "state": "INCOMPLETE",
+        "action_summary": "Keep incomplete",
+        "findings": [{"code": "TEST"}],
+    }
+    sealed = seal_security_scan(audit, core)
+    assert (
+        sealed["state"] == "INCOMPLETE"
+        and sealed["action_summary"] == "Keep incomplete"
+    )
+    assert len(sealed["audit_sha256"]) == 64 and "_primitive_source_bytes" not in sealed
+
+
+def test_precision257_intent_quality_url_and_path_helpers_distinguish_safe_and_unsafe():
+    import ast
+    from factoryline import intent_quality as iq
+
+    safe_call = ast.parse("requests.get(url=safe)", mode="eval").body
+    unsafe_call = ast.parse("requests.get(user_url)", mode="eval").body
+    assert iq.bound_sink_argument(safe_call, 0, ("url",)).id == "safe"
+    assert (
+        iq.bound_sink_argument(ast.parse("requests.get(*args)", mode="eval").body, 0)
+        is None
+    )
+    tainted = {"user_url"}
+
+    def is_tainted(node, sources, _seen, _aliases):
+        return isinstance(node, ast.Name) and node.id in sources
+
+    assert (
+        iq.unsafe_request_url(
+            unsafe_call, "requests.get", tainted, {}, is_tainted, lambda *_: False
+        )
+        is True
+    )
+    assert (
+        iq.unsafe_request_url(
+            safe_call, "requests.get", tainted, {}, is_tainted, lambda *_: False
+        )
+        is False
+    )
+    open_call = ast.parse("open(user_path)", mode="eval").body
+    assert (
+        iq.unsafe_open(
+            open_call, tainted | {"user_path"}, {}, is_tainted, lambda *_: False
+        )
+        is True
+    )
+    assert (
+        iq.unsafe_open(
+            ast.parse("other(user_path)", mode="eval").body,
+            {"user_path"},
+            {},
+            is_tainted,
+            lambda *_: False,
+        )
+        is False
+    )
+    assert (
+        iq.fixed_root_filename_path(
+            ast.parse(
+                "os.path.join('/srv/data', secure_filename(name))", mode="eval"
+            ).body,
+            {("secure-upload-leaf", "name")},
+            {},
+            lambda node, aliases, target: target
+            in {"os.path.join", "werkzeug.utils.secure_filename"},
+        )
+        is True
+    )
+    assert (
+        iq.fixed_root_filename_path(
+            ast.parse("os.path.join('/srv/data', name)", mode="eval").body,
+            {"name"},
+            {},
+            lambda *_: True,
+        )
+        is False
+    )
+
+
+def test_precision257_intent_quality_guard_and_sanitizer_bindings():
+    import ast
+    from factoryline import intent_quality as iq
+    from factoryline.security_configuration import yaml_safe_loader
+
+    assert (
+        yaml_safe_loader(
+            ast.parse("yaml.load(data, Loader=yaml.SafeLoader)", mode="eval").body,
+            {"yaml": "yaml"},
+        )
+        is True
+    )
+    assert (
+        yaml_safe_loader(
+            ast.parse("yaml.load(data, Loader=yaml.Loader)", mode="eval").body,
+            {"yaml": "yaml"},
+        )
+        is False
+    )
+    module = ast.parse(
+        "if urllib.parse.urlparse(url).hostname in {'example.com'}:\n    requests.get(url)"
+    )
+    guard = module.body[0]
+    call = module.body[0].body[0].value
+    call._security_flow_statement = guard
+    call._security_lexical_scope = module
+    assert (
+        iq.parsed_host_allowlist(
+            call,
+            {"urllib": "urllib"},
+            lambda node, aliases: "urllib.parse.urlparse",
+            lambda node, aliases, name: name == "urllib.parse.urlparse",
+        )
+        is True
+    )
+    assert (
+        iq.parsed_host_allowlist(
+            ast.parse("requests.get(url)", mode="eval").body,
+            {},
+            lambda *_: "requests.get",
+            lambda *_: True,
+        )
+        is False
+    )
+    clean = ast.parse("def f(url):\n    return urllib.parse.urlparse(url)")
+    clean_call = clean.body[0].body[0].value
+    assert (
+        iq.sanitizer_provider_unchanged(
+            clean_call,
+            {"urllib": "urllib"},
+            "urllib.parse.urlparse",
+            lambda scope: clean,
+        )
+        is True
+    )
+    mutated = ast.parse(
+        "urllib.parse.urlparse = evil\ndef f(url):\n    return urllib.parse.urlparse(url)"
+    )
+    changed_call = mutated.body[1].body[0].value
+    assert (
+        iq.sanitizer_provider_unchanged(
+            changed_call,
+            {"urllib": "urllib"},
+            "urllib.parse.urlparse",
+            lambda scope: mutated,
+        )
+        is False
+    )
+
+
+def test_source_span_validation_accepts_ordered_coordinates_only():
+    assert binding.valid_source_span([1, 0, 1, 8])
+    assert binding.valid_source_span([2, 4, 3, 0])
+    assert not binding.valid_source_span([0, 0, 1, 1])
+    assert not binding.valid_source_span([2, 4, 2, 3])
+    assert not binding.valid_source_span([1, True, 1, 2])
+
+
+def test_fixed_program_builtin_identity_rejects_shadowed_builtin_names():
+    source = ast.parse("exec('x = 1')\n")
+    call = next(node for node in ast.walk(source) if isinstance(node, ast.Call))
+    assert binding.fixed_program_builtin_identity(
+        review_integrity, call, source, "exec"
+    )
+    shadowed = ast.parse("exec = runner\nexec('x = 1')\n")
+    shadow_call = next(
+        node for node in ast.walk(shadowed) if isinstance(node, ast.Call)
+    )
+    assert not binding.fixed_program_builtin_identity(
+        review_integrity, shadow_call, shadowed, "exec"
+    )
+
+
+def test_fixed_program_witness_uses_bound_source_and_builtin_identity():
+    source = b"exec('x = 1')\n"
+    call = next(
+        node for node in ast.walk(ast.parse(source)) if isinstance(node, ast.Call)
+    )
+    assert binding.fixed_program_builtin_identity(
+        review_integrity, call, ast.parse(source.decode()), "exec"
+    )
+    assert binding.fixed_program_witness(review_audits, "app.py", call, "exec") == {}
+
+
+def test_credential_context_cache_schema_is_versioned_and_catalog_bound():
+    first = binding.credential_context_cache_schema()
+    assert first.startswith("factory.security-oracle-context-cache.v8:")
+    assert binding.credential_context_cache_schema() == first
+
+
+def test_closed_declaration_binding_accepts_exact_contract_and_rejects_span_forgery():
+    facts = {
+        "disposition": "PROVEN_CLOSED_DECLARATION_INPUT",
+        "schema": "factory.closed-declaration-input.v1",
+        "grammar_profile": "python3.12-type-alias-subset-v1",
+        "hypothesis": "ARGUMENT_CODE_INJECTION",
+        "input_effect": "CLOSED_INERT_DECLARATION",
+        "runtime_assurance": "INCOMPLETE",
+        "target_execution": "not_performed",
+        "program_sha256": "a" * 64,
+        "call_span": [1, 0, 1, 24],
+        "literal_span": [1, 12, 1, 23],
+    }
+    finding = {"line": 1, "column": 0, "facts": facts}
+    assert binding.closed_declaration_binding(finding, review_integrity)
+    forged = json.loads(json.dumps(finding))
+    forged["facts"]["literal_span"] = [1, 12, 1, 25]
+    assert not binding.closed_declaration_binding(forged, review_integrity)
+
+
+def test_django_fixture_annotation_and_binding_recompute_owner_and_inventory_hashes():
+    source = "def test_secret():\n    token = 'synthetic'\n"
+    source_bytes = source.encode()
+    source_sha = hashlib.sha256(source_bytes).hexdigest()
+    config_bytes = {
+        "pyproject.toml": b"[tool.pytest.ini_options]\n",
+        "tox.ini": b"[tox]\n",
+    }
+    config_hashes = {
+        path: hashlib.sha256(raw).hexdigest() for path, raw in config_bytes.items()
+    }
+    inventory_rows = {"tests/test_app.py": source_sha, **config_hashes}
+    inventory_sha = hashlib.sha256(
+        "\n".join(
+            sorted(f"{name}\0{digest}" for name, digest in inventory_rows.items())
+        ).encode()
+    ).hexdigest()
+    evidence = {
+        "classification": "TEST_OWNED_LOCAL_FIXTURE",
+        "eligible": True,
+        "source": "tests/test_app.py",
+        "source_sha256": source_sha,
+        "runner_config_sha256": config_hashes,
+        "inventory_sha256": inventory_sha,
+    }
+    module = ast.parse(source)
+    module._oracle_source_sha256 = source_sha
+    module._security_oracle_context = {
+        "django_fixture_evidence": {"1:0:token": evidence}
+    }
+    function = module.body[0]
+    function._security_lexical_scope = module
+    finding = {
+        "code": "SECURITY_HARDCODED_SECRET",
+        "severity": "CRITICAL",
+        "path": "tests/test_app.py",
+        "line": 1,
+        "column": 0,
+        "facts": {"name": "token"},
+    }
+    annotated = binding.annotate_django_fixture(finding, function)
+    assert annotated["facts"]["disposition"] == "TEST_OWNED_LOCAL_FIXTURE"
+    sources = [{"path": "tests/test_app.py", "sha256": source_sha}]
+    hashes = {"tests/test_app.py": source_sha, **config_hashes}
+    assert binding.django_fixture_binding(annotated, sources, hashes)
+    assert binding.fixed_primitive_binding(annotated, sources, hashes, review_integrity)
+    hashes["tox.ini"] = "0" * 64
+    assert not binding.django_fixture_binding(annotated, sources, hashes)
+
+
+def test_fixed_program_workspace_binding_and_helper_surface_rebuild_hashes(tmp_path):
+    source = b"exec('x = 1')\n"
+    path = tmp_path / "app.py"
+    path.write_bytes(source)
+    tree = ast.parse(source)
+    tree._oracle_source_sha256 = hashlib.sha256(source).hexdigest()
+    contexts = {"module": {"credential_consumers": {"seed": True}}}
+    helper_bundle = binding.fixed_program_workspace_helpers(review_integrity)
+    binder = helper_bundle[0]
+    binder(tmp_path, contexts, {path: tree}, [path])
+    profile = contexts["module"]["fixed_program_workspace"]
+    assert profile["complete"] is True
+    assert profile["sources_sha256"]
+    assert profile["credential_consumers"] == {"seed": True}
+    changed = ast.parse("globals()['exec']('x=1')\n")
+    changed._oracle_source_sha256 = hashlib.sha256(
+        b"globals()['exec']('x=1')\n"
+    ).hexdigest()
+    rebound = {"module": {}}
+    binding.bind_fixed_program_workspace(
+        review_integrity, tmp_path, rebound, {path: changed}, [path]
+    )
+    assert (
+        rebound["module"]["fixed_program_workspace"]["namespace_mutation_risk"] is True
+    )
+
+
+def test_application_capture_refactor_keeps_exact_config_hash_and_source_boundaries(
+    tmp_path, monkeypatch
+):
+    from factoryline import audit_action_refs as refs
+    from factoryline import primitive_observation_binding as binding
+    from factoryline import credential_role_constructor_provider as provider
+
+    raw = b"value = 1\n"
+    config = b"[project]\nname='sample'\n"
+    (tmp_path / "pyproject.toml").write_bytes(config)
+    digest = hashlib.sha256(config).hexdigest()
+    evidence = {
+        "profile": "DJANGO_CLASS_LOCAL_ACCOUNT_ENROLLMENT",
+        "configuration_sha256": {
+            "pyproject.toml": digest,
+            "ignored.toml": "a" * 64,
+            "tox.ini": "short",
+        },
+    }
+    assert refs._application_configuration_hashes(
+        [evidence, {"configuration_sha256": []}]
+    ) == {"pyproject.toml": digest}
+    assert refs._application_configuration_hashes([]) == {}
+    findings = [{"path": "app.py", "facts": {"fixture_evidence": evidence}}]
+    bindings = [
+        {"path": "app.py", "sha256": hashlib.sha256(raw).hexdigest()},
+        {"path": "other.py", "sha256": "0" * 64},
+    ]
+    captured = refs._captured_application_source_bytes(
+        tmp_path,
+        findings,
+        bindings,
+        {tmp_path / "app.py": raw, tmp_path / "other.py": raw},
+    )
+    assert captured == {"app.py": raw, "pyproject.toml": config}
+    (tmp_path / "pyproject.toml").write_bytes(b"changed")
+    assert refs._captured_application_source_bytes(
+        tmp_path, findings, bindings, {tmp_path / "app.py": raw}
+    ) == {"app.py": raw}
+    original = provider._helper_snapshot(binding.primitive_binding_helpers)
+
+    def changed(*args):
+        return {}
+
+    with monkeypatch.context() as patch:
+        patch.setattr(refs, "_application_configuration_hashes", changed)
+        assert provider._helper_snapshot(binding.primitive_binding_helpers) != original
+    assert provider._helper_snapshot(binding.primitive_binding_helpers) == original
+
+
+def test_fixed_eval_semantic_helpers_are_bound_into_workspace_epoch(monkeypatch):
+    from factoryline import primitive_observation_binding as binding
+    from factoryline import runtime_audit_integrity as runtime
+    from factoryline import credential_role_constructor_provider as provider
+
+    epoch_helpers = binding.fixed_program_workspace_helpers(review_integrity)
+    assert all(
+        helper in epoch_helpers for helper in runtime.fixed_eval_workspace_helpers()
+    )
+    baseline = provider._helper_snapshot(
+        review_integrity.fixed_program_workspace_helpers
+    )
+    names = (
+        "_fixed_eval_name_hazard",
+        "_fixed_eval_import_hazard",
+        "_fixed_eval_attribute_hazard",
+        "_fixed_eval_sink_context",
+        "_fixed_eval_control_flow",
+        "_fixed_eval_local_states",
+        "_fixed_eval_assignment_state",
+        "_fixed_eval_decode_state",
+        "_fixed_eval_proof",
+    )
+    for name in names:
+        with monkeypatch.context() as patch:
+            patch.setattr(runtime, name, lambda *args, **kwargs: None)
+            assert (
+                provider._helper_snapshot(
+                    review_integrity.fixed_program_workspace_helpers
+                )
+                != baseline
+            ), name
+    for name in ("_fixed_program_chain_binding", "_fixed_program_expected_witness"):
+        with monkeypatch.context() as patch:
+            patch.setattr(binding, name, lambda *args, **kwargs: None)
+            assert (
+                provider._helper_snapshot(
+                    review_integrity.fixed_program_workspace_helpers
+                )
+                != baseline
+            ), name
+
+
+def test_fixed_eval_capture_helpers_have_one_source_owner():
+    from factoryline import finite_capture as capture
+    from factoryline import runtime_audit_integrity as runtime
+
+    for name in (
+        "fixed_eval_local_input_witness",
+        "fixed_eval_workspace_provider_clear",
+        "_fixed_eval_provider_alias_escape",
+        "_fixed_eval_module_alias_escape",
+        "_fixed_literal_program_kinds",
+    ):
+        implementation = getattr(capture, name)
+        assert implementation.__module__ == capture.__name__
+        assert getattr(runtime, name) is implementation
+
+
+def test_fixed_eval_actual_capture_callees_invalidate_workspace_epoch(monkeypatch):
+    from factoryline import finite_capture as capture
+    from factoryline import runtime_audit_integrity as runtime
+    from factoryline import credential_role_constructor_provider as provider
+
+    names = {
+        helper.__name__
+        for helper in runtime.fixed_eval_workspace_helpers()
+        if helper.__module__ == capture.__name__
+    }
+    assert "_fixed_literal_program_kinds" in names
+    assert "_fixed_literal_value" in names
+    baseline = provider._helper_snapshot(
+        review_integrity.fixed_program_workspace_helpers
+    )
+    for name in names:
+        with monkeypatch.context() as patch:
+            patch.setattr(capture, name, lambda *args, **kwargs: None)
+            assert (
+                provider._helper_snapshot(
+                    review_integrity.fixed_program_workspace_helpers
+                )
+                != baseline
+            ), name

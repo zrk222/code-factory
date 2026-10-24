@@ -55,51 +55,66 @@ def _captured_closure_closed(root, sources, closure):
     return True
 
 
+def _import_binding_names(node):
+    return [(item.asname or item.name, item.name) for item in node.names]
+
+
+def _collect_plain_import(node, local, bindings, sys_names, typing_names):
+    imports = _import_binding_names(node)
+    names = {name for name, _module in imports}
+    if len(names) < len(imports) or bindings.intersection(names):
+        return False
+    if any(
+        name not in local and module not in {"sys", "typing"}
+        for name, module in imports
+    ):
+        return False
+    sys_names.update(
+        name for name, module in imports if module == "sys" and name not in local
+    )
+    typing_names.update(
+        name for name, module in imports if module == "typing" and name not in local
+    )
+    bindings.update(names)
+    return True
+
+
+def _collect_from_import(node, local, bindings, type_names):
+    names = _import_binding_names(node)
+    bound_names = {name for name, _symbol in names}
+    if (
+        any(symbol == "*" or name not in local for name, symbol in names)
+        or len(bound_names) < len(names)
+        or bindings.intersection(bound_names)
+    ):
+        return False
+    if node.level == 0 and node.module == "typing":
+        type_names.update(name for name, symbol in names if symbol == "assert_type")
+    bindings.update(bound_names)
+    return True
+
+
 def dynamic_provider_capability(tree, local_imports=()):
-    """Report dynamic provider capability when imports, bindings, or module effects escape the modeled inert subset."""
+    """Report capabilities outside the modeled inert module subset."""
     if not isinstance(tree, ast.Module):
         return True
-    local, sys_names, typing_names, type_names = set(local_imports), set(), set(), set()
-    bindings = set()
+    local = set(local_imports)
+    sys_names, typing_names, type_names, bindings = set(), set(), set(), set()
     for node in tree.body:
         if isinstance(node, ast.Import):
-            imports = [(item.asname or item.name, item.name) for item in node.names]
-            names = {name for name, _module in imports}
-            if len(names) < len(imports) or bindings.intersection(names):
-                return True
-            if any(
-                name not in local and module not in {"sys", "typing"}
-                for name, module in imports
+            if not _collect_plain_import(
+                node, local, bindings, sys_names, typing_names
             ):
                 return True
-            sys_names.update(
-                n for n, module in imports if module == "sys" and n not in local
-            )
-            typing_names.update(
-                n for n, module in imports if module == "typing" and n not in local
-            )
-            bindings.update(names)
         elif isinstance(node, ast.ImportFrom):
-            names = [(item.asname or item.name, item.name) for item in node.names]
-            bound_names = {name for name, _symbol in names}
-            if (
-                any(symbol == "*" or name not in local for name, symbol in names)
-                or len(bound_names) < len(names)
-                or bindings.intersection(bound_names)
-            ):
+            if not _collect_from_import(node, local, bindings, type_names):
                 return True
-            if node.level == 0 and node.module == "typing":
-                type_names.update(n for n, symbol in names if symbol == "assert_type")
-            bindings.update(bound_names)
     protected = sys_names | typing_names | type_names
     profile = local, protected, sys_names, type_names, typing_names
     return not _inert_body(tree.body, profile)
 
 
-def owner_module_effects_closed(
-    tree, selected_test, canonical, noop_write=None, local_imports=()
-):
-    """Confirm the provider module is closed after removing the selected assert_type test and any proven no-op write."""
+def _selected_owner_test_is_exact(tree, selected_test, canonical, noop_write):
     if (
         canonical != "typing.assert_type"
         or not isinstance(tree, ast.Module)
@@ -108,6 +123,23 @@ def owner_module_effects_closed(
         or noop_write is not None
         and sum(statement is noop_write for statement in tree.body) != 1
     ):
+        return False
+    return True
+
+
+def _owner_body_without_test(tree, selected_test, noop_write):
+    return [
+        _without_selected_test_body(item) if item is selected_test else item
+        for item in tree.body
+        if item is not noop_write
+    ]
+
+
+def owner_module_effects_closed(
+    tree, selected_test, canonical, noop_write=None, local_imports=()
+):
+    """Confirm provider effects after removing the selected test and proven no-op write."""
+    if not _selected_owner_test_is_exact(tree, selected_test, canonical, noop_write):
         return False
     allowed_imports = set(local_imports) | {
         alias.asname or alias.name
@@ -118,11 +150,7 @@ def owner_module_effects_closed(
         for alias in statement.names
         if alias.name == "assert_type"
     }
-    body = [
-        _without_selected_test_body(item) if item is selected_test else item
-        for item in tree.body
-        if item is not noop_write
-    ]
+    body = _owner_body_without_test(tree, selected_test, noop_write)
     return not dynamic_provider_capability(
         ast.Module(body=body, type_ignores=tree.type_ignores), allowed_imports
     )

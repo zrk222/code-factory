@@ -48,6 +48,11 @@ def single_return(function):
 
 def default_getter(call):
     """Recognize the exact settings getter lambda shape used to fetch ALLAUTH_SETTING_GETTER with a default."""
+    lam = _settings_getter_lambda(call)
+    return lam is not None and _settings_getter_lambda_is_exact(lam)
+
+
+def _settings_getter_lambda(call):
     if not (
         isinstance(call.func, ast.Name)
         and call.func.id == "getattr"
@@ -59,12 +64,16 @@ def default_getter(call):
         and call.args[1].value == "ALLAUTH_SETTING_GETTER"
         and isinstance(call.args[2], ast.Lambda)
     ):
-        return False
-    lam = call.args[2]
+        return None
+    return call.args[2]
+
+
+def _settings_getter_lambda_is_exact(lam):
     args = lam.args
+    if [n.arg for n in args.args] != ["name", "dflt"]:
+        return False
     if (
-        [n.arg for n in args.args] != ["name", "dflt"]
-        or args.posonlyargs
+        args.posonlyargs
         or args.kwonlyargs
         or args.vararg
         or args.kwarg
@@ -72,6 +81,10 @@ def default_getter(call):
     ):
         return False
     body = lam.body
+    return _settings_getter_body_is_exact(body)
+
+
+def _settings_getter_body_is_exact(body):
     return bool(
         isinstance(body, ast.Call)
         and isinstance(body.func, ast.Name)
@@ -140,6 +153,16 @@ def _callable_bridge(function):
 
 def property_default(owner):
     """Recognize an adapter property that returns a dotted setting name through self._setting and return its source nodes."""
+    function = _property_default_method(owner)
+    if function is None:
+        return None
+    row = _property_default_return(function)
+    if row is None:
+        return None
+    return function, row[0], row[1], row[1].value
+
+
+def _property_default_method(owner):
     if owner.decorator_list or owner.keywords:
         return None
     row = effective_method([(None, owner.name, owner)], "ADAPTER", {"property"})
@@ -148,6 +171,10 @@ def property_default(owner):
     function = row[1]
     if not single_return(function):
         return None
+    return function
+
+
+def _property_default_return(function):
     if not any(
         (isinstance(item, ast.Name) and item.id == "property")
         or (isinstance(item, ast.Attribute) and item.attr == "property")
@@ -158,6 +185,11 @@ def property_default(owner):
     if len(returns) != 1 or not isinstance(returns[0].value, ast.Call):
         return None
     call = returns[0].value
+    argument = _property_default_argument(call)
+    return (returns[0], argument) if argument is not None else None
+
+
+def _property_default_argument(call):
     if not (
         isinstance(call.func, ast.Attribute)
         and call.func.attr == "_setting"
@@ -172,7 +204,7 @@ def property_default(owner):
         and "." in call.args[1].value
     ):
         return None
-    return function, returns[0], call.args[1], call.args[1].value
+    return call.args[1]
 
 
 def method_rows(chain, index, imports):
@@ -519,6 +551,12 @@ def verified_instance_receiver(node, function, owner, index, path, verified):
 
     if not function.decorator_list:
         return instance_receiver(node, function, owner, index, path)
+    return _verified_decorated_receiver(node, function, owner, index, path, verified)
+
+
+def _verified_decorated_receiver(node, function, owner, index, path, verified):
+    from .credential_role_constructor_provider import binding_occurrences
+
     if (
         not verified
         or owner is None
@@ -529,10 +567,12 @@ def verified_instance_receiver(node, function, owner, index, path, verified):
     positional = [*args.posonlyargs, *args.args]
     if not positional or positional[0].arg != "self":
         return False
-    from .credential_role_constructor_provider import binding_occurrences
-
     if binding_occurrences(function.body, "self"):
         return False
+    return _verified_receiver_ancestry(node, function, index, path, args)
+
+
+def _verified_receiver_ancestry(node, function, index, path, args):
     current = node
     while current is not function:
         current = index.parents[path].get(id(current))
@@ -659,6 +699,21 @@ def settings_module_bridge(snapshots, settings_path, owner, module_binding):
     tree = snapshots.get(settings_path)
     if not isinstance(tree, ast.Module) or owner.name != "AppSettings":
         return None
+    if not _settings_bridge_class(tree, owner, module_binding):
+        return None
+    hook = module_binding(tree, "__getattr__", (ast.FunctionDef, ast.AsyncFunctionDef))
+    assignments = _settings_bridge_assignment(tree)
+    if not _settings_bridge_hook(hook):
+        return None
+    if not _settings_bridge_assignment_binding(tree, assignments, module_binding):
+        return None
+    assignment = assignments[0]
+    if not _settings_bridge_constructor(assignment.value, owner):
+        return None
+    return _settings_bridge_return(tree, hook, assignment)
+
+
+def _settings_bridge_class(tree, owner, module_binding):
     classes = [
         item
         for item in tree.body
@@ -671,8 +726,11 @@ def settings_module_bridge(snapshots, settings_path, owner, module_binding):
         or owner.decorator_list
         or owner.keywords
     ):
-        return None
-    hook = module_binding(tree, "__getattr__", (ast.FunctionDef, ast.AsyncFunctionDef))
+        return False
+    return True
+
+
+def _settings_bridge_assignment(tree):
     assignments = [
         item
         for item in tree.body
@@ -681,6 +739,10 @@ def settings_module_bridge(snapshots, settings_path, owner, module_binding):
         and isinstance(item.targets[0], ast.Name)
         and item.targets[0].id == "_app_settings"
     ]
+    return assignments
+
+
+def _settings_bridge_hook(hook):
     if (
         not isinstance(hook, ast.FunctionDef)
         or hook.decorator_list
@@ -689,12 +751,20 @@ def settings_module_bridge(snapshots, settings_path, owner, module_binding):
         or hook.args.kwonlyargs
         or hook.args.vararg
         or hook.args.kwarg
-        or len(assignments) != 1
-        or module_binding(tree, "_app_settings", ast.Assign) is not assignments[0]
     ):
-        return None
-    call = assignments[0].value
-    if not (
+        return False
+    return True
+
+
+def _settings_bridge_assignment_binding(tree, assignments, module_binding):
+    return (
+        len(assignments) == 1
+        and module_binding(tree, "_app_settings", ast.Assign) is assignments[0]
+    )
+
+
+def _settings_bridge_constructor(call, owner):
+    return bool(
         isinstance(call, ast.Call)
         and isinstance(call.func, ast.Name)
         and call.func.id == owner.name
@@ -702,8 +772,10 @@ def settings_module_bridge(snapshots, settings_path, owner, module_binding):
         and not call.keywords
         and isinstance(call.args[0], ast.Constant)
         and isinstance(call.args[0].value, str)
-    ):
-        return None
+    )
+
+
+def _settings_bridge_return(tree, hook, assignment):
     returns = _returns(hook)
     from .credential_role_paths import single_return
 
@@ -715,7 +787,7 @@ def settings_module_bridge(snapshots, settings_path, owner, module_binding):
 
     if binding_occurrences(tree.body, "getattr"):
         return None
-    return hook, assignments[0]
+    return hook, assignment
 
 
 def module_binding(tree, name, kind):
@@ -736,6 +808,11 @@ def _doc(node):
 
 def fallback_method(function):
     """Recognize the exact un-decorated settings fallback method shape and return its lookup nodes only when names and branches are stable."""
+    shape = _fallback_rows(function)
+    return _fallback_attempt(shape, function) if shape else None
+
+
+def _fallback_rows(function):
     if function is None or function.decorator_list:
         return None
     if [arg.arg for arg in function.args.args][:3] != ["self", "name", "default"]:
@@ -749,7 +826,12 @@ def fallback_method(function):
         return None
     if not _stable_names(function):
         return None
-    loop, final = loops[0], rows[-1]
+    return rows, loops[0]
+
+
+def _fallback_attempt(shape, function):
+    rows, loop = shape
+    final = rows[-1]
     if (
         not isinstance(final, ast.Return)
         or not isinstance(final.value, ast.Name)
@@ -945,32 +1027,20 @@ def trace_return(
     returned = row.value
     parameter_name, aliases = returned_parameter(function, returned)
     if parameter_name is not None:
-        owner = scope_class(expression, flow.index, caller_path)
-        if owner is None or not verified_instance_receiver(
+        return _trace_bound_parameter(
+            flow,
             expression,
+            row_path,
+            function,
             caller,
-            owner,
-            flow.index,
             caller_path,
-            bool(flow.decorator_proofs.get(caller.name)),
-        ):
-            return None
-        try:
-            bound = _bound_arguments(flow, expression, function)
-        except (TypeError, ValueError):
-            return None
-        actual = bound.get(parameter_name)
-        found = (
-            flow.trace(actual, caller, caller_path, seen, depth + 1, caller_bindings)
-            if actual is not None
-            else None
+            seen,
+            depth,
+            caller_bindings,
+            parameter_name,
+            aliases,
+            scope_class,
         )
-        found = flow._prepend("method_argument_binding", caller_path, actual, found)
-        parameter = _parameter_node(function, parameter_name)
-        found = flow._prepend("bound_method_parameter", row_path, parameter, found)
-        for assignment in reversed(aliases):
-            found = flow._prepend("unique_local_alias", row_path, assignment, found)
-        return found
     receiver = format_receiver(returned)
     if receiver and ("{" in flow.fact._literal or "}" in flow.fact._literal):
         return None
@@ -984,6 +1054,48 @@ def trace_return(
         if receiver
         else found
     )
+
+
+def _trace_bound_parameter(
+    flow,
+    expression,
+    row_path,
+    function,
+    caller,
+    caller_path,
+    seen,
+    depth,
+    caller_bindings,
+    parameter_name,
+    aliases,
+    scope_class,
+):
+    owner = scope_class(expression, flow.index, caller_path)
+    if owner is None or not verified_instance_receiver(
+        expression,
+        caller,
+        owner,
+        flow.index,
+        caller_path,
+        bool(flow.decorator_proofs.get(caller.name)),
+    ):
+        return None
+    try:
+        bound = _bound_arguments(flow, expression, function)
+    except (TypeError, ValueError):
+        return None
+    actual = bound.get(parameter_name)
+    found = (
+        flow.trace(actual, caller, caller_path, seen, depth + 1, caller_bindings)
+        if actual is not None
+        else None
+    )
+    found = flow._prepend("method_argument_binding", caller_path, actual, found)
+    parameter = _parameter_node(function, parameter_name)
+    found = flow._prepend("bound_method_parameter", row_path, parameter, found)
+    for assignment in reversed(aliases):
+        found = flow._prepend("unique_local_alias", row_path, assignment, found)
+    return found
 
 
 def _bound_arguments(flow, call, function):
@@ -1467,36 +1579,10 @@ def _strategy_assignment(function, argument):
 
 def setting_default(expression, chain, index, classes):
     """Return source default plus evidence nodes only for the verified strategy route."""
-    if not isinstance(expression, ast.Call) or not isinstance(
-        expression.func, ast.Attribute
-    ):
+    route = _setting_default_route(expression, chain, index, classes)
+    if route is None:
         return None
-    if (
-        not isinstance(expression.func.value, ast.Name)
-        or expression.func.value.id != "self"
-        or expression.func.attr != "setting"
-    ):
-        return None
-    row = effective_method(chain, "setting")
-    init = effective_method(chain, "__init__")
-    if row is None or init is None:
-        return None
-    forward = _strategy_setting_method(row[1])
-    initializer = init[1]
-    arg = next((item for item in initializer.args.args if item.arg == "strategy"), None)
-    if forward is None or arg is None or arg.annotation is None:
-        return None
-    if _strategy_assignment(initializer, arg) is None:
-        return None
-    names = {item.id for item in ast.walk(arg.annotation) if isinstance(item, ast.Name)}
-    target = _typed_strategy(index, init[0], names, classes)
-    if target is None or not index.validate(target[0]):
-        return None
-    owner = classes[target]
-    strategy = effective_method([(target[0], target[1], owner)], "setting")
-    verified = fallback_method(strategy[1]) if strategy else None
-    if verified is None:
-        return None
+    row, forward, init, initializer, strategy, verified = route
     from .review_integrity import bind_source_call
 
     try:
@@ -1518,6 +1604,52 @@ def setting_default(expression, chain, index, classes):
         if default is not None
         else None
     )
+
+
+def _setting_default_route(expression, chain, index, classes):
+    if not isinstance(expression, ast.Call) or not isinstance(
+        expression.func, ast.Attribute
+    ):
+        return None
+    if (
+        not isinstance(expression.func.value, ast.Name)
+        or expression.func.value.id != "self"
+        or expression.func.attr != "setting"
+    ):
+        return None
+    row = effective_method(chain, "setting")
+    init = effective_method(chain, "__init__")
+    if row is None or init is None:
+        return None
+    strategy_route = _setting_strategy_route(row, init, index, classes)
+    if strategy_route is None:
+        return None
+    forward, initializer, strategy, verified = strategy_route
+    return row, forward, init, initializer, strategy, verified
+
+
+def _setting_strategy_route(row, init, index, classes):
+    forward = _strategy_setting_method(row[1])
+    initializer = init[1]
+    arg = next((item for item in initializer.args.args if item.arg == "strategy"), None)
+    if forward is None or arg is None or arg.annotation is None:
+        return None
+    if _strategy_assignment(initializer, arg) is None:
+        return None
+    names = {item.id for item in ast.walk(arg.annotation) if isinstance(item, ast.Name)}
+    target = _typed_strategy(index, init[0], names, classes)
+    if target is None or not index.validate(target[0]):
+        return None
+    return _resolved_strategy(index, classes, target, initializer, forward)
+
+
+def _resolved_strategy(index, classes, target, initializer, forward):
+    owner = classes[target]
+    strategy = effective_method([(target[0], target[1], owner)], "setting")
+    verified = fallback_method(strategy[1]) if strategy else None
+    if verified is None:
+        return None
+    return forward, initializer, strategy, verified
 
 
 _property_default = property_default
@@ -1921,25 +2053,12 @@ def method_url_hops(
         return None
     if _keyword(call, "url", 1) is not expression:
         return None
-    if not _current(index, sink_path):
-        return None
-    source_path = index.root / fact.path
-    chain = class_chain(index, source_path, fact.owner, imports, classes, audit)
-    if chain is None or any(not _current(index, path) for path, _, _ in chain):
-        return None
-    owner, function = (
-        scope_class(call, index, sink_path),
-        enclosing_function(call, index, sink_path),
+    route = _method_url_route(
+        fact, sink_path, call, index, imports, classes, aliases, audit
     )
-    if (
-        not chain
-        or owner is None
-        or function is None
-        or (sink_path, owner.name) not in {(p, n) for p, n, _ in chain}
-    ):
+    if route is None:
         return None
-    if effective_method(chain, function.name) != (sink_path, function):
-        return None
+    chain, function = route
     traced = _Flow(
         fact, chain, index, imports, classes, aliases, audit, integrity
     ).trace(expression, function, sink_path)
@@ -1962,6 +2081,26 @@ def method_url_hops(
         hops.append(_span(index, path, node, role))
     hops.append(_span(index, sink_path, call, "canonical_http_url_sink"))
     return hops
+
+
+def _method_url_route(fact, sink_path, call, index, imports, classes, aliases, audit):
+    if not _current(index, sink_path):
+        return None
+    source_path = index.root / fact.path
+    chain = class_chain(index, source_path, fact.owner, imports, classes, audit)
+    if chain is None or any(not _current(index, path) for path, _, _ in chain):
+        return None
+    owner, function = (
+        scope_class(call, index, sink_path),
+        enclosing_function(call, index, sink_path),
+    )
+    if not chain or owner is None or function is None:
+        return None
+    if (sink_path, owner.name) not in {(path, name) for path, name, _ in chain}:
+        return None
+    if effective_method(chain, function.name) != (sink_path, function):
+        return None
+    return chain, function
 
 
 _MAX_STATES = 128
@@ -2181,7 +2320,11 @@ def session_request_context(call, index, path, aliases):
         return False
     if not index.validate(path):
         return False
-    receiver, current = call.func.value.id, call
+    return _session_context_encloses(call, index, path, aliases, call.func.value.id)
+
+
+def _session_context_encloses(call, index, path, aliases, receiver):
+    current = call
     while current is not None:
         current = index.parents[path].get(id(current))
         if isinstance(

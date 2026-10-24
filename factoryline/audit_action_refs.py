@@ -395,15 +395,35 @@ def _security_scan_action_summary(state: str) -> str:
     return "Resolve each listed finding and rerun this deterministic scan before release review."
 
 
+def _application_configuration_hashes(class_profiles):
+    """Select only bounded configuration digests from explicit class profiles."""
+    config_hashes = {}
+    for evidence in class_profiles:
+        configured = evidence.get("configuration_sha256", {})
+        if not isinstance(configured, dict):
+            continue
+        for name, digest in configured.items():
+            if (
+                name in {"pyproject.toml", "requirements.txt", "tox.ini"}
+                and isinstance(digest, str)
+                and len(digest) == 64
+            ):
+                config_hashes[name] = digest
+    return config_hashes
+
+
 def _captured_application_source_bytes(workspace, findings, bindings, source_bytes):
     paths = {
         finding.get("path")
         for finding in findings
         if finding.get("facts", {}).get("disposition")
         in {
+            "PROVEN_FIXED_LITERAL_PROGRAM",
             "TEST_OWNED_APPLICATION_CREDENTIAL",
             "PROVEN_CLOSED_OPERATION_COMMAND_SYNTAX",
         }
+        or finding.get("code") == "SECURITY_HARDCODED_SECRET"
+        or isinstance(finding.get("facts", {}).get("security_precondition"), dict)
     }
     for finding in findings:
         evidence = finding.get("facts", {}).get("fixture_evidence", {})
@@ -415,6 +435,30 @@ def _captured_application_source_bytes(workspace, findings, bindings, source_byt
                 if isinstance(row, dict)
             )
     hashes = {row["path"]: row["sha256"] for row in bindings}
+    needs_signing_sources = any(
+        finding.get("code") == "SECURITY_HARDCODED_SECRET"
+        and finding.get("facts", {}).get("name") == "SECRET_KEY"
+        for finding in findings
+    )
+    paths.update(name for name in hashes if needs_signing_sources)
+    class_profiles = [
+        finding.get("facts", {}).get("fixture_evidence", {})
+        for finding in findings
+        if finding.get("facts", {}).get("fixture_evidence", {}).get("profile")
+        in {
+            "DJANGO_CLASS_LOCAL_ACCOUNT_ENROLLMENT",
+            "LOCAL_REVERSIBLE_CREDENTIAL_ROUNDTRIP",
+            "SOURCE_BOUND_FACTORY_TEST_AUTHORITY",
+            "LOCAL_SOURCE_SIGNING_AUTHORITY",
+            "STATIC_API_DATA_ROLE",
+        }
+    ]
+    config_hashes = _application_configuration_hashes(class_profiles)
+    if class_profiles:
+        # These profiles independently recompute over the whole inventory.
+        paths.update(name for name in hashes if name.endswith(".py"))
+    paths.update(config_hashes)
+    hashes.update(config_hashes)
     jwt_findings = [
         finding
         for finding in findings
@@ -425,17 +469,32 @@ def _captured_application_source_bytes(workspace, findings, bindings, source_byt
             "ENDPOINT_DECLARATION_ROLE_PROVEN",
         }
     ]
-    if jwt_findings:
+    fixed_program_findings = [
+        finding
+        for finding in findings
+        if finding.get("facts", {}).get("disposition") == "PROVEN_FIXED_LITERAL_PROGRAM"
+    ]
+    if jwt_findings or fixed_program_findings:
         # Revalidation uses the complete current source inventory, including
         # imported initializers and shadows; selective capture would omit risks.
         paths.update(hashes)
-    return {
-        relative: data
-        for relative in paths
-        if isinstance(relative, str)
-        and isinstance((data := source_bytes.get(workspace / relative)), bytes)
-        and sha256(data).hexdigest() == hashes.get(relative)
-    }
+    captured = {}
+    for relative in paths:
+        if not isinstance(relative, str):
+            continue
+        data = source_bytes.get(workspace / relative)
+        if relative in config_hashes and not isinstance(data, bytes):
+            try:
+                data = (workspace / relative).read_bytes()
+            except OSError:
+                continue
+        if (
+            isinstance(data, bytes)
+            and len(data) <= 1_000_000
+            and sha256(data).hexdigest() == hashes.get(relative)
+        ):
+            captured[relative] = data
+    return captured
 
 
 class _SourceBoundSecurityReport(dict):

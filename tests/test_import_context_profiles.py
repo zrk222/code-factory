@@ -1083,3 +1083,172 @@ def test_captured_import_views_distinguish_child_modules_from_exported_symbols(
         if child_module
         else {"Provider": (target, "Provider")}
     )
+
+
+def test_captured_import_candidates_keep_lexical_package_and_child_roles(tmp_path):
+    root = tmp_path
+    caller = root / "src" / "pkg" / "use.py"
+    node = ast.parse("from .dep import child").body[0]
+    base = caller.parent
+    assert capture.captured_import_path(root, caller)
+    assert not capture.captured_import_path(root, root)
+    assert not capture.captured_import_path(root, root / ".." / "escape.py")
+    assert capture.import_source_bases(root, caller, node) == [base]
+    assert capture.import_child_source_choices(base / "dep", node, "child") == [
+        (base / "dep" / "child.py", "child"),
+        (base / "dep" / "child" / "__init__.py", "child"),
+    ]
+    assert capture.import_child_source_choices(base, node, "bad/name") is None
+    assert capture.import_child_source_choices(base, node, "*") == []
+    assert capture.import_source_choices(root, caller, node, "dep", "child") == [
+        (base / "dep" / "child.py", "child"),
+        (base / "dep" / "child" / "__init__.py", "child"),
+        (base / "dep.py", "package"),
+        (base / "dep" / "__init__.py", "package"),
+    ]
+    assert capture.import_source_choices(root, caller, node, "bad/name", "child") == []
+
+
+def test_captured_import_symbol_separates_child_modules_from_exported_values(tmp_path):
+    caller = tmp_path / "pkg" / "use.py"
+    node = ast.parse("from .dep import child").body[0]
+    child = caller.parent / "dep" / "child.py"
+    package = caller.parent / "dep.py"
+    assert (
+        capture.import_source_symbol(
+            tmp_path, caller, node, "dep", "child", child, captured=True
+        )
+        is None
+    )
+    assert (
+        capture.import_source_symbol(
+            tmp_path, caller, node, "dep", "child", package, captured=True
+        )
+        == "child"
+    )
+    assert (
+        capture.import_source_symbol(
+            tmp_path, caller, node, "dep", "child", child, captured=False
+        )
+        == "child"
+    )
+    assert (
+        capture.import_source_symbol(
+            tmp_path, caller, node, "dep", None, package, captured=True
+        )
+        is None
+    )
+
+
+def test_captured_import_inventory_checks_relative_boundary_and_parent_shadow(tmp_path):
+    caller = tmp_path / "src" / "pkg" / "use.py"
+    node = ast.parse("from .dep import value").body[0]
+    inventory = capture.CapturedImportInventory(tmp_path, [caller])
+    assert capture.captured_relative_import(tmp_path, caller, node)
+    assert not capture.captured_relative_import(
+        tmp_path, caller, ast.parse("from ...dep import value").body[0]
+    )
+    assert capture.captured_import_inventory_matches(
+        tmp_path, caller, node, "dep", inventory
+    )
+    assert not capture.captured_import_inventory_matches(
+        tmp_path, caller, node, "dep", {}
+    )
+    assert not capture.captured_import_inventory_matches(
+        tmp_path, tmp_path / "missing.py", node, "dep", inventory
+    )
+    absolute = ast.parse("import package.child").body[0]
+    assert capture.captured_import_parent_modules(
+        tmp_path, caller, absolute, "package.child", inventory
+    )
+    shadowed = capture.CapturedImportInventory(
+        tmp_path, [caller, tmp_path / "package.py"]
+    )
+    assert not capture.captured_import_parent_modules(
+        tmp_path, caller, absolute, "package.child", shadowed
+    )
+
+
+def test_captured_import_resolution_uses_owned_inventory_without_filesystem_probes(
+    tmp_path, monkeypatch
+):
+    caller = tmp_path / "pkg" / "use.py"
+    source = caller.parent / "dep.py"
+    node = ast.parse("from .dep import value").body[0]
+    inventory = capture.CapturedImportInventory(tmp_path, [caller, source])
+
+    def forbidden_probe(*args, **kwargs):
+        raise AssertionError("captured imports must not probe live source files")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Path, "is_file", forbidden_probe)
+        assert (
+            capture.resolve_import_source(
+                tmp_path, caller, node, "dep", inventory, "value", captured=True
+            )
+            == source
+        )
+        missing = capture.CapturedImportInventory(tmp_path, [caller])
+        assert (
+            capture.resolve_import_source(
+                tmp_path, caller, node, "dep", missing, "value", captured=True
+            )
+            is None
+        )
+
+
+@pytest.mark.parametrize("strict", [False, True])
+def test_import_unique_source_rejects_ambiguity_and_captured_child_package_conflict(
+    strict,
+):
+    child, package = Path("child.py"), Path("package.py")
+    assert (
+        capture.unique_import_source(
+            {"child": set(), "package": {package}}, strict=strict
+        )
+        == package
+    )
+    assert (
+        capture.unique_import_source(
+            {"child": {child}, "package": set()}, strict=strict
+        )
+        == child
+    )
+    assert (
+        capture.unique_import_source(
+            {"child": set(), "package": {child, package}}, strict=strict
+        )
+        is None
+    )
+    assert capture.unique_import_source(
+        {"child": {child}, "package": {package}}, strict=strict
+    ) == (None if strict else child)
+
+
+def test_live_import_path_requires_real_contained_file(tmp_path):
+    source = tmp_path / "owned.py"
+    source.write_text("value = 1\n", encoding="utf-8")
+    assert capture.live_import_path(source, tmp_path) == source.resolve()
+    assert capture.live_import_path(tmp_path / "missing.py", tmp_path) is None
+    assert capture.live_import_path(tmp_path, tmp_path) is None
+    assert capture.live_import_path(source, tmp_path / "different-root") is None
+
+
+def test_import_resolution_helper_binding_and_code_mutation_change_native_epoch(
+    tmp_path, monkeypatch
+):
+    original = capture.resolve_import_source
+    assert original in capture.import_resolution_helpers()
+    before = audit._oracle_context_cache_key(tmp_path, [], {})
+
+    def replacement(*args, **kwargs):
+        return None
+
+    with monkeypatch.context() as patch:
+        patch.setattr(capture, "resolve_import_source", replacement)
+        assert audit._oracle_context_cache_key(tmp_path, [], {}) != before
+    assert audit._oracle_context_cache_key(tmp_path, [], {}) == before
+    with monkeypatch.context() as patch:
+        patch.setattr(original, "__code__", replacement.__code__)
+        assert audit._oracle_context_cache_key(tmp_path, [], {}) != before
+    assert audit._oracle_context_cache_key(tmp_path, [], {}) == before

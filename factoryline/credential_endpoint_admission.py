@@ -206,6 +206,10 @@ def endpoint_admission_helpers():
         "_admissible",
         "_attach",
         "annotate_endpoint_findings",
+        "factory_fixture_consumer_status",
+        "_factory_fixture_uses",
+        "_factory_fixture_consumer_result",
+        "_single_factory_fixture_call",
         "endpoint_admission_helpers",
         "_endpoint_claim_profile_matches",
         "_endpoint_attestation_matches",
@@ -233,6 +237,10 @@ def endpoint_admission_helpers():
         "_protocol_https",
         "_document",
         "_flow_rows",
+        "_openapi_security_schemes",
+        "_openapi_scheme_rows",
+        "_openapi_token_url_rows",
+        "_openapi_declaration_records",
         "_valid_flow",
         "openapi_endpoint_declarations",
         "matches_openapi_endpoint",
@@ -247,6 +255,8 @@ def endpoint_admission_helpers():
         "_forwarder_provider_uncertain",
         "_factory_owner_valid",
         "session_factory_witness",
+        "_session_factory_receiver",
+        "_session_factory_witness_rows",
     )
     role_names = (
         "credential_role_constructor_provider",
@@ -323,6 +333,9 @@ def validation_helpers():
             "tuple_httpx_fixture",
             "request_client_origin",
             "factory_fixture_consumer_status",
+            "_factory_fixture_uses",
+            "_factory_fixture_consumer_result",
+            "_single_factory_fixture_call",
             "public_json_assertion",
             "_json_assertion_operands",
             "_json_detail_name",
@@ -955,7 +968,22 @@ def openapi_endpoint_declarations(raw, *, source_url):
     """
     if not _protocol_https(source_url):
         return None
+    rows = _openapi_token_url_rows(raw)
+    if rows is None:
+        return None
+    digest = hashlib.sha256(raw).hexdigest()
+    return _openapi_declaration_records(rows, source_url, digest)
+
+
+def _openapi_token_url_rows(raw):
     document = _document(raw)
+    schemes = _openapi_security_schemes(document)
+    if schemes is None:
+        return None
+    return _openapi_scheme_rows(schemes)
+
+
+def _openapi_security_schemes(document):
     if document is None:
         return None
     version = document.get("openapi")
@@ -965,8 +993,14 @@ def openapi_endpoint_declarations(raw, *, source_url):
     if not isinstance(components, dict) or "$ref" in components:
         return None
     schemes = components.get("securitySchemes")
-    if not isinstance(schemes, dict) or not schemes or len(schemes) > 128:
-        return None
+    return (
+        schemes
+        if isinstance(schemes, dict) and schemes and len(schemes) <= 128
+        else None
+    )
+
+
+def _openapi_scheme_rows(schemes):
     rows = []
     for name, scheme in schemes.items():
         extracted = _flow_rows(name, scheme)
@@ -975,7 +1009,10 @@ def openapi_endpoint_declarations(raw, *, source_url):
         rows.extend(extracted)
         if len(rows) > MAX_DECLARATIONS:
             return None
-    digest = hashlib.sha256(raw).hexdigest()
+    return rows
+
+
+def _openapi_declaration_records(rows, source_url, digest):
     return tuple(
         {
             "schema": "factory.protocol-endpoint-declaration.v1",
@@ -1255,6 +1292,24 @@ def factory_fixture_consumer_status(
     """Classify a fixture consumer only when its binding and use shape are closed; return false for unsupported local use and None when ownership is unknown."""
     if not isinstance(caller, (ast.FunctionDef, ast.AsyncFunctionDef)):
         return None
+    uses = _factory_fixture_uses(graph, source, path, fixture, caller)
+    if uses is None:
+        return None
+    if uses is False:
+        return False
+    return _factory_fixture_consumer_result(
+        graph,
+        path,
+        fixture,
+        source,
+        caller,
+        uses,
+        app_consumers_closed,
+        route_lookup_only,
+    )
+
+
+def _factory_fixture_uses(graph, source, path, fixture, caller):
     parameters = [
         arg.arg
         for arg in (
@@ -1267,21 +1322,19 @@ def factory_fixture_consumer_status(
         return None
     if graph._nearest_fixture(source, fixture.name, caller) != (path, fixture):
         return False if source == path else None
-    uses = [
+    return [
         node
         for node in graph._walk(caller)
         if isinstance(node, ast.Name) and node.id == fixture.name
     ]
-    if not uses or not all(
-        isinstance(graph.parents.get(id(node)), ast.Call)
-        and graph.parents[id(node)].func is node
-        for node in uses
-    ):
+
+
+def _factory_fixture_consumer_result(
+    graph, path, fixture, source, caller, uses, app_consumers_closed, route_lookup_only
+):
+    call = _single_factory_fixture_call(graph, fixture, uses)
+    if call is None:
         return False
-    calls = [graph.parents[id(node)] for node in uses]
-    if len(calls) != 1:
-        return False
-    call = calls[0]
     parent = graph.parents.get(id(call))
     if isinstance(parent, ast.Return) and parent.value is call:
         return bool(
@@ -1297,6 +1350,19 @@ def factory_fixture_consumer_status(
     ):
         return bool(tuple_httpx_fixture(graph, source, caller, parent.targets[0]))
     return False
+
+
+def _single_factory_fixture_call(graph, fixture, uses):
+    if not uses or not all(
+        isinstance(graph.parents.get(id(node)), ast.Call)
+        and graph.parents[id(node)].func is node
+        for node in uses
+    ):
+        return None
+    calls = [graph.parents[id(node)] for node in uses]
+    if len(calls) != 1:
+        return None
+    return calls[0]
 
 
 # Consolidated from factoryline/credential_json_assertions.py.
@@ -1899,14 +1965,27 @@ def session_factory_witness(path, function, index, aliases):
     if not hasattr(tree, "_security_scope_kind"):
         bind_security_call_scopes(tree)
     body = _body(function)
-    if len(body) not in {2, 3}:
+    receiver, returned = _session_factory_receiver(
+        body, tree, aliases, _security_flow_bindings, _provider_identity_uncertain
+    )
+    if receiver is None or returned is None:
         return None
+    return _session_factory_witness_rows(
+        path, function, index, body, receiver, returned, tree, aliases
+    )
+
+
+def _session_factory_receiver(
+    body, tree, aliases, security_flow_bindings, provider_identity_uncertain
+):
+    if len(body) not in {2, 3}:
+        return None, None
     receiver = _construction(body[0], aliases)
     if receiver is None:
-        return None
-    resolved, _ = _security_flow_bindings(body[0].value, aliases)
-    if _provider_identity_uncertain(tree, resolved):
-        return None
+        return None, None
+    resolved, _ = security_flow_bindings(body[0].value, aliases)
+    if provider_identity_uncertain(tree, resolved):
+        return None, None
     returned = body[-1]
     if not (
         receiver
@@ -1914,7 +1993,13 @@ def session_factory_witness(path, function, index, aliases):
         and isinstance(returned.value, ast.Name)
         and returned.value.id == receiver
     ):
-        return None
+        return None, None
+    return receiver, returned
+
+
+def _session_factory_witness_rows(
+    path, function, index, body, receiver, returned, tree, aliases
+):
     hops = [
         _hop(path, function, "declared_session_factory", index),
         _hop(path, body[0], "canonical_session_construction", index),

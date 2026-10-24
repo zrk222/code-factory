@@ -1,3 +1,7 @@
+import hashlib
+from factoryline import review_audits
+from factoryline import runtime_audit_integrity as runtime
+from factoryline import primitive_observation_binding as primitive
 import pytest
 from factoryline.runtime_audit import evaluate_runtime_audit
 from factoryline.runtime_audit_integrity import index_executions, repair_guidance
@@ -8,6 +12,91 @@ import json
 from factoryline.runtime_audit_integrity import closed_declaration_input_witness
 from factoryline.runtime_audit_integrity import finite_literal_eval_input_witness
 from factoryline.runtime_audit_integrity import source_generated_eval_input_witness
+
+
+def test_finding_tier_report_keeps_known_format_raw_severity_and_run_scope():
+    source = b'GITHUB_TOKEN = "ghp_abcdefghijklmnop"\n'
+    finding = {
+        "code": "SECURITY_HARDCODED_SECRET",
+        "severity": "CRITICAL",
+        "path": "source.py",
+        "line": 1,
+        "column": 0,
+        "message": "credential-like source literal",
+        "facts": {"name": "GITHUB_TOKEN"},
+    }
+    report = primitive.build_finding_tier_report(
+        [finding],
+        [],
+        [{"path": "source.py", "sha256": hashlib.sha256(source).hexdigest()}],
+        {"source.py": source},
+        coverage_state=True,
+        partition_state="VALIDATED",
+    )
+
+    row = report["ledger"][0]
+    assert row["tier"] == "SUPPORTED_DEFECT"
+    assert row["evidence"] == "source_bound_known_format_declaration_value"
+    assert row["raw_finding"]["severity"] == "CRITICAL"
+    assert report["raw_diagnostics"]["count"] == 1
+    assert report["tier_counts"] == {
+        "SUPPORTED_DEFECT": 1,
+        "NEEDS_CONTEXT": 0,
+        "PROVEN_PRIMITIVE": 0,
+    }
+    assert report["claim_policy"]["held_out_precision"] == "NOT_MEASURED"
+    assert report["retention_metrics"]["known_true_positive_retention"].startswith(
+        "NOT_MEASURED"
+    )
+    assert report["defect_gate"]["state"] == "BLOCKED"
+    assert report["defect_gate"]["clean"] is False
+    assert len(report["ledger_sha256"]) == 64
+    assert len(report["report_sha256"]) == 64
+
+
+def test_finding_tier_report_recomputes_precondition_from_captured_source():
+    source = b"eval(user_data)\n"
+    finding = {
+        "code": "SECURITY_DYNAMIC_EXECUTION",
+        "severity": "HIGH",
+        "path": "source.py",
+        "line": 1,
+        "column": 0,
+        "message": "dynamic execution",
+        "facts": {
+            "call": "eval",
+            "security_precondition": {
+                "schema": "factory.security.precondition.v1",
+                "status": "SUPPORTED",
+                "source_role": "untrusted_request",
+                "consumer_role": "eval",
+                "sink_span": [1, 0, 1, 15],
+                "proof_scope": "local_static_wiring",
+                "runtime_execution": "not_performed",
+                "deployment": "UNASSESSED",
+            },
+        },
+    }
+    report = primitive.build_finding_tier_report(
+        [finding],
+        [],
+        [{"path": "source.py", "sha256": hashlib.sha256(source).hexdigest()}],
+        {"source.py": source},
+        coverage_state=True,
+        partition_state="VALIDATED",
+    )
+
+    row = report["ledger"][0]
+    assert row["tier"] == "NEEDS_CONTEXT"
+    assert row["raw_finding"]["severity"] == "HIGH"
+    assert row["missing_premises"] == ["untrusted_code_input_or_equivalent_effect"]
+    assert report["abstention"] == {
+        "count": 1,
+        "denominator": 1,
+        "fraction": 1.0,
+        "scope": "this_run_raw_diagnostics",
+    }
+    assert report["defect_gate"]["state"] == "BLOCKED"
 
 
 @pytest.mark.parametrize(
@@ -949,6 +1038,23 @@ def _literal_blocked_rows(graph):
     )
 
 
+def test_literal_consumer_owner_and_epoch_dependencies_follow_provenance(monkeypatch):
+    from factoryline import provenance, review_integrity
+    from factoryline.runtime_audit_integrity import _LiteralConsumers as runtime_owner
+
+    owner = provenance._LiteralConsumers
+    assert owner is runtime_owner is review_integrity._LiteralConsumers
+    original = owner._walk
+
+    def replacement(self, node):
+        return original(self, node)
+
+    monkeypatch.setattr(owner, "_walk", replacement)
+    dependencies = provenance.credential_consumer_helpers(review_integrity)
+    assert replacement in dependencies
+    assert original not in dependencies
+
+
 def test_literal_consumer_shared_index_matches_legacy_walk_below_caps(tmp_path):
     import hashlib
 
@@ -1419,3 +1525,1241 @@ def test_source_generated_helpers_are_included_in_verifier_source_identity():
     }
     assert expected <= helpers
     assert runtime.finite_eval_binding in helpers
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "_exact_source_call",
+        "_source_span",
+        "_closed_declaration_source_call",
+        "_fixed_program_call_context",
+        "_fixed_program_literal_span",
+        "_source_generated_eval_capture",
+        "_source_eval_call_shape",
+        "_source_eval_source_bound",
+        "_finite_eval_profile",
+        "_finite_eval_domain_digest",
+        "_finite_eval_spans",
+    ],
+)
+@pytest.mark.parametrize("mutation", ["binding", "code"])
+def test_extracted_runtime_helpers_invalidate_native_cache(
+    tmp_path, monkeypatch, name, mutation
+):
+    from factoryline import review_audits as audit
+    from factoryline import runtime_audit_integrity as runtime
+
+    original = getattr(runtime, name)
+    assert original in runtime.workspace_builtin_helpers()
+    before = audit._oracle_context_cache_key(tmp_path, [], {})
+
+    def replacement(*args, **kwargs):
+        return None
+
+    with monkeypatch.context() as patch:
+        if mutation == "binding":
+            patch.setattr(runtime, name, replacement)
+        else:
+            patch.setattr(original, "__code__", replacement.__code__)
+        assert audit._oracle_context_cache_key(tmp_path, [], {}) != before
+    assert audit._oracle_context_cache_key(tmp_path, [], {}) == before
+
+
+def test_tenant_scope_read_retains_unique_binding_and_rejects_ambiguity():
+    row = runtime.tenant_scope_read(
+        review_audits, "Tenant.get", {"Tenant.get": ["tenant_id"]}
+    )
+    assert row == {"call": "Tenant.get", "binding": "tenant_id"}
+    assert runtime.tenant_scope_read(review_audits, "Tenant.list", {}) == {
+        "call": "Tenant.list"
+    }
+    with pytest.raises(review_audits.ReviewAuditError, match="at most one binding"):
+        runtime.tenant_scope_read(
+            review_audits, "Tenant.get", {"Tenant.get": ["a", "b"]}
+        )
+
+
+def test_validate_tenant_scopes_revalidates_and_returns_scoped_reads(tmp_path):
+    (tmp_path / "app.py").write_text(
+        "class Tenant:\n    pass\ndef load(tenant_id):\n    return Tenant.get(tenant_id=tenant_id)\n",
+        encoding="utf-8",
+    )
+    scopes = {
+        "app.py": {
+            "calls": ["Tenant.get"],
+            "bindings": {"Tenant.get": ["keyword:tenant_id:tenant_id"]},
+        }
+    }
+    result = runtime.validate_tenant_scopes(review_audits, tmp_path, scopes)
+    assert result["app.py"]["calls"] == ("Tenant.get",)
+    assert result["app.py"]["bindings"] == {
+        "Tenant.get": ("keyword:tenant_id:tenant_id",)
+    }
+    with pytest.raises(review_audits.ReviewAuditError):
+        runtime.validate_tenant_scopes(
+            review_audits, tmp_path, {"../escape.py": scopes["app.py"]}
+        )
+
+
+def test_fixed_literal_program_witness_binds_literal_bytes_and_refuses_mutation():
+    raw = b"exec('answer = 42')\n"
+    call = next(node for node in ast.walk(ast.parse(raw)) if isinstance(node, ast.Call))
+    witness = runtime.fixed_literal_program_witness(
+        call,
+        "exec",
+        source_bytes=raw,
+        builtin_identity_proven=True,
+        source_path="app.py",
+        scope_profile="module",
+    )
+    assert witness["disposition"] == "PROVEN_FIXED_LITERAL_PROGRAM"
+    assert witness["source_sha256"] == hashlib.sha256(raw).hexdigest()
+    assert witness["profile"]["target_execution"] == "not_performed"
+    dynamic = b"exec(input())\n"
+    dynamic_call = next(
+        node for node in ast.walk(ast.parse(dynamic)) if isinstance(node, ast.Call)
+    )
+    assert (
+        runtime.fixed_literal_program_witness(
+            dynamic_call,
+            "exec",
+            source_bytes=dynamic,
+            builtin_identity_proven=True,
+            source_path="app.py",
+        )
+        == {}
+    )
+
+
+def _local_eval_witness(source):
+    raw = source if isinstance(source, bytes) else source.encode()
+    tree = ast.parse(raw)
+    calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "eval"
+    ]
+    assert len(calls) == 1
+    return (
+        raw,
+        calls[0],
+        runtime.fixed_literal_program_witness(
+            calls[0],
+            "eval",
+            source_bytes=raw,
+            builtin_identity_proven=True,
+            source_path="sample.py",
+            scope_profile="function",
+        ),
+    )
+
+
+def test_local_eval_overwrite_decode_witness_binds_full_chain_and_overwritten_input():
+    raw, call, witness = _local_eval_witness(
+        b"""def handler(request):
+    body = request.body
+    body = b"{'flag': 1}"
+    text = body.decode()
+    result = eval(text)
+    return result
+"""
+    )
+    proof = witness["def_use_witness"]
+    assert witness["disposition"] == "PROVEN_FIXED_LITERAL_PROGRAM"
+    assert witness["source_sha256"] == hashlib.sha256(raw).hexdigest()
+    assert witness["call_span"] == [
+        call.lineno,
+        call.col_offset,
+        call.end_lineno,
+        call.end_col_offset,
+    ]
+    assert proof["schema"] == "factory.fixed-program-local-def-use.v1"
+    assert proof["target_execution"] == "not_performed"
+    assert [row["operation"] for row in proof["reaching_definitions"]] == [
+        "LITERAL_ASSIGNMENT",
+        "BUILTIN_BYTES_DECODE",
+    ]
+    assert [row["operation"] for row in proof["overwritten_definitions"]] == [
+        "EXTERNAL_BODY_READ"
+    ]
+    assert proof["source_sha256"] == hashlib.sha256(raw).hexdigest()
+    assert witness["profile"]["input_resolution"] == "ordered-local-strong-updates"
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        b"""def handler(request):
+    body = request.body
+    text = body.decode()
+    return eval(text)
+""",
+        b"""def handler(request, enabled):
+    body = request.body
+    if enabled:
+        body = b"{'flag': 1}"
+    text = body.decode()
+    return eval(text)
+""",
+        b"""def handler(request):
+    body = request.body
+    text = body.decode()
+    result = eval(text)
+    body = b"{'flag': 1}"
+    return result
+""",
+        b"""def handler(request):
+    body = request.body
+    body = b"{'flag': 1}"
+    text = body.decode()
+    text = request.body.decode()
+    return eval(text)
+""",
+        b"""def handler(request):
+    body = request.body
+    body = b"__import__('os').system('whoami')"
+    text = body.decode()
+    return eval(text)
+""",
+        b"""def handler(request):
+    body = request.body
+    body = b"{'flag': 1}"
+    text = request.body.decode()
+    return eval(text)
+""",
+        b"""def handler(request):
+    body = request.body
+    body = b"{'flag': 1}"
+    text = body.decode('ascii')
+    return eval(text)
+""",
+        b"""def handler(request):
+    body = request.body
+    body = b"{'flag': 1}"
+    text = body.decode()
+    eval = lambda value: value
+    return eval(text)
+""",
+        b"""def handler(request):
+    body = request.body
+    for item in (1,):
+        body = b"{'flag': 1}"
+    text = body.decode()
+    return eval(text)
+""",
+        b"""def handler(request):
+    body = request.body
+    try:
+        body = b"{'flag': 1}"
+    except Exception:
+        pass
+    text = body.decode()
+    return eval(text)
+""",
+        b"""def handler(request):
+    body = maybe_replace(request.body)
+    body = b"{'flag': 1}"
+    text = body.decode()
+    return eval(text)
+""",
+    ],
+)
+def test_local_eval_unknown_or_executable_input_keeps_alert(source):
+    _, _, witness = _local_eval_witness(source)
+    assert witness == {}
+
+
+def test_local_eval_def_use_binding_recomputes_source_and_rejects_stale_or_forged_chain():
+    raw, call, witness = _local_eval_witness(
+        b"""def handler(request):
+    body = request.body
+    body = b"{'flag': 1}"
+    text = body.decode()
+    return eval(text)
+"""
+    )
+    source_hash = hashlib.sha256(raw).hexdigest()
+    sources = [{"path": "sample.py", "sha256": source_hash}]
+    workspace_hash = hashlib.sha256(
+        json.dumps([("sample.py", source_hash)], separators=(",", ":")).encode()
+    ).hexdigest()
+    witness["workspace_sources_sha256"] = workspace_hash
+    finding = {
+        "code": "SECURITY_DYNAMIC_EXECUTION",
+        "path": "sample.py",
+        "line": call.lineno,
+        "column": call.col_offset,
+        "severity": "INFO",
+        "facts": {"call": "eval", **witness},
+    }
+    source_bytes = {"sample.py": raw}
+    bindings = {"sample.py": source_hash}
+    assert primitive.fixed_primitive_binding(
+        finding, sources, bindings, review_audits, source_bytes
+    )
+    assert not primitive.fixed_primitive_binding(
+        finding, sources, bindings, review_audits
+    )
+
+    forged = json.loads(json.dumps(finding))
+    forged["facts"]["def_use_witness"]["reaching_definitions"][0]["operation"] = (
+        "LOCAL_ALIAS"
+    )
+    assert not primitive.fixed_primitive_binding(
+        forged, sources, bindings, review_audits, source_bytes
+    )
+    stripped = json.loads(json.dumps(finding))
+    stripped["facts"].pop("def_use_witness")
+    assert not primitive.fixed_primitive_binding(
+        stripped, sources, bindings, review_audits
+    )
+    assert not primitive.fixed_primitive_binding(
+        stripped, sources, bindings, review_audits, source_bytes
+    )
+
+    changed = raw.replace(b"body = b\"{'flag': 1}\"", b"body = request.body")
+    assert not primitive.fixed_primitive_binding(
+        finding,
+        sources,
+        bindings,
+        review_audits,
+        {"sample.py": changed},
+    )
+
+
+def test_workspace_builtin_profile_requires_complete_hashable_snapshot(tmp_path):
+    path = tmp_path / "a.py"
+    tree = ast.parse("value = 1\n")
+    tree._oracle_source_sha256 = hashlib.sha256(
+        path.read_bytes() if path.exists() else b"value = 1\n"
+    ).hexdigest()
+    profile = runtime.workspace_builtin_profile({path: tree}, [path])
+    assert profile["complete"] is True
+    assert profile["namespace_mutation_risk"] is False
+    shadowed = ast.parse("globals()['exec']('x=1')\n")
+    shadowed._oracle_source_sha256 = tree._oracle_source_sha256
+    assert (
+        runtime.workspace_builtin_profile({path: shadowed}, [path])[
+            "namespace_mutation_risk"
+        ]
+        is True
+    )
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "import builtins as bi\nbi.eval = replacement\n",
+        "import builtins as bi\nsetattr(bi, 'eval', replacement)\n",
+        "import builtins as bi\nalias = bi\nalias.eval = replacement\n",
+        "import builtins as bi\nunknown_consumer(bi)\n",
+        "from builtins import __import__ as load\nload('builtins').eval = replacement\n",
+        "import sys\nsys.modules['builtins'].eval = replacement\n",
+        "import sys as runtime\nruntime.modules['builtins'].__dict__['eval'] = replacement\n",
+        "from sys import modules as registry\nregistry['builtins'].eval = replacement\n",
+        "import sys\nprovider = sys.modules['builtins']\nprovider.eval = replacement\n",
+        "from builtins import __dict__ as namespace\nnamespace['eval'] = replacement\n",
+        "eval(\"setattr(__import__('builtins'), 'eval', replacement)\")\n",
+        'exec("import builtins; builtins.eval = replacement")\n',
+        "def mutate(payload):\n    eval(payload)\nmutate(\"setattr(__import__('builtins'), 'eval', replacement)\")\n",
+        "def mutate(payload):\n    eval(payload)\nalias = mutate\nalias(payload)\n",
+        "def mutate(payload):\n    eval(payload)\ncallbacks = [mutate]\ncallbacks[0](payload)\n",
+        "def make(value=eval(payload)):\n    pass\n",
+        "@eval(payload)\ndef make():\n    pass\n",
+        "def make(value: eval(payload)):\n    pass\n",
+        "class Installer:\n    def __init__(self, payload):\n        eval(payload)\nInstaller(payload)\n",
+        "class Installer:\n    def __init__(self, payload):\n        eval(payload)\nAlias = Installer\nAlias(payload)\n",
+        "class Installer(Base):\n    pass\nInstaller()\n",
+        "eval(provider_code)\n",
+        "exec(provider_code)\n",
+        "import importlib as il\nil.import_module(module_name)\n",
+        "from importlib import import_module as load\nload(module_name)\n",
+        "__import__(module_name)\n",
+    ],
+)
+def test_fixed_eval_provider_risk_fails_closed_for_mutation_aliases_and_imports(source):
+    tree = ast.parse(source)
+    assert runtime._fixed_eval_builtin_provider_risk(tree)
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "import sys\ninstall(sys.modules['builtins'])\n",
+        "import sys\ninstall(sys.modules)\n",
+        "import sys\ninstall(provider=sys.modules['builtins'])\n",
+        "import sys\ninstall(registry=sys.modules)\n",
+        "import sys\ninstall(**{'provider': sys.modules['builtins']})\n",
+        "import sys\ninstall(*[sys.modules['builtins']])\n",
+    ],
+)
+def test_fixed_eval_provider_namespace_call_escape_is_rejected(source):
+    assert runtime._fixed_eval_builtin_provider_risk(ast.parse(source))
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "import sys\nprovider = sys.__dict__['modules']['builtins']\nprovider.eval = replacement\n",
+        "import sys\nprovider = sys.__getattribute__('modules')['builtins']\nprovider.eval = replacement\n",
+        "import sys\nsys.__setattr__('modules', replacement)\n",
+        "import importlib as il\nprovider = il.__dict__['import_module']('builtins')\nprovider.eval = replacement\n",
+    ],
+)
+def test_fixed_eval_reflective_module_capability_escape_is_rejected(source):
+    assert runtime._fixed_eval_builtin_provider_risk(ast.parse(source))
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "__import__('importlib').import_module('builtins').eval = replacement\n",
+        "__import__('importlib.util').import_module('builtins').eval = replacement\n",
+        "from importlib import import_module as load\nload('importlib').import_module('builtins').eval = replacement\n",
+    ],
+)
+def test_fixed_eval_dynamic_provider_namespace_import_is_rejected(source):
+    assert runtime._fixed_eval_builtin_provider_risk(ast.parse(source))
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "from sys import __dict__ as namespace\nnamespace['modules']['builtins'].eval = replacement\n",
+        "from importlib import __dict__ as namespace\nnamespace['import_module']('builtins').eval = replacement\n",
+        "def helper():\n    pass\nhelper.__globals__['__builtins__']['eval'] = replacement\n",
+    ],
+)
+def test_fixed_eval_exported_global_namespace_capability_is_rejected(source):
+    assert runtime._fixed_eval_builtin_provider_risk(ast.parse(source))
+
+
+def test_uninvoked_function_body_does_not_claim_module_init_provider_risk():
+    tree = ast.parse("def deferred(payload):\n    eval(payload)\n")
+    assert not runtime._fixed_eval_builtin_provider_risk(tree)
+
+
+def test_fixed_eval_workspace_provider_binding_requires_complete_current_inventory():
+    source = b"value = 1\n"
+    digest = hashlib.sha256(source).hexdigest()
+    rows = [{"path": "sample.py", "sha256": digest}]
+    assert runtime.fixed_eval_workspace_provider_clear({"sample.py": source}, rows)
+    assert not runtime.fixed_eval_workspace_provider_clear(
+        {"sample.py": b"value = 2\n"}, rows
+    )
+    mutation = b"import builtins as bi\nbi.eval = replacement\n"
+    mutation_rows = [
+        {"path": "sample.py", "sha256": hashlib.sha256(mutation).hexdigest()}
+    ]
+    assert not runtime.fixed_eval_workspace_provider_clear(
+        {"sample.py": mutation}, mutation_rows
+    )
+
+
+def test_full_repository_cli_context_binds_fixed_program_workspace(
+    tmp_path, monkeypatch
+):
+    from types import SimpleNamespace
+
+    from factoryline import context_efficiency, review_integrity
+
+    relative = "app.py"
+    path = tmp_path / relative
+    raw = b"def render(request):\n    return request.body\n"
+    digest = hashlib.sha256(raw).hexdigest()
+    path.write_bytes(raw)
+    tree = ast.parse(raw, filename=relative)
+    tree._oracle_source_sha256 = digest
+    snapshots = {path: tree}
+    captured = {path: raw}
+    bindings = [{"path": relative, "sha256": digest, "bytes": len(raw)}]
+
+    class Engine:
+        @staticmethod
+        def _full_repository_configuration_binding(root, name):
+            return {"path": name, "state": "absent"}
+
+    audit = SimpleNamespace(
+        MAX_BYTES=1_000_000,
+        contracts=SimpleNamespace(
+            bound_snapshots=lambda root, files, source_bytes, source_bindings: snapshots
+        ),
+        _oracle_source_inputs=lambda root, files: (captured, bindings, {}, True),
+        _security_source_bytes=lambda root, name: b"",
+        integrity=review_integrity,
+    )
+    monkeypatch.setattr(
+        context_efficiency,
+        "bind_application_fixture_context",
+        lambda *args, **kwargs: None,
+    )
+    generation = {"root": tmp_path, "files": [path], "frame": {"candidates": []}}
+
+    result = runtime._full_repository_workspace_security_context(
+        Engine(), generation, audit
+    )
+
+    profile = result["contexts"][path]["fixed_program_workspace"]
+    assert profile["complete"] is True
+    assert profile["eval_provider_mutation_risk"] is False
+    assert (
+        profile["sources_sha256"]
+        == hashlib.sha256(
+            json.dumps([[relative, digest]], separators=(",", ":")).encode()
+        ).hexdigest()
+    )
+    assert result["source_bytes"] == captured
+
+
+def test_workspace_eval_provider_risk_is_separate_from_unrelated_namespace_risk():
+    source = "globals()['metadata'] = 'public'\n"
+    tree = ast.parse(source)
+    tree._oracle_source_sha256 = hashlib.sha256(source.encode()).hexdigest()
+    profile = runtime.workspace_builtin_profile({"module.py": tree}, ["module.py"])
+    assert profile["complete"] is True
+    assert profile["namespace_mutation_risk"] is True
+    assert profile["eval_provider_mutation_risk"] is False
+    assert "runtime isolation unproven" in profile["eval_provider_scope"]
+
+
+def test_module_init_opaque_eval_is_not_cleared_by_unrelated_function_boundary():
+    source = "eval(provider_code)\ndef handler(request):\n    return request\n"
+    assert runtime._fixed_eval_builtin_provider_risk(ast.parse(source))
+
+
+def test_uninvoked_function_eval_remains_an_independent_dynamic_alert():
+    source = "def unsafe(request):\n    return eval(request.body)\n"
+    assert not runtime._fixed_eval_builtin_provider_risk(ast.parse(source))
+
+
+def test_oracle_bound_row_rejects_source_digest_and_test_identity_mismatch(tmp_path):
+    test_path = tmp_path / "test_case.py"
+    raw = b"def test_example():\n    assert 2 == 2\n"
+    test_path.write_bytes(raw)
+    digest = hashlib.sha256(raw).hexdigest()
+    row = {
+        "path": "test_case.py",
+        "test_sha256": digest,
+        "mutation": {"source_path": "app.py", "source_sha256": "source-digest"},
+        "symbol": "test_example",
+        "line": 1,
+        "baseline": {"case_ids": ["test_case.py::test_example"]},
+    }
+    runtime.oracle_bound_row(
+        review_audits,
+        tmp_path,
+        row,
+        {"test_case.py": digest, "app.py": "source-digest"},
+    )
+    with pytest.raises(review_audits.ReviewAuditError, match="source binding"):
+        runtime.oracle_bound_row(
+            review_audits, tmp_path, row, {"test_case.py": digest, "app.py": "wrong"}
+        )
+
+
+def test_native_execution_helper_factory_drives_assertion_probe_from_ast():
+    helpers = runtime.native_execution_helpers()
+    probe_builder = next(
+        helper for helper in helpers if helper.__name__ == "native_test_probe"
+    )
+    test_node = ast.parse(
+        "def test_contract():\n    assert value == 3\n    invoke()\n"
+    ).body[0]
+    probe = probe_builder("tests/test_contract.py", test_node)
+    assert probe["available"] is True
+    assert probe["assertion_lines"] == [2]
+    assert probe["call_available"] is True
+    assert probe["call_lines"] == [3]
+    empty = probe_builder(
+        "tests/test_empty.py", ast.parse("def test_empty():\n    pass\n").body[0]
+    )
+    assert empty["available"] is False and empty["call_available"] is False
+
+
+def test_credential_and_finite_template_helper_factories_return_working_validators():
+    validators = runtime.credential_validation_helpers()
+    operation_check = next(
+        helper for helper in validators if helper.__name__ == "_closed_shell_operation"
+    )
+    assert operation_check("upx --best app") == "executable_packing"
+    assert operation_check("upx --best app; rm -rf /") is None
+    capture_helpers = runtime.finite_template_input_helpers()
+    hash_builder = next(
+        helper
+        for helper in capture_helpers
+        if helper.__name__ == "finite_template_program_hashes"
+    )
+    template = (
+        ast.parse('f"async def run({name}) -> None:\\n    pass\\n"').body[0].value
+    )
+    assert hash_builder(template, "name", ["tenant_id"]) is not None
+    assert hash_builder(template, "other", ["tenant_id"]) is None
+
+
+def test_tenant_contract_helper_factory_loads_real_contract_and_preserves_evidence(
+    tmp_path,
+):
+    (tmp_path / "app.py").write_text(
+        "def read(store):\n    return store.get()\n", encoding="utf-8"
+    )
+    contract = {
+        "schema": "factory.tenant-read-contract.v2",
+        "reads": [
+            {
+                "path": "app.py",
+                "reads": [{"call": "store.get", "binding": "position:0:tenant_id"}],
+            }
+        ],
+    }
+    (tmp_path / ".factory").mkdir()
+    (tmp_path / ".factory" / "tenant-read-contract.json").write_text(
+        json.dumps(contract), encoding="utf-8"
+    )
+    loader = runtime.tenant_contract_helpers(review_audits)[0]
+    calls, bindings, evidence = loader(review_audits, tmp_path)
+    assert calls == () and bindings == ()
+    assert evidence["state"] == "loaded"
+    assert evidence["scoped_reads"]["app.py"]["calls"] == ("store.get",)
+    contract["extra"] = True
+    (tmp_path / ".factory" / "tenant-read-contract.json").write_text(
+        json.dumps(contract), encoding="utf-8"
+    )
+    with pytest.raises(review_audits.ReviewAuditError):
+        loader(review_audits, tmp_path)
+
+
+def test_runtime_oracle_reconciliation_fails_closed_without_signed_evidence(tmp_path):
+    core = {"audit_coverage": {"complete": True}}
+    with pytest.raises(review_audits.ReviewAuditError, match="requires receipt"):
+        runtime.reconcile_runtime_oracles(
+            review_audits, tmp_path, core, (None, None, None, None)
+        )
+
+
+def test_repository_workspace_batch_enforces_deadline_before_consuming_state():
+    class Expired(RuntimeError):
+        pass
+
+    class Engine:
+        def _full_repository_check_soft_deadline(self, deadline):
+            assert deadline == 0
+            raise Expired("soft deadline reached")
+
+    with pytest.raises(Expired, match="soft deadline"):
+        runtime.full_repository_workspace_scan_batch(Engine(), {}, review_audits, [], 0)
+
+
+def test_lowercase_enum_scalar_requires_typed_frozen_metadata_consumer(tmp_path):
+    enum_source = """from dataclasses import dataclass
+from enum import Enum
+
+class CredentialRole(str, Enum):
+    API_PASSWORD = "api_password"
+
+@dataclass(frozen=True, eq=False)
+class FieldSpec:
+    role: CredentialRole
+
+def field_spec(*, role: CredentialRole) -> FieldSpec:
+    return FieldSpec(role=role)
+
+PASSWORD_FIELD = field_spec(role=CredentialRole.API_PASSWORD)
+"""
+    graph = _json_enum_graph(
+        tmp_path,
+        test_source="def test_no_public_route():\n    assert True\n",
+        enum_source=enum_source,
+        client_source="",
+    )
+    rows = graph.witnesses().get((tmp_path.resolve() / "common.py", 5, "API_PASSWORD"))
+    assert graph.complete
+    assert rows
+    assert {row["effect"] for row in rows} == {
+        "ENUM_TYPE_ANNOTATION",
+        "TYPED_METADATA_CONSTRUCTOR",
+    }
+    assert all(row["source_sha256"] and row["span"] for row in rows)
+
+
+def test_lowercase_enum_scalar_rejects_untyped_or_mutable_consumer(tmp_path):
+    enum_source = """from dataclasses import dataclass
+from enum import Enum
+
+class CredentialRole(str, Enum):
+    API_PASSWORD = "api_password"
+
+@dataclass(frozen=True, eq=False)
+class FieldSpec:
+    role: CredentialRole
+
+def field_spec(*, role: CredentialRole) -> FieldSpec:
+    return FieldSpec(role=role)
+
+consume(CredentialRole.API_PASSWORD)
+"""
+    graph = _json_enum_graph(
+        tmp_path,
+        test_source="def test_no_public_route():\n    assert True\n",
+        enum_source=enum_source,
+        client_source="",
+    )
+    assert graph.complete
+    assert not graph.witnesses()
+
+    annotated_but_unconsumed = enum_source.replace(
+        "consume(CredentialRole.API_PASSWORD)",
+        "def annotated() -> CredentialRole:\n    raise RuntimeError()\n\n"
+        "consume(CredentialRole.API_PASSWORD)",
+    )
+    graph = _json_enum_graph(
+        tmp_path / "annotated_but_unconsumed",
+        test_source="def test_no_public_route():\n    assert True\n",
+        enum_source=annotated_but_unconsumed,
+        client_source="",
+    )
+    assert graph.complete
+    assert not graph.witnesses()
+    mutable = enum_source.replace(
+        "@dataclass(frozen=True, eq=False)", "@dataclass(eq=False)"
+    ).replace(
+        "consume(CredentialRole.API_PASSWORD)",
+        "field_spec(role=CredentialRole.API_PASSWORD)",
+    )
+    graph = _json_enum_graph(
+        tmp_path / "mutable",
+        test_source="def test_no_public_route():\n    assert True\n",
+        enum_source=mutable,
+        client_source="",
+    )
+    assert graph.complete
+    assert not graph.witnesses()
+
+    mutable_container = enum_source.replace(
+        "role: CredentialRole", "role: tuple[CredentialRole, ...]"
+    ).replace(
+        "PASSWORD_FIELD = field_spec(role=CredentialRole.API_PASSWORD)",
+        "PASSWORD_FIELD = FieldSpec(role=[CredentialRole.API_PASSWORD])",
+    )
+    graph = _json_enum_graph(
+        tmp_path / "mutable_container",
+        test_source="def test_no_public_route():\n    assert True\n",
+        enum_source=mutable_container,
+        client_source="",
+    )
+    assert graph.complete
+    assert not graph.witnesses()
+
+
+def test_enum_metadata_cross_file_annotations_resolve_at_definition_path(tmp_path):
+    consumer = """from dataclasses import dataclass
+from other import ErrorCode
+
+@dataclass(frozen=True, eq=False)
+class FieldSpec:
+    role: ErrorCode
+
+def field_spec(*, role: ErrorCode) -> FieldSpec:
+    return FieldSpec(role=role)
+"""
+    other = """from enum import Enum
+
+class ErrorCode(str, Enum):
+    REGISTER_INVALID_PASSWORD = "register_invalid_password"
+"""
+    test_source = """from common import ErrorCode
+from consumer import field_spec
+
+value = field_spec(role=ErrorCode.REGISTER_INVALID_PASSWORD)
+"""
+    graph = _json_enum_graph(
+        tmp_path,
+        test_source=test_source,
+        client_source="",
+        extra_sources={"consumer.py": consumer, "other.py": other},
+    )
+    assert not graph.witnesses().get(
+        (tmp_path.resolve() / "common.py", 3, "REGISTER_INVALID_PASSWORD")
+    )
+
+
+def test_typed_enum_return_conversion_alone_is_not_a_consumer(tmp_path):
+    enum_source = """from enum import Enum
+
+class ErrorCode(str, Enum):
+    REGISTER_INVALID_PASSWORD = "register_invalid_password"
+    OTHER = "other"
+
+def conversion(value: str) -> ErrorCode:
+    if value == "password":
+        return ErrorCode.REGISTER_INVALID_PASSWORD
+    return ErrorCode.OTHER
+"""
+    graph = _json_enum_graph(
+        tmp_path,
+        test_source="def test_no_public_route():\n    assert True\n",
+        enum_source=enum_source,
+        client_source="",
+    )
+    rows = graph.witnesses().get(
+        (tmp_path.resolve() / "common.py", 4, "REGISTER_INVALID_PASSWORD")
+    )
+    assert graph.complete
+    assert not rows
+
+
+def test_frozen_typed_enum_field_projected_to_authorization_retains_finding(
+    tmp_path,
+):
+    enum_source = """from dataclasses import dataclass
+from enum import Enum
+
+class CredentialRole(str, Enum):
+    API_PASSWORD = "api_password"
+
+@dataclass(frozen=True, eq=False)
+class Holder:
+    token: CredentialRole
+
+holder = Holder(token=CredentialRole.API_PASSWORD)
+requests.get(
+    "https://example.test",
+    headers={"Authorization": holder.token.value},
+)
+"""
+    graph = _json_enum_graph(
+        tmp_path,
+        test_source="def test_no_public_route():\n    assert True\n",
+        enum_source=enum_source,
+        client_source="",
+    )
+    assert not graph.witnesses().get(
+        (tmp_path.resolve() / "common.py", 5, "API_PASSWORD")
+    )
+
+
+@pytest.mark.parametrize(
+    "consumer_source",
+    [
+        'secret = holder.token.value\nrequests.get("https://example.test", headers={"Authorization": secret})\n',
+        "authenticate(password=holder.token.value)\n",
+        'requests.get("https://example.test", auth=("user", holder.token.value))\n',
+        "transport.send(holder.token.value)\n",
+        "def get_password():\n    return holder.token.value\n",
+        "database.save(holder.token.value)\n",
+        'value = getattr(holder, "token").value\n',
+        "alias = holder\ntransport.send(alias.token.value)\n",
+        "from common import holder\ndef get_password():\n    return holder.token.value\n",
+        'from common import holder\neval("holder.token.value")\n',
+        'from common import holder\n__all__ = ["holder"]\n',
+    ],
+    ids=[
+        "scalar-alias-authorization",
+        "password-authentication",
+        "basic-authentication",
+        "arbitrary-transport",
+        "local-return",
+        "persistence",
+        "unknown-getter",
+        "metadata-alias",
+        "cross-file-return",
+        "dynamic-reflection",
+        "explicit-export",
+    ],
+)
+@pytest.mark.parametrize("demand", [False, True], ids=["small", "demand"])
+def test_tracked_metadata_field_use_closure_rejects_unclosed_consumers(
+    tmp_path, consumer_source, demand
+):
+    enum_source = """from dataclasses import dataclass
+from enum import Enum
+
+class CredentialRole(str, Enum):
+    API_PASSWORD = "api_password"
+
+@dataclass(frozen=True, eq=False)
+class Holder:
+    token: CredentialRole
+
+holder = Holder(token=CredentialRole.API_PASSWORD)
+"""
+    extra_sources = {"consumer.py": consumer_source}
+    if demand:
+        extra_sources.update(
+            {
+                f"padding_{index}.py": "# unrelated captured source\n"
+                for index in range(205)
+            }
+        )
+    graph = _json_enum_graph(
+        tmp_path,
+        test_source="def test_no_public_route():\n    assert True\n",
+        enum_source=enum_source,
+        client_source="",
+        extra_sources=extra_sources,
+    )
+    assert graph.enum_demand_only is demand
+    assert not graph.witnesses().get(
+        (tmp_path.resolve() / "common.py", 5, "API_PASSWORD")
+    )
+
+
+@pytest.mark.parametrize("demand", [False, True], ids=["small", "demand"])
+@pytest.mark.parametrize(
+    "metadata_change",
+    [
+        "    def __post_init__(self):\n        authenticate(password=self.token.value)\n",
+        "",
+    ],
+    ids=["post-init-authentication", "inert-control"],
+)
+def test_tracked_metadata_constructor_hooks_are_closed(
+    tmp_path, demand, metadata_change
+):
+    enum_source = """import dataclasses
+from enum import Enum
+
+class CredentialRole(str, Enum):
+    API_PASSWORD = "api_password"
+
+@dataclasses.dataclass(frozen=True, eq=False)
+class Holder:
+    token: CredentialRole
+METADATA_HOOK
+
+holder = Holder(token=CredentialRole.API_PASSWORD)
+""".replace("METADATA_HOOK\n", metadata_change)
+    extra_sources = {}
+    if demand:
+        extra_sources.update(
+            {
+                f"padding_{index}.py": "# unrelated captured source\n"
+                for index in range(205)
+            }
+        )
+    graph = _json_enum_graph(
+        tmp_path,
+        test_source="def test_no_public_route():\n    assert True\n",
+        enum_source=enum_source,
+        client_source="",
+        extra_sources=extra_sources,
+    )
+    assert graph.enum_demand_only is demand
+    rows = graph.witnesses().get((tmp_path.resolve() / "common.py", 5, "API_PASSWORD"))
+    if metadata_change:
+        assert not rows
+    else:
+        assert rows
+        assert all(row["source_sha256"] and row["span"] for row in rows)
+
+
+@pytest.mark.parametrize("demand", [False, True], ids=["small", "demand"])
+@pytest.mark.parametrize(
+    "provider", ["dataclasses", "enum"], ids=["dataclass-provider", "enum-provider"]
+)
+def test_tracked_metadata_rejects_mutated_providers(tmp_path, demand, provider):
+    enum_source = """import dataclasses
+import enum
+
+class CredentialRole(str, enum.Enum):
+    API_PASSWORD = "api_password"
+
+@dataclasses.dataclass(frozen=True, eq=False)
+class Holder:
+    token: CredentialRole
+
+holder = Holder(token=CredentialRole.API_PASSWORD)
+"""
+    extra_sources = {}
+    if provider == "dataclasses":
+        extra_sources["mutation.py"] = (
+            "import dataclasses\ndataclasses.dataclass = supplied\n"
+        )
+    else:
+        enum_source += "\nenum.Enum = supplied\n"
+    if demand:
+        extra_sources.update(
+            {
+                f"padding_{index}.py": "# unrelated captured source\n"
+                for index in range(205)
+            }
+        )
+    graph = _json_enum_graph(
+        tmp_path,
+        test_source="def test_no_public_route():\n    assert True\n",
+        enum_source=enum_source,
+        client_source="",
+        extra_sources=extra_sources,
+    )
+    assert graph.enum_demand_only is demand
+    assert not graph.witnesses().get(
+        (tmp_path.resolve() / "common.py", 5, "API_PASSWORD")
+    )
+
+
+@pytest.mark.parametrize("demand", [False, True], ids=["small", "demand"])
+def test_tracked_metadata_rejects_unsummarized_bases(tmp_path, demand):
+    enum_source = """from dataclasses import dataclass
+from enum import Enum
+
+class CredentialRole(str, Enum):
+    API_PASSWORD = "api_password"
+
+class Parent:
+    pass
+
+@dataclass(frozen=True, eq=False)
+class Holder(Parent):
+    token: CredentialRole
+
+holder = Holder(token=CredentialRole.API_PASSWORD)
+"""
+    extra_sources = {}
+    if demand:
+        extra_sources.update(
+            {
+                f"padding_{index}.py": "# unrelated captured source\n"
+                for index in range(205)
+            }
+        )
+    graph = _json_enum_graph(
+        tmp_path,
+        test_source="def test_no_public_route():\n    assert True\n",
+        enum_source=enum_source,
+        client_source="",
+        extra_sources=extra_sources,
+    )
+    assert graph.enum_demand_only is demand
+    assert not graph.witnesses().get(
+        (tmp_path.resolve() / "common.py", 5, "API_PASSWORD")
+    )
+
+
+@pytest.mark.parametrize("demand", [False, True], ids=["small", "demand"])
+def test_tracked_metadata_wrapper_resolves_constructor_at_definition_path(
+    tmp_path, demand
+):
+    enum_source = """from dataclasses import dataclass
+from enum import Enum
+
+class ErrorCode(str, Enum):
+    REGISTER_INVALID_PASSWORD = "register_invalid_password"
+
+@dataclass(frozen=True, eq=False)
+class FieldSpec:
+    role: ErrorCode
+
+from consumer import field_spec
+value = field_spec(role=ErrorCode.REGISTER_INVALID_PASSWORD)
+"""
+    consumer_source = """from common import ErrorCode
+
+class FieldSpec:
+    def __init__(self, *, role):
+        authenticate(password=role.value)
+
+def field_spec(*, role: ErrorCode):
+    return FieldSpec(role=role)
+"""
+    extra_sources = {"consumer.py": consumer_source}
+    if demand:
+        extra_sources.update(
+            {
+                f"padding_{index}.py": "# unrelated captured source\n"
+                for index in range(205)
+            }
+        )
+    graph = _json_enum_graph(
+        tmp_path,
+        test_source="def test_no_public_route():\n    assert True\n",
+        enum_source=enum_source,
+        client_source="",
+        extra_sources=extra_sources,
+    )
+    assert graph.enum_demand_only is demand
+    assert not graph.witnesses().get(
+        (tmp_path.resolve() / "common.py", 5, "REGISTER_INVALID_PASSWORD")
+    )
+
+
+def test_public_enum_receipt_rejects_changed_consumer_span(tmp_path):
+    from factoryline.review_audits import security_scan
+    from factoryline.review_integrity import partition_proven_primitive_observations
+
+    source = _JSON_TEST.replace(
+        '{"code": ErrorCode.REGISTER_INVALID_PASSWORD}',
+        "ErrorCode.REGISTER_INVALID_PASSWORD",
+    )
+    _json_enum_graph(tmp_path, test_source=source)
+    report = security_scan(tmp_path, cache_enabled=False)
+    assert report.get("primitive_observations")
+    report["primitive_observations"][0]["facts"]["consumers"][0]["span"][1] += 1
+    partition_proven_primitive_observations(report)
+    assert not report.get("primitive_observations")
+    assert any(row["code"] == "SECURITY_HARDCODED_SECRET" for row in report["findings"])
+
+
+def test_full_repository_security_context_uses_native_integrity_owner(
+    tmp_path, monkeypatch
+):
+    from types import SimpleNamespace
+    from factoryline import (
+        context_efficiency,
+        provenance,
+        review_audits,
+        review_integrity,
+    )
+
+    path = tmp_path / "app.py"
+    raw = b"from enum import Enum\nclass Role(str, Enum):\n    PASSWORD = 'invalid_password'\n"
+    path.write_bytes(raw)
+    digest = hashlib.sha256(raw).hexdigest()
+    tree = ast.parse(raw)
+    tree._oracle_source_sha256 = digest
+    snapshots = {path: tree}
+    captured = {path: raw}
+    bindings = [{"path": "app.py", "sha256": digest, "bytes": len(raw)}]
+    owners = []
+    original = provenance.bind_credential_consumers
+
+    def checked_binder(owner, *args, **kwargs):
+        owners.append(owner)
+        assert owner is review_integrity
+        return original(owner, *args, **kwargs)
+
+    monkeypatch.setattr(provenance, "bind_credential_consumers", checked_binder)
+    monkeypatch.setattr(
+        review_audits,
+        "_oracle_source_inputs",
+        lambda *args: (captured, bindings, {}, True),
+    )
+    monkeypatch.setattr(
+        review_audits.contracts, "bound_snapshots", lambda *args: snapshots
+    )
+    monkeypatch.setattr(
+        context_efficiency,
+        "bind_application_fixture_context",
+        lambda *args, **kwargs: None,
+    )
+    engine = SimpleNamespace(
+        _full_repository_configuration_binding=lambda root, name: {
+            "path": name,
+            "state": "absent",
+        }
+    )
+    generation = {"root": tmp_path, "files": [path], "frame": {"candidates": []}}
+    result = runtime._full_repository_workspace_security_context(
+        engine, generation, review_audits
+    )
+    assert owners == [review_integrity]
+    assert set(result["symbolic_imports"]) == {path}
+    assert result["contexts"][path]["fixed_program_workspace"]["complete"] is True
+
+
+@pytest.mark.parametrize(
+    "variant", ["captured", "uncaptured", "ambiguous", "nonpackage"]
+)
+def test_native269_symbolic_imports_use_only_captured_inventory(
+    tmp_path, monkeypatch, variant
+):
+    from types import SimpleNamespace
+    from factoryline import (
+        context_efficiency,
+        import_context,
+        provenance,
+        review_audits,
+    )
+
+    files = {"consumer.py": "from provider import Provider\n"}
+    provider = "provider.py"
+    if variant == "ambiguous":
+        files["consumer.py"] = "from pkg import child\n"
+        files.update(
+            {"pkg/__init__.py": "child = supplied\n", "pkg/child.py": "pass\n"}
+        )
+    elif variant == "nonpackage":
+        files["consumer.py"] = "import pkg.child\n"
+        files.update({"pkg.py": "pass\n", "pkg/child.py": "pass\n"})
+    else:
+        files[provider] = "class Provider: pass\n"
+    for name, text in files.items():
+        path = tmp_path / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+    captured = {
+        tmp_path / name: text.encode()
+        for name, text in files.items()
+        if variant != "uncaptured" or name != provider
+    }
+    snapshots = {path: ast.parse(raw) for path, raw in captured.items()}
+    bindings = [
+        {
+            "path": path.relative_to(tmp_path).as_posix(),
+            "sha256": hashlib.sha256(raw).hexdigest(),
+            "bytes": len(raw),
+        }
+        for path, raw in captured.items()
+    ]
+    for path, tree in snapshots.items():
+        tree._oracle_source_sha256 = hashlib.sha256(captured[path]).hexdigest()
+    monkeypatch.setattr(
+        review_audits,
+        "_oracle_source_inputs",
+        lambda *args: (captured, bindings, {}, True),
+    )
+    monkeypatch.setattr(
+        review_audits.contracts, "bound_snapshots", lambda *args: snapshots
+    )
+    monkeypatch.setattr(
+        context_efficiency,
+        "bind_application_fixture_context",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        provenance, "bind_credential_consumers", lambda *args, **kwargs: None
+    )
+
+    def live_resolution_is_forbidden(*args):
+        raise AssertionError("native symbolic imports must use the captured inventory")
+
+    monkeypatch.setattr(
+        import_context, "live_import_path", live_resolution_is_forbidden
+    )
+    engine = SimpleNamespace(
+        _full_repository_configuration_binding=lambda root, name: {
+            "path": name,
+            "state": "absent",
+        }
+    )
+    generation = {
+        "root": tmp_path,
+        "files": list(captured),
+        "frame": {"candidates": []},
+    }
+    result = runtime._full_repository_workspace_security_context(
+        engine, generation, review_audits
+    )
+    expected = (
+        {"Provider": (tmp_path / provider, "Provider")} if variant == "captured" else {}
+    )
+    assert result["symbolic_imports"][tmp_path / "consumer.py"] == expected
+
+
+def test_provenance_whole_class_replacement_changes_actual_callee_epoch(monkeypatch):
+    from factoryline import provenance, review_integrity
+
+    original = provenance._LiteralConsumers
+    before = provenance.credential_consumer_helpers(review_integrity)
+
+    class Replacement(original):
+        def changed_member(self):
+            return None
+
+    monkeypatch.setattr(provenance, "_LiteralConsumers", Replacement)
+    after = provenance.credential_consumer_helpers(review_integrity)
+    assert before != after
+    assert Replacement in after
+    assert Replacement.changed_member in after
+    assert runtime._LiteralConsumers is original

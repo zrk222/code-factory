@@ -512,6 +512,27 @@ def provider_context_cache_helpers(contracts):
     return (
         roles.PresentationRoleIndex,
         *(
+            getattr(roles, name)
+            for name in (
+                "declaration_fact",
+                "function_bindings",
+                "binding_occurrences",
+                "binding_statements",
+                "declared_origins",
+                "resolve_class",
+                "_method_decorators_allowed",
+                "_scope",
+                "_assignment_target",
+                "_name_origins",
+                "_assigned_origins",
+                "_direct_origins",
+                "_imported_attribute",
+                "_container_origins",
+                "_scope_scope_bindings",
+                "_scope_bindings",
+            )
+        ),
+        *(
             value
             for name, value in vars(roles).items()
             if name.startswith("_presentation_")

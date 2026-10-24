@@ -118,6 +118,10 @@ def direct_mock_return(module, fixture, aliases, audit):
     local_aliases = audit._scope_security_aliases(aliases, fixture)
     if not isinstance(value, ast.Call):
         return False
+    return _direct_mock_call_is_supported(module, fixture, value, local_aliases, audit)
+
+
+def _direct_mock_call_is_supported(module, fixture, value, local_aliases, audit):
     constructor = audit._normalized_call_name(value, local_aliases)
     if constructor not in audit._UNITTEST_MOCK_CONSTRUCTORS:
         return False
@@ -138,34 +142,43 @@ def inert_assertion_methods(module, fixture, audit):
     value = (
         body[0].value if len(body) == 1 and isinstance(body[0], ast.Return) else None
     )
-    if not isinstance(value, ast.Call) or not isinstance(value.func, ast.Name):
+    cls = _inert_assertion_class(module, value, audit)
+    if cls is None:
         return []
+    return [n.name for n in cls.body if n.name in _ASSERTION_METHODS]
+
+
+def _inert_assertion_class(module, value, audit):
+    if not isinstance(value, ast.Call) or not isinstance(value.func, ast.Name):
+        return None
     classes = [
         n
         for n in module.body
         if isinstance(n, ast.ClassDef) and n.name == value.func.id
     ]
     if len(classes) != 1 or classes[0].bases or classes[0].keywords:
-        return []
+        return None
     cls = classes[0]
     if cls.decorator_list or any(
         s is not cls and cls.name in audit._bound_names(s) for s in module.body
     ):
-        return []
-    if any(
-        not isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) for n in cls.body
+        return None
+    if not all(
+        isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) for n in cls.body
     ):
-        return []
-    if any(
-        n.decorator_list
-        or len(n.body) != 1
-        or not isinstance(n.body[0], (ast.Pass, ast.Return))
-        or isinstance(n.body[0], ast.Return)
-        and n.body[0].value is not None
-        for n in cls.body
-    ):
-        return []
-    return [n.name for n in cls.body if n.name in _ASSERTION_METHODS]
+        return None
+    return cls if all(_inert_method_body(method) for method in cls.body) else None
+
+
+def _inert_method_body(method):
+    return (
+        not method.decorator_list
+        and len(method.body) == 1
+        and isinstance(method.body[0], (ast.Pass, ast.Return))
+        and not (
+            isinstance(method.body[0], ast.Return) and method.body[0].value is not None
+        )
+    )
 
 
 def fixture_registration(decorator, function_name, aliases, audit):
@@ -191,6 +204,20 @@ def fixture_bindings_for_source(tree):
     from . import review_audits as audit
 
     aliases = audit._scope_security_aliases(audit._module_security_aliases(tree), tree)
+    fixtures = _source_fixture_declarations(tree, aliases, audit)
+    if not fixtures:
+        return {}
+    mock_provider_safe = _mock_providers_are_closed(tree, aliases, audit)
+    pytest_provider_safe = _pytest_fixture_provider_safe(tree, audit)
+    return {
+        name: _source_fixture_binding(
+            tree, name, items, aliases, audit, mock_provider_safe, pytest_provider_safe
+        )
+        for name, items in fixtures.items()
+    }
+
+
+def _source_fixture_declarations(tree, aliases, audit):
     fixtures = {}
     for node in tree.body:
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -198,33 +225,30 @@ def fixture_bindings_for_source(tree):
                 name, supported = fixture_registration(item, node.name, aliases, audit)
                 if name is not None:
                     fixtures.setdefault(name, []).append((node, supported))
-    if not fixtures:
-        return {}
-    mock_provider_safe = _mock_providers_are_closed(tree, aliases, audit)
-    pytest_provider_safe = _pytest_fixture_provider_safe(tree, audit)
-    result = {}
-    for name, items in fixtures.items():
-        fixture, supported_name = items[0] if len(items) == 1 else (None, False)
-        controlled = bool(
-            fixture
-            and supported_name
-            and len(fixture.decorator_list) == 1
-            and not any(
-                s is not fixture and name in audit._bound_names(s) for s in tree.body
-            )
-            and pytest_provider_safe
+    return fixtures
+
+
+def _source_fixture_binding(tree, name, items, aliases, audit, mock_safe, pytest_safe):
+    fixture, supported_name = items[0] if len(items) == 1 else (None, False)
+    controlled = bool(
+        fixture
+        and supported_name
+        and len(fixture.decorator_list) == 1
+        and not any(
+            s is not fixture and name in audit._bound_names(s) for s in tree.body
         )
-        result[name] = {
-            "mock": bool(
-                controlled
-                and mock_provider_safe
-                and direct_mock_return(tree, fixture, aliases, audit)
-            ),
-            "inert_methods": (
-                inert_assertion_methods(tree, fixture, audit) if controlled else []
-            ),
-        }
-    return result
+        and pytest_safe
+    )
+    return {
+        "mock": bool(
+            controlled
+            and mock_safe
+            and direct_mock_return(tree, fixture, aliases, audit)
+        ),
+        "inert_methods": inert_assertion_methods(tree, fixture, audit)
+        if controlled
+        else [],
+    }
 
 
 def fixtures_for_file(path: Path, sources: dict[Path, dict[str, dict]]):
@@ -332,6 +356,11 @@ def _mock_providers_are_closed(module, aliases, audit):
     return True
 
 
+def _evidence_node_span(node):
+    """Project complete parsed-source coordinates without defaulting missing fields."""
+    return [node.lineno, node.col_offset, node.end_lineno, node.end_col_offset]
+
+
 def _root_name(node):
     while isinstance(node, ast.Attribute):
         node = node.value
@@ -381,9 +410,7 @@ def django_test_secret_index(
     from .credential_role_constructor_provider import SourceSnapshotIndex
 
     source = SourceSnapshotIndex(root, modules, source_bytes, inventory)
-    if not source.bounded or set(configs) != {"pyproject.toml", "tox.ini"}:
-        return None
-    if any(not isinstance(raw, bytes) for raw in configs.values()):
+    if not _django_snapshot_inputs_valid(source, configs):
         return None
     try:
         from .review_audits import tomllib
@@ -393,41 +420,17 @@ def django_test_secret_index(
         tox.read_string(configs["tox.ini"].decode("utf-8"))
     except (ImportError, UnicodeError, ValueError, configparser.Error):
         return None
-    testenv = tox["testenv"] if tox.has_section("testenv") else None
-    if testenv is None or not re.search(
-        r"\bpytest(?:\s|$)", testenv.get("commands", "")
-    ):
+    testenv = _django_test_environment(pyproject, tox)
+    if testenv is None:
         return None
-    if not _django_runner_plugins_safe(pyproject, testenv):
+    runner = _django_settings_module(testenv)
+    if runner is None:
         return None
-    extras = set(testenv.get("extras", "").replace(",", " ").split())
-    optional = pyproject.get("project", {}).get("optional-dependencies", {})
-    test_deps = {
-        re.split(r"[<>=!~\[]", str(item).lower(), maxsplit=1)[0].strip()
-        for key in extras
-        for item in optional.get(key, [])
-    }
-    if "pytest" not in test_deps or "pytest-django" not in test_deps:
-        return None
-    setting_match = re.search(
-        r"(?m)^\s*DJANGO_SETTINGS_MODULE\s*=\s*([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\s*$",
-        testenv.get("setenv", ""),
-    )
-    if setting_match is None:
-        return None
-    runner = setting_match.group(1)
     configs_sha = {
         name: hashlib.sha256(raw).hexdigest() for name, raw in configs.items()
     }
-    rows = {
-        source.relative(path): digest
-        for path, digest in inventory.items()
-        if source.relative(path) is not None
-    }
-    module_paths = {
-        source.relative(path): path for path in modules if source.relative(path)
-    }
-    if len(rows) != len(inventory) or any(
+    rows, module_paths = _django_source_paths(source, modules, inventory)
+    if rows is None or any(
         _django_provider_root_shadowed(module_paths, root)
         for root in _DJANGO_CANONICAL_PROVIDER_ROOTS
     ):
@@ -453,6 +456,52 @@ def django_test_secret_index(
         "model_cache": {},
         "signal_cache": {},
     }
+
+
+def _django_snapshot_inputs_valid(source, configs):
+    return (
+        source.bounded
+        and set(configs) == {"pyproject.toml", "tox.ini"}
+        and all(isinstance(raw, bytes) for raw in configs.values())
+    )
+
+
+def _django_test_environment(pyproject, tox):
+    testenv = tox["testenv"] if tox.has_section("testenv") else None
+    if testenv is None or not re.search(
+        r"\bpytest(?:\s|$)", testenv.get("commands", "")
+    ):
+        return None
+    if not _django_runner_plugins_safe(pyproject, testenv):
+        return None
+    extras = set(testenv.get("extras", "").replace(",", " ").split())
+    optional = pyproject.get("project", {}).get("optional-dependencies", {})
+    test_deps = {
+        re.split(r"[<>=!~\[]", str(item).lower(), maxsplit=1)[0].strip()
+        for key in extras
+        for item in optional.get(key, [])
+    }
+    return testenv if {"pytest", "pytest-django"} <= test_deps else None
+
+
+def _django_settings_module(testenv):
+    match = re.search(
+        r"(?m)^\s*DJANGO_SETTINGS_MODULE\s*=\s*([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)\s*$",
+        testenv.get("setenv", ""),
+    )
+    return match.group(1) if match is not None else None
+
+
+def _django_source_paths(source, modules, inventory):
+    rows = {
+        source.relative(path): digest
+        for path, digest in inventory.items()
+        if source.relative(path) is not None
+    }
+    module_paths = {
+        source.relative(path): path for path in modules if source.relative(path)
+    }
+    return (rows if len(rows) == len(inventory) else None), module_paths
 
 
 def _django_runner_plugins_safe(pyproject, testenv):
@@ -749,25 +798,24 @@ def _django_source_function(index, path, expression, function=None):
     return target_path, rows[0]
 
 
+def _direct_named_assignments(owner, name):
+    rows = []
+    for statement in owner.body:
+        target = None
+        if isinstance(statement, ast.Assign) and len(statement.targets) == 1:
+            target = statement.targets[0]
+        elif isinstance(statement, ast.AnnAssign):
+            target = statement.target
+        if isinstance(target, ast.Name) and target.id == name:
+            rows.append((statement, statement.value))
+    return rows
+
+
 def _django_assignment(tree, name):
     from .credential_role_constructor_provider import binding_occurrences
 
     bindings = binding_occurrences(tree.body, name)
-    rows = []
-    for statement in tree.body:
-        if (
-            isinstance(statement, ast.Assign)
-            and len(statement.targets) == 1
-            and isinstance(statement.targets[0], ast.Name)
-            and statement.targets[0].id == name
-        ):
-            rows.append((statement, statement.value))
-        elif (
-            isinstance(statement, ast.AnnAssign)
-            and isinstance(statement.target, ast.Name)
-            and statement.target.id == name
-        ):
-            rows.append((statement, statement.value))
+    rows = _direct_named_assignments(tree, name)
     return rows if len(rows) == len(bindings) else []
 
 
@@ -1250,22 +1298,7 @@ def _class_has_binding(owner, name):
 
 
 def _django_assignment_from_class(cls, name):
-    rows = []
-    for statement in cls.body:
-        if (
-            isinstance(statement, ast.Assign)
-            and len(statement.targets) == 1
-            and isinstance(statement.targets[0], ast.Name)
-            and statement.targets[0].id == name
-        ):
-            rows.append(statement.value)
-        elif (
-            isinstance(statement, ast.AnnAssign)
-            and isinstance(statement.target, ast.Name)
-            and statement.target.id == name
-        ):
-            rows.append(statement.value)
-    return rows
+    return [value for _, value in _direct_named_assignments(cls, name)]
 
 
 def _django_secret_field_hook(index, path, method):
@@ -2384,9 +2417,7 @@ def _jwt_provider_use_is_closed(name, fixture, provider_aliases, binding_cache=N
             isinstance(target, ast.Name) and target.id not in provider_aliases
             for target in parent.targets
         )
-    # A constructor reference creates an instance; it does not mutate or export
-    # the provider class. Other test cases in the same module may construct the
-    # real provider independently of this fixture.
+    # Constructor refs create instances; they do not mutate/export the provider class. Other tests here may construct it independently.
     if isinstance(parent, ast.Call) and parent.func is name:
         return True
     if _jwt_provider_is_exception_callback(name, parent, binding_cache):
@@ -2933,7 +2964,7 @@ def _jwt_local_definitions(owner, name):
 
 def _jwt_payload_source_span(value, owner, module, aliases, encode_statement):
     if _jwt_local_data_expression(value):
-        return [value.lineno, value.col_offset, value.end_lineno, value.end_col_offset]
+        return _evidence_node_span(value)
     if not isinstance(value, ast.Name):
         return None
     definitions = _jwt_local_definitions(owner, value.id)
@@ -2944,12 +2975,7 @@ def _jwt_payload_source_span(value, owner, module, aliases, encode_statement):
             value.id, owner, encode_statement, module, aliases
         )
     ):
-        return [
-            definitions[0].value.lineno,
-            definitions[0].value.col_offset,
-            definitions[0].value.end_lineno,
-            definitions[0].value.end_col_offset,
-        ]
+        return _evidence_node_span(definitions[0].value)
     if value.id not in {
         argument.arg
         for argument in [
@@ -3007,12 +3033,7 @@ def _jwt_payload_source_span(value, owner, module, aliases, encode_statement):
     ):
         return None
     returned = fixture_body[0].value
-    return [
-        returned.lineno,
-        returned.col_offset,
-        returned.end_lineno,
-        returned.end_col_offset,
-    ]
+    return _evidence_node_span(returned)
 
 
 def _jwt_fixture_payload_expression_safe(value, module, aliases):
@@ -3624,7 +3645,7 @@ def _jwt_encoded_input_span(value, owner, receiver, module, aliases):
     payload = _jwt_bound_argument(token, 0, {"payload"})
     if _jwt_payload_source_span(payload, owner, module, aliases, definition) is None:
         return None
-    return [token.lineno, token.col_offset, token.end_lineno, token.end_col_offset]
+    return _evidence_node_span(token)
 
 
 def _jwt_literal_loads_closed(owner, target, literal_targets, receiver, parent_map):
@@ -3763,6 +3784,13 @@ def closed_jwt_test_literal(
     relative: str, node: ast.AST, target: ast.expr
 ) -> dict | None:
     """Prove a local test literal is used only by its in-process JWT fixture."""
+    context = _closed_jwt_test_context(relative, node, target)
+    if context is None:
+        return None
+    return _closed_jwt_test_evidence(relative, node, *context)
+
+
+def _closed_jwt_test_context(relative, node, target):
     value = getattr(node, "value", None)
     if isinstance(value, ast.Constant) and isinstance(value.value, str):
         if _app_known_credential_format(value.value):
@@ -3790,7 +3818,12 @@ def closed_jwt_test_literal(
     )
     if operation is None:
         return None
-    import hashlib
+    return target, owner, module, fixture, operation
+
+
+def _closed_jwt_test_evidence(
+    relative, node, target, owner, module, fixture, operation
+):
     import json
 
     source_context = module._security_source_context
@@ -3818,38 +3851,20 @@ def closed_jwt_test_literal(
         "workspace_sources_sha256": workspace_sha,
         "provider_path": provider_path.as_posix(),
         "provider_sha256": provider_sha,
-        "declaration_span": [
-            node.lineno,
-            node.col_offset,
-            node.end_lineno,
-            node.end_col_offset,
-        ],
+        "declaration_span": _evidence_node_span(node),
         "test_owner": owner.name,
         "fixture_provider": fixture.name,
         "authority_role": "TEST_OWNED_SYNTHETIC_SIGNING_AUTHORITY",
         "transport_role": "UNASSESSED",
         "runtime_assurance": "INCOMPLETE",
-        "test_owner_span": [
-            owner.lineno,
-            owner.col_offset,
-            owner.end_lineno,
-            owner.end_col_offset,
-        ],
-        "provider_allocation_span": [
-            fixture.body[0].value.lineno,
-            fixture.body[0].value.col_offset,
-            fixture.body[0].value.end_lineno,
-            fixture.body[0].value.end_col_offset,
-        ],
+        "test_owner_span": _evidence_node_span(owner),
+        "provider_allocation_span": _evidence_node_span(fixture.body[0].value),
         "runtime_executed": False,
     }
     evidence.update(
         operation_role="test_owned_local_crypto_operation",
         operation_kind=operation["kind"],
-        crypto_call_spans=[
-            [call.lineno, call.col_offset, call.end_lineno, call.end_col_offset]
-            for call in operation["calls"]
-        ],
+        crypto_call_spans=[_evidence_node_span(call) for call in operation["calls"]],
         input_source_spans=operation["inputs"],
     )
     return evidence
@@ -3864,8 +3879,8 @@ def application_test_index(
     source = SourceSnapshotIndex(root, modules, source_bytes, inventory)
     if not source.bounded:
         return None
-    paths = {source.relative(path): path for path in modules}
-    if None in paths or len(paths) != len(modules):
+    paths = source.module_paths()
+    if paths is None:
         return None
     if any(
         _django_provider_root_shadowed(paths, name)
@@ -3880,6 +3895,7 @@ def application_test_index(
             "itsdangerous",
             "passlib",
             "unittest",
+            "factory",
         )
     ):
         return None
@@ -3927,18 +3943,11 @@ def _app_expression_name(index, path, node, function=None):
 
 
 def _app_local_assignment(function, name):
-    from .credential_role_constructor_provider import binding_occurrences
-
-    bindings = binding_occurrences(function.body, name)
-    rows = [
-        statement
-        for statement in function.body
-        if isinstance(statement, ast.Assign)
-        and len(statement.targets) == 1
-        and isinstance(statement.targets[0], ast.Name)
-        and statement.targets[0].id == name
-    ]
-    return rows[0] if len(rows) == len(bindings) == 1 else None
+    rows = _django_assignment(function, name)
+    if len(rows) != 1:
+        return None
+    statement, _ = rows[0]
+    return statement if isinstance(statement, ast.Assign) else None
 
 
 def _app_literal_encoding(index, path, function, call):
@@ -4195,12 +4204,7 @@ def _app_closed_consumer_uses(index, path, function, secret, secret_value, witne
         return {
             "path": source_path,
             "sha256": source_hash,
-            "span": [
-                node.lineno,
-                node.col_offset,
-                node.end_lineno,
-                node.end_col_offset,
-            ],
+            "span": _evidence_node_span(node),
             "name": name,
             "role": role,
         }
@@ -4246,12 +4250,7 @@ def _app_consumer_operation_rows(index, witness, source_row):
             {
                 "path": relative,
                 "sha256": implementation_hash,
-                "span": [
-                    implementation.lineno,
-                    implementation.col_offset,
-                    implementation.end_lineno,
-                    implementation.end_col_offset,
-                ],
+                "span": _evidence_node_span(implementation),
                 "name": "",
                 "role": "verification_implementation",
             }
@@ -5570,10 +5569,6 @@ def _app_request_wrapper(index, profile, call):
     )
 
 
-def _app_argument_contains_member(node, member):
-    return any(_app_member_chain(child) == member for child in ast.walk(node))
-
-
 def _app_password_operation(index, model, method_name, kind):
     path, owner = model
     selected = _app_password_method(index, model, method_name)
@@ -5807,6 +5802,17 @@ def _app_invitation_tokens(index, path, function, user, request):
     return results
 
 
+def _app_unittest_witness(witness):
+    return {
+        "profile": (
+            "UNITTEST_FACTORY_INVITATION_ENROLLMENT"
+            if "token" in witness
+            else "UNITTEST_FACTORY_USER_ENROLLMENT"
+        ),
+        **witness,
+    }
+
+
 def _app_unittest_enrollment(index, path, function, owner, secret):
     profile = _app_unittest_profile(index, path, owner)
     if profile is None:
@@ -5826,14 +5832,7 @@ def _app_unittest_enrollment(index, path, function, owner, secret):
             index, path, function, profile, call, secret
         )
         if witness is not None:
-            return {
-                "profile": (
-                    "UNITTEST_FACTORY_INVITATION_ENROLLMENT"
-                    if "token" in witness
-                    else "UNITTEST_FACTORY_USER_ENROLLMENT"
-                ),
-                **witness,
-            }
+            return _app_unittest_witness(witness)
     # An old-password input is paired with the same owned user's new password.
     for call in ast.walk(function):
         if (
@@ -5845,14 +5844,7 @@ def _app_unittest_enrollment(index, path, function, owner, secret):
             index, path, function, profile, call, secret
         )
         if witness is not None:
-            return {
-                "profile": (
-                    "UNITTEST_FACTORY_INVITATION_ENROLLMENT"
-                    if "token" in witness
-                    else "UNITTEST_FACTORY_USER_ENROLLMENT"
-                ),
-                **witness,
-            }
+            return _app_unittest_witness(witness)
     return None
 
 
@@ -5864,6 +5856,24 @@ def application_test_secret_evidence(index, path, line, value):
     if candidate is None:
         return _django_unknown(reason)
     literal, assignment, secret = candidate
+    from . import credential_role_identity_effects as effects
+
+    plain = effects.application_value_role_evidence
+    fixture = effects.module_fixture_evidence_for_binding
+    if (effect_evidence := plain(index, path, literal, assignment, secret)) is not None:
+        return effect_evidence
+
+    result = fixture(index, path, assignment, secret)
+    if result is not None:
+        return result
+    return _application_test_secret_from_local_binding(
+        index, path, literal, assignment, secret
+    )
+
+
+def _application_test_secret_from_local_binding(
+    index, path, literal, assignment, secret
+):
     parents = index["source"].parents[path]
     function = parents.get(id(assignment))
     if (
@@ -5884,6 +5894,14 @@ def application_test_secret_evidence(index, path, line, value):
         return _django_unknown(
             "captured framework authority creation and same-client exercise are unresolved"
         )
+    return _application_test_secret_witness(
+        index, path, literal, assignment, function, secret, witness
+    )
+
+
+def _application_test_secret_witness(
+    index, path, literal, assignment, function, secret, witness
+):
     use_closure = _app_closed_consumer_uses(
         index, path, function, secret, literal.value, witness
     )
@@ -5910,15 +5928,10 @@ def application_test_secret_evidence(index, path, line, value):
         "classification": "APPLICATION_TEST_CREDENTIAL_ROLE",
         "source": index["source"].relative(path),
         "source_sha256": hashlib.sha256(index["source"].source_bytes[path]).hexdigest(),
-        "declaration_span": [
-            assignment.lineno,
-            assignment.col_offset,
-            assignment.end_lineno,
-            assignment.end_col_offset,
-        ],
+        "declaration_span": _evidence_node_span(assignment),
         "profile": witness["profile"],
         "witness_spans": {
-            key: [node.lineno, node.col_offset, node.end_lineno, node.end_col_offset]
+            key: _evidence_node_span(node)
             for key, node in witness.items()
             if isinstance(node, ast.AST)
         },
@@ -5947,20 +5960,16 @@ def _app_witness_sources(index, witness):
         result[key] = {
             "path": index["source"].relative(path),
             "sha256": index["source"].inventory[path],
-            "span": [
-                node.lineno,
-                node.col_offset,
-                node.end_lineno,
-                node.end_col_offset,
-            ],
+            "span": _evidence_node_span(node),
         }
     return result
 
 
 def _app_known_credential_cache_dependencies():
-    from .intent_quality import _looks_like_known_credential
+    from .intent_quality import _looks_like_known_credential as looks
+    from .credential_role_identity_effects import module_fixture_helper_epoch as epoch
 
-    return (_looks_like_known_credential, _APP_SECRET_INVENTORY_CACHE_TOKEN)
+    return looks, _APP_SECRET_INVENTORY_CACHE_TOKEN, *epoch()
 
 
 class _AppSecretInventoryCacheToken:
