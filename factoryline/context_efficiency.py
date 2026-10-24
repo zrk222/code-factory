@@ -6,12 +6,14 @@ from __future__ import annotations
 
 import ast
 import hashlib
+import io
 import json
 import os
 import re
 import sqlite3
 import stat
 import threading
+import tokenize
 from copy import deepcopy
 from datetime import datetime, timezone
 from math import ceil
@@ -806,7 +808,8 @@ def _scan_security_source(
             audit, workspace, path, data, binding, tree, fingerprint
         )
         tree._oracle_source_sha256 = binding["sha256"]
-        tree._oracle_source_lines = data.decode("utf-8").splitlines()
+        encoding, _ = tokenize.detect_encoding(io.BytesIO(data).readline)
+        tree._oracle_source_lines = data.decode(encoding).splitlines()
     except SyntaxError as exc:
         return _security_source_failure(
             audit,

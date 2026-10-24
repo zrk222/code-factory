@@ -15,6 +15,31 @@ from factoryline.runtime_audit_integrity import finite_literal_eval_input_witnes
 from factoryline.runtime_audit_integrity import source_generated_eval_input_witness
 
 
+@pytest.mark.parametrize("codec, declaration", [("latin-1", b"# coding: latin-1\n"), ("utf-8-sig", b"")])
+def test_python_source_encoding299_preserves_bytes_and_security(tmp_path, codec, declaration):
+    raw = declaration + ("# café\nfrom flask import request\neval(request.get_data(as_text=True))\n").encode(codec)
+    path = tmp_path / "app.py"
+    path.write_bytes(raw)
+    report = review_audits.security_scan(tmp_path, cache_enabled=False)
+    assert report["audit_coverage"]["complete"] is True
+    assert report["files_scanned"] == 1
+    assert report["unreadable_sources"] == 0
+    assert report["sources"][0]["sha256"] == hashlib.sha256(raw).hexdigest()
+    assert not any(row["code"] == "SECURITY_SOURCE_UNREADABLE" for row in report["findings"])
+    assert any(row["code"] == "SECURITY_DYNAMIC_EXECUTION" for row in report["findings"])
+    row = next(row for row in report["finding_tier_report"]["ledger"] if row["raw_finding"]["code"] == "SECURITY_DYNAMIC_EXECUTION")
+    assert row["tier"] == "SUPPORTED_DEFECT"
+
+
+@pytest.mark.parametrize("raw", [b"# coding: nonexistent-codec\nx = 1\n", b"x = '\xff'\n", b"\xef\xbb\xbf# coding: latin-1\nx = 1\n"])
+def test_python_source_encoding299_invalid_source_remains_incomplete(tmp_path, raw):
+    (tmp_path / "app.py").write_bytes(raw)
+    report = review_audits.security_scan(tmp_path, cache_enabled=False)
+    assert report["audit_coverage"]["complete"] is False
+    assert report["audit_coverage"]["files_audited"] == 0
+    assert any(row["code"] in {"SECURITY_SOURCE_UNREADABLE", "QUALITY_SYNTAX_ERROR"} for row in report["findings"])
+
+
 def _sink_context_index(tmp_path, source):
     from factoryline.credential_role_constructor_provider import SourceSnapshotIndex
 
