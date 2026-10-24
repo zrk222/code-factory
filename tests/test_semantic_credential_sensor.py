@@ -24,6 +24,163 @@ def _premise_scan(source):
     )
 
 
+@pytest.mark.parametrize("helper, invocation", [
+    ("def identity(value):\n    alias = value\n    return alias\n", "identity(request.get_data(as_text=True))"),
+    ("def identity(value, /, *, extra=''):\n    alias = value\n    return alias\n", "identity(request.get_data(as_text=True), extra='')"),
+    ("def identity(value, fallback=''):\n    alias = value\n    return alias\n", "identity(value=request.get_data(as_text=True))"),
+])
+def test_native_flow_helper_return_reaches_primary_verdict(helper, invocation):
+    findings = _premise_scan("from flask import request\n" + helper + f"eval({invocation})\n")
+    dynamic = [x for x in findings if x["code"] == "SECURITY_DYNAMIC_EXECUTION"]
+    assert len(dynamic) == 1
+    assert dynamic[0]["facts"]["security_precondition"]["status"] == "SUPPORTED"
+
+
+@pytest.mark.parametrize("body, invocation", [
+    ("alias = value\n    eval(alias)", "consume(request.get_data(as_text=True))"),
+    ("eval(value)", "consume(value=request.get_data(as_text=True))"),
+])
+def test_native_flow_actual_argument_reaches_callee_sink(body, invocation):
+    findings = _premise_scan("from flask import request\ndef consume(value):\n    " + body + "\n" + invocation + "\n")
+    dynamic = [x for x in findings if x["code"] == "SECURITY_DYNAMIC_EXECUTION"]
+    assert len(dynamic) == 1
+    assert dynamic[0]["facts"]["security_precondition"]["status"] == "SUPPORTED"
+
+
+@pytest.mark.parametrize("helper, invocation, mutation", [
+    ("def identity(value):\n    value = '1'\n    return value\n", "identity(request.get_data(as_text=True))", ""),
+    ("def identity(value):\n    alias = opaque(value)\n    return alias\n", "identity(request.get_data(as_text=True))", ""),
+    ("def identity(value):\n    return value\n", "identity(*values)", ""),
+    ("def identity(value='1'):\n    return value\n", "identity()", "value = request.get_data(as_text=True)\n"),
+    ("def identity(value):\n    return value\n", "identity(request.get_data(as_text=True))", "identity.__code__ = replacement\n"),
+    ("@decorate\ndef identity(value):\n    return value\n", "identity(request.get_data(as_text=True))", ""),
+    ("def identity(value):\n    return identity(value)\n", "identity(request.get_data(as_text=True))", ""),
+])
+def test_native_flow_unproved_helpers_retain_raw_without_support(helper, invocation, mutation):
+    findings = _premise_scan("from flask import request\n" + helper + mutation + f"eval({invocation})\n")
+    dynamic = [x for x in findings if x["code"] == "SECURITY_DYNAMIC_EXECUTION"]
+    assert len(dynamic) == 1
+    assert "security_precondition" not in dynamic[0]["facts"]
+
+
+@pytest.mark.parametrize("body, suffix", [
+    ("value = '1'\n    eval(value)", "consume(request.get_data(as_text=True))"),
+    ("eval(value)", "consume(opaque(request.get_data(as_text=True)))"),
+    ("return\n    eval(value)", "consume(request.get_data(as_text=True))"),
+    ("eval(value)", "consume.__code__ = replacement\nconsume(request.get_data(as_text=True))"),
+])
+def test_native_flow_callee_unknown_or_killed_flow_retains_raw(body, suffix):
+    findings = _premise_scan("from flask import request\ndef consume(value):\n    " + body + "\n" + suffix + "\n")
+    dynamic = [x for x in findings if x["code"] == "SECURITY_DYNAMIC_EXECUTION"]
+    assert len(dynamic) == 1
+    assert "security_precondition" not in dynamic[0]["facts"]
+
+
+@pytest.mark.parametrize("as_text, supported", [(False, True), (True, False)])
+def test_native_flow_pickle_argument_kind_preserved(as_text, supported):
+    findings = _premise_scan(
+        "import pickle\nfrom flask import request\n"
+        "def consume(value):\n    alias = value\n    return pickle.loads(alias)\n"
+        f"consume(request.get_data(as_text={as_text!r}))\n"
+    )
+    dynamic = [x for x in findings if x["code"] == "SECURITY_UNSAFE_DESERIALIZATION"]
+    assert len(dynamic) == 1
+    assert bool(dynamic[0]["facts"].get("security_precondition")) is supported
+
+
+@pytest.mark.parametrize("mutation", [
+    "alias = identity\nalias.__code__ = replacement\n",
+    "setattr(identity, '__code__', replacement)\n",
+    "mutator(identity)\n",
+    "identity.__defaults__ = (replacement,)\n",
+])
+def test_native_flow_provider_capability_mutation_abstains(mutation):
+    findings = _premise_scan(
+        "from flask import request\ndef identity(value):\n    alias = value\n    return alias\n"
+        + mutation + "eval(identity(request.get_data(as_text=True)))\n"
+    )
+    dynamic = [x for x in findings if x["code"] == "SECURITY_DYNAMIC_EXECUTION"]
+    assert len(dynamic) == 1
+    assert "security_precondition" not in dynamic[0]["facts"]
+
+
+def test_native_flow_precondition_is_independently_recomputed():
+    source = (
+        "from flask import request\ndef identity(value):\n    alias = value\n    return alias\n"
+        "eval(identity(request.get_data(as_text=True)))\n"
+    )
+    report = _private_key_auth_tiers(source)
+    row = next(x for x in report["ledger"] if x["raw_finding"]["code"] == "SECURITY_DYNAMIC_EXECUTION")
+    assert row["tier"] == "SUPPORTED_DEFECT"
+    # Keep the claimed fact but replace the helper's actual implementation.
+    changed = source.replace("alias = value", "alias = '1'")
+    report = _private_key_auth_tiers(changed, findings=_premise_scan(source))
+    row = next(x for x in report["ledger"] if x["raw_finding"]["code"] == "SECURITY_DYNAMIC_EXECUTION")
+    assert row["tier"] == "NEEDS_CONTEXT"
+
+
+@pytest.mark.parametrize("source", [
+    "def identity(value):\n    return value\n    yield None\neval(identity(request.get_data(as_text=True)))\n",
+    "def consume(value):\n    yield None\n    eval(value)\nconsume(request.get_data(as_text=True))\n",
+    "def consume(value):\n    opaque_effect()\n    eval(value)\nconsume(request.get_data(as_text=True))\n",
+    "def identity(value, other=opaque_effect()):\n    return value\neval(identity(request.get_data(as_text=True)))\n",
+    "def consume(value):\n    doomed = 1 / 0\n    eval(value)\nconsume(request.get_data(as_text=True))\n",
+    "def identity(value: 1 / 0):\n    return value\neval(identity(request.get_data(as_text=True)))\n",
+    "def consume(value):\n    alias: opaque_effect() = value\n    eval(alias)\nconsume(request.get_data(as_text=True))\n",
+    "def consume(value):\n    doomed = value / 2\n    eval(value)\nconsume(request.get_data(as_text=True))\n",
+    "def identity(value):\n    return value / 2\neval(identity(request.get_data(as_text=True)))\n",
+    "def consume(value):\n    eval(value)\nconsume(request.get_data(as_text=True) / 2)\n",
+    "def identity(value):\n    alias: opaque_effect() = value\n    return alias\neval(identity(request.get_data(as_text=True)))\n",
+    "def identity(value=undefined_default):\n    return value\neval(identity(request.get_data(as_text=True)))\n",
+])
+def test_native_flow_generator_or_opaque_effect_does_not_certify(source):
+    findings = _premise_scan("from flask import request\n" + source)
+    dynamic = [x for x in findings if x["code"] == "SECURITY_DYNAMIC_EXECUTION"]
+    assert len(dynamic) == 1
+    assert "security_precondition" not in dynamic[0]["facts"]
+
+
+def test_native_flow_provider_guard_reuse_is_limited_to_one_source_scan(monkeypatch):
+    from factoryline import intent_quality
+
+    inspected = []
+    original = intent_quality._sanitizer_provider_mutated
+
+    def counted(module, call, aliases, expected, head, reader):
+        if expected == "identity":
+            inspected.append(id(module))
+        return original(module, call, aliases, expected, head, reader)
+
+    monkeypatch.setattr(intent_quality, "_sanitizer_provider_mutated", counted)
+    source = (
+        "from flask import request\ndef identity(value):\n    alias = value\n    return alias\n"
+        "eval(identity(request.get_data(as_text=True)))\n"
+        "eval(identity(request.get_data(as_text=True)))\n"
+    )
+    assert len(_premise_scan(source)) == 2
+    assert len(inspected) == 1
+    mutated = source.replace("eval(identity", "identity.__code__ = replacement\neval(identity", 1)
+    findings = _premise_scan(mutated)
+    assert len(inspected) == 2
+    assert all("security_precondition" not in finding["facts"] for finding in findings)
+
+
+@pytest.mark.parametrize("length, supported", [(2, True), (10, False)])
+def test_native_flow_helper_depth_cutoff_never_becomes_support(length, supported):
+    functions = [
+        f"def helper{i}(value):\n    return "
+        + (f"helper{i+1}(value)\n" if i + 1 < length else "value\n")
+        for i in range(length)
+    ]
+    findings = _premise_scan(
+        "from flask import request\n" + "".join(functions)
+        + "eval(helper0(request.get_data(as_text=True)))\n"
+    )
+    dynamic = [x for x in findings if x["code"] == "SECURITY_DYNAMIC_EXECUTION"]
+    assert len(dynamic) == 1
+    assert bool(dynamic[0]["facts"].get("security_precondition")) is supported
+
+
 def _configuration_tiers277(files, *, omit=()):
     from hashlib import sha256
     from pathlib import Path
@@ -569,6 +726,40 @@ def test_http_body275_supported_precondition_keeps_raw_sink(imports, sink, code)
     assert premise["deployment"] == "UNASSESSED"
     assert premise["runtime_execution"] == "not_performed"
     assert premise["sink_span"][0] == finding["line"]
+
+
+@pytest.mark.parametrize("arguments,bytes_input", [
+    ("", True), ("as_text=False", True), ("False, False", True),
+    ("cache=False, parse_form_data=True", True), ("as_text=True", False),
+])
+@pytest.mark.parametrize("sink", ["pickle.loads(payload)", "eval(payload)"])
+def test_sink_context_flask_body_method_preserves_source_kind(arguments, bytes_input, sink):
+    source = (
+        "import pickle\nfrom flask import request\ndef view():\n"
+        f"    payload = request.get_data({arguments})\n    {sink}\n"
+    )
+    findings = [row for row in _premise_scan(source)
+                if row["code"] in {"SECURITY_UNSAFE_DESERIALIZATION", "SECURITY_DYNAMIC_EXECUTION"}]
+    assert len(findings) == 1
+    expected = bytes_input or sink.startswith("eval")
+    assert bool(findings[0]["facts"].get("security_precondition")) is expected
+
+
+@pytest.mark.parametrize("arguments", [
+    "*values", "**options", "as_text=unknown", "as_text='yes'",
+    "False, False, False, False", "False, cache=True", "other=True",
+])
+def test_sink_context_flask_body_ambiguous_call_is_not_a_source_certificate(arguments):
+    source = f"from flask import request\ndef view():\n    eval(request.get_data({arguments}))\n"
+    assert not any(row.get("facts", {}).get("security_precondition") for row in _premise_scan(source))
+
+
+@pytest.mark.parametrize("mutation", [
+    "request.get_data = replacement", "request = replacement",
+])
+def test_sink_context_flask_body_replaced_provider_is_not_certified(mutation):
+    source = f"from flask import request\n{mutation}\ndef view():\n    eval(request.get_data())\n"
+    assert not any(row.get("facts", {}).get("security_precondition") for row in _premise_scan(source))
 
 
 @pytest.mark.parametrize("framework,expression", [

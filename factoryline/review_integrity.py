@@ -4009,6 +4009,9 @@ def _security_statement_call_findings(
 
         canonical = security_call_name(call, aliases)
         from . import review_audits as audit
+        from .finite_capture import security_forward_helper_sources
+
+        security_forward_helper_sources(relative, call, aliases, requests, helpers)
 
         primitive = audit._security_call_finding(canonical, relative, call)
         if (
@@ -4442,34 +4445,9 @@ def _security_local_helper_definition(call):
 
 
 def _security_helper_return_tainted(call, function, requests, parameters, aliases):
-    if (
-        not isinstance(function, ast.FunctionDef)
-        or function.decorator_list
-        or function.args.vararg
-        or function.args.kwarg
-        or getattr(function, "_security_helper_active", False)
-        or len(function.body) != 1
-    ):
-        return False
-    try:
-        actuals = bind_source_call(call, function, apply_defaults=False)
-    except ValueError:
-        return False
-    if set(actuals) != set(source_signature(function).parameters):
-        return False
-    returned = function.body[0]
-    if not isinstance(returned, ast.Return) or returned.value is None:
-        return False
-    tainted = {
-        name
-        for name, value in actuals.items()
-        if _security_expr_tainted(value, requests, parameters, aliases)
-    }
-    function._security_helper_active = True
-    try:
-        return _security_expr_tainted(returned.value, set(), tainted, aliases)
-    finally:
-        function._security_helper_active = False
+    from .finite_capture import security_helper_return_tainted
+
+    return security_helper_return_tainted(call, function, requests, parameters, aliases)
 
 
 def _security_request_args(node, aliases, scope=None, flow_statement=None):

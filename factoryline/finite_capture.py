@@ -5,6 +5,314 @@ import hashlib
 from collections import defaultdict
 
 
+def _security_helper_definition_supported(function):
+    from . import review_integrity as flow
+
+    defaults = [*function.args.defaults, *function.args.kw_defaults]
+    if any(value is not None and not _fixed_literal_value(value) for value in defaults):
+        return False
+    annotations = [argument.annotation for argument in (*function.args.posonlyargs, *function.args.args, *function.args.kwonlyargs)]
+    annotations.append(function.returns)
+    annotations.extend(node.annotation for node in flow._lexical_nodes(function) if isinstance(node, ast.AnnAssign))
+    if any(not _security_helper_annotation_supported(value) for value in annotations):
+        return False
+    return not any(
+        isinstance(node, (ast.Yield, ast.YieldFrom, ast.Await, ast.Global, ast.Nonlocal))
+        for node in flow._lexical_nodes(function)
+    )
+
+
+def _security_helper_annotation_supported(value):
+    return value is None or isinstance(value, (ast.Name, ast.Constant))
+
+
+def _security_helper_binding(call, function):
+    """Bind a source-owned helper; decline mutation, expansion and recursion."""
+    from . import review_integrity as flow
+
+    if (
+        not isinstance(function, ast.FunctionDef)
+        or function.decorator_list or function.args.vararg or function.args.kwarg
+        or getattr(function, "_security_helper_active", False)
+    ):
+        return None
+    module = flow._security_module_scope(function)
+    if module is None or getattr(module, "_security_helper_flow_depth", 0) >= 8:
+        return None
+    if sum(1 for _ in ast.walk(function)) > 512:
+        return None
+    if not _security_helper_definition_supported(function):
+        return None
+    try:
+        actuals = flow.bind_source_call(call, function, apply_defaults=True)
+    except ValueError:
+        return None
+    if not _security_helper_provider_stable(module, call, function):
+        return None
+    return module, actuals
+
+
+def _security_helper_provider_stable(module, call, function):
+    from . import intent_quality, review_audits as audit
+
+    # The existing binder resets this cache for every captured-source scan.
+    # Cache provider facts only: flow states and return values remain per call.
+    cache = getattr(module, "_security_sanitizer_provider_cache", {})
+    key = ("native-helper-provider", id(function), call.func.id)
+    if key not in cache:
+        aliases = {function.name: function.name, call.func.id: function.name}
+        cache[key] = intent_quality._sanitizer_provider_mutated(
+            module, call, aliases, function.name, call.func.id, audit
+        )
+        module._security_sanitizer_provider_cache = cache
+    return not cache[key]
+
+
+def _security_flow_value(expression, environment, aliases):
+    from . import review_integrity as flow
+
+    if sum(1 for _ in ast.walk(expression)) > 512:
+        return False, None
+    if isinstance(expression, ast.Name):
+        value = environment.get(expression.id)
+        return value is not None, value
+    if _fixed_literal_value(expression):
+        return True, False
+    if not isinstance(expression, (ast.Call, ast.Attribute, ast.Subscript)):
+        # A may-taint arithmetic expression is not a proved evaluable value.
+        return False, None
+    if isinstance(expression, ast.Call) and flow.security_call_name(expression, aliases) in {
+        "os.path.join", "pathlib.Path", "pathlib.PurePath", "werkzeug.utils.secure_filename"
+    }:
+        return False, None
+    tainted = {name for name, value in environment.items() if value is True}
+    if flow._security_expr_tainted(expression, tainted, set(), aliases):
+        return True, True
+    return False, None
+
+
+def _security_helper_initial(call, actuals, requests, parameters, aliases):
+    supplied = {id(value) for value in call.args}
+    supplied.update(id(keyword.value) for keyword in call.keywords)
+    caller = {name: True for name in requests | parameters if isinstance(name, str)}
+    initial = {}
+    for name, value in actuals.items():
+        # Omitted defaults belong to the definition, never to the caller's scope.
+        if _fixed_literal_value(value):
+            initial[name] = False
+        elif id(value) in supplied:
+            known, tainted = _security_flow_value(value, caller, aliases)
+            initial[name] = tainted if known else None
+        else:
+            initial[name] = None
+    return initial
+
+
+def security_helper_return_tainted(call, function, requests, parameters, aliases):
+    binding = _security_helper_binding(call, function)
+    if binding is None:
+        return False
+    module, actuals = binding
+    initial = _security_helper_initial(call, actuals, requests, parameters, aliases)
+    if any(value is None for value in initial.values()):
+        return False
+    function._security_helper_active = True
+    module._security_helper_flow_depth = getattr(module, "_security_helper_flow_depth", 0) + 1
+    try:
+        result = evaluate_helper_flow(
+            function, initial,
+            lambda expression, environment: _security_flow_value(expression, environment, aliases),
+        )
+        return result["status"] == "COMPLETE" and result["return_values"] == (True,)
+    finally:
+        function._security_helper_active = False
+        module._security_helper_flow_depth -= 1
+
+
+def security_forward_helper_sources(relative, call, aliases, requests, helpers):
+    """Feed proven actual-argument sources into the existing callee sink pass."""
+    from . import review_integrity as flow
+    from .semantic_credential_sensor import security_precondition_path_possible, request_payload_value_kind
+
+    if not security_precondition_path_possible(call):
+        return
+    actual_values = [*call.args, *(keyword.value for keyword in call.keywords)]
+    if not any(flow._security_expr_tainted(value, requests, set(), aliases) for value in actual_values):
+        return
+    function = flow._security_local_helper_definition(call)
+    binding = _security_helper_binding(call, function)
+    if binding is None:
+        return
+    module, actuals = binding
+    initial = _security_helper_initial(call, actuals, requests, set(), aliases)
+    if any(value is None for value in initial.values()):
+        return
+    sources = {name for name, value in initial.items() if value is True}
+    if not sources:
+        return
+    # This extension models straight-line local helpers only. Branches and
+    # opaque side effects must not acquire a support verdict from this pass.
+    if (
+        any(not isinstance(statement, (ast.Assign, ast.AnnAssign, ast.Expr, ast.Return, ast.Pass)) for statement in function.body)
+        or not _security_helper_sink_calls_supported(function, aliases, relative)
+        or not _security_helper_prefix_supported(function, initial, aliases)
+    ):
+        return
+    for name in tuple(sources):
+        kind = request_payload_value_kind(actuals[name], requests, aliases, flow._security_scope_request_aliases)
+        if kind:
+            sources.add(("request-type:" + kind, name))
+    function._security_helper_active = True
+    module._security_helper_flow_depth = getattr(module, "_security_helper_flow_depth", 0) + 1
+    try:
+        # The normal raw scan owns emission. This pass supplies only native
+        # source-bound preconditions on those same sink AST nodes.
+        flow._security_analyze_source_sink_block(
+            relative, function.body, function, aliases, sources, set(), set(), set(), set(), helpers
+        )
+    finally:
+        function._security_helper_active = False
+        module._security_helper_flow_depth -= 1
+
+
+def _security_helper_sink_calls_supported(function, aliases, relative):
+    from . import review_audits as audit, review_integrity as flow
+
+    for node in flow._lexical_nodes(function):
+        if isinstance(node, ast.Call):
+            finding = audit._security_call_finding(flow.security_call_name(node, aliases), relative, node)
+            if finding is None or finding["code"] not in {
+                "SECURITY_DYNAMIC_EXECUTION", "SECURITY_OS_COMMAND", "SECURITY_SHELL_COMMAND",
+                "SECURITY_UNSAFE_DESERIALIZATION", "SECURITY_UNSAFE_YAML",
+            }:
+                return False
+    return True
+
+
+def _security_helper_prefix_supported(function, initial, aliases):
+    environment = dict(initial)
+    callback = lambda expression, state: _security_flow_value(expression, state, aliases)
+    for statement in function.body:
+        if isinstance(statement, ast.AnnAssign) and not _security_helper_annotation_supported(statement.annotation):
+            return False
+        if isinstance(statement, (ast.Assign, ast.AnnAssign)):
+            known, name, value = _helper_flow_assignment(statement, environment, callback)
+            if not known:
+                return False
+            environment[name] = value
+        elif isinstance(statement, (ast.Expr, ast.Return)):
+            value = statement.value
+            if value is not None and not isinstance(value, ast.Call) and not callback(value, environment)[0]:
+                return False
+            if isinstance(statement, ast.Return):
+                break
+    return True
+
+
+def _helper_flow_result(status, environment, states, reason, values=()):
+    return {
+        "status": status,
+        "environment": environment,
+        "return_values": tuple(values),
+        "states_used": states,
+        "reason": reason,
+    }
+
+
+def _helper_flow_assignment(statement, environment, evaluate_expression):
+    if isinstance(statement, ast.Assign):
+        if len(statement.targets) != 1 or not isinstance(statement.targets[0], ast.Name):
+            return False, "", None
+        name = statement.targets[0].id
+    elif isinstance(statement, ast.AnnAssign):
+        if not isinstance(statement.target, ast.Name) or statement.value is None:
+            return False, "", None
+        name = statement.target.id
+    else:
+        return False, "", None
+    try:
+        known, value = evaluate_expression(statement.value, dict(environment))
+    except Exception:
+        known, value = False, None
+    environment.pop(name, None)
+    return (known is True, name, value)
+
+
+def _helper_flow_step(statement, index, environment, evaluate_expression):
+    if isinstance(statement, ast.Return):
+        if statement.value is None:
+            return "COMPLETE", "return", (None,)
+        try:
+            known, value = evaluate_expression(statement.value, dict(environment))
+        except Exception:
+            known, value = False, None
+        return ("COMPLETE", "return", (value,)) if known is True else (
+            "UNKNOWN", "unsupported return expression", ()
+        )
+    if isinstance(statement, ast.Pass):
+        return "CONTINUE", "pass", ()
+    if (
+        isinstance(statement, ast.Expr)
+        and isinstance(statement.value, ast.Constant)
+        and isinstance(statement.value.value, str)
+        and index == 0
+    ):
+        return "CONTINUE", "docstring", ()
+    if isinstance(statement, (ast.Assign, ast.AnnAssign)):
+        known, name, value = _helper_flow_assignment(
+            statement, environment, evaluate_expression
+        )
+        if not known:
+            return "UNKNOWN", "unsupported assignment", ()
+        environment[name] = value
+        return "CONTINUE", "assignment", ()
+    return "UNKNOWN", "unsupported statement", ()
+
+
+def evaluate_helper_flow(function, initial, evaluate_expression, *, max_states=512):
+    """Evaluate a bounded straight-line helper with caller-defined value semantics.
+
+    This local transfer function applies reaching-definition kills for exact
+    names and projects the resulting environment to a return value. It never
+    imports or executes the target. Expression callbacks return ``(known,
+    value)``; unsupported values and statements decline explicitly.
+
+    The transfer follows the strong-update/reaching-definition concepts in
+    CodeAnalyzer's Apache-2.0 ``dataflow/defuse.py`` (commit
+    54acde45556869271c16d5fead1134a821012811), and the caller-owned actual to
+    formal and return projection boundary in PyFlow's Apache-2.0 ``taint.py``
+    (commit e057856a3d409ddc756bca9d3e90409f084bbbdc). This is a bounded local
+    evaluator, not a CFG or IFDS solver.
+    """
+    if (
+        not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef))
+        or type(max_states) is not int
+        or max_states < 1
+        or not isinstance(initial, dict)
+        or not callable(evaluate_expression)
+    ):
+        return _helper_flow_result("UNKNOWN", {}, 0, "invalid evaluator input")
+    if len(function.body) > max_states:
+        return _helper_flow_result("BUDGET_EXHAUSTED", {}, 0, "state budget exhausted")
+    if sum(isinstance(node, ast.Return) for node in function.body) > 1:
+        return _helper_flow_result("UNKNOWN", {}, 0, "multiple returns")
+
+    env = dict(initial)
+    states = 0
+    for index, statement in enumerate(function.body):
+        if states >= max_states:
+            return _helper_flow_result("BUDGET_EXHAUSTED", env, states, "state budget exhausted")
+        states += 1
+        status, reason, values = _helper_flow_step(
+            statement, index, env, evaluate_expression
+        )
+        if status == "COMPLETE":
+            return _helper_flow_result(status, env, states, reason, values)
+        if status == "UNKNOWN":
+            return _helper_flow_result(status, env, states, reason)
+    return _helper_flow_result("UNKNOWN", env, states, "no supported return")
+
+
 def captured_value_use_closure(
     function, node, parents, scope_of, return_callers, consumer, *, max_states=512
 ):

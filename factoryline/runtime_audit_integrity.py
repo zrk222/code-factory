@@ -2870,14 +2870,17 @@ def full_repository_workspace_scan_batch(
         and isinstance(data, bytes)
         and path.is_relative_to(root)
     }
-    finding_tiers = _full_repository_workspace_finding_tiers(
-        context_findings,
-        observations if partition_state == "VALIDATED" else [],
-        bindings,
-        tier_source_bytes,
-        coverage_state=(source_capture_complete and all_primaries_assessed),
-        partition_state=partition_state,
-    )
+    with audit._security_only_scan_context(
+        generation["context_profile"] == "workspace-v2"
+    ):
+        finding_tiers = _full_repository_workspace_finding_tiers(
+            context_findings,
+            observations if partition_state == "VALIDATED" else [],
+            bindings,
+            tier_source_bytes,
+            coverage_state=(source_capture_complete and all_primaries_assessed),
+            partition_state=partition_state,
+        )
     generation["workspace_evidence"].update(
         {
             "finding_tiers": finding_tiers,
@@ -3131,6 +3134,7 @@ def _full_repository_workspace_partition(
                     database,
                     False,
                     primitive_bytes,
+                    security_only=generation["context_profile"] == "workspace-v2",
                 )
                 observations.extend(quality.get("primitive_observations", []))
                 partitioned_findings.extend(quality["findings"])
@@ -3198,6 +3202,7 @@ def _full_repository_workspace_consume(
                     retained.get(path),
                     tree,
                     fingerprints.get(path),
+                    security_only=generation["context_profile"] == "workspace-v2",
                 )
             rows.update(group_rows)
             consume_counts["completed_rows"] += len(group_rows)

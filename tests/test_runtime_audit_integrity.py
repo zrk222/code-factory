@@ -3188,3 +3188,195 @@ def test_pyflow_parity_provider_export_cannot_bypass_workspace_binding(tmp_path,
     report = review_audits.security_scan(tmp_path, cache_enabled=False)
     assert any(row["code"] == "SECURITY_UNSAFE_DESERIALIZATION" for row in report["findings"])
     assert not report.get("primitive_observations")
+
+
+def _native_flow_expression(expression, environment):
+    if isinstance(expression, ast.Constant):
+        return True, expression.value
+    if isinstance(expression, ast.Name):
+        return (expression.id in environment, environment.get(expression.id))
+    return False, None
+
+
+def _native_flow_function(source):
+    return next(
+        node for node in ast.parse(source).body if isinstance(node, ast.FunctionDef)
+    )
+
+
+def test_native_helper_flow_reassignment_kills_old_fact_and_aliases_reach_return():
+    from factoryline.finite_capture import evaluate_helper_flow
+
+    helper = _native_flow_function(
+        "def helper(value):\n    alias = value\n    value = 'fixed'\n    return alias\n"
+    )
+    result = evaluate_helper_flow(
+        helper, {"value": "secret-taint"}, _native_flow_expression
+    )
+    assert result["status"] == "COMPLETE"
+    assert result["return_values"] == ("secret-taint",)
+    assert result["environment"]["value"] == "fixed"
+
+
+def test_native_helper_flow_fixed_return_kills_prior_input_fact():
+    from factoryline.finite_capture import evaluate_helper_flow
+
+    helper = _native_flow_function("def helper(value):\n    value = 'safe'\n    return value\n")
+    result = evaluate_helper_flow(
+        helper, {"value": "secret-taint"}, _native_flow_expression
+    )
+    assert result["status"] == "COMPLETE"
+    assert result["return_values"] == ("safe",)
+
+
+def test_native_helper_flow_reads_old_definition_before_strong_update():
+    from factoryline.finite_capture import evaluate_helper_flow
+
+    helper = _native_flow_function(
+        "def helper(value):\n    value = value\n    return value\n"
+    )
+    result = evaluate_helper_flow(
+        helper, {"value": "prior-fact"}, _native_flow_expression
+    )
+    assert result["status"] == "COMPLETE"
+    assert result["return_values"] == ("prior-fact",)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "if value:\n        return value",
+        "return value\n    return 'fixed'",
+        "value.token = 'fixed'\n    return value",
+        "value[0] = 'fixed'\n    return value",
+        "transform(value)\n    return value",
+        "return value.token",
+        "return helper(value)",
+        "pass",
+    ],
+    ids=["conditional", "multiple-returns", "property-write", "subscript-write", "call", "property-read", "recursive-call", "no-return"],
+)
+def test_native_helper_flow_unsupported_shapes_are_unknown(body):
+    from factoryline.finite_capture import evaluate_helper_flow
+
+    helper = _native_flow_function(f"def helper(value):\n    {body}\n")
+    result = evaluate_helper_flow(
+        helper, {"value": "secret-taint"}, _native_flow_expression
+    )
+    assert result["status"] == "UNKNOWN"
+    assert result["reason"]
+    assert result["states_used"] <= 512
+
+
+def test_native_helper_flow_handles_docstring_pass_and_marks_budget_exhaustion():
+    from factoryline.finite_capture import evaluate_helper_flow
+
+    helper = _native_flow_function(
+        "def helper(value):\n    'doc'\n    pass\n    alias = value\n    return alias\n"
+    )
+    complete = evaluate_helper_flow(
+        helper, {"value": "fact"}, _native_flow_expression, max_states=4
+    )
+    exhausted = evaluate_helper_flow(
+        helper, {"value": "fact"}, _native_flow_expression, max_states=2
+    )
+    assert complete["status"] == "COMPLETE"
+    assert complete["return_values"] == ("fact",)
+    assert exhausted["status"] == "BUDGET_EXHAUSTED"
+    assert exhausted["states_used"] == 0
+
+
+def test_native_helper_flow_distinguishes_known_none_from_unknown():
+    from factoryline.finite_capture import evaluate_helper_flow
+
+    helper = _native_flow_function("def helper():\n    return None\n")
+    result = evaluate_helper_flow(helper, {}, _native_flow_expression)
+    assert result["status"] == "COMPLETE"
+    assert result["return_values"] == (None,)
+
+
+def test_workspace_v2_security_only_keeps_security_findings_without_oracle_analysis(
+    tmp_path, monkeypatch
+):
+    from factoryline import review_audits
+    from factoryline.deep_audit_io import full_repository_scan
+
+    (tmp_path / "settings.py").write_text(
+        'GITHUB_TOKEN = "ghp_abcdefghijklmnop"\n', encoding="utf-8"
+    )
+    quality_calls = []
+
+    def forbidden_quality(*args, **kwargs):
+        quality_calls.append(True)
+        raise AssertionError("workspace-v2 must skip test-oracle analysis")
+
+    monkeypatch.setattr(review_audits, "_test_oracle_findings", forbidden_quality)
+    monkeypatch.setattr(
+        review_audits.contracts, "implementation_findings", forbidden_quality
+    )
+    report = full_repository_scan(tmp_path, context_profile="workspace-v2")
+    assert report["audit_coverage"]["complete"]
+    assert any(
+        row["code"] == "SECURITY_HARDCODED_SECRET"
+        for row in report["workspace_evidence"]["raw_findings"]
+    )
+    counts = report["workspace_evidence"]["finding_tiers"]["raw_diagnostics"]
+    assert counts["by_code"]["SECURITY_HARDCODED_SECRET"] == 1
+    assert not any(code.startswith("QUALITY_") for code in counts["by_code"])
+    assert quality_calls == []
+
+
+def test_default_security_tree_keeps_test_oracle_analysis(tmp_path, monkeypatch):
+    (tmp_path / "settings.py").write_text("def test_empty():\n    pass\n", encoding="utf-8")
+    calls = {"oracle": 0, "implementation": 0}
+    original_oracle = review_audits._test_oracle_findings
+    original_implementation = review_audits.contracts.implementation_findings
+
+    def oracle(*args, **kwargs):
+        calls["oracle"] += 1
+        return original_oracle(*args, **kwargs)
+
+    def implementation(*args, **kwargs):
+        calls["implementation"] += 1
+        return original_implementation(*args, **kwargs)
+
+    monkeypatch.setattr(review_audits, "_test_oracle_findings", oracle)
+    monkeypatch.setattr(review_audits.contracts, "implementation_findings", implementation)
+    report = review_audits.security_scan(tmp_path, cache_enabled=False)
+    assert calls["oracle"] and calls["implementation"]
+    assert report["audit_coverage"]["complete"]
+
+
+@pytest.mark.parametrize("flag", ["yes", 1], ids=["truthy-string", "integer"])
+def test_non_boolean_security_only_flags_do_not_skip_quality(tmp_path, monkeypatch, flag):
+    path = tmp_path / "settings.py"
+    path.write_text("value = 1\n", encoding="utf-8")
+    calls = []
+
+    def oracle(*args, **kwargs):
+        calls.append(True)
+        return []
+
+    monkeypatch.setattr(review_audits, "_test_oracle_findings", oracle)
+    review_audits._security_scan_tree(
+        tmp_path,
+        path,
+        ast.parse(path.read_text(encoding="utf-8")),
+        oracle_context={"_security_only": flag},
+    )
+    assert calls
+
+
+def test_security_only_contextvar_restores_nested_success_and_failure():
+    context = review_audits._security_only_scan_context
+    assert review_audits._SECURITY_ONLY_SCAN.get() is False
+    with context(True):
+        assert review_audits._SECURITY_ONLY_SCAN.get() is True
+        with context(False):
+            assert review_audits._SECURITY_ONLY_SCAN.get() is False
+        assert review_audits._SECURITY_ONLY_SCAN.get() is True
+    assert review_audits._SECURITY_ONLY_SCAN.get() is False
+    with pytest.raises(RuntimeError):
+        with context(True):
+            raise RuntimeError("exercise context cleanup")
+    assert review_audits._SECURITY_ONLY_SCAN.get() is False

@@ -1574,7 +1574,7 @@ def full_repository_scan(
     context_profile: str = "isolated-v1",
     deadline_monotonic: float | None = None,
 ) -> dict:
-    """Run at most 460 new native per-file scans; the distinct profile is non-authoritative."""
+    """Run bounded native scans; workspace-v2 reports security findings without quality analysis."""
     from . import review_audits as audit
 
     started = time.monotonic()

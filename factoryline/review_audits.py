@@ -9,6 +9,8 @@ from __future__ import annotations
 import ast
 import configparser
 from collections import OrderedDict
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from hashlib import sha256
 from fnmatch import fnmatchcase
@@ -21,6 +23,17 @@ import sys
 from threading import RLock
 import time
 from typing import Any
+
+_SECURITY_ONLY_SCAN = ContextVar("security_only_scan", default=False)
+
+
+@contextmanager
+def _security_only_scan_context(enabled=False):
+    token = _SECURITY_ONLY_SCAN.set(type(enabled) is bool and enabled is True)
+    try:
+        yield
+    finally:
+        _SECURITY_ONLY_SCAN.reset(token)
 
 try:
     import tomllib
@@ -5658,6 +5671,8 @@ def _security_scan_tree(
     oracle_context: dict | None = None,
     test_file_patterns: set[str] | None = None,
     tenant_policy_applies: bool = False,
+    *,
+    security_only: bool = False,
 ) -> list[dict[str, Any]]:
     relative = path.relative_to(root).as_posix()
     tree._security_source_context = (oracle_context or {}).get(
@@ -5667,6 +5682,10 @@ def _security_scan_tree(
     tree._fixed_program_workspace = (oracle_context or {}).get(
         "fixed_program_workspace", {}
     )
+    context_security_only = (oracle_context or {}).get("_security_only", False)
+    security_only = (type(security_only) is bool and security_only is True) or (
+        type(context_security_only) is bool and context_security_only is True
+    ) or _SECURITY_ONLY_SCAN.get() is True
     nodes = list(ast.walk(tree))
     aliases = _security_aliases(nodes)
     for node in nodes:
@@ -5681,21 +5700,25 @@ def _security_scan_tree(
     source_sink_findings = integrity.security_source_sink_findings(
         relative, tree, nodes, aliases
     )
-    oracle_aliases = _scope_security_aliases(_module_security_aliases(tree), tree)
     context = oracle_context or {}
-    tree._oracle_async_runner_fixtures = context.get("async_runner_fixtures", {})
-    tree._oracle_mock_fixture_provenance = context.get("mock_fixture_provenance", {})
-    helper_names = _local_assertion_helpers(tree, oracle_aliases) | set(
-        context.get("helpers", ())
-    )
-    weak_helper_names = _local_weak_assertion_helpers(tree, oracle_aliases) | set(
-        context.get("weak_helpers", ())
-    )
-    unittest_methods = _unittest_test_methods(tree, oracle_aliases)
-    for cls in tree.body:
-        if isinstance(cls, ast.ClassDef) and cls.name in context.get("mixins", ()):
-            unittest_methods.update(id(method) for method in cls.body)
-    class_helpers = _class_oracle_helpers(tree, oracle_aliases, unittest_methods)
+    if security_only:
+        oracle_aliases, helper_names, weak_helper_names = {}, set(), set()
+        unittest_methods, class_helpers = set(), {}
+    else:
+        oracle_aliases = _scope_security_aliases(_module_security_aliases(tree), tree)
+        tree._oracle_async_runner_fixtures = context.get("async_runner_fixtures", {})
+        tree._oracle_mock_fixture_provenance = context.get("mock_fixture_provenance", {})
+        helper_names = _local_assertion_helpers(tree, oracle_aliases) | set(
+            context.get("helpers", ())
+        )
+        weak_helper_names = _local_weak_assertion_helpers(tree, oracle_aliases) | set(
+            context.get("weak_helpers", ())
+        )
+        unittest_methods = _unittest_test_methods(tree, oracle_aliases)
+        for cls in tree.body:
+            if isinstance(cls, ast.ClassDef) and cls.name in context.get("mixins", ()):
+                unittest_methods.update(id(method) for method in cls.body)
+        class_helpers = _class_oracle_helpers(tree, oracle_aliases, unittest_methods)
     from .review_integrity import redirect_source_findings
     from .semantic_credential_sensor import (
         configuration_and_credential_findings as configuration_findings,
@@ -5716,24 +5739,25 @@ def _security_scan_tree(
         )
     )
     findings.extend(source_sink_findings)
-    findings.extend(
-        _test_oracle_findings(
-            relative,
-            nodes,
-            oracle_aliases,
-            helper_names,
-            unittest_methods,
-            class_helpers,
-            weak_helper_names,
-            context.get("click_runners", set()),
-            context.get("typecheck", False),
-            test_file_patterns,
-            _pytest_inherited_method_ids(tree, context.get("pytest_inherited", set())),
-            context.get("flask_apps", set()),
-            context.get("callback_invokers", {}),
-            context,
+    if not security_only:
+        findings.extend(
+            _test_oracle_findings(
+                relative,
+                nodes,
+                oracle_aliases,
+                helper_names,
+                unittest_methods,
+                class_helpers,
+                weak_helper_names,
+                context.get("click_runners", set()),
+                context.get("typecheck", False),
+                test_file_patterns,
+                _pytest_inherited_method_ids(tree, context.get("pytest_inherited", set())),
+                context.get("flask_apps", set()),
+                context.get("callback_invokers", {}),
+                context,
+            )
         )
-    )
     roundtrip_aliases = _unmodified_serialization_aliases(nodes, aliases)
     for node in nodes:
         findings.extend(
@@ -5784,10 +5808,13 @@ def _security_scan_file_snapshot(
     source_data,
     tree,
     fingerprint,
+    *,
+    security_only=False,
 ):
     """Scan one producer-owned tree after matching its bytes and structure."""
     from .context_efficiency import _scan_security_source
 
+    context = {**(context or {}), "_security_only": security_only}
     return _scan_security_source(
         workspace,
         path,
@@ -6072,26 +6099,29 @@ def _security_scan_report(
     database_context: dict | None = None,
     tenant_policy_applies: bool = False,
     primitive_source_bytes: dict[str, bytes] | None = None,
+    *,
+    security_only: bool = False,
 ) -> dict[str, Any]:
     import sys
 
     from .audit_action_refs import security_scan_report
 
-    return security_scan_report(
-        sys.modules[__name__],
-        files,
-        findings,
-        bindings,
-        counts,
-        outcomes,
-        tenant_read_calls,
-        tenant_read_bindings,
-        oracle_edges,
-        oracle_configuration,
-        database_context,
-        tenant_policy_applies,
-        primitive_source_bytes,
-    )
+    with _security_only_scan_context(security_only):
+        return security_scan_report(
+            sys.modules[__name__],
+            files,
+            findings,
+            bindings,
+            counts,
+            outcomes,
+            tenant_read_calls,
+            tenant_read_bindings,
+            oracle_edges,
+            oracle_configuration,
+            database_context,
+            tenant_policy_applies,
+            primitive_source_bytes,
+        )
 
 
 def _oracle_bound_row(workspace: Path, row: dict, sources: dict) -> None:

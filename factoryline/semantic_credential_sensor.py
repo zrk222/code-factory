@@ -1486,6 +1486,8 @@ def http_request_payload(node, aliases, scope, flow_statement, alias_reader):
             and _http_request_mapping(node.value, aliases, scope, flow_statement, alias_reader, node.slice.value)
         )
     if isinstance(node, ast.Call):
+        if _flask_request_body_kind(node, aliases, scope, flow_statement, alias_reader):
+            return True
         parts = _credential_get_source_key(node)
         return bool(
             parts is not None
@@ -1504,6 +1506,35 @@ def http_request_payload(node, aliases, scope, flow_statement, alias_reader):
     return _django_http_body_payload(node, scope, resolved)
 
 
+_FLASK_BODY_SIGNATURE = ast.parse(
+    "def get_data(cache=True, as_text=False, parse_form_data=False): pass"
+).body[0]
+
+
+def _flask_request_body_kind(node, aliases, scope, statement, alias_reader):
+    """Model only a source-bound body reader with exact boolean call options."""
+    from . import _source_binding_helpers
+    from .review_audits import _name
+
+    if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+        return None
+    if node.func.attr != "get_data":
+        return None
+    resolved = alias_reader(scope or getattr(node, "_security_lexical_scope", None), aliases,
+                            statement or getattr(node, "_security_flow_statement", None))
+    head, _, tail = _name(node.func).partition(".")
+    if resolved.get(head, "") + ("." + tail if tail else "") != "flask.request.get_data":
+        return None
+    try:
+        options = _source_binding_helpers()[1](node, _FLASK_BODY_SIGNATURE)
+    except (TypeError, ValueError):
+        return None
+    if not all(isinstance(value, ast.Constant) and type(value.value) is bool
+               for value in options.values()):
+        return None
+    return "text" if options["as_text"].value else "bytes"
+
+
 def request_payload_value_kind(node, requests, aliases, alias_reader):
     """Carry modeled request text/bytes through explicit codec operations only."""
     if isinstance(node, ast.Name):
@@ -1517,6 +1548,9 @@ def request_payload_value_kind(node, requests, aliases, alias_reader):
             original = request_payload_value_kind(node.func.value, requests, aliases, alias_reader)
             if original == ("text" if codec == "encode" else "bytes"):
                 return "bytes" if codec == "encode" else "text"
+    body_kind = _flask_request_body_kind(node, aliases, None, None, alias_reader)
+    if body_kind:
+        return body_kind
     if http_request_payload(node, aliases, getattr(node, "_security_lexical_scope", None),
                             getattr(node, "_security_flow_statement", None), alias_reader):
         return "bytes" if isinstance(node, ast.Attribute) else "text"

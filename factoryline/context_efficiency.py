@@ -829,8 +829,15 @@ def _scan_security_source(
             "unreadable",
             detail=type(exc).__name__,
         )
-    findings = audit.contracts.implementation_findings(
-        relative, tree, data, oracle_context
+    security_only = (oracle_context or {}).get("_security_only", False)
+    if type(security_only) is not bool:
+        security_only = False
+    findings = (
+        []
+        if security_only is True
+        else audit.contracts.implementation_findings(
+            relative, tree, data, oracle_context
+        )
     )
     findings.extend(
         audit._security_scan_tree(

@@ -6042,12 +6042,17 @@ def test_shared_source_binding_changes_invalidate_oracle_cache(
 def test_shared_source_binding_taint_keeps_explicit_defaults_policy(
     expression, expected
 ):
+    from factoryline import review_integrity as integrity
     from factoryline.review_integrity import _security_helper_return_tainted
 
-    function = ast.parse("def f(value=tainted): return value").body[0]
+    module = ast.parse("def f(value=None): return value\n" + expression)
+    # Native taint support now requires the actual source-owned call scope;
+    # do not synthesize an authority verdict from two disconnected ASTs.
+    integrity.bind_security_call_scopes(module)
+    function, call = module.body[0], module.body[1].value
     assert (
         _security_helper_return_tainted(
-            ast.parse(expression).body[0].value, function, set(), {"tainted"}, {}
+            call, function, set(), {"tainted"}, {}
         )
         is expected
     )
