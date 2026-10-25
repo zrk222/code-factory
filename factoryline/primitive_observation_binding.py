@@ -62,7 +62,7 @@ _MISSING_PREMISES = {
 }
 
 _SECURITY_DEFECT_POLICIES = frozenset(
-    {"legacy-v1", "trusted-core-v1", "source-role-v1"}
+    {"legacy-v1", "trusted-core-v1", "source-role-v1", "source-role-v2"}
 )
 _PICKLE_SOURCE_ROLE_POLICY = {
     "schema": "factory.security.source-role-policy.v1",
@@ -74,6 +74,18 @@ _PICKLE_SOURCE_ROLE_POLICY = {
         "dynamic deployment/discovery",
     ],
     "claim_boundary": "Output-policy selection, not a safe reconstruction, legacy detector gain or clean security result.",
+}
+_SOURCE_ROLE_POLICY_V2 = {
+    **_PICKLE_SOURCE_ROLE_POLICY,
+    "schema": "factory.security.source-role-policy.v2",
+    "policy_id": "source-role-v2",
+    "effect": "v1 roles plus captured registered fixture-harness operations become NEEDS_CONTEXT reviews; raw diagnostics and severity retained",
+    "unassessed": [
+        *_PICKLE_SOURCE_ROLE_POLICY["unassessed"],
+        "fixture payloads and filesystem authority",
+        "operation and callback effects",
+    ],
+    "claim_boundary": "Explicit queue selection, not operation safety, detector improvement, held-out precision or a clean security result.",
 }
 _TRUSTED_CORE_POLICY = {
     "schema": "factory.security.defect-policy.v1",
@@ -89,7 +101,7 @@ def validate_security_defect_policy(value):
     """Validate the closed policy selector before source discovery begins."""
     if type(value) is not str or value not in _SECURITY_DEFECT_POLICIES:
         raise ValueError(
-            "defect policy must be legacy-v1, trusted-core-v1 or source-role-v1"
+            "defect policy must be legacy-v1, trusted-core-v1, source-role-v1 or source-role-v2"
         )
     return value
 
@@ -1525,12 +1537,15 @@ def apply_conditional_provider_profile(report, profile, captured):
 
 def apply_pickle_source_role_policy(core, captured):
     """Rebuild context reviews from the native raw ledger on every seal."""
-    if core.get("selected_defect_policy") != "source-role-v1":
+    policy_id = core.get("selected_defect_policy")
+    if policy_id not in {"source-role-v1", "source-role-v2"}:
         return
     original = [*core.get("findings", []), *core.get("context_reviews", [])]
     core["context_reviews"] = []
     sources = _pickle_role_sources(core, captured)
     roles = None if sources is None else _pickle_role_inventory(sources)
+    if roles is not None:
+        roles["policy_id"] = policy_id
     active, reviews = _pickle_role_partition(original, roles)
     core["findings"], core["context_reviews"] = active, reviews
     core["finding_counts"] = dict(
@@ -1549,7 +1564,7 @@ def apply_pickle_source_role_policy(core, captured):
         tier_report["ledger_sha256"] = _tier_sha256(tier_report["ledger"])
         tier_report["report_sha256"] = _tier_sha256(tier_report)
     core["defect_policy_decision"] = _pickle_source_role_decision(
-        roles, active, reviews, ledger
+        roles, active, reviews, ledger, policy_id
     )
     if roles is not None:
         core["state"] = "FINDINGS" if active else "REVIEW_REQUIRED"
@@ -1632,8 +1647,14 @@ def _pickle_test_path(path):
 
 
 def _pickle_source_role_witness(finding, inventory):
-    return _pickle_test_role_witness(finding, inventory) or _pickle_worker_role_witness(
-        finding, inventory
+    return (
+        _pickle_test_role_witness(finding, inventory)
+        or _pickle_worker_role_witness(finding, inventory)
+        or (
+            _registered_fixture_role_witness(finding, inventory)
+            if inventory.get("policy_id") == "source-role-v2"
+            else None
+        )
     )
 
 
@@ -3975,6 +3996,7 @@ def primitive_binding_helpers():
         _decide_finding_tier,
         _pickle_role_partition,
         _pickle_source_role_decision,
+        *_registered_fixture_helpers(),
         fixed_primitive_binding,
         _local_control_label_binding,
         _jwt_primitive_binding,
@@ -4233,11 +4255,12 @@ def _finding_tier_ledger_row(
     return row
 
 
-def _pickle_source_role_decision(roles, active, reviews, ledger):
+def _pickle_source_role_decision(roles, active, reviews, ledger, policy_id="source-role-v1"):
     """Describe unresolved context review without claiming safe reconstruction."""
+    policy = _SOURCE_ROLE_POLICY_V2 if policy_id == "source-role-v2" else _PICKLE_SOURCE_ROLE_POLICY
     return {
-        **_PICKLE_SOURCE_ROLE_POLICY,
-        "policy_sha256": _tier_sha256(_PICKLE_SOURCE_ROLE_POLICY),
+        **policy,
+        "policy_sha256": _tier_sha256(policy),
         "state": "BLOCKED"
         if roles is None
         else "ALERTS_AND_CONTEXT_REVIEW"
@@ -4257,3 +4280,424 @@ def _pickle_source_role_decision(roles, active, reviews, ledger):
         "passed": False,
         "release_approved": False,
     }
+
+
+def _registered_fixture_helpers():
+    return (
+        _registered_fixture_role_witness,
+        _registered_fixture_entry,
+        _registered_fixture_registration,
+        _registered_fixture_recipe,
+        _registered_fixture_recipe_ast,
+        _registered_fixture_flow,
+        _registered_fixture_expr,
+        _registered_fixture_step,
+        _registered_fixture_namespace,
+        _registered_fixture_prefix,
+        _registered_fixture_module_clear,
+        _registered_fixture_assign,
+        _registered_fixture_profile,
+    )
+
+
+def _registered_fixture_recipe_ast(tree, marker, directory):
+    """Canonicalize one finite runner recipe; preserve all executable statements.
+
+    Only module-owned function names and the registration marker/directory may
+    vary. Imported providers, local bindings, control flow, calls and literals
+    otherwise remain exact. This is an observed protocol, never a safety proof.
+    """
+    tree = copy.deepcopy(tree)
+    names = {
+        node.name: f"_stage_{index}"
+        for index, node in enumerate(tree.body)
+        if isinstance(node, ast.FunctionDef)
+    }
+    for node in ast.walk(tree):
+        if "type_params" in node._fields and not node.type_params:
+            node._fields = tuple(field for field in node._fields if field != "type_params")
+        if isinstance(node, ast.FunctionDef):
+            node.name = names.get(node.name, node.name)
+        elif isinstance(node, ast.Name):
+            node.id = names.get(node.id, node.id)
+        elif isinstance(node, ast.Attribute) and node.attr == marker:
+            node.attr = "_registered_input_suffixes"
+        elif isinstance(node, ast.Constant) and node.value == marker:
+            node.value = "_registered_input_suffixes"
+        elif isinstance(node, ast.Constant) and node.value == directory:
+            node.value = "_fixture_directory"
+    return ast.dump(tree, include_attributes=False)
+
+
+def _registered_fixture_recipe(tree, marker):
+    """Match the complete reviewed fixture-discovery/invocation recipe.
+
+    The finite semantic profile includes argument filtering, error reporting
+    and every module statement, so adding a write/hook anywhere invalidates it.
+    Its digest is of canonical executable AST, not a repository or file hash.
+    """
+    anchors = [
+        node for node in tree.body
+        if isinstance(node, ast.Assign) and len(node.targets) == 1
+        and isinstance(node.targets[0], ast.Name) and node.targets[0].id == "DATA"
+    ]
+    if len(anchors) != 1:
+        return None
+    anchor = anchors[0]
+    expr = anchor.value
+    if not (
+        isinstance(expr, ast.Call) and ast.unparse(expr.func) == "str"
+        and len(expr.args) == 1 and not expr.keywords
+        and isinstance(expr.args[0], ast.BinOp)
+        and isinstance(expr.args[0].op, ast.Div)
+        and ast.unparse(expr.args[0].left) == "pathlib.Path(__file__).parent"
+        and isinstance(expr.args[0].right, ast.Constant)
+        and type(expr.args[0].right.value) is str
+        and re.fullmatch(r"[A-Za-z0-9_-]+", expr.args[0].right.value)
+    ):
+        return None
+    canonical = _registered_fixture_recipe_ast(tree, marker, expr.args[0].right.value)
+    recipe = hashlib.sha256(canonical.encode()).hexdigest()
+    # registered-fixture-runner-v1: discovery -> suffix-bound DATA filenames ->
+    # executor(function,*filenames), with captured result/error reporting.
+    if recipe != _registered_fixture_profile():
+        return None
+    functions = [node for node in tree.body if isinstance(node, ast.FunctionDef)]
+    return {"profile": "registered-fixture-runner-v1", "ast_sha256": recipe,
+            "data_anchor_span": _pickle_span(anchor),
+            "stage_spans": [_pickle_span(node) for node in functions]}
+
+
+def _registered_fixture_registration(tree, function):
+    registrations = []
+    for node in tree.body:
+        if not isinstance(node, ast.Assign) or len(node.targets) != 1:
+            continue
+        target = node.targets[0]
+        if (isinstance(target, ast.Attribute) and isinstance(target.value, ast.Name)
+                and target.value.id == function.name and isinstance(node.value, ast.List)):
+            suffixes = [item.value for item in node.value.elts if isinstance(item, ast.Constant)]
+            if (len(suffixes) == len(node.value.elts) and suffixes
+                    and all(type(item) is str and re.fullmatch(r"\.[A-Za-z0-9_-]+", item)
+                            for item in suffixes)):
+                registrations.append((node, target, suffixes))
+    if len(registrations) != 1 or function.decorator_list or _pickle_role_disabled(function):
+        return None
+    registration, target, suffixes = registrations[0]
+    if registration.lineno <= function.end_lineno:
+        return None
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Subscript) and isinstance(node.slice, ast.Constant) and node.slice.value == function.name:
+            return None
+        if isinstance(node, ast.Subscript) and ast.unparse(node.value) in {"globals()", "locals()"}:
+            if not isinstance(node.ctx, ast.Load) or not isinstance(node.slice, ast.Constant) or node.slice.value == function.name:
+                return None
+        if isinstance(node, ast.Call) and ast.unparse(node.func) in {"globals().update", "locals().update"}:
+            return None
+    allowed = {id(target.value)}
+    if any(isinstance(node, ast.Name) and node.id == function.name and id(node) not in allowed
+           for node in ast.walk(tree)):
+        return None
+    if sum(isinstance(node, (ast.FunctionDef, ast.ClassDef)) and node.name == function.name
+           for node in ast.walk(tree)) != 1:
+        return None
+    parameters = function.args.posonlyargs + function.args.args
+    if (function.args.vararg or function.args.kwarg or function.args.kwonlyargs
+            or len(parameters) != len(suffixes) + 1
+            or parameters[-1].arg != "verbose" or len(function.args.defaults) != 1
+            or not isinstance(function.args.defaults[0], ast.Constant)
+            or function.args.defaults[0].value is not False):
+        return None
+    return registration, target.attr, [item.arg for item in parameters[:-1]]
+
+
+def _registered_fixture_entry(tree, path, marker, inventory):
+    entries = []
+    for node in tree.body:
+        if not isinstance(node, ast.If) or ast.unparse(node.test) != "__name__ == '__main__'" or node.orelse:
+            continue
+        if len(node.body) != 2 or not isinstance(node.body[0], ast.Import):
+            continue
+        imported = node.body[0]
+        if len(imported.names) != 1 or "." in imported.names[0].name:
+            continue
+        alias = imported.names[0]
+        expr = node.body[1]
+        if not isinstance(expr, ast.Expr) or not isinstance(expr.value, ast.Call):
+            continue
+        call = expr.value
+        if (not isinstance(call.func, ast.Attribute) or not isinstance(call.func.value, ast.Name)
+                or call.func.value.id != (alias.asname or alias.name) or call.keywords
+                or len(call.args) != 1 or ast.unparse(call.args[0]) != "globals()"):
+            continue
+        parent = PurePosixPath(path).parent
+        harness_path = str(parent / (alias.name + ".py"))
+        harness = inventory["trees"].get(harness_path)
+        if harness is None:
+            continue
+        providers = {alias.name.split(".")[0] for item in harness.body
+                     if isinstance(item, ast.Import) for alias in item.names}
+        if any(PurePosixPath(name).stem in providers
+               or PurePosixPath(name).name == "__init__.py" and PurePosixPath(name).parent.name in providers
+               for name in inventory["trees"]):
+            continue
+        module_paths = [name for name in inventory["trees"]
+                        if PurePosixPath(name).stem == alias.name
+                        or name.endswith("/" + alias.name + "/__init__.py")]
+        if module_paths != [harness_path]:
+            continue
+        recipe = _registered_fixture_recipe(harness, marker)
+        functions = [item.name for item in harness.body if isinstance(item, ast.FunctionDef)]
+        if recipe and functions and call.func.attr == functions[-1]:
+            entries.append({"path": harness_path, "sha256": hashlib.sha256(
+                inventory["sources"][harness_path]).hexdigest(), "entry_span": _pickle_span(call),
+                "recipe": recipe})
+    return entries[0] if len(entries) == 1 else None
+
+
+def _registered_fixture_expr(node, bindings):
+    """Trace source-visible fixture dependencies; opaque calls do not prove effects."""
+    if not isinstance(node, ast.expr):
+        return None
+    if ast.unparse(node).startswith(("os.environ", "sys.argv", "request.", "requests.", "socket.")):
+        return None
+    if isinstance(node, ast.Constant):
+        return frozenset()
+    if isinstance(node, ast.Name):
+        return bindings.get(node.id)
+    if isinstance(node, ast.Call):
+        name = ast.unparse(node.func)
+        aliases = bindings.get(None, {})
+        root = name.split(".")[0]
+        name = aliases.get(root, root) + name[len(root):]
+        if name.startswith(("request.", "requests.", "socket.", "os.environ", "sys.argv")):
+            return None
+        if isinstance(node.func, ast.Name) and node.func.id not in bindings and node.func.id not in {
+            "list", "str", "bytes", "len", "eval", "exec", "globals", "locals", "open",
+        }:
+            return None
+        values = node.args + [keyword.value for keyword in node.keywords
+                              if _registered_fixture_expr(keyword.value, bindings) != frozenset({"provider"})]
+        if isinstance(node.func, ast.Attribute):
+            receiver = _registered_fixture_expr(node.func.value, bindings)
+            if receiver != frozenset({"provider"}):
+                values = [node.func.value, *values]
+    elif isinstance(node, ast.Subscript):
+        origin = _registered_fixture_expr(node.value, bindings)
+        if not origin or not origin.intersection({"fixture", "sink"}):
+            return None
+        values = [node.value, node.slice]
+    elif isinstance(node, ast.Attribute):
+        return _registered_fixture_expr(node.value, bindings)
+    else:
+        values = list(ast.iter_child_nodes(node))
+        values = [item for item in values if isinstance(item, ast.expr)]
+    parts = [_registered_fixture_expr(value, bindings) for value in values]
+    if any(part is None for part in parts) or (
+        isinstance(node, ast.Call) and any("provider" in part for part in parts)
+    ):
+        return None
+    result = frozenset().union(*parts)
+    if isinstance(node, ast.Call) and not result and ast.unparse(node.func) not in {
+        "globals", "locals", "list", "str", "bytes", "globals().copy", "locals().copy",
+    }:
+        return None
+    return result
+
+
+def _registered_fixture_assign(node, bindings, sink):
+    if isinstance(node, (ast.Assign, ast.AnnAssign)):
+        value = _registered_fixture_expr(node.value, bindings)
+        if value is not None and sink in ast.walk(node.value):
+            value |= {"sink"}
+        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+        for target in targets:
+            if isinstance(target, ast.Name):
+                bindings[target.id] = value
+            else:
+                for name in ast.walk(target):
+                    if isinstance(name, ast.Name) and name.id in bindings:
+                        bindings[name.id] = None
+
+
+def _registered_fixture_step(node, bindings, paths, sink):
+    if isinstance(node, ast.For) and isinstance(node.target, ast.Name):
+        bindings[node.target.id] = frozenset()
+    if isinstance(node, ast.With):
+        for item in node.items:
+            if isinstance(item.optional_vars, ast.Name):
+                bindings[item.optional_vars.id] = None
+            call = item.context_expr
+            if (isinstance(call, ast.Call) and ast.unparse(call.func) == "open"
+                    and call.args and isinstance(call.args[0], ast.Name)
+                    and call.args[0].id in paths and len(call.args) <= 2 and not call.keywords
+                    and bindings.get(call.args[0].id) == frozenset({"path:" + call.args[0].id})
+                    and (len(call.args) == 1 or isinstance(call.args[1], ast.Constant)
+                         and call.args[1].value in {"r", "rb"})
+                    and isinstance(item.optional_vars, ast.Name)):
+                bindings[item.optional_vars.id] = frozenset({"fixture"})
+    _registered_fixture_assign(node, bindings, sink)
+    if isinstance(node, ast.Expr) and isinstance(node.value, ast.Call):
+        call = node.value
+        if isinstance(call.func, ast.Attribute) and isinstance(call.func.value, ast.Name):
+            name = call.func.value.id
+            origin = bindings.get(name)
+            if origin is not None and "provider" not in origin:
+                effect = _registered_fixture_expr(call, bindings)
+                if effect is None:
+                    bindings[name] = None
+                elif call.func.attr in {"append", "extend"}:
+                    bindings[name] |= effect
+    if isinstance(node, ast.Expr) and isinstance(node.value, ast.Call) and node.value is sink:
+        # exec's explicit namespace receives the output of this test operation.
+        if ast.unparse(sink.func) == "exec" and len(sink.args) > 1 and isinstance(sink.args[1], ast.Name):
+            bindings[sink.args[1].id] = frozenset({"sink"})
+
+
+def _registered_fixture_namespace(tree):
+    bindings = {None: {}}
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.ClassDef)):
+            bindings[node.name] = frozenset({"provider"})
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            for alias in node.names:
+                local = alias.asname or alias.name.split(".")[0]
+                bindings[local] = frozenset({"provider"})
+                bindings[None][local] = (node.module + "." + alias.name
+                    if isinstance(node, ast.ImportFrom) and node.module else alias.name)
+    return bindings
+
+
+def _registered_fixture_prefix(function, sink, bindings):
+    if any(isinstance(node, ast.If) and node.lineno < sink.lineno
+           and any(isinstance(item, (ast.Assign, ast.AnnAssign, ast.AugAssign))
+                   for item in ast.walk(node)) for node in ast.walk(function)):
+        return False
+    if any(isinstance(node, (ast.AugAssign, ast.NamedExpr, ast.Delete, ast.Global, ast.Nonlocal))
+           for node in ast.walk(function)):
+        return False
+    if any(isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda))
+           and node is not function for node in ast.walk(function)):
+        return False
+    for node in ast.walk(function):
+        if isinstance(node, (ast.For, ast.AsyncFor)) and node.lineno < sink.lineno:
+            if not isinstance(node.target, ast.Name) or not isinstance(node.iter, (ast.List, ast.Tuple)):
+                return False
+            if not all(isinstance(item, ast.Constant) for item in node.iter.elts):
+                return False
+        if isinstance(node, ast.Try) and node.lineno < sink.lineno and any(
+            isinstance(item, (ast.Assign, ast.AnnAssign, ast.AugAssign))
+            for handler in node.handlers for item in ast.walk(handler)
+        ):
+            return False
+    return True
+
+
+def _registered_fixture_flow(function, sink, parameters, tree):
+    bindings = _registered_fixture_namespace(tree)
+    bindings.update({name: frozenset({"path:" + name}) for name in parameters})
+    observations, transformations, reads, saw_sink = [], [], [], False
+    if not _registered_fixture_prefix(function, sink, bindings):
+        return None
+    nodes = sorted((node for node in ast.walk(function) if isinstance(
+        node, (ast.Assign, ast.AnnAssign, ast.With, ast.For, ast.Expr, ast.Assert, ast.Try))),
+        key=lambda node: (node.lineno, node.col_offset))
+    for node in nodes:
+        if not saw_sink and node.lineno >= sink.lineno:
+            origin = _registered_fixture_expr(sink.args[0], bindings) if sink.args else None
+            if origin is None or "fixture" not in origin:
+                return None
+            saw_sink = True
+        _registered_fixture_step(node, bindings, parameters, sink)
+        if isinstance(node, ast.With):
+            reads.extend(_pickle_span(item.context_expr) for item in node.items
+                         if isinstance(item.optional_vars, ast.Name)
+                         and bindings.get(item.optional_vars.id) == frozenset({"fixture"}))
+        if isinstance(node, (ast.Assign, ast.AnnAssign)):
+            value = _registered_fixture_expr(node.value, bindings)
+            if value and value.intersection({"fixture", "sink"}):
+                transformations.append({"span": _pickle_span(node),
+                    "ast_sha256": _tier_sha256(ast.dump(node, include_attributes=False))})
+        if saw_sink and isinstance(node, ast.Assert):
+            value = _registered_fixture_expr(node.test, bindings)
+            if value is not None and "sink" in value:
+                observations.append(_pickle_span(node))
+        if saw_sink and isinstance(node, ast.Try) and node.orelse and node.handlers:
+            calls = [item for statement in node.body for item in ast.walk(statement)
+                     if isinstance(item, ast.Call)]
+            linked = any("sink" in (_registered_fixture_expr(call, bindings) or ()) for call in calls)
+            raises = [item for statement in node.orelse for item in ast.walk(statement)
+                      if isinstance(item, ast.Raise) and item.exc is not None
+                      and ast.unparse(item.exc).startswith("AssertionError(")]
+            if linked and raises:
+                observations.append(_pickle_span(node))
+    return {"oracle_spans": observations, "read_spans": reads,
+            "registered_filename_parameters": parameters, "transformations": transformations,
+            "sink_input_ast_sha256": _tier_sha256(ast.dump(sink.args[0], include_attributes=False)),
+            "effects": "UNASSESSED"} if observations else None
+
+
+def _registered_fixture_module_clear(tree, entry_span=None):
+    protected = {"open", "globals", "locals", "list", "str", "bytes", "len", "eval", "exec", "__name__", "__builtins__"}
+    parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and node.id in protected and not isinstance(node.ctx, ast.Load):
+            return False
+        if isinstance(node, ast.arg) and node.arg in protected:
+            return False
+        if isinstance(node, (ast.FunctionDef, ast.ClassDef)) and node.name in protected:
+            return False
+        if isinstance(node, ast.alias) and (node.asname or node.name.split(".")[0]) in protected:
+            return False
+        if isinstance(node, ast.Call) and ast.unparse(node.func) in {"globals", "locals", "vars"}:
+            parent = parents.get(node)
+            copied = isinstance(parent, ast.Attribute) and parent.attr == "copy"
+            passed = (isinstance(parent, ast.Call) and parent.args == [node]
+                      and _pickle_span(parent) == entry_span)
+            if not copied and not passed:
+                return False
+    return not _pickle_role_disabled(tree)
+
+
+def _registered_fixture_role_witness(finding, inventory):
+    if (finding.get("code") not in {"SECURITY_UNSAFE_YAML", "SECURITY_DYNAMIC_EXECUTION"}
+            or _valid_security_precondition(finding.get("facts", {}).get("security_precondition"), finding)
+            or finding.get("path") not in inventory["trees"]):
+        return None
+    path = finding["path"]
+    if _pickle_operational_importer(path, inventory["trees"]) or not _pickle_role_native_match(finding, inventory):
+        return None
+    tree = inventory["trees"][path]
+    calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call)
+             and (node.lineno, node.col_offset) == (finding.get("line"), finding.get("column", 0))]
+    if len(calls) != 1:
+        return None
+    sink = calls[0]
+    owners = [node for node in tree.body if isinstance(node, ast.FunctionDef) and sink in ast.walk(node)]
+    if len(owners) != 1:
+        return None
+    function = owners[0]
+    registration = _registered_fixture_registration(tree, function)
+    if registration is None:
+        return None
+    statement, marker, parameters = registration
+    entry = _registered_fixture_entry(tree, path, marker, inventory)
+    flow = _registered_fixture_flow(function, sink, parameters, tree)
+    if entry is None or flow is None or not _registered_fixture_module_clear(tree, entry["entry_span"]):
+        return None
+    return {"schema": "factory.security.registered-fixture-context.v1",
+            "role": "REGISTERED_FIXTURE_HARNESS_OPERATION", "tier": "NEEDS_CONTEXT",
+            "source_path": path, "source_sha256": hashlib.sha256(inventory["sources"][path]).hexdigest(),
+            "sources_sha256": inventory["sources_sha256"], "sink_span": _pickle_span(sink),
+            "function_span": _pickle_span(function), "registration_span": _pickle_span(statement),
+            "harness": entry, "input_flow": flow, "safe_operation": False,
+            "fixture_payloads": "UNASSESSED", "filesystem_authority": "UNASSESSED",
+            "dynamic_deployment": "UNASSESSED", "original_severity": finding.get("severity"),
+            "policy_sha256": _tier_sha256(_SOURCE_ROLE_POLICY_V2)}
+
+
+# The canonical executable-AST profile is reconstructed and independently reviewed
+# from the captured runner; comments, whitespace and owning function names differ
+# freely, while additional/mutated executable statements fail closed.
+def _registered_fixture_profile():
+    return "cd7f402b425a5dd00386aa4763891c617a0acfde1f0797fb779c879edd0f5713"

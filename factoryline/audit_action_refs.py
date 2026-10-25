@@ -567,7 +567,7 @@ def _apply_security_scan_policy(audit, core, captured, prior_tier_report, prior_
                 prior_tiers=prior_tier_report,
                 prior_source_state=prior_state,
             )
-        elif policy == "source-role-v1":
+        elif policy in {"source-role-v1", "source-role-v2"}:
             primitive.apply_pickle_source_role_policy(core, captured)
     else:
         core.pop("defect_policy_decision", None)

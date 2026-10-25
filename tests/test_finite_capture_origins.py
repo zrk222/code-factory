@@ -1054,7 +1054,8 @@ def test_pickle_role_forged_severity_cannot_qualify(tmp_path):
     assert primitive._pickle_test_role_witness(finding, inventory) is None
 
 
-def test_pickle_role_cli_receipt_and_text(tmp_path, capsys):
+@pytest.mark.parametrize("policy", ["source-role-v1", "source-role-v2"])
+def test_pickle_role_cli_receipt_and_text(tmp_path, capsys, policy):
     from factoryline.cli import main
 
     _pickle_role_report(tmp_path, _PICKLE_ROLE_TEST)
@@ -1069,7 +1070,7 @@ def test_pickle_role_cli_receipt_and_text(tmp_path, capsys):
         "--root",
         str(tmp_path),
         "--defect-policy",
-        "source-role-v1",
+        policy,
     ]
     assert main([*argv, "--json"]) == 0
     report = json.loads(capsys.readouterr().out)
@@ -1249,3 +1250,79 @@ def test_pickle_role_ipc_does_not_launder_external_receiver_or_rebound_bytes(
         )
     assert len(report["context_reviews"]) == expected_reviews
     assert any(row["facts"].get("call") == "pickle.loads" for row in report["findings"])
+
+
+_REGISTERED_FLOW_SOURCE = """import yaml
+import os
+import sys
+from network import fetch
+def sample(path, verbose=False):
+    with open(path, 'rb') as handle:
+        data = handle.read()
+    value = yaml.load(data, Loader=yaml.Loader)
+    assert value == 1
+"""
+
+
+def _registered_flow(source):
+    from factoryline import primitive_observation_binding as primitive
+    tree = ast.parse(source)
+    function = next(node for node in tree.body if isinstance(node, ast.FunctionDef))
+    sink = next(node for node in ast.walk(function) if isinstance(node, ast.Call)
+                and ast.unparse(node.func) == 'yaml.load')
+    return primitive._registered_fixture_flow(function, sink, ['path'], tree)
+
+
+def test_registered_fixture_flow_binds_read_transform_and_oracle():
+    flow = _registered_flow(_REGISTERED_FLOW_SOURCE)
+    assert flow['registered_filename_parameters'] == ['path']
+    assert flow['read_spans'] and flow['transformations'] and flow['oracle_spans']
+    assert len(flow['sink_input_ast_sha256']) == 64
+    assert flow['effects'] == 'UNASSESSED'
+
+
+@pytest.mark.parametrize('changed', [
+    _REGISTERED_FLOW_SOURCE.replace('    with open', '    path = supplied\n    with open'),
+    _REGISTERED_FLOW_SOURCE.replace('    value =', '    injected = fetch()\n    value =').replace('yaml.load(data,', 'yaml.load(data + injected,'),
+    _REGISTERED_FLOW_SOURCE.replace('    value =', '    data += supplied\n    value ='),
+    _REGISTERED_FLOW_SOURCE.replace('    value =', '    for data in supplied:\n        pass\n    value ='),
+    _REGISTERED_FLOW_SOURCE.replace('    value =', "    for data in ['fixed']:\n        pass\n    value ="),
+    _REGISTERED_FLOW_SOURCE.replace('    value =', '    with supplied as handle:\n        pass\n    data = handle.read()\n    value ='),
+    _REGISTERED_FLOW_SOURCE.replace('yaml.load(data,', "yaml.load(data + os.environ['PAYLOAD'],"),
+    _REGISTERED_FLOW_SOURCE.replace('yaml.load(data,', 'yaml.load(data + sys.argv[1],'),
+    _REGISTERED_FLOW_SOURCE.replace('import os', 'from os import environ as environment').replace('yaml.load(data,', "yaml.load(data + environment['PAYLOAD'],"),
+    _REGISTERED_FLOW_SOURCE.replace('import sys', 'from sys import argv as arguments').replace('yaml.load(data,', 'yaml.load(data + arguments[1],'),
+    _REGISTERED_FLOW_SOURCE.replace('yaml.load(data,', "yaml.load(data + globals().copy()['PAYLOAD'],"),
+    _REGISTERED_FLOW_SOURCE.replace('    value =', '    if supplied:\n        data = supplied\n    else:\n        data = handle.read()\n    value ='),
+    _REGISTERED_FLOW_SOURCE.replace('    value =', '    try:\n        data = supplied\n    except Exception:\n        data = handle.read()\n    value ='),
+    _REGISTERED_FLOW_SOURCE.replace('    value =', '    data = [data]\n    data[0] = supplied\n    value =').replace('yaml.load(data,', 'yaml.load(data[0],'),
+    _REGISTERED_FLOW_SOURCE.replace('    value =', '    data = [data]\n    data.append(supplied)\n    value =').replace('yaml.load(data,', 'yaml.load(data[0],'),
+    _REGISTERED_FLOW_SOURCE.replace('assert value == 1', 'assert True'),
+    _REGISTERED_FLOW_SOURCE.replace('        data = handle.read()', '        data = supplied'),
+    _REGISTERED_FLOW_SOURCE.replace('    value =', '    def nested():\n        pass\n    value ='),
+])
+def test_registered_fixture_flow_rejects_unclosed_input_and_oracle(changed):
+    assert _registered_flow(changed) is None
+
+
+@pytest.mark.parametrize('source', [
+    'globals = replacement', 'open = supplied', '__name__ = supplied',
+    'namespace = globals(); namespace["sample"] = replacement',
+    'globals().update(replacements)', 'from provider import open',
+    'external.mutate(globals())',
+    "if __name__ == '__main__':\n    external.run(globals())",
+])
+def test_registered_fixture_module_rejects_entry_and_builtin_replacement(source):
+    from factoryline import primitive_observation_binding as primitive
+    assert primitive._registered_fixture_module_clear(ast.parse(source)) is False
+
+
+def test_registered_fixture_policy_is_explicit_and_defaults_compatible(tmp_path):
+    source = 'import yaml\ndef test_handler(data):\n    value = yaml.load(data, Loader=yaml.Loader)\n    assert value\n'
+    v1 = _pickle_role_report(tmp_path, source)
+    v2 = _pickle_role_report(tmp_path, source, policy='source-role-v2')
+    assert v2['findings'] == v1['findings']
+    assert not v2['context_reviews']
+    assert v2['defect_policy_decision']['policy_id'] == 'source-role-v2'
+    assert v2['defect_policy_decision']['clean'] is False
+    assert v2['finding_tier_report']['ledger'][0]['tier'] == 'NEEDS_CONTEXT'
