@@ -5941,3 +5941,86 @@ def test_native_typed_origin_helpers_enrolled_in_cache_identity():
     helpers = runtime.credential_validation_helpers()
     assert all(helper in helpers for helper in (finite._SecurityFlowValue, finite._security_flow_shaped,
         finite.security_helper_return_value, finite.security_helper_return_kind, finite.security_input_value_flow))
+
+
+_REQUEST_SINK_SOURCE = "import requests, sqlite3\nfrom flask import request\nopen(request.args['path'], 'w')\nrequests.get(request.args['url'])\nconnection = sqlite3.connect(':memory:')\nconnection.execute('SELECT * FROM users WHERE name=' + request.args['name'])\n"
+
+
+def test_native_request_sink_families_share_typed_input_trace_and_strict_consumers(tmp_path):
+    (tmp_path / 'app.py').write_text(_REQUEST_SINK_SOURCE, encoding='utf8')
+    report = review_audits.security_scan(tmp_path, cache_enabled=False)
+    selected = [row for row in report['finding_tier_report']['ledger'] if row['raw_finding']['code'] in {
+        'SECURITY_PATH_TRAVERSAL','SECURITY_SSRF','SECURITY_SQL_INJECTION'}]
+    assert len(selected) == 3
+    assert all(row['tier'] == 'SUPPORTED_DEFECT' for row in selected)
+    for row in selected:
+        evidence = row['raw_finding']['facts']['security_precondition']
+        assert evidence['source_role'] == 'untrusted_request'
+        assert evidence['input_value_flow']['value_kind'] == 'text'
+        assert evidence['input_slot_span']
+    assert review_audits._seal_security_scan(report.copy())['finding_tier_report'] == report['finding_tier_report']
+
+
+@pytest.mark.parametrize('replacement,rule', [
+    ("requests.get = replacement\n", 'SECURITY_SSRF'),
+    ("requests.get.__code__ = supplied\n", 'SECURITY_SSRF'),
+    ("sqlite3.connect = replacement\n", 'SECURITY_SQL_INJECTION'),
+    ("open = replacement\n", 'SECURITY_PATH_TRAVERSAL'),
+])
+def test_native_request_sink_provider_replacement_cannot_gain_support(replacement,rule):
+    source = _REQUEST_SINK_SOURCE.replace("open(request.args", replacement + "open(request.args",1)
+    rows = _typed_origin_findings(source)
+    assert not any(row['code'] == rule and row.get('facts',{}).get('security_precondition') for row in rows)
+
+
+@pytest.mark.parametrize('source,rule', [
+    ("import sqlite3\ndef query(value):\n    connection=sqlite3.connect(':memory:')\n    connection.execute('SELECT '+value)\n",'SECURITY_SQL_INJECTION'),
+    (_REQUEST_SINK_SOURCE.replace("connection.execute(", "connection.execute = replacement\nconnection.execute("),'SECURITY_SQL_INJECTION'),
+    (_REQUEST_SINK_SOURCE.replace("connection.execute(", "escape(connection)\nconnection.execute("),'SECURITY_SQL_INJECTION'),
+    (_REQUEST_SINK_SOURCE.replace("connection.execute(", "connection.__setattr__('execute', replacement)\nconnection.execute("),'SECURITY_SQL_INJECTION'),
+    (_REQUEST_SINK_SOURCE.replace("request.args['url']", "request.json['url']"),'SECURITY_SSRF'),
+    (_REQUEST_SINK_SOURCE.replace("requests.get(request.args['url'])", "requests.get(request.args['url'], None, None)"),'SECURITY_SSRF'),
+    (_REQUEST_SINK_SOURCE.replace("requests.get(request.args['url'])", "requests.get(request.args['url'], unknown=True)"),'SECURITY_SSRF'),
+    (_REQUEST_SINK_SOURCE.replace("open(request.args['path'], 'w')", "open(request.args['path'], unknown=True)"),'SECURITY_PATH_TRAVERSAL'),
+    (_REQUEST_SINK_SOURCE.replace("open(request.args['path'], 'w')", "open(request.args['path'], 1,2,3,4,5,6,7,8)"),'SECURITY_PATH_TRAVERSAL'),
+    (_REQUEST_SINK_SOURCE.replace("connection.execute('SELECT * FROM users WHERE name=' + request.args['name'])", "connection.execute('SELECT '+request.args['name'], sql='other')"),'SECURITY_SQL_INJECTION'),
+    (_REQUEST_SINK_SOURCE.replace("requests.get(request.args['url'])", "requests.get(request.args['url'], url=request.args['url'])"),'SECURITY_SSRF'),
+    (_REQUEST_SINK_SOURCE.replace("requests.get(request.args['url'])", "requests.get(*values, url=request.args['url'])"),'SECURITY_SSRF'),
+    (_REQUEST_SINK_SOURCE.replace("open(request.args['path'], 'w')", "open(request.args['path'], file=request.args['path'])"),'SECURITY_PATH_TRAVERSAL'),
+    (_REQUEST_SINK_SOURCE.replace("connection.execute('SELECT * FROM users WHERE name=' + request.args['name'])", "connection.execute('SELECT * FROM users WHERE name=?', (request.args['name'],))"),'SECURITY_SQL_INJECTION'),
+    (_REQUEST_SINK_SOURCE.replace("open(request.args['path'], 'w')", "if False:\n    open(request.args['path'], 'w')"),'SECURITY_PATH_TRAVERSAL'),
+])
+def test_native_request_sink_declines_ambiguous_untyped_and_unproven_consumers(source,rule):
+    rows = _typed_origin_findings(source)
+    assert not any(row['code']==rule and row.get('facts',{}).get('security_precondition') for row in rows)
+
+
+@pytest.mark.parametrize('rule', [
+    'SECURITY_PATH_TRAVERSAL', 'SECURITY_SSRF', 'SECURITY_SQL_INJECTION',
+])
+@pytest.mark.parametrize('tamper', ['slot', 'trace', 'source', 'missing_capture'])
+def test_native_request_sink_consumer_rebuild_rejects_forged_evidence(tmp_path, rule, tamper):
+    from factoryline.primitive_observation_binding import build_finding_tier_report
+
+    (tmp_path / 'app.py').write_text(_REQUEST_SINK_SOURCE, encoding='utf8')
+    scanned = review_audits.security_scan(tmp_path, cache_enabled=False)
+    original = next(row for row in scanned['finding_tier_report']['ledger']
+                    if row['raw_finding']['code'] == rule)
+    assert original['tier'] == 'SUPPORTED_DEFECT'
+    finding = copy.deepcopy(original['raw_finding'])
+    captured = dict(scanned._captured_sources)
+    premise = finding['facts']['security_precondition']
+    if tamper == 'slot':
+        premise['input_slot_span'][0] += 1
+    elif tamper == 'trace':
+        premise['input_value_flow']['value_kind'] = 'bytes'
+    elif tamper == 'source':
+        captured['app.py'] = _REQUEST_SINK_SOURCE.replace('request.args', 'public.args').encode()
+    else:
+        captured.clear()
+    checked = build_finding_tier_report(
+        [finding], [], scanned['sources'], captured,
+        coverage_state='COMPLETE', partition_state='PASS',
+    )
+    assert checked['ledger'][0]['tier'] == 'NEEDS_CONTEXT'
+    assert checked['raw_diagnostics']['count'] == 1

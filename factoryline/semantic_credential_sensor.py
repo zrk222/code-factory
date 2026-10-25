@@ -3417,3 +3417,141 @@ def literal_exec_rejected(node):
             evidence_scope="exact_builtin_call_literal",
         )
     return {}
+
+
+def bind_request_sink_precondition(finding, call, aliases, requests, connections, cursors, helpers):
+    """Reuse native source/sink predicates without promoting arbitrary parameters."""
+    from .review_integrity import _security_module_scope
+    from .finite_capture import security_input_value_flow
+
+    module = _security_module_scope(getattr(call, "_security_lexical_scope", None))
+    if (module is None or not getattr(module, "_security_precondition_providers_stable", False)
+            or not security_precondition_path_possible(call)):
+        return
+    selected = _security_request_sink_slot(finding, call, aliases, requests, connections, cursors, helpers)
+    if selected is None:
+        return
+    argument, provider_roots = selected
+    if _provider_identity_uncertain(module, aliases, roots=provider_roots):
+        return
+    trace = security_input_value_flow(argument, requests, aliases)
+    if trace is None or trace["value_kind"] != "text":
+        return
+    premise = supported_security_precondition(call, "untrusted_request", finding["facts"]["call"])
+    premise["input_slot_span"] = [argument.lineno, argument.col_offset, argument.end_lineno, argument.end_col_offset]
+    premise["input_value_flow"] = trace
+    finding["facts"]["security_precondition"] = premise
+
+
+def _security_request_sink_slot(finding, call, aliases, requests, connections, cursors, helpers):
+    from .intent_quality import bound_sink_argument, sql_statement_argument
+    from .review_integrity import (_security_unsafe_open, _security_unsafe_request_url,
+        _security_unsafe_sql, security_call_name)
+
+    if any(isinstance(arg, ast.Starred) for arg in call.args) or any(kw.arg is None for kw in call.keywords):
+        return None
+    code = finding["code"]
+    if code == "SECURITY_PATH_TRAVERSAL" and finding["facts"].get("call") == "open":
+        if call.keywords or not 1 <= len(call.args) <= 2 or not _security_open_builtin_closed(call):
+            return None
+        if len(call.args) == 2 and not (isinstance(call.args[1], ast.Constant)
+                and call.args[1].value in {"r", "rb", "w", "wb", "a", "ab", "r+", "w+", "a+"}):
+            return None
+        value = bound_sink_argument(call, 0, ("file",))
+        return (value, ("builtins",)) if value is not None and _security_unsafe_open(call, requests, aliases) else None
+    if code == "SECURITY_SSRF":
+        if len(call.args) != 1 or call.keywords:
+            return None
+        value = bound_sink_argument(call, 0, ("url",))
+        return (value, ("requests",)) if value is not None and _security_unsafe_request_url(
+            call, security_call_name(call, aliases), requests, aliases) else None
+    if code == "SECURITY_SQL_INJECTION":
+        if len(call.args) != 1 or call.keywords:
+            return None
+        driver = _security_unsafe_sql(call, security_call_name(call, aliases), set(), requests,
+            aliases, connections, cursors, helpers)
+        if driver:
+            value = sql_statement_argument(call, driver, aliases, security_call_name)
+            if value is not None and _security_sql_receiver_closed(call):
+                return value, (driver,)
+    return None
+
+
+def _security_builtin_identity_closed(module, aliases, names):
+    from .review_integrity import _resolve
+
+    protected = set(names) | {"builtins"} | {name for name, value in aliases.items() if value == "builtins"}
+    parents = {child: node for node in ast.walk(module) for child in ast.iter_child_nodes(node)}
+    reflectors = {"exec", "eval", "globals", "locals", "vars", "__import__", "setattr", "delattr"}
+    for node in ast.walk(module):
+        if isinstance(node, ast.Name) and node.id in protected and not isinstance(node.ctx, ast.Load):
+            return False
+        if isinstance(node, ast.arg) and node.arg in protected:
+            return False
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and node.name in protected:
+            return False
+        if isinstance(node, ast.alias) and (node.asname or node.name.split(".")[0]) in protected and node.name != "builtins":
+            return False
+        if isinstance(node, ast.ExceptHandler) and node.name in protected:
+            return False
+        if isinstance(node, (ast.Name, ast.Attribute)) and isinstance(node.ctx, ast.Load):
+            canonical = _resolve(node, aliases).removeprefix("builtins.")
+            if canonical in reflectors:
+                parent = parents.get(node)
+                direct_attribute_write = (canonical in {"setattr", "delattr"}
+                    and isinstance(parent, ast.Call) and parent.func is node)
+                if not direct_attribute_write:
+                    return False
+    return not _provider_identity_uncertain(module, aliases, roots=("builtins",))
+
+
+def _security_open_builtin_closed(call):
+    from .review_integrity import _security_module_scope, _security_scope_request_aliases
+
+    scope = getattr(call, "_security_lexical_scope", None)
+    module = _security_module_scope(scope)
+    aliases = _security_scope_request_aliases(scope, {}, getattr(call, "_security_flow_statement", None))
+    return module is not None and _security_builtin_identity_closed(module, aliases, {"open"})
+
+
+def log_scalar_metadata(node, reader):
+    """Prove scalar log output while retaining uncertain builtin identities."""
+    if not isinstance(node, ast.Call):
+        return False
+    name = reader.resolve(node, reader.aliases)
+    if name in {"int", "builtins.int"}:
+        return reader._builtin_unshadowed(node, name)
+    if name not in {"bool", "builtins.bool", "len", "builtins.len"}:
+        return False
+    if node.keywords or any(isinstance(arg, ast.Starred) for arg in node.args) or not (
+        len(node.args) == 1 or name in {"bool", "builtins.bool"} and not node.args
+    ) or not reader._builtin_unshadowed(node, name):
+        return False
+    module = reader.module_scope(reader.scope)
+    if module is None:
+        return False
+    if not hasattr(module, "_security_log_builtin_identity_stable"):
+        module._security_log_builtin_identity_stable = _security_builtin_identity_closed(module, reader.aliases, {"bool", "len"})
+    return module._security_log_builtin_identity_stable
+
+
+def _security_sql_receiver_closed(call):
+    """Decline a receiver whose methods/capability escape in the captured module."""
+    from .review_integrity import _security_module_scope
+
+    receiver = call.func.value if isinstance(call.func, ast.Attribute) else None
+    if not isinstance(receiver, ast.Name):
+        return False
+    module = _security_module_scope(getattr(call, "_security_lexical_scope", None))
+    parents = {child: node for node in ast.walk(module) for child in ast.iter_child_nodes(node)}
+    for node in ast.walk(module):
+        if not isinstance(node, ast.Name) or node.id != receiver.id or not isinstance(node.ctx, ast.Load):
+            continue
+        parent = parents.get(node)
+        if not (isinstance(parent, ast.Attribute) and isinstance(parent.ctx, ast.Load)
+                and parent.attr in {"execute", "fetchone", "fetchall", "fetchmany", "commit", "rollback", "close"}
+                and isinstance(parents.get(parent), ast.Call) and parents[parent].func is parent):
+            return False
+    return True
+
+

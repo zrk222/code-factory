@@ -11151,6 +11151,63 @@ def test_audit_log_source_findings_via_security_scan_input_and_request_log_injec
 
 
 @pytest.mark.parametrize(
+    "source,expected",
+    [
+        (
+            "import logging\n"
+            "def record():\n"
+            "    raw = input()\n"
+            "    logging.info('present=%s', bool(raw))\n"
+            "    logging.info('length=%s', len(raw))\n",
+            0,
+        ),
+        (
+            "import logging\n"
+            "raw = input()\n"
+            "logging.error(raw)\n",
+            1,
+        ),
+        (
+            "import logging\n"
+            "def record():\n"
+            "    raw = input()\n"
+            "    bool = lambda value: value\n"
+            "    logging.error(bool(raw))\n",
+            1,
+        ),
+        (
+            "import builtins\n"
+            "import logging\n"
+            "def mutated_builtin():\n"
+            "    raw = input()\n"
+            "    builtins.bool = lambda value: value\n"
+            "    logging.error(builtins.bool(raw))\n"
+            "def rebound_module_alias():\n"
+            "    raw = input()\n"
+            "    builtins = object()\n"
+            "    logging.error(builtins.bool(raw))\n",
+            2,
+        ),
+    ],
+    ids=[
+        "builtin-bool-and-len-metadata-are-safe",
+        "raw-log-input-remains-unsafe",
+        "shadowed-bool-is-not-a-barrier",
+        "mutated-builtins-module-is-not-a-barrier",
+    ],
+)
+def test_log_flow_builtin_boolean_and_length_metadata_barriers(
+    tmp_path, source, expected
+):
+    (tmp_path / "app.py").write_text(source, encoding="utf-8")
+    findings = security_scan(tmp_path, cache_enabled=False)["findings"]
+    log_findings = [
+        item for item in findings if item["code"] == "SECURITY_LOG_INJECTION"
+    ]
+    assert len(log_findings) == expected
+
+
+@pytest.mark.parametrize(
     "assignment",
     [
         'PASSWORD = "hunter2"',
@@ -14653,3 +14710,15 @@ def test_pytest_collection_honors_static_test_false_guards(tmp_path):
         ("test_flags.py", 3),
         ("test_flags.py", 10),
     ]
+
+
+@pytest.mark.parametrize('source,expected', [
+    ("import logging\nraw=input()\nnamespace=globals\nnamespace()['len']=lambda value: value\nlogging.error(len(raw))\n",True),
+    ("import logging,builtins\nraw=input()\nnamespace=builtins.globals\nnamespace()['bool']=lambda value: value\nlogging.error(bool(raw))\n",True),
+    ("import logging,builtins\nraw=input()\nsetattr(builtins,'bool',lambda value:value)\nlogging.error(bool(raw))\n",True),
+    ("import logging\nfrom config import settings\nraw=input()\nsetattr(settings,'label','example')\nlogging.error(bool(raw))\n",False),
+])
+def test_log_scalar_shared_identity_ignores_unrelated_setter_and_retains_reflection_escape(tmp_path,source,expected):
+    (tmp_path/'app.py').write_text(source,encoding='utf8')
+    result=security_scan(tmp_path,cache_enabled=False)
+    assert ('SECURITY_LOG_INJECTION' in result['finding_counts']) is expected

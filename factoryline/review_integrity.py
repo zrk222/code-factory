@@ -4054,6 +4054,11 @@ def _security_statement_call_findings(
             relative, call, aliases, requests, parameters, connections, cursors, helpers
         )
         if finding is not None:
+            from .semantic_credential_sensor import bind_request_sink_precondition
+
+            bind_request_sink_precondition(
+                finding, call, aliases, requests, connections, cursors, helpers
+            )
             findings.append(finding)
     return findings
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 import ast
 from dataclasses import dataclass
 from itertools import chain
-from .semantic_credential_sensor import log_percent_slots
+from .semantic_credential_sensor import log_percent_slots, log_scalar_metadata
 
 _LOGGING_LEVELS = frozenset("debug info warning error critical exception log".split())
 
@@ -216,7 +216,7 @@ class _LogReader:
     def _flow(self, node, tainted, provenance=False):
         if isinstance(node, ast.Name):
             return node.id in tainted if provenance else tainted.get(node.id, False)
-        if self._builtin_integer(node):
+        if log_scalar_metadata(node, self):
             return False
         if self._source(node):
             return True
@@ -312,12 +312,6 @@ class _LogReader:
             and len(slots) == len(values)
         )
 
-    def _builtin_integer(self, node):
-        if not isinstance(node, ast.Call):
-            return False
-        name = self.resolve(node, self.aliases)
-        return name in {"int", "builtins.int"} and self._builtin_unshadowed(node, name)
-
     def _children(self, node):
         if isinstance(node, ast.Lambda):
             return []
@@ -366,7 +360,7 @@ class _LogReader:
         )
         if (
             snapshots is not None
-            and self._builtin_integer(value)
+            and log_scalar_metadata(value, self)
             and any(self._flow(arg, tainted, True) for arg in value.args)
         ):
             snapshots.append(dict(tainted))
