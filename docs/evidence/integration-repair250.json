@@ -1,0 +1,212 @@
+{
+  "schema": "factory.integration-repair250.v1",
+  "recorded_at": "2026-10-23T02:29:00.472491+00:00",
+  "parent": "0499d012e61ecd429503308ddcf716dd4eb7c614",
+  "candidate_sources": {
+    "factoryline/credential_role_constructor_provider.py": {
+      "source": "C:\\Users\\rkatz\\Documents\\Codex\\cf-gate-consolidation162\\.factory\\precision250\\constructor-quality-v2\\factoryline\\credential_role_constructor_provider.py",
+      "sha256": "f47050cb4a7d52ed1e1f69f0c75f3d4e6a71859b08697e352fef64ba4cc73a29"
+    },
+    "factoryline/credential_role_method_use_getter_audit.py": {
+      "source": "C:\\Users\\rkatz\\Documents\\Codex\\cf-gate-consolidation162\\.factory\\precision250\\constructor-quality-v2\\factoryline\\credential_role_method_use_getter_audit.py",
+      "sha256": "c2c53bb34465ceda177496d24f250987fdeae9f8010060de8c3c0df340dc69ba"
+    },
+    "factoryline/runtime_audit_integrity.py": {
+      "source": "C:\\Users\\rkatz\\Documents\\Codex\\cf-gate-consolidation162\\.factory\\precision250\\runtime-quality-v2\\factoryline\\runtime_audit_integrity.py",
+      "sha256": "acea8ea1ec13e0e23b61b65043e91a2c5540a1107b93a0894183a120cce9d9e3"
+    },
+    "factoryline/finite_capture.py": {
+      "source": "C:\\Users\\rkatz\\Documents\\Codex\\cf-gate-consolidation162\\.factory\\precision250\\runtime-quality-v2\\factoryline\\finite_capture.py",
+      "sha256": "8bdab1f803929c1ac751092eaa76c5c123cd3e99b98acbb394e060e96a7c092a"
+    },
+    "factoryline/type_intent_hollow.py": {
+      "source": "C:\\Users\\rkatz\\Documents\\Codex\\cf-gate-consolidation162\\.factory\\precision250\\runtime-quality-v2\\factoryline\\type_intent_hollow.py",
+      "sha256": "1abd61e02a95c1f7625ecc430bc1c856fdb90662e60fd6387300fea3a34ba49b"
+    },
+    "factoryline/type_intent_provider_provenance.py": {
+      "source": "C:\\Users\\rkatz\\Documents\\Codex\\cf-gate-consolidation162\\.factory\\precision250\\runtime-quality-v2\\factoryline\\type_intent_provider_provenance.py",
+      "sha256": "abe81fdd9bd62d74e22dbe3f7516d439b7193a151e47abcfb7d696e30cf55f68"
+    },
+    "factoryline/intent_quality.py": {
+      "source": "C:\\Users\\rkatz\\Documents\\Codex\\cf-gate-consolidation162\\.factory\\precision250\\runtime-quality-v2\\factoryline\\intent_quality.py",
+      "sha256": "c9ac14d220c1b4f6f3cf2827af32f961e07f1e029aa6f7dc949fab3168d575a7"
+    },
+    "factoryline/semantic_credential_sensor.py": {
+      "source": "C:\\Users\\rkatz\\Documents\\Codex\\cf-gate-consolidation162\\.factory\\precision250\\runtime-quality-v2\\factoryline\\semantic_credential_sensor.py",
+      "sha256": "909aaa45fa000bc6b245442099185c8d3d8915216dedb1b01d31b7b041857f45"
+    },
+    "factoryline/credential_role_identity_effects.py": {
+      "source": "C:\\Users\\rkatz\\Documents\\Codex\\cf-gate-consolidation162\\.factory\\precision250\\identity-quality-successor-v2\\factoryline\\credential_role_identity_effects.py",
+      "sha256": "2e27a9c3bd694ab99603ab39b876119eedc3f7b6a48070ea017b975c18f29b71"
+    },
+    "factoryline/mock_fixture_provenance.py": {
+      "source": "C:\\Users\\rkatz\\Documents\\Codex\\cf-gate-consolidation162\\.factory\\precision250\\identity-quality-successor-v2\\factoryline\\mock_fixture_provenance.py",
+      "sha256": "b8da5aa222de03546f7b5c8f7867e071bd5cc3259623d876b5441d0c349d1b59"
+    },
+    "factoryline/credential_role_paths.py": {
+      "source": "C:\\Users\\rkatz\\Documents\\Codex\\cf-gate-consolidation162\\.factory\\precision250\\security-quality\\candidate-v2\\factoryline\\credential_role_paths.py",
+      "sha256": "a30b91b3f39fb807f783624ee2cf40911de0a6c76f4a8b3d4ef4c355b436a038"
+    },
+    "factoryline/primitive_observation_binding.py": {
+      "source": "C:\\Users\\rkatz\\Documents\\Codex\\cf-gate-consolidation162\\.factory\\precision250\\security-quality\\candidate-v2\\factoryline\\primitive_observation_binding.py",
+      "sha256": "abce3da24d7d59a7436f7728266ca4aef0be453a7c1edf9ef639438e49ac74d3"
+    },
+    "factoryline/provenance.py": {
+      "source": "C:\\Users\\rkatz\\Documents\\Codex\\cf-gate-consolidation162\\.factory\\precision250\\security-quality\\candidate-v2\\factoryline\\provenance.py",
+      "sha256": "1f5b4361a62b215f5811e13703cb77e42a95c1c488ba46bab6dd312deb77f341"
+    },
+    "factoryline/credential_endpoint_admission.py": {
+      "source": "C:\\Users\\rkatz\\Documents\\Codex\\cf-gate-consolidation162\\.factory\\precision250\\security-quality\\candidate-v2\\factoryline\\credential_endpoint_admission.py",
+      "sha256": "7688aa46e763582bd31796847f5834c9fbe70f47420b7c1fbfa4d7ef8f41fb3a"
+    },
+    "tests/test_credential_constructor_cache.py": {
+      "source": "C:\\Users\\rkatz\\Documents\\Codex\\cf-gate-consolidation162\\.factory\\precision250\\durable\\tests\\test_credential_constructor_cache.py",
+      "sha256": "5cffa0ccff6ea68f96f8a6b9c2909f7e453be048ba3661a929d28dd30c5bbe60"
+    },
+    "tests/test_semantic_credential_sensor.py": {
+      "source": "C:\\Users\\rkatz\\Documents\\Codex\\cf-gate-consolidation162\\.factory\\precision250\\durable\\tests\\test_semantic_credential_sensor.py",
+      "sha256": "8bad09c3599a4c84d48263c808bde601e962ad91f23d7bc99c432f9d2f90d018"
+    },
+    "tests/test_runtime_audit_integrity.py": {
+      "source": "C:\\Users\\rkatz\\Documents\\Codex\\cf-gate-consolidation162\\.factory\\precision250\\durable\\tests\\test_runtime_audit_integrity.py",
+      "sha256": "a6e21aaec29ab304be39872e55bccbe04dc42ce3f527f1599bf0a3bcf22207a4"
+    },
+    "tests/test_credential_role_identity_call_content.py": {
+      "source": "C:\\Users\\rkatz\\Documents\\Codex\\cf-gate-consolidation162\\.factory\\precision250\\identity-quality-successor-v2\\tests\\test_credential_role_identity_call_content.py",
+      "sha256": "259b1044ca291195e7868ad52516ecf6dbacf0e740830ae7d28a0b04c3d63d17"
+    },
+    "tests/test_mock_fixture_provenance.py": {
+      "source": ".factory\\precision250\\security-quality\\candidate-v2\\tests\\test_mock_fixture_provenance.py",
+      "sha256": "0599fe557d22fd62bfc04ee1bbb49f6f8a367c7546e4935d7bd43b78a5435264"
+    },
+    "plans/accuracy-efficiency174.md": {
+      "source": "C:\\Users\\rkatz\\Documents\\Codex\\cf-gate-consolidation162\\.factory\\precision250\\accuracy-efficiency174-owner-release.md",
+      "sha256": "a07e41154c48084e6ac15e3c6af4fe6ceed3848f389f395b6bbfd0bfe32680be"
+    },
+    "docs/evidence/owner-release-threshold-decision250.json": {
+      "source": "C:\\Users\\rkatz\\Documents\\Codex\\cf-gate-consolidation162\\.factory\\precision250\\owner-release-threshold-decision250.json",
+      "sha256": "8a4c5ff8590f0b19acf4fdf5735c4c7c45facade0e3c4bc4fe9482ab280002cf"
+    },
+    "factoryline/audit_taxonomy.py": {
+      "source": ".factory\\precision250\\agent-ops-update\\factoryline\\audit_taxonomy.py",
+      "sha256": "56818a53f78d34fc6c872fb279455a11e3411d80a5a810d8f36bb8f1d63c9b99"
+    },
+    "factoryline/data/junie_pack.json": {
+      "source": ".factory\\precision250\\agent-ops-update\\factoryline\\data\\junie_pack.json",
+      "sha256": "65fb98402685e66c7efa5b53b35fa114670550e01ed5da5f94d798a90fe83ab3"
+    },
+    "docs/AGENT_CONTRACTS.md": {
+      "source": ".factory\\precision250\\agent-ops-update\\docs\\AGENT_CONTRACTS.md",
+      "sha256": "cbfd278346fa863ad83268de1f215ce31b3a995c3fd4169a150c0d77aa38ad8f"
+    },
+    "docs/JUNIE_FACTORYLINE.md": {
+      "source": ".factory\\precision250\\agent-ops-update\\docs\\JUNIE_FACTORYLINE.md",
+      "sha256": "66264fdad214dbde3c4fb84a5baa6d43c2ae3d8cc21d69d47fd7361a5bdd5db0"
+    },
+    "tests/test_agent_ops_reference.py": {
+      "source": ".factory\\precision250\\agent-ops-update\\tests\\test_agent_ops_reference.py",
+      "sha256": "2ba57c17a30a1054b11923080ea9c3d172a92ae2bff7ae222d1dc76c389bfff2"
+    }
+  },
+  "requirements": [
+    "Preserve source-bound proof semantics during native complexity refactor.",
+    "Invalidate cached proofs on replacement of extracted helpers or code objects.",
+    "Restore annotated enum assignments and Django fallback scope without expectation changes.",
+    "Propagate one accurate operations reference through agent taxonomy and generated Junie manifests."
+  ],
+  "native_complexity": {
+    "engine": "forgeline.gates.qa_audit._complexity",
+    "public_function_count": 1626,
+    "maximum": 10,
+    "all_at_most_10": true
+  },
+  "focused_receipts": {
+    "integrated250-failed-metadata-and-new-controls": {
+      "receipt_sha256": "e73deb74431413748ba29e5ca7b09677ea770d2987a24aa77161f36ed6fd2800",
+      "receipt": {
+        "state": "FINISHED",
+        "exit_code": 0,
+        "seconds": 8.031,
+        "registration_sha256": "8fb7544e83887493e98cdc9798ba1d9210364e561aecbdd5e8aaf5f3333ac6c1",
+        "inputs_unchanged": true,
+        "log_sha256": "8c4313e87ebd30c6e22a3ccbe7af77f32db186bf07828313607583892fb749e3",
+        "xml_sha256": "3c8d016562646c9ed67f7524e687e63bb67a0b6bab1e9021ddb773156a661cb4",
+        "precision_claim": null
+      },
+      "current_differences_since_execution": [
+        ".ruff_cache/0.14.10/1169821336529375656",
+        "docs/AGENT_CONTRACTS.md",
+        "docs/JUNIE_FACTORYLINE.md",
+        "factoryline/audit_taxonomy.py",
+        "factoryline/data/junie_pack.json",
+        "tests/test_mock_fixture_provenance.py"
+      ]
+    },
+    "integrated250-agent-ops-and-enum": {
+      "receipt_sha256": "4d15501d1a9246d5f436044b1e2a64a30df92355b0e7e8a442676f013319fee3",
+      "receipt": {
+        "state": "FINISHED",
+        "exit_code": 0,
+        "seconds": 34.328,
+        "registration_sha256": "59356443223d5a070ff8edd88fdf017dc987bebcb934b796b95db95f33b7f381",
+        "inputs_unchanged": false,
+        "log_sha256": "7406bfaa357bd3b28e511b6509e0190791b3a951dad1b21c6bc14ebd88909b3e",
+        "xml_sha256": "3d0f1b1ffb0d9cb1a4028c6638ff39766e33e799d1bc822d1bf811bd21e9fb06",
+        "precision_claim": null
+      },
+      "current_differences_since_execution": [
+        ".pytest_cache/v/cache/nodeids",
+        "factoryline/data/junie_pack.json"
+      ]
+    },
+    "integrated250-ops-final-encoding": {
+      "receipt_sha256": "cf7f6f36c98841e0b8ad44dfe531b3418c333d76022b68e885ac7ab43154b5f5",
+      "receipt": {
+        "state": "FINISHED",
+        "exit_code": 0,
+        "seconds": 3.828,
+        "registration_sha256": "7034604bafa586ae216ad90768037019df555f7b3038ca93edd33410720ddbad",
+        "inputs_unchanged": true,
+        "log_sha256": "343abdb93e0990e60133cab139aedccb571a8398353f734dfb4b521d575acd17",
+        "xml_sha256": "de473deb275cd5850d9874f714f22c03d551e24a3e031a9b8c4fc36854f637f2",
+        "precision_claim": null
+      },
+      "current_differences_since_execution": []
+    }
+  },
+  "source_reviews": {
+    "ecc-constructor-quality-review-v2.json": "4545b6c4cfe2776c229a3c1aadb75b2ebd2f268a7cf018f23d1cfe0edb6f8864",
+    "ecc-identity-quality-review-v2.json": "de36514f4c63dc0f9ee8a28f590b34a47d257ffb629b27d61306d26e3e4ffaaf",
+    "ecc-runtime-quality-review-v2.json": "81817a54c28b8bbd33a60712fb4ae46b26cfebec7d0c16f4f0f5d54195f03e9f",
+    "ecc-security-quality-review-v2.json": "65ead26e21630a93c452fa3688880cbaa14461c3d4813e93c405dfab5fbdb61d"
+  },
+  "cache_caveat": "42-check run changed only generated .pytest_cache/v/cache/nodeids during execution. Raw inputs_unchanged=false retained. No registered source, test, or documentation changed during that run. Later Unicode-only correction has its own passing frozen focused execution.",
+  "quality": {
+    "native_report_sha256": "e73401ffb5a0876dce91d49ba5a617cdcefc48498f7f234dce1798a5f74ec022",
+    "grade": "A",
+    "findings": [],
+    "max_complexity": 10,
+    "strict_CI_attribution_pass": false,
+    "missing_intent_at_report": 182,
+    "attribution_rate_at_report": 0.8921161825726142,
+    "qualification": "Native report predates operations-only constant/template/test addition; final native AST maximum recomputed above. Required CI remains unresolved."
+  },
+  "precision": {
+    "measured_scanner": "e4a46fcb3e243409d420901ec4961f17ae4aab9c",
+    "study": 249,
+    "actionable": 0.55,
+    "TP": 33,
+    "FP": 27,
+    "unclear": 0,
+    "fresh_precision_of_this_refactor": null,
+    "paired_common_claim_gain": 0,
+    "owner_accepts_current_release": true,
+    "next_pr_target": 0.8
+  },
+  "release": {
+    "merge": "NOT_MERGED",
+    "publication": "NOT_PUBLISHED",
+    "required_technical_and_provider_gates": "NOT_WAIVED"
+  },
+  "live_worktree_preserved": true
+}

@@ -1,0 +1,37 @@
+{
+  "schema": "factory.deterministic-fixture-order250.v1",
+  "source_sha256": "512565df91eabd66a8023f306b130309bbe6677ada8809d52a5dd508764f7a3d",
+  "test_sha256": "f53f19b3601380e0517b2018363ce1d662cca67c89baa1d19218123251cb2715",
+  "requirement": "Same captured source inventory in different insertion order yields identical complete role witnesses; no rows dropped or AST identities replaced.",
+  "root_cause": "Native producer and fresh-byte verifier serialized identical uses and operations in different inventory traversal order.",
+  "repair": "Sort complete consumer rows by source-relative path and full use/call span before pairing and serialization; exact binder equality is retained.",
+  "native": {
+    "files_audited": 209,
+    "coverage": {
+      "complete": true,
+      "files_discovered": 209,
+      "files_processed": 209
+    },
+    "seconds": 26.328,
+    "inputs_unchanged": true,
+    "receipt_sha256": "c1dba679b73d4aec048a5eddae5a3ba5aba9cabaf76c66395e4b8991069d0628",
+    "stdout_sha256": "c41c8c92c7a1def22a9a70bcd8c20c2f588f2f189e21e70277424cab5b422e78",
+    "observed": "tests/base.py:17 retained as primitive observation; tests/base.py:14 unresolved credential remains CRITICAL"
+  },
+  "portable_test": {
+    "passed": 1,
+    "seconds": 3.89,
+    "receipt_sha256": "88abd539798208df35a8ef22b91f844810df80cde41ad17fd6b71e5a46b613b8"
+  },
+  "source_review_sha256": "239448658a3bcaa3e8b7455355eb735afa7e4562c1945396886270a5cd5a026e",
+  "measurement": {
+    "study": 249,
+    "measured_scanner": "e4a46fcb3e243409d420901ec4961f17ae4aab9c",
+    "actionable_precision": 0.55,
+    "TP": 33,
+    "FP": 27,
+    "unclear": 0,
+    "this_fix_fresh_precision": null
+  },
+  "qualification": "Exposed native regression repaired; no new held-out gain, global quality pass, runtime execution or merge approval claimed."
+}

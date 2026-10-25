@@ -1,0 +1,347 @@
+{
+  "schema": "factory.precision256.astra-source-plan.v1",
+  "created_utc": "2026-10-23T02:54:59.830847+00:00",
+  "review_type": "SOURCE_REVIEW_ONLY",
+  "implementation": "NOT_RUN",
+  "measurement": "NOT_RUN",
+  "release_state": "PUBLICATION_HOLD",
+  "planned_pr": "PR256 is owner shorthand; existence/number not asserted",
+  "pr255_reviewed_head": "14871652f7d1274203983fe77af7e13667c5cd5b",
+  "live_head_observed": "965d6294186854e356d5c7c94c603447208ad07e",
+  "source_root": "C:\\Users\\rkatz\\Documents\\Codex\\cf-gate-consolidation162\\.factory\\precision251\\candidate",
+  "doctor": {
+    "command": "factory doctor --strict --json",
+    "exit_code": 0,
+    "ok": true,
+    "installation_ok": true,
+    "workflow_ok": true,
+    "provenance_ok": true
+  },
+  "workflow_inspected": "factory plan --help; documentation-only source audit",
+  "source_hashes": {
+    "factoryline/review_audits.py": "3910839de7da4c411785abeab2359862a978a0843fb1e28f83a9f0b5158680e8",
+    "factoryline/provenance.py": "19eb8c845b9e2a27afdd2443e12c9399076bda43f22ce6a5f3b2287ac4156d41",
+    "factoryline/runtime_audit_integrity.py": "6e01e7ed6dec6edc591cecb8e9d1b628c20e0d6b620b27888daa9065358594f6",
+    "factoryline/review_integrity.py": "0dad42638aa52ca6a79bda7526fd4faa1b4f6c32aaf1bdaab190f3e8367a2936",
+    "factoryline/primitive_observation_binding.py": "abce3da24d7d59a7436f7728266ca4aef0be453a7c1edf9ef639438e49ac74d3",
+    "factoryline/finite_capture.py": "8bdab1f803929c1ac751092eaa76c5c123cd3e99b98acbb394e060e96a7c092a",
+    "factoryline/credential_role_identity_effects.py": "2e27a9c3bd694ab99603ab39b876119eedc3f7b6a48070ea017b975c18f29b71",
+    "factoryline/credential_role_constructor_provider.py": "f47050cb4a7d52ed1e1f69f0c75f3d4e6a71859b08697e352fef64ba4cc73a29",
+    "factoryline/mock_fixture_provenance.py": "b7915b49d419bfe8d7f89407e194658d65659ddb8dc105e47d13d77e63eac14c",
+    "factoryline/semantic_credential_sensor.py": "909aaa45fa000bc6b245442099185c8d3d8915216dedb1b01d31b7b041857f45",
+    "factoryline/security_configuration.py": "835d3dcc9265600d48a027b2fc0b5bdc29d7b09b9b873108c473e01c8999dacf",
+    "tests/test_review_audits.py": "d8cf33f3621c6283a7bc3af2e484ecb72e43d141e1d42a19b8e1839501ec56bd",
+    "tests/test_runtime_audit_integrity.py": "27f1691f0a95de9b5172facba51569ba6fcdd82b4ddf5a7bbc41b0496e6b1013",
+    "tests/test_credential_endpoint_scanner.py": "8e0863ff94caf4374f62663c5267129ffc71fbcbff0159a5a0ab60ce05769e54"
+  },
+  "study_inputs": {
+    "score.json": "71f37fc3f17720f8bd393d25dbbcd9b8f4a129bf564aa49d89ffec103808f444",
+    "labels-a.json": "1fa610199c47450e12634b126bd8806766354691c3f9267179206398f547809b",
+    "labels-b.json": "eaa6d95c7aa3e4d4c96935cd03baccd19ddefd9be2ee942609b08c2bcba506f0",
+    "blinded-packets/manifest.json": "73ad4bea6f5b04b91cc1e38f599e4c569954be9f7364074bb2b040bc5fd2ddb5"
+  },
+  "frozen_metrics": {
+    "baseline": {
+      "TP": 33,
+      "FP": 10,
+      "UNCLEAR": 0,
+      "decided": 43,
+      "precision": 0.7674418604651163,
+      "wilson95": [
+        0.62255479702191,
+        0.8684632152061552
+      ],
+      "unclear_inclusive": 0.7674418604651163
+    },
+    "candidate": {
+      "TP": 33,
+      "FP": 27,
+      "UNCLEAR": 0,
+      "decided": 60,
+      "precision": 0.55,
+      "wilson95": [
+        0.4249193588533434,
+        0.6690634559324476
+      ],
+      "unclear_inclusive": 0.55
+    }
+  },
+  "corrections": [
+    "Five dynamic-execution FP labels comprise four fixed request-body overwrite/decode cases and one database JSON case F249-036.",
+    "FinancialFraud has31dynamic-execution TP and1hardcoded-secret TP; ihatemoney has1hardcoded-secret TP."
+  ],
+  "tasks": [
+    {
+      "id": "P0-1",
+      "title": "Classify enum metadata by consumer effect",
+      "files": [
+        "factoryline/provenance.py",
+        "factoryline/runtime_audit_integrity.py",
+        "tests/test_runtime_audit_integrity.py"
+      ],
+      "functions": [
+        "credential_role_witness",
+        "_credential_enum_literal",
+        "_credential_enum_bases",
+        "_LiteralConsumers._class_members",
+        "_LiteralConsumers.witnesses"
+      ],
+      "packet_ids": [
+        "F249-004",
+        "F249-007",
+        "F249-014",
+        "F249-019",
+        "F249-032",
+        "F249-046",
+        "F249-054",
+        "F249-059"
+      ],
+      "opportunity_fp": 8,
+      "state": "SOURCE_REVIEWED_NOT_IMPLEMENTED"
+    },
+    {
+      "id": "P0-2",
+      "title": "Resolve dominating immutable input to eval",
+      "files": [
+        "factoryline/runtime_audit_integrity.py",
+        "factoryline/finite_capture.py",
+        "factoryline/primitive_observation_binding.py",
+        "tests/test_runtime_audit_integrity.py"
+      ],
+      "functions": [
+        "fixed_literal_program_witness",
+        "_fixed_literal_call",
+        "finite_literal_eval_input_witness",
+        "fixed_program_witness",
+        "_fixed_program_native_witness"
+      ],
+      "packet_ids": [
+        "F249-010",
+        "F249-025",
+        "F249-035",
+        "F249-043"
+      ],
+      "opportunity_fp": 4,
+      "state": "SOURCE_REVIEWED_NOT_IMPLEMENTED"
+    },
+    {
+      "id": "P0-3",
+      "title": "Prove local fixture value roles and absence of authority escape",
+      "files": [
+        "factoryline/credential_role_identity_effects.py",
+        "factoryline/mock_fixture_provenance.py",
+        "factoryline/primitive_observation_binding.py",
+        "tests/test_credential_endpoint_scanner.py",
+        "tests/test_review_audits.py"
+      ],
+      "functions": [
+        "module_fixture_credential_evidence",
+        "_fixture_role_rows",
+        "_fixture_role_pair",
+        "closed_jwt_test_literal",
+        "_jwt_crypto_operation_witness",
+        "annotate_application_fixture",
+        "application_fixture_binding"
+      ],
+      "packet_ids": [
+        "F249-017",
+        "F249-020",
+        "F249-022",
+        "F249-029",
+        "F249-034",
+        "F249-042",
+        "F249-047",
+        "F249-049",
+        "F249-058"
+      ],
+      "opportunity_fp": 9,
+      "state": "SOURCE_REVIEWED_NOT_IMPLEMENTED"
+    }
+  ],
+  "pinned_tp_packet_ids": [
+    "F249-001",
+    "F249-002",
+    "F249-005",
+    "F249-006",
+    "F249-008",
+    "F249-009",
+    "F249-011",
+    "F249-012",
+    "F249-013",
+    "F249-015",
+    "F249-016",
+    "F249-021",
+    "F249-023",
+    "F249-024",
+    "F249-026",
+    "F249-027",
+    "F249-028",
+    "F249-030",
+    "F249-031",
+    "F249-033",
+    "F249-037",
+    "F249-038",
+    "F249-040",
+    "F249-041",
+    "F249-044",
+    "F249-045",
+    "F249-048",
+    "F249-050",
+    "F249-051",
+    "F249-053",
+    "F249-055",
+    "F249-056",
+    "F249-057"
+  ],
+  "conditional_arithmetic": {
+    "opportunity_fp": 21,
+    "required_fp_removals_at_33_tp_for_80pct": 19,
+    "if_all21_closed": {
+      "TP": 33,
+      "FP": 6,
+      "precision": 0.8461538461538461
+    },
+    "status": "ARITHMETIC_ONLY_NOT_PREDICTION"
+  },
+  "deferred_fp_packet_ids": [
+    "F249-003",
+    "F249-018",
+    "F249-036",
+    "F249-039",
+    "F249-052",
+    "F249-060"
+  ],
+  "implementation_constraints": {
+    "new_python_modules": 0,
+    "total_python_file_cap": 464,
+    "core_module_cap": 133,
+    "no_path_or_name_allowlists": true,
+    "no_blanket_severity_demotion": true,
+    "no_posthoc_prediction_filter": true,
+    "no_target_execution": true,
+    "no_coverage_tradeoff": true
+  },
+  "fresh_protocol": {
+    "candidate_decided_min": 30,
+    "candidate_precision_min": 0.8,
+    "unclear_inclusive_precision_min": 0.8,
+    "unclear_fraction_max": 0.05,
+    "baseline_tp_retention": 1.0,
+    "all_selected_repositories_complete": true,
+    "preselected_repositories_min": 20,
+    "tp_contributing_repositories_min": 5,
+    "tp_rule_families_min": 3,
+    "largest_repository_tp_share_max": 0.4,
+    "macro_repository_precision_min": 0.8,
+    "macro_rule_precision_min": 0.8,
+    "interval": "Wilson95 descriptive plus repository-cluster uncertainty; do not call lower bound80 unless measured",
+    "timeout_seconds_per_repo": 180,
+    "workers": 2,
+    "median_and_p95_cold_runtime_ratio_max": 1.2,
+    "comparison_latency_note": "Compare to matched complete baseline; retain failures and do not claim ratios for missing runs",
+    "labelers": 2,
+    "agreement_min": 0.9,
+    "human_adjudication_required": true,
+    "sampling": "all alerts census preferred; if bounded sampling preregister stratified probabilities and weighted aggregate before predictions; never prune predictions to meet score",
+    "reuse_study249_as_fresh": false,
+    "fresh_failure_action": "retain failed run; change becomes development; freeze a different untouched cohort before retest"
+  },
+  "limits": [
+    "No detector tests/scans performed by this audit.",
+    "Closure success for all21FP is unproven.",
+    "Static absence of observed external consumers does not prove runtime secrecy or isolation.",
+    "Alert precision and sampled baseline TP retention do not establish full recall."
+  ],
+  "checked_packet_census": {
+    "method": "Read score.unit_labels; join packet identity by packet_id; no new labels",
+    "tp_by_repository_rule": [
+      {
+        "repository": "sethgu/financialfrauddatagenerator",
+        "rule": "SECURITY_DYNAMIC_EXECUTION",
+        "count": 31,
+        "packet_ids": [
+          "F249-001",
+          "F249-002",
+          "F249-005",
+          "F249-006",
+          "F249-008",
+          "F249-009",
+          "F249-011",
+          "F249-012",
+          "F249-013",
+          "F249-015",
+          "F249-016",
+          "F249-021",
+          "F249-023",
+          "F249-024",
+          "F249-026",
+          "F249-028",
+          "F249-031",
+          "F249-033",
+          "F249-037",
+          "F249-038",
+          "F249-040",
+          "F249-041",
+          "F249-044",
+          "F249-045",
+          "F249-048",
+          "F249-050",
+          "F249-051",
+          "F249-053",
+          "F249-055",
+          "F249-056",
+          "F249-057"
+        ]
+      },
+      {
+        "repository": "sethgu/financialfrauddatagenerator",
+        "rule": "SECURITY_HARDCODED_SECRET",
+        "count": 1,
+        "packet_ids": [
+          "F249-030"
+        ]
+      },
+      {
+        "repository": "spiral-project/ihatemoney",
+        "rule": "SECURITY_HARDCODED_SECRET",
+        "count": 1,
+        "packet_ids": [
+          "F249-027"
+        ]
+      }
+    ],
+    "fp_overwrite_packet_ids": [
+      "F249-010",
+      "F249-025",
+      "F249-035",
+      "F249-043"
+    ],
+    "fp_database_json_packet_id": "F249-036",
+    "frozen_inputs_preserved": true,
+    "score_sha256": "71f37fc3f17720f8bd393d25dbbcd9b8f4a129bf564aa49d89ffec103808f444",
+    "packet_manifest_sha256": "73ad4bea6f5b04b91cc1e38f599e4c569954be9f7364074bb2b040bc5fd2ddb5"
+  },
+  "advisory_memo_freshness": {
+    "status": "PARENT_REPORTED_DIRECT_CONTRACT_FAILURE_NOT_ACTIONABLE_SECURITY_FINDING",
+    "location": "factoryline/credential_role_method_use_getter_audit.py:snapshot_candidates; SourceSnapshotIndex.validate",
+    "evidence": ".factory/precision251/targeted/getter-behavior/tests.log",
+    "reported_result": "1 failed,13 passed",
+    "observation": "Parent reports cached candidates after mutation of inventory digest; raw-byte changes may also leave cached signature unchanged.",
+    "required_next_check": "Trace whether production ClassChainMemo or final fresh-byte binder rejects the stale result; do not claim a production escape without native evidence.",
+    "minimal_remediation_if_confirmed": "Reuse existing source generation/content-hash validity cache key and invalidate stale entries in existing modules; preserve final independent binder."
+  },
+  "implementation_workflow": {
+    "route": "existing CF plan/assembly/workflow-QA",
+    "candidate_quality_attribution_min_percent": 99.85,
+    "test_intent_registration": "required before editing tests",
+    "clarification": "182 was a missing test-intent unit count, not a workflow or gate identifier"
+  },
+  "root_review_addendum": {
+    "audit_original_md_sha256": "8725c1b2a3c8a36a1bbb16aeed7cea5b5bd87c607616a9e86e50363c15ccec7f",
+    "audit_original_json_sha256": "2e105f282f3824c1bbcc773e4133a97619953a71a15cd8ce4929b8d5b3ed94bc",
+    "clarification": "Register intent before test edits; require99.85% attribution at candidate qualification/merge, not as a prerequisite for writing tests that repair that gate.",
+    "protocol_status": "Proposed next-PR preregistration, not additional owner-imposed PR255 merge blockers.",
+    "publication": "HOLD until the higher-precision follow-up is completed; no workflow dispatched.",
+    "new_precision": null
+  }
+}

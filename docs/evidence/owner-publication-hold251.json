@@ -1,0 +1,18 @@
+{
+  "schema": "factory.owner-publication-hold251.v1",
+  "recorded_at": "2026-10-23T02:48:56.774919+00:00",
+  "authority": "direct human message in current Codex chat",
+  "exact_instruction": "AFTER COMPLETED MERGE DO NOT YET PUBLISH PR 255 UNTIL WE FINISH PR 256 WITH THE HIGHER PRECION SCORES. USE ASTRA HIGH AS SENIOR SECURITY PRECISION ENGINEER TO PREPARE AN ACTIONABLE PLAN TO ACHIEVE THE 80+% FOCUS",
+  "supersedes": "docs/evidence/owner-release-threshold-decision250.json publication authorization only",
+  "pr255_merge": "authorized after required engineering checks pass",
+  "publication": "HOLD",
+  "hold_until": "next precision PR completed with higher measured scores",
+  "next_precision_target": 0.8,
+  "requested_next_pr_number": 256,
+  "pr256_exists_at_recording": false,
+  "current_measured_study": 249,
+  "current_measured_actionable_precision": 0.55,
+  "score_and_labels_unchanged": true,
+  "publish_dispatched": false,
+  "reviewer": "one-time gpt-6-astra high senior security precision engineer"
+}

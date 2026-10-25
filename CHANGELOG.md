@@ -22,6 +22,16 @@
   derived evidence when fresh source or resolver checks fail. No cross-run
   authority or unchecked source-cache reuse is introduced.
 
+- Bind endpoint-declaration review to exact independently reviewed historical
+  protocol publications, constructor transfers and selected client identities.
+  Keep original credential severity for auth uses, unresolved value reads or
+  incomplete source coverage. Retain cleared declaration heuristics as primitive
+  observations at their original severity. These bounded source facts do not
+  establish runtime safety or independent held-out precision.
+- Memoize class ancestry within a single role-analysis derivation, discarding
+  derived evidence when fresh source or resolver checks fail. No cross-run
+  authority or unchecked source-cache reuse is introduced.
+
 - Add source-bound PostgreSQL/SQLite schema and SQLAlchemy context to static scan
   receipts and existing context packets. Record tables, columns, constraints,
   indexes, migration operations and supported query dependencies without executing

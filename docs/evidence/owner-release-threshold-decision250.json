@@ -1,0 +1,17 @@
+{
+  "schema": "factory.owner-release-threshold-decision250.v1",
+  "recorded_at": "2026-10-23T02:12:21.679880+00:00",
+  "authority": "direct human user messages in the current Codex chat",
+  "exact_statements": [
+    "AS HUMAN, i VALIDATE THE RESULTS",
+    "PUBLISHING AT 55% IS MET WITH NEXT PR TAKING US TO THE 80+% GOAL"
+  ],
+  "current_release_precision_threshold": 0.55,
+  "next_pr_target": 0.8,
+  "study_score_sha256": "71f37fc3f17720f8bd393d25dbbcd9b8f4a129bf564aa49d89ffec103808f444",
+  "measurement_not_rewritten": true,
+  "original_packet_labelers": "two blinded same-model AI contexts",
+  "human_validation_kind": "owner accepts reported results; not a separate human packet-label set",
+  "engineering_artifact_cadence_provider_gates": "remain required",
+  "release_published": false
+}
