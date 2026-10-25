@@ -97,6 +97,8 @@ MAX_PATHS = 64
 MAX_ORACLE_CONTEXT_CACHE_ENTRIES = 16
 MAX_ORACLE_CONTEXT_CACHE_BYTES = 4 * 1024 * 1024
 ORACLE_CONTEXT_CACHE_TTL_SECONDS = 300
+DEFAULT_ORACLE_SOURCE_RETENTION_BYTES = 16 * 1024 * 1024
+MAX_ORACLE_SOURCE_RETENTION_BYTES = 64 * 1024 * 1024
 _ORACLE_CONTEXT_CACHE: OrderedDict[str, tuple[str, int, float]] = OrderedDict()
 _ORACLE_CONTEXT_CACHE_BYTES = 0
 _ORACLE_CONTEXT_CACHE_HITS = 0
@@ -3578,8 +3580,12 @@ def _oracle_imports(
 
 
 def _oracle_source_inputs(
-    root: Path, files: list[Path]
+    root: Path,
+    files: list[Path],
+    *,
+    retention_limit: int = DEFAULT_ORACLE_SOURCE_RETENTION_BYTES,
 ) -> tuple[dict, list, list, bool]:
+    retention_limit = _validate_oracle_source_retention_limit(retention_limit)
     return contracts._oracle_source_inputs(
         root,
         files,
@@ -3589,8 +3595,18 @@ def _oracle_source_inputs(
         sha256,
         RuntimeAuditError,
         MAX_BYTES,
-        16 * 1024 * 1024,
+        retention_limit,
     )
+
+
+def _validate_oracle_source_retention_limit(retention_limit: int) -> int:
+    if (
+        type(retention_limit) is not int
+        or retention_limit <= 0
+        or retention_limit > MAX_ORACLE_SOURCE_RETENTION_BYTES
+    ):
+        raise ValueError("oracle source retention limit is outside the declared budget")
+    return retention_limit
 
 
 def _oracle_snapshots(root: Path, files: list[Path], source_bytes: dict) -> dict:
@@ -3622,8 +3638,14 @@ def _declared_typecheck_sources(
 
 
 def _oracle_context_cache_key(
-    root: Path, manifest: list, config_identity: dict, *, captured: bool = False
+    root: Path,
+    manifest: list,
+    config_identity: dict,
+    *,
+    captured: bool = False,
+    retention_limit: int = DEFAULT_ORACLE_SOURCE_RETENTION_BYTES,
 ) -> str:
+    retention_limit = _validate_oracle_source_retention_limit(retention_limit)
     import builtins
     from . import test_oracle_misuse as oracle_misuse
     from . import test_callback_closure
@@ -3764,7 +3786,7 @@ def _oracle_context_cache_key(
         "sources": manifest,
         "config": config_identity,
         "source_limit": MAX_BYTES,
-        "source_retention_limit": 16 * 1024 * 1024,
+        "source_retention_limit": retention_limit,
         "python": [sys.implementation.name, *sys.version_info[:3]],
         "helpers": [
             (id(helper), id(getattr(helper, "__code__", None))) for helper in helpers

@@ -593,6 +593,7 @@ FULL_REPOSITORY_BATCH_LIMIT = 460
 FULL_REPOSITORY_CONTEXT_PROFILE = "workspace-v2"
 FULL_REPOSITORY_CONTEXT_SCHEMA = "factory.full-repository-context.v2"
 FULL_REPOSITORY_CONTEXT_SCAN_SCHEMA = "factory.full-repository-scan.workspace-v2"
+FULL_REPOSITORY_WORKSPACE_SOURCE_RETENTION_LIMIT = 64 * 1024 * 1024
 FULL_REPOSITORY_CONTEXT_CHECKPOINT_SCHEMA = (
     "factory.full-repository-checkpoint.workspace-v2"
 )
@@ -796,10 +797,17 @@ def _full_repository_stat_identity(info) -> tuple[int, int, int, int]:
     return info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns
 
 
-def _full_repository_runtime_epoch(root: Path, configuration: str, audit) -> str:
+def _full_repository_runtime_epoch(
+    root: Path, configuration: str, audit, *, retention_limit: int | None = None
+) -> str:
     """Bind only the in-process cache shortcut to live native helper objects."""
     from .context_efficiency import _scan_security_source
 
+    retention_limit = (
+        audit.DEFAULT_ORACLE_SOURCE_RETENTION_BYTES
+        if retention_limit is None
+        else retention_limit
+    )
     helpers = (
         _scan_security_source,
         audit._security_source_files,
@@ -847,7 +855,10 @@ def _full_repository_runtime_epoch(root: Path, configuration: str, audit) -> str
     return digest(
         {
             "native_cache_epoch": audit._oracle_context_cache_key(
-                root, [], {"configuration_sha256": configuration}
+                root,
+                [],
+                {"configuration_sha256": configuration},
+                retention_limit=retention_limit,
             ),
             "full_profile_helpers": [
                 (id(helper), id(getattr(helper, "__code__", None)))
@@ -1120,9 +1131,12 @@ def _full_repository_generation(
         "tenant_reads": [],
         "oracle_context": None,
     }
+    source_retention_limit_bytes = audit.DEFAULT_ORACLE_SOURCE_RETENTION_BYTES
     if context_profile == FULL_REPOSITORY_CONTEXT_PROFILE:
+        source_retention_limit_bytes = FULL_REPOSITORY_WORKSPACE_SOURCE_RETENTION_LIMIT
         config_identity["context_profile"] = FULL_REPOSITORY_CONTEXT_PROFILE
         config_identity["context_profile_schema"] = FULL_REPOSITORY_CONTEXT_SCHEMA
+        config_identity["source_retention_limit_bytes"] = source_retention_limit_bytes
     elif context_profile != "isolated-v1":
         raise RuntimeAuditError(
             "E_CONTEXT_PROFILE", "unsupported full-repository context profile"
@@ -1138,7 +1152,9 @@ def _full_repository_generation(
         }
     configuration = digest(config_identity)
     scanner, inventory_hash = _full_repository_scanner_identity(), digest(inventory)
-    runtime_epoch = _full_repository_runtime_epoch(root, configuration, audit)
+    runtime_epoch = _full_repository_runtime_epoch(
+        root, configuration, audit, retention_limit=source_retention_limit_bytes
+    )
     discovery = _full_repository_discovery_policy(audit)
     workspace = context_profile == FULL_REPOSITORY_CONTEXT_PROFILE
     context_profile_schema = FULL_REPOSITORY_CONTEXT_SCHEMA if workspace else None
@@ -1170,6 +1186,15 @@ def _full_repository_resume_generation(generation: dict, audit):
     root = generation["root"]
     try:
         checkpoint = read_run_json(generation["directory"], "checkpoint.json")
+        if (
+            generation["context_profile"] == FULL_REPOSITORY_CONTEXT_PROFILE
+            and isinstance(checkpoint, dict)
+            and checkpoint.get("configuration_sha256")
+            != generation["configuration"]
+        ):
+            raise RuntimeAuditError(
+                "INVALID_CHECKPOINT", "workspace checkpoint configuration changed"
+            )
         results = _validate_full_repository_checkpoint(
             checkpoint,
             root,
@@ -1294,6 +1319,15 @@ def _full_repository_workspace_scan_batch(
 
 def _full_repository_verify_generation(generation: dict, audit) -> None:
     root = generation["root"]
+    expected_retention_limit = (
+        FULL_REPOSITORY_WORKSPACE_SOURCE_RETENTION_LIMIT
+        if generation["context_profile"] == FULL_REPOSITORY_CONTEXT_PROFILE
+        else audit.DEFAULT_ORACLE_SOURCE_RETENTION_BYTES
+    )
+    if generation.get("source_retention_limit_bytes") != expected_retention_limit:
+        raise RuntimeAuditError(
+            "SOURCE_DRIFT", "source retention configuration changed during the batch"
+        )
     files = audit._security_source_files(root)
     inventory = _full_repository_inventory(root, files)
     patterns, frame, _collection_incomplete = _full_repository_profile_configuration(
@@ -1306,6 +1340,9 @@ def _full_repository_verify_generation(generation: dict, audit) -> None:
         "oracle_context": None,
     }
     if generation["context_profile"] == FULL_REPOSITORY_CONTEXT_PROFILE:
+        config_identity["source_retention_limit_bytes"] = generation[
+            "source_retention_limit_bytes"
+        ]
         config_identity["context_profile"] = FULL_REPOSITORY_CONTEXT_PROFILE
         config_identity["context_profile_schema"] = FULL_REPOSITORY_CONTEXT_SCHEMA
     if generation.get("defect_policy") == "trusted-core-v1":
@@ -1328,7 +1365,12 @@ def _full_repository_verify_generation(generation: dict, audit) -> None:
         )
     if (
         _full_repository_scanner_identity() != generation["scanner"]
-        or _full_repository_runtime_epoch(root, configuration, audit)
+        or _full_repository_runtime_epoch(
+            root,
+            configuration,
+            audit,
+            retention_limit=generation["source_retention_limit_bytes"],
+        )
         != generation["runtime_epoch"]
     ):
         raise RuntimeAuditError(

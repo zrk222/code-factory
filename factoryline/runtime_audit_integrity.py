@@ -5043,13 +5043,11 @@ def _full_repository_workspace_context_state(
     try:
         context = engine._full_repository_security_context(generation, audit)
         generation["security_config_identity"] = context["config_identity"]
-    except (
-        OSError,
-        ValueError,
-        TypeError,
-        audit.ReviewAuditError,
-        RuntimeAuditError,
-    ) as exc:
+    except RuntimeAuditError as exc:
+        if exc.code == "SOURCE_DRIFT":
+            raise
+        context_error = exc.code
+    except (OSError, ValueError, TypeError, audit.ReviewAuditError) as exc:
         context_error = type(exc).__name__
     source_bytes = context.get("source_bytes", {})
     snapshots = context.get("snapshots", {})
@@ -5074,6 +5072,7 @@ def _full_repository_workspace_context_state(
         "capture_complete": source_capture_complete,
         "files_discovered": len(files),
         "files_bound": len(retained_names),
+        "retention_limit_bytes": generation["source_retention_limit_bytes"],
         "source_manifest_sha256": engine.digest(sorted(retained_names.items())),
         "parseable_files": len(snapshot_state.get("paths", ())),
         "collection_state": generation["frame"].get("selected", {}).get("state"),
@@ -5278,6 +5277,9 @@ def _full_repository_workspace_batch_capture(
             else "INCOMPLETE",
             "binding_count": len(context_bindings),
             "edge_count": len(oracle_edges),
+            "source_retention_limit_bytes": generation[
+                "source_retention_limit_bytes"
+            ],
             "global_consumer_closure_verified": False,
         },
         "primitive_observations": [],
@@ -5699,7 +5701,9 @@ def _full_repository_workspace_partition(
     ]
     partition_state = "INCOMPLETE"
     partition_error = (
-        "SOURCE_CONTEXT_ERROR"
+        "E_SOURCE_RETENTION"
+        if context_error == "E_SOURCE_RETENTION"
+        else "SOURCE_CONTEXT_ERROR"
         if context_error
         else "COLLECTION_CONFIG_UNSUPPORTED"
         if generation["collection_incomplete"]
@@ -5862,18 +5866,28 @@ def _full_repository_workspace_dependency_tree(
 
 
 def _full_repository_workspace_security_context(engine, generation, audit):
-    """Capture a security-only generation without project test-oracle work."""
     from .context_efficiency import bind_application_fixture_context
     from .import_context import CapturedImportInventory
-
     root, files = generation["root"], generation["files"]
-    captured, bindings, _manifest, _cacheable = audit._oracle_source_inputs(root, files)
+    retention_limit = generation.get("source_retention_limit_bytes")
+    capture_options = {} if retention_limit is None else {"retention_limit": retention_limit}
+    captured, bindings, _manifest, _cacheable = audit._oracle_source_inputs(root, files, **capture_options)
+    inventory = {row["path"]: row for row in generation.get("inventory", ())}
+    for binding in bindings:
+        prior = inventory.get(binding["path"])
+        if prior is not None and prior.get("sha256") != binding.get("sha256"):
+            raise RuntimeAuditError(
+                "SOURCE_DRIFT", "source changed between inventory and context capture"
+            )
+    if len(captured) < len(bindings):
+        raise RuntimeAuditError(
+            "E_SOURCE_RETENTION", "workspace source retention budget exhausted"
+        )
     snapshots = audit.contracts.bound_snapshots(root, files, captured, bindings)
     hashes = {root / row["path"]: row["sha256"] for row in bindings}
     contexts = {path: {} for path in snapshots}
     config_bindings = []
     config_bytes = {}
-    # Bind selected, competing and absent security config separately from Python.
     names = {row["path"] for row in generation["frame"]["candidates"]}
     names.add("requirements.txt")
     config_identity = []
@@ -5893,15 +5907,10 @@ def _full_repository_workspace_security_context(engine, generation, audit):
         config_bindings.append(
             {"path": name, "sha256": row["sha256"], "bytes": len(raw)}
         )
-
     def captured_config(_root, name):
         if name not in config_bytes:
             raise FileNotFoundError(name)
         return config_bytes[name]
-
-    # Reuse this generation's exact source snapshot and import resolver once.
-    # Symbolic consumers stay fail-closed unless every eligible Python file
-    # has matching bytes, hash binding and a native import view.
     symbolic_imports = {}
     source_paths = set(snapshots)
     binding_paths = [root / row["path"] for row in bindings]
@@ -5935,8 +5944,6 @@ def _full_repository_workspace_security_context(engine, generation, audit):
             captured,
             inventory=hashes,
         )
-
-    # Existing fixture queries resolve their own captured providers.
     bind_application_fixture_context(
         root,
         snapshots,
@@ -5948,10 +5955,6 @@ def _full_repository_workspace_security_context(engine, generation, audit):
         source_inventory=hashes,
         imports=symbolic_imports if symbolic_inputs_complete else None,
     )
-    # The workspace-v2 CLI uses this security-only context builder instead of
-    # the general oracle-context builder. Bind the same complete, byte-backed
-    # fixed-program workspace profile here so its native finding partition can
-    # independently revalidate proofs against the captured source inventory.
     audit.integrity.bind_fixed_program_workspace(
         root, contexts, snapshots, files, captured
     )
@@ -5961,9 +5964,6 @@ def _full_repository_workspace_security_context(engine, generation, audit):
         "bindings": bindings + config_bindings,
         "snapshots": snapshots,
         "symbolic_imports": symbolic_imports if symbolic_inputs_complete else {},
-        # Native consumers parse the current captured bytes afresh. Empty
-        # fingerprints select that existing fail-closed path; no producer AST
-        # can substitute its structure for the byte-bound native scan.
         "fingerprints": {},
         "config_identity": config_identity,
     }

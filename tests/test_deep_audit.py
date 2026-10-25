@@ -28,6 +28,149 @@ def _workspace_policy319_request_pickle_fixture(root):
     )
 
 
+def test_oracle_source_retention_budget_is_bounded_and_cache_keyed(tmp_path, monkeypatch):
+    import factoryline.review_audits as audit
+
+    source = tmp_path / "app.py"
+    source.write_text("value = 1\n", encoding="utf-8")
+    files = audit._security_source_files(tmp_path)
+    original = audit.contracts._oracle_source_inputs
+    observed_limits = []
+
+    def recording_capture(*args):
+        observed_limits.append(args[-1])
+        return original(*args)
+
+    monkeypatch.setattr(audit.contracts, "_oracle_source_inputs", recording_capture)
+    retained, bindings, manifest, _cacheable = audit._oracle_source_inputs(
+        tmp_path, files
+    )
+    assert source in retained
+    assert observed_limits[-1] == 16 * 1024 * 1024
+    assert bindings[0]["path"] == "app.py"
+    assert manifest[0]["state"] == "read"
+
+    for invalid in (True, 0, -1, 1.5, audit.MAX_ORACLE_SOURCE_RETENTION_BYTES + 1):
+        with pytest.raises(ValueError, match="retention limit"):
+            audit._oracle_source_inputs(tmp_path, files, retention_limit=invalid)
+
+    first = audit._oracle_context_cache_key(
+        tmp_path, manifest, {}, retention_limit=8
+    )
+    second = audit._oracle_context_cache_key(
+        tmp_path, manifest, {}, retention_limit=9
+    )
+    assert first != second
+
+
+def test_workspace_retention_exhaustion_reports_incomplete_and_invalidates_checkpoint(
+    tmp_path, monkeypatch
+):
+    from factoryline import deep_audit_io
+
+    (tmp_path / "app.py").write_text("value = 1\n", encoding="utf-8")
+    monkeypatch.setattr(
+        deep_audit_io, "FULL_REPOSITORY_WORKSPACE_SOURCE_RETENTION_LIMIT", 4
+    )
+    report = deep_audit_io.full_repository_scan(
+        tmp_path, context_profile=deep_audit_io.FULL_REPOSITORY_CONTEXT_PROFILE
+    )
+    assert report["state"] == "INCOMPLETE"
+    evidence = report["workspace_evidence"]
+    assert evidence["sources"]["capture_complete"] is False
+    assert evidence["sources"]["context_error"] == "E_SOURCE_RETENTION"
+    assert evidence["sources"]["retention_limit_bytes"] == 4
+    assert evidence["oracle_context"]["state"] == "INCOMPLETE"
+    assert evidence["oracle_context"]["source_retention_limit_bytes"] == 4
+    assert evidence["primitive_partition"] == {
+        "state": "INCOMPLETE",
+        "error_code": "E_SOURCE_RETENTION",
+    }
+    assert evidence["audit_coverage"]["complete"] is False
+
+    monkeypatch.setattr(
+        deep_audit_io, "FULL_REPOSITORY_WORKSPACE_SOURCE_RETENTION_LIMIT", 8
+    )
+    with pytest.raises(RuntimeAuditError) as raised:
+        deep_audit_io.full_repository_scan(
+            tmp_path,
+            context_profile=deep_audit_io.FULL_REPOSITORY_CONTEXT_PROFILE,
+            resume=True,
+        )
+    assert raised.value.code == "INVALID_CHECKPOINT"
+
+    import factoryline.review_audits as audit
+
+    generation = deep_audit_io._full_repository_generation(
+        tmp_path, audit, deep_audit_io.FULL_REPOSITORY_CONTEXT_PROFILE
+    )
+    monkeypatch.setattr(
+        deep_audit_io, "FULL_REPOSITORY_WORKSPACE_SOURCE_RETENTION_LIMIT", 9
+    )
+    with pytest.raises(RuntimeAuditError) as raised:
+        deep_audit_io._full_repository_verify_generation(generation, audit)
+    assert raised.value.code == "SOURCE_DRIFT"
+
+
+def test_workspace_context_rejects_inventory_hash_drift_before_retention_error(
+    tmp_path
+):
+    import hashlib
+
+    from factoryline import review_audits, runtime_audit_integrity
+
+    source = tmp_path / "app.py"
+    source.write_text("current = 2\n", encoding="utf-8")
+    generation = {
+        "root": tmp_path,
+        "files": [source],
+        "source_retention_limit_bytes": 1,
+        "inventory": [
+            {
+                "path": "app.py",
+                "sha256": hashlib.sha256(b"previous = 1\n").hexdigest(),
+            }
+        ],
+    }
+    with pytest.raises(RuntimeAuditError) as raised:
+        runtime_audit_integrity._full_repository_workspace_security_context(
+            None, generation, review_audits
+        )
+    assert raised.value.code == "SOURCE_DRIFT"
+
+
+def test_workspace_public_scan_retains_source_with_larger_budget(tmp_path, monkeypatch):
+    from factoryline import deep_audit_io
+
+    source = b"value = 1\n"
+    low_root = tmp_path / "low"
+    high_root = tmp_path / "high"
+    low_root.mkdir()
+    high_root.mkdir()
+    (low_root / "app.py").write_bytes(source)
+    (high_root / "app.py").write_bytes(source)
+
+    monkeypatch.setattr(
+        deep_audit_io, "FULL_REPOSITORY_WORKSPACE_SOURCE_RETENTION_LIMIT", 4
+    )
+    low = deep_audit_io.full_repository_scan(
+        low_root, context_profile=deep_audit_io.FULL_REPOSITORY_CONTEXT_PROFILE
+    )["workspace_evidence"]
+    assert low["sources"]["capture_complete"] is False
+    assert low["sources"]["context_error"] == "E_SOURCE_RETENTION"
+
+    monkeypatch.setattr(
+        deep_audit_io, "FULL_REPOSITORY_WORKSPACE_SOURCE_RETENTION_LIMIT", 64
+    )
+    high = deep_audit_io.full_repository_scan(
+        high_root, context_profile=deep_audit_io.FULL_REPOSITORY_CONTEXT_PROFILE
+    )["workspace_evidence"]
+    assert high["sources"]["capture_complete"] is True
+    assert high["sources"]["retention_limit_bytes"] == 64
+    assert high["oracle_context"]["state"] == "captured"
+    assert high["primitive_partition"]["state"] == "VALIDATED"
+
+
 def test_zap_source_trace_mount_preserves_isolation_and_signed_python(tmp_path):
     from factoryline.deep_audit import _zap_app_argv
     from test_deep_audit_sarif import _host_zap_lane_fixture
