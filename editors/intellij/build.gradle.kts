@@ -87,7 +87,7 @@ abstract class MarketplacePreflightTask : DefaultTask() {
             "<depends>com.intellij.modules.vcs</depends>",
             "id=\"app.factoryline.intellij.openGuardian\"",
             "class=\"app.factoryline.intellij.OpenGuardianAction\"",
-            "Your IDE feels slow. Your AI code looks fine.",
+            "Your change is ready for a closer look.",
             "Tuned for Junie. Not dependent on Junie.",
             "proof-coupled change acknowledgement",
             "copy-only manifest",
@@ -140,7 +140,7 @@ plugins {
 }
 
 group = "app.factoryline"
-version = "1.3.0"
+version = "1.3.1"
 
 // Keep release task inputs configuration-cache safe. Do not resolve the
 // Project from a task action: Gradle 9.5 treats that as a release-gate error.
@@ -188,6 +188,10 @@ intellijPlatform {
     pluginVerification {
         ides {
             val requestedProduct = providers.gradleProperty("factorylineVerificationProduct").orNull
+            val requestedChannel = providers.gradleProperty("factorylineVerificationChannel")
+                .orNull
+                ?.let(ProductRelease.Channel::valueOf)
+                ?: ProductRelease.Channel.RELEASE
             val localVerificationIde = providers.gradleProperty("factorylineLocalVerificationIde").orNull
             if (localVerificationIde != null) {
                 local(file(localVerificationIde))
@@ -196,7 +200,7 @@ intellijPlatform {
             } else {
                 latest {
                     types.set(listOf(IntelliJPlatformType.valueOf(requestedProduct)))
-                    channels.set(listOf(ProductRelease.Channel.RELEASE))
+                    channels.set(listOf(requestedChannel))
                     sinceBuild.set("252")
                 }
             }

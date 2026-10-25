@@ -1,6 +1,11 @@
 # FactoryLine for IntelliJ Changelog
 
-## 1.3.0 - 2026-10-25 (release candidate; publication pending)
+## 1.3.1 - 2026-10-25 (patch candidate; verification pending)
+
+- Keep Proof Review and Verified Repair Sandbox source navigation working on
+  current IntelliJ builds while preserving project-root path checks and focus.
+
+## 1.3.0 - 2026-10-25 (published)
 
 - Pair the native editor integration with Code Factory 0.49.0. Local receipts
   and source-context reviews retain their original evidence and authority limits.

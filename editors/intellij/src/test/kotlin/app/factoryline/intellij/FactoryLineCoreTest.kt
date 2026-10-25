@@ -2,6 +2,9 @@ package app.factoryline.intellij
 
 import java.nio.file.Files
 import java.nio.file.attribute.FileTime
+import com.intellij.openapi.fileEditor.OpenFileDescriptor
+import com.intellij.openapi.project.Project
+import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.ui.components.JBTextField
 import javax.swing.JLabel
 import kotlin.test.Test
@@ -863,6 +866,16 @@ class FactoryLineCoreTest {
         val root = Files.createTempDirectory("factoryline-workspace")
         assertEquals(root.resolve("missions/one.json").normalize(), WorkspacePath.resolve(root, "missions/one.json"))
         assertEquals(null, WorkspacePath.resolve(root, "../outside.json"))
+    }
+
+    @Test
+    fun workspaceNavigationApiIsAvailableWithoutDeprecation() {
+        val constructor = OpenFileDescriptor::class.java.getConstructor(Project::class.java, VirtualFile::class.java)
+        val navigate = OpenFileDescriptor::class.java.getMethod("navigate", Boolean::class.javaPrimitiveType!!)
+
+        assertEquals(listOf(Project::class.java, VirtualFile::class.java), constructor.parameterTypes.toList())
+        assertEquals(java.lang.Void.TYPE, navigate.returnType)
+        assertNull(navigate.getAnnotation(java.lang.Deprecated::class.java))
     }
 
     @Test

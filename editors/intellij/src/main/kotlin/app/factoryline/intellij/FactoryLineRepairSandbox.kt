@@ -1,6 +1,6 @@
 package app.factoryline.intellij
 
-import com.intellij.openapi.fileEditor.FileEditorManager
+import com.intellij.openapi.fileEditor.OpenFileDescriptor
 import com.intellij.openapi.ide.CopyPasteManager
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
@@ -731,6 +731,6 @@ private fun openProjectFile(project: Project, value: String): String? {
     if (!Files.isRegularFile(path)) return "Path is unavailable or is not a file."
     val virtualFile = LocalFileSystem.getInstance().refreshAndFindFileByNioFile(path)
         ?: return "Path could not be opened in the IDE."
-    FileEditorManager.getInstance(project).openFile(virtualFile, true)
+    OpenFileDescriptor(project, virtualFile).navigate(true)
     return null
 }
