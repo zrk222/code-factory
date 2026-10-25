@@ -57,8 +57,8 @@ jobs:
           assert release['isDraft'] is False
           assert release['targetCommitish'] == '818c1068bcc5b0773739179d44b60b87d1f598d5'
           expected = {
-              'README.md': 'fbb7cbb7c049c7cc093096de54b66408a901b3cb834e85aa4dbb7dc62c52baaf',
-              'index.html': 'fb8137054a99d719df591007cc9ccfc16f7cf2805d7f60838960daf3c7849c2d',
+              'README.md': '9a1ebcebc60621d9b2209abe81b0825170769f844d451efef3595d59624ec9be',
+              'index.html': '54f3f679a3a652c1e80affbfaa661ad4064c8eb2bd40b2e0dd275d2ce4803029',
               'assets/graph-ops-audit-results.png': '9f44c86df4d2bb3407d799d34d53f6ea2dad896f2b8aaedecf985749a6f7660c',
               'assets/graph-ops-audit-telemetry-current.png': '9f5a5b7e9e841e9a41364a915c6afb0a499d972e1e008fac5cd61843c59b1be4',
               'assets/graph-ops-dashboard-current.png': 'c734b22e557454c1816fce4235978e770b9cecaae4213a6d275a336b24505207',
