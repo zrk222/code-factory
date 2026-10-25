@@ -1,10 +1,13 @@
 import argparse
+import copy
 import hashlib
 import json
 import os
 from pathlib import Path
 import re
+import runpy
 import statistics
+import subprocess
 import sys
 import tempfile
 import time
@@ -28,6 +31,142 @@ from factoryline.context_efficiency import (
     evaluate_context_experiment,
     record_context_experiment,
 )
+
+_gain = runpy.run_path(str(Path(__file__).resolve().parents[1] / "scripts/verify_precision_gain.py"))
+
+
+def _precision_pair():
+    cases = [{"id": key, "source_sha256": _digest(key), "label": label}
+             for key, label in (("a", "TP"), ("b", "FP"), ("c", "UNCLEAR"))]
+    seal = _gain["digest"](json.dumps(cases, sort_keys=True, separators=(",", ":")).encode())
+    contract = {"schema": _gain["SCHEMA"], "scope": "fixed_panel", "policy": "same",
+                "context_sha256": _digest("context"), "assumptions_sha256": _digest("profile"),
+                "labels_sha256": seal, "cases": cases, "expected_changes": {}}
+    version = {key: contract[key] for key in ("policy", "context_sha256", "assumptions_sha256", "labels_sha256")}
+    version.update(scanner_sha256=_digest("scanner"), unlabelled_outputs=0,
+                   cases=[dict(row, raw=True, active=True, review=False, supported=False, scan_complete=True)
+                          for row in cases])
+    return contract, version, copy.deepcopy(version)
+
+
+def test_precision_gate_recomputes_and_rejects_unchanged_aggregate_claim():
+    contract, before, after = _precision_pair()
+    after["precision"] = 1.0
+    result = _gain["evaluate"](contract, before, after)
+    assert result["state"] == "NO_PRECISION_GAIN"
+    assert result["metrics"]["candidate"]["active"]["precision"] == 0.5
+    assert result["metrics"]["candidate"]["active"]["unclear_inclusive_rate"] == 1 / 3
+
+
+def test_precision_gate_requires_registered_delta_and_keeps_abstentions_visible():
+    contract, before, after = _precision_pair()
+    after["cases"][1].update(active=False, review=True)
+    assert _gain["evaluate"](contract, before, after)["state"] == "BLOCKED"
+    contract["expected_changes"] = {"b": {"before": ["raw", "active"], "after": ["raw", "review"]}}
+    result = _gain["evaluate"](contract, before, after)
+    assert result["state"] == "ACTIVE_PRECISION_GAIN_FIXED_PANEL"
+    assert result["change_kind"] == "SELECTION_WITH_ABSTENTION"
+    assert result["metrics"]["candidate"]["active_or_review"]["precision"] == 0.5
+    assert result["metrics"]["candidate"]["review"]["FP"] == 1
+    assert result["metrics"]["candidate"]["raw"]["FP"] == 1
+    assert result["publication_eligible"] is False
+    after["unlabelled_outputs"] = 75
+    assert _gain["evaluate"](contract, before, after)["unlabelled_outputs"]["candidate"] == 75
+
+
+@pytest.mark.parametrize("change", ["source", "label", "context", "policy", "assumptions", "missing", "duplicate", "boolean", "derived", "empty"])
+def test_precision_gate_rejects_incomparable_or_malformed_observations(change):
+    contract, before, after = _precision_pair()
+    if change == "source":
+        after["cases"][0]["source_sha256"] = _digest("different")
+    elif change == "label":
+        after["cases"][0]["label"] = "FP"
+    elif change in {"context", "policy", "assumptions"}:
+        after[change + ("_sha256" if change != "policy" else "")] = "changed"
+    elif change == "missing":
+        after["cases"].pop()
+    elif change == "duplicate":
+        after["cases"].append(after["cases"][0])
+    elif change == "boolean":
+        after["cases"][0]["active"] = 1
+    elif change == "derived":
+        after["cases"][0]["raw"] = False
+    else:
+        contract["cases"] = []
+    with pytest.raises(ValueError):
+        _gain["evaluate"](contract, before, after)
+
+
+@pytest.mark.parametrize("change", ["timeout", "lost_tp", "stronger_proof"])
+def test_precision_gate_distinguishes_blockers_from_evidence_strength(change):
+    contract, before, after = _precision_pair()
+    if change == "timeout":
+        after["cases"][0]["scan_complete"] = False
+    elif change == "lost_tp":
+        after["cases"][0].update(active=False, review=True)
+        contract["expected_changes"] = {"a": {"before": ["raw", "active"], "after": ["raw", "review"]}}
+    else:
+        after["cases"][0]["supported"] = True
+        contract["expected_changes"] = {"a": {"before": ["raw", "active"], "after": ["raw", "active", "supported"]}}
+    result = _gain["evaluate"](contract, before, after)
+    assert result["state"] == ("NO_PRECISION_GAIN" if change == "stronger_proof" else "BLOCKED")
+
+
+def test_precision_bound_reader_rejects_stale_and_escaping_artifact(tmp_path):
+    path = tmp_path / "evidence.json"
+    path.write_text("{}")
+    reference = {"path": path.name, "sha256": _gain["digest"](b"{}")}
+    assert _gain["_read_bound"](tmp_path, reference) == {}
+    path.write_text('{"changed": true}')
+    with pytest.raises(ValueError, match="digest mismatch"):
+        _gain["_read_bound"](tmp_path, reference)
+    with pytest.raises(ValueError, match="escapes"):
+        _gain["_read_bound"](tmp_path, {"path": "../elsewhere", "sha256": reference["sha256"]})
+
+
+@pytest.mark.parametrize("payload", [[], {"schema": _gain["SCHEMA"], "scope": "fixed_panel", "cases": [None]}])
+def test_precision_gate_rejects_invalid_document_shape(payload):
+    with pytest.raises(ValueError):
+        _gain["evaluate"](payload, {}, {})
+
+
+@pytest.mark.parametrize("valid", [True, False])
+def test_precision_cli_writes_receipt_for_no_gain_and_invalid_json(tmp_path, valid):
+    contract, before, after = _precision_pair()
+    for name, value in (("baseline", before), ("candidate", after)):
+        path = tmp_path / f"{name}.json"
+        path.write_text(json.dumps(value))
+        contract[name] = {"path": path.name, "sha256": _gain["digest"](path.read_bytes())}
+    path = tmp_path / "contract.json"
+    path.write_text(json.dumps(contract) if valid else "{broken")
+    output = tmp_path / "result.json"
+    script = Path(__file__).resolve().parents[1] / "scripts/verify_precision_gain.py"
+    result = subprocess.run([sys.executable, str(script), str(path), "--out", str(output)],
+                            capture_output=True, text=True, timeout=20)
+    assert result.returncode == 2
+    assert json.loads(output.read_text())["state"] == ("NO_PRECISION_GAIN" if valid else "INVALID")
+
+
+@pytest.mark.parametrize("label", ["TP", "UNCLEAR"])
+def test_precision_gate_blocks_lost_reviewed_claim_even_when_active_precision_rises(label):
+    contract, before, after = _precision_pair()
+    key = "a" if label == "TP" else "c"
+    index = 0 if label == "TP" else 2
+    before["cases"][index].update(active=False, review=True)
+    after["cases"][index].update(active=False, review=False)
+    after["cases"][1].update(active=False, review=True)
+    contract["expected_changes"] = {
+        key: {"before": ["raw", "review"], "after": ["raw"]},
+        "b": {"before": ["raw", "active"], "after": ["raw", "review"]},
+    }
+    assert _gain["evaluate"](contract, before, after)["state"] == "BLOCKED"
+
+
+def test_precision_gate_rejects_supported_defect_outside_active_population():
+    contract, before, after = _precision_pair()
+    after["cases"][0].update(active=False, review=True, supported=True)
+    with pytest.raises(ValueError, match="supported defect must be active"):
+        _gain["evaluate"](contract, before, after)
 
 
 def _digest(seed: str) -> str:
