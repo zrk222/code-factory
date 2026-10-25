@@ -673,10 +673,38 @@ def _finding_private_key_authentication_evidence(
     return private_key_authentication_evidence(finding, cache["inventory"])
 
 
+def _finding_flask_session_authority_evidence(
+    finding, native_rows, bound, captured, bindings, coverage, partition, cache
+):
+    if not (
+        bound
+        and finding.get("code") == "SECURITY_HARDCODED_SECRET"
+        and isinstance(finding.get("facts"), dict)
+        and isinstance(finding["facts"].get("name"), str)
+        and (coverage is True or coverage == "COMPLETE")
+        and partition == "VALIDATED"
+        and _matches_regenerated_finding(finding, native_rows)
+    ):
+        return None
+    from .semantic_credential_sensor import (
+        flask_credential_authority_evidence,
+        signing_configuration_inventory,
+    )
+
+    if "inventory" not in cache:
+        cache["inventory"] = signing_configuration_inventory(captured, bindings)
+    return flask_credential_authority_evidence(finding, cache["inventory"])
+
+
 def _decide_finding_tier(
     finding, bound, native_rows, primitives, credential_evidence=None
 ):
     if bound and credential_evidence is not None:
+        if (
+            credential_evidence.get("proof_scope")
+            == "source_bound_flask_session_authority"
+        ):
+            return "SUPPORTED_DEFECT", "source_bound_flask_session_authority", None
         return (
             "SUPPORTED_DEFECT",
             "source_bound_private_key_http_authentication_flow",
@@ -3943,6 +3971,8 @@ def primitive_binding_helpers():
         _raw_diagnostic_summary,
         _finding_source_binding,
         _finding_tier_ledger_row,
+        _finding_flask_session_authority_evidence,
+        _decide_finding_tier,
         _pickle_role_partition,
         _pickle_source_role_decision,
         fixed_primitive_binding,
@@ -4130,6 +4160,17 @@ def _finding_tier_ledger_row(
         partition_state,
         signing_cache,
     )
+    if credential_evidence is None:
+        credential_evidence = _finding_flask_session_authority_evidence(
+            finding,
+            native_rows,
+            bound_source,
+            source_bytes,
+            bindings,
+            coverage_state,
+            partition_state,
+            signing_cache,
+        )
     tier, evidence, evidence_details = _decide_finding_tier(
         finding,
         bound_source,

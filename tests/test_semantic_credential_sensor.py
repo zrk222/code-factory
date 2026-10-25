@@ -298,6 +298,225 @@ def _configuration_files277(runner):
     }
 
 
+_FLASK_AUTHORITY_SOURCE314 = """
+from flask import Flask, redirect, request, session
+
+ADMIN_PASSWORD = "source-bound-admin-password"
+SECRET_KEY = "source-bound-session-secret"
+app = Flask(__name__)
+app.config.from_object(__name__)
+
+def login_required(fn):
+    def inner(*args, **kwargs):
+        if session.get("logged_in"):
+            return fn(*args, **kwargs)
+        return redirect("/login")
+    return inner
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    password = request.form.get("password")
+    if password == app.config["ADMIN_PASSWORD"]:
+        session["logged_in"] = True
+        return redirect("/")
+    return redirect("/login")
+
+@app.route("/create")
+@login_required
+def create():
+    return "created"
+"""
+
+
+def _flask_authority_tiers314(source=_FLASK_AUTHORITY_SOURCE314, extra_sources=None):
+    from hashlib import sha256
+    from pathlib import Path
+    from factoryline.primitive_observation_binding import build_finding_tier_report
+
+    path = "examples/blog/app.py"
+    sources = {
+        "examples/blog/__init__.py": b"",
+        path: source.encode(),
+    }
+    sources.update(
+        {name: value.encode() for name, value in (extra_sources or {}).items()}
+    )
+    findings = audit._security_scan_tree(Path("."), Path(path), ast.parse(source))
+    selected = [
+        finding
+        for finding in findings
+        if finding.get("code") == "SECURITY_HARDCODED_SECRET"
+        and (
+            finding.get("facts", {}).get("name") == "SECRET_KEY"
+            or "PASSWORD" in finding.get("facts", {}).get("name", "")
+        )
+    ]
+    return build_finding_tier_report(
+        selected,
+        [],
+        [
+            {"path": name, "sha256": sha256(raw).hexdigest()}
+            for name, raw in sources.items()
+        ],
+        sources,
+        coverage_state=True,
+        partition_state="VALIDATED",
+    )
+
+
+def test_tier314_flask_session_authority_preserves_both_source_diagnostics():
+    report = _flask_authority_tiers314()
+    rows = report["ledger"]
+    assert len(rows) == 2
+    assert {row["raw_finding"]["facts"]["name"] for row in rows} == {
+        "ADMIN_PASSWORD",
+        "SECRET_KEY",
+    }
+    assert {row["tier"] for row in rows} == {"SUPPORTED_DEFECT"}
+    assert {row["evidence"] for row in rows} == {"source_bound_flask_session_authority"}
+    for row in rows:
+        observation = row["credential_authority_observation"]
+        assert observation["proof_scope"] == "source_bound_flask_session_authority"
+        assert observation["runtime_execution"] == "not_performed"
+        assert observation["deployment"] == "UNASSESSED"
+        expected_transfers = (
+            9 if row["raw_finding"]["facts"]["name"] == "ADMIN_PASSWORD" else 8
+        )
+        assert len(observation["transfers"]) == expected_transfers
+        assert all(
+            transfer["sha256"] == row["source_identity"]["source_sha256"]
+            for transfer in observation["transfers"]
+        )
+
+
+def test_tier314_flask_authority_tracks_renamed_password_configuration_key():
+    source = _FLASK_AUTHORITY_SOURCE314.replace("ADMIN_PASSWORD", "DASHBOARD_PASSWORD")
+    report = _flask_authority_tiers314(source)
+    assert {row["raw_finding"]["facts"]["name"] for row in report["ledger"]} == {
+        "DASHBOARD_PASSWORD",
+        "SECRET_KEY",
+    }
+    assert {row["tier"] for row in report["ledger"]} == {"SUPPORTED_DEFECT"}
+
+
+def _flask_authority_counterexample_source(replacement):
+    source = _FLASK_AUTHORITY_SOURCE314
+
+    def insert(text):
+        return source.replace(
+            "def login_required(fn):", text + "\n\ndef login_required(fn):"
+        )
+
+    return {
+        'ADMIN_PASSWORD = "overwritten-admin-password"': lambda: insert(
+            'ADMIN_PASSWORD = "overwritten-admin-password"'
+        ),
+        'app.config["ADMIN_PASSWORD"] = "overwritten-admin-password"': lambda: insert(
+            'app.config["ADMIN_PASSWORD"] = "overwritten-admin-password"'
+        ),
+        'app.config.update(ADMIN_PASSWORD="overwritten-admin-password")': lambda: insert(
+            'app.config.update(ADMIN_PASSWORD="overwritten-admin-password")'
+        ),
+        "app = object()": lambda: insert("app = object()"),
+        "Flask = object": lambda: insert("Flask = object"),
+        'app.config.from_object("other.settings")': lambda: source.replace(
+            "app.config.from_object(__name__)",
+            'app.config.from_object("other.settings")',
+        ),
+        'other = Flask(__name__)\n@other.route("/login", methods=["GET", "POST"])': lambda: source.replace(
+            '@app.route("/login", methods=["GET", "POST"])', replacement
+        ),
+        "if password == app.config[config_key]:": lambda: source.replace(
+            'if password == app.config["ADMIN_PASSWORD"]:', replacement
+        ),
+        'if password == app.config["ADMIN_PASSWORD"]:\n        pass': lambda: source.replace(
+            'if password == app.config["ADMIN_PASSWORD"]:\n'
+            '        session["logged_in"] = True',
+            replacement,
+        ),
+        "dead_comparison": lambda: source.replace(
+            '    if password == app.config["ADMIN_PASSWORD"]:\n'
+            '        session["logged_in"] = True\n'
+            '        return redirect("/")',
+            "    if False:\n"
+            '        if password == app.config["ADMIN_PASSWORD"]:\n'
+            '            session["logged_in"] = True\n'
+            '            return redirect("/")',
+        ),
+        "missing_login_consumer": lambda: source.replace("@login_required\n", ""),
+    }[replacement]()
+
+
+@pytest.mark.parametrize(
+    "replacement",
+    [
+        'ADMIN_PASSWORD = "overwritten-admin-password"',
+        'app.config["ADMIN_PASSWORD"] = "overwritten-admin-password"',
+        'app.config.update(ADMIN_PASSWORD="overwritten-admin-password")',
+        "app = object()",
+        "Flask = object",
+        'app.config.from_object("other.settings")',
+        'other = Flask(__name__)\n@other.route("/login", methods=["GET", "POST"])',
+        "if password == app.config[config_key]:",
+        'if password == app.config["ADMIN_PASSWORD"]:\n        pass',
+        "dead_comparison",
+        "missing_login_consumer",
+    ],
+)
+def test_tier314_flask_authority_counterexamples_abstain(replacement):
+    report = _flask_authority_tiers314(
+        _flask_authority_counterexample_source(replacement)
+    )
+    admin_rows = [
+        row
+        for row in report["ledger"]
+        if row["raw_finding"].get("facts", {}).get("name") == "ADMIN_PASSWORD"
+    ]
+    assert admin_rows
+    assert all(row["tier"] == "NEEDS_CONTEXT" for row in admin_rows)
+    assert all("credential_authority_observation" not in row for row in admin_rows)
+
+
+def test_tier314_flask_configuration_load_alone_does_not_promote_secret_key():
+    source = """
+from flask import Flask
+SECRET_KEY = "published-weak-value"
+app = Flask(__name__)
+app.config.from_object(__name__)
+"""
+    report = _flask_authority_tiers314(source)
+    assert report["ledger"]
+    assert all(row["tier"] == "NEEDS_CONTEXT" for row in report["ledger"])
+
+
+def test_tier314_flask_authority_proves_star_imports_only_from_closed_sources():
+    safe = _flask_authority_tiers314(
+        "from examples.safe_imports import *\n" + _FLASK_AUTHORITY_SOURCE314,
+        {"examples/safe_imports.py": "PUBLIC_VALUE = 1\n"},
+    )
+    assert {row["tier"] for row in safe["ledger"]} == {"SUPPORTED_DEFECT"}
+
+    shadowed = _flask_authority_tiers314(
+        "from examples.shadow_imports import *\n" + _FLASK_AUTHORITY_SOURCE314,
+        {"examples/shadow_imports.py": "Flask = object\n"},
+    )
+    assert {row["tier"] for row in shadowed["ledger"]} == {"NEEDS_CONTEXT"}
+
+    opaque = _flask_authority_tiers314(
+        "from missing_provider import *\n" + _FLASK_AUTHORITY_SOURCE314
+    )
+    assert {row["tier"] for row in opaque["ledger"]} == {"NEEDS_CONTEXT"}
+
+    dynamic = _flask_authority_tiers314(
+        "from examples.dynamic_exports import *\n" + _FLASK_AUTHORITY_SOURCE314,
+        {
+            "examples/dynamic_exports.py": "__all__ = ['SAFE_VALUE']\n"
+            "__all__.append('Flask')\nSAFE_VALUE = 1\nFlask = object\n"
+        },
+    )
+    assert {row["tier"] for row in dynamic["ledger"]} == {"NEEDS_CONTEXT"}
+
+
 def _private_key_auth_tiers(source, findings=None):
     from hashlib import sha256
     from factoryline.primitive_observation_binding import build_finding_tier_report
@@ -642,6 +861,21 @@ def test_tier277_rebinding_decision_invalidates_native_epoch(tmp_path, monkeypat
         return original(*args, **kwargs)
 
     monkeypatch.setattr(tiers, "_decide_finding_tier", replacement)
+    assert audit._oracle_context_cache_key(tmp_path, [], {}) != before
+
+
+def test_tier314_flask_authority_implementation_invalidates_native_epoch(
+    tmp_path, monkeypatch
+):
+    from factoryline import primitive_observation_binding as tiers
+
+    before = audit._oracle_context_cache_key(tmp_path, [], {})
+    original = tiers._finding_flask_session_authority_evidence
+
+    def replacement(*args, **kwargs):
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(tiers, "_finding_flask_session_authority_evidence", replacement)
     assert audit._oracle_context_cache_key(tmp_path, [], {}) != before
 
 
@@ -1818,3 +2052,49 @@ def test_private_key_authority_rejects_mismatched_pem_labels():
     source = _PRIVATE_KEY_AUTH_SOURCE.replace("END RSA PRIVATE KEY", "END PRIVATE KEY")
     report = _private_key_auth_tiers(source)
     assert all(r["tier"] != "SUPPORTED_DEFECT" for r in report["ledger"])
+
+
+@pytest.mark.parametrize(
+    "before, after",
+    [
+        ('    if password == app.config["ADMIN_PASSWORD"]:', '    password = "fixed-unrelated-value"\n    if password == app.config["ADMIN_PASSWORD"]:'),
+        ('    password = request.form.get("password")', '    return "public-no-auth"\n    password = request.form.get("password")'),
+        ('        session["logged_in"] = True', '        session["logged_in"] = True\n        session["logged_in"] = False'),
+        ('@app.route("/create")\n@login_required', '@login_required\n@app.route("/create")'),
+    ],
+)
+def test_flask_authority326_public_scanner_rejects_broken_custody(tmp_path, before, after):
+    source = _FLASK_AUTHORITY_SOURCE314.replace(before, after)
+    assert source != _FLASK_AUTHORITY_SOURCE314
+    (tmp_path / "app.py").write_text(source)
+    with audit._security_only_scan_context(True):
+        report = audit.security_scan(tmp_path, cache_enabled=False, defect_policy="source-role-v1")
+    assert report["audit_coverage"]["complete"] is True
+    rows = report["finding_tier_report"]["ledger"]
+    credentials = [row for row in rows if row["raw_finding"].get("code") == "SECURITY_HARDCODED_SECRET" and row["raw_finding"].get("facts", {}).get("name") in {"ADMIN_PASSWORD", "SECRET_KEY"}]
+    assert {row["raw_finding"]["facts"]["name"] for row in credentials} == {"ADMIN_PASSWORD", "SECRET_KEY"}
+    assert {row["tier"] for row in credentials} == {"NEEDS_CONTEXT"}
+    assert all("credential_authority_observation" not in row for row in credentials)
+
+
+@pytest.mark.parametrize(
+    "before, after",
+    [
+        ('def login_required(fn):', 'def login_required(fn):\n    return fn'),
+        ('        session["logged_in"] = True', '        session["logged_in"] = True\n        saved = session\n        saved.clear()'),
+        ('    password = request.form.get("password")\n    if password == app.config["ADMIN_PASSWORD"]:\n        session["logged_in"] = True\n        return redirect("/")', '    password = request.form.get("password")\n    if False:\n        pass\n    else:\n        password = "fixed-unrelated-value"\n        if password == app.config["ADMIN_PASSWORD"]:\n            session["logged_in"] = True\n            return redirect("/")'),
+        ('@app.route("/create")\n@login_required', 'def discard_guard(fn):\n    return lambda: "created"\n\n@app.route("/create")\n@discard_guard\n@login_required'),
+    ],
+)
+def test_flask_authority326_public_scanner_rejects_adjacent_broken_custody(tmp_path, before, after):
+    source = _FLASK_AUTHORITY_SOURCE314.replace(before, after)
+    assert source != _FLASK_AUTHORITY_SOURCE314
+    (tmp_path / "app.py").write_text(source)
+    with audit._security_only_scan_context(True):
+        report = audit.security_scan(tmp_path, cache_enabled=False, defect_policy="source-role-v1")
+    assert report["audit_coverage"]["complete"] is True
+    rows = report["finding_tier_report"]["ledger"]
+    credentials = [row for row in rows if row["raw_finding"].get("facts", {}).get("name") in {"ADMIN_PASSWORD", "SECRET_KEY"}]
+    assert {row["raw_finding"]["facts"]["name"] for row in credentials} == {"ADMIN_PASSWORD", "SECRET_KEY"}
+    assert {row["tier"] for row in credentials} == {"NEEDS_CONTEXT"}
+    assert all("credential_authority_observation" not in row for row in credentials)

@@ -352,6 +352,798 @@ def signing_configuration_evidence(finding, context):
     return _signing_configuration_witness(index, path, declaration, witness)
 
 
+def flask_credential_authority_evidence(finding, context):
+    """Regenerate a configured credential's local Flask session authority chain."""
+    facts = finding.get("facts", {})
+    key = facts.get("name") if isinstance(facts, dict) else None
+    if context is None or not isinstance(key, str):
+        return None
+    if key != "SECRET_KEY" and not key.isidentifier():
+        return None
+    index = context["index"]
+    path = Path(finding.get("path", ""))
+    tree = index.snapshots.get(path)
+    if tree is None or not index.validate(path):
+        return None
+    declaration = _flask_credential_declaration(finding, tree, key)
+    if declaration is None or _flask_imported_key_written(path, context, key):
+        return None
+    session_secret = _flask_config_key_declaration(index, path, "SECRET_KEY")
+    if session_secret is None or not _literal_credential(session_secret.value):
+        return None
+    for app in _flask_configured_apps(path, tree, context, {key, "SECRET_KEY"}):
+        authority = _flask_session_authority_witness(path, tree, context, app, key)
+        if authority is None:
+            continue
+        password_key = authority["password_key"]
+        password_declaration = _flask_config_key_declaration(index, path, password_key)
+        if password_declaration is None or not _literal_credential(
+            password_declaration.value
+        ):
+            continue
+        if key not in {"SECRET_KEY", password_key}:
+            continue
+        return _flask_credential_authority_witness(
+            index,
+            path,
+            declaration,
+            session_secret,
+            password_declaration,
+            app,
+            authority,
+            key,
+        )
+    return None
+
+
+def _flask_credential_declaration(finding, tree, key):
+    declaration = _flask_config_key_declaration_in_tree(tree, key)
+    if declaration is None or _signing_rejection_or_reflection(tree):
+        return None
+    return (
+        declaration
+        if (declaration.lineno, declaration.col_offset)
+        == (
+            finding.get("line"),
+            finding.get("column", 0),
+        )
+        else None
+    )
+
+
+def _flask_config_key_declaration(index, path, key):
+    tree = index.snapshots.get(path)
+    if tree is None or not index.validate(path):
+        return None
+    return _flask_config_key_declaration_in_tree(tree, key)
+
+
+def _flask_config_key_declaration_in_tree(tree, key):
+    declarations = [
+        node
+        for node in tree.body
+        if isinstance(node, (ast.Assign, ast.AnnAssign))
+        and isinstance(node.value, ast.Constant)
+        and isinstance(node.value.value, str)
+        and any(
+            isinstance(target, ast.Name) and target.id == key
+            for target in (
+                node.targets if isinstance(node, ast.Assign) else [node.target]
+            )
+        )
+    ]
+    writes = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Name)
+        and node.id == key
+        and isinstance(node.ctx, (ast.Store, ast.Del))
+    ]
+    return declarations[0] if len(declarations) == len(writes) == 1 else None
+
+
+def _flask_imported_key_written(target, context, key):
+    from .review_audits import _resolved_ast_name
+
+    names = {
+        name[:-3].replace("/", ".")
+        for name, path in context["paths"].items()
+        if path == target and name.endswith(".py")
+    }
+    suffix = target.with_suffix("").as_posix().split("/")
+    names.update(".".join(suffix[-length:]) for length in range(1, len(suffix) + 1))
+    return any(
+        isinstance(node, ast.Attribute)
+        and node.attr == key
+        and isinstance(node.ctx, (ast.Store, ast.Del))
+        and _resolved_ast_name(node.value, context["aliases"][path]) in names
+        for path, tree in context["index"].snapshots.items()
+        for node in ast.walk(tree)
+    )
+
+
+def _flask_configured_apps(target, tree, context, protected_keys):
+    if not _signing_framework_external(context, "flask"):
+        return []
+    if not _flask_authority_provider_clear(target, tree, context):
+        return []
+    receivers = {}
+    configured = []
+    aliases = context["aliases"][target]
+    for statement in tree.body:
+        _flask_bind_created_app(statement, receivers, aliases)
+        call = getattr(statement, "value", None)
+        if not isinstance(call, ast.Call):
+            continue
+        for receiver, creation in receivers.items():
+            if not _flask_config_load(call, receiver, target, context, target):
+                continue
+            if _flask_config_mutated(tree, receiver, protected_keys):
+                continue
+            if _flask_configuration_reloaded(
+                tree, receiver, target, context, protected_keys, target
+            ):
+                continue
+            configured.append(
+                {"receiver": receiver, "creation": creation, "load": call}
+            )
+    return configured
+
+
+def _flask_authority_provider_clear(path, tree, context):
+    from .review_audits import _resolved_ast_name
+
+    aliases = context["aliases"][path]
+    nodes = list(ast.walk(tree))
+    roots = {
+        "flask.Flask",
+        "flask.Config.from_object",
+    }
+    provider_objects = roots | {"flask.request", "flask.session"}
+    names = {
+        name
+        for name, provider in aliases.items()
+        if any(provider == root or provider.startswith(root + ".") for root in roots)
+    }
+    if any(
+        isinstance(node, (ast.Name, ast.Attribute))
+        and _resolved_ast_name(node, aliases).startswith(("sys.modules", "importlib."))
+        for node in nodes
+    ):
+        return False
+    if not _flask_star_imports_clear(tree, context):
+        return False
+    if any(
+        isinstance(node, ast.Name)
+        and node.id in names
+        and isinstance(node.ctx, (ast.Store, ast.Del))
+        for node in nodes
+    ):
+        return False
+    if any(
+        isinstance(node, ast.Attribute)
+        and isinstance(node.ctx, (ast.Store, ast.Del))
+        and _resolved_ast_name(node, aliases) in provider_objects
+        for node in nodes
+    ):
+        return False
+    return not _provider_identity_uncertain(
+        tree, aliases, roots=tuple(roots), nodes=nodes, selected_paths=True
+    )
+
+
+def _flask_star_imports_clear(tree, context):
+    protected = {
+        "Flask",
+        "request",
+        "session",
+        "redirect",
+        "functools",
+        "__name__",
+    }
+    for statement in tree.body:
+        if not isinstance(statement, ast.ImportFrom) or not any(
+            item.name == "*" for item in statement.names
+        ):
+            continue
+        if statement.level or not statement.module:
+            return False
+        provider = _signing_resolve_module(
+            context, ast.Constant(value=statement.module)
+        )
+        if provider is None:
+            return False
+        exports = _flask_static_module_exports(context, provider, set())
+        if exports is None or exports & protected:
+            return False
+    return True
+
+
+def _flask_static_module_exports(context, path, visiting):
+    index = context["index"]
+    if path in visiting or not index.validate(path):
+        return None
+    tree = index.snapshots.get(path)
+    if tree is None:
+        return None
+    visiting.add(path)
+    names, stars, declarations = _flask_static_module_bindings(tree)
+    if not _flask_expand_star_exports(context, stars, visiting, names):
+        return None
+    exported = _flask_explicit_module_exports(tree, names, declarations)
+    visiting.remove(path)
+    return exported
+
+
+def _flask_static_module_bindings(tree):
+    from .review_audits import _bound_names
+
+    names, stars, declarations = set(), [], []
+    for statement in tree.body:
+        names.update(_bound_names(statement))
+        if isinstance(statement, ast.ImportFrom) and any(
+            item.name == "*" for item in statement.names
+        ):
+            stars.append(statement)
+        if _flask_assigns_module_name(statement, "__all__"):
+            declarations.append(statement)
+    names.discard("*")
+    return names, stars, declarations
+
+
+def _flask_assigns_module_name(statement, name):
+    if not isinstance(statement, (ast.Assign, ast.AnnAssign)):
+        return False
+    targets = (
+        statement.targets if isinstance(statement, ast.Assign) else [statement.target]
+    )
+    return any(isinstance(target, ast.Name) and target.id == name for target in targets)
+
+
+def _flask_expand_star_exports(context, stars, visiting, names):
+    for statement in stars:
+        if statement.level or not statement.module:
+            return False
+        child = _signing_resolve_module(context, ast.Constant(value=statement.module))
+        child_names = (
+            _flask_static_module_exports(context, child, visiting)
+            if child is not None
+            else None
+        )
+        if child_names is None:
+            return False
+        names.update(child_names)
+    return True
+
+
+def _flask_explicit_module_exports(tree, names, declarations):
+    from .review_audits import _name
+
+    all_writes = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Name)
+        and node.id == "__all__"
+        and isinstance(node.ctx, (ast.Store, ast.Del))
+    ]
+    if declarations:
+        if len(declarations) != 1 or len(all_writes) != 1:
+            return None
+        if any(
+            isinstance(node, ast.Call)
+            and any(
+                isinstance(child, ast.Name) and child.id == "__all__"
+                for child in ast.walk(node)
+            )
+            for node in ast.walk(tree)
+        ):
+            return None
+        if any(
+            isinstance(node, (ast.Attribute, ast.Subscript))
+            and _name(node).startswith(("__all__.", "__all__["))
+            for node in ast.walk(tree)
+        ):
+            return None
+        value = declarations[0].value
+        if not isinstance(value, (ast.List, ast.Tuple)) or not all(
+            isinstance(item, ast.Constant) and isinstance(item.value, str)
+            for item in value.elts
+        ):
+            return None
+        exported = {item.value for item in value.elts}
+        if not exported <= names:
+            return None
+    else:
+        exported = {name for name in names if not name.startswith("_")}
+    return None if _flask_module_exports_dynamic(tree) else exported
+
+
+def _flask_module_exports_dynamic(tree):
+    dynamic = {"eval", "exec", "globals", "locals", "vars", "setattr", "__import__"}
+    for statement in tree.body:
+        if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            nodes = [
+                *statement.decorator_list,
+                *statement.args.defaults,
+                *statement.args.kw_defaults,
+            ]
+        elif isinstance(statement, ast.ClassDef):
+            nodes = [*statement.decorator_list, *statement.bases, *statement.keywords]
+        else:
+            nodes = [statement]
+        if any(
+            isinstance(node, ast.Call)
+            and (
+                isinstance(node.func, ast.Name)
+                and node.func.id in dynamic
+                or isinstance(node.func, ast.Attribute)
+                and node.func.attr == "import_module"
+            )
+            for root in nodes
+            for node in ast.walk(root)
+        ):
+            return True
+    return False
+
+
+def _flask_config_module_matches(context, expression, target, consumer_path):
+    if isinstance(expression, ast.Name) and expression.id == "__name__":
+        return consumer_path == target
+    return _signing_resolve_module(context, expression) == target
+
+
+def _flask_session_authority_witness(path, tree, context, app, credential_key):
+    from .review_integrity import _security_scope_request_aliases
+
+    aliases = context["aliases"][path]
+    receiver = app["receiver"]
+    login_wrapper = _flask_login_wrapper(tree, aliases)
+    protected = _flask_protected_route(tree, receiver, aliases)
+    if login_wrapper is None or protected is None:
+        return None
+    for route in tree.body:
+        if not isinstance(route, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if not _flask_route_bound_to_app(route, receiver):
+            continue
+        witness = _flask_route_authority(
+            route,
+            tree,
+            receiver,
+            credential_key,
+            aliases,
+            _security_scope_request_aliases,
+        )
+        if witness is not None:
+            return {
+                **witness,
+                "login_wrapper": login_wrapper["guard"],
+                "protected_route": protected,
+            }
+    return None
+
+
+def _flask_route_authority(
+    route, tree, receiver, credential_key, aliases, alias_reader
+):
+    if not isinstance(route, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return None
+    for guard in ast.walk(route):
+        if not isinstance(guard, ast.If) or not _flask_path_conditions_clear(
+            tree, guard
+        ):
+            continue
+        witness = _flask_guard_authority(
+            guard, route, tree, receiver, credential_key, aliases, alias_reader
+        )
+        if witness is not None:
+            return witness
+    return None
+
+
+def _flask_guard_authority(
+    guard, route, tree, receiver, credential_key, aliases, alias_reader
+):
+    comparison = _flask_password_config_comparison(
+        guard.test, receiver, aliases, route, guard, alias_reader
+    )
+    if comparison is None:
+        return None
+    password_key, equality = comparison
+    if _flask_config_key_declaration_in_tree(tree, password_key) is None:
+        return None
+    grant = _flask_session_grant(guard.body, aliases, route, alias_reader)
+    if grant is None or credential_key not in {password_key, "SECRET_KEY"}:
+        return None
+    return {"password_key": password_key, "comparison": equality, "grant": grant}
+
+
+def _flask_credential_authority_witness(
+    index, path, declaration, session_secret, password_declaration, app, authority, key
+):
+    nodes = [declaration]
+    if session_secret is not declaration:
+        nodes.append(session_secret)
+    nodes.extend(
+        (
+            app["creation"],
+            app["load"],
+            password_declaration,
+            authority["comparison"],
+            authority["grant"],
+            authority["login_wrapper"],
+            authority["protected_route"],
+        )
+    )
+    transfers = [_signing_source_span(index, path, node) for node in nodes]
+    return {
+        "framework": "flask",
+        "credential_key": key,
+        "password_key": authority["password_key"],
+        "transfers": transfers,
+        "proof_scope": "source_bound_flask_session_authority",
+        "runtime_execution": "not_performed",
+        "deployment": "UNASSESSED",
+        "claim": (
+            "Captured source connects a literal configuration credential to a "
+            "same-app login comparison, session grant, and local guarded route."
+        ),
+    }
+
+
+def _flask_password_config_comparison(
+    test, receiver, aliases, scope, flow_statement, alias_reader
+):
+    if not isinstance(test, ast.Compare) or len(test.ops) != 1:
+        return None
+    if not isinstance(test.ops[0], ast.Eq) or len(test.comparators) != 1:
+        return None
+    left, right = test.left, test.comparators[0]
+    for config_side, request_side in ((left, right), (right, left)):
+        key = _flask_config_field(config_side, receiver)
+        if key is None:
+            continue
+        if _flask_password_request_value(
+            request_side, aliases, scope, flow_statement, alias_reader
+        ):
+            return key, test
+    return None
+
+
+def _flask_password_request_value(node, aliases, scope, flow_statement, alias_reader):
+    if isinstance(node, ast.Name):
+        return _flask_password_local_value(
+            node, aliases, scope, flow_statement, alias_reader
+        )
+    if isinstance(node, ast.Subscript):
+        return (
+            isinstance(node.slice, ast.Constant)
+            and node.slice.value == "password"
+            and _http_request_mapping(
+                node.value, aliases, scope, flow_statement, alias_reader, "password"
+            )
+        )
+    if (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "get"
+        and len(node.args) == 1
+        and not node.keywords
+        and isinstance(node.args[0], ast.Constant)
+        and node.args[0].value == "password"
+    ):
+        return _http_request_mapping(
+            node.func.value, aliases, scope, flow_statement, alias_reader, "password"
+        )
+    return False
+
+
+def _flask_password_local_value(node, aliases, scope, flow_statement, alias_reader):
+    writes = [
+        statement
+        for statement in _flask_preceding_statements(scope, flow_statement)
+        if any(
+            isinstance(target, ast.Name)
+            and target.id == node.id
+            and isinstance(target.ctx, (ast.Store, ast.Del))
+            for target in ast.walk(statement)
+        )
+    ]
+    if not writes:
+        return False
+    reaching = max(writes, key=lambda statement: statement.lineno)
+    return (
+        isinstance(reaching, (ast.Assign, ast.AnnAssign))
+        and not (isinstance(reaching.value, ast.Name) and reaching.value.id == node.id)
+        and _flask_password_request_value(
+            reaching.value, aliases, scope, reaching, alias_reader
+        )
+    )
+
+
+def _flask_preceding_statements(scope, statement):
+    parents = {
+        id(child): parent
+        for parent in ast.walk(scope)
+        for child in ast.iter_child_nodes(parent)
+    }
+    current = statement
+    while current is not scope:
+        parent = parents.get(id(current))
+        if parent is None:
+            return
+        for _field, body in ast.iter_fields(parent):
+            if isinstance(body, list) and current in body:
+                yield from body[: body.index(current)]
+        current = parent
+
+
+def _flask_config_field(node, receiver):
+    return (
+        node.slice.value
+        if isinstance(node, ast.Subscript)
+        and isinstance(node.slice, ast.Constant)
+        and isinstance(node.slice.value, str)
+        and isinstance(node.value, ast.Attribute)
+        and node.value.attr == "config"
+        and isinstance(node.value.value, ast.Name)
+        and node.value.value.id == receiver
+        else None
+    )
+
+
+def _flask_session_grant(statements, aliases, scope, alias_reader):
+    for position, node in enumerate(statements):
+        if not isinstance(node, ast.Assign) or not (
+            isinstance(node.value, ast.Constant) and node.value.value is True
+        ):
+            continue
+        if not any(
+            isinstance(target, ast.Subscript)
+            and isinstance(target.ctx, ast.Store)
+            and isinstance(target.slice, ast.Constant)
+            and target.slice.value == "logged_in"
+            and _flask_resolves_to(
+                target.value, "flask.session", aliases, scope, node, alias_reader
+            )
+            for target in node.targets
+        ):
+            continue
+        if _flask_path_conditions_clear(scope, node) and _flask_grant_persists(
+            statements[position + 1 :], aliases, scope, alias_reader
+        ):
+            return node
+    return None
+
+
+def _flask_grant_persists(statements, aliases, scope, alias_reader):
+    for statement in statements:
+        if _flask_session_escapes(statement, aliases, scope, alias_reader):
+            return False
+        for node in ast.walk(statement):
+            if isinstance(node, ast.Subscript) and isinstance(
+                node.ctx, (ast.Store, ast.Del)
+            ):
+                if _flask_resolves_to(
+                    node.value, "flask.session", aliases, scope, statement, alias_reader
+                ) and (
+                    not isinstance(node.slice, ast.Constant)
+                    or node.slice.value == "logged_in"
+                ):
+                    return False
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and _flask_resolves_to(
+                    node.func.value,
+                    "flask.session",
+                    aliases,
+                    scope,
+                    statement,
+                    alias_reader,
+                )
+                and node.func.attr not in {"get", "keys", "values", "items", "copy"}
+            ):
+                return False
+        if isinstance(statement, ast.Return):
+            return True
+        if isinstance(statement, ast.Raise):
+            return False
+    return False
+
+
+def _flask_session_escapes(statement, aliases, scope, alias_reader):
+    values = []
+    for node in ast.walk(statement):
+        if isinstance(node, (ast.Assign, ast.AnnAssign, ast.Return)):
+            values.append(node.value)
+        elif isinstance(node, ast.Call):
+            values.extend(node.args)
+            values.extend(keyword.value for keyword in node.keywords)
+    return any(
+        isinstance(node, (ast.Name, ast.Attribute))
+        and _flask_resolves_to(
+            node, "flask.session", aliases, scope, statement, alias_reader
+        )
+        for value in values
+        if value is not None
+        for node in ast.walk(value)
+    )
+
+
+def _flask_login_wrapper(tree, aliases):
+    wrappers = [
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "login_required"
+    ]
+    reassigned = any(
+        isinstance(node, ast.Name)
+        and node.id == "login_required"
+        and isinstance(node.ctx, (ast.Store, ast.Del))
+        for node in ast.walk(tree)
+    )
+    if len(wrappers) != 1 or reassigned:
+        return None
+    wrapper = wrappers[0]
+    if not wrapper.args.args:
+        return None
+    view_parameter = wrapper.args.args[0].arg
+    inner = [node for node in wrapper.body if isinstance(node, ast.FunctionDef)]
+    if len(inner) != 1:
+        return None
+    returned = [
+        node
+        for node in wrapper.body
+        if isinstance(node, ast.Return)
+        and isinstance(node.value, ast.Name)
+        and node.value.id == inner[0].name
+    ]
+    if len(returned) != 1 or not _flask_path_conditions_clear(wrapper, returned[0]):
+        return None
+    if any(
+        node is not inner[0]
+        and node is not returned[0]
+        and not (
+            isinstance(node, ast.Expr)
+            and isinstance(node.value, ast.Constant)
+            and isinstance(node.value.value, str)
+        )
+        for node in wrapper.body
+    ):
+        return None
+    guarded = inner[0]
+    for position, statement in enumerate(guarded.body):
+        if not isinstance(statement, ast.If) or statement.orelse:
+            continue
+        if (
+            _flask_session_get_key(statement.test, "logged_in", aliases, guarded)
+            is False
+        ):
+            continue
+        allowed = [
+            node
+            for node in ast.walk(statement)
+            if isinstance(node, ast.Return)
+            and isinstance(node.value, ast.Call)
+            and isinstance(node.value.func, ast.Name)
+            and node.value.func.id == view_parameter
+        ]
+        denied = guarded.body[position + 1 :]
+        if (
+            len(allowed) == 1
+            and all(
+                isinstance(node, ast.Expr)
+                and isinstance(node.value, ast.Constant)
+                and isinstance(node.value.value, str)
+                for node in guarded.body[:position]
+            )
+            and any(isinstance(node, ast.Return) for node in denied)
+            and not any(
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == view_parameter
+                for sibling in denied
+                for node in ast.walk(sibling)
+            )
+            and _flask_path_conditions_clear(guarded, statement)
+        ):
+            return {"function": wrapper, "guard": statement}
+    return None
+
+
+def _flask_session_get_key(node, key, aliases, scope):
+    from .review_integrity import _security_scope_request_aliases
+
+    if not (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "get"
+        and len(node.args) == 1
+        and not node.keywords
+        and isinstance(node.args[0], ast.Constant)
+        and node.args[0].value == key
+    ):
+        return False
+    return _flask_resolves_to(
+        node.func.value,
+        "flask.session",
+        aliases,
+        scope,
+        node,
+        _security_scope_request_aliases,
+    )
+
+
+def _flask_protected_route(tree, receiver, aliases):
+    wrappers = _flask_login_wrapper(tree, aliases)
+    if wrappers is None:
+        return None
+    for function in tree.body:
+        if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if not _flask_route_bound_to_app(function, receiver):
+            continue
+        guarded = [
+            position
+            for position, decorator in enumerate(function.decorator_list)
+            if isinstance(decorator, ast.Name) and decorator.id == "login_required"
+        ]
+        registered = [
+            position
+            for position, decorator in enumerate(function.decorator_list)
+            if isinstance(decorator, ast.Call)
+            and isinstance(decorator.func, ast.Attribute)
+            and decorator.func.attr == "route"
+            and isinstance(decorator.func.value, ast.Name)
+            and decorator.func.value.id == receiver
+        ]
+        if len(guarded) == 1 and registered and len(registered) == guarded[0] and all(
+            position < guarded[0] for position in registered
+        ):
+            return function
+    return None
+
+
+def _flask_route_bound_to_app(function, receiver):
+    return any(
+        isinstance(value, ast.Attribute)
+        and value.attr == "route"
+        and isinstance(value.value, ast.Name)
+        and value.value.id == receiver
+        for decorator in function.decorator_list
+        for value in [decorator.func if isinstance(decorator, ast.Call) else decorator]
+    )
+
+
+def _flask_resolves_to(node, expected, aliases, scope, statement, alias_reader):
+    from .review_audits import _name
+
+    resolved = alias_reader(scope, aliases, statement)
+    raw = _name(node)
+    head, _, tail = raw.partition(".")
+    return resolved.get(head, "") + ("." + tail if tail else "") == expected
+
+
+def _flask_path_conditions_clear(scope, node):
+    parents = {
+        id(child): parent
+        for parent in ast.walk(scope)
+        for child in ast.iter_child_nodes(parent)
+    }
+    current = node
+    while current is not scope:
+        parent = parents.get(id(current))
+        if parent is None:
+            return False
+        if not _security_control_branch_possible(parent, current):
+            return False
+        if not _security_no_prior_terminator(parent, current):
+            return False
+        current = parent
+    return True
+
+
 def _signing_configuration_consumer_witness(index, path, context):
     for consumer_path, consumer_tree in index.snapshots.items():
         if _signing_rejection_or_reflection(consumer_tree):
@@ -1299,9 +2091,10 @@ def _signing_environment_written(tree, aliases):
     )
 
 
-def _flask_config_mutated(scope, receiver):
+def _flask_config_mutated(scope, receiver, protected_keys=None):
     from .review_audits import _name
 
+    protected_keys = {"SECRET_KEY"} if protected_keys is None else protected_keys
     writes = [
         node
         for node in ast.walk(scope)
@@ -1329,15 +2122,18 @@ def _flask_config_mutated(scope, receiver):
         ):
             if (
                 not isinstance(node.slice, ast.Constant)
-                or node.slice.value == "SECRET_KEY"
+                or node.slice.value in protected_keys
             ):
                 return True
     return False
 
 
-def _flask_configuration_reloaded(scope, receiver, target, context):
+def _flask_configuration_reloaded(
+    scope, receiver, target, context, protected_keys=None, consumer_path=None
+):
     from .review_audits import _name
 
+    protected_keys = {"SECRET_KEY"} if protected_keys is None else protected_keys
     for statement in scope.body:
         call = getattr(statement, "value", None)
         if not isinstance(call, ast.Call) or not isinstance(call.func, ast.Attribute):
@@ -1345,25 +2141,26 @@ def _flask_configuration_reloaded(scope, receiver, target, context):
         if _name(call.func.value) != receiver + ".config":
             continue
         if call.func.attr == "from_object" and not _flask_config_load(
-            call, receiver, target, context
+            call, receiver, target, context, consumer_path
         ):
             return True
         if call.func.attr in {
             "update",
             "from_mapping",
-        } and _flask_mapping_may_replace_key(call):
+        } and _flask_mapping_may_replace_key(call, protected_keys):
             return True
     return False
 
 
-def _flask_mapping_may_replace_key(call):
-    if any(kw.arg in {None, "SECRET_KEY"} for kw in call.keywords):
+def _flask_mapping_may_replace_key(call, protected_keys=None):
+    protected_keys = {"SECRET_KEY"} if protected_keys is None else protected_keys
+    if any(kw.arg is None or kw.arg in protected_keys for kw in call.keywords):
         return True
     for arg in call.args:
         if not isinstance(arg, ast.Dict):
             return True
         if any(
-            not isinstance(key, ast.Constant) or key.value == "SECRET_KEY"
+            not isinstance(key, ast.Constant) or key.value in protected_keys
             for key in arg.keys
         ):
             return True
@@ -1423,7 +2220,7 @@ def _signing_helper_receiver(helper, call, receiver):
     return positional[0].arg
 
 
-def _flask_config_load(call, receiver, target, context):
+def _flask_config_load(call, receiver, target, context, consumer_path=None):
     return (
         isinstance(call.func, ast.Attribute)
         and call.func.attr == "from_object"
@@ -1433,7 +2230,7 @@ def _flask_config_load(call, receiver, target, context):
         and call.func.value.value.id == receiver
         and len(call.args) == 1
         and not call.keywords
-        and _signing_resolve_module(context, call.args[0]) == target
+        and _flask_config_module_matches(context, call.args[0], target, consumer_path)
     )
 
 
@@ -1528,10 +2325,12 @@ def _flask_scope_signing_consumer(target, path, scope, context):
             continue
         for receiver, creation in receivers.items():
             if _flask_config_mutated(scope, receiver) or _flask_configuration_reloaded(
-                scope, receiver, target, context
+                scope, receiver, target, context, consumer_path=path
             ):
                 continue
-            calls = _flask_configuration_calls(call, receiver, target, context)
+            calls = _flask_configuration_calls(
+                call, receiver, target, context, consumer_path=path
+            )
             if calls:
                 return {
                     "framework": "flask",
@@ -1543,17 +2342,21 @@ def _flask_scope_signing_consumer(target, path, scope, context):
     return None
 
 
-def _flask_configuration_calls(call, receiver, target, context):
+def _flask_configuration_calls(
+    call, receiver, target, context, *, protected_keys=None, consumer_path=None
+):
     from .review_integrity import _security_local_helper_definition
 
-    if _flask_config_load(call, receiver, target, context):
+    if _flask_config_load(call, receiver, target, context, consumer_path):
         return [call]
     helper = _security_local_helper_definition(call)
     formal = _signing_helper_receiver(helper, call, receiver)
     if (
         formal is None
-        or _flask_config_mutated(helper, formal)
-        or _flask_configuration_reloaded(helper, formal, target, context)
+        or _flask_config_mutated(helper, formal, protected_keys)
+        or _flask_configuration_reloaded(
+            helper, formal, target, context, protected_keys, consumer_path
+        )
     ):
         return []
     if any(
@@ -1567,7 +2370,7 @@ def _flask_configuration_calls(call, receiver, target, context):
         load = getattr(statement, "value", None)
         if (
             isinstance(load, ast.Call)
-            and _flask_config_load(load, formal, target, context)
+            and _flask_config_load(load, formal, target, context, consumer_path)
             and security_precondition_path_possible(load)
         ):
             return [call, load]
