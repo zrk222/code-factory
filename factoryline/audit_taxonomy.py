@@ -45,7 +45,14 @@ _NATIVE_WORKERS = {
         "target": "semgrep-worker",
         "profile": "semgrep-pattern-limited.json",
         "version": "1.141.0",
-        "scope": "Ten Python/JavaScript/TypeScript rules with local request-to-sink taint including filesystem path traversal; inline suppression disabled; candidate ignore rules can reduce inspection. Community SARIF traces remain unmeasured.",
+        "php_rule_ids": [
+            "php.request-command-injection",
+            "php.request-sql-injection",
+            "php.request-path-traversal",
+            "php.request-file-inclusion",
+            "php.request-unsafe-deserialization",
+        ],
+        "scope": "Fifteen Python/JavaScript/TypeScript/PHP rules with local request-to-sink taint; PHP .php command, procedural SQL, filesystem path, inclusion and unserialize candidates only; callee identity unresolved; PDO/framework/cross-function flows unsupported; inline suppression disabled; candidate ignore rules can reduce inspection. Community SARIF traces remain unmeasured.",
     },
     "osv": {
         "target": "osv-worker",

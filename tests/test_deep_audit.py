@@ -1666,14 +1666,14 @@ def test_runtime_junit_profile_normalizes_native_junit_and_coverage(tmp_path):
     assert report["source_coverage"]["app.py"]["sha256"] == "a" * 64
 
 
-def semgrep_execution_evidence():
+def semgrep_execution_evidence(language="javascript", source="app.js"):
     import base64
     from factoryline.deep_audit_io import canonical_bytes, sha256_bytes
 
     rules = [
         {
             "id": "js-rule",
-            "languages": ["javascript"],
+            "languages": [language],
             "message": "control",
             "severity": "ERROR",
             "pattern": "bad()",
@@ -1695,9 +1695,9 @@ def semgrep_execution_evidence():
         "native_artifact_roles": ["rule_inventory", "sarif_report"],
         "timeout_seconds": 30,
     }
-    sources = {"app.py": "a" * 64, "app.js": "b" * 64}
+    sources = {"app.py": "a" * 64, source: "b" * 64}
     observations = []
-    for index, (rule, path) in enumerate(zip(rules, ("app.js", "app.py"))):
+    for index, (rule, path) in enumerate(zip(rules, (source, "app.py"))):
         native = {
             "version": lane["tool_version"],
             "errors": [],
@@ -1883,6 +1883,7 @@ def test_osv_worker_copies_existing_empty_policy_asset():
 _WORKER_IMPORT_MODULES = frozenset(
     {
         "factoryline/__init__.py",
+        "factoryline/repository_checkpoint_audit.py",
         "factoryline/deep_audit_io.py",
         "factoryline/deep_audit.py",
         "factoryline/deep_audit_sarif.py",
@@ -2743,25 +2744,26 @@ def test_semgrep_native_rejects_resealed_wrong_rule_config_path():
         verify_semgrep_rule_execution(evidence, lane, sources, baseline)
 
 
-def test_semgrep_native_rules_account_for_applicable_and_other_languages():
+@pytest.mark.parametrize("language, source", [("javascript", "app.js"), ("php", "app.php")])
+def test_semgrep_native_rules_account_for_applicable_and_other_languages(language, source):
     from factoryline.deep_audit_io import (
         _semgrep_source_accounting,
         verify_semgrep_rule_execution,
     )
 
-    evidence, lane, sources, baseline = semgrep_execution_evidence()
+    evidence, lane, sources, baseline = semgrep_execution_evidence(language, source)
     checked = verify_semgrep_rule_execution(evidence, lane, sources, baseline)
     assert checked["state"] == "VERIFIED"
-    assert checked["rules"][0]["executed_sources"] == ["app.js"]
+    assert checked["rules"][0]["executed_sources"] == [source]
     assert checked["rules"][0]["not_applicable_sources"] == ["app.py"]
     assert checked["rules"][1]["executed_sources"] == ["app.py"]
-    lane["languages"] = ["python", "javascript"]
+    lane["languages"] = ["python", language]
     inventory = {
         "files": [
             {
                 "path": path,
                 "sha256": sha,
-                "language": "python" if path.endswith(".py") else "javascript",
+                "language": "python" if path.endswith(".py") else language,
             }
             for path, sha in sources.items()
         ]
@@ -2792,10 +2794,11 @@ def test_semgrep_native_rules_account_for_applicable_and_other_languages():
         "budget",
     ],
 )
-def test_semgrep_native_rule_execution_rejects_incomplete_or_resealed_evidence(invalid):
+@pytest.mark.parametrize("language, source", [("javascript", "app.js"), ("php", "app.php")])
+def test_semgrep_native_rule_execution_rejects_incomplete_or_resealed_evidence(invalid, language, source):
     from factoryline.deep_audit_io import verify_semgrep_rule_execution
 
-    evidence, lane, sources, baseline = semgrep_execution_evidence()
+    evidence, lane, sources, baseline = semgrep_execution_evidence(language, source)
     observed = evidence["observations"][0]
     native = observed["native_report"]
     mutations = {
@@ -2810,7 +2813,7 @@ def test_semgrep_native_rule_execution_rejects_incomplete_or_resealed_evidence(i
         "timeout": lambda: observed["execution"].update(timed_out=True),
         "cleanup": lambda: observed["execution"].update(cleanup_confirmed=False),
         "source": lambda: native["paths"].update(scanned=[]),
-        "duplicate": lambda: native["paths"]["scanned"].append("/src/app.js"),
+        "duplicate": lambda: native["paths"]["scanned"].append("/src/" + source),
         "extra-rule": lambda: native.update(
             results=[
                 {"check_id": "unselected", "path": "/src/app.js", "start": {"line": 1}}
@@ -8939,3 +8942,10 @@ def test_deep_audit_io_moved_exports_keep_monkeypatch_seams(monkeypatch, tmp_pat
     monkeypatch.setattr(audit_io, "_zap_native_request", stop_at_challenge)
     with pytest.raises(LookupError, match="challenge seam"):
         audit._run_zap_native_scan({})
+
+
+@pytest.mark.parametrize("name", ["view.phtml", "library.inc", "view.blade.php", "view.twig", "app.py"])
+def test_php_semgrep_unsupported_formats_not_counted_as_execution(name):
+    from factoryline.deep_audit_io import _semgrep_rule_sources
+
+    assert _semgrep_rule_sources({"languages": ["php"]}, {name: "a" * 64}) == set()

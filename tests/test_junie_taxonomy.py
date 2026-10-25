@@ -1491,3 +1491,10 @@ def test_daily_action_guidance_is_shared_and_uses_real_read_only_commands(tmp_pa
     assert parsed.cmd == "home" and parsed.schedule == "checks.json"
     assert parsed.json is True
     assert not any(junie_manifest(tmp_path)["authority"].values())
+
+
+def test_php_supplemental_security_scope_is_visible_and_bounded():
+    scope = audit_taxonomy()["native_workers"]["semgrep"]["scope"]
+    assert "PHP .php" in scope
+    assert "callee identity unresolved" in scope
+    assert "PDO/framework/cross-function flows unsupported" in scope
