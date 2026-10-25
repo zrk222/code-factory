@@ -71,11 +71,10 @@ Actual local Graph Ops capture, October 8, 2026: 415 targeted tests passed. JUni
   with bounded session hooks.
 - **Candidate detection fixes:** flags tests without a local assertion,
   constant-true assertions, and reflexive comparisons. Explicit tenant-read
-  contracts check the declared `tenant_id` parameter binding. The unchanged
-  eight-case public regression corpus now gives 6 true positives, 2 true
-  negatives, and no false positives or false negatives locally. One contract
-  is applied to defective, repaired, and clean inputs. This small development
-  result is not independent accuracy, runtime isolation, or release approval;
+  contracts check the declared `tenant_id` parameter binding.
+  This seeded local demonstration shows the workflow using a finding and a
+  repaired case. It applies the declared tenant-read contract to sample inputs
+  and illustrates a review flow; it is not a release certification.
   CI verification is still required.
 
 These are source preview targets until each provider confirms publication.
@@ -300,7 +299,7 @@ Public exports carry distributions only, never per-reviewer rows.
 
 ## Native agent-harness preview — current source candidate
 
-Status: Current source preview only; published Code Factory 0.48.1 remains unchanged. Local-wheel inclusion is not claimed.
+Core release [0.49.0 is published on PyPI](https://pypi.org/project/factoryline-code-factory/0.49.0/) and [GitHub](https://github.com/zrk222/code-factory/releases/tag/v0.49.0). This native-harness section remains a source preview; inclusion in the published wheel is not claimed.
 
 The native harness keeps incident checkpoints for recovery, binds review
 context shards to source, and compares candidate repairs without applying them.
