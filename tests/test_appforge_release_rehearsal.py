@@ -441,6 +441,130 @@ def test_core_0481_exception_is_explicit_and_protected() -> None:
     assert '"${exception_args[@]}"' in preflight["run"]
 
 
+def _owner_0490_exception_workflow_and_validator():
+    import yaml
+
+    workflow = yaml.safe_load((ROOT / ".github/workflows/publish.yml").read_text())
+    step = next(
+        item
+        for item in workflow["jobs"]["publish_owner_0490_exception"]["steps"]
+        if item.get("name", "").startswith("Verify the owner")
+    )
+    script = step["run"].split("python - <<'PY'\n", 1)[1].split("\nPY", 1)[0]
+    namespace = {"__name__": "owner_0490_exception_test"}
+    exec(compile(script, "owner-0490-workflow", "exec"), namespace)
+    return workflow, namespace
+
+
+def test_owner_0490_exception_is_opt_in_isolated_and_source_bound() -> None:
+    workflow, namespace = _owner_0490_exception_workflow_and_validator()
+    triggers = workflow.get("on", workflow.get(True))
+    option = triggers["workflow_dispatch"]["inputs"]["core_0490_publication_exception"]
+    assert option["type"] == "boolean" and option["default"] is False
+
+    jobs = workflow["jobs"]
+    normal_jobs = {
+        "guard",
+        "validate_python",
+        "validate_vscode",
+        "validate_intellij",
+        "publish",
+        "publish_mcp_registry",
+    }
+    assert set(jobs) == normal_jobs | {"publish_owner_0490_exception"}
+    for name in normal_jobs:
+        assert jobs[name]["if"] == "${{ inputs.core_0490_publication_exception != true }}"
+    assert jobs["publish"]["needs"] == [
+        "guard",
+        "validate_python",
+        "validate_vscode",
+        "validate_intellij",
+    ]
+    guard_run = "\n".join(step.get("run", "") for step in jobs["guard"]["steps"])
+    assert '[[ "$GITHUB_REF" == "refs/heads/main" ]]' in guard_run
+    assert "fetch-ci" in guard_run and "Enforce cadence" in " ".join(
+        step.get("name", "") for step in jobs["guard"]["steps"]
+    )
+    assert any(step.get("run") == "python -m pytest -q" for step in jobs["validate_python"]["steps"])
+
+    exception = jobs["publish_owner_0490_exception"]
+    assert exception["if"] == (
+        "${{ inputs.core_0490_publication_exception == true && github.actor == 'zrk222' "
+        "&& inputs.release_tag == 'v0.49.0' }}"
+    )
+    assert exception["environment"] == "pypi"
+    assert exception["permissions"] == {"contents": "write", "id-token": "write"}
+    assert exception["steps"][0]["with"]["ref"] == namespace["EXPECTED_SOURCE_COMMIT"]
+    assert any(
+        step.get("uses", "").startswith("pypa/gh-action-pypi-publish@")
+        for step in exception["steps"]
+    )
+    receipt = next(
+        step
+        for step in exception["steps"]
+        if "owner-0490-publication-exception-receipt"
+        in step.get("with", {}).get("name", "")
+    )
+    assert receipt.get("if") == "${{ always() }}"
+    receipt_script = next(
+        step["run"]
+        for step in exception["steps"]
+        if step.get("name") == "Record the bounded exception and unmet checks"
+    )
+    for unmet in (
+        "attested clean-runner CI evidence",
+        "release cadence and monthly-cap policy",
+        "full Python test suite",
+        "NOT_RUN",
+        "not a full CI or security approval",
+    ):
+        assert unmet in receipt_script
+
+    validate_dispatch = namespace["validate_exception_dispatch"]
+    validate_binding = namespace["validate_exception_binding"]
+    validate_dispatch("zrk222", "v0.49.0")
+    result = validate_binding(
+        namespace["EXPECTED_SOURCE_COMMIT"],
+        namespace["EXPECTED_SOURCE_COMMIT"],
+        namespace["EXPECTED_WHEEL_SHA256"],
+        namespace["EXPECTED_SDIST_SHA256"],
+    )
+    assert result["source_commit"] == namespace["EXPECTED_SOURCE_COMMIT"]
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("actor", "another-user"),
+        ("release_tag", "v0.48.2"),
+        ("checkout_commit", "f" * 40),
+        ("tag_commit", "e" * 40),
+        ("wheel_sha256", "0" * 64),
+        ("sdist_sha256", "1" * 64),
+    ],
+)
+def test_owner_0490_exception_rejects_actor_tag_commit_and_asset_drift(
+    field: str, value: str
+) -> None:
+    _, namespace = _owner_0490_exception_workflow_and_validator()
+    if field in {"actor", "release_tag"}:
+        values = {"actor": "zrk222", "release_tag": "v0.49.0"}
+        values[field] = value
+        with pytest.raises(SystemExit):
+            namespace["validate_exception_dispatch"](**values)
+        return
+
+    values = {
+        "checkout_commit": namespace["EXPECTED_SOURCE_COMMIT"],
+        "tag_commit": namespace["EXPECTED_SOURCE_COMMIT"],
+        "wheel_sha256": namespace["EXPECTED_WHEEL_SHA256"],
+        "sdist_sha256": namespace["EXPECTED_SDIST_SHA256"],
+    }
+    values[field] = value
+    with pytest.raises(SystemExit):
+        namespace["validate_exception_binding"](**values)
+
+
 @pytest.mark.parametrize(
     ("enabled", "tag", "actor", "admitted"),
     [

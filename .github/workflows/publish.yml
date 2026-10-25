@@ -17,6 +17,11 @@ on:
         required: false
         default: false
         type: boolean
+      core_0490_publication_exception:
+        description: Explicit owner-approved one-time publication exception for v0.49.0 only
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -30,6 +35,7 @@ concurrency:
 jobs:
   guard:
     name: require a draft release tag
+    if: ${{ inputs.core_0490_publication_exception != true }}
     runs-on: ubuntu-latest
     permissions:
       contents: write # GitHub requires write access to read unpublished drafts.
@@ -112,6 +118,7 @@ jobs:
 
   validate_python:
     name: validate Python release artifacts
+    if: ${{ inputs.core_0490_publication_exception != true }}
     needs: [guard]
     runs-on: ubuntu-latest
     steps:
@@ -158,6 +165,7 @@ jobs:
 
   validate_vscode:
     name: validate VS Code release artifact
+    if: ${{ inputs.core_0490_publication_exception != true }}
     needs: [guard]
     runs-on: ubuntu-latest
     defaults:
@@ -195,6 +203,7 @@ jobs:
 
   validate_intellij:
     name: validate JetBrains release artifact
+    if: ${{ inputs.core_0490_publication_exception != true }}
     needs: [guard]
     runs-on: ubuntu-latest
     defaults:
@@ -227,6 +236,7 @@ jobs:
 
   publish:
     name: publish verified release
+    if: ${{ inputs.core_0490_publication_exception != true }}
     needs: [guard, validate_python, validate_vscode, validate_intellij]
     runs-on: ubuntu-latest
     environment: pypi
@@ -371,6 +381,7 @@ jobs:
 
   publish_mcp_registry:
     name: publish Official MCP Registry metadata
+    if: ${{ inputs.core_0490_publication_exception != true }}
     needs: [guard, publish]
     runs-on: ubuntu-latest
     permissions:
@@ -482,3 +493,271 @@ jobs:
 
       - name: Publish MCP Registry descriptor
         run: ./mcp-publisher publish mcp/server.json
+
+  publish_owner_0490_exception:
+    name: publish owner-approved v0.49.0 exception
+    if: ${{ inputs.core_0490_publication_exception == true && github.actor == 'zrk222' && inputs.release_tag == 'v0.49.0' }}
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          ref: 818c1068bcc5b0773739179d44b60b87d1f598d5
+          fetch-depth: 0
+
+      - name: Verify the owner, release tag, source commit, and draft assets
+        id: verify_candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          import subprocess
+          from pathlib import Path
+
+          EXPECTED_SOURCE_COMMIT = "818c1068bcc5b0773739179d44b60b87d1f598d5"
+          EXPECTED_WHEEL = "factoryline_code_factory-0.49.0-py3-none-any.whl"
+          EXPECTED_SDIST = "factoryline_code_factory-0.49.0.tar.gz"
+          EXPECTED_WHEEL_SHA256 = "30ca2a506e662d074fae66aac57823b5be6a5370274af74ec10c857ad42e217f"
+          EXPECTED_SDIST_SHA256 = "d649cf9d5ccf8d07a98d8ed9b12c60346469857b8a51caf5b2cd388d1098f782"
+
+          def validate_exception_dispatch(actor, release_tag):
+              if actor != "zrk222":
+                  raise SystemExit("The v0.49.0 exception is restricted to owner zrk222")
+              if release_tag != "v0.49.0":
+                  raise SystemExit("The v0.49.0 exception is restricted to tag v0.49.0")
+
+          def validate_exception_binding(
+              checkout_commit, tag_commit, wheel_sha256, sdist_sha256
+          ):
+              actual = {
+                  "checkout commit": checkout_commit,
+                  "release tag commit": tag_commit,
+                  EXPECTED_WHEEL: wheel_sha256,
+                  EXPECTED_SDIST: sdist_sha256,
+              }
+              expected = {
+                  "checkout commit": EXPECTED_SOURCE_COMMIT,
+                  "release tag commit": EXPECTED_SOURCE_COMMIT,
+                  EXPECTED_WHEEL: EXPECTED_WHEEL_SHA256,
+                  EXPECTED_SDIST: EXPECTED_SDIST_SHA256,
+              }
+              for name, value in actual.items():
+                  if value != expected[name]:
+                      raise SystemExit(f"Owner exception binding mismatch: {name}")
+              return {
+                  "source_commit": EXPECTED_SOURCE_COMMIT,
+                  "assets": {
+                      EXPECTED_WHEEL: EXPECTED_WHEEL_SHA256,
+                      EXPECTED_SDIST: EXPECTED_SDIST_SHA256,
+                  },
+              }
+
+          def git_text(*args):
+              return subprocess.check_output(["git", *args], text=True).strip()
+
+          def main():
+              release_tag = os.environ["RELEASE_TAG"]
+              validate_exception_dispatch(os.environ["GITHUB_ACTOR"], release_tag)
+              subprocess.run(
+                  [
+                      "git",
+                      "fetch",
+                      "--no-tags",
+                      "origin",
+                      f"refs/tags/{release_tag}:refs/tags/{release_tag}",
+                  ],
+                  check=True,
+              )
+              checkout_commit = git_text("rev-parse", "HEAD")
+              tag_commit = git_text("rev-parse", f"refs/tags/{release_tag}^{{commit}}")
+              release = json.loads(
+                  subprocess.check_output(
+                      [
+                          "gh",
+                          "release",
+                          "view",
+                          release_tag,
+                          "--repo",
+                          os.environ["GITHUB_REPOSITORY"],
+                          "--json",
+                          "isDraft",
+                      ],
+                      text=True,
+                  )
+              )
+              if release.get("isDraft") is not True:
+                  raise SystemExit(
+                      "The owner exception requires the existing GitHub release to remain a draft"
+                  )
+
+              asset_dir = Path("owner-0490-assets")
+              asset_dir.mkdir(parents=True, exist_ok=True)
+              subprocess.run(
+                  [
+                      "gh",
+                      "release",
+                      "download",
+                      release_tag,
+                      "--repo",
+                      os.environ["GITHUB_REPOSITORY"],
+                      "--pattern",
+                      EXPECTED_WHEEL,
+                      "--pattern",
+                      EXPECTED_SDIST,
+                      "--dir",
+                      str(asset_dir),
+                  ],
+                  check=True,
+              )
+              downloaded = {
+                  path.name for path in asset_dir.iterdir() if path.is_file()
+              }
+              if downloaded != {EXPECTED_WHEEL, EXPECTED_SDIST}:
+                  raise SystemExit(
+                      "Draft release did not return exactly the two pinned Python assets"
+                  )
+              binding = validate_exception_binding(
+                  checkout_commit,
+                  tag_commit,
+                  hashlib.sha256((asset_dir / EXPECTED_WHEEL).read_bytes()).hexdigest(),
+                  hashlib.sha256((asset_dir / EXPECTED_SDIST).read_bytes()).hexdigest(),
+              )
+              evidence_dir = Path(os.environ["RUNNER_TEMP"]) / "owner-0490-evidence"
+              evidence_dir.mkdir(parents=True, exist_ok=True)
+              (evidence_dir / "candidate-binding.json").write_text(
+                  json.dumps(binding, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+              )
+              print("OWNER_0490_CANDIDATE_AND_ASSETS_VERIFIED")
+
+          if __name__ == "__main__":
+              main()
+          PY
+
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+
+      - name: Check the pinned distributions
+        id: twine_check
+        run: |
+          python -m pip install --upgrade twine
+          python -m twine check \
+            "owner-0490-assets/factoryline_code_factory-0.49.0-py3-none-any.whl" \
+            "owner-0490-assets/factoryline_code_factory-0.49.0.tar.gz"
+
+      - name: Smoke install the pinned wheel
+        id: wheel_smoke
+        run: |
+          set -euo pipefail
+          python -m venv "$RUNNER_TEMP/factory-0490"
+          "$RUNNER_TEMP/factory-0490/bin/python" -m pip install \
+            "owner-0490-assets/factoryline_code_factory-0.49.0-py3-none-any.whl"
+          "$RUNNER_TEMP/factory-0490/bin/factory" --help
+          "$RUNNER_TEMP/factory-0490/bin/factory" --version --json > "$RUNNER_TEMP/factory-0490-version.json"
+          "$RUNNER_TEMP/factory-0490/bin/python" - "$RUNNER_TEMP/factory-0490-version.json" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          if json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))["version"] != "0.49.0":
+              raise SystemExit("The installed wheel did not report factory version 0.49.0")
+          PY
+
+      - name: Publish the pinned distributions to PyPI
+        id: publish_pypi
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33
+        with:
+          packages-dir: owner-0490-assets/
+          attestations: true
+
+      - name: Publish the pinned GitHub release
+        id: publish_github_release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "refs/tags/${RELEASE_TAG}:refs/tags/${RELEASE_TAG}"
+          [[ "$(git rev-parse HEAD)" == "818c1068bcc5b0773739179d44b60b87d1f598d5" ]]
+          [[ "$(git rev-parse "refs/tags/${RELEASE_TAG}^{commit}")" == "818c1068bcc5b0773739179d44b60b87d1f598d5" ]]
+          [[ "$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq '.isDraft')" == "true" ]]
+          gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false
+
+      - name: Record the bounded exception and unmet checks
+        if: ${{ always() }}
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          VERIFY_OUTCOME: ${{ steps.verify_candidate.outcome || 'not_run' }}
+          TWINE_OUTCOME: ${{ steps.twine_check.outcome || 'not_run' }}
+          WHEEL_SMOKE_OUTCOME: ${{ steps.wheel_smoke.outcome || 'not_run' }}
+          PYPI_OUTCOME: ${{ steps.publish_pypi.outcome || 'not_run' }}
+          GITHUB_RELEASE_OUTCOME: ${{ steps.publish_github_release.outcome || 'not_run' }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import subprocess
+          from pathlib import Path
+
+          try:
+              commit = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+          except (OSError, subprocess.CalledProcessError):
+              commit = None
+          receipt = {
+              "schema": "factory.owner-publication-exception.v1",
+              "exception_scope": {
+                  "workflow_job": "publish_owner_0490_exception",
+                  "opt_in_input": "core_0490_publication_exception",
+                  "actor": os.environ.get("GITHUB_ACTOR"),
+                  "release_tag": os.environ.get("RELEASE_TAG"),
+                  "required_source_commit": "818c1068bcc5b0773739179d44b60b87d1f598d5",
+                  "observed_checkout_commit": commit,
+                  "pypi_environment": "pypi",
+                  "pypi_authentication": "GitHub OIDC trusted publishing",
+              },
+              "pinned_assets": {
+                  "factoryline_code_factory-0.49.0-py3-none-any.whl": "30ca2a506e662d074fae66aac57823b5be6a5370274af74ec10c857ad42e217f",
+                  "factoryline_code_factory-0.49.0.tar.gz": "d649cf9d5ccf8d07a98d8ed9b12c60346469857b8a51caf5b2cd388d1098f782",
+              },
+              "unmet_or_waived_checks": [
+                  {"check": "attested clean-runner CI evidence", "state": "WAIVED_NOT_RUN"},
+                  {"check": "release cadence and monthly-cap policy", "state": "WAIVED_NOT_RUN"},
+                  {"check": "full Python test suite", "state": "NOT_RUN"},
+                  {"check": "VS Code release validation", "state": "NOT_RUN"},
+                  {"check": "JetBrains release validation", "state": "NOT_RUN"},
+                  {"check": "normal sealed release preflight", "state": "NOT_RUN"},
+              ],
+              "bounded_check_outcomes": {
+                  "candidate_source_and_asset_hashes": os.environ.get("VERIFY_OUTCOME", "not_run"),
+                  "twine_check": os.environ.get("TWINE_OUTCOME", "not_run"),
+                  "clean_wheel_help_and_version_smoke": os.environ.get("WHEEL_SMOKE_OUTCOME", "not_run"),
+                  "pypi_publication": os.environ.get("PYPI_OUTCOME", "not_run"),
+                  "github_release_publication": os.environ.get("GITHUB_RELEASE_OUTCOME", "not_run"),
+              },
+              "run": {
+                  "repository": os.environ.get("GITHUB_REPOSITORY"),
+                  "run_id": os.environ.get("GITHUB_RUN_ID"),
+                  "run_attempt": os.environ.get("GITHUB_RUN_ATTEMPT"),
+                  "workflow_ref": os.environ.get("GITHUB_WORKFLOW_REF"),
+              },
+              "claim_boundary": "Exception-scoped package and GitHub release publication only; unmet checks are not passes and this receipt is not a full CI or security approval.",
+          }
+          path = Path("owner-0490-exception-receipt.json")
+          path.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+          PY
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: ${{ always() }}
+        with:
+          name: owner-0490-publication-exception-receipt
+          path: owner-0490-exception-receipt.json
+          if-no-files-found: warn
+          retention-days: 90
