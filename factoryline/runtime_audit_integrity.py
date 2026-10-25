@@ -2021,7 +2021,7 @@ def _pickle_load_call_shape(node, loaded_name, *, allow_nested=False):
     )
 
 
-def closed_local_pickle_origin(node, loaded_name, aliases, audit):
+def closed_local_pickle_origin(node, loaded_name, aliases, audit, *, serializer_namespace_only=False):
     """Retain the runtime facade while delegating native origin proof."""
     from .pickle_model_audit import closed_local_pickle_origin as find_origin
 
@@ -2035,7 +2035,9 @@ def closed_local_pickle_origin(node, loaded_name, aliases, audit):
         scope_module=_pickle_scope_module,
         direct_dump_origin=_pickle_direct_dump_origin,
         direct_protocol=_pickle_direct_protocol,
-        serializer_imports_closed=_pickle_direct_serializer_imports_closed,
+        serializer_imports_closed=lambda *args: _pickle_direct_serializer_imports_closed(
+            *args, serializer_namespace_only=serializer_namespace_only
+        ),
     )
 
 
@@ -2180,14 +2182,11 @@ def _pickle_direct_protocol(call):
 
 
 def _pickle_direct_serializer_imports_closed(
-    module, scope, dump_index, load_index, dump_call, load_call, aliases, audit
+    module, scope, dump_index, load_index, dump_call, load_call, aliases, audit,
+    *, serializer_namespace_only=False,
 ):
-    return (
-        _pickle_call_imported(module, scope, dump_call, dump_index, aliases, audit)
-        and _pickle_call_imported(module, scope, load_call, load_index, aliases, audit)
-        and audit._unmodified_serialization_aliases(list(ast.walk(module)), aliases)
-        == aliases
-    )
+    from .pickle_model_audit import pickle_serializer_imports_closed
+    return pickle_serializer_imports_closed(module, scope, dump_index, load_index, dump_call, load_call, aliases, audit, _pickle_call_imported, _conditional_v3_alias_closure, serializer_namespace_only)
 
 
 def _pickle_direct_scope_index(node, scope, audit):
@@ -2378,21 +2377,8 @@ def _pickle_serializer_imports_closed(
     serializer_namespace_only=False,
 ):
     index = scope.body.index(scope_statement)
-    checked_aliases = aliases
-    if serializer_namespace_only:
-        checked_aliases = {
-            name: origin
-            for name, origin in aliases.items()
-            if origin.split(".", 1)[0] in {"pickle", "_pickle"}
-        }
-    return (
-        _pickle_call_imported(module, scope, dump_call, index, aliases, audit)
-        and _pickle_call_imported(module, scope, load_call, index, aliases, audit)
-        and audit._unmodified_serialization_aliases(
-            list(ast.walk(module)), checked_aliases
-        )
-        == checked_aliases
-    )
+    from .pickle_model_audit import pickle_serializer_imports_closed
+    return pickle_serializer_imports_closed(module, scope, index, index, dump_call, load_call, aliases, audit, _pickle_call_imported, _conditional_v3_alias_closure, serializer_namespace_only)
 
 
 def _closed_pickle_object_flow(scope, loop, loop_statement, dump_call, audit):
@@ -2837,7 +2823,14 @@ def _conditional_selected_pickle_flow(profile, source_bytes, caller, sink_span, 
         None
         if flow
         else _conditional_provider_v2_direct_origin(
-            source_bytes, caller, sink_span, audit
+            source_bytes,
+            caller,
+            sink_span,
+            audit,
+            serializer_namespace_only=any(
+                item["model"]["id"] in graph_models
+                for item in profile["contracts"]
+            ),
         )
     )
     constructor = (
@@ -3001,7 +2994,14 @@ def _conditional_v4_hook_nodes(record, trees):
     return frozenset(admitted)
 
 
-def _conditional_provider_v2_direct_origin(source_bytes, caller, sink_span, audit):
+def _conditional_provider_v2_direct_origin(
+    source_bytes,
+    caller,
+    sink_span,
+    audit,
+    *,
+    serializer_namespace_only=False,
+):
     raw = source_bytes.get(caller)
     if not isinstance(raw, bytes) or len(raw) > 1_000_000:
         return None
@@ -3027,6 +3027,7 @@ def _conditional_provider_v2_direct_origin(source_bytes, caller, sink_span, audi
         audit._normalized_call_name(load_call, aliases),
         aliases,
         audit,
+        serializer_namespace_only=serializer_namespace_only,
     )
 
 

@@ -607,6 +607,94 @@ def test_pickle_origin_rejects_non_native_serializer_namespace():
 
 
 @pytest.mark.parametrize(
+    "extra_import, write, expected_origin",
+    [
+        ("", "requests.get = replacement", True),
+        ("", "pickle.loads = replacement", False),
+        ("import sys as system\n", "system.modules['pickle'].loads = replacement", False),
+        ("import sys as system\n", "setattr(getattr(system, 'modules')['pickle'], 'loads', replacement)", False),
+        ("import importlib as loader\n", "loader.import_module('pickle').loads = replacement", False),
+        ("", "other = pickle\n    other.loads = replacement", False),
+        ("", "opaque(pickle)", False),
+    ],
+)
+def test_pickle_direct_origin_ignores_unrelated_module_mutations(extra_import, write, expected_origin):
+    source = (
+        "import pickle\nimport requests\n" + extra_import
+        + "def roundtrip(value):\n    " + write
+        + "\n    payload = pickle.dumps(value)\n    return pickle.loads(payload)\n"
+    ).encode()
+    caller = "test_case.py"
+    tree = ast.parse(source)
+    runtime._conditional_provider_parents(tree)
+    # Resolve the selected call in EACH variant; import insertion changes its line.
+    load = next(node for node in ast.walk(tree) if isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute) and node.func.attr == "loads")
+    span = runtime._fixed_program_span(load)
+    assert runtime._conditional_provider_v2_direct_origin(
+        {caller: source}, caller, span, review_audits
+    ) is None
+    origin = runtime._conditional_provider_v2_direct_origin(
+        {caller: source}, caller, span, review_audits, serializer_namespace_only=True
+    )
+    assert (origin is not None) is expected_origin
+    if origin is not None:
+        assert origin["status"] == "LOCAL_DIRECT_DUMPS_LOADS_ORIGIN"
+        assert origin["origin_kind"] == "named_payload"
+        assert not {"typed_graph", "provider_witness", "negative_security_decision"}.intersection(origin)
+
+
+def test_pickle_protocol_flow_rejects_serializer_alias_writes_and_escapes():
+    prefix = [
+        "import pickle",
+        "import requests",
+        "def roundtrip():",
+        "    requests.get = replacement",
+    ]
+    suffix = [
+        "    obj = ValueError('fixed')",
+        "    for proto in range(pickle.HIGHEST_PROTOCOL + 1):",
+        "        payload = pickle.dumps(obj, proto)",
+        "        pickle.loads(payload)",
+    ]
+    programs = {
+        "clean": prefix + suffix,
+        "alias_write": prefix
+        + ["    other = pickle", "    other.loads = replacement"]
+        + suffix,
+        "opaque_escape": prefix + ["    opaque(pickle)"] + suffix,
+    }
+    outcomes = {}
+    for label, lines in programs.items():
+        source = "\n".join(lines).encode()
+        tree = ast.parse(source)
+        runtime._conditional_provider_parents(tree)
+        aliases = runtime._conditional_file_aliases(
+            "test_case.py",
+            tree,
+            {"test_case.py": runtime._conditional_module_name("test_case.py")},
+        )
+        load_calls = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and review_audits._normalized_call_name(node, aliases) == "pickle.loads"
+        ]
+        assert len(load_calls) == 1
+        outcomes[label] = runtime.closed_local_pickle_flow(
+            load_calls[0],
+            "pickle.loads",
+            aliases,
+            review_audits,
+            serializer_namespace_only=True,
+        )
+
+    assert outcomes["clean"] is not None
+    assert outcomes["alias_write"] is None
+    assert outcomes["opaque_escape"] is None
+
+
+@pytest.mark.parametrize(
     "extra_source, expected_count",
     [
         ("", 1),
@@ -617,6 +705,12 @@ def test_pickle_origin_rejects_non_native_serializer_namespace():
             0,
         ),
         ("pickle.loads = replacement\n", 0),
+        ("other = pickle\nother.loads = lambda payload: print('unexpected effect')\n", 0),
+        ("def opaque(module):\n    module.loads = lambda payload: print('unexpected effect')\nopaque(pickle)\n", 0),
+        ("import sys\nversion = sys.version_info[:2]\nlimit = sys.maxsize\nexe = sys.executable\npresent = 'fixed' in sys.path\n", 1),
+        ("import sys\ndef opaque(module):\n    module.modules['pickle'].loads = lambda payload: None\nopaque(sys)\n", 0),
+        ("from sys import modules as mods\nother = mods['pickle']\nother.loads = lambda payload: None\n", 0),
+        ("from importlib import import_module as load\nother = load('pickle')\nother.loads = lambda payload: None\n", 0),
     ],
 )
 def test_pickle_typed_v3_reuses_protocol_loop_origin_after_model_selection(

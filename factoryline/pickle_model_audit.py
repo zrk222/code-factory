@@ -2479,6 +2479,125 @@ def closed_local_pickle_origin(
     }
 
 
+def pickle_serializer_imports_closed(
+    module,
+    scope,
+    dump_index,
+    load_index,
+    dump_call,
+    load_call,
+    aliases,
+    audit,
+    call_imported,
+    alias_closure,
+    serializer_namespace_only=False,
+):
+    """Validate selected serializer aliases and the existing provider mutation model."""
+    nodes = list(ast.walk(module))
+    identity = _pickle_serializer_identity_aliases(aliases)
+    stable = _pickle_serializer_identity_aliases(
+        audit._unmodified_serialization_aliases(nodes, aliases)
+    )
+    if not _pickle_serializer_provider_unmodified(module, aliases, audit, alias_closure):
+        return False
+    if serializer_namespace_only and stable != identity:
+        return False
+    if not serializer_namespace_only and audit._unmodified_serialization_aliases(
+        nodes, aliases
+    ) != aliases:
+        return False
+    return call_imported(module, scope, dump_call, dump_index, aliases, audit) and call_imported(
+        module, scope, load_call, load_index, aliases, audit
+    )
+
+
+def _pickle_serializer_identity_aliases(aliases):
+    origins = {"pickle", "_pickle", "pickle.loads", "pickle.dumps", "_pickle.loads", "_pickle.dumps"}
+    return {name: origin for name, origin in aliases.items() if origin in origins}
+
+
+def _pickle_serializer_provider_unmodified(module, aliases, audit, alias_closure):
+    from .finite_capture import finite_provider_mutation_index
+
+    nodes = list(ast.walk(module))
+    roots = {"pickle", "_pickle", "sys", "importlib", "builtins"}
+    resolved = alias_closure(nodes, aliases, roots, audit)
+    for target in nodes:
+        if not isinstance(target, (ast.Attribute, ast.Subscript)) or not isinstance(
+            target.ctx, (ast.Store, ast.Del)
+        ):
+            continue
+        if any(
+            isinstance(part, ast.Name)
+            and audit._resolved_ast_name(part, resolved).split(".", 1)[0] in roots
+            for part in ast.walk(target)
+        ):
+            return False
+    parents = {id(child): parent for parent in nodes for child in ast.iter_child_nodes(parent)}
+    facts = finite_provider_mutation_index(nodes, resolved, audit, parents)
+    if not _pickle_serializer_module_uses_closed(nodes, resolved, parents, audit):
+        return False
+    return not any(
+        (owner == root or owner.startswith(root + "."))
+        and not (
+            attribute == "*"
+            and owner in {"pickle", "_pickle", "pickle.HIGHEST_PROTOCOL", "_pickle.HIGHEST_PROTOCOL"}
+        )
+        for owner, attribute in facts
+        for root in {"pickle", "_pickle"}
+    )
+
+
+def _pickle_serializer_module_uses_closed(nodes, resolved, parents, audit):
+    for node in nodes:
+        if not isinstance(node, ast.Name) or not isinstance(node.ctx, ast.Load):
+            continue
+        origin = audit._resolved_ast_name(node, resolved)
+        root = origin.split(".", 1)[0]
+        if root not in {"pickle", "_pickle", "sys", "importlib", "builtins"}:
+            continue
+        if origin != root:
+            if _pickle_serializer_imported_value_use(origin, parents.get(id(node)), node):
+                continue
+            return False
+        attribute = parents.get(id(node))
+        if not isinstance(attribute, ast.Attribute) or attribute.value is not node:
+            return False
+        owner = parents.get(id(attribute))
+        if origin not in {"pickle", "_pickle"}:
+            if _pickle_serializer_namespace_data_read(origin, attribute, owner):
+                continue
+            return False
+        if attribute.attr in {"loads", "dumps"} and isinstance(owner, ast.Call) and owner.func is attribute:
+            continue
+        if attribute.attr == "HIGHEST_PROTOCOL":
+            # This integer is data, not a reference to the module or serializer.
+            continue
+        return False
+    return True
+
+
+def _pickle_serializer_namespace_data_read(origin, attribute, owner):
+    """Separate immutable sys metadata from mutable import/serializer capabilities."""
+    if origin != "sys":
+        return False
+    if attribute.attr in {"version_info", "maxsize", "executable"}:
+        return True
+    if attribute.attr == "getrefcount":
+        return isinstance(owner, ast.Call) and owner.func is attribute
+    return attribute.attr == "path" and isinstance(owner, ast.Compare)
+
+
+def _pickle_serializer_imported_value_use(origin, owner, node):
+    """From-import aliases retain the capability/data distinction of their origin."""
+    if origin in {"pickle.HIGHEST_PROTOCOL", "_pickle.HIGHEST_PROTOCOL",
+                  "sys.version_info", "sys.maxsize", "sys.executable"}:
+        return True
+    if origin == "sys.path":
+        return isinstance(owner, ast.Compare)
+    return origin in {"pickle.loads", "pickle.dumps", "_pickle.loads", "_pickle.dumps", "sys.getrefcount"} and isinstance(owner, ast.Call) and owner.func is node
+
+
 def _provider_v3_export_chain(contract, trees, target, binding_occurrences):
     """Resolve a bounded, source-bound from-import chain to the selected class."""
     export = contract["export"]
