@@ -90,7 +90,7 @@ COPY --from=osv-build /osv-scanner /usr/local/bin/osv-scanner
 COPY --from=osv-build /osv-extractor-inventory.json /opt/factory/osv-extractor-inventory.json
 COPY --chmod=0555 deploy/deep-adapters/bin/osv-offline /opt/factory/bin/osv-offline
 COPY --chown=1000:1000 deploy/deep-adapters/rules/empty-ignore.txt /opt/factory/rules/osv-scanner.toml
-ADD --checksum=sha256:013a03eb8d5a67818901fe0632728a5f1011621d6b956f14b25e5f71a7b82c5c https://osv-vulnerabilities.storage.googleapis.com/PyPI/all.zip?generation=1792067584457782 /tmp/osv-pypi-all.zip
+ADD --checksum=sha256:95b325be6311d4d9ee90adf4207e73194e92480c2a72a71bbc3ac39fc74e0be5 "https://storage.googleapis.com/storage/v1/b/osv-vulnerabilities/o/PyPI%2Fall.zip?alt=media&generation=1792839797362039" /tmp/osv-pypi-all.zip
 USER 0:0
 RUN mkdir -p /opt/factory/osv-db/osv-scanner/PyPI && mv /tmp/osv-pypi-all.zip /opt/factory/osv-db/osv-scanner/PyPI/all.zip && chmod 0444 /opt/factory/osv-db/osv-scanner/PyPI/all.zip
 COPY --chown=1000:1000 deploy/deep-adapters/profiles/osv.json /opt/factory/adapter-profile.json
