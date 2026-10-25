@@ -12723,41 +12723,13 @@ def test_partition_revalidates_stale_existing_primitive_observation():
     assert core["state"] == "BLOCKED"
 
 
-def test_partition_and_reseal_are_idempotent_for_current_fixed_program():
-    import hashlib
+def test_partition_and_reseal_are_idempotent_for_current_fixed_program(tmp_path):
     import json
     from factoryline import review_audits
 
-    digest = "a" * 64
-    sources = [{"path": "app.py", "sha256": digest}]
-    workspace_sources = hashlib.sha256(
-        json.dumps([["app.py", digest]], separators=(",", ":")).encode()
-    ).hexdigest()
-    finding = {
-        "code": "SECURITY_DYNAMIC_EXECUTION",
-        "severity": "INFO",
-        "path": "app.py",
-        "line": 1,
-        "message": "fixed literal program",
-        "facts": {
-            "schema": "factory.fixed-literal-program.v1",
-            "disposition": "PROVEN_FIXED_LITERAL_PROGRAM",
-            "source_path": "app.py",
-            "source_sha256": digest,
-            "workspace_sources_sha256": workspace_sources,
-            "program_sha256": "b" * 64,
-        },
-    }
-    core = {
-        "sources": sources,
-        "findings": [finding],
-        "primitive_observations": [],
-        "finding_counts": {"SECURITY_DYNAMIC_EXECUTION": 1},
-        "state": "FINDINGS",
-        "tenant_read_contract": {},
-        "oracle_context": {},
-        "database_context": {},
-    }
+    # A current proof needs actual captured bytes, not fabricated digest strings.
+    (tmp_path / "app.py").write_text('eval("[1]")\n', encoding="utf-8")
+    core = review_audits.security_scan(tmp_path, cache_enabled=False)
     first = review_audits._seal_security_scan(core)
     first_hash = first["audit_sha256"]
     first_observations = json.dumps(first["primitive_observations"], sort_keys=True)
@@ -12806,7 +12778,7 @@ def test_partition_and_reseal_are_idempotent_for_current_fixed_program():
         ('PASSWORD = "PASSWORD"\n', False),
         (
             'from enum import Enum\nclass Code(str, Enum):\n    PASSWORD = "hunter2"\n',
-            False,
+            True,
         ),
         (
             'from local_enum import Enum\nclass Code(str, Enum):\n    PASSWORD = "PASSWORD"\n',
@@ -14552,7 +14524,7 @@ def test_native_pytest_collection_patterns_match_nested_paths_and_names(
     from factoryline.review_audits import security_scan
 
     (tmp_path / "pyproject.toml").write_text(
-        '[tool.pytest]\n'
+        "[tool.pytest]\n"
         'python_files = ["testing/python/*.py"]\n'
         'python_functions = ["check_", "*_verify"]\n'
         'python_classes = ["Acceptance", "*Suite"]\n',
@@ -14588,9 +14560,7 @@ def test_native_pytest_collection_patterns_match_nested_paths_and_names(
 
     report = security_scan(tmp_path, cache_enabled=cache_enabled)
     findings = [
-        item
-        for item in report["findings"]
-        if item["code"] == "QUALITY_HOLLOW_TEST"
+        item for item in report["findings"] if item["code"] == "QUALITY_HOLLOW_TEST"
     ]
     assert {item["line"] for item in findings} == {2, 3, 8, 12}
     assert all(item["path"] == "testing/python/test_matrix.py" for item in findings)
@@ -14602,7 +14572,7 @@ def test_pytest_collection_configuration_carries_all_name_patterns(tmp_path):
     from factoryline.review_audits import _pytest_collection_config
 
     (tmp_path / "pyproject.toml").write_text(
-        '[tool.pytest]\n'
+        "[tool.pytest]\n"
         'python_files = ["testing/python/*.py"]\n'
         'python_functions = ["check_", "*_verify"]\n'
         'python_classes = ["Acceptance", "*Suite"]\n',
@@ -14645,13 +14615,10 @@ def test_pytest_collection_rejects_custom_conftest_hooks(tmp_path):
     from factoryline.review_audits import ReviewAuditError, security_scan
 
     (tmp_path / "conftest.py").write_text(
-        "def pytest_pycollect_makeitem(collector, name, obj):\n"
-        "    return None\n",
+        "def pytest_pycollect_makeitem(collector, name, obj):\n    return None\n",
         encoding="utf-8",
     )
-    (tmp_path / "test_case.py").write_text(
-        "def test_empty(): pass\n", encoding="utf-8"
-    )
+    (tmp_path / "test_case.py").write_text("def test_empty(): pass\n", encoding="utf-8")
 
     with pytest.raises(ReviewAuditError, match="pytest test collection"):
         security_scan(tmp_path)
@@ -14674,16 +14641,13 @@ def test_pytest_collection_honors_static_test_false_guards(tmp_path):
         encoding="utf-8",
     )
     (tmp_path / "test_module_disabled.py").write_text(
-        "__test__ = False\n"
-        "def test_module_method(): assert True\n",
+        "__test__ = False\ndef test_module_method(): assert True\n",
         encoding="utf-8",
     )
 
     report = security_scan(tmp_path)
     findings = [
-        item
-        for item in report["findings"]
-        if item["code"] == "QUALITY_HOLLOW_TEST"
+        item for item in report["findings"] if item["code"] == "QUALITY_HOLLOW_TEST"
     ]
     assert [(item["path"], item["line"]) for item in findings] == [
         ("test_flags.py", 3),
