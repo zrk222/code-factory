@@ -2499,7 +2499,12 @@ def request_payload_value_kind(node, requests, aliases, alias_reader):
     kind = _request_payload_codec_kind(node, requests, aliases, alias_reader)
     if kind is not None:
         return kind
-    return _request_payload_source_kind(node, aliases, alias_reader)
+    kind = _request_payload_source_kind(node, aliases, alias_reader)
+    if kind is not None:
+        return kind
+    from .finite_capture import security_helper_return_kind
+
+    return security_helper_return_kind(node, requests, aliases)
 
 
 def _request_payload_name_kind(node, requests):
@@ -2533,7 +2538,23 @@ def _request_payload_source_kind(node, aliases, alias_reader):
         getattr(node, "_security_flow_statement", None),
         alias_reader,
     ):
-        return "bytes" if isinstance(node, ast.Attribute) else "text"
+        if isinstance(node, ast.Attribute):
+            return "bytes"
+        container = node.value if isinstance(node, ast.Subscript) else (
+            _credential_get_source_key(node) or (None,)
+        )[0]
+        if not isinstance(container, ast.Attribute):
+            return None
+        scope = getattr(node, "_security_lexical_scope", None)
+        resolved = alias_reader(scope, aliases, getattr(node, "_security_flow_statement", None))
+        from .review_audits import _name
+
+        head, _, tail = _name(container).partition(".")
+        canonical = resolved.get(head, "") + ("." + tail if tail else "")
+        if canonical in {"flask.request.args", "flask.request.form"} or _django_http_body_payload(
+            container, scope, resolved, {"GET", "POST"}
+        ):
+            return "text"
     return None
 
 

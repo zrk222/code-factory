@@ -375,16 +375,106 @@ def _security_helper_provider_stable(module, call, function):
     return not cache[key]
 
 
+@dataclass(frozen=True)
+class _SecurityFlowValue:
+    """Scanner-owned scalar shape and source trace, never an executed value."""
+
+    tainted: bool
+    kind: str
+    steps: tuple = ()
+
+
+def _security_flow_tainted(value):
+    return value is True or isinstance(value, _SecurityFlowValue) and value.tainted
+
+
+def _security_flow_step(expression, operation):
+    return (operation, tuple(_finite_source_span(expression) or ()),
+            hashlib.sha256(ast.dump(expression, include_attributes=False).encode()).hexdigest())
+
+
+def _security_flow_combine(expression, values, kind, operation):
+    if not values or any(not isinstance(value, _SecurityFlowValue) or value.kind != kind for value in values):
+        return False, None
+    steps = tuple(dict.fromkeys(step for value in values for step in value.steps))
+    if len(steps) >= 64:
+        return False, None
+    return True, _SecurityFlowValue(any(value.tainted for value in values), kind,
+        (*steps, _security_flow_step(expression, operation)))
+
+
+def _security_flow_shaped(expression, environment, aliases):
+    if isinstance(expression, ast.BinOp):
+        if not isinstance(expression.op, ast.Add):
+            return False, None
+        parts = [_security_flow_value(value, environment, aliases)[1]
+                 for value in (expression.left, expression.right)]
+        kind = parts[0].kind if isinstance(parts[0], _SecurityFlowValue) else None
+        return _security_flow_combine(expression, parts, kind, "SCALAR_CONCAT")
+    if isinstance(expression, ast.JoinedStr):
+        values = []
+        for part in expression.values:
+            if isinstance(part, ast.FormattedValue):
+                if part.conversion != -1 or part.format_spec is not None:
+                    return False, None
+                part = part.value
+            known, value = _security_flow_value(part, environment, aliases)
+            if not known:
+                return False, None
+            values.append(value)
+        return _security_flow_combine(expression, values, "text", "TEXT_INTERPOLATION")
+    receiver = expression.func.value
+    if expression.args or expression.keywords:
+        return False, None
+    known, value = _security_flow_value(receiver, environment, aliases)
+    incoming, outgoing = ("text", "bytes") if expression.func.attr == "encode" else ("bytes", "text")
+    if not known or not isinstance(value, _SecurityFlowValue) or value.kind != incoming or len(value.steps) >= 64:
+        return False, None
+    return True, _SecurityFlowValue(value.tainted, outgoing,
+        (*value.steps, _security_flow_step(expression, "BUILTIN_" + expression.func.attr.upper())))
+
+
+def _security_flow_request_leaf(expression, environment, aliases):
+    from . import review_integrity as flow
+    from .semantic_credential_sensor import http_request_payload, _request_payload_source_kind
+
+    if not http_request_payload(expression, aliases,
+        getattr(expression, "_security_lexical_scope", None),
+        getattr(expression, "_security_flow_statement", None), flow._security_scope_request_aliases):
+        return False, None
+    kind = _request_payload_source_kind(expression, aliases, flow._security_scope_request_aliases)
+    if kind is None:
+        return True, True
+    return True, _SecurityFlowValue(True, kind, (_security_flow_step(expression, "REQUEST_SOURCE"),))
+
+
+def _security_flow_name_value(expression, environment):
+    value = environment.get(expression.id)
+    if isinstance(value, _SecurityFlowValue):
+        if len(value.steps) >= 64:
+            return False, None
+        value = _SecurityFlowValue(value.tainted, value.kind,
+            (*value.steps, _security_flow_step(expression, "ALIAS_USE")))
+    return value is not None, value
+
+
 def _security_flow_value(expression, environment, aliases):
     from . import review_integrity as flow
 
     if sum(1 for _ in ast.walk(expression)) > 512:
         return False, None
     if isinstance(expression, ast.Name):
-        value = environment.get(expression.id)
-        return value is not None, value
+        return _security_flow_name_value(expression, environment)
+    if isinstance(expression, ast.Constant) and type(expression.value) in {str, bytes}:
+        return True, _SecurityFlowValue(False, "text" if type(expression.value) is str else "bytes",
+            (_security_flow_step(expression, "FIXED_LITERAL"),))
     if _fixed_literal_value(expression):
         return True, False
+    shaped = isinstance(expression, (ast.BinOp, ast.JoinedStr)) or (
+        isinstance(expression, ast.Call) and isinstance(expression.func, ast.Attribute)
+        and expression.func.attr in {"encode", "decode"})
+    if shaped:
+        return _security_flow_shaped(expression, environment, aliases)
     if not isinstance(expression, (ast.Call, ast.Attribute, ast.Subscript)):
         # A may-taint arithmetic expression is not a proved evaluable value.
         return False, None
@@ -397,21 +487,37 @@ def _security_flow_value(expression, environment, aliases):
         "werkzeug.utils.secure_filename",
     }:
         return False, None
-    tainted = {name for name, value in environment.items() if value is True}
+    leaf = _security_flow_request_leaf(expression, environment, aliases)
+    if leaf[0]:
+        return leaf
+    tainted = {name for name, value in environment.items() if isinstance(name, str) and _security_flow_tainted(value)}
+    if isinstance(expression, ast.Call):
+        function = flow._security_local_helper_definition(expression)
+        if function is not None:
+            for name, value in environment.items():
+                if isinstance(value, _SecurityFlowValue) and value.tainted:
+                    tainted.add(("request-type:" + value.kind, name))
+            value = security_helper_return_value(expression, function, tainted, set(), aliases,
+                caller_values=environment)
+            return value is not None, value
     if flow._security_expr_tainted(expression, tainted, set(), aliases):
         return True, True
     return False, None
 
 
-def _security_helper_initial(call, actuals, requests, parameters, aliases):
+def _security_helper_initial(call, actuals, requests, parameters, aliases, caller_values=None):
     supplied = {id(value) for value in call.args}
     supplied.update(id(keyword.value) for keyword in call.keywords)
-    caller = {name: True for name in requests | parameters if isinstance(name, str)}
+    caller = dict(caller_values or {})
+    caller.update({name: True for name in requests | parameters if isinstance(name, str)})
+    for item in requests:
+        if isinstance(item, tuple) and len(item) == 2 and item[0] in {"request-type:text", "request-type:bytes"}:
+            caller[item[1]] = _SecurityFlowValue(True, item[0].split(":", 1)[1])
     initial = {}
     for name, value in actuals.items():
         # Omitted defaults belong to the definition, never to the caller's scope.
         if _fixed_literal_value(value):
-            initial[name] = False
+            initial[name] = _security_flow_value(value, {}, aliases)[1]
         elif id(value) in supplied:
             known, tainted = _security_flow_value(value, caller, aliases)
             initial[name] = tainted if known else None
@@ -420,15 +526,15 @@ def _security_helper_initial(call, actuals, requests, parameters, aliases):
     return initial
 
 
-def security_helper_return_tainted(call, function, requests, parameters, aliases):
+def security_helper_return_value(call, function, requests, parameters, aliases, *, caller_values=None):
     """Trace an exact source helper return from the supplied request roots without executing it."""
     binding = _security_helper_binding(call, function)
     if binding is None:
-        return False
+        return None
     module, actuals = binding
-    initial = _security_helper_initial(call, actuals, requests, parameters, aliases)
+    initial = _security_helper_initial(call, actuals, requests, parameters, aliases, caller_values)
     if any(value is None for value in initial.values()):
-        return False
+        return None
     function._security_helper_active = True
     module._security_helper_flow_depth = (
         getattr(module, "_security_helper_flow_depth", 0) + 1
@@ -441,10 +547,49 @@ def security_helper_return_tainted(call, function, requests, parameters, aliases
                 expression, environment, aliases
             ),
         )
-        return result["status"] == "COMPLETE" and result["return_values"] == (True,)
+        value = result["return_values"][0] if result["status"] == "COMPLETE" and len(result["return_values"]) == 1 else None
+        if isinstance(value, _SecurityFlowValue):
+            if len(value.steps) >= 62:
+                return None
+            value = _SecurityFlowValue(value.tainted, value.kind, (*value.steps,
+                _security_flow_step(call, "ACTUAL_TO_FORMAL"),
+                _security_flow_step(function, "HELPER_RETURN")))
+        return value
     finally:
         function._security_helper_active = False
         module._security_helper_flow_depth -= 1
+
+
+def security_helper_return_tainted(call, function, requests, parameters, aliases):
+    """Boolean compatibility view of the one native helper summary."""
+    return _security_flow_tainted(security_helper_return_value(call, function, requests, parameters, aliases))
+
+
+def security_helper_return_kind(call, requests, aliases):
+    from . import review_integrity as flow
+
+    function = flow._security_local_helper_definition(call) if isinstance(call, ast.Call) else None
+    value = security_helper_return_value(call, function, requests, set(), aliases)
+    return value.kind if isinstance(value, _SecurityFlowValue) and value.tainted else None
+
+
+def security_input_value_flow(expression, requests, aliases):
+    """Return a regenerable scalar input trace, not runtime authority or safety."""
+    import json
+
+    environment = {name: True for name in requests if isinstance(name, str)}
+    for item in requests:
+        if isinstance(item, tuple) and len(item) == 2 and item[0] in {"request-type:text", "request-type:bytes"}:
+            environment[item[1]] = _SecurityFlowValue(True, item[0].split(":", 1)[1])
+    known, value = _security_flow_value(expression, environment, aliases)
+    if not known or not isinstance(value, _SecurityFlowValue) or not value.tainted:
+        return None
+    evidence = {"schema": "factory.security.scalar-input-flow.v1", "value_kind": value.kind,
+        "scope": "dangerous_argument_only", "runtime_execution": "not_performed",
+        "steps": [{"operation": operation, "span": list(span), "ast_sha256": digest}
+                  for operation, span, digest in value.steps]}
+    evidence["trace_sha256"] = hashlib.sha256(json.dumps(evidence,sort_keys=True,separators=(",", ":")).encode()).hexdigest()
+    return evidence
 
 
 def _security_forward_helper_candidate(call, requests, aliases, flow):
@@ -462,7 +607,7 @@ def _security_forward_helper_candidate(call, requests, aliases, flow):
     initial = _security_helper_initial(call, actuals, requests, set(), aliases)
     if any(value is None for value in initial.values()):
         return None
-    sources = {name for name, value in initial.items() if value is True}
+    sources = {name for name, value in initial.items() if _security_flow_tainted(value)}
     if not sources:
         return None
     return function, module, actuals, initial, sources
@@ -482,12 +627,12 @@ def _security_forward_helper_supported(function, initial, aliases, relative):
 
 
 def _security_forward_helper_request_sources(
-    actuals, requests, aliases, sources, request_payload_value_kind, flow
+    actuals, requests, aliases, sources, request_payload_value_kind, flow, initial
 ):
     for name in tuple(sources):
-        kind = request_payload_value_kind(
-            actuals[name], requests, aliases, flow._security_scope_request_aliases
-        )
+        value = initial[name]
+        kind = value.kind if isinstance(value, _SecurityFlowValue) else request_payload_value_kind(
+            actuals[name], requests, aliases, flow._security_scope_request_aliases)
         if kind:
             sources.add(("request-type:" + kind, name))
 
@@ -536,7 +681,7 @@ def security_forward_helper_sources(relative, call, aliases, requests, helpers):
     if not _security_forward_helper_supported(function, initial, aliases, relative):
         return
     _security_forward_helper_request_sources(
-        actuals, requests, aliases, sources, request_payload_value_kind, flow
+        actuals, requests, aliases, sources, request_payload_value_kind, flow, initial
     )
     _security_forward_helper_run(
         function, module, relative, aliases, sources, helpers, flow

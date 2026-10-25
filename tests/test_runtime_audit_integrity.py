@@ -5866,3 +5866,78 @@ def test_pickle_reconstruction317_model_rejects_exponential_fstring_growth(monke
         )
         is None
     )
+
+
+_TYPED_SOURCE = 'from flask import request\n'
+
+
+def _typed_origin_findings(source):
+    from pathlib import Path
+
+    root = Path.cwd()
+    return review_audits._security_scan_tree(root, root / 'app.py', ast.parse(source), security_only=True)
+
+
+@pytest.mark.parametrize('imports,body,sink,rule', [
+    ('', 'alias = "(" + value + ")"', 'eval', 'SECURITY_DYNAMIC_EXECUTION'),
+    ('import os\n', 'alias = "echo " + value', 'os.system', 'SECURITY_OS_COMMAND'),
+    ('import subprocess\n', 'alias = f"echo {value}"', 'subprocess.run', 'SECURITY_SHELL_COMMAND'),
+    ('import yaml\n', 'alias = value + " "', 'yaml.unsafe_load', 'SECURITY_UNSAFE_YAML'),
+    ('import pickle\n', "alias = b'' + value", 'pickle.loads', 'SECURITY_UNSAFE_DESERIALIZATION'),
+    ('import pickle\n', 'alias = value.encode()', 'pickle.loads', 'SECURITY_UNSAFE_DESERIALIZATION'),
+])
+def test_native_typed_origin_common_transforms_reach_five_sink_families(imports, body, sink, rule):
+    binary = "b''" in body
+    payload = 'request.get_data()' if binary else 'request.get_data(as_text=True)'
+    options = ', shell=True' if sink == 'subprocess.run' else ''
+    source = imports + _TYPED_SOURCE + f'def transform(value):\n    {body}\n    return alias\n{sink}(transform({payload}){options})\n'
+    (finding,) = [row for row in _typed_origin_findings(source) if row['code'] == rule]
+    premise = finding['facts']['security_precondition']
+    trace = premise['input_value_flow']
+    assert premise['status'] == 'SUPPORTED'
+    assert trace['value_kind'] == ('bytes' if binary or 'encode' in body else 'text')
+    assert len(trace['trace_sha256']) == 64
+    assert any(step['operation'] == 'HELPER_RETURN' for step in trace['steps'])
+    assert all(len(step['ast_sha256']) == 64 for step in trace['steps'])
+    assert trace['runtime_execution'] == 'not_performed'
+
+
+@pytest.mark.parametrize('source', [
+    _TYPED_SOURCE + "def transform(value):\n    alias = 'prefix' + opaque()\n    return alias\neval(transform(request.get_data(as_text=True)))\n",
+    _TYPED_SOURCE + "def transform(value):\n    alias = b'prefix' + value\n    return alias\neval(transform(request.get_data(as_text=True)))\n",
+    _TYPED_SOURCE + "def transform(value):\n    alias = value + opaque()\n    return alias\neval(transform(request.get_data(as_text=True)))\n",
+    _TYPED_SOURCE + "def transform(value):\n    alias = f'{value!r}'\n    return alias\neval(transform(request.get_data(as_text=True)))\n",
+    _TYPED_SOURCE + "def transform(value):\n    alias = 'fixed'\n    return alias\neval(transform(request.get_data(as_text=True)))\n",
+    _TYPED_SOURCE + "def transform(value):\n    return transform(value)\neval(transform(request.get_data(as_text=True)))\n",
+    'import pickle\n' + _TYPED_SOURCE + "def transform(value):\n    return value.encode()\nvalue = request.get_json()['payload']\npickle.loads(transform(value))\n",
+    'import pickle\n' + _TYPED_SOURCE + "def transform(value):\n    return value.encode()\nvalue = request.json['payload']\npickle.loads(transform(value))\n",
+    'import pickle\n' + _TYPED_SOURCE + "def transform(value):\n    return value + ''\npickle.loads(transform(request.get_data(as_text=True)))\n",
+    _TYPED_SOURCE + "def transform(value):\n    return value + ')'\ntransform.__code__ = supplied\neval(transform(request.get_data(as_text=True)))\n",
+])
+def test_native_typed_origin_declines_unknown_mixed_overwritten_and_mutated_inputs(source):
+    rows = _typed_origin_findings(source)
+    assert any(row['code'] in {'SECURITY_DYNAMIC_EXECUTION', 'SECURITY_UNSAFE_DESERIALIZATION'} for row in rows)
+    assert not any(row.get('facts', {}).get('security_precondition') for row in rows)
+
+
+def test_native_typed_origin_nested_helper_preserves_known_untainted_prefix():
+    source = _TYPED_SOURCE + "def combine(prefix, value):\n    return prefix + value\ndef transform(value):\n    prefix = '('\n    return combine(prefix, value)\neval(transform(request.get_data(as_text=True)))\n"
+    (row,) = [row for row in _typed_origin_findings(source) if row['code'] == 'SECURITY_DYNAMIC_EXECUTION']
+    assert row['facts']['security_precondition']['input_value_flow']['value_kind'] == 'text'
+
+
+def test_native_typed_origin_public_source_bound_tier_and_reseal(tmp_path):
+    source = _TYPED_SOURCE + "def transform(value):\n    return '(' + value + ')'\neval(transform(request.get_data(as_text=True)))\n"
+    (tmp_path / 'app.py').write_text(source, encoding='utf8')
+    report = review_audits.security_scan(tmp_path, cache_enabled=False)
+    (row,) = [row for row in report['finding_tier_report']['ledger'] if row['raw_finding']['code'] == 'SECURITY_DYNAMIC_EXECUTION']
+    assert row['tier'] == 'SUPPORTED_DEFECT'
+    assert review_audits._seal_security_scan(report.copy())['finding_tier_report'] == report['finding_tier_report']
+
+
+def test_native_typed_origin_helpers_enrolled_in_cache_identity():
+    from factoryline import finite_capture as finite
+    from factoryline import runtime_audit_integrity as runtime
+    helpers = runtime.credential_validation_helpers()
+    assert all(helper in helpers for helper in (finite._SecurityFlowValue, finite._security_flow_shaped,
+        finite.security_helper_return_value, finite.security_helper_return_kind, finite.security_input_value_flow))

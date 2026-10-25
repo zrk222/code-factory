@@ -4046,6 +4046,10 @@ def _security_statement_call_findings(
             call._security_supported_precondition = supported_security_precondition(
                 call, "untrusted_request", canonical
             )
+            from .finite_capture import security_input_value_flow
+
+            if trace := security_input_value_flow(call.args[0], requests, aliases):
+                call._security_supported_precondition["input_value_flow"] = trace
         finding = _security_source_sink_call(
             relative, call, aliases, requests, parameters, connections, cursors, helpers
         )
