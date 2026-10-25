@@ -3724,14 +3724,53 @@ def test_pickle_colocation_uses_current_exact_byte_occurrence_guard(
     )
 
 
+def _test_pickle_runtime_identities():
+    base = {
+        "implementation": "cpython",
+        "version": "3.11.9",
+        "executable_sha256": "1" * 64,
+        "pickle_source_sha256": "2" * 64,
+        "pickle_implementation_sha256": "3" * 64,
+    }
+    v3 = {
+        **base,
+        "enum_source_sha256": "4" * 64,
+        "typing_source_sha256": "5" * 64,
+        "python_runtime_sha256": "6" * 64,
+    }
+    v4 = {
+        **v3,
+        "copyreg_source_sha256": "7" * 64,
+        "collections_source_sha256": "8" * 64,
+        "http_cookiejar_source_sha256": "9" * 64,
+        "threading_source_sha256": "a" * 64,
+    }
+    return base, v3, v4
+
+
+def _patch_test_pickle_runtime_identities(monkeypatch, finite):
+    base, v3, v4 = _test_pickle_runtime_identities()
+    monkeypatch.setattr(finite, "_provider_runtime_identity", lambda: dict(base))
+    monkeypatch.setattr(finite, "provider_runtime_identity_v3", lambda: dict(v3))
+    monkeypatch.setattr(finite, "provider_runtime_identity_v4", lambda: dict(v4))
+
+
 def _typed_pickle_v3_fixture(
-    tmp_path, *, model_source=None, api_source=None, caller_source=None, model_version=3
+    tmp_path,
+    monkeypatch,
+    *,
+    model_source=None,
+    api_source=None,
+    caller_source=None,
+    model_version=3,
 ):
     import ast
     import hashlib
 
     from factoryline import finite_capture as finite
     from factoryline.runtime_audit_common import canonical_bytes
+
+    _patch_test_pickle_runtime_identities(monkeypatch, finite)
 
     model_source = model_source or (
         "from enum import IntEnum\n\n"
@@ -3836,9 +3875,11 @@ def _typed_pickle_v3_fixture(
     return finite, profile, view, raw_sources, source_path, caller_bytes, call
 
 
-def test_typed_pickle_v3_reconstructs_source_bound_intenum_and_build_state(tmp_path):
+def test_typed_pickle_v3_reconstructs_source_bound_intenum_and_build_state(
+    tmp_path, monkeypatch
+):
     finite, profile, view, source, source_path, caller, call = _typed_pickle_v3_fixture(
-        tmp_path
+        tmp_path, monkeypatch
     )
 
     binding = finite.provider_constructor_binding(
@@ -3940,10 +3981,10 @@ def test_typed_pickle_v3_reconstructs_source_bound_intenum_and_build_state(tmp_p
     ],
 )
 def test_typed_pickle_v3_rejects_unknown_reducer_state_enum_and_values(
-    tmp_path, model_source, caller_source, instance_state
+    tmp_path, monkeypatch, model_source, caller_source, instance_state
 ):
     finite, profile, view, source, source_path, _, call = _typed_pickle_v3_fixture(
-        tmp_path, model_source=model_source, caller_source=caller_source
+        tmp_path, monkeypatch, model_source=model_source, caller_source=caller_source
     )
 
     assert (
@@ -3960,10 +4001,10 @@ def test_typed_pickle_v3_rejects_unknown_reducer_state_enum_and_values(
 
 
 def test_typed_pickle_v3_rejects_aliased_build_containers_and_reexport_rebinding(
-    tmp_path,
+    tmp_path, monkeypatch
 ):
     finite, profile, view, source, source_path, _, call = _typed_pickle_v3_fixture(
-        tmp_path
+        tmp_path, monkeypatch
     )
     shared = []
     assert (
@@ -3979,7 +4020,7 @@ def test_typed_pickle_v3_rejects_aliased_build_containers_and_reexport_rebinding
     )
 
     finite, profile, view, source, source_path, _, call = _typed_pickle_v3_fixture(
-        tmp_path
+        tmp_path, monkeypatch
     )
     assert (
         finite.provider_exception_record(
@@ -3995,6 +4036,7 @@ def test_typed_pickle_v3_rejects_aliased_build_containers_and_reexport_rebinding
 
     finite, profile, view, source, source_path, _, call = _typed_pickle_v3_fixture(
         tmp_path,
+        monkeypatch,
         api_source="from .middle import WebSocketError, WSCloseCode\nWebSocketError = other\n",
     )
     assert (
@@ -4010,9 +4052,9 @@ def test_typed_pickle_v3_rejects_aliased_build_containers_and_reexport_rebinding
     )
 
 
-def test_v2_exception_model_does_not_gain_v3_intenum_semantics(tmp_path):
+def test_v2_exception_model_does_not_gain_v3_intenum_semantics(tmp_path, monkeypatch):
     finite, profile, view, source, _, _, call = _typed_pickle_v3_fixture(
-        tmp_path, model_version=2
+        tmp_path, monkeypatch, model_version=2
     )
 
     assert (
@@ -4078,11 +4120,13 @@ def test_pickle_colocation_helpers_participate_in_runtime_proof_identity():
     )
 
 
-def _generic_pickle_v4_fixture(provider, caller):
+def _generic_pickle_v4_fixture(provider, caller, monkeypatch):
     import ast
     import hashlib
     from factoryline import finite_capture as finite
     from factoryline.runtime_audit_common import canonical_bytes
+
+    _patch_test_pickle_runtime_identities(monkeypatch, finite)
 
     sources = {
         "pkg/models.py": provider.encode(),
@@ -4157,11 +4201,13 @@ _GENERIC_PICKLE_V4_CALLER = (
 )
 
 
-def test_pickle_generic_v4_source_graph_preserves_shared_identity_and_protocol_recipes():
+def test_pickle_generic_v4_source_graph_preserves_shared_identity_and_protocol_recipes(
+    monkeypatch,
+):
     from factoryline import finite_capture as finite
 
     sources, profile, view, expression = _generic_pickle_v4_fixture(
-        _GENERIC_PICKLE_V4_PROVIDER, _GENERIC_PICKLE_V4_CALLER
+        _GENERIC_PICKLE_V4_PROVIDER, _GENERIC_PICKLE_V4_CALLER, monkeypatch
     )
     record = finite.provider_pickle_graph_record(
         profile,
@@ -4191,12 +4237,14 @@ def test_pickle_generic_v4_source_graph_preserves_shared_identity_and_protocol_r
         "    @property\n    def value(self):\n        return external()\n",
     ],
 )
-def test_pickle_generic_v4_declines_unmodeled_reconstruction_callbacks(insertion):
+def test_pickle_generic_v4_declines_unmodeled_reconstruction_callbacks(
+    insertion, monkeypatch
+):
     from factoryline import finite_capture as finite
 
     provider = _GENERIC_PICKLE_V4_PROVIDER + insertion
     sources, profile, view, expression = _generic_pickle_v4_fixture(
-        provider, _GENERIC_PICKLE_V4_CALLER
+        provider, _GENERIC_PICKLE_V4_CALLER, monkeypatch
     )
     assert (
         finite.provider_pickle_graph_record(
@@ -4210,7 +4258,7 @@ def test_pickle_generic_v4_declines_unmodeled_reconstruction_callbacks(insertion
     )
 
 
-def test_pickle_generic_v4_replays_paired_source_state_hooks_and_slots():
+def test_pickle_generic_v4_replays_paired_source_state_hooks_and_slots(monkeypatch):
     from factoryline import finite_capture as finite
 
     provider = (
@@ -4226,7 +4274,9 @@ def test_pickle_generic_v4_replays_paired_source_state_hooks_and_slots():
         '        self.token = state["token"]\n'
     )
     caller = 'from pkg import Record\ndef build():\n    return Record("fixed")\n'
-    sources, profile, view, expression = _generic_pickle_v4_fixture(provider, caller)
+    sources, profile, view, expression = _generic_pickle_v4_fixture(
+        provider, caller, monkeypatch
+    )
 
     record = finite.provider_pickle_graph_record(
         profile,
@@ -4264,11 +4314,13 @@ def test_pickle_generic_v4_replays_paired_source_state_hooks_and_slots():
         "    def __setstate__(self, state):\n        external(state)\n",
     ],
 )
-def test_pickle_generic_v4_rejects_unbounded_slots_or_state_hook_effects(provider):
+def test_pickle_generic_v4_rejects_unbounded_slots_or_state_hook_effects(
+    provider, monkeypatch
+):
     from factoryline import finite_capture as finite
 
     sources, profile, view, expression = _generic_pickle_v4_fixture(
-        provider, _GENERIC_PICKLE_V4_CALLER
+        provider, _GENERIC_PICKLE_V4_CALLER, monkeypatch
     )
     assert (
         finite.provider_pickle_graph_record(
@@ -4306,7 +4358,7 @@ def test_pickle_generic_v4_graph_mutable_cycle_and_tuple_cycle_have_distinct_out
     ],
 )
 def test_pickle_generic_v4_shared_constructor_handles_builtin_container_bases(
-    base, initializer, base_tag
+    base, initializer, base_tag, monkeypatch
 ):
     from factoryline import finite_capture as finite
 
@@ -4315,7 +4367,9 @@ def test_pickle_generic_v4_shared_constructor_handles_builtin_container_bases(
         "    def __init__(self):\n" + initializer + '        self.metadata = "owned"\n'
     )
     caller = "from pkg import Record\ndef build():\n    return Record()\n"
-    sources, profile, view, expression = _generic_pickle_v4_fixture(provider, caller)
+    sources, profile, view, expression = _generic_pickle_v4_fixture(
+        provider, caller, monkeypatch
+    )
     record = finite.provider_pickle_graph_record(
         profile,
         sources,
@@ -4332,11 +4386,13 @@ def test_pickle_generic_v4_shared_constructor_handles_builtin_container_bases(
         assert root["protocol_recipes"][0]["insertion"] == "BASE_VALUE_IN_RECONSTRUCTOR"
 
 
-def test_pickle_generic_v4_stale_source_and_supplied_state_are_not_authority():
+def test_pickle_generic_v4_stale_source_and_supplied_state_are_not_authority(
+    monkeypatch,
+):
     from factoryline import finite_capture as finite
 
     sources, profile, view, expression = _generic_pickle_v4_fixture(
-        _GENERIC_PICKLE_V4_PROVIDER, _GENERIC_PICKLE_V4_CALLER
+        _GENERIC_PICKLE_V4_PROVIDER, _GENERIC_PICKLE_V4_CALLER, monkeypatch
     )
     assert (
         finite.provider_pickle_graph_record(
@@ -4363,7 +4419,7 @@ def test_pickle_generic_v4_stale_source_and_supplied_state_are_not_authority():
 
 
 def test_pickle_generic_v4_native_scan_uses_one_graph_for_multiple_source_types(
-    tmp_path,
+    tmp_path, monkeypatch
 ):
     import ast
     from factoryline import review_audits as audit
@@ -4374,7 +4430,7 @@ def test_pickle_generic_v4_native_scan_uses_one_graph_for_multiple_source_types(
         "    payload = pickle.dumps(obj)\n    return pickle.loads(payload)\n"
     )
     sources, profile, _, _ = _generic_pickle_v4_fixture(
-        _GENERIC_PICKLE_V4_PROVIDER, caller
+        _GENERIC_PICKLE_V4_PROVIDER, caller, monkeypatch
     )
     for relative, raw in sources.items():
         target = tmp_path / relative

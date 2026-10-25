@@ -620,9 +620,29 @@ def test_pickle_origin_rejects_non_native_serializer_namespace():
     ],
 )
 def test_pickle_typed_v3_reuses_protocol_loop_origin_after_model_selection(
-    tmp_path, extra_source, expected_count
+    tmp_path, extra_source, expected_count, monkeypatch
 ):
     from factoryline.finite_capture import provider_analysis_profile
+
+    runtime_base = {
+        "implementation": "cpython",
+        "version": "3.11.9",
+        "executable_sha256": "1" * 64,
+        "pickle_source_sha256": "2" * 64,
+        "pickle_implementation_sha256": "3" * 64,
+    }
+    runtime_v3 = {
+        **runtime_base,
+        "enum_source_sha256": "4" * 64,
+        "typing_source_sha256": "5" * 64,
+        "python_runtime_sha256": "6" * 64,
+    }
+    monkeypatch.setattr(
+        finite, "_provider_runtime_identity", lambda: dict(runtime_base)
+    )
+    monkeypatch.setattr(
+        finite, "provider_runtime_identity_v3", lambda: dict(runtime_v3)
+    )
 
     provider_source = (
         "from enum import IntEnum\n"

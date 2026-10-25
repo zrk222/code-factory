@@ -528,10 +528,8 @@ class _SourceBoundSecurityReport(dict):
         return result
 
 
-def seal_security_scan(audit, core: dict[str, Any]) -> dict[str, Any]:
-    """Revalidate local captures on every seal; never serialize their source bytes."""
-    prior_state, prior_summary = core.get("state"), core.get("action_summary")
-    prior_tier_report = core.get("finding_tier_report")
+def _prepare_security_scan_sources(core, prior_tier_report):
+    """Normalize review rows and temporarily expose captured bytes to integrity."""
     core["findings"] = [*core.get("findings", []), *core.pop("context_reviews", [])]
     core.pop("context_review_count", None)
     for row in (prior_tier_report or {}).get("ledger", []):
@@ -541,15 +539,20 @@ def seal_security_scan(audit, core: dict[str, Any]) -> dict[str, Any]:
         captured = dict(core._captured_sources)
     if captured is not None:
         core["_primitive_source_bytes"] = captured
-    try:
-        audit.integrity.partition_proven_primitive_observations(core)
-    finally:
-        core.pop("_primitive_source_bytes", None)
+    return captured
+
+
+def _preserve_security_scan_incomplete_state(audit, core, prior_state, prior_summary):
+    """Prevent resealing from promoting a previously incomplete scan to clean."""
     if prior_state == "INCOMPLETE" and core.get("state") == "CLEAN":
         core["state"] = "INCOMPLETE"
         core["action_summary"] = prior_summary or audit._security_scan_action_summary(
             "INCOMPLETE"
         )
+
+
+def _apply_security_scan_policy(audit, core, captured, prior_tier_report, prior_state):
+    """Recompute only the explicitly selected defect policy after integrity runs."""
     if "selected_defect_policy" in core:
         from . import primitive_observation_binding as primitive
 
@@ -568,6 +571,10 @@ def seal_security_scan(audit, core: dict[str, Any]) -> dict[str, Any]:
             primitive.apply_pickle_source_role_policy(core, captured)
     else:
         core.pop("defect_policy_decision", None)
+
+
+def _finish_security_scan_seal(audit, core, captured):
+    """Bind candidate actions and report digest after all source policy checks."""
     candidate = sha256(
         json.dumps(
             audit._security_scan_report_candidate_payload(core),
@@ -590,6 +597,20 @@ def seal_security_scan(audit, core: dict[str, Any]) -> dict[str, Any]:
         result._captured_sources = tuple(captured.items())
         return result
     return core
+
+
+def seal_security_scan(audit, core: dict[str, Any]) -> dict[str, Any]:
+    """Revalidate local captures on every seal; never serialize their source bytes."""
+    prior_state, prior_summary = core.get("state"), core.get("action_summary")
+    prior_tier_report = core.get("finding_tier_report")
+    captured = _prepare_security_scan_sources(core, prior_tier_report)
+    try:
+        audit.integrity.partition_proven_primitive_observations(core)
+    finally:
+        core.pop("_primitive_source_bytes", None)
+    _preserve_security_scan_incomplete_state(audit, core, prior_state, prior_summary)
+    _apply_security_scan_policy(audit, core, captured, prior_tier_report, prior_state)
+    return _finish_security_scan_seal(audit, core, captured)
 
 
 def security_scan_report(

@@ -989,6 +989,8 @@ def workspace_builtin_profile(snapshots, files):
 
 def workspace_builtin_helpers():
     """Return workspace builtin and source-analysis helpers used by fixed-program and literal-input proofs."""
+    from . import pickle_model_audit
+
     return (
         _workspace_namespace_hazard,
         _workspace_dynamic_exec_risk,
@@ -1023,6 +1025,7 @@ def workspace_builtin_helpers():
         _simple_scope_assignment,
         _prior_pickle_dump,
         _single_local_pickle_bytes_flow,
+        closed_literal_pickle_witness,
         closed_local_pickle_flow,
         closed_local_pickle_origin,
         local_pickle_byte_origin,
@@ -1032,6 +1035,7 @@ def workspace_builtin_helpers():
             if name.startswith(("_pickle_", "_local_pickle", "_conditional_"))
             and callable(value)
         ),
+        *pickle_model_audit.cache_helpers(),
     )
 
 
@@ -1656,6 +1660,8 @@ def _oracle_bound_names(statement):
 
 def native_execution_helpers():
     """Return helpers that analyze native test execution and correlated source-bound calls."""
+    from . import pickle_model_audit
+
     return (
         assigned_sync_function_call,
         _oracle_call_candidates,
@@ -1668,6 +1674,8 @@ def native_execution_helpers():
         _native_call_probe_lines,
         native_test_probe,
         _oracle_bound_names,
+        closed_local_pickle_origin,
+        *pickle_model_audit.cache_helpers(),
     )
 
 
@@ -1702,6 +1710,8 @@ def credential_validation_helpers():
 
 def finite_template_input_helpers():
     """Return the finite-template capture and provider-closure helpers used by source analysis."""
+    from . import pickle_model_audit
+
     return (
         credential_validation_helpers,
         *credential_validation_helpers(),
@@ -1724,6 +1734,9 @@ def finite_template_input_helpers():
         _LiteralConsumers._finite_pytest_tree_closed,
         _LiteralConsumers._finite_pytest_name_closed,
         _LiteralConsumers._finite_module_initializer_safe,
+        closed_literal_pickle_witness,
+        closed_local_pickle_origin,
+        *pickle_model_audit.cache_helpers(),
     )
 
 
@@ -1811,62 +1824,16 @@ def _test_serialization_roundtrip(relative, node, aliases):
 
 
 def closed_literal_pickle_witness(relative, node, aliases):
-    """Prove only modeled stdlib bytes from an inline, closed builtin literal.
+    """Retain the runtime facade while delegating pickle proof to its model."""
+    from .pickle_model_audit import closed_literal_pickle_witness as build_witness
 
-    This excludes arbitrary objects/reducers and does not certify runtime or
-    deployment safety. The partition independently rebuilds this source witness.
-    """
-    from . import review_audits as audit
-    from .review_integrity import _security_module_scope, _security_proven_callee
-
-    if len(node.args) != 1 or node.keywords:
-        return {}
-    dump = node.args[0]
-    if not isinstance(dump, ast.Call) or len(dump.args) != 1 or dump.keywords:
-        return {}
-    literal = dump.args[0]
-    if sum(
-        1 for _ in ast.walk(literal)
-    ) > 512 or not _finite_capture._fixed_literal_value(literal):
-        return {}
-    if not all(
-        _security_proven_callee(call, aliases, name)
-        for call, name in ((node, "pickle.loads"), (dump, "pickle.dumps"))
-    ):
-        return {}
-    module = _security_module_scope(getattr(node, "_security_lexical_scope", None))
-    context = getattr(module, "_security_source_context", None)
-    if not isinstance(context, tuple) or len(context) != 2:
-        return {}
-    root, sources = context
-    raw = sources.get(root / relative)
-    if not isinstance(raw, bytes) or hashlib.sha256(raw).hexdigest() != getattr(
-        module, "_oracle_source_sha256", None
-    ):
-        return {}
-    inventory = _closed_pickle_inventory(root, sources, audit)
-    if inventory is None:
-        return {}
-    return {
-        "schema": "factory.closed-literal-pickle.v1",
-        "disposition": "PROVEN_CLOSED_LITERAL_PICKLE_BYTES",
-        "source_path": relative,
-        "source_sha256": hashlib.sha256(raw).hexdigest(),
-        "workspace_sources_sha256": inventory,
-        "call_span": [
-            node.lineno,
-            node.col_offset,
-            node.end_lineno,
-            node.end_col_offset,
-        ],
-        "literal_sha256": hashlib.sha256(
-            ast.dump(literal, include_attributes=False).encode()
-        ).hexdigest(),
-        "hypothesis": "EXTERNAL_PICKLE_BYTE_INJECTION",
-        "provider_model": "stdlib_pickle_builtin_literal_values",
-        "runtime_assurance": "INCOMPLETE",
-        "target_execution": "not_performed",
-    }
+    return build_witness(
+        relative,
+        node,
+        aliases,
+        fixed_literal_value=_finite_capture._fixed_literal_value,
+        closed_pickle_inventory=_closed_pickle_inventory,
+    )
 
 
 def _closed_pickle_inventory(root, sources, audit):
@@ -2055,50 +2022,21 @@ def _pickle_load_call_shape(node, loaded_name, *, allow_nested=False):
 
 
 def closed_local_pickle_origin(node, loaded_name, aliases, audit):
-    """Prove a direct native dumps-to-loads source origin, without effect credit."""
-    if loaded_name not in {
-        "pickle.loads",
-        "_pickle.loads",
-    } or not _pickle_load_call_shape(node, loaded_name, allow_nested=True):
-        return None
-    scope = getattr(node, "_oracle_scope", None) or getattr(
-        node, "_security_lexical_scope", None
+    """Retain the runtime facade while delegating native origin proof."""
+    from .pickle_model_audit import closed_local_pickle_origin as find_origin
+
+    return find_origin(
+        node,
+        loaded_name,
+        aliases,
+        audit,
+        load_call_shape=_pickle_load_call_shape,
+        direct_scope_index=_pickle_direct_scope_index,
+        scope_module=_pickle_scope_module,
+        direct_dump_origin=_pickle_direct_dump_origin,
+        direct_protocol=_pickle_direct_protocol,
+        serializer_imports_closed=_pickle_direct_serializer_imports_closed,
     )
-    if not isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)):
-        return None
-    load_index = _pickle_direct_scope_index(node, scope, audit)
-    if load_index is None:
-        return None
-    module = _pickle_scope_module(scope)
-    if not isinstance(module, ast.Module):
-        return None
-    selected = _pickle_direct_dump_origin(
-        node, scope, load_index, loaded_name, aliases, audit
-    )
-    if selected is None:
-        return None
-    dump_index, dump_statement, dump_call, payload_name = selected
-    if _pickle_direct_scope_index(dump_call, scope, audit) != dump_index:
-        return None
-    object_expression = dump_call.args[0]
-    protocol = _pickle_direct_protocol(dump_call)
-    if protocol is None or sum(1 for _ in ast.walk(object_expression)) > 512:
-        return None
-    if not _pickle_direct_serializer_imports_closed(
-        module, scope, dump_index, load_index, dump_call, node, aliases, audit
-    ):
-        return None
-    return {
-        "status": "LOCAL_DIRECT_DUMPS_LOADS_ORIGIN",
-        "origin_kind": "nested" if payload_name is None else "named_payload",
-        "load_call": node,
-        "dump_call": dump_call,
-        "dump_statement": dump_statement,
-        "object_expression": object_expression,
-        "payload_name": payload_name,
-        "scope": scope,
-        "protocol": protocol,
-    }
 
 
 def local_pickle_byte_origin(node, loaded_name, aliases, audit):
@@ -5273,12 +5211,9 @@ def _full_repository_workspace_consume_prefix(
     return cached_prefix
 
 
-def full_repository_workspace_scan_batch(
+def _full_repository_workspace_batch_capture(
     engine, generation, audit, results, deadline_monotonic
 ):
-    """Rebuild one full source context, then consume only the bounded primary prefix."""
-
-    engine._full_repository_check_soft_deadline(deadline_monotonic)
     root, files = generation["root"], generation["files"]
     start = len(results)
     stop = min(len(files), start + engine.FULL_REPOSITORY_BATCH_LIMIT)
@@ -5288,8 +5223,7 @@ def full_repository_workspace_scan_batch(
     state = _full_repository_workspace_context_state(
         engine, generation, audit, files, selected
     )
-    context_generation = state["context_generation"]
-    generation["context_generation_sha256"] = context_generation
+    generation["context_generation_sha256"] = state["context_generation"]
     source_by_name = {row["path"]: row for row in generation["inventory"]}
     cached_prefix = _full_repository_workspace_consume_prefix(
         engine,
@@ -5330,7 +5264,50 @@ def full_repository_workspace_scan_batch(
         "findings": [],
         "audit_coverage": {"complete": False, "files_processed": 0},
     }
+    return {
+        "root": root,
+        "files": files,
+        "start": start,
+        "stop": stop,
+        "selected": selected,
+        "rows": rows,
+        "consume_counts": consume_counts,
+        "cached_prefix": cached_prefix,
+        "source_by_name": source_by_name,
+        "context_error": context_error,
+        "context_bindings": context_bindings,
+        "source_bytes": source_bytes,
+        "trees": trees,
+        "oracle_edges": oracle_edges,
+        "source_names": source_names,
+        "source_capture_complete": source_capture_complete,
+        "byte_capture_complete": byte_capture_complete,
+    }
 
+
+def _full_repository_workspace_batch_assessment(
+    engine,
+    generation,
+    audit,
+    root,
+    files,
+    selected,
+    source_by_name,
+    rows,
+    trees,
+    source_bytes,
+    results,
+    deadline_monotonic,
+    start,
+    cached_prefix,
+    stop,
+    byte_capture_complete,
+    source_capture_complete,
+    context_bindings,
+    oracle_edges,
+    context_error,
+    source_names,
+):
     captured, bindings, context_findings = _full_repository_workspace_primary_rows(
         engine,
         generation,
@@ -5358,7 +5335,6 @@ def full_repository_workspace_scan_batch(
         byte_capture_complete,
         stop,
     )
-
     (
         observations,
         active_findings,
@@ -5400,6 +5376,38 @@ def full_repository_workspace_scan_batch(
             coverage_state=(source_capture_complete and all_primaries_assessed),
             partition_state=partition_state,
         )
+    return {
+        "batch": batch,
+        "captured": captured,
+        "context_findings": context_findings,
+        "observations": observations,
+        "active_findings": active_findings,
+        "partition_state": partition_state,
+        "partition_error": partition_error,
+        "all_primaries_assessed": all_primaries_assessed,
+        "finding_tiers": finding_tiers,
+    }
+
+
+def _full_repository_workspace_record_batch_evidence(
+    engine,
+    generation,
+    start,
+    stop,
+    cached_prefix,
+    files,
+    batch,
+    captured,
+    consume_counts,
+    source_capture_complete,
+    all_primaries_assessed,
+    finding_tiers,
+    observations,
+    partition_state,
+    partition_error,
+    context_findings,
+    active_findings,
+):
     generation["workspace_evidence"].update(
         {
             "finding_tiers": finding_tiers,
@@ -5438,6 +5446,86 @@ def full_repository_workspace_scan_batch(
                 "files_discovered": len(files),
             },
         }
+    )
+
+
+def full_repository_workspace_scan_batch(
+    engine, generation, audit, results, deadline_monotonic
+):
+    """Rebuild one full source context, then consume only the bounded primary prefix."""
+
+    engine._full_repository_check_soft_deadline(deadline_monotonic)
+    capture = _full_repository_workspace_batch_capture(
+        engine, generation, audit, results, deadline_monotonic
+    )
+    root = capture["root"]
+    files = capture["files"]
+    start = capture["start"]
+    stop = capture["stop"]
+    selected = capture["selected"]
+    rows = capture["rows"]
+    consume_counts = capture["consume_counts"]
+    cached_prefix = capture["cached_prefix"]
+    source_by_name = capture["source_by_name"]
+    context_error = capture["context_error"]
+    context_bindings = capture["context_bindings"]
+    source_bytes = capture["source_bytes"]
+    trees = capture["trees"]
+    oracle_edges = capture["oracle_edges"]
+    source_names = capture["source_names"]
+    source_capture_complete = capture["source_capture_complete"]
+    byte_capture_complete = capture["byte_capture_complete"]
+
+    assessment = _full_repository_workspace_batch_assessment(
+        engine,
+        generation,
+        audit,
+        root,
+        files,
+        selected,
+        source_by_name,
+        rows,
+        trees,
+        source_bytes,
+        results,
+        deadline_monotonic,
+        start,
+        cached_prefix,
+        stop,
+        byte_capture_complete,
+        source_capture_complete,
+        context_bindings,
+        oracle_edges,
+        context_error,
+        source_names,
+    )
+    batch = assessment["batch"]
+    captured = assessment["captured"]
+    context_findings = assessment["context_findings"]
+    observations = assessment["observations"]
+    active_findings = assessment["active_findings"]
+    partition_state = assessment["partition_state"]
+    partition_error = assessment["partition_error"]
+    all_primaries_assessed = assessment["all_primaries_assessed"]
+    finding_tiers = assessment["finding_tiers"]
+    _full_repository_workspace_record_batch_evidence(
+        engine,
+        generation,
+        start,
+        stop,
+        cached_prefix,
+        files,
+        batch,
+        captured,
+        consume_counts,
+        source_capture_complete,
+        all_primaries_assessed,
+        finding_tiers,
+        observations,
+        partition_state,
+        partition_error,
+        context_findings,
+        active_findings,
     )
     engine._full_repository_check_soft_deadline(deadline_monotonic)
     return batch

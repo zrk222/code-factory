@@ -157,14 +157,9 @@ def security_defect_policy_decision(
         if regenerated is None:
             return decision
         actual = core.get("finding_tier_report")
-        actual_rows = _security_tier_rows(actual)
         expected_rows = _security_tier_rows(regenerated)
-        if actual_rows is None or expected_rows is None or actual_rows != expected_rows:
+        if not _security_tier_reports_match(actual, expected_rows, prior_tiers):
             return decision
-        if prior_tiers is not None:
-            prior_rows = _security_tier_rows(prior_tiers)
-            if prior_rows is None or prior_rows != expected_rows:
-                return decision
 
         supported = regenerated["defect_gate"]["supported_defect_count"]
         unresolved = regenerated["defect_gate"]["needs_context_count"]
@@ -185,6 +180,17 @@ def security_defect_policy_decision(
     except Exception:
         return decision
     return decision
+
+
+def _security_tier_reports_match(actual, expected_rows, prior_tiers):
+    actual_rows = _security_tier_rows(actual)
+    if actual_rows is None or expected_rows is None or actual_rows != expected_rows:
+        return False
+    if prior_tiers is not None:
+        prior_rows = _security_tier_rows(prior_tiers)
+        if prior_rows is None or prior_rows != expected_rows:
+            return False
+    return True
 
 
 def _trusted_core_regenerated_tiers(core, captured_sources):
@@ -472,100 +478,19 @@ def build_finding_tier_report(
     signing_cache = {}
     pickle_origin_cache = {}
     primitive_rows = [row for row in primitive_observations if isinstance(row, dict)]
-    ledger = []
-    for index, raw in enumerate(raw_findings):
-        if not isinstance(raw, dict):
-            raw = {"diagnostic_value": copy.deepcopy(raw)}
-        finding = copy.deepcopy(raw)
-        path = finding.get("path")
-        source_hash = bindings.get(path) if isinstance(path, str) else None
-        captured = source_bytes.get(path) if isinstance(path, str) else None
-        bound_source = (
-            isinstance(captured, bytes)
-            and isinstance(source_hash, str)
-            and hashlib.sha256(captured).hexdigest() == source_hash
-        )
-        native_rows = _finding_native_rows(finding, captured, bound_source, regenerated)
-        signing_evidence = _finding_signing_evidence(
-            finding,
-            native_rows,
-            bound_source,
-            source_bytes,
+    ledger = [
+        _finding_tier_ledger_row(
+            index,
+            raw,
             bindings,
-            coverage_state,
-            partition_state,
-            signing_cache,
-        )
-        credential_evidence = _finding_private_key_authentication_evidence(
-            finding,
-            native_rows,
-            bound_source,
             source_bytes,
-            bindings,
-            coverage_state,
-            partition_state,
-            signing_cache,
-        )
-        tier, evidence, evidence_details = _decide_finding_tier(
-            finding,
-            bound_source,
-            native_rows,
+            (regenerated, signing_cache, pickle_origin_cache),
             primitive_rows,
-            credential_evidence,
+            coverage_state,
+            partition_state,
         )
-        identity = _tier_sha256(
-            {
-                "index": index,
-                "path": path,
-                "source_sha256": source_hash,
-                "code": finding.get("code"),
-                "line": finding.get("line"),
-                "column": finding.get("column"),
-                "original_severity": finding.get("severity"),
-                "raw_finding": finding,
-            }
-        )
-        row = {
-            "index": index,
-            "tier": tier,
-            "gate_relevant": str(finding.get("code", "")).startswith("SECURITY_"),
-            "evidence": evidence,
-            "original_severity": finding.get("severity"),
-            "source_identity": {
-                "path": path,
-                "source_sha256": source_hash,
-                "line": finding.get("line"),
-                "column": finding.get("column"),
-                "code": finding.get("code"),
-                "identity_sha256": identity,
-            },
-            "raw_finding": finding,
-        }
-        if (
-            bound_source
-            and _matches_regenerated_finding(finding, native_rows)
-            and _known_format_declaration(finding, captured)
-        ):
-            row["material_observation"] = {
-                "kind": "KNOWN_CREDENTIAL_FORMAT",
-                "source_bound": True,
-                "credential_validity": "NOT_ESTABLISHED",
-                "security_authority": "UNASSESSED",
-            }
-        if tier == "NEEDS_CONTEXT":
-            row["missing_premises"] = _finding_missing_premises(finding, bound_source)
-        row.update(
-            _pickle_byte_origin_fields(
-                finding, captured, bound_source, pickle_origin_cache, tier
-            )
-        )
-        if signing_evidence is not None:
-            row["static_consumer_observation"] = signing_evidence
-        if credential_evidence is not None:
-            row["credential_authority_observation"] = credential_evidence
-        if evidence_details is not None:
-            row["evidence_details"] = evidence_details
-        ledger.append(row)
+        for index, raw in enumerate(raw_findings)
+    ]
 
     tiers = {
         name: sum(row["tier"] == name for row in ledger)
@@ -580,44 +505,7 @@ def build_finding_tier_report(
     report = {
         "schema": _FINDING_TIER_POLICY["schema"],
         "policy_sha256": finding_tier_policy_sha256(),
-        "raw_diagnostics": {
-            "count": total,
-            "by_severity": dict(
-                sorted(
-                    (
-                        severity,
-                        sum(
-                            row.get("severity") == severity
-                            for row in raw_findings
-                            if isinstance(row, dict)
-                        ),
-                    )
-                    for severity in {
-                        row.get("severity")
-                        for row in raw_findings
-                        if isinstance(row, dict)
-                        and isinstance(row.get("severity"), str)
-                    }
-                )
-            ),
-            "by_code": dict(
-                sorted(
-                    (
-                        code,
-                        sum(
-                            row.get("code") == code
-                            for row in raw_findings
-                            if isinstance(row, dict)
-                        ),
-                    )
-                    for code in {
-                        row.get("code")
-                        for row in raw_findings
-                        if isinstance(row, dict) and isinstance(row.get("code"), str)
-                    }
-                )
-            ),
-        },
+        "raw_diagnostics": _raw_diagnostic_summary(raw_findings, total),
         "tier_counts": tiers,
         "rule_scorecards": _finding_rule_scorecards(ledger),
         "abstention": {
@@ -1615,13 +1503,7 @@ def apply_pickle_source_role_policy(core, captured):
     core["context_reviews"] = []
     sources = _pickle_role_sources(core, captured)
     roles = None if sources is None else _pickle_role_inventory(sources)
-    active, reviews = [], []
-    for finding in original:
-        witness = None if roles is None else _pickle_source_role_witness(finding, roles)
-        if witness is None:
-            active.append(finding)
-        else:
-            reviews.append(finding)
+    active, reviews = _pickle_role_partition(original, roles)
     core["findings"], core["context_reviews"] = active, reviews
     core["finding_counts"] = dict(
         sorted(Counter(row["code"] for row in active).items())
@@ -1638,33 +1520,26 @@ def apply_pickle_source_role_policy(core, captured):
     if isinstance(tier_report.get("ledger"), list):
         tier_report["ledger_sha256"] = _tier_sha256(tier_report["ledger"])
         tier_report["report_sha256"] = _tier_sha256(tier_report)
-    core["defect_policy_decision"] = {
-        **_PICKLE_SOURCE_ROLE_POLICY,
-        "policy_sha256": _tier_sha256(_PICKLE_SOURCE_ROLE_POLICY),
-        "state": "BLOCKED"
-        if roles is None
-        else "ALERTS_AND_CONTEXT_REVIEW"
-        if active
-        else "CONTEXT_REVIEW_REQUIRED",
-        "exit_code": 2 if roles is None else 1 if active else 0,
-        "active_alert_count": len(active),
-        "context_review_count": len(reviews),
-        "source_sha256": None if roles is None else roles["sources_sha256"],
-        "evidence_sha256": _tier_sha256(
-            {
-                "sources": None if roles is None else roles["sources_sha256"],
-                "reviews": [row.get("source_role_review") for row in ledger],
-            }
-        ),
-        "clean": False,
-        "passed": False,
-        "release_approved": False,
-    }
+    core["defect_policy_decision"] = _pickle_source_role_decision(
+        roles, active, reviews, ledger
+    )
     if roles is not None:
         core["state"] = "FINDINGS" if active else "REVIEW_REQUIRED"
         core["action_summary"] = (
             f"{len(active)} active diagnostics; {len(reviews)} unresolved source-context reviews. No clean security result established."
         )
+
+
+def _pickle_role_partition(original, roles):
+    """Partition source-context reviews while retaining every original diagnostic."""
+    active, reviews = [], []
+    for finding in original:
+        witness = None if roles is None else _pickle_source_role_witness(finding, roles)
+        if witness is None:
+            active.append(finding)
+        else:
+            reviews.append(finding)
+    return active, reviews
 
 
 def _pickle_role_identity(finding):
@@ -4064,6 +3939,12 @@ def primitive_binding_helpers():
     from .credential_endpoint_admission import catalog_callable_helpers
 
     return (
+        _security_tier_reports_match,
+        _raw_diagnostic_summary,
+        _finding_source_binding,
+        _finding_tier_ledger_row,
+        _pickle_role_partition,
+        _pickle_source_role_decision,
         fixed_primitive_binding,
         _local_control_label_binding,
         _jwt_primitive_binding,
@@ -4154,3 +4035,184 @@ def credential_context_cache_schema():
     from .credential_endpoint_admission import catalog_content_digest
 
     return "factory.security-oracle-context-cache.v8:" + catalog_content_digest()
+
+
+def _raw_diagnostic_summary(raw_findings, total):
+    """Count original diagnostics without altering their severity or code."""
+    return {
+        "count": total,
+        "by_severity": dict(
+            sorted(
+                (
+                    severity,
+                    sum(
+                        row.get("severity") == severity
+                        for row in raw_findings
+                        if isinstance(row, dict)
+                    ),
+                )
+                for severity in {
+                    row.get("severity")
+                    for row in raw_findings
+                    if isinstance(row, dict) and isinstance(row.get("severity"), str)
+                }
+            )
+        ),
+        "by_code": dict(
+            sorted(
+                (
+                    code,
+                    sum(
+                        row.get("code") == code
+                        for row in raw_findings
+                        if isinstance(row, dict)
+                    ),
+                )
+                for code in {
+                    row.get("code")
+                    for row in raw_findings
+                    if isinstance(row, dict) and isinstance(row.get("code"), str)
+                }
+            )
+        ),
+    }
+
+
+def _finding_source_binding(finding, bindings, source_bytes):
+    """Bind one diagnostic to the captured bytes and declared source hash."""
+    path = finding.get("path")
+    source_hash = bindings.get(path) if isinstance(path, str) else None
+    captured = source_bytes.get(path) if isinstance(path, str) else None
+    bound_source = (
+        isinstance(captured, bytes)
+        and isinstance(source_hash, str)
+        and hashlib.sha256(captured).hexdigest() == source_hash
+    )
+    return path, source_hash, captured, bound_source
+
+
+def _finding_tier_ledger_row(
+    index,
+    raw,
+    bindings,
+    source_bytes,
+    caches,
+    primitive_rows,
+    coverage_state,
+    partition_state,
+):
+    """Regenerate one source-bound tier without discarding its raw diagnostic."""
+    regenerated, signing_cache, pickle_origin_cache = caches
+    if not isinstance(raw, dict):
+        raw = {"diagnostic_value": copy.deepcopy(raw)}
+    finding = copy.deepcopy(raw)
+    path, source_hash, captured, bound_source = _finding_source_binding(
+        finding, bindings, source_bytes
+    )
+    native_rows = _finding_native_rows(finding, captured, bound_source, regenerated)
+    signing_evidence = _finding_signing_evidence(
+        finding,
+        native_rows,
+        bound_source,
+        source_bytes,
+        bindings,
+        coverage_state,
+        partition_state,
+        signing_cache,
+    )
+    credential_evidence = _finding_private_key_authentication_evidence(
+        finding,
+        native_rows,
+        bound_source,
+        source_bytes,
+        bindings,
+        coverage_state,
+        partition_state,
+        signing_cache,
+    )
+    tier, evidence, evidence_details = _decide_finding_tier(
+        finding,
+        bound_source,
+        native_rows,
+        primitive_rows,
+        credential_evidence,
+    )
+    identity = _tier_sha256(
+        {
+            "index": index,
+            "path": path,
+            "source_sha256": source_hash,
+            "code": finding.get("code"),
+            "line": finding.get("line"),
+            "column": finding.get("column"),
+            "original_severity": finding.get("severity"),
+            "raw_finding": finding,
+        }
+    )
+    row = {
+        "index": index,
+        "tier": tier,
+        "gate_relevant": str(finding.get("code", "")).startswith("SECURITY_"),
+        "evidence": evidence,
+        "original_severity": finding.get("severity"),
+        "source_identity": {
+            "path": path,
+            "source_sha256": source_hash,
+            "line": finding.get("line"),
+            "column": finding.get("column"),
+            "code": finding.get("code"),
+            "identity_sha256": identity,
+        },
+        "raw_finding": finding,
+    }
+    if (
+        bound_source
+        and _matches_regenerated_finding(finding, native_rows)
+        and _known_format_declaration(finding, captured)
+    ):
+        row["material_observation"] = {
+            "kind": "KNOWN_CREDENTIAL_FORMAT",
+            "source_bound": True,
+            "credential_validity": "NOT_ESTABLISHED",
+            "security_authority": "UNASSESSED",
+        }
+    if tier == "NEEDS_CONTEXT":
+        row["missing_premises"] = _finding_missing_premises(finding, bound_source)
+    row.update(
+        _pickle_byte_origin_fields(
+            finding, captured, bound_source, pickle_origin_cache, tier
+        )
+    )
+    if signing_evidence is not None:
+        row["static_consumer_observation"] = signing_evidence
+    if credential_evidence is not None:
+        row["credential_authority_observation"] = credential_evidence
+    if evidence_details is not None:
+        row["evidence_details"] = evidence_details
+    return row
+
+
+def _pickle_source_role_decision(roles, active, reviews, ledger):
+    """Describe unresolved context review without claiming safe reconstruction."""
+    return {
+        **_PICKLE_SOURCE_ROLE_POLICY,
+        "policy_sha256": _tier_sha256(_PICKLE_SOURCE_ROLE_POLICY),
+        "state": "BLOCKED"
+        if roles is None
+        else "ALERTS_AND_CONTEXT_REVIEW"
+        if active
+        else "CONTEXT_REVIEW_REQUIRED",
+        "exit_code": 2 if roles is None else 1 if active else 0,
+        "active_alert_count": len(active),
+        "context_review_count": len(reviews),
+        "source_sha256": None if roles is None else roles["sources_sha256"],
+        "evidence_sha256": _tier_sha256(
+            {
+                "sources": None if roles is None else roles["sources_sha256"],
+                "reviews": [row.get("source_role_review") for row in ledger],
+            }
+        ),
+        "clean": False,
+        "passed": False,
+        "release_approved": False,
+    }

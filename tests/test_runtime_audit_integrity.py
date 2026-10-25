@@ -16,6 +16,72 @@ from factoryline.runtime_audit_integrity import finite_literal_eval_input_witnes
 from factoryline.runtime_audit_integrity import source_generated_eval_input_witness
 
 
+def _assert_cache_binding_swap_changes_key(
+    tmp_path, monkeypatch, pickle_model, audit, attribute, first, second, before
+):
+    with monkeypatch.context() as patch:
+        patch.setattr(pickle_model, attribute, first)
+        first_key = audit._oracle_context_cache_key(tmp_path, [], {})
+        patch.setattr(pickle_model, attribute, second)
+        second_key = audit._oracle_context_cache_key(tmp_path, [], {})
+        assert first_key != before and second_key != first_key
+
+
+def _inventory_binding_replacements(original):
+    def first_replacement():
+        return original()
+
+    def second_replacement():
+        return original()
+
+    return first_replacement, second_replacement
+
+
+def _assert_inventory_code_mutation_changes_key(
+    tmp_path, monkeypatch, original, audit, before
+):
+    from types import FunctionType
+
+    saved_inventory = FunctionType(
+        original.__code__,
+        original.__globals__,
+        argdefs=original.__defaults__,
+        closure=original.__closure__,
+    )
+
+    def inventory_replacement(saved=saved_inventory):
+        return saved()
+
+    with monkeypatch.context() as patch:
+        patch.setattr(original, "__defaults__", inventory_replacement.__defaults__)
+        patch.setattr(original, "__code__", inventory_replacement.__code__)
+        assert audit._oracle_context_cache_key(tmp_path, [], {}) != before
+
+
+def _assert_pickle_class_binding_mutations(
+    tmp_path, monkeypatch, pickle_model, audit, before
+):
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            pickle_model, "_ProviderV4Graph", type("ReplacementGraphA", (), {})
+        )
+        first = audit._oracle_context_cache_key(tmp_path, [], {})
+        patch.setattr(
+            pickle_model, "_ProviderV4Graph", type("ReplacementGraphB", (), {})
+        )
+        second = audit._oracle_context_cache_key(tmp_path, [], {})
+        assert first != before and second != first
+
+
+def _assert_pickle_class_method_mutation(
+    tmp_path, monkeypatch, pickle_model, audit, replacement, before
+):
+    original = pickle_model._ProviderV4Graph.edge
+    with monkeypatch.context() as patch:
+        patch.setattr(original, "__code__", replacement.__code__)
+        assert audit._oracle_context_cache_key(tmp_path, [], {}) != before
+
+
 @pytest.mark.parametrize(
     "codec, declaration", [("latin-1", b"# coding: latin-1\n"), ("utf-8-sig", b"")]
 )
@@ -311,6 +377,25 @@ def test_provider_profile308_default_has_no_runtime_or_contract_dependency(monke
     assert profile["conditional"] is False
 
 
+def test_conditional_pickle_admission_rejects_stale_profile(monkeypatch):
+    from factoryline import finite_capture
+
+    contract = _provider_profile_contract308(monkeypatch)
+    profile = finite_capture.provider_analysis_profile(
+        "trusted-dependencies-v1", (contract,)
+    )
+    stale = dict(profile, profile_sha256="0" * 64)
+
+    assert (
+        runtime.conditional_provider_pickle_witness(
+            stale, {}, "consumer.py", [1, 0, 1, 1], review_audits
+        )
+        is None
+    )
+    with pytest.raises(ValueError, match="conditional profile identity differs"):
+        primitive.apply_conditional_provider_profile({"findings": []}, stale, {})
+
+
 def test_provider_profile308_contract_identity_is_canonical_not_safety(monkeypatch):
     from factoryline import finite_capture
 
@@ -449,19 +534,78 @@ def test_provider_profile308_wrong_json_field_types_fail_closed(
 
 
 def test_provider_profile308_fingerprints_real_local_interpreter():
+    import importlib.util
+    import platform
+    import sys
+    import sysconfig
+    from pathlib import Path
+
     from factoryline import finite_capture
 
-    identity = finite_capture._provider_runtime_identity()
-    assert identity["implementation"] == "cpython"
-    assert identity["version"] == "3.11.9"
-    assert all(
-        len(identity[key]) == 64
-        for key in (
-            "executable_sha256",
-            "pickle_source_sha256",
-            "pickle_implementation_sha256",
+    pickle_spec = importlib.util.find_spec("_pickle")
+    assert pickle_spec is not None
+    pickle_binary = (
+        Path(pickle_spec.origin)
+        if pickle_spec.origin != "built-in"
+        else (
+            Path(sys.base_prefix)
+            / f"python{sys.version_info.major}{sys.version_info.minor}.dll"
+            if sys.platform == "win32"
+            else Path(sysconfig.get_config_var("LIBDIR") or sys.base_prefix)
+            / (sysconfig.get_config_var("LDLIBRARY") or "")
         )
     )
+    paths = {
+        "executable_sha256": Path(sys.executable),
+        "pickle_source_sha256": Path(sysconfig.get_path("stdlib")) / "pickle.py",
+        "pickle_implementation_sha256": pickle_binary,
+    }
+    actual_hashes = {
+        name: hashlib.sha256(path.read_bytes()).hexdigest()
+        for name, path in paths.items()
+    }
+    assert all(len(value) == 64 for value in actual_hashes.values())
+    assert all(
+        all(char in "0123456789abcdef" for char in value)
+        for value in actual_hashes.values()
+    )
+
+    if platform.python_implementation() == "CPython" and sys.version_info[:3] == (
+        3,
+        11,
+        9,
+    ):
+        assert finite_capture._provider_runtime_identity() == {
+            "implementation": "cpython",
+            "version": "3.11.9",
+            **actual_hashes,
+        }
+        return
+
+    unsupported_contract = {
+        "schema": "factory.provider-contract.v1",
+        "model": {"id": "builtin-exception-record-v1", "version": 1},
+        "runtime": {
+            "implementation": "cpython",
+            "version": "3.11.9",
+            **actual_hashes,
+        },
+        "artifacts": {"package/errors.py": "4" * 64, "package/__init__.py": "5" * 64},
+        "export": {"path": "package/__init__.py", "symbol": "LocalError"},
+        "classes": [
+            {
+                "path": "package/errors.py",
+                "name": "LocalError",
+                "class_ast_sha256": "6" * 64,
+                "constructor_ast_sha256": "7" * 64,
+            }
+        ],
+        "assumptions": list(finite_capture._PROVIDER_ASSUMPTIONS),
+    }
+    with pytest.raises(RuntimeAuditError, match="E_ANALYSIS_PROFILE"):
+        finite_capture.provider_analysis_profile(
+            "trusted-dependencies-v1", (unsupported_contract,)
+        )
 
 
 def _provider_record308(monkeypatch, constructor=None, base_body="pass", prefix=""):
@@ -3146,6 +3290,150 @@ def test_extracted_runtime_helpers_invalidate_native_cache(
         else:
             patch.setattr(original, "__code__", replacement.__code__)
         assert audit._oracle_context_cache_key(tmp_path, [], {}) != before
+    assert audit._oracle_context_cache_key(tmp_path, [], {}) == before
+
+
+@pytest.mark.parametrize("mutation", ["binding", "code"])
+def test_pickle_model_implementation_invalidates_runtime_oracle_cache(
+    tmp_path, monkeypatch, mutation
+):
+    from factoryline import pickle_model_audit as pickle_model
+    from factoryline import review_audits as audit
+    from factoryline import runtime_audit_integrity as runtime
+
+    expected = {
+        pickle_model._closed_literal_pickle_input,
+        pickle_model._closed_literal_pickle_source_evidence,
+        pickle_model.closed_literal_pickle_witness,
+        pickle_model._closed_local_pickle_scope,
+        pickle_model._closed_local_pickle_dump,
+        pickle_model.closed_local_pickle_origin,
+        pickle_model._provider_v3_export_rows,
+        pickle_model._provider_v3_export_target,
+        pickle_model.provider_export_chain_v3,
+    }
+    for helpers in (
+        runtime.native_execution_helpers(),
+        runtime.finite_template_input_helpers(),
+        runtime.workspace_builtin_helpers(),
+    ):
+        assert expected <= set(helpers)
+
+    original = pickle_model._closed_local_pickle_dump
+    before = audit._oracle_context_cache_key(tmp_path, [], {})
+
+    def replacement(*args, **kwargs):
+        return None
+
+    with monkeypatch.context() as patch:
+        if mutation == "binding":
+            patch.setattr(pickle_model, "_closed_local_pickle_dump", replacement)
+        else:
+            patch.setattr(original, "__code__", replacement.__code__)
+        assert audit._oracle_context_cache_key(tmp_path, [], {}) != before
+    assert audit._oracle_context_cache_key(tmp_path, [], {}) == before
+
+
+def test_pickle_model_inventory_tracks_owned_callables_and_class_methods():
+    from factoryline import pickle_model_audit as pickle_model
+    from factoryline import runtime_audit_integrity as runtime
+
+    expected = {
+        value
+        for value in vars(pickle_model).values()
+        if callable(value)
+        and getattr(value, "__module__", None) == pickle_model.__name__
+    }
+    expected_methods = {
+        member
+        for owner in expected
+        if isinstance(owner, type)
+        for member in vars(owner).values()
+        if callable(member)
+        and getattr(member, "__module__", None) == pickle_model.__name__
+    }
+    expected.update(expected_methods)
+    expected.update(
+        {
+            pickle_model._ProviderV4Graph.edge,
+            pickle_model._ProviderV4SourceInterpreter.value,
+            pickle_model._fixed_literal_value,
+            pickle_model._fixed_program_span,
+            pickle_model._captured_sink_parameter_names,
+        }
+    )
+
+    for helpers in (
+        runtime.native_execution_helpers(),
+        runtime.finite_template_input_helpers(),
+        runtime.workspace_builtin_helpers(),
+    ):
+        assert expected <= set(helpers)
+
+
+@pytest.mark.parametrize(
+    ("surface", "mutation"),
+    [
+        ("class", "binding"),
+        ("class-method", "code"),
+        ("wrapper", "binding"),
+        ("wrapper", "code"),
+        ("inventory", "binding"),
+        ("inventory", "code"),
+    ],
+)
+def test_pickle_model_class_and_wrapper_mutations_invalidate_runtime_oracle_cache(
+    tmp_path, monkeypatch, surface, mutation
+):
+    from factoryline import pickle_model_audit as pickle_model
+    from factoryline import review_audits as audit
+
+    before = audit._oracle_context_cache_key(tmp_path, [], {})
+
+    def replacement(*args, **kwargs):
+        return None
+
+    if surface == "class":
+        _assert_pickle_class_binding_mutations(
+            tmp_path, monkeypatch, pickle_model, audit, before
+        )
+    elif surface == "class-method":
+        _assert_pickle_class_method_mutation(
+            tmp_path, monkeypatch, pickle_model, audit, replacement, before
+        )
+    else:
+        attribute = (
+            "cache_helpers" if surface == "inventory" else "_fixed_literal_value"
+        )
+        original = getattr(pickle_model, attribute)
+        if mutation == "binding":
+            if surface == "inventory":
+                first, second = _inventory_binding_replacements(original)
+            else:
+
+                def second(*args, **kwargs):
+                    return None
+
+                first = replacement
+            _assert_cache_binding_swap_changes_key(
+                tmp_path,
+                monkeypatch,
+                pickle_model,
+                audit,
+                attribute,
+                first,
+                second,
+                before,
+            )
+        elif surface == "inventory":
+            _assert_inventory_code_mutation_changes_key(
+                tmp_path, monkeypatch, original, audit, before
+            )
+        else:
+            with monkeypatch.context() as patch:
+                patch.setattr(original, "__code__", replacement.__code__)
+                assert audit._oracle_context_cache_key(tmp_path, [], {}) != before
+
     assert audit._oracle_context_cache_key(tmp_path, [], {}) == before
 
 

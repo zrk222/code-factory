@@ -2,16 +2,26 @@
 import { lstat, realpath } from 'node:fs/promises';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
 
-export function createEvidenceValidators({ requireValue, object, sha, TrialError, readBounded }) {
 const encode = value => JSON.stringify(value);
-const EVIDENCE_PROFILES = new Set(['static', 'secrets', 'configuration', 'dependencies', 'runtime', 'fuzz', 'security_actionability']);
 const HASH = /^[a-f0-9]{64}$/i;
 const REVISION = /^[a-f0-9]{40}$/i;
 const SAFE_RELPATH = /^(?!\/)(?!.*(?:^|\/)\.\.(?:\/|$))[\w./@+-]{1,512}$/;
 const SECRET_KEY = /(?:secret|token|password|credential|private[_-]?key|authorization|api[_-]?key|raw[_-]?value)/i;
 const SECRET_VALUE = /(?:-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----|\b(?:sk-[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9]{20,}|AKIA[A-Z0-9]{16})\b)/;
+const ACTIONABILITY_SLOTS = {
+  input_origin: 'known', sink_behavior: 'known', callers: 'resolved',
+  trust_boundary: 'known', counterevidence: 'reviewed',
+};
 
-function validateBoundArtifact(artifact, candidate) {
+/** Bind one isolated validator instance to its required evidence services. */
+export function createEvidenceValidators({ requireValue, object, sha, TrialError, readBounded }) {
+  const dependencies = { requireValue, object, sha, TrialError, readBounded };
+  const EVIDENCE_PROFILES = new Set(['static', 'secrets', 'configuration', 'dependencies', 'runtime', 'fuzz', 'security_actionability']);
+  return { EVIDENCE_PROFILES, validateEvidenceReviewCases: validateEvidenceReviewCases.bind(null, dependencies), validateTestOracleCases: validateTestOracleCases.bind(null, dependencies), verifySourceBindings: verifySourceBindings.bind(null, dependencies), validateNoRawSecrets: validateNoRawSecrets.bind(null, dependencies), validateActionabilityState: validateActionabilityState.bind(null, dependencies), actionabilityContextComplete: actionabilityContextComplete.bind(null, dependencies) };
+}
+
+function validateBoundArtifact(dependencies, artifact, candidate) {
+  const { requireValue, object, sha } = dependencies;
   requireValue(object(artifact) && typeof artifact.kind === 'string'
     && typeof artifact.path === 'string' && SAFE_RELPATH.test(artifact.path) && typeof artifact.content === 'string'
     && HASH.test(artifact.sha256) && artifact.sha256.toLowerCase() === sha(Buffer.from(artifact.content, 'utf8'))
@@ -29,7 +39,8 @@ function validateBoundArtifact(artifact, candidate) {
   } else requireValue(artifact.source_binding === undefined, 'invalid_source_binding');
 }
 
-async function readCapturedSource(root, descriptor) {
+async function readCapturedSource(dependencies, root, descriptor) {
+  const { requireValue, object, readBounded, sha, TrialError } = dependencies;
   requireValue(object(descriptor) && typeof descriptor.path === 'string'
     && SAFE_RELPATH.test(descriptor.path) && HASH.test(descriptor.sha256), 'invalid_source_binding');
   let path = await realpath(root);
@@ -50,7 +61,8 @@ async function readCapturedSource(root, descriptor) {
   } catch (error) { throw error instanceof TrialError ? error : new TrialError('source_read_error'); }
 }
 
-async function verifySourceBindings(item, root) {
+async function verifySourceBindings(dependencies, item, root) {
+  const { requireValue, TrialError } = dependencies;
   const evidence = item.state?.evidence;
   const excerpts = evidence?.artifacts?.filter(artifact => artifact.kind === 'source_excerpt') ?? [];
   const descriptors = [...(evidence?.dependencies ?? []), ...excerpts.map(artifact => artifact.source_binding)];
@@ -63,7 +75,7 @@ async function verifySourceBindings(item, root) {
       continue;
     }
     requireValue(sources.size < 64, 'source_count_exceeded');
-    const bytes = await readCapturedSource(root, descriptor);
+    const bytes = await readCapturedSource(dependencies, root, descriptor);
     total += bytes.length;
     requireValue(total <= 32_000_000, 'source_inventory_too_large');
     sources.set(descriptor.path, { sha256: descriptor.sha256, bytes });
@@ -80,33 +92,30 @@ async function verifySourceBindings(item, root) {
   }
 }
 
-function validateNoRawSecrets(value, key = '') {
+function validateNoRawSecrets(dependencies, value, key = '') {
+  const { requireValue, object } = dependencies;
   if (typeof value === 'string') {
     requireValue(!SECRET_VALUE.test(value), 'raw_secret_forbidden');
     requireValue(!SECRET_KEY.test(key), 'raw_secret_field_forbidden');
   } else if (Array.isArray(value)) {
-    for (const item of value) validateNoRawSecrets(item, key);
+    for (const item of value) validateNoRawSecrets(dependencies, item, key);
   } else if (object(value)) {
     for (const [childKey, child] of Object.entries(value)) {
       requireValue(!SECRET_KEY.test(childKey), 'raw_secret_field_forbidden');
-      validateNoRawSecrets(child, childKey);
+      validateNoRawSecrets(dependencies, child, childKey);
     }
   }
 }
 
-const ACTIONABILITY_SLOTS = {
-  input_origin: 'known', sink_behavior: 'known', callers: 'resolved',
-  trust_boundary: 'known', counterevidence: 'reviewed',
-};
-
-function actionabilityContextComplete(evidence) {
+function actionabilityContextComplete(dependencies, evidence) {
+  const { object } = dependencies;
   const context = evidence.actionability;
   return object(context) && Object.entries(ACTIONABILITY_SLOTS).every(([name, status]) =>
-    context[name]?.status === status && context[name].artifacts.some(ref => sourceSpanBound(ref, evidence.artifacts)))
+    context[name]?.status === status && context[name].artifacts.some(ref => sourceSpanBound(dependencies, ref, evidence.artifacts)))
     && (!context.unknowns || context.unknowns.length === 0);
 }
 
-function sourceSpanBound(ref, artifacts) {
+function sourceSpanBound(dependencies, ref, artifacts) {
   const matches = artifacts.filter(artifact => artifact.path === ref.path && artifact.sha256 === ref.sha256);
   const lines = matches.length === 1 ? matches[0].content.replace(/\r?\n$/, '').split(/\r?\n/) : [];
   const first = matches[0]?.kind === 'source_excerpt' ? matches[0].source_binding.start_line : 1;
@@ -117,7 +126,8 @@ function sourceSpanBound(ref, artifacts) {
     && lines.slice(ref.start_line - first, ref.end_line - first + 1).join('\n').trim().length > 0;
 }
 
-function validateActionabilityState(state) {
+function validateActionabilityState(dependencies, state) {
+  const { requireValue, object } = dependencies;
   requireValue(Object.keys(state).every(key => ['requirement', 'candidate', 'evidence'].includes(key)),
     'invalid_actionability_state');
   const evidence = state.evidence, context = evidence.actionability;
@@ -131,7 +141,7 @@ function validateActionabilityState(state) {
     && evidence.dependencies.length <= 64 && evidence.dependencies.every(dependency => object(dependency)
       && Object.keys(dependency).length === 2 && SAFE_RELPATH.test(dependency.path) && HASH.test(dependency.sha256))),
   'invalid_source_dependencies');
-  validateOutboundStrings(state);
+  validateOutboundStrings(dependencies, state);
   if (context === undefined) return; // Missing semantic context abstains locally.
   requireValue(object(context) && Object.keys(context).every(key => Object.hasOwn(ACTIONABILITY_SLOTS, key) || key === 'unknowns')
     && (context.unknowns === undefined || (Array.isArray(context.unknowns) && context.unknowns.length <= 32
@@ -146,18 +156,20 @@ function validateActionabilityState(state) {
     for (const ref of value.artifacts) requireValue(object(ref)
       && Object.keys(ref).every(key => ['path', 'sha256', 'start_line', 'end_line'].includes(key))
       && evidence.artifacts.some(artifact => artifact.path === ref.path && artifact.sha256 === ref.sha256)
-      && ((ref.start_line === undefined && ref.end_line === undefined) || sourceSpanBound(ref, evidence.artifacts)),
+      && ((ref.start_line === undefined && ref.end_line === undefined) || sourceSpanBound(dependencies, ref, evidence.artifacts)),
     'invalid_actionability_reference');
   }
 }
 
-function validateOutboundStrings(value) {
+function validateOutboundStrings(dependencies, value) {
+  const { requireValue, object } = dependencies;
   if (typeof value === 'string') requireValue(!SECRET_VALUE.test(value), 'raw_secret_forbidden');
-  else if (Array.isArray(value)) value.forEach(validateOutboundStrings);
-  else if (object(value)) Object.values(value).forEach(validateOutboundStrings);
+  else if (Array.isArray(value)) value.forEach(item => validateOutboundStrings(dependencies, item));
+  else if (object(value)) Object.values(value).forEach(item => validateOutboundStrings(dependencies, item));
 }
 
-function validateEvidenceReviewCases(cases, profile) {
+function validateEvidenceReviewCases(dependencies, cases, profile) {
+  const { requireValue, object, TrialError } = dependencies;
   for (const item of cases) {
     const state = item.state;
     const candidate = state?.candidate;
@@ -168,7 +180,7 @@ function validateEvidenceReviewCases(cases, profile) {
       && HASH.test(candidate.sha256) && Array.isArray(evidence.artifacts)
       && evidence.artifacts.length > 0 && evidence.artifacts.length <= 32,
     'invalid_review_candidate_binding');
-    for (const artifact of evidence.artifacts) validateBoundArtifact(artifact, candidate);
+    for (const artifact of evidence.artifacts) validateBoundArtifact(dependencies, artifact, candidate);
     const kinds = new Set(evidence.artifacts.map((artifact) => artifact.kind));
     const location = evidence.location;
     const validLocation = location => object(location) && typeof location.path === 'string'
@@ -181,7 +193,7 @@ function validateEvidenceReviewCases(cases, profile) {
             && artifact.source_binding.sha256.toLowerCase() === candidate.sha256.toLowerCase())))
         && validLocation(location) && location.path === candidate.path,
       'missing_static_source');
-      if (profile === 'security_actionability') validateActionabilityState(state);
+      if (profile === 'security_actionability') validateActionabilityState(dependencies, state);
     } else if (profile === 'secrets') {
       requireValue(['secret_pattern_detected', 'credential_exposure_metadata', 'redacted_secret_finding']
         .includes(state.requirement), 'invalid_secret_criterion');
@@ -205,7 +217,7 @@ function validateEvidenceReviewCases(cases, profile) {
           && (feature.entropy_bucket === undefined || ['low', 'medium', 'high'].includes(feature.entropy_bucket))
           && (feature.context_redacted === undefined || feature.context_redacted === true), 'raw_secret_forbidden');
       }
-      validateNoRawSecrets(state);
+      validateNoRawSecrets(dependencies, state);
     } else if (profile === 'configuration') {
       requireValue(evidence.artifacts.some((artifact) => ['configuration_source', 'configuration_report'].includes(artifact.kind)
         && artifact.path === candidate.path && artifact.sha256.toLowerCase() === candidate.sha256.toLowerCase())
@@ -258,7 +270,8 @@ function validateEvidenceReviewCases(cases, profile) {
   }
 }
 
-function validateTestOracleCases(cases) {
+function validateTestOracleCases(dependencies, cases) {
+  const { requireValue, object, sha } = dependencies;
   for (const item of cases) {
     const candidate = item.state?.candidate;
     const source = item.state?.evidence?.source;
@@ -285,8 +298,4 @@ function validateTestOracleCases(cases) {
         .test(lines[selected.start_line - firstLine]), 'invalid_test_oracle_target_binding');
     }
   }
-}
-
-
-return { EVIDENCE_PROFILES, validateEvidenceReviewCases, validateTestOracleCases, verifySourceBindings, validateNoRawSecrets, validateActionabilityState, actionabilityContextComplete };
 }

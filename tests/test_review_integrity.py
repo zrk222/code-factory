@@ -6042,6 +6042,7 @@ def test_shared_source_binding_changes_invalidate_oracle_cache(
 def test_shared_source_binding_taint_keeps_explicit_defaults_policy(
     expression, expected
 ):
+    from factoryline import finite_capture
     from factoryline import review_integrity as integrity
     from factoryline.review_integrity import _security_helper_return_tainted
 
@@ -6051,9 +6052,13 @@ def test_shared_source_binding_taint_keeps_explicit_defaults_policy(
     integrity.bind_security_call_scopes(module)
     function, call = module.body[0], module.body[1].value
     assert (
-        _security_helper_return_tainted(
+        finite_capture.security_helper_return_tainted(
             call, function, set(), {"tainted"}, {}
         )
+        is expected
+    )
+    assert (
+        _security_helper_return_tainted(call, function, set(), {"tainted"}, {})
         is expected
     )
     assert not getattr(function, "_security_helper_active", False)

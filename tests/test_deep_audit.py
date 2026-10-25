@@ -137,6 +137,40 @@ def test_workspace_policy319_legacy_shape_and_isolated_refusal(tmp_path):
         full_repository_scan(tmp_path, defect_policy="trusted-core-v1")
 
 
+@pytest.mark.parametrize(
+    ("owner", "name"),
+    [
+        ("checkpoint", "_trusted_core_ledger_matches"),
+        ("checkpoint", "_trusted_core_ledger_counts"),
+        ("io", "require_digest"),
+    ],
+)
+def test_checkpoint_admission_dependency_change_invalidates_runtime_epoch(
+    tmp_path, monkeypatch, owner, name
+):
+    from factoryline import deep_audit_io, repository_checkpoint_audit, review_audits
+
+    module = repository_checkpoint_audit if owner == "checkpoint" else deep_audit_io
+    original = getattr(module, name)
+    before = deep_audit_io._full_repository_runtime_epoch(
+        tmp_path, "a" * 64, review_audits
+    )
+
+    def changed(*args, **kwargs):
+        return original(*args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(module, name, changed)
+        after = deep_audit_io._full_repository_runtime_epoch(
+            tmp_path, "a" * 64, review_audits
+        )
+        assert after != before
+    assert (
+        deep_audit_io._full_repository_runtime_epoch(tmp_path, "a" * 64, review_audits)
+        == before
+    )
+
+
 def test_workspace_policy319_selection_switch_rejects_checkpoint_reuse(tmp_path):
     from factoryline.deep_audit_io import full_repository_scan
 

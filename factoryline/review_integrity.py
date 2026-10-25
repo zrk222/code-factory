@@ -3933,7 +3933,9 @@ def _security_merge_branch_states(target, branches):
             unsafe_safety = {
                 item
                 for item in merged
-                if isinstance(item, tuple) and item[0] in {"secure-upload-leaf", "request-type:bytes", "request-type:text"}
+                if isinstance(item, tuple)
+                and item[0]
+                in {"secure-upload-leaf", "request-type:bytes", "request-type:text"}
             } - safe
             merged.difference_update(unsafe_safety)
         values.clear()
@@ -4035,7 +4037,10 @@ def _security_statement_call_findings(
             and _security_expr_tainted(call.args[0], requests, set(), aliases)
             and (
                 canonical not in {"pickle.loads", "_pickle.loads", "dill.loads"}
-                or request_payload_value_kind(call.args[0], requests, aliases, _security_scope_request_aliases) == "bytes"
+                or request_payload_value_kind(
+                    call.args[0], requests, aliases, _security_scope_request_aliases
+                )
+                == "bytes"
             )
         ):
             call._security_supported_precondition = supported_security_precondition(
@@ -4372,7 +4377,10 @@ def _security_expr_tainted(node, requests, parameters, aliases):
 
 def _security_call_source_tainted(node, requests, parameters, aliases):
     from .review_audits import _name
-    from .semantic_credential_sensor import http_request_payload, request_payload_value_kind
+    from .semantic_credential_sensor import (
+        http_request_payload,
+        request_payload_value_kind,
+    )
 
     name = security_call_name(node, aliases) if aliases else ""
     if (
@@ -4380,12 +4388,18 @@ def _security_call_source_tainted(node, requests, parameters, aliases):
         and node.func.attr in {"decode", "encode"}
         and not node.args
         and not node.keywords
-        and request_payload_value_kind(node, requests, aliases, _security_scope_request_aliases) is not None
+        and request_payload_value_kind(
+            node, requests, aliases, _security_scope_request_aliases
+        )
+        is not None
     ):
         return True
     if http_request_payload(
-        node, aliases, getattr(node, "_security_lexical_scope", None),
-        getattr(node, "_security_flow_statement", None), _security_scope_request_aliases,
+        node,
+        aliases,
+        getattr(node, "_security_lexical_scope", None),
+        getattr(node, "_security_flow_statement", None),
+        _security_scope_request_aliases,
     ):
         return True
     if name in {"os.path.join", "pathlib.Path", "pathlib.PurePath"} or _name(
@@ -4496,7 +4510,9 @@ def _security_flow_source_assignment(
     from . import intent_quality
     from .semantic_credential_sensor import request_payload_value_kind
 
-    value_kind = request_payload_value_kind(value, requests, aliases, _security_scope_request_aliases)
+    value_kind = request_payload_value_kind(
+        value, requests, aliases, _security_scope_request_aliases
+    )
 
     request_collection = intent_quality._credential_request_collection(
         value, password_fields, _security_request_args, aliases, scope, statement
@@ -4543,6 +4559,20 @@ def _security_flow_source_assignment(
     _security_clear_upload_tags(
         requests, bindings, password_fields, statement, request_collection
     )
+    _security_transfer_assignment_targets(
+        statement,
+        requests,
+        value_kind,
+        flags,
+        known,
+        (upload_object, upload_path, safe_upload_leaf),
+    )
+
+
+def _security_transfer_assignment_targets(
+    statement, requests, value_kind, flags, known, upload_flags
+):
+    upload_object, upload_path, safe_upload_leaf = upload_flags
     targets = getattr(statement, "targets", None) or [statement.target]
     for target in targets:
         if isinstance(target, ast.Name):

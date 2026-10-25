@@ -274,13 +274,32 @@ def signing_configuration_inventory(source_bytes, bindings):
     from .review_audits import _security_aliases
     from .review_integrity import bind_security_call_scopes
 
-    if (
+    if not _signing_inventory_input_closed(source_bytes, bindings):
+        return None
+    result = _signing_inventory_snapshots(
+        source_bytes, bindings, bind_security_call_scopes
+    )
+    if result is None:
+        return None
+    snapshots, captured, inventory = result
+    index = SourceSnapshotIndex(Path("."), snapshots, captured, inventory)
+    paths = index.module_paths()
+    if paths is None:
+        return None
+    aliases = _signing_inventory_aliases(snapshots, _security_aliases)
+    return {"index": index, "paths": paths, "aliases": aliases}
+
+
+def _signing_inventory_input_closed(source_bytes, bindings):
+    return not (
         set(source_bytes) != set(bindings)
         or len(bindings) > 2000
         or sum(len(raw) for raw in source_bytes.values() if isinstance(raw, bytes))
         > 32 * 1024 * 1024
-    ):
-        return None
+    )
+
+
+def _signing_inventory_snapshots(source_bytes, bindings, bind_security_call_scopes):
     snapshots, captured, inventory = {}, {}, {}
     for name, digest in bindings.items():
         raw, path = source_bytes.get(name), Path(name)
@@ -304,15 +323,13 @@ def signing_configuration_inventory(source_bytes, bindings):
             for child in ast.iter_child_nodes(node):
                 child._security_parent = node
         snapshots[path], captured[path], inventory[path] = tree, raw, digest
-    index = SourceSnapshotIndex(Path("."), snapshots, captured, inventory)
-    paths = index.module_paths()
-    if paths is None:
-        return None
-    aliases = {
-        path: _security_aliases(list(ast.walk(tree)))
-        for path, tree in snapshots.items()
+    return snapshots, captured, inventory
+
+
+def _signing_inventory_aliases(snapshots, security_aliases):
+    return {
+        path: security_aliases(list(ast.walk(tree))) for path, tree in snapshots.items()
     }
-    return {"index": index, "paths": paths, "aliases": aliases}
 
 
 def signing_configuration_evidence(finding, context):
@@ -329,6 +346,13 @@ def signing_configuration_evidence(finding, context):
         return None
     if _signing_imported_key_written(path, context):
         return None
+    witness = _signing_configuration_consumer_witness(index, path, context)
+    if witness is None:
+        return None
+    return _signing_configuration_witness(index, path, declaration, witness)
+
+
+def _signing_configuration_consumer_witness(index, path, context):
     for consumer_path, consumer_tree in index.snapshots.items():
         if _signing_rejection_or_reflection(consumer_tree):
             continue
@@ -340,7 +364,7 @@ def signing_configuration_evidence(finding, context):
         if witness is not None and _signing_bound_providers_clear(
             context, path, consumer_path, witness["framework"]
         ):
-            return _signing_configuration_witness(index, path, declaration, witness)
+            return witness
     return None
 
 
@@ -357,7 +381,15 @@ def private_key_authentication_evidence(finding, context):
     if declaration is None or not _credential_providers_clear(context):
         return None
     aliases = context["aliases"][path]
-    decryptors = {
+    decryptors = _credential_private_key_decryptors(tree, declaration, aliases)
+    witness = _credential_http_password_witness(tree, decryptors, aliases)
+    if witness is None:
+        return None
+    return _credential_private_key_witness(index, path, declaration, witness)
+
+
+def _credential_private_key_decryptors(tree, declaration, aliases):
+    return {
         node.name: witness
         for node in tree.body
         if isinstance(node, ast.FunctionDef)
@@ -372,26 +404,31 @@ def private_key_authentication_evidence(finding, context):
         and (witness := _credential_private_key_decryptor(node, declaration, aliases))
         is not None
     }
+
+
+def _credential_http_password_witness(tree, decryptors, aliases):
     for endpoint in tree.body:
         if not isinstance(endpoint, (ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
         witness = _credential_http_password_consumer(endpoint, decryptors, aliases)
         if witness is not None:
-            nodes = [declaration[0], *witness["transfers"]]
-            return {
-                "schema": "factory.security.private-key-auth-flow.v1",
-                "source_role": "embedded_private_key",
-                "consumer_role": "django_password_verifier",
-                "transfers": [
-                    _signing_source_span(index, path, node) for node in nodes
-                ],
-                "proof_scope": "captured_same_module_static_wiring",
-                "runtime_execution": "not_performed",
-                "deployment": "UNASSESSED",
-                "credential_validity": "NOT_ESTABLISHED",
-                "claim": "A captured PEM private-key literal feeds RSA decryption of a POST JSON password field whose plaintext reaches a Django password verifier.",
-            }
+            return witness
     return None
+
+
+def _credential_private_key_witness(index, path, declaration, witness):
+    nodes = [declaration[0], *witness["transfers"]]
+    return {
+        "schema": "factory.security.private-key-auth-flow.v1",
+        "source_role": "embedded_private_key",
+        "consumer_role": "django_password_verifier",
+        "transfers": [_signing_source_span(index, path, node) for node in nodes],
+        "proof_scope": "captured_same_module_static_wiring",
+        "runtime_execution": "not_performed",
+        "deployment": "UNASSESSED",
+        "credential_validity": "NOT_ESTABLISHED",
+        "claim": "A captured PEM private-key literal feeds RSA decryption of a POST JSON password field whose plaintext reaches a Django password verifier.",
+    }
 
 
 def _credential_private_key_declaration(finding, tree):
@@ -1558,35 +1595,53 @@ def supported_security_precondition(node, source_role, consumer_role):
 
 def http_request_payload(node, aliases, scope, flow_statement, alias_reader):
     """Recognize body bytes or selected values, never arbitrary mapping methods."""
-    from .review_audits import _name
-
     if isinstance(node, ast.Subscript):
-        return (
-            isinstance(node.slice, ast.Constant)
-            and isinstance(node.slice.value, str)
-            and _http_request_mapping(
-                node.value,
-                aliases,
-                scope,
-                flow_statement,
-                alias_reader,
-                node.slice.value,
-            )
+        return _http_request_subscript_payload(
+            node, aliases, scope, flow_statement, alias_reader
         )
     if isinstance(node, ast.Call):
-        if _flask_request_body_kind(node, aliases, scope, flow_statement, alias_reader):
-            return True
-        parts = _credential_get_source_key(node)
-        return bool(
-            parts is not None
-            and isinstance(parts[1], ast.Constant)
-            and isinstance(parts[1].value, str)
-            and _http_request_mapping(
-                parts[0], aliases, scope, flow_statement, alias_reader, parts[1].value
-            )
+        return _http_request_call_payload(
+            node, aliases, scope, flow_statement, alias_reader
         )
     if not isinstance(node, ast.Attribute) or not isinstance(node.ctx, ast.Load):
         return False
+    return _http_request_attribute_payload(
+        node, aliases, scope, flow_statement, alias_reader
+    )
+
+
+def _http_request_subscript_payload(node, aliases, scope, flow_statement, alias_reader):
+    return (
+        isinstance(node.slice, ast.Constant)
+        and isinstance(node.slice.value, str)
+        and _http_request_mapping(
+            node.value,
+            aliases,
+            scope,
+            flow_statement,
+            alias_reader,
+            node.slice.value,
+        )
+    )
+
+
+def _http_request_call_payload(node, aliases, scope, flow_statement, alias_reader):
+    if _flask_request_body_kind(node, aliases, scope, flow_statement, alias_reader):
+        return True
+    parts = _credential_get_source_key(node)
+    return bool(
+        parts is not None
+        and isinstance(parts[1], ast.Constant)
+        and isinstance(parts[1].value, str)
+        and _http_request_mapping(
+            parts[0], aliases, scope, flow_statement, alias_reader, parts[1].value
+        )
+    )
+
+
+def _http_request_attribute_payload(node, aliases, scope, flow_statement, alias_reader):
+    from .review_audits import _name
+
     resolved = alias_reader(scope, aliases, flow_statement)
     raw = _name(node)
     head, _, tail = raw.partition(".")
@@ -1635,11 +1690,24 @@ def _flask_request_body_kind(node, aliases, scope, statement, alias_reader):
 
 def request_payload_value_kind(node, requests, aliases, alias_reader):
     """Carry modeled request text/bytes through explicit codec operations only."""
+    kind = _request_payload_name_kind(node, requests)
+    if kind is not None:
+        return kind
+    kind = _request_payload_codec_kind(node, requests, aliases, alias_reader)
+    if kind is not None:
+        return kind
+    return _request_payload_source_kind(node, aliases, alias_reader)
+
+
+def _request_payload_name_kind(node, requests):
     if isinstance(node, ast.Name):
         for kind in ("bytes", "text"):
             if ("request-type:" + kind, node.id) in requests:
                 return kind
-        return None
+    return None
+
+
+def _request_payload_codec_kind(node, requests, aliases, alias_reader):
     if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
         codec = node.func.attr
         if codec in {"encode", "decode"} and not node.args and not node.keywords:
@@ -1648,6 +1716,10 @@ def request_payload_value_kind(node, requests, aliases, alias_reader):
             )
             if original == ("text" if codec == "encode" else "bytes"):
                 return "bytes" if codec == "encode" else "text"
+    return None
+
+
+def _request_payload_source_kind(node, aliases, alias_reader):
     body_kind = _flask_request_body_kind(node, aliases, None, None, alias_reader)
     if body_kind:
         return body_kind
@@ -1915,82 +1987,100 @@ def security_precondition_call_shape(node, canonical):
     """Restrict support to modeled, unambiguous dangerous argument slots."""
     if len(node.args) != 1 or isinstance(node.args[0], ast.Starred):
         return False
-    keywords = {item.arg: item.value for item in node.keywords}
-    if None in keywords or len(keywords) != len(node.keywords):
+    keyword_values = {item.arg: item.value for item in node.keywords}
+    if None in keyword_values or len(keyword_values) != len(node.keywords):
         return False
-    if canonical in {
-        "eval",
-        "exec",
-        "builtins.eval",
-        "builtins.exec",
-        "os.system",
-        "pickle.loads",
-        "_pickle.loads",
-        "dill.loads",
-        "yaml.unsafe_load",
-    }:
-        return not keywords
-    if canonical in {
-        "subprocess.run",
-        "subprocess.call",
-        "subprocess.check_call",
-        "subprocess.check_output",
-        "subprocess.Popen",
-    }:
-        return (
-            set(keywords) == {"shell"}
-            and isinstance(keywords["shell"], ast.Constant)
-            and keywords["shell"].value is True
-        )
-    if canonical == "yaml.load" and set(keywords) == {"Loader"}:
-        from .review_audits import _name, _security_aliases
-        from .review_integrity import _security_flow_bindings, _security_module_scope
-
-        scope = getattr(node, "_security_lexical_scope", None) or getattr(
-            node, "_oracle_scope", None
-        )
-        module = _security_module_scope(scope)
-        aliases = (
-            _security_aliases(module.body) if isinstance(module, ast.Module) else {}
-        )
-        resolved, _constants = _security_flow_bindings(node, aliases)
-        raw = _name(keywords["Loader"])
-        head, _, tail = raw.partition(".")
-        return resolved.get(head, "") + ("." + tail if tail else "") in {
-            "yaml.Loader",
-            "yaml.UnsafeLoader",
-            "yaml.CLoader",
-            "yaml.CUnsafeLoader",
-        }
+    if canonical in _POSITIONAL_SECURITY_CALLS:
+        return not keyword_values
+    if canonical in _SHELL_SECURITY_CALLS:
+        return _security_shell_call_shape(keyword_values)
+    if canonical == "yaml.load" and set(keyword_values) == {"Loader"}:
+        return _security_yaml_loader_call_shape(node, keyword_values)
     return False
+
+
+_POSITIONAL_SECURITY_CALLS = {
+    "eval",
+    "exec",
+    "builtins.eval",
+    "builtins.exec",
+    "os.system",
+    "pickle.loads",
+    "_pickle.loads",
+    "dill.loads",
+    "yaml.unsafe_load",
+}
+_SHELL_SECURITY_CALLS = {
+    "subprocess.run",
+    "subprocess.call",
+    "subprocess.check_call",
+    "subprocess.check_output",
+    "subprocess.Popen",
+}
+
+
+def _security_shell_call_shape(keyword_values):
+    return (
+        set(keyword_values) == {"shell"}
+        and isinstance(keyword_values["shell"], ast.Constant)
+        and keyword_values["shell"].value is True
+    )
+
+
+def _security_yaml_loader_call_shape(node, keyword_values):
+    from .review_audits import _name, _security_aliases
+    from .review_integrity import _security_flow_bindings, _security_module_scope
+
+    scope = getattr(node, "_security_lexical_scope", None) or getattr(
+        node, "_oracle_scope", None
+    )
+    module = _security_module_scope(scope)
+    aliases = _security_aliases(module.body) if isinstance(module, ast.Module) else {}
+    resolved, _constants = _security_flow_bindings(node, aliases)
+    raw = _name(keyword_values["Loader"])
+    head, _, tail = raw.partition(".")
+    return resolved.get(head, "") + ("." + tail if tail else "") in {
+        "yaml.Loader",
+        "yaml.UnsafeLoader",
+        "yaml.CLoader",
+        "yaml.CUnsafeLoader",
+    }
 
 
 def security_precondition_path_possible(node):
     """Reject syntactically dead or unmodeled short-circuit sink positions."""
     child = node
     while (parent := getattr(child, "_security_parent", None)) is not None:
-        if isinstance(parent, (ast.If, ast.While, ast.IfExp)):
-            test = parent.test
-            if isinstance(test, ast.Constant):
-                body = parent.body
-                in_body = child in body if isinstance(body, list) else child is body
-                other = getattr(parent, "orelse", [])
-                in_other = child in other if isinstance(other, list) else child is other
-                if (in_body and not bool(test.value)) or (
-                    in_other and bool(test.value)
-                ):
-                    return False
-        if isinstance(parent, ast.BoolOp) and child is not parent.values[0]:
+        if not _security_control_branch_possible(parent, child):
             return False
-        for _field, value in ast.iter_fields(parent):
-            if isinstance(value, list) and child in value:
-                previous = value[: value.index(child)]
-                if any(
-                    isinstance(item, (ast.Return, ast.Raise, ast.Break, ast.Continue))
-                    for item in previous
-                ):
-                    return False
+        if not _security_no_prior_terminator(parent, child):
+            return False
         child = parent
+    return True
+
+
+def _security_control_branch_possible(parent, child):
+    if isinstance(parent, (ast.If, ast.While, ast.IfExp)):
+        test = parent.test
+        if isinstance(test, ast.Constant):
+            body = parent.body
+            in_body = child in body if isinstance(body, list) else child is body
+            other = getattr(parent, "orelse", [])
+            in_other = child in other if isinstance(other, list) else child is other
+            if (in_body and not bool(test.value)) or (in_other and bool(test.value)):
+                return False
+    return not (isinstance(parent, ast.BoolOp) and child is not parent.values[0])
+
+
+def _security_no_prior_terminator(parent, child):
+    for _field, value in ast.iter_fields(parent):
+        if isinstance(value, list) and child in value:
+            previous = value[: value.index(child)]
+            if any(
+                isinstance(item, (ast.Return, ast.Raise, ast.Break, ast.Continue))
+                for item in previous
+            ):
+                return False
     return True
 
 
