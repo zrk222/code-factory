@@ -73,59 +73,33 @@ from .finite_capture import (
 )
 from .provenance import _LiteralConsumers as _LiteralConsumers
 
-_FULL_REPOSITORY_WORKSPACE_PREFIX_CACHE = None
-
 
 def _full_repository_workspace_store_prefix(
-    checkpoint_key, result_digest, context_digest, rows, digest
+    checkpoint_key, result_digest, context_digest, rows, digest,
+    source_capture=None, source_identity=None,
 ):
-    global _FULL_REPOSITORY_WORKSPACE_PREFIX_CACHE
-    owned = copy.deepcopy(rows)
-    _FULL_REPOSITORY_WORKSPACE_PREFIX_CACHE = (
-        checkpoint_key,
-        result_digest,
-        context_digest,
-        digest(owned),
-        owned,
+    from .context_efficiency import _full_repository_workspace_cache_store_prefix
+
+    return _full_repository_workspace_cache_store_prefix(
+        checkpoint_key, result_digest, context_digest, rows, digest,
+        source_capture, source_identity,
     )
+
+
+def _full_repository_workspace_cache_identity(generation, key):
+    from .context_efficiency import _full_repository_workspace_cache_identity
+
+    return _full_repository_workspace_cache_identity(generation, key)
 
 
 def _full_repository_workspace_load_prefix(
     engine, generation, results, files, source_by_name, context_digest
 ):
-    cached = _FULL_REPOSITORY_WORKSPACE_PREFIX_CACHE
-    key = generation.get("workspace_prefix_cache_key")
-    if (
-        cached is None
-        or key is None
-        or cached[0] != key
-        or cached[1] != engine.digest(results)
-        or cached[1] != generation.get("saved_result_digest")
-        or cached[2] != context_digest
-        or cached[2] != generation.get("saved_context_generation_sha256")
-        or cached[3] != engine.digest(cached[4])
-        or len(cached[4]) != len(results)
-    ):
-        return None
-    rows = copy.deepcopy(cached[4])
-    for row, path, primary in zip(rows, files, results):
-        if (
-            not isinstance(row, dict)
-            or set(row) != {"path", "binding", "findings", "status"}
-            or row["path"] != path.relative_to(generation["root"]).as_posix()
-            or row["path"] != primary.get("path")
-            or row["status"] != primary.get("status")
-            or row["findings"] != primary.get("findings")
-        ):
-            return None
-        source = source_by_name.get(row["path"])
-        binding = row["binding"]
-        if binding is not None and (
-            not isinstance(binding, dict)
-            or binding.get("sha256") != (source or {}).get("sha256")
-        ):
-            return None
-    return rows
+    from .context_efficiency import _full_repository_workspace_cache_load_prefix
+
+    return _full_repository_workspace_cache_load_prefix(
+        engine, generation, results, files, source_by_name, context_digest
+    )
 
 
 def _closed_declaration_program(node, call_name):
@@ -5453,6 +5427,9 @@ def _full_repository_workspace_record_batch_evidence(
                 "consume_calls": consume_counts["calls"],
                 "consume_rows_attempted": consume_counts["attempted_rows"],
                 "consume_rows_completed": consume_counts["completed_rows"],
+                "retained_source_reuse": generation.get(
+                    "workspace_source_capture_reuse", {"files": 0, "bytes": 0}
+                ),
             },
             "findings_authority": "native_source_bound_partition"
             if partition_state == "VALIDATED"
@@ -5866,12 +5843,20 @@ def _full_repository_workspace_dependency_tree(
 
 
 def _full_repository_workspace_security_context(engine, generation, audit):
-    from .context_efficiency import bind_application_fixture_context
+    from .context_efficiency import (
+        _full_repository_workspace_cache_load_source,
+        bind_application_fixture_context,
+    )
     from .import_context import CapturedImportInventory
     root, files = generation["root"], generation["files"]
     retention_limit = generation.get("source_retention_limit_bytes")
     capture_options = {} if retention_limit is None else {"retention_limit": retention_limit}
-    captured, bindings, _manifest, _cacheable = audit._oracle_source_inputs(root, files, **capture_options)
+    reused = _full_repository_workspace_cache_load_source(generation)
+    if reused is None:
+        generation["workspace_source_capture_reuse"] = {"files": 0, "bytes": 0}
+        captured, bindings, _manifest, _cacheable = audit._oracle_source_inputs(root, files, **capture_options)
+    else:
+        captured, bindings = reused
     inventory = {row["path"]: row for row in generation.get("inventory", ())}
     for binding in bindings:
         prior = inventory.get(binding["path"])
@@ -5882,6 +5867,11 @@ def _full_repository_workspace_security_context(engine, generation, audit):
     if len(captured) < len(bindings):
         raise RuntimeAuditError(
             "E_SOURCE_RETENTION", "workspace source retention budget exhausted"
+        )
+    if len(captured) == len(files) == len(bindings):
+        generation["workspace_source_capture_for_cache"] = (
+            {path.relative_to(root).as_posix(): data for path, data in captured.items()},
+            bindings,
         )
     snapshots = audit.contracts.bound_snapshots(root, files, captured, bindings)
     hashes = {root / row["path"]: row["sha256"] for row in bindings}

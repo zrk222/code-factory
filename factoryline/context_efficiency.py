@@ -13,6 +13,7 @@ import os
 import re
 import sqlite3
 import stat
+import sys
 import threading
 import tokenize
 from copy import deepcopy
@@ -94,6 +95,162 @@ from .type_intent_provider_provenance import (
     _module_has_dynamic_capability_access as _module_has_dynamic_capability_access,
     _capability_reflection_names as _capability_reflection_names,
 )
+
+_FULL_REPOSITORY_WORKSPACE_PREFIX_CACHE = None
+# 64 MiB source retention plus 16 MiB for measured cache rows and containers.
+FULL_REPOSITORY_WORKSPACE_CACHE_MAX_BYTES = 80 * 1024 * 1024
+
+
+def _full_repository_workspace_cache_size(value, seen=None, active=None):
+    """Measure exact built-in payloads; reject subclasses and recursive containers."""
+    kind = type(value)
+    if kind not in (dict, list, tuple, type(None), bool, int, float, str, bytes):
+        raise ValueError("unsupported cache payload type")
+    seen, active = set() if seen is None else seen, set() if active is None else active
+    marker = id(value)
+    if marker in active:
+        raise ValueError("recursive cache payload")
+    if marker in seen:
+        return 0
+    seen.add(marker)
+    if kind not in (dict, list, tuple):
+        return sys.getsizeof(value)
+    active.add(marker)
+    try:
+        children = value.items() if kind is dict else value
+        size = sys.getsizeof(value)
+        for child in children:
+            size += sum(
+                _full_repository_workspace_cache_size(item, seen, active)
+                for item in (child if kind is dict else (child,))
+            )
+        return size
+    finally:
+        active.remove(marker)
+
+
+def _full_repository_workspace_cache_store_prefix(
+    key, result_digest, context_digest, rows, digest, source_capture=None, identity=None
+):
+    global _FULL_REPOSITORY_WORKSPACE_PREFIX_CACHE
+    try:
+        _full_repository_workspace_cache_size((key, result_digest, context_digest, rows, source_capture, identity))
+        source = None if source_capture is None else (
+            dict(source_capture[0]), deepcopy(source_capture[1])
+        )
+        owned = deepcopy(rows)
+        entry = (key, result_digest, context_digest, digest(owned), owned, source, identity, 0)
+        size = _full_repository_workspace_cache_size(entry)
+        entry = (*entry[:-1], size)
+        measured = _full_repository_workspace_cache_size(entry)
+        if measured <= FULL_REPOSITORY_WORKSPACE_CACHE_MAX_BYTES:
+            _FULL_REPOSITORY_WORKSPACE_PREFIX_CACHE = (*entry[:-1], measured)
+            return measured
+    except Exception:
+        pass
+    _FULL_REPOSITORY_WORKSPACE_PREFIX_CACHE = None
+    return 0
+
+
+def _full_repository_workspace_cache_identity(generation, key):
+    return (
+        generation["root"].as_posix(), generation["inventory_hash"],
+        generation["configuration"], generation["scanner"],
+        generation["runtime_epoch"], generation["source_retention_limit_bytes"],
+        key[1],
+    )
+
+
+def _full_repository_workspace_cache_load_source(generation):
+    cached, key = _FULL_REPOSITORY_WORKSPACE_PREFIX_CACHE, generation.get("workspace_prefix_cache_key")
+    valid_size = False
+    if type(cached) is tuple and len(cached) == 8:
+        try:
+            valid_size = cached[7] == _full_repository_workspace_cache_size(cached)
+        except Exception:
+            pass
+    if (
+        not valid_size or key is None
+        or type(key) is not tuple or len(key) != 3
+        or cached[0] != key or cached[5] is None
+        or cached[7] > FULL_REPOSITORY_WORKSPACE_CACHE_MAX_BYTES
+    ):
+        return None
+    if cached[6] != _full_repository_workspace_cache_identity(generation, key):
+        return None
+    if not isinstance(cached[5], tuple) or len(cached[5]) != 2:
+        return None
+    source_bytes, bindings = cached[5]
+    if not isinstance(source_bytes, dict) or not isinstance(bindings, list):
+        return None
+    inventory = {row["path"]: row for row in generation["inventory"]}
+    names = [item.get("path") for item in bindings if isinstance(item, dict)]
+    if len(names) != len(inventory) or set(names) != set(inventory) or set(source_bytes) != set(inventory):
+        return None
+    file_by_name = {path.relative_to(generation["root"]).as_posix(): path for path in generation["files"]}
+    if set(file_by_name) != set(inventory) or any(
+        not isinstance(value, bytes) for value in source_bytes.values()
+    ) or sum(map(len, source_bytes.values())) > generation["source_retention_limit_bytes"]:
+        return None
+    captured = {}
+    for binding in bindings:
+        name, data = binding["path"], source_bytes.get(binding["path"])
+        row = inventory[name]
+        if (
+            not isinstance(data, bytes) or len(data) != binding.get("bytes")
+            or binding.get("sha256") != row.get("sha256")
+            or hashlib.sha256(data).hexdigest() != row.get("sha256")
+            or file_by_name[name].is_symlink()
+        ):
+            return None
+        captured[file_by_name[name]] = data
+    if len(captured) != len(generation["files"]):
+        return None
+    generation["workspace_source_capture_reuse"] = {
+        "files": len(captured), "bytes": sum(map(len, captured.values())),
+        "cache_accounted_bytes": cached[7],
+    }
+    return captured, deepcopy(bindings)
+
+
+def _full_repository_workspace_cache_load_prefix(
+    engine, generation, results, files, source_by_name, context_digest
+):
+    cached, key = _FULL_REPOSITORY_WORKSPACE_PREFIX_CACHE, generation.get("workspace_prefix_cache_key")
+    try:
+        valid_size = type(cached) is tuple and len(cached) == 8 and (
+            cached[7] == _full_repository_workspace_cache_size(cached)
+        )
+    except Exception:
+        valid_size = False
+    if (
+        not valid_size or key is None or cached[0] != key
+        or cached[7] > FULL_REPOSITORY_WORKSPACE_CACHE_MAX_BYTES
+        or cached[1] != engine.digest(results)
+        or cached[1] != generation.get("saved_result_digest")
+        or cached[2] != context_digest
+        or cached[2] != generation.get("saved_context_generation_sha256")
+        or cached[3] != engine.digest(cached[4]) or len(cached[4]) != len(results)
+    ):
+        return None
+    rows = deepcopy(cached[4])
+    for row, path, primary in zip(rows, files, results):
+        if (
+            not isinstance(row, dict)
+            or set(row) != {"path", "binding", "findings", "status"}
+            or row["path"] != path.relative_to(generation["root"]).as_posix()
+            or row["path"] != primary.get("path")
+            or row["status"] != primary.get("status")
+            or row["findings"] != primary.get("findings")
+        ):
+            return None
+        source, binding = source_by_name.get(row["path"]), row["binding"]
+        if binding is not None and (
+            not isinstance(binding, dict)
+            or binding.get("sha256") != (source or {}).get("sha256")
+        ):
+            return None
+    return rows
 
 REQUEST_SCHEMA = "factory.context-efficiency-request.v1"
 PACKET_SCHEMA = "factory.context-efficiency-packet.v1"
@@ -402,7 +559,14 @@ def bind_application_fixture_context(
     from collections.abc import Mapping
     from . import review_audits as audit
 
+    for path in snapshots:
+        contexts.setdefault(path, {})["application_fixture_evidence"] = {}
     if not isinstance(source_bytes, dict) or not isinstance(source_inventory, dict):
+        return
+    candidates = {
+        path: _fixture_literal_candidates(tree, audit) for path, tree in snapshots.items()
+    }
+    if not any(candidates.values()):
         return
     configs = _application_profile_bytes(root, bindings, read_source, limit)
     if configs is None:
@@ -442,6 +606,7 @@ def bind_application_fixture_context(
                 fixture, index, presentation, path, node, literal
             ),
             {"inventory_sha256": digest, "configuration_sha256": config_hashes},
+            candidates[path],
         )
 
 
@@ -509,8 +674,8 @@ def bind_django_fixture_context(
         )
 
 
-def _fixture_literal_evidence(tree, audit, resolve, metadata=None):
-    evidence = {}
+def _fixture_literal_candidates(tree, audit):
+    candidates = []
     for node in ast.walk(tree):
         if not isinstance(node, (ast.Assign, ast.AnnAssign)):
             continue
@@ -523,6 +688,15 @@ def _fixture_literal_evidence(tree, audit, resolve, metadata=None):
             or not audit._SECRET_ASSIGNMENT.search(target.id)
         ):
             continue
+        candidates.append((node, target, literal))
+    return candidates
+
+
+def _fixture_literal_evidence(tree, audit, resolve, metadata=None, candidates=None):
+    evidence = {}
+    for node, target, literal in (
+        _fixture_literal_candidates(tree, audit) if candidates is None else candidates
+    ):
         item = resolve(node, literal)
         if item.get("eligible") is True:
             key = f"{node.lineno}:{node.col_offset}:{target.id}"
@@ -605,6 +779,7 @@ def provider_context_cache_helpers(contracts):
         cached_import_bindings,
         _cached_import_binding,
         _cached_import_path,
+        _fixture_literal_candidates,
         bind_django_fixture_context,
         bind_application_fixture_context,
         _fixture_literal_evidence,

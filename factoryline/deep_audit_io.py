@@ -145,8 +145,7 @@ def strict_json(raw: bytes) -> dict:
     return value
 
 
-# Execution inventory is a separate versioned contract; v1 signed intake keeps
-# its original bounds and semantics.
+# Execution inventory is versioned; v1 signed intake keeps its bounds and semantics.
 INVENTORY_LIMIT = 50_000
 SOURCE_LIMIT = 16 * 1024 * 1024
 SNAPSHOT_LIMIT = 1024 * 1024 * 1024
@@ -801,7 +800,7 @@ def _full_repository_runtime_epoch(
     root: Path, configuration: str, audit, *, retention_limit: int | None = None
 ) -> str:
     """Bind only the in-process cache shortcut to live native helper objects."""
-    from .context_efficiency import _scan_security_source
+    from . import context_efficiency as context_cache
 
     retention_limit = (
         audit.DEFAULT_ORACLE_SOURCE_RETENTION_BYTES
@@ -809,7 +808,7 @@ def _full_repository_runtime_epoch(
         else retention_limit
     )
     helpers = (
-        _scan_security_source,
+        context_cache._scan_security_source,
         audit._security_source_files,
         audit._security_source_bytes,
         audit._security_scan_tree,
@@ -836,6 +835,11 @@ def _full_repository_runtime_epoch(
             helper
             for name, helper in sorted(vars(workspace_engine).items())
             if name.startswith("_full_repository_workspace_") and callable(helper)
+        )
+        + tuple(
+            helper
+            for name, helper in sorted(vars(context_cache).items())
+            if name.startswith("_full_repository_workspace_cache_") and callable(helper)
         )
         + (
             checkpoint_admission._trusted_core_ledger_matches,
@@ -1406,15 +1410,23 @@ def _full_repository_store_checkpoint(generation: dict, results: list[dict]) -> 
         generation["runtime_epoch"],
     )
     if workspace and generation.get("workspace_prefix_raw_rows") is not None:
-        from .runtime_audit_integrity import _full_repository_workspace_store_prefix
+        from .runtime_audit_integrity import (
+            _full_repository_workspace_cache_identity,
+            _full_repository_workspace_store_prefix,
+        )
 
-        _full_repository_workspace_store_prefix(
+        cache_bytes = _full_repository_workspace_store_prefix(
             _FULL_REPOSITORY_TRUSTED_CHECKPOINT,
             checkpoint["result_digest"],
             checkpoint["context_generation_sha256"],
             generation["workspace_prefix_raw_rows"],
             digest,
+            generation.get("workspace_source_capture_for_cache"),
+            _full_repository_workspace_cache_identity(
+                generation, _FULL_REPOSITORY_TRUSTED_CHECKPOINT
+            ),
         )
+        generation["workspace_evidence"]["primary_processing"]["cache_accounted_bytes"] = cache_bytes
 
 
 def _full_repository_dependency_index(results: list[dict]) -> dict:

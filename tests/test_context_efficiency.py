@@ -5436,7 +5436,7 @@ def test_full_repository_symlink_source_is_explicitly_unreadable(tmp_path):
 def test_full_repository_runtime_epoch_covers_every_profile_helper(
     tmp_path, monkeypatch
 ):
-    from factoryline import deep_audit_io, review_audits
+    from factoryline import context_efficiency, deep_audit_io, review_audits
 
     epoch = deep_audit_io._full_repository_runtime_epoch
     before = epoch(tmp_path, "fixed-configuration", review_audits)
@@ -5449,6 +5449,17 @@ def test_full_repository_runtime_epoch_covers_every_profile_helper(
     for name in helpers:
         with monkeypatch.context() as patch:
             patch.setattr(deep_audit_io, name, lambda *args, **kwargs: None)
+            assert epoch(tmp_path, "fixed-configuration", review_audits) != before, name
+        assert epoch(tmp_path, "fixed-configuration", review_audits) == before, name
+    cache_helpers = {
+        name: helper
+        for name, helper in vars(context_efficiency).items()
+        if name.startswith("_full_repository_workspace_cache_") and callable(helper)
+    }
+    assert cache_helpers
+    for name in cache_helpers:
+        with monkeypatch.context() as patch:
+            patch.setattr(context_efficiency, name, lambda *args, **kwargs: None)
             assert epoch(tmp_path, "fixed-configuration", review_audits) != before, name
         assert epoch(tmp_path, "fixed-configuration", review_audits) == before, name
     with monkeypatch.context() as patch:
@@ -5566,6 +5577,7 @@ def test_new_shared_provider_helpers_are_epoch_enrolled():
         for helper in (
             _context_refactor._cached_import_binding,
             _context_refactor._cached_import_path,
+            _context_refactor._fixture_literal_candidates,
             _context_refactor._fixture_literal_evidence,
         )
     )
@@ -5705,3 +5717,110 @@ def test_precision257_fixture_context_binders_record_empty_evidence_for_valid_ca
         source_inventory=inventory,
     )
     assert "django_fixture_evidence" not in django_contexts[source_path]
+
+
+def test_application_fixture_context_skips_index_without_literal_demand(
+    tmp_path, monkeypatch
+):
+    import ast
+    import hashlib
+    from pathlib import Path
+    from factoryline import context_efficiency as context, credential_role_constructor_provider as roles
+    from factoryline import mock_fixture_provenance as fixture
+
+    source = Path(tmp_path) / "app.py"
+    raw = b"VALUE = 'ordinary'\n"
+    tree = ast.parse(raw)
+    contexts = {source: {"application_fixture_evidence": {"stale": True}}}
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("no literal demand must avoid fixture indexes and config reads")
+
+    monkeypatch.setattr(context, "_application_profile_bytes", forbidden)
+    monkeypatch.setattr(fixture, "application_test_index", forbidden)
+    monkeypatch.setattr(roles, "SourceSnapshotIndex", forbidden)
+    context.bind_application_fixture_context(
+        tmp_path,
+        {source: tree},
+        contexts,
+        [],
+        forbidden,
+        4096,
+        source_bytes={source: raw},
+        source_inventory={source: hashlib.sha256(raw).hexdigest()},
+    )
+    assert contexts[source]["application_fixture_evidence"] == {}
+
+
+def test_application_fixture_literal_demand_keeps_config_and_source_validation(
+    tmp_path, monkeypatch
+):
+    import ast
+    import hashlib
+    from pathlib import Path
+    from factoryline import context_efficiency as context, credential_role_constructor_provider as roles
+
+    source = Path(tmp_path) / "tests" / "test_auth.py"
+    raw = b"def test_auth():\n    PASSWORD: str = 'secret-value'\n"
+    tree = ast.parse(raw)
+    configs = {"pyproject.toml": b"[tool.pytest.ini_options]\n", "tox.ini": b"[pytest]\n"}
+    bindings = [
+        {"path": name, "sha256": hashlib.sha256(data).hexdigest()}
+        for name, data in configs.items()
+    ]
+    indexes = []
+    original = roles.SourceSnapshotIndex
+
+    def counted(*args, **kwargs):
+        indexes.append(1)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(roles, "SourceSnapshotIndex", counted)
+
+    def read_source(_root, name):
+        return configs[name]
+
+    inventory = {source: hashlib.sha256(raw).hexdigest()}
+    contexts = {source: {}}
+    context.bind_application_fixture_context(
+        tmp_path,
+        {source: tree},
+        contexts,
+        bindings,
+        read_source,
+        4096,
+        source_bytes={source: raw},
+        source_inventory=inventory,
+    )
+    assert indexes
+
+    configs["tox.ini"] = b"[pytest]\nchanged = true\n"
+    declined = {source: {}}
+    context.bind_application_fixture_context(
+        tmp_path,
+        {source: tree},
+        declined,
+        bindings,
+        read_source,
+        4096,
+        source_bytes={source: raw},
+        source_inventory=inventory,
+    )
+    assert len(indexes) == 1
+    assert declined[source]["application_fixture_evidence"] == {}
+
+    configs["tox.ini"] = b"[pytest]\n"
+    bad_inventory = {source: "0" * 64}
+    declined_source = {source: {}}
+    context.bind_application_fixture_context(
+        tmp_path,
+        {source: tree},
+        declined_source,
+        bindings,
+        read_source,
+        4096,
+        source_bytes={source: raw},
+        source_inventory=bad_inventory,
+    )
+    assert len(indexes) > 1
+    assert declined_source[source]["application_fixture_evidence"] == {}

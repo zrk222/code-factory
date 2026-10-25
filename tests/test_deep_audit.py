@@ -171,6 +171,228 @@ def test_workspace_public_scan_retains_source_with_larger_budget(tmp_path, monke
     assert high["primitive_partition"]["state"] == "VALIDATED"
 
 
+def test_workspace_resume_reuses_only_verified_source_bytes(tmp_path, monkeypatch):
+    from factoryline import context_efficiency, deep_audit_io, review_audits
+
+    source = b"from flask import request\ndef read(): return request.args.get('x')\n"
+    (tmp_path / "app.py").write_bytes(source)
+    calls = []
+    original = review_audits._oracle_source_inputs
+
+    def counted(*args, **kwargs):
+        calls.append(1)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(review_audits, "_oracle_source_inputs", counted)
+    started = time.perf_counter()
+    cold = deep_audit_io.full_repository_scan(
+        tmp_path, context_profile=deep_audit_io.FULL_REPOSITORY_CONTEXT_PROFILE
+    )
+    cold_seconds = time.perf_counter() - started
+    started = time.perf_counter()
+    warm = deep_audit_io.full_repository_scan(
+        tmp_path,
+        context_profile=deep_audit_io.FULL_REPOSITORY_CONTEXT_PROFILE,
+        resume=True,
+    )
+    warm_seconds = time.perf_counter() - started
+    assert len(calls) == 1
+    assert warm["primary_results"] == cold["primary_results"]
+    assert warm["workspace_evidence"]["findings"] == cold["workspace_evidence"]["findings"]
+    assert warm["workspace_evidence"]["finding_tiers"] == cold["workspace_evidence"]["finding_tiers"]
+    assert warm["workspace_evidence"]["primitive_observations"] == cold["workspace_evidence"]["primitive_observations"]
+    processing = warm["workspace_evidence"]["primary_processing"]
+    reuse = processing["retained_source_reuse"]
+    assert reuse["files"] == 1 and reuse["bytes"] == len(source)
+    assert reuse["cache_accounted_bytes"] > len(source)
+    assert processing["cache_accounted_bytes"] > 0
+    assert cold_seconds >= 0 and warm_seconds >= 0
+
+    cached = context_efficiency._FULL_REPOSITORY_WORKSPACE_PREFIX_CACHE
+    source_map, bindings = cached[5]
+    name = next(iter(source_map))
+    damaged = dict(source_map)
+    damaged[name] = bytes([source_map[name][0] ^ 1]) + source_map[name][1:]
+    monkeypatch.setattr(
+        context_efficiency,
+        "_FULL_REPOSITORY_WORKSPACE_PREFIX_CACHE",
+        (*cached[:5], (damaged, bindings), *cached[6:]),
+    )
+    corrupt = deep_audit_io.full_repository_scan(
+        tmp_path,
+        context_profile=deep_audit_io.FULL_REPOSITORY_CONTEXT_PROFILE,
+        resume=True,
+    )
+    assert len(calls) == 2
+    assert corrupt["workspace_evidence"]["primary_processing"]["retained_source_reuse"]["files"] == 0
+    assert corrupt["primary_results"] == cold["primary_results"]
+
+    cached = context_efficiency._FULL_REPOSITORY_WORKSPACE_PREFIX_CACHE
+    missing = dict(cached[5][0])
+    missing.pop(name)
+    monkeypatch.setattr(
+        context_efficiency,
+        "_FULL_REPOSITORY_WORKSPACE_PREFIX_CACHE",
+        (*cached[:5], (missing, cached[5][1]), *cached[6:]),
+    )
+    absent = deep_audit_io.full_repository_scan(
+        tmp_path,
+        context_profile=deep_audit_io.FULL_REPOSITORY_CONTEXT_PROFILE,
+        resume=True,
+    )
+    assert len(calls) == 3
+    assert absent["workspace_evidence"]["primary_processing"]["retained_source_reuse"]["files"] == 0
+    assert absent["primary_results"] == cold["primary_results"]
+
+    monkeypatch.setattr(deep_audit_io, "_FULL_REPOSITORY_TRUSTED_CHECKPOINT", None)
+    cold_processor = deep_audit_io.full_repository_scan(
+        tmp_path,
+        context_profile=deep_audit_io.FULL_REPOSITORY_CONTEXT_PROFILE,
+        resume=True,
+    )
+    assert len(calls) == 4
+    assert cold_processor["workspace_evidence"]["primary_processing"]["retained_source_reuse"]["files"] == 0
+    assert cold_processor["primary_results"] == cold["primary_results"]
+    assert cold_seconds < float("inf") and warm_seconds < float("inf")
+
+
+def test_workspace_resume_rejects_same_mtime_source_write(tmp_path):
+    import os
+
+    from factoryline.deep_audit_io import FULL_REPOSITORY_CONTEXT_PROFILE, full_repository_scan
+
+    source = tmp_path / "app.py"
+    source.write_bytes(b"value = 1\n")
+    full_repository_scan(tmp_path, context_profile=FULL_REPOSITORY_CONTEXT_PROFILE)
+    before = source.stat()
+    source.write_bytes(b"value = 2\n")
+    os.utime(source, ns=(before.st_atime_ns, before.st_mtime_ns))
+    with pytest.raises(RuntimeAuditError, match="SOURCE_DRIFT"):
+        full_repository_scan(
+            tmp_path, context_profile=FULL_REPOSITORY_CONTEXT_PROFILE, resume=True
+        )
+
+
+def test_public_workspace_zero_demand_preserves_results_and_skips_fixture_index(
+    tmp_path, monkeypatch
+):
+    import ast
+    from factoryline import context_efficiency as context, deep_audit_io
+    from factoryline import mock_fixture_provenance as fixture
+
+    roots = [tmp_path / "fast", tmp_path / "indexed"]
+    for root in roots:
+        root.mkdir()
+        (root / "app.py").write_text("VALUE = 'ordinary'\n", encoding="utf-8")
+    index_calls = []
+    original_index = fixture.application_test_index
+
+    def counted_index(*args, **kwargs):
+        index_calls.append(1)
+        return original_index(*args, **kwargs)
+
+    monkeypatch.setattr(fixture, "application_test_index", counted_index)
+    fast = deep_audit_io.full_repository_scan(
+        roots[0], context_profile=deep_audit_io.FULL_REPOSITORY_CONTEXT_PROFILE
+    )
+    assert index_calls == []
+    original_candidates = context._fixture_literal_candidates
+
+    def force_old_index_path(tree, audit):
+        candidates = original_candidates(tree, audit)
+        if candidates:
+            return candidates
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign) and len(node.targets) == 1:
+                if isinstance(node.targets[0], ast.Name):
+                    return [(node, node.targets[0], "ordinary")]
+        return []
+
+    monkeypatch.setattr(context, "_fixture_literal_candidates", force_old_index_path)
+    indexed = deep_audit_io.full_repository_scan(
+        roots[1], context_profile=deep_audit_io.FULL_REPOSITORY_CONTEXT_PROFILE
+    )
+    assert index_calls
+    assert fast["primary_results"] == indexed["primary_results"]
+    assert fast["workspace_evidence"]["findings"] == indexed["workspace_evidence"]["findings"]
+    assert fast["workspace_evidence"]["finding_tiers"] == indexed["workspace_evidence"]["finding_tiers"]
+
+
+def test_workspace_source_cache_requires_exact_inventory_and_runtime_identity(
+    tmp_path, monkeypatch
+):
+    import factoryline.context_efficiency as cache
+
+    path, raw = tmp_path / "app.py", b"value = 1\n"
+    path.write_bytes(raw)
+    row = {"path": "app.py", "sha256": sha256_bytes(raw)}
+    generation = {
+        "root": tmp_path,
+        "files": [path],
+        "inventory": [row],
+        "inventory_hash": digest([row]),
+        "configuration": "config",
+        "scanner": "scanner",
+        "runtime_epoch": "runtime",
+        "source_retention_limit_bytes": 64,
+    }
+    key = (tmp_path.as_posix(), "checkpoint", "runtime")
+    generation["workspace_prefix_cache_key"] = key
+    identity = cache._full_repository_workspace_cache_identity(generation, key)
+    bindings = [{"path": "app.py", "sha256": sha256_bytes(raw), "bytes": len(raw)}]
+    assert cache._full_repository_workspace_cache_store_prefix(
+        key, "result", "context", [], digest, ({"app.py": raw}, bindings), identity
+    ) > len(raw)
+    assert cache._full_repository_workspace_cache_load_source(generation)[0] == {path: raw}
+
+    class HiddenPayload(bytes):
+        def __new__(cls, value):
+            instance = super().__new__(cls, value)
+            instance.hidden = bytearray(2 * 1024 * 1024)
+            return instance
+
+    corrupted = list(cache._FULL_REPOSITORY_WORKSPACE_PREFIX_CACHE)
+    corrupted_source = dict(corrupted[5][0])
+    corrupted_source["app.py"] = HiddenPayload(raw)
+    corrupted[5] = (corrupted_source, corrupted[5][1])
+    monkeypatch.setattr(cache, "_FULL_REPOSITORY_WORKSPACE_PREFIX_CACHE", tuple(corrupted))
+    assert cache._full_repository_workspace_cache_load_source(generation) is None
+    shared = [b"shared"]
+    assert cache._full_repository_workspace_cache_size([shared, shared]) > 0
+
+    cyclic = []
+    cyclic.append(cyclic)
+    assert cache._full_repository_workspace_cache_store_prefix(
+        key, "result", "context", cyclic, digest, ({} , []), identity
+    ) == 0
+    assert cache._FULL_REPOSITORY_WORKSPACE_PREFIX_CACHE is None
+    assert cache._full_repository_workspace_cache_store_prefix(
+        key, "result", "context", [], digest, ({"app.py": HiddenPayload(raw)}, bindings), identity
+    ) == 0
+    assert cache._FULL_REPOSITORY_WORKSPACE_PREFIX_CACHE is None
+
+    for field in (
+        "inventory_hash", "configuration", "scanner", "runtime_epoch",
+        "source_retention_limit_bytes",
+    ):
+        altered = dict(generation)
+        altered[field] = 65 if field == "source_retention_limit_bytes" else "changed"
+        assert cache._full_repository_workspace_cache_load_source(altered) is None
+    altered_root = dict(generation, root=tmp_path / "other")
+    assert cache._full_repository_workspace_cache_load_source(altered_root) is None
+    altered_inventory = dict(generation)
+    altered_inventory["inventory"] = [{"path": "app.py", "sha256": "0" * 64}]
+    assert cache._full_repository_workspace_cache_load_source(altered_inventory) is None
+    altered_key = dict(generation, workspace_prefix_cache_key=(*key[:2], "changed"))
+    assert cache._full_repository_workspace_cache_load_source(altered_key) is None
+
+    monkeypatch.setattr(cache, "FULL_REPOSITORY_WORKSPACE_CACHE_MAX_BYTES", 1)
+    assert cache._full_repository_workspace_cache_store_prefix(
+        key, "result", "context", [], digest, ({"app.py": raw}, bindings), identity
+    ) == 0
+    assert cache._FULL_REPOSITORY_WORKSPACE_PREFIX_CACHE is None
+
+
 def test_zap_source_trace_mount_preserves_isolation_and_signed_python(tmp_path):
     from factoryline.deep_audit import _zap_app_argv
     from test_deep_audit_sarif import _host_zap_lane_fixture
