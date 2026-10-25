@@ -1,13 +1,23 @@
 # Changelog
 
-## Unreleased
+## 0.49.0 (candidate; publication pending)
+
+- Coordinate Code Factory 0.49.0 and VS Code / JetBrains 1.3.0 under the
+  existing package and extension identities.
+- Add an explicit source-role review policy for captured pickle test and worker
+  contexts. Preserve original diagnostics and severity, unresolved authority and
+  the default scan policy. A context review does not establish safe deserialization.
+- Bind runtime-oracle credit to current test source and collection configuration;
+  reject altered helpers, providers and executable metadata callbacks.
+- Ship the secondary JEV evidence validator with the installed evaluator and
+  retain offline abstention when contextual evidence or provider access is absent.
 
 - Bind endpoint-declaration review to exact independently reviewed historical
   protocol publications, constructor transfers and selected client identities.
   Keep original credential severity for auth uses, unresolved value reads or
   incomplete source coverage. Retain cleared declaration heuristics as primitive
   observations at their original severity. These bounded source facts do not
-  establish runtime safety or independent held-out precision.
+  establish runtime safety.
 - Memoize class ancestry within a single role-analysis derivation, discarding
   derived evidence when fresh source or resolver checks fail. No cross-run
   authority or unchecked source-cache reuse is introduced.
@@ -66,7 +76,7 @@
   findings in runtime `else` branches and when guard names are shadowed,
   rebound or explicitly overwritten. All files and other detectors still run.
 
-## 0.48.2 (candidate; publication pending)
+## 0.48.2 (2026-10-15)
 
 - Coordinate core 0.48.2, VS Code 1.2.1 and JetBrains 1.2.0 under their existing distribution IDs
   so supported package and editor update checks can discover the new versions.

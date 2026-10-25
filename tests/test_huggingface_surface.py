@@ -47,7 +47,9 @@ def test_huggingface_space_has_static_metadata_and_canonical_release_links() -> 
     assert "Actual product capture set" in page
     assert '<meta name="viewport"' in page
     assert "Audit code.<br>Review evidence.<br>Resolve defects." in page
-    assert "A code audit system for the entire development workflow." in page
+    assert "Your agent has finished a change. Your review comes next." in page
+    assert "This static preview shows the workflow" in page
+    assert "it does not scan or upload your repository" in page
     assert "Explore the audit workflow" in page
     assert (
         "First Proof is one starter example within the larger audit system." in readme

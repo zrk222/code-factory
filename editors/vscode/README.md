@@ -1,15 +1,19 @@
 # FactoryLine for VS Code
 
-## VS Code 1.2.1
+## VS Code 1.3.0
 
 This documentation-only update does not change extension runtime behavior. It
-can be used with Code Factory core 0.48.2; publishing the optional core package
+can be used with Code Factory core 0.49.0; publishing the optional core package
 is a separate release step. Marketplace status must be confirmed from provider
 read-back.
 
-Catch AI-generated tests that could never fail — before review. FactoryLine
-Evidence keeps supported local audit lanes beside the VS Code
-workspace. **Run First Proof** is a setup demonstration that checks the local
+You have a change open and a review to finish. FactoryLine keeps local audit
+findings and receipts beside your VS Code workspace, so you can follow a finding
+back to its file, choose what to repair, and check the result before accepting it.
+Start with **FactoryLine: Run CF + ForgeLine Audits**. This preview accompanies
+the packages prepared for VS Marketplace and Open VSX.
+
+**Run First Proof** is a setup demonstration that checks the local
 CLI; it does not assess repository code. For a repository assessment, run
 `factory scan --root .` from the workspace, then review each result's coverage
 and evidence state before deciding what to accept. Missing or unbound evidence
@@ -235,7 +239,7 @@ Build a local VSIX from this directory, then install it in VS Code:
 ```powershell
 npm ci
 npm run package
-code --install-extension factoryline-vscode-1.2.1.vsix
+code --install-extension factoryline-vscode-1.3.0.vsix
 ```
 
 Set `factoryline.command` if the `factory` executable is not on VS Code's PATH.
@@ -301,7 +305,7 @@ explicitly registered by the caller. Their observations are experimental, not
 model certification or accuracy evidence. The source taxonomy and manifest define the same routes for
 Junie while keeping execution and identity limits visible.
 
-## Native scanner expansion — Code Factory core 0.48.2 candidate
+## Native scanner expansion — Code Factory core 0.49.0 candidate
 
 **Fixed:** native scanner controls require vulnerable and safe results bound to
 image, profile and source hashes. Missing evidence remains incomplete.

@@ -1,5 +1,10 @@
 # FactoryLine for JetBrains IDEs
 
+Your change is ready for a closer look. Open the current diff or active file,
+follow the local findings and evidence, and choose your next repair. Keep an
+agent handoff inside one selected Change List, then bring it back for review
+before deciding what to apply. FactoryLine keeps that decision with you.
+
 Catch AI-generated tests that could never fail — before review. FactoryLine keeps local review evidence beside your code: see what changed, which evidence is available, what remains unproven, and the next review step.
 
 ## Review the change in front of you

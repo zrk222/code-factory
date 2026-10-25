@@ -25,16 +25,16 @@ short_description: Audit code, review evidence, and resolve defects.
 
 # Code Factory
 
-## Current source preview — core 0.48.2, VS Code 1.2.1, JetBrains 1.2.0
+## Current source preview — core 0.49.0, VS Code 1.3.0, JetBrains 1.3.0
 
-Code Factory is a local-first code review tool. Assess a repository with
-`factory scan --root .`, inspect its source findings and evidence coverage, then
-run the relevant tests and checks before deciding what to accept. Missing or
+An agent has finished a change, and you want to understand what comes next.
+Explore the local workflow here: find the source behind a finding, inspect the
+recorded checks, choose a repair, and return to the evidence before accepting it.
+To try it on your own repository, run `factory scan --root .` locally. Missing or
 unavailable evidence stays incomplete. **First Proof is a local setup
 demonstration, not a repository assessment.** This Hugging Face Space is a
 static product overview; it does not scan a visitor's workspace. This source
-preview does not establish publication, exhaustive detection, or measured
-accuracy.
+preview does not establish publication or exhaustive detection.
 
 ![CF Studio product mission form with fictional sample text](https://raw.githubusercontent.com/zrk222/code-factory/d1f2a21cde1f00856c0329e913a1071aca256300/docs/assets/marketplace/cf-product-mission-20261016.jpg)
 
