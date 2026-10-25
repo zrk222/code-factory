@@ -239,10 +239,14 @@ def test_public_ctas_are_outcome_led_and_preserve_proof_boundaries():
         "design-review",
         "ui-quality",
     }.issubset(vscode_package["keywords"])
+    assert "You have a change open and a review to finish." in vscode_readme
+    assert "choose what to repair" in " ".join(vscode_readme.split())
+    assert value in intellij_readme
+    assert "FactoryLine keeps that decision with you." in intellij_readme
     for content in (vscode_readme, intellij_readme):
-        assert value in content
         assert "Graph Ops" in content
-    assert "Your IDE feels slow. Your AI code looks fine." in intellij_plugin
+    assert "Your change is ready for a closer look." in intellij_plugin
+    assert "FactoryLine keeps that decision with you." in intellij_plugin
     assert (
         "FactoryLine AI Proof is free, local IDE Guardian + AI proof for JetBrains."
         in intellij_plugin
@@ -394,7 +398,11 @@ def test_vscode_supply_chain_is_patched_and_audited_before_tests():
     assert "verifyBinary(bytes, asset[1])" in auditor
     assert "requireSuccessfulScan(spawnSync" in auditor
     assert "--omit" not in auditor
-    assert package["overrides"] == {"brace-expansion": "5.0.12"}
+    assert package["overrides"] == {
+        "brace-expansion": "5.0.12",
+        "@azure/msal-node": "7.1.1",
+    }
+    assert lock["packages"]["node_modules/@azure/msal-node"]["version"] == "7.1.1"
     assert lock["packages"]["node_modules/brace-expansion"]["version"] == "5.0.12"
     assert lock["packages"]["node_modules/@vscode/vsce"]["version"] == "4.0.0"
     assert "node_modules/braces" not in lock["packages"]
@@ -603,32 +611,32 @@ def test_hosted_release_and_editor_versions_are_declared():
         encoding="utf-8"
     )
 
-    assert project["version"] == "0.48.2"
+    assert project["version"] == "0.49.0"
     assert "hosted" in project["optional-dependencies"]
-    assert vscode["version"] == "1.2.1"
+    assert vscode["version"] == "1.3.0"
     assert vscode_lock["version"] == vscode["version"]
     assert vscode_lock["packages"][""]["version"] == vscode["version"]
     assert (
         "Version 1.1.3 pairs with the published Code Factory CLI 0.48.0"
         in vscode_readme
     )
-    assert "VS Code 1.2.1" in vscode_readme
-    assert "factoryline-vscode-1.2.1.vsix" in vscode_readme
+    assert "VS Code 1.3.0" in vscode_readme
+    assert "factoryline-vscode-1.3.0.vsix" in vscode_readme
     assert (
         "This documentation-only update does not change extension runtime behavior."
         in vscode_readme
     )
     assert "0.48.0 candidate" not in vscode_readme
-    assert "factoryline-vscode-1.2.1.vsix" in release_channels
-    assert 'version = "1.2.0"' in gradle
+    assert "factoryline-vscode-1.3.0.vsix" in release_channels
+    assert 'version = "1.3.0"' in gradle
     assert "postgres:17" in hosted_workflow
     assert "FACTORY_TEST_POSTGRES_DSN" in hosted_workflow
     assert (
-        "Candidate: `factoryline-code-factory==0.48.2` (prepared, not published)"
+        "Candidate: `factoryline-code-factory==0.49.0` (prepared, not published)"
         in release_channels
     )
     assert (
-        "The 0.48.2 source candidate is separate from the previously published 0.48.1."
+        "The 0.49.0 source candidate is separate from the previously published 0.48.2."
         in release_channels
     )
 
@@ -664,7 +672,8 @@ def test_jetbrains_listing_is_outcome_led_and_first_proof_is_discoverable():
 
     assert "<id>app.factoryline</id>" in plugin_xml
     assert "<name>FactoryLine AI Proof</name>" in plugin_xml
-    assert "Your IDE feels slow. Your AI code looks fine." in plugin_xml
+    assert "Your change is ready for a closer look." in plugin_xml
+    assert "Bring the returned Change List back for review" in plugin_xml
     assert (
         "FactoryLine AI Proof is free, local IDE Guardian + AI proof for JetBrains."
         in plugin_xml

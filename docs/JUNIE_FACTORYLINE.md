@@ -34,7 +34,7 @@ The most useful additional JetBrains integration is not another agent switch:
 it is a reviewable answer to *why is this change here, and what did the agent
 actually check?* JetBrains already supplies a diff viewer, selective revert,
 and grouped change review. FactoryLine adds an evidence route beside that
-review: `source → obligation → forbidden behavior → gate → test → evidence →
+review: `source â†’ obligation â†’ forbidden behavior â†’ gate â†’ test â†’ evidence â†’
 decision`.
 
 After Junie uses one or more `factory.*` tools, it calls the read-only
@@ -63,10 +63,10 @@ factory junie install --root . --confirmation "INSTALL Junie FactoryLine Pack"
 This creates only these files, unless an existing FactoryLine entry is already
 identical:
 
-- `.junie/AGENTS.md` — the progressive working contract for Junie.
-- `.junie/mcp/mcp.json` — a local stdio `factory mcp serve --root <project>`
+- `.junie/AGENTS.md` â€” the progressive working contract for Junie.
+- `.junie/mcp/mcp.json` â€” a local stdio `factory mcp serve --root <project>`
   configuration.
-- `.junie/agents/factoryline-proof.md` — an optional native Junie subagent
+- `.junie/agents/factoryline-proof.md` â€” an optional native Junie subagent
   with YAML frontmatter that permits only `Read`, `Grep`, `Glob`, and the
   `code-factory` MCP server. Its `plan` mode and 12-turn cap make it a
   read-only evidence navigator; it cannot edit files or run shell commands.
@@ -90,7 +90,7 @@ green. When it cannot establish a required fact, it returns that fact as an
 unknown for the human reviewer. Its final handoff contains changed paths, tests
 run, evidence locations, failures, and remaining unknowns.
 
-FactoryLine’s outputs remain evidence-navigation and review aids. They do not
+FactoryLineâ€™s outputs remain evidence-navigation and review aids. They do not
 make Junie autonomous, prove a provider action, or replace human approval.
 
 ## Optional marketplace feedback
@@ -167,6 +167,6 @@ local evidence does not establish authenticated identity, correctness, merge,
 release, or production status.
 
 For the current scoped accuracy operations and owner decision, Junie and other
-adapters use the shared [`AGENT_CONTRACTS.md` Study249 reference](AGENT_CONTRACTS.md#current-accuracy-operations-study249).
+adapters use the shared [`AGENT_CONTRACTS.md` operating reference](AGENT_CONTRACTS.md#current-audit-operations).
 Generated Junie guidance links to the same reference; it does not embed a
 separate copy of the mutable measurements.

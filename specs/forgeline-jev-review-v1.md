@@ -62,6 +62,18 @@ Scenario: All claims and references are checked
 - Do not replace the deterministic judge, add a mandatory CF-to-Forge dependency cycle, or treat model agreement as independent ground truth.
 - Do not add a Python module or raise any existing source size or complexity budget.
 
+## Authorized parameters
+
+- timeout = 5
+- timeout_ms = 30000
+
+For the owner-authorized installed JEV actionability command, the Node version
+probe uses `timeout = 5` seconds. Provider request default is
+`timeout_ms = 30000` milliseconds, within 1..60000 milliseconds; the explicit
+dispatch policy supplies total latency, capped at one hour by the CLI. Existing
+runner cost and latency reservations remain mandatory. A new source-context
+profile does not authorize a threshold change or scanner suppression.
+
 ## Decision logic (factory candidates)
 | # | if | then |
 |---|----|------|

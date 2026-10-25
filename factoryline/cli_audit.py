@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import argparse
 import sys
 import time
 from pathlib import Path
@@ -31,10 +32,19 @@ def add_parser(sub: Any) -> None:
             "workflows",
             "taxonomy",
             "agent-context",
+            "actionability",
         ],
     )
     code_audit.add_argument("--policy", default=".factory/review-audits.json")
     code_audit.add_argument("--root", default=".")
+    code_audit.add_argument("--cases", help="bound JEV actionability case JSON")
+    code_audit.add_argument(
+        "--live", action="store_true", help="opt in to Vercel Gateway JEV review"
+    )
+    code_audit.add_argument(
+        "--budget-policy", help="hash-bound JEV dispatch budget JSON"
+    )
+    code_audit.add_argument("--timeout-ms", type=int, default=30000)
     code_audit.add_argument(
         "--tenant-read-call",
         action="append",
@@ -67,6 +77,12 @@ def add_parser(sub: Any) -> None:
         "--out", help="optional workspace-contained fingerprint receipt path"
     )
     code_audit.add_argument("--json", action="store_true")
+    code_audit.add_argument(
+        "--defect-policy",
+        choices=["legacy-v1", "trusted-core-v1", "source-role-v1"],
+        default=argparse.SUPPRESS,
+        help="explicit bounded security defect policy; trusted-core keeps unresolved items visible without establishing a clean security result",
+    )
     code_audit.add_argument(
         "--full-repository",
         action="store_true",
@@ -114,6 +130,137 @@ def add_parser(sub: Any) -> None:
         "--role",
         help="specialist role for the host-neutral agent context projection",
     )
+
+
+def _jev_evaluation_assets():
+    """Find the existing evaluator in a source checkout or installed wheel."""
+    import sysconfig
+
+    package = Path(__file__).resolve().parent
+    candidates = (
+        package.parent / "scripts/evaluate_jev.mjs",
+        Path(sysconfig.get_path("data"))
+        / "share/code-factory/evaluation/evaluate_jev.mjs",
+    )
+    runner = next((path for path in candidates if path.is_file()), None)
+    rubric = package / "data/judge_framework.json"
+    if runner is None or not rubric.is_file():
+        raise ValueError("Packaged JEV evaluator assets are missing; reinstall CF.")
+    return runner, rubric
+
+
+def _jev_node():
+    import shutil
+    from .cli import _run_cli_bounded
+
+    node = shutil.which("node")
+    if node is None:
+        raise ValueError("JEV evaluation requires Node.js 18 or newer on PATH.")
+    version = _run_cli_bounded(node, ["--version"], Path.cwd(), timeout=5)
+    text = version["stdout"].decode("utf-8", errors="replace").strip().lstrip("v")
+    if (
+        not version["ok"]
+        or not text.split(".")[0].isdigit()
+        or int(text.split(".")[0]) < 18
+    ):
+        raise ValueError("JEV evaluation requires Node.js 18 or newer on PATH.")
+    return node
+
+
+def _jev_workspace_path(root, value, *, required=False):
+    if not value:
+        raise ValueError("JEV case and evidence paths are required.")
+    path = (root / value).resolve()
+    if not path.is_relative_to(root) or (required and not path.is_file()):
+        raise ValueError(
+            "JEV paths must resolve to the selected workspace; input must exist."
+        )
+    return path
+
+
+def _jev_review_command(args, root):
+    import os
+
+    cases = _jev_workspace_path(root, args.cases, required=True)
+    output = _jev_workspace_path(
+        root, args.out or ".factory/jev/actionability-report.json"
+    )
+    if not 1 <= args.timeout_ms <= 60000:
+        raise ValueError("JEV timeout must be 1..60000 milliseconds.")
+    argv = [
+        "--cases",
+        str(cases),
+        "--profile",
+        "security_actionability",
+        "--out",
+        str(output),
+        "--timeout-ms",
+        str(args.timeout_ms),
+    ]
+    deadline = 45.0
+    if args.live:
+        if not os.environ.get("AI_GATEWAY_API_KEY", "").strip():
+            raise ValueError("Configure AI_GATEWAY_API_KEY locally before live review.")
+        budget = _jev_workspace_path(root, args.budget_policy, required=True)
+        if budget.stat().st_size > 1048576:
+            raise ValueError("JEV budget policy exceeds the size limit.")
+        policy = json.loads(budget.read_bytes())
+        if not isinstance(policy, dict):
+            raise ValueError("JEV budget policy must be a JSON object.")
+        duration = policy.get("max_latency_ms")
+        if type(duration) not in (int, float) or not 0 < duration <= 3600000:
+            raise ValueError("JEV total dispatch budget must be at most one hour.")
+        deadline = duration / 1000 + 15
+        argv.extend(["--live", "--budget-policy", str(budget)])
+    runner, rubric = _jev_evaluation_assets()
+    return {
+        "node": _jev_node(),
+        "argv": [str(runner), "--rubric", str(rubric), *argv],
+        "deadline_seconds": deadline,
+    }
+
+
+def _run_actionability(args: Any) -> int:
+    """Use the shipped Gateway evaluator; never alter deterministic findings."""
+    from .cli import _run_cli_bounded
+
+    try:
+        root = Path(args.root).resolve(strict=True)
+        command = _jev_review_command(args, root)
+        output = _jev_workspace_path(
+            root, args.out or ".factory/jev/actionability-report.json"
+        )
+        output.parent.mkdir(parents=True, exist_ok=True)
+        result = _run_cli_bounded(
+            command["node"], command["argv"], root, timeout=command["deadline_seconds"]
+        )
+        print(result["stdout"].decode("utf-8", errors="replace"), end="")
+        if not result["ok"]:
+            print(
+                json.dumps(
+                    {
+                        "state": "UNAVAILABLE",
+                        "code": "E_JEV_EVALUATION",
+                        "message": "JEV evaluation did not complete; inspect the local journal.",
+                        "exit_code": result.get("exit_code"),
+                    }
+                ),
+                file=sys.stderr,
+            )
+            return 2
+        return 0
+    except (OSError, ValueError, TypeError) as error:
+        print(
+            json.dumps(
+                {
+                    "state": "UNAVAILABLE",
+                    "code": "E_JEV_PREFLIGHT",
+                    "message": str(error),
+                }
+            ),
+            file=sys.stderr,
+        )
+        return 2
 
 
 def _run_workflows(args: Any) -> int:
@@ -264,6 +411,7 @@ def _print_full_security(args: Any, result: dict) -> None:
             f"Workspace context: {evidence.get('oracle_context', {}).get('state', 'INCOMPLETE')}; "
             f"full primary inventory assessed: {evidence.get('audit_coverage', {}).get('complete', False)}."
         )
+        _print_finding_tier_report(evidence.get("finding_tiers"))
     print("Semantic coverage: INCOMPLETE; global consumer closure is not verified.")
 
 
@@ -284,6 +432,51 @@ def _print_full_security_findings(result, workspace_profile):
         )
 
 
+def _print_finding_tier_report(report):
+    """Render additive finding tiers without implying a clean security result."""
+    if not isinstance(report, dict):
+        print("Finding tiers: unavailable; no tier claim is made.")
+        return
+    counts = report.get("tier_counts", {})
+    if not isinstance(counts, dict):
+        counts = {}
+    abstention = report.get("abstention", {})
+    if not isinstance(abstention, dict):
+        abstention = {}
+    fraction = abstention.get("fraction")
+    fraction_text = f"{fraction:.1%}" if isinstance(fraction, (int, float)) else "N/A"
+    gate = report.get("defect_gate", {})
+    if not isinstance(gate, dict):
+        gate = {}
+    print(
+        "Finding tiers: "
+        f"supported={counts.get('SUPPORTED_DEFECT', 0)}, "
+        f"needs_context={counts.get('NEEDS_CONTEXT', 0)}, "
+        f"proven_primitive={counts.get('PROVEN_PRIMITIVE', 0)}."
+    )
+    print(
+        f"Tier abstention: {abstention.get('count', 0)}/{abstention.get('denominator', 0)} "
+        f"({fraction_text}); this-run diagnostics only."
+    )
+    print(
+        f"Finding tier defect gate: {gate.get('state', 'BLOCKED')} "
+        f"({gate.get('reason', 'tier_report_unavailable')}); no clean result is established."
+    )
+    for row in report.get("ledger", []):
+        if not isinstance(row, dict) or row.get("tier") != "NEEDS_CONTEXT":
+            continue
+        source = row.get("source_identity", {})
+        missing = row.get("missing_premises", [])
+        raw = row.get("raw_finding", {})
+        if not isinstance(source, dict) or not isinstance(raw, dict):
+            continue
+        print(
+            f"  NEEDS_CONTEXT {source.get('code', '?')}: "
+            f"{source.get('path', '?')}:{source.get('line', '?')} "
+            f"[{raw.get('severity', '?')}] missing={','.join(str(item) for item in missing)}"
+        )
+
+
 def _run_full_security(args: Any) -> int:
     from .deep_audit_io import RuntimeAuditError, full_repository_scan
 
@@ -301,12 +494,18 @@ def _run_full_security(args: Any) -> int:
         return 2
     try:
         context_profile = getattr(args, "context_profile", "isolated-v1")
+        policy_options = (
+            {"defect_policy": "trusted-core-v1"}
+            if getattr(args, "defect_policy", "legacy-v1") == "trusted-core-v1"
+            else {}
+        )
         deadline = time.monotonic() + 180 if context_profile == "workspace-v2" else None
         result = full_repository_scan(
             Path(args.root),
             resume=getattr(args, "resume", False),
             context_profile=context_profile,
             deadline_monotonic=deadline,
+            **policy_options,
         )
         completed_batches = 1
         max_batches = getattr(args, "max_batches", 1)
@@ -316,6 +515,7 @@ def _run_full_security(args: Any) -> int:
                 resume=True,
                 context_profile=context_profile,
                 deadline_monotonic=deadline,
+                **policy_options,
             )
             completed_batches += 1
         result["invocation"] = {
@@ -342,12 +542,52 @@ def _run_full_security(args: Any) -> int:
             file=sys.stderr,
         )
         return 2
-    _print_full_security(args, result)
+    return _finish_full_security(args, result, policy_options)
+
+
+def _finish_full_security(args, result, policy_options):
+    if policy_options and not args.json:
+        _print_selected_security_policy(result)
+        print("Semantic coverage: INCOMPLETE; global consumer closure is not verified.")
+    else:
+        _print_full_security(args, result)
+    if policy_options:
+        return result.get("defect_policy_decision", {}).get("exit_code", 2)
     # File accounting is not a clean security result while semantic coverage is incomplete.
     return 1
 
 
 def _run_security(args: Any) -> int:
+    if getattr(args, "defect_policy", "legacy-v1") == "source-role-v1" and getattr(
+        args, "full_repository", False
+    ):
+        print(
+            json.dumps(
+                {
+                    "state": "INVALID",
+                    "code": "E_DEFECT_POLICY_SCOPE",
+                    "message": "source-role-v1 currently requires a bounded native scan",
+                }
+            ),
+            file=sys.stderr,
+        )
+        return 2
+    if (
+        getattr(args, "defect_policy", "legacy-v1") != "legacy-v1"
+        and getattr(args, "full_repository", False)
+        and getattr(args, "context_profile", "isolated-v1") != "workspace-v2"
+    ):
+        print(
+            json.dumps(
+                {
+                    "state": "INVALID",
+                    "code": "E_DEFECT_POLICY_SCOPE",
+                    "message": "trusted-core-v1 requires a bounded native scan or the native workspace-v2 partition",
+                }
+            ),
+            file=sys.stderr,
+        )
+        return 2
     if error := _security_mode_option_error(args):
         print(
             json.dumps(
@@ -399,6 +639,11 @@ def _run_bounded_security(args: Any) -> int:
             oracle_trust_root=getattr(args, "oracle_trust_root", None),
             oracle_trust_sha256=getattr(args, "oracle_trust_sha256", None),
             oracle_environment_sha256=getattr(args, "oracle_environment_sha256", None),
+            **(
+                {"defect_policy": args.defect_policy}
+                if getattr(args, "defect_policy", "legacy-v1") != "legacy-v1"
+                else {}
+            ),
         )
         result["tenant_read_contract"]["configuration"] = contract_evidence
         if contract_evidence["state"] == "missing":
@@ -423,8 +668,14 @@ def _run_bounded_security(args: Any) -> int:
         message = _security_receipt_error_message(error)
         print(json.dumps({"state": "INVALID", "message": message}), file=sys.stderr)
         return 2
+    return _finish_bounded_security(args, result)
+
+
+def _finish_bounded_security(args, result):
     if args.json:
         print(json.dumps(result, indent=2, sort_keys=True))
+    elif getattr(args, "defect_policy", "legacy-v1") != "legacy-v1":
+        _print_selected_security_policy(result)
     else:
         print(f"Security audit: {result['state']} ({len(result['findings'])} findings)")
         coverage = result.get("audit_coverage", {})
@@ -446,7 +697,52 @@ def _run_bounded_security(args: Any) -> int:
                 f"{item['severity']} {item['code']}: {item['path']}:{item['line']} — {item['message']}"
             )
         print(result["action_summary"])
+        _print_finding_tier_report(result.get("finding_tier_report"))
+    if getattr(args, "defect_policy", "legacy-v1") != "legacy-v1":
+        return result.get("defect_policy_decision", {}).get("exit_code", 2)
     return 0 if result["state"] == "CLEAN" else 2 if result["state"] == "BLOCKED" else 1
+
+
+def _print_selected_security_policy(result):
+    """Keep policy nonblocking status distinct from source and release approval."""
+    decision = result.get("defect_policy_decision", {})
+    print(
+        f"Defect policy {result.get('selected_defect_policy', 'trusted-core-v1')}: {decision.get('state', 'BLOCKED')}"
+    )
+    print(
+        decision.get("action_summary", "Current native policy evidence is unavailable.")
+    )
+    coverage = result.get("audit_coverage", {})
+    print(
+        f"Source coverage: {coverage.get('files_audited', 0)}/{coverage.get('files_discovered', 0)}; complete={coverage.get('complete') is True}"
+    )
+    tiers = result.get(
+        "finding_tier_report",
+        result.get("workspace_evidence", {}).get("finding_tiers", {}),
+    )
+    if result.get("selected_defect_policy") == "source-role-v1":
+        for raw in result.get("findings", []):
+            print(
+                f"ACTIVE [{raw['severity']}] {raw['code']}: {raw['path']}:{raw['line']} — {raw['message']}"
+            )
+        print(
+            f"NEEDS_CONTEXT reviews: {len(result.get('context_reviews', []))}; reconstruction safety remains unassessed."
+        )
+        print(
+            "Original diagnostics and severities remain in the JSON report and receipt. No clean security result or release approval established."
+        )
+        return
+    for row in tiers.get("ledger", []):
+        if row.get("tier") != "SUPPORTED_DEFECT":
+            continue
+        raw = row["raw_finding"]
+        print(
+            f"SUPPORTED_DEFECT [{raw['severity']}] {raw['code']}: {raw['path']}:{raw['line']} — {raw['message']}"
+        )
+    _print_finding_tier_report(tiers)
+    print(
+        "Original diagnostics and severities remain in the JSON report and receipt. Policy exit zero does not approve a release or establish a clean security result."
+    )
 
 
 def _run_governance(args: Any) -> int:
@@ -514,6 +810,18 @@ def run(args: Any) -> int:
     """Run one audit command, importing the engine only after selection."""
     from .review_audits import ReviewAuditError
 
+    if args.tool != "security" and hasattr(args, "defect_policy"):
+        print(
+            json.dumps(
+                {
+                    "state": "INVALID",
+                    "code": "E_DEFECT_POLICY_SCOPE",
+                    "message": "--defect-policy is valid only for audit security",
+                }
+            ),
+            file=sys.stderr,
+        )
+        return 2
     if args.tool != "security" and (
         getattr(args, "full_repository", False)
         or getattr(args, "resume", False)
@@ -539,6 +847,7 @@ def run(args: Any) -> int:
         "workflows": _run_workflows,
         "taxonomy": _run_taxonomy,
         "agent-context": _run_agent_context,
+        "actionability": _run_actionability,
     }
     try:
         return handlers.get(args.tool, _run_code)(args)

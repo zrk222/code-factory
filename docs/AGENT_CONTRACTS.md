@@ -18,7 +18,7 @@ before any module is run and fails closed on drift or an invalid rail.
 
 ## Tiered model-route receipts
 
-CF’s agent-access plane uses three deterministic routing tiers:
+CFâ€™s agent-access plane uses three deterministic routing tiers:
 `lightweight`, `workhorse`, and `frontier`. `route_model` selects a tier from
 explicit task, risk, latency, and token inputs; it never contacts a provider or
 grants model authority. The returned `factory.model-route.v1` receipt is
@@ -90,52 +90,26 @@ its complete candidate and execution bindings match; an inventory or stale
 receipt is never a pass. Missing runtime, mutation or language coverage stays
 incomplete. Avoid launching every heavyweight worker for each edit.
 
-## Current accuracy operations (Study249)
+## Current audit operations
 
-This dated snapshot is the shared operational reference for the Study249
-accuracy sample. The 55% is actionable precision on this sample, not a general
-precision guarantee or universal coverage claim.
+Keep analysis bound to the exact captured source, execution profile, and reviewed
+policy. Preserve original diagnostics and severity. A source pattern, missing
+context, and a supported defect are distinct outcomes; retain uncertainty and
+missing premises explicitly.
 
-- The candidate sample recorded 33 true positives, 27 false positives, and no
-  unclear labels: 55% precision (Wilson 95% interval 42.49-66.91%). The
-  baseline recorded 33/43 true positives (76.74%; Wilson interval
-  62.2555-86.8463%, rounded to 62.26-86.85%). On the 43 unchanged exact claims, both recorded 33 true
-  positives and 10 false positives, so the common-claim measured gain was
-  zero.
-- 32 of 33 candidate true positives were distinct sink locations in one
-  repository. Two blinded same-model GPT labelers agreed. The human release
-  owner separately validated and accepted the reported result; there was no
-  separate human packet-label submission or external-organization validation.
-  Study249 was prospectively frozen before prediction and labeling. After
-  measurement it became exposed development data for future tuning, so it is
-  not fresh evidence for later tuning claims. The baseline timed out on 17
-  candidate-only sampled alerts; those unmatched alerts do not show paired
-  gains or regressions.
-- The release owner previously accepted the observed 55% result for the
-  current bounded release decision and authorized publication. The latest owner
-  instruction **supersedes that publication authorization**: finish the PR #255
-  merge after its required checks pass, then **hold publication until the next
-  precision PR (requested as PR #256) is completed with higher measured scores**.
-  Its target remains at least 80% actionable precision on a new prospectively
-  frozen, sufficiently decided sample. PR #256 was not yet present at the time
-  this hold was recorded. Do not dispatch the publish workflow, create a public
-  release, or upload packages for PR #255 while this hold applies.
-  Owner acceptance does not establish that publication occurred or provider
-  checks passed. The current technical checks remain enforced. Do not claim
-  the higher target has been reached without its own evidence.
-- Keep the configured caps at 464 Python files and 133 core modules. Prioritize
-  precision, speed, and simplicity. Preserve finding IDs, severity, and test
-  expectations. Reproduce actual failures, misses, and false positives; do
-  not turn frozen exposed data into a fresh general-gain claim.
+- Preserve the publication hold. Merge authorization does not authorize a
+  release, package upload, deployment, or publication workflow.
+- Keep test-quality collection and security-source coverage separate. Unsupported
+  collection hooks remain unverified; parser, source, and analysis errors remain
+  incomplete and must not be hidden by a successful process exit.
+- Use content-bound cache identities and share stable analysis results. Changed
+  sources, providers, configuration, or execution profiles invalidate reuse.
+- Keep the configured caps at 464 Python files and 133 core modules. Reuse
+  existing modules, remove redundant implementations, and retain adversarial
+  controls for every source-proof family.
+- Commit reviewable code and operating-contract changes independently of result
+  publication. Keep dated study records in their evidence artifacts; operational
+  manifests must not announce an unverified score.
 
-Agent taxonomy and generated IDE manifests link here. Keep dated measurements
-in this shared reference instead of copying them into generic agent rules.
-
-
-The follow-up's one-time Astra High plan is recorded in
-[`accuracy-efficiency174.md`](../plans/accuracy-efficiency174.md#next-precision-pr-one-time-astra-high-senior-security-plan)
-and its [source/case census](evidence/astra-precision256-plan.json). Priorities
-are resolved enum/discriminator roles, dominating immutable overwrite inputs,
-and complete local fixture effects. These are planned changes; the current
-measured score remains 55%. Retain all 33 exact TPs, then measure on a new
-prospectively frozen cohort. PR #255 merge does not lift the publication hold.
+Agent taxonomy and generated Junie guidance use this shared reference. Missing
+execution evidence remains unknown; no adapter grants merge or release authority.

@@ -3,6 +3,7 @@
 from factoryline import finite_capture as finite
 from factoryline import review_audits
 from factoryline import review_integrity
+from factoryline import runtime_audit_integrity as runtime
 
 import pytest
 from test_runtime_audit_integrity import _json_enum_graph
@@ -489,3 +490,648 @@ def test_finite_template_capture_shape_accepts_only_sorted_parametrize_capture()
         )
         is None
     )
+
+
+def _pickle_origin(source, aliases=None):
+    module = ast.parse(source)
+    runtime._conditional_provider_parents(module)
+    aliases = aliases or {"pickle": "pickle"}
+    load_name = next(iter(aliases.values())) + ".loads"
+    loads = [
+        node
+        for node in ast.walk(module)
+        if isinstance(node, ast.Call)
+        and review_audits._normalized_call_name(node, aliases) == load_name
+    ]
+    assert len(loads) == 1
+    return runtime.closed_local_pickle_origin(
+        loads[0], load_name, aliases, review_audits
+    )
+
+
+@pytest.mark.parametrize(
+    "roundtrip, kind, protocol",
+    [
+        (
+            "result = pickle.loads(pickle.dumps(obj))",
+            "nested",
+            {"kind": "default", "source": "omitted"},
+        ),
+        (
+            "packed = pickle.dumps(obj, protocol=4)\nresult = pickle.loads(packed)",
+            "named_payload",
+            {"kind": "integer", "value": 4, "source": "keyword_literal"},
+        ),
+        (
+            "packed = pickle.dumps(obj, None)\nresult = pickle.loads(packed)",
+            "named_payload",
+            {"kind": "default", "source": "explicit_none"},
+        ),
+    ],
+)
+def test_pickle_origin_normalizes_native_nested_and_named_roundtrips(
+    roundtrip, kind, protocol
+):
+    source = f"import pickle\ndef run(obj):\n    {roundtrip.replace(chr(10), chr(10) + '    ')}\n"
+    origin = _pickle_origin(source)
+    assert origin is not None
+    assert origin["status"] == "LOCAL_DIRECT_DUMPS_LOADS_ORIGIN"
+    assert origin["origin_kind"] == kind
+    assert origin["protocol"] == protocol
+    assert isinstance(origin["dump_call"], ast.Call)
+    assert isinstance(origin["object_expression"], ast.Name)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "packed = pickle.dumps(obj)\nalias = packed\nresult = pickle.loads(packed)",
+        "packed = pickle.dumps(obj)\n"
+        "packed += b'changed'\n"
+        "result = pickle.loads(packed)",
+        "packed = pickle.dumps(obj)\n"
+        "packed = replacement\n"
+        "result = pickle.loads(packed)",
+        "global packed\npacked = pickle.dumps(obj)\nresult = pickle.loads(packed)",
+    ],
+)
+def test_pickle_named_origin_rejects_payload_alias_mutation_and_global_escape(body):
+    source = "import pickle\ndef run(obj):\n    " + body.replace("\n", "\n    ") + "\n"
+    assert _pickle_origin(source) is None
+
+
+def test_pickle_nested_origin_is_separate_from_reconstruction_effect_proof():
+    source = (
+        "import pickle\n"
+        "def run():\n"
+        "    result = pickle.loads(pickle.dumps(make_unknown()))\n"
+    )
+    origin = _pickle_origin(source)
+    assert origin is not None
+    assert origin["object_expression"].func.id == "make_unknown"
+    module = ast.parse(source)
+    runtime._conditional_provider_parents(module)
+    loads = next(
+        node
+        for node in ast.walk(module)
+        if isinstance(node, ast.Call)
+        and review_audits._normalized_call_name(node, {"pickle": "pickle"})
+        == "pickle.loads"
+    )
+    assert (
+        runtime.closed_local_pickle_flow(
+            loads, "pickle.loads", {"pickle": "pickle"}, review_audits
+        )
+        is None
+    )
+
+
+def test_pickle_origin_keeps_import_identity_and_rejects_local_serializer_rebinding():
+    source = (
+        "import pickle as serializer\n"
+        "def run(obj):\n"
+        "    result = serializer.loads(serializer.dumps(obj))\n"
+    )
+    origin = _pickle_origin(source, {"serializer": "pickle"})
+    assert origin is not None and origin["origin_kind"] == "nested"
+    rebound = source.replace(
+        "    result =",
+        "    serializer = replacement\n    result =",
+    )
+    assert _pickle_origin(rebound, {"serializer": "pickle"}) is None
+
+
+def test_pickle_origin_rejects_non_native_serializer_namespace():
+    source = "import json\ndef run(obj):\n    result = json.loads(json.dumps(obj))\n"
+    assert _pickle_origin(source, {"json": "json"}) is None
+
+
+@pytest.mark.parametrize(
+    "extra_source, expected_count",
+    [
+        ("", 1),
+        ("import zlib as compression\ndef unrelated(compression):\n    pass\n", 1),
+        ("def unrelated():\n    observe(LocalError)\n", 1),
+        (
+            "def poison():\n    alias = LocalError\n    alias.__init__ = replacement\n",
+            0,
+        ),
+        ("pickle.loads = replacement\n", 0),
+    ],
+)
+def test_pickle_typed_v3_reuses_protocol_loop_origin_after_model_selection(
+    tmp_path, extra_source, expected_count
+):
+    from factoryline.finite_capture import provider_analysis_profile
+
+    provider_source = (
+        "from enum import IntEnum\n"
+        "class LocalError(Exception):\n"
+        "    def __init__(self, message=None):\n"
+        "        super().__init__(message)\n"
+        "        self.message = message\n"
+        "class WireCode(IntEnum):\n"
+        "    PROTOCOL_ERROR = 7\n"
+    ).encode()
+    package_source = ("from .errors import LocalError, WireCode\n").encode()
+    caller_source = (
+        "import pickle\n"
+        "from package import LocalError, WireCode\n"
+        "def test_closed_record():\n"
+        "    err = LocalError(WireCode.PROTOCOL_ERROR)\n"
+        "    err.foo = 'bar'\n"
+        "    for proto in range(pickle.HIGHEST_PROTOCOL + 1):\n"
+        "        packed = pickle.dumps(err, proto)\n"
+        "        result = pickle.loads(packed)\n"
+        "        assert result.foo == 'bar'\n"
+    ).encode() + extra_source.encode()
+    sources = {
+        "package/errors.py": provider_source,
+        "package/__init__.py": package_source,
+        "test_roundtrip.py": caller_source,
+    }
+    error_tree = ast.parse(provider_source)
+    classes = [node for node in error_tree.body if isinstance(node, ast.ClassDef)]
+    contract = {
+        "schema": "factory.provider-contract.v1",
+        "model": {"id": "typed-pickle-reconstruction-v3", "version": 3},
+        "runtime": finite.provider_runtime_identity_v3(),
+        "artifacts": {
+            path: hashlib.sha256(value).hexdigest()
+            for path, value in sources.items()
+            if path != "test_roundtrip.py"
+        },
+        "export": {"path": "package/__init__.py", "symbol": "LocalError"},
+        "classes": [
+            {
+                "path": "package/errors.py",
+                "name": cls.name,
+                "class_ast_sha256": hashlib.sha256(
+                    ast.dump(cls, include_attributes=False).encode()
+                ).hexdigest(),
+                "constructor_ast_sha256": next(
+                    (
+                        hashlib.sha256(
+                            ast.dump(item, include_attributes=False).encode()
+                        ).hexdigest()
+                        for item in cls.body
+                        if isinstance(item, ast.FunctionDef) and item.name == "__init__"
+                    ),
+                    None,
+                ),
+            }
+            for cls in classes
+        ],
+        "assumptions": list(finite._PROVIDER_ASSUMPTIONS),
+    }
+    for path, value in sources.items():
+        target = tmp_path / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(value)
+    profile = provider_analysis_profile("trusted-dependencies-v2", (contract,))
+    report = review_audits.security_scan(
+        tmp_path,
+        cache_enabled=False,
+        analysis_profile="trusted-dependencies-v2",
+        provider_contracts=tuple(profile["contracts"]),
+    )
+    witnesses = [
+        row
+        for row in report.get("primitive_observations", [])
+        if row["code"] == "SECURITY_UNSAFE_DESERIALIZATION"
+    ]
+    assert len(witnesses) == expected_count
+    if not expected_count:
+        assert any(
+            row["code"] == "SECURITY_UNSAFE_DESERIALIZATION"
+            for row in report["findings"]
+        )
+        return
+    witness = witnesses[0]["facts"]["provider_witness"]
+    assert witness["selected_model_sha256"]
+    assert witness["protocol"]["same_iteration"] is True
+
+
+@pytest.mark.parametrize(
+    "body, observed",
+    [
+        ("    return pickle.loads(pickle.dumps(value))\n", True),
+        ("    blob = pickle.dumps(value)\n    return pickle.loads(blob)\n", True),
+        (
+            "    for p in range(2):\n        blob = pickle.dumps(value, p)\n        result = pickle.loads(blob)\n"
+            "    for p in range(2):\n        blob = pickle.dumps(value, p)\n        result = pickle.loads(blob)\n",
+            True,
+        ),
+        (
+            "    global blob\n    blob = pickle.dumps(value)\n    return pickle.loads(blob)\n",
+            False,
+        ),
+        (
+            "    blob = pickle.dumps(value)\n    blob += supplied\n    return pickle.loads(blob)\n",
+            False,
+        ),
+        (
+            "    blob = pickle.dumps(value)\n    leak(blob)\n    return pickle.loads(blob)\n",
+            False,
+        ),
+        ("    return pickle.loads(supplied)\n", False),
+    ],
+)
+def test_pickle_family_byte_origin_is_type_independent_and_not_a_safety_decision(
+    body, observed
+):
+    from factoryline import runtime_audit_integrity as runtime
+
+    tree = ast.parse("import pickle\ndef work(value, supplied=None):\n" + body)
+    runtime._conditional_provider_parents(tree)
+    loads = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and review_audits._normalized_call_name(node, {"pickle": "pickle"})
+        == "pickle.loads"
+    ]
+    for load in loads:
+        origin = runtime.local_pickle_byte_origin(
+            load, "pickle.loads", {"pickle": "pickle"}, review_audits
+        )
+        assert (origin is not None) is observed
+        if origin:
+            assert origin["reconstruction_effects"] == "UNASSESSED"
+            assert origin["negative_security_decision"] is False
+
+
+def test_pickle_family_origin_observation_keeps_dangerous_reducer_diagnostic(tmp_path):
+    source = (
+        "import pickle\nclass Payload:\n"
+        "    def __reduce__(self):\n        return eval, ('controlled_expression',)\n"
+        "def work():\n    return pickle.loads(pickle.dumps(Payload()))\n"
+    )
+    (tmp_path / "consumer.py").write_text(source, encoding="utf-8")
+    report = review_audits.security_scan(tmp_path, cache_enabled=False)
+    findings = [
+        row
+        for row in report["findings"]
+        if row["code"] == "SECURITY_UNSAFE_DESERIALIZATION"
+    ]
+    assert len(findings) == 1
+    (ledger,) = [
+        row
+        for row in report["finding_tier_report"]["ledger"]
+        if row["raw_finding"]["code"] == "SECURITY_UNSAFE_DESERIALIZATION"
+    ]
+    assert ledger["raw_finding"] == findings[0]
+    assert ledger["tier"] == "NEEDS_CONTEXT"
+    assert ledger["byte_origin_observation"]["negative_security_decision"] is False
+    assert ledger["byte_origin_observation"]["reconstruction_effects"] == "UNASSESSED"
+    assert not any(
+        row["code"] == "SECURITY_UNSAFE_DESERIALIZATION"
+        for row in report.get("primitive_observations", [])
+    )
+
+
+def _pickle_role_report(root, source, extra=None, policy="source-role-v1"):
+    path = root / "tests" / "test_roundtrip.py"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(source, encoding="utf-8")
+    for name, value in (extra or {}).items():
+        target = root / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(value, encoding="utf-8")
+    with review_audits._security_only_scan_context(True):
+        return review_audits.security_scan(
+            root, cache_enabled=False, defect_policy=policy
+        )
+
+
+_PICKLE_ROLE_TEST = "import pickle\ndef test_roundtrip():\n    result = pickle.loads(pickle.dumps(object()))\n    assert result\n"
+
+
+def test_pickle_role_review_preserves_raw_and_reseals(tmp_path):
+    report = _pickle_role_report(tmp_path, _PICKLE_ROLE_TEST)
+    (review,) = report["context_reviews"]
+    assert not report["findings"]
+    (raw,) = report["finding_tier_report"]["ledger"]
+    assert raw["raw_finding"] == review
+    assert raw["source_role_review"]["safe_reconstruction"] is False
+    assert raw["source_role_review"]["reconstruction_effects"] == "UNASSESSED"
+    assert report["state"] == "REVIEW_REQUIRED"
+    assert report["defect_policy_decision"]["clean"] is False
+    again = review_audits._seal_security_scan(report.copy())
+    assert again["context_reviews"] == [review]
+    assert again["audit_sha256"] == report["audit_sha256"]
+    assert "_primitive_source_bytes" not in again
+
+
+@pytest.mark.parametrize("policy", ["legacy-v1", "trusted-core-v1"])
+def test_pickle_role_policy_switch_restores_diagnostics(tmp_path, policy):
+    report = _pickle_role_report(tmp_path, _PICKLE_ROLE_TEST)
+    (original,) = report["context_reviews"]
+    report["selected_defect_policy"] = policy
+    changed = review_audits._seal_security_scan(report)
+    assert original in changed["findings"]
+    assert not changed.get("context_reviews")
+    assert all(
+        "source_role_review" not in row
+        for row in changed["finding_tier_report"]["ledger"]
+    )
+
+
+@pytest.mark.parametrize(
+    "source,extra",
+    [
+        (
+            "import pickle\ndef test_external(blob):\n    assert pickle.loads(blob)\n",
+            {},
+        ),
+        (_PICKLE_ROLE_TEST.replace("def test_roundtrip", "def handler"), {}),
+        (
+            _PICKLE_ROLE_TEST.replace(
+                "import pickle", "import pickle\npickle.loads = supplied"
+            ),
+            {},
+        ),
+        (_PICKLE_ROLE_TEST, {"app.py": "import tests.test_roundtrip\n"}),
+        (_PICKLE_ROLE_TEST, {"app.py": "from .tests import test_roundtrip\n"}),
+        (
+            "import pytest\nimport pickle\nclass Handler:\n    def test_roundtrip(self):\n        assert pickle.loads(pickle.dumps(object()))\n",
+            {},
+        ),
+        (
+            "import pickle\n__test__ = False\ndef test_roundtrip():\n    assert pickle.loads(pickle.dumps(object()))\n",
+            {},
+        ),
+        (
+            "import pickle\nclass TestRoundtrip:\n    def __init__(self): pass\n    def test_roundtrip(self):\n        assert pickle.loads(pickle.dumps(object()))\n",
+            {},
+        ),
+        (
+            _PICKLE_ROLE_TEST,
+            {
+                "model.py": 'import requests\nclass Payload:\n    def __getstate__(self):\n        requests.get("https://example.invalid")\n        return {}\n'
+            },
+        ),
+        (
+            _PICKLE_ROLE_TEST,
+            {
+                "model.py": 'def run(value):\n    return eval(value)\nclass Payload:\n    def __reduce__(self):\n        return run, ("x",)\n'
+            },
+        ),
+        (
+            _PICKLE_ROLE_TEST,
+            {"mutation.py": "import pickle\npickle.loads = attacker\n"},
+        ),
+        (
+            _PICKLE_ROLE_TEST,
+            {
+                "mutation.py": 'import builtins, pickle\nbuiltins.setattr(pickle, "loads", attacker)\n'
+            },
+        ),
+        (
+            _PICKLE_ROLE_TEST,
+            {
+                "mutation.py": "import pickle\nprovider = pickle\nprovider.loads = attacker\n"
+            },
+        ),
+        (
+            _PICKLE_ROLE_TEST,
+            {
+                "mutation.py": 'import pickle\npickle.__dict__.update({"loads": attacker})\n'
+            },
+        ),
+        (_PICKLE_ROLE_TEST, {"pickle.py": "def loads(value): return value\n"}),
+        (
+            _PICKLE_ROLE_TEST
+            + '\nfrom helper import restore\nclass Payload:\n    def __reduce__(self): return restore, ("x",)\n',
+            {"helper.py": "def restore(value): return eval(value)\n"},
+        ),
+    ],
+)
+def test_pickle_role_counterevidence_keeps_alert(tmp_path, source, extra):
+    report = _pickle_role_report(tmp_path, source, extra)
+    assert not report.get("context_reviews")
+    assert any(
+        row["code"] == "SECURITY_UNSAFE_DESERIALIZATION" for row in report["findings"]
+    )
+
+
+def test_pickle_role_stale_capture_restores_alert(tmp_path):
+    report = _pickle_role_report(tmp_path, _PICKLE_ROLE_TEST)
+    report["_primitive_source_bytes"] = {}
+    changed = review_audits._seal_security_scan(report)
+    assert not changed["context_reviews"]
+    assert changed["defect_policy_decision"]["state"] == "BLOCKED"
+    assert any(
+        row["code"] == "SECURITY_UNSAFE_DESERIALIZATION" for row in changed["findings"]
+    )
+
+
+def test_pickle_role_forged_severity_cannot_qualify(tmp_path):
+    from factoryline import primitive_observation_binding as primitive
+
+    report = _pickle_role_report(tmp_path, _PICKLE_ROLE_TEST)
+    original = report["context_reviews"][0]
+    finding = dict(
+        original, severity="CRITICAL" if original["severity"] != "CRITICAL" else "INFO"
+    )
+    inventory = primitive._pickle_role_inventory(
+        {"tests/test_roundtrip.py": _PICKLE_ROLE_TEST.encode()}
+    )
+    assert primitive._pickle_test_role_witness(finding, inventory) is None
+
+
+def test_pickle_role_cli_receipt_and_text(tmp_path, capsys):
+    from factoryline.cli import main
+
+    _pickle_role_report(tmp_path, _PICKLE_ROLE_TEST)
+    (tmp_path / ".factory").mkdir(exist_ok=True)
+    (tmp_path / ".factory" / "tenant-read-contract.json").write_text(
+        json.dumps({"schema": "factory.tenant-read-contract.v1", "reads": []}),
+        encoding="utf-8",
+    )
+    argv = [
+        "audit",
+        "security",
+        "--root",
+        str(tmp_path),
+        "--defect-policy",
+        "source-role-v1",
+    ]
+    assert main([*argv, "--json"]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert len(report["context_reviews"]) == 1
+    assert report["defect_policy_decision"]["clean"] is False
+    receipt = json.loads(
+        (tmp_path / ".factory/security-scan/latest.json").read_text(encoding="utf-8")
+    )
+    assert receipt["report"]["context_reviews"] == report["context_reviews"]
+    assert main(argv) == 0
+    output = capsys.readouterr().out
+    assert "NEEDS_CONTEXT reviews: 1" in output
+    assert "No clean security result" in output
+    assert main([*argv, "--full-repository", "--json"]) == 2
+    assert json.loads(capsys.readouterr().err)["code"] == "E_DEFECT_POLICY_SCOPE"
+
+
+@pytest.mark.parametrize(
+    "base,extra,qualified",
+    [
+        ("unittest.TestCase", {}, True),
+        (
+            "ConnectingCase",
+            {
+                "tests/helper.py": "import unittest\nclass ConnectingCase(unittest.TestCase): pass\n"
+            },
+            True,
+        ),
+        (
+            "ConnectingCase",
+            {
+                "tests/helper.py": "import types, unittest\nclass ConnectingCase(unittest.TestCase): pass\ndef f():\n    types = []\n"
+            },
+            True,
+        ),
+        (
+            "ConnectingCase",
+            {
+                "tests/helper.py": "import unittest\nunittest = supplied\nclass ConnectingCase(unittest.TestCase): pass\n"
+            },
+            False,
+        ),
+        ("ConnectingCase", {}, False),
+        ("unittest.TestCase", {"unittest.py": "class TestCase: pass\n"}, False),
+        ("ConnectingCase", {"tests/helper.py": "class ConnectingCase: pass\n"}, False),
+    ],
+)
+def test_pickle_role_unittest_ancestry_is_source_bound(
+    tmp_path, base, extra, qualified
+):
+    source = (
+        "import unittest\nimport pickle\nfrom .helper import ConnectingCase\n"
+        f"class CursorChecks({base}):\n"
+        "    def test_roundtrip(self):\n"
+        "        result = pickle.loads(pickle.dumps(object()))\n"
+        "        self.assertTrue(result)\n"
+    )
+    report = _pickle_role_report(tmp_path, source, extra)
+    assert bool(report.get("context_reviews")) is qualified
+    assert bool(report["findings"]) is not qualified
+
+
+_PICKLE_PIPE_WORKER = """import pickle
+import subprocess
+import sys
+from runtime import open_process, BufferedByteReceiveStream
+async def launch():
+    command = [sys.executable, "-u", "-m", __name__]
+    process = await open_process(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+    buffered = BufferedByteReceiveStream(process.stdout)
+    async def communicate():
+        payload = await buffered.receive_exactly(10)
+        return pickle.loads(payload)
+    return await communicate()
+def worker():
+    stdin = sys.stdin
+    value = pickle.load(stdin.buffer)
+    encoded = pickle.dumps(value)
+    return encoded
+if __name__ == "__main__":
+    worker()
+"""
+
+
+@pytest.mark.parametrize(
+    "source,qualified",
+    [
+        (_PICKLE_PIPE_WORKER, True),
+        (
+            _PICKLE_PIPE_WORKER.replace(
+                'sys.executable, "-u", "-m", __name__', '"remote-program"'
+            ),
+            False,
+        ),
+        (_PICKLE_PIPE_WORKER.replace("stdin=subprocess.PIPE", "stdin=external"), False),
+        (
+            _PICKLE_PIPE_WORKER.replace(
+                "    buffered = BufferedByteReceiveStream(process.stdout)",
+                "    buffered = external",
+            ),
+            False,
+        ),
+        (
+            _PICKLE_PIPE_WORKER.replace(
+                "    stdin = sys.stdin", "    stdin = external"
+            ),
+            False,
+        ),
+    ],
+)
+def test_pickle_role_worker_protocol_requires_source_bindings(
+    tmp_path, source, qualified
+):
+    (tmp_path / "worker.py").write_text(source, encoding="utf-8")
+    with review_audits._security_only_scan_context(True):
+        report = review_audits.security_scan(
+            tmp_path, cache_enabled=False, defect_policy="source-role-v1"
+        )
+    reviews = report.get("context_reviews", [])
+    if qualified:
+        assert len(reviews) == 2
+        assert not report["findings"]
+        assert all(
+            row["source_role_review"]["safe_reconstruction"] is False
+            for row in report["finding_tier_report"]["ledger"]
+        )
+    else:
+        assert report["findings"]
+    assert len(report["findings"]) + len(reviews) == 2
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "ConnectingCase = object",
+        "unittest.TestCase = object",
+        'setattr(unittest, "TestCase", object)',
+    ],
+)
+def test_pickle_role_rebound_testcase_cannot_qualify(tmp_path, mutation):
+    source = (
+        "import unittest\nimport pickle\nclass ConnectingCase(unittest.TestCase): pass\n"
+        + mutation
+        + "\nclass CursorChecks(ConnectingCase):\n"
+        "    def test_roundtrip(self):\n"
+        "        self.assertTrue(pickle.loads(pickle.dumps(object())))\n"
+    )
+    report = _pickle_role_report(tmp_path, source)
+    assert not report.get("context_reviews")
+    assert report["findings"]
+
+
+@pytest.mark.parametrize(
+    "source,expected_reviews",
+    [
+        (
+            _PICKLE_PIPE_WORKER
+            + "\nasync def external_read(buffered):\n    payload = await buffered.receive_exactly(10)\n    return pickle.loads(payload)\n",
+            2,
+        ),
+        (
+            _PICKLE_PIPE_WORKER.replace(
+                "        return pickle.loads(payload)",
+                "        payload = external\n        return pickle.loads(payload)",
+            ),
+            1,
+        ),
+    ],
+)
+def test_pickle_role_ipc_does_not_launder_external_receiver_or_rebound_bytes(
+    tmp_path, source, expected_reviews
+):
+    (tmp_path / "worker.py").write_text(source, encoding="utf-8")
+    with review_audits._security_only_scan_context(True):
+        report = review_audits.security_scan(
+            tmp_path, cache_enabled=False, defect_policy="source-role-v1"
+        )
+    assert len(report["context_reviews"]) == expected_reviews
+    assert any(row["facts"].get("call") == "pickle.loads" for row in report["findings"])

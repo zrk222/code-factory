@@ -678,9 +678,14 @@ def _full_repository_runtime_dependencies() -> dict[str, str | None]:
     return versions
 
 
-def _full_repository_configuration(root: Path, audit) -> tuple[set[str], dict]:
+def _full_repository_configuration(
+    root: Path, audit, source_files=None
+) -> tuple[dict, dict]:
     """Bind presence and exact bytes of every native pytest config candidate."""
-    patterns, collection = audit._pytest_collection_config(root)
+    patterns, collection = audit._pytest_collection_config(root, source_files)
+    settings = audit._pytest_collection_settings(
+        {**collection, "python_files": sorted(patterns)}
+    )
     candidates = (
         "pytest.toml",
         ".pytest.toml",
@@ -693,12 +698,14 @@ def _full_repository_configuration(root: Path, audit) -> tuple[set[str], dict]:
     bindings = [
         _full_repository_configuration_binding(root, name) for name in candidates
     ]
-    return set(patterns), {"selected": collection, "candidates": bindings}
+    return settings, {"selected": collection, "candidates": bindings}
 
 
-def _full_repository_profile_configuration(root: Path, audit, context_profile):
+def _full_repository_profile_configuration(
+    root: Path, audit, context_profile, source_files=None
+):
     try:
-        patterns, frame = _full_repository_configuration(root, audit)
+        patterns, frame = _full_repository_configuration(root, audit, source_files)
         return patterns, frame, False
     except audit.ReviewAuditError:
         if context_profile != FULL_REPOSITORY_CONTEXT_PROFILE:
@@ -713,7 +720,11 @@ def _full_repository_profile_configuration(root: Path, audit, context_profile):
             "setup.cfg",
         )
         return (
-            set(audit._TEST_FILE_PATTERNS),
+            {
+                "python_files": list(audit._TEST_FILE_PATTERNS),
+                "python_functions": list(audit._TEST_FUNCTION_PATTERNS),
+                "python_classes": list(audit._TEST_CLASS_PATTERNS),
+            },
             {
                 "selected": {"path": None, "state": "unsupported"},
                 "candidates": [
@@ -1203,17 +1214,169 @@ def _full_repository_scan_digest(
     return digest(payload)
 
 
+def _full_repository_trusted_core_decision(generation, results):
+    """Format a decision only after native workspace evidence passes admission."""
+    from . import primitive_observation_binding as primitive
+
+    blocked = primitive._trusted_core_policy_result()
+    evidence = generation.get("workspace_evidence")
+    if not isinstance(evidence, dict):
+        return blocked
+    sources = evidence.get("sources")
+    oracle = evidence.get("oracle_context")
+    coverage = evidence.get("audit_coverage")
+    partition = evidence.get("primitive_partition")
+    tiers = evidence.get("finding_tiers")
+    findings = evidence.get("raw_findings")
+    inventory = generation.get("inventory")
+    if not all(
+        isinstance(value, dict)
+        for value in (sources, oracle, coverage, partition, tiers)
+    ):
+        return blocked
+    if not isinstance(findings, list) or not isinstance(inventory, list):
+        return blocked
+    expected_paths = {row.get("path") for row in inventory if isinstance(row, dict)}
+    source_rows = {row.get("path"): row for row in inventory if isinstance(row, dict)}
+    if (
+        len(source_rows) != len(inventory)
+        or generation.get("collection_incomplete") is not False
+        or sources.get("capture_complete") is not True
+        or sources.get("files_discovered") != len(inventory)
+        or sources.get("files_bound") != len(inventory)
+        or oracle.get("state") != "captured"
+        or coverage.get("complete") is not True
+        or coverage.get("files_processed") != len(inventory)
+        or partition.get("state") != "VALIDATED"
+        or len(results) != len(inventory)
+        or any(
+            not isinstance(row, dict) or row.get("status") != "audited"
+            for row in results
+        )
+        or not expected_paths
+    ):
+        return blocked
+    try:
+        current_tier_policy = primitive.finding_tier_policy_sha256()
+        gate = tiers.get("defect_gate")
+        ledger = tiers.get("ledger")
+        supported = sum(
+            isinstance(row, dict)
+            and row.get("tier") == "SUPPORTED_DEFECT"
+            and row.get("gate_relevant") is True
+            for row in ledger or ()
+        )
+        unresolved = sum(
+            isinstance(row, dict)
+            and row.get("tier") == "NEEDS_CONTEXT"
+            and row.get("gate_relevant") is True
+            for row in ledger or ()
+        )
+        expected_completeness = (
+            "INCOMPLETE" if unresolved else "ASSESSED_WITHIN_DECLARED_SCOPE"
+        )
+        if (
+            tiers.get("policy_sha256") != current_tier_policy
+            or not isinstance(ledger, list)
+            or not isinstance(findings, list)
+            or len(ledger) != len(findings)
+            or not isinstance(gate, dict)
+            or gate.get("state")
+            not in {"DEFECTS_PRESENT", "NO_SUPPORTED_DEFECTS_OBSERVED"}
+            or gate.get("passed") is not False
+            or gate.get("clean") is not False
+            or gate.get("completeness_state") != expected_completeness
+            or type(gate.get("supported_defect_count")) is not int
+            or type(gate.get("needs_context_count")) is not int
+            or gate.get("supported_defect_count") < 0
+            or gate.get("needs_context_count") < 0
+            or gate.get("supported_defect_count") != supported
+            or gate.get("needs_context_count") != unresolved
+            or not isinstance(tiers.get("tier_counts"), dict)
+            or tiers["tier_counts"].get("SUPPORTED_DEFECT")
+            != sum(
+                isinstance(row, dict) and row.get("tier") == "SUPPORTED_DEFECT"
+                for row in ledger or ()
+            )
+            or tiers["tier_counts"].get("NEEDS_CONTEXT")
+            != sum(
+                isinstance(row, dict) and row.get("tier") == "NEEDS_CONTEXT"
+                for row in ledger or ()
+            )
+            or tiers.get("ledger_sha256") != digest(ledger)
+        ):
+            return blocked
+        report_body = {
+            key: value for key, value in tiers.items() if key != "report_sha256"
+        }
+        if tiers.get("report_sha256") != digest(report_body):
+            return blocked
+        for index, (raw, row) in enumerate(zip(findings, ledger, strict=True)):
+            identity = row.get("source_identity") if isinstance(row, dict) else None
+            if (
+                not isinstance(raw, dict)
+                or row.get("index") != index
+                or row.get("raw_finding") != raw
+                or not isinstance(identity, dict)
+                or identity.get("path") != raw.get("path")
+                or identity.get("path") not in expected_paths
+                or identity.get("source_sha256")
+                != source_rows[identity["path"]].get("sha256")
+                or source_rows[identity["path"]].get("state") != "ready"
+                or identity.get("identity_sha256")
+                != primitive._tier_sha256(
+                    {
+                        "index": index,
+                        "path": identity.get("path"),
+                        "source_sha256": identity.get("source_sha256"),
+                        "code": raw.get("code"),
+                        "line": raw.get("line"),
+                        "column": raw.get("column"),
+                        "original_severity": raw.get("severity"),
+                        "raw_finding": raw,
+                    }
+                )
+            ):
+                return blocked
+        source_manifest_hash = sources.get("source_manifest_sha256")
+        if (
+            not isinstance(source_manifest_hash, str)
+            or len(source_manifest_hash) != 64
+            or any(char not in "0123456789abcdef" for char in source_manifest_hash)
+        ):
+            return blocked
+        policy_sha = blocked["policy_sha256"]
+        evidence_payload = {
+            "policy_id": "trusted-core-v1",
+            "policy_sha256": policy_sha,
+            "sources_sha256": sources["source_manifest_sha256"],
+            "inventory_sha256": generation["inventory_hash"],
+            "context_generation_sha256": generation.get("context_generation_sha256"),
+            "scanner_identity_sha256": generation["scanner"],
+            "configuration_sha256": generation["configuration"],
+            "finding_tier_policy_sha256": current_tier_policy,
+            "tier_report_sha256": tiers["report_sha256"],
+            "tier_ledger_sha256": tiers["ledger_sha256"],
+        }
+        counts = (gate["supported_defect_count"], gate["needs_context_count"])
+        if any(type(value) is not int for value in counts):
+            return blocked
+        return primitive._trusted_core_policy_result(evidence_payload, counts)
+    except (KeyError, TypeError, ValueError, RuntimeAuditError):
+        return blocked
+
+
 def _full_repository_generation(
-    root: Path, audit, context_profile="isolated-v1"
+    root: Path, audit, context_profile="isolated-v1", defect_policy="legacy-v1"
 ) -> dict:
     root = Path(root).resolve()
     files = audit._security_source_files(root)
     inventory = _full_repository_inventory(root, files)
     patterns, frame, collection_incomplete = _full_repository_profile_configuration(
-        root, audit, context_profile
+        root, audit, context_profile, files
     )
     config_identity = {
-        "patterns": sorted(patterns),
+        "collection": patterns,
         "frame": frame,
         "tenant_reads": [],
         "oracle_context": None,
@@ -1225,6 +1388,15 @@ def _full_repository_generation(
         raise RuntimeAuditError(
             "E_CONTEXT_PROFILE", "unsupported full-repository context profile"
         )
+    if defect_policy == "trusted-core-v1":
+        from . import primitive_observation_binding as primitive
+
+        policy = primitive._trusted_core_policy_result()
+        config_identity["defect_policy"] = {
+            "policy_id": defect_policy,
+            "policy_sha256": policy["policy_sha256"],
+            "finding_tier_policy_sha256": primitive.finding_tier_policy_sha256(),
+        }
     configuration = digest(config_identity)
     scanner, inventory_hash = _full_repository_scanner_identity(), digest(inventory)
     runtime_epoch = _full_repository_runtime_epoch(root, configuration, audit)
@@ -1386,10 +1558,10 @@ def _full_repository_verify_generation(generation: dict, audit) -> None:
     files = audit._security_source_files(root)
     inventory = _full_repository_inventory(root, files)
     patterns, frame, _collection_incomplete = _full_repository_profile_configuration(
-        root, audit, generation["context_profile"]
+        root, audit, generation["context_profile"], files
     )
     config_identity = {
-        "patterns": sorted(patterns),
+        "collection": patterns,
         "frame": frame,
         "tenant_reads": [],
         "oracle_context": None,
@@ -1397,6 +1569,15 @@ def _full_repository_verify_generation(generation: dict, audit) -> None:
     if generation["context_profile"] == FULL_REPOSITORY_CONTEXT_PROFILE:
         config_identity["context_profile"] = FULL_REPOSITORY_CONTEXT_PROFILE
         config_identity["context_profile_schema"] = FULL_REPOSITORY_CONTEXT_SCHEMA
+    if generation.get("defect_policy") == "trusted-core-v1":
+        from . import primitive_observation_binding as primitive
+
+        policy = primitive._trusted_core_policy_result()
+        config_identity["defect_policy"] = {
+            "policy_id": generation["defect_policy"],
+            "policy_sha256": policy["policy_sha256"],
+            "finding_tier_policy_sha256": primitive.finding_tier_policy_sha256(),
+        }
     configuration = digest(config_identity)
     if (
         files != generation["files"]
@@ -1553,6 +1734,15 @@ def _full_repository_report(
                 },
             }
         )
+        if generation.get("defect_policy") == "trusted-core-v1":
+            decision = evidence.get("defect_policy_decision")
+            report.update(
+                {
+                    "selected_defect_policy": "trusted-core-v1",
+                    "defect_policy_sha256": decision["policy_sha256"],
+                    "defect_policy_decision": decision,
+                }
+            )
     return report
 
 
@@ -1561,17 +1751,30 @@ def full_repository_scan(
     *,
     resume: bool = False,
     context_profile: str = "isolated-v1",
+    defect_policy: str = "legacy-v1",
     deadline_monotonic: float | None = None,
 ) -> dict:
-    """Run at most 460 new native per-file scans; the distinct profile is non-authoritative."""
+    """Run bounded native scans; workspace-v2 reports security findings without quality analysis."""
     from . import review_audits as audit
 
+    from .primitive_observation_binding import validate_security_defect_policy
+
+    selected_policy = validate_security_defect_policy(defect_policy)
+    if (
+        selected_policy == "trusted-core-v1"
+        and context_profile != FULL_REPOSITORY_CONTEXT_PROFILE
+    ):
+        raise RuntimeAuditError(
+            "E_CONTEXT_PROFILE", "trusted-core defect policy requires workspace-v2"
+        )
     started = time.monotonic()
     if context_profile == FULL_REPOSITORY_CONTEXT_PROFILE:
         deadline_monotonic = deadline_monotonic or (
             started + FULL_REPOSITORY_CONTEXT_DEADLINE_SECONDS
         )
-    generation = _full_repository_generation(root, audit, context_profile)
+    generation = _full_repository_generation(
+        root, audit, context_profile, selected_policy
+    )
     if context_profile == FULL_REPOSITORY_CONTEXT_PROFILE:
         _full_repository_check_soft_deadline(deadline_monotonic)
     if resume:
@@ -1588,6 +1791,10 @@ def full_repository_scan(
     batch = _full_repository_scan_batch(generation, audit, results, deadline_monotonic)
     results.extend(batch)
     _full_repository_verify_generation(generation, audit)
+    if selected_policy == "trusted-core-v1":
+        decision = _full_repository_trusted_core_decision(generation, results)
+        generation["workspace_evidence"]["defect_policy_decision"] = decision
+        generation["workspace_evidence"]["selected_defect_policy"] = selected_policy
     if context_profile == FULL_REPOSITORY_CONTEXT_PROFILE:
         _full_repository_check_soft_deadline(deadline_monotonic)
     _full_repository_store_checkpoint(generation, results)

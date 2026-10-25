@@ -103,7 +103,7 @@ _AGENT_USAGE_CONTRACT = {
     "cli_fallback": "factory audit taxonomy --json",
     "ide_specific_guidance": "factory.junie_taxonomy",
     "operations_reference": {
-        "path": "docs/AGENT_CONTRACTS.md#current-accuracy-operations-study249",
+        "path": "docs/AGENT_CONTRACTS.md#current-audit-operations",
         "use_when": "Before citing the current Study249 accuracy state or planning its follow-up; this dated reference is scoped evidence, not a general quality guarantee.",
         "adapters": "Configured agents and generated IDE manifests link to this shared reference instead of copying mutable study measurements.",
     },

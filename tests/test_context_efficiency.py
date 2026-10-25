@@ -3724,6 +3724,309 @@ def test_pickle_colocation_uses_current_exact_byte_occurrence_guard(
     )
 
 
+def _typed_pickle_v3_fixture(
+    tmp_path, *, model_source=None, api_source=None, caller_source=None, model_version=3
+):
+    import ast
+    import hashlib
+
+    from factoryline import finite_capture as finite
+    from factoryline.runtime_audit_common import canonical_bytes
+
+    model_source = model_source or (
+        "from enum import IntEnum\n\n"
+        "from typing import cast\n\n"
+        "class WSCloseCode(IntEnum):\n"
+        "    PROTOCOL_ERROR = 1002\n"
+        "    OTHER = 1003\n\n"
+        "class WebSocketError(Exception):\n"
+        "    def __init__(self, code: int, message: str) -> None:\n"
+        "        self.code = code\n"
+        "        super().__init__(code, message)\n\n"
+        "    def __str__(self) -> str:\n"
+        "        return cast(str, self.args[1])\n"
+    )
+    api_source = api_source or "from .middle import WebSocketError, WSCloseCode\n"
+    caller_source = caller_source or (
+        "import pickle\n"
+        "from pkg.api import WebSocketError, WSCloseCode\n\n"
+        "def roundtrip():\n"
+        "    err = WebSocketError(WSCloseCode.PROTOCOL_ERROR, 'invalid')\n"
+        "    err.foo = 'bar'\n"
+        "    return pickle.loads(pickle.dumps(err))\n"
+    )
+    contents = {
+        "pkg/__init__.py": "",
+        "pkg/api.py": api_source,
+        "pkg/middle.py": "from .model import WebSocketError, WSCloseCode\n",
+        "pkg/model.py": model_source,
+    }
+    trees = {path: ast.parse(text) for path, text in contents.items()}
+    class_names = (
+        ["WebSocketError", "WSCloseCode"] if model_version == 3 else ["WebSocketError"]
+    )
+    classes = []
+    for name in class_names:
+        cls = next(
+            node
+            for node in trees["pkg/model.py"].body
+            if isinstance(node, ast.ClassDef) and node.name == name
+        )
+        init = next(
+            (
+                node
+                for node in cls.body
+                if isinstance(node, ast.FunctionDef) and node.name == "__init__"
+            ),
+            None,
+        )
+
+        def fingerprint(node):
+            return hashlib.sha256(
+                ast.dump(node, include_attributes=False).encode()
+            ).hexdigest()
+
+        classes.append(
+            {
+                "path": "pkg/model.py",
+                "name": name,
+                "class_ast_sha256": fingerprint(cls),
+                "constructor_ast_sha256": fingerprint(init)
+                if init is not None
+                else None,
+            }
+        )
+    model = (
+        {"id": "typed-pickle-reconstruction-v3", "version": 3}
+        if model_version == 3
+        else {"id": "builtin-exception-record-v2", "version": 2}
+    )
+    contract = {
+        "schema": "factory.provider-contract.v1",
+        "model": model,
+        "runtime": finite.provider_runtime_identity_v3()
+        if model_version == 3
+        else finite._provider_runtime_identity(),
+        "artifacts": {
+            path: hashlib.sha256(text.encode()).hexdigest()
+            for path, text in contents.items()
+        },
+        "export": {
+            "path": "pkg/api.py" if model_version == 3 else "pkg/model.py",
+            "symbol": "WebSocketError",
+        },
+        "classes": classes,
+        "assumptions": list(finite._PROVIDER_ASSUMPTIONS),
+    }
+    raw_sources = {path: text.encode() for path, text in contents.items()}
+    caller_bytes = caller_source.encode()
+    source_path = "tests/caller.py"
+    raw_sources[source_path] = caller_bytes
+    profile = finite.provider_analysis_profile("trusted-dependencies-v2", (contract,))
+    contract_sha256 = hashlib.sha256(canonical_bytes(contract)).hexdigest()
+    view = finite.provider_contract_view(profile, contract_sha256)
+    caller_tree = ast.parse(caller_bytes)
+    call = next(
+        node
+        for node in ast.walk(caller_tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "WebSocketError"
+    )
+    return finite, profile, view, raw_sources, source_path, caller_bytes, call
+
+
+def test_typed_pickle_v3_reconstructs_source_bound_intenum_and_build_state(tmp_path):
+    finite, profile, view, source, source_path, caller, call = _typed_pickle_v3_fixture(
+        tmp_path
+    )
+
+    binding = finite.provider_constructor_binding(
+        profile, source, caller, call, selected_contract_view=view
+    )
+    record = finite.provider_exception_record(
+        profile,
+        source,
+        call,
+        selected_contract_view=view,
+        instance_state={"foo": "bar"},
+        source_path=source_path,
+    )
+
+    assert binding is not None
+    assert binding["export"] == {"path": "pkg/api.py", "symbol": "WebSocketError"}
+    assert record is not None
+    graph = record["typed_graph"]
+    assert graph["schema"] == "factory.typed-pickle-graph.v3"
+    assert [item["tag"] for item in graph["root"]["args"]] == ["enum_member", "str"]
+    enum = graph["root"]["args"][0]
+    assert enum["type"]["qualname"] == "WSCloseCode"
+    assert enum["member"] == "PROTOCOL_ERROR"
+    assert enum["value"] == {"tag": "int", "decimal": "1002"}
+    assert enum["reconstruction"]["kind"] == "IntEnum_VALUE_CONSTRUCT"
+    assert graph["root"]["state"]["foo"] == {"tag": "str", "value": "bar"}
+    assert graph["root"]["state"]["code"]["member"] == "PROTOCOL_ERROR"
+    assert [row["path"] for row in graph["export_chains"][0]["chain"]] == [
+        "pkg/api.py",
+        "pkg/middle.py",
+        "pkg/model.py",
+    ]
+    assert len(record["enum_leaf_uses"]) == 1
+    assert record["enum_leaf_uses"][0]["member"] == "PROTOCOL_ERROR"
+    assert record["display_method_uses"][0]["method_name"] == "__str__"
+    assert (
+        record["display_method_uses"][0]["recipe"]
+        == "TYPING_CAST_IDENTITY_ARGS_INDEX_1"
+    )
+    assert record["typed_graph_sha256"]
+
+
+@pytest.mark.parametrize(
+    "model_source,caller_source,instance_state",
+    [
+        (
+            "from enum import IntEnum\nclass WSCloseCode(IntEnum):\n PROTOCOL_ERROR=1002\n"
+            "class WebSocketError(Exception):\n def __init__(self, code, message):\n  super().__init__(code,message)\n"
+            " def __reduce__(self):\n  return eval, ('1+1',)\n",
+            None,
+            {"foo": "bar"},
+        ),
+        (
+            "from enum import IntEnum\nclass WSCloseCode(IntEnum):\n PROTOCOL_ERROR=1002\n"
+            "class WebSocketError(Exception):\n def __init__(self, code, message):\n  super().__init__(code,message)\n"
+            " def __setstate__(self, state):\n  self.__dict__.update(state)\n",
+            None,
+            {"foo": "bar"},
+        ),
+        (
+            "from enum import IntEnum\nclass WSCloseCode(IntEnum):\n PROTOCOL_ERROR=1002\n"
+            "class WebSocketError(Exception):\n def __init__(self, code, message):\n  self.args=(code,message,'extra')\n  super().__init__(code,message)\n",
+            None,
+            {"foo": "bar"},
+        ),
+        (
+            "from enum import IntEnum\nclass WSCloseCode(IntEnum):\n PROTOCOL_ERROR=1002\n"
+            "class WebSocketError(Exception):\n def __init__(self, code, message, extra=[]):\n"
+            "  super().__init__(code,message)\n",
+            None,
+            {"foo": "bar"},
+        ),
+        (
+            "from enum import IntEnum\nclass WSCloseCode(IntEnum):\n PROTOCOL_ERROR=make_code()\n"
+            "class WebSocketError(Exception):\n def __init__(self, code, message):\n  super().__init__(code,message)\n",
+            None,
+            {"foo": "bar"},
+        ),
+        (
+            "from enum import IntEnum\nclass WSCloseCode(IntEnum):\n PROTOCOL_ERROR=1002\n ALIAS=1002\n"
+            "class WebSocketError(Exception):\n def __init__(self, code, message):\n  super().__init__(code,message)\n",
+            None,
+            {"foo": "bar"},
+        ),
+        (
+            None,
+            "import pickle\nfrom pkg.api import WebSocketError, WSCloseCode\n"
+            "def roundtrip():\n err=WebSocketError(WSCloseCode.MISSING, 'invalid')\n"
+            " err.foo='bar'\n return pickle.loads(pickle.dumps(err))\n",
+            {"foo": "bar"},
+        ),
+        (
+            None,
+            "import pickle\nfrom pkg.api import WebSocketError, WSCloseCode\n"
+            "def roundtrip():\n err=WebSocketError(WSCloseCode.PROTOCOL_ERROR, execute())\n"
+            " err.foo='bar'\n return pickle.loads(pickle.dumps(err))\n",
+            {"foo": "bar"},
+        ),
+    ],
+)
+def test_typed_pickle_v3_rejects_unknown_reducer_state_enum_and_values(
+    tmp_path, model_source, caller_source, instance_state
+):
+    finite, profile, view, source, source_path, _, call = _typed_pickle_v3_fixture(
+        tmp_path, model_source=model_source, caller_source=caller_source
+    )
+
+    assert (
+        finite.provider_exception_record(
+            profile,
+            source,
+            call,
+            selected_contract_view=view,
+            instance_state=instance_state,
+            source_path=source_path,
+        )
+        is None
+    )
+
+
+def test_typed_pickle_v3_rejects_aliased_build_containers_and_reexport_rebinding(
+    tmp_path,
+):
+    finite, profile, view, source, source_path, _, call = _typed_pickle_v3_fixture(
+        tmp_path
+    )
+    shared = []
+    assert (
+        finite.provider_exception_record(
+            profile,
+            source,
+            call,
+            selected_contract_view=view,
+            instance_state={"left": shared, "right": shared},
+            source_path=source_path,
+        )
+        is None
+    )
+
+    finite, profile, view, source, source_path, _, call = _typed_pickle_v3_fixture(
+        tmp_path
+    )
+    assert (
+        finite.provider_exception_record(
+            profile,
+            source,
+            call,
+            selected_contract_view=view,
+            instance_state={"x" * 16_385: "bar"},
+            source_path=source_path,
+        )
+        is None
+    )
+
+    finite, profile, view, source, source_path, _, call = _typed_pickle_v3_fixture(
+        tmp_path,
+        api_source="from .middle import WebSocketError, WSCloseCode\nWebSocketError = other\n",
+    )
+    assert (
+        finite.provider_exception_record(
+            profile,
+            source,
+            call,
+            selected_contract_view=view,
+            instance_state={"foo": "bar"},
+            source_path=source_path,
+        )
+        is None
+    )
+
+
+def test_v2_exception_model_does_not_gain_v3_intenum_semantics(tmp_path):
+    finite, profile, view, source, _, _, call = _typed_pickle_v3_fixture(
+        tmp_path, model_version=2
+    )
+
+    assert (
+        finite.provider_exception_record(
+            profile,
+            source,
+            call,
+            selected_contract_view=view,
+            instance_state={"foo": "bar"},
+        )
+        is None
+    )
+
+
 def test_provider_colocation_uses_current_captured_import_closure(
     monkeypatch, tmp_path
 ):
@@ -3773,6 +4076,332 @@ def test_pickle_colocation_helpers_participate_in_runtime_proof_identity():
     assert (
         context._test_serialization_roundtrip is runtime._test_serialization_roundtrip
     )
+
+
+def _generic_pickle_v4_fixture(provider, caller):
+    import ast
+    import hashlib
+    from factoryline import finite_capture as finite
+    from factoryline.runtime_audit_common import canonical_bytes
+
+    sources = {
+        "pkg/models.py": provider.encode(),
+        "pkg/__init__.py": b"from .models import Record, Child\n",
+        "caller.py": caller.encode(),
+    }
+    classes = {
+        node.name: node
+        for node in ast.parse(provider).body
+        if isinstance(node, ast.ClassDef)
+    }
+    rows = []
+    for name in ("Record", "Child"):
+        node = classes[name]
+        init = next(
+            (
+                item
+                for item in node.body
+                if isinstance(item, ast.FunctionDef) and item.name == "__init__"
+            ),
+            None,
+        )
+        rows.append(
+            {
+                "path": "pkg/models.py",
+                "name": name,
+                "class_ast_sha256": hashlib.sha256(
+                    ast.dump(node, include_attributes=False).encode()
+                ).hexdigest(),
+                "constructor_ast_sha256": hashlib.sha256(
+                    ast.dump(init, include_attributes=False).encode()
+                ).hexdigest()
+                if init
+                else None,
+            }
+        )
+    contract = {
+        "schema": "factory.provider-contract.v1",
+        "model": {"id": "typed-pickle-reconstruction-v4", "version": 4},
+        "runtime": finite.provider_runtime_identity_v4(),
+        "artifacts": {
+            path: hashlib.sha256(raw).hexdigest()
+            for path, raw in sources.items()
+            if path.startswith("pkg/")
+        },
+        "export": {"path": "pkg/__init__.py", "symbol": "Record"},
+        "classes": rows,
+        "assumptions": list(finite._PROVIDER_ASSUMPTIONS),
+    }
+    profile = finite.provider_analysis_profile("trusted-dependencies-v2", (contract,))
+    view = finite.provider_contract_view(
+        profile, hashlib.sha256(canonical_bytes(contract)).hexdigest()
+    )
+    expression = next(
+        node.value
+        for node in ast.parse(caller).body[-1].body
+        if isinstance(node, ast.Return)
+    )
+    return sources, profile, view, expression
+
+
+_GENERIC_PICKLE_V4_PROVIDER = (
+    "class Child:\n"
+    "    def __init__(self, value):\n        self.value = value\n"
+    "class Record:\n"
+    "    def __init__(self, value):\n"
+    "        shared = [Child(value)]\n"
+    "        self.first = shared\n        self.second = shared\n"
+)
+_GENERIC_PICKLE_V4_CALLER = (
+    'from pkg import Record\ndef build():\n    return Record("fixed")\n'
+)
+
+
+def test_pickle_generic_v4_source_graph_preserves_shared_identity_and_protocol_recipes():
+    from factoryline import finite_capture as finite
+
+    sources, profile, view, expression = _generic_pickle_v4_fixture(
+        _GENERIC_PICKLE_V4_PROVIDER, _GENERIC_PICKLE_V4_CALLER
+    )
+    record = finite.provider_pickle_graph_record(
+        profile,
+        sources,
+        expression,
+        selected_contract_view=view,
+        source_path="caller.py",
+    )
+    assert record is not None
+    graph = record["typed_graph"]
+    root = graph["nodes"][graph["root"]["id"]]
+    fields = graph["nodes"][root["state"]["id"]]["items"]
+    assert fields[0][1] == fields[1][1]
+    assert root["protocol_recipes"][0]["allocation"] == "COPYREG_RECONSTRUCTOR"
+    assert root["protocol_recipes"][2]["allocation"] == "OBJECT_NEWOBJ"
+    assert [row["protocol"] for row in root["protocol_recipes"]] == list(range(6))
+    assert record["requires_initialized_provider_witness"] is True
+    assert record["requires_protocol_conformance"] is True
+
+
+@pytest.mark.parametrize(
+    "insertion",
+    [
+        '    def __reduce__(self):\n        return eval, ("payload",)\n',
+        "    def __getnewargs__(self):\n        return external()\n",
+        "    def __setstate__(self, state):\n        external(state)\n",
+        "    @property\n    def value(self):\n        return external()\n",
+    ],
+)
+def test_pickle_generic_v4_declines_unmodeled_reconstruction_callbacks(insertion):
+    from factoryline import finite_capture as finite
+
+    provider = _GENERIC_PICKLE_V4_PROVIDER + insertion
+    sources, profile, view, expression = _generic_pickle_v4_fixture(
+        provider, _GENERIC_PICKLE_V4_CALLER
+    )
+    assert (
+        finite.provider_pickle_graph_record(
+            profile,
+            sources,
+            expression,
+            selected_contract_view=view,
+            source_path="caller.py",
+        )
+        is None
+    )
+
+
+def test_pickle_generic_v4_replays_paired_source_state_hooks_and_slots():
+    from factoryline import finite_capture as finite
+
+    provider = (
+        "class Child:\n    pass\n"
+        "class Record:\n"
+        '    __slots__ = ("token",)\n'
+        "    def __init__(self, value):\n"
+        "        self.value = value\n        self.token = value\n"
+        "    def __getstate__(self):\n"
+        '        return {"value": self.value, "token": self.token}\n'
+        "    def __setstate__(self, state):\n"
+        '        self.value = state["value"]\n'
+        '        self.token = state["token"]\n'
+    )
+    caller = 'from pkg import Record\ndef build():\n    return Record("fixed")\n'
+    sources, profile, view, expression = _generic_pickle_v4_fixture(provider, caller)
+
+    record = finite.provider_pickle_graph_record(
+        profile,
+        sources,
+        expression,
+        selected_contract_view=view,
+        source_path="caller.py",
+    )
+
+    assert record is not None
+    node = record["typed_graph"]["nodes"][record["typed_graph"]["root"]["id"]]
+    assert node["slots"] == ["token"]
+    assert node["state_recipe"] == "SOURCE_GETSTATE_SETSTATE_BUILD"
+    assert [row["method"] for row in node["state_hook_uses"]] == [
+        "__getstate__",
+        "__setstate__",
+    ]
+    assert [row["state"] for row in node["protocol_recipes"]] == [
+        "SOURCE_GETSTATE_SETSTATE_BUILD"
+    ] * 6
+    assert {row["method"] for row in record["typed_graph"]["method_uses"]} >= {
+        "__init__",
+        "__getstate__",
+        "__setstate__",
+    }
+
+
+@pytest.mark.parametrize(
+    "provider",
+    [
+        "class Child:\n    pass\nclass Record:\n    __slots__ = dynamic_slots()\n",
+        "class Child:\n    pass\nclass Record:\n    def __getstate__(self):\n        return {}\n",
+        "class Child:\n    pass\nclass Record:\n"
+        "    def __getstate__(self):\n        return {}\n"
+        "    def __setstate__(self, state):\n        external(state)\n",
+    ],
+)
+def test_pickle_generic_v4_rejects_unbounded_slots_or_state_hook_effects(provider):
+    from factoryline import finite_capture as finite
+
+    sources, profile, view, expression = _generic_pickle_v4_fixture(
+        provider, _GENERIC_PICKLE_V4_CALLER
+    )
+    assert (
+        finite.provider_pickle_graph_record(
+            profile,
+            sources,
+            expression,
+            selected_contract_view=view,
+            source_path="caller.py",
+        )
+        is None
+    )
+
+
+def test_pickle_generic_v4_graph_mutable_cycle_and_tuple_cycle_have_distinct_outcomes():
+    from factoryline import finite_capture as finite
+
+    cyclic = []
+    cyclic.append(cyclic)
+    graph = finite._ProviderV4Graph()
+    assert graph.edge(cyclic) == {"tag": "ref", "id": 0}
+    assert graph.nodes[0]["items"] == [{"tag": "ref", "id": 0}]
+    bridge = []
+    immutable = (bridge,)
+    bridge.append(immutable)
+    with pytest.raises(ValueError, match="immutable tuple"):
+        finite._ProviderV4Graph().edge(bridge)
+
+
+@pytest.mark.parametrize(
+    "base, initializer, base_tag",
+    [
+        ("list", "        super().__init__([1, 2])\n", "list"),
+        ("dict", '        super().__init__({"a": 1, "b": 2})\n', "dict"),
+        ("object", "        super().__init__()\n", "dict"),
+    ],
+)
+def test_pickle_generic_v4_shared_constructor_handles_builtin_container_bases(
+    base, initializer, base_tag
+):
+    from factoryline import finite_capture as finite
+
+    provider = (
+        "class Child:\n    pass\nclass Record(" + base + "):\n"
+        "    def __init__(self):\n" + initializer + '        self.metadata = "owned"\n'
+    )
+    caller = "from pkg import Record\ndef build():\n    return Record()\n"
+    sources, profile, view, expression = _generic_pickle_v4_fixture(provider, caller)
+    record = finite.provider_pickle_graph_record(
+        profile,
+        sources,
+        expression,
+        selected_contract_view=view,
+        source_path="caller.py",
+    )
+    assert record is not None
+    graph = record["typed_graph"]
+    root = graph["nodes"][graph["root"]["id"]]
+    assert root["base_kind"] == base
+    assert graph["nodes"][root["base_items"]["id"]]["tag"] == base_tag
+    if base in {"list", "dict"}:
+        assert root["protocol_recipes"][0]["insertion"] == "BASE_VALUE_IN_RECONSTRUCTOR"
+
+
+def test_pickle_generic_v4_stale_source_and_supplied_state_are_not_authority():
+    from factoryline import finite_capture as finite
+
+    sources, profile, view, expression = _generic_pickle_v4_fixture(
+        _GENERIC_PICKLE_V4_PROVIDER, _GENERIC_PICKLE_V4_CALLER
+    )
+    assert (
+        finite.provider_pickle_graph_record(
+            profile,
+            sources,
+            expression,
+            selected_contract_view=view,
+            source_path="caller.py",
+            state_evidence={"safe": True},
+        )
+        is None
+    )
+    sources["pkg/models.py"] += b"\n# stale provider\n"
+    assert (
+        finite.provider_pickle_graph_record(
+            profile,
+            sources,
+            expression,
+            selected_contract_view=view,
+            source_path="caller.py",
+        )
+        is None
+    )
+
+
+def test_pickle_generic_v4_native_scan_uses_one_graph_for_multiple_source_types(
+    tmp_path,
+):
+    import ast
+    from factoryline import review_audits as audit
+
+    caller = (
+        "import pickle\nfrom pkg import Record\n"
+        'def build():\n    obj = Record("fixed")\n'
+        "    payload = pickle.dumps(obj)\n    return pickle.loads(payload)\n"
+    )
+    sources, profile, _, _ = _generic_pickle_v4_fixture(
+        _GENERIC_PICKLE_V4_PROVIDER, caller
+    )
+    for relative, raw in sources.items():
+        target = tmp_path / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(raw)
+    report = audit.security_scan(
+        tmp_path,
+        cache_enabled=False,
+        analysis_profile="trusted-dependencies-v2",
+        provider_contracts=tuple(profile["contracts"]),
+    )
+    assert not [
+        row
+        for row in report["findings"]
+        if row["code"] == "SECURITY_UNSAFE_DESERIALIZATION"
+    ]
+    (proved,) = [
+        row
+        for row in report["primitive_observations"]
+        if row["code"] == "SECURITY_UNSAFE_DESERIALIZATION"
+    ]
+    witness = proved["facts"]["provider_witness"]
+    assert witness["schema"] == "factory.conditional-provider-pickle-witness.v4"
+    assert witness["typed_graph"]["schema"] == "factory.typed-pickle-graph.v4"
+    types = {row.get("type", {}).get("name") for row in witness["typed_graph"]["nodes"]}
+    assert {"Record", "Child"} <= types
+    assert ast.parse(sources["caller.py"])
 
 
 @pytest.mark.parametrize("provider", ["builtins", "contextlib"])

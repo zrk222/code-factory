@@ -796,6 +796,30 @@ class SourceSnapshotIndex:
         except (ValueError, TypeError):
             return None
 
+    def module_paths(self):
+        """Index regular-package roots; ambiguous aliases stay unresolved locally."""
+        paths = {self.relative(path): path for path in self.snapshots}
+        if None in paths or not self.bounded:
+            return None
+        for path in self.snapshots:
+            directory = path.parent
+            package_root = None
+            while (
+                directory != self.root and (directory / "__init__.py") in self.snapshots
+            ):
+                if not self.validate(directory / "__init__.py"):
+                    return None
+                package_root = directory.parent
+                directory = directory.parent
+            if package_root is None:
+                continue
+            alias = path.relative_to(package_root).as_posix()
+            if alias in paths and paths[alias] != path:
+                paths[alias] = None
+            else:
+                paths[alias] = path
+        return paths
+
 
 def source_session_factories(tree, aliases):
     """Find top-level functions that create and return the same requests.Session local name."""
@@ -954,6 +978,65 @@ def _fact(index, path, node, member, owner, source_role, value):
     )
 
 
+def _presentation_provider_facts(tree, nodes, parents, audit):
+    """Index canonical provider changes once, including nested import aliases."""
+    aliases = audit._module_security_aliases(tree)
+    mutation_aliases, mutations = dict(aliases), set()
+    for node in nodes:
+        if isinstance(node, (ast.Import, ast.ImportFrom)) and node not in tree.body:
+            for name, canonical in audit._module_security_aliases(
+                ast.Module(body=[node], type_ignores=[])
+            ).items():
+                prior = mutation_aliases.get(name)
+                if prior is not None and prior != canonical:
+                    mutations.update(((prior, "*"), (canonical, "*")))
+                else:
+                    mutation_aliases[name] = canonical
+    mutations.update(
+        finite_provider_mutation_index(nodes, mutation_aliases, audit, parents)
+    )
+    if any(
+        audit._resolved_ast_name(node, mutation_aliases) == "sys.modules"
+        for node in nodes
+        if isinstance(node, ast.Attribute)
+    ):
+        mutations.add(("sys.modules", "*"))
+    star_imports = any(
+        isinstance(node, ast.ImportFrom)
+        and any(alias.name == "*" for alias in node.names)
+        for node in nodes
+    )
+    return aliases, mutations, star_imports
+
+
+def _presentation_provider_shadow(expression, name, source, path, audit):
+    """An enclosing lexical binder prevents credit for a module import."""
+    current, parents = expression, source.parents[path]
+    while (current := parents.get(id(current))) is not None:
+        if (
+            isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and function_bindings(current, name, audit) != []
+        ):
+            return True
+        if isinstance(current, ast.ClassDef) and binding_occurrences(
+            current.body, name
+        ):
+            return True
+        if isinstance(
+            current,
+            (ast.Lambda, ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp),
+        ) and any(
+            isinstance(item, ast.arg)
+            and item.arg == name
+            or isinstance(item, ast.Name)
+            and item.id == name
+            and isinstance(item.ctx, (ast.Store, ast.Del))
+            for item in ast.walk(current)
+        ):
+            return True
+    return False
+
+
 class PresentationRoleIndex:
     """Bounded captured uses under schema-annotation and masking API profiles."""
 
@@ -970,8 +1053,18 @@ class PresentationRoleIndex:
         )
         self.references, self.reflected_members = {}, set()
         self.reflective_paths, self.calls = set(), []
+        self.provider_aliases, self.provider_mutations = {}, set()
+        self.star_imports = False
+        self._data_paths = source.module_paths() if self.complete else None
         for path, tree in source.snapshots.items() if self.complete else ():
-            for node in ast.walk(tree):
+            nodes = list(ast.walk(tree))
+            aliases, mutations, star = _presentation_provider_facts(
+                tree, nodes, source.parents[path], audit
+            )
+            self.provider_aliases[path] = aliases
+            self.provider_mutations.update(mutations)
+            self.star_imports = self.star_imports or star
+            for node in nodes:
                 if isinstance(node, (ast.Name, ast.Attribute)):
                     name = node.id if isinstance(node, ast.Name) else node.attr
                     self.references.setdefault(name, []).append((path, node))
@@ -1016,6 +1109,13 @@ class PresentationRoleIndex:
         elif fact.source_role == "module_literal":
             uses = self._mask_uses(fact)
             profile = "MASKING_SENTINEL"
+            if not uses:
+                uses = (
+                    None
+                    if self._data_reflection_conflict(fact)
+                    else self._module_uses(fact, self._data_role)
+                )
+                profile = "STATIC_API_DATA_ROLE"
         else:
             uses, profile = None, None
         if not uses:
@@ -1121,6 +1221,23 @@ class PresentationRoleIndex:
         )
 
     def _mask_uses(self, fact):
+        uses = self._module_uses(
+            fact,
+            lambda path, node: _presentation_mask_output(
+                node, self.source.parents[path]
+            )
+            or _presentation_mask_restore(node, self.source.parents[path]),
+        )
+        return (
+            uses
+            if uses
+            and {row["role"] for row in uses}
+            == {"MASK_OUTPUT", "PRESERVE_PREVIOUS_VALUE"}
+            else None
+        )
+
+    def _module_uses(self, fact, classify):
+        """Share exact import/rebinding closure across modeled scalar roles."""
         from .credential_role_constructor_provider import matches_fact
 
         uses = []
@@ -1157,19 +1274,100 @@ class PresentationRoleIndex:
                 )
             ):
                 continue
-            parents = self.source.parents[path]
-            role = _presentation_mask_output(
-                node, parents
-            ) or _presentation_mask_restore(node, parents)
+            role = classify(path, node)
             if role is None:
                 return None
             uses.append(self._witness(path, node, role))
-        return (
-            uses
-            if {row["role"] for row in uses}
-            == {"MASK_OUTPUT", "PRESERVE_PREVIOUS_VALUE"}
-            else None
-        )
+        return uses
+
+    def _data_reflection_conflict(self, fact):
+        """Dynamic namespace access cannot establish complete scalar-use closure."""
+        origin = self.source.root / fact.path
+        if self.star_imports:
+            return True
+        for name in (
+            "globals",
+            "locals",
+            "eval",
+            "exec",
+            "__dict__",
+            "__globals__",
+            "__getattribute__",
+        ):
+            for path, node in self.references.get(name, ()):
+                if path == origin:
+                    return True
+                if (
+                    isinstance(node, ast.Attribute)
+                    and isinstance(node.value, ast.Name)
+                    and self._namespace_alias(path, node.value.id, fact)
+                ):
+                    return True
+        return False
+
+    def _data_role(self, path, node):
+        """Model argument roles, never identifier spelling or test-directory names."""
+        parents = self.source.parents[path]
+        parent = parents.get(id(node))
+        call = parents.get(id(parent)) if isinstance(parent, ast.keyword) else parent
+        if (
+            not isinstance(call, ast.Call)
+            or any(isinstance(arg, ast.Starred) for arg in call.args)
+            or any(item.arg is None for item in call.keywords)
+        ):
+            return None
+        aliases = self.provider_aliases[path]
+        canonical = self.audit._resolved_ast_name(call.func, aliases)
+        # A pattern or cache key can itself confer authentication authority.
+        # Those roles require downstream evidence; argument position is insufficient.
+        roles = {
+            "os.getenv": ("key", "ENVIRONMENT_NAME"),
+            "os.environ.get": ("key", "ENVIRONMENT_NAME"),
+        }
+        selected = roles.get(canonical)
+        if selected is None or not self._data_provider_stable(
+            path, call.func, canonical
+        ):
+            return None
+        keyword, role = selected
+        actuals = [
+            *call.args[:1],
+            *(kw.value for kw in call.keywords if kw.arg == keyword),
+        ]
+        return role if len(actuals) == 1 and actuals[0] is node else None
+
+    def _data_provider_stable(self, path, expression, canonical):
+        """Reuse provider escape/mutation facts and exact lexical import binding."""
+        root = expression
+        while isinstance(root, ast.Attribute):
+            root = root.value
+        if not isinstance(root, ast.Name) or root.id not in self.provider_aliases[path]:
+            return False
+        if _presentation_provider_shadow(
+            expression, root.id, self.source, path, self.audit
+        ):
+            return False
+        if not import_is_stable(path, root.id, self.source, self.audit):
+            return False
+        paths = self._data_paths
+        provider = canonical.split(".")[0]
+        if paths is None or any(
+            name in paths for name in (provider + ".py", provider + "/__init__.py")
+        ):
+            return False
+        for owner, member in self.provider_mutations:
+            changed = owner if member == "*" else owner + "." + member
+            # getenv delegates through environ; function mutation and module-table
+            # indirection can replace the modeled provider too.
+            dependencies = {canonical, "os.environ", "sys.modules"}
+            if any(
+                dependency == changed
+                or dependency.startswith(changed + ".")
+                or changed.startswith(dependency + ".")
+                for dependency in dependencies
+            ):
+                return False
+        return True
 
     def _mask_reference(self, fact, path, node):
         if not isinstance(node.ctx, ast.Load):
@@ -3232,7 +3430,7 @@ def _source_aliases(path, tree, imports, index):
 
     module, aliases = _source_module(path), {}
     for node in tree.body:
-        if isinstance(node, ast.ClassDef):
+        if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
             defs = binding_occurrences(tree.body, node.name)
             if len(defs) == 1 and defs[0] is node:
                 aliases[node.name] = f"{module}.{node.name}"
@@ -3350,8 +3548,12 @@ def constructor_provider_helper_epoch():
     from .finite_capture import _provider_alias_bindings
     from .finite_capture import _provider_paths
     from .import_context import import_source_bases
+    from .finite_capture import _provider_mutation_for_node
     from .finite_capture import _provider_call_argument
     from .review_audits import _resolved_ast_name
+    from .review_audits import _module_security_aliases
+    from .review_audits import _security_aliases
+    from .review_audits import _name
 
     model_helpers = constructor_provider_model_helper_epoch()
     return (
@@ -3394,6 +3596,9 @@ def constructor_provider_helper_epoch():
         _provider_paths,
         import_source_bases,
         _resolved_ast_name,
+        _module_security_aliases,
+        _security_aliases,
+        _name,
         _overlaps,
         _mutation_overlaps,
         _shared_function_mutation,
@@ -3414,6 +3619,7 @@ def constructor_provider_helper_epoch():
         finite_capture._record_provider_capture,
         finite_capture._provider_alias_bindings,
         finite_capture._provider_paths,
+        _provider_mutation_for_node,
         finite_capture._reflective_provider_write,
         *model_helpers,
     )

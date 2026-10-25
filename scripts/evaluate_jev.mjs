@@ -1,4 +1,5 @@
 // Experimental, labeled Jev trials. Does not approve scanner findings or releases.
+import { createEvidenceValidators } from './jev_evidence.mjs';
 import { createHash, randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
 import { chmod, lstat, mkdir, open, readFile, realpath } from 'node:fs/promises';
@@ -7,8 +8,8 @@ import { pathToFileURL } from 'node:url';
 
 export const ENDPOINT = 'https://ai-gateway.vercel.sh/v1/evaluate';
 export const MODEL = 'typesafe-ai/jev';
-const REVIEW_PROFILES = ['prd', 'pr', 'test_oracle', 'static', 'secrets', 'configuration', 'dependencies', 'runtime', 'fuzz'];
-const USAGE = 'Usage: node scripts/evaluate_jev.mjs --cases cases.json --rubric rubric.json [--budget-policy budget.json --live] [--profile prd|pr|test_oracle|static|secrets|configuration|dependencies|runtime|fuzz] [--out new-report.json] [--grade] [--true-threshold 0.9] [--false-threshold 0.1] [--timeout-ms 30000]\nProfiles require the matching review_profiles entry in a judge framework. New evidence-review profiles require candidate-bound, hash-verified lane evidence.\nDefault is dry run. --grade enables equal-weight experimental advisory grading; unresolved criteria keep the numeric grade null. Live dispatch requires --budget-policy and AI_GATEWAY_API_KEY. Policy approval references are declared, not authenticated; budget overshoot is detected after provider billing. No release or scanner override authority.\n';
+const REVIEW_PROFILES = ['prd', 'pr', 'test_oracle', 'static', 'secrets', 'configuration', 'dependencies', 'runtime', 'fuzz', 'security_actionability'];
+const USAGE = 'Usage: node scripts/evaluate_jev.mjs --cases cases.json --rubric rubric.json [--budget-policy budget.json --live] [--profile prd|pr|test_oracle|static|secrets|configuration|dependencies|runtime|fuzz|security_actionability] [--out new-report.json] [--grade] [--true-threshold 0.9] [--false-threshold 0.1] [--timeout-ms 30000]\nProfiles require the matching review_profiles entry in a judge framework. New evidence-review profiles require candidate-bound, hash-verified lane evidence.\nDefault is dry run. --grade enables equal-weight experimental advisory grading; unresolved criteria keep the numeric grade null. Live dispatch requires --budget-policy and AI_GATEWAY_API_KEY. Policy approval references are declared, not authenticated; budget overshoot is detected after provider billing. No release or scanner override authority.\n';
 const MAX_INPUT_BYTES = 1_048_576;
 const MAX_RESPONSE_BYTES = 65_536;
 const MAX_CASES = 100;
@@ -30,7 +31,8 @@ function validate(cases, rubric, options) {
   const ids = new Set();
   for (const item of cases) {
     requireValue(object(item) && typeof item.id === 'string' && /^[\w.-]{1,128}$/.test(item.id)
-      && !ids.has(item.id) && typeof item.expected === 'boolean', 'invalid_case');
+      && !ids.has(item.id) && (typeof item.expected === 'boolean'
+        || (options.profile === 'security_actionability' && item.expected === undefined)), 'invalid_case');
     requireValue(typeof item.state === 'string' || object(item.state) || Array.isArray(item.state), 'invalid_state');
     requireValue(item.category === undefined || (typeof item.category === 'string'
       && /^[\w.-]{1,128}$/.test(item.category)), 'invalid_category');
@@ -196,6 +198,7 @@ async function evaluateOne(item, rubric, options, timeoutMs) {
   });
   try {
     const operation = (async () => {
+      if (options.profile === 'security_actionability') await verifySourceBindings(item, options.sourceRoot ?? process.cwd());
       const response = await options.fetchImpl(ENDPOINT, {
         method: 'POST', redirect: 'error', signal: controller.signal,
         headers: { Authorization: `Bearer ${options.apiKey}`, 'Content-Type': 'application/json' },
@@ -205,6 +208,7 @@ async function evaluateOne(item, rubric, options, timeoutMs) {
       rawResponseSha256 = observed.raw_sha256;
       cost = reportedCost(observed.payload);
       requireValue(observed.ok, 'http_error');
+      if (options.profile === 'security_actionability') await verifySourceBindings(item, options.sourceRoot ?? process.cwd());
       return parseAnswer(observed.payload, observed.raw_sha256);
     })();
     const result = await Promise.race([operation, timeout]);
@@ -228,11 +232,12 @@ async function evaluateOne(item, rubric, options, timeoutMs) {
 
 function metricsFor(results, live) {
   const confusion = { tp: 0, fp: 0, fn: 0, tn: 0 };
+  const labelled = results.filter(result => typeof result.expected === 'boolean').length;
   let decided = 0, abstentions = 0, errors = 0;
   for (const result of results) {
     if (result.prediction !== null) {
       decided++;
-      confusion[result.expected ? (result.prediction ? 'tp' : 'fn')
+      if (typeof result.expected === 'boolean') confusion[result.expected ? (result.prediction ? 'tp' : 'fn')
         : (result.prediction ? 'fp' : 'tn')]++;
     } else {
       if (live && result.expected) confusion.fn++;
@@ -242,12 +247,13 @@ function metricsFor(results, live) {
   }
   const ratio = (a, b) => b === 0 ? null : a / b;
   return {
-    total: results.length, decided, abstentions, errors, unresolved: results.length - decided,
+    total: results.length, labelled, unlabelled: results.length - labelled,
+    decided, abstentions, errors, unresolved: results.length - decided,
     confusion, precision: live ? ratio(confusion.tp, confusion.tp + confusion.fp) : null,
     recall: live ? ratio(confusion.tp, confusion.tp + confusion.fn) : null,
-    accuracy: live ? (confusion.tp + confusion.tn) / results.length : null,
+    accuracy: live ? ratio(confusion.tp + confusion.tn, labelled) : null,
     coverage: decided / results.length,
-    policy: 'Positive abstentions/errors count as FN; unresolved negatives are not TN. Accuracy denominator is every labeled case. Dry-run has no measured confusion.',
+    policy: 'Only independent expected labels enter confusion and accuracy. Unlabelled review has no accuracy/precision claim. Positive abstentions/errors count as FN; unresolved negatives are not TN. Accuracy denominator is every labeled case. Dry-run has no measured confusion.',
   };
 }
 
@@ -262,6 +268,9 @@ function dispatchOptions(supplied) {
 
 function admissionFor(item, options, ledger) {
   const empty = { reserved_cost_usd: 0, reserved_latency_ms: 0 };
+  if (options.profile === 'security_actionability' && !actionabilityContextComplete(item.state.evidence)) {
+    return { ...empty, disposition: 'not_run', actionability_incomplete: true };
+  }
   if (!options.live) return { ...empty, disposition: 'not_run' };
   if (ledger.halted) return { ...empty, disposition: 'halted' };
   if (!selectByFraction(options.budgetPolicy, item)) return { ...empty, disposition: 'not_selected' };
@@ -287,6 +296,9 @@ function reconcileDispatch(outcome, options, ledger) {
 async function executeAdmittedCase(item, rubric, options, ledger, admission) {
   if (options.onAdmission) await options.onAdmission(structuredClone({
     id: item.id, case_sha256: sha(encode(item)), ...admission }));
+  if (admission.actionability_incomplete) return { status: 'abstain',
+    abstention_reason: 'insufficient_actionability_context', prediction: null,
+    probability: null, evidence_probability: null, reported_cost_usd: 0, provider_verified: false };
   if (admission.disposition !== 'admitted') return { status: admission.disposition,
     prediction: null, probability: null, evidence_probability: null,
     reported_cost_usd: null, provider_verified: false };
@@ -303,7 +315,14 @@ function dispatchResult(item, outcome, admission, options) {
   return { id: item.id, category: item.category ?? 'unspecified', expected: item.expected,
     state_sha256: sha(encode(item.state)), case_sha256: sha(encode(item)),
     admission: admission.disposition, ...outcome,
-    latency_ms: admission.disposition === 'admitted' ? options.latencies.at(-1) : null };
+    latency_ms: admission.disposition === 'admitted' ? options.latencies.at(-1) : null,
+    ...(options.profile === 'security_actionability' ? {
+      advisory_label: outcome.prediction === true ? 'ACTIONABLE'
+        : outcome.prediction === false ? 'NOT_ACTIONABLE' : 'INSUFFICIENT_EVIDENCE',
+      source_references: item.state.evidence.artifacts.filter(artifact => artifact.kind === 'source')
+        .map(({ path, sha256 }) => ({ path, sha256 })),
+      decision_boundary: 'Thresholded advisory judgment; source references bind host inputs, not model citations or proven correctness.',
+    } : {}) };
 }
 
 /** Evaluate every case with policy-bound admission and explicit unresolved outcomes. */
@@ -432,7 +451,8 @@ async function trialReport(cases, rubric, results, options) {
   const metrics = metricsFor(results, options.live);
   return {
     schema: 'factory.jev-experimental-trial.v1', mode: options.live ? 'live' : 'dry_run',
-    state: !options.live ? 'NOT_RUN' : metrics.unresolved ? 'INCOMPLETE' : 'MEASURED_TRIAL',
+    state: !options.live ? 'NOT_RUN' : metrics.unresolved ? 'INCOMPLETE'
+      : metrics.labelled === 0 ? 'ADVISORY_REVIEW' : 'MEASURED_TRIAL',
     observed_at: new Date().toISOString(), node: process.version, model: MODEL, model_revision: null,
     endpoint: ENDPOINT, thresholds: { true: options.trueThreshold, false: options.falseThreshold },
     hashes: await trialHashes(cases, rubric, options),
@@ -474,162 +494,7 @@ function selectProfile(document, profile) {
   return { ...document, rubric: document.review_profiles[profile] };
 }
 
-const EVIDENCE_PROFILES = new Set(['static', 'secrets', 'configuration', 'dependencies', 'runtime', 'fuzz']);
-const HASH = /^[a-f0-9]{64}$/i;
-const REVISION = /^[a-f0-9]{40}$/i;
-const SAFE_RELPATH = /^(?!\/)(?!.*(?:^|\/)\.\.(?:\/|$))[\w./@+-]{1,512}$/;
-const SECRET_KEY = /(?:secret|token|password|credential|private[_-]?key|authorization|api[_-]?key|raw[_-]?value)/i;
-const SECRET_VALUE = /(?:-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----|\b(?:sk-[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9]{20,}|AKIA[A-Z0-9]{16})\b)/;
-
-function validateBoundArtifact(artifact, candidate) {
-  requireValue(object(artifact) && typeof artifact.kind === 'string'
-    && typeof artifact.path === 'string' && SAFE_RELPATH.test(artifact.path) && typeof artifact.content === 'string'
-    && HASH.test(artifact.sha256) && artifact.sha256.toLowerCase() === sha(Buffer.from(artifact.content, 'utf8'))
-    && artifact.candidate_commit === candidate.commit
-    && artifact.candidate_sha256 === candidate.sha256,
-  'invalid_review_artifact_binding');
-}
-
-function validateNoRawSecrets(value, key = '') {
-  if (typeof value === 'string') {
-    requireValue(!SECRET_VALUE.test(value), 'raw_secret_forbidden');
-    requireValue(!SECRET_KEY.test(key), 'raw_secret_field_forbidden');
-  } else if (Array.isArray(value)) {
-    for (const item of value) validateNoRawSecrets(item, key);
-  } else if (object(value)) {
-    for (const [childKey, child] of Object.entries(value)) {
-      requireValue(!SECRET_KEY.test(childKey), 'raw_secret_field_forbidden');
-      validateNoRawSecrets(child, childKey);
-    }
-  }
-}
-
-function validateEvidenceReviewCases(cases, profile) {
-  for (const item of cases) {
-    const state = item.state;
-    const candidate = state?.candidate;
-    const evidence = state?.evidence;
-    requireValue(object(state) && typeof state.requirement === 'string' && state.requirement.trim().length > 0
-      && Buffer.byteLength(state.requirement) <= 8192 && object(candidate) && object(evidence)
-      && REVISION.test(candidate.commit) && typeof candidate.path === 'string' && SAFE_RELPATH.test(candidate.path)
-      && HASH.test(candidate.sha256) && Array.isArray(evidence.artifacts)
-      && evidence.artifacts.length > 0 && evidence.artifacts.length <= 32,
-    'invalid_review_candidate_binding');
-    for (const artifact of evidence.artifacts) validateBoundArtifact(artifact, candidate);
-    const kinds = new Set(evidence.artifacts.map((artifact) => artifact.kind));
-    const location = evidence.location;
-    const validLocation = location => object(location) && typeof location.path === 'string'
-      && SAFE_RELPATH.test(location.path) && Number.isInteger(location.start_line) && location.start_line > 0
-      && Number.isInteger(location.end_line) && location.end_line >= location.start_line;
-    if (profile === 'static') {
-      requireValue(evidence.artifacts.some((artifact) => artifact.kind === 'source'
-        && artifact.path === candidate.path && artifact.sha256.toLowerCase() === candidate.sha256.toLowerCase())
-        && validLocation(location) && location.path === candidate.path,
-      'missing_static_source');
-    } else if (profile === 'secrets') {
-      requireValue(['secret_pattern_detected', 'credential_exposure_metadata', 'redacted_secret_finding']
-        .includes(state.requirement), 'invalid_secret_criterion');
-      requireValue(evidence.artifacts.length === 1 && evidence.artifacts[0].kind === 'redacted_report'
-        && evidence.artifacts[0].path === candidate.path && evidence.artifacts[0].sha256.toLowerCase() === candidate.sha256.toLowerCase(),
-      'invalid_redacted_report');
-      requireValue(Object.keys(state).every((key) => ['requirement', 'candidate', 'evidence'].includes(key))
-        && Object.keys(evidence).every((key) => key === 'artifacts'), 'raw_secret_field_forbidden');
-      let report;
-      try { report = JSON.parse(evidence.artifacts[0].content); }
-      catch { throw new TrialError('invalid_redacted_report'); }
-      requireValue(object(report) && report.schema === 'factory.jev-redacted-secret-report.v1'
-        && Array.isArray(report.features) && report.features.length > 0 && report.features.length <= 256
-        && Object.keys(report).every((key) => ['schema', 'features'].includes(key)), 'invalid_redacted_report');
-      for (const feature of report.features) {
-        requireValue(object(feature) && Object.keys(feature).every((key) =>
-          ['kind', 'location', 'fingerprint', 'entropy_bucket', 'context_redacted'].includes(key))
-          && ['high_entropy', 'credential_assignment', 'key_material', 'known_token_pattern'].includes(feature.kind)
-          && typeof feature.location === 'string' && /^[\w./@+-]{1,512}(?::\d+)?$/.test(feature.location)
-          && typeof feature.fingerprint === 'string' && /^[a-f0-9]{8,64}$/i.test(feature.fingerprint)
-          && (feature.entropy_bucket === undefined || ['low', 'medium', 'high'].includes(feature.entropy_bucket))
-          && (feature.context_redacted === undefined || feature.context_redacted === true), 'raw_secret_forbidden');
-      }
-      validateNoRawSecrets(state);
-    } else if (profile === 'configuration') {
-      requireValue(evidence.artifacts.some((artifact) => ['configuration_source', 'configuration_report'].includes(artifact.kind)
-        && artifact.path === candidate.path && artifact.sha256.toLowerCase() === candidate.sha256.toLowerCase())
-        && validLocation(location) && location.path === candidate.path,
-      'missing_configuration_evidence');
-    } else if (profile === 'dependencies') {
-      const packages = evidence.packages;
-      const manifest = evidence.artifacts.find((artifact) => artifact.kind === 'package_manifest');
-      let declaredPackages;
-      try { declaredPackages = JSON.parse(manifest?.content ?? 'null'); }
-      catch { throw new TrialError('invalid_dependency_manifest'); }
-      requireValue(Array.isArray(packages) && packages.length > 0 && packages.length <= 256
-        && packages.every((pkg) => object(pkg) && typeof pkg.ecosystem === 'string' && /^[\w.-]{1,64}$/.test(pkg.ecosystem)
-          && typeof pkg.name === 'string' && /^[\w.@/+:-]{1,256}$/.test(pkg.name)
-          && typeof pkg.version === 'string' && /^[\w.+-]{1,128}$/.test(pkg.version))
-        && encode(declaredPackages) === encode(packages)
-        && evidence.artifacts.some((artifact) => artifact.kind === 'package_manifest'
-          && artifact.path === candidate.path && artifact.sha256.toLowerCase() === candidate.sha256.toLowerCase())
-        && kinds.has('advisory'), 'missing_dependency_advisory_evidence');
-      for (const advisory of evidence.artifacts.filter((artifact) => artifact.kind === 'advisory')) {
-        let record;
-        try { record = JSON.parse(advisory.content); }
-        catch { throw new TrialError('invalid_advisory_evidence'); }
-        requireValue(object(record) && typeof (record.advisory_id ?? record.id) === 'string'
-          && (record.advisory_id ?? record.id).trim().length > 0
-          && Object.keys(record).every((key) => ['advisory_id', 'id', 'source', 'details'].includes(key)),
-        'invalid_advisory_evidence');
-      }
-    } else {
-      const execution = evidence.execution;
-      const trace = evidence.artifacts.find((artifact) => artifact.kind === 'trace');
-      let traceRecord;
-      try { traceRecord = JSON.parse(trace?.content ?? 'null'); }
-      catch { throw new TrialError('invalid_execution_trace'); }
-      requireValue(object(execution) && typeof execution.command === 'string' && execution.command.trim().length > 0
-        && Buffer.byteLength(execution.command) <= 8192 && typeof execution.engine === 'string'
-        && /^[\w .@/+:-]{1,128}$/.test(execution.engine)
-        && ((Number.isInteger(execution.exit_code) && execution.exit_code >= -1 && execution.exit_code <= 255)
-          || execution.timed_out === true)
-        && (execution.timed_out === undefined || typeof execution.timed_out === 'boolean')
-        && kinds.has('trace') && evidence.artifacts.some((artifact) => artifact.kind === 'source'
-          && artifact.path === candidate.path && artifact.sha256.toLowerCase() === candidate.sha256.toLowerCase())
-        && object(traceRecord) && traceRecord.schema === 'factory.jev-execution-trace.v1'
-        && traceRecord.command === execution.command && traceRecord.engine === execution.engine
-        && traceRecord.exit_code === execution.exit_code && traceRecord.timed_out === execution.timed_out
-        && traceRecord.candidate_commit === candidate.commit && traceRecord.candidate_sha256 === candidate.sha256
-        && typeof traceRecord.trace === 'string' && traceRecord.trace.length > 0,
-      profile === 'runtime' ? 'missing_runtime_execution_evidence' : 'missing_fuzz_execution_evidence');
-    }
-  }
-}
-
-function validateTestOracleCases(cases) {
-  for (const item of cases) {
-    const candidate = item.state?.candidate;
-    const source = item.state?.evidence?.source;
-    requireValue(object(item.state) && object(candidate) && object(item.state.evidence)
-      && typeof candidate.commit === 'string' && /^[a-f0-9]{40}$/i.test(candidate.commit)
-      && typeof candidate.path === 'string' && candidate.path.trim().length > 0
-      && typeof source === 'string' && source.length > 0
-      && typeof candidate.excerpt_sha256 === 'string' && /^[a-f0-9]{64}$/i.test(candidate.excerpt_sha256)
-      && candidate.excerpt_sha256.toLowerCase() === sha(Buffer.from(source, 'utf8')),
-    'invalid_test_oracle_evidence_binding');
-    const selected = item.state.evidence.selected_test;
-    if (selected !== undefined) {
-      const firstLine = item.state.evidence.source_start_line ?? 1;
-      const lines = source.split(/\r?\n/);
-      if (lines.at(-1) === '') lines.pop();
-      requireValue(object(selected) && typeof selected.name === 'string'
-        && /^[A-Za-z_]\w*$/.test(selected.name)
-        && Number.isInteger(firstLine) && firstLine > 0
-        && Number.isInteger(selected.start_line) && selected.start_line >= firstLine
-        && Number.isInteger(selected.end_line) && selected.end_line >= selected.start_line
-        && selected.end_line < firstLine + lines.length,
-      'invalid_test_oracle_target_binding');
-      requireValue(new RegExp(`^\\s*(?:async\\s+)?def\\s+${selected.name}\\s*\\(`)
-        .test(lines[selected.start_line - firstLine]), 'invalid_test_oracle_target_binding');
-    }
-  }
-}
+const { EVIDENCE_PROFILES, validateEvidenceReviewCases, validateTestOracleCases, verifySourceBindings, validateNoRawSecrets, validateActionabilityState, actionabilityContextComplete } = createEvidenceValidators({ requireValue, object, sha, TrialError, readBounded });
 
 function unwrapFramework(rubric, profile) {
   if (!object(rubric) || !Object.hasOwn(rubric, 'schema')) return { rubric, framework: null };
@@ -640,7 +505,7 @@ function unwrapFramework(rubric, profile) {
     validation: 'envelope_and_one_combined_rubric_only', full_protocol_executed: false } };
 }
 
-export async function loadTrial(casesPath, rubricPath, profile, budgetPolicyPath) {
+export async function loadTrial(casesPath, rubricPath, profile, budgetPolicyPath, sourceRoot = process.cwd()) {
   const input = await readBounded(casesPath);
   const question = await readBounded(rubricPath);
   let parsed, rubric;
@@ -657,9 +522,12 @@ export async function loadTrial(casesPath, rubricPath, profile, budgetPolicyPath
     catch { throw new TrialError('invalid_budget_policy_json'); }
     budgetPolicySha256 = sha(bytes);
   }
-  validate(cases, rubric, { live: false, grade: false, falseThreshold: 0.1, trueThreshold: 0.9, timeoutMs: 30_000 });
+  validate(cases, rubric, { live: false, grade: false, falseThreshold: 0.1, trueThreshold: 0.9, timeoutMs: 30_000, profile });
   if (profile === 'test_oracle') validateTestOracleCases(cases);
   if (EVIDENCE_PROFILES.has(profile)) validateEvidenceReviewCases(cases, profile);
+  if (profile === 'security_actionability') {
+    for (const item of cases) await verifySourceBindings(item, sourceRoot);
+  }
   return { cases, rubric, framework, budgetPolicy, budgetPolicySha256,
     hashes: { input: sha(input), rubric: sha(question) } };
 }
@@ -975,8 +843,8 @@ export async function runCli(argv, { env = process.env, fetchImpl = globalThis.f
     const options = parseArgs(argv);
     checkOutputPath(options);
     requireValue(!options.live || options.budgetPolicyPath, 'missing_budget_policy');
-    const trial = await loadTrial(options.casesPath, options.rubricPath, options.profile, options.budgetPolicyPath);
-    const evaluationOptions = cliEvaluationOptions(options, trial, env, fetchImpl);
+    const trial = await loadTrial(options.casesPath, options.rubricPath, options.profile, options.budgetPolicyPath, archiveBoundary);
+    const evaluationOptions = { ...cliEvaluationOptions(options, trial, env, fetchImpl), sourceRoot: archiveBoundary };
     validate(trial.cases, trial.rubric, evaluationOptions);
     output = await reserveOutput(options.outPath);
     journal = await reserveJournal(archiveRoot, archiveBoundary, trial, evaluationOptions);

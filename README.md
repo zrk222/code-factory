@@ -1,8 +1,10 @@
 # Code Factory
 
-Your agent built it. Your review service reviewed it. Code Factory helps you
-inspect what was checked, what failed, and what still needs evidence before
-you accept the change. Start with one command:
+Your agent handed you a change. Now you need to decide what to accept.
+Code Factory brings the findings, source context and recorded checks into one
+review trail. Inspect a finding, choose the repair, and rerun the affected checks.
+You keep the evidence with the change and the decision in your hands.
+Start with one command:
 
 ```powershell
 python -m pip install factoryline-code-factory
@@ -13,7 +15,7 @@ factory scan --root .
 affected checks again. The basic scan reads eligible Python source; it does not
 run your project. Missing evidence is **INCOMPLETE**, not a clean bill of health.
 
-## Current source preview — core 0.48.2, VS Code 1.2.1, JetBrains 1.2.0
+## Current source preview — core 0.49.0, VS Code 1.3.0, JetBrains 1.3.0
 
 The bounded security review follows values through supported local helpers to
 HTTP, file, and SQL sinks, and checks an upload directory separately from its
@@ -247,7 +249,7 @@ explicitly registered by the caller. Their observations are experimental, not
 model certification or accuracy evidence. The source taxonomy and manifest define the same routes for
 Junie while keeping execution and identity limits visible.
 
-## Native scanner expansion — core 0.48.2 / editor 1.2.0 source preview
+## Native scanner expansion — core 0.49.0 / editor 1.3.0 source preview
 
 **Fixed:** native scanner controls require vulnerable and safe results bound to
 image, profile and source hashes. Missing evidence remains incomplete.
@@ -262,9 +264,9 @@ them, and receipt discovery skips explicit file checks for unrelated logs.
 security-extended analysis, and ten Python/JavaScript/TypeScript Semgrep
 rules including local taint tracking. CodeQL controls require native flow
 evidence; Semgrep community output does not establish cross-file coverage.
-The external-source regression corpus now includes 31 upstream cases from
-requests, Rich and Click; it is separate from the eight seeded benchmark cases
-and does not establish held-out accuracy.
+The external-source regression corpus includes upstream cases from requests,
+Rich and Click. These source fixtures exercise supported regression cases;
+runtime verification remains a separate step.
 
 Code Factory is a robust code audit factory with Production/Stable package
 metadata. This source preview does not establish new marketplace publication,

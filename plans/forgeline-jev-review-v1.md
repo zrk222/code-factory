@@ -9,6 +9,21 @@ Own factoryline/jev_classifier.py and tests/test_audit_rule_search.py. Map the v
 ## Packet C — Operator join and adversarial proof
 Demonstrate all four profiles through the actual ForgeLine hook and shared CF validator using a controlled transport, plus missing-provider, malformed-response, unsupported-authority and source-change controls. Record source hashes and actual commands. This proves the local integration, not live provider accuracy. Reuse the existing Vercel runner for any separately authorized live dispatch rather than adding another provider client.
 
+## Packet D — Installed CF actionability review through Vercel Gateway
+
+Owner-authorized addition: expose `factory audit actionability --cases <cases.json>`
+through the existing packaged `evaluate_jev.mjs` runner and a distinct
+`security_actionability` profile. Default to offline. Live dispatch requires
+`--live`, a local `AI_GATEWAY_API_KEY`, and an explicit hash-bound budget policy.
+Require Node 18 or newer; resolve installed wheel assets without a source checkout.
+Reuse the existing process bounds, provider endpoint, journals, response validation
+and abstention policy. Do not add another HTTP client or a mandatory provider
+dependency. Bind source, callers, trust boundaries, counterevidence and unknowns;
+API presence alone is not actionable. Keep raw scanner decisions unchanged.
+Verify missing/stale inputs, label isolation, positive/negative/unresolved mock
+responses, installed-wheel execution and separately recorded live-provider tests.
+The scoped acceptance contract is `.factory/precision286/cli-acceptance-contract.json`.
+
 ## Limits and gates
 CF remains <=460 tracked Python files. Measure formatted byte/line budgets before every write; never exceed current per-file ceilings. Changed functions must pass Ruff and Forge complexity <=10. Run only new/directly invalidated tests, SpecLine strict/validator/drift gates, CF doctor/workflow evidence gates, independent Astra MED review of Luna work and normal CI. Provider usage remains unknown when absent. Source transfers and external effects require current operator authorization. Existing full-goal requirements remain active.
 

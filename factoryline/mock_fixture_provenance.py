@@ -2417,9 +2417,7 @@ def _jwt_provider_use_is_closed(name, fixture, provider_aliases, binding_cache=N
             isinstance(target, ast.Name) and target.id not in provider_aliases
             for target in parent.targets
         )
-    # A constructor reference creates an instance; it does not mutate or export
-    # the provider class. Other test cases in the same module may construct the
-    # real provider independently of this fixture.
+    # Constructor refs create instances; they do not mutate/export the provider class. Other tests here may construct it independently.
     if isinstance(parent, ast.Call) and parent.func is name:
         return True
     if _jwt_provider_is_exception_callback(name, parent, binding_cache):
@@ -3881,8 +3879,8 @@ def application_test_index(
     source = SourceSnapshotIndex(root, modules, source_bytes, inventory)
     if not source.bounded:
         return None
-    paths = {source.relative(path): path for path in modules}
-    if None in paths or len(paths) != len(modules):
+    paths = source.module_paths()
+    if paths is None:
         return None
     if any(
         _django_provider_root_shadowed(paths, name)
@@ -3897,6 +3895,7 @@ def application_test_index(
             "itsdangerous",
             "passlib",
             "unittest",
+            "factory",
         )
     ):
         return None
@@ -5857,9 +5856,14 @@ def application_test_secret_evidence(index, path, line, value):
     if candidate is None:
         return _django_unknown(reason)
     literal, assignment, secret = candidate
-    from .credential_role_identity_effects import module_fixture_evidence_for_binding
+    from . import credential_role_identity_effects as effects
 
-    result = module_fixture_evidence_for_binding(index, path, assignment, secret)
+    plain = effects.application_value_role_evidence
+    fixture = effects.module_fixture_evidence_for_binding
+    if (effect_evidence := plain(index, path, literal, assignment, secret)) is not None:
+        return effect_evidence
+
+    result = fixture(index, path, assignment, secret)
     if result is not None:
         return result
     return _application_test_secret_from_local_binding(

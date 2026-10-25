@@ -1783,3 +1783,133 @@ def test_source_owner_consumer_requires_closed_classmethod_effects(
         {path: aliases},
     )
     assert result == ("source.Consumer.inspect" if accepted else None)
+
+
+@pytest.mark.parametrize(
+    "change,eligible",
+    [
+        ("", True),
+        ("unknown-mode", False),
+        ("overwrite", False),
+        ("formal-rebind", False),
+        ("escape", False),
+        ("mutating-method", False),
+        ("early-return", False),
+        ("effectful-guard", False),
+        ("wrong-branch", False),
+        ("namespace-mutation", False),
+        ("detached-caller", False),
+    ],
+)
+def test_literal273_selected_field_branch_is_source_bound(tmp_path, change, eligible):
+    import ast
+    import hashlib
+    from factoryline.mock_fixture_provenance import application_test_index
+    from factoryline.review_integrity import bind_source_call
+    from factoryline.credential_role_identity_effects import (
+        _app_literal_branch_field_transfer,
+    )
+
+    text = (
+        "class Request:\n"
+        "    def __init__(self, *, body, mode='http'):\n"
+        "        if mode == 'http':\n"
+        "            self.raw_body = body if body is not None else ''\n"
+        "        else:\n"
+        "            self.raw_body = ''\n"
+        "def test_request():\n"
+        "    raw = 'payload'\n"
+        "    request = Request(body=raw)\n"
+    )
+    if change == "unknown-mode":
+        text = text.replace("Request(body=raw)", "Request(body=raw, mode=unknown())")
+    if change == "overwrite":
+        text = text.replace(
+            "def test_request", "        self.raw_body = other\ndef test_request"
+        )
+    if change in {"formal-rebind", "escape", "mutating-method", "early-return"}:
+        statement = {
+            "formal-rebind": "body = other",
+            "escape": "publish(self)",
+            "mutating-method": "self.change()",
+            "early-return": "return",
+        }[change]
+        text = text.replace(
+            "        if mode", "        " + statement + "\n        if mode"
+        )
+    if change == "effectful-guard":
+        text = text.replace("mode == 'http'", "publish(body) is None")
+    if change == "wrong-branch":
+        text = text.replace("Request(body=raw)", "Request(body=raw, mode='other')")
+    if change == "namespace-mutation":
+        text = text.replace(
+            "def test_request", "        rewrite(self.__dict__)\ndef test_request"
+        )
+    path = tmp_path / "sample.py"
+    raw = text.encode()
+    digest = hashlib.sha256(raw).hexdigest()
+    tree = ast.parse(raw)
+    tree._oracle_source_sha256 = digest
+    index = application_test_index(tmp_path, {path: tree}, {path: raw}, {path: digest})
+    assert index is not None
+    assert index["source"].validate(path)
+    constructor = tree.body[0].body[0]
+    caller = tree.body[1]
+    call = caller.body[-1].value
+    bound = bind_source_call(call, constructor, ast.Name(id="target", ctx=ast.Load()))
+    if change == "detached-caller":
+        caller = ast.parse(text.replace("raw = 'payload'", "raw = 'forged'")).body[1]
+    result = _app_literal_branch_field_transfer(
+        index, path, constructor, bound, path, caller, "raw_body"
+    )
+    assert (result is not None) is eligible
+    if result is not None:
+        assert result["formal"] == "body"
+        assert result["actual"] is call.keywords[0].value
+        assert result["statement"] is constructor.body[0].body[0]
+
+
+@pytest.mark.parametrize(
+    "arguments,change,accepted",
+    [
+        ("headers=value", "", True),
+        ("headers=value, **options", "", False),
+        ("*items, headers=value", "", False),
+        ("**value", "", False),
+        ("headers=value", "detached-keyword", False),
+        ("headers=value", "foreign-scope", False),
+        ("headers=value", "unverified-consumer", False),
+    ],
+)
+def test_literal273_keyword_value_requires_exact_closed_consumer(
+    arguments, change, accepted
+):
+    from factoryline.finite_capture import captured_value_use_closure
+
+    function = ast.parse("def test_request():\n    Request(" + arguments + ")\n").body[
+        0
+    ]
+    call = function.body[0].value
+    keyword = call.keywords[0]
+    value = keyword.value
+    parents = {
+        id(child): node
+        for node in ast.walk(function)
+        for child in ast.iter_child_nodes(node)
+    }
+    if change == "detached-keyword":
+        parents[id(value)] = ast.keyword(arg="headers", value=value)
+        parents[id(parents[id(value)])] = call
+    result = captured_value_use_closure(
+        function,
+        value,
+        parents,
+        lambda node: None if change == "foreign-scope" else function,
+        lambda scope: None,
+        lambda scope, node: call
+        if node is call and change != "unverified-consumer"
+        else None,
+    )
+    assert (result is not None) is accepted
+    if result is not None:
+        assert result["sinks"] == (call,)

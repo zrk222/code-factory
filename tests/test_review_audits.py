@@ -4091,18 +4091,18 @@ def test_runtime_oracle_config_preserves_legacy_config_sources(tmp_path):
 
 
 @pytest.mark.parametrize(
-    "config",
+    "filename, config",
     [
-        "[pytest]\npython_functions = check_*\n",
-        "[pytest\npython_files = test_*.py\n",
+        ("pytest.toml", "[pytest]\npython_functions = 42\n"),
+        ("pytest.ini", "[pytest\npython_files = test_*.py\n"),
     ],
 )
 def test_unsupported_or_malformed_pytest_collection_config_fails_closed(
-    tmp_path, config
+    tmp_path, filename, config
 ):
     from factoryline.review_audits import ReviewAuditError
 
-    (tmp_path / "pytest.ini").write_text(config, encoding="utf-8")
+    (tmp_path / filename).write_text(config, encoding="utf-8")
     with pytest.raises(ReviewAuditError, match="pytest test collection"):
         security_scan(tmp_path)
 
@@ -5347,7 +5347,7 @@ def test_security_inventory_prunes_ignored_descendants_not_workspace(
     root = tmp_path / root_name
     root.mkdir()
     (root / "app.py").write_text("value = 1\n", encoding="utf-8")
-    for ignored in (".factory", "node_modules", ".venv", "vendor"):
+    for ignored in (".factory", "node_modules", ".venv", "__pycache__"):
         folder = root / ignored / "nested"
         folder.mkdir(parents=True)
         (folder / "cached.py").write_text("value = 2\n", encoding="utf-8")
@@ -5362,6 +5362,24 @@ def test_security_inventory_prunes_ignored_descendants_not_workspace(
     monkeypatch.setattr(module.os, "walk", observed_walk)
     assert module._security_source_files(root) == [root / "app.py"]
     assert visited == [str(root)]
+
+
+def test_security_inventory_includes_product_sources_in_ambiguous_directories(tmp_path):
+    import factoryline.review_audits as module
+
+    expected = []
+    for folder in ("build", "dist", "tmp", "vendor", "site-packages"):
+        source = tmp_path / folder / "package" / "module.py"
+        source.parent.mkdir(parents=True)
+        source.write_text("value = 1\n", encoding="utf-8")
+        expected.append(source)
+    root_build_source = tmp_path / "build" / "root_module.py"
+    root_build_source.write_text("value = 2\n", encoding="utf-8")
+    expected.append(root_build_source)
+
+    assert module._security_source_files(tmp_path) == sorted(
+        expected, key=lambda path: path.relative_to(tmp_path).as_posix()
+    )
 
 
 def test_import_index_reuses_resolved_sources_without_reindexing(tmp_path, monkeypatch):
@@ -12705,41 +12723,13 @@ def test_partition_revalidates_stale_existing_primitive_observation():
     assert core["state"] == "BLOCKED"
 
 
-def test_partition_and_reseal_are_idempotent_for_current_fixed_program():
-    import hashlib
+def test_partition_and_reseal_are_idempotent_for_current_fixed_program(tmp_path):
     import json
     from factoryline import review_audits
 
-    digest = "a" * 64
-    sources = [{"path": "app.py", "sha256": digest}]
-    workspace_sources = hashlib.sha256(
-        json.dumps([["app.py", digest]], separators=(",", ":")).encode()
-    ).hexdigest()
-    finding = {
-        "code": "SECURITY_DYNAMIC_EXECUTION",
-        "severity": "INFO",
-        "path": "app.py",
-        "line": 1,
-        "message": "fixed literal program",
-        "facts": {
-            "schema": "factory.fixed-literal-program.v1",
-            "disposition": "PROVEN_FIXED_LITERAL_PROGRAM",
-            "source_path": "app.py",
-            "source_sha256": digest,
-            "workspace_sources_sha256": workspace_sources,
-            "program_sha256": "b" * 64,
-        },
-    }
-    core = {
-        "sources": sources,
-        "findings": [finding],
-        "primitive_observations": [],
-        "finding_counts": {"SECURITY_DYNAMIC_EXECUTION": 1},
-        "state": "FINDINGS",
-        "tenant_read_contract": {},
-        "oracle_context": {},
-        "database_context": {},
-    }
+    # A current proof needs actual captured bytes, not fabricated digest strings.
+    (tmp_path / "app.py").write_text('eval("[1]")\n', encoding="utf-8")
+    core = review_audits.security_scan(tmp_path, cache_enabled=False)
     first = review_audits._seal_security_scan(core)
     first_hash = first["audit_sha256"]
     first_observations = json.dumps(first["primitive_observations"], sort_keys=True)
@@ -12788,7 +12778,7 @@ def test_partition_and_reseal_are_idempotent_for_current_fixed_program():
         ('PASSWORD = "PASSWORD"\n', False),
         (
             'from enum import Enum\nclass Code(str, Enum):\n    PASSWORD = "hunter2"\n',
-            False,
+            True,
         ),
         (
             'from local_enum import Enum\nclass Code(str, Enum):\n    PASSWORD = "PASSWORD"\n',
@@ -14525,3 +14515,141 @@ def test_jwt_static_parametrize_rejects_escaped_callable_mutation(mutation):
     )
 
     assert proof._jwt_static_parametrize_decorator(module, owner) is None
+
+
+@pytest.mark.parametrize("cache_enabled", [False, True])
+def test_native_pytest_collection_patterns_match_nested_paths_and_names(
+    tmp_path, cache_enabled
+):
+    from factoryline.review_audits import security_scan
+
+    (tmp_path / "pyproject.toml").write_text(
+        "[tool.pytest]\n"
+        'python_files = ["testing/python/*.py"]\n'
+        'python_functions = ["check_", "*_verify"]\n'
+        'python_classes = ["Acceptance", "*Suite"]\n',
+        encoding="utf-8",
+    )
+    selected = tmp_path / "testing" / "python"
+    selected.mkdir(parents=True)
+    (selected / "test_matrix.py").write_text(
+        "import pytest\n"
+        "def check_module(): assert True\n"
+        "def should_verify(): assert True\n"
+        "def test_unmatched(): assert True\n"
+        "@pytest.fixture\n"
+        "def check_fixture(): pass\n"
+        "class AcceptanceCase:\n"
+        "    def check_method(self): assert True\n"
+        "    def should_verify_method(self): assert True\n"
+        "    def test_unmatched(self): assert True\n"
+        "class ExampleSuite:\n"
+        "    def check_suite(self): assert True\n"
+        "class TestWrong:\n"
+        "    def check_wrong(self): assert True\n"
+        "class AcceptanceWithInit:\n"
+        "    def __init__(self): pass\n"
+        "    def check_init(self): assert True\n",
+        encoding="utf-8",
+    )
+    decoy = tmp_path / "testing" / "elsewhere"
+    decoy.mkdir(parents=True)
+    (decoy / "test_matrix.py").write_text(
+        "def check_decoy(): assert True\n", encoding="utf-8"
+    )
+
+    report = security_scan(tmp_path, cache_enabled=cache_enabled)
+    findings = [
+        item for item in report["findings"] if item["code"] == "QUALITY_HOLLOW_TEST"
+    ]
+    assert {item["line"] for item in findings} == {2, 3, 8, 12}
+    assert all(item["path"] == "testing/python/test_matrix.py" for item in findings)
+
+
+def test_pytest_collection_configuration_carries_all_name_patterns(tmp_path):
+    from factoryline import deep_audit_io
+    from factoryline import review_audits
+    from factoryline.review_audits import _pytest_collection_config
+
+    (tmp_path / "pyproject.toml").write_text(
+        "[tool.pytest]\n"
+        'python_files = ["testing/python/*.py"]\n'
+        'python_functions = ["check_", "*_verify"]\n'
+        'python_classes = ["Acceptance", "*Suite"]\n',
+        encoding="utf-8",
+    )
+
+    files, identity = _pytest_collection_config(tmp_path)
+    assert files == {"testing/python/*.py"}
+    assert identity["python_functions"] == ["check_", "*_verify"]
+    assert identity["python_classes"] == ["Acceptance", "*Suite"]
+    settings, frame = deep_audit_io._full_repository_configuration(
+        tmp_path, review_audits
+    )
+    assert settings == {
+        "python_files": ["testing/python/*.py"],
+        "python_functions": ["check_", "*_verify"],
+        "python_classes": ["Acceptance", "*Suite"],
+    }
+    assert frame["selected"]["python_functions"] == ["check_", "*_verify"]
+    assert frame["selected"]["python_classes"] == ["Acceptance", "*Suite"]
+
+
+def test_pytest_unittest_method_prefix_remains_independent_of_pytest_names(
+    tmp_path,
+):
+    from factoryline.review_audits import security_scan
+
+    (tmp_path / "test_case.py").write_text(
+        "import unittest\n"
+        "class Example(unittest.TestCase):\n"
+        "    def testWorks(self): self.assertTrue(True)\n",
+        encoding="utf-8",
+    )
+
+    report = security_scan(tmp_path)
+    assert report["finding_counts"]["QUALITY_UNKNOWN_TEST_ORACLE"] == 1
+
+
+def test_pytest_collection_rejects_custom_conftest_hooks(tmp_path):
+    from factoryline.review_audits import ReviewAuditError, security_scan
+
+    (tmp_path / "conftest.py").write_text(
+        "def pytest_pycollect_makeitem(collector, name, obj):\n    return None\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "test_case.py").write_text("def test_empty(): pass\n", encoding="utf-8")
+
+    with pytest.raises(ReviewAuditError, match="pytest test collection"):
+        security_scan(tmp_path)
+
+
+def test_pytest_collection_honors_static_test_false_guards(tmp_path):
+    from factoryline.review_audits import security_scan
+
+    (tmp_path / "test_flags.py").write_text(
+        "def test_function_disabled(): assert True\n"
+        "test_function_disabled.__test__ = False\n"
+        "def test_local_assignment():\n"
+        "    __test__ = False\n"
+        "    pass\n"
+        "class TestDisabled:\n"
+        "    __test__ = False\n"
+        "    def test_method(self): assert True\n"
+        "class TestEnabled:\n"
+        "    def test_active(self): assert True\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "test_module_disabled.py").write_text(
+        "__test__ = False\ndef test_module_method(): assert True\n",
+        encoding="utf-8",
+    )
+
+    report = security_scan(tmp_path)
+    findings = [
+        item for item in report["findings"] if item["code"] == "QUALITY_HOLLOW_TEST"
+    ]
+    assert [(item["path"], item["line"]) for item in findings] == [
+        ("test_flags.py", 3),
+        ("test_flags.py", 10),
+    ]

@@ -1344,6 +1344,85 @@ def test_implementation_scope_inventory_is_collected_once(monkeypatch):
     }
 
 
+def test_fixture_scope_fast_path_skips_alias_reconstruction(monkeypatch):
+    tree = ast.parse("import pytest\ndef provider():\n    return 1\n")
+    scope = tree.body[1]
+    parents = review_integrity._implementation_parents(tree)
+
+    def forbidden(*args):
+        raise AssertionError("An empty decorator set cannot contain a fixture")
+
+    monkeypatch.setattr(review_integrity, "_implementation_scope_aliases", forbidden)
+    assert review_integrity._implementation_fixture_scope(scope, parents) is False
+
+
+@pytest.mark.parametrize(
+    "source,expected",
+    [
+        ("import pytest as pt\n@pt.fixture\ndef provider(): return 1\n", True),
+        ("from pytest import fixture as fx\n@fx()\ndef provider(): return 1\n", True),
+        (
+            "import pytest\npytest = object()\n@pytest.fixture\ndef provider(): return 1\n",
+            False,
+        ),
+        ("@decorator\ndef provider(): return 1\n", False),
+    ],
+)
+def test_fixture_scope_fast_path_preserves_decorated_resolution(source, expected):
+    tree = ast.parse(source)
+    scope = tree.body[-1]
+    parents = review_integrity._implementation_parents(tree)
+    assert review_integrity._implementation_fixture_scope(scope, parents) is expected
+
+
+def test_fixture_scope_fast_path_does_not_keep_mutated_ast_results():
+    tree = ast.parse("import pytest\n@pytest.fixture\ndef provider(): return 1\n")
+    scope = tree.body[-1]
+    parents = review_integrity._implementation_parents(tree)
+    assert review_integrity._implementation_fixture_scope(scope, parents) is True
+    scope.decorator_list.clear()
+    assert review_integrity._implementation_fixture_scope(scope, parents) is False
+
+
+@pytest.mark.parametrize("decorator", ["pytest.fixture", "_pytest.fixture"])
+def test_fixture_scope_requires_bound_canonical_provider(decorator):
+    tree = ast.parse(f"@{decorator}\ndef provider(): return 1\n")
+    assert (
+        review_integrity._implementation_fixture_scope(
+            tree.body[0], review_integrity._implementation_parents(tree)
+        )
+        is False
+    )
+
+
+@pytest.mark.parametrize("decorator,fixture", [("pt.fixture", True), ("other", False)])
+def test_native270_fixture_aliases_reuse_invocation_cache(
+    monkeypatch, decorator, fixture
+):
+    source = (
+        "import pytest as pt\nfrom unittest.mock import Mock\n"
+        + f"@{decorator}\ndef provider():\n"
+        + "    Mock()\n" * 40
+    )
+    tree = ast.parse(source)
+    original = review_integrity._implementation_scope_nodes
+    module_walks = []
+
+    def counted(scope):
+        if scope is tree:
+            module_walks.append(scope)
+        return original(scope)
+
+    monkeypatch.setattr(review_integrity, "_implementation_scope_nodes", counted)
+    findings = review_integrity.implementation_completeness_findings(
+        "app.py", tree, source
+    )
+    assert len(findings) == (0 if fixture else 40)
+    assert all(row["code"] == "QUALITY_PRODUCTION_MOCK" for row in findings)
+    assert len(module_walks) <= 2
+    assert not hasattr(tree, "_implementation_alias_cache")
+
+
 def test_implementation_alias_cache_copies_results_and_binds_alias_inputs(monkeypatch):
     from factoryline import review_integrity as module
 
@@ -5963,12 +6042,17 @@ def test_shared_source_binding_changes_invalidate_oracle_cache(
 def test_shared_source_binding_taint_keeps_explicit_defaults_policy(
     expression, expected
 ):
+    from factoryline import review_integrity as integrity
     from factoryline.review_integrity import _security_helper_return_tainted
 
-    function = ast.parse("def f(value=tainted): return value").body[0]
+    module = ast.parse("def f(value=None): return value\n" + expression)
+    # Native taint support now requires the actual source-owned call scope;
+    # do not synthesize an authority verdict from two disconnected ASTs.
+    integrity.bind_security_call_scopes(module)
+    function, call = module.body[0], module.body[1].value
     assert (
         _security_helper_return_tainted(
-            ast.parse(expression).body[0].value, function, set(), {"tainted"}, {}
+            call, function, set(), {"tainted"}, {}
         )
         is expected
     )
@@ -6774,7 +6858,7 @@ def test_native_helper_catalogs_bind_live_predicate_code_and_catalog_schema(
     from factoryline import credential_endpoint_admission as admission
 
     expected = (
-        "factory.security-oracle-context-cache.v7:" + admission.catalog_content_digest()
+        "factory.security-oracle-context-cache.v8:" + admission.catalog_content_digest()
     )
     assert integrity.credential_context_cache_schema() == expected
     direct = provenance.credential_consumer_helpers(integrity)
@@ -7070,7 +7154,7 @@ def test_fixed_program_witness_uses_bound_source_and_builtin_identity():
 
 def test_credential_context_cache_schema_is_versioned_and_catalog_bound():
     first = binding.credential_context_cache_schema()
-    assert first.startswith("factory.security-oracle-context-cache.v7:")
+    assert first.startswith("factory.security-oracle-context-cache.v8:")
     assert binding.credential_context_cache_schema() == first
 
 
@@ -7219,3 +7303,88 @@ def test_application_capture_refactor_keeps_exact_config_hash_and_source_boundar
         patch.setattr(refs, "_application_configuration_hashes", changed)
         assert provider._helper_snapshot(binding.primitive_binding_helpers) != original
     assert provider._helper_snapshot(binding.primitive_binding_helpers) == original
+
+
+def test_fixed_eval_semantic_helpers_are_bound_into_workspace_epoch(monkeypatch):
+    from factoryline import primitive_observation_binding as binding
+    from factoryline import runtime_audit_integrity as runtime
+    from factoryline import credential_role_constructor_provider as provider
+
+    epoch_helpers = binding.fixed_program_workspace_helpers(review_integrity)
+    assert all(
+        helper in epoch_helpers for helper in runtime.fixed_eval_workspace_helpers()
+    )
+    baseline = provider._helper_snapshot(
+        review_integrity.fixed_program_workspace_helpers
+    )
+    names = (
+        "_fixed_eval_name_hazard",
+        "_fixed_eval_import_hazard",
+        "_fixed_eval_attribute_hazard",
+        "_fixed_eval_sink_context",
+        "_fixed_eval_control_flow",
+        "_fixed_eval_local_states",
+        "_fixed_eval_assignment_state",
+        "_fixed_eval_decode_state",
+        "_fixed_eval_proof",
+    )
+    for name in names:
+        with monkeypatch.context() as patch:
+            patch.setattr(runtime, name, lambda *args, **kwargs: None)
+            assert (
+                provider._helper_snapshot(
+                    review_integrity.fixed_program_workspace_helpers
+                )
+                != baseline
+            ), name
+    for name in ("_fixed_program_chain_binding", "_fixed_program_expected_witness"):
+        with monkeypatch.context() as patch:
+            patch.setattr(binding, name, lambda *args, **kwargs: None)
+            assert (
+                provider._helper_snapshot(
+                    review_integrity.fixed_program_workspace_helpers
+                )
+                != baseline
+            ), name
+
+
+def test_fixed_eval_capture_helpers_have_one_source_owner():
+    from factoryline import finite_capture as capture
+    from factoryline import runtime_audit_integrity as runtime
+
+    for name in (
+        "fixed_eval_local_input_witness",
+        "fixed_eval_workspace_provider_clear",
+        "_fixed_eval_provider_alias_escape",
+        "_fixed_eval_module_alias_escape",
+        "_fixed_literal_program_kinds",
+    ):
+        implementation = getattr(capture, name)
+        assert implementation.__module__ == capture.__name__
+        assert getattr(runtime, name) is implementation
+
+
+def test_fixed_eval_actual_capture_callees_invalidate_workspace_epoch(monkeypatch):
+    from factoryline import finite_capture as capture
+    from factoryline import runtime_audit_integrity as runtime
+    from factoryline import credential_role_constructor_provider as provider
+
+    names = {
+        helper.__name__
+        for helper in runtime.fixed_eval_workspace_helpers()
+        if helper.__module__ == capture.__name__
+    }
+    assert "_fixed_literal_program_kinds" in names
+    assert "_fixed_literal_value" in names
+    baseline = provider._helper_snapshot(
+        review_integrity.fixed_program_workspace_helpers
+    )
+    for name in names:
+        with monkeypatch.context() as patch:
+            patch.setattr(capture, name, lambda *args, **kwargs: None)
+            assert (
+                provider._helper_snapshot(
+                    review_integrity.fixed_program_workspace_helpers
+                )
+                != baseline
+            ), name

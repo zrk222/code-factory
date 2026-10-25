@@ -51,6 +51,24 @@ def _is_sha256(value: object) -> bool:
     )
 
 
+def build_informed_actionability_case(
+    finding: Mapping[str, Any],
+    source_index: Any,
+    *,
+    candidate_commit: str,
+    requirement: str,
+) -> dict[str, Any]:
+    """Build the source-bound secondary review packet through the shared context assembler."""
+    from .context_efficiency import build_informed_actionability_case as assemble
+
+    return assemble(
+        finding,
+        source_index,
+        candidate_commit=candidate_commit,
+        requirement=requirement,
+    )
+
+
 def build_evidence_review_input(
     packet: Mapping[str, Any],
     *,

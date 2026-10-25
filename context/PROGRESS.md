@@ -908,3 +908,36 @@ Durable SpecLine gate receipts for focused feature work.
 - [2026-10-22 01:37] GATE plan full-source-coverage211 approver=root under explicit owner delegation tasks=3 sha=07ffa6b02ec23033
 - [2026-10-22 01:45] GATE plan full-source-coverage211 approver=root under explicit owner delegation tasks=2 sha=07ffa6b02ec23033
 - Correction for full-source-coverage211: the initial 01:33 `approver=human` value was the CLI default, not an independent human review. The 01:36 gate records the actual root review under explicit owner delegation. Neither gate establishes human precision labeling or release approval.
+
+- [2026-10-24 08:03] GATE spec forgeline-jev-review-v1 approver=human strict=True sha=685e0c92158b7925
+- [2026-10-24 08:03] GATE plan forgeline-jev-review-v1 approver=human tasks=4 sha=685e0c92158b7925
+- Correction: 2026-10-24 08:03 spec/plan gate approver=human was the CLI default. Root reviewed the existing feature extension under explicit owner authorization; no independent human review or precision labelling is established.
+
+- [2026-10-24 08:50] GATE spec jev-informed-inputs-v1 approver=root-owner-authorized strict=True sha=361053fc377caa95
+- [2026-10-24 08:50] GATE plan jev-informed-inputs-v1 approver=root-owner-authorized tasks=3 sha=361053fc377caa95
+- [2026-10-24 08:54] GATE spec jev-informed-inputs-v1 approver=root-owner-authorized strict=True sha=819f60c138618735
+- [2026-10-24 08:54] GATE plan jev-informed-inputs-v1 approver=root-owner-authorized tasks=3 sha=819f60c138618735
+- [2026-10-24 08:56] GATE plan jev-informed-inputs-v1 approver=root-owner-authorized tasks=4 sha=819f60c138618735
+- [2026-10-24 13:56] GATE spec trusted-provider-profile-v1 approver=human strict=True sha=080817d14dc78928
+- [2026-10-24 13:56] GATE plan trusted-provider-profile-v1 approver=human tasks=3 sha=080817d14dc78928
+- [2026-10-24 15:39] GATE spec captured-program-origin-v1 approver=human strict=True sha=922320fc5f05940d
+- [2026-10-24 15:40] GATE plan captured-program-origin-v1 approver=human tasks=4 sha=922320fc5f05940d
+- [2026-10-24 16:01] GATE spec credential-authority-v1 approver=human strict=True sha=59559f39a6ff14c9
+- [2026-10-24 16:08] GATE spec trusted-core-policy-v1 approver=human strict=True sha=d692c496026eb7cd
+- [2026-10-24 16:10] GATE plan trusted-core-policy-v1 approver=human tasks=2 sha=d692c496026eb7cd
+- [2026-10-24 16:42] GATE spec pickle-reconstruction-v2 approver=human strict=True sha=3a5b9403b720ca07
+- [2026-10-24 16:44] GATE plan pickle-reconstruction-v2 approver=human tasks=3 sha=3a5b9403b720ca07
+- [2026-10-24 19:07] GATE spec workspace-defect-policy-v1 approver=human strict=True sha=2522e68392a8cfda
+- [2026-10-24 19:07] GATE plan workspace-defect-policy-v1 approver=human tasks=3 sha=2522e68392a8cfda
+- [2026-10-24 19:47] GATE spec pickle-reconstruction-v3 approver=human strict=True sha=bd1648c2347f0c34
+- [2026-10-24 19:48] GATE plan pickle-reconstruction-v3 approver=human tasks=3 sha=bd1648c2347f0c34
+- [2026-10-25 02:52] GATE spec pickle-reconstruction-v4 approver=human strict=True sha=774041f0ba27c48f
+- [2026-10-25 02:53] GATE plan pickle-reconstruction-v4 approver=human tasks=3 sha=774041f0ba27c48f
+- [2026-10-25 03:22] GATE spec pickle-reconstruction-v4 approver=human strict=True sha=40390a0ed950d6fe
+- [2026-10-25 03:22] GATE plan pickle-reconstruction-v4 approver=human tasks=3 sha=40390a0ed950d6fe
+- [2026-10-25 03:31] GATE spec pickle-context-role-v1 approver=human strict=True sha=a37f14a1abdf09a1
+- [2026-10-25 03:31] GATE plan pickle-context-role-v1 approver=human tasks=3 sha=a37f14a1abdf09a1
+- [2026-10-25 03:33] GATE spec pickle-context-role-v1 approver=human strict=True sha=8f560efcad15e02e
+- [2026-10-25 03:33] GATE plan pickle-context-role-v1 approver=human tasks=3 sha=8f560efcad15e02e
+- [2026-10-25 04:02] GATE spec pickle-context-role-v1 approver=human strict=True sha=787be4f172380cac
+- [2026-10-25 04:02] GATE plan pickle-context-role-v1 approver=human tasks=3 sha=787be4f172380cac

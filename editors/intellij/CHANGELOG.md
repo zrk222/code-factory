@@ -1,5 +1,11 @@
 # FactoryLine for IntelliJ Changelog
 
+## 1.3.0 - 2026-10-25 (release candidate; publication pending)
+
+- Pair the native editor integration with Code Factory 0.49.0. Local receipts
+  and source-context reviews retain their original evidence and authority limits.
+- Preserve existing tool-window commands and explicit workspace execution consent.
+
 ## 1.2.0 - 2026-10-15 (release candidate; publication gated)
 
 - Align the editor candidate with Code Factory core 0.48.2 and the VS Code

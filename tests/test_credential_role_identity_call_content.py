@@ -404,6 +404,21 @@ def test_receiver_helper_code_epoch_invalidates_and_restores_cached_model():
         identity._call_actual_expressions,
         identity._mapped_formal_value,
         identity._exact_receiver_class_for_function,
+        identity._event_span,
+        identity._role_expression_roots,
+        identity._add_role_event,
+        identity._join_field_values,
+        identity._field_projection_value,
+        identity._ordinary_field_dispatch,
+        identity._Analyzer.__init__,
+        identity._Analyzer.run,
+        identity._Analyzer._aliases,
+        identity._Analyzer._visit,
+        identity._Analyzer._assignment,
+        identity._Analyzer._attribute_role,
+        identity._Analyzer._call,
+        identity.record_escape,
+        identity.record_opaque_call,
     }
     assert enrolled <= set(identity._receiver_helper_epoch())
 
