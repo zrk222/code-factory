@@ -1019,20 +1019,19 @@ def workspace_builtin_helpers():
         source_generated_eval_input_witness,
         finite_eval_binding,
         _test_serialization_roundtrip,
-        _local_pickle_roundtrip,
         _plain_scope_statement_index,
         _simple_scope_assignment,
         _prior_pickle_dump,
-        _pickle_protocol_integer,
-        _pickle_protocol_options_closed,
-        _pickle_protocol_parameter,
-        _pickle_protocol_test_unreferenced,
-        _local_pickle_value,
-        _pickle_nested_effect,
-        _pickle_lambda_parameters,
-        _pickle_mentions,
-        _pickle_call_imported,
         _single_local_pickle_bytes_flow,
+        closed_local_pickle_flow,
+        closed_local_pickle_origin,
+        local_pickle_byte_origin,
+        *(
+            value
+            for name, value in sorted(globals().items())
+            if name.startswith(("_pickle_", "_local_pickle", "_conditional_"))
+            and callable(value)
+        ),
     )
 
 
@@ -1826,11 +1825,14 @@ def closed_literal_pickle_witness(relative, node, aliases):
     if not isinstance(dump, ast.Call) or len(dump.args) != 1 or dump.keywords:
         return {}
     literal = dump.args[0]
-    if sum(1 for _ in ast.walk(literal)) > 512 or not _finite_capture._fixed_literal_value(literal):
+    if sum(
+        1 for _ in ast.walk(literal)
+    ) > 512 or not _finite_capture._fixed_literal_value(literal):
         return {}
-    if not all(_security_proven_callee(call, aliases, name) for call, name in (
-        (node, "pickle.loads"), (dump, "pickle.dumps")
-    )):
+    if not all(
+        _security_proven_callee(call, aliases, name)
+        for call, name in ((node, "pickle.loads"), (dump, "pickle.dumps"))
+    ):
         return {}
     module = _security_module_scope(getattr(node, "_security_lexical_scope", None))
     context = getattr(module, "_security_source_context", None)
@@ -1838,7 +1840,9 @@ def closed_literal_pickle_witness(relative, node, aliases):
         return {}
     root, sources = context
     raw = sources.get(root / relative)
-    if not isinstance(raw, bytes) or hashlib.sha256(raw).hexdigest() != getattr(module, "_oracle_source_sha256", None):
+    if not isinstance(raw, bytes) or hashlib.sha256(raw).hexdigest() != getattr(
+        module, "_oracle_source_sha256", None
+    ):
         return {}
     inventory = _closed_pickle_inventory(root, sources, audit)
     if inventory is None:
@@ -1846,13 +1850,22 @@ def closed_literal_pickle_witness(relative, node, aliases):
     return {
         "schema": "factory.closed-literal-pickle.v1",
         "disposition": "PROVEN_CLOSED_LITERAL_PICKLE_BYTES",
-        "source_path": relative, "source_sha256": hashlib.sha256(raw).hexdigest(),
+        "source_path": relative,
+        "source_sha256": hashlib.sha256(raw).hexdigest(),
         "workspace_sources_sha256": inventory,
-        "call_span": [node.lineno, node.col_offset, node.end_lineno, node.end_col_offset],
-        "literal_sha256": hashlib.sha256(ast.dump(literal, include_attributes=False).encode()).hexdigest(),
+        "call_span": [
+            node.lineno,
+            node.col_offset,
+            node.end_lineno,
+            node.end_col_offset,
+        ],
+        "literal_sha256": hashlib.sha256(
+            ast.dump(literal, include_attributes=False).encode()
+        ).hexdigest(),
         "hypothesis": "EXTERNAL_PICKLE_BYTE_INJECTION",
         "provider_model": "stdlib_pickle_builtin_literal_values",
-        "runtime_assurance": "INCOMPLETE", "target_execution": "not_performed",
+        "runtime_assurance": "INCOMPLETE",
+        "target_execution": "not_performed",
     }
 
 
@@ -1863,7 +1876,13 @@ def _closed_pickle_inventory(root, sources, audit):
 
     if not isinstance(sources, dict) or len(sources) > 2000:
         return None
-    if any(not isinstance(raw, bytes) or len(raw) > 1_000_000 for raw in sources.values()) or sum(map(len, sources.values())) > 32_000_000:
+    if (
+        any(
+            not isinstance(raw, bytes) or len(raw) > 1_000_000
+            for raw in sources.values()
+        )
+        or sum(map(len, sources.values())) > 32_000_000
+    ):
         return None
     rows, records, provider_modules = [], [], set()
     for path, raw in sources.items():
@@ -1881,12 +1900,17 @@ def _closed_pickle_inventory(root, sources, audit):
         rows.append((relative.as_posix(), hashlib.sha256(raw).hexdigest()))
     if any(not _pickle_exports_closed(nodes, provider_modules) for nodes in records):
         return None
-    return hashlib.sha256(json.dumps(sorted(rows), separators=(",", ":")).encode()).hexdigest()
+    return hashlib.sha256(
+        json.dumps(sorted(rows), separators=(",", ":")).encode()
+    ).hexdigest()
 
 
 def _pickle_export_modules(relative, nodes, audit):
     aliases = audit._security_aliases(nodes)
-    if not any(origin == "pickle" or origin.startswith("pickle.") for origin in aliases.values()):
+    if not any(
+        origin == "pickle" or origin.startswith("pickle.")
+        for origin in aliases.values()
+    ):
         return set()
     parts = relative.with_suffix("").parts
     if parts[-1] == "__init__":
@@ -1897,12 +1921,17 @@ def _pickle_export_modules(relative, nodes, audit):
 
 def _pickle_exports_closed(nodes, provider_modules):
     for node in nodes:
-        if isinstance(node, ast.Import) and any(alias.name in provider_modules for alias in node.names):
+        if isinstance(node, ast.Import) and any(
+            alias.name in provider_modules for alias in node.names
+        ):
             return False
         if isinstance(node, ast.ImportFrom):
             if node.level or any(alias.name == "*" for alias in node.names):
                 return False
-            if node.module in provider_modules or any(f"{node.module}.{alias.name}" in provider_modules for alias in node.names):
+            if node.module in provider_modules or any(
+                f"{node.module}.{alias.name}" in provider_modules
+                for alias in node.names
+            ):
                 return False
     return True
 
@@ -1913,11 +1942,24 @@ def _closed_pickle_provider_source(nodes, audit):
     aliases = _finite_capture._shell_import_aliases(nodes, audit, "pickle")
     if aliases is None:
         return False
-    namespace_paths = [audit._resolved_ast_name(node, aliases) for node in nodes if isinstance(node, ast.Attribute)]
-    if any(path == "sys.modules" or path.startswith("pickle.__") for path in namespace_paths):
+    namespace_paths = [
+        audit._resolved_ast_name(node, aliases)
+        for node in nodes
+        if isinstance(node, ast.Attribute)
+    ]
+    if any(
+        path == "sys.modules" or path.startswith("pickle.__")
+        for path in namespace_paths
+    ):
         return False
-    parents = {id(child): parent for parent in nodes for child in ast.iter_child_nodes(parent)}
-    if _finite_capture._shell_dynamic_provider_access(nodes, aliases, audit, parents, "pickle") or not _finite_capture._shell_namespace_queries_closed(nodes, aliases, audit, parents, "pickle"):
+    parents = {
+        id(child): parent for parent in nodes for child in ast.iter_child_nodes(parent)
+    }
+    if _finite_capture._shell_dynamic_provider_access(
+        nodes, aliases, audit, parents, "pickle"
+    ) or not _finite_capture._shell_namespace_queries_closed(
+        nodes, aliases, audit, parents, "pickle"
+    ):
         return False
     module = next(node for node in nodes if isinstance(node, ast.Module))
     for head, origin in aliases.items():
@@ -1929,7 +1971,9 @@ def _closed_pickle_provider_source(nodes, audit):
             if origin == "pickle":
                 function = ast.Attribute(value=function, attr=leaf, ctx=ast.Load())
             call = ast.Call(func=function, args=[], keywords=[])
-            if _sanitizer_provider_mutated(module, call, aliases, expected, head, audit):
+            if _sanitizer_provider_mutated(
+                module, call, aliases, expected, head, audit
+            ):
                 return False
     return True
 
@@ -1960,6 +2004,641 @@ def _local_pickle_roundtrip(node, loaded_name, aliases, audit):
         and _pickle_call_imported(module, scope, node, load_index, aliases, audit)
         and _single_local_pickle_bytes_flow(scope, bytes_name, dump_statement, node)
     )
+
+
+def closed_local_pickle_flow(
+    node, loaded_name, aliases, audit, *, serializer_namespace_only=False
+):
+    """Resolve a source-closed local serialization edge without assuming arbitrary object reconstruction is safe."""
+    if not _pickle_load_call_shape(node, loaded_name):
+        return None
+    scope = getattr(node, "_oracle_scope", None) or getattr(
+        node, "_security_lexical_scope", None
+    )
+    if not isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return None
+    ancestors = _pickle_flow_ancestors(node, scope, audit)
+    scope_statement = next((item for owner, item in ancestors if owner is scope), None)
+    module = _pickle_scope_module(scope)
+    if scope_statement not in scope.body or module is None:
+        return None
+    for loop, load_statement in reversed(ancestors):
+        witness = _closed_pickle_iteration_witness(
+            node,
+            loaded_name,
+            aliases,
+            audit,
+            scope,
+            scope_statement,
+            module,
+            loop,
+            load_statement,
+            serializer_namespace_only=serializer_namespace_only,
+        )
+        if witness is not None:
+            return witness
+    return None
+
+
+def _pickle_load_call_shape(node, loaded_name, *, allow_nested=False):
+    return (
+        isinstance(node, ast.Call)
+        and len(node.args) == 1
+        and not node.keywords
+        and (
+            isinstance(node.args[0], ast.Name)
+            or allow_nested
+            and isinstance(node.args[0], ast.Call)
+        )
+        and loaded_name.endswith(".loads")
+    )
+
+
+def closed_local_pickle_origin(node, loaded_name, aliases, audit):
+    """Prove a direct native dumps-to-loads source origin, without effect credit."""
+    if loaded_name not in {
+        "pickle.loads",
+        "_pickle.loads",
+    } or not _pickle_load_call_shape(node, loaded_name, allow_nested=True):
+        return None
+    scope = getattr(node, "_oracle_scope", None) or getattr(
+        node, "_security_lexical_scope", None
+    )
+    if not isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return None
+    load_index = _pickle_direct_scope_index(node, scope, audit)
+    if load_index is None:
+        return None
+    module = _pickle_scope_module(scope)
+    if not isinstance(module, ast.Module):
+        return None
+    selected = _pickle_direct_dump_origin(
+        node, scope, load_index, loaded_name, aliases, audit
+    )
+    if selected is None:
+        return None
+    dump_index, dump_statement, dump_call, payload_name = selected
+    if _pickle_direct_scope_index(dump_call, scope, audit) != dump_index:
+        return None
+    object_expression = dump_call.args[0]
+    protocol = _pickle_direct_protocol(dump_call)
+    if protocol is None or sum(1 for _ in ast.walk(object_expression)) > 512:
+        return None
+    if not _pickle_direct_serializer_imports_closed(
+        module, scope, dump_index, load_index, dump_call, node, aliases, audit
+    ):
+        return None
+    return {
+        "status": "LOCAL_DIRECT_DUMPS_LOADS_ORIGIN",
+        "origin_kind": "nested" if payload_name is None else "named_payload",
+        "load_call": node,
+        "dump_call": dump_call,
+        "dump_statement": dump_statement,
+        "object_expression": object_expression,
+        "payload_name": payload_name,
+        "scope": scope,
+        "protocol": protocol,
+    }
+
+
+def local_pickle_byte_origin(node, loaded_name, aliases, audit):
+    """Describe a source-visible serializer edge independently of reconstructed types.
+
+    This observation grants no primitive partition, safe-object or negative
+    security decision. Reducer effects and runtime authority remain unassessed.
+    """
+    if loaded_name != "pickle.loads" or not _pickle_load_call_shape(
+        node, loaded_name, allow_nested=True
+    ):
+        return None
+    scope = getattr(node, "_oracle_scope", None)
+    if not isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return None
+    module = _pickle_scope_module(scope)
+    if module is None:
+        return None
+    selected = _pickle_byte_edge_dump(node, scope, aliases, audit)
+    if selected is None:
+        return None
+    dump, payload = selected
+    scope_statement = _conditional_v3_load_statement(node, scope)
+    if scope_statement not in scope.body or not _pickle_byte_edge_dump_shape(dump):
+        return None
+    if not _pickle_serializer_imports_closed(
+        module,
+        scope,
+        scope_statement,
+        dump,
+        node,
+        aliases,
+        audit,
+        serializer_namespace_only=True,
+    ):
+        return None
+    return {
+        "schema": "factory.pickle.byte-origin.v1",
+        "origin": "SOURCE_VISIBLE_PICKLE_DUMP_EDGE",
+        "serializer_provider_identity": "UNASSESSED",
+        "load_span": _fixed_program_span(node),
+        "dump_span": _fixed_program_span(dump),
+        "frame_span": _fixed_program_span(scope),
+        "object_expression_sha256": _conditional_v3_ast_digest(dump.args[0]),
+        "payload_binding": payload,
+        "byte_replacement_on_captured_edge": "NO_SOURCE_VISIBLE_REASSIGNMENT",
+        "reconstruction_effects": "UNASSESSED",
+        "runtime_assurance": "INCOMPLETE",
+        "negative_security_decision": False,
+    }
+
+
+def _pickle_byte_edge_dump(node, scope, aliases, audit):
+    payload = node.args[0]
+    if isinstance(payload, ast.Call):
+        return (
+            (payload, None)
+            if audit._normalized_call_name(payload, aliases) == "pickle.dumps"
+            else None
+        )
+    for owner, statement in reversed(_pickle_flow_ancestors(node, scope, audit)):
+        body = getattr(owner, "body", None)
+        if not isinstance(body, list) or statement not in body:
+            continue
+        matches = [
+            (index, item, _simple_scope_assignment(item, payload.id))
+            for index, item in enumerate(body[: body.index(statement)])
+            if _simple_scope_assignment(item, payload.id) is not None
+        ]
+        if len(matches) != 1:
+            continue
+        position, assignment, dump = matches[0]
+        if (
+            isinstance(dump, ast.Call)
+            and audit._normalized_call_name(dump, aliases) == "pickle.dumps"
+        ):
+            window = body[position : body.index(statement) + 1]
+            return (
+                (dump, payload.id)
+                if _pickle_byte_edge_window_closed(
+                    scope, window, assignment, node, payload.id
+                )
+                else None
+            )
+    return None
+
+
+def _pickle_byte_edge_window_closed(scope, statements, assignment, load, name):
+    from .context_efficiency import _capability_uses_match
+
+    if any(
+        isinstance(item, (ast.Global, ast.Nonlocal)) and name in item.names
+        for item in ast.walk(scope)
+    ):
+        return False
+    target = _pickle_statement_target(assignment)
+    nodes = [node for statement in statements for node in ast.walk(statement)]
+    return _capability_uses_match(nodes, name, [target, load.args[0]])
+
+
+def _pickle_byte_edge_dump_shape(call):
+    return (
+        isinstance(call, ast.Call)
+        and 1 <= len(call.args) <= 2
+        and not any(isinstance(value, ast.Starred) for value in call.args)
+        and all(item.arg == "protocol" for item in call.keywords)
+        and len(call.keywords) <= 1
+        and not (len(call.args) == 2 and call.keywords)
+    )
+
+
+def _pickle_direct_protocol(call):
+    """Accept the default or one bounded literal protocol, with no extra options."""
+    if not isinstance(call, ast.Call) or not call.args:
+        return None
+    if any(isinstance(argument, ast.Starred) for argument in call.args):
+        return None
+    protocol = None
+    source = "omitted"
+    if len(call.args) == 1 and not call.keywords:
+        return {"kind": "default", "source": source}
+    if len(call.args) == 2 and not call.keywords:
+        protocol = call.args[1]
+        source = "positional_literal"
+    elif len(call.args) == 1 and len(call.keywords) == 1:
+        keyword = call.keywords[0]
+        if keyword.arg != "protocol":
+            return None
+        protocol = keyword.value
+        source = "keyword_literal"
+    else:
+        return None
+    if isinstance(protocol, ast.Constant) and protocol.value is None:
+        return {"kind": "default", "source": "explicit_none"}
+    if not _pickle_protocol_integer(protocol):
+        return None
+    value = ast.literal_eval(protocol)
+    if value < -1 or value > 5:
+        return None
+    return {"kind": "integer", "value": value, "source": source}
+
+
+def _pickle_direct_serializer_imports_closed(
+    module, scope, dump_index, load_index, dump_call, load_call, aliases, audit
+):
+    return (
+        _pickle_call_imported(module, scope, dump_call, dump_index, aliases, audit)
+        and _pickle_call_imported(module, scope, load_call, load_index, aliases, audit)
+        and audit._unmodified_serialization_aliases(list(ast.walk(module)), aliases)
+        == aliases
+    )
+
+
+def _pickle_direct_scope_index(node, scope, audit):
+    ancestors = _pickle_flow_ancestors(node, scope, audit)
+    statement = next((child for owner, child in ancestors if owner is scope), None)
+    if statement not in scope.body:
+        return None
+    controls = (
+        ast.If,
+        ast.For,
+        ast.AsyncFor,
+        ast.While,
+        ast.Try,
+        ast.With,
+        ast.AsyncWith,
+        ast.Match,
+        ast.IfExp,
+        ast.BoolOp,
+        ast.ListComp,
+        ast.SetComp,
+        ast.DictComp,
+        ast.GeneratorExp,
+    )
+    if any(
+        parent is not scope and isinstance(parent, controls) for parent, _ in ancestors
+    ):
+        return None
+    return scope.body.index(statement)
+
+
+def _pickle_flow_ancestors(node, scope, audit):
+    ancestors = getattr(node, "_oracle_ancestors", ())
+    if ancestors:
+        return ancestors
+    chain, child = [], node
+    while child is not scope:
+        parent = audit._security_parent(child)
+        if parent is None:
+            return ()
+        chain.append((parent, child))
+        child = parent
+    return tuple(reversed(chain))
+
+
+def _pickle_scope_module(scope):
+    module = getattr(scope, "_oracle_module", None)
+    if not isinstance(module, ast.Module):
+        from .review_integrity import _security_module_scope
+
+        module = _security_module_scope(scope)
+    return module if isinstance(module, ast.Module) else None
+
+
+def _closed_pickle_iteration_witness(
+    node,
+    loaded_name,
+    aliases,
+    audit,
+    scope,
+    scope_statement,
+    module,
+    loop,
+    load_statement,
+    *,
+    serializer_namespace_only=False,
+):
+    if not isinstance(node.args[0], ast.Name):
+        return None
+    if not _pickle_protocol_loop_shape(loop, load_statement):
+        return None
+    protocol = _pickle_protocol_loop_range(loop, scope, module, aliases, audit)
+    if protocol is None:
+        return None
+    dump = _pickle_dump_assignment(
+        loop,
+        load_statement,
+        node.args[0].id,
+        loaded_name,
+        protocol,
+        scope,
+        aliases,
+        audit,
+        node,
+    )
+    if dump is None:
+        return None
+    dump_statement, dump_call = dump
+    if not _pickle_serializer_imports_closed(
+        module,
+        scope,
+        scope_statement,
+        dump_call,
+        node,
+        aliases,
+        audit,
+        serializer_namespace_only=serializer_namespace_only,
+    ):
+        return None
+    object_flow = _closed_pickle_object_flow(
+        scope, loop, scope_statement, dump_call, audit
+    )
+    if object_flow is None:
+        return None
+    return {
+        "status": "LOCAL_PROTOCOL_LOOP_ROUNDTRIP",
+        "load_call": node,
+        "dump_call": dump_call,
+        "dump_statement": dump_statement,
+        "object_expression": dump_call.args[0],
+        "scope": scope,
+        "loop": loop,
+        "protocol": protocol,
+        **object_flow,
+    }
+
+
+def _pickle_protocol_loop_shape(loop, load_statement):
+    return (
+        isinstance(loop, ast.For)
+        and load_statement in loop.body
+        and isinstance(load_statement, (ast.Assign, ast.AnnAssign, ast.Expr))
+        and isinstance(loop.target, ast.Name)
+        and not loop.orelse
+    )
+
+
+def _pickle_dump_assignment(
+    loop, load_statement, bytes_name, loaded_name, protocol, scope, aliases, audit, node
+):
+    load_index = loop.body.index(load_statement)
+    dumps_name = loaded_name.removesuffix("loads") + "dumps"
+    dumps = [
+        (statement, statement.value)
+        for statement in loop.body[:load_index]
+        if _simple_scope_assignment(statement, bytes_name) is not None
+        and isinstance(statement.value, ast.Call)
+        and audit._normalized_call_name(statement.value, aliases) == dumps_name
+    ]
+    if len(dumps) != 1:
+        return None
+    statement, call = dumps[0]
+    if not _pickle_dump_shape(call, statement, bytes_name, loop, protocol, scope):
+        return None
+    if not _pickle_bytes_flow_closed(scope, bytes_name, statement, node):
+        return None
+    return statement, call
+
+
+def _pickle_dump_shape(call, statement, bytes_name, loop, protocol, scope):
+    target = _pickle_statement_target(statement)
+    if not isinstance(target, ast.Name) or target.id != bytes_name:
+        return False
+    if not isinstance(target.ctx, ast.Store) or len(call.args) != 2 or call.keywords:
+        return False
+    if any(isinstance(arg, ast.Starred) for arg in call.args):
+        return False
+    use = call.args[1]
+    if not (
+        isinstance(use, ast.Name)
+        and use.id == protocol["name"]
+        and not _pickle_protocol_variable_rebound(loop, use)
+    ):
+        return False
+    return not any(
+        isinstance(item, (ast.Global, ast.Nonlocal)) and use.id in item.names
+        for item in ast.walk(scope)
+    )
+
+
+def _pickle_bytes_flow_closed(scope, name, statement, load_call):
+    if any(
+        isinstance(item, (ast.Global, ast.Nonlocal)) and name in item.names
+        for item in ast.walk(scope)
+    ):
+        return False
+    return _single_local_pickle_bytes_flow(scope, name, statement, load_call)
+
+
+def _pickle_serializer_imports_closed(
+    module,
+    scope,
+    scope_statement,
+    dump_call,
+    load_call,
+    aliases,
+    audit,
+    *,
+    serializer_namespace_only=False,
+):
+    index = scope.body.index(scope_statement)
+    checked_aliases = aliases
+    if serializer_namespace_only:
+        checked_aliases = {
+            name: origin
+            for name, origin in aliases.items()
+            if origin.split(".", 1)[0] in {"pickle", "_pickle"}
+        }
+    return (
+        _pickle_call_imported(module, scope, dump_call, index, aliases, audit)
+        and _pickle_call_imported(module, scope, load_call, index, aliases, audit)
+        and audit._unmodified_serialization_aliases(
+            list(ast.walk(module)), checked_aliases
+        )
+        == checked_aliases
+    )
+
+
+def _closed_pickle_object_flow(scope, loop, loop_statement, dump_call, audit):
+    return _closed_pickle_object_flow_at(scope, loop_statement, dump_call, audit)
+
+
+def _closed_pickle_object_flow_at(scope, boundary_statement, dump_call, audit):
+    from .credential_role_constructor_provider import binding_occurrences
+
+    expression = dump_call.args[0]
+    if not isinstance(expression, ast.Name) or not isinstance(expression.ctx, ast.Load):
+        return None
+    name = expression.id
+    if name in audit._scope_parameters(scope):
+        return None
+    initializer = _pickle_object_constructor(scope, name, binding_occurrences)
+    if initializer is None:
+        return None
+    init_index, assignment, constructor, target = initializer
+    boundary_index = scope.body.index(boundary_statement)
+    if init_index >= boundary_index or not isinstance(constructor, ast.Call):
+        return None
+    field_flow = _pickle_object_field_writes(scope, name, init_index, boundary_index)
+    if field_flow is None:
+        return None
+    field_writes, field_bases = field_flow
+    if not _pickle_object_occurrences_closed(
+        scope, name, target, field_bases, expression
+    ):
+        return None
+    return {
+        "object_name": name,
+        "object_assignment": assignment,
+        "constructor_call": constructor,
+        "field_writes": tuple(field_writes),
+    }
+
+
+def _pickle_object_constructor(scope, name, binding_occurrences):
+    bindings = binding_occurrences(scope.body, name)
+    if len(bindings) != 1 or not isinstance(bindings[0], ast.Name):
+        return None
+    target = bindings[0]
+    if not isinstance(target.ctx, ast.Store):
+        return None
+    for index, statement in enumerate(scope.body):
+        value = _simple_scope_assignment(statement, name)
+        candidate = _pickle_statement_target(statement)
+        if value is not None and candidate is target:
+            return index, statement, value, target
+    return None
+
+
+def _pickle_statement_target(statement):
+    if isinstance(statement, ast.Assign) and len(statement.targets) == 1:
+        return statement.targets[0]
+    if isinstance(statement, ast.AnnAssign):
+        return statement.target
+    return None
+
+
+def _pickle_object_field_writes(scope, name, init_index, loop_index):
+    writes, bases = [], []
+    for statement in scope.body[init_index + 1 : loop_index]:
+        if isinstance(statement, ast.Pass):
+            continue
+        base = _pickle_closed_field_write(statement, name)
+        if base is None:
+            return None
+        writes.append(statement)
+        bases.append(base)
+    return writes, bases
+
+
+def _pickle_closed_field_write(statement, name):
+    if not isinstance(statement, ast.Assign) or len(statement.targets) != 1:
+        return None
+    target = statement.targets[0]
+    if (
+        not isinstance(target, ast.Attribute)
+        or not isinstance(target.ctx, ast.Store)
+        or target.attr == "args"
+        or target.attr.startswith("__")
+    ):
+        return None
+    base = target.value
+    if (
+        not isinstance(base, ast.Name)
+        or base.id != name
+        or not isinstance(base.ctx, ast.Load)
+    ):
+        return None
+    if sum(1 for _ in ast.walk(statement.value)) > 512:
+        return None
+    return base if _finite_capture._fixed_literal_value(statement.value) else None
+
+
+def _pickle_object_occurrences_closed(scope, name, target, field_bases, expression):
+    if any(
+        isinstance(item, (ast.Global, ast.Nonlocal)) and name in item.names
+        for item in ast.walk(scope)
+    ):
+        return False
+    occurrences = [
+        item
+        for item in ast.walk(scope)
+        if isinstance(item, ast.Name) and item.id == name
+    ]
+    allowed = [target, *field_bases, expression]
+    return len(occurrences) == len(allowed) and {id(item) for item in occurrences} == {
+        id(item) for item in allowed
+    }
+
+
+def _pickle_protocol_variable_rebound(loop, use):
+    from .credential_role_constructor_provider import binding_occurrences
+
+    name = use.id
+    occurrences = [
+        item
+        for item in ast.walk(loop)
+        if isinstance(item, ast.Name) and item.id == name
+    ]
+    return (
+        binding_occurrences(loop.body, name)
+        or len(occurrences) != 2
+        or {id(item) for item in occurrences} != {id(loop.target), id(use)}
+    )
+
+
+def _pickle_protocol_loop_range(loop, scope, module, aliases, audit):
+    iterator = loop.iter
+    if not (
+        isinstance(iterator, ast.Call)
+        and isinstance(iterator.func, ast.Name)
+        and iterator.func.id == "range"
+        and not iterator.keywords
+        and len(iterator.args) in {1, 2}
+    ):
+        return None
+    if (
+        "range" in audit._scope_parameters(scope)
+        or any("range" in audit._bound_names(item) for item in scope.body)
+        or any(
+            item is not scope and "range" in audit._bound_names(item)
+            for item in module.body
+        )
+    ):
+        return None
+    lower_expr, upper = (
+        (ast.Constant(value=0), iterator.args[0])
+        if len(iterator.args) == 1
+        else iterator.args
+    )
+    if not _pickle_protocol_integer(lower_expr):
+        return None
+    lower = ast.literal_eval(lower_expr)
+    if isinstance(upper, ast.Constant) and type(upper.value) is int:
+        maximum = upper.value - 1
+        upper_shape = {"kind": "integer", "stop_exclusive": upper.value}
+    elif (
+        isinstance(upper, ast.BinOp)
+        and isinstance(upper.op, ast.Add)
+        and isinstance(upper.right, ast.Constant)
+        and type(upper.right.value) is int
+        and upper.right.value == 1
+        and audit._resolved_ast_name(upper.left, aliases) == "pickle.HIGHEST_PROTOCOL"
+    ):
+        maximum = "pickle.HIGHEST_PROTOCOL"
+        upper_shape = {
+            "kind": "provider_constant",
+            "stop_exclusive": "pickle.HIGHEST_PROTOCOL + 1",
+        }
+    else:
+        return None
+    if lower < 0 or (type(maximum) is int and lower > maximum):
+        return None
+    return {
+        "name": loop.target.id,
+        "minimum": lower,
+        "maximum": maximum,
+        "range": upper_shape,
+        "same_iteration": True,
+    }
 
 
 def _plain_scope_statement_index(node, scope):
@@ -1999,6 +2678,1820 @@ def _simple_scope_assignment(statement, name):
     if isinstance(statement, ast.AnnAssign) and isinstance(statement.target, ast.Name):
         return statement.value if statement.target.id == name else None
     return None
+
+
+def conditional_provider_pickle_witness(
+    profile, source_bytes, source_path, sink_span, audit
+):
+    """Build source facts for one conditional, trusted-provider pickle roundtrip."""
+    try:
+        return _conditional_provider_witness(
+            profile, source_bytes, source_path, sink_span, audit
+        )
+    except (
+        AttributeError,
+        KeyError,
+        TypeError,
+        ValueError,
+        SyntaxError,
+        MemoryError,
+        RecursionError,
+    ):
+        return None
+
+
+def _conditional_provider_witness(profile, source_bytes, source_path, sink_span, audit):
+    current = _finite_capture.provider_analysis_profile(
+        profile["analysis_profile"], tuple(profile["contracts"])
+    )
+    if current != profile:
+        return None
+    if current["analysis_profile"] == "trusted-dependencies-v2":
+        return _conditional_provider_v2_witness(
+            current, source_bytes, source_path, sink_span, audit
+        )
+    if current["analysis_profile"] != "trusted-dependencies-v1":
+        return None
+    contract = current["contracts"][0]
+    caller = str(source_path).replace("\\", "/")
+    paths = set(contract["artifacts"]) | {caller}
+    if not isinstance(source_bytes, dict) or len(paths) > 64:
+        return None
+    raw = {path: source_bytes[path] for path in paths}
+    if any(
+        not isinstance(value, bytes) or len(value) > 1_000_000 for value in raw.values()
+    ):
+        return None
+    trees = {path: ast.parse(value) for path, value in raw.items()}
+    rows = [(path, list(ast.walk(tree))) for path, tree in trees.items()]
+    ast_nodes = sum(len(nodes) for _, nodes in rows)
+    if ast_nodes > 100_000 or caller not in trees or not isinstance(sink_span, list):
+        return None
+    return _conditional_provider_result(
+        current,
+        contract,
+        source_bytes,
+        raw,
+        trees,
+        rows,
+        caller,
+        sink_span,
+        ast_nodes,
+        audit,
+    )
+
+
+def _conditional_provider_v2_flow(
+    source_bytes, caller, sink_span, audit, *, serializer_namespace_only=False
+):
+    raw = source_bytes.get(caller)
+    if not isinstance(raw, bytes) or len(raw) > 1_000_000:
+        return None
+    tree = ast.parse(raw)
+    modules = {caller: _conditional_module_name(caller)}
+    aliases = _conditional_file_aliases(caller, tree, modules)
+    if aliases is None:
+        return None
+    _conditional_provider_parents(tree)
+    calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and _fixed_program_span(node) == sink_span
+    ]
+    if len(calls) != 1:
+        return None
+    node = calls[0]
+    return closed_local_pickle_flow(
+        node,
+        audit._normalized_call_name(node, aliases),
+        aliases,
+        audit,
+        serializer_namespace_only=serializer_namespace_only,
+    )
+
+
+def _conditional_provider_v2_selection(profile, source_bytes, caller, constructor):
+    from .runtime_audit_common import canonical_bytes
+
+    selected = []
+    for contract in profile["contracts"]:
+        digest = hashlib.sha256(canonical_bytes(contract)).hexdigest()
+        view = _finite_capture.provider_contract_view(profile, digest)
+        binding = _finite_capture.provider_constructor_binding(
+            profile,
+            source_bytes,
+            source_bytes[caller],
+            constructor,
+            selected_contract_view=view,
+        )
+        if binding is not None:
+            selected.append((view, binding))
+    return selected[0] if len(selected) == 1 else None
+
+
+def _conditional_provider_v2_context(contract, source_bytes, caller):
+    paths = set(contract["artifacts"]) | {caller}
+    if len(paths) > 64:
+        return None
+    raw = {path: source_bytes[path] for path in paths}
+    if any(
+        not isinstance(value, bytes) or len(value) > 1_000_000 for value in raw.values()
+    ):
+        return None
+    trees = {path: ast.parse(value) for path, value in raw.items()}
+    rows = [(path, list(ast.walk(tree))) for path, tree in trees.items()]
+    ast_nodes = sum(len(nodes) for _, nodes in rows)
+    if ast_nodes > 100_000:
+        return None
+    aliases, classes = _conditional_provider_aliases(trees, contract)
+    if aliases is None:
+        return None
+    return raw, trees, rows, ast_nodes, aliases, classes
+
+
+def _conditional_provider_v2_witness(
+    profile, source_bytes, source_path, sink_span, audit
+):
+    caller = str(source_path).replace("\\", "/")
+    selected = _conditional_selected_pickle_flow(
+        profile, source_bytes, caller, sink_span, audit
+    )
+    if selected is None:
+        return None
+    flow, view, binding = selected
+    if view["contract"]["model"]["id"] == _finite_capture._PROVIDER_MODEL_V4["id"]:
+        return _conditional_provider_v4_witness(
+            profile, source_bytes, caller, sink_span, flow, view, binding, audit
+        )
+    if view["contract"]["model"]["id"] == _finite_capture._PROVIDER_MODEL_V3["id"]:
+        return _conditional_provider_v3_witness(
+            profile, source_bytes, caller, sink_span, flow, view, binding, audit
+        )
+    context = _conditional_provider_v2_context(view["contract"], source_bytes, caller)
+    if context is None:
+        return None
+    raw, trees, rows, ast_nodes, aliases, classes = context
+    classes = _conditional_selected_descendants(rows, aliases, classes, audit)
+    initialized = _conditional_initialized_global(
+        view["contract"], flow, rows, aliases, classes, audit
+    )
+    if initialized is None or not _conditional_provider_mutations(
+        rows, aliases, classes, audit
+    ):
+        return None
+    record = _finite_capture.provider_exception_record(
+        profile,
+        raw,
+        flow["constructor_call"],
+        selected_contract_view=view,
+        instance_state={
+            write.targets[0].attr: ast.literal_eval(write.value)
+            for write in flow["field_writes"]
+        },
+    )
+    if record is None or binding["call_span"] != _fixed_program_span(
+        flow["constructor_call"]
+    ):
+        return None
+    facts = _conditional_provider_facts(
+        profile,
+        view["contract"],
+        raw,
+        caller,
+        sink_span,
+        flow,
+        binding,
+        record,
+        ast_nodes,
+    )
+    if facts is None:
+        return None
+    return {
+        **facts,
+        "schema": "factory.conditional-provider-pickle-witness.v2",
+        "selected_contract_sha256": view["selected_contract_sha256"],
+        "selected_model_sha256": view["selected_model_sha256"],
+        "initialized_provider": initialized,
+    }
+
+
+def _conditional_selected_pickle_flow(profile, source_bytes, caller, sink_span, audit):
+    if (
+        not isinstance(source_bytes, dict)
+        or not isinstance(sink_span, list)
+        or not _conditional_global_modules_unique(source_bytes)
+    ):
+        return None
+    flow = _conditional_provider_v2_flow(source_bytes, caller, sink_span, audit)
+    extended = False
+    graph_models = {
+        _finite_capture._PROVIDER_MODEL_V3["id"],
+        _finite_capture._PROVIDER_MODEL_V4["id"],
+    }
+    if flow is None and any(
+        item["model"]["id"] in graph_models for item in profile["contracts"]
+    ):
+        flow = _conditional_provider_v2_flow(
+            source_bytes, caller, sink_span, audit, serializer_namespace_only=True
+        )
+        extended = flow is not None
+    origin = (
+        None
+        if flow
+        else _conditional_provider_v2_direct_origin(
+            source_bytes, caller, sink_span, audit
+        )
+    )
+    constructor = (
+        flow["constructor_call"]
+        if flow
+        else _conditional_pickle_origin_constructor(origin)
+        if origin
+        else None
+    )
+    selection = (
+        None
+        if constructor is None
+        else _conditional_provider_v2_selection(
+            profile, source_bytes, caller, constructor
+        )
+    )
+    if selection is None:
+        return None
+    view, binding = selection
+    if view["contract"]["model"]["id"] in graph_models:
+        flow = _conditional_v3_selected_effect_flow(flow, origin, audit)
+    elif extended or origin is not None:
+        return None
+    return (flow, view, binding) if flow is not None else None
+
+
+def _conditional_v3_selected_effect_flow(flow, origin, audit):
+    if flow is not None:
+        return {**flow, "origin_kind": "protocol_loop"}
+    return _conditional_pickle_origin_effect_flow(origin, audit)
+
+
+def _conditional_provider_v4_witness(
+    profile, source_bytes, caller, sink_span, flow, view, binding, audit
+):
+    """Admit only independently regenerated generic source-object graphs."""
+    context = _conditional_provider_v2_context(view["contract"], source_bytes, caller)
+    if context is None:
+        return None
+    raw, trees, rows, ast_nodes, aliases, classes = context
+    record = _finite_capture.provider_pickle_graph_record(
+        profile,
+        raw,
+        flow["object_expression"],
+        selected_contract_view=view,
+        source_path=caller,
+    )
+    if record is None or binding["call_span"] != _fixed_program_span(
+        flow["constructor_call"]
+    ):
+        return None
+    active = _conditional_v4_active_nodes(record, flow, caller, trees, aliases, audit)
+    if active is None:
+        return None
+    classes = _conditional_selected_descendants(rows, aliases, classes, audit)
+    if not _conditional_provider_mutations(
+        rows,
+        aliases,
+        classes,
+        audit,
+        typed_pickle_v3=True,
+        active_escape_nodes_by_path=active,
+        allowed_reconstruction_hooks=_conditional_v4_hook_nodes(record, trees),
+    ):
+        return None
+    initialized = _conditional_initialized_global(
+        view["contract"], flow, rows, aliases, classes, audit
+    )
+    if initialized is None:
+        return None
+    return {
+        "schema": "factory.conditional-provider-pickle-witness.v4",
+        "profile_sha256": profile["profile_sha256"],
+        "selected_contract_sha256": view["selected_contract_sha256"],
+        "selected_model_sha256": view["selected_model_sha256"],
+        "source_path": caller,
+        "selected_source_hashes": record["typed_graph"]["source_hashes"],
+        "sink_span": sink_span,
+        "dump_span": _fixed_program_span(flow["dump_call"]),
+        "origin_kind": flow["origin_kind"],
+        "initialized_provider": initialized,
+        "typed_graph": record["typed_graph"],
+        "typed_graph_sha256": record["typed_graph_sha256"],
+        "active_frame_span": _fixed_program_span(flow["scope"]),
+        "ast_nodes_parsed": ast_nodes,
+        "assumptions": list(_finite_capture._PROVIDER_ASSUMPTIONS),
+        "target_execution": "not_performed",
+        "claim_boundary": "Conditional generic reconstruction under captured provider/runtime identities; not deployment assurance.",
+    }
+
+
+def _conditional_v4_active_nodes(record, flow, caller, trees, aliases, audit):
+    active = {path: set() for path in trees}
+    for path, tree in trees.items():
+        _conditional_v3_add_module_execution_nodes(tree, active[path])
+    scope = _conditional_v3_current_node(trees[caller], flow["scope"])
+    load = _conditional_v3_current_node(trees[caller], flow["load_call"])
+    if scope is None or load is None:
+        return None
+    active[caller].update(id(node) for node in ast.walk(scope))
+    if not _conditional_v3_frame_calls_closed(
+        scope, {**flow, "scope": scope, "load_call": load}, aliases[caller], audit
+    ):
+        return None
+    uses = record["typed_graph"]["method_uses"]
+    if not isinstance(uses, list) or len(uses) > 512:
+        return None
+    for use in uses:
+        if not _conditional_v4_add_method_use(use, trees, active):
+            return None
+    return active
+
+
+def _conditional_v4_add_method_use(use, trees, active):
+    method = _conditional_v4_bound_method(use, trees)
+    if method is None:
+        return False
+    active[use["path"]].update(id(node) for node in ast.walk(method))
+    return True
+
+
+def _conditional_v4_bound_method(use, trees):
+    if not isinstance(use, dict) or set(use) != {
+        "path",
+        "class",
+        "method",
+        "span",
+        "ast_sha256",
+    }:
+        return None
+    if use["path"] not in trees:
+        return None
+    classes = [
+        node
+        for node in trees[use["path"]].body
+        if isinstance(node, ast.ClassDef) and node.name == use["class"]
+    ]
+    methods = [
+        node
+        for cls in classes
+        for node in cls.body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == use["method"]
+        and _fixed_program_span(node) == use["span"]
+        and _conditional_v3_ast_digest(node) == use["ast_sha256"]
+    ]
+    if len(classes) != 1 or len(methods) != 1:
+        return None
+    return methods[0]
+
+
+def _conditional_v4_hook_nodes(record, trees):
+    admitted = set()
+    hook_names = {"__reduce__", "__getstate__", "__setstate__"}
+    for use in record["typed_graph"]["method_uses"]:
+        if use.get("method") in hook_names:
+            method = _conditional_v4_bound_method(use, trees)
+            if method is None:
+                raise ValueError("reconstruction hook identity differs")
+            admitted.add(id(method))
+    return frozenset(admitted)
+
+
+def _conditional_provider_v2_direct_origin(source_bytes, caller, sink_span, audit):
+    raw = source_bytes.get(caller)
+    if not isinstance(raw, bytes) or len(raw) > 1_000_000:
+        return None
+    tree = ast.parse(raw)
+    nodes = list(ast.walk(tree))
+    if len(nodes) > 100_000:
+        return None
+    modules = {caller: _conditional_module_name(caller)}
+    aliases = _conditional_file_aliases(caller, tree, modules)
+    if aliases is None:
+        return None
+    _conditional_provider_parents(tree)
+    calls = [
+        node
+        for node in nodes
+        if isinstance(node, ast.Call) and _fixed_program_span(node) == sink_span
+    ]
+    if len(calls) != 1:
+        return None
+    load_call = calls[0]
+    return closed_local_pickle_origin(
+        load_call,
+        audit._normalized_call_name(load_call, aliases),
+        aliases,
+        audit,
+    )
+
+
+def _conditional_pickle_origin_constructor(origin):
+    expression = origin["object_expression"]
+    if isinstance(expression, ast.Call):
+        return expression
+    if not isinstance(expression, ast.Name):
+        return None
+    from .credential_role_constructor_provider import binding_occurrences
+
+    initializer = _pickle_object_constructor(
+        origin["scope"], expression.id, binding_occurrences
+    )
+    if initializer is None or not isinstance(initializer[2], ast.Call):
+        return None
+    return initializer[2]
+
+
+def _conditional_pickle_origin_effect_flow(origin, audit):
+    expression = origin["object_expression"]
+    if isinstance(expression, ast.Name):
+        if any(
+            isinstance(node, (ast.Global, ast.Nonlocal)) and expression.id in node.names
+            for node in ast.walk(origin["scope"])
+        ):
+            return None
+        object_flow = _closed_pickle_object_flow_at(
+            origin["scope"], origin["dump_statement"], origin["dump_call"], audit
+        )
+        if object_flow is None:
+            return None
+        return {**origin, **object_flow, "loop": None}
+    if isinstance(expression, ast.Call):
+        return {
+            **origin,
+            "constructor_call": expression,
+            "object_assignment": None,
+            "field_writes": (),
+            "object_name": None,
+            "loop": None,
+        }
+    return None
+
+
+def _conditional_provider_v3_witness(
+    profile, source_bytes, caller, sink_span, flow, view, binding, audit
+):
+    context = _conditional_provider_v2_context(view["contract"], source_bytes, caller)
+    if context is None:
+        return None
+    raw, trees, rows, ast_nodes, aliases, classes = context
+    classes = _conditional_selected_descendants(rows, aliases, classes, audit)
+    export_identities = _conditional_v3_export_identities(view["contract"], raw)
+    if export_identities is None:
+        return None
+    classes.update(export_identities)
+    classes = _conditional_selected_descendants(rows, aliases, classes, audit)
+    if (
+        binding["call_span"] != _fixed_program_span(flow["constructor_call"])
+        or _fixed_program_span(flow["constructor_call"])[:2]
+        >= _fixed_program_span(flow["dump_call"])[:2]
+    ):
+        return None
+    instance_state = {
+        write.targets[0].attr: ast.literal_eval(write.value)
+        for write in flow["field_writes"]
+    }
+    record = _finite_capture.provider_exception_record(
+        profile,
+        raw,
+        flow["object_expression"],
+        selected_contract_view=view,
+        instance_state=instance_state,
+        source_path=caller,
+    )
+    if record is None:
+        return None
+    allowed_enum_leaf_nodes = _conditional_v3_enum_leaf_nodes(
+        record,
+        view["contract"],
+        caller,
+        flow["constructor_call"],
+        raw,
+        trees,
+        aliases,
+        audit,
+    )
+    if allowed_enum_leaf_nodes is None:
+        return None
+    active_escape_nodes = _conditional_v3_active_escape_nodes(
+        flow, record, view["contract"], caller, trees, aliases, audit
+    )
+    if active_escape_nodes is None:
+        return None
+    if not _conditional_provider_mutations(
+        rows,
+        aliases,
+        classes,
+        audit,
+        allowed_enum_leaf_nodes=allowed_enum_leaf_nodes,
+        typed_pickle_v3=True,
+        active_escape_nodes_by_path=active_escape_nodes,
+    ):
+        return None
+    initialized = _conditional_initialized_global(
+        view["contract"], flow, rows, aliases, classes, audit
+    )
+    if initialized is None:
+        return None
+    facts = _conditional_provider_facts(
+        profile,
+        view["contract"],
+        raw,
+        caller,
+        sink_span,
+        flow,
+        binding,
+        record,
+        ast_nodes,
+        allow_missing_object_assignment=True,
+    )
+    if facts is None:
+        return None
+    return {
+        **facts,
+        "schema": "factory.conditional-provider-pickle-witness.v2",
+        "selected_contract_sha256": view["selected_contract_sha256"],
+        "selected_model_sha256": view["selected_model_sha256"],
+        "initialized_provider": initialized,
+        "typed_graph_sha256": record["typed_graph_sha256"],
+        "active_frame": {
+            "source_path": caller,
+            "span": _fixed_program_span(flow["scope"]),
+            "ast_sha256": hashlib.sha256(
+                ast.dump(flow["scope"], include_attributes=False).encode()
+            ).hexdigest(),
+            "origin_kind": flow["origin_kind"],
+            "modeled_methods": [
+                *record["initializer_uses"],
+                *record["display_method_uses"],
+            ],
+            "global_counterevidence": "explicit captured provider and registry writes remain rejected",
+            "deferred_bodies": "potential escapes only; conditional immutable initialized provider",
+        },
+    }
+
+
+def _conditional_v3_active_escape_nodes(
+    flow, record, contract, caller, trees, aliases_by_path, audit
+):
+    """Bind active AST identities to the exact current parse, never another tree."""
+    active = {path: set() for path in trees}
+    for path, tree in trees.items():
+        _conditional_v3_add_module_execution_nodes(tree, active[path])
+    caller_tree = trees.get(caller)
+    if not isinstance(caller_tree, ast.Module):
+        return None
+    _conditional_provider_parents(caller_tree)
+    scope = _conditional_v3_current_node(caller_tree, flow["scope"])
+    load = _conditional_v3_current_node(caller_tree, flow["load_call"])
+    if not isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)) or load is None:
+        return None
+    flow = {**flow, "scope": scope, "load_call": load}
+    active[caller].update(id(node) for node in ast.walk(scope))
+    if not _conditional_v3_activate_bound_methods(record, contract, trees, active):
+        return None
+    aliases = aliases_by_path[caller]
+    if not _conditional_v3_display_scope_closed(
+        scope, flow, record, caller_tree, aliases, audit
+    ):
+        return None
+    return (
+        active
+        if _conditional_v3_frame_calls_closed(scope, flow, aliases, audit)
+        else None
+    )
+
+
+def _conditional_v3_activate_bound_methods(record, contract, trees, active):
+    initializers, displays = (
+        record.get("initializer_uses"),
+        record.get("display_method_uses", []),
+    )
+    if not isinstance(initializers, list) or len(initializers) != 1:
+        return False
+    if not isinstance(displays, list) or len(displays) > 8:
+        return False
+    for use, expected in [
+        (initializers[0], "__init__"),
+        *((item, "__str__") for item in displays),
+    ]:
+        method = _conditional_v3_bound_method(use, expected, contract, trees)
+        if method is None:
+            return False
+        active[use["source_path"]].update(id(node) for node in ast.walk(method))
+    return True
+
+
+def _conditional_v3_bound_method(use, expected, contract, trees):
+    base = {
+        "source_path",
+        "class_name",
+        "class_ast_sha256",
+        "method_name",
+        "span",
+        "ast_sha256",
+    }
+    extra = (
+        {"recipe", "cast_import_span", "cast_import_ast_sha256"}
+        if expected == "__str__"
+        else set()
+    )
+    if (
+        not isinstance(use, dict)
+        or set(use) != base | extra
+        or use["method_name"] != expected
+    ):
+        return None
+    if extra and use["recipe"] != "TYPING_CAST_IDENTITY_ARGS_INDEX_1":
+        return None
+    path = use["source_path"]
+    if path not in trees or path not in contract["artifacts"]:
+        return None
+    rows = [
+        row
+        for row in contract["classes"]
+        if (row["path"], row["name"], row["class_ast_sha256"])
+        == (path, use["class_name"], use["class_ast_sha256"])
+    ]
+    classes = [
+        node
+        for node in trees[path].body
+        if isinstance(node, ast.ClassDef)
+        and node.name == use["class_name"]
+        and _conditional_v3_ast_digest(node) == use["class_ast_sha256"]
+    ]
+    if len(rows) != 1 or len(classes) != 1:
+        return None
+    methods = [
+        node
+        for node in classes[0].body
+        if isinstance(node, ast.FunctionDef)
+        and node.name == expected
+        and _fixed_program_span(node) == use["span"]
+        and _conditional_v3_ast_digest(node) == use["ast_sha256"]
+    ]
+    return methods[0] if len(methods) == 1 else None
+
+
+def _conditional_v3_ast_digest(node):
+    return hashlib.sha256(ast.dump(node, include_attributes=False).encode()).hexdigest()
+
+
+def _conditional_v3_display_scope_closed(scope, flow, record, module, aliases, audit):
+    calls = [
+        node
+        for node in ast.walk(scope)
+        if isinstance(node, ast.Call)
+        and audit._resolved_ast_name(node.func, aliases) == "str"
+    ]
+    if not calls:
+        return True
+    shadowed = "str" in audit._scope_parameters(scope) or any(
+        "str" in audit._bound_names(statement)
+        for statement in [*module.body, *scope.body]
+    )
+    loaded = _conditional_v3_load_target_name(flow["load_call"])
+    return (
+        not shadowed
+        and len(record.get("display_method_uses", [])) == 1
+        and all(
+            _conditional_v3_display_call_shape(call, loaded, aliases, audit)
+            and _fixed_program_span(call)[:2]
+            > _fixed_program_span(flow["load_call"])[:2]
+            for call in calls
+        )
+    )
+
+
+def _conditional_v3_current_node(tree, original):
+    matches = [
+        node
+        for node in ast.walk(tree)
+        if type(node) is type(original)
+        and _fixed_program_span(node) == _fixed_program_span(original)
+        and ast.dump(node, include_attributes=False)
+        == ast.dump(original, include_attributes=False)
+    ]
+    return matches[0] if len(matches) == 1 else None
+
+
+def _conditional_v3_frame_calls_closed(scope, flow, aliases, audit):
+    """Unknown active callbacks cannot inherit the deferred-body exception."""
+    if any(
+        isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda))
+        and node is not scope
+        for node in ast.walk(scope)
+    ):
+        return False
+    approved = {
+        _conditional_span_tuple(flow[key])
+        for key in ("constructor_call", "dump_call", "load_call")
+    }
+    loop = flow.get("loop")
+    if isinstance(loop, ast.For):
+        approved.add(_conditional_span_tuple(loop.iter))
+    loaded_name = _conditional_v3_load_target_name(flow["load_call"])
+    return all(
+        _conditional_span_tuple(node) in approved
+        or _conditional_v3_display_call_shape(node, loaded_name, aliases, audit)
+        for node in ast.walk(scope)
+        if isinstance(node, ast.Call)
+    )
+
+
+def _conditional_span_tuple(node):
+    return tuple(_fixed_program_span(node))
+
+
+def _conditional_v3_display_call_shape(node, loaded_name, aliases, audit):
+    return (
+        loaded_name is not None
+        and audit._resolved_ast_name(node.func, aliases) == "str"
+        and len(node.args) == 1
+        and not node.keywords
+        and isinstance(node.args[0], ast.Name)
+        and node.args[0].id == loaded_name
+    )
+
+
+def _conditional_v3_load_statement(load_call, scope):
+    node = load_call
+    while node is not None and node is not scope:
+        parent = getattr(node, "_security_parent", None)
+        if parent is scope:
+            return node
+        node = parent
+    return None
+
+
+def _conditional_v3_load_target_name(load_call):
+    parent = getattr(load_call, "_security_parent", None)
+    if (
+        isinstance(parent, ast.Assign)
+        and parent.value is load_call
+        and len(parent.targets) == 1
+    ):
+        return parent.targets[0].id if isinstance(parent.targets[0], ast.Name) else None
+    if isinstance(parent, ast.AnnAssign) and parent.value is load_call:
+        return parent.target.id if isinstance(parent.target, ast.Name) else None
+    return None
+
+
+def _conditional_v3_add_module_execution_nodes(node, active):
+    """Mark import-time syntax while excluding deferred function and lambda bodies."""
+    active.add(id(node))
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        for field, value in ast.iter_fields(node):
+            if field != "body":
+                _conditional_v3_add_module_execution_value(value, active)
+        return
+    if isinstance(node, ast.Lambda):
+        for field, value in ast.iter_fields(node):
+            if field != "body":
+                _conditional_v3_add_module_execution_value(value, active)
+        return
+    for child in ast.iter_child_nodes(node):
+        _conditional_v3_add_module_execution_nodes(child, active)
+
+
+def _conditional_v3_add_module_execution_value(value, active):
+    if isinstance(value, ast.AST):
+        _conditional_v3_add_module_execution_nodes(value, active)
+    elif isinstance(value, list):
+        for item in value:
+            _conditional_v3_add_module_execution_value(item, active)
+
+
+def _conditional_v3_export_identities(contract, source_bytes):
+    identities = set()
+    for class_row in contract["classes"]:
+        chain = _finite_capture.provider_export_chain_v3(
+            contract, source_bytes, class_row=class_row
+        )
+        if not isinstance(chain, list) or not chain:
+            return None
+        for item in chain:
+            module, symbol = item.get("module"), item.get("symbol")
+            if (
+                not isinstance(module, str)
+                or not module
+                or not isinstance(symbol, str)
+                or not symbol.isidentifier()
+            ):
+                return None
+            identities.add(f"{module}.{symbol}")
+    return identities
+
+
+def _conditional_global_modules_unique(source_bytes):
+    """A source path cannot stand in for two competing Python module identities."""
+    modules = set()
+    for path in source_bytes:
+        if not isinstance(path, str):
+            return False
+        if not path.endswith(".py"):
+            continue
+        name = _conditional_module_name(path).casefold()
+        if name in modules:
+            return False
+        modules.add(name)
+    return True
+
+
+def _conditional_initialized_global(contract, flow, rows, aliases, classes, audit):
+    """Conditional cached lookup implication; never inspect target runtime state."""
+    for path, nodes in rows:
+        if any(
+            _conditional_global_lookup_hazard(node, aliases[path], audit)
+            for node in nodes
+        ):
+            return None
+    first = contract["classes"][0]
+    module = _conditional_module_name(first["path"])
+    if not module or not first["name"].isidentifier():
+        return None
+    if (
+        _fixed_program_span(flow["constructor_call"])[:2]
+        >= _fixed_program_span(flow["dump_call"])[:2]
+    ):
+        return None
+    return {
+        "schema": "factory.initialized-pickle-global.v1",
+        "status": "CONDITIONAL_CACHED_GLOBAL_IDENTITY",
+        "module": module,
+        "qualname": first["name"],
+        "export": dict(contract["export"]),
+        "class_ast_sha256": first["class_ast_sha256"],
+        "constructor_span": _fixed_program_span(flow["constructor_call"]),
+        "successful_dump_span": _fixed_program_span(flow["dump_call"]),
+        "load_span": _fixed_program_span(flow["load_call"]),
+        "identity_check": "canonical_save_global_then_cached_find_class",
+        "initialization_safety": "TRUSTED_NOT_AUDITED",
+        "initialization_premise": "declared trusted initialization completed before constructor binding",
+        "audit_event": "pickle.find_class; source-visible hook registration rejected",
+        "runtime_observation": "not_performed",
+    }
+
+
+def _conditional_global_lookup_hazard(node, aliases, audit):
+    name = audit._resolved_ast_name(node, aliases)
+    if name.startswith(
+        (
+            "sys.modules",
+            "sys.meta_path",
+            "sys.path_hooks",
+            "sys.path_importer_cache",
+            "copyreg._extension_registry",
+            "copyreg._inverted_registry",
+            "copyreg._extension_cache",
+            "pickle._extension_registry",
+            "pickle._inverted_registry",
+            "pickle._extension_cache",
+            "copyreg.dispatch_table",
+            "pickle.dispatch_table",
+            "pickle.Pickler.dispatch_table",
+        )
+    ):
+        return True
+    if name in {
+        "builtins.__import__",
+        "__builtins__.__import__",
+        "builtins.globals",
+        "builtins.locals",
+        "builtins.vars",
+        "builtins.eval",
+        "builtins.exec",
+    }:
+        return True
+    if isinstance(node, ast.Name) and node.id in {
+        "__builtins__",
+        "__import__",
+        "globals",
+        "locals",
+        "vars",
+        "eval",
+        "exec",
+    }:
+        return True
+    if _conditional_reflection_alias_hazard(node, name):
+        return True
+    if _conditional_lookup_import_hazard(node):
+        return True
+    if isinstance(node, ast.Call):
+        return _conditional_lookup_call_hazard(node, aliases, audit)
+    if isinstance(node, ast.Attribute) and node.attr in {
+        "persistent_id",
+        "persistent_load",
+        "find_class",
+        "__module__",
+        "__qualname__",
+        "__bases__",
+        "__mro__",
+    }:
+        return isinstance(node.ctx, (ast.Store, ast.Del))
+    return False
+
+
+def _conditional_lookup_call_hazard(node, aliases, audit):
+    call = audit._resolved_ast_name(node.func, aliases)
+    if _conditional_dynamic_namespace_call(node, call, aliases, audit):
+        return True
+    if call in {
+        "sys.addaudithook",
+        "importlib.reload",
+        "builtins.reload",
+        "copyreg.add_extension",
+        "copyreg.remove_extension",
+        "copyreg.clear_extension_cache",
+    }:
+        return True
+    return call.startswith(
+        (
+            "copyreg._extension",
+            "copyreg._inverted_registry",
+            "pickle.Unpickler",
+            "_pickle.Unpickler",
+        )
+    )
+
+
+def _conditional_lookup_import_hazard(node):
+    if not isinstance(node, ast.ImportFrom) or node.module not in {
+        "sys",
+        "importlib",
+        "copyreg",
+        "builtins",
+    }:
+        return False
+    sensitive = {
+        "addaudithook",
+        "modules",
+        "meta_path",
+        "path_hooks",
+        "reload",
+        "add_extension",
+        "remove_extension",
+        "clear_extension_cache",
+        "_extension_registry",
+        "_inverted_registry",
+        "_extension_cache",
+        "dispatch_table",
+        "globals",
+        "locals",
+        "vars",
+        "eval",
+        "exec",
+        "__import__",
+        "getattr",
+        "setattr",
+        "delattr",
+    }
+    return any(item.name in sensitive for item in node.names)
+
+
+def _conditional_reflection_alias_hazard(node, name):
+    capabilities = {
+        "getattr",
+        "setattr",
+        "delattr",
+        "builtins.getattr",
+        "builtins.setattr",
+        "builtins.delattr",
+    }
+    if name not in capabilities or not isinstance(node, (ast.Name, ast.Attribute)):
+        return False
+    parent = getattr(node, "_security_parent", None)
+    return not (isinstance(parent, ast.Call) and parent.func is node)
+
+
+def _conditional_dynamic_namespace_call(node, call, aliases, audit):
+    if call in {
+        "globals",
+        "locals",
+        "vars",
+        "eval",
+        "exec",
+        "builtins.globals",
+        "builtins.locals",
+        "builtins.vars",
+        "builtins.eval",
+        "builtins.exec",
+    }:
+        return True
+    if (
+        call
+        not in {
+            "getattr",
+            "setattr",
+            "delattr",
+            "builtins.getattr",
+            "builtins.setattr",
+            "builtins.delattr",
+        }
+        or not node.args
+    ):
+        return False
+    target = audit._resolved_ast_name(node.args[0], aliases)
+    return target in {"sys", "copyreg", "pickle", "builtins", "__builtins__"}
+
+
+def _conditional_selected_descendants(rows, aliases, classes, audit):
+    """Include method/descriptor owners so their code cannot drift under a stable type."""
+    selected = set(classes)
+    prefixes = tuple(name + "." for name in classes)
+    for path, nodes in rows:
+        for node in nodes:
+            name = audit._resolved_ast_name(node, aliases[path])
+            if name.startswith(prefixes):
+                selected.add(name)
+    return selected
+
+
+def _conditional_provider_result(
+    current,
+    contract,
+    source_bytes,
+    raw,
+    trees,
+    rows,
+    caller,
+    sink_span,
+    ast_nodes,
+    audit,
+):
+    aliases, classes = _conditional_provider_aliases(trees, contract)
+    if aliases is None:
+        return None
+    _conditional_provider_parents(trees[caller])
+    calls = [
+        node
+        for node in ast.walk(trees[caller])
+        if isinstance(node, ast.Call) and _fixed_program_span(node) == sink_span
+    ]
+    if len(calls) != 1:
+        return None
+    load = calls[0]
+    flow = closed_local_pickle_flow(
+        load, audit._normalized_call_name(load, aliases[caller]), aliases[caller], audit
+    )
+    if flow is None:
+        return None
+    constructor = flow["constructor_call"]
+    binding = _finite_capture.provider_constructor_binding(
+        current, source_bytes, raw[caller], constructor
+    )
+    record = _finite_capture.provider_exception_record(current, raw, constructor)
+    if (
+        binding is None
+        or record is None
+        or binding["call_span"] != _fixed_program_span(constructor)
+        or binding["export"] != contract["export"]
+    ):
+        return None
+    if not _conditional_provider_mutations(rows, aliases, classes, audit):
+        return None
+    return _conditional_provider_facts(
+        current, contract, raw, caller, sink_span, flow, binding, record, ast_nodes
+    )
+
+
+def _conditional_provider_facts(
+    current,
+    contract,
+    raw,
+    caller,
+    sink_span,
+    flow,
+    binding,
+    record,
+    ast_nodes,
+    *,
+    allow_missing_object_assignment=False,
+):
+    if not allow_missing_object_assignment and "object_assignment" not in flow:
+        return None
+    hashes = {
+        path: hashlib.sha256(value).hexdigest() for path, value in sorted(raw.items())
+    }
+    field_rows = [
+        {
+            "span": _fixed_program_span(write),
+            "value_sha256": hashlib.sha256(
+                ast.dump(write.value, include_attributes=False).encode()
+            ).hexdigest(),
+        }
+        for write in flow["field_writes"]
+    ]
+    state_hash = hashlib.sha256(
+        repr((record["args"], sorted(record["state"].items()))).encode()
+    ).hexdigest()
+    states = len(hashes) + len(contract["classes"]) + len(field_rows) + 6 + len(raw)
+    if states > 512:
+        return None
+    facts = {
+        "schema": "factory.conditional-provider-pickle-witness.v1",
+        "analysis_profile": current["analysis_profile"],
+        "profile_sha256": current["profile_sha256"],
+        "model_sha256": current["model_sha256"],
+        "contract_sha256": current["contract_sha256"],
+        "runtime_identity_sha256": hashlib.sha256(
+            repr(sorted(contract["runtime"].items())).encode()
+        ).hexdigest(),
+        "source_path": caller,
+        "caller_sha256": hashes[caller],
+        "selected_source_hashes": hashes,
+        "export": dict(binding["export"]),
+        "sink_span": sink_span,
+        "constructor_span": binding["call_span"],
+        "object_assignment_span": _fixed_program_span(flow.get("object_assignment")),
+        "dump_span": _fixed_program_span(flow["dump_call"]),
+        "load_span": _fixed_program_span(flow["load_call"]),
+        "protocol": dict(flow["protocol"]),
+        "field_writes": field_rows,
+        "constructor_state_sha256": state_hash,
+        "evidence_source_count": len(hashes),
+        "evidence_bytes": sum(map(len, raw.values())),
+        "evidence_states": states,
+        "ast_nodes_parsed": ast_nodes,
+        "assumptions": list(_finite_capture._PROVIDER_ASSUMPTIONS),
+        "source_scope": "contract artifacts plus caller source only",
+        "target_execution": "not_performed",
+    }
+    if allow_missing_object_assignment:
+        facts["object_origin_kind"] = flow.get("origin_kind", "unknown")
+        facts["enum_leaf_uses"] = list(record.get("enum_leaf_uses", []))
+    return facts
+
+
+def _conditional_provider_aliases(trees, contract):
+    modules = {path: _conditional_module_name(path) for path in trees}
+    aliases = {
+        path: _conditional_file_aliases(path, tree, modules)
+        for path, tree in trees.items()
+    }
+    if any(mapping is None for mapping in aliases.values()):
+        return None, None
+    class_paths = {
+        f"{modules[row['path']]}.{row['name']}" for row in contract["classes"]
+    }
+    for row in contract["classes"]:
+        aliases[row["path"]][row["name"]] = f"{modules[row['path']]}.{row['name']}"
+    originals = set(class_paths)
+    if contract["model"]["id"] == _finite_capture._PROVIDER_MODEL_V3["id"]:
+        changed = True
+        while changed:
+            changed = False
+            for path, mapping in aliases.items():
+                for name, target in mapping.items():
+                    alias_path = f"{modules[path]}.{name}"
+                    if target in class_paths and alias_path not in class_paths:
+                        class_paths.add(alias_path)
+                        changed = True
+    else:
+        for path, mapping in aliases.items():
+            class_paths.update(
+                f"{modules[path]}.{name}"
+                for name, target in mapping.items()
+                if target in originals
+            )
+    return aliases, class_paths
+
+
+def _conditional_file_aliases(path, tree, modules):
+    module = modules[path]
+    package = module if path.endswith("/__init__.py") else module.rpartition(".")[0]
+    aliases = {}
+    for statement in tree.body:
+        if isinstance(statement, ast.Import):
+            for item in statement.names:
+                aliases[item.asname or item.name.split(".")[0]] = (
+                    item.name if item.asname else item.name.split(".")[0]
+                )
+        elif isinstance(statement, ast.ImportFrom):
+            base = _conditional_relative_module(
+                package, statement.level, statement.module
+            )
+            if base is None or any(item.name == "*" for item in statement.names):
+                return None
+            for item in statement.names:
+                target = f"{base}.{item.name}" if base else item.name
+                aliases[item.asname or item.name] = target
+    return aliases
+
+
+def _conditional_relative_module(package, level, module):
+    if level == 0:
+        return module
+    parts = package.split(".") if package else []
+    if level > len(parts) + 1:
+        return None
+    return ".".join(
+        [*parts[: len(parts) - level + 1], *(module.split(".") if module else [])]
+    )
+
+
+def _conditional_provider_parents(tree):
+    pending = [(tree, None, None)]
+    while pending:
+        node, parent, scope = pending.pop()
+        if parent is not None:
+            node._security_parent = parent
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            scope = node
+            node._security_parent_scope = getattr(
+                parent, "_security_parent_scope", tree
+            )
+        if isinstance(node, ast.Module):
+            node._oracle_module = tree
+        elif scope is not None:
+            node._security_lexical_scope = scope
+            node._oracle_scope = scope
+            node._oracle_module = tree
+        pending.extend((child, node, scope) for child in ast.iter_child_nodes(node))
+
+
+def _conditional_provider_mutations(
+    node_rows,
+    aliases_by_path,
+    selected_classes,
+    audit,
+    *,
+    allowed_enum_leaf_nodes=frozenset(),
+    typed_pickle_v3=False,
+    active_escape_nodes_by_path=None,
+    allowed_reconstruction_hooks=frozenset(),
+):
+    module_exports = _conditional_module_exports(selected_classes)
+    for path, nodes in node_rows:
+        aliases = aliases_by_path[path]
+        if typed_pickle_v3:
+            aliases = _conditional_v3_alias_closure(
+                nodes, aliases, selected_classes, audit
+            )
+        active_escape_nodes = (active_escape_nodes_by_path or {}).get(path, set())
+        parents = {
+            id(child): node for node in nodes for child in ast.iter_child_nodes(node)
+        }
+        if typed_pickle_v3 and _conditional_enum_base_mutated(nodes, aliases, audit):
+            return False
+        fact_nodes = [
+            node
+            for node in nodes
+            if id(node) not in allowed_enum_leaf_nodes
+            and (
+                not typed_pickle_v3
+                or id(node) in active_escape_nodes
+                or _conditional_v3_explicit_mutation_fact(
+                    node, aliases, selected_classes, module_exports, audit
+                )
+            )
+        ]
+
+        def capture_predicate(statement):
+            return (
+                not typed_pickle_v3
+                or id(statement) in active_escape_nodes
+                or _conditional_v3_global_capture(statement, parents)
+            )
+
+        facts = _finite_capture.finite_provider_mutation_index(
+            fact_nodes,
+            aliases,
+            audit,
+            parents,
+            capture_predicate=capture_predicate,
+        )
+        registry_roots = (
+            "copyreg.dispatch_table",
+            "pickle.dispatch_table",
+            "pickle.Pickler.dispatch_table",
+        )
+        if any(
+            owner in selected_classes
+            or owner == "copyreg"
+            or owner.startswith(registry_roots)
+            for owner, _ in facts
+        ):
+            return False
+        if any(
+            not _conditional_provider_node_safe(
+                node,
+                path,
+                aliases,
+                selected_classes,
+                module_exports,
+                audit,
+                allowed_enum_leaf_nodes=allowed_enum_leaf_nodes,
+                active_escape_nodes=active_escape_nodes if typed_pickle_v3 else None,
+                allowed_reconstruction_hooks=allowed_reconstruction_hooks,
+            )
+            for node in nodes
+        ):
+            return False
+    return True
+
+
+def _conditional_v3_alias_closure(nodes, aliases, selected_classes, audit):
+    """Keep class, method and enum-member write aliases visible even in deferred bodies."""
+    resolved = dict(aliases)
+    for _ in range(8):
+        previous = dict(resolved)
+        for node in nodes:
+            if not isinstance(node, (ast.Assign, ast.AnnAssign)):
+                continue
+            value = getattr(node, "value", None)
+            if not isinstance(value, (ast.Name, ast.Attribute)):
+                continue
+            origin = audit._resolved_ast_name(value, resolved)
+            if not any(
+                origin == selected or origin.startswith(selected + ".")
+                for selected in selected_classes
+            ):
+                continue
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            resolved.update(
+                {
+                    target.id: origin
+                    for target in targets
+                    if isinstance(target, ast.Name)
+                }
+            )
+        if resolved == previous:
+            return resolved
+    # A chain beyond the bound must not hide a write through its last alias.
+    raise ValueError("provider alias closure exceeds eight steps")
+
+
+def _conditional_v3_explicit_mutation_fact(
+    node, aliases, selected_classes, module_exports, audit
+):
+    if isinstance(node, ast.Attribute) and isinstance(node.ctx, (ast.Store, ast.Del)):
+        return True
+    if not isinstance(node, ast.Call):
+        return False
+    callee = audit._resolved_ast_name(node.func, aliases)
+    if callee in {
+        "copyreg.pickle",
+        "copyreg.add_extension",
+        "copyreg.remove_extension",
+        "copyreg.clear_extension_cache",
+        "pickle.Pickler.dispatch_table.update",
+        "copyreg.dispatch_table.update",
+        "sys.addaudithook",
+        "importlib.reload",
+        "builtins.reload",
+    }:
+        return True
+    if _conditional_module_export_write(node, aliases, module_exports, audit):
+        return True
+    if _conditional_module_dict_update(node, aliases, module_exports, audit):
+        return True
+    if callee in {"setattr", "delattr", "builtins.setattr", "builtins.delattr"}:
+        return bool(
+            node.args
+            and _conditional_selected_reference(
+                node.args[0], aliases, audit, selected_classes, module_exports
+            )
+        )
+    return False
+
+
+def _conditional_v3_global_capture(statement, parents):
+    if not isinstance(statement, (ast.Assign, ast.AnnAssign, ast.NamedExpr)):
+        return False
+    targets = (
+        statement.targets if isinstance(statement, ast.Assign) else [statement.target]
+    )
+    names = {
+        node.id
+        for target in targets
+        for node in ast.walk(target)
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store)
+    }
+    if not names:
+        return False
+    current = statement
+    while current is not None and not isinstance(
+        current, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)
+    ):
+        current = parents.get(id(current))
+    if current is None:
+        return False
+    return any(
+        isinstance(node, (ast.Global, ast.Nonlocal))
+        and bool(names.intersection(node.names))
+        for node in ast.walk(current)
+    )
+
+
+def _conditional_provider_node_safe(
+    node,
+    path,
+    aliases,
+    selected_classes,
+    module_exports,
+    audit,
+    *,
+    allowed_enum_leaf_nodes=frozenset(),
+    active_escape_nodes=None,
+    allowed_reconstruction_hooks=frozenset(),
+):
+    hooks = {
+        "__reduce__",
+        "__reduce_ex__",
+        "__getstate__",
+        "__setstate__",
+        "__getattribute__",
+        "__setattr__",
+        "__init_subclass__",
+    }
+    if (
+        isinstance(node, ast.ClassDef)
+        and f"{_conditional_module_name(path)}.{node.name}" in selected_classes
+    ):
+        if any(
+            isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and item.name in hooks
+            and id(item) not in allowed_reconstruction_hooks
+            for item in node.body
+        ):
+            return False
+    if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign, ast.Delete)):
+        targets = (
+            node.targets
+            if isinstance(node, (ast.Assign, ast.Delete))
+            else [node.target]
+        )
+        if any(
+            _conditional_selected_reference(
+                target, aliases, audit, selected_classes, module_exports
+            )
+            for target in targets
+        ):
+            return False
+        value = getattr(node, "value", None)
+        if (
+            (active_escape_nodes is None or id(node) in active_escape_nodes)
+            and value is not None
+            and _conditional_selected_reference(
+                value, aliases, audit, selected_classes, module_exports
+            )
+        ):
+            return False
+        if any(
+            _conditional_registry_path(target, audit, aliases) for target in targets
+        ):
+            return False
+    if (
+        isinstance(node, ast.Call)
+        and (
+            active_escape_nodes is None
+            or id(node) in active_escape_nodes
+            or _conditional_v3_explicit_mutation_fact(
+                node, aliases, selected_classes, module_exports, audit
+            )
+        )
+        and not _conditional_provider_call_safe(
+            node,
+            aliases,
+            selected_classes,
+            module_exports,
+            audit,
+            allowed_enum_leaf_nodes=allowed_enum_leaf_nodes,
+        )
+    ):
+        return False
+    return not (
+        (active_escape_nodes is None or id(node) in active_escape_nodes)
+        and isinstance(node, (ast.Return, ast.Yield, ast.YieldFrom))
+        and _conditional_selected_reference(
+            node.value, aliases, audit, selected_classes, module_exports
+        )
+    )
+
+
+def _conditional_provider_call_safe(
+    node,
+    aliases,
+    selected_classes,
+    module_exports,
+    audit,
+    *,
+    allowed_enum_leaf_nodes=frozenset(),
+):
+    callee = audit._resolved_ast_name(node.func, aliases)
+    registry = {
+        "copyreg.pickle",
+        "copyreg.add_extension",
+        "pickle.Pickler.dispatch_table.update",
+        "copyreg.dispatch_table.update",
+    }
+    if callee in registry or callee in {"__import__", "importlib.import_module"}:
+        return False
+    if _conditional_module_export_write(
+        node, aliases, module_exports, audit
+    ) or _conditional_module_dict_update(node, aliases, module_exports, audit):
+        return False
+    for argument in [*node.args, *(item.value for item in node.keywords)]:
+        if id(argument) in allowed_enum_leaf_nodes:
+            continue
+        if _conditional_selected_reference(
+            argument, aliases, audit, selected_classes, module_exports
+        ):
+            return False
+    return True
+
+
+def _conditional_enum_base_mutated(
+    nodes, aliases, audit, *, additional_roots=frozenset()
+):
+    """Canonical base writes and their aliases remain global counterevidence."""
+    roots = {
+        "enum.Enum",
+        "enum.IntEnum",
+        "enum.EnumType",
+        "enum.EnumMeta",
+        "Exception",
+        "BaseException",
+        "builtins.Exception",
+        "builtins.BaseException",
+    }
+    roots.update(additional_roots)
+    aliases = _conditional_v3_alias_closure(nodes, aliases, roots, audit)
+    for node in nodes:
+        if isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign, ast.Delete)):
+            targets = (
+                node.targets
+                if isinstance(node, (ast.Assign, ast.Delete))
+                else [node.target]
+            )
+            if any(
+                _conditional_enum_root_path(target, aliases, roots, audit)
+                for target in targets
+            ):
+                return True
+        if _conditional_enum_base_call_mutated(node, aliases, roots, audit):
+            return True
+    return False
+
+
+def _conditional_enum_root_path(node, aliases, roots, audit):
+    name = audit._resolved_ast_name(node, aliases)
+    return any(name == root or name.startswith(root + ".") for root in roots)
+
+
+def _conditional_enum_base_call_mutated(node, aliases, roots, audit):
+    if not isinstance(node, ast.Call):
+        return False
+    callee = audit._resolved_ast_name(node.func, aliases)
+    if (
+        callee in {"setattr", "delattr", "builtins.setattr", "builtins.delattr"}
+        and node.args
+    ):
+        return _conditional_enum_root_path(node.args[0], aliases, roots, audit)
+    return isinstance(node.func, ast.Attribute) and _conditional_enum_root_path(
+        node.func.value, aliases, roots, audit
+    )
+
+
+def _conditional_v3_enum_leaf_nodes(
+    record, contract, caller, constructor_call, raw, trees, aliases_by_path, audit
+):
+    """Match only regenerated typed leaves inside the selected constructor."""
+    rows = record.get("enum_leaf_uses", [])
+    if not isinstance(rows, list) or len(rows) > 512:
+        return None
+    if not rows:
+        return frozenset()
+    tree, aliases = trees.get(caller), aliases_by_path.get(caller)
+    if not isinstance(tree, ast.Module) or not isinstance(aliases, dict):
+        return None
+    call = _conditional_v3_current_node(tree, constructor_call)
+    if call is None:
+        return None
+    argument_nodes = {
+        id(node)
+        for root in [*call.args, *(item.value for item in call.keywords)]
+        for node in ast.walk(root)
+    }
+    classes = {(item["path"], item["name"]): item for item in contract["classes"]}
+    allowed, seen = set(), set()
+    for row in rows:
+        if not _conditional_v3_enum_row_shape(row, caller):
+            return None
+        identity = (tuple(row["span"]), row["ast_sha256"])
+        leaf = _conditional_v3_enum_leaf(
+            row, classes, tree, aliases, argument_nodes, contract, raw, audit
+        )
+        if identity in seen or leaf is None:
+            return None
+        seen.add(identity)
+        allowed.update(id(node) for node in ast.walk(leaf))
+    return frozenset(allowed)
+
+
+def _conditional_v3_enum_row_shape(row, caller):
+    required = {
+        "source_path",
+        "span",
+        "ast_sha256",
+        "enum_class_path",
+        "enum_class_name",
+        "class_ast_sha256",
+        "member",
+        "literal_value",
+    }
+    return (
+        isinstance(row, dict)
+        and set(row) == required
+        and row["source_path"] == caller
+        and isinstance(row["span"], list)
+        and len(row["span"]) == 4
+        and all(type(value) is int for value in row["span"])
+        and all(
+            isinstance(row[key], str)
+            for key in (
+                "ast_sha256",
+                "enum_class_path",
+                "enum_class_name",
+                "class_ast_sha256",
+                "member",
+            )
+        )
+        and type(row["literal_value"]) is int
+    )
+
+
+def _conditional_v3_enum_leaf(
+    row, classes, tree, aliases, argument_nodes, contract, raw, audit
+):
+    enum = classes.get((row["enum_class_path"], row["enum_class_name"]))
+    if enum is None or enum["class_ast_sha256"] != row["class_ast_sha256"]:
+        return None
+    matches = [
+        node
+        for node in ast.walk(tree)
+        if _fixed_program_span(node) == row["span"]
+        and _conditional_v3_ast_digest(node) == row["ast_sha256"]
+    ]
+    if len(matches) != 1:
+        return None
+    leaf = matches[0]
+    if (
+        not isinstance(leaf, (ast.Name, ast.Attribute))
+        or not isinstance(leaf.ctx, ast.Load)
+        or id(leaf) not in argument_nodes
+    ):
+        return None
+    chain = _finite_capture.provider_export_chain_v3(contract, raw, class_row=enum)
+    if not isinstance(chain, list) or not chain:
+        return None
+    paths = {
+        item["module"] + "." + item["symbol"] + "." + row["member"] for item in chain
+    }
+    paths.add(
+        _conditional_module_name(row["enum_class_path"])
+        + "."
+        + row["enum_class_name"]
+        + "."
+        + row["member"]
+    )
+    return leaf if audit._resolved_ast_name(leaf, aliases) in paths else None
+
+
+def _conditional_resolved_name(node, aliases, audit):
+    return audit._resolved_ast_name(node, aliases)
+
+
+def _conditional_module_exports(selected_classes):
+    exports = {}
+    for path in selected_classes:
+        module, _, name = path.rpartition(".")
+        exports.setdefault(module, set()).add(name)
+    return exports
+
+
+def _conditional_module_export_write(call, aliases, module_exports, audit):
+    name = audit._resolved_ast_name(call.func, aliases)
+    if (
+        name not in {"setattr", "delattr", "builtins.setattr", "builtins.delattr"}
+        or not call.args
+    ):
+        return False
+    module = audit._resolved_ast_name(call.args[0], aliases)
+    if module not in module_exports:
+        return False
+    if (
+        len(call.args) < 2
+        or not isinstance(call.args[1], ast.Constant)
+        or type(call.args[1].value) is not str
+    ):
+        return True
+    return call.args[1].value in module_exports[module]
+
+
+def _conditional_selected_reference(
+    node, aliases, audit, selected_classes, module_exports
+):
+    if _conditional_selected_path(node, aliases, audit, selected_classes):
+        return True
+    if isinstance(node, ast.Subscript):
+        if _conditional_module_dict(node.value, aliases, audit, module_exports):
+            key = node.slice
+            if not isinstance(key, ast.Constant) or type(key.value) is not str:
+                return True
+            module = _conditional_module_dict_path(node.value, aliases, audit)
+            return key.value in module_exports.get(module, set())
+    if (
+        isinstance(node, ast.Call)
+        and audit._resolved_ast_name(node.func, aliases) == "getattr"
+        and len(node.args) >= 2
+    ):
+        module = audit._resolved_ast_name(node.args[0], aliases)
+        if module in module_exports:
+            key = node.args[1]
+            return (
+                not isinstance(key, ast.Constant)
+                or type(key.value) is not str
+                or key.value in module_exports[module]
+            )
+    return (
+        isinstance(node, ast.Attribute)
+        and node.attr == "__dict__"
+        and audit._resolved_ast_name(node.value, aliases) in module_exports
+    )
+
+
+def _conditional_module_dict(node, aliases, audit, module_exports):
+    if isinstance(node, ast.Attribute) and node.attr == "__dict__":
+        return audit._resolved_ast_name(node.value, aliases) in module_exports
+    return (
+        isinstance(node, ast.Call)
+        and audit._resolved_ast_name(node.func, aliases) == "vars"
+        and bool(node.args)
+        and audit._resolved_ast_name(node.args[0], aliases) in module_exports
+    )
+
+
+def _conditional_module_dict_path(node, aliases, audit):
+    if isinstance(node, ast.Attribute):
+        return audit._resolved_ast_name(node.value, aliases)
+    if isinstance(node, ast.Call) and node.args:
+        return audit._resolved_ast_name(node.args[0], aliases)
+    return ""
+
+
+def _conditional_module_dict_update(call, aliases, module_exports, audit):
+    function = call.func
+    if not isinstance(function, ast.Attribute) or function.attr != "update":
+        return False
+    if not _conditional_module_dict(function.value, aliases, audit, module_exports):
+        return False
+    if not call.args or not isinstance(call.args[0], ast.Dict):
+        return True
+    module = _conditional_module_dict_path(function.value, aliases, audit)
+    exports = module_exports[module]
+    keys = call.args[0].keys
+    return any(
+        key is None
+        or not isinstance(key, ast.Constant)
+        or type(key.value) is not str
+        or key.value in exports
+        for key in keys
+    )
+
+
+def _conditional_registry_path(node, audit, aliases):
+    if isinstance(node, ast.Subscript):
+        return _conditional_registry_path(node.value, audit, aliases)
+    name = audit._resolved_ast_name(node, aliases)
+    return name.startswith(
+        (
+            "copyreg.dispatch_table",
+            "pickle.dispatch_table",
+            "pickle.Pickler.dispatch_table",
+        )
+    )
+
+
+def _conditional_module_name(path):
+    from pathlib import PurePosixPath
+
+    parts = PurePosixPath(path).with_suffix("").parts
+    return ".".join(parts[:-1] if parts[-1] == "__init__" else parts)
+
+
+def _conditional_selected_path(node, aliases, audit, selected_classes):
+    return (
+        isinstance(node, (ast.Name, ast.Attribute))
+        and audit._resolved_ast_name(node, aliases) in selected_classes
+    )
 
 
 def _prior_pickle_dump(scope, bytes_name, load_index, loaded_name, aliases, audit):
@@ -2520,7 +5013,33 @@ def reconcile_runtime_oracles(
             manifests[id(row)] = audit.runtime_config_sources(
                 workspace, core, row, schema
             )
-        bindings = core["sources"] + core["oracle_context"]["configuration_sources"]
+        configuration_sources = core["oracle_context"]["configuration_sources"]
+        covered_test_keys = {
+            (finding["path"], finding["line"], finding["facts"].get("symbol"))
+            for finding in core["findings"]
+            if finding["code"] in {"QUALITY_UNKNOWN_TEST_ORACLE", "QUALITY_HOLLOW_TEST"}
+            and (
+                finding["code"] != "QUALITY_UNKNOWN_TEST_ORACLE"
+                or schema == "factory.test-oracle-verification.v3"
+            )
+        }
+        coverage_checked_test_paths = {
+            row["path"]
+            for row in verified["tests"]
+            if (row["path"], row["line"], row["symbol"]) in covered_test_keys
+        }
+        mutation_paths = {row["mutation"]["source_path"] for row in verified["tests"]}
+        config_paths = {
+            item["path"]
+            for items in [configuration_sources, *manifests.values()]
+            for item in items
+        }
+        redundant_test_paths = (
+            coverage_checked_test_paths - mutation_paths - config_paths
+        )
+        bindings = [
+            item for item in core["sources"] if item["path"] not in redundant_test_paths
+        ] + configuration_sources
         audit._verify_security_bindings(workspace, bindings)
     except (RuntimeAttestationError, RuntimeAuditError, OSError, ValueError) as error:
         raise audit.ReviewAuditError(
@@ -3340,3 +5859,34 @@ def _full_repository_workspace_security_context(engine, generation, audit):
         "fingerprints": {},
         "config_identity": config_identity,
     }
+
+
+def _pickle_direct_dump_origin(node, scope, load_index, loaded_name, aliases, audit):
+    dumps_name = loaded_name.removesuffix("loads") + "dumps"
+    if isinstance(node.args[0], ast.Call):
+        call = node.args[0]
+        return (
+            (load_index, scope.body[load_index], call, None)
+            if audit._normalized_call_name(call, aliases) == dumps_name
+            else None
+        )
+    name = node.args[0].id
+    candidates = [
+        (index, statement, _simple_scope_assignment(statement, name))
+        for index, statement in enumerate(scope.body[:load_index])
+        if isinstance(_pickle_statement_target(statement), ast.Name)
+        and _pickle_statement_target(statement).id == name
+    ]
+    if len(candidates) != 1:
+        return None
+    index, statement, call = candidates[0]
+    if (
+        not isinstance(call, ast.Call)
+        or audit._normalized_call_name(call, aliases) != dumps_name
+    ):
+        return None
+    return (
+        (index, statement, call, name)
+        if _pickle_bytes_flow_closed(scope, name, statement, node)
+        else None
+    )

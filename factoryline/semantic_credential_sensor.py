@@ -363,16 +363,19 @@ def private_key_authentication_evidence(finding, context):
         if isinstance(node, ast.FunctionDef)
         and not node.decorator_list
         and not _credential_module_rebound(tree, node.name, node)
-        and sum(isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and item.name == node.name for item in ast.walk(tree)) == 1
+        and sum(
+            isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+            and item.name == node.name
+            for item in ast.walk(tree)
+        )
+        == 1
         and (witness := _credential_private_key_decryptor(node, declaration, aliases))
         is not None
     }
     for endpoint in tree.body:
         if not isinstance(endpoint, (ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
-        witness = _credential_http_password_consumer(
-            endpoint, decryptors, aliases
-        )
+        witness = _credential_http_password_consumer(endpoint, decryptors, aliases)
         if witness is not None:
             nodes = [declaration[0], *witness["transfers"]]
             return {
@@ -433,7 +436,10 @@ def _credential_pem_private_key(value):
     from cryptography.hazmat.primitives.serialization import load_der_private_key
     from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey
 
-    match = re.fullmatch(r"\s*-----BEGIN (?P<label>(?:RSA )?PRIVATE KEY)-----\s+(?P<body>[A-Za-z0-9+/=\s]+)-----END (?P=label)-----\s*", value)
+    match = re.fullmatch(
+        r"\s*-----BEGIN (?P<label>(?:RSA )?PRIVATE KEY)-----\s+(?P<body>[A-Za-z0-9+/=\s]+)-----END (?P=label)-----\s*",
+        value,
+    )
     if match is None or len(value) > 65536:
         return False
     try:
@@ -447,7 +453,11 @@ def _credential_private_key_decryptor(function, declaration, aliases):
     from .review_audits import _resolved_ast_name
 
     key_name = declaration[1]
-    parameters = [*function.args.posonlyargs, *function.args.args, *function.args.kwonlyargs]
+    parameters = [
+        *function.args.posonlyargs,
+        *function.args.args,
+        *function.args.kwonlyargs,
+    ]
     provider_names = _credential_provider_alias_names(
         aliases,
         ("Crypto.PublicKey.RSA", "Crypto.Cipher.PKCS1_v1_5", "base64.b64decode"),
@@ -472,7 +482,11 @@ def _credential_private_key_decryptor(function, declaration, aliases):
         for node in assignments
         if len(node.targets if isinstance(node, ast.Assign) else [node.target]) == 1
         and isinstance(
-            (target := (node.targets if isinstance(node, ast.Assign) else [node.target])[0]),
+            (
+                target := (
+                    node.targets if isinstance(node, ast.Assign) else [node.target]
+                )[0]
+            ),
             ast.Name,
         )
         and _resolved_ast_name(node.value.func, aliases)
@@ -535,13 +549,22 @@ def _credential_private_key_decryptor(function, declaration, aliases):
     ):
         return None
     returns = [
-        node for node in _credential_function_nodes(function) if isinstance(node, ast.Return)
+        node
+        for node in _credential_function_nodes(function)
+        if isinstance(node, ast.Return)
     ]
-    if not returns or any(
-        not _credential_decoded_return(node.value, plaintext_name)
-        or not _credential_transfer_precedes(decrypt_call, node)
-        for node in returns
-    ) or not all(security_precondition_path_possible(node) for node in [key_call, cipher_call, decrypt_call, *returns]):
+    if (
+        not returns
+        or any(
+            not _credential_decoded_return(node.value, plaintext_name)
+            or not _credential_transfer_precedes(decrypt_call, node)
+            for node in returns
+        )
+        or not all(
+            security_precondition_path_possible(node)
+            for node in [key_call, cipher_call, decrypt_call, *returns]
+        )
+    ):
         return None
     return {
         "function": function.name,
@@ -553,7 +576,11 @@ def _credential_named_assignment(assignments, accepts):
     matches = []
     for node in assignments:
         targets = node.targets if isinstance(node, ast.Assign) else [node.target]
-        if len(targets) == 1 and isinstance(targets[0], ast.Name) and accepts(node.value):
+        if (
+            len(targets) == 1
+            and isinstance(targets[0], ast.Name)
+            and accepts(node.value)
+        ):
             matches.append((node.value, targets[0].id))
     return matches[0] if len(matches) == 1 else None
 
@@ -562,7 +589,9 @@ def _credential_function_nodes(function):
     nodes, pending = [], list(function.body)
     while pending:
         node = pending.pop()
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
+        if isinstance(
+            node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
+        ):
             continue
         nodes.append(node)
         pending.extend(ast.iter_child_nodes(node))
@@ -615,7 +644,10 @@ def _credential_provider_alias_names(aliases, roots):
 
 
 def _credential_transfer_precedes(source, use):
-    before, after = _credential_control_context(source), _credential_control_context(use)
+    before, after = (
+        _credential_control_context(source),
+        _credential_control_context(use),
+    )
     try_bodies = set()
     child = use
     while (parent := getattr(child, "_security_parent", None)) is not None:
@@ -624,8 +656,8 @@ def _credential_transfer_precedes(source, use):
         child = parent
     return (
         (source.lineno, source.col_offset) < (use.lineno, use.col_offset)
-        and after[:len(before)] == before
-        and all(context in try_bodies for context in after[len(before):])
+        and after[: len(before)] == before
+        and all(context in try_bodies for context in after[len(before) :])
         and security_precondition_path_possible(source)
         and security_precondition_path_possible(use)
     )
@@ -635,12 +667,26 @@ def _credential_control_context(node):
     context = []
     child = node
     while (parent := getattr(child, "_security_parent", None)) is not None:
-        if isinstance(parent, (ast.If, ast.For, ast.AsyncFor, ast.While, ast.Try, ast.With, ast.AsyncWith, ast.Match)):
+        if isinstance(
+            parent,
+            (
+                ast.If,
+                ast.For,
+                ast.AsyncFor,
+                ast.While,
+                ast.Try,
+                ast.With,
+                ast.AsyncWith,
+                ast.Match,
+            ),
+        ):
             for field, value in ast.iter_fields(parent):
                 if field not in {"body", "orelse", "finalbody", "handlers", "cases"}:
                     continue
                 if isinstance(value, list) and child in value:
-                    index = value.index(child) if field in {"handlers", "cases"} else None
+                    index = (
+                        value.index(child) if field in {"handlers", "cases"} else None
+                    )
                     context.append((id(parent), field, index))
                     break
         elif isinstance(parent, ast.ExceptHandler) and child in parent.body:
@@ -660,7 +706,10 @@ def _credential_decoded_return(value, plaintext_name):
         and value.func.value.id == plaintext_name
         and len(value.args) <= 1
         and not value.keywords
-        and all(isinstance(arg, ast.Constant) and isinstance(arg.value, str) for arg in value.args)
+        and all(
+            isinstance(arg, ast.Constant) and isinstance(arg.value, str)
+            for arg in value.args
+        )
     )
 
 
@@ -668,9 +717,7 @@ def _credential_providers_clear(context):
     paths = context["paths"]
     if any(
         name.casefold() in {"crypto.py", "django.py", "json.py", "base64.py"}
-        or name.casefold().startswith(
-            ("crypto/", "django/", "json/", "base64/")
-        )
+        or name.casefold().startswith(("crypto/", "django/", "json/", "base64/"))
         for name in paths
     ):
         return False
@@ -696,7 +743,11 @@ def _credential_providers_clear(context):
             )
         }
         if any(
-            (isinstance(node, ast.Name) and node.id in provider_names and isinstance(node.ctx, (ast.Store, ast.Del)))
+            (
+                isinstance(node, ast.Name)
+                and node.id in provider_names
+                and isinstance(node.ctx, (ast.Store, ast.Del))
+            )
             or (isinstance(node, ast.arg) and node.arg in provider_names)
             for node in ast.walk(tree)
         ) or _provider_identity_uncertain(
@@ -712,8 +763,17 @@ def _credential_providers_clear(context):
 
 def _credential_http_password_consumer(function, decryptors, aliases):
     request_name = _credential_post_request_name(function, aliases)
-    parameters = [*function.args.posonlyargs, *function.args.args, *function.args.kwonlyargs]
-    if request_name is None or function.args.vararg or function.args.kwarg or {p.arg for p in parameters} & set(decryptors):
+    parameters = [
+        *function.args.posonlyargs,
+        *function.args.args,
+        *function.args.kwonlyargs,
+    ]
+    if (
+        request_name is None
+        or function.args.vararg
+        or function.args.kwarg
+        or {p.arg for p in parameters} & set(decryptors)
+    ):
         return None
     provider_names = _credential_provider_alias_names(
         aliases,
@@ -750,17 +810,16 @@ def _credential_http_password_consumer(function, decryptors, aliases):
             or value.func.id not in decryptors
             or len(value.args) != 1
             or value.keywords
-            or not _credential_request_password_value(value.args[0], mappings, function, assignment)
+            or not _credential_request_password_value(
+                value.args[0], mappings, function, assignment
+            )
             or _credential_name_writes(function, target.id) != 1
             or not security_precondition_path_possible(assignment)
         ):
             continue
         for call in (node for node in function_nodes if isinstance(node, ast.Call)):
             consumer = _credential_password_consumer(call, target.id, aliases)
-            if (
-                consumer
-                and _credential_transfer_precedes(assignment, call)
-            ):
+            if consumer and _credential_transfer_precedes(assignment, call):
                 return {
                     "transfers": [
                         *decryptors[value.func.id]["transfers"],
@@ -792,8 +851,7 @@ def _credential_post_request_name(function, aliases):
             and not decorator.keywords
             and isinstance(decorator.args[0], (ast.List, ast.Tuple))
             and any(
-                isinstance(item, ast.Constant)
-                and item.value == "POST"
+                isinstance(item, ast.Constant) and item.value == "POST"
                 for item in decorator.args[0].elts
             )
         ):
@@ -831,7 +889,8 @@ def _credential_json_body_map(node, function, aliases, request_name):
     if isinstance(value, ast.Call) and isinstance(value.func, ast.Attribute):
         if (
             value.func.attr != "decode"
-            or value.args and not all(
+            or value.args
+            and not all(
                 isinstance(arg, ast.Constant) and isinstance(arg.value, str)
                 for arg in value.args
             )
@@ -857,10 +916,16 @@ def _credential_json_mapping_unchanged(function, name):
     if _credential_name_writes(function, name) != 1:
         return False
     for node in _credential_function_nodes(function):
-        if not isinstance(node, ast.Name) or node.id != name or not isinstance(node.ctx, ast.Load):
+        if (
+            not isinstance(node, ast.Name)
+            or node.id != name
+            or not isinstance(node.ctx, ast.Load)
+        ):
             continue
         attribute = parents.get(id(node))
-        call = parents.get(id(attribute)) if isinstance(attribute, ast.Attribute) else None
+        call = (
+            parents.get(id(attribute)) if isinstance(attribute, ast.Attribute) else None
+        )
         if (
             not isinstance(attribute, ast.Attribute)
             or attribute.value is not node
@@ -890,18 +955,24 @@ def _credential_request_password_value(node, mappings, function, use):
             len(assignments) == 1
             and _credential_name_writes(function, node.id) == 1
             and _credential_transfer_precedes(assignments[0], use)
-            and _credential_request_password_value(assignments[0].value, mappings, function, assignments[0])
+            and _credential_request_password_value(
+                assignments[0].value, mappings, function, assignments[0]
+            )
         )
     if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
         return False
-    mapping_assignments = [
-        item
-        for item in _credential_function_nodes(function)
-        if isinstance(item, ast.Assign)
-        and len(item.targets) == 1
-        and isinstance(item.targets[0], ast.Name)
-        and item.targets[0].id == node.func.value.id
-    ] if isinstance(node.func.value, ast.Name) else []
+    mapping_assignments = (
+        [
+            item
+            for item in _credential_function_nodes(function)
+            if isinstance(item, ast.Assign)
+            and len(item.targets) == 1
+            and isinstance(item.targets[0], ast.Name)
+            and item.targets[0].id == node.func.value.id
+        ]
+        if isinstance(node.func.value, ast.Name)
+        else []
+    )
     return (
         node.func.attr == "get"
         and isinstance(node.func.value, ast.Name)
@@ -920,18 +991,28 @@ def _credential_password_consumer(call, plaintext_name, aliases):
     from .review_audits import _resolved_ast_name
 
     name = _resolved_ast_name(call.func, aliases)
-    if any(isinstance(arg, ast.Starred) for arg in call.args) or any(k.arg is None for k in call.keywords):
+    if any(isinstance(arg, ast.Starred) for arg in call.args) or any(
+        k.arg is None for k in call.keywords
+    ):
         return False
     names = [k.arg for k in call.keywords]
     if len(names) != len(set(names)):
         return False
     if name == "django.contrib.auth.hashers.check_password":
-        return (len(call.args) in {2, 3} and not call.keywords
-                and isinstance(call.args[0], ast.Name) and call.args[0].id == plaintext_name)
+        return (
+            len(call.args) in {2, 3}
+            and not call.keywords
+            and isinstance(call.args[0], ast.Name)
+            and call.args[0].id == plaintext_name
+        )
     if name == "django.contrib.auth.authenticate":
         passwords = [item.value for item in call.keywords if item.arg == "password"]
-        return (len(call.args) <= 1 and len(passwords) == 1
-                and isinstance(passwords[0], ast.Name) and passwords[0].id == plaintext_name)
+        return (
+            len(call.args) <= 1
+            and len(passwords) == 1
+            and isinstance(passwords[0], ast.Name)
+            and passwords[0].id == plaintext_name
+        )
     return False
 
 
@@ -1483,7 +1564,14 @@ def http_request_payload(node, aliases, scope, flow_statement, alias_reader):
         return (
             isinstance(node.slice, ast.Constant)
             and isinstance(node.slice.value, str)
-            and _http_request_mapping(node.value, aliases, scope, flow_statement, alias_reader, node.slice.value)
+            and _http_request_mapping(
+                node.value,
+                aliases,
+                scope,
+                flow_statement,
+                alias_reader,
+                node.slice.value,
+            )
         )
     if isinstance(node, ast.Call):
         if _flask_request_body_kind(node, aliases, scope, flow_statement, alias_reader):
@@ -1493,7 +1581,9 @@ def http_request_payload(node, aliases, scope, flow_statement, alias_reader):
             parts is not None
             and isinstance(parts[1], ast.Constant)
             and isinstance(parts[1].value, str)
-            and _http_request_mapping(parts[0], aliases, scope, flow_statement, alias_reader, parts[1].value)
+            and _http_request_mapping(
+                parts[0], aliases, scope, flow_statement, alias_reader, parts[1].value
+            )
         )
     if not isinstance(node, ast.Attribute) or not isinstance(node.ctx, ast.Load):
         return False
@@ -1520,17 +1610,25 @@ def _flask_request_body_kind(node, aliases, scope, statement, alias_reader):
         return None
     if node.func.attr != "get_data":
         return None
-    resolved = alias_reader(scope or getattr(node, "_security_lexical_scope", None), aliases,
-                            statement or getattr(node, "_security_flow_statement", None))
+    resolved = alias_reader(
+        scope or getattr(node, "_security_lexical_scope", None),
+        aliases,
+        statement or getattr(node, "_security_flow_statement", None),
+    )
     head, _, tail = _name(node.func).partition(".")
-    if resolved.get(head, "") + ("." + tail if tail else "") != "flask.request.get_data":
+    if (
+        resolved.get(head, "") + ("." + tail if tail else "")
+        != "flask.request.get_data"
+    ):
         return None
     try:
         options = _source_binding_helpers()[1](node, _FLASK_BODY_SIGNATURE)
     except (TypeError, ValueError):
         return None
-    if not all(isinstance(value, ast.Constant) and type(value.value) is bool
-               for value in options.values()):
+    if not all(
+        isinstance(value, ast.Constant) and type(value.value) is bool
+        for value in options.values()
+    ):
         return None
     return "text" if options["as_text"].value else "bytes"
 
@@ -1545,14 +1643,21 @@ def request_payload_value_kind(node, requests, aliases, alias_reader):
     if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
         codec = node.func.attr
         if codec in {"encode", "decode"} and not node.args and not node.keywords:
-            original = request_payload_value_kind(node.func.value, requests, aliases, alias_reader)
+            original = request_payload_value_kind(
+                node.func.value, requests, aliases, alias_reader
+            )
             if original == ("text" if codec == "encode" else "bytes"):
                 return "bytes" if codec == "encode" else "text"
     body_kind = _flask_request_body_kind(node, aliases, None, None, alias_reader)
     if body_kind:
         return body_kind
-    if http_request_payload(node, aliases, getattr(node, "_security_lexical_scope", None),
-                            getattr(node, "_security_flow_statement", None), alias_reader):
+    if http_request_payload(
+        node,
+        aliases,
+        getattr(node, "_security_lexical_scope", None),
+        getattr(node, "_security_flow_statement", None),
+        alias_reader,
+    ):
         return "bytes" if isinstance(node, ast.Attribute) else "text"
     return None
 
@@ -1574,9 +1679,14 @@ def _http_request_mapping(node, aliases, scope, flow_statement, alias_reader, ke
     head, _, tail = raw.partition(".")
     canonical = resolved.get(head, "") + ("." + tail if tail else "")
     if isinstance(node, ast.Call):
-        return canonical == "flask.request.get_json" and _request_mapping_value_unchanged(node, scope, key)
+        return (
+            canonical == "flask.request.get_json"
+            and _request_mapping_value_unchanged(node, scope, key)
+        )
     recognized = canonical in {
-        "flask.request.args", "flask.request.form", "flask.request.json",
+        "flask.request.args",
+        "flask.request.form",
+        "flask.request.json",
     } or _django_http_body_payload(node, scope, resolved, {"GET", "POST"})
     return recognized and _request_mapping_value_unchanged(node, scope, key)
 
@@ -1586,15 +1696,19 @@ def _request_mapping_aliases(node, nodes):
 
     def references(value):
         return (
-            isinstance(value, (ast.Attribute, ast.Call)) and ast.dump(value, include_attributes=False) == origin
-            or isinstance(value, ast.Name) and value.id in aliases
+            isinstance(value, (ast.Attribute, ast.Call))
+            and ast.dump(value, include_attributes=False) == origin
+            or isinstance(value, ast.Name)
+            and value.id in aliases
         )
 
     for _ in range(len(nodes)):
         before = len(aliases)
         for item in nodes:
             if isinstance(item, (ast.Assign, ast.AnnAssign)) and references(item.value):
-                targets = item.targets if isinstance(item, ast.Assign) else [item.target]
+                targets = (
+                    item.targets if isinstance(item, ast.Assign) else [item.target]
+                )
                 aliases.update(t.id for t in targets if isinstance(t, ast.Name))
         if len(aliases) == before:
             return references
@@ -1610,14 +1724,29 @@ def _request_mapping_value_unchanged(node, scope, key):
 
 
 def _request_mapping_mutation(item, references, key):
-    if isinstance(item, ast.Subscript) and isinstance(item.ctx, (ast.Store, ast.Del)) and references(item.value):
-        return not (isinstance(item.slice, ast.Constant) and isinstance(item.slice.value, str) and item.slice.value != key)
-    if isinstance(item, ast.Attribute) and isinstance(item.ctx, (ast.Store, ast.Del)) and references(item.value):
+    if (
+        isinstance(item, ast.Subscript)
+        and isinstance(item.ctx, (ast.Store, ast.Del))
+        and references(item.value)
+    ):
+        return not (
+            isinstance(item.slice, ast.Constant)
+            and isinstance(item.slice.value, str)
+            and item.slice.value != key
+        )
+    if (
+        isinstance(item, ast.Attribute)
+        and isinstance(item.ctx, (ast.Store, ast.Del))
+        and references(item.value)
+    ):
         return True
     if isinstance(item, ast.Call):
         if isinstance(item.func, ast.Attribute) and references(item.func.value):
             return _credential_get_source_key(item) is None
-        return any(references(value) for value in [*item.args, *(kw.value for kw in item.keywords)])
+        return any(
+            references(value)
+            for value in [*item.args, *(kw.value for kw in item.keywords)]
+        )
     return isinstance(item, (ast.Return, ast.Yield)) and references(item.value)
 
 
@@ -1708,10 +1837,19 @@ def security_precondition_providers_stable(tree, aliases, nodes):
     ]
     payload_ids = {id(node) for node in payloads}
     payload_children = {id(child) for node in payloads for child in ast.walk(node)}
+    loader_children = {
+        id(child)
+        for node in nodes
+        if isinstance(node, ast.keyword)
+        and node.arg == "Loader"
+        and _resolved_ast_name(node.value, aliases)
+        in {"yaml.Loader", "yaml.UnsafeLoader", "yaml.CLoader", "yaml.CUnsafeLoader"}
+        for child in ast.walk(node.value)
+    }
     inventory = [
         node
         for node in nodes
-        if id(node) not in payload_children
+        if id(node) not in payload_children | loader_children
         and not (
             isinstance(node, (ast.Assign, ast.AnnAssign))
             and id(node.value) in payload_ids
@@ -1737,6 +1875,40 @@ def security_precondition_providers_stable(tree, aliases, nodes):
         nodes=inventory,
         parents=parents,
     )
+
+
+def log_security_provider_stable(tree, aliases, nodes):
+    """Check logging provider identity against the captured source mutation inventory."""
+    return not _provider_identity_uncertain(
+        tree, aliases, roots=("logging",), nodes=nodes
+    )
+
+
+def log_percent_slots(message):
+    """Read actual percent-format conversion slots, excluding escaped percent signs."""
+    import re
+
+    return [
+        code
+        for code in re.findall(
+            r"%(?:\([^)]*\))?[-+#0 ]*(?:\d+|\*)?(?:\.\d+|\.\*)?([a-zA-Z%])",
+            message,
+        )
+        if code != "%"
+    ]
+
+
+def log_security_precondition(module, call):
+    """Return a log-input premise only for a stable provider and a possible sink path."""
+    if getattr(
+        module, "_security_log_provider_stable", False
+    ) and security_precondition_path_possible(call):
+        return {
+            "security_precondition": supported_security_precondition(
+                call, "untrusted_input", "log_message"
+            )
+        }
+    return {}
 
 
 def security_precondition_call_shape(node, canonical):
@@ -1771,10 +1943,17 @@ def security_precondition_call_shape(node, canonical):
             and keywords["shell"].value is True
         )
     if canonical == "yaml.load" and set(keywords) == {"Loader"}:
-        from .review_audits import _name
-        from .review_integrity import _security_flow_bindings
+        from .review_audits import _name, _security_aliases
+        from .review_integrity import _security_flow_bindings, _security_module_scope
 
-        resolved, _constants = _security_flow_bindings(node, {})
+        scope = getattr(node, "_security_lexical_scope", None) or getattr(
+            node, "_oracle_scope", None
+        )
+        module = _security_module_scope(scope)
+        aliases = (
+            _security_aliases(module.body) if isinstance(module, ast.Module) else {}
+        )
+        resolved, _constants = _security_flow_bindings(node, aliases)
         raw = _name(keywords["Loader"])
         head, _, tail = raw.partition(".")
         return resolved.get(head, "") + ("." + tail if tail else "") in {

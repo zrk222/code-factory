@@ -1,4 +1,5 @@
 from __future__ import annotations
+import ast
 import json
 from hashlib import sha256
 from pathlib import Path
@@ -31,6 +32,8 @@ from factoryline.guardrails import (
 import base64
 import hmac
 import sqlite3
+
+
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 from factoryline.control_plane import ControlPlaneError, Principal
@@ -97,6 +100,494 @@ from factoryline.refinement import pareto_win
 from factoryline.run_metrics import export_public_metrics, load_run_receipts
 from factoryline.savings import load_savings_pairs
 from factoryline.update_notifier import read_manifest
+
+
+def _informed_fixture(tmp_path, sources):
+    from factoryline.credential_role_constructor_provider import SourceSnapshotIndex
+
+    raw = {tmp_path / name: text.encode() for name, text in sources.items()}
+    trees = {path: ast.parse(value) for path, value in raw.items()}
+    hashes = {path: sha256(value).hexdigest() for path, value in raw.items()}
+    for path, tree in trees.items():
+        tree._oracle_source_sha256 = hashes[path]
+    index = SourceSnapshotIndex(tmp_path, trees, raw, hashes)
+    path = tmp_path / "sink.py"
+    sink = next(
+        n
+        for n in ast.walk(trees[path])
+        if isinstance(n, ast.Call)
+        and isinstance(n.func, ast.Attribute)
+        and n.func.attr == "loads"
+    )
+    finding = {
+        "path": "sink.py",
+        "source_sha256": hashes[path],
+        "line": sink.lineno,
+        "column": sink.col_offset,
+        "end_line": sink.end_lineno,
+        "end_column": sink.end_col_offset,
+    }
+    return index, finding
+
+
+def test_informed_secondary_projection_retains_source_and_unknowns_without_labels(
+    tmp_path,
+):
+    from factoryline.jev_classifier import build_informed_actionability_case
+
+    sources = {
+        "sink.py": "import pickle\r\ndef decode(payload):\r\n    return pickle.loads(payload)\r\n",
+    }
+    index, finding = _informed_fixture(tmp_path, sources)
+    finding["expected"] = "private-test-label-must-never-leak"
+    item = build_informed_actionability_case(
+        finding,
+        index,
+        candidate_commit="a" * 40,
+        requirement="Does untrusted data reach this sink with a supported harmful effect?",
+    )
+    state = item["state"]
+    assert "private-test-label-must-never-leak" not in json.dumps(item)
+    assert state["candidate"]["sha256"] == finding["source_sha256"]
+    artifacts = state["evidence"]["artifacts"]
+    excerpt = next(
+        row
+        for row in artifacts
+        if row["kind"] == "source_excerpt" and row["source_binding"]["start_line"] == 2
+    )
+    assert excerpt["content"] == sources["sink.py"].split("\r\n", 1)[1]
+    assert excerpt["source_binding"]["sha256"] == finding["source_sha256"]
+    assert excerpt["sha256"] == sha256(excerpt["content"].encode()).hexdigest()
+    ledger = json.loads(
+        next(
+            row["content"] for row in artifacts if row["kind"] == "native_sink_evidence"
+        )
+    )
+    assert ledger["actionability"] == "NEEDS_CONTEXT"
+    assert ledger["authority"]["status"] == "UNKNOWN"
+    assert all(
+        slot["status"] == "unknown"
+        for name, slot in state["evidence"]["actionability"].items()
+        if name != "unknowns"
+    )
+    assert len(json.dumps(item).encode()) < 64_000
+
+
+@pytest.mark.parametrize("mutation", ["revision", "criterion", "stale"])
+def test_informed_secondary_projection_rejects_unbound_inputs(tmp_path, mutation):
+    from factoryline.jev_classifier import build_informed_actionability_case
+
+    index, finding = _informed_fixture(
+        tmp_path,
+        {
+            "sink.py": "import pickle\ndef decode(payload):\n    return pickle.loads(payload)\n"
+        },
+    )
+    if mutation == "stale":
+        index.source_bytes[tmp_path / "sink.py"] += b"# changed\n"
+    with pytest.raises(JevClassificationError):
+        build_informed_actionability_case(
+            finding,
+            index,
+            candidate_commit="bad" if mutation == "revision" else "a" * 40,
+            requirement=""
+            if mutation == "criterion"
+            else "Is this a supported actionable defect?",
+        )
+
+
+def test_informed_secondary_identity_includes_rule_and_exact_sink_span(tmp_path):
+    from factoryline.jev_classifier import build_informed_actionability_case
+
+    index, first = _informed_fixture(
+        tmp_path,
+        {
+            "sink.py": "import pickle\ndef decode(payload):\n    first = pickle.loads(payload)\n    return pickle.loads(payload)\n"
+        },
+    )
+    second_call = max(
+        (
+            node
+            for node in ast.walk(index.snapshots[tmp_path / "sink.py"])
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "loads"
+        ),
+        key=lambda node: node.lineno,
+    )
+    second = {
+        **first,
+        "line": second_call.lineno,
+        "column": second_call.col_offset,
+        "end_line": second_call.end_lineno,
+        "end_column": second_call.end_col_offset,
+    }
+
+    def case(finding):
+        return build_informed_actionability_case(
+            finding,
+            index,
+            candidate_commit="a" * 40,
+            requirement="Is this an actionable deserialization defect?",
+        )
+
+    a, b = case(first), case(second)
+    assert a["id"] != b["id"]
+    assert a["id"] == case(first)["id"]
+    assert a["id"] != case({**first, "code": "A_DIFFERENT_RULE"})["id"]
+
+
+@pytest.mark.parametrize(
+    "import_line,call",
+    [
+        ("from helpers import prepare", "prepare(data)"),
+        ("import helpers as h", "h.prepare(data)"),
+    ],
+)
+def test_informed_cross_file_helper_exact_excerpts_and_edges(
+    tmp_path, import_line, call
+):
+    from factoryline.analysis_evidence import build_informed_sink_context
+
+    index, finding = _informed_fixture(
+        tmp_path,
+        {
+            "sink.py": f"import pickle\n{import_line}\ndef restore(data):\n    payload = {call}\n    return pickle.loads(payload)\n",
+            "helpers.py": "def prepare(value, flag=True):\r\n    return value\r\n",
+        },
+    )
+    result = build_informed_sink_context(finding, index)
+    helper = next(
+        x
+        for x in result["excerpts"]
+        if x["path"] == "helpers.py" and x["kind"] == "helper"
+    )
+    assert helper["content"] == index.source_bytes[tmp_path / "helpers.py"].decode()
+    assert helper["sha256"] == index.inventory[tmp_path / "helpers.py"]
+    assert any(
+        x["kind"] == "actual_to_formal" and x["formal"] == "value"
+        for x in result["edges"]
+    )
+    assert any(
+        x["kind"] == "default_to_formal" and x["formal"] == "flag"
+        for x in result["edges"]
+    )
+    assert any(x["kind"] == "return_to_call" for x in result["edges"])
+    assert result["authority"]["status"] == "UNKNOWN"
+    assert result["actionability"] == "NEEDS_CONTEXT"
+    assert {x["path"] for x in result["dependency_sources"]} == {
+        "sink.py",
+        "helpers.py",
+    }
+
+
+def test_informed_caller_actual_formal_return_and_opaque_receiver(tmp_path):
+    from factoryline.analysis_evidence import build_informed_sink_context
+
+    index, finding = _informed_fixture(
+        tmp_path,
+        {
+            "sink.py": "import pickle\ndef restore(data):\n    return pickle.loads(data)\n",
+            "entry.py": "from sink import restore\ndef invoke(raw):\n    return restore(raw)\n",
+            "opaque.py": "def invoke(obj, raw):\n    return obj.restore(raw)\n",
+        },
+    )
+    result = build_informed_sink_context(finding, index)
+    assert any(
+        x["kind"] == "caller" and x["path"] == "entry.py" for x in result["excerpts"]
+    )
+    assert any(
+        x["kind"] == "actual_to_formal" and x["formal"] == "data"
+        for x in result["edges"]
+    )
+    assert any(x["kind"] == "return_to_call" for x in result["edges"])
+    assert any("caller_completeness" in x["reason"] for x in result["unknowns"])
+    assert any("receiver" in x["reason"] for x in result["unknowns"])
+
+
+@pytest.mark.parametrize("replacement", ["", "\nprepare = other\n"])
+def test_informed_missing_or_rebound_helper_stays_unknown(tmp_path, replacement):
+    from factoryline.analysis_evidence import build_informed_sink_context
+
+    index, finding = _informed_fixture(
+        tmp_path,
+        {
+            "sink.py": "import pickle\nfrom absent import prepare\n"
+            + replacement
+            + "def restore(data):\n    return pickle.loads(prepare(data))\n",
+        },
+    )
+    result = build_informed_sink_context(finding, index)
+    assert result["unknowns"]
+    assert not any(x["kind"] == "actual_to_formal" for x in result["edges"])
+    assert result["actionability"] == "NEEDS_CONTEXT"
+
+
+def test_informed_stale_helper_rejected(tmp_path):
+    from factoryline.analysis_evidence import build_informed_sink_context
+
+    index, finding = _informed_fixture(
+        tmp_path,
+        {
+            "sink.py": "import pickle\nfrom helpers import prepare\ndef restore(data):\n    return pickle.loads(prepare(data))\n",
+            "helpers.py": "def prepare(value):\n    return value\n",
+        },
+    )
+    index.source_bytes[tmp_path / "helpers.py"] += b"# drift\n"
+    result = build_informed_sink_context(finding, index)
+    assert result["status"] == "SINK_SOURCE_STALE"
+    assert result["excerpts"] == []
+
+
+@pytest.mark.parametrize(
+    "options", [{"max_sources": 1}, {"max_states": 1}, {"max_output_bytes": 900}]
+)
+def test_informed_budget_is_explicit_and_output_bounded(tmp_path, options):
+    from factoryline.analysis_evidence import build_informed_sink_context
+
+    index, finding = _informed_fixture(
+        tmp_path,
+        {
+            "sink.py": "import pickle\nfrom helpers import prepare\ndef restore(data):\n    return pickle.loads(prepare(data))\n",
+            "helpers.py": "def prepare(value):\n    return value\n",
+        },
+    )
+    result = build_informed_sink_context(finding, index, **options)
+    assert result["truncation"]
+    assert result["status"] != "COMPLETE"
+    assert len(json.dumps(result, separators=(",", ":")).encode()) <= options.get(
+        "max_output_bytes", 64000
+    )
+
+
+def test_informed_oversized_source_not_validated(tmp_path, monkeypatch):
+    from factoryline.analysis_evidence import build_informed_sink_context
+
+    index, finding = _informed_fixture(
+        tmp_path, {"sink.py": "import pickle\npickle.loads(data)\n"}
+    )
+    index.source_bytes[tmp_path / "sink.py"] = b"#" * 1_000_001
+    monkeypatch.setattr(
+        index, "validate", lambda path: pytest.fail("oversized source validated")
+    )
+    assert (
+        build_informed_sink_context(finding, index)["status"] == "SINK_INPUT_UNASSESSED"
+    )
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["h.prepare = other\n", "setattr(h, 'prepare', other)\n", "from opaque import *\n"],
+)
+def test_informed_helper_provider_mutation_cannot_grant_edges(tmp_path, mutation):
+    from factoryline.analysis_evidence import build_informed_sink_context
+
+    index, finding = _informed_fixture(
+        tmp_path,
+        {
+            "sink.py": "import pickle\nimport helpers as h\n"
+            + mutation
+            + "def restore(data):\n    return pickle.loads(h.prepare(data))\n",
+            "helpers.py": "def prepare(value):\n    return value\n",
+        },
+    )
+    result = build_informed_sink_context(finding, index)
+    assert not result["edges"]
+    assert result["unknowns"]
+
+
+def test_informed_revalidates_dependency_after_expansion(tmp_path, monkeypatch):
+    import factoryline.context_efficiency as evidence
+
+    index, finding = _informed_fixture(
+        tmp_path,
+        {
+            "sink.py": "import pickle\nfrom helpers import prepare\ndef restore(data):\n    return pickle.loads(prepare(data))\n",
+            "helpers.py": "def prepare(value):\n    return value\n",
+        },
+    )
+    original = evidence._informed_expand
+
+    def mutate(*args, **kwargs):
+        original(*args, **kwargs)
+        index.source_bytes[tmp_path / "helpers.py"] += b"# after\n"
+
+    monkeypatch.setattr(evidence, "_informed_expand", mutate)
+    result = evidence.build_informed_sink_context(finding, index)
+    assert result["status"] == "SINK_SOURCE_STALE"
+    assert result["excerpts"] == []
+
+
+def test_informed_constructor_source_and_invalid_arity(tmp_path):
+    from factoryline.analysis_evidence import build_informed_sink_context
+
+    index, finding = _informed_fixture(
+        tmp_path,
+        {
+            "sink.py": "import pickle\nfrom helpers import Holder\ndef restore(data):\n    value = Holder(data)\n    return pickle.loads(value)\n",
+            "helpers.py": "class Holder:\n    def __init__(self, data):\n        self.data = data\n",
+        },
+    )
+    result = build_informed_sink_context(finding, index)
+    assert any(
+        x["path"] == "helpers.py" and x["content"].startswith("class Holder:")
+        for x in result["excerpts"]
+    )
+    assert any(x["formal"] == "data" for x in result["edges"] if "formal" in x)
+
+
+def test_informed_expands_helper_imports_signature_and_rejects_rebinding(tmp_path):
+    from factoryline.analysis_evidence import build_informed_sink_context
+
+    index, finding = _informed_fixture(
+        tmp_path,
+        {
+            "sink.py": "import pickle\nfrom helpers import prepare\ndef restore(data):\n    return pickle.loads(prepare(data))\n",
+            "helpers.py": "import pickle\ndef prepare(value: bytes) -> bytes:\n    return pickle.dumps(value)\n",
+        },
+    )
+    result = build_informed_sink_context(finding, index)
+    assert any(
+        x["path"] == "helpers.py" and x["kind"] == "import" for x in result["excerpts"]
+    )
+    assert any(
+        x["path"] == "helpers.py" and x["kind"] == "signature"
+        for x in result["excerpts"]
+    )
+    assert result["edges"]
+    index, finding = _informed_fixture(
+        tmp_path,
+        {
+            "sink.py": "import pickle\nfrom helpers import prepare\nprepare = other\ndef restore(data):\n    return pickle.loads(prepare(data))\n",
+            "helpers.py": "def prepare(value):\n    return value\n",
+        },
+    )
+    assert not build_informed_sink_context(finding, index)["edges"]
+
+
+def test_informed_rejects_changed_ast_after_expansion(tmp_path, monkeypatch):
+    import factoryline.context_efficiency as evidence
+
+    index, finding = _informed_fixture(
+        tmp_path,
+        {
+            "sink.py": "import pickle\nfrom helpers import prepare\ndef restore(data):\n    return pickle.loads(prepare(data))\n",
+            "helpers.py": "def prepare(value):\n    return value\n",
+        },
+    )
+    original = evidence._informed_expand
+
+    def mutate(*args, **kwargs):
+        original(*args, **kwargs)
+        index.snapshots[tmp_path / "helpers.py"].body[0].name = "replaced"
+
+    monkeypatch.setattr(evidence, "_informed_expand", mutate)
+    assert (
+        evidence.build_informed_sink_context(finding, index)["status"]
+        == "SINK_SOURCE_STALE"
+    )
+
+
+@pytest.mark.parametrize(
+    "call", ["prepare(data, other)", "prepare(*data)", "prepare(value=data, other=1)"]
+)
+def test_informed_invalid_helper_arity_or_expansion_remains_unknown(tmp_path, call):
+    from factoryline.analysis_evidence import build_informed_sink_context
+
+    index, finding = _informed_fixture(
+        tmp_path,
+        {
+            "sink.py": f"import pickle\nfrom helpers import prepare\ndef restore(data):\n    return pickle.loads({call})\n",
+            "helpers.py": "def prepare(value):\n    return value\n",
+        },
+    )
+    result = build_informed_sink_context(finding, index)
+    assert not result["edges"]
+    assert any("ARGUMENT" in x["reason"] for x in result["unknowns"])
+
+
+def test_informed_large_inventory_binds_only_bounded_inspected_sources(tmp_path):
+    from factoryline.analysis_evidence import build_informed_sink_context
+
+    sources = {"sink.py": "import pickle\npickle.loads(data)\n"}
+    sources.update({f"other{i}.py": "constant = 1\n" for i in range(70)})
+    index, finding = _informed_fixture(tmp_path, sources)
+    result = build_informed_sink_context(finding, index)
+    assert len(result["dependency_sources"]) <= 64
+    assert result["truncation"]
+    assert result["status"] == "INCOMPLETE"
+
+
+@pytest.mark.parametrize(
+    "changed",
+    [{"path": "../sink.py"}, {"source_sha256": "0" * 64}, {"end_column": 999}],
+)
+def test_informed_forged_path_hash_or_span_rejected(tmp_path, changed):
+    from factoryline.analysis_evidence import build_informed_sink_context
+
+    index, finding = _informed_fixture(
+        tmp_path, {"sink.py": "import pickle\npickle.loads(data)\n"}
+    )
+    result = build_informed_sink_context({**finding, **changed}, index)
+    assert result["status"] in {"SINK_SOURCE_STALE", "SINK_LOCATION_UNRESOLVED"}
+    assert not result["excerpts"]
+
+
+def test_informed_closure_parameter_cannot_resolve_global_helper(tmp_path):
+    from factoryline.analysis_evidence import build_informed_sink_context
+
+    index, finding = _informed_fixture(
+        tmp_path,
+        {
+            "sink.py": "import pickle\ndef prepare(value):\n    return value\ndef outer(prepare):\n    def inner(data):\n        return pickle.loads(prepare(data))\n    return inner\n",
+        },
+    )
+    result = build_informed_sink_context(finding, index)
+    assert not result["edges"]
+    assert not any(x["kind"] == "helper" for x in result["excerpts"])
+    assert any("binding_unresolved" in x["reason"] for x in result["unknowns"])
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "prepare.__code__ = replacement.__code__\n",
+        "alias = prepare\nalias.__code__ = replacement.__code__\n",
+    ],
+)
+def test_informed_selected_module_code_mutation_prevents_source_edges(
+    tmp_path, mutation
+):
+    from factoryline.analysis_evidence import build_informed_sink_context
+
+    index, finding = _informed_fixture(
+        tmp_path,
+        {
+            "sink.py": "import pickle\nfrom helpers import prepare\ndef restore(data):\n    return pickle.loads(prepare(data))\n",
+            "helpers.py": "def prepare(value):\n    return value\ndef replacement(value):\n    return other(value)\n"
+            + mutation,
+        },
+    )
+    result = build_informed_sink_context(finding, index)
+    assert not result["edges"]
+    assert not any(x["kind"] == "helper" for x in result["excerpts"])
+
+
+def test_informed_package_initializer_mutation_remains_unknown(tmp_path):
+    from factoryline.analysis_evidence import build_informed_sink_context
+
+    index, finding = _informed_fixture(
+        tmp_path,
+        {
+            "sink.py": "import pickle\nfrom pkg.helpers import prepare\ndef restore(data):\n    return pickle.loads(prepare(data))\n",
+            "pkg/__init__.py": "from . import helpers\nhelpers.prepare = external\n",
+            "pkg/helpers.py": "def prepare(value):\n    return value\n",
+        },
+    )
+    result = build_informed_sink_context(finding, index)
+    assert not result["edges"]
+    assert result["unknowns"]
+    assert "pkg/__init__.py" in {x["path"] for x in result["dependency_sources"]}
 
 
 def _content(response: dict[str, object]) -> dict[str, object]:

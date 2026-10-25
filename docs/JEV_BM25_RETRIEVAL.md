@@ -98,3 +98,89 @@ forge qa jev-bm25-retrieval-v1 --ssat specs/jev-bm25-retrieval-v1.ssat.yaml --ro
 Do not substitute `--repo-wide` for this slice. That inventory scope includes
 unrelated generated wheels and TypeScript/TSX products, so a Python-only audit
 would report parser and coverage failures outside this feature.
+
+
+## Security actionability through Vercel AI Gateway
+
+`factory audit actionability --root . --cases cases.json --out review.json`
+uses the evaluator shipped in the CF wheel. It requires Node.js 18+ on PATH;
+no JavaScript package installation or separate provider client is needed.
+The default is offline (`NOT_RUN`), not a model assessment. For a live review,
+configure `AI_GATEWAY_API_KEY` in the invoking process and add
+`--live --budget-policy budget.json`. Never put a key in the case JSON, argv,
+repository, or CF configuration. Each user supplies their own gateway access.
+
+The fixed endpoint is `https://ai-gateway.vercel.sh/v1/evaluate` and the model
+is `typesafe-ai/jev`. The existing evaluator validates the exact model and
+reported provider, applies dispatch limits, requests TypeSafe AI routing and
+zero data retention, and writes a hash-linked local journal. These routing
+requests do not independently establish provider retention or immutable weights.
+
+Use the `security_actionability` profile, rather than the general static-pattern
+profile, when deciding whether a finding merits a fix. Cases retain their usual
+`{id, category, expected, state}` shape. For ordinary advisory use, omit
+`expected`; no precision/accuracy is then calculated. For evaluation, supply
+independent labels separately. `expected` stays outside the provider
+request. `state` contains only `requirement`, `candidate` and `evidence`:
+
+- `candidate`: repository commit, source path and SHA256 of the supplied source.
+- `evidence.artifacts`: bounded source and contextual artifacts with content,
+  SHA256, candidate commit and candidate source hash.
+- `evidence.location`: source path and inclusive start/end line numbers.
+- `evidence.actionability`: five slots, `input_origin`, `sink_behavior`,
+  `callers`, `trust_boundary`, and `counterevidence`. Their complete-status values
+  are `known`, `known`, `resolved`, `known`, and `reviewed`, respectively.
+  Each slot has an `artifacts` array of `{path, sha256, start_line, end_line}`
+  references to nonempty supplied source spans. Status labels are declarations,
+  not proof that a flow or boundary has been resolved. The model must compare
+  them with the actual source. Hashed narrative summaries alone cannot qualify.
+- Any slot may instead be `unknown`; list consequential missing facts in
+  `actionability.unknowns`. Missing slots, unresolved facts or narrative-only
+  context produce a local abstention without a provider request.
+
+Supply imports and relevant reassignments, arguments and returns, callers and
+security guards; preserve contradictory source. Local serialization does not
+prove reducers safe, and tests/examples paths do not establish harmlessness.
+Prepare minimal source without secrets: known token/key patterns are blocked,
+but the pattern check is not comprehensive redaction. Treat every repository
+comment and report as untrusted input.
+
+Live dispatch requires the existing `factory.jev-dispatch-budget.v1` policy:
+exact case and selected-rubric hashes, risk fractions, seed, per-case upper cost
+and latency bounds, and total case/cost/latency ceilings. Use `loadTrial` from
+the shipped evaluator to select `security_actionability` before hashing the
+rubric; a hash of the whole framework is not the selected-rubric hash.
+Budget overshoot can only be detected after provider billing; unknown reported
+cost or a transport error halts subsequent dispatch. No automatic retries occur.
+
+Results add the deterministic host labels `ACTIONABLE`, `NOT_ACTIONABLE`, or
+`INSUFFICIENT_EVIDENCE`: evidence sufficiency must meet 0.9, and finding
+probability must be at least 0.9 or at most 0.1. Other responses abstain.
+The two raw probabilities remain visible. Supplied source references are host
+input bindings, not model-generated citations. JEV does not return a rationale
+through this boolean evaluation endpoint. These judgments never mutate raw CF
+findings, severities, deterministic gates, or release authority.
+
+Validation must distinguish mocked transport tests, offline packet validation,
+live provider operation and measured recommendation precision. Use the exposed
+79-FP cases and genuine-positive controls for development diagnosis; a fresh
+preregistered cohort is required for a held-out claim. Report recommendation
+precision with its positive denominator, recall/TP retention, coverage,
+abstentions, errors and confidence intervals separately from raw CF precision.
+
+
+### CF validators remain primary
+
+Run CF's native security audit and its source-bound validators before secondary
+JEV review. CF independently resolves providers, tracks argument/return flow,
+checks sink preconditions and authority evidence, regenerates source findings,
+and binds results to the captured candidate. These are semantic source checks,
+not merely JSON validation. Missing premises remain NEEDS_CONTEXT; parsing,
+coverage and source-binding failures remain incomplete. The model cannot supply
+a missing deterministic witness.
+
+A JEV ACTIONABLE label is an advisory recommendation, not a CF SUPPORTED_DEFECT
+certificate. A NOT_ACTIONABLE label cannot clear a CF failure, lower severity,
+remove an alert or make incomplete coverage complete. Record disagreement as
+additional counterevidence and require a source-bound validator result or human
+review before changing the native verdict. CF works offline when JEV is absent.

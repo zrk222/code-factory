@@ -2,9 +2,148 @@ import builtins
 import json
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
 
 from factoryline import provenance as bootstrap
 from factoryline import provenance as provenance_module
+
+
+def _actionability_args(root, **changes):
+    values = dict(
+        root=str(root),
+        cases="cases.json",
+        out="report.json",
+        live=False,
+        budget_policy=None,
+        timeout_ms=30000,
+    )
+    values.update(changes)
+    return SimpleNamespace(**values)
+
+
+@pytest.mark.parametrize("live", [False, True])
+def test_jev_actionability_cli_reuses_bounded_gateway_runner(
+    tmp_path, monkeypatch, capsys, live
+):
+    from factoryline import cli_audit, cli
+
+    (tmp_path / "cases.json").write_text("[]", encoding="utf-8")
+    (tmp_path / "budget.json").write_text('{"max_latency_ms":20000}', encoding="utf-8")
+    calls = []
+    monkeypatch.setenv("AI_GATEWAY_API_KEY", "test-key-never-in-argv")
+    monkeypatch.setattr(
+        cli_audit,
+        "_jev_evaluation_assets",
+        lambda: (Path("runner.mjs"), Path("rubric.json")),
+        raising=False,
+    )
+    monkeypatch.setattr(cli_audit, "_jev_node", lambda: "node", raising=False)
+
+    def execute(node, arguments, cwd, **options):
+        calls.append((node, arguments, cwd, options))
+        return {
+            "ok": True,
+            "exit_code": 0,
+            "stdout": b'{"state":"advisory"}\n',
+            "stderr": b"",
+        }
+
+    monkeypatch.setattr(cli, "_run_cli_bounded", execute)
+    args = _actionability_args(
+        tmp_path, live=live, budget_policy="budget.json" if live else None
+    )
+    assert cli_audit._run_actionability(args) == 0
+    assert len(calls) == 1
+    node, arguments, cwd, options = calls[0]
+    assert node == "node" and cwd == tmp_path
+    assert arguments[arguments.index("--profile") + 1] == "security_actionability"
+    assert ("--live" in arguments) is live
+    assert "test-key-never-in-argv" not in repr(arguments)
+    assert options["timeout"] <= 45
+    assert json.loads(capsys.readouterr().out)["state"] == "advisory"
+
+
+@pytest.mark.parametrize(
+    "failure", ["escape", "missing-key", "missing-budget", "missing-cases"]
+)
+def test_jev_actionability_cli_rejects_before_transport(
+    tmp_path, monkeypatch, capsys, failure
+):
+    from factoryline import cli_audit, cli
+
+    (tmp_path / "cases.json").write_text("[]", encoding="utf-8")
+    monkeypatch.delenv("AI_GATEWAY_API_KEY", raising=False)
+    monkeypatch.setattr(
+        cli, "_run_cli_bounded", lambda *a, **kw: pytest.fail("must not dispatch")
+    )
+    args = _actionability_args(tmp_path)
+    if failure == "escape":
+        args.out = "../escape.json"
+    elif failure == "missing-cases":
+        args.cases = None
+    else:
+        args.live = True
+        if failure == "missing-budget":
+            monkeypatch.setenv("AI_GATEWAY_API_KEY", "test-only")
+    assert cli_audit._run_actionability(args) == 2
+    assert json.loads(capsys.readouterr().err)["state"] == "UNAVAILABLE"
+
+
+def test_jev_actionability_assets_resolve_from_installed_distribution(
+    tmp_path, monkeypatch
+):
+    from factoryline import cli_audit
+    import sysconfig
+
+    module = tmp_path / "site-packages/factoryline/cli_audit.py"
+    module.parent.mkdir(parents=True)
+    module.write_text("", encoding="utf-8")
+    rubric = module.parent / "data/judge_framework.json"
+    rubric.parent.mkdir()
+    rubric.write_text("{}", encoding="utf-8")
+    runner = tmp_path / "share/code-factory/evaluation/evaluate_jev.mjs"
+    runner.parent.mkdir(parents=True)
+    runner.write_text("", encoding="utf-8")
+    monkeypatch.setattr(cli_audit, "__file__", str(module))
+    monkeypatch.setattr(sysconfig, "get_path", lambda name: str(tmp_path))
+    assert cli_audit._jev_evaluation_assets() == (runner, rubric)
+
+
+@pytest.mark.parametrize(
+    "version,accepted", [(b"v18.0.0", True), (b"v16.20.0", False), (b"broken", False)]
+)
+def test_jev_actionability_node_runtime_version(monkeypatch, version, accepted):
+    from factoryline import cli_audit, cli
+    import shutil
+
+    monkeypatch.setattr(shutil, "which", lambda name: "node")
+    monkeypatch.setattr(
+        cli, "_run_cli_bounded", lambda *a, **k: {"ok": True, "stdout": version}
+    )
+    if accepted:
+        assert cli_audit._jev_node() == "node"
+    else:
+        with pytest.raises(ValueError, match="18 or newer"):
+            cli_audit._jev_node()
+
+
+def test_jev_actionability_invalid_budget_shape_is_controlled(
+    tmp_path, monkeypatch, capsys
+):
+    from factoryline import cli_audit
+
+    (tmp_path / "cases.json").write_text("[]", encoding="utf-8")
+    (tmp_path / "budget.json").write_text("[]", encoding="utf-8")
+    monkeypatch.setenv("AI_GATEWAY_API_KEY", "test-only")
+    assert (
+        cli_audit._run_actionability(
+            _actionability_args(tmp_path, live=True, budget_policy="budget.json")
+        )
+        == 2
+    )
+    assert json.loads(capsys.readouterr().err)["code"] == "E_JEV_PREFLIGHT"
 
 
 def test_finding_tier_cli_renders_exact_abstentions_without_clean_claim(capsys):
@@ -576,3 +715,339 @@ def test_full_repository_security_cli_rejects_legacy_oracle_options(
     )
     payload = json.loads(capsys.readouterr().err)
     assert payload["code"] == "E_FULL_REPOSITORY_OPTIONS"
+
+
+def _trusted_core_policy316_workspace(root):
+    (root / "app.py").write_text(
+        "def run(program):\n    exec(program)\n", encoding="utf-8"
+    )
+    (root / ".factory").mkdir()
+    (root / ".factory" / "tenant-read-contract.json").write_text(
+        json.dumps({"schema": "factory.tenant-read-contract.v1", "reads": []}),
+        encoding="utf-8",
+    )
+
+
+def test_trusted_core_policy316_cli_json_receipt_and_default_compatibility(
+    tmp_path, capsys
+):
+    from factoryline.cli import main as cli_main
+
+    _trusted_core_policy316_workspace(tmp_path)
+    argv = ["audit", "security", "--root", str(tmp_path), "--json"]
+    assert cli_main(argv) == 2
+    legacy = json.loads(capsys.readouterr().out)
+    assert "selected_defect_policy" not in legacy
+    assert "defect_policy_decision" not in legacy
+    assert cli_main([*argv, "--defect-policy", "trusted-core-v1"]) == 0
+    selected = json.loads(capsys.readouterr().out)
+    assert selected["state"] == legacy["state"] == "BLOCKED"
+    assert selected["findings"] == legacy["findings"]
+    decision = selected["defect_policy_decision"]
+    assert decision["state"] == "NO_SUPPORTED_DEFECTS_REVIEW_REQUIRED"
+    assert decision["exit_code"] == 0
+    assert decision["passed"] is False
+    assert decision["clean"] is False
+    assert decision["release_approved"] is False
+    assert selected["candidate_sha256"] != legacy["candidate_sha256"]
+    receipt = json.loads(
+        (tmp_path / ".factory/security-scan/latest.json").read_text(encoding="utf-8")
+    )
+    assert receipt["report"]["defect_policy_decision"] == decision
+
+
+def test_trusted_core_policy316_text_retains_review_queue_without_forced_repairs(
+    tmp_path, capsys
+):
+    from factoryline.cli import main as cli_main
+
+    _trusted_core_policy316_workspace(tmp_path)
+    assert (
+        cli_main(
+            [
+                "audit",
+                "security",
+                "--root",
+                str(tmp_path),
+                "--defect-policy",
+                "trusted-core-v1",
+            ]
+        )
+        == 0
+    )
+    output = capsys.readouterr().out
+    assert "NO_SUPPORTED_DEFECTS_REVIEW_REQUIRED" in output
+    assert "NEEDS_CONTEXT SECURITY_DYNAMIC_EXECUTION" in output
+    assert "Resolve each listed finding" not in output
+    assert "does not approve a release" in output
+
+
+@pytest.mark.parametrize("profile", ["isolated-v1"])
+def test_trusted_core_policy316_full_scope_rejected_before_engine(
+    tmp_path, monkeypatch, capsys, profile
+):
+    from factoryline import deep_audit_io
+    from factoryline.cli import main as cli_main
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError(
+            "unsupported policy scope must not scan or read a checkpoint"
+        )
+
+    monkeypatch.setattr(deep_audit_io, "full_repository_scan", forbidden)
+    assert (
+        cli_main(
+            [
+                "audit",
+                "security",
+                "--root",
+                str(tmp_path),
+                "--full-repository",
+                "--context-profile",
+                profile,
+                "--defect-policy",
+                "trusted-core-v1",
+                "--json",
+            ]
+        )
+        == 2
+    )
+    assert json.loads(capsys.readouterr().err)["code"] == "E_DEFECT_POLICY_SCOPE"
+
+
+@pytest.mark.parametrize("policy", ["legacy-v1", "trusted-core-v1"])
+def test_trusted_core_policy316_non_security_scope_rejected(tmp_path, capsys, policy):
+    from factoryline.cli import main as cli_main
+
+    assert (
+        cli_main(
+            [
+                "audit",
+                "patterns",
+                "--root",
+                str(tmp_path),
+                "--defect-policy",
+                policy,
+                "--json",
+            ]
+        )
+        == 2
+    )
+    assert json.loads(capsys.readouterr().err)["code"] == "E_DEFECT_POLICY_SCOPE"
+
+
+def test_trusted_core_policy316_supported_native_defect_blocks(tmp_path, capsys):
+    from factoryline.cli import main as cli_main
+
+    _trusted_core_policy316_workspace(tmp_path)
+    (tmp_path / "app.py").write_text(
+        "from flask import request\neval(request.get_data(as_text=True))\n",
+        encoding="utf-8",
+    )
+    assert (
+        cli_main(
+            [
+                "audit",
+                "security",
+                "--root",
+                str(tmp_path),
+                "--defect-policy",
+                "trusted-core-v1",
+                "--json",
+            ]
+        )
+        == 1
+    )
+    result = json.loads(capsys.readouterr().out)
+    decision = result["defect_policy_decision"]
+    assert decision["state"] == "DEFECTS_PRESENT"
+    assert decision["supported_defect_count"] == 1
+    assert any(
+        row["code"] == "SECURITY_DYNAMIC_EXECUTION" and row["severity"] == "HIGH"
+        for row in result["findings"]
+    )
+    assert decision["release_approved"] is False
+
+
+def test_trusted_core_policy316_late_collection_change_blocks_final_receipt(
+    tmp_path, monkeypatch, capsys
+):
+    from factoryline import review_audits
+    from factoryline.cli import main as cli_main
+
+    _trusted_core_policy316_workspace(tmp_path)
+    scan = review_audits.security_scan
+
+    def change_collection_after_scan(*args, **kwargs):
+        result = scan(*args, **kwargs)
+        (tmp_path / "pytest.ini").write_text(
+            "[pytest]\ntestpaths = elsewhere\n", encoding="utf-8"
+        )
+        return result
+
+    monkeypatch.setattr(review_audits, "security_scan", change_collection_after_scan)
+    assert (
+        cli_main(
+            [
+                "audit",
+                "security",
+                "--root",
+                str(tmp_path),
+                "--defect-policy",
+                "trusted-core-v1",
+                "--json",
+            ]
+        )
+        == 2
+    )
+    result = json.loads(capsys.readouterr().out)
+    assert result["state"] == "INCOMPLETE"
+    assert result["defect_policy_decision"]["state"] == "BLOCKED"
+    assert result["defect_policy_decision"]["exit_code"] == 2
+    receipt = json.loads(
+        (tmp_path / ".factory/security-scan/latest.json").read_text(encoding="utf-8")
+    )
+    assert (
+        receipt["report"]["defect_policy_decision"] == result["defect_policy_decision"]
+    )
+
+
+def test_trusted_core_policy316_missing_tenant_scope_cannot_be_masked_by_high_finding(
+    tmp_path, capsys
+):
+    from factoryline.cli import main as cli_main
+
+    (tmp_path / "app.py").write_text(
+        "def run(program):\n    exec(program)\n", encoding="utf-8"
+    )
+    assert (
+        cli_main(
+            [
+                "audit",
+                "security",
+                "--root",
+                str(tmp_path),
+                "--defect-policy",
+                "trusted-core-v1",
+                "--json",
+            ]
+        )
+        == 2
+    )
+    result = json.loads(capsys.readouterr().out)
+    assert result["tenant_read_contract"]["configuration"]["state"] == "missing"
+    assert result["defect_policy_decision"]["state"] == "BLOCKED"
+    assert result["defect_policy_decision"]["exit_code"] == 2
+
+
+@pytest.mark.parametrize(
+    "source, expected_exit, state",
+    [
+        (
+            "def run(program):\n    exec(program)\n",
+            0,
+            "NO_SUPPORTED_DEFECTS_REVIEW_REQUIRED",
+        ),
+        (
+            "import pickle\nfrom flask import request\npickle.loads(request.get_data())\n",
+            1,
+            "DEFECTS_PRESENT",
+        ),
+        ("def broken(:\n", 2, "BLOCKED"),
+    ],
+    ids=["unknown-review", "native-defect", "parse-incomplete"],
+)
+def test_workspace_policy319_cli_native_json(
+    tmp_path, capsys, source, expected_exit, state
+):
+    from factoryline.cli import main as cli_main
+
+    (tmp_path / "app.py").write_text(source, encoding="utf-8")
+    code = cli_main(
+        [
+            "audit",
+            "security",
+            "--root",
+            str(tmp_path),
+            "--full-repository",
+            "--context-profile",
+            "workspace-v2",
+            "--defect-policy",
+            "trusted-core-v1",
+            "--json",
+        ]
+    )
+    result = json.loads(capsys.readouterr().out)
+    assert code == expected_exit
+    assert result["defect_policy_decision"]["exit_code"] == code
+    assert result["defect_policy_decision"]["state"] == state
+    assert result["selected_defect_policy"] == "trusted-core-v1"
+    assert result["semantic_coverage"] == "INCOMPLETE"
+    assert result["release_approved"] is False
+    assert result["native_completion_receipt"] is False
+    assert all(
+        result["defect_policy_decision"][field] is False
+        for field in ["passed", "clean", "release_approved"]
+    )
+    if expected_exit != 2:
+        assert result["workspace_evidence"]["raw_findings"]
+
+
+def test_workspace_policy319_cli_text_retains_unknown_queue(tmp_path, capsys):
+    from factoryline.cli import main as cli_main
+
+    (tmp_path / "app.py").write_text(
+        "def run(program):\n    exec(program)\n", encoding="utf-8"
+    )
+    assert (
+        cli_main(
+            [
+                "audit",
+                "security",
+                "--root",
+                str(tmp_path),
+                "--full-repository",
+                "--context-profile",
+                "workspace-v2",
+                "--defect-policy",
+                "trusted-core-v1",
+            ]
+        )
+        == 0
+    )
+    output = capsys.readouterr().out
+    assert "NO_SUPPORTED_DEFECTS_REVIEW_REQUIRED" in output
+    assert "NEEDS_CONTEXT SECURITY_DYNAMIC_EXECUTION" in output
+    assert "does not approve a release" in output
+    assert "Semantic coverage: INCOMPLETE" in output
+
+
+def test_workspace_policy319_cli_missing_decision_never_defaults_to_zero(
+    tmp_path, monkeypatch, capsys
+):
+    from factoryline import deep_audit_io
+    from factoryline.cli import main as cli_main
+
+    def scan(_root, **options):
+        assert options["defect_policy"] == "trusted-core-v1"
+        return {"pending_count": 0, "context_profile": "workspace-v2"}
+
+    monkeypatch.setattr(deep_audit_io, "full_repository_scan", scan)
+    assert (
+        cli_main(
+            [
+                "audit",
+                "security",
+                "--root",
+                str(tmp_path),
+                "--full-repository",
+                "--context-profile",
+                "workspace-v2",
+                "--defect-policy",
+                "trusted-core-v1",
+                "--json",
+            ]
+        )
+        == 2
+    )
+    assert "defect_policy_decision" not in json.loads(capsys.readouterr().out)

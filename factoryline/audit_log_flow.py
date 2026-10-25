@@ -5,7 +5,7 @@ from __future__ import annotations
 import ast
 from dataclasses import dataclass
 from itertools import chain
-import re
+from .semantic_credential_sensor import log_percent_slots
 
 _LOGGING_LEVELS = frozenset("debug info warning error critical exception log".split())
 
@@ -23,10 +23,10 @@ def audit_log_source_findings(relative, tree, nodes, aliases):
         security_call_name,
     )
 
-    from .semantic_credential_sensor import _provider_identity_uncertain
+    from .semantic_credential_sensor import log_security_provider_stable
 
-    tree._security_log_provider_stable = not _provider_identity_uncertain(
-        tree, aliases, roots=("logging",), nodes=nodes
+    tree._security_log_provider_stable = log_security_provider_stable(
+        tree, aliases, nodes
     )
     findings = []
     for scope in nodes:
@@ -157,20 +157,7 @@ class _LogReader:
                 continue
             name = self._logging_name(call)
             if name and self._unsafe(call, tainted, name):
-                from .semantic_credential_sensor import (
-                    supported_security_precondition,
-                    security_precondition_path_possible,
-                )
-
-                premise = {}
-                if getattr(
-                    self.module_scope(self.scope),
-                    "_security_log_provider_stable",
-                    False,
-                ) and security_precondition_path_possible(call):
-                    premise["security_precondition"] = supported_security_precondition(
-                        call, "untrusted_input", "log_message"
-                    )
+                from .semantic_credential_sensor import log_security_precondition
 
                 self.findings.append(
                     self.audit._security_finding(
@@ -182,7 +169,9 @@ class _LogReader:
                         call=name,
                         source="input_or_request_parameter",
                         cwe="CWE-117",
-                        **premise,
+                        **log_security_precondition(
+                            self.module_scope(self.scope), call
+                        ),
                     )
                 )
 
@@ -279,8 +268,7 @@ class _LogReader:
             and isinstance(node.left, ast.Constant)
             and isinstance(node.left.value, str)
         ):
-            codes = _percent_codes(node.left.value)
-            slots = [code for code in codes if code != "%"]
+            slots = log_percent_slots(node.left.value)
             return (
                 bool(slots)
                 and all(code == "r" for code in slots)
@@ -317,8 +305,7 @@ class _LogReader:
     def _percent_repr(self, message, values, tainted):
         if not isinstance(message, ast.Constant) or not isinstance(message.value, str):
             return False
-        codes = _percent_codes(message.value)
-        slots = [code for code in codes if code != "%"]
+        slots = log_percent_slots(message.value)
         return (
             bool(slots)
             and all(code == "r" for code in slots)
@@ -411,9 +398,3 @@ def _merge_flow(states):
         name: any(state.get(name, False) for state in states)
         for name in set().union(*states)
     }
-
-
-def _percent_codes(value):
-    return re.findall(
-        r"%(?:\([^)]*\))?[-+#0 ]*(?:\d+|\*)?(?:\.\d+|\.\*)?([a-zA-Z%])", value
-    )

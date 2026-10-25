@@ -116,13 +116,26 @@ def _security_scan_candidate_payload(
 
 def _security_scan_report_candidate_payload(report: dict[str, Any]) -> dict[str, Any]:
     """Build the shared candidate payload from a sealed scan report."""
-    return _security_scan_candidate_payload(
+    payload = _security_scan_candidate_payload(
         report.get("sources", []),
         report.get("tenant_read_contract", {}),
         report.get("oracle_context", {}),
         report.get("database_context", {}),
         include_database_context="database_context" in report,
     )
+    if "selected_defect_policy" in report:
+        decision = report.get("defect_policy_decision")
+        payload["selected_defect_policy"] = report["selected_defect_policy"]
+        payload["defect_policy_sha256"] = (
+            decision.get("policy_sha256") if isinstance(decision, dict) else None
+        )
+        payload["defect_policy_evidence_sha256"] = (
+            decision.get("evidence_sha256") if isinstance(decision, dict) else None
+        )
+        from .primitive_observation_binding import finding_tier_policy_sha256
+
+        payload["finding_tier_policy_sha256"] = finding_tier_policy_sha256()
+    return payload
 
 
 _NUMBER_FIELDS = {
@@ -412,7 +425,9 @@ def _application_configuration_hashes(class_profiles):
     return config_hashes
 
 
-def _captured_application_source_bytes(workspace, findings, bindings, source_bytes):
+def _captured_application_source_bytes(
+    workspace, findings, bindings, source_bytes, *, capture_all_sources=False
+):
     paths = {
         finding.get("path")
         for finding in findings
@@ -423,7 +438,8 @@ def _captured_application_source_bytes(workspace, findings, bindings, source_byt
             "PROVEN_CLOSED_OPERATION_COMMAND_SYNTAX",
             "PROVEN_CLOSED_LITERAL_PICKLE_BYTES",
         }
-        or finding.get("code") == "SECURITY_HARDCODED_SECRET"
+        or finding.get("code")
+        in {"SECURITY_HARDCODED_SECRET", "SECURITY_UNSAFE_DESERIALIZATION"}
         or isinstance(finding.get("facts", {}).get("security_precondition"), dict)
     }
     for finding in findings:
@@ -436,6 +452,7 @@ def _captured_application_source_bytes(workspace, findings, bindings, source_byt
                 if isinstance(row, dict)
             )
     hashes = {row["path"]: row["sha256"] for row in bindings}
+    paths.update(hashes if capture_all_sources else ())
     needs_signing_sources = any(
         finding.get("code") == "SECURITY_HARDCODED_SECRET"
         and finding.get("facts", {}).get("name") == "SECRET_KEY"
@@ -514,6 +531,11 @@ class _SourceBoundSecurityReport(dict):
 def seal_security_scan(audit, core: dict[str, Any]) -> dict[str, Any]:
     """Revalidate local captures on every seal; never serialize their source bytes."""
     prior_state, prior_summary = core.get("state"), core.get("action_summary")
+    prior_tier_report = core.get("finding_tier_report")
+    core["findings"] = [*core.get("findings", []), *core.pop("context_reviews", [])]
+    core.pop("context_review_count", None)
+    for row in (prior_tier_report or {}).get("ledger", []):
+        row.pop("source_role_review", None)
     captured = core.pop("_primitive_source_bytes", None)
     if captured is None and type(core) is _SourceBoundSecurityReport:
         captured = dict(core._captured_sources)
@@ -528,6 +550,24 @@ def seal_security_scan(audit, core: dict[str, Any]) -> dict[str, Any]:
         core["action_summary"] = prior_summary or audit._security_scan_action_summary(
             "INCOMPLETE"
         )
+    if "selected_defect_policy" in core:
+        from . import primitive_observation_binding as primitive
+
+        policy = primitive.validate_security_defect_policy(
+            core["selected_defect_policy"]
+        )
+        core.pop("defect_policy_decision", None)
+        if policy == "trusted-core-v1":
+            core["defect_policy_decision"] = primitive.security_defect_policy_decision(
+                core,
+                captured,
+                prior_tiers=prior_tier_report,
+                prior_source_state=prior_state,
+            )
+        elif policy == "source-role-v1":
+            primitive.apply_pickle_source_role_policy(core, captured)
+    else:
+        core.pop("defect_policy_decision", None)
     candidate = sha256(
         json.dumps(
             audit._security_scan_report_candidate_payload(core),

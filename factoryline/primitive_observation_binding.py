@@ -5,6 +5,7 @@ import copy
 import hashlib
 import json
 import re
+from collections import Counter
 from pathlib import Path
 from pathlib import PurePosixPath
 from contextvars import ContextVar
@@ -19,6 +20,7 @@ _FINDING_TIER_POLICY = {
     ],
     "primitive_evidence": "current_native_source_bound_primitive_partition",
     "unknown_evidence": "NEEDS_CONTEXT",
+    "pickle_byte_origin": "source_edge_observation_only; reconstruction_effects_remain_unassessed",
     "known_format_patterns": "factory.context_efficiency._SECRET_BYTES",
     "known_format_policy": "material_observation_only; authority_and_validity_not_established",
     "configuration_load_policy": "static_consumer_observation_only; authority_not_established",
@@ -59,6 +61,384 @@ _MISSING_PREMISES = {
     ],
 }
 
+_SECURITY_DEFECT_POLICIES = frozenset(
+    {"legacy-v1", "trusted-core-v1", "source-role-v1"}
+)
+_PICKLE_SOURCE_ROLE_POLICY = {
+    "schema": "factory.security.source-role-policy.v1",
+    "policy_id": "source-role-v1",
+    "effect": "source-bound test roundtrips and paired local worker protocols become NEEDS_CONTEXT reviews; original severity retained",
+    "unassessed": [
+        "serializer runtime identity",
+        "object reconstruction",
+        "dynamic deployment/discovery",
+    ],
+    "claim_boundary": "Output-policy selection, not a safe reconstruction, legacy detector gain or clean security result.",
+}
+_TRUSTED_CORE_POLICY = {
+    "schema": "factory.security.defect-policy.v1",
+    "policy_id": "trusted-core-v1",
+    "supported_state": "DEFECTS_PRESENT",
+    "review_state": "NO_SUPPORTED_DEFECTS_REVIEW_REQUIRED",
+    "incomplete_state": "BLOCKED",
+    "claim_boundary": "No clean security result, accuracy gain, or release approval.",
+}
+
+
+def validate_security_defect_policy(value):
+    """Validate the closed policy selector before source discovery begins."""
+    if type(value) is not str or value not in _SECURITY_DEFECT_POLICIES:
+        raise ValueError(
+            "defect policy must be legacy-v1, trusted-core-v1 or source-role-v1"
+        )
+    return value
+
+
+def _trusted_core_policy_result(evidence_payload=None, counts=None):
+    """Format a native caller's decision; this helper grants no evidence authority."""
+    decision = {
+        "schema": _TRUSTED_CORE_POLICY["schema"],
+        "policy_id": "trusted-core-v1",
+        "policy_sha256": _tier_sha256(_TRUSTED_CORE_POLICY),
+        "state": "BLOCKED",
+        "exit_code": 2,
+        "passed": False,
+        "clean": False,
+        "release_approved": False,
+        "action_summary": "Trusted-core policy admission is incomplete; retain the scan for review.",
+        "source_sha256": None,
+        "evidence_sha256": None,
+        "supported_defect_count": 0,
+        "needs_context_count": 0,
+        "claim_boundary": _TRUSTED_CORE_POLICY["claim_boundary"],
+    }
+    if evidence_payload is None or counts is None:
+        return decision
+    supported, unresolved = counts
+    if supported:
+        state, exit_code = "DEFECTS_PRESENT", 1
+        summary = (
+            f"{supported} supported security defect(s) found; "
+            f"{unresolved} unresolved item(s) remain for review."
+        )
+    else:
+        state, exit_code = "NO_SUPPORTED_DEFECTS_REVIEW_REQUIRED", 0
+        summary = (
+            "No supported security defects were regenerated; "
+            f"{unresolved} unresolved item(s) remain for review. "
+            "This is not a clean security result or release approval."
+        )
+    decision.update(
+        state=state,
+        exit_code=exit_code,
+        action_summary=summary,
+        source_sha256=evidence_payload["sources_sha256"],
+        evidence_sha256=_tier_sha256(evidence_payload),
+        supported_defect_count=supported,
+        needs_context_count=unresolved,
+    )
+    return decision
+
+
+def security_defect_policy_decision(
+    core, captured_sources, prior_tiers=None, prior_source_state=None
+):
+    """Regenerate trusted-core admission from the complete captured native scan."""
+    policy_id = validate_security_defect_policy(core.get("selected_defect_policy"))
+    if policy_id != "trusted-core-v1":
+        return None
+    decision = _trusted_core_policy_result()
+    try:
+        if prior_source_state in {"INCOMPLETE", "NO_SOURCES"}:
+            return decision
+        regenerated, sources_sha256, source_findings = _trusted_core_regenerated_tiers(
+            core, captured_sources
+        )
+        if regenerated is None:
+            return decision
+        actual = core.get("finding_tier_report")
+        actual_rows = _security_tier_rows(actual)
+        expected_rows = _security_tier_rows(regenerated)
+        if actual_rows is None or expected_rows is None or actual_rows != expected_rows:
+            return decision
+        if prior_tiers is not None:
+            prior_rows = _security_tier_rows(prior_tiers)
+            if prior_rows is None or prior_rows != expected_rows:
+                return decision
+
+        supported = regenerated["defect_gate"]["supported_defect_count"]
+        unresolved = regenerated["defect_gate"]["needs_context_count"]
+        evidence_payload = {
+            "policy_id": policy_id,
+            "policy_sha256": decision["policy_sha256"],
+            "sources_sha256": sources_sha256,
+            "tenant_contract_sha256": _tier_sha256(
+                core.get("tenant_read_contract", {})
+            ),
+            "oracle_context_sha256": _tier_sha256(core.get("oracle_context", {})),
+            "database_context_sha256": _tier_sha256(core.get("database_context", {})),
+            "native_security_findings_sha256": _tier_sha256(source_findings),
+            "tier_report_sha256": regenerated["report_sha256"],
+            "tier_ledger_sha256": regenerated["ledger_sha256"],
+        }
+        return _trusted_core_policy_result(evidence_payload, (supported, unresolved))
+    except Exception:
+        return decision
+    return decision
+
+
+def _trusted_core_regenerated_tiers(core, captured_sources):
+    from . import review_audits as audit
+
+    sources = _trusted_core_complete_sources(core, captured_sources, audit)
+    if sources is None:
+        return None, None, None
+    captured, captured_paths, sources_sha256 = sources
+    tenant = _trusted_core_tenant_arguments(core, audit)
+    if tenant is None:
+        return None, None, None
+    native_rows = _trusted_core_native_security_rows(captured_paths, tenant, audit)
+    if native_rows is None or not _trusted_core_surface_matches(core, native_rows):
+        return None, None, None
+    regenerated = build_finding_tier_report(
+        native_rows,
+        core.get("primitive_observations", []),
+        core["sources"],
+        captured,
+        coverage_state=True,
+        partition_state="VALIDATED",
+    )
+    return regenerated, sources_sha256, native_rows
+
+
+def _trusted_core_complete_sources(core, captured_sources, audit):
+    sources = core.get("sources")
+    coverage = core.get("audit_coverage")
+    if (
+        core.get("schema") != audit.SECURITY_SCHEMA
+        or core.get("marker") != "SECURITY_AUDIT_COMPLETE"
+        or not isinstance(sources, list)
+        or not sources
+        or not isinstance(coverage, dict)
+        or coverage.get("complete") is not True
+        or coverage.get("inventory_complete") is not True
+        or coverage.get("measurement_state") != "complete"
+        or coverage.get("files_discovered") != len(sources)
+        or coverage.get("files_attempted") != len(sources)
+        or coverage.get("files_audited") != len(sources)
+        or core.get("files_scanned") != len(sources)
+        or core.get("parse_errors") != 0
+        or core.get("unreadable_sources") != 0
+        or core.get("oversized_sources") != 0
+        or not isinstance(captured_sources, dict)
+        or core.get("provider_analysis_profile") is not None
+        or not _trusted_core_database_context_valid(core.get("database_context"))
+    ):
+        return None
+
+    bindings = {}
+    for row in sources:
+        validated = _trusted_core_source_binding(row)
+        if validated is None or validated[0] in bindings:
+            return None
+        path, digest = validated
+        bindings[path] = digest
+    if set(captured_sources) != set(bindings) or len(bindings) != len(sources):
+        return None
+    if len(bindings) > audit.MAX_SECURITY_SOURCE_FILES:
+        return None
+
+    total_bytes = 0
+    captured = {}
+    captured_paths = {}
+    for path, digest in bindings.items():
+        raw = captured_sources.get(path)
+        if not isinstance(raw, bytes) or len(raw) > audit.MAX_BYTES:
+            return None
+        total_bytes += len(raw)
+        if total_bytes > 32 * 1024 * 1024 or hashlib.sha256(raw).hexdigest() != digest:
+            return None
+        captured[path] = raw
+        captured_paths[Path(path)] = raw
+    return captured, captured_paths, _tier_sha256(sources)
+
+
+def _trusted_core_source_binding(row):
+    if not isinstance(row, dict):
+        return None
+    path, digest = row.get("path"), row.get("sha256")
+    if not isinstance(path, str):
+        return None
+    relative = PurePosixPath(path)
+    if (
+        relative.is_absolute()
+        or not relative.parts
+        or ".." in relative.parts
+        or relative.as_posix() != path
+        or relative.suffix != ".py"
+        or not isinstance(digest, str)
+        or re.fullmatch(r"[0-9a-f]{64}", digest) is None
+    ):
+        return None
+    return path, digest
+
+
+def _trusted_core_database_context_valid(value):
+    if value in (None, {}):
+        return True
+    return isinstance(value, dict) and value.get("status") in {
+        "COMPLETE",
+        "NOT_APPLICABLE",
+    }
+
+
+def _trusted_core_tenant_arguments(core, audit):
+    oracle_context = core.get("oracle_context", {})
+    if not isinstance(oracle_context, dict):
+        return None
+    pytest_capture = oracle_context.get("pytest_collection")
+    if (
+        isinstance(pytest_capture, dict)
+        and pytest_capture.get("capture_state") != "stable_pre_post"
+    ):
+        return None
+
+    tenant = core.get("tenant_read_contract", {})
+    if not isinstance(tenant, dict):
+        return None
+    configuration = tenant.get("configuration")
+    if "pytest_collection" in oracle_context:
+        if (
+            not isinstance(configuration, dict)
+            or configuration.get("state") != "loaded"
+        ):
+            return None
+    elif configuration is not None and (
+        not isinstance(configuration, dict) or configuration.get("state") != "loaded"
+    ):
+        return None
+    calls = tenant.get("calls", [])
+    argument_bindings = tenant.get("argument_bindings", {})
+    applies = tenant.get("policy_applies", False)
+    if (
+        not isinstance(calls, list)
+        or not isinstance(argument_bindings, dict)
+        or type(applies) is not bool
+    ):
+        return None
+    try:
+        calls = audit._tenant_contract_calls(tuple(calls))
+        if any(
+            not isinstance(call, str)
+            or not isinstance(rows, list)
+            or any(not isinstance(row, str) for row in rows)
+            for call, rows in argument_bindings.items()
+        ):
+            return None
+        binding_rows = tuple(
+            f"{call}={binding}"
+            for call, rows in argument_bindings.items()
+            for binding in rows
+        )
+        argument_bindings = audit._tenant_contract_bindings(binding_rows, calls)
+    except Exception:
+        return None
+    return calls, argument_bindings, applies
+
+
+def _trusted_core_native_security_rows(captured_paths, tenant, audit):
+    calls, argument_bindings, applies = tenant
+    native_rows = []
+    source_context = (Path("."), captured_paths)
+    for path, raw in captured_paths.items():
+        tree = ast.parse(raw)
+        rows = audit._security_scan_tree(
+            Path("."),
+            path,
+            tree,
+            calls,
+            argument_bindings,
+            {"_security_source_context": source_context},
+            tenant_policy_applies=applies,
+            security_only=True,
+        )
+        native_rows.extend(
+            row
+            for row in rows
+            if isinstance(row, dict)
+            and isinstance(row.get("code"), str)
+            and row["code"].startswith("SECURITY_")
+        )
+    native_rows.sort(
+        key=lambda row: (
+            row.get("path", ""),
+            row.get("line", 0),
+            row.get("column", 0),
+            row.get("code", ""),
+        )
+    )
+
+    return native_rows
+
+
+def _trusted_core_surface_matches(core, native_rows):
+    surface = [
+        row
+        for field in ("findings", "primitive_observations")
+        for row in core.get(field, [])
+        if isinstance(row, dict)
+        and isinstance(row.get("code"), str)
+        and row["code"].startswith("SECURITY_")
+    ]
+    surface_ids = sorted(
+        (
+            row.get("path"),
+            row.get("line"),
+            row.get("column", 0),
+            row.get("code"),
+            row.get("severity"),
+        )
+        for row in surface
+    )
+    native_ids = sorted(
+        (
+            row.get("path"),
+            row.get("line"),
+            row.get("column", 0),
+            row.get("code"),
+            row.get("severity"),
+        )
+        for row in native_rows
+    )
+    return surface_ids == native_ids
+
+
+def _security_tier_rows(report):
+    if not isinstance(report, dict) or not isinstance(report.get("ledger"), list):
+        return None
+    rows = []
+    for row in report["ledger"]:
+        raw = row.get("raw_finding") if isinstance(row, dict) else None
+        if not isinstance(raw, dict) or not str(raw.get("code", "")).startswith(
+            "SECURITY_"
+        ):
+            continue
+        rows.append(
+            {
+                "raw_finding": raw,
+                "tier": row.get("tier"),
+                "evidence": row.get("evidence"),
+                "evidence_details": row.get("evidence_details"),
+                "credential_authority_observation": row.get(
+                    "credential_authority_observation"
+                ),
+                "static_consumer_observation": row.get("static_consumer_observation"),
+                "byte_origin_observation": row.get("byte_origin_observation"),
+                "missing_premises": row.get("missing_premises"),
+            }
+        )
+    return sorted(rows, key=_tier_sha256)
+
 
 def finding_tier_policy_sha256():
     """Return the digest bound into the full-workspace context generation."""
@@ -90,6 +470,7 @@ def build_finding_tier_report(
     }
     regenerated = {}
     signing_cache = {}
+    pickle_origin_cache = {}
     primitive_rows = [row for row in primitive_observations if isinstance(row, dict)]
     ledger = []
     for index, raw in enumerate(raw_findings):
@@ -173,6 +554,11 @@ def build_finding_tier_report(
             }
         if tier == "NEEDS_CONTEXT":
             row["missing_premises"] = _finding_missing_premises(finding, bound_source)
+        row.update(
+            _pickle_byte_origin_fields(
+                finding, captured, bound_source, pickle_origin_cache, tier
+            )
+        )
         if signing_evidence is not None:
             row["static_consumer_observation"] = signing_evidence
         if credential_evidence is not None:
@@ -283,6 +669,75 @@ def _finding_native_rows(finding, captured, bound, cache):
     if path not in cache:
         cache[path] = _regenerate_native_findings(path, captured)
     return cache[path]
+
+
+def _pickle_byte_origin_fields(finding, captured, bound, cache, tier):
+    origin = _finding_pickle_byte_origin(finding, captured, bound, cache)
+    if origin is None:
+        return {}
+    fields = {"byte_origin_observation": origin}
+    if tier == "NEEDS_CONTEXT":
+        fields["missing_premises"] = [
+            "serializer_provider_identity",
+            "reconstruction_effects_and_input_authority",
+            "operational_reachability",
+        ]
+    return fields
+
+
+def _finding_pickle_byte_origin(finding, captured, bound, cache):
+    """Add independently rebuilt byte provenance without changing finding authority."""
+    if not bound or finding.get("code") != "SECURITY_UNSAFE_DESERIALIZATION":
+        return None
+    path = finding["path"]
+    if path not in cache:
+        cache[path] = _pickle_byte_origins_for_source(path, captured)
+    entry = cache[path].get((finding.get("line"), finding.get("column")))
+    facts = finding.get("facts", {})
+    if (
+        entry is None
+        or not isinstance(facts, dict)
+        or facts.get("call") != entry["native_call"]
+    ):
+        return None
+    return {
+        **entry["origin"],
+        "source_path": path,
+        "source_sha256": hashlib.sha256(captured).hexdigest(),
+    }
+
+
+def _pickle_byte_origins_for_source(path, captured):
+    from . import review_audits as audit
+    from .runtime_audit_integrity import (
+        _conditional_file_aliases,
+        _conditional_module_name,
+        _conditional_provider_parents,
+        local_pickle_byte_origin,
+    )
+
+    try:
+        tree = ast.parse(captured)
+        aliases = _conditional_file_aliases(
+            path, tree, {path: _conditional_module_name(path)}
+        )
+        if aliases is None:
+            return {}
+        _conditional_provider_parents(tree)
+        result = {}
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            call_name = audit._normalized_call_name(node, aliases)
+            observation = local_pickle_byte_origin(node, call_name, aliases, audit)
+            if observation is not None:
+                result[(node.lineno, node.col_offset)] = {
+                    "origin": observation,
+                    "native_call": call_name,
+                }
+        return result
+    except (SyntaxError, ValueError, TypeError, RecursionError):
+        return {}
 
 
 def _finding_signing_evidence(
@@ -598,7 +1053,9 @@ def _local_control_label_binding(finding, sources, bindings, source_bytes):
     relevant = [row for row in sources if row.get("path") == path]
     if len(relevant) != 1 or relevant[0].get("sha256") != bindings.get(path):
         return False
-    captured = _jwt_bound_source_inventory({path: source_bytes.get(path)}, {path: bindings.get(path)})
+    captured = _jwt_bound_source_inventory(
+        {path: source_bytes.get(path)}, {path: bindings.get(path)}
+    )
     if captured is None:
         return False
     try:
@@ -611,7 +1068,11 @@ def _local_control_label_binding(finding, sources, bindings, source_bytes):
                 child._security_parent = parent
         aliases = audit._security_aliases(nodes)
         targets = _jwt_declaration_targets(tree, finding.get("facts", {}))
-        return len(targets) == 1 and audit._literal_assignment_diagnostic(path, *targets[0], aliases) == finding
+        return (
+            len(targets) == 1
+            and audit._literal_assignment_diagnostic(path, *targets[0], aliases)
+            == finding
+        )
     except (SyntaxError, ValueError, TypeError, RecursionError):
         return False
 
@@ -619,7 +1080,11 @@ def _local_control_label_binding(finding, sources, bindings, source_bytes):
 def _closed_literal_pickle_binding(finding, sources, bindings, source_bytes):
     from . import review_audits as audit
 
-    captured = _jwt_bound_source_inventory(source_bytes, bindings) if isinstance(source_bytes, dict) else None
+    captured = (
+        _jwt_bound_source_inventory(source_bytes, bindings)
+        if isinstance(source_bytes, dict)
+        else None
+    )
     if captured is None or len(sources) != len(bindings):
         return False
     path = finding.get("path")
@@ -629,14 +1094,21 @@ def _closed_literal_pickle_binding(finding, sources, bindings, source_bytes):
     try:
         tree = ast.parse(raw)
         tree._oracle_source_sha256 = hashlib.sha256(raw).hexdigest()
-        rows = audit._security_scan_tree(Path("."), Path(path), tree, oracle_context={
-            "_security_source_context": (Path("."), captured)
-        })
+        rows = audit._security_scan_tree(
+            Path("."),
+            Path(path),
+            tree,
+            oracle_context={"_security_source_context": (Path("."), captured)},
+        )
     except (SyntaxError, ValueError, TypeError, RecursionError):
         return False
-    return any(row.get("code") == finding.get("code") and row.get("line") == finding.get("line")
-               and row.get("column") == finding.get("column") and row.get("facts") == finding.get("facts")
-               for row in rows)
+    return any(
+        row.get("code") == finding.get("code")
+        and row.get("line") == finding.get("line")
+        and row.get("column") == finding.get("column")
+        and row.get("facts") == finding.get("facts")
+        for row in rows
+    )
 
 
 def _jwt_primitive_binding(finding, facts, sources, bindings, integrity, source_bytes):
@@ -1001,6 +1473,16 @@ def rejected_primitive_proof(finding):
                 "proof_rejection": "CONTRADICTORY_SECURITY_PREMISES",
             },
         }
+    if facts.get("disposition") == "CONDITIONAL_PROVIDER_CONTRACT":
+        return {
+            **finding,
+            "facts": {
+                **facts,
+                "disposition": "UNVERIFIED_PROVIDER_CONTRACT",
+                "state": "INCOMPLETE",
+                "proof_rejection": "PROFILE_OR_SOURCE_BINDING_MISMATCH",
+            },
+        }
     if facts.get("disposition") == "ENDPOINT_DECLARATION_ROLE_PROVEN":
         return {
             **finding,
@@ -1041,6 +1523,1165 @@ def rejected_primitive_proof(finding):
             "proof_rejection": "SOURCE_BINDING_MISMATCH",
         },
     }
+
+
+def _conditional_provider_row(finding, profile, captured, audit):
+    from .runtime_audit_integrity import conditional_provider_pickle_witness
+
+    facts, path = finding.get("facts", {}), finding.get("path")
+    if (
+        finding.get("code") != "SECURITY_UNSAFE_DESERIALIZATION"
+        or not isinstance(facts, dict)
+        or facts.get("disposition")
+        or _valid_security_precondition(facts.get("security_precondition"), finding)
+    ):
+        return None
+    raw = captured.get(path)
+    if not isinstance(raw, bytes):
+        return None
+    native = _regenerate_native_findings(path, raw)
+    if finding not in native:
+        return None
+    try:
+        calls = [
+            node
+            for node in ast.walk(ast.parse(raw))
+            if isinstance(node, ast.Call)
+            and (node.lineno, node.col_offset)
+            == (finding.get("line"), finding.get("column", 0))
+        ]
+        if len(calls) != 1:
+            return None
+        node = calls[0]
+        witness = conditional_provider_pickle_witness(
+            profile,
+            captured,
+            path,
+            [node.lineno, node.col_offset, node.end_lineno, node.end_col_offset],
+            audit,
+        )
+    except (SyntaxError, TypeError, ValueError, RecursionError):
+        return None
+    if not witness:
+        return None
+    return {
+        **finding,
+        "facts": {
+            **facts,
+            "disposition": "CONDITIONAL_PROVIDER_CONTRACT",
+            "analysis_profile": profile["analysis_profile"],
+            "profile_sha256": profile["profile_sha256"],
+            "model_sha256": profile["model_sha256"],
+            "contract_sha256": profile["contract_sha256"],
+            "provider_witness": witness,
+        },
+    }
+
+
+def apply_conditional_provider_profile(report, profile, captured):
+    """Produce conditional candidates, then seal through independent source admission."""
+    from . import review_audits as audit
+    from .finite_capture import provider_analysis_profile
+
+    current = provider_analysis_profile(
+        profile["analysis_profile"], tuple(profile["contracts"])
+    )
+    if current != profile or not current["conditional"]:
+        raise ValueError("conditional profile identity differs")
+    core = dict(report)
+    core["provider_analysis_profile"] = current
+    core["provider_analysis_cache"] = "CONDITIONAL_DECISIONS_NOT_REUSED"
+    core["_primitive_source_bytes"] = dict(captured)
+    core["source_manifest_sha256"] = _tier_sha256(
+        {
+            "sources": core.get("sources", []),
+            "oracle_context": core.get("oracle_context", {}),
+            "database_context": core.get("database_context", {}),
+            "provider_analysis_profile": current,
+        }
+    )
+    core["findings"] = [
+        _conditional_provider_row(finding, current, captured, audit) or finding
+        for finding in core.get("findings", [])
+    ]
+    return audit._seal_security_scan(core)
+
+
+def apply_pickle_source_role_policy(core, captured):
+    """Rebuild context reviews from the native raw ledger on every seal."""
+    if core.get("selected_defect_policy") != "source-role-v1":
+        return
+    original = [*core.get("findings", []), *core.get("context_reviews", [])]
+    core["context_reviews"] = []
+    sources = _pickle_role_sources(core, captured)
+    roles = None if sources is None else _pickle_role_inventory(sources)
+    active, reviews = [], []
+    for finding in original:
+        witness = None if roles is None else _pickle_source_role_witness(finding, roles)
+        if witness is None:
+            active.append(finding)
+        else:
+            reviews.append(finding)
+    core["findings"], core["context_reviews"] = active, reviews
+    core["finding_counts"] = dict(
+        sorted(Counter(row["code"] for row in active).items())
+    )
+    core["context_review_count"] = len(reviews)
+    ledger = core.get("finding_tier_report", {}).get("ledger", [])
+    reviewed_ids = {_pickle_role_identity(row) for row in reviews}
+    for row in ledger:
+        finding = row.get("raw_finding", {})
+        if _pickle_role_identity(finding) in reviewed_ids:
+            row["source_role_review"] = _pickle_source_role_witness(finding, roles)
+    tier_report = core.get("finding_tier_report", {})
+    tier_report.pop("report_sha256", None)
+    if isinstance(tier_report.get("ledger"), list):
+        tier_report["ledger_sha256"] = _tier_sha256(tier_report["ledger"])
+        tier_report["report_sha256"] = _tier_sha256(tier_report)
+    core["defect_policy_decision"] = {
+        **_PICKLE_SOURCE_ROLE_POLICY,
+        "policy_sha256": _tier_sha256(_PICKLE_SOURCE_ROLE_POLICY),
+        "state": "BLOCKED"
+        if roles is None
+        else "ALERTS_AND_CONTEXT_REVIEW"
+        if active
+        else "CONTEXT_REVIEW_REQUIRED",
+        "exit_code": 2 if roles is None else 1 if active else 0,
+        "active_alert_count": len(active),
+        "context_review_count": len(reviews),
+        "source_sha256": None if roles is None else roles["sources_sha256"],
+        "evidence_sha256": _tier_sha256(
+            {
+                "sources": None if roles is None else roles["sources_sha256"],
+                "reviews": [row.get("source_role_review") for row in ledger],
+            }
+        ),
+        "clean": False,
+        "passed": False,
+        "release_approved": False,
+    }
+    if roles is not None:
+        core["state"] = "FINDINGS" if active else "REVIEW_REQUIRED"
+        core["action_summary"] = (
+            f"{len(active)} active diagnostics; {len(reviews)} unresolved source-context reviews. No clean security result established."
+        )
+
+
+def _pickle_role_identity(finding):
+    return (
+        finding.get("path"),
+        finding.get("code"),
+        finding.get("line"),
+        finding.get("column", 0),
+    )
+
+
+def _pickle_role_sources(core, captured):
+    if core.get("audit_coverage", {}).get("complete") is not True or not isinstance(
+        captured, dict
+    ):
+        return None
+    rows = core.get("sources")
+    if not isinstance(rows, list) or not rows or len(rows) > 2000:
+        return None
+    selected = {}
+    for row in rows:
+        path = row.get("path")
+        raw = captured.get(path)
+        if not isinstance(path, str) or path in selected or not isinstance(raw, bytes):
+            return None
+        if hashlib.sha256(raw).hexdigest() != row.get("sha256") or len(raw) > 1_000_000:
+            return None
+        selected[path] = raw
+    return selected if sum(map(len, selected.values())) <= 32_000_000 else None
+
+
+def _pickle_role_inventory(sources):
+    try:
+        trees = {path: ast.parse(raw) for path, raw in sources.items()}
+    except (SyntaxError, ValueError, RecursionError):
+        return None
+    return {
+        "sources": sources,
+        "trees": trees,
+        "sources_sha256": _tier_sha256(
+            {
+                path: hashlib.sha256(raw).hexdigest()
+                for path, raw in sorted(sources.items())
+            }
+        ),
+        "origins": {},
+        "native": {},
+        "unsafe_callbacks": _pickle_role_serializer_risk(trees)
+        or any(
+            _pickle_role_callback_risk(tree, trees.values()) for tree in trees.values()
+        ),
+    }
+
+
+def _pickle_test_path(path):
+    value = PurePosixPath(path)
+    return (
+        bool({"test", "tests"}.intersection(value.parts[:-1]))
+        or value.name.startswith("test_")
+        or value.name.endswith("_test.py")
+    )
+
+
+def _pickle_source_role_witness(finding, inventory):
+    return _pickle_test_role_witness(finding, inventory) or _pickle_worker_role_witness(
+        finding, inventory
+    )
+
+
+def _pickle_worker_role_witness(finding, inventory):
+    path = finding.get("path")
+    if (
+        finding.get("code") != "SECURITY_UNSAFE_DESERIALIZATION"
+        or path not in inventory["trees"]
+        or inventory["unsafe_callbacks"]
+        or _pickle_test_path(path)
+        or _valid_security_precondition(
+            finding.get("facts", {}).get("security_precondition"), finding
+        )
+    ):
+        return None
+    if not _pickle_role_native_match(finding, inventory):
+        return None
+    tree = inventory["trees"][path]
+    calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and (node.lineno, node.col_offset)
+        == (finding.get("line"), finding.get("column", 0))
+    ]
+    if len(calls) != 1:
+        return None
+    evidence = _pickle_pipe_protocol(tree, calls[0]) or _pickle_queue_protocol(
+        tree, calls[0]
+    )
+    if not evidence:
+        return None
+    return {
+        "schema": "factory.security.pickle-worker-context.v1",
+        "role": "CAPTURED_LOCAL_WORKER_PROTOCOL",
+        "tier": "NEEDS_CONTEXT",
+        "source_path": path,
+        "source_sha256": hashlib.sha256(inventory["sources"][path]).hexdigest(),
+        "sources_sha256": inventory["sources_sha256"],
+        "protocol": evidence,
+        "reconstruction_effects": "UNASSESSED",
+        "external_writer_authority": "UNASSESSED",
+        "runtime_provider_identity": "UNASSESSED",
+        "safe_reconstruction": False,
+        "original_severity": finding.get("severity"),
+        "policy_sha256": _tier_sha256(_PICKLE_SOURCE_ROLE_POLICY),
+    }
+
+
+def _pickle_span(node):
+    return [node.lineno, node.col_offset, node.end_lineno, node.end_col_offset]
+
+
+def _pickle_pipe_protocol(tree, sink):
+    parents = {
+        child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)
+    }
+    spawns = _pickle_worker_spawns(tree)
+    if not spawns:
+        return None
+    if ast.unparse(sink.func) == "pickle.load" and len(sink.args) == 1:
+        if _pickle_worker_stdin_scope(sink, parents, tree):
+            return {
+                "kind": "SAME_MODULE_SUBPROCESS_STDIN",
+                "sink_span": _pickle_span(sink),
+                "spawn_spans": [_pickle_span(node) for node in spawns],
+            }
+    if (
+        ast.unparse(sink.func) != "pickle.loads"
+        or len(sink.args) != 1
+        or not isinstance(sink.args[0], ast.Name)
+    ):
+        return None
+    scope = parents.get(sink)
+    while scope in parents and not isinstance(
+        scope, (ast.FunctionDef, ast.AsyncFunctionDef)
+    ):
+        scope = parents[scope]
+    return _pickle_worker_pipe_receiver(tree, scope, sink, spawns)
+
+
+def _pickle_worker_spawns(tree):
+    commands = {
+        node.targets[0].id: node.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Assign)
+        and len(node.targets) == 1
+        and isinstance(node.targets[0], ast.Name)
+    }
+    spawns = []
+    for node in ast.walk(tree):
+        if (
+            not isinstance(node, ast.Call)
+            or not isinstance(node.func, ast.Name)
+            or not node.args
+        ):
+            continue
+        command = (
+            commands.get(node.args[0].id)
+            if isinstance(node.args[0], ast.Name)
+            else node.args[0]
+        )
+        if not isinstance(command, (ast.List, ast.Tuple)):
+            continue
+        argv = [ast.unparse(value) for value in command.elts]
+        pipes = {kw.arg: ast.unparse(kw.value) for kw in node.keywords}
+        if (
+            argv
+            in [
+                ["sys.executable", "'-u'", "'-m'", "__name__"],
+                ["sys.executable", "'-m'", "__name__"],
+            ]
+            and pipes.get("stdin") == pipes.get("stdout") == "subprocess.PIPE"
+        ):
+            spawns.append(node)
+    return spawns
+
+
+def _pickle_worker_stdin_scope(sink, parents, tree):
+    scope = parents.get(sink)
+    while scope in parents and not isinstance(
+        scope, (ast.FunctionDef, ast.AsyncFunctionDef)
+    ):
+        scope = parents[scope]
+    if (
+        not isinstance(scope, ast.FunctionDef)
+        or parents.get(scope) is not tree
+        or scope.args.args
+    ):
+        return False
+    if ast.unparse(sink.args[0]) != "stdin.buffer":
+        return False
+    bindings = [
+        node
+        for node in ast.walk(scope)
+        if isinstance(node, ast.Assign)
+        and any(isinstance(t, ast.Name) and t.id == "stdin" for t in node.targets)
+        and node.lineno < sink.lineno
+    ]
+    bound = len(bindings) == 1 and ast.unparse(bindings[0].value) == "sys.stdin"
+    launched = any(
+        isinstance(node, ast.If)
+        and ast.unparse(node.test) == "__name__ == '__main__'"
+        and any(
+            isinstance(item, ast.Expr)
+            and isinstance(item.value, ast.Call)
+            and ast.unparse(item.value.func) == scope.name
+            for item in node.body
+        )
+        for node in tree.body
+    )
+    dumps = any(
+        isinstance(node, ast.Call) and ast.unparse(node.func) == "pickle.dumps"
+        for node in ast.walk(scope)
+    )
+    return bound and launched and dumps
+
+
+def _pickle_worker_pipe_receiver(tree, scope, sink, spawns):
+    if not isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return None
+    receives = [
+        node
+        for node in ast.walk(scope)
+        if isinstance(node, ast.Assign)
+        and len(node.targets) == 1
+        and isinstance(node.targets[0], ast.Name)
+        and node.targets[0].id == sink.args[0].id
+        and isinstance(node.value, ast.Await)
+        and isinstance(node.value.value, ast.Call)
+        and ast.unparse(node.value.value.func) == "buffered.receive_exactly"
+        and node.lineno < sink.lineno
+    ]
+    enclosing = _pickle_role_enclosing(
+        tree, sink, (ast.FunctionDef, ast.AsyncFunctionDef)
+    )
+    buffers = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Assign)
+        and isinstance(node.value, ast.Call)
+        and any(isinstance(t, ast.Name) and t.id == "buffered" for t in node.targets)
+        and _pickle_role_enclosing(tree, node, (ast.FunctionDef, ast.AsyncFunctionDef))[
+            :1
+        ]
+        in [enclosing[i : i + 1] for i in range(len(enclosing))]
+        and any(
+            isinstance(value, ast.Attribute) and ast.unparse(value) == "process.stdout"
+            for value in ast.walk(node.value)
+        )
+    ]
+    dumps = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and ast.unparse(node.func) == "pickle.dumps"
+    ]
+    all_buffers = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Assign)
+        and any(isinstance(t, ast.Name) and t.id == "buffered" for t in node.targets)
+    ]
+    writes = [
+        node
+        for node in ast.walk(scope)
+        if isinstance(node, ast.Name)
+        and node.id == sink.args[0].id
+        and isinstance(node.ctx, (ast.Store, ast.Del))
+    ]
+    if (
+        len(receives) != 1
+        or len(writes) != 1
+        or not buffers
+        or len(all_buffers) != len(buffers)
+        or not dumps
+    ):
+        return None
+    if any(
+        arg.arg == "buffered"
+        for frame in enclosing
+        for arg in [*frame.args.args, *frame.args.posonlyargs, *frame.args.kwonlyargs]
+    ):
+        return None
+    if not any(
+        _pickle_role_enclosing(tree, node, (ast.FunctionDef, ast.AsyncFunctionDef))[:1]
+        == enclosing[-1:]
+        for node in spawns
+    ):
+        return None
+    return {
+        "kind": "SAME_MODULE_SUBPROCESS_STDOUT",
+        "sink_span": _pickle_span(sink),
+        "receive_span": _pickle_span(receives[0]),
+        "buffer_spans": [_pickle_span(n) for n in buffers],
+        "spawn_spans": [_pickle_span(n) for n in spawns],
+        "serialization_spans": [_pickle_span(n) for n in dumps],
+    }
+
+
+def _pickle_role_enclosing(tree, node, kinds):
+    parents = {
+        child: parent
+        for parent in ast.walk(tree)
+        for child in ast.iter_child_nodes(parent)
+    }
+    result = []
+    while node in parents:
+        node = parents[node]
+        if isinstance(node, kinds):
+            result.append(node)
+    return result
+
+
+def _pickle_queue_protocol(tree, sink):
+    if (
+        ast.unparse(sink.func) != "pickle.loads"
+        or len(sink.args) != 1
+        or ast.unparse(sink.args[0]) != "res"
+    ):
+        return None
+    calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call)]
+    names = {ast.unparse(node.func) for node in calls}
+    if (
+        not {
+            "_interpqueues.create",
+            "_interpqueues.get",
+            "_interpqueues.put",
+            "_interpreters.exec",
+            "pickle.dumps",
+        }
+        <= names
+    ):
+        return None
+    creates = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Assign)
+        and any(ast.unparse(t) == "self._queue_id" for t in node.targets)
+        and isinstance(node.value, ast.Call)
+        and ast.unparse(node.value.func) == "_interpqueues.create"
+    ]
+    receives = [
+        node
+        for node in calls
+        if ast.unparse(node.func) == "_interpqueues.get"
+        and node.args
+        and ast.unparse(node.args[0]) == "self._queue_id"
+    ]
+    peers = _pickle_queue_serializing_peers(tree, calls)
+    if (
+        len(creates) != 1
+        or len(receives) != 1
+        or not peers
+        or _pickle_role_enclosing(tree, creates[0], (ast.ClassDef,))[:1]
+        != _pickle_role_enclosing(tree, sink, (ast.ClassDef,))[:1]
+        or not _pickle_role_enclosing(tree, sink, (ast.ClassDef,))
+        or not _pickle_queue_sink_bound(tree, sink, receives[0])
+    ):
+        return None
+    if not _pickle_queue_identities_bound(tree, sink, creates[0]):
+        return None
+    return {
+        "kind": "SOURCE_CREATED_INTERPRETER_QUEUE",
+        "sink_span": _pickle_span(sink),
+        "queue_creation_span": _pickle_span(creates[0]),
+        "receive_span": _pickle_span(receives[0]),
+        "embedded_peer_sha256": peers,
+    }
+
+
+def _pickle_queue_identities_bound(tree, sink, creation):
+    owner = _pickle_role_enclosing(tree, sink, (ast.ClassDef,))[0]
+    queue_writes = [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Attribute)
+        and ast.unparse(node) == "self._queue_id"
+        and isinstance(node.ctx, (ast.Store, ast.Del))
+    ]
+    if len(queue_writes) != 1:
+        return False
+    frames = _pickle_role_enclosing(tree, sink, (ast.FunctionDef, ast.AsyncFunctionDef))
+    calls = [node for node in ast.walk(frames[0]) if isinstance(node, ast.Call)]
+    if not any(
+        ast.unparse(node.func) == "_interpreters.exec"
+        and node.args
+        and ast.unparse(node.args[0]) == "self._interpreter_id"
+        for node in calls
+    ):
+        return False
+    return any(
+        ast.unparse(node.func) == "_interpqueues.put"
+        and node.args
+        and ast.unparse(node.args[0]) == "self._queue_id"
+        for node in calls
+    )
+
+
+def _pickle_queue_sink_bound(tree, sink, receive):
+    parents = {
+        child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)
+    }
+    scope = sink
+    while scope in parents and not isinstance(
+        scope, (ast.FunctionDef, ast.AsyncFunctionDef)
+    ):
+        scope = parents[scope]
+    if not isinstance(
+        scope, (ast.FunctionDef, ast.AsyncFunctionDef)
+    ) or receive not in set(ast.walk(scope)):
+        return False
+    writes = [
+        node
+        for node in ast.walk(scope)
+        if isinstance(node, ast.Assign)
+        and node.lineno < sink.lineno
+        and any(
+            isinstance(value, ast.Name) and value.id == "res"
+            for target in node.targets
+            for value in ast.walk(target)
+        )
+    ]
+    expected = ["_interpqueues.get(self._queue_id)", "res[:2]"]
+    if [
+        ast.unparse(node.value) for node in sorted(writes, key=lambda node: node.lineno)
+    ] != expected:
+        return False
+    return any(
+        isinstance(node, ast.Call)
+        and ast.unparse(node.func) == "_interpreters.set___main___attrs"
+        and len(node.args) == 2
+        and ast.unparse(node.args[1]) == "{'queue_id': self._queue_id}"
+        for node in ast.walk(tree)
+    )
+
+
+def _pickle_queue_serializing_peers(tree, calls):
+    peers = []
+    for node in calls:
+        if (
+            ast.unparse(node.func) != "compile"
+            or not node.args
+            or not isinstance(node.args[0], ast.Constant)
+        ):
+            continue
+        source = node.args[0].value
+        if not isinstance(source, str):
+            continue
+        bindings = [
+            item.targets[0].id
+            for item in ast.walk(tree)
+            if isinstance(item, ast.Assign)
+            and item.value is node
+            and len(item.targets) == 1
+            and isinstance(item.targets[0], ast.Name)
+        ]
+        if len(bindings) != 1 or not any(
+            ast.unparse(item.func) == "_interpreters.exec"
+            and len(item.args) == 2
+            and ast.unparse(item.args[1]) == bindings[0]
+            for item in calls
+        ):
+            continue
+        try:
+            peer = ast.parse(source)
+        except SyntaxError:
+            continue
+        names = {
+            ast.unparse(item.func)
+            for item in ast.walk(peer)
+            if isinstance(item, ast.Call)
+        }
+        queue_calls = [
+            item
+            for item in ast.walk(peer)
+            if isinstance(item, ast.Call)
+            and ast.unparse(item.func) in {"_interpqueues.put", "_interpqueues.get"}
+        ]
+        ids_bound = queue_calls and all(
+            item.args and ast.unparse(item.args[0]) == "queue_id"
+            for item in queue_calls
+        )
+        if {
+            "dumps",
+            "_interpqueues.put",
+            "_interpqueues.get",
+            "loads",
+        } <= names and ids_bound:
+            peers.append(hashlib.sha256(source.encode()).hexdigest())
+    return peers
+
+
+def _pickle_test_role_witness(finding, inventory):
+    path = finding.get("path")
+    if (
+        finding.get("code") != "SECURITY_UNSAFE_DESERIALIZATION"
+        or not isinstance(path, str)
+        or not _pickle_test_path(path)
+        or path not in inventory["trees"]
+    ):
+        return None
+    if (
+        _valid_security_precondition(
+            finding.get("facts", {}).get("security_precondition"), finding
+        )
+        or inventory["unsafe_callbacks"]
+    ):
+        return None
+    source = inventory["sources"][path]
+    if not _pickle_role_native_match(finding, inventory):
+        return None
+    origin = _finding_pickle_byte_origin(finding, source, True, inventory["origins"])
+    if origin is None or _pickle_operational_importer(path, inventory["trees"]):
+        return None
+    tree = inventory["trees"][path]
+    scope = _pickle_role_test_scope(tree, finding, inventory)
+    if scope is None:
+        return None
+    return {
+        "schema": "factory.security.pickle-test-context.v1",
+        "role": "CAPTURED_TEST_ROUNDTRIP",
+        "tier": "NEEDS_CONTEXT",
+        "source_path": path,
+        "source_sha256": hashlib.sha256(source).hexdigest(),
+        "sources_sha256": inventory["sources_sha256"],
+        "test_span": [
+            scope.lineno,
+            scope.col_offset,
+            scope.end_lineno,
+            scope.end_col_offset,
+        ],
+        "test_ast_sha256": _tier_sha256(ast.dump(scope, include_attributes=False)),
+        "byte_origin": origin,
+        "static_operational_importer": "NOT_OBSERVED",
+        "reconstruction_effects": "UNASSESSED",
+        "dynamic_deployment": "UNASSESSED",
+        "original_severity": finding.get("severity"),
+        "safe_reconstruction": False,
+        "policy_sha256": _tier_sha256(_PICKLE_SOURCE_ROLE_POLICY),
+    }
+
+
+def _pickle_role_native_match(finding, inventory):
+    from .review_audits import _security_only_scan_context
+
+    path = finding["path"]
+    if path not in inventory["native"]:
+        with _security_only_scan_context(True):
+            inventory["native"][path] = _regenerate_native_findings(
+                path, inventory["sources"][path]
+            )
+    return finding in inventory["native"][path]
+
+
+def _pickle_role_test_scope(tree, finding, inventory=None):
+    parents = {
+        child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)
+    }
+    calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and (node.lineno, node.col_offset)
+        == (finding.get("line"), finding.get("column", 0))
+    ]
+    if len(calls) != 1:
+        return None
+    scope = calls[0]
+    while scope in parents and not isinstance(
+        scope, (ast.FunctionDef, ast.AsyncFunctionDef)
+    ):
+        scope = parents[scope]
+    if not isinstance(
+        scope, (ast.FunctionDef, ast.AsyncFunctionDef)
+    ) or not scope.name.startswith("test"):
+        return None
+    owner = parents.get(scope)
+    if owner is not tree and not (
+        isinstance(owner, ast.ClassDef) and parents.get(owner) is tree
+    ):
+        return None
+    if _pickle_role_disabled(tree) or _pickle_role_disabled(scope):
+        return None
+    if isinstance(owner, ast.ClassDef) and (
+        _pickle_role_disabled(owner)
+        or any(
+            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == "__init__"
+            for node in owner.body
+        )
+    ):
+        return None
+    imports = [
+        node for node in tree.body if isinstance(node, (ast.Import, ast.ImportFrom))
+    ]
+    framework = any(
+        (isinstance(node, ast.ImportFrom) and node.module in {"pytest", "unittest"})
+        or isinstance(node, ast.Import)
+        and any(alias.name in {"pytest", "unittest"} for alias in node.names)
+        for node in imports
+    )
+    asserted = any(isinstance(node, ast.Assert) for node in ast.walk(scope))
+    collected_owner = (
+        owner is tree
+        or isinstance(owner, ast.ClassDef)
+        and (
+            owner.name.startswith("Test")
+            or _pickle_collected_descendant(owner.name, tree, scope.name)
+            or inventory is not None
+            and id(owner) in _pickle_role_unittest_owners(inventory)
+        )
+    )
+    return scope if collected_owner and (framework or asserted) else None
+
+
+def _pickle_role_unittest_owners(inventory):
+    if "unittest_owners" not in inventory:
+        inventory["unittest_owners"] = _pickle_role_unittest_graph(inventory["trees"])
+    return inventory["unittest_owners"]
+
+
+def _pickle_role_unittest_graph(trees):
+    from . import review_audits as audit
+    from .runtime_audit_integrity import (
+        _conditional_file_aliases,
+        _conditional_module_name,
+    )
+
+    if any(
+        PurePosixPath(path).stem == "unittest" or "/unittest/" in "/" + path
+        for path in trees
+    ):
+        return set()
+    modules = {path: _conditional_module_name(path) for path in trees}
+    writes = _pickle_role_class_writes(trees, modules)
+    classes = {}
+    for path, tree in trees.items():
+        aliases = _conditional_file_aliases(path, tree, modules)
+        if aliases is None:
+            continue
+        local = {
+            node.name: f"{modules[path]}.{node.name}"
+            for node in tree.body
+            if isinstance(node, ast.ClassDef)
+        }
+        for node in tree.body:
+            if (
+                isinstance(node, ast.ClassDef)
+                and not _pickle_role_disabled(node)
+                and not _pickle_role_bases_rebound(tree, node, aliases)
+            ):
+                bases = [
+                    audit._resolved_ast_name(base, {**local, **aliases})
+                    for base in node.bases
+                ]
+                if not any(
+                    _pickle_role_class_path_written(name, writes)
+                    for name in [local[node.name], *bases]
+                ):
+                    classes[local[node.name]] = (node, bases)
+    selected = {"unittest.TestCase"}
+    for _ in range(len(classes) + 1):
+        before = set(selected)
+        selected.update(
+            name
+            for name, (_, bases) in classes.items()
+            if any(base in selected for base in bases)
+        )
+        if before == selected:
+            break
+    return {id(node) for name, (node, _) in classes.items() if name in selected}
+
+
+def _pickle_role_class_path_written(name, writes):
+    return any(
+        name == value
+        or name.startswith(value + ".")
+        or value
+        in {name + ".__bases__", name + ".__class__", name + ".__init_subclass__"}
+        for value in writes
+    )
+
+
+def _pickle_role_class_writes(trees, modules):
+    from . import review_audits as audit
+    from .runtime_audit_integrity import _conditional_file_aliases
+
+    writes = set()
+    for path, tree in trees.items():
+        aliases = _conditional_file_aliases(path, tree, modules) or {}
+        aliases.update(
+            {
+                node.name: f"{modules[path]}.{node.name}"
+                for node in tree.body
+                if isinstance(node, ast.ClassDef)
+            }
+        )
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.Name, ast.Attribute)) and isinstance(
+                node.ctx, (ast.Store, ast.Del)
+            ):
+                writes.add(audit._resolved_ast_name(node, aliases))
+            if isinstance(node, ast.Call) and audit._resolved_ast_name(
+                node.func, aliases
+            ).removeprefix("builtins.") in {"setattr", "delattr"}:
+                if (
+                    len(node.args) >= 2
+                    and isinstance(node.args[1], ast.Constant)
+                    and isinstance(node.args[1].value, str)
+                ):
+                    writes.add(
+                        audit._resolved_ast_name(node.args[0], aliases)
+                        + "."
+                        + node.args[1].value
+                    )
+    return writes
+
+
+def _pickle_role_import_rebound(tree, aliases):
+    return any(
+        isinstance(node, ast.Name)
+        and isinstance(node.ctx, (ast.Store, ast.Del))
+        and node.id in aliases
+        for node in ast.walk(tree)
+    )
+
+
+def _pickle_role_bases_rebound(tree, node, aliases):
+    roots = {
+        value.id
+        for base in node.bases
+        for value in ast.walk(base)
+        if isinstance(value, ast.Name)
+    }
+    return _pickle_role_import_rebound(
+        tree, {name: target for name, target in aliases.items() if name in roots}
+    )
+
+
+def _pickle_role_disabled(node):
+    return any(
+        isinstance(item, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == "__test__"
+            for target in item.targets
+        )
+        and isinstance(item.value, ast.Constant)
+        and item.value.value is False
+        for item in node.body
+    )
+
+
+def _pickle_collected_descendant(name, tree, method):
+    classes = [node for node in tree.body if isinstance(node, ast.ClassDef)]
+    selected = {name}
+    for _ in range(16):
+        before = set(selected)
+        selected.update(
+            node.name
+            for node in classes
+            if not _pickle_role_disabled(node)
+            and not any(
+                isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and item.name in {method, "__init__"}
+                for item in node.body
+            )
+            and any(
+                isinstance(base, ast.Name) and base.id in selected
+                for base in node.bases
+            )
+        )
+        if selected == before:
+            return any(value.startswith("Test") for value in selected)
+    return False
+
+
+def _pickle_operational_importer(path, trees):
+    parts = PurePosixPath(path).with_suffix("").parts
+    candidates = {".".join(parts[index:]) for index in range(len(parts))}
+    for importer, tree in trees.items():
+        if _pickle_test_path(importer):
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import) and any(
+                alias.name in candidates for alias in node.names
+            ):
+                return True
+            if isinstance(node, ast.ImportFrom) and _pickle_role_imports_target(
+                node, importer, candidates
+            ):
+                return True
+    return False
+
+
+def _pickle_role_imports_target(node, importer, candidates):
+    package = list(PurePosixPath(importer).with_suffix("").parts[:-1])
+    if node.level:
+        package = package[: max(0, len(package) - node.level + 1)]
+    else:
+        package = []
+    prefix = ".".join([*package, *([node.module] if node.module else [])])
+    return prefix in candidates or any(
+        ".".join(filter(None, [prefix, alias.name])) in candidates
+        for alias in node.names
+    )
+
+
+def _pickle_role_serializer_risk(trees):
+    from . import review_audits as audit
+
+    for path, tree in trees.items():
+        value = PurePosixPath(path)
+        if value.stem in {"pickle", "_pickle"} or (
+            value.name == "__init__.py" and value.parent.name in {"pickle", "_pickle"}
+        ):
+            return True
+        aliases = _pickle_role_serializer_aliases(tree, audit)
+        if _pickle_role_serializer_rebound(tree, aliases):
+            return True
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.Attribute, ast.Subscript)) and isinstance(
+                node.ctx, (ast.Store, ast.Del)
+            ):
+                if any(
+                    audit._resolved_ast_name(child, aliases).split(".")[0]
+                    in {"pickle", "_pickle"}
+                    for child in ast.walk(node)
+                    if isinstance(child, (ast.Name, ast.Attribute))
+                ):
+                    return True
+            if isinstance(node, ast.Call) and _pickle_role_serializer_mutation(
+                node, aliases, audit
+            ):
+                return True
+    return False
+
+
+def _pickle_role_serializer_rebound(tree, aliases):
+    stores = {
+        node.id
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del))
+    }
+    args = {node.arg for node in ast.walk(tree) if isinstance(node, ast.arg)}
+    direct = {
+        alias.asname or alias.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Import)
+        for alias in node.names
+        if alias.name in {"pickle", "_pickle"}
+    }
+    return bool(direct.intersection(stores | args))
+
+
+def _pickle_role_serializer_aliases(tree, audit):
+    aliases = audit._security_aliases(list(ast.walk(tree)))
+    assignments = [node for node in ast.walk(tree) if isinstance(node, ast.Assign)]
+    for _ in range(len(assignments) + 1):
+        before = dict(aliases)
+        for node in assignments:
+            name = audit._resolved_ast_name(node.value, aliases)
+            if name in {"pickle", "_pickle", "pickle.__dict__", "_pickle.__dict__"}:
+                aliases.update(
+                    {
+                        target.id: name
+                        for target in node.targets
+                        if isinstance(target, ast.Name)
+                    }
+                )
+        if aliases == before:
+            break
+    return aliases
+
+
+def _pickle_role_serializer_mutation(node, aliases, audit):
+    name = audit._resolved_ast_name(node.func, aliases)
+    if name.removeprefix("builtins.") in {"setattr", "delattr", "vars"}:
+        return bool(
+            node.args
+            and audit._resolved_ast_name(node.args[0], aliases) in {"pickle", "_pickle"}
+        )
+    return name.startswith(("pickle.__dict__.", "_pickle.__dict__.")) or name in {
+        "pickle.__setattr__",
+        "pickle.__delattr__",
+        "_pickle.__setattr__",
+        "_pickle.__delattr__",
+    }
+
+
+def _pickle_role_callback_risk(tree, trees=None):
+    from . import review_audits as audit
+
+    hooks = {
+        "__reduce__",
+        "__reduce_ex__",
+        "__getstate__",
+        "__setstate__",
+        "__new__",
+        "__getnewargs__",
+        "__getnewargs_ex__",
+    }
+    dangerous = {"eval", "exec", "open", "compile", "__import__"}
+    roots = (
+        "subprocess.",
+        "os.system",
+        "os.popen",
+        "requests.",
+        "socket.",
+        "urllib.request.",
+    )
+    functions = [
+        (node, owner)
+        for owner in (trees if trees is not None else [tree])
+        for node in ast.walk(owner)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    ]
+    pending = [
+        (node, owner)
+        for node, owner in functions
+        if owner is tree and node.name in hooks
+    ]
+    seen = set()
+    while pending:
+        function, owner = pending.pop()
+        if id(function) in seen:
+            continue
+        seen.add(id(function))
+        aliases = audit._security_aliases(list(ast.walk(owner)))
+        names = [
+            audit._resolved_ast_name(node, aliases)
+            for node in ast.walk(function)
+            if isinstance(node, (ast.Name, ast.Attribute))
+        ]
+        if any(
+            name in dangerous
+            or name.removeprefix("builtins.") in dangerous
+            or name.startswith(roots)
+            for name in names
+        ):
+            return True
+        pending.extend(
+            (node, owner)
+            for node, owner in functions
+            if node.name in {name.rsplit(".", 1)[-1] for name in names}
+        )
+    return False
+
+
+def _conditional_provider_binding(finding, core, bindings, audit):
+    from . import review_audits as native_audit
+    from .finite_capture import provider_analysis_profile
+    from .runtime_audit_common import RuntimeAuditError
+
+    profile = core.get("provider_analysis_profile")
+    captured = core.get("_primitive_source_bytes")
+    if (
+        not isinstance(profile, dict)
+        or profile.get("analysis_profile")
+        not in {"trusted-dependencies-v1", "trusted-dependencies-v2"}
+        or not isinstance(captured, dict)
+        or core.get("audit_coverage", {}).get("complete") is not True
+    ):
+        return False
+    if (
+        len(bindings) != len(core.get("sources", []))
+        or _jwt_bound_source_inventory(
+            {path: captured.get(path) for path in bindings}, bindings
+        )
+        is None
+    ):
+        return False
+    try:
+        current = provider_analysis_profile(
+            profile["analysis_profile"], tuple(profile["contracts"])
+        )
+        if current != profile:
+            return False
+        selected = _conditional_binding_contract(current, finding)
+        if selected is None:
+            return False
+        required = {finding.get("path"), *selected["artifacts"]}
+        if not required <= set(bindings):
+            return False
+        native = _regenerate_native_findings(
+            finding.get("path"), captured.get(finding.get("path"))
+        )
+        return any(
+            _conditional_provider_row(row, current, captured, native_audit) == finding
+            for row in native
+            if (row.get("code"), row.get("line"), row.get("column"))
+            == (finding.get("code"), finding.get("line"), finding.get("column"))
+        )
+    except (KeyError, TypeError, ValueError, RecursionError, RuntimeAuditError):
+        return False
+
+
+def _conditional_binding_contract(profile, finding):
+    if profile["analysis_profile"] == "trusted-dependencies-v1":
+        return profile["contracts"][0]
+    from .finite_capture import provider_contract_view
+
+    witness = finding.get("facts", {}).get("provider_witness", {})
+    digest = witness.get("selected_contract_sha256")
+    if not isinstance(digest, str):
+        return None
+    view = provider_contract_view(profile, digest)
+    if not isinstance(view, dict) or view["selected_model_sha256"] != witness.get(
+        "selected_model_sha256"
+    ):
+        return None
+    return view["contract"]
 
 
 def partition_proven_primitive_observations(core, audit):
@@ -1089,6 +2730,7 @@ def _partition_proven_primitive_observations(core, audit):
             "PROVEN_CLOSED_OPERATION_COMMAND_SYNTAX",
             "PROVEN_CLOSED_LITERAL_PICKLE_BYTES",
             "PROVEN_LOCAL_CONTROL_LABEL",
+            "CONDITIONAL_PROVIDER_CONTRACT",
         }:
             retained.append(finding)
             continue
@@ -1142,8 +2784,12 @@ def _partition_proven_primitive_observations(core, audit):
 
 
 def _current_primitive_binding(finding, core, bindings, audit):
-    if _valid_security_precondition(finding.get("facts", {}).get("security_precondition"), finding):
+    if _valid_security_precondition(
+        finding.get("facts", {}).get("security_precondition"), finding
+    ):
         return False
+    if finding.get("facts", {}).get("disposition") == "CONDITIONAL_PROVIDER_CONTRACT":
+        return _conditional_provider_binding(finding, core, bindings, audit)
     sources = core.get("sources", [])
     if (
         finding.get("facts", {}).get("disposition")
@@ -2434,6 +4080,9 @@ def primitive_binding_helpers():
         rejected_primitive_proof,
         partition_proven_primitive_observations,
         _partition_proven_primitive_observations,
+        _pickle_byte_origin_fields,
+        _finding_pickle_byte_origin,
+        _pickle_byte_origins_for_source,
         _application_role_rebuild_index,
         _current_primitive_binding,
         annotate_django_fixture,

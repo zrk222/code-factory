@@ -20,6 +20,14 @@ from factoryline.deep_audit_io import digest
 from factoryline.runtime_audit_common import RuntimeAuditError, sha256_bytes
 
 
+def _workspace_policy319_request_pickle_fixture(root):
+    (root / "app.py").write_text(
+        "import pickle\nfrom flask import request\n"
+        "def decode():\n    return pickle.loads(request.get_data())\n",
+        encoding="utf-8",
+    )
+
+
 def test_zap_source_trace_mount_preserves_isolation_and_signed_python(tmp_path):
     from factoryline.deep_audit import _zap_app_argv
     from test_deep_audit_sarif import _host_zap_lane_fixture
@@ -64,6 +72,130 @@ def test_zap_prepare_trace_activates_only_signed_bound_python_provider(tmp_path)
     assert prepared_request["target"] == lane["native_target"]
     assert prepared_request["profile_sha256"] == digest(lane)
     assert b"/trace/events.jsonl" in path.read_bytes()
+
+
+def test_workspace_policy319_native_request_pickle_defect_is_admitted(tmp_path):
+    from factoryline.deep_audit_io import full_repository_scan
+
+    _workspace_policy319_request_pickle_fixture(tmp_path)
+    report = full_repository_scan(
+        tmp_path, context_profile="workspace-v2", defect_policy="trusted-core-v1"
+    )
+    decision = report["defect_policy_decision"]
+    assert decision["state"] == "DEFECTS_PRESENT"
+    assert decision["exit_code"] == 1
+    assert decision["supported_defect_count"] >= 1
+    assert decision["passed"] is False
+    assert decision["clean"] is False
+    assert decision["release_approved"] is False
+    assert report["workspace_evidence"]["selected_defect_policy"] == "trusted-core-v1"
+    assert any(
+        row["code"] == "SECURITY_UNSAFE_DESERIALIZATION"
+        for row in report["workspace_evidence"]["raw_findings"]
+    )
+
+
+def test_workspace_policy319_review_and_incomplete_states_stay_distinct(tmp_path):
+    from factoryline.deep_audit_io import full_repository_scan
+
+    (tmp_path / "opaque.py").write_text(
+        "import pickle\ndef decode(value):\n    return pickle.loads(value)\n",
+        encoding="utf-8",
+    )
+    review = full_repository_scan(
+        tmp_path, context_profile="workspace-v2", defect_policy="trusted-core-v1"
+    )["defect_policy_decision"]
+    assert review["state"] == "NO_SUPPORTED_DEFECTS_REVIEW_REQUIRED"
+    assert review["exit_code"] == 0
+    assert review["passed"] is False and review["clean"] is False
+    assert review["release_approved"] is False
+    assert review["needs_context_count"] >= 1
+
+    incomplete_root = tmp_path / "incomplete"
+    incomplete_root.mkdir()
+    (incomplete_root / "broken.py").write_text("def broken(:\n", encoding="utf-8")
+    blocked = full_repository_scan(
+        incomplete_root,
+        context_profile="workspace-v2",
+        defect_policy="trusted-core-v1",
+    )["defect_policy_decision"]
+    assert blocked["state"] == "BLOCKED" and blocked["exit_code"] == 2
+    assert blocked["passed"] is False and blocked["clean"] is False
+    assert blocked["release_approved"] is False
+
+
+def test_workspace_policy319_legacy_shape_and_isolated_refusal(tmp_path):
+    from factoryline.deep_audit_io import full_repository_scan
+
+    (tmp_path / "opaque.py").write_text("value = 1\n", encoding="utf-8")
+    legacy = full_repository_scan(tmp_path, context_profile="workspace-v2")
+    assert "selected_defect_policy" not in legacy
+    assert "defect_policy_sha256" not in legacy
+    assert "defect_policy_decision" not in legacy
+    assert "selected_defect_policy" not in legacy["workspace_evidence"]
+    with pytest.raises(RuntimeAuditError, match="workspace-v2"):
+        full_repository_scan(tmp_path, defect_policy="trusted-core-v1")
+
+
+def test_workspace_policy319_selection_switch_rejects_checkpoint_reuse(tmp_path):
+    from factoryline.deep_audit_io import full_repository_scan
+
+    (tmp_path / "opaque.py").write_text("value = 1\n", encoding="utf-8")
+    full_repository_scan(tmp_path, context_profile="workspace-v2")
+    with pytest.raises(RuntimeAuditError, match="checkpoint|configuration|identity"):
+        full_repository_scan(
+            tmp_path,
+            context_profile="workspace-v2",
+            defect_policy="trusted-core-v1",
+            resume=True,
+        )
+
+
+def test_workspace_policy319_rejects_inconsistent_native_tier_gate(
+    tmp_path, monkeypatch
+):
+    from factoryline import deep_audit_io
+
+    evidence = {
+        "sources": {
+            "capture_complete": True,
+            "files_discovered": 1,
+            "files_bound": 1,
+            "source_manifest_sha256": "a" * 64,
+        },
+        "oracle_context": {"state": "captured"},
+        "audit_coverage": {"complete": True, "files_processed": 1},
+        "primitive_partition": {"state": "VALIDATED"},
+        "raw_findings": [],
+        "finding_tiers": {
+            "defect_gate": {
+                "state": "NO_SUPPORTED_DEFECTS_OBSERVED",
+                "supported_defect_count": 1,
+                "needs_context_count": 0,
+                "passed": False,
+                "clean": False,
+                "completeness_state": "ASSESSED_WITHIN_DECLARED_SCOPE",
+            },
+            "ledger": [],
+            "tier_counts": {},
+            "policy_sha256": "x",
+            "ledger_sha256": "x",
+            "report_sha256": "x",
+        },
+    }
+    generation = {
+        "workspace_evidence": evidence,
+        "inventory": [{"path": "x.py", "state": "ready", "sha256": "b" * 64}],
+        "inventory_hash": "c" * 64,
+        "scanner": "d" * 64,
+        "configuration": "e" * 64,
+        "context_generation_sha256": "f" * 64,
+        "collection_incomplete": False,
+    }
+    decision = deep_audit_io._full_repository_trusted_core_decision(
+        generation, [{"status": "audited"}]
+    )
+    assert decision["state"] == "BLOCKED" and decision["exit_code"] == 2
 
 
 @pytest.mark.parametrize("mode", ["valid", "missing", "replay", "unmeasured"])

@@ -5,6 +5,7 @@ The packet is a read-only view of already-authorized local sources. It is not a 
 from __future__ import annotations
 
 import ast
+from collections.abc import Mapping
 import hashlib
 import io
 import json
@@ -6029,3 +6030,613 @@ def _protocol_chain_bindings(chain):
     from .test_oracle_misuse import _protocol_chain_bindings as analyze
 
     return analyze(chain)
+
+
+def _informed_failure(status, reason, limit=64000):
+    return {
+        "schema": "factory.informed-sink-context.v1",
+        "status": status,
+        "excerpts": [],
+        "edges": [],
+        "dependency_sources": [],
+        "unknowns": [{"status": "UNKNOWN", "reason": reason}],
+        "truncation": [reason] if "BUDGET" in status else [],
+        "authority": {"status": "UNKNOWN"},
+        "actionability": "NEEDS_CONTEXT",
+    }
+
+
+def _informed_ref(index, path, node):
+    return {
+        "path": index.relative(path),
+        "sha256": index.inventory[path],
+        "start_line": node.lineno,
+        "end_line": node.end_lineno,
+    }
+
+
+def _informed_excerpt(index, path, node, kind):
+    lines = index.source_bytes[path].decode("utf-8").splitlines(keepends=True)
+    end = (
+        max(node.lineno, node.body[0].lineno - 1)
+        if kind == "signature"
+        else node.end_lineno
+    )
+    return {
+        **_informed_ref(index, path, node),
+        "kind": kind,
+        "end_line": end,
+        "content": "".join(lines[node.lineno - 1 : end]),
+    }
+
+
+def _informed_owner(index, path, node):
+    parent = index.parents[path].get(id(node))
+    while parent is not None:
+        if isinstance(parent, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            return parent
+        parent = index.parents[path].get(id(parent))
+    return index.snapshots[path]
+
+
+def _informed_target(index, path, call, inventory, capture):
+    from .credential_role_constructor_provider import binding_occurrences
+
+    expr, tree = call.func, index.snapshots[path]
+    owner = _informed_owner(index, path, call)
+    root = expr.value if isinstance(expr, ast.Attribute) else expr
+    if not isinstance(root, ast.Name) or _informed_mutation(tree, root.id):
+        return None
+    if not _informed_unshadowed(index, path, owner, tree, root.id):
+        return None
+    bindings = binding_occurrences(tree.body, root.id)
+    if len(bindings) != 1 or bindings[0] not in tree.body:
+        return None
+    binding, selected = bindings[0], path
+    if isinstance(binding, (ast.Import, ast.ImportFrom)):
+        resolved = _informed_import(
+            index, path, binding, root.id, expr, inventory, capture
+        )
+        if resolved is None:
+            return None
+        selected, binding = resolved
+    elif isinstance(expr, ast.Attribute):
+        return None
+    if isinstance(binding, ast.ClassDef):
+        return _informed_constructor(selected, binding, call)
+    if (
+        isinstance(binding, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and not binding.decorator_list
+    ):
+        return selected, binding, None, binding
+    return None
+
+
+def _informed_unshadowed(index, path, owner, tree, name):
+    from .credential_role_constructor_provider import binding_occurrences
+
+    while owner is not tree:
+        if isinstance(owner, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            params = {n.arg for n in ast.walk(owner.args) if isinstance(n, ast.arg)}
+            if name in params or binding_occurrences(owner.body, name):
+                return False
+        elif isinstance(owner, (ast.Lambda, ast.ClassDef)):
+            return False
+        owner = index.parents[path].get(id(owner))
+        if owner is None:
+            return False
+    return True
+
+
+def _informed_constructor(path, declaration, call):
+    from .credential_role_constructor_provider import binding_occurrences
+
+    methods = binding_occurrences(declaration.body, "__init__")
+    if len(methods) == 1 and isinstance(methods[0], ast.FunctionDef):
+        if (
+            not declaration.bases
+            and not declaration.decorator_list
+            and not methods[0].decorator_list
+        ):
+            return path, methods[0], call, declaration
+    return None
+
+
+def _informed_mutation(tree, name):
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and any(a.name == "*" for a in node.names):
+            return True
+        if isinstance(node, ast.Attribute) and isinstance(
+            node.ctx, (ast.Store, ast.Del)
+        ):
+            if node.attr in {
+                "__code__",
+                "__defaults__",
+                "__kwdefaults__",
+                "__closure__",
+            }:
+                return True
+            if any(
+                isinstance(n, ast.Name) and n.id == name for n in ast.walk(node.value)
+            ):
+                return True
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            if node.func.id in {
+                "setattr",
+                "delattr",
+                "globals",
+                "locals",
+                "vars",
+                "exec",
+            }:
+                return True
+    return False
+
+
+def _informed_import(index, path, binding, name, expr, inventory, capture):
+    from .import_context import resolve_import_source, import_source_symbol
+    from .credential_role_constructor_provider import binding_occurrences
+
+    alias = next(
+        (a for a in binding.names if (a.asname or a.name.split(".")[0]) == name), None
+    )
+    if (
+        alias is None
+        or isinstance(binding, ast.Import)
+        and "." in alias.name
+        and not alias.asname
+    ):
+        return None
+    module = binding.module if isinstance(binding, ast.ImportFrom) else alias.name
+    imported = alias.name if isinstance(binding, ast.ImportFrom) else None
+    selected = resolve_import_source(
+        index.root, path, binding, module, inventory, imported, captured=True
+    )
+    if selected is None:
+        return None
+    if not _informed_admit(index, selected, capture):
+        return None
+    symbol = import_source_symbol(
+        index.root, path, binding, module, imported, selected, captured=True
+    )
+    if isinstance(expr, ast.Attribute):
+        if symbol is not None:
+            return None
+        symbol = expr.attr
+    if _informed_mutation(
+        index.snapshots[selected], symbol
+    ) or not _informed_packages_clear(index, selected):
+        return None
+    declarations = binding_occurrences(index.snapshots[selected].body, symbol)
+    return (selected, declarations[0]) if len(declarations) == 1 else None
+
+
+def _informed_admit(index, path, capture):
+    if path in capture["dependencies"]:
+        return True
+    if len(capture["dependencies"]) >= capture["max_sources"]:
+        capture["truncation"].append("max_sources")
+        return False
+    if not index.validate(path):
+        capture["stale"] = True
+        return False
+    capture["dependencies"][path] = index.inventory[path]
+    package = (
+        path.parent.parent if path.name == "__init__.py" else path.parent
+    ) / "__init__.py"
+    if package in index.snapshots and package != path:
+        return _informed_admit(index, package, capture)
+    return True
+
+
+def _informed_packages_clear(index, path):
+    directory = path.parent
+    while directory.is_relative_to(index.root):
+        initializer = index.snapshots.get(directory / "__init__.py")
+        if initializer is not None and not _informed_initializer_clear(initializer):
+            return False
+        directory = directory.parent
+    return True
+
+
+def _informed_initializer_clear(tree):
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            return False
+        if isinstance(node, (ast.Attribute, ast.Subscript)):
+            if isinstance(node.ctx, (ast.Store, ast.Del)):
+                return False
+    return True
+
+
+def _informed_edges(index, caller_path, call, target):
+    from .review_integrity import bind_source_call
+
+    path, function, receiver, declaration = target
+    bound = bind_source_call(call, function, receiver=receiver)
+    formals = {a.arg: a for a in ast.walk(function.args) if isinstance(a, ast.arg)}
+    actuals = {
+        id(n)
+        for arg in [*call.args, *(k.value for k in call.keywords)]
+        for n in ast.walk(arg)
+    }
+    rows = []
+    for name, value in bound.items():
+        if not isinstance(value, ast.AST):
+            raise ValueError("variadic_argument_binding_unknown")
+        origin = caller_path if id(value) in actuals or value is receiver else path
+        rows.append(
+            {
+                "kind": (
+                    "actual_to_formal"
+                    if id(value) in actuals or value is receiver
+                    else "default_to_formal"
+                ),
+                "status": "OBSERVED",
+                "formal": name,
+                "actual": _informed_ref(index, origin, value),
+                "formal_source": _informed_ref(index, path, formals[name]),
+            }
+        )
+    returns = [
+        n for n in function.body if isinstance(n, ast.Return) and n.value is not None
+    ]
+    if returns and returns[-1] is function.body[-1]:
+        rows.append(
+            {
+                "kind": "return_to_call",
+                "status": "OBSERVED",
+                "return_source": _informed_ref(index, path, returns[-1]),
+                "call_source": _informed_ref(index, caller_path, call),
+                "semantics": "syntactic_return_only_control_and_effects_unknown",
+            }
+        )
+    return rows
+
+
+def _informed_expand(result, index, path, sink, inventory, max_states, capture):
+    owner = _informed_owner(index, path, sink)
+    pending, visited, count = [(path, owner, "body")], set(), 0
+    while pending:
+        current, scope, kind = pending.pop(0)
+        if (current, id(scope)) in visited:
+            continue
+        visited.add((current, id(scope)))
+        _informed_scope_excerpts(result, index, current, scope, kind)
+        nodes = [scope]
+        while nodes:
+            node = nodes.pop()
+            count += 1
+            if count > max_states:
+                result["truncation"].append("max_states")
+                return
+            if node is not scope and isinstance(
+                node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
+            ):
+                continue
+            nodes.extend(ast.iter_child_nodes(node))
+            if not isinstance(node, ast.Call) or node is sink:
+                continue
+            target = _informed_target(index, current, node, inventory, capture)
+            if target is None:
+                result["unknowns"].append(
+                    {
+                        **_informed_ref(index, current, node),
+                        "status": "UNKNOWN",
+                        "reason": "callee_or_receiver_binding_unresolved",
+                    }
+                )
+                continue
+            try:
+                result["edges"].extend(_informed_edges(index, current, node, target))
+            except ValueError as exc:
+                result["unknowns"].append(
+                    {
+                        **_informed_ref(index, current, node),
+                        "status": "UNKNOWN",
+                        "reason": str(exc),
+                    }
+                )
+            pending.append((target[0], target[3], "helper"))
+    _informed_callers(
+        result, index, inventory, (path, owner), max_states - count, capture
+    )
+
+
+def _informed_scope_excerpts(result, index, path, scope, kind):
+    if hasattr(scope, "lineno"):
+        result["excerpts"].append(_informed_excerpt(index, path, scope, kind))
+    if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        result["excerpts"].append(_informed_excerpt(index, path, scope, "signature"))
+    result["excerpts"].extend(
+        _informed_excerpt(index, path, node, "import")
+        for node in index.snapshots[path].body
+        if isinstance(node, (ast.Import, ast.ImportFrom))
+    )
+
+
+def _informed_callers(result, index, inventory, initial, remaining, capture):
+    for current, tree in index.snapshots.items():
+        if not _informed_admit(index, current, capture):
+            return
+        for call in (n for n in ast.walk(tree) if isinstance(n, ast.Call)):
+            remaining -= 1
+            if remaining < 0:
+                result["truncation"].append("max_states")
+                return
+            target = _informed_target(index, current, call, inventory, capture)
+            if (
+                target is None
+                and isinstance(call.func, ast.Attribute)
+                and call.func.attr == getattr(initial[1], "name", None)
+            ):
+                result["unknowns"].append(
+                    {
+                        **_informed_ref(index, current, call),
+                        "status": "UNKNOWN",
+                        "reason": "caller_receiver_binding_unknown",
+                    }
+                )
+            if target is None or (target[0], target[1]) != initial:
+                continue
+            try:
+                result["edges"].extend(_informed_edges(index, current, call, target))
+                owner = _informed_owner(index, current, call)
+                result["excerpts"].append(
+                    _informed_excerpt(
+                        index,
+                        current,
+                        owner if hasattr(owner, "lineno") else call,
+                        "caller",
+                    )
+                )
+            except (ValueError, AttributeError):
+                result["unknowns"].append(
+                    {
+                        **_informed_ref(index, current, call),
+                        "status": "UNKNOWN",
+                        "reason": "caller_argument_binding_unknown",
+                    }
+                )
+
+
+def _informed_preflight(finding, index, limits):
+    if any(
+        type(n) is not int or n <= 0 or n > cap
+        for n, cap in zip(limits, (64, 512, 64000))
+    ):
+        return _informed_failure("SINK_BUDGET_INVALID", "invalid_limit")
+    requested = Path(finding.get("path", ""))
+    if (
+        requested.is_absolute()
+        or ".." in requested.parts
+        or requested.as_posix() != finding.get("path")
+    ):
+        return _informed_failure("SINK_SOURCE_STALE", "sink_path_noncanonical")
+    if (
+        any(len(raw) > 1_000_000 for raw in index.source_bytes.values())
+        or sum(map(len, index.source_bytes.values())) > 32_000_000
+    ):
+        return _informed_failure("SINK_INPUT_UNASSESSED", "input_byte_bound")
+
+
+def build_informed_sink_context(
+    finding, source_index, *, max_sources=64, max_states=512, max_output_bytes=64000
+):
+    """Expand captured source evidence; source closure never grants execution authority."""
+    from .import_context import CapturedImportInventory
+    from .runtime_audit_integrity import captured_sink_evidence
+
+    index = source_index
+    failure = _informed_preflight(
+        finding, index, (max_sources, max_states, max_output_bytes)
+    )
+    if failure:
+        return failure
+    path = index.root / finding.get("path", "")
+    digest = finding.get("source_sha256", finding.get("facts", {}).get("source_sha256"))
+    if (
+        path not in index.snapshots
+        or index.inventory[path] != digest
+        or index.relative(path) != finding.get("path")
+    ):
+        return _informed_failure("SINK_SOURCE_STALE", "sink_identity_invalid")
+    if not index.validate(path):
+        return _informed_failure("SINK_SOURCE_STALE", "sink_snapshot_invalid")
+    matches = [
+        n
+        for n in ast.walk(index.snapshots[path])
+        if isinstance(n, ast.Call)
+        and n.lineno == finding.get("line")
+        and n.col_offset == finding.get("column")
+        and all(
+            finding.get(k, getattr(n, attr)) == getattr(n, attr)
+            for k, attr in [
+                ("end_line", "end_lineno"),
+                ("end_column", "end_col_offset"),
+            ]
+        )
+    ]
+    if len(matches) != 1:
+        return _informed_failure("SINK_LOCATION_UNRESOLVED", "sink_span_not_unique")
+    native = captured_sink_evidence(
+        matches[0],
+        source_path=path,
+        source_sha256=digest,
+        source_index=index,
+        max_sources=max_sources,
+        max_states=max_states,
+        max_output_bytes=max_output_bytes,
+    )
+    result = {
+        **_informed_failure(
+            "CAPTURED", "caller_completeness_authority_and_opaque_effects_unknown"
+        ),
+        "native_ledger": native,
+    }
+    capture = {
+        "dependencies": {path: digest},
+        "max_sources": max_sources,
+        "truncation": result["truncation"],
+        "stale": False,
+    }
+    if native.get("status") not in {"COMPLETE", "INCOMPLETE"}:
+        return {
+            **result,
+            "status": native.get("status", "SINK_INPUT_UNASSESSED"),
+            "truncation": native.get("truncation", []),
+        }
+    inventory = CapturedImportInventory(index.root, tuple(index.snapshots))
+    _informed_expand(
+        result,
+        index,
+        path,
+        matches[0],
+        inventory,
+        max_states - native.get("budget", {}).get("states_used", max_states // 2),
+        capture,
+    )
+    dependencies = capture["dependencies"]
+    result["dependency_sources"] = [
+        {"path": index.relative(p), "sha256": h} for p, h in dependencies.items()
+    ]
+    for selected in dependencies:
+        index._validation_inputs.pop(selected, None)
+    if capture["stale"] or any(
+        index.inventory.get(p) != digest or not index.validate(p)
+        for p, digest in dependencies.items()
+    ):
+        return _informed_failure(
+            "SINK_SOURCE_STALE", "dependency_changed_after_capture"
+        )
+    result["truncation"].extend(native.get("truncation", []))
+    result["status"] = "INCOMPLETE" if result["truncation"] else "CAPTURED"
+    if len(canonical_bytes(result)) > max_output_bytes:
+        return _informed_failure("SINK_BUDGET_EXHAUSTED", "max_output_bytes")
+    return result
+
+
+def build_informed_actionability_case(
+    finding: Mapping[str, Any],
+    source_index: Any,
+    *,
+    candidate_commit: str,
+    requirement: str,
+) -> dict[str, Any]:
+    """Project native captured evidence into the bounded secondary-review envelope.
+
+    Captured source is evidence, not a trust contract. Unresolved native facts
+    stay unresolved; this builder never manufactures admission from packet shape.
+    """
+    from .jev_classifier import JevClassificationError, _digest
+
+    if (
+        not isinstance(candidate_commit, str)
+        or len(candidate_commit) != 40
+        or any(c not in "0123456789abcdef" for c in candidate_commit)
+        or not isinstance(requirement, str)
+        or not requirement.strip()
+        or len(requirement.encode("utf-8")) > 8192
+    ):
+        raise JevClassificationError("invalid informed review criterion or revision")
+    context = build_informed_sink_context(finding, source_index)
+    if context["status"] not in {"CAPTURED", "INCOMPLETE"}:
+        raise JevClassificationError(context["status"])
+    candidate = {
+        "commit": candidate_commit,
+        "path": finding["path"],
+        "sha256": source_index.inventory[source_index.root / finding["path"]],
+    }
+    artifacts, seen = [], set()
+    for excerpt in context["excerpts"]:
+        identity = tuple(excerpt[key] for key in ("path", "start_line", "end_line"))
+        if identity in seen:
+            continue
+        seen.add(identity)
+        artifacts.append(
+            {
+                "kind": "source_excerpt",
+                "path": excerpt["path"],
+                "content": excerpt["content"],
+                "sha256": hashlib.sha256(
+                    excerpt["content"].encode("utf-8")
+                ).hexdigest(),
+                "candidate_commit": candidate_commit,
+                "candidate_sha256": candidate["sha256"],
+                "source_binding": {
+                    key: excerpt[key]
+                    for key in ("path", "sha256", "start_line", "end_line")
+                },
+            }
+        )
+    ledger = json.dumps(
+        {key: value for key, value in context.items() if key != "excerpts"},
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    artifacts.append(
+        {
+            "kind": "native_sink_evidence",
+            "path": "evidence/native-sink.json",
+            "content": ledger,
+            "sha256": hashlib.sha256(ledger.encode("utf-8")).hexdigest(),
+            "candidate_commit": candidate_commit,
+            "candidate_sha256": candidate["sha256"],
+        }
+    )
+    item = {
+        "id": "sink-"
+        + _digest(
+            {
+                "candidate": candidate,
+                "rule": finding.get("code"),
+                "span": [
+                    finding.get(key)
+                    for key in ("line", "column", "end_line", "end_column")
+                ],
+                "criterion_sha256": hashlib.sha256(
+                    requirement.encode("utf-8")
+                ).hexdigest(),
+            }
+        )[:24],
+        "category": "security_actionability",
+        "state": {
+            "requirement": requirement,
+            "candidate": candidate,
+            "evidence": {
+                "location": {
+                    "path": candidate["path"],
+                    "start_line": finding["line"],
+                    "end_line": finding.get("end_line", finding["line"]),
+                },
+                "artifacts": artifacts,
+                "dependencies": context["dependency_sources"],
+                "actionability": {
+                    **{
+                        name: {"status": "unknown", "artifacts": []}
+                        for name in (
+                            "input_origin",
+                            "sink_behavior",
+                            "callers",
+                            "trust_boundary",
+                            "counterevidence",
+                        )
+                    },
+                    "unknowns": [
+                        "Native source capture does not establish complete callers, authority or opaque object effects."
+                    ],
+                },
+            },
+        },
+    }
+    if not any(
+        row["kind"] == "source_excerpt" and row["path"] == candidate["path"]
+        for row in artifacts
+    ):
+        raise JevClassificationError("SINK_LOCATION_UNRESOLVED")
+    if (
+        len(json.dumps(item, ensure_ascii=False).encode("utf-8")) > 64_000
+        or len(artifacts) > 32
+    ):
+        raise JevClassificationError("SINK_BUDGET_EXHAUSTED")
+    return item

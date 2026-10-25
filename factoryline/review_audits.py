@@ -24,17 +24,6 @@ from threading import RLock
 import time
 from typing import Any
 
-_SECURITY_ONLY_SCAN = ContextVar("security_only_scan", default=False)
-
-
-@contextmanager
-def _security_only_scan_context(enabled=False):
-    token = _SECURITY_ONLY_SCAN.set(type(enabled) is bool and enabled is True)
-    try:
-        yield
-    finally:
-        _SECURITY_ONLY_SCAN.reset(token)
-
 try:
     import tomllib
 except ModuleNotFoundError:  # Python 3.10
@@ -62,6 +51,18 @@ from . import (
     type_intent_provider_provenance,
 )
 from .review_integrity import security_call_name as security_call_name
+
+_SECURITY_ONLY_SCAN = ContextVar("security_only_scan", default=False)
+
+
+@contextmanager
+def _security_only_scan_context(enabled=False):
+    token = _SECURITY_ONLY_SCAN.set(type(enabled) is bool and enabled is True)
+    try:
+        yield
+    finally:
+        _SECURITY_ONLY_SCAN.reset(token)
+
 
 _completion_only_oracle = integrity._completion_only_oracle
 
@@ -1394,8 +1395,8 @@ def _security_finding(
         "code": code,
         "severity": severity,
         "path": path,
-        "line": int(getattr(node, "lineno", 0)),
-        "column": int(getattr(node, "col_offset", 0)),
+        "line": int(getattr(node, "lineno", 0) or 0),
+        "column": int(getattr(node, "col_offset", 0) or 0),
         "message": message,
         "facts": facts,
     }
@@ -5129,10 +5130,7 @@ def _collected_test_function(
         return node.name.startswith("test")
     if _pytest_test_disabled(node, parents, nodes):
         return False
-    if (
-        not inherited
-        and not pytest_file
-    ):
+    if not inherited and not pytest_file:
         return False
     if not _pytest_name_matches(node.name, settings["python_functions"]):
         return False
@@ -5157,9 +5155,7 @@ def _collected_test_function(
     cls = enclosing[-1]
     return pytest_file and (
         _pytest_collects_class(cls, parents, settings["python_classes"])
-        or _pytest_inherited_by_collected_class(
-            cls, nodes, settings["python_classes"]
-        )
+        or _pytest_inherited_by_collected_class(cls, nodes, settings["python_classes"])
     )
 
 
@@ -5168,8 +5164,8 @@ def _pytest_collects_class(cls, parents, class_patterns=("Test",)):
         not _pytest_name_matches(cls.name, class_patterns)
         or _pytest_scope_test_disabled(cls)
         or any(
-        isinstance(member, _FUNCTION_NODES) and member.name == "__init__"
-        for member in cls.body
+            isinstance(member, _FUNCTION_NODES) and member.name == "__init__"
+            for member in cls.body
         )
     ):
         return False
@@ -5190,8 +5186,8 @@ def _pytest_inherited_by_collected_class(base, nodes, class_patterns=("Test",)):
             not _pytest_name_matches(child.name, class_patterns)
             or _pytest_scope_test_disabled(child)
             or any(
-            isinstance(member, _FUNCTION_NODES) and member.name == "__init__"
-            for member in child.body
+                isinstance(member, _FUNCTION_NODES) and member.name == "__init__"
+                for member in child.body
             )
         ):
             continue
@@ -5261,10 +5257,7 @@ def _pytest_name_matches(name, patterns):
     """Apply pytest's prefix-or-glob rule used for function and class names."""
     return any(
         name.startswith(pattern)
-        or (
-            any(marker in pattern for marker in "*?[")
-            and fnmatchcase(name, pattern)
-        )
+        or (any(marker in pattern for marker in "*?[") and fnmatchcase(name, pattern))
         for pattern in patterns
     )
 
@@ -5283,11 +5276,14 @@ def _pytest_file_matches(relative, patterns):
 
 def _pytest_test_disabled(node, parents, nodes):
     """Honor statically false module/class/function __test__ markers."""
-    scopes = [nodes[0], *(
-        parent
-        for parent, _child in parents.get(id(node), ())
-        if isinstance(parent, ast.ClassDef)
-    )]
+    scopes = [
+        nodes[0],
+        *(
+            parent
+            for parent, _child in parents.get(id(node), ())
+            if isinstance(parent, ast.ClassDef)
+        ),
+    ]
     return any(_pytest_scope_test_disabled(scope) for scope in scopes) or any(
         _pytest_function_test_disabled(statement, node.name)
         for scope in scopes
@@ -5305,9 +5301,13 @@ def _pytest_scope_test_disabled(scope):
             else []
         )
         value = getattr(statement, "value", None)
-        if isinstance(value, ast.Constant) and value.value is False and any(
-            isinstance(target, ast.Name) and target.id == "__test__"
-            for target in targets
+        if (
+            isinstance(value, ast.Constant)
+            and value.value is False
+            and any(
+                isinstance(target, ast.Name) and target.id == "__test__"
+                for target in targets
+            )
         ):
             return True
     return False
@@ -5353,20 +5353,19 @@ def _pytest_collection_config(root, source_files=None):
                     f"{result[1]['state']} configuration."
                 )
             patterns, identity = result
-            identity = _pytest_collection_source_identity(
-                root, identity, source_files
-            )
+            identity = _pytest_collection_source_identity(root, identity, source_files)
             return patterns, identity
-    patterns, identity = defaults, {
-        "path": None,
-        "state": "missing",
-        "python_files": sorted(defaults),
-        "python_functions": list(_TEST_FUNCTION_PATTERNS),
-        "python_classes": list(_TEST_CLASS_PATTERNS),
-    }
-    return patterns, _pytest_collection_source_identity(
-        root, identity, source_files
+    patterns, identity = (
+        defaults,
+        {
+            "path": None,
+            "state": "missing",
+            "python_files": sorted(defaults),
+            "python_functions": list(_TEST_FUNCTION_PATTERNS),
+            "python_classes": list(_TEST_CLASS_PATTERNS),
+        },
     )
+    return patterns, _pytest_collection_source_identity(root, identity, source_files)
 
 
 def _pytest_collection_source_identity(root, identity, source_files=None):
@@ -5400,16 +5399,7 @@ def _pytest_collection_source_identity(root, identity, source_files=None):
             ):
                 found.append(node.name)
         plugin_assignment = (is_conftest or is_test_module) and any(
-            isinstance(node, (ast.Assign, ast.AnnAssign))
-            and any(
-                isinstance(target, ast.Name) and target.id == "pytest_plugins"
-                for target in (
-                    node.targets
-                    if isinstance(node, ast.Assign)
-                    else [node.target]
-                )
-            )
-            for node in tree.body
+            _pytest_plugin_declaration_active(node) for node in tree.body
         )
         if found or plugin_assignment:
             hooks.append(
@@ -5433,6 +5423,22 @@ def _pytest_collection_source_identity(root, identity, source_files=None):
             "or pytest plugins are unsupported."
         )
     return {**identity, "conftest_sources": sources}
+
+
+def _pytest_plugin_declaration_active(node):
+    if not isinstance(node, (ast.Assign, ast.AnnAssign)):
+        return False
+    targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+    if not any(
+        isinstance(target, ast.Name) and target.id == "pytest_plugins"
+        for target in targets
+    ):
+        return False
+    try:
+        value = ast.literal_eval(node.value)
+    except (ValueError, TypeError):
+        return True
+    return not (type(value) in {list, tuple} and len(value) == 0)
 
 
 def _pytest_config_file(root, relative, section, defaults):
@@ -5480,11 +5486,15 @@ def _pytest_config_data(data, relative, section, defaults):
             )
             return defaults, identity
         return defaults, {**identity, "state": "absent-section"}
-    settings = configured if configured is not None else {
-        "python_files": sorted(defaults),
-        "python_functions": list(_TEST_FUNCTION_PATTERNS),
-        "python_classes": list(_TEST_CLASS_PATTERNS),
-    }
+    settings = (
+        configured
+        if configured is not None
+        else {
+            "python_files": sorted(defaults),
+            "python_functions": list(_TEST_FUNCTION_PATTERNS),
+            "python_classes": list(_TEST_CLASS_PATTERNS),
+        }
+    )
     return set(settings["python_files"]), {**identity, **settings}
 
 
@@ -5604,7 +5614,9 @@ def _security_node_findings(
         if finding and finding["code"] == "SECURITY_UNSAFE_DESERIALIZATION":
             from .runtime_audit_integrity import closed_literal_pickle_witness
 
-            proof = closed_literal_pickle_witness(relative, node, roundtrip_aliases or {})
+            proof = closed_literal_pickle_witness(
+                relative, node, roundtrip_aliases or {}
+            )
             if proof:
                 finding["facts"].update(proof)
             if _test_serialization_roundtrip(relative, node, roundtrip_aliases or {}):
@@ -5683,9 +5695,11 @@ def _security_scan_tree(
         "fixed_program_workspace", {}
     )
     context_security_only = (oracle_context or {}).get("_security_only", False)
-    security_only = (type(security_only) is bool and security_only is True) or (
-        type(context_security_only) is bool and context_security_only is True
-    ) or _SECURITY_ONLY_SCAN.get() is True
+    security_only = (
+        (type(security_only) is bool and security_only is True)
+        or (type(context_security_only) is bool and context_security_only is True)
+        or _SECURITY_ONLY_SCAN.get() is True
+    )
     nodes = list(ast.walk(tree))
     aliases = _security_aliases(nodes)
     for node in nodes:
@@ -5707,7 +5721,9 @@ def _security_scan_tree(
     else:
         oracle_aliases = _scope_security_aliases(_module_security_aliases(tree), tree)
         tree._oracle_async_runner_fixtures = context.get("async_runner_fixtures", {})
-        tree._oracle_mock_fixture_provenance = context.get("mock_fixture_provenance", {})
+        tree._oracle_mock_fixture_provenance = context.get(
+            "mock_fixture_provenance", {}
+        )
         helper_names = _local_assertion_helpers(tree, oracle_aliases) | set(
             context.get("helpers", ())
         )
@@ -5752,7 +5768,9 @@ def _security_scan_tree(
                 context.get("click_runners", set()),
                 context.get("typecheck", False),
                 test_file_patterns,
-                _pytest_inherited_method_ids(tree, context.get("pytest_inherited", set())),
+                _pytest_inherited_method_ids(
+                    tree, context.get("pytest_inherited", set())
+                ),
                 context.get("flask_apps", set()),
                 context.get("callback_invokers", {}),
                 context,
@@ -5963,6 +5981,7 @@ def _scan_security_sources(
     test_file_patterns: set[str] | None = None,
     database_context: dict | None = None,
     primitive_source_bytes_out: dict[str, bytes] | None = None,
+    capture_all_sources: bool = False,
 ) -> tuple[
     list[dict[str, Any]],
     list[dict[str, Any]],
@@ -6071,7 +6090,13 @@ def _scan_security_sources(
         counts[finding["code"]] = counts.get(finding["code"], 0) + 1
     if primitive_source_bytes_out is not None:
         primitive_source_bytes_out.update(
-            _app_source_bytes(workspace, findings, bindings, source_bytes)
+            _app_source_bytes(
+                workspace,
+                findings,
+                bindings,
+                source_bytes,
+                capture_all_sources=capture_all_sources,
+            )
         )
     scanned = {item["path"] for item in bindings}
     extra_bindings = [item for item in context_bindings if item["path"] not in scanned]
@@ -6106,7 +6131,9 @@ def _security_scan_report(
 
     from .audit_action_refs import security_scan_report
 
-    with _security_only_scan_context(security_only):
+    with _security_only_scan_context(
+        security_only or _SECURITY_ONLY_SCAN.get() is True
+    ):
         return security_scan_report(
             sys.modules[__name__],
             files,
@@ -6176,8 +6203,16 @@ def security_scan(
     oracle_trust_root: str | None = None,
     oracle_trust_sha256: str | None = None,
     oracle_environment_sha256: str | None = None,
+    analysis_profile: str = "source-closed-v1",
+    provider_contracts: tuple[dict, ...] = (),
+    defect_policy: str = "legacy-v1",
 ) -> dict[str, Any]:
     """Run a bounded AST scan with content-bound process-local context reuse."""
+    from .finite_capture import provider_analysis_profile
+    from .primitive_observation_binding import validate_security_defect_policy
+
+    selected_policy = validate_security_defect_policy(defect_policy)
+    profile = provider_analysis_profile(analysis_profile, provider_contracts)
     workspace = Path(root).resolve()
     if not isinstance(tenant_policy_applies, bool):
         raise ReviewAuditError("tenant_policy_applies must be a boolean.")
@@ -6197,24 +6232,16 @@ def security_scan(
     if tenant_policy_applies:
         tenant_read_scopes[""] = {"calls": (), "bindings": {}, "_policy_applies": True}
     if len(files) > MAX_SECURITY_SOURCE_FILES:
-        blocked = _blocked_security_scan_report(
+        return _security_source_limit_report(
             workspace,
             files,
             tenant_read_calls,
             tenant_read_bindings,
             tenant_policy_applies,
+            evidence,
+            profile,
+            selected_policy,
         )
-        if any(value is not None for value in evidence):
-            blocked["runtime_oracles"] = {
-                "state": "NOT_VERIFIED",
-                "reason": "SOURCE_LIMIT_EXCEEDED",
-                "requested": True,
-                "reconciled_count": 0,
-                "reconciled": [],
-                "authority": "none",
-                "claim_boundary": "Supplied runtime evidence was not evaluated because source coverage exceeds the scanner limit.",
-            }
-        return _seal_security_scan(blocked)
     database_context = {}
     primitive_source_bytes = {}
     bindings, findings, counts, outcomes, oracle_edges, oracle_configuration = (
@@ -6224,9 +6251,11 @@ def security_scan(
             tenant_read_calls,
             tenant_read_bindings,
             tenant_read_scopes,
-            cache_enabled=cache_enabled,
+            cache_enabled=cache_enabled and not profile["conditional"],
             database_context=database_context,
             primitive_source_bytes_out=primitive_source_bytes,
+            capture_all_sources=profile["conditional"]
+            or selected_policy != "legacy-v1",
         )
     )
     result = _security_scan_report(
@@ -6243,11 +6272,41 @@ def security_scan(
         tenant_policy_applies,
         primitive_source_bytes,
     )
+    if profile["conditional"]:
+        from .primitive_observation_binding import apply_conditional_provider_profile
+
+        result = apply_conditional_provider_profile(
+            result, profile, primitive_source_bytes
+        )
+    if selected_policy != "legacy-v1":
+        result["selected_defect_policy"] = selected_policy
+        result = _seal_security_scan(result)
     return (
         _reconcile_runtime_oracles(workspace, result, evidence)
         if any(value is not None for value in evidence)
         else result
     )
+
+
+def _security_source_limit_report(
+    workspace, files, calls, bindings, applies, evidence, profile, policy
+):
+    blocked = _blocked_security_scan_report(workspace, files, calls, bindings, applies)
+    if any(value is not None for value in evidence):
+        blocked["runtime_oracles"] = {
+            "state": "NOT_VERIFIED",
+            "reason": "SOURCE_LIMIT_EXCEEDED",
+            "requested": True,
+            "reconciled_count": 0,
+            "reconciled": [],
+            "authority": "none",
+            "claim_boundary": "Supplied runtime evidence was not evaluated because source coverage exceeds the scanner limit.",
+        }
+    if profile["conditional"]:
+        blocked["provider_analysis_profile"] = profile
+    if policy != "legacy-v1":
+        blocked["selected_defect_policy"] = policy
+    return _seal_security_scan(blocked)
 
 
 def security_evals() -> dict[str, Any]:

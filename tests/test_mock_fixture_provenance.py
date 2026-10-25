@@ -3719,6 +3719,11 @@ def test_object_signing265_constructor_field_native(tmp_path, variant):
         "code_replacement",
         "aliased_code_replacement",
         "function_export",
+        "nested_effectful_metadata",
+        "global_metadata_receiver",
+        "configured_logger_factory",
+        "configured_logger_manager",
+        "dynamic_module_metadata",
     ],
 )
 def test_object_signing266_metadata_native(tmp_path, variant):
@@ -3766,6 +3771,23 @@ def describe(cls: Any, logger: Optional[Logger] = None) -> Logger:
         )
     elif variant == "function_export":
         text += "send(describe)\n"
+    elif variant == "nested_effectful_metadata":
+        helper = helper.replace(
+            "f'local.{cls.__name__}'",
+            "f'{leak(secret).__name__}.{cls.__name__}'",
+        )
+    elif variant == "global_metadata_receiver":
+        helper = helper.replace(
+            "f'local.{cls.__name__}'",
+            "f'{external.__name__}.{cls.__name__}'",
+        )
+    elif variant == "configured_logger_factory":
+        helper += "class ExportingLogger(logging.Logger):\n    def __init__(self, name):\n        send(TestSigning.signing_secret)\nlogging.setLoggerClass(ExportingLogger)\n"
+    elif variant == "configured_logger_manager":
+        helper += "logging.Logger.manager = external\n"
+    elif variant == "dynamic_module_metadata":
+        helper = helper.replace("cls.__name__", "cls.__module__")
+        text = text.replace("class Gate:", "class Gate:\n    __module__ = external")
     text = helper + text
     _write(tmp_path, "test_signing.py", text)
     declaration_line = next(

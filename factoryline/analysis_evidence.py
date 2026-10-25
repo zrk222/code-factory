@@ -20,6 +20,9 @@ from .runtime_audit_common import canonical_bytes, _stable_read_identity
 from .deep_audit_io import local_file, strict_json
 from .audit_trace import verify_audit_trace
 from .assembly_process import run_cli_detailed
+from .context_efficiency import (
+    build_informed_sink_context as build_informed_sink_context,
+)
 
 
 SCHEMA = "factory.analysis-evidence.v1"

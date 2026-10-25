@@ -167,11 +167,15 @@ def _role_expression_roots(node, aliases, *, strict_calls=False):
         projected = [aliases.get((root, node.attr)) for root in receiver]
         known_projection = [item for item in projected if item is not None]
         if known_projection:
-            roots.update(set().union(*(tracked_roots(item) for item in known_projection)))
+            roots.update(
+                set().union(*(tracked_roots(item) for item in known_projection))
+            )
         elif receiver:
             roots.update(receiver)
     elif isinstance(node, ast.Subscript) and not roots:
-        roots.update(_role_expression_roots(node.value, aliases, strict_calls=strict_calls))
+        roots.update(
+            _role_expression_roots(node.value, aliases, strict_calls=strict_calls)
+        )
     elif isinstance(node, (ast.List, ast.Tuple, ast.Dict)) and not roots:
         for child in ast.iter_child_nodes(node):
             roots.update(
@@ -545,8 +549,7 @@ def _record_attribute_write(
         if any(
             (root, target.attr) in (initial_fields or {}) for root in base.roots
         ) or (
-            effects.record_role_events
-            and field_ids.intersection(effects.field_writes)
+            effects.record_role_events and field_ids.intersection(effects.field_writes)
         ):
             effects.unknowns.add("projected field identity overwritten")
         if target.attr == "__class__":
@@ -595,8 +598,10 @@ def _record_attribute_write(
                     or not (source_roots or value.inert_kind or value.items)
                 ),
             )
-            if effects.record_role_events and target.attr not in ordinary_fields and not _ordinary_field_dispatch(
-                function, target.attr, parents
+            if (
+                effects.record_role_events
+                and target.attr not in ordinary_fields
+                and not _ordinary_field_dispatch(function, target.attr, parents)
             ):
                 effects.unknowns.add("attribute store dispatch is not source-closed")
                 _add_role_event(
@@ -670,7 +675,8 @@ def _ordinary_field_dispatch(function, field_name, parents):
         return False
     if any(
         isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
-        and node.name in {"__getattribute__", "__getattr__", "__setattr__", "__delattr__"}
+        and node.name
+        in {"__getattribute__", "__getattr__", "__setattr__", "__delattr__"}
         for node in owner.body
     ):
         return False
@@ -727,7 +733,9 @@ def record_opaque_call(call, aliases, involved, out, *, strict_calls=False, path
             call,
             _call_role_actuals(call, aliases, strict_calls=strict_calls),
             receiver_roots=(
-                _role_expression_roots(call.func.value, aliases, strict_calls=strict_calls)
+                _role_expression_roots(
+                    call.func.value, aliases, strict_calls=strict_calls
+                )
                 if isinstance(call.func, ast.Attribute)
                 else ()
             ),
@@ -743,7 +751,9 @@ def record_opaque_call(call, aliases, involved, out, *, strict_calls=False, path
             call,
             _call_role_actuals(call, aliases, strict_calls=strict_calls),
             receiver_roots=(
-                _role_expression_roots(call.func.value, aliases, strict_calls=strict_calls)
+                _role_expression_roots(
+                    call.func.value, aliases, strict_calls=strict_calls
+                )
                 if isinstance(call.func, ast.Attribute)
                 else ()
             ),
@@ -752,11 +762,16 @@ def record_opaque_call(call, aliases, involved, out, *, strict_calls=False, path
 
 
 def _call_role_actuals(call, aliases, *, strict_calls=False):
-    actuals = [f"arg[{i}]" for i, value in enumerate(call.args) if _role_expression_roots(value, aliases, strict_calls=strict_calls)]
+    actuals = [
+        f"arg[{i}]"
+        for i, value in enumerate(call.args)
+        if _role_expression_roots(value, aliases, strict_calls=strict_calls)
+    ]
     actuals.extend(
         f"keyword:{item.arg}"
         for item in call.keywords
-        if item.arg and _role_expression_roots(item.value, aliases, strict_calls=strict_calls)
+        if item.arg
+        and _role_expression_roots(item.value, aliases, strict_calls=strict_calls)
     )
     if isinstance(call.func, ast.Attribute) and _role_expression_roots(
         call.func.value, aliases, strict_calls=strict_calls
@@ -1579,6 +1594,7 @@ def summarize_identity_effect(
     state_budget=512,
     role_view=False,
     ordinary_fields=(),
+    source_inert_nodes=(),
 ):
     """Summarize captured ASTs without executing target code.
 
@@ -1597,6 +1613,7 @@ def summarize_identity_effect(
             strict_calls,
             role_view,
             ordinary_fields,
+            source_inert_nodes,
         )
         .run(function, path, dict(roots), 0, frozenset())
         .freeze()
@@ -1605,8 +1622,16 @@ def summarize_identity_effect(
 
 class _Analyzer:
     def __init__(
-        self, index, resolver, depth_limit, budget, field_roots, strict_calls, role_view,
+        self,
+        index,
+        resolver,
+        depth_limit,
+        budget,
+        field_roots,
+        strict_calls,
+        role_view,
         ordinary_fields=(),
+        source_inert_nodes=(),
     ):
         self.index, self.resolver = index, resolver
         self.depth_limit, self.budget, self.states = depth_limit, budget, 0
@@ -1614,6 +1639,7 @@ class _Analyzer:
         self.strict_calls = strict_calls
         self.role_view = role_view
         self.ordinary_fields = frozenset(ordinary_fields)
+        self.source_inert_nodes = frozenset(source_inert_nodes)
 
     def run(
         self,
@@ -1634,7 +1660,11 @@ class _Analyzer:
         if not captured_function_valid(function, path, self.index):
             out.unknowns.add("callee is not a validated captured function")
             return out
-        nodes = own_function_nodes(function, path, self.index)
+        nodes = [
+            node
+            for node in own_function_nodes(function, path, self.index)
+            if (path, id(node)) not in self.source_inert_nodes
+        ]
         self.states += len(nodes)
         if self.states > self.budget:
             out.unknowns.add("AST state budget exceeded")
@@ -1755,7 +1785,9 @@ class _Analyzer:
                     and isinstance(target, ast.Attribute)
                     and target.attr != "__class__"
                 ):
-                    base = identity_value(target.value, env, strict_calls=self.strict_calls)
+                    base = identity_value(
+                        target.value, env, strict_calls=self.strict_calls
+                    )
                     roots = tracked_roots(base)
                     if not roots:
                         continue
@@ -1768,7 +1800,9 @@ class _Analyzer:
                         )
             for key, writes in field_writes.items():
                 candidates = [value for value, _, _ in writes]
-                ambiguous = len(writes) != 1 or any(not row[1] or row[2] for row in writes)
+                ambiguous = len(writes) != 1 or any(
+                    not row[1] or row[2] for row in writes
+                )
                 if len(writes) == 1 and writes[0][1] and not writes[0][2]:
                     projected = candidates[0]
                 else:
@@ -1803,9 +1837,8 @@ class _Analyzer:
                 node,
                 node.attr,
                 receiver_roots=receiver,
-                uncertain=len(receiver) != 1 or any(
-                    value.unknown or _has_unknown_content(value) for value in known
-                ),
+                uncertain=len(receiver) != 1
+                or any(value.unknown or _has_unknown_content(value) for value in known),
             )
             if node.attr not in self.ordinary_fields and not _ordinary_field_dispatch(
                 function, node.attr, parents
@@ -1823,9 +1856,7 @@ class _Analyzer:
                 )
             return
         parent = parents.get(id(node))
-        bound = (
-            isinstance(parent, ast.Call) and parent.func is node
-        ) or (
+        bound = (isinstance(parent, ast.Call) and parent.func is node) or (
             isinstance(parent, (ast.Assign, ast.AnnAssign, ast.NamedExpr))
             and getattr(parent, "value", None) is node
         )
@@ -1953,7 +1984,9 @@ class _Analyzer:
         resolved = self.resolver(call, path) if self.resolver else None
         if resolved is None:
             if self.role_view:
-                out.unknowns.add("unresolved call may reach tracked identity indirectly")
+                out.unknowns.add(
+                    "unresolved call may reach tracked identity indirectly"
+                )
             record_opaque_call(
                 call,
                 aliases,
@@ -3048,7 +3081,12 @@ def _app_signing_constructor_transfer(index, chain, call, actual):
     if not constructor_args:
         return None
     receiver = constructor_args[0].arg
-    ordinary_fields = _app_signing_ordinary_fields(chain, {transfer[0]})
+    inert_nodes, metadata_fields = _app_signing_metadata_assignments(
+        index, constructor_path, constructor, receiver
+    )
+    ordinary_fields = _app_signing_ordinary_fields(
+        chain, {transfer[0], *metadata_fields}
+    )
     if ordinary_fields is None:
         return None
     resolver = _app_signing_constructor_resolver(chain, receiver)
@@ -3061,12 +3099,116 @@ def _app_signing_constructor_transfer(index, chain, call, actual):
         strict_calls=True,
         role_view=True,
         ordinary_fields=ordinary_fields,
+        source_inert_nodes=inert_nodes,
     )
     if not _app_signing_constructor_role_transfer_closed(
         effects, constructor_path, transfer[0], transfer[1]
     ):
         return None
     return constructor_path, *transfer
+
+
+def _app_signing_metadata_assignments(index, path, constructor, receiver):
+    from . import mock_fixture_provenance as fixture
+
+    ignored, fields = set(), set()
+    parents = index["source"].parents[path]
+    for statement in constructor.body:
+        if (
+            not isinstance(statement, ast.Assign)
+            or len(statement.targets) != 1
+            or not isinstance(statement.value, ast.Call)
+        ):
+            continue
+        target, call = statement.targets[0], statement.value
+        if not (
+            isinstance(target, ast.Attribute)
+            and isinstance(target.value, ast.Name)
+            and target.value.id == receiver
+            and not target.attr.startswith("__")
+            and len(call.args) == 1
+            and not call.keywords
+        ):
+            continue
+        if _app_class_metadata_consumer(index, path, call.args[0]) is None:
+            continue
+        selected = fixture._app_source_symbol(
+            index, path, call.func, _enclosing_function(call, parents)
+        )
+        if selected is None or not _app_metadata_logger_result(index, *selected):
+            continue
+        ignored.update((path, id(node)) for node in ast.walk(statement))
+        fields.add(target.attr)
+    return ignored, fields
+
+
+def _app_metadata_logger_result(index, path, function):
+    from . import mock_fixture_provenance as fixture
+
+    parameters = [*function.args.posonlyargs, *function.args.args]
+    if not parameters:
+        return False
+    metadata_receiver = parameters[0].arg
+    body = [
+        node
+        for node in function.body
+        if not (
+            isinstance(node, ast.Expr)
+            and isinstance(node.value, ast.Constant)
+            and isinstance(node.value.value, str)
+        )
+    ]
+    if (
+        len(body) != 1
+        or not isinstance(body[0], ast.Return)
+        or not isinstance(body[0].value, ast.Call)
+    ):
+        return False
+    call = body[0].value
+    if (
+        fixture._app_expression_name(index, path, call.func, function)
+        != "logging.getLogger"
+        or len(call.args) != 1
+        or call.keywords
+        or not isinstance(call.args[0], ast.JoinedStr)
+    ):
+        return False
+    return _app_metadata_logging_environment_closed(index) and all(
+        isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        or isinstance(node, ast.FormattedValue)
+        and node.conversion == -1
+        and node.format_spec is None
+        and isinstance(node.value, ast.Attribute)
+        and node.value.attr == "__name__"
+        and isinstance(node.value.value, ast.Name)
+        and node.value.value.id == metadata_receiver
+        for node in call.args[0].values
+    )
+
+
+def _app_metadata_logging_environment_closed(index):
+    """Reject captured logger factories, manager access and logging-provider exports."""
+    from . import mock_fixture_provenance as fixture
+
+    if not _app_signing_terminal_stable(index, "logging"):
+        return False
+    for path, tree in index["modules"].items():
+        parents = index["source"].parents[path]
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.Name, ast.Attribute)):
+                continue
+            canonical = fixture._app_expression_name(index, path, node)
+            if canonical == "logging":
+                if not isinstance(parents.get(id(node)), ast.Attribute):
+                    return False
+            elif (
+                canonical
+                and canonical.startswith("logging.")
+                and canonical not in {"logging.Logger", "logging.getLogger"}
+            ):
+                return False
+    return True
 
 
 def _app_signing_ordinary_fields(chain, selected_fields):
