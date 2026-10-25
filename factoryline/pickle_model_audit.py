@@ -1,6 +1,7 @@
 """Source-bound pickle provider models and reconstruction analysis."""
 
 import ast
+import copy
 import hashlib
 from dataclasses import dataclass
 
@@ -40,12 +41,23 @@ _PROVIDER_MODEL_V3 = {
 _PROVIDER_MODEL_V4 = {
     "id": "typed-pickle-reconstruction-v4",
     "version": 4,
-    "constructor": "source-regenerated typed object graph with exact builtin and source-instance nodes",
-    "reconstruction": "protocol 0/1 copyreg reconstruction and protocol 2-5 NEWOBJ/container insertion/state recipes",
-    "scope": "bounded source-bound instances, list/dict subclasses, OrderedDict and paired closed state hooks",
+    "constructor": "source-regenerated identity graph with builtin, Exception, and source-instance nodes",
+    "reconstruction": "object/container recipes plus canonical BaseException REDUCE class-call and descriptor-checked BUILD on protocols 0-5",
+    "scope": "bounded source-bound instances, list/dict subclasses, canonical Exception MROs, OrderedDict, and paired closed state hooks",
     "graph": "identity-preserving node/ref table; mutable-shell memoization; immutable tuple cycles abstain",
     "limits": "depth <=8; nodes <=512; classes <=16; artifacts <=64; scalar UTF-8/bytes <=16384; int <=4096 bits",
 }
+_NATIVE_EMPTY_MAPPING = {
+    "id": "multidict-6.7.0-cp311-win-amd64-empty-v1",
+    "files": {
+        "multidict/__init__.py": "beba8ceebb991f5f33a9442e980696b467a424561bfe85af4e19c074db80c60e",
+        "multidict/_compat.py": "4dc463092b64da2218d7f0f00cd8fc90da49450f6bb4b8fdd97be4d73d86fda9",
+        "multidict/_abc.py": "7bfd090c98bb13a2d64b4037814275ed29200cb96683c7df8dfca54eefef6e87",
+        "multidict/_multidict.cp311-win_amd64.pyd": "fb947865c6931152dc3bfc8aa0c7a44483872a1ae41fdadc872bfcca24644e70",
+    },
+    "assumptions": ["native export selected", "initialized immutable provider", "no preloaded module mutation"],
+}
+_PROVIDER_MODEL_V4["native_leaf_profile"] = _NATIVE_EMPTY_MAPPING
 _PROVIDER_MODELS = {
     (_PROVIDER_MODEL["id"], 1): _PROVIDER_MODEL,
     (_PROVIDER_MODEL_V2["id"], 2): _PROVIDER_MODEL_V2,
@@ -95,6 +107,7 @@ class _ProviderV4SourceObject:
     class_ast_sha256: str
     base_kind: str
     base_items: object
+    base_args: tuple
     state: dict
     slots: tuple
     state_hook_uses: tuple
@@ -116,6 +129,17 @@ class _ProviderV4OrderedDict:
 
 
 @dataclass(frozen=True)
+class _ProviderV4NativeCIMultiDict:
+    items: tuple = ()
+
+
+@dataclass(frozen=True)
+class _ProviderV4Module:
+    name: str
+    path: str = ""
+
+
+@dataclass(frozen=True)
 class _ProviderV4AbstractScalar:
     kind: str
     source_path: str
@@ -126,6 +150,20 @@ class _ProviderV4AbstractScalar:
 class _ProviderV4Return(Exception):
     def __init__(self, value):
         self.value = value
+
+
+def _provider_v4_exception_data_descriptor(name):
+    """Resolve inherited BaseException data descriptors without invoking them."""
+    if not isinstance(name, str):
+        return None
+    for owner in BaseException.__mro__:
+        descriptor = vars(owner).get(name)
+        if descriptor is not None and (
+            hasattr(type(descriptor), "__set__")
+            or hasattr(type(descriptor), "__delete__")
+        ):
+            return owner, descriptor
+    return None
 
 
 class _ProviderV4Graph:
@@ -177,6 +215,17 @@ class _ProviderV4Graph:
             node.update(tag="dict", items=self._mapping(value.items(), depth))
         elif kind is _ProviderV4OrderedDict:
             node.update(tag="ordered_dict", items=self._mapping(value.items, depth))
+        elif kind is _ProviderV4NativeCIMultiDict:
+            if value.items:
+                raise ValueError("native CIMultiDict state is not empty")
+            node.update(
+                tag="native_empty_cimultidict",
+                provider="multidict-6.7.0-cp311-cimultidict-empty-v1",
+                type="multidict._multidict.CIMultiDict",
+                items=[],
+                reconstruction_args="ONE_EXACT_EMPTY_LIST",
+                protocol_recipes=_provider_v4_native_mapping_recipes(),
+            )
         elif kind is _ProviderV4SourceObject:
             self._instance(node, value, depth)
         else:
@@ -217,6 +266,11 @@ class _ProviderV4Graph:
             },
             base_kind=value.base_kind,
             base_items=self.edge(value.base_items, depth + 1),
+            **(
+                {"base_args": self.edge(value.base_args, depth + 1)}
+                if value.base_kind == "exception"
+                else {}
+            ),
             state=self.edge(
                 value.serialized_state
                 if value.serialized_state is not None
@@ -266,6 +320,18 @@ def _provider_v4_protocol_recipes(
     state_recipe="DEFAULT_DICT_BUILD",
     reduce_recipe="CANONICAL_OBJECT_REDUCE",
 ):
+    if base_kind == "exception":
+        return [
+            {
+                "protocol": protocol,
+                "allocation": "REDUCE_EXCEPTION_CLASS_CALL",
+                "constructor": "SOURCE_INIT_WITH_REDUCED_BASEEXCEPTION_ARGS",
+                "insertion": "NONE",
+                "reduce": "CANONICAL_BASEEXCEPTION_REDUCE",
+                "state": "BUILD_PYOBJECT_SETATTR_AFTER_REDUCE",
+            }
+            for protocol in range(6)
+        ]
     if base_kind not in {"object", "list", "dict", "ordered_dict"}:
         raise ValueError("unsupported allocation base")
     old = (
@@ -320,8 +386,15 @@ class _ProviderV4SourceInterpreter:
         self.remaining -= 1
         if self.remaining < 0 or len(self.stack) > 8:
             raise ValueError("source interpreter budget exhausted")
-        if isinstance(node, ast.Name) and node.id in env:
-            return env[node.id]
+        if isinstance(node, ast.Name):
+            if node.id in env:
+                return env[node.id]
+            symbol = _provider_v4_resolve_symbol(path, node.id, self.trees)
+            if isinstance(symbol, _ProviderV4Module):
+                return symbol
+            if symbol == "pickle.HIGHEST_PROTOCOL":
+                return self._pickle_highest_protocol()
+            raise ValueError("unbound source name")
         if isinstance(node, ast.Constant):
             _provider_v4_scalar(node.value)
             return node.value
@@ -338,7 +411,26 @@ class _ProviderV4SourceInterpreter:
     def attribute(self, node, env, path):
         """Resolve a captured field or method while rejecting unknown descriptor and provider behavior."""
         receiver = self.value(node.value, env, path)
+        if isinstance(receiver, _ProviderV4Module):
+            if receiver.name == "pickle" and node.attr == "HIGHEST_PROTOCOL":
+                return self._pickle_highest_protocol()
+            if receiver.path:
+                symbol = _provider_v4_resolve_symbol(
+                    receiver.path, node.attr, self.trees
+                )
+                if isinstance(symbol, tuple):
+                    return symbol
+            raise ValueError("unresolved source module attribute")
         if type(receiver) is _ProviderV4SourceObject:
+            if receiver.base_kind == "exception":
+                descriptor = _provider_v4_exception_data_descriptor(node.attr)
+                if descriptor is not None:
+                    if (
+                        descriptor[0] is BaseException
+                        and descriptor[1] is vars(BaseException).get("args")
+                    ):
+                        return receiver.base_args
+                    raise ValueError("unmodeled native exception descriptor read")
             if node.attr in receiver.state:
                 return receiver.state[node.attr]
             if node.attr in receiver.slots and node.attr in receiver.slot_state:
@@ -394,11 +486,38 @@ class _ProviderV4SourceInterpreter:
             symbol = _provider_v4_resolve_symbol(path, call.func.id, self.trees)
             if symbol in self.classes:
                 return self.construct(symbol, call, args, kwargs)
+            if symbol == "multidict.CIMultiDict":
+                return self.native_cimultidict(args, kwargs)
             return _provider_v4_builtin_call(symbol, args, kwargs)
         if isinstance(call.func, ast.Attribute):
             receiver = self.value(call.func.value, env, path)
+            if isinstance(receiver, _ProviderV4Module):
+                symbol = (
+                    _provider_v4_resolve_symbol(
+                        receiver.path, call.func.attr, self.trees
+                    )
+                    if receiver.path
+                    else f"{receiver.name}.{call.func.attr}"
+                )
+                if symbol in self.classes:
+                    return self.construct(symbol, call, args, kwargs)
+                if symbol == "multidict.CIMultiDict":
+                    return self.native_cimultidict(args, kwargs)
+                raise ValueError("unmodeled source module call")
             return self.method(receiver, call.func.attr, call, args, kwargs)
         raise ValueError("indirect source call")
+
+    def _pickle_highest_protocol(self):
+        if self.contract["runtime"].get("version") != "3.11.9":
+            raise ValueError("pickle protocol runtime is not pinned")
+        return 5
+
+    def native_cimultidict(self, args, kwargs):
+        if _provider_v4_native_binding(self.contract) is None:
+            raise ValueError("native provider requires an explicit current qualified profile")
+        if kwargs or len(args) > 1 or args and (type(args[0]) is not list or args[0]):
+            raise ValueError("native mapping constructor is not the exact empty form")
+        return _ProviderV4NativeCIMultiDict()
 
     def super_method(self, name, args, kwargs, env, path):
         """Resolve a modeled super call using the captured class hierarchy and lexical owner."""
@@ -413,14 +532,17 @@ class _ProviderV4SourceInterpreter:
         ) or binding_occurrences(method.body, "super"):
             raise ValueError("super provider is shadowed")
         receiver = env[method.args.args[0].arg]
-        if kwargs:
-            raise ValueError("unmodeled base method keywords")
         target, base_kind = self.source_super_target(receiver, model, name)
         if target is not None:
             return self.run_method(
                 receiver, target, target["own_methods"][name], None, args, kwargs
             )
+        if kwargs:
+            raise ValueError("unmodeled base method keywords")
         model = {**model, "base": base_kind}
+        if model["base"] == "exception":
+            receiver.base_args = tuple(args)
+            return None
         if model["base"] == "dict":
             return self.dict_base_method(receiver, name, args)
         if name != "__init__":
@@ -498,6 +620,7 @@ class _ProviderV4SourceInterpreter:
             class_ast_sha256=model["digest"],
             base_kind=model["base"],
             base_items=[] if model["base"] == "list" else {},
+            base_args=tuple(args) if model["base"] == "exception" else (),
             state={},
             slots=model["slots"],
             state_hook_uses=(),
@@ -517,6 +640,26 @@ class _ProviderV4SourceInterpreter:
         if model["state_hooks"]:
             self._apply_source_state_hooks(obj, model)
             return
+        if obj.base_kind == "exception" and any(
+            type(name) is not str
+            or _provider_v4_exception_data_descriptor(name) is not None
+            for name in obj.state
+        ):
+            raise ValueError("Exception BUILD would invoke an unsupported descriptor")
+        if obj.base_kind == "exception":
+            # REDUCE calls the class with args on EVERY protocol. Re-evaluate the
+            # initializer before BUILD: source construction alone is insufficient.
+            args, state = copy.deepcopy((obj.base_args, obj.state))
+            restored = self.construct((obj.path, obj.name), None, list(args), {})
+            for name, value in state.items():
+                restored.state[name] = value
+            # Exception __init__ can insert fields before BUILD inserts the
+            # original fields. Compare field bindings; do not promise __dict__
+            # insertion order is preserved by a pickle roundtrip.
+            if restored.state.keys() == obj.state.keys():
+                restored.state = {name: restored.state[name] for name in obj.state}
+            if not _provider_v4_replayed_state_matches(obj, restored):
+                raise ValueError("Exception REDUCE/BUILD does not reconstruct the modeled state")
         obj.state_recipe = (
             "DEFAULT_DICT_AND_SLOT_BUILD" if obj.slots else "DEFAULT_DICT_BUILD"
         )
@@ -540,6 +683,7 @@ class _ProviderV4SourceInterpreter:
             class_ast_sha256=original.class_ast_sha256,
             base_kind=original.base_kind,
             base_items=[] if original.base_kind == "list" else {},
+            base_args=original.base_args,
             state={},
             slots=original.slots,
             state_hook_uses=(),
@@ -748,6 +892,20 @@ class _ProviderV4SourceInterpreter:
             "__"
         ):
             raise ValueError("unsupported instance state store")
+        descriptor = (
+            _provider_v4_exception_data_descriptor(target.attr)
+            if receiver.base_kind == "exception"
+            else None
+        )
+        if descriptor is not None:
+            if (
+                descriptor[0] is not BaseException
+                or descriptor[1] is not vars(BaseException).get("args")
+                or type(value) is not tuple
+            ):
+                raise ValueError("unmodeled native exception descriptor store")
+            receiver.base_args = value
+            return
         if _provider_v2_text_size(target.attr) is None:
             raise ValueError("field name exceeds bound")
         if target.attr in receiver.slots:
@@ -827,12 +985,16 @@ def _provider_v4_method_use(model, method):
 
 def _provider_v4_replayed_state_matches(original, restored):
     pairs = set()
+    forward, reverse = {id(original): id(restored)}, {id(restored): id(original)}
 
     def same(left, right):
         if type(left) is not type(right):
             return False
         if type(left) in {str, bytes, int, float, bool, type(None)}:
             return left == right
+        if forward.get(id(left), id(right)) != id(right) or reverse.get(id(right), id(left)) != id(left):
+            return False
+        forward[id(left)], reverse[id(right)] = id(right), id(left)
         pair = (id(left), id(right))
         if pair in pairs:
             return True
@@ -848,11 +1010,14 @@ def _provider_v4_replayed_state_matches(original, restored):
             )
         if type(left) is _ProviderV4OrderedDict:
             return same(left.items, right.items)
+        if type(left) is _ProviderV4NativeCIMultiDict:
+            return not left.items and not right.items
         if type(left) is _ProviderV4SourceObject:
             return (
                 left.path == right.path
                 and left.name == right.name
                 and same(left.base_items, right.base_items)
+                and same(left.base_args, right.base_args)
                 and same(left.state, right.state)
                 and same(left.slot_state, right.slot_state)
             )
@@ -860,6 +1025,7 @@ def _provider_v4_replayed_state_matches(original, restored):
 
     return (
         same(original.base_items, restored.base_items)
+        and same(original.base_args, restored.base_args)
         and same(original.state, restored.state)
         and same(original.slot_state, restored.slot_state)
     )
@@ -893,7 +1059,12 @@ def _provider_v4_class_model(cls, tree, row, trees):
         _provider_v4_base_symbol(node, row["path"], trees) for node in cls.bases
     ] or ["object"]
     base = next(
-        (value for value in bases if value in {"object", "list", "dict"}), "object"
+        (
+            value
+            for value in bases
+            if value in {"object", "list", "dict", "exception"}
+        ),
+        "object",
     )
     methods = {}
     forbidden = _provider_v4_forbidden_methods(base)
@@ -932,7 +1103,9 @@ def _provider_v4_class_model(cls, tree, row, trees):
         "state_hooks": ("__getstate__", "__setstate__")
         if "__getstate__" in methods
         else (),
-        "reduce_recipe": "CANONICAL_BASE_REDUCE"
+        "reduce_recipe": "CANONICAL_BASEEXCEPTION_REDUCE"
+        if base == "exception"
+        else "CANONICAL_BASE_REDUCE"
         if reduce_method is not None
         else "CANONICAL_OBJECT_REDUCE",
     }
@@ -959,6 +1132,8 @@ def _provider_v4_base_symbol(node, path, trees):
     if not isinstance(node, ast.Name):
         raise ValueError("dynamic or starred base")
     candidate = _provider_v4_resolve_symbol(path, node.id, trees)
+    if candidate == "Exception":
+        return "exception"
     if not isinstance(candidate, tuple) and candidate not in {"object", "list", "dict"}:
         raise ValueError("unknown native class allocator")
     return candidate
@@ -1032,6 +1207,23 @@ def _provider_v4_apply_mro(models, linearized):
         forbidden = _provider_v4_forbidden_methods(model["base"])
         if forbidden.intersection(model["methods"]):
             raise ValueError("inherited reconstruction override")
+        if model["base"] == "exception" and (
+            {
+                "__new__",
+                "__reduce__",
+                "__reduce_ex__",
+                "__getnewargs__",
+                "__getnewargs_ex__",
+                "__getstate__",
+                "__setstate__",
+                "__setattr__",
+                "__getattribute__",
+                "__delattr__",
+            }
+            & model["methods"].keys()
+            or any(parent["slots"] for parent in model["mro_models"])
+        ):
+            raise ValueError("Exception reconstruction override or descriptor")
         if any(parent["slots"] for parent in model["mro_models"][1:]):
             raise ValueError("inherited slot layouts require separate descriptor model")
         model["state_hooks"] = (
@@ -1167,6 +1359,10 @@ def _provider_v4_resolve_symbol(path, name, trees, visited=()):
     node = bindings[0]
     if isinstance(node, ast.ClassDef):
         return path, name
+    if isinstance(node, ast.Import):
+        matches = [item for item in node.names if (item.asname or item.name.split('.')[0]) == name]
+        if len(matches) == 1 and matches[0].name in {"pickle", "multidict"}:
+            return _ProviderV4Module(matches[0].name)
     if isinstance(node, ast.ImportFrom) and not any(
         alias.name == "*" for alias in node.names
     ):
@@ -1191,6 +1387,9 @@ def _provider_v4_resolve_symbol(path, name, trees, visited=()):
             )
             if candidate in trees
         ]
+        submodule = (module + "." + alias.name).replace(".", "/") + ".py"
+        if submodule in trees and (not targets or not binding_occurrences(trees[targets[0]].body, alias.name)):
+            return _ProviderV4Module(module + "." + alias.name, submodule)
         if len(targets) == 1:
             return _provider_v4_resolve_symbol(targets[0], alias.name, trees, visited)
         if len(targets) > 1:
@@ -1337,6 +1536,8 @@ def provider_pickle_graph_record(
             "version": 4,
         }:
             return None
+        if not provider_native_sources_clear(contract, source_bytes):
+            return None
         interpreter = _ProviderV4SourceInterpreter(contract, source_bytes)
         tree, expression, scope = _provider_v4_caller_expression(
             source_bytes, source_path, object_expression
@@ -1449,7 +1650,19 @@ def _provider_v4_source_root(interpreter, scope, expression, path):
         statement = parents.get(statement)
         if statement is None:
             raise ValueError("root expression has no direct frame statement")
-    if not isinstance(statement, (ast.Assign, ast.AnnAssign, ast.Return, ast.Expr)):
+    if isinstance(statement, ast.For):
+        from . import review_audits as audit
+        from .runtime_audit_integrity import closed_local_pickle_flow, _conditional_file_aliases, _conditional_module_name, _conditional_provider_parents
+
+        _conditional_provider_parents(interpreter.trees[path])
+        aliases = _conditional_file_aliases(path, interpreter.trees[path], {path: _conditional_module_name(path)})
+        loads = [node for node in ast.walk(statement) if isinstance(node, ast.Call)
+                 and audit._normalized_call_name(node, aliases) in {"pickle.loads", "_pickle.loads"}]
+        flow = closed_local_pickle_flow(loads[0], audit._normalized_call_name(loads[0], aliases), aliases, audit,
+                                       serializer_namespace_only=True) if len(loads) == 1 else None
+        if flow is None or _fixed_program_span(flow["object_expression"]) != _fixed_program_span(expression):
+            raise ValueError("loop root lacks exact closed serializer/object flow")
+    elif not isinstance(statement, (ast.Assign, ast.AnnAssign, ast.Return, ast.Expr)):
         raise ValueError("uncertain control flow around root")
     parameters = {
         item.arg
@@ -1487,6 +1700,8 @@ def _provider_v4_graph_record(
         "selected_model_sha256": view["selected_model_sha256"],
         "runtime": contract["runtime"],
     }
+    if "native_artifacts" in contract:
+        payload["native_runtime_binding"] = _provider_v4_native_binding(contract)
     return {
         "assurance": "PROVISIONAL_PROVIDER_RECONSTRUCTION",
         "analysis_profile": profile["analysis_profile"],
@@ -1746,7 +1961,7 @@ def _provider_contract_valid(contract, runtime, *, allow_v2=False):
         "classes",
         "assumptions",
     }
-    if not isinstance(contract, dict) or set(contract) != keys:
+    if not isinstance(contract, dict) or set(contract) not in (keys, keys | {"native_artifacts"}):
         return False
     model, export = contract["model"], contract["export"]
     if (
@@ -1759,6 +1974,11 @@ def _provider_contract_valid(contract, runtime, *, allow_v2=False):
         return False
     descriptor = _PROVIDER_MODELS.get((model["id"], model["version"]))
     if descriptor is None or not allow_v2 and descriptor is not _PROVIDER_MODEL:
+        return False
+    if "native_artifacts" in contract and (
+        descriptor is not _PROVIDER_MODEL_V4
+        or _provider_v4_native_binding(contract) is None
+    ):
         return False
     if (
         contract["schema"] != "factory.provider-contract.v1"
@@ -1781,6 +2001,57 @@ def _provider_contract_valid(contract, runtime, *, allow_v2=False):
         and export["symbol"].isidentifier()
         and _provider_class_rows_valid(contract["classes"], artifacts, maximum=maximum)
     )
+
+
+def _provider_v4_native_binding(contract):
+    """Bind the opt-in empty-native recipe to current local files; no imports.
+
+    Native export selection and initialized provider immutability remain explicit
+    conditional assumptions, never assertions about a target deployment.
+    """
+    import importlib.metadata
+    import os
+    import sys
+    import sysconfig
+    from pathlib import Path
+
+    if (contract.get("native_artifacts") != _NATIVE_EMPTY_MAPPING
+            or sys.version_info[:3] != (3, 11, 9)
+            or sys.implementation.name != "cpython"
+            or sysconfig.get_platform() != "win-amd64"
+            or os.environ.get("MULTIDICT_NO_EXTENSIONS")):
+        return None
+    try:
+        distribution = importlib.metadata.distribution("multidict")
+        if distribution.version != "6.7.0":
+            return None
+        observed = {path: hashlib.sha256(Path(distribution.locate_file(path)).read_bytes()).hexdigest()
+                    for path in _NATIVE_EMPTY_MAPPING["files"]}
+        if observed != _NATIVE_EMPTY_MAPPING["files"]:
+            return None
+        return {"profile": _NATIVE_EMPTY_MAPPING["id"], "observed_file_sha256": observed,
+                "selector": "CONDITIONAL_NOT_EXECUTED", "deployment": "NOT_VERIFIED"}
+    except (OSError, ValueError, importlib.metadata.PackageNotFoundError):
+        return None
+
+
+def provider_native_sources_clear(contract, sources):
+    """Captured import candidates contradict installed-native selection premises."""
+    if "native_artifacts" not in contract:
+        return True
+    from pathlib import PurePosixPath
+
+    return not any(
+        "multidict" in PurePosixPath(path.casefold()).parts
+        or PurePosixPath(path.casefold()).name == "multidict.py"
+        for path in sources
+    )
+
+
+def _provider_v4_native_mapping_recipes():
+    return [{"protocol": protocol, "allocation": "REDUCE_EXACT_NATIVE_CIMULTIDICT",
+             "arguments": "ONE_EXACT_EMPTY_LIST", "state": "NONE"}
+            for protocol in range(6)]
 
 
 def provider_analysis_profile(

@@ -4201,6 +4201,177 @@ _GENERIC_PICKLE_V4_CALLER = (
 )
 
 
+def test_pickle_generic_v4_models_baseexception_args_before_and_after_init(
+    monkeypatch,
+):
+    from factoryline import finite_capture as finite
+
+    provider = (
+        "class Child:\n    pass\n"
+        "class Record(Exception):\n"
+        "    def __init__(self, value):\n"
+        "        self.value = value\n"
+        "        self.args = (value,)\n"
+    )
+    caller = 'from pkg import Record\ndef build():\n    return Record("fixed")\n'
+    sources, profile, view, expression = _generic_pickle_v4_fixture(
+        provider, caller, monkeypatch
+    )
+
+    record = finite.provider_pickle_graph_record(
+        profile,
+        sources,
+        expression,
+        selected_contract_view=view,
+        source_path="caller.py",
+    )
+
+    assert record is not None
+    node = record["typed_graph"]["nodes"][record["typed_graph"]["root"]["id"]]
+    assert node["base_kind"] == "exception"
+    assert node["base_args"]["tag"] == "ref"
+    args = record["typed_graph"]["nodes"][node["base_args"]["id"]]
+    assert args["tag"] == "tuple"
+    assert args["items"][0]["value"] == "fixed"
+    assert [row["allocation"] for row in node["protocol_recipes"]] == [
+        "REDUCE_EXCEPTION_CLASS_CALL",
+        "REDUCE_EXCEPTION_CLASS_CALL",
+        "REDUCE_EXCEPTION_CLASS_CALL",
+        "REDUCE_EXCEPTION_CLASS_CALL",
+        "REDUCE_EXCEPTION_CLASS_CALL",
+        "REDUCE_EXCEPTION_CLASS_CALL",
+    ]
+
+
+def test_pickle_generic_v4_replays_initializer_with_reduced_args(monkeypatch):
+    from factoryline import finite_capture as finite
+
+    provider = (
+        "class Child:\n    pass\n"
+        "class Record(Exception):\n"
+        "    def __init__(self, value):\n"
+        "        if value is None:\n            print('restore effect')\n"
+        "        self.value = value\n        self.args = (None,)\n"
+    )
+    caller = 'from pkg import Record\ndef build():\n    return Record("fixed")\n'
+    sources, profile, view, expression = _generic_pickle_v4_fixture(provider, caller, monkeypatch)
+    assert finite.provider_pickle_graph_record(
+        profile, sources, expression, selected_contract_view=view, source_path="caller.py"
+    ) is None
+
+
+@pytest.mark.parametrize("field", ["__cause__", "__context__", "__traceback__"])
+def test_pickle_generic_v4_rejects_exception_native_descriptor_state(field, monkeypatch):
+    from factoryline import finite_capture as finite
+
+    provider = (
+        "class Child:\n    pass\n"
+        "class Record(Exception):\n"
+        "    def __init__(self, value):\n        self." + field + " = None\n"
+    )
+    caller = 'from pkg import Record\ndef build():\n    return Record("fixed")\n'
+    sources, profile, view, expression = _generic_pickle_v4_fixture(provider, caller, monkeypatch)
+    assert finite.provider_pickle_graph_record(
+        profile, sources, expression, selected_contract_view=view, source_path="caller.py"
+    ) is None
+
+
+def test_pickle_native_leaf_requires_explicit_current_profile():
+    from factoryline import pickle_model_audit as model
+
+    assert model._provider_v4_native_binding({}) is None
+    assert model._provider_v4_native_binding({"native_artifacts": {"id": "invented"}}) is None
+
+
+def test_pickle_exception_restore_does_not_mutate_original_model(monkeypatch):
+    from factoryline import finite_capture as finite
+
+    provider = (
+        "class Child:\n    pass\n"
+        "class Record(Exception):\n"
+        "    def __init__(self, value):\n"
+        "        value.append('again')\n        self.value = value\n"
+    )
+    caller = 'from pkg import Record\ndef build():\n    return Record([])\n'
+    sources, profile, view, expression = _generic_pickle_v4_fixture(provider, caller, monkeypatch)
+    assert finite.provider_pickle_graph_record(
+        profile, sources, expression, selected_contract_view=view, source_path="caller.py"
+    ) is None
+
+
+def test_pickle_exception_restore_preserves_cross_field_alias_topology(monkeypatch):
+    from factoryline import finite_capture as finite
+
+    provider = (
+        "class Child:\n    pass\n"
+        "class Record(Exception):\n"
+        "    def __init__(self, value):\n"
+        "        self.args = (list(value),)\n        self.value = self.args[0]\n"
+    )
+    caller = 'from pkg import Record\ndef build():\n    return Record([])\n'
+    sources, profile, view, expression = _generic_pickle_v4_fixture(provider, caller, monkeypatch)
+    assert finite.provider_pickle_graph_record(
+        profile, sources, expression, selected_contract_view=view, source_path="caller.py"
+    ) is None
+
+
+@pytest.mark.parametrize("path", ["multidict.py", "multidict/__init__.py", "src/multidict/__init__.py"])
+def test_native_mapping_selection_rejects_captured_import_shadow(path):
+    from factoryline import pickle_model_audit as model
+
+    contract = {"native_artifacts": model._NATIVE_EMPTY_MAPPING}
+    assert model.provider_native_sources_clear(contract, {"caller.py": b"pass"})
+    assert not model.provider_native_sources_clear(contract, {path: b"class CIMultiDict: pass"})
+
+
+def test_pickle_base_alias_definition_does_not_hide_write_through_alias():
+    import ast
+    from factoryline import review_audits as audit, runtime_audit_integrity as runtime
+
+    source = "class Other(Exception):\n    __reduce__ = BaseException.__reduce__\n"
+    tree = ast.parse(source)
+    assert not runtime._conditional_enum_base_mutated(list(ast.walk(tree)), {}, audit)
+    poisoned = ast.parse(source + "alias = BaseException\nalias.__reduce__ = replacement\n")
+    assert runtime._conditional_enum_base_mutated(list(ast.walk(poisoned)), {}, audit)
+
+
+@pytest.mark.parametrize(
+    "insertion",
+    [
+        "    def __reduce__(self):\n        return super().__reduce__()\n",
+        "    def __getstate__(self):\n        return self.__dict__.copy()\n"
+        "    def __setstate__(self, state):\n        self.__dict__.update(state)\n",
+        "    def __setattr__(self, name, value):\n        object.__setattr__(self, name, value)\n",
+    ],
+)
+def test_pickle_generic_v4_exception_rejects_custom_reconstruction_effects(
+    insertion, monkeypatch
+):
+    from factoryline import finite_capture as finite
+
+    provider = (
+        "class Child:\n    pass\n"
+        "class Record(Exception):\n"
+        "    def __init__(self, value):\n        self.value = value\n"
+        + insertion
+    )
+    caller = 'from pkg import Record\ndef build():\n    return Record("fixed")\n'
+    sources, profile, view, expression = _generic_pickle_v4_fixture(
+        provider, caller, monkeypatch
+    )
+
+    assert (
+        finite.provider_pickle_graph_record(
+            profile,
+            sources,
+            expression,
+            selected_contract_view=view,
+            source_path="caller.py",
+        )
+        is None
+    )
+
+
 def test_pickle_generic_v4_source_graph_preserves_shared_identity_and_protocol_recipes(
     monkeypatch,
 ):

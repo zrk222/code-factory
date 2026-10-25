@@ -2812,9 +2812,8 @@ def _conditional_selected_pickle_flow(profile, source_bytes, caller, sink_span, 
         _finite_capture._PROVIDER_MODEL_V3["id"],
         _finite_capture._PROVIDER_MODEL_V4["id"],
     }
-    if flow is None and any(
-        item["model"]["id"] in graph_models for item in profile["contracts"]
-    ):
+    typed = any(item["model"]["id"] in graph_models for item in profile["contracts"])
+    if flow is None and typed:
         flow = _conditional_provider_v2_flow(
             source_bytes, caller, sink_span, audit, serializer_namespace_only=True
         )
@@ -2827,10 +2826,7 @@ def _conditional_selected_pickle_flow(profile, source_bytes, caller, sink_span, 
             caller,
             sink_span,
             audit,
-            serializer_namespace_only=any(
-                item["model"]["id"] in graph_models
-                for item in profile["contracts"]
-            ),
+            serializer_namespace_only=typed,
         )
     )
     constructor = (
@@ -2867,6 +2863,9 @@ def _conditional_provider_v4_witness(
     profile, source_bytes, caller, sink_span, flow, view, binding, audit
 ):
     """Admit only independently regenerated generic source-object graphs."""
+    from .pickle_model_audit import provider_native_sources_clear
+    if not provider_native_sources_clear(view["contract"], source_bytes):
+        return None
     context = _conditional_provider_v2_context(view["contract"], source_bytes, caller)
     if context is None:
         return None
@@ -2886,6 +2885,9 @@ def _conditional_provider_v4_witness(
     if active is None:
         return None
     classes = _conditional_selected_descendants(rows, aliases, classes, audit)
+    if record["typed_graph"].get("native_runtime_binding"):
+        classes = {*classes, "multidict.CIMultiDict", "multidict.MultiDict",
+                   "multidict._multidict.CIMultiDict", "multidict._multidict.MultiDict"}
     if not _conditional_provider_mutations(
         rows,
         aliases,
@@ -2931,8 +2933,14 @@ def _conditional_v4_active_nodes(record, flow, caller, trees, aliases, audit):
     if scope is None or load is None:
         return None
     active[caller].update(id(node) for node in ast.walk(scope))
+    native_calls = frozenset(
+        _conditional_span_tuple(node) for node in ast.walk(scope)
+        if isinstance(node, ast.Call) and not node.args and not node.keywords
+        and audit._resolved_ast_name(node.func, aliases[caller]) == "multidict.CIMultiDict"
+    ) if record["typed_graph"].get("native_runtime_binding") else frozenset()
     if not _conditional_v3_frame_calls_closed(
-        scope, {**flow, "scope": scope, "load_call": load}, aliases[caller], audit
+        scope, {**flow, "scope": scope, "load_call": load}, aliases[caller], audit,
+        additional_calls=native_calls,
     ):
         return None
     uses = record["typed_graph"]["method_uses"]
@@ -3320,7 +3328,7 @@ def _conditional_v3_current_node(tree, original):
     return matches[0] if len(matches) == 1 else None
 
 
-def _conditional_v3_frame_calls_closed(scope, flow, aliases, audit):
+def _conditional_v3_frame_calls_closed(scope, flow, aliases, audit, *, additional_calls=frozenset()):
     """Unknown active callbacks cannot inherit the deferred-body exception."""
     if any(
         isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda))
@@ -3332,6 +3340,7 @@ def _conditional_v3_frame_calls_closed(scope, flow, aliases, audit):
         _conditional_span_tuple(flow[key])
         for key in ("constructor_call", "dump_call", "load_call")
     }
+    approved.update(additional_calls)
     loop = flow.get("loop")
     if isinstance(loop, ast.For):
         approved.add(_conditional_span_tuple(loop.iter))
@@ -4170,6 +4179,14 @@ def _conditional_enum_base_mutated(
                 if isinstance(node, (ast.Assign, ast.Delete))
                 else [node.target]
             )
+            value = getattr(node, "value", None)
+            # Creating a fresh name for a canonical descriptor does not write
+            # through it. Keep subsequent writes via that alias visible.
+            if isinstance(node, (ast.Assign, ast.AnnAssign)) and isinstance(
+                value, (ast.Name, ast.Attribute)
+            ) and _conditional_enum_root_path(value, aliases, roots, audit):
+                targets = [target for target in targets
+                           if not isinstance(target, ast.Name) or target.id in roots]
             if any(
                 _conditional_enum_root_path(target, aliases, roots, audit)
                 for target in targets
@@ -4338,7 +4355,9 @@ def _conditional_module_export_write(call, aliases, module_exports, audit):
 def _conditional_selected_reference(
     node, aliases, audit, selected_classes, module_exports
 ):
-    if _conditional_selected_path(node, aliases, audit, selected_classes):
+    if _conditional_selected_path(node, aliases, audit, selected_classes) or (
+        isinstance(node, ast.Name) and audit._resolved_ast_name(node, aliases) in module_exports
+    ):
         return True
     if isinstance(node, ast.Subscript):
         if _conditional_module_dict(node.value, aliases, audit, module_exports):
