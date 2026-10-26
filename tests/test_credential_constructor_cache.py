@@ -1683,6 +1683,47 @@ def test_external_terminal_resolution_requires_exact_explicit_contract(
         assert result is None
 
 
+@pytest.mark.parametrize("declaration,base", [
+    ("from external import Other, Base", "Base"),
+    ("from external import Base, Other", "Base"),
+    ("from external import Other, Base as Parent", "Parent"),
+    ("from external import Other as Base, Base as Parent", "Parent"),
+])
+def test_terminal366_combined_import_preserves_selected_base_contract(tmp_path, declaration, base):
+    index, paths = _snapshot(tmp_path, {"source.py": f"{declaration}\nclass Child({base}): pass\n"})
+    path = paths["source.py"]
+    owner = index.snapshots[path].body[1]
+    result = provider.resolve_class_chain_with_terminals(
+        index, path, "Child", {path: {}}, {(path, "Child"): owner}, audit,
+        {"external.Base": "reviewed.external-base.v1"},
+    )
+    assert result == {"chain": [(path, "Child", owner)],
+                      "terminal_assumptions": [{"canonical": "external.Base", "contract": "reviewed.external-base.v1"}]}
+
+
+@pytest.mark.parametrize("change", ["duplicate-alias", "rebound", "captured-shadow", "provider-write", "unregistered-base"])
+def test_terminal366_combined_import_rejects_ambiguous_or_mutated_base(tmp_path, change):
+    declaration = "from external import Other, Base as Parent"
+    if change == "duplicate-alias":
+        declaration = "from external import Base as Parent, Other as Parent"
+    source = declaration + "\nclass Child(Parent): pass\n"
+    if change == "rebound":
+        source += "Parent = replacement\n"
+    sources = {"source.py": source}
+    if change == "captured-shadow":
+        sources["external.py"] = "class Base: pass\nclass Other: pass\n"
+    if change == "provider-write":
+        sources["mutator.py"] = "import external\nexternal.Base = replacement\n"
+    index, paths = _snapshot(tmp_path, sources)
+    path = paths["source.py"]
+    owner = index.snapshots[path].body[1]
+    contract = "external.Other" if change == "unregistered-base" else "external.Base"
+    assert provider.resolve_class_chain_with_terminals(
+        index, path, "Child", {path: {}}, {(path, "Child"): owner}, audit,
+        {contract: "reviewed.external-base.v1"},
+    ) is None
+
+
 @pytest.mark.parametrize(
     "declaration,suffix,accepted",
     [

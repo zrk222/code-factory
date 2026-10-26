@@ -2183,7 +2183,7 @@ def _direct_terminal_import(index, path, alias):
         index.snapshots[path], alias
     ):
         return None
-    selected = statement.names[0]
+    selected = next(item for item in statement.names if (item.asname or item.name) == alias)
     return f"{statement.module}.{selected.name}", statement
 
 
@@ -2198,11 +2198,11 @@ def _direct_terminal_import_statement(index, path, alias):
         index.parents[path].get(id(statement)) is not index.snapshots[path]
         or statement.level
         or not statement.module
-        or len(statement.names) != 1
+        or any(item.name == "*" for item in statement.names)
     ):
         return None
-    selected = statement.names[0]
-    if (selected.asname or selected.name) != alias or selected.name == "*":
+    selected = [item for item in statement.names if (item.asname or item.name) == alias]
+    if len(selected) != 1:
         return None
     return statement
 
