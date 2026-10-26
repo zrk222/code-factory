@@ -1326,3 +1326,213 @@ def test_registered_fixture_policy_is_explicit_and_defaults_compatible(tmp_path)
     assert v2['defect_policy_decision']['policy_id'] == 'source-role-v2'
     assert v2['defect_policy_decision']['clean'] is False
     assert v2['finding_tier_report']['ledger'][0]['tier'] == 'NEEDS_CONTEXT'
+
+
+def _field_use_scope(node, parents):
+    current = node
+    while current is not None:
+        current = parents.get(id(current))
+        if isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            return current
+    return None
+
+
+
+def _field_use_chain(node):
+    parts = []
+    while isinstance(node, ast.Attribute):
+        parts.append(node.attr)
+        node = node.value
+    if isinstance(node, ast.Name):
+        return [node.id, *reversed(parts)]
+    return []
+
+
+
+def _owned_field_successors(function, value, parents):
+    """Test resolver: expand one class-owned field into every captured read."""
+    parent = parents.get(id(value))
+    if isinstance(parent, ast.Assign) and parent.value is value:
+        targets = parent.targets
+        if len(targets) != 1 or _field_use_chain(targets[0]) != ["self", "account"]:
+            return None
+        owner = parents.get(id(function))
+        if not isinstance(owner, ast.ClassDef):
+            return ()
+        stores = [
+            node
+            for node in ast.walk(owner)
+            if isinstance(node, ast.Attribute)
+            and _field_use_chain(node) == ["self", "account"]
+            and isinstance(node.ctx, (ast.Store, ast.Del))
+        ]
+        if stores != [targets[0]]:
+            return ()
+        reads = [
+            node
+            for node in ast.walk(owner)
+            if isinstance(node, ast.Attribute)
+            and _field_use_chain(node) == ["self", "account"]
+            and isinstance(node.ctx, ast.Load)
+        ]
+        if not reads:
+            return ()
+        scopes = [( _field_use_scope(read, parents), read) for read in reads]
+        return scopes
+    chain = _field_use_chain(value) if isinstance(value, ast.Attribute) else []
+    if chain[:2] == ["self", "account"]:
+        parent = parents.get(id(value))
+        if isinstance(parent, ast.Attribute) and parent.value is value:
+            return [(function, parent)]
+        if isinstance(parent, ast.Call) and value in (
+            *parent.args,
+            *(kw.value for kw in parent.keywords),
+        ):
+            return [(function, parent)]
+    if isinstance(value, ast.Name):
+        parent = parents.get(id(value))
+        if (
+            isinstance(parent, ast.Call)
+            and isinstance(parent.func, ast.Name)
+            and parent.func.id == "consume"
+            and value in parent.args
+        ):
+            return [(function, parent)]
+    return None
+
+
+
+def _class_field_graph(source, terminal="consume"):
+    tree = ast.parse(source)
+    parents = {
+        id(child): node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)
+    }
+    owner = tree.body[0]
+    setup = next(node for node in owner.body if isinstance(node, ast.FunctionDef) and node.name == "setUp")
+    creation = next(node for node in ast.walk(setup) if isinstance(node, ast.Call))
+
+    def scope_of(node):
+        return _field_use_scope(node, parents)
+
+    def consumer(function, value):
+        if not isinstance(value, ast.Call) or not isinstance(value.func, ast.Name):
+            return None
+        return value if value.func.id == terminal else None
+
+    result = finite.captured_value_use_closure(
+        setup,
+        creation,
+        parents,
+        scope_of,
+        lambda _function: None,
+        consumer,
+        field_successors=_owned_field_successors,
+    )
+    return result
+
+
+
+def test_captured_value_use_closure_follows_source_resolved_owned_field_reads():
+    result = _class_field_graph(
+        "class Fixture:\n"
+        " def setUp(self): self.account = build()\n"
+        " def test_value(self): consume(self.account.pk)\n"
+    )
+    assert result is not None
+    assert len(result["sinks"]) == 1
+
+
+
+def test_captured_value_use_closure_follows_owned_field_local_alias_to_positional_sink():
+    result = _class_field_graph(
+        "class Fixture:\n"
+        " def setUp(self): self.account = build()\n"
+        " def test_value(self):\n"
+        "  account = self.account\n"
+        "  consume(account)\n"
+    )
+    assert result is not None
+    assert len(result["sinks"]) == 1
+
+
+
+def test_captured_value_use_closure_rejects_owned_field_escape_or_rebinding():
+    escape = _class_field_graph(
+        "class Fixture:\n"
+        " def setUp(self): self.account = build()\n"
+        " def test_value(self): leak(self.account)\n"
+    )
+    rebound = _class_field_graph(
+        "class Fixture:\n"
+        " def setUp(self): self.account = build()\n"
+        " def test_value(self): self.account = other; consume(self.account)\n"
+    )
+    assert escape is None
+    assert rebound is None
+
+
+
+def test_captured_value_use_closure_does_not_assume_opaque_positional_calls_preserve_values():
+    tree = ast.parse(
+        "def exercise():\n"
+        " result = opaque(build())\n"
+        " consume(result)\n"
+    )
+    parents = {
+        id(child): node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)
+    }
+    function = tree.body[0]
+    build = next(
+        node
+        for node in ast.walk(function)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "build"
+    )
+
+    def scope_of(node):
+        return _field_use_scope(node, parents)
+
+    def consumer(_function, value):
+        return (
+            value
+            if isinstance(value, ast.Call)
+            and ast.unparse(value.func) == "consume"
+            else None
+        )
+
+    assert finite.captured_value_use_closure(
+        function, build, parents, scope_of, lambda _function: None, consumer
+    ) is None
+
+
+
+def test_captured_value_use_closure_bounds_caller_supplied_field_edges():
+    tree = ast.parse("def exercise():\n    build()\n")
+    parents = {
+        id(child): node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)
+    }
+    function = tree.body[0]
+    call = next(node for node in ast.walk(function) if isinstance(node, ast.Call))
+    produced = []
+
+    def field_successors(scope, value, _parents):
+        def edges():
+            while True:
+                produced.append(value)
+                yield scope, value
+
+        return edges()
+
+    result = finite.captured_value_use_closure(
+        function,
+        call,
+        parents,
+        lambda node: function if node in ast.walk(function) else None,
+        lambda _function: None,
+        lambda _function, _value: None,
+        field_successors=field_successors,
+        max_states=3,
+    )
+    assert result is None
+    assert len(produced) == 3

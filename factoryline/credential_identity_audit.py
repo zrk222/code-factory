@@ -7,6 +7,11 @@ from . import credential_role_identity_effects as _legacy
 
 def application_value_role_evidence(index, path, literal, assignment, secret):
     """Resolve shared test-authority effects before the reversible-value lane."""
+    django_fixture = _legacy.django_testcase_helper_secret_evidence(
+        index, path, literal, assignment, secret
+    )
+    if django_fixture is not None:
+        return django_fixture
     signing = _app_signing_authority(index, path, assignment, secret)
     if signing is not None:
         return signing

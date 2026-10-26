@@ -1724,6 +1724,246 @@ def test_terminal366_combined_import_rejects_ambiguous_or_mutated_base(tmp_path,
     ) is None
 
 
+@pytest.mark.parametrize("operand", [
+    "django.utils.timezone.now",
+    "[django.utils.timezone.now]",
+    "{'callback': django.utils.timezone.now}",
+])
+def test_terminal367_namespace_receivers_do_not_escape_the_whole_package(tmp_path, operand):
+    index, paths = _snapshot(tmp_path, {
+        "source.py": "from django.test import TestCase, Client\nclass Case(TestCase): pass\n",
+        "migration.py": f"import django.utils.timezone\nfield(default={operand})\n",
+    })
+    path = paths["source.py"]
+    owner = index.snapshots[path].body[1]
+    result = provider.resolve_class_chain_with_terminals(
+        index, path, "Case", {path: {}}, {(path, "Case"): owner}, audit,
+        {"django.test.TestCase": "reviewed.testcase.v1"},
+    )
+    assert result is not None
+    assert result["terminal_assumptions"] == [
+        {"canonical": "django.test.TestCase", "contract": "reviewed.testcase.v1"}
+    ]
+
+
+@pytest.mark.parametrize("effect", [
+    "consume(django)",
+    "consume(django.test)",
+    "consume(django.test.TestCase)",
+    "consume(django.test.TestCase.setUp)",
+    "consume(django.__dict__)",
+    "django.test.TestCase = supplied",
+    "setattr(django.test, 'TestCase', supplied)",
+    "def callback(django): consume(django.utils.timezone.now)",
+    "def callback():\n    import other as django\n    consume(django.utils.timezone.now)",
+    "def callback():\n    def django(): pass\n    consume(django.utils.timezone.now)",
+])
+def test_terminal367_real_namespace_escape_or_provider_write_stays_rejected(tmp_path, effect):
+    index, paths = _snapshot(tmp_path, {
+        "source.py": "from django.test import TestCase, Client\nclass Case(TestCase): pass\n",
+        "migration.py": "import django.utils.timezone\n" + effect + "\n",
+    })
+    path = paths["source.py"]
+    owner = index.snapshots[path].body[1]
+    assert provider.resolve_class_chain_with_terminals(
+        index, path, "Case", {path: {}}, {(path, "Case"): owner}, audit,
+        {"django.test.TestCase": "reviewed.testcase.v1"},
+    ) is None
+
+
+def test_terminal367_leaf_capability_escape_is_not_cleared_by_module_prefix(tmp_path):
+    index, paths = _snapshot(tmp_path, {
+        "source.py": "from library.provider import Base\nclass Case(Base): pass\n",
+        "peer.py": "import library.provider\nconsume(library.provider.Base.endpoint)\n",
+    })
+    path = paths["source.py"]
+    owner = index.snapshots[path].body[1]
+    assert provider.resolve_class_chain_with_terminals(
+        index, path, "Case", {path: {}}, {(path, "Case"): owner}, audit,
+        {"library.provider.Base": "reviewed.base.v1"},
+    ) is None
+
+
+@pytest.mark.parametrize("helper", ["_terminal_imported_module_receiver", "_terminal_namespace_import_prefix"])
+def test_terminal367_import_operand_helper_replacement_invalidates_native_context(tmp_path, monkeypatch, helper):
+    original = audit._oracle_context_cache_key(tmp_path, [], {})
+    monkeypatch.setattr(provider, helper, lambda *_: False)
+    assert audit._oracle_context_cache_key(tmp_path, [], {}) != original
+
+
+@pytest.mark.parametrize("declaration,operand", [
+    ("from django.db import models", "models.CASCADE"),
+    ("from django.db import models as db", "db.CASCADE"),
+])
+def test_terminal367_contracted_class_module_prefix_is_a_namespace(tmp_path, declaration, operand):
+    index, paths = _snapshot(tmp_path, {
+        "source.py": "from django.db.models import Model\nclass Record(Model): pass\n",
+        "migration.py": declaration + f"\nfield(on_delete={operand})\n",
+    })
+    path = paths["source.py"]
+    owner = index.snapshots[path].body[1]
+    assert provider.resolve_class_chain_with_terminals(
+        index, path, "Record", {path: {}}, {(path, "Record"): owner}, audit,
+        {"django.db.models.Model": "reviewed.model.v1"},
+    ) is not None
+
+
+def test_terminal367_imported_class_receiver_does_not_receive_namespace_exemption(tmp_path):
+    index, paths = _snapshot(tmp_path, {
+        "source.py": "from framework import Provider\nclass Record(Provider): pass\n",
+        "peer.py": "from framework import Provider\nconsume(Provider.member)\n",
+    })
+    path = paths["source.py"]
+    owner = index.snapshots[path].body[1]
+    assert provider.resolve_class_chain_with_terminals(
+        index, path, "Record", {path: {}}, {(path, "Record"): owner}, audit,
+        {"framework.Provider": "reviewed.class.v1"},
+    ) is None
+
+
+@pytest.mark.parametrize("change", [
+    "", "password-projection-hook", "manager-return-replacement", "model-id-descriptor",
+    "signal-connect", "aliased-signal-connect", "dynamic-signal-import", "provider-escape",
+    "registry-user-alias", "get-user-model-alias", "reflective-registry-alias",
+])
+def test_terminal367_user_identifier_contract_rejects_password_dependent_identifiers(tmp_path, change):
+    source = "from django.contrib.auth.models import User\n"
+    additions = {
+        "": "pass\n",
+        "password-projection-hook": (
+            "from django.db.models.signals import post_save\n"
+            "from django.dispatch import receiver\n"
+            "@receiver(post_save, sender=User)\n"
+            "def rewrite(sender, instance, **kwargs):\n"
+            "    instance.pk = int.from_bytes(instance.password.encode()[:8], 'big')\n"
+        ),
+        "manager-return-replacement": "User.objects.create_superuser = replacement\n",
+        "model-id-descriptor": "User.id = property(lambda obj: obj.password)\n",
+        "signal-connect": (
+            "from django.db.models.signals import post_init\n"
+            "post_init.connect(rewrite, sender=User)\n"
+        ),
+        "aliased-signal-connect": (
+            "import django.db.models.signals as hooks\n"
+            "connect = hooks.post_save.connect\nconnect(rewrite)\n"
+        ),
+        "dynamic-signal-import": (
+            "from importlib import import_module\n"
+            "hooks = import_module('django.db.models.signals')\n"
+        ),
+        "provider-escape": "unknown(User)\n",
+        "registry-user-alias": (
+            "from django.apps import apps\nTarget = apps.get_model('auth', 'User')\n"
+            "Target.pk = property(lambda obj: obj.password)\n"
+        ),
+        "get-user-model-alias": (
+            "from django.contrib.auth import get_user_model\nTarget = get_user_model()\n"
+            "Target.pk = property(lambda obj: obj.password)\n"
+        ),
+        "reflective-registry-alias": (
+            "from django.apps import apps\nTarget = apps.get_model('auth', 'User')\n"
+            "setattr(Target, 'pk', property(lambda obj: obj.password))\n"
+        ),
+    }
+    index, _ = _snapshot(tmp_path, {"source.py": source + additions[change]})
+    result = provider.django_user_identifier_contract({"source": index})
+    assert (result is not None) is (change == "")
+    if result is not None:
+        assert result["projections"] == ("pk", "id")
+        assert result["role"] == "NON_SECRET_PROJECTION"
+        assert result["downstream_authorization"] == "UNASSESSED"
+
+
+@pytest.mark.parametrize("helper", ["django_user_identifier_contract", "_django_user_projection_hooks_clear"])
+def test_terminal367_identifier_contract_helpers_participate_in_native_cache_epoch(tmp_path, monkeypatch, helper):
+    before = audit._oracle_context_cache_key(tmp_path, [], {})
+    monkeypatch.setattr(provider, helper, lambda *_: None)
+    assert audit._oracle_context_cache_key(tmp_path, [], {}) != before
+
+
+@pytest.mark.parametrize("change", [
+    "", "unbound-method", "unbound-init", "reflective-init", "self-rebind", "custom-new", "shadowed-object",
+])
+def test_terminal367_unrelated_constructor_write_requires_owned_receiver_closure(tmp_path, change):
+    source = (
+        "from django.apps import apps\n"
+        "class Metadata(object):\n"
+        "    def __init__(self, key, value):\n"
+        "        setattr(self, key, value)\n"
+        "Metadata('title', 'ordinary data')\n"
+    )
+    if change == "unbound-method":
+        source = source.replace("__init__", "rewrite").replace("Metadata('title', 'ordinary data')", "")
+        source += "Target = apps.get_model('auth', 'User')\nMetadata.rewrite(Target, 'pk', descriptor)\n"
+    if change == "unbound-init":
+        source += "Target = apps.get_model('auth', 'User')\nMetadata.__init__(Target, 'pk', descriptor)\n"
+    if change == "reflective-init":
+        source += "Target = apps.get_model('auth', 'User')\ngetattr(Metadata, '__init__')(Target, 'pk', descriptor)\n"
+    if change == "self-rebind":
+        source = source.replace("        setattr", "        self = apps.get_model('auth', 'User')\n        setattr")
+    if change == "custom-new":
+        source = source.replace("    def __init__", "    def __new__(cls, *args): return apps.get_model('auth', 'User')\n    def __init__")
+    if change == "shadowed-object":
+        source = source.replace("class Metadata", "object = apps.get_model('auth', 'User')\nclass Metadata")
+    index, _ = _snapshot(tmp_path, {"source.py": source})
+    assert (provider.django_user_identifier_contract({"source": index}) is not None) is (change == "")
+
+
+@pytest.mark.parametrize("change", [
+    "", "self-alias", "self-escape", "password-escape", "account-escape",
+    "client-escape", "helper-export", "outside-call", "unbound-call",
+    "identity-mismatch", "account-rebind", "conditional-client-override",
+])
+def test_adapter367_registered_helper_requires_complete_credential_and_receiver_uses(tmp_path, change):
+    from factoryline import mock_fixture_provenance as fixture
+
+    text = (
+        "from django.contrib.auth.models import User\n"
+        "from django.test import TestCase, Client\n"
+        "class Scenario(TestCase):\n"
+        "    def setUp(self): self.assertTrue(self.prepare())\n"
+        "    def prepare(self):\n"
+        "        username = 'account'\n"
+        "        email = 'account@example.invalid'\n"
+        "        password = 'admin'\n"
+        "        self.transport = Client()\n"
+        "        self.actor = User.objects.create_superuser(username, email, password)\n"
+        "        return self.transport.login(username=username, password=password)\n"
+        "    def test_exercise(self):\n"
+        "        consume(self.actor.pk)\n"
+        "        self.transport.get('/')\n"
+    )
+    additions = {
+        "self-alias": "        alias = self\n        leak(alias.actor.password)\n",
+        "self-escape": "        leak(self)\n",
+        "account-escape": "        leak(self.actor)\n",
+        "client-escape": "        leak(self.transport)\n",
+        "helper-export": "        callback = self.prepare\n        leak(callback)\n",
+        "account-rebind": "        self.actor = other\n",
+    }
+    text += additions.get(change, "")
+    if change == "password-escape":
+        text = text.replace("        self.transport = Client()", "        leak(password)\n        self.transport = Client()")
+    if change == "outside-call":
+        text += "case = Scenario()\ncase.prepare()\n"
+    if change == "unbound-call":
+        text += "Scenario.prepare(holder)\n"
+    if change == "identity-mismatch":
+        text = text.replace("login(username=username", "login(username='different'")
+    if change == "conditional-client-override":
+        text = text.replace("class Scenario(TestCase):", "class Scenario(TestCase):\n    if True: client_class = RemoteClient")
+    raw = text.encode()
+    path = tmp_path / "renamed.py"
+    digest = hashlib.sha256(raw).hexdigest()
+    tree = ast.parse(raw)
+    tree._oracle_source_sha256 = digest
+    index = fixture.application_test_index(tmp_path, {path: tree}, {path: raw}, {path: digest})
+    declaration = next(node for node in ast.walk(tree) if isinstance(node, ast.Assign)
+                       and isinstance(node.value, ast.Constant) and node.value.value == "admin")
+    result = fixture.application_test_secret_evidence(index, path, declaration.lineno, "admin")
+    assert result["eligible"] is (change == ""), result
+
+
 @pytest.mark.parametrize(
     "declaration,suffix,accepted",
     [

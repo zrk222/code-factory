@@ -856,7 +856,15 @@ def evaluate_helper_flow(function, initial, evaluate_expression, *, max_states=5
 
 
 def captured_value_use_closure(
-    function, node, parents, scope_of, return_callers, consumer, *, max_states=512
+    function,
+    node,
+    parents,
+    scope_of,
+    return_callers,
+    consumer,
+    *,
+    field_successors=None,
+    max_states=512,
 ):
     """Account for every use through captured local aliases and helper returns.
 
@@ -879,9 +887,37 @@ def captured_value_use_closure(
         if edge is not None:
             sinks[id(edge)] = edge
             continue
-        successors = _captured_value_use_successors(
-            current, value, parents, scope_of, return_callers
-        )
+        successors = None
+        if field_successors is not None:
+            successors = field_successors(current, value, parents)
+            if successors is not None:
+                from itertools import islice
+
+                try:
+                    edges = tuple(
+                        islice(iter(successors), max_states - len(seen) + 1)
+                    )
+                except (TypeError, ValueError):
+                    return None
+                if len(edges) > max_states - len(seen) or not edges:
+                    return None
+                if any(
+                    not isinstance(edge, (tuple, list)) or len(edge) != 2
+                    for edge in edges
+                ):
+                    return None
+                successors = tuple((edge[0], edge[1]) for edge in edges)
+                if any(
+                    not isinstance(scope, ast.AST)
+                    or not isinstance(child, ast.AST)
+                    or scope_of(child) is not scope
+                    for scope, child in successors
+                ):
+                    return None
+        if successors is None:
+            successors = _captured_value_use_successors(
+                current, value, parents, scope_of, return_callers
+            )
         if not successors:
             return None
         pending.extend((scope, child, ancestors | {key}) for scope, child in successors)
@@ -2360,10 +2396,12 @@ def finite_template_program_hashes(template, parameter, values):
 
 
 def _provider_mutation_for_node(
-    node, aliases, audit, parents, bindings, facts, capture_predicate
+    node, aliases, audit, parents, bindings, facts, capture_predicate, argument_predicate
 ):
     if isinstance(node, ast.Attribute) and isinstance(node.ctx, (ast.Store, ast.Del)):
         _record_provider_paths(node.value, node.attr, aliases, audit, bindings, facts)
+    elif isinstance(node, ast.Subscript) and isinstance(node.ctx, (ast.Store, ast.Del)):
+        _record_provider_paths(node.value, "*", aliases, audit, bindings, facts)
     elif isinstance(node, ast.Call):
         _reflective_provider_write(node, aliases, audit, bindings, facts)
     elif isinstance(node, (ast.Assign, ast.AnnAssign, ast.NamedExpr)):
@@ -2372,21 +2410,95 @@ def _provider_mutation_for_node(
     elif isinstance(node, (ast.Name, ast.Attribute)) and _provider_call_argument(
         node, parents
     ):
-        _record_provider_paths(node, "*", aliases, audit, bindings, facts)
+        if argument_predicate is None or argument_predicate(node, aliases, parents):
+            _record_provider_paths(node, "*", aliases, audit, bindings, facts)
     elif isinstance(node, (ast.Return, ast.Yield, ast.YieldFrom)):
         _record_provider_paths(node.value, "*", aliases, audit, bindings, facts)
 
 
 def finite_provider_mutation_index(
-    nodes, aliases, audit, parents, *, capture_predicate=None
+    nodes, aliases, audit, parents, *, capture_predicate=None, argument_predicate=None
 ):
     """Collect provider mutation facts from writes, reflective calls, captured assignments, passed aliases, and returned aliases."""
+    nodes = tuple(nodes)
     bindings = _provider_alias_bindings(nodes)
     facts = set()
-    for node in nodes:
-        _provider_mutation_for_node(
-            node, aliases, audit, parents, bindings, facts, capture_predicate
-        )
+    _provider_mutation_facts(
+        nodes,
+        aliases,
+        audit,
+        parents,
+        bindings,
+        facts,
+        capture_predicate,
+        argument_predicate,
+    )
+    module = next((node for node in nodes if isinstance(node, ast.Module)), None)
+    context = getattr(module, "_security_source_context", None)
+    current_hash = getattr(module, "_oracle_source_sha256", None)
+    if isinstance(context, tuple) and len(context) == 2 and current_hash:
+        _, sources = context
+        if isinstance(sources, dict):
+            from .review_audits import _security_aliases
+
+            if len(sources) > 2048:
+                facts.update((path.partition(".")[0], "*") for path in aliases.values())
+            total = 0
+            for source_path, source in () if len(sources) > 2048 else sources.items():
+                if not str(source_path).lower().endswith(".py"):
+                    continue
+                try:
+                    data = source.encode() if isinstance(source, str) else source
+                    if not isinstance(data, bytes):
+                        raise TypeError("captured source is not bytes")
+                    total += len(data)
+                    if total > 64 * 1024 * 1024:
+                        facts.update(
+                            (path.partition(".")[0], "*") for path in aliases.values()
+                        )
+                        break
+                    source_hash = hashlib.sha256(data).hexdigest()
+                    if source_hash == current_hash:
+                        continue
+                    cache, key = _foreign_provider_mutation_cache(
+                        module,
+                        source_hash,
+                        audit,
+                        _security_aliases,
+                        capture_predicate,
+                        argument_predicate,
+                    )
+                    if cache is not None and key in cache:
+                        facts.update(cache[key])
+                        continue
+                    foreign_nodes, foreign_aliases, foreign_parents, foreign_bindings = (
+                        _foreign_provider_inputs(module, data, source_hash, _security_aliases)
+                    )
+                except (
+                    SyntaxError,
+                    UnicodeError,
+                    AttributeError,
+                    TypeError,
+                    ValueError,
+                ):
+                    facts.update(
+                        (path.partition(".")[0], "*") for path in aliases.values()
+                    )
+                    continue
+                foreign_facts = set()
+                _provider_mutation_facts(
+                    foreign_nodes,
+                    foreign_aliases,
+                    audit,
+                    foreign_parents,
+                    foreign_bindings,
+                    foreign_facts,
+                    capture_predicate,
+                    argument_predicate,
+                )
+                facts.update(foreign_facts)
+                if cache is not None and len(cache) < 2048:
+                    cache[key] = frozenset(foreign_facts)
     return facts
 
 
@@ -2418,6 +2530,11 @@ def _provider_alias_bindings(nodes):
 
 def _provider_paths(node, aliases, audit, bindings, seen=frozenset(), depth=0):
     if depth > 16 or not isinstance(node, (ast.Name, ast.Attribute)):
+        if isinstance(node, ast.Subscript):
+            paths, _ = _provider_paths(
+                node.value, aliases, audit, bindings, seen, depth + 1
+            )
+            return paths, True
         return set(), True
     if isinstance(node, ast.Attribute):
         paths, uncertain = _provider_paths(
@@ -4272,3 +4389,79 @@ def _fixed_literal_program_kinds(program, normalized, node_limit=1024):
         OverflowError,
     ):
         return None, 0
+
+
+def _foreign_provider_inputs(module, data, source_hash, aliases):
+    """Reuse native parse inputs; predicates and mutation interpretation still run."""
+    context = getattr(module, "_security_oracle_context", {})
+    cache = context.get("_security_provider_mutation_cache") if isinstance(context, dict) else None
+    helpers = (ast.parse, ast.walk, ast.iter_child_nodes, aliases, _provider_alias_bindings,
+               _provider_call_argument)
+    key = ("parsed", source_hash, tuple(
+        (fn, getattr(fn, "__code__", None), id(getattr(fn, "__defaults__", None)))
+        for fn in helpers
+    ))
+    if isinstance(cache, dict) and key in cache:
+        return cache[key]
+    nodes = tuple(ast.walk(ast.parse(data.decode("utf-8"))))
+    parents = {
+        id(child): node for node in nodes for child in ast.iter_child_nodes(node)
+    }
+    events = tuple(node for node in nodes if
+        isinstance(node, (ast.Call, ast.Assign, ast.AnnAssign, ast.NamedExpr,
+                          ast.Return, ast.Yield, ast.YieldFrom))
+        or isinstance(node, (ast.Attribute, ast.Subscript)) and isinstance(node.ctx, (ast.Store, ast.Del))
+        or isinstance(node, (ast.Name, ast.Attribute)) and _provider_call_argument(node, parents))
+    # Keep source order and reevaluate every predicate; only inert nodes are omitted.
+    result = (events, aliases(nodes), parents, _provider_alias_bindings(nodes))
+    if isinstance(cache, dict) and len(cache) < 4096:
+        cache[key] = result
+    return result
+
+
+
+def _foreign_provider_mutation_cache(
+    module, source_hash, audit, aliases, capture, argument
+):
+    """Reuse only unpredicated, content-bound facts inside one native scan."""
+    context = getattr(module, "_security_oracle_context", {})
+    cache = (
+        context.get("_security_provider_mutation_cache")
+        if isinstance(context, dict)
+        else None
+    )
+    if capture is not None or argument is not None or not isinstance(cache, dict):
+        return None, None
+    helpers = (
+        ast.parse,
+        ast.walk,
+        ast.iter_child_nodes,
+        aliases,
+        audit._resolved_ast_name,
+        _provider_mutation_facts,
+        _provider_mutation_for_node,
+        _record_provider_paths,
+        _record_provider_capture,
+        _provider_alias_bindings,
+        _provider_paths,
+        _provider_call_argument,
+        _reflective_provider_write,
+        _foreign_provider_inputs,
+    )
+    identity = tuple(
+        (
+            helper,
+            getattr(helper, "__code__", None),
+            id(getattr(helper, "__defaults__", None)),
+        )
+        for helper in helpers
+    )
+    return cache, (source_hash, identity)
+
+
+
+def _provider_mutation_facts(nodes, aliases, audit, parents, bindings, facts, predicate, argument_predicate):
+    for node in nodes:
+        _provider_mutation_for_node(
+            node, aliases, audit, parents, bindings, facts, predicate, argument_predicate
+        )

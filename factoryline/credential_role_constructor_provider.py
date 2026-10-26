@@ -2255,7 +2255,12 @@ def _captured_terminal_provider_mutation(index, audit, canonical):
         parents = {
             id(child): node for node in nodes for child in ast.iter_child_nodes(node)
         }
-        mutations = finite_provider_mutation_index(nodes, aliases, audit, parents)
+        mutations = finite_provider_mutation_index(
+            nodes, aliases, audit, parents,
+            argument_predicate=lambda node, _aliases, current_parents: not (
+                _terminal_imported_module_receiver(node, current_parents, audit, canonical)
+            ),
+        )
         if any(
             _terminal_mutation_overlaps(provider, attribute, canonical)
             for provider, attribute in mutations
@@ -3574,6 +3579,13 @@ def constructor_provider_helper_epoch():
         _terminal_alias_unmodified,
         _captured_module_shadows_terminal,
         _captured_terminal_provider_mutation,
+        _terminal_imported_module_receiver,
+        _terminal_namespace_import_prefix,
+        django_user_identifier_contract,
+        _django_user_projection_hooks_clear,
+        _django_user_identifier_write,
+        _django_ordinary_constructor_write,
+        _django_unbound_constructors_absent,
         _terminal_provider_related,
         _terminal_mutation_overlaps,
         _terminal_registry_mutation,
@@ -4427,3 +4439,175 @@ def build_hops(
     ]
     hops = [_hop(index, path, node, role) for path, node, role in nodes]
     return hops if all(hops) else None
+
+
+def _terminal_imported_module_receiver(node, parents, audit, canonical):
+    """A proven import namespace receiver is not the value passed to a call.
+
+    Keep actual module arguments, bound object/class receivers and reflective
+    namespace access conservative. Only explicit, unshadowed import prefixes
+    qualify; this does not establish the safety of the leaf argument.
+    """
+    parent = parents.get(id(node))
+    if not isinstance(parent, ast.Attribute) or parent.value is not node:
+        return False
+    if parent.attr.startswith("__"):
+        return False
+    parts, root = [], node
+    while isinstance(root, ast.Attribute):
+        parts.insert(0, root.attr)
+        root = root.value
+    if not isinstance(root, ast.Name):
+        return False
+    parts.insert(0, root.id)
+    module = node
+    while parents.get(id(module)) is not None:
+        module = parents[id(module)]
+        if isinstance(module, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            bindings = (
+                binding_occurrences(module.body, root.id)
+                if isinstance(module, ast.ClassDef)
+                else function_bindings(module, root.id, audit)
+            )
+            if bindings != []:
+                return False
+    if not isinstance(module, ast.Module) or not _terminal_alias_unmodified(module, root.id):
+        return False
+    if any(isinstance(item, ast.arg) and item.arg == root.id for item in ast.walk(module)):
+        return False
+    bindings = binding_occurrences(module.body, root.id)
+    if len(bindings) != 1 or not isinstance(bindings[0], (ast.Import, ast.ImportFrom)):
+        return False
+    prefix = _terminal_namespace_import_prefix(bindings[0], root.id, canonical)
+    return bool(prefix and parts == prefix[:len(parts)])
+
+
+
+def _terminal_namespace_import_prefix(statement, name, canonical):
+    imports = [item for item in statement.names if (item.asname or item.name.split(".")[0]) == name]
+    if len(imports) != 1:
+        return None
+    selected = imports[0]
+    if isinstance(statement, ast.Import):
+        return [selected.asname] if selected.asname else selected.name.split(".")
+    # A proper module prefix of the explicitly contracted external class is a
+    # namespace. The class itself never receives this exemption.
+    module = f"{statement.module}.{selected.name}"
+    if statement.level or not statement.module or not canonical.startswith(module + "."):
+        return None
+    return [selected.asname or selected.name]
+
+
+
+def django_user_identifier_contract(index):
+    """Model default User identifiers independently of its password value.
+
+    The caller must bind the exact fresh built-in User creation and receiver.
+    This contract never validates an arbitrary object or downstream consumer.
+    Source-visible model hooks or provider changes decline this bounded profile.
+    """
+    from . import review_audits as audit
+
+    source = index["source"]
+    dependencies = (
+        "django.contrib.auth", "django.db.models.Model", "django.db.models.base.Model",
+        "django.db.models.AutoField", "django.db.models.BigAutoField",
+        "builtins.object", "builtins.super",
+    )
+    if not source.bounded or not _django_user_projection_hooks_clear(source, audit):
+        return None
+    if any(_captured_terminal_provider_mutation(source, audit, name) for name in dependencies):
+        return None
+    return {
+        "contract": "django.default-user-generated-identifier.v1",
+        "provider": "django.contrib.auth.models.User",
+        "projections": ("pk", "id"),
+        "role": "NON_SECRET_PROJECTION",
+        "downstream_authorization": "UNASSESSED",
+        "runtime_assurance": "INCOMPLETE",
+    }
+
+
+
+def _django_user_projection_hooks_clear(source, audit):
+    roots = ("django.db.models.signals", "django.dispatch", "django.contrib.auth.signals",
+             "django.contrib.auth.get_user_model")
+    imports = {path: audit._oracle_imports(source.root, path, tree, source.snapshots, captured=True)
+               for path, tree in source.snapshots.items()}
+    if not _django_unbound_constructors_absent(source, audit):
+        return False
+    for path, tree in source.snapshots.items():
+        if not source.validate(path):
+            return False
+        aliases = audit._module_security_aliases(tree)
+        for node in ast.walk(tree):
+            if _django_user_identifier_write(node, source, path, imports, audit, aliases):
+                return False
+            name = audit._resolved_ast_name(node, aliases) if isinstance(node, (ast.Name, ast.Attribute)) else None
+            if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                name = node.value
+            if name and any(name == root or name.startswith(root + ".") for root in roots):
+                return False
+        if any(name == root or name.startswith(root + ".") for name in aliases.values() for root in roots):
+            return False
+    return True
+
+
+
+def _django_user_identifier_write(node, source, path, imports, audit, aliases):
+    """Unknown class aliases must not overwrite generated identifier semantics."""
+    fields = {"pk", "id", "__getattribute__", "__getattr__", "__class__", "__setattr__",
+              "__delattr__", "__init__", "__new__", "objects", "_default_manager", "_base_manager", "_meta"}
+    if isinstance(node, ast.Attribute) and isinstance(node.ctx, (ast.Store, ast.Del)):
+        return node.attr in fields
+    if not isinstance(node, ast.Call):
+        return False
+    name = audit._resolved_ast_name(node.func, aliases)
+    if name not in {"setattr", "delattr", "builtins.setattr", "builtins.delattr", "type.__setattr__", "type.__delattr__"}:
+        return False
+    if len(node.args) > 1 and isinstance(node.args[1], ast.Constant):
+        return node.args[1].value in fields
+    return not _django_ordinary_constructor_write(node, source, path, imports)
+
+
+
+def _django_ordinary_constructor_write(node, source, path, imports):
+    """Reuse captured receiver and provider closure, never infer from self alone."""
+    parents = source.parents[path]
+    target = node.args[0] if node.args else None
+    current = node
+    while current is not None and not isinstance(current, ast.FunctionDef):
+        current = parents.get(id(current))
+    owner = parents.get(id(current))
+    if not (
+        isinstance(current, ast.FunctionDef) and current.name == "__init__"
+        and isinstance(owner, ast.ClassDef)
+        and _class_binding_is_exact(source, path, owner.name, owner)
+        and instance_receiver(target, current, owner, source, path)
+        and not binding_occurrences(owner.body, "__new__")
+        and (not owner.bases or len(owner.bases) == 1 and isinstance(owner.bases[0], ast.Name)
+             and owner.bases[0].id == "object" and not binding_occurrences(source.snapshots[path].body, "object"))
+    ):
+        return False
+    return constructor_bindings_inert([(path, owner.name, owner)], source, imports)
+
+
+
+def _django_unbound_constructors_absent(source, audit):
+    """Do not let source borrow an ordinary initializer for a foreign receiver."""
+    for path, tree in source.snapshots.items():
+        aliases = audit._module_security_aliases(tree)
+        parents = {id(child): parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Attribute) or node.attr != "__init__":
+                continue
+            call = parents.get(id(node))
+            proxy = node.value
+            if not (
+                isinstance(call, ast.Call) and call.func is node
+                and isinstance(proxy, ast.Call)
+                and audit._resolved_ast_name(proxy.func, aliases) in {"super", "builtins.super"}
+                and not binding_occurrences(tree.body, "super")
+            ):
+                return False
+    return True

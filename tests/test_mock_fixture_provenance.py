@@ -4385,3 +4385,156 @@ def test_testrole364_shared_graph_helpers_invalidate_provenance_on_replacement(m
     monkeypatch.setattr(binding, "_pickle_role_callback_risk", replacement)
     helpers = binding.primitive_binding_helpers()
     assert replacement in helpers and original not in helpers
+
+
+def test_testrole367_local_django_api_strings_require_one_captured_binding(tmp_path):
+    import ast
+    from factoryline import credential_role_identity_effects as effects
+
+    index, modules = _identity_transfer_capture(
+        tmp_path,
+        {"tests/test_login.py": (
+            "def _login():\n"
+            "    account_name = 'admin'\n"
+            "    contact = 'admin@example.test'\n"
+            "    return account_name, contact\n"
+        )},
+    )
+    path = next(iter(modules))
+    assert index["source"].validate(path)
+    helper = modules[path].body[0]
+    names = [node for node in ast.walk(helper) if isinstance(node, ast.Name)]
+    account_name = next(node for node in names if node.id == "account_name" and isinstance(node.ctx, ast.Load))
+    contact = next(node for node in names if node.id == "contact" and isinstance(node.ctx, ast.Load))
+    assert effects._fixture_string_literal(index, path, helper, account_name) == "admin"
+    assert effects._fixture_string_literal(index, path, helper, contact) == "admin@example.test"
+
+    helper.body.insert(1, ast.parse("account_name = supplied_value").body[0])
+    ast.fix_missing_locations(helper)
+    assert effects._fixture_string_literal(index, path, helper, account_name) is None
+
+
+
+_TESTROLE367_DJANGO_HELPER = (
+    "from django.test import TestCase, Client\n"
+    "from django.contrib.auth.models import User\n"
+    "class AccountChecks(TestCase):\n"
+    "    def setUp(self):\n"
+    "        self.assertTrue(self._login())\n"
+    "    def _login(self):\n"
+    "        account_name = 'admin'\n"
+    "        contact = 'admin@example.test'\n"
+    "        password = 'admin'\n"
+    "        self.browser = Client()\n"
+    "        self.account = User.objects.create_superuser(account_name, contact, password)\n"
+    "        return self.browser.login(username=account_name, password=password)\n"
+    "    def test_page(self):\n"
+    "        self.browser.get('/')\n"
+    "        account_id = self.account.pk\n"
+)
+
+
+
+def _testrole367_fixture_evidence(tmp_path, source, extras=None):
+    import ast
+    from factoryline import mock_fixture_provenance as fixture
+
+    files = {"tests/test_views.py": source, "tests/__init__.py": ""}
+    files.update(extras or {})
+    index, modules = _identity_transfer_capture(tmp_path, files)
+    path = next(iter(modules))
+    tree = modules[path]
+    assignment = next(
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.Assign)
+        and len(node.targets) == 1
+        and isinstance(node.targets[0], ast.Name)
+        and node.targets[0].id == "password"
+    )
+    return fixture.application_test_secret_evidence(
+        index, path, assignment.value.lineno, assignment.value.value
+    )
+
+
+
+def test_testrole367_registered_django_helper_requires_complete_authority_closure(tmp_path):
+    evidence = _testrole367_fixture_evidence(tmp_path, _TESTROLE367_DJANGO_HELPER)
+    assert evidence["eligible"] is True
+    assert evidence["profile"] == "SOURCE_BOUND_FACTORY_TEST_AUTHORITY"
+    closure = evidence["consumer_use_closure"]
+    assert closure["complete"] is True
+    assert closure["credential"]["complete"] is True
+    assert closure["account_field"]["complete"] is True
+    assert closure["client_field"]["complete"] is True
+
+
+
+@pytest.mark.parametrize("variant", [
+    "password_escape", "whole_user_escape", "client_escape", "username_mismatch",
+    "helper_export", "creation_order", "provider_replacement", "custom_user", "field_rebind",
+    "receiver_alias_escape", "receiver_escape", "client_field_rebind", "outside_owner_call",
+    "unbound_helper_export", "cross_module_owner_call", "nested_cross_module_owner_call",
+    "conditional_client_override",
+])
+def test_testrole367_registered_django_helper_keeps_escaped_or_rebound_authority_active(
+    tmp_path, variant
+):
+    source = _TESTROLE367_DJANGO_HELPER
+    if variant == "password_escape":
+        source = source.replace("        password = 'admin'\n", "        password = 'admin'\n        disclose(password)\n")
+    elif variant == "whole_user_escape":
+        source = source.replace("        account_id = self.account.pk\n", "        account_id = self.account.pk\n        Request(user=self.account)\n")
+    elif variant == "client_escape":
+        source = source.replace("        account_id = self.account.pk\n", "        account_id = self.account.pk\n        disclose(self.browser)\n")
+    elif variant == "username_mismatch":
+        source = source.replace("username=account_name, password=password", "username='different', password=password")
+    elif variant == "helper_export":
+        source = source.replace("        self.assertTrue(self._login())\n", "        self.saved_login = self._login\n        self.assertTrue(self._login())\n")
+    elif variant == "creation_order":
+        creation = "        self.account = User.objects.create_superuser(account_name, contact, password)\n"
+        login = "        return self.browser.login(username=account_name, password=password)\n"
+        source = source.replace(creation + login, login + creation)
+    elif variant == "provider_replacement":
+        source = source.replace("        self.browser = Client()\n", "        Client = replacement\n        self.browser = Client()\n")
+    elif variant == "custom_user":
+        source = source.replace("from django.contrib.auth.models import User", "from application.models import User")
+    elif variant == "field_rebind":
+        source = source.replace("        account_id = self.account.pk\n", "        self.account = replacement\n        account_id = self.account.pk\n")
+    elif variant == "receiver_alias_escape":
+        source = source.replace("        account_id = self.account.pk\n", "        alias = self\n        leak(alias.account.password)\n        account_id = self.account.pk\n")
+    elif variant == "receiver_escape":
+        source = source.replace("        account_id = self.account.pk\n", "        leak(self)\n        account_id = self.account.pk\n")
+    elif variant == "client_field_rebind":
+        source = source.replace("        self.browser.get('/')\n", "        self.browser = replacement\n        self.browser.get('/')\n")
+    elif variant == "outside_owner_call":
+        source += "instance = AccountChecks()\ninstance._login()\n"
+    elif variant == "unbound_helper_export":
+        source += "AccountChecks._login(holder)\n"
+    elif variant == "cross_module_owner_call":
+        evidence = _testrole367_fixture_evidence(
+            tmp_path, source,
+            {"tests/external.py": (
+                "from tests.test_views import AccountChecks as Subject\n"
+                "instance = Subject()\ninstance._login()\n"
+            )},
+        )
+        assert evidence["eligible"] is False
+        return
+    elif variant == "nested_cross_module_owner_call":
+        evidence = _testrole367_fixture_evidence(
+            tmp_path, source,
+            {"tests/external.py": (
+                "def boot():\n"
+                "    from tests.test_views import AccountChecks as Subject\n"
+                "    Subject()._login()\n"
+            )},
+        )
+        assert evidence["eligible"] is False
+        return
+    elif variant == "conditional_client_override":
+        source = source.replace(
+            "class AccountChecks(TestCase):\n",
+            "class AccountChecks(TestCase):\n    if True:\n        client_class = RemoteClient\n",
+        )
+    evidence = _testrole367_fixture_evidence(tmp_path, source)
+    assert evidence["eligible"] is False
