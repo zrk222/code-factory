@@ -1631,9 +1631,7 @@ def _pickle_role_inventory(sources):
         "origins": {},
         "native": {},
         "unsafe_callbacks": _pickle_role_serializer_risk(trees)
-        or any(
-            _pickle_role_callback_risk(tree, trees.values()) for tree in trees.values()
-        ),
+        or _pickle_role_callback_risk(None, trees.values()),
     }
 
 
@@ -2197,17 +2195,20 @@ def _pickle_role_test_scope(tree, finding, inventory=None):
         for node in imports
     )
     asserted = any(isinstance(node, ast.Assert) for node in ast.walk(scope))
+    registered_owner = (
+        isinstance(owner, ast.ClassDef) and inventory is not None
+        and id(owner) in _pickle_role_unittest_owners(inventory)
+    )
     collected_owner = (
         owner is tree
         or isinstance(owner, ast.ClassDef)
         and (
             owner.name.startswith("Test")
             or _pickle_collected_descendant(owner.name, tree, scope.name)
-            or inventory is not None
-            and id(owner) in _pickle_role_unittest_owners(inventory)
+            or registered_owner
         )
     )
-    return scope if collected_owner and (framework or asserted) else None
+    return scope if collected_owner and (framework or asserted or registered_owner) else None
 
 
 def _pickle_role_unittest_owners(inventory):
@@ -2256,6 +2257,14 @@ def _pickle_role_unittest_graph(trees):
                 ):
                     classes[local[node.name]] = (node, bases)
     selected = {"unittest.TestCase"}
+    # Framework contracts are conditional on unshadowed dependency identities.
+    if not any(PurePosixPath(path).stem == "django" or "django" in PurePosixPath(path).parts[:-1] for path in trees):
+        selected.update(
+            f"{module}.{base}" for module in ("django.test", "django.test.testcases")
+            for base in ("SimpleTestCase", "TransactionTestCase", "TestCase")
+            if not any(_pickle_role_class_path_written(f"{alias}.{base}", writes)
+                       for alias in ("django.test", "django.test.testcases"))
+        )
     for _ in range(len(classes) + 1):
         before = set(selected)
         selected.update(
@@ -2514,15 +2523,18 @@ def _pickle_role_callback_risk(tree, trees=None):
     pending = [
         (node, owner)
         for node, owner in functions
-        if owner is tree and node.name in hooks
+        if (tree is None or owner is tree) and node.name in hooks
     ]
     seen = set()
+    owner_aliases = {}
     while pending:
         function, owner = pending.pop()
         if id(function) in seen:
             continue
         seen.add(id(function))
-        aliases = audit._security_aliases(list(ast.walk(owner)))
+        if id(owner) not in owner_aliases:
+            owner_aliases[id(owner)] = audit._security_aliases(list(ast.walk(owner)))
+        aliases = owner_aliases[id(owner)]
         names = [
             audit._resolved_ast_name(node, aliases)
             for node in ast.walk(function)
@@ -2535,10 +2547,11 @@ def _pickle_role_callback_risk(tree, trees=None):
             for name in names
         ):
             return True
+        referenced = {name.rsplit(".", 1)[-1] for name in names}
         pending.extend(
             (node, owner)
             for node, owner in functions
-            if node.name in {name.rsplit(".", 1)[-1] for name in names}
+            if node.name in referenced
         )
     return False
 
@@ -3996,6 +4009,11 @@ def primitive_binding_helpers():
         _decide_finding_tier,
         _pickle_role_partition,
         _pickle_source_role_decision,
+        _pickle_role_inventory,
+        _pickle_role_test_scope,
+        _pickle_role_unittest_owners,
+        _pickle_role_unittest_graph,
+        _pickle_role_callback_risk,
         *_registered_fixture_helpers(),
         fixed_primitive_binding,
         _local_control_label_binding,

@@ -4257,3 +4257,131 @@ def test_role_helper274_epoch_does_not_bind_transient_module_init(tmp_path):
 
     keys = [audit._oracle_context_cache_key(tmp_path, [], {}) for _ in range(3)]
     assert len(set(keys)) == 1
+
+
+@pytest.mark.parametrize("sources", [
+    {"a.py": "x = 1", "b.py": "def helper():\n    return 1"},
+    {"a.py": "class A:\n    def __reduce__(self):\n        return (str, ('a',))"},
+    {"a.py": "class A:\n    def __reduce__(self):\n        return eval('1')"},
+    {"a.py": "class A:\n    def __setstate__(self, state):\n        helper()", "b.py": "def helper():\n    import os\n    os.system('echo x')"},
+    {"a.py": "class A:\n    def __new__(cls):\n        first()", "b.py": "def first():\n    second()\ndef second():\n    first()"},
+    {"a.py": "class A:\n    def __getstate__(self):\n        helper()", "b.py": "def helper():\n    return 1", "c.py": "def helper():\n    open('x')"},
+])
+def test_callback363_global_graph_matches_per_module_risk_union(sources):
+    import ast
+    from factoryline import primitive_observation_binding as binding
+
+    trees = {path: ast.parse(source) for path, source in sources.items()}
+    before = any(binding._pickle_role_callback_risk(tree, trees.values()) for tree in trees.values())
+    assert binding._pickle_role_callback_risk(None, trees.values()) == before
+
+
+def test_callback363_inventory_builds_one_repository_callback_graph(monkeypatch):
+    from factoryline import primitive_observation_binding as binding
+
+    original = binding._pickle_role_callback_risk
+    calls = []
+
+    def observed(tree, trees=None):
+        calls.append(tree)
+        return original(tree, trees)
+
+    monkeypatch.setattr(binding, "_pickle_role_callback_risk", observed)
+    inventory = binding._pickle_role_inventory({f"module_{i}.py": b"def local():\n    return 1\n" for i in range(32)})
+    assert inventory["unsafe_callbacks"] is False
+    assert calls == [None]
+
+
+@pytest.mark.parametrize("base", ["TestCase", "SimpleTestCase", "TransactionTestCase"])
+def test_testrole364_django_inheritance_binds_fixture_owner_without_local_unittest_import(base):
+    import ast
+    from factoryline import primitive_observation_binding as binding
+
+    source = (f"from django.test import {base} as Parent\nimport pickle\n"
+              "class RoundTrips(Parent):\n    def test_roundtrip(self):\n"
+              "        value = pickle.loads(pickle.dumps('sample'))\n        self.assertEqual(value, 'sample')\n")
+    tree = ast.parse(source)
+    inventory = binding._pickle_role_inventory({"tests/test_values.py": source.encode()})
+    finding = {"line": 5, "column": 16}
+    scope = binding._pickle_role_test_scope(inventory['trees']['tests/test_values.py'], finding, inventory)
+    assert scope is not None and scope.name == "test_roundtrip"
+    assert tree.body[2].name == "RoundTrips"
+
+
+@pytest.mark.parametrize("extra", [
+    {"django.py": b"class test: pass\n"},
+    {"django/test/__init__.py": b"class TestCase: pass\n"},
+    {"mutator.py": b"import django.test\ndjango.test.TestCase = replacement\n"},
+])
+def test_testrole364_django_shadow_and_base_mutation_stay_unknown(extra):
+    from factoryline import primitive_observation_binding as binding
+
+    source = b"from django.test import TestCase\nimport pickle\nclass RoundTrips(TestCase):\n    def test_roundtrip(self):\n        value = pickle.loads(pickle.dumps('sample'))\n        self.assertEqual(value, 'sample')\n"
+    inventory = binding._pickle_role_inventory({"tests/test_values.py": source, **extra})
+    assert binding._pickle_role_test_scope(inventory['trees']['tests/test_values.py'], {"line": 5, "column": 16}, inventory) is None
+
+
+def test_testrole364_captured_unittest_base_is_registration_for_importing_module():
+    from factoryline import primitive_observation_binding as binding
+
+    sources = {
+        "tests/base.py": b"import unittest\nclass Base(unittest.TestCase):\n    pass\n",
+        "tests/test_values.py": b"from tests.base import Base\nimport pickle\nclass RoundTrips(Base):\n    def test_roundtrip(self):\n        value = pickle.loads(pickle.dumps('sample'))\n        self.assertEqual(value, 'sample')\n",
+    }
+    inventory = binding._pickle_role_inventory(sources)
+    assert binding._pickle_role_test_scope(inventory['trees']['tests/test_values.py'], {"line": 5, "column": 16}, inventory) is not None
+
+
+@pytest.mark.parametrize("shadow", ["src/django.py", "src/django/test.py"])
+def test_testrole364_src_shadow_is_not_a_framework_contract(shadow):
+    from factoryline import primitive_observation_binding as binding
+
+    source = b"from django.test import TestCase\nclass Sample(TestCase):\n    pass\n"
+    inventory = binding._pickle_role_inventory({"tests/test_values.py": source, shadow: b"pass\n"})
+    assert not binding._pickle_role_unittest_owners(inventory)
+
+
+@pytest.mark.parametrize("module", ["django.test", "django.test.testcases"])
+def test_testrole364_alias_mutation_invalidates_both_public_framework_paths(module):
+    from factoryline import primitive_observation_binding as binding
+
+    source = b"from django.test import TestCase\nfrom django.test.testcases import TestCase as Other\nclass Sample(TestCase):\n    pass\nclass Second(Other):\n    pass\n"
+    mutation = f"import {module}\n{module}.TestCase.__bases__ = replacement\n".encode()
+    inventory = binding._pickle_role_inventory({"tests/test_values.py": source, "mutator.py": mutation})
+    assert not binding._pickle_role_unittest_owners(inventory)
+
+
+def test_callback363_aliases_are_shared_only_within_one_inventory_traversal(monkeypatch):
+    import ast
+    from factoryline import primitive_observation_binding as binding
+    from factoryline import review_audits as audit
+
+    tree = ast.parse("class Sample:\n    def __getstate__(self):\n        return 1\n    def __setstate__(self, state):\n        return None\n")
+    calls = []
+    original = audit._security_aliases
+
+    def observed(nodes):
+        calls.append(1)
+        return original(nodes)
+
+    monkeypatch.setattr(audit, "_security_aliases", observed)
+    assert binding._pickle_role_callback_risk(None, [tree]) is False
+    assert calls == [1]
+    assert binding._pickle_role_callback_risk(None, [tree]) is False
+    assert calls == [1, 1]
+
+
+def test_testrole364_shared_graph_helpers_invalidate_provenance_on_replacement(monkeypatch):
+    from factoryline import primitive_observation_binding as binding
+
+    names = ("_pickle_role_inventory", "_pickle_role_test_scope", "_pickle_role_unittest_owners",
+             "_pickle_role_unittest_graph", "_pickle_role_callback_risk")
+    assert all(getattr(binding, name) in binding.primitive_binding_helpers() for name in names)
+    original = binding._pickle_role_callback_risk
+
+    def replacement(*args):
+        return True
+
+    monkeypatch.setattr(binding, "_pickle_role_callback_risk", replacement)
+    helpers = binding.primitive_binding_helpers()
+    assert replacement in helpers and original not in helpers
