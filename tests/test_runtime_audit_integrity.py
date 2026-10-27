@@ -1053,9 +1053,10 @@ def test_provider_cache351_predicated_and_invalid_sources_remain_conservative(
         )
 
     assert ("requests", "get") in scan(**{predicate: lambda *args: False})
-    assert all(
-        key[0] == "parsed"
-        for key in tree._security_oracle_context["_security_provider_mutation_cache"]
+    keys = tree._security_oracle_context["_security_provider_mutation_cache"]
+    assert all(key[0] in {"parsed", "capture-independent"} for key in keys)
+    assert any(key[0] == "capture-independent" for key in keys) is (
+        predicate == "capture_predicate"
     )
     scan()
     sources["peer.py"] = b"invalid ("
@@ -1111,6 +1112,111 @@ def test_provider_cache351_each_capture_predicate_is_reevaluated():
     assert ("requests.get", "*") not in scan(False)
     assert ("requests.get", "*") in scan(True)
     assert ("requests.get", "*") not in scan(False)
+
+
+def test_provider_cache351_capture_partition_matches_full_facts_and_bindings(
+    monkeypatch,
+):
+    from factoryline import finite_capture as finite
+
+    tree, sources, nodes, parents = _provider_cache351_inputs()
+    raw = (
+        b"import requests\nselected = requests.get\nalias = requests\n"
+        b"alias.post = replacement\nsetattr(alias, 'put', replacement)\n"
+        b"accept(alias)\n(held := requests.patch)\n"
+        b"def escaped():\n    yield alias\n"
+    )
+    sources["peer.py"] = raw
+    full = tuple(ast.walk(ast.parse(raw)))
+    full_parents = {
+        id(child): node for node in full for child in ast.iter_child_nodes(node)
+    }
+    full_aliases = review_audits._security_aliases(full)
+    full_bindings = finite._provider_alias_bindings(full)
+    original = finite._provider_mutation_for_node
+    visits = []
+
+    def observed(node, *args):
+        visits.append(ast.dump(node))
+        return original(node, *args)
+
+    monkeypatch.setattr(finite, "_provider_mutation_for_node", observed)
+    repeated_nonassignment_visits = []
+    for accepted in (False, True, False):
+        expected, expected_calls = set(), []
+
+        def expected_capture(node):
+            expected_calls.append(ast.dump(node))
+            return accepted
+
+        finite._provider_mutation_facts(
+            full,
+            full_aliases,
+            review_audits,
+            full_parents,
+            full_bindings,
+            expected,
+            expected_capture,
+            None,
+        )
+        actual_calls = []
+
+        def capture(node):
+            actual_calls.append(ast.dump(node))
+            return accepted
+
+        visits.clear()
+        actual = finite.finite_provider_mutation_index(
+            nodes,
+            {"requests": "requests"},
+            review_audits,
+            parents,
+            capture_predicate=capture,
+        )
+        assert actual == expected
+        assert actual_calls == expected_calls
+        assert ("requests", "post") in actual
+        assert ("requests", "put") in actual
+        assert (("requests.get", "*") in actual) is accepted
+        repeated_nonassignment_visits.append(
+            sum(text.startswith("Call(") for text in visits)
+        )
+        actual.clear()
+    assert repeated_nonassignment_visits[0] > repeated_nonassignment_visits[1]
+    assert repeated_nonassignment_visits[1] == repeated_nonassignment_visits[2] == 1
+
+
+def test_provider_cache351_capture_partition_invalidates_changed_peer_and_helper(
+    monkeypatch,
+):
+    from factoryline import finite_capture as finite
+
+    tree, sources, nodes, parents = _provider_cache351_inputs()
+
+    def scan():
+        return finite.finite_provider_mutation_index(
+            nodes,
+            {"requests": "requests"},
+            review_audits,
+            parents,
+            capture_predicate=lambda node: False,
+        )
+
+    assert ("requests", "get") in scan()
+    sources["peer.py"] = (
+        b"import requests\nrequests.post = replacement\n"
+        b"setattr(requests, 'put', replacement)\n"
+    )
+    assert ("requests", "get") not in scan()
+    assert ("requests", "post") in scan()
+    original = finite._reflective_provider_write
+
+    def changed(call, aliases, audit, bindings, facts):
+        original(call, aliases, audit, bindings, facts)
+        facts.add(("requests", "changed_helper"))
+
+    monkeypatch.setattr(finite, "_reflective_provider_write", changed)
+    assert ("requests", "changed_helper") in scan()
 
 
 def test_foreign_provider360_indexes_events_without_caching_predicate_results():

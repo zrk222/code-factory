@@ -4528,18 +4528,24 @@ def _foreign_provider_source_mutations(
     inventory_projector,
     inventory_dependencies,
 ):
+    split_capture = (
+        capture_predicate is not None
+        and argument_predicate is None
+        and inventory_projector is None
+    )
     try:
         cache, key = _foreign_provider_mutation_cache(
             module,
             source_hash,
             audit,
             alias_reader,
-            capture_predicate,
+            None if split_capture else capture_predicate,
             argument_predicate,
             inventory_projector,
             inventory_dependencies,
         )
-        if cache is not None and key in cache:
+        key = ("capture-independent", key) if split_capture else key
+        if cache is not None and key in cache and not split_capture:
             return cache[key]
         nodes, foreign_aliases, parents, bindings = _foreign_provider_inputs(
             module, data, source_hash, alias_reader
@@ -4549,19 +4555,39 @@ def _foreign_provider_source_mutations(
     nodes, bindings = _project_provider_inventory(
         nodes, foreign_aliases, parents, bindings, inventory_projector
     )
+    captures = ()
+    if split_capture:
+        assignment = (ast.Assign, ast.AnnAssign, ast.NamedExpr)
+        captures = tuple(node for node in nodes if isinstance(node, assignment))
+        nodes = tuple(node for node in nodes if not isinstance(node, assignment))
     facts = set()
-    _provider_mutation_facts(
-        nodes,
-        foreign_aliases,
-        audit,
-        parents,
-        bindings,
-        facts,
-        capture_predicate,
-        argument_predicate,
-    )
-    if cache is not None and len(cache) < 2048:
-        cache[key] = frozenset(facts)
+    if cache is not None and key in cache:
+        facts.update(cache[key])
+    else:
+        _provider_mutation_facts(
+            nodes,
+            foreign_aliases,
+            audit,
+            parents,
+            bindings,
+            facts,
+            capture_predicate,
+            argument_predicate,
+        )
+        if cache is not None and len(cache) < 2048:
+            cache[key] = frozenset(facts)
+    if split_capture:
+        # Full original bindings/parents are needed even for this event subset.
+        _provider_mutation_facts(
+            captures,
+            foreign_aliases,
+            audit,
+            parents,
+            bindings,
+            facts,
+            capture_predicate,
+            argument_predicate,
+        )
     return facts
 
 
