@@ -3409,11 +3409,7 @@ def application_fixture_binding(finding, sources, bindings, source_bytes=None):
     if not isinstance(evidence, dict):
         return False
     configs = evidence.get("configuration_sha256", {})
-    if not isinstance(configs, dict) or not set(configs) <= {
-        "requirements.txt",
-        "pyproject.toml",
-        "tox.ini",
-    }:
+    if _application_class_source_inputs(source_bytes, bindings, configs) is None:
         return False
     digest = _application_fixture_inventory(sources, bindings, configs)
     if digest is None:
