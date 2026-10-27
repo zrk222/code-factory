@@ -55,6 +55,7 @@ from .audit_action_refs import (
     _security_scan_coverage as _security_scan_coverage,
     _security_scan_state as _security_scan_state,
     _security_scan_action_summary as _security_scan_action_summary,
+    _validate_source_file_limit as _validate_source_file_limit,
 )
 from .finite_capture import closed_shell_finding, shell_execution_calls
 from .deep_audit_io import local_file
@@ -90,7 +91,7 @@ SCHEMA = "factory.review-audit-policy.v1"
 FINGERPRINT_SCHEMA = "factory.code-review-fingerprint.v1"
 SECURITY_SCHEMA = "factory.security-audit.v1"
 TENANT_CONTRACT_SCHEMA = "factory.tenant-read-contract.v1"
-MAX_SECURITY_SOURCE_FILES = 460
+MAX_SECURITY_SOURCE_FILES = 2000
 MAX_BYTES = 1_000_000
 MAX_RULES = 128
 MAX_PATHS = 64
@@ -5580,9 +5581,9 @@ def _blocked_security_scan_report(
     tenant_read_calls,
     tenant_read_bindings,
     tenant_policy_applies=False,
+    source_limit=None,
 ):
     from .audit_action_refs import blocked_security_scan_report
-    import sys
 
     return blocked_security_scan_report(
         sys.modules[__name__],
@@ -5591,6 +5592,7 @@ def _blocked_security_scan_report(
         tenant_read_calls,
         tenant_read_bindings,
         tenant_policy_applies,
+        source_limit,
     )
 
 
@@ -5787,9 +5789,8 @@ def _security_scan_report(
     primitive_source_bytes: dict[str, bytes] | None = None,
     *,
     security_only: bool = False,
+    source_limit: int | None = None,
 ) -> dict[str, Any]:
-    import sys
-
     from .audit_action_refs import security_scan_report
 
     with _security_only_scan_context(
@@ -5809,6 +5810,7 @@ def _security_scan_report(
             database_context,
             tenant_policy_applies,
             primitive_source_bytes,
+            source_limit=source_limit,
         )
 
 
@@ -5867,12 +5869,14 @@ def security_scan(
     analysis_profile: str = "source-closed-v1",
     provider_contracts: tuple[dict, ...] = (),
     defect_policy: str = "legacy-v1",
+    max_files: int | None = None,
 ) -> dict[str, Any]:
     """Run a bounded AST scan with content-bound process-local context reuse."""
     from .finite_capture import provider_analysis_profile
     from .primitive_observation_binding import validate_security_defect_policy
 
     selected_policy = validate_security_defect_policy(defect_policy)
+    source_limit = _validate_source_file_limit(max_files)
     profile = provider_analysis_profile(analysis_profile, provider_contracts)
     workspace = Path(root).resolve()
     if not isinstance(tenant_policy_applies, bool):
@@ -5892,7 +5896,7 @@ def security_scan(
     files = _security_source_files(workspace)
     if tenant_policy_applies:
         tenant_read_scopes[""] = {"calls": (), "bindings": {}, "_policy_applies": True}
-    if len(files) > MAX_SECURITY_SOURCE_FILES:
+    if len(files) > source_limit:
         return _security_source_limit_report(
             workspace,
             files,
@@ -5902,6 +5906,7 @@ def security_scan(
             evidence,
             profile,
             selected_policy,
+            source_limit,
         )
     database_context = {}
     primitive_source_bytes = {}
@@ -5934,6 +5939,7 @@ def security_scan(
         database_context,
         tenant_policy_applies,
         primitive_source_bytes,
+        source_limit=source_limit,
     )
     if profile["conditional"]:
         from .primitive_observation_binding import apply_conditional_provider_profile
@@ -5954,9 +5960,19 @@ def security_scan(
 
 
 def _security_source_limit_report(
-    workspace, files, calls, bindings, applies, evidence, profile, policy
+    workspace,
+    files,
+    calls,
+    bindings,
+    applies,
+    evidence,
+    profile,
+    policy,
+    source_limit=None,
 ):
-    blocked = _blocked_security_scan_report(workspace, files, calls, bindings, applies)
+    blocked = _blocked_security_scan_report(
+        workspace, files, calls, bindings, applies, source_limit
+    )
     if any(value is not None for value in evidence):
         blocked["runtime_oracles"] = {
             "state": "NOT_VERIFIED",

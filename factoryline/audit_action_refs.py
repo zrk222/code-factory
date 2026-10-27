@@ -637,10 +637,16 @@ def security_scan_report(
     database_context: dict | None = None,
     tenant_policy_applies: bool = False,
     primitive_source_bytes: dict[str, bytes] | None = None,
+    *,
+    source_limit: int | None = None,
 ) -> dict[str, Any]:
     """Assemble and seal the bounded Python security scan report with coverage, source bindings, findings, and its non-runtime, non-approval limits."""
     audit_coverage = audit._security_scan_coverage(
-        files, outcomes, audit.MAX_SECURITY_SOURCE_FILES
+        files,
+        outcomes,
+        _validate_source_file_limit(
+            audit.MAX_SECURITY_SOURCE_FILES if source_limit is None else source_limit
+        ),
     )
     state = audit._security_scan_state(
         files, findings, database_context, audit_coverage
@@ -690,6 +696,18 @@ def security_scan_report(
     return audit._seal_security_scan(core)
 
 
+def _validate_source_file_limit(value: int | None) -> int:
+    from .review_audits import MAX_SECURITY_SOURCE_FILES, ReviewAuditError
+
+    if value is None:
+        return MAX_SECURITY_SOURCE_FILES
+    if type(value) is not int or not 1 <= value <= MAX_SECURITY_SOURCE_FILES:
+        raise ReviewAuditError(
+            f"max_files must be an integer from 1 to {MAX_SECURITY_SOURCE_FILES}."
+        )
+    return value
+
+
 def _security_scan_coverage(
     files: list[Path], outcomes: dict[str, int], limit: int
 ) -> dict[str, Any]:
@@ -723,17 +741,25 @@ def blocked_security_scan_report(
     tenant_read_calls: tuple[str, ...],
     tenant_read_bindings: dict[str, tuple[str, ...]],
     tenant_policy_applies: bool = False,
+    source_limit: int | None = None,
 ) -> dict[str, Any]:
     """Return a fail-closed receipt when the bounded inventory is exceeded."""
     relative_paths = [path.relative_to(workspace).as_posix() for path in files]
+    source_limit = _validate_source_file_limit(
+        audit.MAX_SECURITY_SOURCE_FILES if source_limit is None else source_limit
+    )
+    advice = (
+        f"rerun factory scan --max-files {audit.MAX_SECURITY_SOURCE_FILES}."
+        if source_limit < audit.MAX_SECURITY_SOURCE_FILES
+        else "partition the workspace to stay within the captured-source bound."
+    )
     finding = audit._security_finding(
         "SECURITY_AUDIT_INCOMPLETE",
         ".",
         audit.ast.Module(body=[], type_ignores=[]),
         (
             f"Eligible Python source inventory contains {len(files)} files, above "
-            f"the {audit.MAX_SECURITY_SOURCE_FILES}-file scan limit. No files were "
-            "scanned; partition the workspace or use a reviewed larger limit."
+            f"the {source_limit}-file scan limit. No files were scanned; {advice}"
         ),
         "HIGH",
         files_discovered=len(files),
@@ -757,7 +783,7 @@ def blocked_security_scan_report(
             "measurement_state": "blocked",
             "inventory_complete": True,
             "complete": False,
-            "limit": audit.MAX_SECURITY_SOURCE_FILES,
+            "limit": source_limit,
             "inventory_sha256": audit.sha256(
                 "\n".join(relative_paths).encode("utf-8")
             ).hexdigest(),

@@ -968,7 +968,7 @@ def test_repo_scan_deep_runs_static_lane_on_small_workspace(tmp_path: Path) -> N
     result = run_deep_repository_audit(tmp_path, inventory)
 
     assert result["schema"] == "factory.deep-repository-audit.v1"
-    assert result["scope"]["python_source_limit"] == 460
+    assert result["scope"]["python_source_limit"] == 2000
     lane_ids = {lane["measurement_id"] for lane in result["lanes"]}
     assert {
         "candidate_inventory",
@@ -1023,7 +1023,7 @@ def test_repo_scan_deep_blocks_when_python_limit_is_exceeded(tmp_path: Path) -> 
             "value = 1\n", encoding="utf-8"
         )
 
-    result = run_repo_scan(tmp_path, deep=True)
+    result = run_repo_scan(tmp_path, deep=True, max_files=460)
     lanes = {lane["measurement_id"]: lane for lane in result["deep_audit"]["lanes"]}
 
     assert result["deep_audit"]["scope"]["python_source_limit"] == 460
@@ -1033,6 +1033,135 @@ def test_repo_scan_deep_blocks_when_python_limit_is_exceeded(tmp_path: Path) -> 
         == 461
     )
     assert result["deep_audit"]["state"] == "BLOCKED"
+
+
+@pytest.mark.parametrize("deep", [False, True])
+def test_daily_scan_accepts_479_python_files_on_first_run(tmp_path, deep):
+    for index in range(479):
+        (tmp_path / f"module_{index:03d}.py").write_text(
+            "value = 1\n", encoding="utf-8"
+        )
+    result = run_repo_scan(tmp_path, deep=deep)
+    security = result["static_security"]
+    assert security["state"] == "CLEAN"
+    assert security["audit_coverage"]["files_discovered"] == 479
+    assert security["audit_coverage"]["files_audited"] == 479
+    assert security["audit_coverage"]["complete"] is True
+    assert len(security["sources"]) == 479
+    assert security["audit_coverage"]["limit"] == 2000
+
+
+@pytest.mark.parametrize(
+    ("source", "code", "finding"),
+    [
+        ("value = 1\n", 0, "findings : 0"),
+        ("def execute(value):\n    eval(value)\n", 2, "SECURITY_DYNAMIC_EXECUTION"),
+        ("def test_behavior():\n    assert True\n", 0, "QUALITY_HOLLOW_TEST"),
+    ],
+)
+def test_daily_scan_human_output_explains_findings_and_exit(
+    tmp_path, capsys, source, code, finding
+):
+    (tmp_path / "test_app.py").write_text(source, encoding="utf-8")
+    assert main(["scan", "--static-only", "--root", str(tmp_path)]) == code
+    output = capsys.readouterr().out
+    assert finding in output
+    assert "Python audited 1/1, limit 2000" in output
+    assert f"exit     : {code}" in output
+    assert "advisories may remain" in output
+    assert "INCOMPLETE means missing evidence" in output
+    assert "JS/shell" in output
+    if code == 2:
+        assert "test_app.py:2:" in output
+
+
+@pytest.mark.parametrize("deep", [False, True])
+def test_daily_scan_cli_threads_explicit_budget(tmp_path, capsys, deep):
+    for name in ["a.py", "b.py"]:
+        (tmp_path / name).write_text("value = 1\n", encoding="utf-8")
+    args = ["scan", "--root", str(tmp_path), "--max-files", "1", "--json"]
+    if not deep:
+        args.append("--static-only")
+    assert main(args) == 2
+    report = json.loads(capsys.readouterr().out)
+    assert report["static_security"]["audit_coverage"]["limit"] == 1
+    assert report["static_security"]["audit_coverage"]["files_attempted"] == 0
+    if deep:
+        assert report["deep_audit"]["scope"]["python_source_limit"] == 1
+
+
+def test_daily_scan_help_and_invalid_budget(tmp_path, capsys):
+    with pytest.raises(SystemExit) as exit_info:
+        main(["scan", "--help"])
+    assert exit_info.value.code == 0
+    assert "--max-files" in capsys.readouterr().out
+    assert main(["scan", "--root", str(tmp_path), "--max-files", "0", "--json"]) == 2
+    report = json.loads(capsys.readouterr().out)
+    assert report["state"] == "INVALID"
+    assert "max_files must be" in report["message"]
+
+
+@pytest.mark.parametrize("worker_state", ["OBSERVED", "INCOMPLETE"])
+def test_daily_scan_human_output_preserves_native_worker_findings(capsys, worker_state):
+    from factoryline.cli_first_lap import _print_repo_scan
+    from factoryline.adoption import _native_domain_projection
+
+    finding = {
+        "finding_id": "worker-sink",
+        "path": "app.ts",
+        "line": 4,
+        "remediation": "Repair the boundary",
+    }
+    lanes = [
+        {
+            "measurement_id": "native_worker_execution",
+            "result": {
+                "lanes": [
+                    {
+                        "engine": "scanner",
+                        "family": "static",
+                        "state": worker_state,
+                        "gaps": [],
+                        "findings": [finding],
+                    }
+                ]
+            },
+        },
+        {"measurement_id": "dependencies_and_supply_chain", "result": {}},
+        {"measurement_id": "runtime_coverage", "result": {}},
+    ]
+    _print_repo_scan(
+        {
+            "state": "INCOMPLETE",
+            "verdict": "INCOMPLETE",
+            "deep_audit": {
+                "lanes": lanes,
+                "native_domains": _native_domain_projection(lanes),
+            },
+        },
+        0,
+    )
+    output = capsys.readouterr().out
+    assert "findings : 1" in output
+    assert output.count("worker-sink") == 1
+    assert "app.ts:4:0 - Repair the boundary" in output
+
+
+def test_daily_scan_human_output_exposes_analyzer_error(capsys):
+    from factoryline.cli_first_lap import _print_repo_scan
+
+    _print_repo_scan(
+        {
+            "state": "BLOCKED",
+            "verdict": "BLOCKED",
+            "static_security": {
+                "state": "INVALID",
+                "message": "Analyzer failed: ReviewAuditError",
+            },
+        },
+        2,
+    )
+    assert "Analyzer failed: ReviewAuditError" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize(
