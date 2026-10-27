@@ -1404,3 +1404,83 @@ def test_security_only_unknown_collection_rejects_wrong_scope(capsys, argv):
     captured = capsys.readouterr()
     assert captured.out == ""
     assert json.loads(captured.err)["code"] == "E_SECURITY_ONLY_SCOPE"
+
+
+@pytest.mark.parametrize(
+    "policy",
+    [
+        "legacy-v1",
+        "trusted-core-v1",
+        "source-role-v1",
+        "source-role-v2",
+        "source-role-v3",
+    ],
+)
+def test_evidence_policy_remediation_requires_native_supported_tier(
+    tmp_path, capsys, policy
+):
+    from factoryline.cli import main
+    from factoryline import review_audits as audit
+
+    (tmp_path / "app.py").write_text(
+        "from flask import request\n"
+        "password = 'demonstration-password'\n"
+        "def run():\n    return eval(request.get_data(as_text=True))\n",
+        encoding="utf-8",
+    )
+    code = main(
+        [
+            "audit",
+            "security",
+            "--root",
+            str(tmp_path),
+            "--security-only",
+            "--defect-policy",
+            policy,
+            "--json",
+        ]
+    )
+    output = capsys.readouterr()
+    assert output.err == "" and code in {1, 2}
+    report = json.loads(output.out)
+    rows = report["finding_tier_report"]["ledger"]
+    assert len(rows) == 2
+    assert {r["tier"] for r in rows} == {"SUPPORTED_DEFECT", "NEEDS_CONTEXT"}
+    assert len(report["findings"]) == 2
+    actions = report["agent_actions"]
+    assert len(actions) == (2 if policy == "legacy-v1" else 1)
+    assert any(
+        a["finding_context"]["code"] == "SECURITY_DYNAMIC_EXECUTION" for a in actions
+    )
+    if policy != "legacy-v1":
+        assert not any(
+            a["finding_context"]["code"] == "SECURITY_HARDCODED_SECRET" for a in actions
+        )
+        assert report["defect_policy_decision"]["clean"] is False
+    status = security_scan_status(tmp_path)
+    assert status["candidate_freshness"] == "CURRENT_SOURCE_HASHES_VERIFIED"
+    receipt = json.loads((tmp_path / ".factory/security-scan/latest.json").read_text())
+    assert receipt["report"] == report
+    core = copy.deepcopy(report)
+    core["_primitive_source_bytes"] = {"app.py": (tmp_path / "app.py").read_bytes()}
+    assert audit._seal_security_scan(core)["agent_actions"] == actions
+    if policy != "legacy-v1":
+        for row in core["finding_tier_report"]["ledger"]:
+            row["tier"] = "SUPPORTED_DEFECT"
+        core["_primitive_source_bytes"] = {"app.py": (tmp_path / "app.py").read_bytes()}
+        assert audit._seal_security_scan(core)["agent_actions"] == actions
+
+
+def test_evidence_policy_remediation_retains_quality_hollow_handoff(tmp_path):
+    from factoryline import review_audits as audit
+
+    (tmp_path / "test_empty.py").write_text(
+        "def test_empty():\n    pass\n", encoding="utf-8"
+    )
+    report = audit.security_scan(
+        tmp_path, defect_policy="source-role-v3", cache_enabled=False
+    )
+    assert any(
+        a["finding_context"]["code"] == "QUALITY_HOLLOW_TEST"
+        for a in report["agent_actions"]
+    )
