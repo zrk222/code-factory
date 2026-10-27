@@ -239,6 +239,7 @@ def _provider_path_conflicts(path, attribute, selected):
     return (
         effective == selected
         or effective.startswith(selected + ".")
+        or selected.startswith(effective + ".")
         or attribute == "*"
         and selected.startswith(path + ".")
     )

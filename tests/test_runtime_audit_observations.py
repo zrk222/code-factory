@@ -1547,6 +1547,13 @@ def test_foreign_provider_request_alias_memo_restores_outer(raises):
             False,
         ),
         ("import django\nunknown(django)\n", True, False),
+        (
+            "import django.views.decorators as decorators\n"
+            "decorators.http = replacement\n",
+            True,
+            False,
+        ),
+        ("import django\ndjango.views = replacement\n", True, False),
         ("import builtins\nbuiltins.eval = replacement\n", True, False),
         ("from django.contrib import admin\n", False, False),
     ],
