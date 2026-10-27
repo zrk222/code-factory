@@ -5447,3 +5447,105 @@ def test_shared_digest372_adversarial_oracle_and_provider(tmp_path, variant):
         index, tmp_path / "test_flow.py", 5, "owned-digest-input"
     )
     assert evidence.get("eligible") is not True, evidence
+
+
+@pytest.mark.parametrize(
+    "consumer", ["environment-name", "provider-mutation", "credential-escape"]
+)
+def test_source_metadata_unknown_collection_public_cli(
+    tmp_path, capsys, monkeypatch, consumer
+):
+    import json
+    from factoryline.cli import main
+    from factoryline.mission_control_status import security_scan_status
+    from factoryline import mock_fixture_provenance as fixture
+
+    _write(
+        tmp_path,
+        "conftest.py",
+        "pytest_plugins = ['external_plugin']\nraise AssertionError('must not execute')\n",
+    )
+    _write(tmp_path, "pytest.ini", "[pytest]\npython_files = test_*.py\n")
+    text = "import os\nPASSWORD_ENV = 'SERVICE_PASSWORD'\nvalue = os.getenv(PASSWORD_ENV)\n"
+    if consumer == "provider-mutation":
+        text += "os.getenv = send\n"
+    if consumer == "credential-escape":
+        text += "send(PASSWORD_ENV)\n"
+    _write(tmp_path, "selectors.py", text)
+    _write(
+        tmp_path,
+        "app.py",
+        "from flask import request\nPASSWORD = 'operational-credential-value'\ninstall_user(password=PASSWORD)\ndef apply():\n    return eval(request.args['program'])\n",
+    )
+
+    # UNKNOWN may classify source-only metadata, but must never ask a test provider
+    # for lifecycle authority. An unexpected call fails this real CLI control.
+    def no_fixture_authority(*args, **kwargs):
+        raise AssertionError("UNKNOWN collection invoked application test authority")
+
+    monkeypatch.setattr(
+        fixture, "application_test_secret_evidence", no_fixture_authority
+    )
+    argv = [
+        "audit",
+        "security",
+        "--root",
+        str(tmp_path),
+        "--security-only",
+        "--defect-policy",
+        "source-role-v3",
+        "--json",
+    ]
+    reports = []
+    for _ in range(2):
+        assert main(argv) == 2
+        captured = capsys.readouterr()
+        assert captured.err == ""
+        reports.append(json.loads(captured.out))
+    first, warm = reports
+    for key in (
+        "findings",
+        "primitive_observations",
+        "finding_tier_report",
+        "defect_policy_decision",
+    ):
+        assert first.get(key, []) == warm.get(key, [])
+    assert first["oracle_context"]["pytest_collection"]["collection_state"] == "UNKNOWN"
+    assert first["state"] == "INCOMPLETE"
+    assert first["defect_policy_decision"]["clean"] is False
+    metadata = [
+        row
+        for row in first.get("primitive_observations", [])
+        if row["path"] == "selectors.py"
+    ]
+    assert len(metadata) == (1 if consumer == "environment-name" else 0)
+    if metadata:
+        assert metadata[0]["facts"]["disposition"] == "SOURCE_PRESENTATION_METADATA"
+        assert (
+            metadata[0]["facts"]["fixture_evidence"]["profile"]
+            == "STATIC_API_DATA_ROLE"
+        )
+    assert any(
+        row["path"] == "app.py"
+        and row["code"] == "SECURITY_HARDCODED_SECRET"
+        and row["severity"] == "CRITICAL"
+        for row in first["findings"]
+    )
+    assert any(row["code"] == "SECURITY_DYNAMIC_EXECUTION" for row in first["findings"])
+    status = security_scan_status(tmp_path)
+    assert status["source_freshness"] == "CURRENT_SOURCE_HASHES_VERIFIED"
+    assert status["state"] == "INCOMPLETE"
+
+    def identity(row):
+        return row["code"], row["path"], row.get("line"), row["severity"]
+
+    assert list(map(identity, status["findings"])) == list(
+        map(identity, warm["findings"])
+    )
+    # A persisted proof cannot survive an extra credential consumer.
+    with (tmp_path / "selectors.py").open("a", encoding="utf-8") as stream:
+        stream.write("\nsend(PASSWORD_ENV)\n")
+    assert (
+        security_scan_status(tmp_path)["source_freshness"]
+        != "CURRENT_SOURCE_HASHES_VERIFIED"
+    )

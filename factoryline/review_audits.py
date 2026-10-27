@@ -4060,8 +4060,9 @@ def _project_oracle_context(
         source_inventory=source_hashes,
         imports=resolved,
         source_index=(producer_source_model_out or {}).get("source"),
-        configuration_valid=config_cacheable
-        and (collection_identity or {}).get("collection_state") != "UNKNOWN",
+        configuration_valid=config_cacheable,
+        collection_known=(collection_identity or {}).get("collection_state")
+        != "UNKNOWN",
     )
     integrity.bind_fixed_program_workspace(
         root, contexts, snapshots, files, source_bytes, resolved
