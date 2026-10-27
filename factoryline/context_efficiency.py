@@ -22,6 +22,7 @@ from math import ceil
 from pathlib import Path
 from statistics import median
 from typing import Any, NoReturn
+from .import_context import application_configuration_names, application_profile_configuration
 
 from .context_protocol_audit import (
     protocol_call_context as protocol_call_context,
@@ -503,31 +504,11 @@ def typecheck_cache_helpers(contracts):
     )
 
 
-def application_profile_configuration(root, read_source, limit):
-    """Read bounded requirements.txt bytes and return their hash binding; distinguish missing, read-error, and oversized input states."""
-    name = "requirements.txt"
-    try:
-        raw = read_source(root, name)
-    except FileNotFoundError:
-        return [], {"path": name, "state": "missing"}, True
-    except (OSError, ValueError, RuntimeError) as exc:
-        code = getattr(exc, "code", type(exc).__name__)
-        return [], {"path": name, "state": code}, code == "E_SOURCE_MISSING"
-    if len(raw) > limit:
-        return [], {"path": name, "state": "oversized"}, False
-    binding = {
-        "path": name,
-        "sha256": hashlib.sha256(raw).hexdigest(),
-        "bytes": len(raw),
-    }
-    return [binding], binding, True
-
-
 def _application_profile_bytes(root, bindings, read_source, limit):
     selected = {
         row["path"]: row
         for row in bindings
-        if row["path"] in {"requirements.txt", "pyproject.toml", "tox.ini"}
+        if row["path"] in application_configuration_names()
     }
     result = {}
     for name, binding in selected.items():
@@ -552,16 +533,16 @@ def bind_application_fixture_context(
     source_bytes=None,
     source_inventory=None,
     imports=None,
+    source_index=None,
+    configuration_valid=True,
 ):
     """Bind eligible application-fixture evidence to the captured source inventory and hashed configuration without asserting runtime isolation."""
-    from . import mock_fixture_provenance as fixture
-    from . import credential_role_constructor_provider as roles
-    from collections.abc import Mapping
+    from . import mock_fixture_provenance as fixture, credential_role_constructor_provider as roles
     from . import review_audits as audit
 
     for path in snapshots:
         contexts.setdefault(path, {})["application_fixture_evidence"] = {}
-    if not isinstance(source_bytes, dict) or not isinstance(source_inventory, dict):
+    if configuration_valid is not True or not isinstance(source_bytes, dict) or not isinstance(source_inventory, dict):
         return
     candidates = {
         path: _fixture_literal_candidates(tree, audit) for path, tree in snapshots.items()
@@ -574,7 +555,7 @@ def bind_application_fixture_context(
     captured = {path: source_bytes.get(path) for path in snapshots}
     inventory = {path: source_inventory.get(path) for path in snapshots}
     index = fixture.application_test_index(
-        root, snapshots, captured, inventory, configs
+        root, snapshots, captured, inventory, configs, source_index=source_index
     )
     source = (
         index["source"]
@@ -730,6 +711,8 @@ def provider_context_cache_helpers(contracts):
     from . import credential_role_constructor_provider as roles
 
     return (
+        roles.security_snapshot_model, roles.application_snapshot_index, roles.verified_security_tree,
+        roles.security_source_snapshots, roles.consume_cached_security_snapshots,
         roles.PresentationRoleIndex,
         *(
             getattr(roles, name)
@@ -785,6 +768,7 @@ def provider_context_cache_helpers(contracts):
         _fixture_literal_evidence,
         _application_literal_evidence,
         application_profile_configuration,
+        application_configuration_names,
         _application_profile_bytes,
         _captured_fixture_configuration,
         provider_cache_fields,
@@ -826,12 +810,19 @@ def _consume_security_snapshots(
     tenant_read_calls,
     tenant_read_bindings,
     test_file_patterns,
-    scan_snapshot,
+    scan_snapshot, source_model_out=None,
 ):
-    """Consume producer-owned trees synchronously and clear their sidecar map."""
+    """Consume trees while retaining an owned source model for later consumers."""
     from . import test_oracle_misuse as oracle
+    from . import review_audits as audit
 
-    rows, state = {}, oracle.source_callback_snapshot_state(snapshots, fingerprints)
+    security_only = audit._SECURITY_ONLY_SCAN.get() is True
+    rows, state = {}, (
+        ({}, {})
+        if security_only
+        else oracle.source_callback_snapshot_state(snapshots, fingerprints)
+    )
+    provider_mutations = {}
     try:
         for path in files:
             if (tree := snapshots.pop(path, None)) is None:
@@ -845,9 +836,12 @@ def _consume_security_snapshots(
                 **contexts.get(path, {}),
                 "_tenant_policy_applies": scope.get("_policy_applies", False),
                 "_security_source_context": (workspace, retained),
+                "_security_provider_mutation_cache": provider_mutations,
+                "_security_source_model": (source_model_out or {}).get("source"),
             }
-            bind = oracle.source_callback_snapshot_context
-            context.update(bind(context.get("captured_imports", {}), workspace, *state))
+            if not security_only:
+                bind = oracle.source_callback_snapshot_context
+                context.update(bind(context.get("captured_imports", {}), workspace, *state))
             rows[path] = scan_snapshot(
                 workspace,
                 path,
@@ -961,17 +955,10 @@ def _undeclared_tenant_read_findings(relative, nodes, aliases, declared_reads, a
     ]
 
 
-def _verified_security_tree(audit, workspace, path, data, binding, tree, fingerprint):
-    """Reuse only a producer AST that still matches both source and structure."""
-    if (
-        not isinstance(tree, ast.Module)
-        or getattr(tree, "_oracle_source_sha256", None) != binding["sha256"]
-        or fingerprint is None
-        or audit._oracle_tree_fingerprint(tree) != fingerprint
-    ):
-        return audit._measure_parse(ast.parse, data, workspace, path)
-    audit.contracts._clear_analysis_sidecars(tree)
-    return tree
+def _verified_security_tree(*args, **kwargs):
+    from .credential_role_constructor_provider import verified_security_tree
+
+    return verified_security_tree(*args, **kwargs)
 
 
 def _scan_security_source(
@@ -1024,7 +1011,7 @@ def _scan_security_source(
             "bytes": len(data),
         }
         tree = _verified_security_tree(
-            audit, workspace, path, data, binding, tree, fingerprint
+            audit, workspace, path, data, binding, tree, fingerprint, source_context=oracle_context
         )
         tree._oracle_source_sha256 = binding["sha256"]
         encoding, _ = tokenize.detect_encoding(io.BytesIO(data).readline)
@@ -1052,8 +1039,7 @@ def _scan_security_source(
             detail=type(exc).__name__,
         )
     security_only = (oracle_context or {}).get("_security_only", False)
-    if type(security_only) is not bool:
-        security_only = False
+    security_only = security_only is True or audit._SECURITY_ONLY_SCAN.get() is True
     findings = (
         []
         if security_only is True
@@ -5456,7 +5442,14 @@ def _informed_import(index, path, binding, name, expr, inventory, capture):
     if not _informed_admit(index, selected, capture):
         return None
     symbol = import_source_symbol(
-        index.root, path, binding, module, imported, selected, captured=True
+        index.root,
+        path,
+        binding,
+        module,
+        imported,
+        selected,
+        captured=True,
+        captured_inventory=inventory,
     )
     if isinstance(expr, ast.Attribute):
         if symbol is not None:

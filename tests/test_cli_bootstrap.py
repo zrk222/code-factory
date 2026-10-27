@@ -739,13 +739,13 @@ def test_trusted_core_policy316_cli_json_receipt_and_default_compatibility(
     legacy = json.loads(capsys.readouterr().out)
     assert "selected_defect_policy" not in legacy
     assert "defect_policy_decision" not in legacy
-    assert cli_main([*argv, "--defect-policy", "trusted-core-v1"]) == 0
+    assert cli_main([*argv, "--defect-policy", "trusted-core-v1"]) == 2
     selected = json.loads(capsys.readouterr().out)
     assert selected["state"] == legacy["state"] == "BLOCKED"
     assert selected["findings"] == legacy["findings"]
     decision = selected["defect_policy_decision"]
     assert decision["state"] == "NO_SUPPORTED_DEFECTS_REVIEW_REQUIRED"
-    assert decision["exit_code"] == 0
+    assert decision["exit_code"] == 2
     assert decision["passed"] is False
     assert decision["clean"] is False
     assert decision["release_approved"] is False
@@ -773,7 +773,7 @@ def test_trusted_core_policy316_text_retains_review_queue_without_forced_repairs
                 "trusted-core-v1",
             ]
         )
-        == 0
+        == 2
     )
     output = capsys.readouterr().out
     assert "NO_SUPPORTED_DEFECTS_REVIEW_REQUIRED" in output
@@ -945,7 +945,7 @@ def test_trusted_core_policy316_missing_tenant_scope_cannot_be_masked_by_high_fi
     [
         (
             "def run(program):\n    exec(program)\n",
-            0,
+            2,
             "NO_SUPPORTED_DEFECTS_REVIEW_REQUIRED",
         ),
         (
@@ -1013,7 +1013,7 @@ def test_workspace_policy319_cli_text_retains_unknown_queue(tmp_path, capsys):
                 "trusted-core-v1",
             ]
         )
-        == 0
+        == 2
     )
     output = capsys.readouterr().out
     assert "NO_SUPPORTED_DEFECTS_REVIEW_REQUIRED" in output

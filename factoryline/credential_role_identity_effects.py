@@ -1,6 +1,7 @@
 """Bounded source-only identity-effect summaries for selected object roots."""
 
 import ast
+import hashlib
 from collections import deque
 from collections.abc import Callable, Mapping
 
@@ -27,6 +28,8 @@ class ResolvedIdentityCall:
     function: ast.FunctionDef | ast.AsyncFunctionDef
     path: object
     arguments: Mapping[str, ast.expr]
+    negative_binding_closed: bool = False
+    negative_binding_check: Callable[[], bool] | None = None
 
 
 @dataclass(frozen=True)
@@ -48,6 +51,8 @@ class IdentityEffectSummary:
     field_writes: tuple[str, ...] = ()
     field_transfers: tuple["IdentityFieldTransfer", ...] = ()
     role_events: tuple["IdentityEffectEvent", ...] = ()
+    return_values: tuple["IdentityReturnProjection", ...] = ()
+    return_status: str = "UNKNOWN"
 
     @property
     def preserves_class_identity(self):
@@ -63,6 +68,18 @@ class _Value:
     unknown: bool = False
     content_unknown: bool = False
     inert_kind: str | None = None
+    scalar_kind: str | None = None
+    trace: tuple[tuple[object, ...], ...] = ()
+    container_id: str | None = None
+
+
+@dataclass(frozen=True)
+class IdentityReturnProjection:
+    """One source-bound possible return value; it does not replace return effects."""
+
+    path: object
+    source_span: tuple[object, ...]
+    value: _Value
 
 
 @dataclass(frozen=True)
@@ -101,12 +118,19 @@ class _Effects:
     )
     role_events: list[IdentityEffectEvent] = _dataclass_field(default_factory=list)
     record_role_events: bool = False
+    return_values: list[IdentityReturnProjection] = _dataclass_field(
+        default_factory=list
+    )
+    return_status: str = "UNKNOWN"
 
-    def merge(self, other):
+    def merge(self, other, *, include_returns=False):
         """Merge class writes, escapes, unknowns, and field writes from another effect accumulator."""
         for name in ("class_writes", "escapes", "unknowns", "field_writes"):
             getattr(self, name).update(getattr(other, name))
         self.field_transfers.extend(other.field_transfers)
+        if include_returns:
+            self.return_values.extend(other.return_values)
+            self.return_status = other.return_status
         if self.record_role_events:
             self.role_events.extend(other.role_events)
 
@@ -141,6 +165,8 @@ class _Effects:
             )
             if self.record_role_events
             else (),
+            tuple(self.return_values),
+            self.return_status,
         )
 
 
@@ -245,56 +271,300 @@ def maps_each_actual_once(actuals, arguments):
     ) == sorted(map(id, actuals))
 
 
+def source_symbol_index(index):
+    """Reuse the captured symbol/import wrapper across source-owned consumers."""
+    wrapper = getattr(index, "_identity_symbol_index", None)
+    if wrapper is None:
+        module_paths = index.module_paths()
+        if module_paths is None:
+            return None
+        wrapper = {
+            "source": index,
+            "modules": index.snapshots,
+            "module_paths": module_paths,
+            "imports": {},
+            "profiles": {},
+        }
+        index._identity_symbol_index = wrapper
+    return wrapper
+
+
+def resolve_source_identity_call(call, path, index, *, lexical_scope=None, defer_negative_binding=False):
+    """Resolve one exact captured import/re-export and bind its source signature."""
+    if not isinstance(call, ast.Call) or not index.validate(path):
+        return None
+    wrapper = source_symbol_index(index)
+    if wrapper is None:
+        return None
+    from .mock_fixture_provenance import _app_source_symbol, _app_expression_name, _django_name
+    from .credential_role_constructor_provider import _scope_scope_bindings, _captured_terminal_provider_mutation, _presentation_provider_shadow
+    from . import review_audits as audit
+
+    lexical_scope = lexical_scope or _scope_scope_bindings(call, index.parents[path], None)
+    if isinstance(lexical_scope, ast.Lambda):
+        return None
+    head = call.func
+    while isinstance(head, ast.Attribute):
+        head = head.value
+    if isinstance(head, ast.Name) and _presentation_provider_shadow(call, head.id, index, path, audit):
+        return None
+
+    provider_chain = []
+    selected = _app_source_symbol(
+        wrapper,
+        path,
+        call.func,
+        lexical_scope,
+        provider_chain=provider_chain,
+    )
+    if selected is None:
+        return None
+    callee_path, function = selected
+    if (
+        not isinstance(function, ast.FunctionDef)
+        or function.decorator_list
+        or function.args.vararg is not None
+        or function.args.kwarg is not None
+    ):
+        return None
+    if not index.validate(callee_path) or id(function) not in index.parents[callee_path]:
+        return None
+    from .review_integrity import bind_source_call
+
+    try:
+        arguments = bind_source_call(call, function, apply_defaults=True)
+    except (TypeError, ValueError):
+        return None
+    providers = {(_app_expression_name(wrapper, path, call.func, lexical_scope), callee_path, function.name),
+                 *provider_chain,
+                 *((_django_name(wrapper, p) + "." + name, p, name) for _, p, name in provider_chain)}
+    def generation():
+        return (index.root, frozenset(index.source_bytes), frozenset(index.inventory), tuple(
+            (p, tree, index.source_bytes.get(p), index.inventory.get(p), getattr(tree, "_oracle_source_sha256", None))
+            for p, tree in index.snapshots.items()
+        ))
+
+    captured_generation = generation() if defer_negative_binding else None
+    captured_trees = {p: audit._oracle_tree_fingerprint(index.snapshots[p]) for p in {path, callee_path}}
+
+    def check_binding():
+        if captured_generation is not None and (
+            generation() != captured_generation
+            or any(audit._oracle_tree_fingerprint(index.snapshots[p]) != digest for p, digest in captured_trees.items())
+            or not index.validate(path) or not index.validate(callee_path)
+            or id(function) not in index.parents[callee_path]
+            or id(call) not in index.parents[path]
+        ):
+            return False
+        if not all(provider is not None for provider, _, _ in providers):
+            return False
+        bindings = tuple((provider, (owner_path, name)) for provider, owner_path, name in sorted(providers))
+        return not _captured_terminal_provider_mutation(
+            index, audit, bindings[0][0], local_binding=bindings[0][1],
+            additional_bindings=bindings[1:],
+        )
+    if defer_negative_binding:
+        return ResolvedIdentityCall(function, callee_path, arguments, negative_binding_check=check_binding)
+    return ResolvedIdentityCall(function, callee_path, arguments, negative_binding_closed=check_binding())
+
+
 _UNKNOWN_KEY = object()
 
 
-def identity_value(node, aliases, *, strict_calls=False):
-    """Project names, attributes, and literal containers without evaluation."""
+def identity_value(node, aliases, *, strict_calls=False, material_values=False):
+    """Share value algebra while separating possible data origins from exact identity."""
+    projected = aliases.get(("expression", id(node))) if isinstance(node, ast.expr) else None
+    if isinstance(projected, _Value):
+        return _value_with_trace(projected, node, "BOUND_EXPRESSION")
     if isinstance(node, ast.Constant):
-        return _Value(inert_kind="scalar")
+        value_type = type(node.value)
+        scalar_kind = (
+            "text" if value_type is str else
+            "bytes" if value_type is bytes else
+            "boolean" if value_type is bool else
+            "integer" if value_type is int else
+            "none" if node.value is None else
+            "scalar"
+        )
+        return _Value(
+            inert_kind="scalar",
+            scalar_kind=scalar_kind,
+            trace=(_value_trace(node, "CONSTANT"),),
+        )
     if isinstance(node, ast.Name):
-        return aliases.get(node.id, _Value())
+        value = aliases.get(node.id, _Value(unknown=material_values))
+        return _value_with_trace(value, node, "ALIAS_USE")
     if isinstance(node, ast.Attribute):
-        return _attribute_value(node, aliases, strict_calls=strict_calls)
+        return _attribute_value(node, aliases, strict_calls=strict_calls, material_values=material_values)
     if isinstance(node, (ast.List, ast.Tuple, ast.Dict)):
-        return _container_value(node, aliases, strict_calls=strict_calls)
+        return _container_value(node, aliases, strict_calls=strict_calls, material_values=material_values)
     if isinstance(node, ast.Subscript):
-        return _subscript_value(node, aliases, strict_calls=strict_calls)
+        return _subscript_value(node, aliases, strict_calls=strict_calls, material_values=material_values)
     if isinstance(node, ast.Call):
-        return _identity_call_value(node, aliases, strict_calls=strict_calls)
-    return _unknown_expression(node, aliases, strict_calls=strict_calls)
+        return _identity_call_value(node, aliases, strict_calls=strict_calls, material_values=material_values)
+    return _unknown_expression(node, aliases, strict_calls=strict_calls, material_values=material_values)
 
 
-def _identity_call_value(node, aliases, *, strict_calls=False):
+def _identity_call_value(node, aliases, *, strict_calls=False, material_values=False):
+    if material_values:
+        formatted = _structural_scalar_format(node, aliases)
+        if formatted is not None:
+            return formatted
+    if (
+        isinstance(node.func, ast.Attribute)
+        and node.func.attr in {"encode", "decode"}
+        and not node.args
+        and not node.keywords
+    ):
+        receiver = identity_value(node.func.value, aliases, strict_calls=strict_calls, material_values=material_values)
+        incoming, outgoing = (
+            ("text", "bytes") if node.func.attr == "encode" else ("bytes", "text")
+        )
+        if (
+            not receiver.unknown
+            and not receiver.content_unknown
+            and receiver.scalar_kind == incoming
+        ):
+            return _Value(
+                roots=receiver.roots,
+                items=receiver.items,
+                class_roots=receiver.class_roots,
+                unknown=False,
+                content_unknown=False,
+                inert_kind=receiver.inert_kind,
+                scalar_kind=outgoing,
+                trace=(*receiver.trace, _value_trace(node, "BUILTIN_" + node.func.attr.upper())),
+            )
     if isinstance(node.func, ast.Attribute) and node.func.attr == "__class__":
-        receiver = identity_value(node.func.value, aliases, strict_calls=strict_calls)
+        receiver = identity_value(node.func.value, aliases, strict_calls=strict_calls, material_values=material_values)
         if contains_tracked(receiver):
-            return _Value(unknown=True)
-    return (
-        _Value(content_unknown=True)
-        if strict_calls
-        else _unknown_expression(node, aliases, strict_calls=strict_calls)
+            return _Value(
+                roots=frozenset(tracked_roots(receiver)) if material_values else frozenset(),
+                unknown=True, content_unknown=material_values,
+                trace=(*receiver.trace, _value_trace(node, "UNKNOWN_CLASS_CALL")),
+            )
+    value = _unknown_expression(node, aliases, strict_calls=strict_calls, material_values=material_values)
+    if not material_values:
+        return _Value(content_unknown=True) if strict_calls else value
+    return _Value(
+        roots=value.roots,
+        items=value.items,
+        class_roots=value.class_roots,
+        unknown=True,
+        content_unknown=True,
+        trace=(*value.trace, _value_trace(node, "OPAQUE_CALL")),
     )
 
 
-def _subscript_value(node, aliases, *, strict_calls=False):
-    base = identity_value(node.value, aliases, strict_calls=strict_calls)
+def _subscript_value(node, aliases, *, strict_calls=False, material_values=False):
+    base = identity_value(node.value, aliases, strict_calls=strict_calls, material_values=material_values)
     key = node.slice.value if isinstance(node.slice, ast.Constant) else None
     if strict_calls and base.content_unknown:
-        return _Value(unknown=True)
-    return dict(base.items).get(key, _Value(unknown=contains_tracked(base)))
+        if not material_values:
+            return _Value(unknown=True)
+        selected = dict(base.items).get(key, _Value())
+        return _Value(
+            roots=frozenset(tracked_roots(base) | tracked_roots(selected)),
+            items=selected.items,
+            class_roots=selected.class_roots | base.class_roots,
+            unknown=True,
+            content_unknown=True,
+            scalar_kind=selected.scalar_kind,
+            trace=(*dict.fromkeys((*base.trace, *selected.trace)),
+                   _value_trace(node, "UNKNOWN_CONTAINER_SELECT")),
+        )
+    selected = dict(base.items).get(key, _Value(unknown=contains_tracked(base)))
+    return _value_with_trace(selected, node, "CONTAINER_SELECT")
 
 
-def _unknown_expression(node, aliases, *, strict_calls=False):
+def _structural_scalar_format(node, aliases):
+    """Track material origins through literal formats with primitive operands only."""
+    if not (isinstance(node.func, ast.Attribute) and node.func.attr == "format"
+            and isinstance(node.func.value, ast.Constant) and type(node.func.value.value) is str
+            and len(node.func.value.value) <= 4096 and len(node.args) <= 32 and not node.keywords):
+        return None
+    from string import Formatter
+
+    try:
+        fields = list(Formatter().parse(node.func.value.value))
+    except ValueError:
+        return None
+    if any(field is not None and (field and not field.isdecimal() or spec or conversion)
+            for _, field, spec, conversion in fields):
+        return None
+    selected = [field for _, field, _, _ in fields if field is not None]
+    if (selected.count("") > len(node.args) or "" in selected and any(selected)
+            or any(field and int(field) >= len(node.args) for field in selected)):
+        return None
+    values = [identity_value(arg, aliases, strict_calls=True, material_values=True) for arg in node.args]
+    if any(value.unknown or value.content_unknown or value.items or value.class_roots
+            or value.scalar_kind not in {"text", "bytes", "integer", "boolean"} for value in values):
+        return None
+    trace = tuple(dict.fromkeys(step for value in values for step in value.trace))
+    if len(trace) >= 64:
+        return None
+    return _Value(roots=frozenset().union(*(value.roots for value in values)),
+        scalar_kind="text", trace=(*trace, _value_trace(node, "TEXT_INTERPOLATION")))
+
+
+def _unknown_expression(node, aliases, *, strict_calls=False, material_values=False):
     roots = set()
     if isinstance(node, ast.expr):
         for child in ast.walk(node):
             if isinstance(child, ast.Name) and isinstance(child.ctx, ast.Load):
                 roots.update(tracked_roots(aliases.get(child.id, _Value())))
-    return _Value(roots=frozenset(roots), unknown=bool(roots))
+    return _Value(
+        roots=frozenset(roots),
+        unknown=material_values or bool(roots),
+        trace=(_value_trace(node, "UNKNOWN_EXPRESSION"),),
+    )
 
 
-def _container_value(node, aliases, *, strict_calls=False):
+def _value_trace(node, operation):
+    try:
+        digest = hashlib.sha256(
+            ast.dump(node, include_attributes=False).encode("utf-8")
+        ).hexdigest()
+    except (TypeError, ValueError):
+        digest = ""
+    return (
+        operation,
+        (
+            getattr(node, "lineno", None),
+            getattr(node, "col_offset", None),
+            getattr(node, "end_lineno", None),
+            getattr(node, "end_col_offset", None),
+        ),
+        digest,
+    )
+
+
+def _value_with_trace(value, node, operation):
+    trace = (*value.trace, _value_trace(node, operation))
+    exhausted = len(trace) > 64
+    return _Value(
+        roots=value.roots,
+        items=value.items,
+        class_roots=value.class_roots,
+        unknown=value.unknown or exhausted,
+        content_unknown=value.content_unknown or exhausted,
+        inert_kind=value.inert_kind,
+        scalar_kind=value.scalar_kind,
+        trace=trace[:64],
+        container_id=value.container_id,
+    )
+
+
+def _unproved_return_binding(value, call):
+    from dataclasses import replace
+
+    return replace(
+        _value_with_trace(value, call, "UNPROVED_HELPER_PROVIDER"),
+        items=tuple((key, _unproved_return_binding(child, call)) for key, child in value.items),
+    )
+
+
+def _container_value(node, aliases, *, strict_calls=False, material_values=False):
     if isinstance(node, (ast.List, ast.Tuple, ast.Dict)):
         pairs = (
             zip(node.keys, node.values)
@@ -303,10 +573,10 @@ def _container_value(node, aliases, *, strict_calls=False):
         )
         items, unknown = [], False
         for key, item in pairs:
-            value = identity_value(item, aliases, strict_calls=strict_calls)
+            value = identity_value(item, aliases, strict_calls=strict_calls, material_values=material_values)
             if isinstance(node, ast.Dict) and not isinstance(key, ast.Constant):
                 key_value = (
-                    identity_value(key, aliases, strict_calls=strict_calls)
+                    identity_value(key, aliases, strict_calls=strict_calls, material_values=material_values)
                     if isinstance(key, ast.expr)
                     else _Value()
                 )
@@ -326,8 +596,182 @@ def _container_value(node, aliases, *, strict_calls=False):
             items=tuple(items),
             unknown=unknown,
             inert_kind=_inert_container(node, items),
+            scalar_kind=type(node).__name__.lower(),
+            trace=(_value_trace(node, "CONTAINER"),),
+            container_id=_container_identity(node),
         )
     return _Value()
+
+
+def _container_identity(node):
+    trace = _value_trace(node, "CONTAINER")
+    return hashlib.sha256(repr((trace[1], trace[2])).encode("utf-8")).hexdigest()
+
+
+def _unknown_value(value, reason):
+    items = tuple((key, _unknown_value(item, reason)) for key, item in value.items)
+    trace = (*value.trace, (reason, (), ""))
+    return _Value(
+        roots=value.roots,
+        items=items,
+        class_roots=value.class_roots,
+        unknown=True,
+        content_unknown=True,
+        inert_kind=value.inert_kind,
+        scalar_kind=value.scalar_kind,
+        trace=trace[-64:],
+        container_id=value.container_id,
+    )
+
+
+def _value_container_ids(value):
+    result = {value.container_id} if value.container_id else set()
+    for _, item in value.items:
+        result.update(_value_container_ids(item))
+    return result
+
+
+def _container_value_shape(value):
+    return (
+        value.container_id,
+        tuple((key, _container_value_shape(item)) for key, item in value.items),
+    )
+
+
+def join_identity_values(values, *, max_states=512, max_depth=32):
+    """Join bounded may-values recursively without dropping nested origins."""
+    values = tuple(values)
+    if not values:
+        return _Value(unknown=True, content_unknown=True)
+    if len(values) > max_states or any(not isinstance(value, _Value) for value in values):
+        possible = [value for value in values if isinstance(value, _Value)]
+        return _Value(
+            roots=frozenset().union(*(tracked_roots(value) for value in possible)),
+            class_roots=frozenset().union(*(value.class_roots for value in possible)),
+            unknown=True,
+            content_unknown=True,
+        )
+    states = [0]
+
+    def join(selected, depth):
+        states[0] += 1
+        roots = frozenset().union(*(value.roots for value in selected))
+        classes = frozenset().union(*(value.class_roots for value in selected))
+        if states[0] > max_states or depth > max_depth:
+            return _Value(
+                roots=frozenset(set().union(*(tracked_roots(value) for value in selected))),
+                class_roots=classes,
+                unknown=True,
+                content_unknown=True,
+            )
+        if all(value == selected[0] for value in selected[1:]):
+            value = selected[0]
+            return (
+                _unknown_value(value, "VALUE_TRACE_BUDGET")
+                if len(value.trace) > 64
+                else value
+            )
+        keys = []
+        maps = [dict(value.items) for value in selected]
+        for mapping in maps:
+            for key in mapping:
+                if key not in keys:
+                    keys.append(key)
+        if len(keys) > 128:
+            roots = frozenset(
+                set(roots).union(*(tracked_roots(value) for value in selected))
+            )
+        items = []
+        for key in keys[:128]:
+            children = [mapping[key] for mapping in maps if key in mapping]
+            items.append((key, join(children, depth + 1)))
+        traces = tuple(dict.fromkeys(step for value in selected for step in value.trace))
+        container_ids = {value.container_id for value in selected}
+        return _Value(
+            roots=roots,
+            items=tuple(items),
+            class_roots=classes,
+            unknown=True,
+            content_unknown=True,
+            inert_kind=(selected[0].inert_kind if all(
+                value.inert_kind == selected[0].inert_kind for value in selected
+            ) else None),
+            scalar_kind=(selected[0].scalar_kind if all(
+                value.scalar_kind == selected[0].scalar_kind for value in selected
+            ) else None),
+            trace=traces[:64],
+            container_id=(next(iter(container_ids)) if len(container_ids) == 1 else None),
+        )
+
+    return join(values, 0)
+
+
+def invalidate_structural_statement(statement, environment):
+    """Invalidate every source-visible mutable alias touched or escaped by a statement."""
+    if not isinstance(environment, dict):
+        return False
+
+    parents = {
+        id(child): parent
+        for parent in ast.walk(statement)
+        for child in ast.iter_child_nodes(parent)
+    }
+    mutated_ids, mutated_shapes, receiver_roots = set(), set(), set()
+
+    def register(expression):
+        if not isinstance(expression, ast.expr):
+            return
+        value = identity_value(expression, environment, strict_calls=True, material_values=True)
+        ids = _value_container_ids(value)
+        if ids:
+            mutated_ids.update(ids)
+        elif value.items:
+            mutated_shapes.add(_container_value_shape(value))
+        receiver_roots.update(value.roots)
+
+    for node in ast.walk(statement):
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+            parent = parents.get(id(node))
+            if isinstance(parent, (ast.Subscript, ast.Attribute)) and parent.ctx is node.ctx:
+                register(parent.value)
+            elif isinstance(parent, ast.AugAssign) and parent.target is node:
+                register(node)
+        elif isinstance(node, ast.Call):
+            register(node.func.value if isinstance(node.func, ast.Attribute) else None)
+            for argument in [*node.args, *(keyword.value for keyword in node.keywords)]:
+                register(argument)
+    targets = (
+        [*statement.targets]
+        if isinstance(statement, (ast.Assign, ast.Delete))
+        else [statement.target]
+        if isinstance(statement, (ast.AnnAssign, ast.AugAssign))
+        else []
+    )
+    for target in targets:
+        if isinstance(target, (ast.Attribute, ast.Subscript)):
+            register(target.value)
+        elif isinstance(statement, ast.AugAssign) and isinstance(target, ast.Name):
+            register(target)
+    if not mutated_ids and not mutated_shapes and not receiver_roots:
+        return False
+    changed = False
+    for name, value in tuple(environment.items()):
+        if not isinstance(value, _Value):
+            continue
+        affected = bool(_value_container_ids(value) & mutated_ids)
+        if not affected and mutated_shapes and value.items:
+            affected = _container_value_shape(value) in mutated_shapes
+        if (
+            not affected
+            and isinstance(name, tuple)
+            and len(name) == 2
+            and name[0] in receiver_roots
+        ):
+            affected = True
+        if affected:
+            environment[name] = _unknown_value(value, "MUTABLE_ALIAS_OR_ESCAPE")
+            changed = True
+    return changed
 
 
 def call_has_unknown_value(call, aliases, *, strict_calls=False):
@@ -514,19 +958,40 @@ def _inert_container(node, items):
     )
 
 
-def _attribute_value(node, aliases, *, strict_calls=False):
-    base = identity_value(node.value, aliases, strict_calls=strict_calls)
+def _attribute_value(node, aliases, *, strict_calls=False, material_values=False):
+    base = identity_value(node.value, aliases, strict_calls=strict_calls, material_values=material_values)
     if node.attr == "__class__" and base.roots:
         return _Value(class_roots=base.roots)
     if len(base.roots) == 1 and not base.unknown and not base.class_roots:
         projected = aliases.get((next(iter(base.roots)), node.attr))
         if projected is not None:
-            return projected
+            return _value_with_trace(projected, node, "FIELD_SELECT")
     if strict_calls and base.roots and not base.class_roots and not base.unknown:
-        return _Value(content_unknown=True)
+        if not material_values:
+            return _Value(content_unknown=True)
+        return _Value(
+            roots=base.roots,
+            unknown=True,
+            content_unknown=True,
+            trace=(*base.trace, _value_trace(node, "UNKNOWN_FIELD")),
+        )
     if strict_calls and base.content_unknown:
-        return _Value(unknown=True)
-    return _Value(unknown=bool(base.roots or base.class_roots or base.unknown))
+        if not material_values:
+            return _Value(unknown=True)
+        return _Value(
+            roots=base.roots,
+            class_roots=base.class_roots,
+            unknown=True,
+            content_unknown=True,
+            trace=(*base.trace, _value_trace(node, "UNKNOWN_FIELD")),
+        )
+    return _Value(
+        roots=base.roots if material_values else frozenset(),
+        class_roots=base.class_roots if material_values else frozenset(),
+        unknown=bool(base.roots or base.class_roots or base.unknown),
+        content_unknown=base.content_unknown,
+        trace=(*base.trace, _value_trace(node, "UNKNOWN_FIELD")),
+    )
 
 
 def _record_attribute_write(
@@ -785,6 +1250,8 @@ def _field_projection_value(receiver_root, value):
         unknown=True,
         content_unknown=value.content_unknown,
         inert_kind=value.inert_kind,
+        scalar_kind=value.scalar_kind,
+        trace=value.trace,
     )
 
 
@@ -1058,13 +1525,35 @@ def mapped_call_values(call, aliases, involved, resolved, out, *, strict_calls=F
     if not isinstance(resolved, ResolvedIdentityCall):
         out.unknowns.add("invalid exact call binding")
         return None
+    from .review_integrity import bind_source_call
+
+    receiver = (call.func.value if isinstance(call.func, ast.Attribute)
+                and any(expression is call.func.value for expression in resolved.arguments.values()) else None)
+    try:
+        authoritative = bind_source_call(call, resolved.function, receiver=receiver, apply_defaults=False)
+    except (TypeError, ValueError):
+        out.unknowns.add("call does not match the captured source signature")
+        return None
     params = _resolved_parameter_names(resolved.function)
-    actuals = _call_actual_expressions(call)
-    if not maps_each_actual_once(actuals, resolved.arguments):
+    actuals = [*call.args, *(keyword.value for keyword in call.keywords)]
+    if receiver is not None:
+        actuals.append(receiver)
+    defaults = _declared_call_defaults(resolved.function)
+    provided = {}
+    for formal, expression in resolved.arguments.items():
+        if any(expression is actual for actual in actuals):
+            provided[formal] = expression
+        elif (not isinstance(expression, ast.expr) or formal not in defaults
+              or defaults[formal] is not expression):
+            out.unknowns.add("call mapping includes an unbound non-default expression")
+            return None
+    if (set(provided) != set(authoritative)
+            or any(provided[name] is not expression for name, expression in authoritative.items())
+            or not maps_each_actual_once(actuals, provided)):
         out.unknowns.add("exact call mapping must cover each actual once")
         return None
     mapped = {}
-    for formal, expr in resolved.arguments.items():
+    for formal, expr in provided.items():
         value = _mapped_formal_value(
             formal, expr, params, actuals, aliases, out, strict_calls
         )
@@ -1111,17 +1600,17 @@ def _mapped_formal_value(formal, expr, params, actuals, aliases, out, strict_cal
     roots = tracked_roots(value)
     if (
         not isinstance(expr, ast.expr)
-        or value.unknown
-        or (strict_calls and value.content_unknown)
         or len(roots) > 1
         or (value.items and roots)
     ):
         out.unknowns.add("ambiguous exact call root mapping")
         return None
+    if value.unknown or (strict_calls and value.content_unknown):
+        out.unknowns.add("exact formal is bound to an unknown actual value")
     return value
 
 
-def _with_inert_defaults(function, mapped, out, *, strict_calls=False):
+def _declared_call_defaults(function):
     args = function.args
     positional = [*args.posonlyargs, *args.args]
     defaults = dict(
@@ -1130,7 +1619,12 @@ def _with_inert_defaults(function, mapped, out, *, strict_calls=False):
     defaults.update(
         (arg.arg, value) for arg, value in zip(args.kwonlyargs, args.kw_defaults)
     )
-    for parameter in [*positional, *args.kwonlyargs]:
+    return defaults
+
+
+def _with_inert_defaults(function, mapped, out, *, strict_calls=False):
+    defaults = _declared_call_defaults(function)
+    for parameter in [*function.args.posonlyargs, *function.args.args, *function.args.kwonlyargs]:
         if parameter.arg in mapped:
             continue
         default = defaults.get(parameter.arg)
@@ -1183,9 +1677,6 @@ def summarize_identity_call(
     Allocation, ownership, descriptors, prior mutations, and binding stability
     are separate caller obligations. This is not fixture admission or execution.
     """
-    pass
-    pass
-
     out = _Effects(record_role_events=role_view)
     if (
         not index.validate(path)
@@ -1198,10 +1689,81 @@ def summarize_identity_call(
     if analyzer.fields is None:
         out.unknowns.add("invalid initial field identity graph")
         return out.freeze()
-    aliases = {name: _Value(roots=frozenset({root})) for name, root in roots.items()}
+    aliases = {
+        name: root if isinstance(root, _Value) else _Value(roots=frozenset({root}))
+        for name, root in roots.items()
+    }
     aliases.update(analyzer.fields)
-    analyzer._call(call, path, aliases, 0, frozenset(), out)
+    expression_nodes = []
+    for argument in _call_actual_expressions(call):
+        if id(argument) not in index.parents[path]:
+            out.unknowns.add("call actual is outside the validated source tree")
+            continue
+        expression_nodes.extend(
+            node for node in ast.walk(argument) if isinstance(node, ast.Call)
+        )
+    if len(expression_nodes) > 512:
+        out.unknowns.add("argument effect state budget exceeded")
+        return out.freeze()
+    for nested in reversed(expression_nodes):
+        if nested is not call:
+            analyzer._call(nested, path, aliases, 0, frozenset(), out)
+    analyzer._call(call, path, aliases, 0, frozenset(), out, capture_returns=True)
+    if not out.return_values:
+        candidate = _unknown_expression(call, aliases, strict_calls=True, material_values=True)
+        out.return_values.append(
+            IdentityReturnProjection(
+                path,
+                _event_span(path, call),
+                _value_with_trace(candidate, call, "UNRESOLVED_CALL_RESULT"),
+            )
+        )
+        out.return_status = "UNKNOWN"
     return out.freeze()
+
+
+def captured_source_call_result(call, path, index, roots):
+    """Return one exact captured helper result while retaining its may-effects.
+
+    Only a complete single-result projection is returned. Opaque argument
+    effects, provider writes, unknown escapes and unresolved callers remain
+    visible and decline the value projection.
+    """
+    if not isinstance(call, ast.Call) or not index.validate(path):
+        return None
+
+    def resolve(candidate, candidate_path):
+        parents = index.parents.get(candidate_path)
+        if parents is None:
+            return None
+        lexical_scope = _enclosing_function(candidate, parents)
+        return resolve_source_identity_call(
+            candidate, candidate_path, index, lexical_scope=lexical_scope
+        )
+
+    summary = summarize_identity_call(
+        call, path, index, roots, resolve_call=resolve, role_view=True
+    )
+    if (
+        summary.unknowns
+        or summary.class_writes
+        or summary.field_writes
+        or summary.return_status != "COMPLETE"
+        or len(summary.return_values) != 1
+    ):
+        return None
+    allowed_effects = {"return_escape", "local_alias", "local_container"}
+    root_names = set().union(*(tracked_roots(value) for value in roots.values()))
+    if any(
+        event.uncertain
+        or (root_names.intersection(event.roots) and event.kind not in allowed_effects)
+        for event in summary.role_events
+    ):
+        return None
+    projection = summary.return_values[0].value
+    if projection.unknown or projection.content_unknown:
+        return None
+    return {"value": projection, "effects": summary, "source": summary.return_values[0]}
 
 
 def captured_function_valid(function, path, index):
@@ -1745,6 +2307,7 @@ class _Analyzer:
         )
         active = active | {(path, id(function))}
         self._visit(nodes, function, path, aliases, depth, active, out)
+        self._project_returns(function, path, roots, aliases, nodes, out)
         out.escapes.update(
             nested_capture_roots(
                 function,
@@ -1756,6 +2319,64 @@ class _Analyzer:
             )
         )
         return out
+
+    def _project_returns(self, function, path, roots, aliases, nodes, out):
+        returns = [node for node in nodes if isinstance(node, ast.Return)]
+        if not returns:
+            out.return_status = (
+                "UNKNOWN"
+                if any(isinstance(node, (ast.Yield, ast.YieldFrom)) for node in nodes)
+                else "NO_RETURN"
+            )
+            return
+        from .finite_capture import evaluate_helper_flow
+
+        initial = {
+            name: value if isinstance(value, _Value) else _Value(roots=frozenset({value}))
+            for name, value in roots.items()
+        }
+        initial.update(self.fields)
+        result = evaluate_helper_flow(
+            function,
+            initial,
+            lambda expression, environment: (
+                True,
+                identity_value(
+                    expression, environment, strict_calls=self.strict_calls, material_values=True
+                ),
+            ),
+            max_states=self.budget,
+        )
+        if result["status"] == "COMPLETE" and len(result["return_values"]) == 1:
+            value = result["return_values"][0]
+            if isinstance(value, _Value):
+                out.return_values.append(
+                    IdentityReturnProjection(
+                        path,
+                        _event_span(path, returns[0]),
+                        _value_with_trace(value, returns[0], "HELPER_RETURN"),
+                    )
+                )
+                out.return_status = "UNKNOWN" if value.unknown else "COMPLETE"
+                return
+        # Unsupported control flow retains possible origins as UNKNOWN. It may
+        # inform a may-flow witness, but cannot prove one selected result.
+        for node in returns:
+            value = identity_value(node.value, aliases, strict_calls=self.strict_calls, material_values=True)
+            possible = _Value(
+                roots=value.roots,
+                items=value.items,
+                class_roots=value.class_roots,
+                unknown=True,
+                content_unknown=value.content_unknown or value.unknown,
+                inert_kind=value.inert_kind,
+                scalar_kind=value.scalar_kind,
+                trace=(*value.trace, _value_trace(node, "UNKNOWN_RETURN_PATH")),
+            )
+            out.return_values.append(
+                IdentityReturnProjection(path, _event_span(path, node), possible)
+            )
+        out.return_status = "UNKNOWN"
 
     def _visit(self, nodes, function, path, aliases, depth, active, out):
         exported = exported_names(nodes)
@@ -2031,7 +2652,7 @@ class _Analyzer:
                 out, "local_alias", tracked_roots(value), path, node, target.id
             )
 
-    def _call(self, call, path, aliases, depth, active, out):
+    def _call(self, call, path, aliases, depth, active, out, *, capture_returns=False):
         if literal_dict_update(call, aliases, strict_calls=self.strict_calls):
             return
         if call_has_unknown_value(call, aliases, strict_calls=self.strict_calls):
@@ -2052,7 +2673,8 @@ class _Analyzer:
                 ),
                 uncertain=True,
             )
-            return
+            if not capture_returns:
+                return
         involved = call_tracked_roots(call, aliases, strict_calls=self.strict_calls)
         if not involved and not self.strict_calls:
             if self.role_view:
@@ -2093,7 +2715,22 @@ class _Analyzer:
         if mapped is None:
             return
 
-        out.merge(self.run(resolved.function, resolved.path, mapped, depth + 1, active))
+        nested = self.run(resolved.function, resolved.path, mapped, depth + 1, active)
+        if capture_returns and nested.return_values and not (
+            resolved.negative_binding_closed
+            or resolved.negative_binding_check is not None
+            and any(
+                not isinstance(projection.value, _Value)
+                or projection.value.unknown is not True or projection.value.items != ()
+                for projection in nested.return_values
+            )
+            and resolved.negative_binding_check() is True
+        ):
+            from dataclasses import replace
+
+            nested.return_values = [replace(projection, value=_unproved_return_binding(projection.value, call))
+                                    for projection in nested.return_values]
+        out.merge(nested, include_returns=capture_returns)
 
 
 def _fixture_symbol(index, path, expression, function=None):
@@ -3412,6 +4049,7 @@ def module_fixture_helper_epoch():
     from . import credential_identity_audit as application_audit
 
     return (
+        *security_value_helper_epoch(),
         module_fixture_evidence_for_binding,
         module_fixture_credential_evidence,
         _fixture_symbol,
@@ -3493,6 +4131,8 @@ def module_fixture_helper_epoch():
         review_audits._constant_value,
         review_audits._comparison_value,
         fixture._app_local_assignment,
+        fixture._app_closed_consumer_uses,
+        fixture._app_credential_lineage,
         fixture._app_source_symbol,
         fixture._app_provider_unchanged,
         fixture._app_dynamic_callable,
@@ -3737,4 +4377,119 @@ def _fixture_prefix_client_call(member, selected, call):
         and selected.attr in methods
         and isinstance(call, ast.Call)
         and call.func is selected
+    )
+
+
+def structural_value_join(values):
+    """Join bounded may-values, preserving known origins/items under UNKNOWN."""
+    return join_identity_values(values)
+
+
+def _structural_closed_consumer_uses(function, name, roots, parents, scope_of, transform):
+    """Share one complete use graph; family contracts supply permitted terminals."""
+    from .finite_capture import captured_value_use_closure
+
+    origin = binding_occurrences(function.body, name)
+    if len(origin) != 1 or not isinstance(origin[0], ast.Name):
+        return None
+    permitted = {id(node): role for role, expression in roots for node in ast.walk(expression)}
+    loads = [node for node in ast.walk(function) if isinstance(node, ast.Name)
+             and node.id == name and isinstance(node.ctx, ast.Load)]
+    if not loads or any(scope_of(node) is not function for node in loads):
+        return None
+    visited = {}
+    def consumer(scope, node):
+        return node if id(node) in permitted else None
+    for load in loads:
+        closure = captured_value_use_closure(function, load, parents, scope_of,
+            lambda scope: (), consumer, field_successors=lambda scope, node, pp: _structural_consumer_transfer(scope, node, pp, transform))
+        if closure is None:
+            return None
+        visited.update((id(node), node) for node in closure["nodes"])
+    reached = [node for node in visited.values()
+               if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load)]
+    assignments = _structural_consumer_assignments(function, name, reached, parents)
+    if assignments is None:
+        return None
+    roles = {id(node): permitted.get(id(node), "derived_value") for node in reached}
+    if not _structural_consumer_writes_closed(function, name, origin[0], assignments):
+        return None
+    return assignments, reached, roles
+
+
+def _structural_consumer_assignments(function, name, reached, parents):
+    assignments = {}
+    for node in reached:
+        if node.id == name:
+            continue
+        bindings = binding_occurrences(function.body, node.id)
+        if len(bindings) != 1 or not isinstance(bindings[0], ast.Name):
+            return None
+        assignment = parents.get(id(bindings[0]))
+        if not isinstance(assignment, (ast.Assign, ast.AnnAssign)):
+            return None
+        assignments[node.id] = assignment
+    return assignments
+
+
+def _structural_consumer_transfer(scope, node, current_parents, transform):
+    parent = current_parents.get(id(node))
+    if isinstance(parent, (ast.Assign, ast.AnnAssign)) and parent.value is node:
+        return None
+    if isinstance(parent, ast.Attribute):
+        call = current_parents.get(id(parent))
+        if isinstance(call, ast.Call) and call.func is parent and transform(call):
+            return [(scope, call)]
+    if isinstance(parent, ast.expr) and transform(parent):
+        return [(scope, parent)]
+    return ()
+
+def _structural_consumer_writes_closed(function, name, origin, assignments):
+    """Nested write-only captures and namespace exports cannot disappear from a use graph."""
+    targets = {name: origin}
+    for key, statement in assignments.items():
+        target = statement.target if isinstance(statement, ast.AnnAssign) else statement.targets[0]
+        targets[key] = target
+    for node in ast.walk(function):
+        if isinstance(node, (ast.Global, ast.Nonlocal)) and set(node.names) & targets.keys():
+            return False
+        if (isinstance(node, ast.Name) and node.id in targets
+                and isinstance(node.ctx, (ast.Store, ast.Del)) and node is not targets[node.id]):
+            return False
+    return True
+
+
+
+def security_value_helper_epoch():
+    """Bind cached proofs to the shared value, effect, binding and transfer kernel."""
+    from . import finite_capture
+    from . import review_audits as audit
+    from .import_context import import_resolution_helpers
+    from .credential_role_constructor_provider import _presentation_provider_shadow, constructor_provider_helper_epoch
+    from .mock_fixture_provenance import _app_source_symbol, _app_expression_name, _django_name, _django_mod
+
+    return (
+        security_value_helper_epoch, _Value, _Value.__init__, IdentityEffectSummary,
+        *import_resolution_helpers(),
+        _presentation_provider_shadow, *constructor_provider_helper_epoch(),
+        _app_source_symbol, _app_expression_name, _django_name, _django_mod,
+        IdentityReturnProjection, ResolvedIdentityCall, ResolvedIdentityCall.__init__,
+        SourceSnapshotIndex.validate, audit._oracle_tree_fingerprint, identity_value,
+        _identity_call_value, _subscript_value, _container_value, _attribute_value,
+        _unknown_expression, _value_trace, _value_with_trace, _unproved_return_binding, tracked_roots,
+        _unknown_value, _container_identity, _value_container_ids, _container_value_shape,
+        structural_value_join, join_identity_values, invalidate_structural_statement,
+        resolve_source_identity_call, source_symbol_index, summarize_identity_call, mapped_call_values,
+        _declared_call_defaults, _with_inert_defaults, _immutable_default,
+        _Analyzer._call, _Analyzer._visit, _Analyzer._project_returns,
+        _Effects.merge, _Effects.freeze,
+        *(value for name, value in globals().items()
+          if name.startswith('_structural_') and callable(value)),
+        *(value for name, value in vars(finite_capture).items()
+          if (name.startswith(('security_structural_', '_security_structural_'))
+              or name in {'_SecurityFlowState', '_security_store_structural_targets',
+                          '_security_merge_structural_states', '_security_source_path',
+                          '_structural_compat_value', '_legacy_security_value',
+                          'security_input_value_flow', 'security_helper_return_value'})
+          and callable(value)),
     )

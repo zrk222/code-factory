@@ -471,7 +471,7 @@ def test_workspace_policy319_review_and_incomplete_states_stay_distinct(tmp_path
         tmp_path, context_profile="workspace-v2", defect_policy="trusted-core-v1"
     )["defect_policy_decision"]
     assert review["state"] == "NO_SUPPORTED_DEFECTS_REVIEW_REQUIRED"
-    assert review["exit_code"] == 0
+    assert review["exit_code"] == 2
     assert review["passed"] is False and review["clean"] is False
     assert review["release_approved"] is False
     assert review["needs_context_count"] >= 1

@@ -87,7 +87,7 @@ def _literal_bool(node):
 
 
 def yaml_safe_loader(call, aliases):
-    """Credit only a canonical safe loader in an unambiguous argument slot."""
+    """Credit only an unmutated canonical safe loader in an exact argument slot."""
     if _expanded(call) or len(call.args) > 2:
         return False
     keywords = [item for item in call.keywords if item.arg == "Loader"]
@@ -96,16 +96,23 @@ def yaml_safe_loader(call, aliases):
     loader = _keyword(call, "Loader", 1)
     if loader is None:
         return False
-    return _canonical(call, aliases, loader) in {
-        "yaml.SafeLoader",
-        "yaml.CSafeLoader",
-        "yaml.BaseLoader",
-        "yaml.CBaseLoader",
-        "yaml.loader.SafeLoader",
-        "yaml.loader.BaseLoader",
-        "yaml.cyaml.CSafeLoader",
+    selected = _canonical(call, aliases, loader)
+    if selected not in {
+        "yaml.SafeLoader", "yaml.CSafeLoader", "yaml.BaseLoader", "yaml.CBaseLoader",
+        "yaml.loader.SafeLoader", "yaml.loader.BaseLoader", "yaml.cyaml.CSafeLoader",
         "yaml.cyaml.CBaseLoader",
-    }
+    }:
+        return False
+    from .review_integrity import _security_module_scope
+    from .semantic_credential_sensor import yaml_loader_provider_uncertain
+
+    module = _security_module_scope(getattr(call, "_security_lexical_scope", None))
+    if module is None:
+        return False
+    provider_nodes = tuple(ast.walk(module))
+    if any(isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and _canonical(call, aliases, n.func.value) == selected for n in provider_nodes):
+        return False
+    return not yaml_loader_provider_uncertain(module, aliases, selected)
 
 
 def _environment_autoescape(call):

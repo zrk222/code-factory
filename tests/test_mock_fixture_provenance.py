@@ -981,6 +981,8 @@ def test_application133_credential_role_uses_authority_not_filename(tmp_path):
     assert evidence["witness_sources"]
 
 
+
+
 def _app_plaintext_roundtrip_projection(
     tmp_path, test_body, provider_rewrite=None, test_rewrite=None, return_index=False
 ):
@@ -3169,6 +3171,64 @@ def test_signing_authority_role_requires_exact_key_flow_and_closed_result(
     ), evidence
 
 
+@pytest.mark.parametrize("variant", ["direct", "inline", "key_escape", "digest_escape", "helper_effect", "provider_write", "provider_escape", "source_write", "unknown_operand", "overridden_assertion", "key_in_payload", "wrong_slot"])
+def test_shared_digest372_closed_key_and_computed_result(tmp_path, variant):
+    from factoryline import mock_fixture_provenance as fixture
+
+    helper = "import hmac\nimport hashlib\ndef calculate(key, timestamp, body):\n    message = '{}.{}'.format(timestamp, body).encode()\n    return hmac.new(key.encode(), message, hashlib.sha256).hexdigest()\n"
+    caller = "from django.test import TestCase\nimport codec\nclass Checks(TestCase):\n    def test_local_key(self):\n        secret = 'owned-digest-input'\n        body = '{}'\n        observed = codec.calculate(secret, 1000, body)\n        self.assertEqual(observed, codec.calculate(secret, 1000, body))\n"
+    if variant == "inline":
+        caller = caller.replace("        observed = codec.calculate(secret, 1000, body)\n        self.assertEqual(observed,", "        self.assertNotEqual(codec.calculate(secret, 1001, body),")
+    elif variant == "key_escape":
+        caller += "        publish(secret)\n"
+    elif variant == "digest_escape":
+        caller += "        publish(observed)\n"
+    elif variant == "helper_effect":
+        helper = helper.replace("    message =", "    publish(key)\n    message =")
+    elif variant == "provider_write":
+        helper += "hmac.new = replacement\n"
+    elif variant == "provider_escape":
+        caller += "        opaque(codec)\n"
+    elif variant == "source_write":
+        caller += "        codec.calculate.__code__ = replacement\n"
+    elif variant == "unknown_operand":
+        caller = caller.replace("body = '{}'", "body = unknown()")
+    elif variant == "overridden_assertion":
+        caller += "    def assertEqual(self, *args):\n        pass\n"
+    elif variant == "key_in_payload":
+        helper = helper.replace("timestamp, body).encode()", "timestamp, key).encode()")
+    elif variant == "wrong_slot":
+        caller = caller.replace("calculate(secret, 1000, body)", "calculate(body, 1000, secret)")
+    modules, captured, inventory = {}, {}, {}
+    for name, text in {"codec.py": helper, "test_flow.py": caller}.items():
+        path = tmp_path / name
+        raw = text.encode()
+        tree = ast.parse(raw)
+        tree._oracle_source_sha256 = hashlib.sha256(raw).hexdigest()
+        modules[path], captured[path], inventory[path] = tree, raw, tree._oracle_source_sha256
+    index = fixture.application_test_index(tmp_path, modules, captured, inventory)
+    evidence = fixture.application_test_secret_evidence(index, tmp_path / "test_flow.py", 5, "owned-digest-input")
+    assert (evidence.get("eligible") is True) is (variant in {"direct", "inline"}), evidence
+    if evidence.get("eligible"):
+        assert evidence["profile"] == "SOURCE_BOUND_DIGEST_TEST_AUTHORITY"
+
+
+def test_shared_digest372_all_role_profiles_capture_complete_verifier_inputs(tmp_path):
+    from factoryline.audit_action_refs import _captured_application_source_bytes
+
+    payloads = {"test_flow.py": b"pass\n", "codec.py": b"pass\n", "requirements.txt": b"Django\n"}
+    for name, raw in payloads.items():
+        (tmp_path / name).write_bytes(raw)
+    bindings = [{"path": name, "sha256": hashlib.sha256(raw).hexdigest()}
+                for name, raw in payloads.items() if name.endswith(".py")]
+    finding = {"code": "SECURITY_HARDCODED_SECRET", "path": "test_flow.py", "facts": {
+        "name": "secret", "fixture_evidence": {"classification": "APPLICATION_TEST_CREDENTIAL_ROLE",
+            "profile": "SOURCE_BOUND_DIGEST_TEST_AUTHORITY",
+            "configuration_sha256": {"requirements.txt": hashlib.sha256(payloads["requirements.txt"]).hexdigest()}}}}
+    captured = _captured_application_source_bytes(tmp_path, [finding], bindings, {tmp_path / name: raw for name, raw in payloads.items() if name.endswith(".py")})
+    assert captured == payloads
+
+
 def _signing_authority_role_sources():
     return {
         "codec.py": "import jwt\nclass Envelope:\n    def encode(self, secret):\n        return jwt.encode({}, key=secret, algorithm='HS256')\n    @classmethod\n    def decode(cls, token, secret):\n        return jwt.decode(token, key=secret, algorithms=['HS256'])\n",
@@ -4259,6 +4319,99 @@ def test_role_helper274_epoch_does_not_bind_transient_module_init(tmp_path):
     assert len(set(keys)) == 1
 
 
+@pytest.mark.parametrize("call", [
+    "loading.get_auth_plugin_conf_options(PASSWORD_PLUGIN)",
+    "loading.get_auth_plugin_conf_options(plugin=PASSWORD_PLUGIN)",
+])
+def test_plugin_selector_role_is_bound_api_metadata_not_authentication(tmp_path, call):
+    evidence = _metadata143_projection(tmp_path,
+        "from keystoneauth1 import loading\nPASSWORD_PLUGIN = 'password'\n"
+        f"def options():\n    return {call}\n", "PASSWORD_PLUGIN")
+    assert evidence["eligible"] is True
+    assert evidence["profile"] == "STATIC_API_DATA_ROLE"
+    assert {row["role"] for row in evidence["uses"]} == {"PLUGIN_LOADER_NAME"}
+
+
+@pytest.mark.parametrize("suffix, extras", [
+    ("send(PASSWORD_PLUGIN)\n", {}),
+    ("loading.get_auth_plugin_conf_options = send\n", {}),
+    ("alias = loading\nalias.get_auth_plugin_conf_options = send\n", {}),
+    ("PASSWORD_PLUGIN = other\n", {}),
+    ("def leak(loading):\n    return loading.get_auth_plugin_conf_options(PASSWORD_PLUGIN)\n", {}),
+    ("loading.get_auth_plugin_conf_options(PASSWORD_PLUGIN, plugin='other')\n", {}),
+    ("loading.get_auth_plugin_conf_options(PASSWORD_PLUGIN, other)\n", {}),
+    ("loading.get_auth_plugin_conf_options(PASSWORD_PLUGIN, secret='other')\n", {}),
+    ("loading.load_auth_from_conf_options(conf, group, password=PASSWORD_PLUGIN)\n", {}),
+    ("", {"peer.py": "from sample import PASSWORD_PLUGIN\nsend(PASSWORD_PLUGIN)\n"}),
+    ("", {"keystoneauth1.py": "def get_auth_plugin_conf_options(plugin):\n    send(plugin)\n"}),
+])
+def test_plugin_selector_role_keeps_credential_consumers_escapes_and_mutations(tmp_path, suffix, extras):
+    evidence = _metadata143_projection(tmp_path,
+        "from keystoneauth1 import loading\nPASSWORD_PLUGIN = 'password'\n"
+        "loading.get_auth_plugin_conf_options(PASSWORD_PLUGIN)\n" + suffix,
+        "PASSWORD_PLUGIN", extras=extras)
+    assert evidence["eligible"] is False
+
+
+@pytest.mark.parametrize("additional", ["", "send(PASSWORD_PLUGIN)\n", "loading.get_auth_plugin_conf_options = send\n"])
+def test_plugin_selector_native_metadata_rebuild_preserves_unknown_consumers(tmp_path, additional):
+    from factoryline import review_audits as audit
+
+    path = tmp_path / "sample.py"
+    path.write_text("from keystoneauth1 import loading\nPASSWORD_PLUGIN = 'password'\n"
+                    "def options():\n    return loading.get_auth_plugin_conf_options(PASSWORD_PLUGIN)\n"
+                    + additional, encoding="utf8")
+    report = audit.security_scan(tmp_path, cache_enabled=False, defect_policy="source-role-v2")
+    assert report["audit_coverage"]["complete"] is True
+    rows = [r for r in report["finding_tier_report"]["ledger"]
+            if r["raw_finding"]["code"] == "SECURITY_HARDCODED_SECRET"]
+    assert len(rows) == 1
+    assert (rows[0]["tier"] == "PROVEN_PRIMITIVE") is (additional == "")
+    assert bool([f for f in report["findings"] if f["code"] == "SECURITY_HARDCODED_SECRET"]) is bool(additional)
+    assert audit._seal_security_scan(report.copy())["finding_tier_report"] == report["finding_tier_report"]
+
+
+def test_presentation352_warm_rebuild_rejects_changed_provider_mutation_helper(tmp_path, monkeypatch):
+    from factoryline import finite_capture, primitive_observation_binding as binding
+    from factoryline import review_audits as audit
+
+    (tmp_path / "sample.py").write_text(
+        "from keystoneauth1 import loading\nPASSWORD_PLUGIN = 'password'\n"
+        "loading.get_auth_plugin_conf_options(PASSWORD_PLUGIN)\n", encoding="utf8")
+    (tmp_path / "peer.py").write_text("unchanged = 1\n", encoding="utf8")
+    report = audit.security_scan(tmp_path, cache_enabled=False, defect_policy="source-role-v2")
+    finding = report["finding_tier_report"]["ledger"][0]["raw_finding"]
+    facts = finding["facts"]
+    evidence = facts["fixture_evidence"]
+    captured = dict(report._captured_sources)
+    hashes = {row["path"]: row["sha256"] for row in report["sources"]}
+    original = finite_capture._provider_mutation_for_node
+    calls = []
+    foreign_calls = []
+
+    def forbidden_foreign_reparse(*args):
+        foreign_calls.append(True)
+        raise AssertionError("Presentation rebuild has no foreign source-context cache")
+
+    monkeypatch.setattr(finite_capture, "_foreign_provider_inputs", forbidden_foreign_reparse)
+
+    def changed(*args):
+        original(*args)
+        args[5].add(("keystoneauth1.loading", "*"))
+        calls.append(True)
+
+    token = binding._ROLE_REBUILD_CONTEXT.set({})
+    try:
+        assert binding._presentation_data_role_recomputes(evidence, hashes, facts, captured)
+        assert binding._presentation_data_role_recomputes(evidence, hashes, facts, captured)
+        assert not foreign_calls
+        monkeypatch.setattr(finite_capture, "_provider_mutation_for_node", changed)
+        assert not binding._presentation_data_role_recomputes(evidence, hashes, facts, captured)
+        assert calls
+    finally:
+        binding._ROLE_REBUILD_CONTEXT.reset(token)
+
+
 @pytest.mark.parametrize("sources", [
     {"a.py": "x = 1", "b.py": "def helper():\n    return 1"},
     {"a.py": "class A:\n    def __reduce__(self):\n        return (str, ('a',))"},
@@ -4414,7 +4567,6 @@ def test_testrole367_local_django_api_strings_require_one_captured_binding(tmp_p
     assert effects._fixture_string_literal(index, path, helper, account_name) is None
 
 
-
 _TESTROLE367_DJANGO_HELPER = (
     "from django.test import TestCase, Client\n"
     "from django.contrib.auth.models import User\n"
@@ -4432,7 +4584,6 @@ _TESTROLE367_DJANGO_HELPER = (
     "        self.browser.get('/')\n"
     "        account_id = self.account.pk\n"
 )
-
 
 
 def _testrole367_fixture_evidence(tmp_path, source, extras=None):
@@ -4456,7 +4607,6 @@ def _testrole367_fixture_evidence(tmp_path, source, extras=None):
     )
 
 
-
 def test_testrole367_registered_django_helper_requires_complete_authority_closure(tmp_path):
     evidence = _testrole367_fixture_evidence(tmp_path, _TESTROLE367_DJANGO_HELPER)
     assert evidence["eligible"] is True
@@ -4466,7 +4616,6 @@ def test_testrole367_registered_django_helper_requires_complete_authority_closur
     assert closure["credential"]["complete"] is True
     assert closure["account_field"]["complete"] is True
     assert closure["client_field"]["complete"] is True
-
 
 
 @pytest.mark.parametrize("variant", [
@@ -4538,3 +4687,121 @@ def test_testrole367_registered_django_helper_keeps_escaped_or_rebound_authority
         )
     evidence = _testrole367_fixture_evidence(tmp_path, source)
     assert evidence["eligible"] is False
+
+
+def test_shared_source_inventory_reuses_validated_trees(tmp_path, monkeypatch):
+    import ast
+    import hashlib
+    from factoryline import review_audits as audit
+    from factoryline.credential_role_constructor_provider import security_snapshot_model as _security_snapshot_model
+    from factoryline.primitive_observation_binding import _pickle_role_inventory
+    path = tmp_path / 'sample.py'
+    raw = b'import pickle\ndef test_roundtrip():\n    assert pickle.loads(pickle.dumps(3)) == 3\n'
+    tree = ast.parse(raw)
+    tree._oracle_source_sha256 = hashlib.sha256(raw).hexdigest()
+    model = _security_snapshot_model(tmp_path, {path: tree}, {path: raw}, {path: audit._oracle_tree_fingerprint(tree)})
+    assert model.validate(path)
+    def forbidden(*args, **kwargs):
+        raise AssertionError('validated producer must not reparse')
+    monkeypatch.setattr(ast, 'parse', forbidden)
+    inventory = _pickle_role_inventory({'sample.py': raw}, source_model=model)
+    assert inventory['trees']['sample.py'] is tree
+    assert inventory['sources'] == {'sample.py': raw}
+
+
+@pytest.mark.parametrize('corruption', ['bytes', 'tree', 'inventory'])
+def test_shared_source_inventory_declines_stale_capture(tmp_path, corruption):
+    import ast
+    import hashlib
+    from factoryline import review_audits as audit
+    from factoryline.credential_role_constructor_provider import security_snapshot_model as _security_snapshot_model
+    from factoryline.primitive_observation_binding import _pickle_role_inventory
+    path = tmp_path / 'sample.py'
+    raw = b'VALUE = 1\n'
+    tree = ast.parse(raw)
+    tree._oracle_source_sha256 = hashlib.sha256(raw).hexdigest()
+    model = _security_snapshot_model(tmp_path, {path: tree}, {path: raw}, {path: audit._oracle_tree_fingerprint(tree)})
+    assert model.validate(path)
+    if corruption == 'bytes':
+        model.source_bytes[path] = b'VALUE = 2\n'
+    elif corruption == 'tree':
+        tree.body[0].value.value = 2
+    else:
+        model.inventory[path] = '0' * 64
+    assert _pickle_role_inventory({'sample.py': raw}, source_model=model) is None
+
+
+@pytest.mark.parametrize("variant", [
+    "receiver_rebound", "instance_assertion_replaced", "class_assertion_replaced",
+    "reexport_terminal_replaced", "reexport_terminal_code_replaced",
+    "algorithm_callback_elsewhere", "algorithm_provider_replaced", "wildcard_provider",
+    "extra_digest_escape", "helper_default_mutated", "unknown_format_operand",
+    "receiver_escape", "receiver_alias", "reflective_receiver", "class_decorator",
+    "class_metaclass", "hmac_readonly_precondition_false",
+    "hmac_lexical_shadow_callback",
+    "hmac_outer_shadow_callback", "hmac_class_shadow_callback",
+    "receiver_alias_assertion_write", "receiver_alias_nested_assertion_write",
+])
+def test_shared_digest372_adversarial_oracle_and_provider(tmp_path, variant):
+    from factoryline import mock_fixture_provenance as fixture
+
+    helper = "import hmac\nimport hashlib\ndef calculate(key, timestamp, body):\n    message = '{}.{}'.format(timestamp, body).encode()\n    return hmac.new(key.encode(), message, hashlib.sha256).hexdigest()\n"
+    caller = "from django.test import TestCase\nimport codec\nclass Checks(TestCase):\n    def test_local_key(self):\n        secret = 'owned-digest-input'\n        body = '{}'\n        observed = codec.calculate(secret, 1000, body)\n        self.assertEqual(observed, codec.calculate(secret, 1000, body))\n"
+    sources = {}
+    if variant == "receiver_alias_assertion_write":
+        caller = caller.replace("        body =", "        peer = self\n        peer.assertEqual = publish\n        body =")
+    elif variant == "receiver_alias_nested_assertion_write":
+        caller = caller.replace("        body =", "        peer = self\n        def change():\n            peer.assertEqual = publish\n        change()\n        body =")
+    elif variant == "hmac_outer_shadow_callback":
+        helper += "def outer(hmac):\n    def inner():\n        return hmac.new(b'other', b'payload', hashlib.sha256)\n    return inner\n"
+    elif variant == "hmac_class_shadow_callback":
+        helper += "class Foreign:\n    hmac = opaque\n    value = hmac.new(b'other', b'payload', hashlib.sha256)\n"
+    elif variant == "hmac_lexical_shadow_callback":
+        helper += "def unknown(hmac):\n    hmac.new(b'other', b'payload', hashlib.sha256)\n"
+    elif variant == "receiver_escape":
+        caller += "        opaque(self)\n"
+    elif variant == "receiver_alias":
+        caller = caller.replace("        body =", "        other = self\n        opaque(other)\n        body =")
+    elif variant == "reflective_receiver":
+        caller += "        getattr(self, 'assertEqual')(observed, observed)\n"
+    elif variant == "class_decorator":
+        caller = caller.replace("class Checks", "@replace_owner\nclass Checks")
+    elif variant == "class_metaclass":
+        caller = caller.replace("class Checks(TestCase):", "class Checks(TestCase, metaclass=Unknown):")
+    elif variant == "hmac_readonly_precondition_false":
+        helper += "hmac.new = replace_and_capture_callback\n"
+    elif variant == "receiver_rebound":
+        caller = caller.replace("        body =", "        self = replacement\n        body =")
+    elif variant == "instance_assertion_replaced":
+        caller = caller.replace("        body =", "        self.assertEqual = publish\n        body =")
+    elif variant == "class_assertion_replaced":
+        caller += "Checks.assertEqual = publish\n"
+    elif variant.startswith("reexport_terminal"):
+        caller = caller.replace("import codec", "import bridge as codec")
+        sources["bridge.py"] = "from codec import calculate\n"
+        suffix = ".__code__" if variant.endswith("code_replaced") else ""
+        sources["peer.py"] = "import codec\ncodec.calculate" + suffix + " = replacement\n"
+    elif variant == "algorithm_callback_elsewhere":
+        helper += "opaque(hashlib.sha256)\n"
+    elif variant == "algorithm_provider_replaced":
+        helper += "hashlib.sha256 = replacement\n"
+    elif variant == "wildcard_provider":
+        helper += "from opaque import *\n"
+    elif variant == "extra_digest_escape":
+        caller += "        publish(observed)\n"
+    elif variant == "helper_default_mutated":
+        helper += "calculate.__defaults__ = replacement\n"
+        caller += "codec.calculate.__defaults__ = replacement\n"
+    elif variant == "unknown_format_operand":
+        caller = caller.replace("body = '{}'", "body = custom_object")
+    sources.update({"codec.py": helper, "test_flow.py": caller})
+    modules, captured, inventory = {}, {}, {}
+    for name, text in sources.items():
+        path = tmp_path / name
+        raw = text.encode()
+        tree = ast.parse(raw)
+        tree._oracle_source_sha256 = hashlib.sha256(raw).hexdigest()
+        modules[path], captured[path], inventory[path] = tree, raw, tree._oracle_source_sha256
+    index = fixture.application_test_index(tmp_path, modules, captured, inventory)
+    evidence = fixture.application_test_secret_evidence(index, tmp_path / "test_flow.py", 5, "owned-digest-input")
+    assert evidence.get("eligible") is not True, evidence

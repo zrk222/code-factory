@@ -1384,11 +1384,8 @@ def test_security_scan_rechecks_sources_after_cold_and_warm_consumption(
     review_audits._oracle_context_cache_clear()
     if cache_enabled:
         review_audits.security_scan(tmp_path, cache_enabled=True)
-        scanner = review_audits._security_scan_file
-        scanner_name = "_security_scan_file"
-    else:
-        scanner = review_audits._security_scan_file_snapshot
-        scanner_name = "_security_scan_file_snapshot"
+    scanner = review_audits._security_scan_file_snapshot
+    scanner_name = "_security_scan_file_snapshot"
 
     def mutate_after_scan(*args, **kwargs):
         result = scanner(*args, **kwargs)
@@ -5625,8 +5622,12 @@ def test_precision257_context_profiles_and_fixture_binders_fail_closed():
     from factoryline import intent_quality
 
     raw = b"requests==2.31.0\n"
+    def read_requirement(_root, name):
+        if name != "requirements.txt":
+            raise FileNotFoundError(name)
+        return raw
     rows, binding, eligible = application_profile_configuration(
-        "root", lambda _root, name: raw if name == "requirements.txt" else b"", 64
+        "root", read_requirement, 64
     )
     assert rows == [
         {
@@ -5635,13 +5636,14 @@ def test_precision257_context_profiles_and_fixture_binders_fail_closed():
             "bytes": len(raw),
         }
     ]
-    assert binding == rows[0] and eligible is True
+    assert binding["requirements.txt"] == {**rows[0], "state": "read"} and eligible is True
+    names = {"requirements.txt", "pytest.ini", ".pytest.ini", "setup.cfg"}
     assert application_profile_configuration(
         "root", lambda *_: (_ for _ in ()).throw(FileNotFoundError()), 64
-    ) == ([], {"path": "requirements.txt", "state": "missing"}, True)
+    ) == ([], {name: {"path": name, "state": "missing"} for name in names}, True)
     assert application_profile_configuration("root", lambda *_: raw, 2) == (
         [],
-        {"path": "requirements.txt", "state": "oversized"},
+        {name: {"path": name, "state": "oversized", "bytes": len(raw)} for name in names},
         False,
     )
     snapshots, contexts, bindings = {}, {}, []
@@ -5824,3 +5826,158 @@ def test_application_fixture_literal_demand_keeps_config_and_source_validation(
     )
     assert len(indexes) > 1
     assert declined_source[source]["application_fixture_evidence"] == {}
+
+
+def test_shared_source_model_outlives_consumed_snapshot_map(tmp_path):
+    import hashlib
+    from factoryline.context_efficiency import _consume_security_snapshots
+    path = tmp_path / 'app.py'
+    raw = b'VALUE = 1\n'
+    tree = ast.parse(raw)
+    tree._oracle_source_sha256 = hashlib.sha256(raw).hexdigest()
+    snapshots = {path: tree}
+    from factoryline.credential_role_constructor_provider import security_snapshot_model
+    fingerprints = {path: _audit_refactor._oracle_tree_fingerprint(tree)}
+    model_out, models = {'source': security_snapshot_model(tmp_path, snapshots, {path: raw}, fingerprints)}, []
+    def scan(*args):
+        models.append(args[4]['_security_source_model'])
+        return None, [], 'audited'
+    rows = _consume_security_snapshots(
+        tmp_path, [path], snapshots, {path: _audit_refactor._oracle_tree_fingerprint(tree)},
+        {}, {path: raw}, {}, (), {}, set(), scan, model_out,
+    )
+    assert snapshots == {}
+    assert rows[path][2] == 'audited'
+    assert models == [model_out['source']]
+    assert model_out['source'].snapshots[path] is tree
+    assert model_out['source'].validate(path)
+
+
+def test_shared_source_model_rejects_changed_producer_structure(tmp_path):
+    import hashlib
+    from factoryline.credential_role_constructor_provider import security_snapshot_model as _security_snapshot_model
+    path = tmp_path / 'app.py'
+    raw = b'VALUE = 1\n'
+    tree = ast.parse(raw)
+    tree._oracle_source_sha256 = hashlib.sha256(raw).hexdigest()
+    fingerprint = _audit_refactor._oracle_tree_fingerprint(tree)
+    tree.body[0].value.value = 2
+    assert _security_snapshot_model(tmp_path, {path: tree}, {path: raw}, {path: fingerprint}) is None
+
+
+def test_shared_source_model_reused_by_application_index(tmp_path):
+    import hashlib
+    from factoryline.credential_role_constructor_provider import security_snapshot_model as _security_snapshot_model
+    from factoryline.mock_fixture_provenance import application_test_index
+    path = tmp_path / 'app.py'
+    raw = b'VALUE = 1\n'
+    tree = ast.parse(raw)
+    tree._oracle_source_sha256 = hashlib.sha256(raw).hexdigest()
+    modules, sources = {path: tree}, {path: raw}
+    inventory = {path: tree._oracle_source_sha256}
+    model = _security_snapshot_model(tmp_path, modules, sources, {path: _audit_refactor._oracle_tree_fingerprint(tree)})
+    first = application_test_index(tmp_path, modules, sources, inventory, source_index=model)
+    second = application_test_index(tmp_path, modules, sources, inventory, source_index=model)
+    assert first['source'] is second['source'] is model
+    assert first['profiles'] is not second['profiles']
+    assert first['imports'] is not second['imports']
+    tree.body[0].value.value = 2
+    assert application_test_index(tmp_path, modules, sources, inventory, source_index=model) is None
+
+
+@pytest.mark.parametrize("name", ["pytest.ini", ".pytest.ini", "setup.cfg"])
+def test_shared_configuration374_complete_producer_sealer_verifier(tmp_path, name):
+    import hashlib
+    from factoryline.import_context import application_profile_configuration
+    from factoryline.context_efficiency import _application_profile_bytes
+    from factoryline.audit_action_refs import _application_configuration_hashes
+    from factoryline.primitive_observation_binding import _application_class_source_inputs
+
+    selector = b"[pytest]\nDJANGO_SETTINGS_MODULE = checks.settings\n"
+    (tmp_path / name).write_bytes(selector)
+    def read(root, relative):
+        return (root / relative).read_bytes()
+    rows, identity, valid = application_profile_configuration(tmp_path, read, 1024)
+    assert valid and len(rows) == 1 and identity[name]["state"] == "read"
+    configs = _application_profile_bytes(tmp_path, rows, read, 1024)
+    assert configs == {name: selector}
+    hashes = {name: hashlib.sha256(selector).hexdigest()}
+    assert _application_configuration_hashes([{"configuration_sha256": hashes}]) == hashes
+    sources = {"app.py": b"VALUE = 1\n", name: selector}
+    bindings = {key: hashlib.sha256(raw).hexdigest() for key, raw in sources.items()}
+    from factoryline.audit_action_refs import _captured_application_source_bytes
+    (tmp_path / "app.py").write_bytes(sources["app.py"])
+    finding = {"code": "SECURITY_HARDCODED_SECRET", "path": "app.py", "facts": {
+        "fixture_evidence": {"classification": "APPLICATION_TEST_CREDENTIAL_ROLE",
+                             "configuration_sha256": hashes}}}
+    assert _captured_application_source_bytes(tmp_path, [finding],
+        [{"path": "app.py", "sha256": bindings["app.py"]}],
+        {tmp_path / "app.py": sources["app.py"]}) == sources
+    rebuilt = _application_class_source_inputs(sources, bindings, hashes)
+    assert rebuilt is not None and rebuilt[Path(name)] == selector
+    assert _application_class_source_inputs({**sources, name: selector + b"#stale"}, bindings, hashes) is None
+    (tmp_path / name).write_bytes(selector + b"#changed selector\n")
+    assert _application_profile_bytes(tmp_path, rows, read, 1024) is None
+    _, changed, _ = application_profile_configuration(tmp_path, read, 1024)
+    assert changed != identity
+
+
+@pytest.mark.parametrize("failure", ["missing", "unreadable", "oversized"])
+def test_shared_configuration374_capture_failure_is_visible(failure):
+    from factoryline.import_context import application_profile_configuration
+
+    def read(_root, name):
+        if name != "setup.cfg" or failure == "missing":
+            raise FileNotFoundError(name)
+        if failure == "unreadable":
+            raise PermissionError(name)
+        return b"large config"
+    rows, identity, valid = application_profile_configuration(Path("root"), read, 4)
+    assert rows == [] and valid is (failure == "missing")
+    assert identity["setup.cfg"]["state"] == {"missing": "missing", "unreadable": "PermissionError", "oversized": "oversized"}[failure]
+
+
+def test_shared_configuration374_unknown_config_cannot_enter_verifier():
+    import hashlib
+    from factoryline.import_context import application_configuration_names, import_resolution_helpers
+    from factoryline.context_efficiency import provider_context_cache_helpers
+    from factoryline.audit_action_refs import _application_configuration_hashes
+    from factoryline.primitive_observation_binding import _application_class_source_inputs
+    from factoryline import intent_quality
+
+    raw = b"x=1\n"
+    digest = hashlib.sha256(raw).hexdigest()
+    sources = {"app.py": raw, "pytest.ini.extra": raw}
+    assert _application_class_source_inputs(sources, dict.fromkeys(sources, digest), {"pytest.ini.extra": digest}) is None
+    assert _application_configuration_hashes([{"configuration_sha256": {"pytest.ini.extra": digest}}]) == {}
+    assert application_configuration_names in import_resolution_helpers()
+    assert application_configuration_names in provider_context_cache_helpers(intent_quality)
+
+
+def test_shared_configuration374_invalid_capture_cannot_bind_fixture(tmp_path):
+    import hashlib
+    from factoryline.context_efficiency import bind_application_fixture_context
+
+    path = tmp_path / "test_flow.py"
+    raw = b"def test_flow():\n    password = 'runtime-material'\n"
+    contexts = {path: {}}
+    def forbidden(*args):
+        raise AssertionError("Invalid configuration cannot reach a role classifier")
+    bind_application_fixture_context(tmp_path, {path: ast.parse(raw)}, contexts, [],
+        forbidden, 1024, source_bytes={path: raw},
+        source_inventory={path: hashlib.sha256(raw).hexdigest()}, configuration_valid=False)
+    assert contexts[path]["application_fixture_evidence"] == {}
+
+
+@pytest.mark.parametrize("name", ["pytest.ini", ".pytest.ini", "setup.cfg"])
+def test_shared_configuration374_native_scan_records_selector_without_admission(tmp_path, name):
+    import hashlib
+    raw = b"[pytest]\nDJANGO_SETTINGS_MODULE = runtime.settings\n"
+    (tmp_path / name).write_bytes(raw)
+    (tmp_path / "app.py").write_text("PASSWORD = 'runtime-material'\n")
+    with _audit_refactor._security_only_scan_context(True):
+        report = _audit_refactor.security_scan(tmp_path, cache_enabled=False, defect_policy="source-role-v3")
+    bindings = {row["path"]: row["sha256"] for row in report["oracle_context"]["configuration_sources"]}
+    assert bindings[name] == hashlib.sha256(raw).hexdigest()
+    assert any(row["code"] == "SECURITY_HARDCODED_SECRET" for row in report["findings"])
+    assert not report.get("primitive_observations")

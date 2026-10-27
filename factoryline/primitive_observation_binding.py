@@ -62,7 +62,7 @@ _MISSING_PREMISES = {
 }
 
 _SECURITY_DEFECT_POLICIES = frozenset(
-    {"legacy-v1", "trusted-core-v1", "source-role-v1", "source-role-v2"}
+    {"legacy-v1", "trusted-core-v1", "source-role-v1", "source-role-v2", "source-role-v3"}
 )
 _PICKLE_SOURCE_ROLE_POLICY = {
     "schema": "factory.security.source-role-policy.v1",
@@ -87,11 +87,20 @@ _SOURCE_ROLE_POLICY_V2 = {
     ],
     "claim_boundary": "Explicit queue selection, not operation safety, detector improvement, held-out precision or a clean security result.",
 }
+_SOURCE_ROLE_POLICY_V3 = {
+    **_SOURCE_ROLE_POLICY_V2,
+    "schema": "factory.security.source-role-policy.v3",
+    "policy_id": "source-role-v3",
+    "effect": "v2 plus captured literal process inputs become NEEDS_CONTEXT reviews; every raw diagnostic and severity retained",
+    "unassessed": [*_SOURCE_ROLE_POLICY_V2["unassessed"], "command effects, shell interpretation, executable/environment, filesystem/cwd, credentials/network and deployment authority"],
+}
 _TRUSTED_CORE_POLICY = {
     "schema": "factory.security.defect-policy.v1",
     "policy_id": "trusted-core-v1",
     "supported_state": "DEFECTS_PRESENT",
     "review_state": "NO_SUPPORTED_DEFECTS_REVIEW_REQUIRED",
+    "unresolved_exit_code": 2,
+    "empty_exit_code": 0,
     "incomplete_state": "BLOCKED",
     "claim_boundary": "No clean security result, accuracy gain, or release approval.",
 }
@@ -101,7 +110,7 @@ def validate_security_defect_policy(value):
     """Validate the closed policy selector before source discovery begins."""
     if type(value) is not str or value not in _SECURITY_DEFECT_POLICIES:
         raise ValueError(
-            "defect policy must be legacy-v1, trusted-core-v1, source-role-v1 or source-role-v2"
+            "defect policy must be legacy-v1, trusted-core-v1, source-role-v1, source-role-v2 or source-role-v3"
         )
     return value
 
@@ -134,7 +143,10 @@ def _trusted_core_policy_result(evidence_payload=None, counts=None):
             f"{unresolved} unresolved item(s) remain for review."
         )
     else:
-        state, exit_code = "NO_SUPPORTED_DEFECTS_REVIEW_REQUIRED", 0
+        state = _TRUSTED_CORE_POLICY["review_state"]
+        exit_code = _TRUSTED_CORE_POLICY[
+            "unresolved_exit_code" if unresolved else "empty_exit_code"
+        ]
         summary = (
             "No supported security defects were regenerated; "
             f"{unresolved} unresolved item(s) remain for review. "
@@ -557,7 +569,7 @@ def build_finding_tier_report(
     return report
 
 
-def _finding_native_rows(finding, captured, bound, cache):
+def _finding_native_rows(finding, captured, bound, cache, sources=None, bindings=None):
     facts = finding.get("facts", {})
     if not bound or not (
         finding.get("code") == "SECURITY_HARDCODED_SECRET"
@@ -567,7 +579,10 @@ def _finding_native_rows(finding, captured, bound, cache):
         return []
     path = finding["path"]
     if path not in cache:
-        cache[path] = _regenerate_native_findings(path, captured)
+        key = ("independent_source_model",)
+        if key not in cache:
+            cache[key] = _regenerate_source_model(sources, bindings)
+        cache[path] = _regenerate_native_findings(path, captured, source_model=cache[key])
     return cache[path]
 
 
@@ -820,7 +835,7 @@ def _tier_sha256(value):
     ).hexdigest()
 
 
-def _regenerate_native_findings(path, source_bytes):
+def _regenerate_native_findings(path, source_bytes, *, source_model=None):
     """Re-run only the native security producer against the bound source bytes."""
     try:
         relative = PurePosixPath(path)
@@ -828,12 +843,52 @@ def _regenerate_native_findings(path, source_bytes):
             return []
         from . import review_audits as audit
 
-        root = Path(".")
+        root = Path(".") if source_model is None else source_model.root
         source_path = root.joinpath(*relative.parts)
-        tree = ast.parse(source_bytes)
-        return audit._security_scan_tree(root, source_path, tree)
+        from .credential_role_constructor_provider import security_snapshot_model
+
+        if source_model is None:
+            tree = ast.parse(source_bytes)
+            tree._oracle_source_sha256 = hashlib.sha256(source_bytes).hexdigest()
+            model = security_snapshot_model(
+                root, {source_path: tree}, {source_path: source_bytes},
+                {source_path: audit._oracle_tree_fingerprint(tree)},
+            )
+        else:
+            model = source_model
+            if model.source_bytes.get(source_path) != source_bytes or not model.validate(source_path):
+                return []
+            tree = model.snapshots[source_path]
+        return audit._security_scan_tree(
+            root, source_path, tree, oracle_context={"_security_source_model": model,
+                "_security_source_context": (root, model.source_bytes)}
+        )
     except Exception:
         return []
+
+
+def _regenerate_source_model(sources, bindings):
+    """Build a verifier-owned graph once from the complete hash-checked Python set."""
+    if not isinstance(sources, dict) or not isinstance(bindings, dict):
+        return None
+    selected = {name: raw for name, raw in sources.items() if str(name).endswith(".py")}
+    hashes = {name: digest for name, digest in bindings.items() if str(name).endswith(".py")}
+    captured = _jwt_bound_source_inventory(selected, hashes)
+    if captured is None or len(captured) > 2000 or any(len(raw) > 1_000_000 for raw in captured.values()) or sum(map(len, captured.values())) > 32_000_000:
+        return None
+    from .credential_role_constructor_provider import security_snapshot_model
+    from .review_audits import _oracle_tree_fingerprint
+
+    try:
+        trees = {path: ast.parse(raw, filename=path.as_posix()) for path, raw in captured.items()}
+        for path, tree in trees.items():
+            tree._oracle_source_sha256 = hashes[path.as_posix()]
+        return security_snapshot_model(
+            Path("."), trees, captured,
+            {path: _oracle_tree_fingerprint(tree) for path, tree in trees.items()},
+        )
+    except (SyntaxError, ValueError, TypeError, RecursionError, MemoryError):
+        return None
 
 
 def _matches_regenerated_finding(finding, native_rows):
@@ -854,15 +909,21 @@ def _matches_regenerated_precondition_finding(finding, native_rows):
     premise = facts.get("security_precondition") if isinstance(facts, dict) else None
     if not _valid_security_precondition(premise, finding):
         return False
-    return any(
-        candidate.get("code") == finding.get("code")
-        and candidate.get("path") == finding.get("path")
-        and candidate.get("line") == finding.get("line")
-        and candidate.get("column") == finding.get("column")
-        and candidate.get("facts", {}).get("security_precondition") == premise
-        for candidate in native_rows
-        if isinstance(candidate, dict) and isinstance(candidate.get("facts"), dict)
-    )
+    for candidate in native_rows:
+        if not isinstance(candidate, dict) or not isinstance(candidate.get("facts"), dict):
+            continue
+        if any(candidate.get(key) != finding.get(key) for key in ("code", "path", "line", "column")):
+            continue
+        regenerated = candidate["facts"].get("security_precondition")
+        if regenerated == premise:
+            return True
+        if isinstance(regenerated, dict) and "input_value_flow" not in premise:
+            # Independent reconstruction may add a witness to a minimal v1
+            # claim. Every supplied field still requires exact equality.
+            core = {key: value for key, value in regenerated.items() if key != "input_value_flow"}
+            if core == premise:
+                return True
+    return False
 
 
 def _valid_security_precondition(premise, finding):
@@ -1127,13 +1188,19 @@ def _jwt_operation_spans_valid(facts, integrity):
     )
 
 
+def fixed_program_proof_dispositions():
+    """One capture/admission registry for independently rechecked program proofs."""
+    return frozenset({
+        "PROVEN_FIXED_LITERAL_PROGRAM", "PROVEN_SOURCE_BUILT_AST_PROGRAM",
+        "PROVEN_FINITE_LITERAL_EVAL_INPUT", "PROVEN_CLOSED_DECLARATION_INPUT",
+    })
+
+
 def _fixed_program_binding(
     finding, facts, sources, bindings, integrity, source_bytes=None
 ):
     if not _fixed_program_binding_base(finding, facts, sources, bindings, integrity):
         return False
-    if facts.get("disposition") != "PROVEN_FIXED_LITERAL_PROGRAM":
-        return True
     if not isinstance(source_bytes, dict):
         return False
     return _fixed_program_chain_binding(
@@ -1173,6 +1240,8 @@ def _fixed_program_disposition_bound(finding, facts, integrity):
     disposition = facts.get("disposition")
     if disposition == "PROVEN_FIXED_LITERAL_PROGRAM":
         return facts.get("schema") == "factory.fixed-literal-program.v1"
+    if disposition == "PROVEN_SOURCE_BUILT_AST_PROGRAM":
+        return facts.get("schema") == "factory.source-built-ast-program.v1"
     if disposition == "PROVEN_FINITE_LITERAL_EVAL_INPUT":
         return integrity._finite_eval_binding(finding)
     return integrity._closed_declaration_binding(finding)
@@ -1195,6 +1264,7 @@ def _fixed_program_chain_binding(finding, facts, sources, source_bytes, integrit
         return False
     try:
         tree = ast.parse(raw, filename=source_path)
+        integrity.bind_security_call_scopes(tree)
     except (SyntaxError, ValueError, TypeError, MemoryError, RecursionError):
         return False
     calls = [
@@ -1211,41 +1281,96 @@ def _fixed_program_chain_binding(finding, facts, sources, source_bytes, integrit
         fixed_eval_workspace_provider_clear,
     )
 
-    if not fixed_eval_workspace_provider_clear(source_bytes, sources):
+    if (
+        facts.get("disposition") == "PROVEN_FIXED_LITERAL_PROGRAM"
+        and not fixed_eval_workspace_provider_clear(source_bytes, sources)
+    ):
         return False
     node = calls[0]
-    if not _fixed_eval_builtin_source_clear(tree, node):
+    if facts.get("disposition") in {
+        "PROVEN_FIXED_LITERAL_PROGRAM", "PROVEN_SOURCE_BUILT_AST_PROGRAM",
+    } and not _fixed_eval_builtin_source_clear(tree, node):
         return False
-    expected = _fixed_program_expected_witness(node, facts, raw, source_path)
+    if not fixed_program_builtin_identity(integrity, node, tree, facts.get("call")):
+        return False
+    expected = _fixed_program_expected_witness(
+        node, facts, raw, source_path, source_bytes, sources, integrity, tree
+    )
     if not expected:
         return False
-    fields = (
-        "schema",
-        "disposition",
-        "source_path",
-        "source_sha256",
-        "call_span",
-        "literal_span",
-        "program_sha256",
-        "statement_kinds",
-        "def_use_witness",
-        "profile",
-    )
-    return all(facts.get(key) == expected.get(key) for key in fields)
+    expected.setdefault("workspace_sources_sha256", facts["workspace_sources_sha256"])
+    return facts == {"call": facts.get("call"), **expected}
 
 
-def _fixed_program_expected_witness(node, facts, raw, source_path):
+def _fixed_program_expected_witness(
+    node, facts, raw, source_path, source_bytes=None, sources=None, integrity=None, tree=None
+):
+    disposition = facts.get("disposition")
+    if disposition != "PROVEN_FIXED_LITERAL_PROGRAM" and (
+        not isinstance(source_bytes, dict)
+        or not isinstance(sources, (list, tuple))
+        or _jwt_bound_source_inventory(
+            source_bytes, {row["path"]: row["sha256"] for row in sources}
+        ) is None
+    ):
+        return {}
+    if disposition in {
+        "PROVEN_CLOSED_DECLARATION_INPUT", "PROVEN_FINITE_LITERAL_EVAL_INPUT",
+    }:
+        from .runtime_audit_integrity import (
+            closed_declaration_input_witness,
+            finite_literal_eval_input_witness,
+            source_generated_eval_input_witness,
+        )
+
+        call = facts.get("call")
+        if disposition == "PROVEN_CLOSED_DECLARATION_INPUT":
+            witness = closed_declaration_input_witness(
+                node, call, source_bytes=raw, source_path=source_path
+            )
+        else:
+            witness = finite_literal_eval_input_witness(
+                node, call, source_bytes=raw, source_path=source_path
+            ) or source_generated_eval_input_witness(
+                node, call, source_bytes=raw, source_path=source_path,
+                builtin_identity_proven=fixed_program_builtin_identity(
+                    integrity, node, tree, call
+                ),
+            )
+        if not witness or witness.get("disposition") != disposition:
+            return {}
+        witness["workspace_sources_sha256"] = facts["workspace_sources_sha256"]
+        return witness
+    if facts.get("disposition") == "PROVEN_SOURCE_BUILT_AST_PROGRAM":
+        from .finite_capture import (
+            source_built_ast_program_witness,
+            source_built_ast_workspace_provider_clear,
+        )
+
+        if (
+            not source_built_ast_workspace_provider_clear(source_bytes, source_path)
+            or not fixed_program_builtin_identity(integrity, node, tree, "exec")
+        ):
+            return {}
+        witness = source_built_ast_program_witness(
+            node, "exec", source_bytes=raw, source_path=source_path
+        )
+        if not witness:
+            return {}
+        workspace_sources = sorted((row["path"], row["sha256"]) for row in sources or [])
+        witness["workspace_sources_sha256"] = hashlib.sha256(
+            json.dumps(workspace_sources, separators=(",", ":")).encode()
+        ).hexdigest()
+        return witness
     from .runtime_audit_integrity import fixed_literal_program_witness
 
-    profile = facts.get("profile")
-    scope = profile.get("scope") if isinstance(profile, dict) else None
     return fixed_literal_program_witness(
         node,
         facts.get("call"),
         source_bytes=raw,
         builtin_identity_proven=True,
         source_path=source_path,
-        scope_profile=scope,
+        scope_profile="native-module-or-function-omitted-namespaces",
     )
 
 
@@ -1535,15 +1660,15 @@ def apply_conditional_provider_profile(report, profile, captured):
     return audit._seal_security_scan(core)
 
 
-def apply_pickle_source_role_policy(core, captured):
+def apply_pickle_source_role_policy(core, captured, *, source_model=None):
     """Rebuild context reviews from the native raw ledger on every seal."""
     policy_id = core.get("selected_defect_policy")
-    if policy_id not in {"source-role-v1", "source-role-v2"}:
+    if policy_id not in {"source-role-v1", "source-role-v2", "source-role-v3"}:
         return
     original = [*core.get("findings", []), *core.get("context_reviews", [])]
     core["context_reviews"] = []
     sources = _pickle_role_sources(core, captured)
-    roles = None if sources is None else _pickle_role_inventory(sources)
+    roles = None if sources is None else _pickle_role_inventory(sources, source_model=source_model)
     if roles is not None:
         roles["policy_id"] = policy_id
     active, reviews = _pickle_role_partition(original, roles)
@@ -1614,14 +1739,30 @@ def _pickle_role_sources(core, captured):
     return selected if sum(map(len, selected.values())) <= 32_000_000 else None
 
 
-def _pickle_role_inventory(sources):
+def _pickle_role_inventory(sources, *, source_model=None):
     try:
-        trees = {path: ast.parse(raw) for path, raw in sources.items()}
+        trees = (_pickle_role_model_trees(sources, source_model) if source_model is not None
+                 else {path: ast.parse(raw) for path, raw in sources.items()})
     except (SyntaxError, ValueError, RecursionError):
         return None
+    if trees is None:
+        return None
+    if source_model is None:
+        from .credential_role_constructor_provider import security_snapshot_model
+        from .review_audits import _oracle_tree_fingerprint
+
+        snapshots = {Path(path): tree for path, tree in trees.items()}
+        for path, tree in snapshots.items():
+            tree._oracle_source_sha256 = hashlib.sha256(sources[path.as_posix()]).hexdigest()
+        source_model = security_snapshot_model(
+            Path("."), snapshots,
+            {Path(path): raw for path, raw in sources.items()},
+            {path: _oracle_tree_fingerprint(tree) for path, tree in snapshots.items()},
+        )
     return {
         "sources": sources,
         "trees": trees,
+        "source_model": source_model,
         "sources_sha256": _tier_sha256(
             {
                 path: hashlib.sha256(raw).hexdigest()
@@ -1635,6 +1776,26 @@ def _pickle_role_inventory(sources):
     }
 
 
+def _pickle_role_model_trees(sources, model):
+    """Reuse only an exact scan-local producer capture, never serialized evidence."""
+    from .credential_role_constructor_provider import SourceSnapshotIndex
+    from .review_audits import _oracle_tree_fingerprint
+
+    if type(model) is not SourceSnapshotIndex or not model.bounded:
+        return None
+    captured = {model.relative(path): raw for path, raw in model.source_bytes.items()}
+    if captured != sources or set(model.snapshots) != set(model.source_bytes):
+        return None
+    fingerprints = getattr(model, "producer_fingerprints", {})
+    trees = {}
+    for path, tree in model.snapshots.items():
+        if (_oracle_tree_fingerprint(tree) != fingerprints.get(path)
+                or not model.validate(path)):
+            return None
+        trees[model.relative(path)] = tree
+    return trees
+
+
 def _pickle_test_path(path):
     value = PurePosixPath(path)
     return (
@@ -1645,15 +1806,130 @@ def _pickle_test_path(path):
 
 
 def _pickle_source_role_witness(finding, inventory):
+    from .finite_capture import captured_file_program_role, captured_literal_caller_program_role, captured_registered_fixture_helper_role
+
     return (
-        _pickle_test_role_witness(finding, inventory)
+        (_authored_shell_source_role_witness(finding, inventory)
+         if inventory.get("policy_id") == "source-role-v3" else None)
+        or (captured_registered_fixture_helper_role(finding, inventory)
+            if inventory.get("policy_id") == "source-role-v3"
+            and not _valid_security_precondition(finding.get("facts", {}).get("security_precondition"), finding) else None)
+        or _pickle_test_role_witness(finding, inventory)
         or _pickle_worker_role_witness(finding, inventory)
         or (
             _registered_fixture_role_witness(finding, inventory)
-            if inventory.get("policy_id") == "source-role-v2"
+            or ((captured_file_program_role(finding, inventory)
+                 or captured_literal_caller_program_role(finding, inventory))
+                if finding.get("code") == "SECURITY_DYNAMIC_EXECUTION"
+                and _pickle_role_native_match(finding, inventory)
+                and not _valid_security_precondition(
+                    finding.get("facts", {}).get("security_precondition"), finding
+                ) else None)
+            if inventory.get("policy_id") in {"source-role-v2", "source-role-v3"}
             else None
         )
     )
+
+
+def _authored_shell_source_role_witness(finding, inventory):
+    """Classify literal input origin; never establish operation or shell safety."""
+    from .finite_capture import _closed_shell_provider, closed_shell_workspace, shell_execution_calls
+    if finding.get("code") not in {"SECURITY_OS_COMMAND", "SECURITY_SHELL_COMMAND"} or not _pickle_role_native_match(finding, inventory):
+        return None
+    if _valid_security_precondition(finding.get("facts", {}).get("security_precondition"), finding):
+        return None
+    path = finding.get("path")
+    tree = inventory["trees"].get(path)
+    calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call) and (n.lineno, n.col_offset) == (finding.get("line"), finding.get("column", 0))]
+    if len(calls) != 1:
+        return None
+    call = calls[0]
+    providers = [name for name in shell_execution_calls() if _closed_shell_provider(tree, call, name, shell_execution_calls())]
+    if len(providers) != 1 or len(call.args) != 1:
+        return None
+    provider = providers[0]
+    argument = _authored_shell_literal_input(call, provider, inventory=inventory)
+    if argument is None:
+        return None
+    if closed_shell_workspace(inventory["sources"], provider.split(".")[0]) is None:
+        return None
+    return {
+        "schema": "factory.security.authored-command-context.v1",
+        "role": "CAPTURED_LITERAL_PROCESS_COMMAND_INPUT", "tier": "NEEDS_CONTEXT",
+        "source_path": path, "source_sha256": hashlib.sha256(inventory["sources"][path]).hexdigest(),
+        "sources_sha256": inventory["sources_sha256"], "call_span": _pickle_span(call),
+        "provider": provider, "command_expression_sha256": _tier_sha256(ast.dump(argument)),
+        "policy_sha256": _tier_sha256(_SOURCE_ROLE_POLICY_V3), "original_severity": finding.get("severity"),
+        **{key: "UNASSESSED" for key in ("command_effects", "shell_runtime_interpretation", "environment_and_executable_identity", "filesystem_and_cwd_authority", "credential_or_network_effects", "deployment_authorization")},
+        "safe_execution": False,
+    }
+
+
+def _authored_shell_literal_input(call, provider, *, inventory=None):
+    """Keep command origin literal without interpreting command effects."""
+    argument = call.args[0]
+    original = argument
+    if inventory is not None and not isinstance(argument, (ast.Constant, ast.List, ast.Tuple)):
+        argument = _authored_shell_bound_input(call, inventory)
+        if argument is None:
+            return None
+    pieces = argument.elts if isinstance(argument, (ast.List, ast.Tuple)) else [argument]
+    if not pieces or len(pieces) > 64 or not all(isinstance(n, ast.Constant) and type(n.value) is str and n.value for n in pieces):
+        return None
+    values = [n.value for n in pieces]
+    if sum(map(len, values)) > 4096 or any(not 32 <= ord(char) <= 126 or char in "|&;<>`$%'\"\\" for value in values for char in value):
+        return None
+    if any(token.strip("'\"").lower().startswith(("-c", "/c", "--command", "-encodedcommand")) for value in values for token in value.split()):
+        return None
+    keys = [kw.arg for kw in call.keywords]
+    if None in keys or len(keys) != len(set(keys)):
+        return None
+    if provider == "os.system":
+        if keys or not isinstance(argument, ast.Constant):
+            return None
+    elif not any(kw.arg == "shell" and isinstance(kw.value, ast.Constant) and kw.value.value is True for kw in call.keywords):
+        return None
+    if any(kw.arg not in {"shell", "cwd", "text", "encoding", "errors", "capture_output", "check", "timeout"} or (kw.arg != "cwd" and not isinstance(kw.value, ast.Constant)) for kw in call.keywords):
+        return None
+    return original
+
+
+def _authored_shell_bound_input(call, inventory):
+    """Consume native value facts; accept only unchanged captured literal content."""
+    from .credential_role_identity_effects import _Value
+    from .finite_capture import security_structural_value
+
+    environment = getattr(call, "_security_structural_values", None)
+    if not isinstance(environment, dict):
+        return None
+    value = security_structural_value(call.args[0], environment)
+    constants = inventory.get("literal_nodes")
+    if constants is None:
+        constants = {}
+        for tree in inventory["trees"].values():
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Constant) and type(node.value) is str:
+                    key = (tuple(_pickle_span(node)), hashlib.sha256(ast.dump(node, include_attributes=False).encode()).hexdigest())
+                    constants.setdefault(key, []).append(node)
+        inventory["literal_nodes"] = constants
+    allowed = {"CONSTANT", "CONTAINER", "ALIAS_USE", "BOUND_EXPRESSION", "CONTAINER_SELECT", "FIELD_SELECT", "HELPER_RETURN"}
+    def literal(item):
+        if (not isinstance(item, _Value) or item.roots or item.class_roots or item.unknown
+                or item.content_unknown or any(step[0] not in allowed for step in item.trace)):
+            return None
+        if item.scalar_kind in {"list", "tuple"} and 0 < len(item.items) <= 64:
+            if any(isinstance(n, ast.Call) for kw in call.keywords for n in ast.walk(kw.value)):
+                return None
+            children = [literal(child) for _, child in item.items]
+            return ast.List(elts=children, ctx=ast.Load()) if all(children) else None
+        if item.scalar_kind != "text":
+            return None
+        selected = [constants.get((tuple(step[1]), step[2]), ()) for step in item.trace if step[0] == "CONSTANT"]
+        nodes = [node for group in selected for node in group]
+        if not selected or any(not group for group in selected) or len({node.value for node in nodes}) != 1:
+            return None
+        return ast.Constant(value=nodes[0].value)
+    return literal(value)
 
 
 def _pickle_worker_role_witness(finding, inventory):
@@ -2142,7 +2418,7 @@ def _pickle_role_native_match(finding, inventory):
     if path not in inventory["native"]:
         with _security_only_scan_context(True):
             inventory["native"][path] = _regenerate_native_findings(
-                path, inventory["sources"][path]
+                path, inventory["sources"][path], source_model=inventory["source_model"]
             )
     return finding in inventory["native"][path]
 
@@ -2291,9 +2567,27 @@ def _pickle_role_class_writes(trees, modules):
     from . import review_audits as audit
     from .runtime_audit_integrity import _conditional_file_aliases
 
+    imports = {path: _conditional_file_aliases(path, tree, modules) for path, tree in trees.items()}
+    exports = {modules[path]: aliases for path, aliases in imports.items()}
+    def canonical(name):
+        seen = set()
+        for _ in range(12):
+            if name in seen:
+                return name
+            seen.add(name)
+            parts = name.split(".")
+            for length in range(len(parts) - 1, 0, -1):
+                selected = (exports.get(".".join(parts[:length])) or {}).get(parts[length])
+                if selected:
+                    name = ".".join([selected, *parts[length + 1:]])
+                    break
+            else:
+                return name
+        return name
     writes = set()
     for path, tree in trees.items():
-        aliases = _conditional_file_aliases(path, tree, modules) or {}
+        uncertain = imports[path] is None
+        aliases = dict(imports[path] or {})
         aliases.update(
             {
                 node.name: f"{modules[path]}.{node.name}"
@@ -2305,7 +2599,12 @@ def _pickle_role_class_writes(trees, modules):
             if isinstance(node, (ast.Name, ast.Attribute)) and isinstance(
                 node.ctx, (ast.Store, ast.Del)
             ):
-                writes.add(audit._resolved_ast_name(node, aliases))
+                root = node
+                while isinstance(root, ast.Attribute):
+                    root = root.value
+                if isinstance(root, ast.Name) and (uncertain or root.id in aliases):
+                    original = audit._resolved_ast_name(node, aliases)
+                    writes.update((original, canonical(original)))
             if isinstance(node, ast.Call) and audit._resolved_ast_name(
                 node.func, aliases
             ).removeprefix("builtins.") in {"setattr", "delattr"}:
@@ -2314,11 +2613,12 @@ def _pickle_role_class_writes(trees, modules):
                     and isinstance(node.args[1], ast.Constant)
                     and isinstance(node.args[1].value, str)
                 ):
-                    writes.add(
-                        audit._resolved_ast_name(node.args[0], aliases)
-                        + "."
-                        + node.args[1].value
-                    )
+                    receiver = node.args[0]
+                    while isinstance(receiver, ast.Attribute):
+                        receiver = receiver.value
+                    if isinstance(receiver, ast.Name) and (uncertain or receiver.id in aliases):
+                        original = audit._resolved_ast_name(node.args[0], aliases) + "." + node.args[1].value
+                        writes.update((original, canonical(original)))
     return writes
 
 
@@ -2635,6 +2935,7 @@ def _partition_proven_primitive_observations(core, audit):
     from .audit_action_refs import _security_scan_action_summary, _security_scan_state
 
     bindings = {row["path"]: row["sha256"] for row in core.get("sources", [])}
+    captured = _primitive_source_capture(core)
     prior = core.get("primitive_observations", [])
     previous_tiers = core.get("finding_tier_report", {})
     if (
@@ -2653,10 +2954,7 @@ def _partition_proven_primitive_observations(core, audit):
     touched = bool(prior)
     for finding in [*core["findings"], *prior]:
         facts = finding.get("facts", {})
-        if facts.get("disposition") not in {
-            "PROVEN_FIXED_LITERAL_PROGRAM",
-            "PROVEN_CLOSED_DECLARATION_INPUT",
-            "PROVEN_FINITE_LITERAL_EVAL_INPUT",
+        if facts.get("disposition") not in fixed_program_proof_dispositions() | {
             "PROVEN_PUBLIC_SYMBOLIC_IDENTIFIER",
             "PROVEN_FINITE_TEMPLATE_INPUT",
             "ENDPOINT_DECLARATION_ROLE_PROVEN",
@@ -2685,7 +2983,7 @@ def _partition_proven_primitive_observations(core, audit):
             or core.get("audit_coverage", {}).get("complete") is True
         )
         if endpoint_complete and _current_primitive_binding(
-            finding, core, bindings, audit
+            finding, core, bindings, audit, captured
         ):
             proved.append(finding)
         else:
@@ -2712,7 +3010,7 @@ def _partition_proven_primitive_observations(core, audit):
         raw_findings,
         core.get("primitive_observations", []),
         core.get("sources", []),
-        core.get("_primitive_source_bytes", {}),
+        captured,
         coverage_state=(coverage.get("complete") is True),
         partition_state="VALIDATED"
         if coverage.get("complete") is True
@@ -2720,12 +3018,28 @@ def _partition_proven_primitive_observations(core, audit):
     )
 
 
-def _current_primitive_binding(finding, core, bindings, audit):
+def _primitive_source_capture(core):
+    """Read the report's private source snapshot without exposing it in its mapping."""
+    if "_primitive_source_bytes" in core:
+        captured = core["_primitive_source_bytes"]
+    else:
+        captured = getattr(core, "_captured_sources", ())
+        if type(captured) is tuple and all(
+            type(row) is tuple and len(row) == 2 for row in captured
+        ):
+            captured = dict(captured)
+    return captured if isinstance(captured, dict) else {}
+
+
+def _current_primitive_binding(finding, core, bindings, audit, captured=None):
     if _valid_security_precondition(
         finding.get("facts", {}).get("security_precondition"), finding
     ):
         return False
+    captured = _primitive_source_capture(core) if captured is None else captured
     if finding.get("facts", {}).get("disposition") == "CONDITIONAL_PROVIDER_CONTRACT":
+        if "_primitive_source_bytes" not in core and captured:
+            core = {**core, "_primitive_source_bytes": captured}
         return _conditional_provider_binding(finding, core, bindings, audit)
     sources = core.get("sources", [])
     if (
@@ -2733,7 +3047,7 @@ def _current_primitive_binding(finding, core, bindings, audit):
         == "PROVEN_CLOSED_OPERATION_COMMAND_SYNTAX"
     ):
         return closed_shell_binding(
-            finding, sources, bindings, core.get("_primitive_source_bytes")
+            finding, sources, bindings, captured
         )
     if finding.get("facts", {}).get("disposition") in {
         "TEST_OWNED_LOCAL_FIXTURE",
@@ -2744,7 +3058,7 @@ def _current_primitive_binding(finding, core, bindings, audit):
         sources = [*sources, *configs]
         bindings = {row["path"]: row["sha256"] for row in sources}
     return audit._fixed_primitive_binding(
-        finding, sources, bindings, core.get("_primitive_source_bytes")
+        finding, sources, bindings, captured
     )
 
 
@@ -2872,6 +3186,7 @@ def _application_fixture_use_proof(evidence, bindings, facts, source_bytes):
         )
     if evidence.get("profile") in {
         "SOURCE_BOUND_FACTORY_TEST_AUTHORITY",
+        "SOURCE_BOUND_DIGEST_TEST_AUTHORITY",
         "LOCAL_SOURCE_SIGNING_AUTHORITY",
     }:
         return _application_fixture_role_recomputes(
@@ -2891,12 +3206,15 @@ def _application_fixture_use_proof(evidence, bindings, facts, source_bytes):
 
 def _application_class_source_inputs(source_bytes, bindings, configs):
     """Validate current full-source and selected configuration bytes before rebuilding class facts."""
+    from .import_context import application_configuration_names
+
+    configuration_names = application_configuration_names()
     if (
         not isinstance(source_bytes, dict)
         or not isinstance(bindings, dict)
         or not isinstance(configs, dict)
         or set(source_bytes) != set(bindings)
-        or len(source_bytes) > 2003
+        or len(source_bytes) > 2000 + len(configuration_names)
     ):
         return None
     for name, raw in source_bytes.items():
@@ -2918,7 +3236,7 @@ def _application_class_source_inputs(source_bytes, bindings, configs):
         not python_names
         or len(python_names) > 2000
         or set(bindings) - python_names != set(configs)
-        or not set(configs) <= {"pyproject.toml", "requirements.txt", "tox.ini"}
+        or not set(configs) <= configuration_names
         or sum(map(len, source_bytes.values())) > 32 * 1024 * 1024
         or any(len(source_bytes[name]) > 1_000_000 for name in python_names)
     ):
@@ -3839,7 +4157,41 @@ def _fixed_program_native_witness(
                         "sources_sha256"
                     )
                     return witness
+            if witness := _source_built_ast_native_witness(
+                audit, relative, node, call_name, module,
+                workspace_profile, context, raw,
+            ):
+                witness["workspace_sources_sha256"] = workspace_profile.get(
+                    "sources_sha256"
+                )
+                return witness
     return {}
+
+
+def _source_built_ast_native_witness(
+    audit, relative, node, call_name, module, workspace_profile, context, raw
+):
+    if (
+        call_name != "exec"
+        or not isinstance(workspace_profile, dict)
+        or workspace_profile.get("complete") is not True
+        or not audit._fixed_program_builtin_identity(node, module, call_name)
+        or not isinstance(context, tuple)
+        or len(context) != 2
+        or not isinstance(context[1], dict)
+    ):
+        return {}
+    from .finite_capture import (
+        source_built_ast_program_witness,
+        source_built_ast_workspace_provider_clear,
+    )
+
+    root, sources = context
+    if not source_built_ast_workspace_provider_clear(sources, relative, root):
+        return {}
+    return source_built_ast_program_witness(
+        node, call_name, source_bytes=raw, source_path=relative
+    )
 
 
 def _fixed_program_legacy_witness(
@@ -3927,6 +4279,18 @@ def fixed_program_workspace_helpers(audit):
     """Return the source and validator helpers used to construct fixed-program workspace evidence."""
     from . import runtime_audit_integrity as runtime
     from .finite_capture import (
+        _source_built_ast_annotations_static,
+        _source_built_ast_builder,
+        _source_built_ast_constants,
+        _source_built_ast_effects_closed,
+        _source_built_ast_module_alias,
+        _source_built_ast_owned_values,
+        _source_built_ast_provider_expr,
+        _source_built_ast_scope,
+        _source_built_ast_sensitive_attribute,
+        _source_built_ast_sink,
+        source_built_ast_program_witness,
+        source_built_ast_workspace_provider_clear,
         shell_execution_calls,
         _closed_shell_operation,
         _closed_shell_call_role,
@@ -3944,6 +4308,7 @@ def fixed_program_workspace_helpers(audit):
 
     return (
         audit.bind_fixed_program_workspace,
+        fixed_program_proof_dispositions,
         _fixed_program_binding,
         _fixed_program_binding_base,
         _fixed_program_source_hash_bound,
@@ -3954,6 +4319,19 @@ def fixed_program_workspace_helpers(audit):
         fixed_program_witness,
         _fixed_program_native_witness,
         _fixed_program_legacy_witness,
+        _source_built_ast_native_witness,
+        _source_built_ast_annotations_static,
+        _source_built_ast_builder,
+        _source_built_ast_constants,
+        _source_built_ast_effects_closed,
+        _source_built_ast_module_alias,
+        _source_built_ast_owned_values,
+        _source_built_ast_provider_expr,
+        _source_built_ast_scope,
+        _source_built_ast_sensitive_attribute,
+        _source_built_ast_sink,
+        source_built_ast_program_witness,
+        source_built_ast_workspace_provider_clear,
         shell_execution_calls,
         _closed_shell_operation,
         _closed_shell_call_role,
@@ -3992,6 +4370,7 @@ def fixed_program_workspace_helpers(audit):
 
 def primitive_binding_helpers():
     """Return primitive-binding validators for endpoint, fixture, declaration, finite-eval, workspace, and symbolic-identifier evidence."""
+    from .credential_role_identity_effects import security_value_helper_epoch
     from .audit_action_refs import (
         _captured_application_source_bytes,
         _application_configuration_hashes,
@@ -3999,8 +4378,30 @@ def primitive_binding_helpers():
     from .credential_endpoint_admission import endpoint_evidence_helpers
     from .credential_endpoint_admission import endpoint_admission_helpers
     from .credential_endpoint_admission import catalog_callable_helpers
+    from .finite_capture import (
+        captured_literal_caller_program_role,
+        captured_file_program_role,
+        captured_registered_fixture_helper_role,
+        _source_built_ast_annotations_static,
+        _source_built_ast_builder,
+        _source_built_ast_constants,
+        _source_built_ast_effects_closed,
+        _source_built_ast_module_alias,
+        _source_built_ast_owned_values,
+        _source_built_ast_provider_expr,
+        _source_built_ast_scope,
+        _source_built_ast_sensitive_attribute,
+        _source_built_ast_sink,
+        source_built_ast_program_witness,
+        source_built_ast_workspace_provider_clear,
+    )
 
     return (
+        _primitive_source_capture,
+        captured_literal_caller_program_role,
+        captured_file_program_role,
+        captured_registered_fixture_helper_role,
+        fixed_program_proof_dispositions,
         _security_tier_reports_match,
         _raw_diagnostic_summary,
         _finding_source_binding,
@@ -4009,11 +4410,19 @@ def primitive_binding_helpers():
         _decide_finding_tier,
         _pickle_role_partition,
         _pickle_source_role_decision,
+        _pickle_source_role_witness,
         _pickle_role_inventory,
+        _pickle_role_model_trees,
+        _regenerate_source_model,
+        *security_value_helper_epoch(),
         _pickle_role_test_scope,
         _pickle_role_unittest_owners,
         _pickle_role_unittest_graph,
+        _pickle_role_class_writes,
         _pickle_role_callback_risk,
+        _authored_shell_source_role_witness,
+        _authored_shell_literal_input,
+        _authored_shell_bound_input,
         *_registered_fixture_helpers(),
         fixed_primitive_binding,
         _local_control_label_binding,
@@ -4091,6 +4500,20 @@ def primitive_binding_helpers():
         fixed_program_witness,
         _fixed_program_native_witness,
         _fixed_program_legacy_witness,
+        _source_built_ast_native_witness,
+        _source_built_ast_annotations_static,
+        _source_built_ast_builder,
+        _source_built_ast_constants,
+        _source_built_ast_effects_closed,
+        _source_built_ast_module_alias,
+        _source_built_ast_owned_values,
+        _source_built_ast_provider_expr,
+        _source_built_ast_scope,
+        _source_built_ast_sensitive_attribute,
+        _source_built_ast_sink,
+        _fixed_program_expected_witness,
+        source_built_ast_program_witness,
+        source_built_ast_workspace_provider_clear,
         bind_fixed_program_workspace,
         fixed_program_workspace_helpers,
         credential_context_cache_schema,
@@ -4179,7 +4602,7 @@ def _finding_tier_ledger_row(
     path, source_hash, captured, bound_source = _finding_source_binding(
         finding, bindings, source_bytes
     )
-    native_rows = _finding_native_rows(finding, captured, bound_source, regenerated)
+    native_rows = _finding_native_rows(finding, captured, bound_source, regenerated, source_bytes, bindings)
     signing_evidence = _finding_signing_evidence(
         finding,
         native_rows,
@@ -4275,7 +4698,7 @@ def _finding_tier_ledger_row(
 
 def _pickle_source_role_decision(roles, active, reviews, ledger, policy_id="source-role-v1"):
     """Describe unresolved context review without claiming safe reconstruction."""
-    policy = _SOURCE_ROLE_POLICY_V2 if policy_id == "source-role-v2" else _PICKLE_SOURCE_ROLE_POLICY
+    policy = {"source-role-v2": _SOURCE_ROLE_POLICY_V2, "source-role-v3": _SOURCE_ROLE_POLICY_V3}.get(policy_id, _PICKLE_SOURCE_ROLE_POLICY)
     return {
         **policy,
         "policy_sha256": _tier_sha256(policy),

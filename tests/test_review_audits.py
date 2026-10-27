@@ -13492,6 +13492,18 @@ def test_tenant_read_contract_preserves_scanner_facade_hooks(tmp_path, monkeypat
             "import yaml\ndef parse(data, SafeLoader):\n    return yaml.load(data, Loader=SafeLoader)\n",
             True,
         ),
+        (
+            "import yaml\nyaml.SafeLoader = yaml.UnsafeLoader\nyaml.load(data, Loader=yaml.SafeLoader)\n",
+            True,
+        ),
+        (
+            "from yaml import SafeLoader as Safe\nSafe.add_constructor('tag:example', handler)\nyaml.load(data, Loader=Safe)\n",
+            True,
+        ),
+        (
+            "import yaml\nyaml.SafeLoader.yaml_constructors['tag'] = replacement\nyaml.load(data, Loader=yaml.SafeLoader)\n",
+            True,
+        ),
     ],
 )
 def test_yaml_loader_argument_requires_canonical_safe_provider(
@@ -13500,6 +13512,18 @@ def test_yaml_loader_argument_requires_canonical_safe_provider(
     (tmp_path / "parse_input.py").write_text(source, encoding="utf-8")
     findings = security_scan(tmp_path, cache_enabled=False)["findings"]
     assert any(item["code"] == "SECURITY_UNSAFE_YAML" for item in findings) is expected
+
+
+def test_yaml_safe_loader_credit_checks_captured_peer_module_mutation(tmp_path):
+    (tmp_path / "parse_input.py").write_text(
+        "import yaml\nyaml.load(data, Loader=yaml.SafeLoader)\n", encoding="utf-8"
+    )
+    (tmp_path / "loader_patch.py").write_text(
+        "import yaml\nyaml.SafeLoader.yaml_constructors['tag'] = replacement\n",
+        encoding="utf-8",
+    )
+    findings = security_scan(tmp_path, cache_enabled=False)["findings"]
+    assert any(item["code"] == "SECURITY_UNSAFE_YAML" for item in findings)
 
 
 @pytest.mark.parametrize(
@@ -14623,6 +14647,40 @@ def test_native_pytest_collection_patterns_match_nested_paths_and_names(
     assert all(item["path"] == "testing/python/test_matrix.py" for item in findings)
 
 
+@pytest.mark.parametrize("addopts", ["[]", '["-v", "--cov=package", "--color=yes"]'])
+def test_pytest_collection351_toml_addopts_array_has_string_parity(tmp_path, addopts):
+    from factoryline.review_audits import _pytest_collection_config
+
+    (tmp_path / "pyproject.toml").write_text(
+        f"[tool.pytest.ini_options]\naddopts = {addopts}\n"
+    )
+    patterns, identity = _pytest_collection_config(tmp_path)
+    assert identity["state"] == "read"
+    assert "test_*.py" in patterns
+
+
+@pytest.mark.parametrize(
+    "addopts",
+    [
+        '["-p", "custom"]',
+        '["--ignore=tests"]',
+        '["--override-ini", "python_files=other.py"]',
+        "[42]",
+        '["-v", false]',
+    ],
+)
+def test_pytest_collection351_toml_addopts_array_retains_unknown_collection(
+    tmp_path, addopts
+):
+    from factoryline.review_audits import _pytest_collection_config, ReviewAuditError
+
+    (tmp_path / "pyproject.toml").write_text(
+        f"[tool.pytest.ini_options]\naddopts = {addopts}\n"
+    )
+    with pytest.raises(ReviewAuditError, match="unsupported configuration"):
+        _pytest_collection_config(tmp_path)
+
+
 def test_pytest_collection_configuration_carries_all_name_patterns(tmp_path):
     from factoryline import deep_audit_io
     from factoryline import review_audits
@@ -14722,3 +14780,140 @@ def test_log_scalar_shared_identity_ignores_unrelated_setter_and_retains_reflect
     (tmp_path/'app.py').write_text(source,encoding='utf8')
     result=security_scan(tmp_path,cache_enabled=False)
     assert ('SECURITY_LOG_INJECTION' in result['finding_counts']) is expected
+
+
+@pytest.mark.parametrize(
+    "peer, other",
+    [
+        (False, "yaml.load(other, Loader=yaml.SafeLoader)"),
+        (True, "yaml.load(other, Loader=yaml.SafeLoader)"),
+        (True, "yaml.load_all(other, Loader=yaml.SafeLoader)"),
+    ],
+)
+def test_yaml_safe_loader_repeated_canonical_consumers_do_not_escape(
+    tmp_path, peer, other
+):
+    source = "import yaml\nyaml.load(data, Loader=yaml.SafeLoader)\n"
+    if peer:
+        (tmp_path / "peer.py").write_text("import yaml\n" + other + "\n")
+    else:
+        source += other + "\n"
+    (tmp_path / "app.py").write_text(source)
+    report = security_scan(tmp_path, cache_enabled=False)
+    assert report["audit_coverage"]["complete"] is True
+    assert not any(row["code"] == "SECURITY_UNSAFE_YAML" for row in report["findings"])
+
+
+@pytest.mark.parametrize(
+    "mutation, peer",
+    [
+        ("yaml.load = external", False),
+        ("yaml.load = external", True),
+        ("yaml.load(data, Loader=yaml.SafeLoader, bogus=1)", True),
+        ("yaml.load(Loader=yaml.SafeLoader)", True),
+        ("yaml.load(data, stream=other, Loader=yaml.SafeLoader)", True),
+        ("yaml.load(data, Loader=yaml.SafeLoader, Loader=yaml.SafeLoader)", True),
+        ("yaml.load_all = external\nyaml.load_all(data, Loader=yaml.SafeLoader)", True),
+        ("yaml.SafeLoader.yaml_constructors['tag'] = external", True),
+        ("unknown(yaml.SafeLoader)", True),
+        (
+            "def consume(Loader):\n    Loader.changed = True\nconsume(yaml.SafeLoader)",
+            True,
+        ),
+        ("def parse(yaml):\n    yaml.load(data, Loader=yaml.SafeLoader)", True),
+    ],
+)
+def test_yaml_loader_consumer_slot_never_masks_mutation_or_unknown_escape(
+    tmp_path, mutation, peer
+):
+    source = "import yaml\n"
+    if peer:
+        (tmp_path / "peer.py").write_text("import yaml\n" + mutation + "\n")
+    else:
+        source += mutation + "\n"
+    source += "yaml.load(data, Loader=yaml.SafeLoader)\n"
+    (tmp_path / "app.py").write_text(source)
+    rows = security_scan(tmp_path, cache_enabled=False)["findings"]
+    assert any(row["code"] == "SECURITY_UNSAFE_YAML" for row in rows)
+
+
+@pytest.mark.parametrize('selected', ['selected', 'fixed'])
+def test_shared_native_summary_selected_return_reaches_shell_and_pickle(tmp_path, selected):
+    from factoryline import review_audits as audit
+    source = """import os
+import pickle
+from flask import request
+
+def choose(value):
+    return {'selected': value, 'fixed': b'fixed'}
+
+def route():
+    raw = request.get_data()
+    values = choose(raw)
+    selected = values[%r]
+    pickle.loads(selected)
+    os.system(selected.decode())
+""" % selected
+    (tmp_path / 'app.py').write_text(source, encoding='utf-8')
+    report = audit.security_scan(tmp_path, cache_enabled=False)
+    rows = report.get('finding_tier_report', {}).get('ledger', [])
+    supported = {row['raw_finding']['code'] for row in rows if row.get('tier') == 'SUPPORTED_DEFECT'}
+    expected = {'SECURITY_UNSAFE_DESERIALIZATION', 'SECURITY_OS_COMMAND'}
+    assert expected <= {row['raw_finding']['code'] for row in rows}
+    if selected == 'selected':
+        assert expected <= supported
+    else:
+        assert not (expected & supported)
+    assert json.loads(json.dumps(report)) == report
+
+
+def test_shared_native_summary_branch_join_retains_may_origin():
+    from factoryline.review_integrity import _SecurityFlowState, _security_merge_branch_states
+    from factoryline.credential_role_identity_effects import _Value
+    request = _SecurityFlowState(values={'data': _Value(roots=frozenset({'request'}), scalar_kind='bytes')})
+    literal = _SecurityFlowState(values={'data': _Value(scalar_kind='bytes')})
+    merged = _SecurityFlowState()
+    _security_merge_branch_states((merged,), [(request,), (literal,)])
+    assert merged.values['data'].roots == frozenset({'request'})
+    assert merged.values['data'].unknown
+
+
+def test_shared_native_summary_cached_context_retains_imported_result(tmp_path):
+    from factoryline import review_audits as audit
+    (tmp_path / 'helper.py').write_text("def choose(value):\n    return {'selected': value, 'fixed': b'fixed'}\n", encoding='utf-8')
+    (tmp_path / 'facade.py').write_text('from helper import choose\n', encoding='utf-8')
+    (tmp_path / 'app.py').write_text("import pickle\nimport os\nfrom flask import request\nfrom facade import choose\ndef route():\n    values = choose(request.get_data())\n    selected = values['selected']\n    pickle.loads(selected)\n    os.system(selected.decode())\n", encoding='utf-8')
+    audit._oracle_context_cache_clear()
+    cold = audit.security_scan(tmp_path, cache_enabled=True)
+    warm = audit.security_scan(tmp_path, cache_enabled=True)
+    expected = {'SECURITY_UNSAFE_DESERIALIZATION', 'SECURITY_OS_COMMAND'}
+    for report in (cold, warm):
+        ledger = report['finding_tier_report']['ledger']
+        supported = {row['raw_finding']['code'] for row in ledger if row['tier'] == 'SUPPORTED_DEFECT'}
+        assert expected <= supported
+        for row in ledger:
+            if row['tier'] == 'SUPPORTED_DEFECT':
+                steps = row['raw_finding']['facts']['security_precondition']['input_value_flow']['steps']
+                assert any(step['operation'] == 'REQUEST_SOURCE' for step in steps)
+    assert cold['audit_sha256'] == warm['audit_sha256']
+
+
+@pytest.mark.parametrize('change', ["alias['selected'] = b'fixed'", "del alias['selected']", "alias['selected'] += b'fixed'", "touch(alias)"])
+def test_shared_native_summary_mutated_alias_declines_supported(tmp_path, change):
+    from factoryline import review_audits as audit
+    (tmp_path / 'app.py').write_text("import pickle\nfrom flask import request\ndef route():\n    raw = request.get_data()\n    box = {'selected': raw}\n    alias = box\n    " + change + "\n    pickle.loads(box['selected'])\n", encoding='utf-8')
+    report = audit.security_scan(tmp_path, cache_enabled=False)
+    rows = [row for row in report['finding_tier_report']['ledger'] if row['raw_finding']['code'] == 'SECURITY_UNSAFE_DESERIALIZATION']
+    assert len(rows) == 1
+    assert rows[0]['tier'] == 'NEEDS_CONTEXT'
+
+
+def test_shared_native_summary_kernel_owner_change_invalidates_cache(tmp_path, monkeypatch):
+    from factoryline import review_audits as scanner
+    from factoryline import credential_role_identity_effects as effects
+    first = scanner._oracle_context_cache_key(tmp_path, [], {})
+    original = effects.identity_value
+    def replacement(node, aliases, *, strict_calls=False):
+        return original(node, aliases, strict_calls=strict_calls)
+    monkeypatch.setattr(effects, 'identity_value', replacement)
+    assert scanner._oracle_context_cache_key(tmp_path, [], {}) != first

@@ -416,6 +416,8 @@ def _pytest_config_uses_custom_collection(options):
     if "pytest_plugins" in options:
         return True
     addopts = options.get("addopts", "")
+    if isinstance(addopts, list) and all(isinstance(value, str) for value in addopts):
+        addopts = " ".join(addopts)
     if not isinstance(addopts, str):
         return True
     tokens = addopts.split()

@@ -2110,7 +2110,10 @@ def _pickle_byte_edge_window_closed(scope, statements, assignment, load, name):
         return False
     target = _pickle_statement_target(assignment)
     nodes = [node for statement in statements for node in ast.walk(statement)]
-    return _capability_uses_match(nodes, name, [target, load.args[0]])
+    observations = [statement.test for statement in statements
+                    if isinstance(statement, ast.Assert) and statement.msg is None
+                    and isinstance(statement.test, ast.Name) and statement.test.id == name]
+    return _capability_uses_match(nodes, name, [target, load.args[0], *observations])
 
 
 def _pickle_byte_edge_dump_shape(call):

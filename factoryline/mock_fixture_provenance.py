@@ -722,7 +722,9 @@ def _django_import_rows(statement, package):
         return None
     if statement.level:
         base_parts = package.split(".") if package else []
-        keep = max(0, len(base_parts) - statement.level + 1)
+        if statement.level > len(base_parts):
+            return None
+        keep = len(base_parts) - statement.level + 1
         base = ".".join(base_parts[:keep])
         module = ".".join(part for part in (base, statement.module or "") if part)
     else:
@@ -3871,13 +3873,13 @@ def _closed_jwt_test_evidence(
 
 
 def application_test_index(
-    root, modules, source_bytes, inventory, configuration_bytes=None
+    root, modules, source_bytes, inventory, configuration_bytes=None, *, source_index=None
 ):
     """Reuse the captured snapshot graph for application credential role slices."""
-    from .credential_role_constructor_provider import SourceSnapshotIndex
+    from .credential_role_constructor_provider import application_snapshot_index
 
-    source = SourceSnapshotIndex(root, modules, source_bytes, inventory)
-    if not source.bounded:
+    source = application_snapshot_index(root, modules, source_bytes, inventory, source_index)
+    if source is None or not source.bounded:
         return None
     paths = source.module_paths()
     if paths is None:
@@ -4019,32 +4021,6 @@ def _app_credential_lineage(index, path, function, expression, secret, seen=()):
     return False
 
 
-def _app_consumer_aliases(index, path, function, secret):
-    candidates, assignments = {secret}, {}
-    for _ in range(9):
-        changed = False
-        for statement in function.body:
-            if not isinstance(statement, ast.Assign) or len(statement.targets) != 1:
-                continue
-            target = statement.targets[0]
-            if not isinstance(target, ast.Name) or target.id in candidates:
-                continue
-            if _app_local_assignment(function, target.id) is not statement:
-                continue
-            if not _app_credential_lineage(
-                index, path, function, statement.value, secret
-            ):
-                continue
-            candidates.add(target.id)
-            assignments[target.id] = statement
-            changed = True
-            if len(candidates) > 9:
-                return None
-        if not changed:
-            return candidates, assignments
-    return None
-
-
 def _app_consumer_roots(index, path, function, secret, witness):
     roots = []
     for role, operation in witness.items():
@@ -4101,73 +4077,8 @@ def _app_request_secret_values(operation):
     ]
 
 
-def _app_consumer_reached_assignments(candidates, assignments, secret, roots):
-    pending = {
-        node.id
-        for _, expression in roots
-        for node in ast.walk(expression)
-        if isinstance(node, ast.Name) and node.id in candidates
-    }
-    reached, used = {secret}, {}
-    while pending:
-        name = pending.pop()
-        if name in reached:
-            continue
-        statement = assignments.get(name)
-        if statement is None:
-            return None
-        reached.add(name)
-        used[name] = statement
-        pending.update(
-            node.id
-            for node in ast.walk(statement.value)
-            if isinstance(node, ast.Name)
-            and node.id in candidates
-            and node.id not in reached
-        )
-    return used
 
 
-def _app_consumer_stores_closed(nodes, function, secret, candidates, used):
-    for node in nodes:
-        if not isinstance(node, ast.Name) or node.id not in candidates:
-            continue
-        if not isinstance(node.ctx, (ast.Store, ast.Del)):
-            continue
-        assignment = _app_local_assignment(function, node.id)
-        permitted = assignment is not None and node is assignment.targets[0]
-        permitted = permitted and (
-            node.id == secret or node.id in used and used[node.id] is assignment
-        )
-        if not permitted:
-            return False
-    return True
-
-
-def _app_consumer_allowed_loads(nodes, function, secret, candidates, used, roots):
-    if not _app_consumer_stores_closed(nodes, function, secret, candidates, used):
-        return None
-    allowed = {}
-    for statement in used.values():
-        for node in ast.walk(statement.value):
-            if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
-                allowed[id(node)] = "derived_value"
-    for role, expression in roots:
-        for node in ast.walk(expression):
-            if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
-                allowed[id(node)] = role
-    loads = [
-        node
-        for node in nodes
-        if isinstance(node, ast.Name)
-        and isinstance(node.ctx, ast.Load)
-        and node.id in candidates
-    ]
-    return (
-        (loads, allowed)
-        if loads and all(id(node) in allowed for node in loads)
-        else None
-    )
 
 
 def _app_closed_consumer_uses(index, path, function, secret, secret_value, witness):
@@ -4183,22 +4094,16 @@ def _app_closed_consumer_uses(index, path, function, secret, secret_value, witne
         index, path, function, nodes
     ):
         return None
-    aliases = _app_consumer_aliases(index, path, function, secret)
-    if aliases is None:
-        return None
-    candidates, assignments = aliases
     roots = _app_consumer_roots(index, path, function, secret, witness)
-    if not roots:
-        return None
-    used = _app_consumer_reached_assignments(candidates, assignments, secret, roots)
-    if used is None:
-        return None
-    closure = _app_consumer_allowed_loads(
-        nodes, function, secret, candidates, used, roots
-    )
+    from .credential_role_identity_effects import _structural_closed_consumer_uses, _enclosing_function
+
+    closure = _structural_closed_consumer_uses(function, secret, roots,
+        index["source"].parents[path],
+        lambda node: _enclosing_function(node, index["source"].parents[path]),
+        lambda expression: _app_credential_lineage(index, path, function, expression, secret))
     if closure is None:
         return None
-    loads, allowed = closure
+    used, loads, allowed = closure
 
     def source_row(node, name, role):
         return {
@@ -4779,21 +4684,10 @@ def _app_drf_enrollment(index, path, function, owner, secret):
 
 
 def _app_source_function(index, path, expression, function=None):
-    canonical = _app_expression_name(index, path, expression, function)
-    if canonical is None:
+    if _app_expression_name(index, path, expression, function) is None:
         return None
-    module, _, name = canonical.rpartition(".")
-    target, tree = _django_mod(index, module)
-    if tree is None:
-        return None
-    from .credential_role_constructor_provider import binding_occurrences
-
-    rows = binding_occurrences(tree.body, name)
-    return (
-        (target, rows[0])
-        if len(rows) == 1 and isinstance(rows[0], ast.FunctionDef)
-        else None
-    )
+    selected = _app_source_symbol(index, path, expression, function)
+    return selected if selected is not None and isinstance(selected[1], ast.FunctionDef) else None
 
 
 def _app_fixture_provider(index, path, name):
@@ -4948,21 +4842,32 @@ def _app_pytest_store_enrollment(index, path, function, secret):
     }
 
 
-def _app_source_symbol(index, path, expression, function=None, seen=()):
+def _app_source_symbol(index, path, expression, function=None, seen=(), provider_chain=None):
     """Resolve captured imports/reexports to one exact module declaration."""
     canonical = _app_expression_name(index, path, expression, function)
     if canonical is None and isinstance(expression, ast.Name):
         from .credential_role_constructor_provider import binding_occurrences
 
-        if function is not None and binding_occurrences(function.body, expression.id):
+        from .credential_role_identity_effects import _argument_names
+
+        if function is not None and (expression.id in _argument_names(function)
+                                    or binding_occurrences(function.body, expression.id)):
             return None
         canonical = _django_name(index, path) + "." + expression.id
     if not canonical or canonical in seen or len(seen) >= 12:
         return None
     module, _, name = canonical.rpartition(".")
     target, tree = _django_mod(index, module)
+    if module.partition(".")[0] not in _DJANGO_CANONICAL_PROVIDER_ROOTS:
+        from .import_context import captured_import_module
+
+        imported, candidate = captured_import_module(index["source"], path, module)
+        if imported:
+            target, tree = candidate, index["modules"].get(candidate)
     if tree is None:
         return None
+    if provider_chain is not None:
+        provider_chain.append((canonical, target, name))
     from .credential_role_constructor_provider import binding_occurrences
 
     rows = binding_occurrences(tree.body, name)
@@ -4970,7 +4875,8 @@ def _app_source_symbol(index, path, expression, function=None, seen=()):
         return None
     if isinstance(rows[0], (ast.Import, ast.ImportFrom)):
         return _app_source_symbol(
-            index, target, ast.Name(id=name, ctx=ast.Load()), seen=(*seen, canonical)
+            index, target, ast.Name(id=name, ctx=ast.Load()), seen=(*seen, canonical),
+            provider_chain=provider_chain,
         )
     binding = rows[0]
     if isinstance(binding, ast.Name):

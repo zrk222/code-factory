@@ -15,15 +15,18 @@ _HTTP_CALLS = frozenset(
 )
 _AUTH_CALLS = frozenset({"requests.auth.HTTPBasicAuth", "httpx.BasicAuth"})
 _AUTH_HEADER = re.compile(r"(?i)^\s*(?:bearer|basic)\s+(.+?)\s*$")
+_AUTH_TEMPLATE = re.compile(r"(?:^\$\{[^}]+\}$|^<[^>]+>$|^your[-_]$|\{[^{}]+\})", re.I)
 
 
-def _literal_credential(node):
+def _literal_credential(node, *, auth_slot=False):
     from .review_audits import _PLACEHOLDER_SECRET
 
     if not isinstance(node, ast.Constant) or not isinstance(node.value, str):
         return False
     value = node.value.strip()
-    return bool(value and not _PLACEHOLDER_SECRET.match(value))
+    if not value:
+        return False
+    return not (_AUTH_TEMPLATE.search(value) if auth_slot else _PLACEHOLDER_SECRET.match(value))
 
 
 def _canonical_http_call(node, aliases):
@@ -78,7 +81,7 @@ def _url_userinfo_credential(call, name):
         return None
     password = _url_password(url)
     candidate = ast.Constant(password) if password else None
-    return candidate if _literal_credential(candidate) else None
+    return candidate if _literal_credential(candidate, auth_slot=True) else None
 
 
 def _authorization_credential(call, name):
@@ -91,7 +94,7 @@ def _authorization_credential(call, name):
     if not isinstance(value, ast.Constant) or not isinstance(value.value, str):
         return None
     match = _AUTH_HEADER.match(value.value)
-    if match and _literal_credential(ast.Constant(match.group(1))):
+    if match and _literal_credential(ast.Constant(match.group(1)), auth_slot=True):
         return value
     return None
 
@@ -164,6 +167,10 @@ def _provider_identity_uncertain(
     nodes=None,
     parents=None,
     selected_paths=False,
+    mutations=None,
+    argument_predicate=None,
+    inventory_projector=None,
+    inventory_dependencies=(),
 ):
     """Veto HTTP proofs if the full provider mutation index finds a relevant escape."""
     from types import SimpleNamespace
@@ -177,7 +184,11 @@ def _provider_identity_uncertain(
             id(child): node for node in nodes for child in ast.iter_child_nodes(node)
         }
     audit = SimpleNamespace(_resolved_ast_name=_resolved_ast_name)
-    mutations = finite_provider_mutation_index(nodes, aliases, audit, parents)
+    if mutations is None:
+        mutations = finite_provider_mutation_index(
+            nodes, aliases, audit, parents, argument_predicate=argument_predicate,
+            inventory_projector=inventory_projector, inventory_dependencies=inventory_dependencies,
+        )
     if selected_paths:
         return any(
             _provider_path_conflicts(path, attribute, root)
@@ -201,6 +212,76 @@ def _provider_path_conflicts(path, attribute, selected):
     )
 
 
+def yaml_loader_argument_consumer(node, aliases, parents):
+    """Identify exact, modeled YAML consumer value slots for provider indexing."""
+    from .security_configuration import _canonical, _expanded
+    from .review_integrity import bind_security_call_scopes
+
+    child = node
+    parent = parents.get(id(child))
+    while parent is not None and not isinstance(parent, ast.Call):
+        if isinstance(parent, ast.keyword):
+            child = parent.value
+            parent = parents.get(id(parent))
+            continue
+        child = parent
+        parent = parents.get(id(parent))
+    call = parent
+    if not isinstance(call, ast.Call) or _expanded(call):
+        return None
+    if not (
+        any(item.arg in {"Loader", "Dumper"} and item.value is child for item in call.keywords)
+        or any(index < len(call.args) and call.args[index] is child for index in (1, 2))
+    ):
+        return None
+    module = call
+    while id(module) in parents:
+        module = parents[id(module)]
+    if not isinstance(module, ast.Module):
+        return None
+    if not hasattr(module, "_security_scope_kind"):
+        bind_security_call_scopes(module)
+    canonical = _canonical(call, aliases)
+    parameter = _YAML_TYPED_CONSUMER_SLOTS.get(canonical)
+    if parameter is None or len({item.arg for item in call.keywords}) != len(call.keywords):
+        return None
+    if any(item.arg is None for item in call.keywords):
+        return None
+    keyword = next((item for item in call.keywords if item.arg == parameter[0]), None)
+    if keyword is not None:
+        if len(call.args) > parameter[1] or keyword.value is not child:
+            return None
+    elif len(call.args) <= parameter[1] or call.args[parameter[1]] is not child:
+        return None
+    return canonical
+
+
+_YAML_TYPED_CONSUMER_SLOTS = {
+    "yaml.load": ("Loader", 1),
+    "yaml.load_all": ("Loader", 1),
+    "yaml.compose": ("Loader", 1),
+    "yaml.compose_all": ("Loader", 1),
+    "yaml.parse": ("Loader", 1),
+    "yaml.scan": ("Loader", 1),
+    "yaml.dump": ("Dumper", 2),
+    "yaml.dump_all": ("Dumper", 2),
+}
+
+
+def yaml_loader_provider_uncertain(module, aliases, selected):
+    """Check typed YAML value uses and every modeled consumer against mutations."""
+    roots = {selected, *_YAML_TYPED_CONSUMER_SLOTS}
+
+    def argument_escapes(node, local_aliases, parents):
+        consumer = yaml_loader_argument_consumer(node, local_aliases, parents)
+        return consumer is None
+
+    return _provider_identity_uncertain(
+        module, aliases, roots=roots, selected_paths=True,
+        argument_predicate=argument_escapes,
+    )
+
+
 def _credential_candidates(tree, aliases, nodes=None):
     candidates = []
     nodes = ast.walk(tree) if nodes is None else nodes
@@ -209,13 +290,13 @@ def _credential_candidates(tree, aliases, nodes=None):
             if slot == "authorization":
                 match = _AUTH_HEADER.match(value.value)
                 value = ast.Constant(match.group(1) if match else "")
-            if _literal_credential(value):
+            if _literal_credential(value, auth_slot=True):
                 candidates.append((call, consumer_role, slot))
     return candidates
 
 
 def credential_findings(tree, aliases, relative="<source>", *, nodes=None):
-    """Report only non-placeholder literals in statically bound HTTP auth slots."""
+    """Report statically bound HTTP auth literals, including weak defaults."""
     from .review_audits import _security_finding
     from .review_integrity import bind_security_call_scopes
 
@@ -223,10 +304,34 @@ def credential_findings(tree, aliases, relative="<source>", *, nodes=None):
         bind_security_call_scopes(tree)
     nodes = tuple(ast.walk(tree) if nodes is None else nodes)
     candidates = _credential_candidates(tree, aliases, nodes)
-    if not candidates or _provider_identity_uncertain(tree, aliases, nodes=nodes):
+    if not candidates:
         return []
+    from types import SimpleNamespace
+
+    from .finite_capture import finite_provider_mutation_index
+    from .review_audits import _resolved_ast_name
+    from .security_configuration import _canonical
+
+    parents = {
+        id(child): node for node in nodes for child in ast.iter_child_nodes(node)
+    }
+    mutations = finite_provider_mutation_index(
+        nodes, aliases, SimpleNamespace(_resolved_ast_name=_resolved_ast_name), parents
+    )
     findings = []
     for call, consumer_role, slot in candidates:
+        provider = (
+            _canonical_http_call(call, aliases) or _canonical(call, aliases)
+        ).split(".", 1)[0]
+        if _provider_identity_uncertain(
+            tree,
+            aliases,
+            roots=(provider,),
+            nodes=nodes,
+            parents=parents,
+            mutations=mutations,
+        ):
+            continue
         findings.append(
             _security_finding(
                 "SECURITY_LITERAL_HTTP_CREDENTIAL",
@@ -2377,6 +2482,247 @@ def _flask_configuration_calls(
     return []
 
 
+def bind_native_input_precondition(call, canonical, primitive, scope, requests, aliases):
+    """Attach the shared source-owned dangerous-input premise to a native call."""
+    from . import review_integrity as flow
+    from .finite_capture import security_input_value_flow
+
+    stable = getattr(flow._security_module_scope(scope),
+                     "_security_precondition_providers_stable", False)
+    if not (stable and primitive is not None and primitive["code"] in {
+        "SECURITY_DYNAMIC_EXECUTION", "SECURITY_OS_COMMAND", "SECURITY_SHELL_COMMAND",
+        "SECURITY_UNSAFE_DESERIALIZATION", "SECURITY_UNSAFE_YAML",
+    } and call.args and security_precondition_call_shape(call, canonical)
+            and security_precondition_path_possible(call)):
+        return
+    if flow._security_expr_tainted(call.args[0], requests, set(), aliases) and (
+        canonical not in {"pickle.loads", "_pickle.loads", "dill.loads"}
+        or request_payload_value_kind(call.args[0], requests, aliases,
+            flow._security_scope_request_aliases, scope,
+            getattr(call, "_security_flow_statement", None)) == "bytes"
+    ):
+        premise = supported_security_precondition(call, "untrusted_request", canonical)
+        if trace := security_input_value_flow(call.args[0], requests, aliases):
+            premise["input_value_flow"] = trace
+        call._security_supported_precondition = premise
+    elif canonical in {"eval", "exec", "builtins.eval", "builtins.exec", "os.system",
+                        "subprocess.call", "subprocess.run", "subprocess.Popen",
+                        "subprocess.check_call", "subprocess.check_output"} and (witness := persisted_field_input(call)):
+        premise = supported_security_precondition(call, "untrusted_input", canonical)
+        premise["persisted_input"] = witness
+        call._security_supported_precondition = premise
+
+
+def _persisted_field_read(call, index, path):
+    from .credential_role_constructor_provider import binding_occurrences
+
+    value = call.args[0]
+    scope = getattr(call, "_security_lexical_scope", None)
+    if not (isinstance(value, ast.Attribute) and isinstance(value.value, ast.Name)
+            and isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and not scope.decorator_list and scope.args.args
+            and scope.args.args[0].arg == value.value.id):
+        return None
+    owner = index.parents[path].get(id(scope))
+    if not isinstance(owner, ast.ClassDef) or owner.keywords or len(owner.bases) != 1 or binding_occurrences(scope.body, value.value.id):
+        return None
+    from .credential_role_constructor_provider import DYNAMIC_HOOKS
+    if any(binding_occurrences(owner.body, name) for name in
+           {*DYNAMIC_HOOKS, "query", "query_class", "__query_class__"}):
+        return None
+    if len(binding_occurrences(owner.body, value.attr)) != 1:
+        return None
+    if not _persisted_receiver_stable(scope, value.value.id, value.attr, index.parents[path]):
+        return None
+    return (index.relative(path), owner.name), value.attr
+
+
+def _persisted_receiver_stable(scope, receiver, field, parents):
+    from . import finite_capture as finite, review_audits as audit
+
+    reads = [node for node in ast.walk(scope) if isinstance(node, ast.Attribute)
+             and isinstance(node.ctx, ast.Load) and isinstance(node.value, ast.Name)
+             and node.value.id == receiver and node.attr == field]
+    excluded = {id(child) for node in reads for child in ast.walk(node)}
+    nodes = [node for node in ast.walk(scope) if id(node) not in excluded]
+    facts = set()
+    finite._provider_mutation_facts(nodes, {receiver: "storage.receiver"}, audit, parents,
+                                   finite._provider_alias_bindings(nodes), facts, None, None)
+    return not any(path == "storage.receiver" or path.startswith("storage.receiver.")
+                   for path, _ in facts)
+
+
+def _persisted_query_receiver(call):
+    if not (isinstance(call.func, ast.Attribute) and call.func.attr == "update"
+            and len(call.args) == 1 and not call.keywords and isinstance(call.args[0], ast.Dict)):
+        return None
+    keys = [key.value for key in call.args[0].keys
+            if isinstance(key, ast.Constant) and isinstance(key.value, str)]
+    if len(keys) != len(call.args[0].keys) or len(keys) != len(set(keys)):
+        return None
+    receiver = call.func.value
+    for _ in range(8):
+        if isinstance(receiver, ast.Attribute) and receiver.attr == "query":
+            return receiver.value
+        if not (isinstance(receiver, ast.Call) and isinstance(receiver.func, ast.Attribute)
+                and receiver.func.attr in {"filter", "filter_by"}):
+            return None
+        from .finite_capture import captured_scalar_guard
+
+        if any(captured_scalar_guard(value, {}, False) is False for value in receiver.args):
+            return None
+        receiver = receiver.func.value
+    return None
+
+
+def _persisted_writer_origin(expression, environment, aliases, scope, module):
+    from .finite_capture import security_structural_value
+    from .credential_role_constructor_provider import binding_occurrences
+    from .credential_role_identity_effects import _argument_names
+
+    conversion = False
+    if (isinstance(expression, ast.Call) and isinstance(expression.func, ast.Name)
+            and expression.func.id == "str" and len(expression.args) == 1
+            and not expression.keywords):
+        if ("str" in _argument_names(scope) or "str" in getattr(expression, "_security_shadowed_names", ())
+                or binding_occurrences(scope.body, "str") or binding_occurrences(module.body, "str")):
+            return None
+        conversion = True
+        expression = expression.args[0]
+    value = security_structural_value(expression, environment, aliases)
+    if not (value.scalar_kind == "text" or conversion) or not value.roots or not any(step[0] in {"REQUEST_SOURCE", "REQUEST_SOURCE_UNKNOWN_KIND"}
+                                  for step in value.trace):
+        return None
+    return {"roots": sorted(value.roots), "value_kind": "text", "conversion": "builtin_str" if conversion else "none",
+            "value_unknown": value.unknown,
+            "content_unknown": value.content_unknown,
+            "steps": [{"operation": op, "span": list(span), "ast_sha256": digest}
+                      for op, span, digest in value.trace]}
+
+
+def _persisted_query_witness(index, wrapper, models, selected, field):
+    from . import review_integrity as flow, review_audits as audit
+    from .mock_fixture_provenance import _app_source_symbol
+
+    for path, tree in index.snapshots.items():
+        if not index.validate(path):
+            return None
+        calls = [(node, _persisted_query_receiver(node)) for node in ast.walk(tree)
+                 if isinstance(node, ast.Call)]
+        candidates = [(call, receiver) for call, receiver in calls if receiver is not None]
+        if not candidates:
+            continue
+        if not hasattr(tree, "_security_scope_kind"):
+            flow.bind_security_call_scopes(tree)
+        aliases = audit._security_aliases(list(ast.walk(tree)))
+        analyzed = set()
+        for call, receiver in candidates:
+            scope = getattr(call, "_security_lexical_scope", None)
+            resolved = _app_source_symbol(wrapper, path, receiver, function=scope)
+            if not (resolved and isinstance(resolved[1], ast.ClassDef)
+                    and (index.relative(resolved[0]), resolved[1].name) == selected):
+                continue
+            if (not isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef))
+                    or not security_precondition_path_possible(call)):
+                continue
+            witness = _persisted_update_witness(index, models[selected], field, path, tree, call, scope, aliases, analyzed)
+            if witness is not None:
+                return witness
+    return None
+
+
+def _persisted_update_witness(index, model, field, path, tree, call, scope, aliases, analyzed):
+    if id(scope) not in analyzed:
+        from .review_integrity import _security_scope_source_sink_findings
+
+        analyzed.add(id(scope))
+        _security_scope_source_sink_findings(index.relative(path), scope, aliases, {})
+    for key, expression in zip(call.args[0].keys, call.args[0].values):
+        if not isinstance(key, ast.Constant) or key.value != field:
+            continue
+        origin = _persisted_writer_origin(expression,
+            getattr(call, "_security_structural_values", {}) or {}, aliases, scope, tree)
+        if origin is not None:
+            return {"schema": "factory.security.persisted-input.v1",
+                    "model": model["identity"],
+                    "field": model["fields"][field],
+                    "writer": {"path": index.relative(path), "sha256": index.inventory[path],
+                               "span": [call.lineno, call.col_offset, call.end_lineno, call.end_col_offset]},
+                    "input_flow": origin, "authority": "possible_request_writer",
+                    "api_contract_assumptions": [*model["api_contract_assumptions"],
+                        "SQLAlchemy model query update writes selected mapped fields"],
+                    "negative_writer_closure": "NOT_ESTABLISHED"}
+    return None
+
+
+def _persisted_base_providers(index, wrapper, owner, path):
+    from .mock_fixture_provenance import _app_source_symbol, _app_expression_name
+    from .credential_role_constructor_provider import binding_occurrences
+    from .runtime_audit_integrity import _conditional_module_name
+
+    additional = []
+    for base in owner.bases:
+        base_ref = _app_source_symbol(wrapper, path, base)
+        if base_ref is None:
+            continue  # Constructed default Model member is closed by its provider contract.
+        base_path, declaration = base_ref
+        if isinstance(declaration, ast.ClassDef) and any(
+            binding_occurrences(declaration.body, name) for name in {"query", "query_class", "__query_class__"}
+        ):
+            return None
+        base_canonical = _app_expression_name(wrapper, path, base)
+        if base_canonical is None and isinstance(base, ast.Name):
+            base_canonical = _conditional_module_name(index.relative(base_path)) + "." + base.id
+        if base_canonical is not None and isinstance(base, ast.Name):
+            additional.append((base_canonical, (base_path, base_canonical.rsplit(".", 1)[1])))
+    return tuple(additional)
+
+
+def persisted_field_input(call):
+    """Witness one possible request write to the exact mapped field read by a sink.
+
+    This is a positive static path, never a proof that all stored values or uses
+    are known, that a row is reachable in deployment, or that storage is safe.
+    """
+    from .finite_capture import _security_helper_source_context
+    from .credential_role_identity_effects import source_symbol_index
+    from .credential_role_constructor_provider import model_field_identities
+
+    module, index, path = _security_helper_source_context(call, None)
+    if index is None or path is None or getattr(index, "_storage_origin_building", False):
+        return None
+    if not index.validate(path) or (read := _persisted_field_read(call, index, path)) is None:
+        return None
+    models = model_field_identities(index)
+    selected, field = read
+    if selected not in models or field not in models[selected]["fields"]:
+        return None
+    if models[selected]["fields"][field].get("type") not in {
+        "TEXT", "VARCHAR", "CHAR", "NCHAR", "NVARCHAR", "STRING", "UNICODE", "UNICODETEXT"
+    }:
+        return None
+    wrapper = source_symbol_index(index)
+    if wrapper is None:
+        return None
+    from .credential_role_constructor_provider import _captured_terminal_provider_mutation
+    from .runtime_audit_integrity import _conditional_module_name
+    from . import review_audits as audit
+
+    canonical = _conditional_module_name(selected[0]) + "." + selected[1]
+    owner = index.parents[path][id(getattr(call, "_security_lexical_scope"))]
+    additional = _persisted_base_providers(index, wrapper, owner, path)
+    if additional is None:
+        return None
+    if _captured_terminal_provider_mutation(index, audit, canonical, local_binding=(path, selected[1]),
+                                           additional_bindings=tuple(additional)):
+        return None
+    index._storage_origin_building = True
+    try:
+        return _persisted_query_witness(index, wrapper, models, selected, field)
+    finally:
+        index._storage_origin_building = False
+
+
 def supported_security_precondition(node, source_role, consumer_role):
     """Describe a native producer's local premise, never runtime exploitability."""
     return {
@@ -2491,15 +2837,26 @@ def _flask_request_body_kind(node, aliases, scope, statement, alias_reader):
     return "text" if options["as_text"].value else "bytes"
 
 
-def request_payload_value_kind(node, requests, aliases, alias_reader):
+def request_payload_value_kind(
+    node, requests, aliases, alias_reader, scope=None, flow_statement=None
+):
     """Carry modeled request text/bytes through explicit codec operations only."""
+    from .review_integrity import _security_structural_expression
+
+    value = _security_structural_expression(node, requests, aliases)
+    if value is not None and not value.unknown and value.roots:
+        return value.scalar_kind
     kind = _request_payload_name_kind(node, requests)
     if kind is not None:
         return kind
-    kind = _request_payload_codec_kind(node, requests, aliases, alias_reader)
+    kind = _request_payload_codec_kind(
+        node, requests, aliases, alias_reader, scope, flow_statement
+    )
     if kind is not None:
         return kind
-    kind = _request_payload_source_kind(node, aliases, alias_reader)
+    kind = _request_payload_source_kind(
+        node, aliases, alias_reader, scope, flow_statement
+    )
     if kind is not None:
         return kind
     from .finite_capture import security_helper_return_kind
@@ -2515,27 +2872,33 @@ def _request_payload_name_kind(node, requests):
     return None
 
 
-def _request_payload_codec_kind(node, requests, aliases, alias_reader):
+def _request_payload_codec_kind(
+    node, requests, aliases, alias_reader, scope=None, flow_statement=None
+):
     if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
         codec = node.func.attr
         if codec in {"encode", "decode"} and not node.args and not node.keywords:
             original = request_payload_value_kind(
-                node.func.value, requests, aliases, alias_reader
+                node.func.value, requests, aliases, alias_reader, scope, flow_statement
             )
             if original == ("text" if codec == "encode" else "bytes"):
                 return "bytes" if codec == "encode" else "text"
     return None
 
 
-def _request_payload_source_kind(node, aliases, alias_reader):
-    body_kind = _flask_request_body_kind(node, aliases, None, None, alias_reader)
+def _request_payload_source_kind(
+    node, aliases, alias_reader, scope=None, flow_statement=None
+):
+    scope = scope or getattr(node, "_security_lexical_scope", None)
+    flow_statement = flow_statement or getattr(node, "_security_flow_statement", None)
+    body_kind = _flask_request_body_kind(node, aliases, scope, flow_statement, alias_reader)
     if body_kind:
         return body_kind
     if http_request_payload(
         node,
         aliases,
-        getattr(node, "_security_lexical_scope", None),
-        getattr(node, "_security_flow_statement", None),
+        scope,
+        flow_statement,
         alias_reader,
     ):
         if isinstance(node, ast.Attribute):
@@ -2545,8 +2908,7 @@ def _request_payload_source_kind(node, aliases, alias_reader):
         )[0]
         if not isinstance(container, ast.Attribute):
             return None
-        scope = getattr(node, "_security_lexical_scope", None)
-        resolved = alias_reader(scope, aliases, getattr(node, "_security_flow_statement", None))
+        resolved = alias_reader(scope, aliases, flow_statement)
         from .review_audits import _name
 
         head, _, tail = _name(container).partition(".")
@@ -2704,32 +3066,42 @@ def _django_http_body_payload(node, scope, resolved, attributes=frozenset({"body
     return False
 
 
-def security_precondition_providers_stable(tree, aliases, nodes):
-    """Keep request payload values distinct from provider-object escapes."""
+def _native_request_data_member(node, aliases):
+    """Framework data attributes are values; the request object remains a capability."""
     from .review_integrity import _security_scope_request_aliases
     from .review_audits import _resolved_ast_name
 
-    if any(
-        isinstance(node, (ast.Name, ast.Attribute))
-        and (
-            _resolved_ast_name(node, aliases).startswith(("sys.modules", "importlib."))
-            or (isinstance(node, ast.Name) and node.id == "__builtins__")
-        )
-        for node in nodes
-    ):
+    if (isinstance(node, ast.Subscript) and isinstance(node.ctx, ast.Load)
+            and isinstance(node.slice, ast.Constant) and type(node.slice.value) in {str, int}):
+        return _native_request_data_member(node.value, aliases)
+    if not (isinstance(node, ast.Attribute) and isinstance(node.ctx, ast.Load)
+            and node.attr in {"remote_addr", "method", "url", "base_url", "host", "path",
+                              "endpoint", "files", "headers", "cookies", "values"}):
         return False
+    scope = getattr(node, "_security_lexical_scope", None)
+    bindings = _security_scope_request_aliases(scope, aliases,
+        getattr(node, "_security_flow_statement", None))
+    return _resolved_ast_name(node.value, bindings) == "flask.request"
 
+
+def _native_input_provider_inventory(tree, aliases, nodes):
+    """Use the same request-value/provider distinction in every captured module."""
+    from .review_integrity import bind_security_call_scopes, _security_scope_request_aliases
+    from .review_audits import _resolved_ast_name
+
+    if not hasattr(tree, "_security_scope_kind"):
+        bind_security_call_scopes(tree)
     payloads = [
         node
         for node in nodes
         if isinstance(node, (ast.Attribute, ast.Call, ast.Subscript))
-        and http_request_payload(
+        and (http_request_payload(
             node,
             aliases,
             getattr(node, "_security_lexical_scope", None),
             getattr(node, "_security_flow_statement", None),
             _security_scope_request_aliases,
-        )
+        ) or _native_request_data_member(node, aliases))
     ]
     payload_ids = {id(node) for node in payloads}
     payload_children = {id(child) for node in payloads for child in ast.walk(node)}
@@ -2742,15 +3114,43 @@ def security_precondition_providers_stable(tree, aliases, nodes):
         in {"yaml.Loader", "yaml.UnsafeLoader", "yaml.CLoader", "yaml.CUnsafeLoader"}
         for child in ast.walk(node.value)
     }
-    inventory = [
+    return [
         node
         for node in nodes
         if id(node) not in payload_children | loader_children
+        and not (isinstance(node, ast.Name)
+                 and isinstance(getattr(node, "_security_parent", None), ast.Attribute)
+                 and getattr(node, "_security_parent").value is node)
         and not (
             isinstance(node, (ast.Assign, ast.AnnAssign))
             and id(node.value) in payload_ids
         )
     ]
+
+
+def _native_input_inventory_epoch():
+    from . import review_integrity, intent_quality
+
+    functions = [value for namespace in (globals(), vars(review_integrity), vars(intent_quality))
+                 for value in namespace.values() if callable(value) and hasattr(value, "__code__")]
+    return tuple((fn, fn.__code__, id(fn.__defaults__)) for fn in functions)
+
+
+def security_precondition_providers_stable(tree, aliases, nodes):
+    """Keep request payload values distinct from provider-object escapes."""
+    from .review_audits import _resolved_ast_name
+
+    if any(
+        isinstance(node, (ast.Name, ast.Attribute))
+        and (
+            _resolved_ast_name(node, aliases).startswith(("sys.modules", "importlib."))
+            or (isinstance(node, ast.Name) and node.id == "__builtins__")
+        )
+        for node in nodes
+    ):
+        return False
+
+    inventory = _native_input_provider_inventory(tree, aliases, nodes)
     parents = {
         id(child): node for node in nodes for child in ast.iter_child_nodes(node)
     }
@@ -2758,18 +3158,14 @@ def security_precondition_providers_stable(tree, aliases, nodes):
         tree,
         aliases,
         roots=(
-            "os",
-            "subprocess",
-            "pickle",
-            "_pickle",
-            "dill",
-            "yaml",
-            "builtins",
-            "flask",
-            "django",
+            "os.system", "os.path.join", "subprocess", "pickle", "_pickle", "dill",
+            "yaml", "builtins", "flask", "django",
         ),
+        selected_paths=True,
         nodes=inventory,
         parents=parents,
+        inventory_projector=_native_input_provider_inventory,
+        inventory_dependencies=_native_input_inventory_epoch(),
     )
 
 
