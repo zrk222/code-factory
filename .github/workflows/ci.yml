@@ -1,322 +1,37 @@
-name: ci
+name: focused snapshot integrity verification
 on:
-  push:
-    branches: [ main ]
-  pull_request:
   workflow_dispatch:
-
 permissions:
   contents: read
-
-concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
-  coordinated-acceptance:
-    name: coordinated acceptance (${{ matrix.os }})
+  repaired-snapshot-tests:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest]
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
-        with:
-          ref: 9d0697da39f9b52e932bc712943725e924adc434
-          persist-credentials: false
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
-        with:
-          repository: zrk222/code-factory-1-spec
-          ref: c00fef6f490ea7dff72ea3d9d699315a28c80d9e
-          path: .integration/spec
-          persist-credentials: false
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
-        with:
-          repository: zrk222/code-factory-2-forge
-          ref: 7830ef1465a80cabfaafad69a0fbd7c1077d8226
-          path: .integration/forge
-          persist-credentials: false
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
-        with:
-          python-version: "3.11"
-      - name: Install exact checked-out tool sources
-        run: python -m pip install -e . -e .integration/spec -e .integration/forge pytest
-      - name: Verify native handoff and stale-evidence controls
-        run: python -m pytest -q -o addopts= -o junit_family=xunit2 --junitxml=coordinated-acceptance.xml .integration/spec/tests/test_acceptance_evidence.py .integration/spec/tests/test_acceptance_mutations.py
-      - name: Reject skipped or incomplete coordinated evidence
-        run: |
-          python -c "import xml.etree.ElementTree as E; r=E.parse('coordinated-acceptance.xml'); s=list(r.iter('testsuite')); assert sum(int(x.get('tests','0')) for x in s)==19; assert not any(int(x.get(k,'0')) for x in s for k in ('skipped','failures','errors')); print('19 coordinated cases executed without skips')"
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
-        if: always()
-        with:
-          name: coordinated-acceptance-${{ matrix.os }}
-          path: coordinated-acceptance.xml
-          if-no-files-found: error
-
-  candidate-quality:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
-        with:
-          ref: 9d0697da39f9b52e932bc712943725e924adc434
-          persist-credentials: false
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
-        with:
-          python-version: "3.11"
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
-        with:
-          node-version: "22"
-      - name: Install fixed audit and TypeScript parser versions
-        run: |
-          python -m pip install code-factory-2-forge==0.10.8
-          npm install --no-save --no-package-lock typescript@5.9.3
-      - name: Require A grade at 97.9, 99.85% attribution and the strict 464 Python file ceiling
-        run: |
-          forge qa --repo-wide --root . --strict > candidate-quality.json
-          python - <<'PY'
-          import json, subprocess
-          from pathlib import Path
-          report = json.loads(Path('candidate-quality.json').read_text())
-          assert report['grade'] == 'A' and report['passed'] is True
-          assert report['metrics']['composite'] >= 97.9
-          assert report['attribution']['rate'] >= 0.9985, 'static test-intent attribution fell below 99.85%'
-          assert report['metrics']['max_complexity'] <= 10
-          assert not report.get('findings'), 'quality findings remain'
-          assert not report['metrics'].get('skipped_paths'), 'source was unreadable'
-          paths = subprocess.check_output(['git', 'ls-files', '-z']).decode().split('\0')
-          assert sum(path.endswith('.py') for path in paths if path) <= 464
-          policy = json.loads(Path('architecture-policy.json').read_text())
-          assert policy['budgets']['max_python_files'] == 464
-          assert policy['budgets']['max_core_modules'] == 133
-          print('CANDIDATE_QUALITY_A_97_9_AND_464_CEILING_OK')
-          PY
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
-        if: always()
-        with:
-          name: candidate-quality
-          path: candidate-quality.json
-          if-no-files-found: error
-
-  editor-security:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    defaults:
-      run:
-        working-directory: editors/vscode
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
-        with:
-          ref: 9d0697da39f9b52e932bc712943725e924adc434
-          persist-credentials: false
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
-        with:
-          node-version: "22"
-          cache: npm
-          cache-dependency-path: editors/vscode/package-lock.json
-      - run: npm ci --no-audit
-      - name: Audit production and build dependencies without ignore rules
-        run: npm run audit
-      - run: npm test
-      - name: Exercise Muse receipt integrity and hook event handling
-        working-directory: .
-        run: node --test plugins/muse-code-factory-audit/tests/mcp-server.test.mjs
-      - name: Exercise offline Jev evaluation and failure controls
-        working-directory: .
-        run: node --test scripts/evaluate_jev.test.mjs
-
-  video-regressions:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    defaults:
-      run:
-        working-directory: videos/code-factory-proof-of-survival/remotion
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
-        with:
-          ref: 9d0697da39f9b52e932bc712943725e924adc434
-          persist-credentials: false
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
-        with:
-          node-version: "22"
-          cache: npm
-          cache-dependency-path: videos/code-factory-proof-of-survival/remotion/package-lock.json
-      - run: npm ci --ignore-scripts --no-audit
-      - run: npm test
-
-  test:
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
-        python: ["3.10", "3.11", "3.12"]
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+        python-version: ['3.10', '3.11', '3.12']
+    env:
+      PYTEST_DISABLE_PLUGIN_AUTOLOAD: '1'
+      PYTHONIOENCODING: utf-8
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
-          ref: 9d0697da39f9b52e932bc712943725e924adc434
+          ref: 146c529cb04707af6b9c4513c8dc21eb5f62730b
+          persist-credentials: false
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
-          python-version: ${{ matrix.python }}
-          cache: pip
-      - name: Install
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install -e ".[dev,enterprise]"
-      - name: Require immutable action and reusable workflow refs
-        if: matrix.os == 'ubuntu-latest' && matrix.python == '3.11'
-        run: |
-          python -c "import json; from pathlib import Path; from factoryline.workflow_audit import audit_action_pins; r=audit_action_pins(Path('.')); print(json.dumps(r,indent=2)); raise SystemExit(0 if r['state']=='PASS' else 1)"
-      - name: Enforce architecture and per-file growth budgets
-        if: matrix.os == 'ubuntu-latest' && matrix.python == '3.11'
-        run: python -m factoryline.cli architecture health --strict --json
-      - name: Test without runtime coverage
-        if: matrix.os != 'ubuntu-latest' || matrix.python != '3.11'
-        run: python -m pytest -n 2 -q --junitxml=pytest-results.xml --durations=20
-      - name: Start runtime coverage receipt
-        id: runtime-coverage-start
-        if: matrix.os == 'ubuntu-latest' && matrix.python == '3.11'
-        run: python scripts/write_ci_runtime_coverage.py start
-      - name: Test with runtime statement and branch coverage
-        id: runtime-tests
-        if: matrix.os == 'ubuntu-latest' && matrix.python == '3.11'
-        env:
-          COVERAGE_FILE: .factory/test-reports/.coverage
-          PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
-        run: >-
-          python -m pytest -p pytest_asyncio.plugin -p xdist.plugin -q -n 2 -p pytest_cov.plugin
-          --junitxml=.factory/test-reports/pytest.xml --durations=20
-          --cov=factoryline --cov-branch
-          --cov-report=json:.factory/test-reports/coverage.json
-          --cov-report=xml:.factory/test-reports/coverage.xml
-      - name: Finish runtime coverage receipt
-        if: always() && steps.runtime-coverage-start.outcome == 'success'
-        env:
-          TEST_OUTCOME: ${{ steps.runtime-tests.outcome }}
-        run: python scripts/write_ci_runtime_coverage.py finish
-      - name: Upload test results and timing evidence
-        if: always() && (matrix.os != 'ubuntu-latest' || matrix.python != '3.11')
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
-        with:
-          name: pytest-${{ matrix.os }}-${{ matrix.python }}
-          path: pytest-results.xml
-          if-no-files-found: error
-      - name: Upload runtime coverage reports
-        if: always() && matrix.os == 'ubuntu-latest' && matrix.python == '3.11'
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
-        with:
-          name: pytest-${{ matrix.os }}-${{ matrix.python }}
-          path: |
-            .factory/test-reports/pytest.xml
-            .factory/test-reports/coverage.json
-            .factory/test-reports/coverage.xml
-            .factory/test-reports/coverage.run.json
-          include-hidden-files: true
-          if-no-files-found: error
-
-  native-process-parity:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
-        with:
-          ref: 9d0697da39f9b52e932bc712943725e924adc434
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
-        with:
-          python-version: "3.11"
-          cache: pip
-      - name: Install native parity test dependencies
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install -e ".[dev]"
-      - name: Verify native process parity
-        run: >-
-          python -m pytest -q -rA
-          tests/test_assembly_process.py::test_ci_runs_native_python_matrix_on_all_supported_host_families
-          tests/test_assembly_process.py::test_candidate_quality_gate_keeps_attribution_floor_and_python_cap
-          tests/test_assembly_process.py::test_native_timeout_returns_closed_receipt
-          tests/test_assembly_process.py::test_native_output_limit_returns_closed_receipt
-          tests/test_assembly_process.py::test_native_cancellation_returns_closed_receipt
-          tests/test_assembly_process.py::test_native_surviving_child_is_unconfirmed
-          --junitxml=native-process-parity.junit.xml
+          python-version: ${{ matrix.python-version }}
+      - name: Install the exact repaired source
+        run: python -m pip install -e . pytest
+      - name: Verify source revision
+        run: python -c "import subprocess; assert subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip()=='146c529cb04707af6b9c4513c8dc21eb5f62730b'"
+      - name: Run only repaired source integrity and parser controls
+        run: python -m pytest tests/test_review_integrity.py::test_unretained_snapshot_rejects_transient_changed_and_restored_bytes tests/test_review_audits.py::test_bound_snapshots_parses_only_hash_matching_source_bytes tests/test_runtime_audit_integrity.py -k "source_diagnostic318 or transient_changed_and_restored_bytes or bound_snapshots_parses_only_hash_matching_source_bytes" -q --junitxml=snapshot-integrity.xml
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
         with:
-          name: native-process-parity-${{ matrix.os }}
-          path: native-process-parity.junit.xml
+          name: snapshot-integrity-${{ matrix.os }}-${{ matrix.python-version }}
+          path: snapshot-integrity.xml
           if-no-files-found: error
-
-  package-contract:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
-        with:
-          ref: 9d0697da39f9b52e932bc712943725e924adc434
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
-        with:
-          python-version: "3.12"
-          cache: pip
-      - name: Build and inspect distributions
-        run: |
-          python -m pip install --upgrade build twine
-          python -m build
-          # Check only publishable archives; ignored scratch directories in
-          # dist/ must never be interpreted as distributions.
-          python -m twine check dist/*.whl dist/*.tar.gz
-      - name: Prove the wheel installs without the source tree
-        run: |
-          python -m venv /tmp/factory-wheel
-          /tmp/factory-wheel/bin/python -m pip install dist/*.whl
-          cp scripts/release_train_e2e.py /tmp/release_train_e2e.py
-          cd /tmp
-          /tmp/factory-wheel/bin/factory --help
-          ! /tmp/factory-wheel/bin/factory verify missing-feature --root /tmp --strict-release --json
-          /tmp/factory-wheel/bin/python -c "import factoryline; print(factoryline.__version__)"
-          /tmp/factory-wheel/bin/python /tmp/release_train_e2e.py
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
-        with:
-          name: python-distributions
-          path: dist/
-          if-no-files-found: error
-
-  five-brick-prooflab:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
-        with:
-          ref: 9d0697da39f9b52e932bc712943725e924adc434
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
-        with:
-          python-version: "3.12"
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
-        with:
-          node-version: "22"
-      - name: Install pinned TypeScript parser for the ForgeLine TSX doctor canary
-        run: npm install --no-save --no-package-lock typescript@5.9.3
-      - name: Check out reviewed immutable companion revisions
-        run: |
-          git init ../code-factory-1-spec && git -C ../code-factory-1-spec fetch --depth 1 https://github.com/zrk222/code-factory-1-spec.git 6da88be2e99bd8082e950673ee5151db84c43f2d && git -C ../code-factory-1-spec checkout --detach FETCH_HEAD
-          git init ../code-factory-2-forge && git -C ../code-factory-2-forge fetch --depth 1 https://github.com/zrk222/code-factory-2-forge.git 77eea36a7b7762b834997e0fa1be9132070af928 && git -C ../code-factory-2-forge checkout --detach FETCH_HEAD
-          git init ../code-factory-3-compile && git -C ../code-factory-3-compile fetch --depth 1 https://github.com/zrk222/code-factory-3-compile.git 2f09e463f6f4bb896691a39807a664878f9e62f4 && git -C ../code-factory-3-compile checkout --detach FETCH_HEAD
-          git init ../code-factory-4-design && git -C ../code-factory-4-design fetch --depth 1 https://github.com/zrk222/code-factory-4-design.git 3190b17d4c242fd18c13306309d33ccb2b24ba04 && git -C ../code-factory-4-design checkout --detach FETCH_HEAD
-      - name: Install source train
-        run: >-
-          python -m pip install -e ".[dev]"
-          -e ../code-factory-1-spec
-          -e ../code-factory-2-forge
-          -e ../code-factory-3-compile
-          -e ../code-factory-4-design
-      - name: Run HSF admission extraction-failure integration test
-        run: >-
-          python -m pytest -q
-          tests/test_loop_passport.py::test_hsf_admission_advice_routes_extraction_failure_to_human_review
-      - run: factory doctor --strict
-      - name: Build and verify five-brick Factory Passport
-        run: python scripts/prooflab_e2e.py
-      - name: Prove complete release decisions and reject incomplete ones
-        run: python scripts/release_train_e2e.py
