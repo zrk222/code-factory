@@ -17,6 +17,77 @@ from factoryline.runtime_audit_integrity import source_generated_eval_input_witn
 
 
 @pytest.mark.parametrize(
+    "config",
+    [
+        '[tool.pytest.ini_options]\naddopts = "--doctest-modules"\n',
+        '[tool.pytest]\nstrict = true\naddopts = ["-ra", "--import-mode=importlib"]\n',
+        '[tool.pytest]\naddopts = "--import-mode append --doctest-modules"\n',
+    ],
+)
+def test_builtin_collection_modes_security_only_native(tmp_path, capsys, config):
+    from factoryline.pytest_collection_audit import _pytest_collection_config
+    from factoryline.cli import main
+    from factoryline.mission_control_status import security_scan_status
+
+    path = tmp_path / "pyproject.toml"
+    path.write_text(config, encoding="utf-8")
+    (tmp_path / "app.py").write_text(
+        "from flask import request\ndef run():\n    return eval(request.args['code'])\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "test_empty.py").write_text(
+        "def test_empty(): pass\n", encoding="utf-8"
+    )
+    with pytest.raises(
+        review_audits.ReviewAuditError, match="unsupported configuration"
+    ):
+        _pytest_collection_config(tmp_path)
+    patterns, identity = _pytest_collection_config(tmp_path, allow_unknown=True)
+    assert patterns == set() and identity["collection_state"] == "UNKNOWN"
+    assert identity["sha256"] == hashlib.sha256(path.read_bytes()).hexdigest()
+    assert all(
+        identity[k] == []
+        for k in ("python_files", "python_functions", "python_classes")
+    )
+    code = main(
+        ["audit", "security", "--root", str(tmp_path), "--security-only", "--json"]
+    )
+    output = capsys.readouterr()
+    assert output.err == "" and code == 2
+    report = json.loads(output.out)
+    assert report["state"] == "INCOMPLETE"
+    assert (
+        report["oracle_context"]["test_oracle_assessment"]
+        == "NOT_ASSESSED_SECURITY_ONLY"
+    )
+    assert any(f["code"] == "SECURITY_DYNAMIC_EXECUTION" for f in report["findings"])
+    assert not any(f["code"].startswith("QUALITY_") for f in report["findings"])
+    receipt = json.loads((tmp_path / ".factory/security-scan/latest.json").read_text())
+    assert receipt["report"] == report
+    status = security_scan_status(tmp_path)
+    assert status["candidate_freshness"] == "PYTEST_COLLECTION_UNKNOWN"
+    assert status["source_freshness"] == "CURRENT_SOURCE_HASHES_VERIFIED"
+    path.write_text(config + "\n# changed\n", encoding="utf-8")
+    assert _pytest_collection_config(tmp_path, allow_unknown=True)[1] != identity
+
+
+@pytest.mark.parametrize(
+    "addopts",
+    ["--import-mode=invalid", "--import-mode", "--doctest-modules -p plugin"],
+)
+def test_builtin_collection_modes_do_not_admit_invalid_or_plugin_options(
+    tmp_path, addopts
+):
+    from factoryline.pytest_collection_audit import _pytest_collection_config
+
+    (tmp_path / "pytest.ini").write_text(
+        "[pytest]\naddopts = " + addopts + "\n", encoding="utf-8"
+    )
+    with pytest.raises(review_audits.ReviewAuditError):
+        _pytest_collection_config(tmp_path, allow_unknown=True)
+
+
+@pytest.mark.parametrize(
     "source",
     ["pytest_plugins = ['plugin']\n", "def pytest_generate_tests(metafunc): pass\n"],
 )

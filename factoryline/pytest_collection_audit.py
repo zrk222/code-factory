@@ -153,15 +153,16 @@ def _pytest_collection_config(root, source_files=None, *, allow_unknown=False):
     for relative, section in candidates:
         result = _pytest_config_file(root, relative, section, defaults)
         if result is not None and result[1].get("state") != "absent-section":
+            unmodeled = result[1].get("state") == "unmodeled-builtin-collection"
             if result[1].get("state") in {
                 "invalid",
                 "oversized",
                 "unreadable",
                 "unsupported",
-            }:
+            } or (unmodeled and not allow_unknown):
                 raise ReviewAuditError(
                     f"Cannot determine pytest test collection from {relative}: "
-                    f"{result[1]['state']} configuration."
+                    f"{'unsupported' if unmodeled else result[1]['state']} configuration."
                 )
             patterns, identity = result
             identity = _pytest_collection_source_identity(
@@ -251,13 +252,16 @@ def _pytest_collection_source_identity(
             "Cannot determine pytest test collection: custom collection hooks "
             "or pytest plugins are unsupported."
         )
-    if hooks:
+    unmodeled = identity.get("state") == "unmodeled-builtin-collection"
+    if hooks or unmodeled:
         return {
             **identity,
             "state": "unsupported",
             "collection_state": "UNKNOWN",
             "mode": "security_only",
-            "reason": "custom_collection_hooks_or_pytest_plugins",
+            "reason": "unmodeled_builtin_collection_options"
+            if unmodeled
+            else "custom_collection_hooks_or_pytest_plugins",
             "python_files": [],
             "python_functions": [],
             "python_classes": [],
@@ -348,6 +352,8 @@ def _pytest_config_data(data, relative, section, defaults):
         return set(), {**identity, "state": "invalid"}
     if configured is _UNSUPPORTED_PYTEST_CONFIG:
         return defaults, {**identity, "state": "unsupported"}
+    if configured is _UNMODELED_BUILTIN_COLLECTION:
+        return defaults, {**identity, "state": "unmodeled-builtin-collection"}
     if configured is _ABSENT_PYTEST_SECTION:
         if relative in {"pytest.toml", ".pytest.toml", "pytest.ini", ".pytest.ini"}:
             identity.update(
@@ -382,7 +388,7 @@ def _pytest_pattern_value(text, section):
     if not _supported_pytest_function_patterns(options):
         return _UNSUPPORTED_PYTEST_CONFIG
     if _pytest_config_uses_custom_collection(options):
-        return _UNSUPPORTED_PYTEST_CONFIG
+        return _pytest_custom_collection_state(options)
     return _pytest_patterns_from_options(options)
 
 
@@ -401,7 +407,7 @@ def _toml_pytest_pattern_value(text, section):
     if not _supported_pytest_function_patterns(options):
         return _UNSUPPORTED_PYTEST_CONFIG
     if _pytest_config_uses_custom_collection(options):
-        return _UNSUPPORTED_PYTEST_CONFIG
+        return _pytest_custom_collection_state(options)
     return _pytest_patterns_from_options(options)
 
 
@@ -470,6 +476,33 @@ def _pytest_config_uses_custom_collection(options):
     )
 
 
+def _pytest_custom_collection_state(options):
+    """Distinguish builtin collector modes from invalid/external configuration."""
+    addopts = options.get("addopts", "")
+    if isinstance(addopts, list) and all(isinstance(value, str) for value in addopts):
+        addopts = " ".join(addopts)
+    if not isinstance(addopts, str):
+        return _UNSUPPORTED_PYTEST_CONFIG
+    tokens = iter(addopts.split())
+    remaining = []
+    for token in tokens:
+        if token == "--doctest-modules":
+            continue
+        if token == "--import-mode" or token.startswith("--import-mode="):
+            mode = (
+                next(tokens, None)
+                if token == "--import-mode"
+                else token.partition("=")[2]
+            )
+            if mode not in {"prepend", "append", "importlib"}:
+                return _UNSUPPORTED_PYTEST_CONFIG
+            continue
+        remaining.append(token)
+    if _pytest_config_uses_custom_collection({**options, "addopts": remaining}):
+        return _UNSUPPORTED_PYTEST_CONFIG
+    return _UNMODELED_BUILTIN_COLLECTION
+
+
 def _pytest_pattern_list(value):
     return value.split() if isinstance(value, str) else value
 
@@ -481,3 +514,6 @@ _INVALID_PYTEST_CONFIG = object()
 
 
 _UNSUPPORTED_PYTEST_CONFIG = object()
+
+
+_UNMODELED_BUILTIN_COLLECTION = object()
