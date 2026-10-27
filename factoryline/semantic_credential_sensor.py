@@ -5513,6 +5513,8 @@ def _security_structural_helper_flow_value(
 
 def _security_structural_call_flow_value(call, requests, aliases):
     """Resolve a captured helper call and project its exact source-bound return."""
+    if not isinstance(call, ast.Call):
+        return None
     from . import review_integrity as flow
     from .credential_role_identity_effects import resolve_source_identity_call
     from .finite_capture import security_structural_helper_summary
@@ -5743,15 +5745,13 @@ def _source_built_ast_profile(sink, builder, owner):
 def security_input_value_flow(expression, requests, aliases):
     """Return a regenerable scalar input trace, not runtime authority or safety."""
     if hasattr(requests, "values"):
-        if isinstance(expression, ast.Call):
-            helper_value = _security_structural_call_flow_value(
-                expression, requests, aliases
-            )
-            if helper_value is not None:
-                if evidence := _security_input_flow_evidence(
-                    helper_value, value_type=_SecurityFlowValue
-                ):
-                    return evidence
+        helper_value = _security_structural_call_flow_value(
+            expression, requests, aliases
+        )
+        if evidence := _security_input_flow_evidence(
+            helper_value, value_type=_SecurityFlowValue
+        ):
+            return evidence
         from .credential_role_identity_effects import _Value
 
         from .finite_capture import security_structural_value

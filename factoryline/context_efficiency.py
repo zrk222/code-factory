@@ -1021,17 +1021,6 @@ def _scan_security_source(
         tree._oracle_source_sha256 = binding["sha256"]
         encoding, _ = tokenize.detect_encoding(io.BytesIO(data).readline)
         tree._oracle_source_lines = data.decode(encoding).splitlines()
-    except SyntaxError as exc:
-        return _security_source_failure(
-            audit,
-            binding,
-            relative,
-            "QUALITY_SYNTAX_ERROR",
-            exc,
-            "Python source cannot be parsed deterministically.",
-            "syntax_error",
-            detail="invalid Python syntax",
-        )
     except (OSError, UnicodeError, audit.RuntimeAuditError) as exc:
         return _security_source_failure(
             audit,
@@ -1042,6 +1031,17 @@ def _scan_security_source(
             "Source could not be read for security analysis.",
             "unreadable",
             detail=type(exc).__name__,
+        )
+    except (SyntaxError, ValueError) as exc:
+        return _security_source_failure(
+            audit,
+            binding,
+            relative,
+            "QUALITY_SYNTAX_ERROR",
+            exc,
+            "Python source cannot be parsed deterministically.",
+            "syntax_error",
+            detail="invalid Python syntax",
         )
     security_only = (oracle_context or {}).get("_security_only", False)
     security_only = security_only is True or audit._SECURITY_ONLY_SCAN.get() is True

@@ -1269,9 +1269,19 @@ def test_provider_profile308_public_api_rejects_before_source_inventory(
 @pytest.mark.parametrize(
     "source", [b"\x00", b"value = 'unclosed", b"# coding: unknown-codec\nvalue = 1\n"]
 )
+@pytest.mark.parametrize("legacy_null_error", [False, True])
 def test_source_diagnostic318_missing_coordinates_retains_parse_failure(
-    tmp_path, source
+    tmp_path, source, legacy_null_error, monkeypatch
 ):
+    if legacy_null_error:
+        parse = ast.parse
+
+        def legacy_parse(data, *args, **kwargs):
+            if isinstance(data, bytes) and b"\x00" in data:
+                raise ValueError("source code string cannot contain null bytes")
+            return parse(data, *args, **kwargs)
+
+        monkeypatch.setattr(ast, "parse", legacy_parse)
     (tmp_path / "broken.py").write_bytes(source)
     report = review_audits.security_scan(tmp_path, cache_enabled=False)
     assert report["parse_errors"] == 1
@@ -1289,6 +1299,41 @@ def test_source_diagnostic318_known_coordinates_are_preserved():
         "QUALITY_SYNTAX_ERROR", "broken.py", node, "Invalid syntax", "HIGH"
     )
     assert (row["line"], row["column"]) == (7, 3)
+
+
+@pytest.mark.parametrize(
+    ("error", "expected_code", "expected_outcome"),
+    [
+        (ValueError("null bytes"), "QUALITY_SYNTAX_ERROR", "syntax_error"),
+        (SyntaxError("invalid syntax"), "QUALITY_SYNTAX_ERROR", "syntax_error"),
+        (
+            UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid byte"),
+            "SECURITY_SOURCE_UNREADABLE",
+            "unreadable",
+        ),
+    ],
+)
+def test_source_diagnostic318_parser_error_classes_stay_distinct(
+    tmp_path, monkeypatch, error, expected_code, expected_outcome
+):
+    from factoryline import context_efficiency
+
+    path = tmp_path / "source.py"
+    source = b"value = 1\n"
+    path.write_bytes(source)
+
+    def reject_tree(*args, **kwargs):
+        raise error
+
+    monkeypatch.setattr(context_efficiency, "_verified_security_tree", reject_tree)
+    binding, findings, outcome = context_efficiency._scan_security_source(
+        tmp_path, path, (), (), {}, (), source
+    )
+    assert binding["path"] == "source.py"
+    assert outcome == expected_outcome
+    assert len(findings) == 1
+    assert findings[0]["code"] == expected_code
+    assert findings[0]["severity"] == "HIGH"
 
 
 def test_provider_profile308_public_scan_preserves_raw_and_default(
