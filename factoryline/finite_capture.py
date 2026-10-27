@@ -4595,7 +4595,16 @@ def _project_provider_inventory(nodes, aliases, parents, bindings, projector):
     if projector is None or not nodes:
         return nodes, bindings
     tree = next(n for n in parents.values() if isinstance(n, ast.Module))
-    nodes = projector(tree, aliases, list(ast.walk(tree)))
+    from . import intent_quality as contracts
+    from .semantic_credential_sensor import _new_security_request_alias_memo
+
+    token = contracts._SECURITY_REQUEST_ALIAS_MEMO.set(
+        _new_security_request_alias_memo(tree)
+    )
+    try:
+        nodes = projector(tree, aliases, list(ast.walk(tree)))
+    finally:
+        contracts._SECURITY_REQUEST_ALIAS_MEMO.reset(token)
     return nodes, _provider_alias_bindings(nodes)
 
 

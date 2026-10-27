@@ -1484,3 +1484,45 @@ def test_evidence_policy_remediation_retains_quality_hollow_handoff(tmp_path):
         a["finding_context"]["code"] == "QUALITY_HOLLOW_TEST"
         for a in report["agent_actions"]
     )
+
+
+@pytest.mark.parametrize("raises", [False, True])
+def test_foreign_provider_request_alias_memo_restores_outer(raises):
+    import ast
+    from factoryline import finite_capture, intent_quality, semantic_credential_sensor
+
+    outer = ast.parse("import outer\n")
+    foreign = ast.parse(
+        "from flask import request\ndef view():\n    return request.form['value']\n"
+    )
+    memo = semantic_credential_sensor._new_security_request_alias_memo(outer)
+    token = intent_quality._SECURITY_REQUEST_ALIAS_MEMO.set(memo)
+    nodes = list(ast.walk(foreign))
+    parents = {
+        id(child): parent for parent in nodes for child in ast.iter_child_nodes(parent)
+    }
+    observed = []
+
+    def projector(tree, aliases, input_nodes):
+        current = intent_quality._SECURITY_REQUEST_ALIAS_MEMO.get()
+        observed.append(current["tree"] is tree)
+        assert current["tree"] is foreign
+        if raises:
+            raise ValueError("projector failure")
+        return input_nodes
+
+    try:
+        if raises:
+            with pytest.raises(ValueError, match="projector failure"):
+                finite_capture._project_provider_inventory(
+                    nodes, {}, parents, {}, projector
+                )
+        else:
+            actual, _ = finite_capture._project_provider_inventory(
+                nodes, {}, parents, {}, projector
+            )
+            assert [id(node) for node in actual] == [id(node) for node in nodes]
+        assert observed == [True]
+        assert intent_quality._SECURITY_REQUEST_ALIAS_MEMO.get() is memo
+    finally:
+        intent_quality._SECURITY_REQUEST_ALIAS_MEMO.reset(token)
