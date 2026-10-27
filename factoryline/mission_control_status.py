@@ -937,6 +937,7 @@ def _security_scan_report_consistency_error(
     if report.get("state") not in {
         "CLEAN",
         "FINDINGS",
+        "REVIEW_REQUIRED",
         "BLOCKED",
         "INCOMPLETE",
         "NO_SOURCES",

@@ -1008,6 +1008,63 @@ def test_security_scan_receipt_is_current_hash_bound_and_advisory(tmp_path: Path
     assert any(item["code"] == "QUALITY_HOLLOW_TEST" for item in stale["findings"])
 
 
+@pytest.mark.parametrize("policy", ["source-role-v1", "source-role-v2", "source-role-v3"])
+@pytest.mark.parametrize("tenant_loaded", [False, True])
+def test_source_role_review_required_receipt_is_advisory(
+    tmp_path: Path, capsys, policy, tenant_loaded
+):
+    from factoryline import review_audits
+    from factoryline.cli import main
+
+    source = tmp_path / "app.py"
+    source.write_text("VALUE = 1\n", encoding="utf-8")
+    if tenant_loaded:
+        (tmp_path / ".factory").mkdir()
+        (tmp_path / ".factory" / "tenant-read-contract.json").write_text(
+            json.dumps({"schema": "factory.tenant-read-contract.v1", "reads": []}),
+            encoding="utf-8",
+        )
+    with review_audits._security_only_scan_context(True):
+        exit_code = main(
+            ["audit", "security", "--root", str(tmp_path), "--defect-policy", policy, "--json"]
+        )
+    report = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert report["state"] == "REVIEW_REQUIRED"
+    assert report["findings"] == []
+    decision = report["defect_policy_decision"]
+    assert not any(decision[key] for key in ("clean", "passed", "release_approved"))
+    status = security_scan_status(tmp_path)
+    assert status["report_state"] == "REVIEW_REQUIRED"
+    assert status["state"] == ("REVIEW_REQUIRED" if tenant_loaded else "INCOMPLETE")
+    assert status["candidate_freshness"] == "CURRENT_SOURCE_HASHES_VERIFIED"
+    assert status["authority"] == {"execution": False, "approval": False, "repair": False}
+
+    source.write_text("VALUE = 2\n", encoding="utf-8")
+    stale = security_scan_status(tmp_path)
+    assert stale["state"] == "INCOMPLETE"
+    assert stale["report_state"] == "REVIEW_REQUIRED"
+    assert stale["candidate_freshness"] == "SOURCE_HASH_MISMATCH"
+
+
+def test_security_scan_receipt_rejects_unknown_state(tmp_path: Path):
+    from factoryline.deep_audit_io import canonical_bytes, digest
+    from factoryline.review_audits import _seal_security_scan
+
+    _complete_security_scan_receipt(tmp_path)
+    path = tmp_path / ".factory" / "security-scan" / "latest.json"
+    envelope = json.loads(path.read_bytes())
+    envelope["report"]["state"] = "NOT_A_SCAN_STATE"
+    envelope["report"] = _seal_security_scan(envelope["report"])
+    envelope["receipt_sha256"] = digest(
+        {key: value for key, value in envelope.items() if key != "receipt_sha256"}
+    )
+    path.write_bytes(canonical_bytes(envelope))
+    status = security_scan_status(tmp_path)
+    assert status["state"] == "INVALID"
+    assert status["reason"] == "scan state is invalid"
+
+
 def test_security_scan_source_removed_after_receipt_is_incomplete(tmp_path: Path):
     _complete_security_scan_receipt(tmp_path)
     (tmp_path / "test_case.py").unlink()
