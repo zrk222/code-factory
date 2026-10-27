@@ -19,13 +19,47 @@ def application_value_role_evidence(index, path, literal, assignment, secret):
     if object_signing is not None:
         return object_signing
     factory = _app_factory_test_authority(index, path, assignment, secret)
-    return (
-        factory
-        if factory is not None
-        else _legacy.application_plaintext_effect_evidence(
-            index, path, literal, assignment, secret
-        )
+    if factory is not None:
+        return factory
+    plaintext = _legacy.application_plaintext_effect_evidence(
+        index, path, literal, assignment, secret
     )
+    return plaintext or application_test_scope_role_evidence(
+        index, path, assignment, secret
+    )
+
+
+def application_test_scope_role_evidence(index, path, assignment, secret):
+    """Recompute test-invocation scope independently of crypto validity."""
+    from .credential_role_method_use_getter_audit import _source_test_scope_evidence
+
+    return _source_test_scope_evidence(index, path, assignment, secret)
+
+
+class _TestScopeContractEpoch:
+    """Retain actual immutable model bindings for role-cache generations."""
+
+    __name__ = "test_scope_contract_epoch"
+
+    @property
+    def __code__(self):
+        from . import credential_role_method_use_getter_audit as getter
+
+        names = sorted(
+            name
+            for name in vars(getter)
+            if name.startswith("_SCOPE_") or name == "SCOPE_API_CONTRACT_EPOCH"
+        )
+        values = tuple(getattr(getter, name) for name in names)
+        key = tuple((name, id(value)) for name, value in zip(names, values))
+        if not hasattr(self, "generations"):
+            self.generations = {}
+        if key not in self.generations:
+            self.generations[key] = (object(), values)
+        return self.generations[key][0]
+
+
+_TEST_SCOPE_CONTRACT_EPOCH = _TestScopeContractEpoch()
 
 
 def _app_digest_provider_binding(index, path, owner, call):
@@ -5161,6 +5195,8 @@ def application_identity_helper_epoch():
     """Bind every moved application audit predicate and its core callees."""
     return (
         _legacy._APP_RECEIVER_HOOKS_CACHE_TOKEN,
+        _TEST_SCOPE_CONTRACT_EPOCH,
+        application_test_scope_role_evidence,
         application_value_role_evidence,
         _app_digest_call,
         _app_digest_bytes,

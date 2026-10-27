@@ -3619,3 +3619,406 @@ def _scope_builtin_contract(canonical, receiver, arguments, keywords):
         if "errors" in bound and _scope_exact_text(bound["errors"]) != "strict":
             return None
     return ("propagate", value)
+
+
+class _SourceTestScope:
+    """Close explicit test invocations through current source and modeled APIs."""
+
+    def __init__(self, index, path, assignment, secret):
+        from . import credential_identity_audit as audit
+        from . import mock_fixture_provenance as fixture
+        from .credential_role_constructor_provider import (
+            PresentationRoleIndex,
+            declaration_fact,
+        )
+
+        self.index, self.source = index, index["source"]
+        self.audit, self.fixture = audit, fixture
+        self.path, self.assignment, self.secret = path, assignment, secret
+        self.origin = (
+            "credential:"
+            + str(self.source.relative(path))
+            + ":"
+            + str(assignment.lineno)
+        )
+        self.objects, self.witnesses, self.owners = {}, {}, {}
+        self.flow = None
+        imports = audit._app_crypto_provider_imports(index)
+        from . import review_audits
+
+        self.view = (
+            PresentationRoleIndex(self.source, imports or {}, review_audits)
+            if imports is not None
+            else None
+        )
+        self.fact = declaration_fact(self.source, path, assignment)
+
+    def witness(self, path, node, role):
+        row = self.audit._app_credential_source_row(self.index, path, node, role)
+        key = (row["path"], tuple(row["span"]), role)
+        self.witnesses[key] = row
+
+    def canonical(self, path, node):
+        owner = self.audit._legacy._enclosing_function(node, self.source.parents[path])
+        return self.fixture._app_expression_name(self.index, path, node, owner)
+
+    def declaration(self, path, node):
+        owner = self.audit._legacy._enclosing_function(node, self.source.parents[path])
+        return self.fixture._app_source_symbol(self.index, path, node, owner)
+
+    def owner_for(self, path, node):
+        parents = self.source.parents[path]
+        function = self.audit._legacy._enclosing_function(node, parents)
+        owner = parents.get(id(function)) if function is not None else None
+        if not isinstance(owner, ast.ClassDef) or not self.test_owner(path, owner):
+            return None
+        if function.name != "setUp" and not function.name.startswith("test_"):
+            return None
+        return owner
+
+    def test_owner(self, path, owner):
+        if owner.decorator_list or owner.keywords or len(owner.bases) != 1:
+            return False
+        if self.canonical(path, owner.bases[0]) not in {
+            "unittest.TestCase",
+            "django.test.TestCase",
+        }:
+            return False
+        forbidden = {
+            "__init__",
+            "__new__",
+            "__getattr__",
+            "__getattribute__",
+            "__setattr__",
+            "__delattr__",
+            "run",
+            "__call__",
+            "setUpClass",
+            "tearDownClass",
+        }
+        if any(binding_occurrences(owner.body, name) for name in forbidden):
+            return False
+        for node in owner.body:
+            if isinstance(node, ast.FunctionDef):
+                if self.audit._legacy._definition_effects_unknown(node):
+                    return False
+            elif not (
+                isinstance(node, ast.Expr)
+                and isinstance(node.value, ast.Constant)
+                and type(node.value.value) is str
+            ):
+                return False
+        return self.owner_namespace_closed(path, owner)
+
+    def owner_namespace_closed(self, path, owner):
+        module_name = self.fixture._django_name(self.index, path)
+        for other_path, tree in self.index["modules"].items():
+            package = self.fixture._django_name(self.index, other_path).rpartition(".")[
+                0
+            ]
+            for node in ast.walk(tree):
+                if (
+                    other_path == path
+                    and isinstance(node, ast.Name)
+                    and node.id == owner.name
+                    and isinstance(node.ctx, ast.Load)
+                ):
+                    return False
+                if isinstance(node, (ast.Import, ast.ImportFrom)):
+                    rows = self.fixture._django_import_rows(node, package)
+                    if rows is None or any(
+                        target
+                        in {
+                            module_name,
+                            module_name + "." + owner.name,
+                            module_name + ".*",
+                        }
+                        for _, target in rows
+                    ):
+                        return False
+        return True
+
+    def origin_use(self, path, node):
+        owner = self.owner_for(path, node)
+        if owner is None:
+            return None
+        self.owners[path, id(owner)] = (path, owner)
+        self.witness(path, node, "test_origin_read")
+        return "TEST_ORIGIN_READ"
+
+    def resolve_name(self, path, node):
+        selected = self.declaration(path, node)
+        if selected is not None:
+            origin_path, declaration = selected
+            if origin_path == self.path and declaration is self.assignment:
+                return _Value(
+                    roots=frozenset({self.origin}),
+                    inert_kind="scalar",
+                    scalar_kind="text",
+                )
+            if isinstance(declaration, (ast.Assign, ast.AnnAssign)):
+                value = self.audit._legacy.identity_value(declaration.value, {})
+                if value.inert_kind and not _has_unknown_content(value):
+                    return value
+        canonical = self.canonical(path, node)
+        if canonical and canonical.split(".")[0] in {"jwt", "unittest", "django"}:
+            return _Value(inert_kind="scope_namespace", _exact_scalar=(canonical,))
+        return None
+
+    def object_class(self, value):
+        if value is not None and len(value.class_roots) == 1:
+            return self.objects.get(next(iter(value.class_roots)))
+        return None
+
+    def resolve_call(self, path, call, receiver):
+        from .review_integrity import bind_source_call
+
+        selected = self.object_class(receiver)
+        if selected is None or not isinstance(call.func, ast.Attribute):
+            return None
+        class_path, owner = selected
+        methods = [(class_path, owner.name, owner)]
+        target = self.audit._legacy.effective_method(methods, call.func.attr)
+        if target is None:
+            return None
+        target_path, function = target
+        bound = bind_source_call(call, function, call.func.value, apply_defaults=False)
+        self.witness(target_path, function, "captured_test_scope_method")
+        return ResolvedIdentityCall(function, target_path, bound)
+
+    def resolve_attribute(self, flow, path, node, receiver):
+        selected = self.object_class(receiver)
+        if selected is None:
+            return None
+        class_path, owner = selected
+        getters = [
+            item
+            for item in owner.body
+            if isinstance(item, ast.FunctionDef) and item.name == node.attr
+        ]
+        if len(getters) != 1:
+            return None
+        getter = getters[0]
+        if (
+            len(getter.decorator_list) != 1
+            or self.canonical(class_path, getter.decorator_list[0])
+            != "functools.cached_property"
+        ):
+            return None
+        self.witness(class_path, getter, "captured_cached_property")
+        value = flow.run(
+            class_path, getter, {getter.args.args[0].arg: receiver}, nested=True
+        )
+        flow.write_field(receiver, node.attr, value)
+        return value
+
+    def construct(self, flow, path, call, args, kwargs):
+        from .review_integrity import bind_source_call
+
+        selected = self.declaration(path, call.func)
+        if selected is None or not isinstance(selected[1], ast.ClassDef):
+            return None
+        class_path, owner = selected
+        if owner.bases or owner.keywords or owner.decorator_list:
+            return None
+        hooks = {
+            "__new__",
+            "__getattr__",
+            "__getattribute__",
+            "__setattr__",
+            "__delattr__",
+            "__slots__",
+        }
+        if any(binding_occurrences(owner.body, name) for name in hooks):
+            return None
+        if not self.class_source_closed(class_path, owner):
+            return None
+        constructor = self.audit._legacy.effective_method(
+            [(class_path, owner.name, owner)], "__init__"
+        )
+        if constructor is None:
+            return None
+        obj = flow.allocate(path, call, "source_object")
+        self.objects[next(iter(obj.class_roots))] = selected
+        synthetic = ast.Name(id="_scope_receiver", ctx=ast.Load())
+        bound = bind_source_call(call, constructor[1], synthetic, apply_defaults=True)
+        values = {id(expr): value for expr, value in zip(call.args, args)}
+        values.update((id(item.value), kwargs[item.arg]) for item in call.keywords)
+        values[id(synthetic)] = obj
+        initial = {
+            name: values[id(expr)]
+            if id(expr) in values
+            else self.resolve_literal(class_path, expr)
+            for name, expr in bound.items()
+        }
+        if any(value is None for value in initial.values()):
+            return None
+        self.witness(class_path, constructor[1], "captured_test_scope_constructor")
+        flow.run(class_path, constructor[1], initial, nested=True)
+        return obj
+
+    def class_source_closed(self, path, owner):
+        if not self.audit._app_signing_captured_provider_stable(
+            self.index, [(path, owner)]
+        ):
+            return False
+        for node in owner.body:
+            if (
+                isinstance(node, ast.Expr)
+                and isinstance(node.value, ast.Constant)
+                and type(node.value.value) is str
+            ):
+                continue
+            if not isinstance(node, ast.FunctionDef):
+                return False
+            if node.name.startswith("__") and node.name != "__init__":
+                return False
+            allowed = tuple(
+                d
+                for d in node.decorator_list
+                if self.canonical(path, d) == "functools.cached_property"
+            )
+            if self.audit._legacy._definition_effects_unknown(
+                node, allowed_decorators=allowed
+            ):
+                return False
+        return True
+
+    def resolve_literal(self, path, node):
+        if not self.source.validate(path) or id(node) not in self.source.parents[path]:
+            return None
+        value = self.audit._legacy.identity_value(node, {})
+        return value if value.inert_kind and not _has_unknown_content(value) else None
+
+    def contract(self, flow, path, call, receiver, args, kwargs):
+        self.flow = flow
+        created = self.construct(flow, path, call, args, kwargs)
+        if created is not None:
+            return created
+        canonical = self.canonical(path, call.func)
+        selected = self.object_class(receiver)
+        if selected and self.test_owner(*selected):
+            canonical = "unittest.TestCase." + call.func.attr
+            model_receiver = ("testcase", receiver, True)
+        else:
+            model_receiver = None
+        if receiver is not None and receiver.inert_kind == "scope_namespace":
+            receiver = None
+        if not canonical:
+            return None
+        stable = self.audit._app_signing_terminal_stable(
+            self.index, canonical.split(".")[0]
+        )
+        transfer = credential_scope_api_contract(
+            canonical, model_receiver, args, kwargs, provider_stable=stable
+        )
+        if transfer is None:
+            return None
+        self.witness(path, call, "modeled_test_scope_" + transfer[0])
+        if transfer[0] == "derive":
+            roots = frozenset("derived:" + item for item in tracked_roots(transfer[1]))
+            return _Value(roots=roots, inert_kind="scalar", scalar_kind="text")
+        if transfer[0] == "consume":
+            return _Value(
+                roots=frozenset(tracked_roots(transfer[1])), inert_kind="dict"
+            )
+        if transfer[0] == "observe":
+            return _constant_identity_value(ast.Constant(value=None))
+        return None
+
+    def exercise(self):
+        if (
+            not self.view
+            or not self.view.complete
+            or self.fact is None
+            or self.fact.source_role != "module_literal"
+        ):
+            return False
+        if self.view._data_reflection_conflict(self.fact):
+            return False
+        uses = self.view._module_uses(self.fact, self.origin_use)
+        if not uses or not self.owners:
+            return False
+        for path, owner in self.owners.values():
+            if not self.exercise_owner(path, owner):
+                return False
+        return True
+
+    def exercise_owner(self, path, owner):
+        setup = next(
+            (
+                n
+                for n in owner.body
+                if isinstance(n, ast.FunctionDef) and n.name == "setUp"
+            ),
+            None,
+        )
+        tests = [
+            n
+            for n in owner.body
+            if isinstance(n, ast.FunctionDef) and n.name.startswith("test_")
+        ]
+        if not tests:
+            return False
+        for number, test in enumerate(tests):
+            identity = (
+                "test-invocation:" + self.source.relative(path) + ":" + str(test.lineno)
+            )
+            receiver = _Value(class_roots=frozenset({identity}))
+            self.objects[identity] = (path, owner)
+            functions = ([setup] if setup is not None else []) + [test]
+            entries = [
+                (path, f, {f.args.args[0].arg: receiver})
+                for f in functions
+                if f.args.args
+            ]
+            if len(entries) != len(functions):
+                return False
+            result = captured_credential_role_closure(
+                self.source,
+                entries,
+                resolve_call=self.resolve_call,
+                contract=self.contract,
+                resolve_name=self.resolve_name,
+                resolve_attribute=self.resolve_attribute,
+            )
+            if not result.complete:
+                return False
+            self.witness(path, test, "declared_test_invocation")
+        return True
+
+
+def _source_test_scope_evidence(index, path, assignment, secret):
+    """Prove a modeled source-scope role; never infer runtime isolation."""
+    from . import credential_identity_audit as audit
+
+    try:
+        proof = _SourceTestScope(index, path, assignment, secret)
+        if not proof.exercise():
+            return None
+    except (TypeError, ValueError, KeyError, AttributeError, RecursionError):
+        return None
+    witnesses = [proof.witnesses[key] for key in sorted(proof.witnesses)]
+    return {
+        "eligible": True,
+        "classification": "APPLICATION_TEST_CREDENTIAL_ROLE",
+        "source": index["source"].relative(path),
+        "source_sha256": index["source"].inventory[path],
+        "declaration_span": proof.fixture._evidence_node_span(assignment),
+        "profile": "SOURCE_BOUND_TEST_SCOPE_ONLY",
+        "runtime_assurance": "INCOMPLETE",
+        "transport_role": "UNASSESSED",
+        "target_execution": "not_performed",
+        "isolation_assurance": "UNASSESSED",
+        "provider_runtime_version": "UNASSESSED",
+        "semantic_model": SCOPE_API_CONTRACT_EPOCH,
+        "witness_sources": witnesses,
+        "consumer_use_closure": {
+            "schema": "factory.test-scope-consumer-closure.v1",
+            "complete": True,
+            "origin": audit._app_credential_source_row(
+                index, path, assignment, "test_scope_origin", secret
+            ),
+            "consumers": witnesses,
+        },
+    }

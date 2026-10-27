@@ -6132,3 +6132,161 @@ def test_object_signing_constructor_guard_public_cli_receipt(tmp_path, capsys):
         security_scan_status(tmp_path)["candidate_freshness"]
         != "CURRENT_SOURCE_HASHES_VERIFIED"
     )
+
+
+@pytest.mark.parametrize(
+    "variant",
+    [
+        "closed",
+        "raw_export",
+        "token_export",
+        "owner_export",
+        "runtime_import",
+        "provider_change",
+        "descriptor",
+        "destructor",
+        "header_effect",
+        "method_shadow",
+        "assertion_shadow",
+    ],
+)
+def test_source_bound_test_scope_native(tmp_path, variant):
+    _write(tmp_path, "fixture_keys.py", "SIGNING_SECRET = 'fixture-owned-key-4791'\n")
+    _write(
+        tmp_path,
+        "signer.py",
+        "import jwt\nclass Signer:\n    def __init__(self, key):\n        self.key = key\n    def sign(self, payload):\n        return jwt.encode(payload, self.key, algorithm='HS256')\n    def verify(self, token):\n        return jwt.decode(token, self.key, algorithms=['HS256'])\n",
+    )
+    source = "from unittest import TestCase\nfrom fixture_keys import SIGNING_SECRET\nfrom signer import Signer\nclass SigningChecks(TestCase):\n    def setUp(self):\n        self.signers = (Signer(SIGNING_SECRET), Signer('other'))\n    def test_tokens(self):\n        for signer in self.signers:\n            token = signer.sign({'purpose': 'local'})\n            self.assertEqual(signer.verify(token), {'purpose': 'local'})\n"
+    if variant == "method_shadow":
+        source = source.replace(
+            "    def test_tokens(self):",
+            "    def test_tokens(self):\n        self.signers[0].sign = send",
+        )
+    if variant == "assertion_shadow":
+        source = source.replace(
+            "    def test_tokens(self):",
+            "    def test_tokens(self):\n        self.assertEqual = send",
+        )
+    source += {
+        "raw_export": "        send(SIGNING_SECRET)\n",
+        "token_export": "        send(token)\n",
+        "owner_export": "        send(self)\n",
+    }.get(variant, "")
+    _write(tmp_path, "test_signing.py", source)
+    if variant == "runtime_import":
+        _write(
+            tmp_path,
+            "runtime.py",
+            "from fixture_keys import SIGNING_SECRET\nsend(SIGNING_SECRET)\n",
+        )
+    if variant == "provider_change":
+        _write(tmp_path, "override.py", "import jwt\njwt.encode = send\n")
+    if variant in {"descriptor", "destructor", "header_effect"}:
+        target = tmp_path / "signer.py"
+        text = target.read_text()
+        text = {
+            "descriptor": text.replace(
+                "class Signer:\n", "class Signer:\n    key = property(get_key, send)\n"
+            ),
+            "destructor": text + "    def __del__(self):\n        send(self.key)\n",
+            "header_effect": text.replace(
+                "def sign(self, payload):", "def sign(self, payload=mutate()):"
+            ),
+        }[variant]
+        target.write_text(text)
+    report = security_scan(tmp_path, cache_enabled=False)
+    active = [f for f in report["findings"] if f["code"] == "SECURITY_HARDCODED_SECRET"]
+    observations = [
+        f
+        for f in report.get("primitive_observations", [])
+        if f["code"] == "SECURITY_HARDCODED_SECRET"
+    ]
+    if variant == "closed":
+        assert not active, report
+        assert any(
+            f["facts"].get("fixture_evidence", {}).get("profile")
+            == "SOURCE_BOUND_TEST_SCOPE_ONLY"
+            for f in observations
+        ), report
+    else:
+        assert active and all(f["severity"] == "CRITICAL" for f in active), report
+
+
+def test_source_bound_test_scope_epoch_uses_actual_contract_bindings(monkeypatch):
+    from factoryline import credential_identity_audit as audit
+    from factoryline import credential_role_method_use_getter_audit as scope
+
+    before = audit._TEST_SCOPE_CONTRACT_EPOCH.__code__
+    monkeypatch.setattr(scope, "_SCOPE_DEFAULT_ALGORITHMS", frozenset({"HS256"}))
+    after = audit._TEST_SCOPE_CONTRACT_EPOCH.__code__
+    assert after is not before
+    assert audit._TEST_SCOPE_CONTRACT_EPOCH.__code__ is after
+
+
+def test_source_bound_test_scope_cli_receipt_and_recompute(tmp_path, capsys):
+    import copy
+    import json
+    from factoryline.cli import main
+    from factoryline.mission_control_status import security_scan_status
+    from factoryline.primitive_observation_binding import application_fixture_binding
+
+    test_source = "from unittest import TestCase\nfrom fixture_keys import SIGNING_SECRET\nimport jwt\nclass SigningChecks(TestCase):\n    def setUp(self):\n        self.key = SIGNING_SECRET\n    def test_tokens(self):\n        token = jwt.encode({'purpose': 'local'}, self.key, algorithm='HS256')\n        self.assertEqual(jwt.decode(token, self.key, algorithms=['HS256']), {'purpose': 'local'})\n"
+    _write(
+        tmp_path, "fixture_keys.py", "SIGNING_SECRET = 'scope-receipt-marker-4791'\n"
+    )
+    _write(tmp_path, "test_signing.py", test_source)
+    _write(
+        tmp_path,
+        "live.py",
+        "PASSWORD = 'real-operational-password'\ninstall_user(password=PASSWORD)\n",
+    )
+    code = main(
+        [
+            "audit",
+            "security",
+            "--root",
+            str(tmp_path),
+            "--security-only",
+            "--defect-policy",
+            "source-role-v3",
+            "--json",
+        ]
+    )
+    output = capsys.readouterr()
+    assert not output.err
+    report = json.loads(output.out)
+    assert code in {1, 2} and not report["defect_policy_decision"]["clean"]
+    active = [f for f in report["findings"] if f["code"] == "SECURITY_HARDCODED_SECRET"]
+    assert [(f["path"], f["severity"]) for f in active] == [("live.py", "CRITICAL")]
+    primitives = [
+        f
+        for f in report["primitive_observations"]
+        if f["code"] == "SECURITY_HARDCODED_SECRET"
+    ]
+    assert len(primitives) == 1 and primitives[0]["severity"] == "CRITICAL"
+    assert (
+        primitives[0]["facts"]["fixture_evidence"]["profile"]
+        == "SOURCE_BOUND_TEST_SCOPE_ONLY"
+    )
+    assert "scope-receipt-marker-4791" not in output.out
+    rows = report["sources"]
+    bindings = {r["path"]: r["sha256"] for r in rows}
+    sources = {r["path"]: (tmp_path / r["path"]).read_bytes() for r in rows}
+    assert application_fixture_binding(primitives[0], rows, bindings, sources)
+    forged = copy.deepcopy(primitives[0])
+    forged["facts"]["fixture_evidence"]["semantic_model"] = "forged-model"
+    assert not application_fixture_binding(forged, rows, bindings, sources)
+    assert (
+        security_scan_status(tmp_path)["candidate_freshness"]
+        == "CURRENT_SOURCE_HASHES_VERIFIED"
+    )
+    _write(
+        tmp_path,
+        "runtime.py",
+        "from fixture_keys import SIGNING_SECRET\nsend(SIGNING_SECRET)\n",
+    )
+    assert (
+        security_scan_status(tmp_path)["candidate_freshness"]
+        != "CURRENT_SOURCE_HASHES_VERIFIED"
+    )

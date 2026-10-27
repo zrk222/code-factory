@@ -3468,6 +3468,15 @@ def _application_fixture_use_proof(evidence, bindings, facts, source_bytes):
                 evidence, bindings, facts, source_bytes
             )
         return _presentation_witness_bindings(evidence, bindings, facts)
+    if evidence.get("profile") == "SOURCE_BOUND_TEST_SCOPE_ONLY":
+        return _application_fixture_role_recomputes(
+            evidence,
+            bindings,
+            facts.get("name"),
+            source_bytes,
+            "factory.test-scope-consumer-closure.v1",
+            "SOURCE_BOUND_TEST_SCOPE_ONLY",
+        )
     if evidence.get("profile") == "DJANGO_CLASS_LOCAL_ACCOUNT_ENROLLMENT":
         return _application_class_role_recomputes(
             evidence, bindings, facts.get("name"), source_bytes
