@@ -2588,7 +2588,7 @@ def summarize_identity_effect(
     function,
     path,
     index: SourceSnapshotIndex,
-    roots: Mapping[str, str],
+    roots: Mapping[str, str | SourceFieldLiteral | _Value],
     *,
     resolve_call: CallResolver | None = None,
     field_roots: Mapping[tuple[str, str], str | SourceFieldLiteral] | None = None,
@@ -2605,7 +2605,19 @@ def summarize_identity_effect(
     field ownership; initial field projections are not admission evidence.
     Unknown protocols, heap escapes and overwritten projections fail closed.
     Strict mode also rejects unresolved calls without explicit root arguments.
+    Source-backed parameter literals retain their value role rather than becoming
+    identity roots. The caller still proves the exact actual/default binding.
     """
+    parameters = {
+        name: _source_literal(value, index)
+        if isinstance(value, SourceFieldLiteral)
+        else value
+        for name, value in roots.items()
+    }
+    if any(value is None for value in parameters.values()):
+        return IdentityEffectSummary(
+            "UNKNOWN", unknowns=("invalid captured parameter literal",)
+        )
     return (
         _Analyzer(
             index,
@@ -2618,7 +2630,7 @@ def summarize_identity_effect(
             ordinary_fields,
             source_inert_nodes,
         )
-        .run(function, path, dict(roots), 0, frozenset())
+        .run(function, path, parameters, 0, frozenset())
         .freeze()
     )
 

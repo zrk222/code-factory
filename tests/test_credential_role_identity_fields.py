@@ -925,3 +925,113 @@ def test_application_identity_helper_epoch_invalidates_cached_role_evidence(
         index, path, assignment.value, assignment, "credential"
     )
     assert len(index["profiles"]) == 2
+
+
+@pytest.mark.parametrize("origin", ["actual", "default"])
+def test_captured_parameter_literals_keep_metadata_separate_from_key(tmp_path, origin):
+    from factoryline.credential_role_identity_effects import SourceFieldLiteral
+
+    path = tmp_path / "wrapper.py"
+    raw = b"class Holder:\n    def __init__(self, key, algorithm='HS256'):\n        self.key = key\n        self.algorithm = algorithm\ndef build(key):\n    return Holder(key, algorithm='HS512')\n"
+    path.write_bytes(raw)
+    tree = ast.parse(raw)
+    digest = hashlib.sha256(raw).hexdigest()
+    tree._oracle_source_sha256 = digest
+    index = SourceSnapshotIndex(tmp_path, {path: tree}, {path: raw}, {path: digest})
+    constructor = tree.body[0].body[0]
+    literal = (
+        constructor.args.defaults[0]
+        if origin == "default"
+        else tree.body[1].body[0].value.keywords[0].value
+    )
+    summary = summarize_identity_effect(
+        constructor,
+        path,
+        index,
+        {
+            "self": "owner",
+            "key": "candidate",
+            "algorithm": SourceFieldLiteral(path, literal),
+        },
+        strict_calls=True,
+        role_view=True,
+        ordinary_fields={"key", "algorithm"},
+    )
+    assert summary.unknowns == ()
+    key_store = next(
+        row
+        for row in summary.role_events
+        if row.kind == "field_store" and row.relevant == "key"
+    )
+    metadata_store = next(
+        row
+        for row in summary.role_events
+        if row.kind == "field_store" and row.relevant == "algorithm"
+    )
+    assert key_store.roots == ("candidate",) and key_store.uncertain is False
+    assert metadata_store.roots == () and metadata_store.uncertain is False
+    assert {
+        row.source_roots for row in summary.field_transfers if row.target_field == "key"
+    } == {("candidate",)}
+
+
+@pytest.mark.parametrize(
+    "mutation", ["forged-node", "wrong-path", "stale-bytes", "opaque-expression"]
+)
+def test_captured_parameter_literals_reject_unbound_or_changed_source(
+    tmp_path, mutation
+):
+    from factoryline.credential_role_identity_effects import SourceFieldLiteral
+
+    path = tmp_path / "wrapper.py"
+    raw = b"def apply(key, metadata='algorithm-name'):\n    return key\ndef obtain():\n    return opaque()\n"
+    tree = ast.parse(raw)
+    digest = hashlib.sha256(raw).hexdigest()
+    tree._oracle_source_sha256 = digest
+    data = {path: raw}
+    index = SourceSnapshotIndex(tmp_path, {path: tree}, data, {path: digest})
+    function = tree.body[0]
+    literal, literal_path = function.args.defaults[0], path
+    if mutation == "forged-node":
+        literal = ast.Constant(value="algorithm-name")
+    elif mutation == "wrong-path":
+        literal_path = tmp_path / "absent.py"
+    elif mutation == "stale-bytes":
+        data[path] += b"# stale\n"
+    else:
+        literal = tree.body[1].body[0].value
+    summary = summarize_identity_effect(
+        function,
+        path,
+        index,
+        {"key": "candidate", "metadata": SourceFieldLiteral(literal_path, literal)},
+        strict_calls=True,
+        role_view=True,
+    )
+    assert summary.status == "UNKNOWN"
+    assert summary.unknowns
+
+
+def test_captured_parameter_literals_preserve_real_key_escape(tmp_path):
+    from factoryline.credential_role_identity_effects import SourceFieldLiteral
+
+    path = tmp_path / "wrapper.py"
+    raw = b"def apply(key, metadata='algorithm-name'):\n    send(key)\n"
+    tree = ast.parse(raw)
+    digest = hashlib.sha256(raw).hexdigest()
+    tree._oracle_source_sha256 = digest
+    index = SourceSnapshotIndex(tmp_path, {path: tree}, {path: raw}, {path: digest})
+    function = tree.body[0]
+    summary = summarize_identity_effect(
+        function,
+        path,
+        index,
+        {
+            "key": "candidate",
+            "metadata": SourceFieldLiteral(path, function.args.defaults[0]),
+        },
+        strict_calls=True,
+        role_view=True,
+    )
+    assert summary.status == "UNKNOWN"
+    assert "candidate" in summary.escapes

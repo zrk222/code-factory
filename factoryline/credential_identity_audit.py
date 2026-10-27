@@ -491,7 +491,9 @@ def _app_signing_constructor_flow(index, path, function, call, actual, seen=()):
     chain = _app_signing_transfer_chain(index, target_path, owner)
     if not chain or not _app_signing_captured_provider_stable(index, chain):
         return None
-    transfer = _app_signing_constructor_transfer(index, chain, call, actual)
+    transfer = _app_signing_constructor_transfer(
+        index, chain, path, function, call, actual
+    )
     if transfer is None:
         return None
     constructor_path, field, statement = transfer
@@ -513,9 +515,16 @@ def _app_signing_constructor_flow(index, path, function, call, actual, seen=()):
     ]
 
 
-def _app_signing_constructor_transfer(index, chain, call, actual):
+def _app_signing_constructor_transfer(index, chain, caller_path, caller, call, actual):
     from .review_integrity import bind_source_call
 
+    source = index["source"]
+    if (
+        not source.validate(caller_path)
+        or id(caller) not in source.parents[caller_path]
+        or not any(node is call for node in ast.walk(caller))
+    ):
+        return None
     constructors = [
         (p, n)
         for p, cls in chain
@@ -532,6 +541,12 @@ def _app_signing_constructor_transfer(index, chain, call, actual):
             ast.Name(id="_instance", ctx=ast.Load()),
             apply_defaults=False,
         )
+        with_defaults = bind_source_call(
+            call,
+            constructor,
+            ast.Name(id="_instance", ctx=ast.Load()),
+            apply_defaults=True,
+        )
     except (TypeError, ValueError):
         return None
     formals = [name for name, value in bound.items() if value is actual]
@@ -546,6 +561,16 @@ def _app_signing_constructor_transfer(index, chain, call, actual):
     if not constructor_args:
         return None
     receiver = constructor_args[0].arg
+    roots = {receiver: "owner", formals[0]: "candidate"}
+    roots.update(
+        {
+            name: _legacy.SourceFieldLiteral(
+                caller_path if name in bound else constructor_path, value
+            )
+            for name, value in with_defaults.items()
+            if name not in roots and isinstance(value, ast.Constant)
+        }
+    )
     inert_nodes, metadata_fields = _app_signing_metadata_assignments(
         index, constructor_path, constructor, receiver
     )
@@ -559,7 +584,7 @@ def _app_signing_constructor_transfer(index, chain, call, actual):
         constructor,
         constructor_path,
         index["source"],
-        {receiver: "owner", formals[0]: "candidate"},
+        roots,
         resolve_call=resolver,
         strict_calls=True,
         role_view=True,
