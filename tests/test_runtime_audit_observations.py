@@ -1008,6 +1008,77 @@ def test_security_scan_receipt_is_current_hash_bound_and_advisory(tmp_path: Path
     assert any(item["code"] == "QUALITY_HOLLOW_TEST" for item in stale["findings"])
 
 
+@pytest.mark.parametrize(
+    "policy", ["source-role-v1", "source-role-v2", "source-role-v3"]
+)
+@pytest.mark.parametrize("tenant_loaded", [False, True])
+def test_source_role_review_required_receipt_is_advisory(
+    tmp_path: Path, capsys, policy, tenant_loaded
+):
+    from factoryline import review_audits
+    from factoryline.cli import main
+
+    source = tmp_path / "app.py"
+    source.write_text("VALUE = 1\n", encoding="utf-8")
+    if tenant_loaded:
+        (tmp_path / ".factory").mkdir()
+        (tmp_path / ".factory" / "tenant-read-contract.json").write_text(
+            json.dumps({"schema": "factory.tenant-read-contract.v1", "reads": []}),
+            encoding="utf-8",
+        )
+    with review_audits._security_only_scan_context(True):
+        exit_code = main(
+            [
+                "audit",
+                "security",
+                "--root",
+                str(tmp_path),
+                "--defect-policy",
+                policy,
+                "--json",
+            ]
+        )
+    report = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert report["state"] == "REVIEW_REQUIRED"
+    assert report["findings"] == []
+    decision = report["defect_policy_decision"]
+    assert not any(decision[key] for key in ("clean", "passed", "release_approved"))
+    status = security_scan_status(tmp_path)
+    assert status["report_state"] == "REVIEW_REQUIRED"
+    assert status["state"] == ("REVIEW_REQUIRED" if tenant_loaded else "INCOMPLETE")
+    assert status["candidate_freshness"] == "CURRENT_SOURCE_HASHES_VERIFIED"
+    assert status["authority"] == {
+        "execution": False,
+        "approval": False,
+        "repair": False,
+    }
+
+    source.write_text("VALUE = 2\n", encoding="utf-8")
+    stale = security_scan_status(tmp_path)
+    assert stale["state"] == "INCOMPLETE"
+    assert stale["report_state"] == "REVIEW_REQUIRED"
+    assert stale["candidate_freshness"] == "SOURCE_HASH_MISMATCH"
+
+
+def test_security_scan_receipt_rejects_unknown_state(tmp_path: Path):
+    from factoryline.deep_audit_io import canonical_bytes, digest
+    from factoryline.review_audits import _seal_security_scan
+
+    _complete_security_scan_receipt(tmp_path)
+    path = tmp_path / ".factory" / "security-scan" / "latest.json"
+    envelope = json.loads(path.read_bytes())
+    envelope["report"]["state"] = "NOT_A_SCAN_STATE"
+    envelope["report"] = _seal_security_scan(envelope["report"])
+    envelope["receipt_sha256"] = digest(
+        {key: value for key, value in envelope.items() if key != "receipt_sha256"}
+    )
+    path.write_bytes(canonical_bytes(envelope))
+    status = security_scan_status(tmp_path)
+    assert status["state"] == "INVALID"
+    assert status["reason"] == "scan state is invalid"
+
+
 def test_security_scan_source_removed_after_receipt_is_incomplete(tmp_path: Path):
     _complete_security_scan_receipt(tmp_path)
     (tmp_path / "test_case.py").unlink()
@@ -1248,3 +1319,88 @@ def test_security_scan_receipt_preserves_undefined_call_incompleteness(tmp_path)
         item["code"] == "QUALITY_UNKNOWN_TEST_ORACLE" for item in status["findings"]
     )
     assert not any(item["code"] == "QUALITY_HOLLOW_TEST" for item in status["findings"])
+
+
+@pytest.mark.parametrize("policy", ["legacy-v1", "source-role-v3"])
+@pytest.mark.parametrize("hook_file", ["conftest.py", "test_case.py"])
+@pytest.mark.parametrize("mutation", ["hook", "config", "source"])
+def test_security_only_unknown_collection_cli_receipt(
+    tmp_path, capsys, policy, hook_file, mutation
+):
+    from factoryline.cli import main
+
+    hook = tmp_path / hook_file
+    hook.write_text(
+        "pytest_plugins = ['external_plugin']\nraise AssertionError('must not execute')\n",
+        encoding="utf-8",
+    )
+    config = tmp_path / "pytest.ini"
+    config.write_text("[pytest]\npython_files = test_*.py\n", encoding="utf-8")
+    source = tmp_path / "app.py"
+    source.write_text("def apply(program):\n    exec(program)\n", encoding="utf-8")
+    (tmp_path / ".factory").mkdir()
+    (tmp_path / ".factory" / "tenant-read-contract.json").write_text(
+        json.dumps({"schema": "factory.tenant-read-contract.v1", "reads": []}),
+        encoding="utf-8",
+    )
+    exit_code = main(
+        [
+            "audit",
+            "security",
+            "--root",
+            str(tmp_path),
+            "--security-only",
+            "--defect-policy",
+            policy,
+            "--json",
+        ]
+    )
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    report = json.loads(captured.out)
+    assert exit_code == 2 and report["state"] == "INCOMPLETE"
+    identity = report["oracle_context"]["pytest_collection"]
+    assert identity["capture_state"] == "stable_pre_post"
+    assert identity["collection_state"] == "UNKNOWN"
+    assert identity["patterns"] == []
+    assert (
+        report["oracle_context"]["test_oracle_assessment"]
+        == "NOT_ASSESSED_SECURITY_ONLY"
+    )
+    assert report["audit_coverage"]["complete"] is True
+    assert any(
+        row["code"] == "SECURITY_DYNAMIC_EXECUTION" for row in report["findings"]
+    )
+    assert not any(row["code"].startswith("QUALITY_") for row in report["findings"])
+    status = security_scan_status(tmp_path)
+    assert status["state"] == "INCOMPLETE"
+    assert status["candidate_freshness"] == "PYTEST_COLLECTION_UNKNOWN"
+    assert status["source_freshness"] == "CURRENT_SOURCE_HASHES_VERIFIED"
+    assert status["authority"] == {
+        "execution": False,
+        "approval": False,
+        "repair": False,
+    }
+    changed = {"hook": hook, "config": config, "source": source}[mutation]
+    changed.write_text(
+        changed.read_text(encoding="utf-8") + "\n# changed\n", encoding="utf-8"
+    )
+    stale = security_scan_status(tmp_path)
+    assert stale["state"] == "INCOMPLETE"
+    assert stale["source_freshness"] != "CURRENT_SOURCE_HASHES_VERIFIED"
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["audit", "patterns", "--security-only", "--json"],
+        ["audit", "security", "--security-only", "--full-repository", "--json"],
+    ],
+)
+def test_security_only_unknown_collection_rejects_wrong_scope(capsys, argv):
+    from factoryline.cli import main
+
+    assert main(argv) == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert json.loads(captured.err)["code"] == "E_SECURITY_ONLY_SCOPE"

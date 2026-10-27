@@ -433,20 +433,8 @@ def _captured_application_source_bytes(
     from .primitive_observation_binding import fixed_program_proof_dispositions
 
     program_proofs = fixed_program_proof_dispositions()
-    paths = {
-        finding.get("path")
-        for finding in findings
-        if finding.get("facts", {}).get("disposition")
-        in program_proofs
-        | {
-            "TEST_OWNED_APPLICATION_CREDENTIAL",
-            "PROVEN_CLOSED_OPERATION_COMMAND_SYNTAX",
-            "PROVEN_CLOSED_LITERAL_PICKLE_BYTES",
-        }
-        or finding.get("code")
-        in {"SECURITY_HARDCODED_SECRET", "SECURITY_UNSAFE_DESERIALIZATION"}
-        or isinstance(finding.get("facts", {}).get("security_precondition"), dict)
-    }
+    # Byte binding is evidence substrate for every finding, never defect credit.
+    paths = {finding.get("path") for finding in findings}
     for finding in findings:
         evidence = finding.get("facts", {}).get("fixture_evidence", {})
         closure = evidence.get("consumer_use_closure", {})
@@ -501,7 +489,12 @@ def _captured_application_source_bytes(
         paths.update(hashes)
     captured = {}
     for relative in paths:
-        if not isinstance(relative, str):
+        if (
+            not isinstance(relative, str)
+            or relative.startswith(("/", "\\"))
+            or ":" in relative
+            or ".." in relative.replace("\\", "/").split("/")
+        ):
             continue
         data = source_bytes.get(workspace / relative)
         if relative in config_hashes and not isinstance(data, bytes):
@@ -637,10 +630,18 @@ def security_scan_report(
     database_context: dict | None = None,
     tenant_policy_applies: bool = False,
     primitive_source_bytes: dict[str, bytes] | None = None,
+    *,
+    source_limit: int | None = None,
+    collection_identity: dict | None = None,
+    security_only: bool = False,
 ) -> dict[str, Any]:
     """Assemble and seal the bounded Python security scan report with coverage, source bindings, findings, and its non-runtime, non-approval limits."""
     audit_coverage = audit._security_scan_coverage(
-        files, outcomes, audit.MAX_SECURITY_SOURCE_FILES
+        files,
+        outcomes,
+        _validate_source_file_limit(
+            audit.MAX_SECURITY_SOURCE_FILES if source_limit is None else source_limit
+        ),
     )
     state = audit._security_scan_state(
         files, findings, database_context, audit_coverage
@@ -674,6 +675,14 @@ def security_scan_report(
         },
         "claim_boundary": "Bounded Python AST pattern scan only. Declared tenant argument bindings verify syntactic pass-through, not tenant identity, authorization, or access isolation; this is not a penetration test, runtime exploit proof, dependency advisory, or release approval.",
     }
+    if security_only is True:
+        core["oracle_context"]["test_oracle_assessment"] = "NOT_ASSESSED_SECURITY_ONLY"
+    if (
+        collection_identity is not None
+        and collection_identity.get("collection_state") == "UNKNOWN"
+    ):
+        core["oracle_context"]["pytest_collection"] = dict(collection_identity)
+        core["state"] = "INCOMPLETE"
     core["source_manifest_sha256"] = audit.sha256(
         json.dumps(
             {
@@ -688,6 +697,150 @@ def security_scan_report(
     ).hexdigest()
     core["action_summary"] = audit._security_scan_action_summary(state)
     return audit._seal_security_scan(core)
+
+
+def _security_scan_context(audit, security_only, evidence):
+    """Keep effective security-only mode and its oracle boundary together."""
+    if type(security_only) is not bool:
+        raise audit.ReviewAuditError("security_only must be a boolean.")
+    enabled = security_only or audit._SECURITY_ONLY_SCAN.get() is True
+    if enabled and any(value is not None for value in evidence):
+        raise audit.ReviewAuditError(
+            "security_only cannot credit runtime test-oracle evidence."
+        )
+    return audit._security_only_scan_context(enabled)
+
+
+def security_scan(
+    audit,
+    root: Path,
+    *,
+    tenant_read_calls: tuple[str, ...] = (),
+    tenant_read_bindings: tuple[str, ...] = (),
+    tenant_read_scopes: dict | None = None,
+    tenant_policy_applies: bool = False,
+    cache_enabled: bool = True,
+    oracle_evidence: str | None = None,
+    oracle_trust_root: str | None = None,
+    oracle_trust_sha256: str | None = None,
+    oracle_environment_sha256: str | None = None,
+    analysis_profile: str = "source-closed-v1",
+    provider_contracts: tuple[dict, ...] = (),
+    defect_policy: str = "legacy-v1",
+    max_files: int | None = None,
+    security_only: bool = False,
+) -> dict[str, Any]:
+    """Run a bounded AST scan with content-bound process-local context reuse."""
+    evidence = (
+        oracle_evidence,
+        oracle_trust_root,
+        oracle_trust_sha256,
+        oracle_environment_sha256,
+    )
+    with _security_scan_context(audit, security_only, evidence):
+        from .finite_capture import provider_analysis_profile
+        from .primitive_observation_binding import validate_security_defect_policy
+
+        selected_policy = validate_security_defect_policy(defect_policy)
+        source_limit = audit._validate_source_file_limit(max_files)
+        profile = provider_analysis_profile(analysis_profile, provider_contracts)
+        workspace = Path(root).resolve()
+        if not isinstance(tenant_policy_applies, bool):
+            raise audit.ReviewAuditError("tenant_policy_applies must be a boolean.")
+        tenant_read_calls = audit._tenant_contract_calls(tenant_read_calls)
+        tenant_read_bindings = audit._tenant_contract_bindings(
+            tenant_read_bindings, tenant_read_calls
+        )
+        tenant_read_scopes = audit._validate_tenant_scopes(
+            workspace, tenant_read_scopes
+        )
+        cache_enabled = audit._validate_cache_enabled(cache_enabled)
+        files = audit._security_source_files(workspace)
+        if tenant_policy_applies:
+            tenant_read_scopes[""] = {
+                "calls": (),
+                "bindings": {},
+                "_policy_applies": True,
+            }
+        if len(files) > source_limit:
+            return audit._security_source_limit_report(
+                workspace,
+                files,
+                tenant_read_calls,
+                tenant_read_bindings,
+                tenant_policy_applies,
+                evidence,
+                profile,
+                selected_policy,
+                source_limit,
+            )
+        database_context = {}
+        primitive_source_bytes = {}
+        producer_source_model = {}
+        collection_identity = {}
+        bindings, findings, counts, outcomes, oracle_edges, oracle_configuration = (
+            audit._scan_security_sources(
+                workspace,
+                files,
+                tenant_read_calls,
+                tenant_read_bindings,
+                tenant_read_scopes,
+                cache_enabled=cache_enabled and (not profile["conditional"]),
+                database_context=database_context,
+                primitive_source_bytes_out=primitive_source_bytes,
+                capture_all_sources=profile["conditional"]
+                or selected_policy != "legacy-v1",
+                producer_source_model_out=producer_source_model,
+                collection_identity_out=collection_identity,
+            )
+        )
+        result = audit._security_scan_report(
+            files,
+            findings,
+            bindings,
+            counts,
+            outcomes,
+            tenant_read_calls,
+            tenant_read_bindings,
+            oracle_edges,
+            oracle_configuration,
+            database_context,
+            tenant_policy_applies,
+            primitive_source_bytes,
+            source_limit=source_limit,
+            collection_identity=collection_identity,
+            security_only=audit._SECURITY_ONLY_SCAN.get() is True,
+        )
+        if profile["conditional"]:
+            from .primitive_observation_binding import (
+                apply_conditional_provider_profile,
+            )
+
+            result = apply_conditional_provider_profile(
+                result, profile, primitive_source_bytes
+            )
+        if selected_policy != "legacy-v1":
+            result["selected_defect_policy"] = selected_policy
+            result = audit._seal_security_scan(
+                result, producer_source_model=producer_source_model.get("source")
+            )
+        return (
+            audit._reconcile_runtime_oracles(workspace, result, evidence)
+            if any((value is not None for value in evidence))
+            else result
+        )
+
+
+def _validate_source_file_limit(value: int | None) -> int:
+    from .review_audits import MAX_SECURITY_SOURCE_FILES, ReviewAuditError
+
+    if value is None:
+        return MAX_SECURITY_SOURCE_FILES
+    if type(value) is not int or not 1 <= value <= MAX_SECURITY_SOURCE_FILES:
+        raise ReviewAuditError(
+            f"max_files must be an integer from 1 to {MAX_SECURITY_SOURCE_FILES}."
+        )
+    return value
 
 
 def _security_scan_coverage(
@@ -723,17 +876,25 @@ def blocked_security_scan_report(
     tenant_read_calls: tuple[str, ...],
     tenant_read_bindings: dict[str, tuple[str, ...]],
     tenant_policy_applies: bool = False,
+    source_limit: int | None = None,
 ) -> dict[str, Any]:
     """Return a fail-closed receipt when the bounded inventory is exceeded."""
     relative_paths = [path.relative_to(workspace).as_posix() for path in files]
+    source_limit = _validate_source_file_limit(
+        audit.MAX_SECURITY_SOURCE_FILES if source_limit is None else source_limit
+    )
+    advice = (
+        f"rerun factory scan --max-files {audit.MAX_SECURITY_SOURCE_FILES}."
+        if source_limit < audit.MAX_SECURITY_SOURCE_FILES
+        else "partition the workspace to stay within the captured-source bound."
+    )
     finding = audit._security_finding(
         "SECURITY_AUDIT_INCOMPLETE",
         ".",
         audit.ast.Module(body=[], type_ignores=[]),
         (
             f"Eligible Python source inventory contains {len(files)} files, above "
-            f"the {audit.MAX_SECURITY_SOURCE_FILES}-file scan limit. No files were "
-            "scanned; partition the workspace or use a reviewed larger limit."
+            f"the {source_limit}-file scan limit. No files were scanned; {advice}"
         ),
         "HIGH",
         files_discovered=len(files),
@@ -757,7 +918,7 @@ def blocked_security_scan_report(
             "measurement_state": "blocked",
             "inventory_complete": True,
             "complete": False,
-            "limit": audit.MAX_SECURITY_SOURCE_FILES,
+            "limit": source_limit,
             "inventory_sha256": audit.sha256(
                 "\n".join(relative_paths).encode("utf-8")
             ).hexdigest(),

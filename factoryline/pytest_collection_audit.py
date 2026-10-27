@@ -131,7 +131,7 @@ def _pytest_function_test_disabled(statement, function_name):
     )
 
 
-def _pytest_collection_config(root, source_files=None):
+def _pytest_collection_config(root, source_files=None, *, allow_unknown=False):
     """Read pytest selected root config; malformed config is incomplete."""
     from .review_audits import (
         ReviewAuditError,
@@ -164,7 +164,11 @@ def _pytest_collection_config(root, source_files=None):
                     f"{result[1]['state']} configuration."
                 )
             patterns, identity = result
-            identity = _pytest_collection_source_identity(root, identity, source_files)
+            identity = _pytest_collection_source_identity(
+                root, identity, source_files, allow_unknown=allow_unknown
+            )
+            if identity.get("collection_state") == "UNKNOWN":
+                patterns = set()
             return patterns, identity
     patterns, identity = (
         defaults,
@@ -176,14 +180,22 @@ def _pytest_collection_config(root, source_files=None):
             "python_classes": list(_TEST_CLASS_PATTERNS),
         },
     )
-    return patterns, _pytest_collection_source_identity(root, identity, source_files)
+    identity = _pytest_collection_source_identity(
+        root, identity, source_files, allow_unknown=allow_unknown
+    )
+    return (
+        set() if identity.get("collection_state") == "UNKNOWN" else patterns
+    ), identity
 
 
-def _pytest_collection_source_identity(root, identity, source_files=None):
-    """Bind and reject project-local hooks that can change pytest collection."""
+def _pytest_collection_source_identity(
+    root, identity, source_files=None, *, allow_unknown=False
+):
+    """Bind project-local collection hooks; reject them unless explicitly unknown."""
     from .review_audits import (
         ReviewAuditError,
         RuntimeAuditError,
+        MAX_BYTES,
         _security_source_bytes,
         _security_source_files,
         ast,
@@ -202,9 +214,11 @@ def _pytest_collection_source_identity(root, identity, source_files=None):
             continue
         try:
             data = _security_source_bytes(root, relative)
+            if len(data) > MAX_BYTES:
+                raise OSError("oversized hook source")
             tree = ast.parse(data, filename=relative)
         except (OSError, UnicodeError, SyntaxError, RuntimeAuditError, RecursionError):
-            if is_conftest:
+            if is_conftest or allow_unknown:
                 raise ReviewAuditError(
                     f"Cannot determine pytest test collection from {relative}: "
                     "unreadable or invalid hook source."
@@ -218,6 +232,8 @@ def _pytest_collection_source_identity(root, identity, source_files=None):
             hooks.append(
                 {
                     "path": relative,
+                    "sha256": sha256(data).hexdigest(),
+                    "bytes": len(data),
                     "names": sorted(set(found)),
                     "pytest_plugins": plugin_assignment,
                 }
@@ -230,11 +246,24 @@ def _pytest_collection_source_identity(root, identity, source_files=None):
                     "bytes": len(data),
                 }
             )
-    if hooks:
+    if hooks and not allow_unknown:
         raise ReviewAuditError(
             "Cannot determine pytest test collection: custom collection hooks "
             "or pytest plugins are unsupported."
         )
+    if hooks:
+        return {
+            **identity,
+            "state": "unsupported",
+            "collection_state": "UNKNOWN",
+            "mode": "security_only",
+            "reason": "custom_collection_hooks_or_pytest_plugins",
+            "python_files": [],
+            "python_functions": [],
+            "python_classes": [],
+            "conftest_sources": sources,
+            "collection_hook_sources": hooks,
+        }
     return {**identity, "conftest_sources": sources}
 
 

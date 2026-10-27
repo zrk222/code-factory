@@ -1032,7 +1032,7 @@ def _scan_security_source(
             "unreadable",
             detail=type(exc).__name__,
         )
-    except (SyntaxError, ValueError) as exc:
+    except SyntaxError as exc:
         return _security_source_failure(
             audit,
             binding,
@@ -1552,7 +1552,7 @@ def async_runner_fixture_context(root, files, snapshots):
     """Build bounded, JSON-safe provenance for inherited async runner fixtures."""
     from . import review_audits as audit
 
-    if len(snapshots) > 460:
+    if len(snapshots) > audit.MAX_SECURITY_SOURCE_FILES:
         return {}
     rows, candidates = _async_runner_snapshot_records(
         root, set(files), snapshots, audit

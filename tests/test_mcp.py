@@ -1480,6 +1480,220 @@ def test_mcp_stdio_emits_only_newline_delimited_json_rpc(tmp_path: Path):
     )
 
 
+@pytest.mark.parametrize("method", ["tools/list", "resources/list"])
+@pytest.mark.parametrize(
+    "params",
+    [
+        None,
+        {},
+        {"cursor": None},
+        {"_meta": {}},
+        {"_meta": None},
+        {"cursor": None, "_meta": {"progressToken": "probe"}},
+    ],
+)
+def test_mcp_empty_list_params_and_request_metadata_allow_discovery(
+    tmp_path, method, params
+):
+    request = {"jsonrpc": "2.0", "id": 1, "method": method, "params": params}
+    baseline = dispatch({**request, "params": {}}, tmp_path)
+    assert dispatch(request, tmp_path) == baseline
+
+
+@pytest.mark.parametrize("method", ["tools/list", "resources/list"])
+@pytest.mark.parametrize(
+    "params",
+    [
+        {"cursor": "unknown"},
+        {"root": "/other"},
+        {"_meta": []},
+        {"_meta": "invalid"},
+        {"cursor": False},
+        [],
+    ],
+)
+def test_mcp_request_metadata_preserves_rejection_of_state_and_unknown_params(
+    tmp_path, method, params
+):
+    result = dispatch(
+        {"jsonrpc": "2.0", "id": 1, "method": method, "params": params}, tmp_path
+    )
+    assert result["error"]["code"] == -32602
+    assert result["error"]["data"]["marker"] == "MCP_INVALID_PARAMS_REJECTED"
+
+
+@pytest.mark.parametrize(
+    "method, params",
+    [
+        ("tools/call", {"name": "factory.status", "arguments": {}}),
+        ("resources/read", {"uri": "factory://status"}),
+    ],
+)
+def test_mcp_request_metadata_is_transport_only_and_cannot_retarget_workspace(
+    tmp_path, method, params
+):
+    request = {"jsonrpc": "2.0", "id": 1, "method": method, "params": params}
+    baseline = dispatch(request, tmp_path)
+    actual = dispatch(
+        {
+            **request,
+            "params": {
+                **params,
+                "_meta": {"progressToken": "probe", "root": "/other", "approval": True},
+            },
+        },
+        tmp_path,
+    )
+    assert actual == baseline
+    payload = (
+        _content(actual)
+        if method == "tools/call"
+        else json.loads(actual["result"]["contents"][0]["text"])
+    )
+    assert payload["workspace_root"] == str(tmp_path.resolve())
+    assert not any(payload["authority"].values())
+
+
+def test_mcp_protocol_metadata_stdio_initialize_discover_and_read_status(tmp_path):
+    requests = [
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": MCP_PROTOCOL_VERSION,
+                "capabilities": {},
+                "clientInfo": {"name": "Codex-compatible-probe", "version": "1"},
+                "_meta": {},
+            },
+        },
+        {"jsonrpc": "2.0", "method": "notifications/initialized"},
+        {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/list",
+            "params": {"cursor": None, "_meta": {"progressToken": "probe"}},
+        },
+        {
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "tools/call",
+            "params": {
+                "name": "factory.status",
+                "arguments": {},
+                "_meta": {"progressToken": "probe"},
+            },
+        },
+    ]
+    before = _files(tmp_path)
+    incoming = StringIO("\n".join(json.dumps(row) for row in requests) + "\n")
+    outgoing = StringIO()
+    assert serve_stdio(tmp_path, input_stream=incoming, output_stream=outgoing) == 0
+    replies = [json.loads(line) for line in outgoing.getvalue().splitlines()]
+    assert len(replies) == 3
+    assert all("error" not in reply for reply in replies)
+    assert "factory.status" in {row["name"] for row in replies[1]["result"]["tools"]}
+    assert _content(replies[2])["workspace_root"] == str(tmp_path.resolve())
+    assert _files(tmp_path) == before
+
+
+def test_mcp_request_metadata_cannot_relax_tool_arguments(tmp_path):
+    response = dispatch(
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {
+                "name": "factory.status",
+                "arguments": {"root": "/other"},
+                "_meta": {},
+            },
+        },
+        tmp_path,
+    )
+    assert response["error"]["code"] == -32602
+
+
+def test_mcp_protocol_metadata_stateless_keeps_original_request_binding(tmp_path):
+    request = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/list",
+        "params": {"_meta": {"progressToken": "probe"}},
+    }
+    response = mcp.dispatch_stateless(request, tmp_path)
+    assert response["response"] == dispatch({**request, "params": {}}, tmp_path)
+    assert (
+        response["request_sha256"]
+        == hashlib.sha256(mcp._canonical(request).encode()).hexdigest()
+    )
+    assert not any(response["authority"].values())
+
+
+def test_mcp_protocol_metadata_real_stdio_process(tmp_path):
+    import subprocess
+    import sys
+
+    requests = [
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": MCP_PROTOCOL_VERSION,
+                "capabilities": {},
+                "clientInfo": {"name": "probe", "version": "1"},
+            },
+        },
+        {"jsonrpc": "2.0", "method": "notifications/initialized"},
+        {
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/list",
+            "params": {"cursor": None, "_meta": {"progressToken": "probe"}},
+        },
+        {
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "tools/call",
+            "params": {
+                "name": "factory.status",
+                "arguments": {},
+                "_meta": {"root": "/other"},
+            },
+        },
+    ]
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "factoryline.cli",
+            "mcp",
+            "serve",
+            "--root",
+            str(tmp_path),
+        ],
+        cwd=Path(mcp.__file__).resolve().parent.parent,
+        input="\n".join(json.dumps(row) for row in requests) + "\n",
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    assert result.returncode == 0 and not result.stderr
+    replies = [json.loads(line) for line in result.stdout.splitlines()]
+    assert [row["id"] for row in replies] == [1, 2, 3]
+    assert all("error" not in row for row in replies)
+    assert len(replies[1]["result"]["tools"]) == len(mcp._tool_definitions())
+    status = _content(replies[2])
+    assert status["workspace_root"] == str(tmp_path.resolve())
+    assert not any(status["authority"].values())
+    files = _files(tmp_path)
+    assert len(files) == 1
+    name, data = next(iter(files.items()))
+    assert name.startswith(".factory/ops/lifecycle/") and name.endswith(".json")
+    assert json.loads(data)["command_family"] == "mcp"
+
+
 def test_release_gate_input_required_is_deterministic_and_authority_free() -> None:
     card = {
         "feature": "payments",

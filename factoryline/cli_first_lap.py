@@ -20,8 +20,14 @@ def add_parser(sub: Any) -> None:
     scan = sub.add_parser(
         "scan",
         help="run every applicable local audit lane with explicit evidence gaps",
+        epilog="Exit 0: no blocking findings/checks (advisories may remain). Exit 2: blocked or invalid analysis. INCOMPLETE means evidence gaps remain; it is not release approval. Base static analysis covers Python; other languages require workers.",
     )
     scan.add_argument("--root", default=".")
+    scan.add_argument(
+        "--max-files",
+        type=int,
+        help="Python source budget, 1..2000 (default: 2000); over-budget inventories are blocked without truncation",
+    )
     scan_scope = scan.add_mutually_exclusive_group()
     scan_scope.add_argument(
         "--deep",
@@ -240,6 +246,7 @@ def _run_scan(args: Any) -> int:
     try:
         result = run_repo_scan(
             Path(args.root).resolve(),
+            max_files=args.max_files,
             deep=args.deep,
             worker_config=args.worker_config,
             oracle_options={
@@ -265,24 +272,61 @@ def _run_scan(args: Any) -> int:
     if args.json:
         print(json.dumps(result, indent=2, sort_keys=True))
     else:
-        print("factory scan")
-        print("=" * 44)
-        print(f"state    : {result['state']}")
-        print(f"verdict  : {result['verdict']}")
-        assessment = result.get("assessment", {})
-        print(
-            f"inventory: {assessment.get('files_discovered', 0)} files "
-            f"({assessment.get('inventory_sha256', 'unavailable')[:12]})"
-        )
-        print(
-            "security : "
-            + str(result.get("static_security", {}).get("state", "unavailable"))
-        )
-        for action in result.get("next_actions", []):
-            print(f"next     : {action}")
-        if result.get("message"):
-            print(f"error    : {result['message']}", file=sys.stderr)
+        _print_repo_scan(result, code)
     return code
+
+
+def _print_repo_scan(result: dict, code: int) -> None:
+    print("factory scan\n" + "=" * 44)
+    print(f"state    : {result['state']}")
+    print(f"verdict  : {result['verdict']}")
+    assessment = result.get("assessment", {})
+    print(
+        f"inventory: {assessment.get('files_discovered', 0)} files ({assessment.get('inventory_sha256', 'unavailable')[:12]})"
+    )
+    security = result.get("static_security", {})
+    coverage = security.get("audit_coverage", {})
+    print(
+        f"security : {security.get('state', 'unavailable')}; Python audited {coverage.get('files_audited', 0)}/{coverage.get('files_discovered', 0)}, limit {coverage.get('limit', 'unavailable')}"
+    )
+    print(
+        "scope    : Python AST static checks; JS/shell and other languages require external workers."
+    )
+    print(
+        f"exit     : {code}; 0=no blocking findings/checks (advisories may remain), 2=blocked/invalid."
+    )
+    print(
+        "evidence : INCOMPLETE means missing evidence or review; a clean static scan is not runtime coverage or release approval."
+    )
+    _print_scan_findings(result)
+    for lane in (result.get("deep_audit") or {}).get("lanes", []):
+        if lane.get("state") == "BLOCKED":
+            print(
+                f"blocking : {lane['measurement_id']}: {lane.get('next_action', 'Review this lane.')}"
+            )
+    for action in result.get("next_actions", []):
+        print(f"next     : {action}")
+    error = (
+        result.get("message")
+        or result.get("static_security_error")
+        or security.get("message")
+    )
+    if error:
+        print(f"error    : {error}", file=sys.stderr)
+
+
+def _print_scan_findings(result: dict) -> None:
+    findings = list(result.get("static_security", {}).get("findings", []))
+    deep = result.get("deep_audit") or {}
+    findings.extend(deep.get("native_domains", {}).get("findings", []))
+    for lane in deep.get("lanes", []):
+        if lane.get("measurement_id") != "python_ast_security":
+            findings.extend((lane.get("result") or {}).get("findings", []))
+    print(f"findings : {len(findings)}")
+    for row in findings:
+        print(
+            f"  {row.get('severity', 'INFO')} {row.get('code', row.get('rule_id', row.get('finding_id', 'FINDING')))} {row.get('path', '.')}:{row.get('line', 1)}:{row.get('column', 0)} - {row.get('message', row.get('summary', row.get('remediation', 'Review finding evidence.')))}"
+        )
 
 
 def _read_input(path: str | Path) -> Any:

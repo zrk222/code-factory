@@ -16,6 +16,191 @@ from factoryline.runtime_audit_integrity import finite_literal_eval_input_witnes
 from factoryline.runtime_audit_integrity import source_generated_eval_input_witness
 
 
+@pytest.mark.parametrize(
+    "source",
+    ["pytest_plugins = ['plugin']\n", "def pytest_generate_tests(metafunc): pass\n"],
+)
+def test_collection_unknown_profile_rejects_each_test_module_declaration_by_default(
+    tmp_path, source
+):
+    from factoryline.pytest_collection_audit import _pytest_collection_config
+
+    (tmp_path / "test_example.py").write_text(source, encoding="utf-8")
+    with pytest.raises(review_audits.ReviewAuditError, match="custom collection hooks"):
+        _pytest_collection_config(tmp_path)
+    assert (
+        _pytest_collection_config(tmp_path, allow_unknown=True)[1]["collection_state"]
+        == "UNKNOWN"
+    )
+
+
+def test_collection_unknown_profile_binds_hooks_and_config_without_execution(tmp_path):
+    from factoryline.pytest_collection_audit import _pytest_collection_config
+
+    config = tmp_path / "pytest.ini"
+    config.write_text("[pytest]\npython_files = test_*.py\n", encoding="utf-8")
+    conftest = tmp_path / "conftest.py"
+    conftest.write_text(
+        "def pytest_collection_modifyitems(items): pass\n", encoding="utf-8"
+    )
+    test_module = tmp_path / "test_example.py"
+    test_module.write_text(
+        "raise RuntimeError('must not execute')\n"
+        "pytest_plugins = ['plugin']\n"
+        "def pytest_generate_tests(metafunc): pass\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(review_audits.ReviewAuditError, match="custom collection hooks"):
+        _pytest_collection_config(tmp_path)
+
+    patterns, identity = _pytest_collection_config(tmp_path, allow_unknown=True)
+    assert patterns == set()
+    assert {
+        key: identity[key] for key in ("state", "collection_state", "mode", "reason")
+    } == {
+        "state": "unsupported",
+        "collection_state": "UNKNOWN",
+        "mode": "security_only",
+        "reason": "custom_collection_hooks_or_pytest_plugins",
+    }
+    assert all(
+        identity[key] == []
+        for key in ("python_files", "python_functions", "python_classes")
+    )
+    assert identity["path"] == "pytest.ini"
+    assert identity["sha256"] == hashlib.sha256(config.read_bytes()).hexdigest()
+    assert identity["bytes"] == len(config.read_bytes())
+    hooks = {entry["path"]: entry for entry in identity["collection_hook_sources"]}
+    assert set(hooks) == {"conftest.py", "test_example.py"}
+    for path in (conftest, test_module):
+        assert (
+            hooks[path.name]["sha256"] == hashlib.sha256(path.read_bytes()).hexdigest()
+        )
+        assert hooks[path.name]["bytes"] == len(path.read_bytes())
+    assert hooks["conftest.py"]["names"] == ["pytest_collection_modifyitems"]
+    assert hooks["test_example.py"]["names"] == ["pytest_generate_tests"]
+    assert hooks["test_example.py"]["pytest_plugins"] is True
+
+    for path in (conftest, test_module, config):
+        path.write_text(
+            path.read_text(encoding="utf-8") + "\n# changed\n", encoding="utf-8"
+        )
+        changed = _pytest_collection_config(tmp_path, allow_unknown=True)[1]
+        assert changed != identity
+        identity = changed
+
+
+@pytest.mark.parametrize(
+    "kind",
+    [
+        "invalid_config",
+        "oversized_config",
+        "unreadable_config",
+        "unsupported_config",
+        "invalid_hook",
+        "oversized_hook",
+        "unreadable_hook",
+        "invalid_test_module",
+        "oversized_test_module",
+    ],
+)
+def test_collection_unknown_profile_does_not_relax_invalid_inputs(
+    tmp_path, monkeypatch, kind
+):
+    from factoryline.pytest_collection_audit import _pytest_collection_config
+    from factoryline.runtime_audit_common import RuntimeAuditError
+
+    (tmp_path / "conftest.py").write_text(
+        "def pytest_collection_modifyitems(items): pass\n", encoding="utf-8"
+    )
+    if kind == "invalid_config":
+        (tmp_path / "pytest.ini").write_text("[pytest\n", encoding="utf-8")
+    elif kind == "oversized_config":
+        (tmp_path / "pytest.ini").write_bytes(b" " * (review_audits.MAX_BYTES + 1))
+    elif kind in {"unreadable_config", "unreadable_hook"}:
+
+        def unreadable(*args):
+            raise RuntimeAuditError("E_SOURCE_UNREADABLE", "unreadable")
+
+        target = {
+            "unreadable_config": "local_file",
+            "unreadable_hook": "_security_source_bytes",
+        }[kind]
+        monkeypatch.setattr(review_audits, target, unreadable)
+    elif kind == "unsupported_config":
+        (tmp_path / "pytest.ini").write_text(
+            "[pytest]\naddopts = -p plugin\n", encoding="utf-8"
+        )
+    elif kind == "invalid_hook":
+        (tmp_path / "conftest.py").write_text("def broken(:\n", encoding="utf-8")
+    elif kind == "oversized_hook":
+        (tmp_path / "conftest.py").write_bytes(b" " * (review_audits.MAX_BYTES + 1))
+    elif kind == "invalid_test_module":
+        (tmp_path / "test_example.py").write_text("def broken(:\n", encoding="utf-8")
+    elif kind == "oversized_test_module":
+        (tmp_path / "test_example.py").write_bytes(b" " * (review_audits.MAX_BYTES + 1))
+    with pytest.raises(review_audits.ReviewAuditError):
+        _pytest_collection_config(tmp_path, allow_unknown=True)
+
+
+@pytest.mark.parametrize(
+    "code",
+    ["SECURITY_DYNAMIC_EXECUTION", "SECURITY_OS_COMMAND", "SECURITY_SQL_INJECTION"],
+)
+def test_all_finding_source_binding_keeps_bytes_without_inventing_a_proof(
+    tmp_path, code
+):
+    from factoryline.audit_action_refs import _captured_application_source_bytes
+
+    data = b"def invoke(program):\n    exec(program)\n"
+    bindings = [{"path": "app.py", "sha256": hashlib.sha256(data).hexdigest()}]
+    captured = _captured_application_source_bytes(
+        tmp_path,
+        [{"code": code, "path": "app.py", "facts": {}}],
+        bindings,
+        {tmp_path / "app.py": data},
+    )
+    assert captured == {"app.py": data}
+
+
+@pytest.mark.parametrize(
+    "relative", ["app.py", "../outside.py", "/absolute.py", "C:/outside.py"]
+)
+def test_all_finding_source_binding_rejects_stale_or_escaping_bytes(tmp_path, relative):
+    from factoryline.audit_action_refs import _captured_application_source_bytes
+
+    data = b"exec(program)\n"
+    bindings = [{"path": relative, "sha256": hashlib.sha256(data).hexdigest()}]
+    # Stale bytes must not gain credit even on an otherwise valid bound path.
+    actual = b"exec(changed)\n" if relative == "app.py" else data
+    assert (
+        _captured_application_source_bytes(
+            tmp_path,
+            [{"code": "SECURITY_DYNAMIC_EXECUTION", "path": relative, "facts": {}}],
+            bindings,
+            {tmp_path / relative: actual},
+        )
+        == {}
+    )
+
+
+def test_all_finding_source_binding_native_exec_stays_contextual(tmp_path):
+    (tmp_path / "app.py").write_text(
+        "def invoke(program):\n    exec(program)\n", encoding="utf-8"
+    )
+    with review_audits._security_only_scan_context(True):
+        report = review_audits.security_scan(
+            tmp_path, cache_enabled=False, defect_policy="legacy-v1"
+        )
+    row = next(
+        row
+        for row in report["finding_tier_report"]["ledger"]
+        if row["raw_finding"]["code"] == "SECURITY_DYNAMIC_EXECUTION"
+    )
+    assert "source_byte_binding" not in row["missing_premises"]
+    assert row["tier"] == "NEEDS_CONTEXT"
+
+
 def _assert_cache_binding_swap_changes_key(
     tmp_path, monkeypatch, pickle_model, audit, attribute, first, second, before
 ):
@@ -1053,9 +1238,10 @@ def test_provider_cache351_predicated_and_invalid_sources_remain_conservative(
         )
 
     assert ("requests", "get") in scan(**{predicate: lambda *args: False})
-    assert all(
-        key[0] == "parsed"
-        for key in tree._security_oracle_context["_security_provider_mutation_cache"]
+    keys = tree._security_oracle_context["_security_provider_mutation_cache"]
+    assert all(key[0] in {"parsed", "capture-independent"} for key in keys)
+    assert any(key[0] == "capture-independent" for key in keys) is (
+        predicate == "capture_predicate"
     )
     scan()
     sources["peer.py"] = b"invalid ("
@@ -1111,6 +1297,111 @@ def test_provider_cache351_each_capture_predicate_is_reevaluated():
     assert ("requests.get", "*") not in scan(False)
     assert ("requests.get", "*") in scan(True)
     assert ("requests.get", "*") not in scan(False)
+
+
+def test_provider_cache351_capture_partition_matches_full_facts_and_bindings(
+    monkeypatch,
+):
+    from factoryline import finite_capture as finite
+
+    tree, sources, nodes, parents = _provider_cache351_inputs()
+    raw = (
+        b"import requests\nselected = requests.get\nalias = requests\n"
+        b"alias.post = replacement\nsetattr(alias, 'put', replacement)\n"
+        b"accept(alias)\n(held := requests.patch)\n"
+        b"def escaped():\n    yield alias\n"
+    )
+    sources["peer.py"] = raw
+    full = tuple(ast.walk(ast.parse(raw)))
+    full_parents = {
+        id(child): node for node in full for child in ast.iter_child_nodes(node)
+    }
+    full_aliases = review_audits._security_aliases(full)
+    full_bindings = finite._provider_alias_bindings(full)
+    original = finite._provider_mutation_for_node
+    visits = []
+
+    def observed(node, *args):
+        visits.append(ast.dump(node))
+        return original(node, *args)
+
+    monkeypatch.setattr(finite, "_provider_mutation_for_node", observed)
+    repeated_nonassignment_visits = []
+    for accepted in (False, True, False):
+        expected, expected_calls = set(), []
+
+        def expected_capture(node):
+            expected_calls.append(ast.dump(node))
+            return accepted
+
+        finite._provider_mutation_facts(
+            full,
+            full_aliases,
+            review_audits,
+            full_parents,
+            full_bindings,
+            expected,
+            expected_capture,
+            None,
+        )
+        actual_calls = []
+
+        def capture(node):
+            actual_calls.append(ast.dump(node))
+            return accepted
+
+        visits.clear()
+        actual = finite.finite_provider_mutation_index(
+            nodes,
+            {"requests": "requests"},
+            review_audits,
+            parents,
+            capture_predicate=capture,
+        )
+        assert actual == expected
+        assert actual_calls == expected_calls
+        assert ("requests", "post") in actual
+        assert ("requests", "put") in actual
+        assert (("requests.get", "*") in actual) is accepted
+        repeated_nonassignment_visits.append(
+            sum(text.startswith("Call(") for text in visits)
+        )
+        actual.clear()
+    assert repeated_nonassignment_visits[0] > repeated_nonassignment_visits[1]
+    assert repeated_nonassignment_visits[1] == repeated_nonassignment_visits[2] == 1
+
+
+def test_provider_cache351_capture_partition_invalidates_changed_peer_and_helper(
+    monkeypatch,
+):
+    from factoryline import finite_capture as finite
+
+    tree, sources, nodes, parents = _provider_cache351_inputs()
+
+    def scan():
+        return finite.finite_provider_mutation_index(
+            nodes,
+            {"requests": "requests"},
+            review_audits,
+            parents,
+            capture_predicate=lambda node: False,
+        )
+
+    assert ("requests", "get") in scan()
+    sources["peer.py"] = (
+        b"import requests\nrequests.post = replacement\n"
+        b"setattr(requests, 'put', replacement)\n"
+    )
+    assert ("requests", "get") not in scan()
+    assert ("requests", "post") in scan()
+    original = finite._reflective_provider_write
+
+    def changed(call, aliases, audit, bindings, facts):
+        original(call, aliases, audit, bindings, facts)
+        facts.add(("requests", "changed_helper"))
+
+    monkeypatch.setattr(finite, "_reflective_provider_write", changed)
+    assert ("requests", "changed_helper") in scan()
 
 
 def test_foreign_provider360_indexes_events_without_caching_predicate_results():
@@ -1302,11 +1593,12 @@ def test_source_diagnostic318_known_coordinates_are_preserved():
 
 
 @pytest.mark.parametrize(
-    ("error", "expected_code", "expected_outcome"),
+    ("source", "error", "expected_code", "expected_outcome"),
     [
-        (ValueError("null bytes"), "QUALITY_SYNTAX_ERROR", "syntax_error"),
-        (SyntaxError("invalid syntax"), "QUALITY_SYNTAX_ERROR", "syntax_error"),
+        (b"\x00", ValueError("null bytes"), "QUALITY_SYNTAX_ERROR", "syntax_error"),
+        (b"if", SyntaxError("invalid syntax"), "QUALITY_SYNTAX_ERROR", "syntax_error"),
         (
+            b"\xff",
             UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid byte"),
             "SECURITY_SOURCE_UNREADABLE",
             "unreadable",
@@ -1314,18 +1606,17 @@ def test_source_diagnostic318_known_coordinates_are_preserved():
     ],
 )
 def test_source_diagnostic318_parser_error_classes_stay_distinct(
-    tmp_path, monkeypatch, error, expected_code, expected_outcome
+    tmp_path, monkeypatch, source, error, expected_code, expected_outcome
 ):
     from factoryline import context_efficiency
 
     path = tmp_path / "source.py"
-    source = b"value = 1\n"
     path.write_bytes(source)
 
-    def reject_tree(*args, **kwargs):
+    def reject_parse(*args, **kwargs):
         raise error
 
-    monkeypatch.setattr(context_efficiency, "_verified_security_tree", reject_tree)
+    monkeypatch.setattr(ast, "parse", reject_parse)
     binding, findings, outcome = context_efficiency._scan_security_source(
         tmp_path, path, (), (), {}, (), source
     )
@@ -1334,6 +1625,43 @@ def test_source_diagnostic318_parser_error_classes_stay_distinct(
     assert len(findings) == 1
     assert findings[0]["code"] == expected_code
     assert findings[0]["severity"] == "HIGH"
+
+
+@pytest.mark.parametrize("source", [b"value = 1\n", b"\x00"])
+@pytest.mark.parametrize("error_type", [ValueError, review_audits.ReviewAuditError])
+def test_source_diagnostic318_integrity_errors_propagate(
+    tmp_path, monkeypatch, source, error_type
+):
+    from factoryline import context_efficiency
+
+    path = tmp_path / "source.py"
+    path.write_bytes(source)
+
+    def reject_tree(*args, **kwargs):
+        raise error_type("Source changed before snapshot parsing")
+
+    monkeypatch.setattr(context_efficiency, "_verified_security_tree", reject_tree)
+    with pytest.raises(error_type, match="Source changed"):
+        context_efficiency._scan_security_source(tmp_path, path, (), (), {}, (), source)
+
+
+@pytest.mark.parametrize(
+    ("source", "error"),
+    [
+        (b"value = 1\n", ValueError("provider failed")),
+        (b"\x00", review_audits.ReviewAuditError("Source changed")),
+    ],
+)
+def test_source_diagnostic318_parser_preserves_non_syntax_value_errors(
+    tmp_path, source, error
+):
+    from factoryline.ops_telemetry import _measure_parse
+
+    def reject_parse(*args, **kwargs):
+        raise error
+
+    with pytest.raises(type(error), match=str(error)):
+        _measure_parse(reject_parse, source, tmp_path, tmp_path / "source.py")
 
 
 def test_provider_profile308_public_scan_preserves_raw_and_default(

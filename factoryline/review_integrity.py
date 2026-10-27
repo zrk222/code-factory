@@ -4344,8 +4344,9 @@ def _security_django_request_parameter(node, aliases, scope=None, flow_statement
     )
 
 
-def _security_expr_tainted(node, requests, parameters, aliases):
-    structural = _security_structural_expression(node, requests, aliases)
+def _security_expr_tainted(node, requests, parameters, aliases, structural=None):
+    if structural is None:
+        structural = _security_structural_expression(node, requests, aliases)
     if structural is not None and not structural.unknown:
         return bool(structural.roots)
     if isinstance(node, ast.Name):
@@ -4517,29 +4518,25 @@ def _security_flow_source_assignment(
     from . import intent_quality
     from .semantic_credential_sensor import request_payload_value_kind
 
-    value_kind = request_payload_value_kind(
-        value, requests, aliases, _security_scope_request_aliases, scope, statement
-    )
     structural = _security_structural_expression(value, requests, aliases)
-    if structural is not None and not structural.unknown:
-        value_kind = structural.scalar_kind if structural.roots else value_kind
-
+    if structural is not None and not structural.unknown and structural.roots:
+        value_kind = structural.scalar_kind
+    else:
+        value_kind = request_payload_value_kind(
+            value, requests, aliases, _security_scope_request_aliases, scope, statement
+        )
     request_collection = intent_quality._credential_request_collection(
         value, password_fields, _security_request_args, aliases, scope, statement
     )
     flags = (
         isinstance(value, ast.AST)
-        and _security_expr_tainted(value, requests, set(), aliases),
+        and _security_expr_tainted(value, requests, set(), aliases, structural),
         isinstance(value, ast.AST)
         and _security_password_source(
-            value,
-            password_fields,
-            aliases,
-            getattr(statement, "_security_lexical_scope", None),
-            statement,
+            value, password_fields, aliases, scope, statement
         ),
         isinstance(value, ast.AST)
-        and _security_expr_tainted(value, requests, parameters, aliases),
+        and _security_expr_tainted(value, requests, parameters, aliases, structural),
     )
     upload_object = isinstance(value, ast.AST) and (
         _security_flask_upload_expression(value, aliases, scope, statement)

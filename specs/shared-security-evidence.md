@@ -61,6 +61,7 @@ Scenario: `Wilson95` completion boundary
   Then at least 30 decided alerts and at least 80 percent actionable precision are required with unclear labels and all six TP checks visible
 ```
 ## SHOULD — Technical/structural
+- An explicit security-only profile may continue bounded security analysis when custom pytest hooks or plugin declarations make test collection unknown. The strict default still rejects those inputs. The profile must bind selected configuration and relevant hook/plugin source hashes, record UNKNOWN with empty file/function/class collection settings, suppress test-oracle and fixture-role credit, and preserve ordinary security findings and source bytes. Malformed, unreadable or oversized configuration remains an error. UNKNOWN collection must survive native sealing, cache, policy, serialization and persisted read-back as INCOMPLETE with no clean or release credit; source/config/hook drift must invalidate the receipt. A profile change requires a newly frozen evaluation; incomplete Study382 is retained without a score claim.
 - Existing source capture, structural values and finite helper flow are the implementation surface.
 - Delete replaced producer traversals after parity; verifier parsing remains independent.
 - Keep Python, PHP, runtime and oracle frontend identities separate; JEV remains secondary.

@@ -156,9 +156,15 @@ def _measure_hash(name: str, hasher, data: bytes) -> str:
 
 
 def _measure_parse(parser, data: bytes, root: Path, path: Path):
-    return _measure_call(
-        "source_parse", parser, data, filename=path.relative_to(root).as_posix()
-    )
+    filename = path.relative_to(root).as_posix()
+    try:
+        return _measure_call("source_parse", parser, data, filename=filename)
+    except ValueError as exc:
+        if type(exc) is not ValueError or b"\x00" not in data:
+            raise
+        # Python 3.10 reports null-byte source as ValueError, later versions
+        # as SyntaxError. Normalize only the parser's malformed-source case.
+        raise SyntaxError(str(exc), (filename, None, None, None)) from exc
 
 
 def _measured_phase(name: str):

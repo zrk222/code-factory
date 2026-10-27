@@ -28,6 +28,7 @@ from .e2e_proof import (
     write_e2e_proof_artifacts,
 )
 from .review_audits import MAX_SECURITY_SOURCE_FILES
+from .cli_foundations import _SCRIPT_LANGUAGE_SUFFIXES
 
 
 FIRST_PROOF_SCHEMA = "factory.first-proof.v1"
@@ -80,6 +81,11 @@ def _project_native_worker_execution(result: dict[str, Any]) -> None:
             lane.pop("action_id", None)
 
 
+def _project_native_observation(domain: object) -> None:
+    if isinstance(domain, dict) and isinstance(domain.get("result"), dict):
+        domain["result"].pop("run_id", None)
+
+
 def _scan_identity_projection(result: dict[str, Any]) -> dict[str, Any]:
     """Return deterministic scan content while excluding run receipt evidence."""
     identity = copy.deepcopy(result)
@@ -90,17 +96,20 @@ def _scan_identity_projection(result: dict[str, Any]) -> dict[str, Any]:
         deep_audit.pop("telemetry", None)
         deep_audit.pop("audit_sha256", None)
         for lane in deep_audit.get("lanes", []):
-            if (
-                isinstance(lane, dict)
-                and lane.get("measurement_id") == "native_worker_execution"
-                and isinstance(lane.get("result"), dict)
-            ):
-                _project_native_worker_execution(lane["result"])
+            if isinstance(lane, dict) and isinstance(lane.get("result"), dict):
+                if lane.get("measurement_id") == "native_worker_execution":
+                    _project_native_worker_execution(lane["result"])
+                if lane.get("measurement_id") in {
+                    "runtime_coverage",
+                    "dependencies_and_supply_chain",
+                }:
+                    _project_native_observation(
+                        lane["result"].get("native_observations")
+                    )
         native_domains = deep_audit.get("native_domains")
         if isinstance(native_domains, dict):
             for domain in native_domains.get("domains", []):
-                if isinstance(domain, dict) and isinstance(domain.get("result"), dict):
-                    domain["result"].pop("run_id", None)
+                _project_native_observation(domain)
             for finding in native_domains.get("findings", []):
                 if isinstance(finding, dict):
                     finding.pop("run_id", None)
@@ -157,8 +166,7 @@ def _workspace_inventory(workspace: Path, *, limit: int = 10_000) -> dict[str, A
             break
     suffixes = {
         "python": (".py",),
-        "javascript": (".js", ".jsx", ".mjs", ".cjs"),
-        "typescript": (".ts", ".tsx"),
+        **_SCRIPT_LANGUAGE_SUFFIXES,
         "docs": (".md", ".rst"),
         "go": (".go",),
         "rust": (".rs",),
@@ -1099,6 +1107,7 @@ def _python_audit_lanes(
     python_count: int,
     tenant_contract: str,
     oracle_options: dict[str, str] | None = None,
+    max_files: int | None = None,
 ) -> list[dict[str, Any]]:
     lanes: list[dict[str, Any]] = []
     if python_count:
@@ -1114,6 +1123,7 @@ def _python_audit_lanes(
             )
             security = security_scan(
                 workspace,
+                max_files=max_files,
                 tenant_read_calls=tuple(calls),
                 tenant_read_bindings=tuple(bindings),
                 tenant_read_scopes=contract.get("scoped_reads"),
@@ -1137,7 +1147,7 @@ def _python_audit_lanes(
                 state=security_state,
                 applicable=True,
                 result=security,
-                basis="Python AST security, hollow-test, tenant-contract and alias-aware checks over the 460-file scanner boundary.",
+                basis=f"Python AST security, hollow-test, tenant-contract and alias-aware checks over the {max_files or MAX_SECURITY_SOURCE_FILES}-file scanner boundary.",
                 next_action=security.get(
                     "action_summary", "Resolve Python security or test-oracle findings."
                 ),
@@ -1578,7 +1588,10 @@ def _native_domain_projection(lanes: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def _deep_audit_report(
-    lanes: list[dict[str, Any]], python_count: int, languages: list[str]
+    lanes: list[dict[str, Any]],
+    python_count: int,
+    languages: list[str],
+    max_files: int | None = None,
 ) -> dict[str, Any]:
     applicable = [lane for lane in lanes if lane["applicability_state"] == "APPLICABLE"]
     blocked = [lane for lane in applicable if lane["measurement_state"] == "BLOCKED"]
@@ -1601,7 +1614,7 @@ def _deep_audit_report(
         "state": state,
         "scope": {
             "root": ".",
-            "python_source_limit": MAX_SECURITY_SOURCE_FILES,
+            "python_source_limit": max_files or MAX_SECURITY_SOURCE_FILES,
             "python_source_discovered": python_count,
             "languages": languages,
         },
@@ -1677,9 +1690,13 @@ def run_deep_repository_audit(
     tenant_contract: str = ".factory/tenant-read-contract.json",
     worker_config: str | None = None,
     oracle_options: dict[str, str] | None = None,
+    max_files: int | None = None,
 ) -> dict[str, Any]:
     """Run all applicable local audit lanes and return an evidence map."""
     workspace = Path(root).resolve()
+    from .review_audits import _validate_source_file_limit
+
+    max_files = _validate_source_file_limit(max_files)
     file_types = inventory.get("file_types", {})
     python_count = int(file_types.get("python", 0))
     oracle_options = _validated_oracle_options(oracle_options, python_count)
@@ -1698,7 +1715,7 @@ def run_deep_repository_audit(
         (
             "python",
             lambda: _python_audit_lanes(
-                workspace, python_count, tenant_contract, oracle_options
+                workspace, python_count, tenant_contract, oracle_options, max_files
             ),
         ),
         ("languages", lambda: _non_python_security_lane(workspace, languages)),
@@ -1718,7 +1735,7 @@ def run_deep_repository_audit(
     with measured_span(recorder, "repository_audit"):
         for name, operation in operations:
             lanes.extend(_observed_native_lane(recorder, name, operation))
-    report = _deep_audit_report(lanes, python_count, languages)
+    report = _deep_audit_report(lanes, python_count, languages, max_files)
     report["telemetry"] = {
         "schema": "factory.scan-telemetry.v1",
         "trace_id": recorder.trace_id,
@@ -1737,15 +1754,21 @@ def _scan_security_and_deep_audit(
     deep: bool,
     worker_config: str | None,
     oracle_options: dict[str, str] | None = None,
+    max_files: int | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any] | None, str | None]:
     if not deep:
-        return _scan_static_security(workspace, inventory, oracle_options), None, None
+        return (
+            _scan_static_security(workspace, inventory, oracle_options, max_files),
+            None,
+            None,
+        )
     try:
         deep_audit = run_deep_repository_audit(
             workspace,
             inventory,
             worker_config=worker_config,
             oracle_options=oracle_options,
+            max_files=max_files,
         )
         static_security = next(
             (
@@ -1761,7 +1784,7 @@ def _scan_security_and_deep_audit(
         )
         if not static_security:
             static_security = _scan_static_security(
-                workspace, inventory, oracle_options
+                workspace, inventory, oracle_options, max_files
             )
         return static_security, deep_audit, None
     except (OSError, UnicodeError, ValueError, TypeError) as exc:
@@ -1780,6 +1803,7 @@ def _scan_static_security(
     workspace: Path,
     inventory: dict[str, Any],
     oracle_options: dict[str, str] | None = None,
+    max_files: int | None = None,
 ) -> dict[str, Any]:
     python_count = int(inventory.get("file_types", {}).get("python", 0))
     if not python_count:
@@ -1797,6 +1821,7 @@ def _scan_static_security(
         )
         return security_scan(
             workspace,
+            max_files=max_files,
             tenant_read_calls=tuple(calls),
             tenant_read_bindings=tuple(bindings),
             tenant_read_scopes=contract.get("scoped_reads"),
@@ -1861,6 +1886,7 @@ def run_repo_scan(
     deep: bool = True,
     worker_config: str | None = None,
     oracle_options: dict[str, str] | None = None,
+    max_files: int | None = None,
 ) -> dict[str, Any]:
     """Run every local audit lane unless explicitly restricted to static checks.
 
@@ -1870,6 +1896,9 @@ def run_repo_scan(
     """
     if worker_config is not None and not deep:
         raise ValueError("--worker-config requires --deep")
+    from .review_audits import _validate_source_file_limit
+
+    max_files = _validate_source_file_limit(max_files)
     workspace = Path(root).resolve()
     workspace.mkdir(parents=True, exist_ok=True)
     from .ops_telemetry import _measure_phase
@@ -1881,7 +1910,7 @@ def run_repo_scan(
     )
     with _measure_phase("source_audit"):
         static_security, deep_audit, security_error = _scan_security_and_deep_audit(
-            workspace, inventory, deep, worker_config, oracle_options
+            workspace, inventory, deep, worker_config, oracle_options, max_files
         )
     state, verdict = _repo_scan_state(deep_audit, static_security, deep, inventory)
     next_actions = (

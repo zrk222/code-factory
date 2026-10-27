@@ -3677,7 +3677,13 @@ def _resource_read(root: Path, params: object) -> dict[str, object]:
 
 
 def _require_no_params(params: object, method: str) -> None:
-    if params != {}:
+    if params is None:
+        return
+    if (
+        not isinstance(params, dict)
+        or set(params) - {"cursor"}
+        or params.get("cursor") is not None
+    ):
         raise McpError(f"{method} accepts no params")
 
 
@@ -3724,6 +3730,15 @@ def _resources_read(root: Path, params: object) -> dict[str, object]:
     return _resource_read(root, params)
 
 
+def _method_params(params: object) -> object:
+    """Separate transport metadata from the unchanged method argument contract."""
+    if not isinstance(params, dict) or "_meta" not in params:
+        return params
+    if params["_meta"] is not None and not isinstance(params["_meta"], dict):
+        raise McpError("request _meta must be an object")
+    return {name: value for name, value in params.items() if name != "_meta"}
+
+
 def _method_result(root: Path, method: str, params: object) -> dict[str, object]:
     handlers = {
         "initialize": _initialize,
@@ -3735,7 +3750,7 @@ def _method_result(root: Path, method: str, params: object) -> dict[str, object]
     handler = handlers.get(method)
     if handler is None:
         raise LookupError(method)
-    return handler(root, params)
+    return handler(root, _method_params(params))
 
 
 def _request_context(request: object) -> tuple[object, bool, str, object] | None:

@@ -15,6 +15,17 @@ factory scan --root .
 affected checks again. The basic scan reads eligible Python source; it does not
 run your project. Missing evidence is **INCOMPLETE**, not a clean bill of health.
 
+The Python source budget defaults to 2,000 files. `factory scan --max-files 1000`
+sets a smaller per-run budget; over-budget scans stop explicitly without silently
+dropping files. This runtime budget is separate from CF's own architecture caps.
+Human output includes finding locations and audited/discovered source counts.
+Exit **0** means no blocking finding or failed check; advisories and missing
+evidence may remain. Exit **2** means blocked or invalid analysis. A clean
+Python static result does not establish runtime coverage or release approval.
+Use `--static-only` for the Python-only path; the default also orchestrates
+other applicable evidence lanes. JavaScript, shell and other language audits
+require external workers.
+
 ## Current source preview — core 0.49.0, VS Code 1.3.0, JetBrains 1.3.0
 
 The bounded security review follows values through supported local helpers to
