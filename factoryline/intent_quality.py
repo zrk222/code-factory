@@ -3610,7 +3610,7 @@ def _oracle_source_snapshots(
             for node in ast.walk(tree):
                 node._scan_bound_names = None
             snapshots[path] = tree
-        except (OSError, SyntaxError, ValueError, UnicodeError, runtime_error):
+        except (OSError, SyntaxError, UnicodeError, runtime_error):
             continue
     return snapshots
 

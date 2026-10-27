@@ -1032,7 +1032,7 @@ def _scan_security_source(
             "unreadable",
             detail=type(exc).__name__,
         )
-    except (SyntaxError, ValueError) as exc:
+    except SyntaxError as exc:
         return _security_source_failure(
             audit,
             binding,

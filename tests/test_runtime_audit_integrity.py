@@ -1302,11 +1302,12 @@ def test_source_diagnostic318_known_coordinates_are_preserved():
 
 
 @pytest.mark.parametrize(
-    ("error", "expected_code", "expected_outcome"),
+    ("source", "error", "expected_code", "expected_outcome"),
     [
-        (ValueError("null bytes"), "QUALITY_SYNTAX_ERROR", "syntax_error"),
-        (SyntaxError("invalid syntax"), "QUALITY_SYNTAX_ERROR", "syntax_error"),
+        (b"\x00", ValueError("null bytes"), "QUALITY_SYNTAX_ERROR", "syntax_error"),
+        (b"if", SyntaxError("invalid syntax"), "QUALITY_SYNTAX_ERROR", "syntax_error"),
         (
+            b"\xff",
             UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid byte"),
             "SECURITY_SOURCE_UNREADABLE",
             "unreadable",
@@ -1314,18 +1315,17 @@ def test_source_diagnostic318_known_coordinates_are_preserved():
     ],
 )
 def test_source_diagnostic318_parser_error_classes_stay_distinct(
-    tmp_path, monkeypatch, error, expected_code, expected_outcome
+    tmp_path, monkeypatch, source, error, expected_code, expected_outcome
 ):
     from factoryline import context_efficiency
 
     path = tmp_path / "source.py"
-    source = b"value = 1\n"
     path.write_bytes(source)
 
-    def reject_tree(*args, **kwargs):
+    def reject_parse(*args, **kwargs):
         raise error
 
-    monkeypatch.setattr(context_efficiency, "_verified_security_tree", reject_tree)
+    monkeypatch.setattr(ast, "parse", reject_parse)
     binding, findings, outcome = context_efficiency._scan_security_source(
         tmp_path, path, (), (), {}, (), source
     )
@@ -1334,6 +1334,43 @@ def test_source_diagnostic318_parser_error_classes_stay_distinct(
     assert len(findings) == 1
     assert findings[0]["code"] == expected_code
     assert findings[0]["severity"] == "HIGH"
+
+
+@pytest.mark.parametrize("source", [b"value = 1\n", b"\x00"])
+@pytest.mark.parametrize("error_type", [ValueError, review_audits.ReviewAuditError])
+def test_source_diagnostic318_integrity_errors_propagate(
+    tmp_path, monkeypatch, source, error_type
+):
+    from factoryline import context_efficiency
+
+    path = tmp_path / "source.py"
+    path.write_bytes(source)
+
+    def reject_tree(*args, **kwargs):
+        raise error_type("Source changed before snapshot parsing")
+
+    monkeypatch.setattr(context_efficiency, "_verified_security_tree", reject_tree)
+    with pytest.raises(error_type, match="Source changed"):
+        context_efficiency._scan_security_source(tmp_path, path, (), (), {}, (), source)
+
+
+@pytest.mark.parametrize(
+    ("source", "error"),
+    [
+        (b"value = 1\n", ValueError("provider failed")),
+        (b"\x00", review_audits.ReviewAuditError("Source changed")),
+    ],
+)
+def test_source_diagnostic318_parser_preserves_non_syntax_value_errors(
+    tmp_path, source, error
+):
+    from factoryline.ops_telemetry import _measure_parse
+
+    def reject_parse(*args, **kwargs):
+        raise error
+
+    with pytest.raises(type(error), match=str(error)):
+        _measure_parse(reject_parse, source, tmp_path, tmp_path / "source.py")
 
 
 def test_provider_profile308_public_scan_preserves_raw_and_default(
