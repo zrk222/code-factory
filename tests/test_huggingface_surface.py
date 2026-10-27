@@ -14,9 +14,23 @@ SPACE = ROOT / "deploy" / "huggingface"
 def test_preview_separates_candidate_regressions_from_accuracy_and_review() -> None:
     page = (SPACE / "index.html").read_text(encoding="utf-8")
     readme = (SPACE / "README.md").read_text(encoding="utf-8")
-    assert "6 defects detected; 2 clean cases accepted" in page
+    assert "Seeded demonstration" in page
+    assert "Review a finding and a repaired case" in page
+    assert "This seeded local example applies a declared tenant-read contract" in page
+    assert (
+        "This seeded local demonstration shows the workflow using a finding and a"
+        in readme
+    )
     assert "CI verification is still required" in page
-    assert "not independent accuracy or release approval" in page
+    assert "published Code Factory 0.48.1 remains unchanged" not in readme
+    assert "published Code Factory 0.48.2 remains unchanged" not in page
+    assert "Code Factory 0.49.0 is published" in page
+    assert "https://pypi.org/project/factoryline-code-factory/0.49.0/" in page
+    assert "https://github.com/zrk222/code-factory/releases/tag/v0.49.0" in page
+    assert "Code Factory 0.48.1 candidate" not in page
+    assert "6 true positives" not in page + readme
+    assert "2 true negatives" not in page + readme
+    assert "false positives or false negatives" not in page + readme
     assert "not authenticate tenants or prove runtime isolation" in page
     assert "not subsequent detection fixes" in readme
     assert "latest local strict ForgeLine report" not in page + readme
@@ -35,8 +49,8 @@ def test_huggingface_space_has_static_metadata_and_canonical_release_links() -> 
     )
     assert len(short_description) <= 60
     assert "factoryline-code-factory" in page
-    assert "Source preview" in page
-    assert 'href="https://github.com/zrk222/code-factory/releases"' in page
+    assert "Static workflow preview" in page
+    assert 'href="https://github.com/zrk222/code-factory/releases/tag/v0.49.0"' in page
     assert "Specialty AI audit evidence is available" in page
     assert (
         "https://github.com/zrk222/code-factory/pull/131#issuecomment-5980528354"

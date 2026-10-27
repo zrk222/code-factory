@@ -410,6 +410,8 @@ def _security_scan_action_summary(state: str) -> str:
 
 def _application_configuration_hashes(class_profiles):
     """Select only bounded configuration digests from explicit class profiles."""
+    from .import_context import application_configuration_names
+
     config_hashes = {}
     for evidence in class_profiles:
         configured = evidence.get("configuration_sha256", {})
@@ -417,7 +419,7 @@ def _application_configuration_hashes(class_profiles):
             continue
         for name, digest in configured.items():
             if (
-                name in {"pyproject.toml", "requirements.txt", "tox.ini"}
+                name in application_configuration_names()
                 and isinstance(digest, str)
                 and len(digest) == 64
             ):
@@ -428,12 +430,15 @@ def _application_configuration_hashes(class_profiles):
 def _captured_application_source_bytes(
     workspace, findings, bindings, source_bytes, *, capture_all_sources=False
 ):
+    from .primitive_observation_binding import fixed_program_proof_dispositions
+
+    program_proofs = fixed_program_proof_dispositions()
     paths = {
         finding.get("path")
         for finding in findings
         if finding.get("facts", {}).get("disposition")
-        in {
-            "PROVEN_FIXED_LITERAL_PROGRAM",
+        in program_proofs
+        | {
             "TEST_OWNED_APPLICATION_CREDENTIAL",
             "PROVEN_CLOSED_OPERATION_COMMAND_SYNTAX",
             "PROVEN_CLOSED_LITERAL_PICKLE_BYTES",
@@ -452,7 +457,12 @@ def _captured_application_source_bytes(
                 if isinstance(row, dict)
             )
     hashes = {row["path"]: row["sha256"] for row in bindings}
-    paths.update(hashes if capture_all_sources else ())
+    whole_inventory = capture_all_sources or any(
+        finding.get("facts", {}).get("disposition") in program_proofs
+        or isinstance(finding.get("facts", {}).get("security_precondition"), dict)
+        for finding in findings
+    )
+    paths.update(hashes if whole_inventory else ())
     needs_signing_sources = any(
         finding.get("code") == "SECURITY_HARDCODED_SECRET"
         and finding.get("facts", {}).get("name") == "SECRET_KEY"
@@ -462,13 +472,10 @@ def _captured_application_source_bytes(
     class_profiles = [
         finding.get("facts", {}).get("fixture_evidence", {})
         for finding in findings
-        if finding.get("facts", {}).get("fixture_evidence", {}).get("profile")
+        if finding.get("facts", {}).get("fixture_evidence", {}).get("classification")
         in {
-            "DJANGO_CLASS_LOCAL_ACCOUNT_ENROLLMENT",
-            "LOCAL_REVERSIBLE_CREDENTIAL_ROUNDTRIP",
-            "SOURCE_BOUND_FACTORY_TEST_AUTHORITY",
-            "LOCAL_SOURCE_SIGNING_AUTHORITY",
-            "STATIC_API_DATA_ROLE",
+            "APPLICATION_TEST_CREDENTIAL_ROLE",
+            "PRESENTATION_METADATA_ROLE",
         }
     ]
     config_hashes = _application_configuration_hashes(class_profiles)
@@ -488,12 +495,7 @@ def _captured_application_source_bytes(
             "ENDPOINT_DECLARATION_ROLE_PROVEN",
         }
     ]
-    fixed_program_findings = [
-        finding
-        for finding in findings
-        if finding.get("facts", {}).get("disposition") == "PROVEN_FIXED_LITERAL_PROGRAM"
-    ]
-    if jwt_findings or fixed_program_findings:
+    if jwt_findings:
         # Revalidation uses the complete current source inventory, including
         # imported initializers and shadows; selective capture would omit risks.
         paths.update(hashes)
@@ -528,10 +530,8 @@ class _SourceBoundSecurityReport(dict):
         return result
 
 
-def seal_security_scan(audit, core: dict[str, Any]) -> dict[str, Any]:
-    """Revalidate local captures on every seal; never serialize their source bytes."""
-    prior_state, prior_summary = core.get("state"), core.get("action_summary")
-    prior_tier_report = core.get("finding_tier_report")
+def _prepare_security_scan_sources(core, prior_tier_report):
+    """Normalize review rows and temporarily expose captured bytes to integrity."""
     core["findings"] = [*core.get("findings", []), *core.pop("context_reviews", [])]
     core.pop("context_review_count", None)
     for row in (prior_tier_report or {}).get("ledger", []):
@@ -541,15 +541,22 @@ def seal_security_scan(audit, core: dict[str, Any]) -> dict[str, Any]:
         captured = dict(core._captured_sources)
     if captured is not None:
         core["_primitive_source_bytes"] = captured
-    try:
-        audit.integrity.partition_proven_primitive_observations(core)
-    finally:
-        core.pop("_primitive_source_bytes", None)
+    return captured
+
+
+def _preserve_security_scan_incomplete_state(audit, core, prior_state, prior_summary):
+    """Prevent resealing from promoting a previously incomplete scan to clean."""
     if prior_state == "INCOMPLETE" and core.get("state") == "CLEAN":
         core["state"] = "INCOMPLETE"
         core["action_summary"] = prior_summary or audit._security_scan_action_summary(
             "INCOMPLETE"
         )
+
+
+def _apply_security_scan_policy(
+    audit, core, captured, prior_tier_report, prior_state, producer_source_model=None
+):
+    """Recompute only the explicitly selected defect policy after integrity runs."""
     if "selected_defect_policy" in core:
         from . import primitive_observation_binding as primitive
 
@@ -564,10 +571,16 @@ def seal_security_scan(audit, core: dict[str, Any]) -> dict[str, Any]:
                 prior_tiers=prior_tier_report,
                 prior_source_state=prior_state,
             )
-        elif policy == "source-role-v1":
-            primitive.apply_pickle_source_role_policy(core, captured)
+        elif policy in {"source-role-v1", "source-role-v2", "source-role-v3"}:
+            primitive.apply_pickle_source_role_policy(
+                core, captured, source_model=producer_source_model
+            )
     else:
         core.pop("defect_policy_decision", None)
+
+
+def _finish_security_scan_seal(audit, core, captured):
+    """Bind candidate actions and report digest after all source policy checks."""
     candidate = sha256(
         json.dumps(
             audit._security_scan_report_candidate_payload(core),
@@ -590,6 +603,24 @@ def seal_security_scan(audit, core: dict[str, Any]) -> dict[str, Any]:
         result._captured_sources = tuple(captured.items())
         return result
     return core
+
+
+def seal_security_scan(
+    audit, core: dict[str, Any], *, producer_source_model=None
+) -> dict[str, Any]:
+    """Revalidate local captures on every seal; never serialize their source bytes."""
+    prior_state, prior_summary = core.get("state"), core.get("action_summary")
+    prior_tier_report = core.get("finding_tier_report")
+    captured = _prepare_security_scan_sources(core, prior_tier_report)
+    try:
+        audit.integrity.partition_proven_primitive_observations(core)
+    finally:
+        core.pop("_primitive_source_bytes", None)
+    _preserve_security_scan_incomplete_state(audit, core, prior_state, prior_summary)
+    _apply_security_scan_policy(
+        audit, core, captured, prior_tier_report, prior_state, producer_source_model
+    )
+    return _finish_security_scan_seal(audit, core, captured)
 
 
 def security_scan_report(
@@ -683,3 +714,77 @@ def _security_scan_coverage(
         "complete": complete,
         "limit": limit,
     }
+
+
+def blocked_security_scan_report(
+    audit,
+    workspace: Path,
+    files: list[Path],
+    tenant_read_calls: tuple[str, ...],
+    tenant_read_bindings: dict[str, tuple[str, ...]],
+    tenant_policy_applies: bool = False,
+) -> dict[str, Any]:
+    """Return a fail-closed receipt when the bounded inventory is exceeded."""
+    relative_paths = [path.relative_to(workspace).as_posix() for path in files]
+    finding = audit._security_finding(
+        "SECURITY_AUDIT_INCOMPLETE",
+        ".",
+        audit.ast.Module(body=[], type_ignores=[]),
+        (
+            f"Eligible Python source inventory contains {len(files)} files, above "
+            f"the {audit.MAX_SECURITY_SOURCE_FILES}-file scan limit. No files were "
+            "scanned; partition the workspace or use a reviewed larger limit."
+        ),
+        "HIGH",
+        files_discovered=len(files),
+        files_scanned=0,
+    )
+    core = {
+        "schema": audit.SECURITY_SCHEMA,
+        "marker": "SECURITY_AUDIT_COMPLETE",
+        "state": "BLOCKED",
+        "files_scanned": 0,
+        "parse_errors": 0,
+        "unreadable_sources": 0,
+        "oversized_sources": 0,
+        "audit_coverage": {
+            "language": "Python",
+            "files_discovered": len(files),
+            "files_attempted": 0,
+            "files_audited": 0,
+            "audit_rate": 0.0,
+            "rate_defined": True,
+            "measurement_state": "blocked",
+            "inventory_complete": True,
+            "complete": False,
+            "limit": audit.MAX_SECURITY_SOURCE_FILES,
+            "inventory_sha256": audit.sha256(
+                "\n".join(relative_paths).encode("utf-8")
+            ).hexdigest(),
+        },
+        "tenant_read_contract": audit._tenant_read_contract(
+            tenant_read_calls, tenant_read_bindings, tenant_policy_applies
+        ),
+        "sources": [],
+        "oracle_context": {
+            "mode": "not_assessed_source_limit",
+            "configuration_sources": [],
+        },
+        "findings": [finding],
+        "finding_counts": {finding["code"]: 1},
+        "governance": "human_controlled",
+        "authority": {
+            "execution": False,
+            "approval": False,
+            "publication": False,
+            "deployment": False,
+        },
+        "claim_boundary": (
+            "No security analysis completed because the eligible Python source "
+            "inventory exceeded the configured scan limit. Other languages, "
+            "runtime behavior, dependency advisories, and release approval are "
+            "outside this scanner's scope."
+        ),
+        "action_summary": finding["message"],
+    }
+    return audit._seal_security_scan(core)

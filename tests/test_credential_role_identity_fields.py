@@ -180,14 +180,19 @@ def test_field_name_does_not_override_the_source_value_role():
 
 
 def test_branch_and_overwrite_field_projections_keep_all_roots_unknown():
-    branch = _summarize("""
+    branch = _summarize(
+        """
         def inspect(self, key, choose):
             if choose:
                 self.value = key
             else:
                 self.value = self
             return self.value
-    """, "inspect", {"self": "owner", "key": "candidate"}, role_view=True)
+    """,
+        "inspect",
+        {"self": "owner", "key": "candidate"},
+        role_view=True,
+    )
     assert branch.status == "UNKNOWN"
     branch_read = next(
         event
@@ -198,17 +203,26 @@ def test_branch_and_overwrite_field_projections_keep_all_roots_unknown():
     assert branch_read.uncertain
     assert set(branch.escapes) == {"candidate", "owner"}
 
-    overwritten = _summarize("""
+    overwritten = _summarize(
+        """
         def inspect(self, key):
             self.value = key
             self.value = "ordinary"
             return self.value
-    """, "inspect", {"self": "owner", "key": "candidate"}, role_view=True)
+    """,
+        "inspect",
+        {"self": "owner", "key": "candidate"},
+        role_view=True,
+    )
     assert overwritten.status == "UNKNOWN"
-    assert any(event.kind == "field_store" and event.roots == ("candidate",)
-               for event in overwritten.role_events)
-    assert any(event.kind == "field_read" and event.roots == ("candidate",)
-               and event.uncertain for event in overwritten.role_events)
+    assert any(
+        event.kind == "field_store" and event.roots == ("candidate",)
+        for event in overwritten.role_events
+    )
+    assert any(
+        event.kind == "field_read" and event.roots == ("candidate",) and event.uncertain
+        for event in overwritten.role_events
+    )
     assert "projected field identity overwritten" in overwritten.unknowns
 
 
@@ -420,9 +434,7 @@ def test_constructor_role_consumer_requires_exact_store_and_no_related_effects()
     )
 
     assert result.status != "NO_CLASS_EFFECT"
-    assert _app_signing_constructor_role_transfer_closed(
-        result, path, "secret", store
-    )
+    assert _app_signing_constructor_role_transfer_closed(result, path, "secret", store)
 
     back_path, back_tree, back_index = _index("""
         class Owner:
@@ -541,6 +553,19 @@ def _index(source):
     index = SourceSnapshotIndex(
         Path("."), {path: tree}, {path: raw}, {path: hashlib.sha256(raw).hexdigest()}
     )
+    return path, tree, index
+
+
+def _application_role_index(source):
+    from factoryline.mock_fixture_provenance import application_test_index
+
+    path = Path("fixture.py")
+    raw = textwrap.dedent(source).encode()
+    tree = ast.parse(raw)
+    digest = hashlib.sha256(raw).hexdigest()
+    tree._oracle_source_sha256 = digest
+    index = application_test_index(Path("."), {path: tree}, {path: raw}, {path: digest})
+    assert index is not None
     return path, tree, index
 
 
@@ -839,3 +864,64 @@ def test_own_scope_excludes_nested_bodies_but_keeps_definition_headers():
         if isinstance(node, ast.Call)
     ]
     assert calls == ["header_call"]
+
+
+def test_application_role_facades_reject_plaintext_without_crypto_roundtrip():
+    from factoryline import credential_identity_audit as identity_audit
+    from factoryline import credential_role_identity_effects as role_effects
+
+    path, tree, index = _application_role_index(
+        "def view():\n    credential = 'ordinary text'\n    return credential\n"
+    )
+    assignment = next(node for node in ast.walk(tree) if isinstance(node, ast.Assign))
+    literal = assignment.value
+
+    for module in (identity_audit, role_effects):
+        assert (
+            module.application_value_role_evidence(
+                index, path, literal, assignment, "credential"
+            )
+            is None
+        )
+        assert (
+            module.application_plaintext_effect_evidence(
+                index, path, literal, assignment, "credential"
+            )
+            is None
+        )
+
+
+def test_application_identity_helper_epoch_invalidates_cached_role_evidence(
+    monkeypatch,
+):
+    from factoryline import credential_identity_audit as identity_audit
+
+    path, tree, index = _application_role_index(
+        "def view():\n    credential = 'ordinary text'\n    return credential\n"
+    )
+    assignment = next(node for node in ast.walk(tree) if isinstance(node, ast.Assign))
+    epoch = identity_audit.application_identity_helper_epoch()
+    assert identity_audit.application_identity_helper_epoch in epoch
+    assert identity_audit.application_plaintext_effect_evidence in epoch
+    assert identity_audit._app_local_crypto_roundtrip in epoch
+    identity_audit.application_plaintext_effect_evidence(
+        index, path, assignment.value, assignment, "credential"
+    )
+    assert len(index["profiles"]) == 1
+
+    helper = identity_audit._app_local_crypto_roundtrip
+
+    def replacement(*args, **kwargs):
+        return None
+
+    with monkeypatch.context() as patch:
+        patch.setattr(helper, "__code__", replacement.__code__)
+        identity_audit.application_plaintext_effect_evidence(
+            index, path, assignment.value, assignment, "credential"
+        )
+        assert len(index["profiles"]) == 2
+
+    identity_audit.application_plaintext_effect_evidence(
+        index, path, assignment.value, assignment, "credential"
+    )
+    assert len(index["profiles"]) == 2

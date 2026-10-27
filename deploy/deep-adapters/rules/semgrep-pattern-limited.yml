@@ -45,7 +45,7 @@ rules:
       - pattern: request.form[...]
     pattern-sinks:
       - patterns:
-          - pattern: $DB.execute($QUERY, ...)
+          - pattern: '$DB.execute($QUERY, ...)'
           - focus-metavariable: $QUERY
     metadata:
       category: security
@@ -78,9 +78,9 @@ rules:
     languages: [javascript, typescript]
     mode: taint
     pattern-sources:
-      - pattern: $REQ.query
-      - pattern: $REQ.body
-      - pattern: $REQ.params
+      - pattern: '$REQ.query'
+      - pattern: '$REQ.body'
+      - pattern: '$REQ.params'
     pattern-sinks:
       - patterns:
           - pattern-either:
@@ -97,12 +97,12 @@ rules:
     languages: [javascript, typescript]
     mode: taint
     pattern-sources:
-      - pattern: $REQ.query
-      - pattern: $REQ.body
-      - pattern: $REQ.params
+      - pattern: '$REQ.query'
+      - pattern: '$REQ.body'
+      - pattern: '$REQ.params'
     pattern-sinks:
       - patterns:
-          - pattern: $DB.query($QUERY, ...)
+          - pattern: '$DB.query($QUERY, ...)'
           - focus-metavariable: $QUERY
     metadata:
       category: security
@@ -114,12 +114,12 @@ rules:
     languages: [javascript, typescript]
     mode: taint
     pattern-sources:
-      - pattern: $REQ.query
-      - pattern: $REQ.body
-      - pattern: $REQ.params
+      - pattern: '$REQ.query'
+      - pattern: '$REQ.body'
+      - pattern: '$REQ.params'
     pattern-sinks:
       - patterns:
-          - pattern: $RES.send($HTML)
+          - pattern: '$RES.send($HTML)'
           - focus-metavariable: $HTML
     metadata:
       category: security
@@ -172,9 +172,9 @@ rules:
     languages: [javascript, typescript]
     mode: taint
     pattern-sources:
-      - pattern: $REQ.query
-      - pattern: $REQ.body
-      - pattern: $REQ.params
+      - pattern: '$REQ.query'
+      - pattern: '$REQ.body'
+      - pattern: '$REQ.params'
     pattern-sinks:
       - patterns:
           - pattern: fs.readFile($PATH, ...)
@@ -193,3 +193,194 @@ rules:
       confidence: MEDIUM
       scope: Local query/body/params to fs read paths; containment sanitizers require review.
       cwe: ["CWE-22"]
+  - id: php.request-command-injection
+    message: Request data reaches a shell-command candidate; use a fixed executable and validated argument boundaries.
+    severity: WARNING
+    languages: [php]
+    mode: taint
+    pattern-sources:
+      - pattern: '$_GET[...]'
+        exact: true
+      - pattern: '$_POST[...]'
+        exact: true
+      - pattern: '$_REQUEST[...]'
+        exact: true
+      - pattern: '$_COOKIE[...]'
+        exact: true
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: system($VALUE, ...)
+              - pattern: \system($VALUE, ...)
+              - pattern: exec($VALUE, ...)
+              - pattern: \exec($VALUE, ...)
+              - pattern: shell_exec($VALUE)
+              - pattern: \shell_exec($VALUE)
+              - pattern: passthru($VALUE, ...)
+              - pattern: \passthru($VALUE, ...)
+              - pattern: popen($VALUE, ...)
+              - pattern: \popen($VALUE, ...)
+              - pattern: 'system(..., command: $VALUE, ...)'
+              - pattern: '\system(..., command: $VALUE, ...)'
+              - pattern: 'exec(..., command: $VALUE, ...)'
+              - pattern: '\exec(..., command: $VALUE, ...)'
+              - pattern: 'shell_exec(..., command: $VALUE, ...)'
+              - pattern: '\shell_exec(..., command: $VALUE, ...)'
+              - pattern: 'passthru(..., command: $VALUE, ...)'
+              - pattern: '\passthru(..., command: $VALUE, ...)'
+              - pattern: 'popen(..., command: $VALUE, ...)'
+              - pattern: '\popen(..., command: $VALUE, ...)'
+          - focus-metavariable: $VALUE
+    metadata:
+      category: security
+      confidence: MEDIUM
+      cwe: ["CWE-78"]
+      scope: PHP .php local request taint only; callee provider identity unresolved, no framework or interprocedural guarantee.
+  - id: php.request-sql-injection
+    message: Request data reaches procedural SQL text; bind values to fixed SQL instead of concatenating SQL.
+    severity: WARNING
+    languages: [php]
+    mode: taint
+    pattern-sources:
+      - pattern: '$_GET[...]'
+        exact: true
+      - pattern: '$_POST[...]'
+        exact: true
+      - pattern: '$_REQUEST[...]'
+        exact: true
+      - pattern: '$_COOKIE[...]'
+        exact: true
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: mysqli_query($DB, $VALUE, ...)
+              - pattern: \mysqli_query($DB, $VALUE, ...)
+              - pattern: mysqli_multi_query($DB, $VALUE)
+              - pattern: \mysqli_multi_query($DB, $VALUE)
+              - pattern: mysqli_prepare($DB, $VALUE)
+              - pattern: \mysqli_prepare($DB, $VALUE)
+              - pattern: pg_query($VALUE)
+              - pattern: \pg_query($VALUE)
+              - pattern: pg_query($DB, $VALUE)
+              - pattern: \pg_query($DB, $VALUE)
+              - pattern: pg_query_params($VALUE, $PARAMS)
+              - pattern: \pg_query_params($VALUE, $PARAMS)
+              - pattern: pg_query_params($DB, $VALUE, $PARAMS)
+              - pattern: \pg_query_params($DB, $VALUE, $PARAMS)
+              - pattern: 'mysqli_query(..., query: $VALUE, ...)'
+              - pattern: '\mysqli_query(..., query: $VALUE, ...)'
+              - pattern: 'mysqli_multi_query(..., query: $VALUE, ...)'
+              - pattern: '\mysqli_multi_query(..., query: $VALUE, ...)'
+              - pattern: 'mysqli_prepare(..., query: $VALUE, ...)'
+              - pattern: '\mysqli_prepare(..., query: $VALUE, ...)'
+              - pattern: 'pg_query(..., query: $VALUE, ...)'
+              - pattern: '\pg_query(..., query: $VALUE, ...)'
+              - pattern: 'pg_query(connection: $VALUE)'
+              - pattern: '\pg_query(connection: $VALUE)'
+              - pattern: 'pg_query_params(..., query: $VALUE, ..., params: $PARAMS, ...)'
+              - pattern: 'pg_query_params($DB, $VALUE, params: $PARAMS)'
+              - pattern: 'pg_query_params(connection: $VALUE, query: $PARAMS)'
+              - pattern: 'pg_query_params($VALUE, query: $PARAMS)'
+              - pattern: '\pg_query_params(..., query: $VALUE, ..., params: $PARAMS, ...)'
+              - pattern: '\pg_query_params($DB, $VALUE, params: $PARAMS)'
+              - pattern: '\pg_query_params(connection: $VALUE, query: $PARAMS)'
+              - pattern: '\pg_query_params($VALUE, query: $PARAMS)'
+          - focus-metavariable: $VALUE
+    metadata:
+      category: security
+      confidence: MEDIUM
+      cwe: ["CWE-89"]
+      scope: PHP .php local request taint only; callee provider identity unresolved, no framework or interprocedural guarantee.
+  - id: php.request-path-traversal
+    message: Request data reaches a filesystem operand; normalize and enforce allowed-root containment before access.
+    severity: WARNING
+    languages: [php]
+    mode: taint
+    pattern-sources:
+      - pattern: '$_GET[...]'
+        exact: true
+      - pattern: '$_POST[...]'
+        exact: true
+      - pattern: '$_REQUEST[...]'
+        exact: true
+      - pattern: '$_COOKIE[...]'
+        exact: true
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: file_get_contents($VALUE, ...)
+              - pattern: \file_get_contents($VALUE, ...)
+              - pattern: fopen($VALUE, ...)
+              - pattern: \fopen($VALUE, ...)
+              - pattern: readfile($VALUE, ...)
+              - pattern: \readfile($VALUE, ...)
+              - pattern: file_put_contents($VALUE, ...)
+              - pattern: \file_put_contents($VALUE, ...)
+              - pattern: 'file_get_contents(..., filename: $VALUE, ...)'
+              - pattern: '\file_get_contents(..., filename: $VALUE, ...)'
+              - pattern: 'fopen(..., filename: $VALUE, ...)'
+              - pattern: '\fopen(..., filename: $VALUE, ...)'
+              - pattern: 'readfile(..., filename: $VALUE, ...)'
+              - pattern: '\readfile(..., filename: $VALUE, ...)'
+              - pattern: 'file_put_contents(..., filename: $VALUE, ...)'
+              - pattern: '\file_put_contents(..., filename: $VALUE, ...)'
+          - focus-metavariable: $VALUE
+    metadata:
+      category: security
+      confidence: MEDIUM
+      cwe: ["CWE-22"]
+      scope: PHP .php local request taint only; callee provider identity unresolved, no framework or interprocedural guarantee.
+  - id: php.request-file-inclusion
+    message: Request data reaches an inclusion operand; use a fixed allowlist of local includes.
+    severity: WARNING
+    languages: [php]
+    mode: taint
+    pattern-sources:
+      - pattern: '$_GET[...]'
+        exact: true
+      - pattern: '$_POST[...]'
+        exact: true
+      - pattern: '$_REQUEST[...]'
+        exact: true
+      - pattern: '$_COOKIE[...]'
+        exact: true
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: include $VALUE
+              - pattern: include_once $VALUE
+              - pattern: require $VALUE
+              - pattern: require_once $VALUE
+          - focus-metavariable: $VALUE
+    metadata:
+      category: security
+      confidence: MEDIUM
+      cwe: ["CWE-98"]
+      scope: PHP .php local request taint only; callee provider identity unresolved, no framework or interprocedural guarantee.
+  - id: php.request-unsafe-deserialization
+    message: Request data reaches unserialize; use a non-executable format with schema validation.
+    severity: WARNING
+    languages: [php]
+    mode: taint
+    pattern-sources:
+      - pattern: '$_GET[...]'
+        exact: true
+      - pattern: '$_POST[...]'
+        exact: true
+      - pattern: '$_REQUEST[...]'
+        exact: true
+      - pattern: '$_COOKIE[...]'
+        exact: true
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: unserialize($VALUE, ...)
+              - pattern: \unserialize($VALUE, ...)
+              - pattern: 'unserialize(..., data: $VALUE, ...)'
+              - pattern: '\unserialize(..., data: $VALUE, ...)'
+          - focus-metavariable: $VALUE
+    metadata:
+      category: security
+      confidence: MEDIUM
+      cwe: ["CWE-502"]
+      scope: PHP .php local request taint only; callee provider identity unresolved, no framework or interprocedural guarantee.

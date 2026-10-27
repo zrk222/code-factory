@@ -124,406 +124,39 @@ class _LiteralConsumers(_FiniteInputCapture):
     def _build_enum_demand_index(self):
         """Index candidate enum bindings and references without retaining irrelevant AST nodes."""
         try:
-            for path, tree in self.trees.items():
-                if not self._snapshot_valid(path, tree, self.source_bytes[path]):
-                    self._snapshot_incomplete()
-                    return
-                nodes = list(self._walk(tree))
-                parents = {
-                    id(child): node
-                    for node in nodes
-                    for child in ast.iter_child_nodes(node)
-                }
-                self.provider_attribute_writes.update(
-                    finite_provider_attribute_write_index(
-                        nodes, self.aliases[path], self.audit, parents
-                    )
-                )
-            self.snapshot_complete = True
-
-            for path, tree in self.trees.items():
-                tree._security_scope_kind = "module"
-                binding_counts = defaultdict(int)
-                for statement in tree.body:
-                    if isinstance(statement, ast.ClassDef):
-                        statement._security_parent_scope = tree
-                        statement._security_scope_kind = "class"
-                        for item in statement.body:
-                            if isinstance(item, (ast.Assign, ast.AnnAssign)):
-                                item._security_lexical_scope = statement
-                        self.objects[path, statement.name] = statement
-                        bases = [
-                            self.audit._resolved_ast_name(base, self.aliases[path])
-                            for base in statement.bases
-                        ]
-                        if bases == ["str", "enum.Enum"]:
-                            self._class_members(path, statement)
-                    elif isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                        self.functions[path, statement.name] = statement
-                    elif isinstance(statement, (ast.Assign, ast.AnnAssign)):
-                        targets = (
-                            statement.targets
-                            if isinstance(statement, ast.Assign)
-                            else [statement.target]
-                        )
-                        value = statement.value
-                        if (
-                            len(targets) == 1
-                            and isinstance(targets[0], ast.Name)
-                            and isinstance(value, (ast.Name, ast.Attribute, ast.Call))
-                        ):
-                            self.objects[path, targets[0].id] = value
-                            if isinstance(value, (ast.Name, ast.Attribute)):
-                                binding_counts[targets[0].id] += 1
-                                self.demand_static_aliases = getattr(
-                                    self, "demand_static_aliases", set()
-                                )
-                                self.demand_static_aliases.add((path, id(targets[0])))
-                for name, count in binding_counts.items():
-                    if count != 1:
-                        self.blocked.add((path, name))
-
+            if not self._demand_index_sources():
+                return
             enum_classes = {(path, cls) for path, cls, _member in self.members}
             if not enum_classes:
                 self.enum_demand_complete = True
                 return
-
-            module_relevance = {}
-            relevant_roots = {path: set() for path in self.trees}
-            relevant_paths = {path for path, _cls in enum_classes}
-            for path in self.trees:
-                names = (
-                    set(self.imports[path])
-                    | {name for owner, name in self.objects if owner == path}
-                    | {name for owner, name in self.functions if owner == path}
-                )
-                for name in names:
-                    resolved = self.resolve(path, (name,))
-                    if (
-                        resolved is not None
-                        and resolved[0] == "class"
-                        and resolved[1:3] in enum_classes
-                    ):
-                        relevant_roots[path].add(name)
-                        relevant_paths.add(path)
-                    elif resolved is not None and resolved[0] == "module":
-                        source = resolved[1]
-                        if source not in module_relevance:
-                            module_relevance[source] = self._relevant_origin(
-                                source, None
-                            )
-                        if module_relevance[source]:
-                            relevant_roots[path].add(name)
-                            relevant_paths.add(path)
-            if not self.complete:
-                return
-
-            # Star imports cannot be matched to a finite native binding view.
-            # They remain a workspace-level unresolved edge.
-            if any(
-                isinstance(statement, ast.ImportFrom)
-                and any(alias.name == "*" for alias in statement.names)
-                for tree in self.trees.values()
-                for statement in tree.body
+            relevant_paths = self._demand_relevant_paths(enum_classes)
+            if (
+                relevant_paths is None
+                or not self.complete
+                or self._demand_has_star_import()
             ):
                 return
-
-            unsupported_nodes = []
-            enum_members_by_class = defaultdict(set)
-            for member_path, member_class, member_name in self.members:
-                enum_members_by_class[member_path, member_class].add(member_name)
-            self.demand_reference_scopes = {}
-            self.demand_unsupported_scopes = []
-            for path, tree in self.trees.items():
-                if path not in relevant_paths:
-                    continue
-                ancestors = []
-                stack = [(tree, False)]
-                while stack:
-                    node, exiting = stack.pop()
-                    if exiting:
-                        ancestors.pop()
-                        continue
-                    if not self._tick():
-                        return
-                    if isinstance(node, ast.ImportFrom) and any(
-                        alias.name == "*" for alias in node.names
-                    ):
-                        unsupported_nodes.append((path, node, tuple(ancestors)))
-                    if isinstance(node, ast.Attribute) and node.attr == "__dict__":
-                        unsupported_nodes.append((path, node, tuple(ancestors)))
-                    if isinstance(node, ast.Call):
-                        call_name = self.audit._resolved_ast_name(
-                            node.func, self.aliases[path]
-                        )
-                        if call_name in {
-                            "builtins.__import__",
-                            "__import__",
-                            "importlib.import_module",
-                            "builtins.eval",
-                            "eval",
-                            "builtins.exec",
-                            "exec",
-                            "globals",
-                            "locals",
-                            "vars",
-                            "getattr",
-                            "setattr",
-                            "delattr",
-                        }:
-                            unsupported_nodes.append((path, node, tuple(ancestors)))
-
-                    if isinstance(node, (ast.Name, ast.arg)):
-                        bound_name = node.id if isinstance(node, ast.Name) else node.arg
-                        if isinstance(node, ast.arg) or isinstance(
-                            node.ctx, (ast.Store, ast.Del)
-                        ):
-                            if (
-                                isinstance(node, ast.Name)
-                                and isinstance(node.ctx, ast.Store)
-                                and (path, id(node))
-                                in getattr(self, "demand_static_aliases", set())
-                                and (path, bound_name) not in self.blocked
-                            ):
-                                pass
-                            elif bound_name in relevant_roots[path]:
-                                resolved_binding = self.resolve(path, (bound_name,))
-                                if (
-                                    resolved_binding is not None
-                                    and resolved_binding[0] == "class"
-                                    and resolved_binding[1:3] in enum_classes
-                                ):
-                                    for member_name in enum_members_by_class[
-                                        resolved_binding[1:3]
-                                    ]:
-                                        key = (*resolved_binding[1:3], member_name)
-                                        self.enum_demand_rejected_keys.add(key)
-                                        self.enum_demand_rejection_details.setdefault(
-                                            key, (path, node.lineno, "rebinding")
-                                        )
-
-                    if isinstance(node, ast.Attribute) and isinstance(
-                        node.ctx, (ast.Store, ast.Del)
-                    ):
-                        root_name = self.audit._name(node).split(".", 1)[0]
-                        resolved_write = (
-                            self.resolve(path, tuple(self.audit._name(node).split(".")))
-                            if root_name in relevant_roots[path]
-                            else None
-                        )
-                        if (
-                            resolved_write is not None
-                            and resolved_write[0] == "class"
-                            and resolved_write[1:3] in enum_classes
-                            and resolved_write[3]
-                        ):
-                            written_member = resolved_write[3][0]
-                            names = enum_members_by_class[resolved_write[1:3]]
-                            affected = (
-                                {written_member} if written_member in names else names
-                            )
-                            for member_name in affected:
-                                key = (*resolved_write[1:3], member_name)
-                                self.enum_demand_rejected_keys.add(key)
-                                self.enum_demand_rejection_details.setdefault(
-                                    key, (path, node.lineno, "member mutation")
-                                )
-
-                    if (
-                        isinstance(node, ast.Name)
-                        and isinstance(node.ctx, ast.Load)
-                        and node.id in relevant_roots[path]
-                    ):
-                        end = node
-                        for parent in reversed(ancestors):
-                            if (
-                                isinstance(parent, ast.Attribute)
-                                and parent.value is end
-                            ):
-                                end = parent
-                            else:
-                                break
-                        resolved = self.resolve(
-                            path, tuple(self.audit._name(end).split("."))
-                        )
-                        if (
-                            resolved is not None
-                            and resolved[0] == "class"
-                            and resolved[1:3] in enum_classes
-                        ):
-                            chain = (*ancestors, node)
-                            for index in range(1, len(chain)):
-                                self.parents[id(chain[index])] = chain[index - 1]
-                            self.refs[resolved[:3]].append((path, end, resolved[3]))
-                            self.demand_reference_scopes[path, id(end)] = (
-                                self._demand_lexical_scope(ancestors, tree),
-                                tuple(ancestors),
-                            )
-
-                    ancestors.append(node)
-                    stack.append((node, True))
-                    for child in reversed(list(ast.iter_child_nodes(node))):
-                        stack.append((child, False))
-
-            if not self.complete or self.remaining_work < 0:
+            members_by_class = self._demand_members_by_class()
+            unsupported = self._demand_scan_relevant_paths(
+                relevant_paths, enum_classes, members_by_class
+            )
+            if unsupported is None or not self.complete or self.remaining_work < 0:
                 return
-            for path, unsupported, ancestors in unsupported_nodes:
-                unsupported_scope = self._demand_lexical_scope(
-                    ancestors, self.trees[path]
-                )
-                reflection_call = isinstance(
-                    unsupported, ast.Call
-                ) and self.audit._resolved_ast_name(
-                    unsupported.func, self.aliases[path]
-                ) in {"getattr", "setattr", "delattr"}
-                reflection_receiver = (
-                    self._demand_receiver_class(path, unsupported.args[0], ancestors)
-                    if reflection_call
-                    and unsupported.args
-                    and isinstance(unsupported.args[0], (ast.Name, ast.Attribute))
-                    else None
-                )
-                reflection_attr_node = (
-                    unsupported.args[1]
-                    if reflection_call and len(unsupported.args) > 1
-                    else None
-                )
-                reflection_attr = (
-                    reflection_attr_node.value
-                    if isinstance(reflection_attr_node, ast.Constant)
-                    and type(reflection_attr_node.value) is str
-                    else None
-                )
-                for (kind, enum_path, enum_class), refs in self.refs.items():
-                    if kind != "class":
-                        continue
-                    for reference_path, _node, tail in refs:
-                        if reference_path != path:
-                            continue
-                        reference_scope, reference_ancestors = (
-                            self.demand_reference_scopes[reference_path, id(_node)]
-                        )
-                        same_scope = reference_scope is unsupported_scope
-                        if reflection_call:
-                            direct_reflection = (
-                                unsupported in reference_ancestors or _node in ancestors
-                            )
-                            if not self._demand_reflection_affects(
-                                reflection_receiver,
-                                reflection_attr,
-                                ("class", enum_path, enum_class),
-                                tail,
-                                direct_reflection,
-                            ):
-                                continue
-                            same_scope = True
-                        direct_dependency = any(
-                            item is unsupported for item in reference_ancestors
-                        ) or any(item is _node for item in ancestors)
-                        if not (same_scope or direct_dependency):
-                            continue
-                        member_name = tail[0] if tail else None
-                        if member_name in enum_members_by_class[enum_path, enum_class]:
-                            key = enum_path, enum_class, member_name
-                            self.enum_demand_rejected_keys.add(key)
-                            self.enum_demand_rejection_details.setdefault(
-                                key,
-                                (path, unsupported.lineno, type(unsupported).__name__),
-                            )
-                        else:
-                            for name in enum_members_by_class[enum_path, enum_class]:
-                                key = enum_path, enum_class, name
-                                self.enum_demand_rejected_keys.add(key)
-                                self.enum_demand_rejection_details.setdefault(
-                                    key,
-                                    (
-                                        path,
-                                        unsupported.lineno,
-                                        type(unsupported).__name__,
-                                    ),
-                                )
-            # An unresolved import or star import blocks only enum obligations
-            # whose source binding occurs in that same module. It does not
-            # poison unrelated enum declarations elsewhere in the corpus.
-            for path in relevant_paths:
-                uncertain_names = {
-                    name
-                    for name, origin in self.imports[path].items()
-                    if origin is None
-                }
-                has_star_import = any(
-                    isinstance(statement, ast.ImportFrom)
-                    and any(alias.name == "*" for alias in statement.names)
-                    for statement in self.trees[path].body
-                )
-                if not uncertain_names and not has_star_import:
-                    continue
-                for (kind, enum_path, enum_class), refs in self.refs.items():
-                    if kind != "class":
-                        continue
-                    for reference_path, reference, tail in refs:
-                        if reference_path != path:
-                            continue
-                        source_name = self.audit._name(reference).split(".", 1)[0]
-                        if has_star_import or source_name in uncertain_names:
-                            member_name = tail[0] if tail else None
-                            if (
-                                member_name
-                                in enum_members_by_class[enum_path, enum_class]
-                            ):
-                                key = enum_path, enum_class, member_name
-                                self.enum_demand_rejected_keys.add(key)
-                                self.enum_demand_rejection_details.setdefault(
-                                    key,
-                                    (path, reference.lineno, "unresolved/star import"),
-                                )
-                            else:
-                                for name in enum_members_by_class[
-                                    enum_path, enum_class
-                                ]:
-                                    key = enum_path, enum_class, name
-                                    self.enum_demand_rejected_keys.add(key)
-                                    self.enum_demand_rejection_details.setdefault(
-                                        key,
-                                        (
-                                            path,
-                                            reference.lineno,
-                                            "unresolved/star import",
-                                        ),
-                                    )
-
+            self._demand_reject_unsupported(unsupported, members_by_class)
+            self._demand_reject_unresolved_imports(relevant_paths, members_by_class)
             consumer_symbols = self._demand_consumer_symbols()
-            effect_paths = set(relevant_paths)
-            for path in self.trees:
-                names = (
-                    set(self.imports[path])
-                    | {name for owner, name in self.objects if owner == path}
-                    | {name for owner, name in self.functions if owner == path}
-                )
-                for name in names:
-                    resolved = self.resolve(path, (name,))
-                    if resolved is not None and resolved[:3] in consumer_symbols:
-                        effect_paths.add(path)
-            if not self.complete:
+            effect_paths = self._demand_consumer_effect_paths(
+                relevant_paths, consumer_symbols
+            )
+            if effect_paths is None:
                 return
             self.enum_effect_paths = effect_paths
-
             self.enum_demand_witnesses = self._collect_enum_witnesses()
             self.enum_demand_complete = self.complete
-            self.enum_demand_stats = {
-                "sources_examined": len(self.trees),
-                "source_bytes_hashed_and_parsed": sum(
-                    map(len, self.source_bytes.values())
-                ),
-                "candidate_classes": len(enum_classes),
-                "candidate_members": len(self.members),
-                "candidate_references": sum(map(len, self.refs.values())),
-                "relevant_paths": len(relevant_paths),
-                "effect_paths": len(effect_paths),
-                "unresolved_imports": len(self.demand_unresolved_imports),
-                "rejected_member_obligations": len(self.enum_demand_rejected_keys),
-                "retained_reference_nodes": len(self.demand_reference_scopes),
-            }
+            self.enum_demand_stats = self._enum_demand_statistics(
+                enum_classes, relevant_paths, effect_paths
+            )
         except (
             AttributeError,
             KeyError,
@@ -534,6 +167,450 @@ class _LiteralConsumers(_FiniteInputCapture):
         ):
             self.enum_demand_complete = False
 
+    def _demand_index_sources(self):
+        for path, tree in self.trees.items():
+            if not self._snapshot_valid(path, tree, self.source_bytes[path]):
+                self._snapshot_incomplete()
+                return False
+            nodes = list(self._walk(tree))
+            parents = {
+                id(child): node
+                for node in nodes
+                for child in ast.iter_child_nodes(node)
+            }
+            self.provider_attribute_writes.update(
+                finite_provider_attribute_write_index(
+                    nodes, self.aliases[path], self.audit, parents
+                )
+            )
+        self.snapshot_complete = True
+        for path, tree in self.trees.items():
+            tree._security_scope_kind = "module"
+            binding_counts = defaultdict(int)
+            for statement in tree.body:
+                self._demand_index_module_statement(
+                    path, tree, statement, binding_counts
+                )
+            for name, count in binding_counts.items():
+                if count != 1:
+                    self.blocked.add((path, name))
+        return True
+
+    def _demand_index_module_statement(self, path, tree, statement, binding_counts):
+        if isinstance(statement, ast.ClassDef):
+            statement._security_parent_scope = tree
+            statement._security_scope_kind = "class"
+            for item in statement.body:
+                if isinstance(item, (ast.Assign, ast.AnnAssign)):
+                    item._security_lexical_scope = statement
+            self.objects[path, statement.name] = statement
+            bases = [
+                self.audit._resolved_ast_name(base, self.aliases[path])
+                for base in statement.bases
+            ]
+            if bases == ["str", "enum.Enum"]:
+                self._class_members(path, statement)
+        elif isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            self.functions[path, statement.name] = statement
+        elif isinstance(statement, (ast.Assign, ast.AnnAssign)):
+            targets = (
+                statement.targets
+                if isinstance(statement, ast.Assign)
+                else [statement.target]
+            )
+            value = statement.value
+            if (
+                len(targets) != 1
+                or not isinstance(targets[0], ast.Name)
+                or not isinstance(value, (ast.Name, ast.Attribute, ast.Call))
+            ):
+                return
+            self.objects[path, targets[0].id] = value
+            if isinstance(value, (ast.Name, ast.Attribute)):
+                binding_counts[targets[0].id] += 1
+                self.demand_static_aliases = getattr(
+                    self, "demand_static_aliases", set()
+                )
+                self.demand_static_aliases.add((path, id(targets[0])))
+
+    def _demand_relevant_paths(self, enum_classes):
+        module_relevance = {}
+        relevant_roots = {path: set() for path in self.trees}
+        relevant_paths = {path for path, _cls in enum_classes}
+        for path in self.trees:
+            names = (
+                set(self.imports[path])
+                | {name for owner, name in self.objects if owner == path}
+                | {name for owner, name in self.functions if owner == path}
+            )
+            for name in names:
+                resolved = self.resolve(path, (name,))
+                if (
+                    resolved is not None
+                    and resolved[0] == "class"
+                    and resolved[1:3] in enum_classes
+                ):
+                    relevant_roots[path].add(name)
+                    relevant_paths.add(path)
+                elif resolved is not None and resolved[0] == "module":
+                    source = resolved[1]
+                    if source not in module_relevance:
+                        module_relevance[source] = self._relevant_origin(source, None)
+                    if module_relevance[source]:
+                        relevant_roots[path].add(name)
+                        relevant_paths.add(path)
+        if not self.complete:
+            return None
+        self.demand_relevant_roots = relevant_roots
+        return relevant_paths
+
+    def _demand_has_star_import(self):
+        return any(
+            isinstance(statement, ast.ImportFrom)
+            and any(alias.name == "*" for alias in statement.names)
+            for tree in self.trees.values()
+            for statement in tree.body
+        )
+
+    def _demand_members_by_class(self):
+        members_by_class = defaultdict(set)
+        for member_path, member_class, member_name in self.members:
+            members_by_class[member_path, member_class].add(member_name)
+        self.demand_reference_scopes = {}
+        self.demand_unsupported_scopes = []
+        return members_by_class
+
+    def _demand_scan_relevant_paths(
+        self, relevant_paths, enum_classes, members_by_class
+    ):
+        unsupported_nodes = []
+        for path, tree in self.trees.items():
+            if path not in relevant_paths:
+                continue
+            if not self._demand_scan_reference_path(
+                path, tree, enum_classes, members_by_class, unsupported_nodes
+            ):
+                return None
+        return unsupported_nodes
+
+    def _demand_scan_reference_path(
+        self, path, tree, enum_classes, members_by_class, unsupported_nodes
+    ):
+        ancestors = []
+        stack = [(tree, False)]
+        while stack:
+            node, exiting = stack.pop()
+            if exiting:
+                ancestors.pop()
+                continue
+            if not self._tick():
+                return False
+            if self._demand_unsupported_node(path, node):
+                unsupported_nodes.append((path, node, tuple(ancestors)))
+            self._demand_process_binding(path, node, enum_classes, members_by_class)
+            self._demand_record_reference(path, node, ancestors, tree, enum_classes)
+            ancestors.append(node)
+            stack.append((node, True))
+            for child in reversed(list(ast.iter_child_nodes(node))):
+                stack.append((child, False))
+        return True
+
+    def _demand_unsupported_node(self, path, node):
+        if isinstance(node, ast.ImportFrom) and any(
+            alias.name == "*" for alias in node.names
+        ):
+            return True
+        if isinstance(node, ast.Attribute) and node.attr == "__dict__":
+            return True
+        if not isinstance(node, ast.Call):
+            return False
+        call_name = self.audit._resolved_ast_name(node.func, self.aliases[path])
+        return call_name in {
+            "builtins.__import__",
+            "__import__",
+            "importlib.import_module",
+            "builtins.eval",
+            "eval",
+            "builtins.exec",
+            "exec",
+            "globals",
+            "locals",
+            "vars",
+            "getattr",
+            "setattr",
+            "delattr",
+        }
+
+    def _demand_process_binding(self, path, node, enum_classes, members_by_class):
+        if isinstance(node, (ast.Name, ast.arg)):
+            self._demand_reject_rebound_name(path, node, enum_classes, members_by_class)
+        elif isinstance(node, ast.Attribute) and isinstance(
+            node.ctx, (ast.Store, ast.Del)
+        ):
+            self._demand_reject_member_write(path, node, enum_classes, members_by_class)
+
+    def _demand_reject_rebound_name(self, path, node, enum_classes, members_by_class):
+        name = node.id if isinstance(node, ast.Name) else node.arg
+        if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
+            if (path, id(node)) in getattr(self, "demand_static_aliases", set()) and (
+                path,
+                name,
+            ) not in self.blocked:
+                return
+        if not isinstance(node, ast.arg) and not isinstance(
+            node.ctx, (ast.Store, ast.Del)
+        ):
+            return
+        if name not in self.demand_relevant_roots[path]:
+            return
+        resolved = self.resolve(path, (name,))
+        if (
+            resolved is None
+            or resolved[0] != "class"
+            or resolved[1:3] not in enum_classes
+        ):
+            return
+        for member_name in members_by_class[resolved[1:3]]:
+            key = (*resolved[1:3], member_name)
+            self.enum_demand_rejected_keys.add(key)
+            self.enum_demand_rejection_details.setdefault(
+                key, (path, node.lineno, "rebinding")
+            )
+
+    def _demand_reject_member_write(self, path, node, enum_classes, members_by_class):
+        root_name = self.audit._name(node).split(".", 1)[0]
+        resolved = (
+            self.resolve(path, tuple(self.audit._name(node).split(".")))
+            if root_name in self.demand_relevant_roots[path]
+            else None
+        )
+        if (
+            resolved is None
+            or resolved[0] != "class"
+            or resolved[1:3] not in enum_classes
+            or not resolved[3]
+        ):
+            return
+        names = members_by_class[resolved[1:3]]
+        written = resolved[3][0]
+        affected = {written} if written in names else names
+        for member_name in affected:
+            key = (*resolved[1:3], member_name)
+            self.enum_demand_rejected_keys.add(key)
+            self.enum_demand_rejection_details.setdefault(
+                key, (path, node.lineno, "member mutation")
+            )
+
+    def _demand_record_reference(self, path, node, ancestors, tree, enum_classes):
+        if (
+            not isinstance(node, ast.Name)
+            or not isinstance(node.ctx, ast.Load)
+            or node.id not in self.demand_relevant_roots[path]
+        ):
+            return
+        end = node
+        for parent in reversed(ancestors):
+            if isinstance(parent, ast.Attribute) and parent.value is end:
+                end = parent
+            else:
+                break
+        resolved = self.resolve(path, tuple(self.audit._name(end).split(".")))
+        if (
+            resolved is None
+            or resolved[0] != "class"
+            or resolved[1:3] not in enum_classes
+        ):
+            return
+        chain = (*ancestors, node)
+        for index in range(1, len(chain)):
+            self.parents[id(chain[index])] = chain[index - 1]
+        self.refs[resolved[:3]].append((path, end, resolved[3]))
+        self.demand_reference_scopes[path, id(end)] = (
+            self._demand_lexical_scope(ancestors, tree),
+            tuple(ancestors),
+        )
+
+    def _demand_reject_unsupported(self, unsupported_nodes, members_by_class):
+        for path, unsupported, ancestors in unsupported_nodes:
+            self._demand_reject_unsupported_node(
+                path, unsupported, ancestors, members_by_class
+            )
+
+    def _demand_reject_unsupported_node(
+        self, path, unsupported, ancestors, members_by_class
+    ):
+        unsupported_scope = self._demand_lexical_scope(ancestors, self.trees[path])
+        reflection_call = isinstance(
+            unsupported, ast.Call
+        ) and self.audit._resolved_ast_name(unsupported.func, self.aliases[path]) in {
+            "getattr",
+            "setattr",
+            "delattr",
+        }
+        reflection_receiver = self._demand_reflection_receiver(
+            path, unsupported, ancestors, reflection_call
+        )
+        reflection_attr = self._demand_reflection_attribute(
+            unsupported, reflection_call
+        )
+        for (kind, enum_path, enum_class), refs in self.refs.items():
+            if kind != "class":
+                continue
+            for reference_path, reference, tail in refs:
+                if (
+                    reference_path != path
+                    or not self._demand_unsupported_affects_reference(
+                        path,
+                        unsupported,
+                        ancestors,
+                        unsupported_scope,
+                        reflection_call,
+                        reflection_receiver,
+                        reflection_attr,
+                        enum_path,
+                        enum_class,
+                        reference,
+                        tail,
+                    )
+                ):
+                    continue
+                self._demand_reject_enum_reference(
+                    enum_path,
+                    enum_class,
+                    tail,
+                    path,
+                    unsupported.lineno,
+                    type(unsupported).__name__,
+                    members_by_class,
+                )
+
+    def _demand_reflection_receiver(
+        self, path, unsupported, ancestors, reflection_call
+    ):
+        if (
+            not reflection_call
+            or not unsupported.args
+            or not isinstance(unsupported.args[0], (ast.Name, ast.Attribute))
+        ):
+            return None
+        return self._demand_receiver_class(path, unsupported.args[0], ancestors)
+
+    @staticmethod
+    def _demand_reflection_attribute(unsupported, reflection_call):
+        if not reflection_call or len(unsupported.args) <= 1:
+            return None
+        value = unsupported.args[1]
+        return (
+            value.value
+            if isinstance(value, ast.Constant) and type(value.value) is str
+            else None
+        )
+
+    def _demand_unsupported_affects_reference(
+        self,
+        path,
+        unsupported,
+        ancestors,
+        unsupported_scope,
+        reflection_call,
+        reflection_receiver,
+        reflection_attr,
+        enum_path,
+        enum_class,
+        reference,
+        tail,
+    ):
+        reference_scope, reference_ancestors = self.demand_reference_scopes[
+            path, id(reference)
+        ]
+        same_scope = reference_scope is unsupported_scope
+        if reflection_call:
+            direct_reflection = (
+                unsupported in reference_ancestors or reference in ancestors
+            )
+            if not self._demand_reflection_affects(
+                reflection_receiver,
+                reflection_attr,
+                ("class", enum_path, enum_class),
+                tail,
+                direct_reflection,
+            ):
+                return False
+            same_scope = True
+        direct_dependency = any(
+            item is unsupported for item in reference_ancestors
+        ) or any(item is reference for item in ancestors)
+        return same_scope or direct_dependency
+
+    def _demand_reject_enum_reference(
+        self, enum_path, enum_class, tail, path, line, reason, members_by_class
+    ):
+        names = members_by_class[enum_path, enum_class]
+        member_name = tail[0] if tail else None
+        affected = {member_name} if member_name in names else names
+        for name in affected:
+            key = enum_path, enum_class, name
+            self.enum_demand_rejected_keys.add(key)
+            self.enum_demand_rejection_details.setdefault(key, (path, line, reason))
+
+    def _demand_reject_unresolved_imports(self, relevant_paths, members_by_class):
+        for path in relevant_paths:
+            uncertain_names = {
+                name for name, origin in self.imports[path].items() if origin is None
+            }
+            has_star_import = any(
+                isinstance(statement, ast.ImportFrom)
+                and any(alias.name == "*" for alias in statement.names)
+                for statement in self.trees[path].body
+            )
+            if not uncertain_names and not has_star_import:
+                continue
+            for (kind, enum_path, enum_class), refs in self.refs.items():
+                if kind != "class":
+                    continue
+                for reference_path, reference, tail in refs:
+                    if reference_path != path:
+                        continue
+                    source_name = self.audit._name(reference).split(".", 1)[0]
+                    if has_star_import or source_name in uncertain_names:
+                        self._demand_reject_enum_reference(
+                            enum_path,
+                            enum_class,
+                            tail,
+                            path,
+                            reference.lineno,
+                            "unresolved/star import",
+                            members_by_class,
+                        )
+
+    def _demand_consumer_effect_paths(self, relevant_paths, consumer_symbols):
+        effect_paths = set(relevant_paths)
+        for path in self.trees:
+            names = (
+                set(self.imports[path])
+                | {name for owner, name in self.objects if owner == path}
+                | {name for owner, name in self.functions if owner == path}
+            )
+            for name in names:
+                resolved = self.resolve(path, (name,))
+                if resolved is not None and resolved[:3] in consumer_symbols:
+                    effect_paths.add(path)
+        return effect_paths if self.complete else None
+
+    def _enum_demand_statistics(self, enum_classes, relevant_paths, effect_paths):
+        return {
+            "sources_examined": len(self.trees),
+            "source_bytes_hashed_and_parsed": sum(map(len, self.source_bytes.values())),
+            "candidate_classes": len(enum_classes),
+            "candidate_members": len(self.members),
+            "candidate_references": sum(map(len, self.refs.values())),
+            "relevant_paths": len(relevant_paths),
+            "effect_paths": len(effect_paths),
+            "unresolved_imports": len(self.demand_unresolved_imports),
+            "rejected_member_obligations": len(self.enum_demand_rejected_keys),
+            "retained_reference_nodes": len(self.demand_reference_scopes),
+        }
+
     def _demand_consumer_symbols(self):
         """Find class/helper definitions on candidate enum reference paths."""
         result = set()
@@ -541,40 +618,43 @@ class _LiteralConsumers(_FiniteInputCapture):
             for path, node, tail in self.refs.get(("class", enum_path, enum_class), []):
                 if tail != (member,) or not isinstance(node.ctx, ast.Load):
                     continue
-                value = node
-                parent = self.parents.get(id(value))
-                while isinstance(parent, ast.Tuple) and parent.elts and self._tick():
-                    value, parent = parent, self.parents.get(id(parent))
-                if not isinstance(parent, ast.keyword):
-                    continue
-                call = self.parents.get(id(parent))
-                if not isinstance(call, ast.Call) or not isinstance(
-                    call.func, (ast.Name, ast.Attribute)
-                ):
-                    continue
-                consumer = self.resolve(
-                    path, tuple(self.audit._name(call.func).split("."))
-                )
-                if consumer is None or consumer[0] not in {"class", "function"}:
-                    continue
-                result.add(consumer[:3])
-                if consumer[0] != "function":
-                    continue
-                helper = self.functions.get(consumer[1:3])
-                if not isinstance(helper, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    continue
-                returns = [item for item in helper.body if isinstance(item, ast.Return)]
-                if (
-                    len(returns) == 1
-                    and isinstance(returns[0].value, ast.Call)
-                    and isinstance(returns[0].value.func, (ast.Name, ast.Attribute))
-                ):
-                    result_class = self.resolve(
-                        consumer[1],
-                        tuple(self.audit._name(returns[0].value.func).split(".")),
-                    )
-                    if result_class is not None and result_class[0] == "class":
-                        result.add(result_class[:3])
+                result.update(self._demand_consumer_symbols_for_reference(path, node))
+        return result
+
+    def _demand_consumer_symbols_for_reference(self, path, node):
+        """Resolve the constructor/helper enclosing one keyword-bound enum use."""
+        value = node
+        parent = self.parents.get(id(value))
+        while isinstance(parent, ast.Tuple) and parent.elts and self._tick():
+            value, parent = parent, self.parents.get(id(parent))
+        if not isinstance(parent, ast.keyword):
+            return set()
+        call = self.parents.get(id(parent))
+        if not isinstance(call, ast.Call) or not isinstance(
+            call.func, (ast.Name, ast.Attribute)
+        ):
+            return set()
+        consumer = self.resolve(path, tuple(self.audit._name(call.func).split(".")))
+        if consumer is None or consumer[0] not in {"class", "function"}:
+            return set()
+        result = {consumer[:3]}
+        if consumer[0] != "function":
+            return result
+        helper = self.functions.get(consumer[1:3])
+        if not isinstance(helper, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            return result
+        returns = [item for item in helper.body if isinstance(item, ast.Return)]
+        if (
+            len(returns) != 1
+            or not isinstance(returns[0].value, ast.Call)
+            or not isinstance(returns[0].value.func, (ast.Name, ast.Attribute))
+        ):
+            return result
+        result_class = self.resolve(
+            consumer[1], tuple(self.audit._name(returns[0].value.func).split("."))
+        )
+        if result_class is not None and result_class[0] == "class":
+            result.add(result_class[:3])
         return result
 
     @staticmethod
@@ -626,119 +706,133 @@ class _LiteralConsumers(_FiniteInputCapture):
         name = parts[0]
         scope = self._demand_lexical_scope(ancestors, self.trees[path])
         if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            for argument in (
-                *scope.args.posonlyargs,
-                *scope.args.args,
-                *scope.args.kwonlyargs,
-            ):
-                if argument.arg == name and argument.annotation is not None:
-                    annotation = argument.annotation
-                    if (
-                        isinstance(annotation, ast.Constant)
-                        and type(annotation.value) is str
-                    ):
-                        if len(annotation.value) > 256:
-                            return None
-                        try:
-                            annotation = ast.parse(annotation.value, mode="eval").body
-                        except (SyntaxError, ValueError):
-                            return None
-                    for node in self._walk(annotation):
-                        if isinstance(node, (ast.Name, ast.Attribute)):
-                            origin = self.resolve(
-                                path, tuple(self.audit._name(node).split("."))
-                            )
-                            if origin is not None and origin[0] == "class":
-                                return origin[1:3]
-            assignments = [
-                node
-                for node in self._walk(scope)
-                if isinstance(node, (ast.Assign, ast.AnnAssign))
-                and any(
-                    isinstance(target, ast.Name) and target.id == name
-                    for target in (
-                        node.targets if isinstance(node, ast.Assign) else [node.target]
-                    )
-                )
-            ]
-            if len(assignments) == 1:
-                value = assignments[0].value
-                if isinstance(value, ast.Call) and isinstance(
-                    value.func, (ast.Name, ast.Attribute)
-                ):
-                    origin = self.resolve(
-                        path, tuple(self.audit._name(value.func).split("."))
-                    )
-                    if origin is not None and origin[0] == "class" and not origin[3]:
-                        return origin[1:3]
-                if isinstance(value, (ast.Name, ast.Attribute)):
-                    origin = self.resolve(
-                        path, tuple(self.audit._name(value).split("."))
-                    )
-                    if origin is not None and origin[0] == "class" and not origin[3]:
-                        return origin[1:3]
+            annotation_class = self._demand_receiver_from_annotation(path, scope, name)
+            if annotation_class is not None:
+                return annotation_class
+            assignment_class = self._demand_receiver_from_assignment(path, scope, name)
+            if assignment_class is not None:
+                return assignment_class
         for owner in reversed(ancestors):
             if isinstance(owner, ast.ClassDef) and name == "self":
                 return path, owner.name
         return None
 
+    def _demand_receiver_from_annotation(self, path, scope, name):
+        for argument in (
+            *scope.args.posonlyargs,
+            *scope.args.args,
+            *scope.args.kwonlyargs,
+        ):
+            if argument.arg != name or argument.annotation is None:
+                continue
+            annotation = argument.annotation
+            if isinstance(annotation, ast.Constant) and type(annotation.value) is str:
+                if len(annotation.value) > 256:
+                    return None
+                try:
+                    annotation = ast.parse(annotation.value, mode="eval").body
+                except (SyntaxError, ValueError):
+                    return None
+            for node in self._walk(annotation):
+                if isinstance(node, (ast.Name, ast.Attribute)):
+                    origin = self.resolve(
+                        path, tuple(self.audit._name(node).split("."))
+                    )
+                    if origin is not None and origin[0] == "class":
+                        return origin[1:3]
+        return None
+
+    def _demand_receiver_from_assignment(self, path, scope, name):
+        assignments = [
+            node
+            for node in self._walk(scope)
+            if isinstance(node, (ast.Assign, ast.AnnAssign))
+            and any(
+                isinstance(target, ast.Name) and target.id == name
+                for target in (
+                    node.targets if isinstance(node, ast.Assign) else [node.target]
+                )
+            )
+        ]
+        if len(assignments) != 1:
+            return None
+        value = assignments[0].value
+        if isinstance(value, ast.Call) and isinstance(
+            value.func, (ast.Name, ast.Attribute)
+        ):
+            value = value.func
+        elif not isinstance(value, (ast.Name, ast.Attribute)):
+            return None
+        origin = self.resolve(path, tuple(self.audit._name(value).split(".")))
+        return (
+            origin[1:3]
+            if origin is not None and origin[0] == "class" and not origin[3]
+            else None
+        )
+
     def _collect_enum_witnesses(self):
         """Apply the same all-reference consumer effects to the demanded enum index."""
         result = {}
         for (path, cls, member), declaration in self.members.items():
-            if (path, cls, member) in self.enum_demand_rejected_keys:
+            witness = self._collect_enum_member_witness(path, cls, member, declaration)
+            if witness is None:
                 continue
-            enum_key = ("class", path, cls)
-            refs = self.refs.get(enum_key, [])
-            if not refs:
-                continue
-            if not self._tick(len(refs)):
-                return {}
-            relevant = [
-                (consumer_path, node, tail)
-                for consumer_path, node, tail in refs
-                if not tail or tail[0] == member
-            ]
-            if not any(tail == (member,) for _, _, tail in relevant):
-                continue
-            effects = []
-            for consumer_path, node, tail in relevant:
-                if not tail:
-                    effect = (
-                        "ENUM_TYPE_ANNOTATION"
-                        if self._enum_type_consumer(consumer_path, node, enum_key)
-                        else None
-                    )
-                elif tail == (member,) and isinstance(node.ctx, ast.Load):
-                    if self.public(consumer_path, node):
-                        effect = "PUBLIC_ASSERTION_OR_RESPONSE"
-                    elif self._enum_metadata_consumer(consumer_path, node, enum_key):
-                        effect = "TYPED_METADATA_CONSTRUCTOR"
-                    else:
-                        effect = None
-                else:
-                    effect = None
-                effects.append(effect)
-            if not effects or any(effect is None for effect in effects):
-                continue
-            result[path, declaration.lineno, member] = [
-                {
-                    "path": consumer_path.relative_to(self.root).as_posix(),
-                    "line": node.lineno,
-                    "span": [
-                        node.lineno,
-                        node.col_offset,
-                        node.end_lineno,
-                        node.end_col_offset,
-                    ],
-                    "effect": effect,
-                    "source_sha256": getattr(
-                        self.trees[consumer_path], "_oracle_source_sha256", None
-                    ),
-                }
-                for (consumer_path, node, _tail), effect in zip(relevant, effects)
-            ]
+            result[path, declaration.lineno, member] = witness
         return result
+
+    def _collect_enum_member_witness(self, path, cls, member, declaration):
+        if (path, cls, member) in self.enum_demand_rejected_keys:
+            return None
+        enum_key = ("class", path, cls)
+        refs = self.refs.get(enum_key, [])
+        if not refs:
+            return None
+        if not self._tick(len(refs)):
+            return None
+        relevant = [
+            (consumer_path, node, tail)
+            for consumer_path, node, tail in refs
+            if not tail or tail[0] == member
+        ]
+        if not any(tail == (member,) for _, _, tail in relevant):
+            return None
+        effects = [
+            self._enum_reference_effect(consumer_path, node, tail, member, enum_key)
+            for consumer_path, node, tail in relevant
+        ]
+        if not effects or any(effect is None for effect in effects):
+            return None
+        return [
+            {
+                "path": consumer_path.relative_to(self.root).as_posix(),
+                "line": node.lineno,
+                "span": [
+                    node.lineno,
+                    node.col_offset,
+                    node.end_lineno,
+                    node.end_col_offset,
+                ],
+                "effect": effect,
+                "source_sha256": getattr(
+                    self.trees[consumer_path], "_oracle_source_sha256", None
+                ),
+            }
+            for (consumer_path, node, _tail), effect in zip(relevant, effects)
+        ]
+
+    def _enum_reference_effect(self, path, node, tail, member, enum_key):
+        if not tail:
+            return (
+                "ENUM_TYPE_ANNOTATION"
+                if self._enum_type_consumer(path, node, enum_key)
+                else None
+            )
+        if tail == (member,) and isinstance(node.ctx, ast.Load):
+            if self.public(path, node):
+                return "PUBLIC_ASSERTION_OR_RESPONSE"
+            if self._enum_metadata_consumer(path, node, enum_key):
+                return "TYPED_METADATA_CONSTRUCTOR"
+        return None
 
     def _index_source_nodes(self, path, tree, total):
         nodes = []
@@ -2033,101 +2127,87 @@ class _LiteralConsumers(_FiniteInputCapture):
         consumer = self.resolve(path, tuple(self.audit._name(call.func).split(".")))
         if consumer is None:
             return False
-        field_name = parent.arg if isinstance(parent, ast.keyword) else None
-        if isinstance(parent, ast.Call):
-            if (
-                value not in call.args
-                or any(isinstance(item, ast.Starred) for item in call.args)
-                or any(item.arg is None for item in call.keywords)
-            ):
-                return False
-            position = call.args.index(value)
-            if consumer[0] == "function":
-                helper = self.functions.get(consumer[1:3])
-                if not isinstance(helper, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    return False
-                positional = (*helper.args.posonlyargs, *helper.args.args)
-                if position >= len(positional):
-                    return False
-                field_name = positional[position].arg
-            elif consumer[0] == "class":
-                definition = self.objects.get(consumer[1:3])
-                if not isinstance(
-                    definition, ast.ClassDef
-                ) or not self._frozen_metadata_class(consumer[1], definition):
-                    return False
-                fields = [
-                    item.target.id
-                    for item in definition.body
-                    if isinstance(item, ast.AnnAssign)
-                    and isinstance(item.target, ast.Name)
-                ]
-                if position >= len(fields):
-                    return False
-                field_name = fields[position]
-            if field_name is None or any(
-                item.arg == field_name for item in call.keywords
-            ):
-                return False
-        elif not isinstance(parent, ast.keyword) or parent.value is not value:
-            return False
+        field_name = self._enum_metadata_argument_field(
+            path, value, parent, call, consumer
+        )
         if field_name is None:
             return False
         if consumer[0] == "class":
-            definition = self.objects.get(consumer[1:3])
-            definition_path = consumer[1]
-            if not isinstance(
-                definition, ast.ClassDef
-            ) or not self._frozen_metadata_class(definition_path, definition):
-                return False
-            field = next(
-                (
-                    item
-                    for item in definition.body
-                    if isinstance(item, ast.AnnAssign)
-                    and isinstance(item.target, ast.Name)
-                    and item.target.id == field_name
-                ),
-                None,
-            )
-            return bool(
-                field is not None
-                and self._enum_annotation_contains(
-                    definition_path, field.annotation, enum_key
-                )
-                and self._metadata_field_escapes(
-                    definition_path, definition, field_name
-                )
-                == "closed-benign"
-            )
+            return self._enum_metadata_class_field(consumer, field_name, enum_key)
         if consumer[0] != "function":
             return False
-        helper = self.functions.get(consumer[1:3])
-        if not isinstance(helper, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            return False
+        return self._enum_metadata_function_field(consumer, field_name, enum_key)
+
+    def _enum_metadata_argument_field(self, path, value, parent, call, consumer):
+        if isinstance(parent, ast.Call):
+            return self._enum_metadata_positional_field(value, call, consumer)
+        if isinstance(parent, ast.keyword) and parent.value is value:
+            return parent.arg
+        return None
+
+    def _enum_metadata_positional_field(self, value, call, consumer):
         if (
-            helper.decorator_list
-            or helper.args.defaults
-            or any(value is not None for value in helper.args.kw_defaults)
-            or helper.args.vararg is not None
-            or helper.args.kwarg is not None
-            or any(
-                isinstance(node, ast.Call)
-                for annotation in [
-                    *(
-                        arg.annotation
-                        for arg in (
-                            *helper.args.posonlyargs,
-                            *helper.args.args,
-                            *helper.args.kwonlyargs,
-                        )
-                    ),
-                    helper.returns,
-                ]
-                if annotation is not None
-                for node in self._walk(annotation)
-            )
+            value not in call.args
+            or any(isinstance(item, ast.Starred) for item in call.args)
+            or any(item.arg is None for item in call.keywords)
         ):
+            return None
+        position = call.args.index(value)
+        if consumer[0] == "function":
+            helper = self.functions.get(consumer[1:3])
+            if not isinstance(helper, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                return None
+            positional = (*helper.args.posonlyargs, *helper.args.args)
+            field_name = (
+                positional[position].arg if position < len(positional) else None
+            )
+        elif consumer[0] == "class":
+            definition = self.objects.get(consumer[1:3])
+            if not isinstance(
+                definition, ast.ClassDef
+            ) or not self._frozen_metadata_class(consumer[1], definition):
+                return None
+            fields = [
+                item.target.id
+                for item in definition.body
+                if isinstance(item, ast.AnnAssign) and isinstance(item.target, ast.Name)
+            ]
+            field_name = fields[position] if position < len(fields) else None
+        else:
+            return None
+        if field_name is None or any(item.arg == field_name for item in call.keywords):
+            return None
+        return field_name
+
+    def _enum_metadata_class_field(self, consumer, field_name, enum_key):
+        definition_path = consumer[1]
+        definition = self.objects.get(consumer[1:3])
+        if not isinstance(definition, ast.ClassDef) or not self._frozen_metadata_class(
+            definition_path, definition
+        ):
+            return False
+        field = next(
+            (
+                item
+                for item in definition.body
+                if isinstance(item, ast.AnnAssign)
+                and isinstance(item.target, ast.Name)
+                and item.target.id == field_name
+            ),
+            None,
+        )
+        return bool(
+            field is not None
+            and self._enum_annotation_contains(
+                definition_path, field.annotation, enum_key
+            )
+            and self._metadata_field_escapes(definition_path, definition, field_name)
+            == "closed-benign"
+        )
+
+    def _enum_metadata_function_field(self, consumer, field_name, enum_key):
+        helper = self.functions.get(consumer[1:3])
+        if not self._enum_metadata_helper_header_closed(helper):
             return False
         argument = next(
             (
@@ -2149,6 +2229,38 @@ class _LiteralConsumers(_FiniteInputCapture):
             )
         ):
             return False
+        return self._enum_metadata_helper_result(consumer, helper, field_name, enum_key)
+
+    def _enum_metadata_helper_header_closed(self, helper):
+        if not isinstance(helper, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            return False
+        if (
+            helper.decorator_list
+            or helper.args.defaults
+            or any(value is not None for value in helper.args.kw_defaults)
+            or helper.args.vararg is not None
+            or helper.args.kwarg is not None
+        ):
+            return False
+        annotations = [
+            *(
+                arg.annotation
+                for arg in (
+                    *helper.args.posonlyargs,
+                    *helper.args.args,
+                    *helper.args.kwonlyargs,
+                )
+            ),
+            helper.returns,
+        ]
+        return not any(
+            isinstance(node, ast.Call)
+            for annotation in annotations
+            if annotation is not None
+            for node in self._walk(annotation)
+        )
+
+    def _enum_metadata_helper_result(self, consumer, helper, field_name, enum_key):
         returns = [item for item in helper.body if isinstance(item, ast.Return)]
         if (
             len(returns) != 1
@@ -2220,6 +2332,37 @@ class _LiteralConsumers(_FiniteInputCapture):
             if isinstance(value, ast.ClassDef)
             and self._frozen_metadata_class(key[0], value)
         }
+        collected = self._metadata_field_instances(classes)
+        if collected is None:
+            return
+        instances, instance_names, parents = collected
+        escaped = set()
+        for path, tree in self.trees.items():
+            for node in self._walk(tree):
+                if self._metadata_field_dynamic_call_blocks(path, node, instances):
+                    self._metadata_field_escape_incomplete()
+                    return
+                escaped.update(
+                    self._metadata_field_node_escapes(
+                        path, node, classes, parents, instances, instance_names
+                    )
+                )
+        for class_key in escaped:
+            definition = self.objects.get(class_key)
+            if isinstance(definition, ast.ClassDef):
+                for item in definition.body:
+                    if isinstance(item, ast.AnnAssign) and isinstance(
+                        item.target, ast.Name
+                    ):
+                        self.metadata_field_escape_cache[
+                            (*class_key, item.target.id)
+                        ] = True
+        self.metadata_field_escape_index_ready = True
+        self.metadata_field_escape_index_complete = self.complete and not getattr(
+            self, "demand_unresolved_imports", ()
+        )
+
+    def _metadata_field_instances(self, classes):
         instances = defaultdict(set)
         instance_names = defaultdict(set)
         parents = {}
@@ -2228,9 +2371,8 @@ class _LiteralConsumers(_FiniteInputCapture):
             while stack:
                 node, parent = stack.pop()
                 if not self._tick():
-                    self.metadata_field_escape_index_ready = True
-                    self.metadata_field_escape_index_complete = False
-                    return
+                    self._metadata_field_escape_incomplete()
+                    return None
                 if parent is not None:
                     parents[id(node)] = parent
                 stack.extend((child, node) for child in ast.iter_child_nodes(node))
@@ -2246,186 +2388,185 @@ class _LiteralConsumers(_FiniteInputCapture):
                     or not isinstance(value, ast.Call)
                 ):
                     continue
-                resolved = (
-                    self.resolve(path, tuple(self.audit._name(value.func).split(".")))
-                    if isinstance(value.func, (ast.Name, ast.Attribute))
-                    else None
-                )
-                result = resolved
-                if resolved is not None and resolved[0] == "function":
-                    helper = self.functions.get(resolved[1:3])
-                    returns = (
-                        [item for item in helper.body if isinstance(item, ast.Return)]
-                        if isinstance(helper, (ast.FunctionDef, ast.AsyncFunctionDef))
-                        else []
-                    )
-                    if (
-                        len(returns) == 1
-                        and len(helper.body) == 1
-                        and not helper.decorator_list
-                        and isinstance(returns[0].value, ast.Call)
-                        and isinstance(returns[0].value.func, (ast.Name, ast.Attribute))
-                    ):
-                        result = self.resolve(
-                            resolved[1],
-                            tuple(self.audit._name(returns[0].value.func).split(".")),
-                        )
-                if (
-                    result is not None
-                    and result[0] == "class"
-                    and result[1:3] in classes
-                ):
-                    instances[path, targets[0].id].add(result[1:3])
-                    instance_names[targets[0].id].add(result[1:3])
+                instance = self._metadata_field_constructed_class(path, value, classes)
+                if instance is not None:
+                    instances[path, targets[0].id].add(instance)
+                    instance_names[targets[0].id].add(instance)
+        return instances, instance_names, parents
 
-        escaped = set()
-        for path, tree in self.trees.items():
-            for node in self._walk(tree):
-                if isinstance(node, ast.Call) and isinstance(
-                    node.func, (ast.Name, ast.Attribute)
-                ):
-                    result = self.resolve(
-                        path, tuple(self.audit._name(node.func).split("."))
-                    )
-                    if (
-                        result is not None
-                        and result[0] == "class"
-                        and result[1:3] in classes
-                    ):
-                        parent = parents.get(id(node))
-                        targets = (
-                            parent.targets
-                            if isinstance(parent, ast.Assign)
-                            else [parent.target]
-                            if isinstance(parent, ast.AnnAssign)
-                            else []
-                        )
-                        assigned = (
-                            parent is not None
-                            and getattr(parent, "value", None) is node
-                            and len(targets) == 1
-                            and isinstance(targets[0], ast.Name)
-                        )
-                        returned = (
-                            isinstance(parent, ast.Return)
-                            and isinstance(
-                                parents.get(id(parent)),
-                                (ast.FunctionDef, ast.AsyncFunctionDef),
-                            )
-                            and len(parents[id(parent)].body) == 1
-                            and not parents[id(parent)].decorator_list
-                        )
-                        if not assigned and not returned:
-                            escaped.add(result[1:3])
-                if isinstance(node, ast.Call):
-                    name = self.audit._resolved_ast_name(node.func, self.aliases[path])
-                    if name in {
-                        "builtins.__import__",
-                        "__import__",
-                        "importlib.import_module",
-                        "builtins.eval",
-                        "eval",
-                        "builtins.exec",
-                        "exec",
-                        "globals",
-                        "locals",
-                        "vars",
-                        "getattr",
-                        "setattr",
-                        "delattr",
-                    }:
-                        imported = any(
-                            (resolved := self.resolve(path, (name,))) is not None
-                            and (
-                                resolved[0] == "value"
-                                and resolved[1:3] in instances
-                                or resolved[0] == "module"
-                                and any(owner == resolved[1] for owner, _ in instances)
-                            )
-                            for name in self.imports[path]
-                        )
-                        if (
-                            path in {owner for owner, _ in instances}
-                            or imported
-                            or path in getattr(self, "enum_effect_paths", ())
-                        ):
-                            self.metadata_field_escape_index_ready = True
-                            self.metadata_field_escape_index_complete = False
-                            return
-                if isinstance(node, (ast.Assign, ast.AnnAssign)):
-                    targets = (
-                        node.targets if isinstance(node, ast.Assign) else [node.target]
-                    )
-                    if any(
-                        isinstance(target, ast.Name) and target.id == "__all__"
-                        for target in targets
-                    ):
-                        names = (
-                            {
-                                item.value
-                                for item in node.value.elts
-                                if isinstance(item, ast.Constant)
-                                and type(item.value) is str
-                            }
-                            if isinstance(node.value, (ast.List, ast.Tuple))
-                            else set()
-                        )
-                        if not names:
-                            escaped.update(
-                                class_key
-                                for (owner, _), keys in instances.items()
-                                if owner == path
-                                for class_key in keys
-                            )
-                        for name in names:
-                            result = self.resolve(path, (name,))
-                            if (
-                                result is not None
-                                and result[0] == "value"
-                                and result[1:3] in instances
-                            ):
-                                escaped.add(result[1:3])
-                            origin = self.imports[path].get(name)
-                            if origin in instances:
-                                escaped.update(instances[origin])
-                if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
-                    result = self.resolve(path, (node.id,))
-                    escaped.update(instance_names.get(node.id, ()))
-                    if (
-                        (path, node.id) in instances
-                        or result is not None
-                        and result[0] == "value"
-                        and result[1:3] in instances
-                    ):
-                        escaped.update(
-                            instances.get(
-                                (path, node.id), {result[1:3]} if result else set()
-                            )
-                        )
-                elif isinstance(node, ast.Attribute) and isinstance(node.ctx, ast.Load):
-                    result = self.resolve(
-                        path, tuple(self.audit._name(node).split("."))
-                    )
-                    if (
-                        result is not None
-                        and result[0] == "value"
-                        and result[1:3] in instances
-                    ):
-                        escaped.add(result[1:3])
-        for class_key in escaped:
-            definition = self.objects.get(class_key)
-            if isinstance(definition, ast.ClassDef):
-                for item in definition.body:
-                    if isinstance(item, ast.AnnAssign) and isinstance(
-                        item.target, ast.Name
-                    ):
-                        self.metadata_field_escape_cache[
-                            (*class_key, item.target.id)
-                        ] = True
-        self.metadata_field_escape_index_ready = True
-        self.metadata_field_escape_index_complete = self.complete and not getattr(
-            self, "demand_unresolved_imports", ()
+    def _metadata_field_constructed_class(self, path, value, classes):
+        if not isinstance(value.func, (ast.Name, ast.Attribute)):
+            return None
+        resolved = self.resolve(path, tuple(self.audit._name(value.func).split(".")))
+        result = resolved
+        if resolved is not None and resolved[0] == "function":
+            helper = self.functions.get(resolved[1:3])
+            returns = (
+                [item for item in helper.body if isinstance(item, ast.Return)]
+                if isinstance(helper, (ast.FunctionDef, ast.AsyncFunctionDef))
+                else []
+            )
+            if (
+                len(returns) == 1
+                and len(helper.body) == 1
+                and not helper.decorator_list
+                and isinstance(returns[0].value, ast.Call)
+                and isinstance(returns[0].value.func, (ast.Name, ast.Attribute))
+            ):
+                result = self.resolve(
+                    resolved[1],
+                    tuple(self.audit._name(returns[0].value.func).split(".")),
+                )
+        if result is not None and result[0] == "class" and result[1:3] in classes:
+            return result[1:3]
+        return None
+
+    def _metadata_field_node_escapes(
+        self, path, node, classes, parents, instances, instance_names
+    ):
+        escaped = self._metadata_field_constructor_escape(path, node, classes, parents)
+        escaped.update(self._metadata_field_export_escape(path, node, instances))
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
+            escaped.update(
+                self._metadata_field_name_escape(path, node, instances, instance_names)
+            )
+        elif isinstance(node, ast.Attribute) and isinstance(node.ctx, ast.Load):
+            escaped.update(self._metadata_field_attribute_escape(path, node, instances))
+        return escaped
+
+    def _metadata_field_constructor_escape(self, path, node, classes, parents):
+        if not isinstance(node, ast.Call) or not isinstance(
+            node.func, (ast.Name, ast.Attribute)
+        ):
+            return set()
+        result = self.resolve(path, tuple(self.audit._name(node.func).split(".")))
+        if result is None or result[0] != "class" or result[1:3] not in classes:
+            return set()
+        parent = parents.get(id(node))
+        assigned = self._metadata_field_constructor_assignment(parent, node)
+        returned = self._metadata_field_constructor_return(parent, parents)
+        return set() if assigned or returned else {result[1:3]}
+
+    @staticmethod
+    def _metadata_field_constructor_assignment(parent, node):
+        targets = (
+            parent.targets
+            if isinstance(parent, ast.Assign)
+            else [parent.target]
+            if isinstance(parent, ast.AnnAssign)
+            else []
         )
+        return (
+            parent is not None
+            and getattr(parent, "value", None) is node
+            and len(targets) == 1
+            and isinstance(targets[0], ast.Name)
+        )
+
+    @staticmethod
+    def _metadata_field_constructor_return(parent, parents):
+        owner = parents.get(id(parent)) if isinstance(parent, ast.Return) else None
+        return (
+            isinstance(parent, ast.Return)
+            and isinstance(owner, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and len(owner.body) == 1
+            and not owner.decorator_list
+        )
+
+    def _metadata_field_dynamic_call_blocks(self, path, node, instances):
+        if not isinstance(node, ast.Call):
+            return False
+        name = self.audit._resolved_ast_name(node.func, self.aliases[path])
+        if name not in {
+            "builtins.__import__",
+            "__import__",
+            "importlib.import_module",
+            "builtins.eval",
+            "eval",
+            "builtins.exec",
+            "exec",
+            "globals",
+            "locals",
+            "vars",
+            "getattr",
+            "setattr",
+            "delattr",
+        }:
+            return False
+        imported = any(
+            (resolved := self.resolve(path, (import_name,))) is not None
+            and (
+                resolved[0] == "value"
+                and resolved[1:3] in instances
+                or resolved[0] == "module"
+                and any(owner == resolved[1] for owner, _ in instances)
+            )
+            for import_name in self.imports[path]
+        )
+        return (
+            path in {owner for owner, _ in instances}
+            or imported
+            or path in getattr(self, "enum_effect_paths", ())
+        )
+
+    def _metadata_field_export_escape(self, path, node, instances):
+        if not isinstance(node, (ast.Assign, ast.AnnAssign)):
+            return set()
+        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+        if not any(
+            isinstance(target, ast.Name) and target.id == "__all__"
+            for target in targets
+        ):
+            return set()
+        names = self._metadata_field_exported_names(node.value)
+        escaped = set()
+        if not names:
+            escaped.update(
+                class_key
+                for (owner, _), keys in instances.items()
+                if owner == path
+                for class_key in keys
+            )
+        for name in names:
+            result = self.resolve(path, (name,))
+            if result is not None and result[0] == "value" and result[1:3] in instances:
+                escaped.add(result[1:3])
+            origin = self.imports[path].get(name)
+            if origin in instances:
+                escaped.update(instances[origin])
+        return escaped
+
+    @staticmethod
+    def _metadata_field_exported_names(value):
+        if not isinstance(value, (ast.List, ast.Tuple)):
+            return set()
+        return {
+            item.value
+            for item in value.elts
+            if isinstance(item, ast.Constant) and type(item.value) is str
+        }
+
+    def _metadata_field_name_escape(self, path, node, instances, instance_names):
+        escaped = set(instance_names.get(node.id, ()))
+        result = self.resolve(path, (node.id,))
+        if (path, node.id) not in instances and not (
+            result is not None and result[0] == "value" and result[1:3] in instances
+        ):
+            return escaped
+        escaped.update(
+            instances.get((path, node.id), {result[1:3]} if result else set())
+        )
+        return escaped
+
+    def _metadata_field_attribute_escape(self, path, node, instances):
+        result = self.resolve(path, tuple(self.audit._name(node).split(".")))
+        if result is not None and result[0] == "value" and result[1:3] in instances:
+            return {result[1:3]}
+        return set()
+
+    def _metadata_field_escape_incomplete(self):
+        self.metadata_field_escape_index_ready = True
+        self.metadata_field_escape_index_complete = False
 
     def _frozen_metadata_class(self, path, definition):
         if (
@@ -2909,64 +3050,54 @@ class _LiteralConsumers(_FiniteInputCapture):
             )
         if not self.complete:
             return {}
+        return self._public_witnesses()
+
+    def _public_witnesses(self):
         result = {}
         for (path, cls, member), declaration in self.members.items():
-            enum_key = ("class", path, cls)
-            refs = self.refs.get(("class", path, cls), [])
-            if not refs:
-                continue
-            if not self._tick(len(refs)):
-                return {}
-            relevant = [
-                (p, node, tail)
-                for p, node, tail in refs
-                if not tail or tail[0] == member
-            ]
-            if not any(tail == (member,) for _, _, tail in relevant):
-                continue
-            effects = []
-            for p, node, tail in relevant:
-                if not tail:
-                    effect = (
-                        "ENUM_TYPE_ANNOTATION"
-                        if self._enum_type_consumer(p, node, enum_key)
-                        else None
-                    )
-                elif tail == (member,) and isinstance(node.ctx, ast.Load):
-                    if self.public(p, node):
-                        effect = "PUBLIC_ASSERTION_OR_RESPONSE"
-                    elif self._enum_metadata_consumer(p, node, enum_key):
-                        effect = "TYPED_METADATA_CONSTRUCTOR"
-                    else:
-                        effect = None
-                else:
-                    effect = None
-                effects.append(effect)
-            if not effects or any(effect is None for effect in effects):
-                continue
-            result[path, declaration.lineno, member] = [
-                {
-                    "path": p.relative_to(self.root).as_posix(),
-                    "line": node.lineno,
-                    "span": [
-                        node.lineno,
-                        node.col_offset,
-                        node.end_lineno,
-                        node.end_col_offset,
-                    ],
-                    "effect": effect,
-                    "source_sha256": getattr(
-                        self.trees[p], "_oracle_source_sha256", None
-                    ),
-                    **(
-                        {"source_profile": self.source_profiles[p]}
-                        if p in self.source_profiles
-                        else {}
-                    ),
-                }
-                for (p, node, tail), effect in zip(relevant, effects)
-            ]
+            witness = self._public_member_witness(path, cls, member, declaration)
+            if witness is not None:
+                result[path, declaration.lineno, member] = witness
         return result if self.complete else {}
+
+    def _public_member_witness(self, path, cls, member, declaration):
+        refs = self.refs.get(("class", path, cls), [])
+        if not refs:
+            return None
+        if not self._tick(len(refs)):
+            return None
+        relevant = [
+            (p, node, tail) for p, node, tail in refs if not tail or tail[0] == member
+        ]
+        if not any(tail == (member,) for _, _, tail in relevant):
+            return None
+        enum_key = ("class", path, cls)
+        effects = [
+            self._enum_reference_effect(p, node, tail, member, enum_key)
+            for p, node, tail in relevant
+        ]
+        if not effects or any(effect is None for effect in effects):
+            return None
+        return [
+            {
+                "path": p.relative_to(self.root).as_posix(),
+                "line": node.lineno,
+                "span": [
+                    node.lineno,
+                    node.col_offset,
+                    node.end_lineno,
+                    node.end_col_offset,
+                ],
+                "effect": effect,
+                "source_sha256": getattr(self.trees[p], "_oracle_source_sha256", None),
+                **(
+                    {"source_profile": self.source_profiles[p]}
+                    if p in self.source_profiles
+                    else {}
+                ),
+            }
+            for (p, node, _tail), effect in zip(relevant, effects)
+        ]
 
     def _walk(self, node):
         for child in ast.walk(node):
@@ -3332,14 +3463,12 @@ def bind_public_symbolic_consumers(
 ):
     """Populate credential-consumer and finite-template context evidence from a matching source inventory; clear it on incomplete or failed analysis."""
     from . import review_audits as audit
-    import hashlib
-    import json
 
     for context in contexts.values():
         context["credential_consumers"] = {}
         context["finite_template_inputs"] = {}
     try:
-        if not isinstance(inventory, dict) or set(contexts) != set(inventory):
+        if not _symbolic_inventory_complete(inventory, contexts):
             return
         graph = _LiteralConsumers(
             root,
@@ -3360,40 +3489,9 @@ def bind_public_symbolic_consumers(
             return
         if not graph.complete and not demand_enum_only:
             witnesses = {}
-        workspace = hashlib.sha256(
-            json.dumps(
-                sorted(
-                    (path.relative_to(root).as_posix(), digest)
-                    for path, digest in inventory.items()
-                ),
-                separators=(",", ":"),
-            ).encode()
-        ).hexdigest()
-        for (path, line, column), facts in templates.items():
-            evidence = {**facts, "workspace_sources_sha256": workspace}
-            evidence["proof_facts_sha256"] = hashlib.sha256(
-                json.dumps(evidence, sort_keys=True, separators=(",", ":")).encode()
-            ).hexdigest()
-            contexts[path]["finite_template_inputs"][f"{line}:{column}"] = evidence
-        profiles = (
-            []
-            if demand_enum_only
-            else [
-                {"source_path": path.relative_to(root).as_posix(), **profile}
-                for path, profile in sorted(
-                    getattr(graph, "source_profiles", {}).items()
-                )
-            ]
+        _bind_public_symbolic_evidence(
+            root, inventory, contexts, graph, templates, witnesses, demand_enum_only
         )
-        for (path, line, member), consumers in witnesses.items():
-            evidence = {"consumers": consumers, "source_profiles": profiles}
-            digest = hashlib.sha256(
-                json.dumps(evidence, sort_keys=True, separators=(",", ":")).encode()
-            ).hexdigest()
-            contexts[path]["credential_consumers"][f"{line}:{member}"] = {
-                **evidence,
-                "consumer_evidence_sha256": digest,
-            }
     except (
         AttributeError,
         KeyError,
@@ -3549,37 +3647,91 @@ def _facts_digest(facts, hashlib, json):
 
 def _local_control_literal_binding(binding, parents):
     owner = parents.get(binding)
-    targets = owner.targets if isinstance(owner, ast.Assign) else [owner.target] if isinstance(owner, ast.AnnAssign) else []
+    targets = (
+        owner.targets
+        if isinstance(owner, ast.Assign)
+        else [owner.target]
+        if isinstance(owner, ast.AnnAssign)
+        else []
+    )
     return (
-        isinstance(binding, ast.Name) and isinstance(binding.ctx, ast.Store)
-        and targets == [binding] and isinstance(owner.value, ast.Constant)
+        isinstance(binding, ast.Name)
+        and isinstance(binding.ctx, ast.Store)
+        and targets == [binding]
+        and isinstance(owner.value, ast.Constant)
         and type(owner.value.value) is str
     )
 
 
 def _local_control_literal_use(reference, scope, parents):
     comparison = parents.get(reference)
-    if not isinstance(comparison, ast.Compare) or not all(isinstance(op, (ast.Eq, ast.NotEq)) for op in comparison.ops):
+    if not isinstance(comparison, ast.Compare) or not all(
+        isinstance(op, (ast.Eq, ast.NotEq)) for op in comparison.ops
+    ):
         return False
-    if not all(item is reference or isinstance(item, ast.Constant) and type(item.value) is str for item in [comparison.left, *comparison.comparators]):
+    if not all(
+        item is reference or isinstance(item, ast.Constant) and type(item.value) is str
+        for item in [comparison.left, *comparison.comparators]
+    ):
         return False
     current = reference
     while current in parents:
         current = parents[current]
-        if isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef, ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)):
+        if isinstance(
+            current,
+            (
+                ast.FunctionDef,
+                ast.AsyncFunctionDef,
+                ast.Lambda,
+                ast.ClassDef,
+                ast.ListComp,
+                ast.SetComp,
+                ast.DictComp,
+                ast.GeneratorExp,
+            ),
+        ):
             return current is scope
     return False
 
 
 def _local_control_reflection(module, scope_nodes, aliases):
-    reflective = {"eval", "exec", "locals", "globals", "vars", "builtins", "__builtins__", "__import__", "_getframe", "currentframe", "f_locals", "f_globals", "f_back", "gi_frame", "cr_frame", "ag_frame"}
+    reflective = {
+        "eval",
+        "exec",
+        "locals",
+        "globals",
+        "vars",
+        "builtins",
+        "__builtins__",
+        "__import__",
+        "_getframe",
+        "currentframe",
+        "f_locals",
+        "f_globals",
+        "f_back",
+        "gi_frame",
+        "cr_frame",
+        "ag_frame",
+    }
     for item in ast.walk(module):
-        name = aliases.get(item.id, item.id).split(".")[-1] if isinstance(item, ast.Name) else item.attr if isinstance(item, ast.Attribute) else item.name.split(".")[-1] if isinstance(item, ast.alias) else None
+        name = (
+            aliases.get(item.id, item.id).split(".")[-1]
+            if isinstance(item, ast.Name)
+            else item.attr
+            if isinstance(item, ast.Attribute)
+            else item.name.split(".")[-1]
+            if isinstance(item, ast.alias)
+            else None
+        )
         if name in reflective:
             return True
         if name == "getattr":
             parent = getattr(item, "_security_parent", None)
-            if item in scope_nodes or not isinstance(parent, ast.Call) or parent.func is not item:
+            if (
+                item in scope_nodes
+                or not isinstance(parent, ast.Call)
+                or parent.func is not item
+            ):
                 return True
     return False
 
@@ -3591,7 +3743,9 @@ def _local_control_label_witness(audit, node, target, aliases):
     from .context_efficiency import _SECRET_BYTES
 
     scope = getattr(node, "_security_lexical_scope", None)
-    if not isinstance(target, ast.Name) or not isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)):
+    if not isinstance(target, ast.Name) or not isinstance(
+        scope, (ast.FunctionDef, ast.AsyncFunctionDef)
+    ):
         return {}
     if target.id in audit._scope_parameters(scope):
         return {}
@@ -3600,20 +3754,46 @@ def _local_control_label_witness(audit, node, target, aliases):
     if not isinstance(digest, str) or len(digest) != 64:
         return {}
     nodes = list(ast.walk(scope))
-    if len(nodes) > 4096 or any(isinstance(item, (ast.Global, ast.Nonlocal)) and target.id in item.names for item in nodes):
+    if len(nodes) > 4096 or any(
+        isinstance(item, (ast.Global, ast.Nonlocal)) and target.id in item.names
+        for item in nodes
+    ):
         return {}
     if _local_control_reflection(module, set(nodes), aliases):
         return {}
     parents = {child: owner for owner in nodes for child in ast.iter_child_nodes(owner)}
     bindings = binding_occurrences(scope.body, target.id)
-    if not bindings or target not in bindings or not all(_local_control_literal_binding(binding, parents) for binding in bindings):
+    if (
+        not bindings
+        or target not in bindings
+        or not all(
+            _local_control_literal_binding(binding, parents) for binding in bindings
+        )
+    ):
         return {}
-    references = [item for item in nodes if isinstance(item, ast.Name) and item.id == target.id and isinstance(item.ctx, ast.Load)]
-    if not references or not all(_local_control_literal_use(item, scope, parents) for item in references):
+    references = [
+        item
+        for item in nodes
+        if isinstance(item, ast.Name)
+        and item.id == target.id
+        and isinstance(item.ctx, ast.Load)
+    ]
+    if not references or not all(
+        _local_control_literal_use(item, scope, parents) for item in references
+    ):
         return {}
     literals = [parents[binding].value for binding in bindings]
-    literals.extend(item for reference in references for item in [parents[reference].left, *parents[reference].comparators] if item is not reference)
-    if any(pattern.search(item.value.encode("utf-8")) for item in literals for pattern in _SECRET_BYTES):
+    literals.extend(
+        item
+        for reference in references
+        for item in [parents[reference].left, *parents[reference].comparators]
+        if item is not reference
+    )
+    if any(
+        pattern.search(item.value.encode("utf-8"))
+        for item in literals
+        for pattern in _SECRET_BYTES
+    ):
         return {}
     return {
         "schema": "factory.local-control-label.v1",
@@ -3706,6 +3886,8 @@ def credential_consumer_helpers(audit):
         audit.bind_credential_consumers,
         bind_credential_consumers,
         bind_public_symbolic_consumers,
+        _symbolic_inventory_complete,
+        _bind_public_symbolic_evidence,
         public_symbolic_binding,
         _symbolic_binding_header,
         _symbolic_consumer_rows,
@@ -3738,3 +3920,48 @@ def credential_consumer_helpers(audit):
         audit._oracle_bound_names,
         *(value for value in vars(audit._LiteralConsumers).values() if callable(value)),
     )
+
+
+def _symbolic_inventory_complete(inventory, contexts):
+    return isinstance(inventory, dict) and set(contexts) == set(inventory)
+
+
+def _bind_public_symbolic_evidence(
+    root, inventory, contexts, graph, templates, witnesses, demand_enum_only
+):
+    """Seal captured template and consumer facts to their shared source inventory."""
+    import hashlib
+    import json
+
+    workspace = hashlib.sha256(
+        json.dumps(
+            sorted(
+                (path.relative_to(root).as_posix(), digest)
+                for path, digest in inventory.items()
+            ),
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
+    for (path, line, column), facts in templates.items():
+        evidence = {**facts, "workspace_sources_sha256": workspace}
+        evidence["proof_facts_sha256"] = hashlib.sha256(
+            json.dumps(evidence, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        contexts[path]["finite_template_inputs"][f"{line}:{column}"] = evidence
+    profiles = (
+        []
+        if demand_enum_only
+        else [
+            {"source_path": path.relative_to(root).as_posix(), **profile}
+            for path, profile in sorted(getattr(graph, "source_profiles", {}).items())
+        ]
+    )
+    for (path, line, member), consumers in witnesses.items():
+        evidence = {"consumers": consumers, "source_profiles": profiles}
+        digest = hashlib.sha256(
+            json.dumps(evidence, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        contexts[path]["credential_consumers"][f"{line}:{member}"] = {
+            **evidence,
+            "consumer_evidence_sha256": digest,
+        }

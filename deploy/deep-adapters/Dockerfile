@@ -16,7 +16,7 @@ RUN ldconfig && python -m pip uninstall -y setuptools wheel \
     && python -m pip install --no-cache-dir --disable-pip-version-check --require-hashes --only-binary=:all: -r /tmp/requirements-bootstrap.txt \
     && python -c 'import ssl,sqlite3,ctypes,bz2,lzma,readline,curses,uuid; print(ssl.OPENSSL_VERSION,sqlite3.sqlite_version)'
 # Keep the explicit worker entrypoint/import closure in sync with its contract test.
-COPY factoryline/__init__.py factoryline/deep_audit_io.py factoryline/deep_audit.py factoryline/deep_audit_sarif.py factoryline/deep_audit_contract.py factoryline/deep_audit_loop.py factoryline/deep_audit_attestation.py factoryline/audit_action_refs.py factoryline/audit_taxonomy.py factoryline/enterprise_receipts.py factoryline/runtime_audit_common.py factoryline/runtime_audit_process.py factoryline/assembly_process.py /usr/local/lib/python3.11/site-packages/factoryline/
+COPY factoryline/__init__.py factoryline/repository_checkpoint_audit.py factoryline/deep_audit_io.py factoryline/deep_audit.py factoryline/deep_audit_sarif.py factoryline/deep_audit_contract.py factoryline/deep_audit_loop.py factoryline/deep_audit_attestation.py factoryline/audit_action_refs.py factoryline/audit_taxonomy.py factoryline/enterprise_receipts.py factoryline/runtime_audit_common.py factoryline/runtime_audit_process.py factoryline/assembly_process.py /usr/local/lib/python3.11/site-packages/factoryline/
 COPY factoryline/data/junie_pack.json /usr/local/lib/python3.11/site-packages/factoryline/data/junie_pack.json
 COPY --chmod=0555 deploy/deep-adapters/entrypoint /opt/factory/bin/audit-adapter
 RUN mkdir -p /src /out /opt/factory/rules
@@ -29,7 +29,7 @@ FROM semgrep/semgrep:1.141.0@sha256:64102d27111415eb3d51a313bf69739030a069716d7b
 FROM semgrep-tool AS semgrep-worker
 USER 0:0
 # Semgrep has its own Python interpreter, so copy the same tested closure here.
-COPY factoryline/__init__.py factoryline/deep_audit_io.py factoryline/deep_audit.py factoryline/deep_audit_sarif.py factoryline/deep_audit_contract.py factoryline/deep_audit_loop.py factoryline/deep_audit_attestation.py factoryline/audit_action_refs.py factoryline/audit_taxonomy.py factoryline/enterprise_receipts.py factoryline/runtime_audit_common.py factoryline/runtime_audit_process.py factoryline/assembly_process.py /usr/lib/python3.12/site-packages/factoryline/
+COPY factoryline/__init__.py factoryline/repository_checkpoint_audit.py factoryline/deep_audit_io.py factoryline/deep_audit.py factoryline/deep_audit_sarif.py factoryline/deep_audit_contract.py factoryline/deep_audit_loop.py factoryline/deep_audit_attestation.py factoryline/audit_action_refs.py factoryline/audit_taxonomy.py factoryline/enterprise_receipts.py factoryline/runtime_audit_common.py factoryline/runtime_audit_process.py factoryline/assembly_process.py /usr/lib/python3.12/site-packages/factoryline/
 COPY factoryline/data/junie_pack.json /usr/lib/python3.12/site-packages/factoryline/data/junie_pack.json
 COPY --chmod=0555 deploy/deep-adapters/entrypoint /opt/factory/bin/audit-adapter
 COPY --chown=1000:1000 deploy/deep-adapters/profiles/semgrep-pattern-limited.json /opt/factory/adapter-profile.json
@@ -90,7 +90,7 @@ COPY --from=osv-build /osv-scanner /usr/local/bin/osv-scanner
 COPY --from=osv-build /osv-extractor-inventory.json /opt/factory/osv-extractor-inventory.json
 COPY --chmod=0555 deploy/deep-adapters/bin/osv-offline /opt/factory/bin/osv-offline
 COPY --chown=1000:1000 deploy/deep-adapters/rules/empty-ignore.txt /opt/factory/rules/osv-scanner.toml
-ADD --checksum=sha256:013a03eb8d5a67818901fe0632728a5f1011621d6b956f14b25e5f71a7b82c5c https://osv-vulnerabilities.storage.googleapis.com/PyPI/all.zip?generation=1792067584457782 /tmp/osv-pypi-all.zip
+ADD --checksum=sha256:95b325be6311d4d9ee90adf4207e73194e92480c2a72a71bbc3ac39fc74e0be5 "https://storage.googleapis.com/storage/v1/b/osv-vulnerabilities/o/PyPI%2Fall.zip?alt=media&generation=1792839797362039" /tmp/osv-pypi-all.zip
 USER 0:0
 RUN mkdir -p /opt/factory/osv-db/osv-scanner/PyPI && mv /tmp/osv-pypi-all.zip /opt/factory/osv-db/osv-scanner/PyPI/all.zip && chmod 0444 /opt/factory/osv-db/osv-scanner/PyPI/all.zip
 COPY --chown=1000:1000 deploy/deep-adapters/profiles/osv.json /opt/factory/adapter-profile.json

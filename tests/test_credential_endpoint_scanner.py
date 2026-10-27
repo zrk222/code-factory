@@ -443,23 +443,20 @@ def test_publication_is_revalidated_even_with_native_marker(monkeypatch):
     assert not evidence.endpoint_binding(finding, sources, bindings)
 
 
-def test_partition_roundtrip_rejection_retains_original_priority_and_message():
+def test_partition_roundtrip_rejection_retains_original_priority_and_message(tmp_path):
     from factoryline.review_integrity import partition_proven_primitive_observations
 
-    finding, sources, _ = _case()
-    core = {
-        "sources": sources,
-        "findings": [finding],
-        "audit_coverage": {"complete": True},
-    }
+    _write(tmp_path)
+    core = security_scan(tmp_path, cache_enabled=False)
     partition_proven_primitive_observations(core)
     assert core["findings"] == []
     assert len(core["primitive_observations"]) == 1
+    original = core["primitive_observations"][0]
     decoded = json.loads(json.dumps(core))
     partition_proven_primitive_observations(decoded)
     assert decoded["primitive_observations"] == []
     assert decoded["findings"][0]["severity"] == "CRITICAL"
-    assert decoded["findings"][0]["message"] == "original"
+    assert decoded["findings"][0]["message"] == original["message"]
     assert decoded["findings"][0]["facts"]["state"] == "INCOMPLETE"
 
 

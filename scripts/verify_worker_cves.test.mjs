@@ -23,6 +23,7 @@ test('worker workflow path filters cover every Docker build input without framew
     'factoryline/deep_audit_loop.py',
     'factoryline/deep_audit_sarif.py',
     'factoryline/enterprise_receipts.py',
+    'factoryline/repository_checkpoint_audit.py',
     'factoryline/runtime_audit_common.py',
     'factoryline/runtime_audit_process.py',
   ].sort());

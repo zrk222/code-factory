@@ -28,6 +28,423 @@ def _workspace_policy319_request_pickle_fixture(root):
     )
 
 
+def test_oracle_source_retention_budget_is_bounded_and_cache_keyed(
+    tmp_path, monkeypatch
+):
+    import factoryline.review_audits as audit
+
+    source = tmp_path / "app.py"
+    source.write_text("value = 1\n", encoding="utf-8")
+    files = audit._security_source_files(tmp_path)
+    original = audit.contracts._oracle_source_inputs
+    observed_limits = []
+
+    def recording_capture(*args):
+        observed_limits.append(args[-1])
+        return original(*args)
+
+    monkeypatch.setattr(audit.contracts, "_oracle_source_inputs", recording_capture)
+    retained, bindings, manifest, _cacheable = audit._oracle_source_inputs(
+        tmp_path, files
+    )
+    assert source in retained
+    assert observed_limits[-1] == 16 * 1024 * 1024
+    assert bindings[0]["path"] == "app.py"
+    assert manifest[0]["state"] == "read"
+
+    for invalid in (True, 0, -1, 1.5, audit.MAX_ORACLE_SOURCE_RETENTION_BYTES + 1):
+        with pytest.raises(ValueError, match="retention limit"):
+            audit._oracle_source_inputs(tmp_path, files, retention_limit=invalid)
+
+    first = audit._oracle_context_cache_key(tmp_path, manifest, {}, retention_limit=8)
+    second = audit._oracle_context_cache_key(tmp_path, manifest, {}, retention_limit=9)
+    assert first != second
+
+
+def test_workspace_retention_exhaustion_reports_incomplete_and_invalidates_checkpoint(
+    tmp_path, monkeypatch
+):
+    from factoryline import deep_audit_io
+
+    (tmp_path / "app.py").write_text("value = 1\n", encoding="utf-8")
+    monkeypatch.setattr(
+        deep_audit_io, "FULL_REPOSITORY_WORKSPACE_SOURCE_RETENTION_LIMIT", 4
+    )
+    report = deep_audit_io.full_repository_scan(
+        tmp_path, context_profile=deep_audit_io.FULL_REPOSITORY_CONTEXT_PROFILE
+    )
+    assert report["state"] == "INCOMPLETE"
+    evidence = report["workspace_evidence"]
+    assert evidence["sources"]["capture_complete"] is False
+    assert evidence["sources"]["context_error"] == "E_SOURCE_RETENTION"
+    assert evidence["sources"]["retention_limit_bytes"] == 4
+    assert evidence["oracle_context"]["state"] == "INCOMPLETE"
+    assert evidence["oracle_context"]["source_retention_limit_bytes"] == 4
+    assert evidence["primitive_partition"] == {
+        "state": "INCOMPLETE",
+        "error_code": "E_SOURCE_RETENTION",
+    }
+    assert evidence["audit_coverage"]["complete"] is False
+
+    monkeypatch.setattr(
+        deep_audit_io, "FULL_REPOSITORY_WORKSPACE_SOURCE_RETENTION_LIMIT", 8
+    )
+    with pytest.raises(RuntimeAuditError) as raised:
+        deep_audit_io.full_repository_scan(
+            tmp_path,
+            context_profile=deep_audit_io.FULL_REPOSITORY_CONTEXT_PROFILE,
+            resume=True,
+        )
+    assert raised.value.code == "INVALID_CHECKPOINT"
+
+    import factoryline.review_audits as audit
+
+    generation = deep_audit_io._full_repository_generation(
+        tmp_path, audit, deep_audit_io.FULL_REPOSITORY_CONTEXT_PROFILE
+    )
+    monkeypatch.setattr(
+        deep_audit_io, "FULL_REPOSITORY_WORKSPACE_SOURCE_RETENTION_LIMIT", 9
+    )
+    with pytest.raises(RuntimeAuditError) as raised:
+        deep_audit_io._full_repository_verify_generation(generation, audit)
+    assert raised.value.code == "SOURCE_DRIFT"
+
+
+def test_workspace_context_rejects_inventory_hash_drift_before_retention_error(
+    tmp_path,
+):
+    import hashlib
+
+    from factoryline import review_audits, runtime_audit_integrity
+
+    source = tmp_path / "app.py"
+    source.write_text("current = 2\n", encoding="utf-8")
+    generation = {
+        "root": tmp_path,
+        "files": [source],
+        "source_retention_limit_bytes": 1,
+        "inventory": [
+            {
+                "path": "app.py",
+                "sha256": hashlib.sha256(b"previous = 1\n").hexdigest(),
+            }
+        ],
+    }
+    with pytest.raises(RuntimeAuditError) as raised:
+        runtime_audit_integrity._full_repository_workspace_security_context(
+            None, generation, review_audits
+        )
+    assert raised.value.code == "SOURCE_DRIFT"
+
+
+def test_workspace_public_scan_retains_source_with_larger_budget(tmp_path, monkeypatch):
+    from factoryline import deep_audit_io
+
+    source = b"value = 1\n"
+    low_root = tmp_path / "low"
+    high_root = tmp_path / "high"
+    low_root.mkdir()
+    high_root.mkdir()
+    (low_root / "app.py").write_bytes(source)
+    (high_root / "app.py").write_bytes(source)
+
+    monkeypatch.setattr(
+        deep_audit_io, "FULL_REPOSITORY_WORKSPACE_SOURCE_RETENTION_LIMIT", 4
+    )
+    low = deep_audit_io.full_repository_scan(
+        low_root, context_profile=deep_audit_io.FULL_REPOSITORY_CONTEXT_PROFILE
+    )["workspace_evidence"]
+    assert low["sources"]["capture_complete"] is False
+    assert low["sources"]["context_error"] == "E_SOURCE_RETENTION"
+
+    monkeypatch.setattr(
+        deep_audit_io, "FULL_REPOSITORY_WORKSPACE_SOURCE_RETENTION_LIMIT", 64
+    )
+    high = deep_audit_io.full_repository_scan(
+        high_root, context_profile=deep_audit_io.FULL_REPOSITORY_CONTEXT_PROFILE
+    )["workspace_evidence"]
+    assert high["sources"]["capture_complete"] is True
+    assert high["sources"]["retention_limit_bytes"] == 64
+    assert high["oracle_context"]["state"] == "captured"
+    assert high["primitive_partition"]["state"] == "VALIDATED"
+
+
+def test_workspace_resume_reuses_only_verified_source_bytes(tmp_path, monkeypatch):
+    from factoryline import context_efficiency, deep_audit_io, review_audits
+
+    source = b"from flask import request\ndef read(): return request.args.get('x')\n"
+    (tmp_path / "app.py").write_bytes(source)
+    calls = []
+    original = review_audits._oracle_source_inputs
+
+    def counted(*args, **kwargs):
+        calls.append(1)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(review_audits, "_oracle_source_inputs", counted)
+    started = time.perf_counter()
+    cold = deep_audit_io.full_repository_scan(
+        tmp_path, context_profile=deep_audit_io.FULL_REPOSITORY_CONTEXT_PROFILE
+    )
+    cold_seconds = time.perf_counter() - started
+    started = time.perf_counter()
+    warm = deep_audit_io.full_repository_scan(
+        tmp_path,
+        context_profile=deep_audit_io.FULL_REPOSITORY_CONTEXT_PROFILE,
+        resume=True,
+    )
+    warm_seconds = time.perf_counter() - started
+    assert len(calls) == 1
+    assert warm["primary_results"] == cold["primary_results"]
+    assert (
+        warm["workspace_evidence"]["findings"] == cold["workspace_evidence"]["findings"]
+    )
+    assert (
+        warm["workspace_evidence"]["finding_tiers"]
+        == cold["workspace_evidence"]["finding_tiers"]
+    )
+    assert (
+        warm["workspace_evidence"]["primitive_observations"]
+        == cold["workspace_evidence"]["primitive_observations"]
+    )
+    processing = warm["workspace_evidence"]["primary_processing"]
+    reuse = processing["retained_source_reuse"]
+    assert reuse["files"] == 1 and reuse["bytes"] == len(source)
+    assert reuse["cache_accounted_bytes"] > len(source)
+    assert processing["cache_accounted_bytes"] > 0
+    assert cold_seconds >= 0 and warm_seconds >= 0
+
+    cached = context_efficiency._FULL_REPOSITORY_WORKSPACE_PREFIX_CACHE
+    source_map, bindings = cached[5]
+    name = next(iter(source_map))
+    damaged = dict(source_map)
+    damaged[name] = bytes([source_map[name][0] ^ 1]) + source_map[name][1:]
+    monkeypatch.setattr(
+        context_efficiency,
+        "_FULL_REPOSITORY_WORKSPACE_PREFIX_CACHE",
+        (*cached[:5], (damaged, bindings), *cached[6:]),
+    )
+    corrupt = deep_audit_io.full_repository_scan(
+        tmp_path,
+        context_profile=deep_audit_io.FULL_REPOSITORY_CONTEXT_PROFILE,
+        resume=True,
+    )
+    assert len(calls) == 2
+    assert (
+        corrupt["workspace_evidence"]["primary_processing"]["retained_source_reuse"][
+            "files"
+        ]
+        == 0
+    )
+    assert corrupt["primary_results"] == cold["primary_results"]
+
+    cached = context_efficiency._FULL_REPOSITORY_WORKSPACE_PREFIX_CACHE
+    missing = dict(cached[5][0])
+    missing.pop(name)
+    monkeypatch.setattr(
+        context_efficiency,
+        "_FULL_REPOSITORY_WORKSPACE_PREFIX_CACHE",
+        (*cached[:5], (missing, cached[5][1]), *cached[6:]),
+    )
+    absent = deep_audit_io.full_repository_scan(
+        tmp_path,
+        context_profile=deep_audit_io.FULL_REPOSITORY_CONTEXT_PROFILE,
+        resume=True,
+    )
+    assert len(calls) == 3
+    assert (
+        absent["workspace_evidence"]["primary_processing"]["retained_source_reuse"][
+            "files"
+        ]
+        == 0
+    )
+    assert absent["primary_results"] == cold["primary_results"]
+
+    monkeypatch.setattr(deep_audit_io, "_FULL_REPOSITORY_TRUSTED_CHECKPOINT", None)
+    cold_processor = deep_audit_io.full_repository_scan(
+        tmp_path,
+        context_profile=deep_audit_io.FULL_REPOSITORY_CONTEXT_PROFILE,
+        resume=True,
+    )
+    assert len(calls) == 4
+    assert (
+        cold_processor["workspace_evidence"]["primary_processing"][
+            "retained_source_reuse"
+        ]["files"]
+        == 0
+    )
+    assert cold_processor["primary_results"] == cold["primary_results"]
+    assert cold_seconds < float("inf") and warm_seconds < float("inf")
+
+
+def test_workspace_resume_rejects_same_mtime_source_write(tmp_path):
+    import os
+
+    from factoryline.deep_audit_io import (
+        FULL_REPOSITORY_CONTEXT_PROFILE,
+        full_repository_scan,
+    )
+
+    source = tmp_path / "app.py"
+    source.write_bytes(b"value = 1\n")
+    full_repository_scan(tmp_path, context_profile=FULL_REPOSITORY_CONTEXT_PROFILE)
+    before = source.stat()
+    source.write_bytes(b"value = 2\n")
+    os.utime(source, ns=(before.st_atime_ns, before.st_mtime_ns))
+    with pytest.raises(RuntimeAuditError, match="SOURCE_DRIFT"):
+        full_repository_scan(
+            tmp_path, context_profile=FULL_REPOSITORY_CONTEXT_PROFILE, resume=True
+        )
+
+
+def test_public_workspace_zero_demand_preserves_results_and_skips_fixture_index(
+    tmp_path, monkeypatch
+):
+    import ast
+    from factoryline import context_efficiency as context, deep_audit_io
+    from factoryline import mock_fixture_provenance as fixture
+
+    roots = [tmp_path / "fast", tmp_path / "indexed"]
+    for root in roots:
+        root.mkdir()
+        (root / "app.py").write_text("VALUE = 'ordinary'\n", encoding="utf-8")
+    index_calls = []
+    original_index = fixture.application_test_index
+
+    def counted_index(*args, **kwargs):
+        index_calls.append(1)
+        return original_index(*args, **kwargs)
+
+    monkeypatch.setattr(fixture, "application_test_index", counted_index)
+    fast = deep_audit_io.full_repository_scan(
+        roots[0], context_profile=deep_audit_io.FULL_REPOSITORY_CONTEXT_PROFILE
+    )
+    assert index_calls == []
+    original_candidates = context._fixture_literal_candidates
+
+    def force_old_index_path(tree, audit):
+        candidates = original_candidates(tree, audit)
+        if candidates:
+            return candidates
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign) and len(node.targets) == 1:
+                if isinstance(node.targets[0], ast.Name):
+                    return [(node, node.targets[0], "ordinary")]
+        return []
+
+    monkeypatch.setattr(context, "_fixture_literal_candidates", force_old_index_path)
+    indexed = deep_audit_io.full_repository_scan(
+        roots[1], context_profile=deep_audit_io.FULL_REPOSITORY_CONTEXT_PROFILE
+    )
+    assert index_calls
+    assert fast["primary_results"] == indexed["primary_results"]
+    assert (
+        fast["workspace_evidence"]["findings"]
+        == indexed["workspace_evidence"]["findings"]
+    )
+    assert (
+        fast["workspace_evidence"]["finding_tiers"]
+        == indexed["workspace_evidence"]["finding_tiers"]
+    )
+
+
+def test_workspace_source_cache_requires_exact_inventory_and_runtime_identity(
+    tmp_path, monkeypatch
+):
+    import factoryline.context_efficiency as cache
+
+    path, raw = tmp_path / "app.py", b"value = 1\n"
+    path.write_bytes(raw)
+    row = {"path": "app.py", "sha256": sha256_bytes(raw)}
+    generation = {
+        "root": tmp_path,
+        "files": [path],
+        "inventory": [row],
+        "inventory_hash": digest([row]),
+        "configuration": "config",
+        "scanner": "scanner",
+        "runtime_epoch": "runtime",
+        "source_retention_limit_bytes": 64,
+    }
+    key = (tmp_path.as_posix(), "checkpoint", "runtime")
+    generation["workspace_prefix_cache_key"] = key
+    identity = cache._full_repository_workspace_cache_identity(generation, key)
+    bindings = [{"path": "app.py", "sha256": sha256_bytes(raw), "bytes": len(raw)}]
+    assert cache._full_repository_workspace_cache_store_prefix(
+        key, "result", "context", [], digest, ({"app.py": raw}, bindings), identity
+    ) > len(raw)
+    assert cache._full_repository_workspace_cache_load_source(generation)[0] == {
+        path: raw
+    }
+
+    class HiddenPayload(bytes):
+        def __new__(cls, value):
+            instance = super().__new__(cls, value)
+            instance.hidden = bytearray(2 * 1024 * 1024)
+            return instance
+
+    corrupted = list(cache._FULL_REPOSITORY_WORKSPACE_PREFIX_CACHE)
+    corrupted_source = dict(corrupted[5][0])
+    corrupted_source["app.py"] = HiddenPayload(raw)
+    corrupted[5] = (corrupted_source, corrupted[5][1])
+    monkeypatch.setattr(
+        cache, "_FULL_REPOSITORY_WORKSPACE_PREFIX_CACHE", tuple(corrupted)
+    )
+    assert cache._full_repository_workspace_cache_load_source(generation) is None
+    shared = [b"shared"]
+    assert cache._full_repository_workspace_cache_size([shared, shared]) > 0
+
+    cyclic = []
+    cyclic.append(cyclic)
+    assert (
+        cache._full_repository_workspace_cache_store_prefix(
+            key, "result", "context", cyclic, digest, ({}, []), identity
+        )
+        == 0
+    )
+    assert cache._FULL_REPOSITORY_WORKSPACE_PREFIX_CACHE is None
+    assert (
+        cache._full_repository_workspace_cache_store_prefix(
+            key,
+            "result",
+            "context",
+            [],
+            digest,
+            ({"app.py": HiddenPayload(raw)}, bindings),
+            identity,
+        )
+        == 0
+    )
+    assert cache._FULL_REPOSITORY_WORKSPACE_PREFIX_CACHE is None
+
+    for field in (
+        "inventory_hash",
+        "configuration",
+        "scanner",
+        "runtime_epoch",
+        "source_retention_limit_bytes",
+    ):
+        altered = dict(generation)
+        altered[field] = 65 if field == "source_retention_limit_bytes" else "changed"
+        assert cache._full_repository_workspace_cache_load_source(altered) is None
+    altered_root = dict(generation, root=tmp_path / "other")
+    assert cache._full_repository_workspace_cache_load_source(altered_root) is None
+    altered_inventory = dict(generation)
+    altered_inventory["inventory"] = [{"path": "app.py", "sha256": "0" * 64}]
+    assert cache._full_repository_workspace_cache_load_source(altered_inventory) is None
+    altered_key = dict(generation, workspace_prefix_cache_key=(*key[:2], "changed"))
+    assert cache._full_repository_workspace_cache_load_source(altered_key) is None
+
+    monkeypatch.setattr(cache, "FULL_REPOSITORY_WORKSPACE_CACHE_MAX_BYTES", 1)
+    assert (
+        cache._full_repository_workspace_cache_store_prefix(
+            key, "result", "context", [], digest, ({"app.py": raw}, bindings), identity
+        )
+        == 0
+    )
+    assert cache._FULL_REPOSITORY_WORKSPACE_PREFIX_CACHE is None
+
+
 def test_zap_source_trace_mount_preserves_isolation_and_signed_python(tmp_path):
     from factoryline.deep_audit import _zap_app_argv
     from test_deep_audit_sarif import _host_zap_lane_fixture
@@ -106,7 +523,7 @@ def test_workspace_policy319_review_and_incomplete_states_stay_distinct(tmp_path
         tmp_path, context_profile="workspace-v2", defect_policy="trusted-core-v1"
     )["defect_policy_decision"]
     assert review["state"] == "NO_SUPPORTED_DEFECTS_REVIEW_REQUIRED"
-    assert review["exit_code"] == 0
+    assert review["exit_code"] == 2
     assert review["passed"] is False and review["clean"] is False
     assert review["release_approved"] is False
     assert review["needs_context_count"] >= 1
@@ -135,6 +552,40 @@ def test_workspace_policy319_legacy_shape_and_isolated_refusal(tmp_path):
     assert "selected_defect_policy" not in legacy["workspace_evidence"]
     with pytest.raises(RuntimeAuditError, match="workspace-v2"):
         full_repository_scan(tmp_path, defect_policy="trusted-core-v1")
+
+
+@pytest.mark.parametrize(
+    ("owner", "name"),
+    [
+        ("checkpoint", "_trusted_core_ledger_matches"),
+        ("checkpoint", "_trusted_core_ledger_counts"),
+        ("io", "require_digest"),
+    ],
+)
+def test_checkpoint_admission_dependency_change_invalidates_runtime_epoch(
+    tmp_path, monkeypatch, owner, name
+):
+    from factoryline import deep_audit_io, repository_checkpoint_audit, review_audits
+
+    module = repository_checkpoint_audit if owner == "checkpoint" else deep_audit_io
+    original = getattr(module, name)
+    before = deep_audit_io._full_repository_runtime_epoch(
+        tmp_path, "a" * 64, review_audits
+    )
+
+    def changed(*args, **kwargs):
+        return original(*args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(module, name, changed)
+        after = deep_audit_io._full_repository_runtime_epoch(
+            tmp_path, "a" * 64, review_audits
+        )
+        assert after != before
+    assert (
+        deep_audit_io._full_repository_runtime_epoch(tmp_path, "a" * 64, review_audits)
+        == before
+    )
 
 
 def test_workspace_policy319_selection_switch_rejects_checkpoint_reuse(tmp_path):
@@ -1632,14 +2083,14 @@ def test_runtime_junit_profile_normalizes_native_junit_and_coverage(tmp_path):
     assert report["source_coverage"]["app.py"]["sha256"] == "a" * 64
 
 
-def semgrep_execution_evidence():
+def semgrep_execution_evidence(language="javascript", source="app.js"):
     import base64
     from factoryline.deep_audit_io import canonical_bytes, sha256_bytes
 
     rules = [
         {
             "id": "js-rule",
-            "languages": ["javascript"],
+            "languages": [language],
             "message": "control",
             "severity": "ERROR",
             "pattern": "bad()",
@@ -1661,9 +2112,9 @@ def semgrep_execution_evidence():
         "native_artifact_roles": ["rule_inventory", "sarif_report"],
         "timeout_seconds": 30,
     }
-    sources = {"app.py": "a" * 64, "app.js": "b" * 64}
+    sources = {"app.py": "a" * 64, source: "b" * 64}
     observations = []
-    for index, (rule, path) in enumerate(zip(rules, ("app.js", "app.py"))):
+    for index, (rule, path) in enumerate(zip(rules, (source, "app.py"))):
         native = {
             "version": lane["tool_version"],
             "errors": [],
@@ -1849,6 +2300,7 @@ def test_osv_worker_copies_existing_empty_policy_asset():
 _WORKER_IMPORT_MODULES = frozenset(
     {
         "factoryline/__init__.py",
+        "factoryline/repository_checkpoint_audit.py",
         "factoryline/deep_audit_io.py",
         "factoryline/deep_audit.py",
         "factoryline/deep_audit_sarif.py",
@@ -2709,25 +3161,30 @@ def test_semgrep_native_rejects_resealed_wrong_rule_config_path():
         verify_semgrep_rule_execution(evidence, lane, sources, baseline)
 
 
-def test_semgrep_native_rules_account_for_applicable_and_other_languages():
+@pytest.mark.parametrize(
+    "language, source", [("javascript", "app.js"), ("php", "app.php")]
+)
+def test_semgrep_native_rules_account_for_applicable_and_other_languages(
+    language, source
+):
     from factoryline.deep_audit_io import (
         _semgrep_source_accounting,
         verify_semgrep_rule_execution,
     )
 
-    evidence, lane, sources, baseline = semgrep_execution_evidence()
+    evidence, lane, sources, baseline = semgrep_execution_evidence(language, source)
     checked = verify_semgrep_rule_execution(evidence, lane, sources, baseline)
     assert checked["state"] == "VERIFIED"
-    assert checked["rules"][0]["executed_sources"] == ["app.js"]
+    assert checked["rules"][0]["executed_sources"] == [source]
     assert checked["rules"][0]["not_applicable_sources"] == ["app.py"]
     assert checked["rules"][1]["executed_sources"] == ["app.py"]
-    lane["languages"] = ["python", "javascript"]
+    lane["languages"] = ["python", language]
     inventory = {
         "files": [
             {
                 "path": path,
                 "sha256": sha,
-                "language": "python" if path.endswith(".py") else "javascript",
+                "language": "python" if path.endswith(".py") else language,
             }
             for path, sha in sources.items()
         ]
@@ -2758,10 +3215,15 @@ def test_semgrep_native_rules_account_for_applicable_and_other_languages():
         "budget",
     ],
 )
-def test_semgrep_native_rule_execution_rejects_incomplete_or_resealed_evidence(invalid):
+@pytest.mark.parametrize(
+    "language, source", [("javascript", "app.js"), ("php", "app.php")]
+)
+def test_semgrep_native_rule_execution_rejects_incomplete_or_resealed_evidence(
+    invalid, language, source
+):
     from factoryline.deep_audit_io import verify_semgrep_rule_execution
 
-    evidence, lane, sources, baseline = semgrep_execution_evidence()
+    evidence, lane, sources, baseline = semgrep_execution_evidence(language, source)
     observed = evidence["observations"][0]
     native = observed["native_report"]
     mutations = {
@@ -2776,7 +3238,7 @@ def test_semgrep_native_rule_execution_rejects_incomplete_or_resealed_evidence(i
         "timeout": lambda: observed["execution"].update(timed_out=True),
         "cleanup": lambda: observed["execution"].update(cleanup_confirmed=False),
         "source": lambda: native["paths"].update(scanned=[]),
-        "duplicate": lambda: native["paths"]["scanned"].append("/src/app.js"),
+        "duplicate": lambda: native["paths"]["scanned"].append("/src/" + source),
         "extra-rule": lambda: native.update(
             results=[
                 {"check_id": "unselected", "path": "/src/app.js", "start": {"line": 1}}
@@ -8905,3 +9367,12 @@ def test_deep_audit_io_moved_exports_keep_monkeypatch_seams(monkeypatch, tmp_pat
     monkeypatch.setattr(audit_io, "_zap_native_request", stop_at_challenge)
     with pytest.raises(LookupError, match="challenge seam"):
         audit._run_zap_native_scan({})
+
+
+@pytest.mark.parametrize(
+    "name", ["view.phtml", "library.inc", "view.blade.php", "view.twig", "app.py"]
+)
+def test_php_semgrep_unsupported_formats_not_counted_as_execution(name):
+    from factoryline.deep_audit_io import _semgrep_rule_sources
+
+    assert _semgrep_rule_sources({"languages": ["php"]}, {name: "a" * 64}) == set()

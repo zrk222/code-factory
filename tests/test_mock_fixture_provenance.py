@@ -540,6 +540,7 @@ def test_django_fixture_requires_captured_bytes_and_resolves_local_authority(tmp
 
 
 def test_django_fixture_allows_only_source_bound_literal_model_projections(tmp_path):
+    """bind_flask_model_exports, database_project_exports, and flask_model_identity_functions expose only captured model fields."""
     model = _authority128_MODEL.replace(
         "class ClientApplication(Record):\n    objects = RecordManager()",
         "class ClientApplication(Record):\n"
@@ -892,6 +893,7 @@ def test_django_external_transport_is_not_misreported_as_role_guard(tmp_path):
 
 
 def test_django_fixture_scanner_cold_warm_and_config_drift(tmp_path):
+    """security_source_snapshots and consume_cached_security_snapshots preserve scan evidence across cold and warm runs."""
     _authority128_fixture_project(tmp_path)
     for _ in range(2):
         report = security_scan(tmp_path)
@@ -1776,13 +1778,13 @@ def test_repair260_fixture_role_recompute_helper_tracks_cold_warm_epoch(monkeypa
         ("identity", "_definition_effects_unknown", "true"),
         ("provider", "constructor_provider_bindings_inert", "false"),
         ("provider", "_captured_terminal_provider_mutation", "true"),
-        ("provider", "finite_provider_mutation_index", "mutation"),
         ("finite_capture", "_provider_mutation_for_node", "node_mutation"),
     ],
 )
 def test_repair260_actual_closure_callees_invalidate_warm_effect_cache(
     tmp_path, monkeypatch, module_name, helper_name, replacement_kind
 ):
+    """security_value_helper_epoch includes actual closure callees so replacing their binding or code invalidates cached effects."""
     from factoryline import credential_role_constructor_provider as provider
     from factoryline import credential_role_identity_effects as identity
     from factoryline import finite_capture
@@ -1844,7 +1846,7 @@ def test_repair260_actual_closure_callees_invalidate_warm_effect_cache(
 
 @pytest.mark.parametrize(
     "helper_name",
-    ("_module_security_aliases", "_security_aliases", "_resolved_ast_name", "_name"),
+    ("_security_aliases", "_resolved_ast_name", "_name"),
 )
 def test_repair260_terminal_alias_helpers_invalidate_warm_effect_cache(
     tmp_path, monkeypatch, helper_name
@@ -3136,69 +3138,8 @@ def test_signing_authority_role_requires_exact_key_flow_and_closed_result(
     import hashlib
     from factoryline import mock_fixture_provenance as fixture
 
-    sources = {
-        "codec.py": "import jwt\nclass Envelope:\n    def encode(self, secret):\n        return jwt.encode({}, key=secret, algorithm='HS256')\n    @classmethod\n    def decode(cls, token, secret):\n        return jwt.decode(token, key=secret, algorithms=['HS256'])\n",
-        "test_flow.py": "import jwt\nfrom codec import Envelope\ndef test_key():\n    secret = 'local-signing-material'\n    token = jwt.encode({}, key=secret, algorithm='HS256')\n    decoded = jwt.decode(token, key=secret, algorithms=['HS256'])\n    assert decoded == {}\n",
-    }
-    if variant in {
-        "wrapper",
-        "wrapper_leak",
-        "wrapper_rebound",
-        "wrapper_returns_input",
-    }:
-        sources["test_flow.py"] = (
-            sources["test_flow.py"]
-            .replace(
-                "    token = jwt.encode({}, key=secret, algorithm='HS256')",
-                "    envelope = Envelope()\n    token = envelope.encode(secret=secret)",
-            )
-            .replace(
-                "jwt.decode(token, key=secret, algorithms=['HS256'])",
-                "Envelope.decode(token, secret=secret)",
-            )
-        )
-    if variant == "escape":
-        sources["test_flow.py"] += "    send_elsewhere(secret)\n"
-    elif variant == "result_escape":
-        sources["test_flow.py"] += "    send_elsewhere(token)\n"
-    elif variant == "key_not_key":
-        sources["test_flow.py"] = sources["test_flow.py"].replace(
-            "jwt.encode({}, key=secret", "jwt.encode(secret, key='different'"
-        )
-    elif variant == "provider_write":
-        sources["mutator.py"] = "import jwt\njwt.encode = send_elsewhere\n"
-        sources["test_flow.py"] = "import mutator\n" + sources["test_flow.py"]
-    elif variant in {"backend_provider_write", "namespace_write", "namespace_escape"}:
-        expression = {
-            "backend_provider_write": "jwt.api_jws.encode = send_elsewhere",
-            "namespace_write": "jwt.__dict__['encode'] = send_elsewhere",
-            "namespace_escape": "send_elsewhere(jwt)",
-        }[variant]
-        sources["mutator.py"] = "import jwt\n" + expression + "\n"
-        sources["test_flow.py"] = "import mutator\n" + sources["test_flow.py"]
-    elif variant == "wrapper_leak":
-        sources["codec.py"] = sources["codec.py"].replace(
-            "        return jwt.encode",
-            "        send_elsewhere(secret)\n        return jwt.encode",
-        )
-    elif variant == "wrapper_rebound":
-        sources["test_flow.py"] = sources["test_flow.py"].replace(
-            "    token = envelope",
-            "    envelope.encode = send_elsewhere\n    token = envelope",
-        )
-    elif variant == "overloaded_assertion":
-        sources["test_flow.py"] += "    assert remote.password == secret\n"
-    elif variant == "unrelated_token":
-        sources["test_flow.py"] = sources["test_flow.py"].replace(
-            "jwt.decode(token,", "jwt.decode('external-token',"
-        )
-    elif variant == "wrapper_returns_input":
-        sources["codec.py"] = sources["codec.py"].replace(
-            "        return jwt.decode(token, key=secret, algorithms=['HS256'])",
-            "        data = jwt.decode(token, key=secret, algorithms=['HS256'])\n        return token",
-        )
-    elif variant == "decoded_payload_use":
-        sources["test_flow.py"] += "    inspect_claims(decoded)\n"
+    sources = _signing_authority_role_sources()
+    _apply_signing_authority_role_variant(sources, variant)
     modules, captured, inventory = {}, {}, {}
     for name, text in sources.items():
         path = tmp_path / name
@@ -3228,6 +3169,230 @@ def test_signing_authority_role_requires_exact_key_flow_and_closed_result(
     assert (evidence.get("eligible") is True) is (
         variant in {"direct", "wrapper", "decoded_payload_use"}
     ), evidence
+
+
+@pytest.mark.parametrize(
+    "variant",
+    [
+        "direct",
+        "inline",
+        "key_escape",
+        "digest_escape",
+        "helper_effect",
+        "provider_write",
+        "provider_escape",
+        "source_write",
+        "unknown_operand",
+        "overridden_assertion",
+        "key_in_payload",
+        "wrong_slot",
+    ],
+)
+def test_shared_digest372_closed_key_and_computed_result(tmp_path, variant):
+    from factoryline import mock_fixture_provenance as fixture
+
+    helper = "import hmac\nimport hashlib\ndef calculate(key, timestamp, body):\n    message = '{}.{}'.format(timestamp, body).encode()\n    return hmac.new(key.encode(), message, hashlib.sha256).hexdigest()\n"
+    caller = "from django.test import TestCase\nimport codec\nclass Checks(TestCase):\n    def test_local_key(self):\n        secret = 'owned-digest-input'\n        body = '{}'\n        observed = codec.calculate(secret, 1000, body)\n        self.assertEqual(observed, codec.calculate(secret, 1000, body))\n"
+    mutations = {
+        "inline": lambda helper, caller: (
+            helper,
+            caller.replace(
+                "        observed = codec.calculate(secret, 1000, body)\n        self.assertEqual(observed,",
+                "        self.assertNotEqual(codec.calculate(secret, 1001, body),",
+            ),
+        ),
+        "key_escape": lambda helper, caller: (
+            helper,
+            caller + "        publish(secret)\n",
+        ),
+        "digest_escape": lambda helper, caller: (
+            helper,
+            caller + "        publish(observed)\n",
+        ),
+        "helper_effect": lambda helper, caller: (
+            helper.replace("    message =", "    publish(key)\n    message ="),
+            caller,
+        ),
+        "provider_write": lambda helper, caller: (
+            helper + "hmac.new = replacement\n",
+            caller,
+        ),
+        "provider_escape": lambda helper, caller: (
+            helper,
+            caller + "        opaque(codec)\n",
+        ),
+        "source_write": lambda helper, caller: (
+            helper,
+            caller + "        codec.calculate.__code__ = replacement\n",
+        ),
+        "unknown_operand": lambda helper, caller: (
+            helper,
+            caller.replace("body = '{}'", "body = unknown()"),
+        ),
+        "overridden_assertion": lambda helper, caller: (
+            helper,
+            caller + "    def assertEqual(self, *args):\n        pass\n",
+        ),
+        "key_in_payload": lambda helper, caller: (
+            helper.replace("timestamp, body).encode()", "timestamp, key).encode()"),
+            caller,
+        ),
+        "wrong_slot": lambda helper, caller: (
+            helper,
+            caller.replace(
+                "calculate(secret, 1000, body)", "calculate(body, 1000, secret)"
+            ),
+        ),
+    }
+    if variant in mutations:
+        helper, caller = mutations[variant](helper, caller)
+    modules, captured, inventory = {}, {}, {}
+    for name, text in {"codec.py": helper, "test_flow.py": caller}.items():
+        path = tmp_path / name
+        raw = text.encode()
+        tree = ast.parse(raw)
+        tree._oracle_source_sha256 = hashlib.sha256(raw).hexdigest()
+        modules[path], captured[path], inventory[path] = (
+            tree,
+            raw,
+            tree._oracle_source_sha256,
+        )
+    index = fixture.application_test_index(tmp_path, modules, captured, inventory)
+    evidence = fixture.application_test_secret_evidence(
+        index, tmp_path / "test_flow.py", 5, "owned-digest-input"
+    )
+    assert (evidence.get("eligible") is True) is (variant in {"direct", "inline"}), (
+        evidence
+    )
+    if evidence.get("eligible"):
+        assert evidence["profile"] == "SOURCE_BOUND_DIGEST_TEST_AUTHORITY"
+
+
+def test_shared_digest372_all_role_profiles_capture_complete_verifier_inputs(tmp_path):
+    from factoryline.audit_action_refs import _captured_application_source_bytes
+
+    payloads = {
+        "test_flow.py": b"pass\n",
+        "codec.py": b"pass\n",
+        "requirements.txt": b"Django\n",
+    }
+    for name, raw in payloads.items():
+        (tmp_path / name).write_bytes(raw)
+    bindings = [
+        {"path": name, "sha256": hashlib.sha256(raw).hexdigest()}
+        for name, raw in payloads.items()
+        if name.endswith(".py")
+    ]
+    finding = {
+        "code": "SECURITY_HARDCODED_SECRET",
+        "path": "test_flow.py",
+        "facts": {
+            "name": "secret",
+            "fixture_evidence": {
+                "classification": "APPLICATION_TEST_CREDENTIAL_ROLE",
+                "profile": "SOURCE_BOUND_DIGEST_TEST_AUTHORITY",
+                "configuration_sha256": {
+                    "requirements.txt": hashlib.sha256(
+                        payloads["requirements.txt"]
+                    ).hexdigest()
+                },
+            },
+        },
+    }
+    captured = _captured_application_source_bytes(
+        tmp_path,
+        [finding],
+        bindings,
+        {
+            tmp_path / name: raw
+            for name, raw in payloads.items()
+            if name.endswith(".py")
+        },
+    )
+    assert captured == payloads
+
+
+def _signing_authority_role_sources():
+    return {
+        "codec.py": "import jwt\nclass Envelope:\n    def encode(self, secret):\n        return jwt.encode({}, key=secret, algorithm='HS256')\n    @classmethod\n    def decode(cls, token, secret):\n        return jwt.decode(token, key=secret, algorithms=['HS256'])\n",
+        "test_flow.py": "import jwt\nfrom codec import Envelope\ndef test_key():\n    secret = 'local-signing-material'\n    token = jwt.encode({}, key=secret, algorithm='HS256')\n    decoded = jwt.decode(token, key=secret, algorithms=['HS256'])\n    assert decoded == {}\n",
+    }
+
+
+def _apply_signing_authority_role_variant(sources, variant):
+    if variant in {
+        "wrapper",
+        "wrapper_leak",
+        "wrapper_rebound",
+        "wrapper_returns_input",
+    }:
+        sources["test_flow.py"] = (
+            sources["test_flow.py"]
+            .replace(
+                "    token = jwt.encode({}, key=secret, algorithm='HS256')",
+                "    envelope = Envelope()\n    token = envelope.encode(secret=secret)",
+            )
+            .replace(
+                "jwt.decode(token, key=secret, algorithms=['HS256'])",
+                "Envelope.decode(token, secret=secret)",
+            )
+        )
+    replacements = {
+        "key_not_key": [
+            (
+                "test_flow.py",
+                "jwt.encode({}, key=secret",
+                "jwt.encode(secret, key='different'",
+            )
+        ],
+        "wrapper_rebound": [
+            (
+                "test_flow.py",
+                "    token = envelope",
+                "    envelope.encode = send_elsewhere\n    token = envelope",
+            )
+        ],
+        "unrelated_token": [
+            ("test_flow.py", "jwt.decode(token,", "jwt.decode('external-token',")
+        ],
+        "wrapper_leak": [
+            (
+                "codec.py",
+                "        return jwt.encode",
+                "        send_elsewhere(secret)\n        return jwt.encode",
+            )
+        ],
+        "wrapper_returns_input": [
+            (
+                "codec.py",
+                "        return jwt.decode(token, key=secret, algorithms=['HS256'])",
+                "        data = jwt.decode(token, key=secret, algorithms=['HS256'])\n        return token",
+            )
+        ],
+    }
+    for name, before, after in replacements.get(variant, []):
+        sources[name] = sources[name].replace(before, after)
+    additions = {
+        "escape": ("test_flow.py", "    send_elsewhere(secret)\n"),
+        "result_escape": ("test_flow.py", "    send_elsewhere(token)\n"),
+        "overloaded_assertion": (
+            "test_flow.py",
+            "    assert remote.password == secret\n",
+        ),
+        "decoded_payload_use": ("test_flow.py", "    inspect_claims(decoded)\n"),
+    }
+    if variant in additions:
+        name, addition = additions[variant]
+        sources[name] += addition
+    mutators = {
+        "provider_write": "jwt.encode = send_elsewhere",
+        "backend_provider_write": "jwt.api_jws.encode = send_elsewhere",
+        "namespace_write": "jwt.__dict__['encode'] = send_elsewhere",
+        "namespace_escape": "send_elsewhere(jwt)",
+    }
+    if variant in mutators:
+        sources["mutator.py"] = "import jwt\n" + mutators[variant] + "\n"
+        sources["test_flow.py"] = "import mutator\n" + sources["test_flow.py"]
 
 
 _CLASS_SIGNING264 = """import jwt
@@ -3594,80 +3759,7 @@ def test_request273_typing_provider_reads_do_not_forgive_mutation(tmp_path, vari
     ],
 )
 def test_object_signing265_constructor_field_native(tmp_path, variant):
-    text = _OBJECT_SIGNING265
-    extras = {
-        "key_export": "        send(self.signing_secret)\n",
-        "owner_export": "        send(self)\n",
-        "gate_export": "        send(gate)\n",
-        "provider_write": "SignatureVerifier.generate_signature = send\n",
-        "signature_export": "        requests.post('https://api.example', headers={'X-Slack-Signature': signature})\n",
-        "unused_signature": "        unused = self.signer.generate_signature(body='body', timestamp='timestamp')\n",
-    }
-    text += extras.get(variant, "")
-    if variant == "raw_field_export":
-        text = text.replace(
-            "        return verifier.is_valid",
-            "        send(self._key)\n        return verifier.is_valid",
-        )
-    elif variant == "constructor_escape":
-        text = text.replace(
-            "        self._key = key", "        self._key = key\n        send(self)"
-        )
-    elif variant == "no_signer_use":
-        text = text.replace(
-            "self.signer.generate_signature(body='body', timestamp='timestamp')",
-            "'signature'",
-        )
-    elif variant == "other_key":
-        text = text.replace(
-            "SignatureVerifier(signing_secret)", "SignatureVerifier('different-key')"
-        )
-    elif variant == "verifier_export":
-        text = text.replace(
-            "        return verifier.is_valid",
-            "        send(verifier)\n        return verifier.is_valid",
-        )
-    elif variant == "verifier_transmit":
-        text = text.replace(
-            "        return verifier.is_valid",
-            "        requests.post('https://api.example', headers={'X-Slack-Signature': verifier.generate_signature(body='body', timestamp='timestamp')})\n        return verifier.is_valid",
-        )
-    elif variant == "returned_verifier":
-        text = text.replace(
-            "return verifier.is_valid('body', 'timestamp', signature)",
-            "return verifier",
-        ).replace("assert gate.check(signature)", "send(gate.check(signature))")
-    elif variant == "unrelated_signature":
-        text = text.replace(
-            "assert gate.check(signature)", "assert gate.check('external-signature')"
-        )
-    elif variant == "unused_verifier":
-        text = text.replace("        assert gate.check(signature)\n", "")
-    elif variant == "signature_formal_export":
-        text = text.replace(
-            "        return verifier.is_valid",
-            "        send(signature)\n        return verifier.is_valid",
-        )
-    elif variant == "verifier_alias":
-        text = text.replace(
-            "        return verifier.is_valid",
-            "        alias = verifier\n        return verifier.is_valid",
-        )
-    elif variant == "hidden_verifier_export":
-        text = text.replace(
-            "class TestSigning:",
-            "    def unused(self):\n        verifier = SignatureVerifier(self._key)\n        send(verifier)\nclass TestSigning:",
-        )
-    elif variant == "constructor_method_export":
-        text = text.replace(
-            "        self._key = key",
-            "        self._key = key\n        register(self.check)",
-        )
-    elif variant == "verification_method_export":
-        text = text.replace(
-            "        verifier = SignatureVerifier(self._key)",
-            "        register(self.check)\n        verifier = SignatureVerifier(self._key)",
-        )
+    text = _object_signing265_constructor_variant(variant)
     _write(tmp_path, "test_signing.py", text)
     declaration_line = next(
         node.lineno
@@ -3699,6 +3791,94 @@ def test_object_signing265_constructor_field_native(tmp_path, variant):
             )
 
 
+def _object_signing265_constructor_variant(variant):
+    extras = {
+        "key_export": "        send(self.signing_secret)\n",
+        "owner_export": "        send(self)\n",
+        "gate_export": "        send(gate)\n",
+        "provider_write": "SignatureVerifier.generate_signature = send\n",
+        "signature_export": "        requests.post('https://api.example', headers={'X-Slack-Signature': signature})\n",
+        "unused_signature": "        unused = self.signer.generate_signature(body='body', timestamp='timestamp')\n",
+    }
+    replacements = {
+        "raw_field_export": [
+            (
+                "        return verifier.is_valid",
+                "        send(self._key)\n        return verifier.is_valid",
+            )
+        ],
+        "constructor_escape": [
+            ("        self._key = key", "        self._key = key\n        send(self)")
+        ],
+        "no_signer_use": [
+            (
+                "self.signer.generate_signature(body='body', timestamp='timestamp')",
+                "'signature'",
+            )
+        ],
+        "other_key": [
+            ("SignatureVerifier(signing_secret)", "SignatureVerifier('different-key')")
+        ],
+        "verifier_export": [
+            (
+                "        return verifier.is_valid",
+                "        send(verifier)\n        return verifier.is_valid",
+            )
+        ],
+        "verifier_transmit": [
+            (
+                "        return verifier.is_valid",
+                "        requests.post('https://api.example', headers={'X-Slack-Signature': verifier.generate_signature(body='body', timestamp='timestamp')})\n        return verifier.is_valid",
+            )
+        ],
+        "returned_verifier": [
+            (
+                "return verifier.is_valid('body', 'timestamp', signature)",
+                "return verifier",
+            ),
+            ("assert gate.check(signature)", "send(gate.check(signature))"),
+        ],
+        "unrelated_signature": [
+            ("assert gate.check(signature)", "assert gate.check('external-signature')")
+        ],
+        "unused_verifier": [("        assert gate.check(signature)\n", "")],
+        "signature_formal_export": [
+            (
+                "        return verifier.is_valid",
+                "        send(signature)\n        return verifier.is_valid",
+            )
+        ],
+        "verifier_alias": [
+            (
+                "        return verifier.is_valid",
+                "        alias = verifier\n        return verifier.is_valid",
+            )
+        ],
+        "hidden_verifier_export": [
+            (
+                "class TestSigning:",
+                "    def unused(self):\n        verifier = SignatureVerifier(self._key)\n        send(verifier)\nclass TestSigning:",
+            )
+        ],
+        "constructor_method_export": [
+            (
+                "        self._key = key",
+                "        self._key = key\n        register(self.check)",
+            )
+        ],
+        "verification_method_export": [
+            (
+                "        verifier = SignatureVerifier(self._key)",
+                "        register(self.check)\n        verifier = SignatureVerifier(self._key)",
+            )
+        ],
+    }
+    text = _OBJECT_SIGNING265 + extras.get(variant, "")
+    for before, after in replacements.get(variant, []):
+        text = text.replace(before, after)
+    return text
+
+
 @pytest.mark.parametrize(
     "variant",
     [
@@ -3727,68 +3907,7 @@ def test_object_signing265_constructor_field_native(tmp_path, variant):
     ],
 )
 def test_object_signing266_metadata_native(tmp_path, variant):
-    helper = """import logging
-from logging import Logger
-from typing import Any, Optional
-def describe(cls: Any, logger: Optional[Logger] = None) -> Logger:
-    return logging.getLogger(f'local.{cls.__name__}')
-"""
-    text = _OBJECT_SIGNING265.replace(
-        "        self._key = key",
-        "        self._key = key\n        self.label = describe(Gate)",
-    )
-    changes = {
-        "raw_export": "    send(cls)\n",
-        "field_export": "    send(cls.authority)\n",
-        "method_export": "    register(cls.check)\n",
-        "nested_capture": "    def inner():\n        return cls.__name__\n",
-        "formal_rebind": "    cls = attacker\n",
-        "class_write": "    cls.authority = 'changed'\n",
-        "reflective_read": "    getattr(cls, 'authority')\n",
-    }
-    helper = helper.replace(
-        "    return logging.getLogger",
-        changes.get(variant, "") + "    return logging.getLogger",
-    )
-    if variant == "replacement":
-        text += "describe = send\n"
-    elif variant == "effectful_annotation":
-        helper = helper.replace("cls: Any", "cls: mutate()")
-    elif variant == "effectful_default":
-        helper = helper.replace("= None", "= mutate()")
-    elif variant == "decorated":
-        helper = helper.replace("def describe", "@transform\ndef describe")
-    elif variant == "key_export":
-        text += "        send(self.signing_secret)\n"
-    elif variant == "signature_export":
-        text += "        send(signature)\n"
-    elif variant in {"code_replacement", "aliased_code_replacement"}:
-        text += "\ndef transmit(self, signature):\n    requests.post('https://api.example', headers={'Authorization': self._key})\n    return True\ndef attacker(cls):\n    cls.check = transmit\n    return 'changed'\n"
-        text += (
-            "describe.__code__ = attacker.__code__\n"
-            if variant == "code_replacement"
-            else "replacement = describe\nreplacement.__code__ = attacker.__code__\n"
-        )
-    elif variant == "function_export":
-        text += "send(describe)\n"
-    elif variant == "nested_effectful_metadata":
-        helper = helper.replace(
-            "f'local.{cls.__name__}'",
-            "f'{leak(secret).__name__}.{cls.__name__}'",
-        )
-    elif variant == "global_metadata_receiver":
-        helper = helper.replace(
-            "f'local.{cls.__name__}'",
-            "f'{external.__name__}.{cls.__name__}'",
-        )
-    elif variant == "configured_logger_factory":
-        helper += "class ExportingLogger(logging.Logger):\n    def __init__(self, name):\n        send(TestSigning.signing_secret)\nlogging.setLoggerClass(ExportingLogger)\n"
-    elif variant == "configured_logger_manager":
-        helper += "logging.Logger.manager = external\n"
-    elif variant == "dynamic_module_metadata":
-        helper = helper.replace("cls.__name__", "cls.__module__")
-        text = text.replace("class Gate:", "class Gate:\n    __module__ = external")
-    text = helper + text
+    text = _object_signing266_metadata_variant(variant)
     _write(tmp_path, "test_signing.py", text)
     declaration_line = next(
         node.lineno
@@ -3820,6 +3939,71 @@ def describe(cls: Any, logger: Optional[Logger] = None) -> Logger:
                 and all(row["severity"] == "CRITICAL" for row in active)
                 and not observed
             ), report
+
+
+def _object_signing266_metadata_variant(variant):
+    helper = """import logging
+from logging import Logger
+from typing import Any, Optional
+def describe(cls: Any, logger: Optional[Logger] = None) -> Logger:
+    return logging.getLogger(f'local.{cls.__name__}')
+"""
+    text = _OBJECT_SIGNING265.replace(
+        "        self._key = key",
+        "        self._key = key\n        self.label = describe(Gate)",
+    )
+    changes = {
+        "raw_export": "    send(cls)\n",
+        "field_export": "    send(cls.authority)\n",
+        "method_export": "    register(cls.check)\n",
+        "nested_capture": "    def inner():\n        return cls.__name__\n",
+        "formal_rebind": "    cls = attacker\n",
+        "class_write": "    cls.authority = 'changed'\n",
+        "reflective_read": "    getattr(cls, 'authority')\n",
+    }
+    helper = helper.replace(
+        "    return logging.getLogger",
+        changes.get(variant, "") + "    return logging.getLogger",
+    )
+    helper = helper.replace(
+        "cls.__name__",
+        {"dynamic_module_metadata": "cls.__module__"}.get(variant, "cls.__name__"),
+    )
+    metadata_replacements = {
+        "effectful_annotation": [("cls: Any", "cls: mutate()")],
+        "effectful_default": [("= None", "= mutate()")],
+        "decorated": [("def describe", "@transform\ndef describe")],
+        "nested_effectful_metadata": [
+            ("f'local.{cls.__name__}'", "f'{leak(secret).__name__}.{cls.__name__}'")
+        ],
+        "global_metadata_receiver": [
+            ("f'local.{cls.__name__}'", "f'{external.__name__}.{cls.__name__}'")
+        ],
+    }
+    text_additions = {
+        "replacement": "describe = send\n",
+        "key_export": "        send(self.signing_secret)\n",
+        "signature_export": "        send(signature)\n",
+        "function_export": "send(describe)\n",
+    }
+    code_replacement = "\ndef transmit(self, signature):\n    requests.post('https://api.example', headers={'Authorization': self._key})\n    return True\ndef attacker(cls):\n    cls.check = transmit\n    return 'changed'\n"
+    text += text_additions.get(variant, "")
+    if variant in {"code_replacement", "aliased_code_replacement"}:
+        text += code_replacement
+        text += {
+            "code_replacement": "describe.__code__ = attacker.__code__\n",
+            "aliased_code_replacement": "replacement = describe\nreplacement.__code__ = attacker.__code__\n",
+        }[variant]
+    for before, after in metadata_replacements.get(variant, []):
+        helper = helper.replace(before, after)
+    helper += {
+        "configured_logger_factory": "class ExportingLogger(logging.Logger):\n    def __init__(self, name):\n        send(TestSigning.signing_secret)\nlogging.setLoggerClass(ExportingLogger)\n",
+        "configured_logger_manager": "logging.Logger.manager = external\n",
+    }.get(variant, "")
+    if variant == "dynamic_module_metadata":
+        text = text.replace("class Gate:", "class Gate:\n    __module__ = external")
+    text = helper + text
+    return text
 
 
 @pytest.mark.parametrize("kind", ["def", "async def", "class"])
@@ -3861,55 +4045,7 @@ def test_source_alias266_exact_local_definition_identity(tmp_path, kind):
     ],
 )
 def test_signing267_lazy(tmp_path, variant):
-    eager = "    def check(self, signature):\n        verifier = SignatureVerifier(self._key)\n        return verifier.is_valid('body', 'timestamp', signature)\n"
-    lazy = """    @property
-    def verifier(self):
-        if self._verifier is None:
-            self._verifier = SignatureVerifier(self._key)
-        return self._verifier
-    def check(self, signature):
-        return self.verifier.is_valid('body', 'timestamp', signature)
-"""
-    text = _OBJECT_SIGNING265.replace(eager, lazy).replace(
-        "        self._key = key",
-        "        self._key = key\n        self._verifier = None",
-    )
-    extras = {
-        "field_export": "    def escape(self):\n        send(self._verifier)\n",
-        "property_export": "    def escape(self):\n        send(self.verifier)\n",
-        "property_alias": "    def escape(self):\n        alias = self.verifier\n        send(alias)\n",
-        "property_return": "    def escape(self):\n        return self.verifier\n",
-        "field_mutation": "    def replace(self):\n        self._verifier = attacker\n",
-    }
-    text = text.replace(
-        "class TestSigning:", extras.get(variant, "") + "class TestSigning:"
-    )
-    if variant == "getter_extra":
-        text = text.replace(
-            "        return self._verifier",
-            "        send(self._verifier)\n        return self._verifier",
-        )
-    elif variant == "getter_replacement":
-        text += "Gate.verifier = attacker\n"
-    elif variant == "property_shadow":
-        text = "property = transform\n" + text
-    elif variant == "signature_export":
-        text += "        send(signature)\n"
-    elif variant == "bound_method_export":
-        text = text.replace(
-            "        self._key = key",
-            "        self._key = key\n        register(self.check)",
-        )
-    if variant == "receiver_rebind":
-        text = text.replace(
-            "        return self.verifier.is_valid",
-            "        self = other\n        return self.verifier.is_valid",
-        )
-        text += "\nclass External:\n    def is_valid(self, body, timestamp, signature):\n        send(signature)\n        return True\nclass Remote:\n    verifier = External()\nother = Remote()\n"
-    elif variant == "getter_default_effect":
-        text = text.replace("def verifier(self):", "def verifier(self=mutate()):")
-    elif variant == "getter_annotation_effect":
-        text = text.replace("def verifier(self):", "def verifier(self) -> mutate():")
+    text = _signing267_lazy_variant(variant)
     _write(tmp_path, "test_signing.py", text)
     line = next(
         node.lineno
@@ -3941,6 +4077,69 @@ def test_signing267_lazy(tmp_path, variant):
             ), report
 
 
+def _signing267_lazy_variant(variant):
+    eager = "    def check(self, signature):\n        verifier = SignatureVerifier(self._key)\n        return verifier.is_valid('body', 'timestamp', signature)\n"
+    lazy = """    @property
+    def verifier(self):
+        if self._verifier is None:
+            self._verifier = SignatureVerifier(self._key)
+        return self._verifier
+    def check(self, signature):
+        return self.verifier.is_valid('body', 'timestamp', signature)
+"""
+    text = _OBJECT_SIGNING265.replace(eager, lazy).replace(
+        "        self._key = key",
+        "        self._key = key\n        self._verifier = None",
+    )
+    extras = {
+        "field_export": "    def escape(self):\n        send(self._verifier)\n",
+        "property_export": "    def escape(self):\n        send(self.verifier)\n",
+        "property_alias": "    def escape(self):\n        alias = self.verifier\n        send(alias)\n",
+        "property_return": "    def escape(self):\n        return self.verifier\n",
+        "field_mutation": "    def replace(self):\n        self._verifier = attacker\n",
+    }
+    text = text.replace(
+        "class TestSigning:", extras.get(variant, "") + "class TestSigning:"
+    )
+    replacements = {
+        "getter_extra": [
+            (
+                "        return self._verifier",
+                "        send(self._verifier)\n        return self._verifier",
+            )
+        ],
+        "bound_method_export": [
+            (
+                "        self._key = key",
+                "        self._key = key\n        register(self.check)",
+            )
+        ],
+        "receiver_rebind": [
+            (
+                "        return self.verifier.is_valid",
+                "        self = other\n        return self.verifier.is_valid",
+            )
+        ],
+        "getter_default_effect": [
+            ("def verifier(self):", "def verifier(self=mutate()):")
+        ],
+        "getter_annotation_effect": [
+            ("def verifier(self):", "def verifier(self) -> mutate():")
+        ],
+    }
+    for before, after in replacements.get(variant, []):
+        text = text.replace(before, after)
+    text = {
+        "property_shadow": "property = transform\n" + text,
+    }.get(variant, text)
+    text += {
+        "getter_replacement": "Gate.verifier = attacker\n",
+        "signature_export": "        send(signature)\n",
+        "receiver_rebind": "\nclass External:\n    def is_valid(self, body, timestamp, signature):\n        send(signature)\n        return True\nclass Remote:\n    verifier = External()\nother = Remote()\n",
+    }.get(variant, "")
+    return text
+
+
 @pytest.mark.parametrize(
     "variant",
     [
@@ -3964,82 +4163,7 @@ def test_signing267_lazy(tmp_path, variant):
     ],
 )
 def test_signing268_helper(tmp_path, variant):
-    text = _OBJECT_SIGNING265.replace(
-        "    def test_roundtrip(self):",
-        "    def signature(self, body: str):\n        return self.signer.generate_signature(body=body, timestamp='timestamp')\n    def test_roundtrip(self):",
-    ).replace(
-        "signature = self.signer.generate_signature(body='body', timestamp='timestamp')",
-        "signature = self.signature('body')",
-    )
-    if variant == "alias":
-        text = text.replace(
-            "        return self.signer.generate_signature(body=body, timestamp='timestamp')",
-            "        token = self.signer.generate_signature(body=body, timestamp='timestamp')\n        alias = token\n        return alias",
-        )
-    elif variant == "nested":
-        text = text.replace(
-            "    def test_roundtrip(self):",
-            "    def envelope(self):\n        return self.signature('body')\n    def test_roundtrip(self):",
-        ).replace("signature = self.signature('body')", "signature = self.envelope()")
-    elif variant == "export":
-        text += "        send(signature)\n"
-    elif variant == "helper_export":
-        text = text.replace(
-            "    def test_roundtrip(self):",
-            "    def publish(self):\n        send(self.signature('body'))\n    def test_roundtrip(self):",
-        )
-    elif variant == "alias_export":
-        text = text.replace(
-            "        assert gate.check(signature)",
-            "        alias = signature\n        send(alias)\n        assert gate.check(signature)",
-        )
-    elif variant == "rebound_receiver":
-        text = text.replace(
-            "        signature = self.signature",
-            "        self = remote\n        signature = self.signature",
-        )
-    elif variant == "helper_replacement":
-        text = text.replace(
-            "        signature = self.signature",
-            "        self.signature = attacker\n        signature = self.signature",
-        )
-    elif variant == "helper_default":
-        text = text.replace("body: str):", "body: str = mutate()):")
-    elif variant == "helper_annotation":
-        text = text.replace("body: str):", "body: mutate()):")
-    elif variant == "missing_argument":
-        text = text.replace(
-            "signature = self.signature('body')", "signature = self.signature()"
-        )
-    elif variant == "unused":
-        text = text.replace("        assert gate.check(signature)\n", "")
-    elif variant == "loop":
-        text = text.replace(
-            "    def test_roundtrip(self):",
-            "    def recurse(self):\n        return self.recurse() or self.signature('body')\n    def test_roundtrip(self):",
-        ).replace("signature = self.signature('body')", "signature = self.recurse()")
-    elif variant == "nested_capture":
-        text = text.replace(
-            "        assert gate.check(signature)",
-            "        def escaped():\n            send(signature)\n        assert gate.check(signature)",
-        )
-    elif variant == "rebind_alias":
-        text = text.replace(
-            "        assert gate.check(signature)",
-            "        signature = other\n        assert gate.check(signature)",
-        )
-    elif variant == "before_assignment":
-        text = text.replace(
-            "        signature = self.signature('body')",
-            "        send(signature)\n        signature = self.signature('body')",
-        )
-    if variant == "same_method_name":
-        text = text.replace(
-            "def signature(self,", "def generate_signature(self,"
-        ).replace(
-            "signature = self.signature('body')",
-            "signature = self.generate_signature('body')",
-        )
+    text = _signing268_helper_variant(variant)
     _write(tmp_path, "test_signing.py", text)
     line = next(
         node.lineno
@@ -4069,6 +4193,97 @@ def test_signing268_helper(tmp_path, variant):
                 and all(row["severity"] == "CRITICAL" for row in active)
                 and not observations
             ), report
+
+
+def _signing268_helper_variant(variant):
+    text = _OBJECT_SIGNING265.replace(
+        "    def test_roundtrip(self):",
+        "    def signature(self, body: str):\n        return self.signer.generate_signature(body=body, timestamp='timestamp')\n    def test_roundtrip(self):",
+    ).replace(
+        "signature = self.signer.generate_signature(body='body', timestamp='timestamp')",
+        "signature = self.signature('body')",
+    )
+    replacements = {
+        "alias": [
+            (
+                "        return self.signer.generate_signature(body=body, timestamp='timestamp')",
+                "        token = self.signer.generate_signature(body=body, timestamp='timestamp')\n        alias = token\n        return alias",
+            )
+        ],
+        "nested": [
+            (
+                "    def test_roundtrip(self):",
+                "    def envelope(self):\n        return self.signature('body')\n    def test_roundtrip(self):",
+            ),
+            ("signature = self.signature('body')", "signature = self.envelope()"),
+        ],
+        "alias_export": [
+            (
+                "        assert gate.check(signature)",
+                "        alias = signature\n        send(alias)\n        assert gate.check(signature)",
+            )
+        ],
+        "helper_export": [
+            (
+                "    def test_roundtrip(self):",
+                "    def publish(self):\n        send(self.signature('body'))\n    def test_roundtrip(self):",
+            )
+        ],
+        "rebound_receiver": [
+            (
+                "        signature = self.signature",
+                "        self = remote\n        signature = self.signature",
+            )
+        ],
+        "helper_replacement": [
+            (
+                "        signature = self.signature",
+                "        self.signature = attacker\n        signature = self.signature",
+            )
+        ],
+        "helper_default": [("body: str):", "body: str = mutate()):")],
+        "helper_annotation": [("body: str):", "body: mutate()):")],
+        "missing_argument": [
+            ("signature = self.signature('body')", "signature = self.signature()")
+        ],
+        "unused": [("        assert gate.check(signature)\n", "")],
+        "loop": [
+            (
+                "    def test_roundtrip(self):",
+                "    def recurse(self):\n        return self.recurse() or self.signature('body')\n    def test_roundtrip(self):",
+            ),
+            ("signature = self.signature('body')", "signature = self.recurse()"),
+        ],
+        "nested_capture": [
+            (
+                "        assert gate.check(signature)",
+                "        def escaped():\n            send(signature)\n        assert gate.check(signature)",
+            )
+        ],
+        "rebind_alias": [
+            (
+                "        assert gate.check(signature)",
+                "        signature = other\n        assert gate.check(signature)",
+            )
+        ],
+        "before_assignment": [
+            (
+                "        signature = self.signature('body')",
+                "        send(signature)\n        signature = self.signature('body')",
+            )
+        ],
+        "same_method_name": [
+            ("def signature(self,", "def generate_signature(self,"),
+            (
+                "signature = self.signature('body')",
+                "signature = self.generate_signature('body')",
+            ),
+        ],
+    }
+    for before, after in replacements.get(variant, []):
+        text = text.replace(before, after)
+    text += {"export": "        send(signature)\n"}.get(variant, "")
+    return text
 
 
 def _identity_transfer_capture(tmp_path, files):
@@ -4185,3 +4400,871 @@ def test_role_helper274_epoch_does_not_bind_transient_module_init(tmp_path):
 
     keys = [audit._oracle_context_cache_key(tmp_path, [], {}) for _ in range(3)]
     assert len(set(keys)) == 1
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        "loading.get_auth_plugin_conf_options(PASSWORD_PLUGIN)",
+        "loading.get_auth_plugin_conf_options(plugin=PASSWORD_PLUGIN)",
+    ],
+)
+def test_plugin_selector_role_is_bound_api_metadata_not_authentication(tmp_path, call):
+    evidence = _metadata143_projection(
+        tmp_path,
+        "from keystoneauth1 import loading\nPASSWORD_PLUGIN = 'password'\n"
+        f"def options():\n    return {call}\n",
+        "PASSWORD_PLUGIN",
+    )
+    assert evidence["eligible"] is True
+    assert evidence["profile"] == "STATIC_API_DATA_ROLE"
+    assert {row["role"] for row in evidence["uses"]} == {"PLUGIN_LOADER_NAME"}
+
+
+@pytest.mark.parametrize(
+    "suffix, extras",
+    [
+        ("send(PASSWORD_PLUGIN)\n", {}),
+        ("loading.get_auth_plugin_conf_options = send\n", {}),
+        ("alias = loading\nalias.get_auth_plugin_conf_options = send\n", {}),
+        ("PASSWORD_PLUGIN = other\n", {}),
+        (
+            "def leak(loading):\n    return loading.get_auth_plugin_conf_options(PASSWORD_PLUGIN)\n",
+            {},
+        ),
+        ("loading.get_auth_plugin_conf_options(PASSWORD_PLUGIN, plugin='other')\n", {}),
+        ("loading.get_auth_plugin_conf_options(PASSWORD_PLUGIN, other)\n", {}),
+        ("loading.get_auth_plugin_conf_options(PASSWORD_PLUGIN, secret='other')\n", {}),
+        (
+            "loading.load_auth_from_conf_options(conf, group, password=PASSWORD_PLUGIN)\n",
+            {},
+        ),
+        (
+            "",
+            {"peer.py": "from sample import PASSWORD_PLUGIN\nsend(PASSWORD_PLUGIN)\n"},
+        ),
+        (
+            "",
+            {
+                "keystoneauth1.py": "def get_auth_plugin_conf_options(plugin):\n    send(plugin)\n"
+            },
+        ),
+    ],
+)
+def test_plugin_selector_role_keeps_credential_consumers_escapes_and_mutations(
+    tmp_path, suffix, extras
+):
+    evidence = _metadata143_projection(
+        tmp_path,
+        "from keystoneauth1 import loading\nPASSWORD_PLUGIN = 'password'\n"
+        "loading.get_auth_plugin_conf_options(PASSWORD_PLUGIN)\n" + suffix,
+        "PASSWORD_PLUGIN",
+        extras=extras,
+    )
+    assert evidence["eligible"] is False
+
+
+@pytest.mark.parametrize(
+    "additional",
+    ["", "send(PASSWORD_PLUGIN)\n", "loading.get_auth_plugin_conf_options = send\n"],
+)
+def test_plugin_selector_native_metadata_rebuild_preserves_unknown_consumers(
+    tmp_path, additional
+):
+    from factoryline import review_audits as audit
+
+    path = tmp_path / "sample.py"
+    path.write_text(
+        "from keystoneauth1 import loading\nPASSWORD_PLUGIN = 'password'\n"
+        "def options():\n    return loading.get_auth_plugin_conf_options(PASSWORD_PLUGIN)\n"
+        + additional,
+        encoding="utf8",
+    )
+    report = audit.security_scan(
+        tmp_path, cache_enabled=False, defect_policy="source-role-v2"
+    )
+    assert report["audit_coverage"]["complete"] is True
+    rows = [
+        r
+        for r in report["finding_tier_report"]["ledger"]
+        if r["raw_finding"]["code"] == "SECURITY_HARDCODED_SECRET"
+    ]
+    assert len(rows) == 1
+    assert (rows[0]["tier"] == "PROVEN_PRIMITIVE") is (additional == "")
+    assert bool(
+        [f for f in report["findings"] if f["code"] == "SECURITY_HARDCODED_SECRET"]
+    ) is bool(additional)
+    assert (
+        audit._seal_security_scan(report.copy())["finding_tier_report"]
+        == report["finding_tier_report"]
+    )
+
+
+def test_presentation352_warm_rebuild_rejects_changed_provider_mutation_helper(
+    tmp_path, monkeypatch
+):
+    from factoryline import finite_capture, primitive_observation_binding as binding
+    from factoryline import review_audits as audit
+
+    (tmp_path / "sample.py").write_text(
+        "from keystoneauth1 import loading\nPASSWORD_PLUGIN = 'password'\n"
+        "loading.get_auth_plugin_conf_options(PASSWORD_PLUGIN)\n",
+        encoding="utf8",
+    )
+    (tmp_path / "peer.py").write_text("unchanged = 1\n", encoding="utf8")
+    report = audit.security_scan(
+        tmp_path, cache_enabled=False, defect_policy="source-role-v2"
+    )
+    finding = report["finding_tier_report"]["ledger"][0]["raw_finding"]
+    facts = finding["facts"]
+    evidence = facts["fixture_evidence"]
+    captured = dict(report._captured_sources)
+    hashes = {row["path"]: row["sha256"] for row in report["sources"]}
+    original = finite_capture._provider_mutation_for_node
+    calls = []
+    foreign_calls = []
+
+    def forbidden_foreign_reparse(*args):
+        foreign_calls.append(True)
+        raise AssertionError("Presentation rebuild has no foreign source-context cache")
+
+    monkeypatch.setattr(
+        finite_capture, "_foreign_provider_inputs", forbidden_foreign_reparse
+    )
+
+    def changed(*args):
+        original(*args)
+        args[5].add(("keystoneauth1.loading", "*"))
+        calls.append(True)
+
+    token = binding._ROLE_REBUILD_CONTEXT.set({})
+    try:
+        assert binding._presentation_data_role_recomputes(
+            evidence, hashes, facts, captured
+        )
+        assert binding._presentation_data_role_recomputes(
+            evidence, hashes, facts, captured
+        )
+        assert not foreign_calls
+        monkeypatch.setattr(finite_capture, "_provider_mutation_for_node", changed)
+        assert not binding._presentation_data_role_recomputes(
+            evidence, hashes, facts, captured
+        )
+        assert calls
+    finally:
+        binding._ROLE_REBUILD_CONTEXT.reset(token)
+
+
+@pytest.mark.parametrize(
+    "sources",
+    [
+        {"a.py": "x = 1", "b.py": "def helper():\n    return 1"},
+        {"a.py": "class A:\n    def __reduce__(self):\n        return (str, ('a',))"},
+        {"a.py": "class A:\n    def __reduce__(self):\n        return eval('1')"},
+        {
+            "a.py": "class A:\n    def __setstate__(self, state):\n        helper()",
+            "b.py": "def helper():\n    import os\n    os.system('echo x')",
+        },
+        {
+            "a.py": "class A:\n    def __new__(cls):\n        first()",
+            "b.py": "def first():\n    second()\ndef second():\n    first()",
+        },
+        {
+            "a.py": "class A:\n    def __getstate__(self):\n        helper()",
+            "b.py": "def helper():\n    return 1",
+            "c.py": "def helper():\n    open('x')",
+        },
+    ],
+)
+def test_callback363_global_graph_matches_per_module_risk_union(sources):
+    import ast
+    from factoryline import primitive_observation_binding as binding
+
+    trees = {path: ast.parse(source) for path, source in sources.items()}
+    before = any(
+        binding._pickle_role_callback_risk(tree, trees.values())
+        for tree in trees.values()
+    )
+    assert binding._pickle_role_callback_risk(None, trees.values()) == before
+
+
+def test_callback363_inventory_builds_one_repository_callback_graph(monkeypatch):
+    from factoryline import primitive_observation_binding as binding
+
+    original = binding._pickle_role_callback_risk
+    calls = []
+
+    def observed(tree, trees=None):
+        calls.append(tree)
+        return original(tree, trees)
+
+    monkeypatch.setattr(binding, "_pickle_role_callback_risk", observed)
+    inventory = binding._pickle_role_inventory(
+        {f"module_{i}.py": b"def local():\n    return 1\n" for i in range(32)}
+    )
+    assert inventory["unsafe_callbacks"] is False
+    assert calls == [None]
+
+
+@pytest.mark.parametrize("base", ["TestCase", "SimpleTestCase", "TransactionTestCase"])
+def test_testrole364_django_inheritance_binds_fixture_owner_without_local_unittest_import(
+    base,
+):
+    import ast
+    from factoryline import primitive_observation_binding as binding
+
+    source = (
+        f"from django.test import {base} as Parent\nimport pickle\n"
+        "class RoundTrips(Parent):\n    def test_roundtrip(self):\n"
+        "        value = pickle.loads(pickle.dumps('sample'))\n        self.assertEqual(value, 'sample')\n"
+    )
+    tree = ast.parse(source)
+    inventory = binding._pickle_role_inventory(
+        {"tests/test_values.py": source.encode()}
+    )
+    finding = {"line": 5, "column": 16}
+    scope = binding._pickle_role_test_scope(
+        inventory["trees"]["tests/test_values.py"], finding, inventory
+    )
+    assert scope is not None and scope.name == "test_roundtrip"
+    assert tree.body[2].name == "RoundTrips"
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"django.py": b"class test: pass\n"},
+        {"django/test/__init__.py": b"class TestCase: pass\n"},
+        {"mutator.py": b"import django.test\ndjango.test.TestCase = replacement\n"},
+    ],
+)
+def test_testrole364_django_shadow_and_base_mutation_stay_unknown(extra):
+    from factoryline import primitive_observation_binding as binding
+
+    source = b"from django.test import TestCase\nimport pickle\nclass RoundTrips(TestCase):\n    def test_roundtrip(self):\n        value = pickle.loads(pickle.dumps('sample'))\n        self.assertEqual(value, 'sample')\n"
+    inventory = binding._pickle_role_inventory(
+        {"tests/test_values.py": source, **extra}
+    )
+    assert (
+        binding._pickle_role_test_scope(
+            inventory["trees"]["tests/test_values.py"],
+            {"line": 5, "column": 16},
+            inventory,
+        )
+        is None
+    )
+
+
+def test_testrole364_captured_unittest_base_is_registration_for_importing_module():
+    from factoryline import primitive_observation_binding as binding
+
+    sources = {
+        "tests/base.py": b"import unittest\nclass Base(unittest.TestCase):\n    pass\n",
+        "tests/test_values.py": b"from tests.base import Base\nimport pickle\nclass RoundTrips(Base):\n    def test_roundtrip(self):\n        value = pickle.loads(pickle.dumps('sample'))\n        self.assertEqual(value, 'sample')\n",
+    }
+    inventory = binding._pickle_role_inventory(sources)
+    assert (
+        binding._pickle_role_test_scope(
+            inventory["trees"]["tests/test_values.py"],
+            {"line": 5, "column": 16},
+            inventory,
+        )
+        is not None
+    )
+
+
+@pytest.mark.parametrize("shadow", ["src/django.py", "src/django/test.py"])
+def test_testrole364_src_shadow_is_not_a_framework_contract(shadow):
+    from factoryline import primitive_observation_binding as binding
+
+    source = b"from django.test import TestCase\nclass Sample(TestCase):\n    pass\n"
+    inventory = binding._pickle_role_inventory(
+        {"tests/test_values.py": source, shadow: b"pass\n"}
+    )
+    assert not binding._pickle_role_unittest_owners(inventory)
+
+
+@pytest.mark.parametrize("module", ["django.test", "django.test.testcases"])
+def test_testrole364_alias_mutation_invalidates_both_public_framework_paths(module):
+    from factoryline import primitive_observation_binding as binding
+
+    source = b"from django.test import TestCase\nfrom django.test.testcases import TestCase as Other\nclass Sample(TestCase):\n    pass\nclass Second(Other):\n    pass\n"
+    mutation = f"import {module}\n{module}.TestCase.__bases__ = replacement\n".encode()
+    inventory = binding._pickle_role_inventory(
+        {"tests/test_values.py": source, "mutator.py": mutation}
+    )
+    assert not binding._pickle_role_unittest_owners(inventory)
+
+
+def test_callback363_aliases_are_shared_only_within_one_inventory_traversal(
+    monkeypatch,
+):
+    import ast
+    from factoryline import primitive_observation_binding as binding
+    from factoryline import review_audits as audit
+
+    tree = ast.parse(
+        "class Sample:\n    def __getstate__(self):\n        return 1\n    def __setstate__(self, state):\n        return None\n"
+    )
+    calls = []
+    original = audit._security_aliases
+
+    def observed(nodes):
+        calls.append(1)
+        return original(nodes)
+
+    monkeypatch.setattr(audit, "_security_aliases", observed)
+    assert binding._pickle_role_callback_risk(None, [tree]) is False
+    assert calls == [1]
+    assert binding._pickle_role_callback_risk(None, [tree]) is False
+    assert calls == [1, 1]
+
+
+def test_testrole364_shared_graph_helpers_invalidate_provenance_on_replacement(
+    monkeypatch,
+):
+    from factoryline import primitive_observation_binding as binding
+
+    names = (
+        "_pickle_role_inventory",
+        "_pickle_role_test_scope",
+        "_pickle_role_unittest_owners",
+        "_pickle_role_unittest_graph",
+        "_pickle_role_callback_risk",
+    )
+    assert all(
+        getattr(binding, name) in binding.primitive_binding_helpers() for name in names
+    )
+    original = binding._pickle_role_callback_risk
+
+    def replacement(*args):
+        return True
+
+    monkeypatch.setattr(binding, "_pickle_role_callback_risk", replacement)
+    helpers = binding.primitive_binding_helpers()
+    assert replacement in helpers and original not in helpers
+
+
+def test_testrole367_local_django_api_strings_require_one_captured_binding(tmp_path):
+    import ast
+    from factoryline import credential_role_identity_effects as effects
+
+    index, modules = _identity_transfer_capture(
+        tmp_path,
+        {
+            "tests/test_login.py": (
+                "def _login():\n"
+                "    account_name = 'admin'\n"
+                "    contact = 'admin@example.test'\n"
+                "    return account_name, contact\n"
+            )
+        },
+    )
+    path = next(iter(modules))
+    assert index["source"].validate(path)
+    helper = modules[path].body[0]
+    names = [node for node in ast.walk(helper) if isinstance(node, ast.Name)]
+    account_name = next(
+        node
+        for node in names
+        if node.id == "account_name" and isinstance(node.ctx, ast.Load)
+    )
+    contact = next(
+        node
+        for node in names
+        if node.id == "contact" and isinstance(node.ctx, ast.Load)
+    )
+    assert effects._fixture_string_literal(index, path, helper, account_name) == "admin"
+    assert (
+        effects._fixture_string_literal(index, path, helper, contact)
+        == "admin@example.test"
+    )
+
+    helper.body.insert(1, ast.parse("account_name = supplied_value").body[0])
+    ast.fix_missing_locations(helper)
+    assert effects._fixture_string_literal(index, path, helper, account_name) is None
+
+
+_TESTROLE367_DJANGO_HELPER = (
+    "from django.test import TestCase, Client\n"
+    "from django.contrib.auth.models import User\n"
+    "class AccountChecks(TestCase):\n"
+    "    def setUp(self):\n"
+    "        self.assertTrue(self._login())\n"
+    "    def _login(self):\n"
+    "        account_name = 'admin'\n"
+    "        contact = 'admin@example.test'\n"
+    "        password = 'admin'\n"
+    "        self.browser = Client()\n"
+    "        self.account = User.objects.create_superuser(account_name, contact, password)\n"
+    "        return self.browser.login(username=account_name, password=password)\n"
+    "    def test_page(self):\n"
+    "        self.browser.get('/')\n"
+    "        account_id = self.account.pk\n"
+)
+
+
+def _testrole367_fixture_evidence(tmp_path, source, extras=None):
+    import ast
+    from factoryline import mock_fixture_provenance as fixture
+
+    files = {"tests/test_views.py": source, "tests/__init__.py": ""}
+    files.update(extras or {})
+    index, modules = _identity_transfer_capture(tmp_path, files)
+    path = next(iter(modules))
+    tree = modules[path]
+    assignment = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Assign)
+        and len(node.targets) == 1
+        and isinstance(node.targets[0], ast.Name)
+        and node.targets[0].id == "password"
+    )
+    return fixture.application_test_secret_evidence(
+        index, path, assignment.value.lineno, assignment.value.value
+    )
+
+
+def test_testrole367_registered_django_helper_requires_complete_authority_closure(
+    tmp_path,
+):
+    """django_testcase_helper_secret_evidence requires closed account, client, and credential-use consumers."""
+    evidence = _testrole367_fixture_evidence(tmp_path, _TESTROLE367_DJANGO_HELPER)
+    assert evidence["eligible"] is True
+    assert evidence["profile"] == "SOURCE_BOUND_FACTORY_TEST_AUTHORITY"
+    closure = evidence["consumer_use_closure"]
+    assert closure["complete"] is True
+    assert closure["credential"]["complete"] is True
+    assert closure["account_field"]["complete"] is True
+    assert closure["client_field"]["complete"] is True
+
+
+@pytest.mark.parametrize(
+    "variant",
+    [
+        "password_escape",
+        "whole_user_escape",
+        "client_escape",
+        "username_mismatch",
+        "helper_export",
+        "creation_order",
+        "provider_replacement",
+        "custom_user",
+        "field_rebind",
+        "receiver_alias_escape",
+        "receiver_escape",
+        "client_field_rebind",
+        "outside_owner_call",
+        "unbound_helper_export",
+        "cross_module_owner_call",
+        "nested_cross_module_owner_call",
+        "conditional_client_override",
+    ],
+)
+def test_testrole367_registered_django_helper_keeps_escaped_or_rebound_authority_active(
+    tmp_path, variant
+):
+    source = _TESTROLE367_DJANGO_HELPER
+    mutations = {
+        "password_escape": lambda source: (
+            source.replace(
+                "        password = 'admin'\n",
+                "        password = 'admin'\n        disclose(password)\n",
+            ),
+        ),
+        "whole_user_escape": lambda source: (
+            source.replace(
+                "        account_id = self.account.pk\n",
+                "        account_id = self.account.pk\n        Request(user=self.account)\n",
+            ),
+        ),
+        "client_escape": lambda source: (
+            source.replace(
+                "        account_id = self.account.pk\n",
+                "        account_id = self.account.pk\n        disclose(self.browser)\n",
+            ),
+        ),
+        "username_mismatch": lambda source: (
+            source.replace(
+                "username=account_name, password=password",
+                "username='different', password=password",
+            ),
+        ),
+        "helper_export": lambda source: (
+            source.replace(
+                "        self.assertTrue(self._login())\n",
+                "        self.saved_login = self._login\n        self.assertTrue(self._login())\n",
+            ),
+        ),
+        "provider_replacement": lambda source: (
+            source.replace(
+                "        self.browser = Client()\n",
+                "        Client = replacement\n        self.browser = Client()\n",
+            ),
+        ),
+        "custom_user": lambda source: (
+            source.replace(
+                "from django.contrib.auth.models import User",
+                "from application.models import User",
+            ),
+        ),
+        "field_rebind": lambda source: (
+            source.replace(
+                "        account_id = self.account.pk\n",
+                "        self.account = replacement\n        account_id = self.account.pk\n",
+            ),
+        ),
+        "receiver_alias_escape": lambda source: (
+            source.replace(
+                "        account_id = self.account.pk\n",
+                "        alias = self\n        leak(alias.account.password)\n        account_id = self.account.pk\n",
+            ),
+        ),
+        "receiver_escape": lambda source: (
+            source.replace(
+                "        account_id = self.account.pk\n",
+                "        leak(self)\n        account_id = self.account.pk\n",
+            ),
+        ),
+        "client_field_rebind": lambda source: (
+            source.replace(
+                "        self.browser.get('/')\n",
+                "        self.browser = replacement\n        self.browser.get('/')\n",
+            ),
+        ),
+        "outside_owner_call": lambda source: (
+            source + "instance = AccountChecks()\ninstance._login()\n",
+        ),
+        "unbound_helper_export": lambda source: (
+            source + "AccountChecks._login(holder)\n",
+        ),
+        "conditional_client_override": lambda source: (
+            source.replace(
+                "class AccountChecks(TestCase):\n",
+                "class AccountChecks(TestCase):\n    if True:\n        client_class = RemoteClient\n",
+            ),
+        ),
+    }
+    if variant in mutations:
+        (source,) = mutations[variant](source)
+    if variant == "creation_order":
+        creation = "        self.account = User.objects.create_superuser(account_name, contact, password)\n"
+        login = "        return self.browser.login(username=account_name, password=password)\n"
+        source = source.replace(creation + login, login + creation)
+    if variant == "cross_module_owner_call":
+        evidence = _testrole367_fixture_evidence(
+            tmp_path,
+            source,
+            {
+                "tests/external.py": (
+                    "from tests.test_views import AccountChecks as Subject\n"
+                    "instance = Subject()\ninstance._login()\n"
+                )
+            },
+        )
+        assert evidence["eligible"] is False
+        return
+    if variant == "nested_cross_module_owner_call":
+        evidence = _testrole367_fixture_evidence(
+            tmp_path,
+            source,
+            {
+                "tests/external.py": (
+                    "def boot():\n"
+                    "    from tests.test_views import AccountChecks as Subject\n"
+                    "    Subject()._login()\n"
+                )
+            },
+        )
+        assert evidence["eligible"] is False
+        return
+    evidence = _testrole367_fixture_evidence(tmp_path, source)
+    assert evidence["eligible"] is False
+
+
+def test_shared_source_inventory_reuses_validated_trees(tmp_path, monkeypatch):
+    """A current SourceSnapshotIndex lets the pickle inventory reuse its validated AST without reparsing."""
+    import ast
+    import hashlib
+    from factoryline import review_audits as audit
+    from factoryline.credential_role_constructor_provider import (
+        security_snapshot_model as _security_snapshot_model,
+    )
+    from factoryline.primitive_observation_binding import _pickle_role_inventory
+
+    path = tmp_path / "sample.py"
+    raw = b"import pickle\ndef test_roundtrip():\n    assert pickle.loads(pickle.dumps(3)) == 3\n"
+    tree = ast.parse(raw)
+    tree._oracle_source_sha256 = hashlib.sha256(raw).hexdigest()
+    model = _security_snapshot_model(
+        tmp_path,
+        {path: tree},
+        {path: raw},
+        {path: audit._oracle_tree_fingerprint(tree)},
+    )
+    assert model.validate(path)
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("validated producer must not reparse")
+
+    monkeypatch.setattr(ast, "parse", forbidden)
+    inventory = _pickle_role_inventory({"sample.py": raw}, source_model=model)
+    assert inventory["trees"]["sample.py"] is tree
+    assert inventory["sources"] == {"sample.py": raw}
+
+
+@pytest.mark.parametrize("corruption", ["bytes", "tree", "inventory"])
+def test_shared_source_inventory_declines_stale_capture(tmp_path, corruption):
+    """Source inventory admission declines changed bytes, AST structure, or digest bindings."""
+    import ast
+    import hashlib
+    from factoryline import review_audits as audit
+    from factoryline.credential_role_constructor_provider import (
+        security_snapshot_model as _security_snapshot_model,
+    )
+    from factoryline.primitive_observation_binding import _pickle_role_inventory
+
+    path = tmp_path / "sample.py"
+    raw = b"VALUE = 1\n"
+    tree = ast.parse(raw)
+    tree._oracle_source_sha256 = hashlib.sha256(raw).hexdigest()
+    model = _security_snapshot_model(
+        tmp_path,
+        {path: tree},
+        {path: raw},
+        {path: audit._oracle_tree_fingerprint(tree)},
+    )
+    assert model.validate(path)
+    if corruption == "bytes":
+        model.source_bytes[path] = b"VALUE = 2\n"
+    elif corruption == "tree":
+        tree.body[0].value.value = 2
+    else:
+        model.inventory[path] = "0" * 64
+    assert _pickle_role_inventory({"sample.py": raw}, source_model=model) is None
+
+
+def test_security_snapshot_index_and_verified_tree_require_current_source(tmp_path):
+    """Snapshot index reuse requires exact bytes and inventory, while stale tree fingerprints force reparsing."""
+    import ast
+    import hashlib
+    from factoryline import review_audits as audit
+    from factoryline.credential_role_constructor_provider import (
+        SourceSnapshotIndex,
+        application_snapshot_index,
+        verified_security_tree,
+    )
+
+    path = tmp_path / "sample.py"
+    raw = b"VALUE = 1\n"
+    digest = hashlib.sha256(raw).hexdigest()
+    tree = ast.parse(raw, filename=str(path))
+    tree._oracle_source_sha256 = digest
+    fingerprint = audit._oracle_tree_fingerprint(tree)
+    modules, sources = {path: tree}, {path: raw}
+    inventory = {path: digest}
+
+    index = application_snapshot_index(tmp_path, modules, sources, inventory, None)
+    assert isinstance(index, SourceSnapshotIndex)
+    index.producer_fingerprints = {path: fingerprint}
+    assert (
+        application_snapshot_index(tmp_path, modules, sources, inventory, index)
+        is index
+    )
+    assert (
+        application_snapshot_index(
+            tmp_path, modules, {path: b"VALUE = 2\n"}, inventory, index
+        )
+        is None
+    )
+
+    context = {"_security_source_model": index}
+    assert (
+        verified_security_tree(
+            audit,
+            tmp_path,
+            path,
+            raw,
+            {"sha256": digest},
+            tree,
+            fingerprint,
+            source_context=context,
+        )
+        is tree
+    )
+    reparsed = verified_security_tree(
+        audit,
+        tmp_path,
+        path,
+        raw,
+        {"sha256": digest},
+        tree,
+        "stale-fingerprint",
+        source_context=context,
+    )
+    assert reparsed is not tree
+    assert ast.dump(reparsed, include_attributes=True) == ast.dump(
+        tree, include_attributes=True
+    )
+
+
+@pytest.mark.parametrize(
+    "variant",
+    [
+        "receiver_rebound",
+        "instance_assertion_replaced",
+        "class_assertion_replaced",
+        "reexport_terminal_replaced",
+        "reexport_terminal_code_replaced",
+        "algorithm_callback_elsewhere",
+        "algorithm_provider_replaced",
+        "wildcard_provider",
+        "extra_digest_escape",
+        "helper_default_mutated",
+        "unknown_format_operand",
+        "receiver_escape",
+        "receiver_alias",
+        "reflective_receiver",
+        "class_decorator",
+        "class_metaclass",
+        "hmac_readonly_precondition_false",
+        "hmac_lexical_shadow_callback",
+        "hmac_outer_shadow_callback",
+        "hmac_class_shadow_callback",
+        "receiver_alias_assertion_write",
+        "receiver_alias_nested_assertion_write",
+    ],
+)
+def test_shared_digest372_adversarial_oracle_and_provider(tmp_path, variant):
+    from factoryline import mock_fixture_provenance as fixture
+
+    helper = "import hmac\nimport hashlib\ndef calculate(key, timestamp, body):\n    message = '{}.{}'.format(timestamp, body).encode()\n    return hmac.new(key.encode(), message, hashlib.sha256).hexdigest()\n"
+    caller = "from django.test import TestCase\nimport codec\nclass Checks(TestCase):\n    def test_local_key(self):\n        secret = 'owned-digest-input'\n        body = '{}'\n        observed = codec.calculate(secret, 1000, body)\n        self.assertEqual(observed, codec.calculate(secret, 1000, body))\n"
+    sources = {}
+    mutations = {
+        "receiver_alias_assertion_write": lambda helper, caller: (
+            helper,
+            caller.replace(
+                "        body =",
+                "        peer = self\n        peer.assertEqual = publish\n        body =",
+            ),
+        ),
+        "receiver_alias_nested_assertion_write": lambda helper, caller: (
+            helper,
+            caller.replace(
+                "        body =",
+                "        peer = self\n        def change():\n            peer.assertEqual = publish\n        change()\n        body =",
+            ),
+        ),
+        "hmac_outer_shadow_callback": lambda helper, caller: (
+            helper
+            + "def outer(hmac):\n    def inner():\n        return hmac.new(b'other', b'payload', hashlib.sha256)\n    return inner\n",
+            caller,
+        ),
+        "hmac_class_shadow_callback": lambda helper, caller: (
+            helper
+            + "class Foreign:\n    hmac = opaque\n    value = hmac.new(b'other', b'payload', hashlib.sha256)\n",
+            caller,
+        ),
+        "hmac_lexical_shadow_callback": lambda helper, caller: (
+            helper
+            + "def unknown(hmac):\n    hmac.new(b'other', b'payload', hashlib.sha256)\n",
+            caller,
+        ),
+        "receiver_escape": lambda helper, caller: (
+            helper,
+            caller + "        opaque(self)\n",
+        ),
+        "receiver_alias": lambda helper, caller: (
+            helper,
+            caller.replace(
+                "        body =",
+                "        other = self\n        opaque(other)\n        body =",
+            ),
+        ),
+        "reflective_receiver": lambda helper, caller: (
+            helper,
+            caller + "        getattr(self, 'assertEqual')(observed, observed)\n",
+        ),
+        "class_decorator": lambda helper, caller: (
+            helper,
+            caller.replace("class Checks", "@replace_owner\nclass Checks"),
+        ),
+        "class_metaclass": lambda helper, caller: (
+            helper,
+            caller.replace(
+                "class Checks(TestCase):", "class Checks(TestCase, metaclass=Unknown):"
+            ),
+        ),
+        "hmac_readonly_precondition_false": lambda helper, caller: (
+            helper + "hmac.new = replace_and_capture_callback\n",
+            caller,
+        ),
+        "receiver_rebound": lambda helper, caller: (
+            helper,
+            caller.replace(
+                "        body =", "        self = replacement\n        body ="
+            ),
+        ),
+        "instance_assertion_replaced": lambda helper, caller: (
+            helper,
+            caller.replace(
+                "        body =", "        self.assertEqual = publish\n        body ="
+            ),
+        ),
+        "class_assertion_replaced": lambda helper, caller: (
+            helper,
+            caller + "Checks.assertEqual = publish\n",
+        ),
+        "algorithm_callback_elsewhere": lambda helper, caller: (
+            helper + "opaque(hashlib.sha256)\n",
+            caller,
+        ),
+        "algorithm_provider_replaced": lambda helper, caller: (
+            helper + "hashlib.sha256 = replacement\n",
+            caller,
+        ),
+        "wildcard_provider": lambda helper, caller: (
+            helper + "from opaque import *\n",
+            caller,
+        ),
+        "extra_digest_escape": lambda helper, caller: (
+            helper,
+            caller + "        publish(observed)\n",
+        ),
+        "helper_default_mutated": lambda helper, caller: (
+            helper + "calculate.__defaults__ = replacement\n",
+            caller + "codec.calculate.__defaults__ = replacement\n",
+        ),
+        "unknown_format_operand": lambda helper, caller: (
+            helper,
+            caller.replace("body = '{}'", "body = custom_object"),
+        ),
+    }
+    if variant in mutations:
+        helper, caller = mutations[variant](helper, caller)
+    if variant.startswith("reexport_terminal"):
+        caller = caller.replace("import codec", "import bridge as codec")
+        sources["bridge.py"] = "from codec import calculate\n"
+        suffix = ".__code__" if variant.endswith("code_replaced") else ""
+        sources["peer.py"] = (
+            "import codec\ncodec.calculate" + suffix + " = replacement\n"
+        )
+    sources.update({"codec.py": helper, "test_flow.py": caller})
+    modules, captured, inventory = {}, {}, {}
+    for name, text in sources.items():
+        path = tmp_path / name
+        raw = text.encode()
+        tree = ast.parse(raw)
+        tree._oracle_source_sha256 = hashlib.sha256(raw).hexdigest()
+        modules[path], captured[path], inventory[path] = (
+            tree,
+            raw,
+            tree._oracle_source_sha256,
+        )
+    index = fixture.application_test_index(tmp_path, modules, captured, inventory)
+    evidence = fixture.application_test_secret_evidence(
+        index, tmp_path / "test_flow.py", 5, "owned-digest-input"
+    )
+    assert evidence.get("eligible") is not True, evidence

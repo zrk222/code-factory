@@ -387,8 +387,6 @@ def _module_has_dynamic_capability_access(nodes):
 
 
 def _mock_provider_capability(raw):
-    from .context_efficiency import _module_has_dynamic_capability_access
-
     try:
         nodes = tuple(ast.walk(ast.parse(raw)))
     except (SyntaxError, ValueError, RecursionError, UnicodeDecodeError):

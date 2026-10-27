@@ -434,11 +434,16 @@ def test_semgrep_clean_challenge_has_no_target_finding(kind):
 
 
 @pytest.mark.parametrize("missing", [True, False])
-def test_signed_semgrep_requires_rederived_native_rule_execution(missing):
+@pytest.mark.parametrize(
+    "language, source", [("javascript", "app.js"), ("php", "app.php")]
+)
+def test_signed_semgrep_requires_rederived_native_rule_execution(
+    missing, language, source
+):
     from factoryline.deep_audit_sarif import _rule_accounting_gaps
     from test_deep_audit import semgrep_execution_evidence
 
-    evidence, lane, sources, baseline = semgrep_execution_evidence()
+    evidence, lane, sources, baseline = semgrep_execution_evidence(language, source)
     coverage = {"semgrep_rule_execution": evidence}
     assert _rule_accounting_gaps(coverage, lane, sources, baseline) == []
     if missing:
@@ -1045,6 +1050,58 @@ def ingest(tmp_path, payload):
         {"path": "report.json", "sha256": sha256_bytes(raw)},
         ANALYZER,
         {"app.py": sha256_bytes((tmp_path / "app.py").read_bytes())},
+    )
+
+
+@pytest.mark.parametrize("same_location", [False, True])
+def test_semgrep_login_placeholder_uses_bound_source_identity(tmp_path, same_location):
+    payload = report()
+    run = payload["runs"][0]
+    run["tool"]["driver"].update(name="Semgrep OSS", version="1.141.0")
+    finding = run["results"][0]
+    finding.pop("partialFingerprints")
+    finding["fingerprints"] = {"matchBasedId/v1": "requires login"}
+    other = deepcopy(finding)
+    other["locations"] = [location(1 if same_location else 2)]
+    run["results"].append(other)
+    source = b"one\ntwo\n"
+    (tmp_path / "app.py").write_bytes(source)
+    raw = json.dumps(payload).encode()
+    (tmp_path / "report.json").write_bytes(raw)
+    args = (
+        tmp_path,
+        {"path": "report.json", "sha256": sha256_bytes(raw)},
+        {"id": "semgrep", "driver": "Semgrep OSS", "version": "1.141.0"},
+        {"app.py": sha256_bytes(source)},
+    )
+    if same_location:
+        with pytest.raises(RuntimeAuditError, match="E_DUPLICATE_FINDING"):
+            normalize_sarif(*args)
+        return
+    result = normalize_sarif(*args)
+    assert len({item["finding_id"] for item in result["findings"]}) == 2
+    assert all(
+        item["finding_identity_basis"] == "source_location_fallback"
+        for item in result["findings"]
+    )
+    assert all(
+        item["native_fingerprint_sha256"]
+        == digest({"fingerprints:matchBasedId/v1": "requires login"})
+        for item in result["findings"]
+    )
+
+
+def test_semgrep_placeholder_does_not_replace_real_or_other_tool_fingerprints():
+    from factoryline.deep_audit_sarif import _usable_native_fingerprint
+
+    placeholder = {"fingerprints:matchBasedId/v1": "requires login"}
+    semgrep = {"driver": "Semgrep OSS"}
+    assert _usable_native_fingerprint({"driver": "Example"}, placeholder)
+    assert _usable_native_fingerprint(
+        semgrep, {**placeholder, "partialFingerprints:primary/v1": "real-id"}
+    )
+    assert _usable_native_fingerprint(
+        semgrep, {"fingerprints:matchBasedId/v1": "real-id"}
     )
 
 

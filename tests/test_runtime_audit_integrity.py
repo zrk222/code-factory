@@ -16,6 +16,72 @@ from factoryline.runtime_audit_integrity import finite_literal_eval_input_witnes
 from factoryline.runtime_audit_integrity import source_generated_eval_input_witness
 
 
+def _assert_cache_binding_swap_changes_key(
+    tmp_path, monkeypatch, pickle_model, audit, attribute, first, second, before
+):
+    with monkeypatch.context() as patch:
+        patch.setattr(pickle_model, attribute, first)
+        first_key = audit._oracle_context_cache_key(tmp_path, [], {})
+        patch.setattr(pickle_model, attribute, second)
+        second_key = audit._oracle_context_cache_key(tmp_path, [], {})
+        assert first_key != before and second_key != first_key
+
+
+def _inventory_binding_replacements(original):
+    def first_replacement():
+        return original()
+
+    def second_replacement():
+        return original()
+
+    return first_replacement, second_replacement
+
+
+def _assert_inventory_code_mutation_changes_key(
+    tmp_path, monkeypatch, original, audit, before
+):
+    from types import FunctionType
+
+    saved_inventory = FunctionType(
+        original.__code__,
+        original.__globals__,
+        argdefs=original.__defaults__,
+        closure=original.__closure__,
+    )
+
+    def inventory_replacement(saved=saved_inventory):
+        return saved()
+
+    with monkeypatch.context() as patch:
+        patch.setattr(original, "__defaults__", inventory_replacement.__defaults__)
+        patch.setattr(original, "__code__", inventory_replacement.__code__)
+        assert audit._oracle_context_cache_key(tmp_path, [], {}) != before
+
+
+def _assert_pickle_class_binding_mutations(
+    tmp_path, monkeypatch, pickle_model, audit, before
+):
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            pickle_model, "_ProviderV4Graph", type("ReplacementGraphA", (), {})
+        )
+        first = audit._oracle_context_cache_key(tmp_path, [], {})
+        patch.setattr(
+            pickle_model, "_ProviderV4Graph", type("ReplacementGraphB", (), {})
+        )
+        second = audit._oracle_context_cache_key(tmp_path, [], {})
+        assert first != before and second != first
+
+
+def _assert_pickle_class_method_mutation(
+    tmp_path, monkeypatch, pickle_model, audit, replacement, before
+):
+    original = pickle_model._ProviderV4Graph.edge
+    with monkeypatch.context() as patch:
+        patch.setattr(original, "__code__", replacement.__code__)
+        assert audit._oracle_context_cache_key(tmp_path, [], {}) != before
+
+
 @pytest.mark.parametrize(
     "codec, declaration", [("latin-1", b"# coding: latin-1\n"), ("utf-8-sig", b"")]
 )
@@ -238,7 +304,7 @@ def test_local_control_label301_regeneration_avoids_unrelated_scanner_work(
     )
 
 
-def _sink_context_index(tmp_path, source):
+def _sink_context_index(tmp_path, source, selected_name=None):
     from factoryline.credential_role_constructor_provider import SourceSnapshotIndex
 
     path = tmp_path / "sink.py"
@@ -252,8 +318,11 @@ def _sink_context_index(tmp_path, source):
         node
         for node in ast.walk(tree)
         if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and node.func.attr == "loads"
+        and (
+            isinstance(node.func, ast.Name) and node.func.id == selected_name
+            if selected_name is not None
+            else isinstance(node.func, ast.Attribute) and node.func.attr == "loads"
+        )
     )
     return path, raw, digest, tree, index, sink
 
@@ -309,6 +378,25 @@ def test_provider_profile308_default_has_no_runtime_or_contract_dependency(monke
     assert profile["analysis_profile"] == "source-closed-v1"
     assert profile["contracts"] == []
     assert profile["conditional"] is False
+
+
+def test_conditional_pickle_admission_rejects_stale_profile(monkeypatch):
+    from factoryline import finite_capture
+
+    contract = _provider_profile_contract308(monkeypatch)
+    profile = finite_capture.provider_analysis_profile(
+        "trusted-dependencies-v1", (contract,)
+    )
+    stale = dict(profile, profile_sha256="0" * 64)
+
+    assert (
+        runtime.conditional_provider_pickle_witness(
+            stale, {}, "consumer.py", [1, 0, 1, 1], review_audits
+        )
+        is None
+    )
+    with pytest.raises(ValueError, match="conditional profile identity differs"):
+        primitive.apply_conditional_provider_profile({"findings": []}, stale, {})
 
 
 def test_provider_profile308_contract_identity_is_canonical_not_safety(monkeypatch):
@@ -449,19 +537,78 @@ def test_provider_profile308_wrong_json_field_types_fail_closed(
 
 
 def test_provider_profile308_fingerprints_real_local_interpreter():
+    import importlib.util
+    import platform
+    import sys
+    import sysconfig
+    from pathlib import Path
+
     from factoryline import finite_capture
 
-    identity = finite_capture._provider_runtime_identity()
-    assert identity["implementation"] == "cpython"
-    assert identity["version"] == "3.11.9"
-    assert all(
-        len(identity[key]) == 64
-        for key in (
-            "executable_sha256",
-            "pickle_source_sha256",
-            "pickle_implementation_sha256",
+    pickle_spec = importlib.util.find_spec("_pickle")
+    assert pickle_spec is not None
+    pickle_binary = (
+        Path(pickle_spec.origin)
+        if pickle_spec.origin != "built-in"
+        else (
+            Path(sys.base_prefix)
+            / f"python{sys.version_info.major}{sys.version_info.minor}.dll"
+            if sys.platform == "win32"
+            else Path(sysconfig.get_config_var("LIBDIR") or sys.base_prefix)
+            / (sysconfig.get_config_var("LDLIBRARY") or "")
         )
     )
+    paths = {
+        "executable_sha256": Path(sys.executable),
+        "pickle_source_sha256": Path(sysconfig.get_path("stdlib")) / "pickle.py",
+        "pickle_implementation_sha256": pickle_binary,
+    }
+    actual_hashes = {
+        name: hashlib.sha256(path.read_bytes()).hexdigest()
+        for name, path in paths.items()
+    }
+    assert all(len(value) == 64 for value in actual_hashes.values())
+    assert all(
+        all(char in "0123456789abcdef" for char in value)
+        for value in actual_hashes.values()
+    )
+
+    if platform.python_implementation() == "CPython" and sys.version_info[:3] == (
+        3,
+        11,
+        9,
+    ):
+        assert finite_capture._provider_runtime_identity() == {
+            "implementation": "cpython",
+            "version": "3.11.9",
+            **actual_hashes,
+        }
+        return
+
+    unsupported_contract = {
+        "schema": "factory.provider-contract.v1",
+        "model": {"id": "builtin-exception-record-v1", "version": 1},
+        "runtime": {
+            "implementation": "cpython",
+            "version": "3.11.9",
+            **actual_hashes,
+        },
+        "artifacts": {"package/errors.py": "4" * 64, "package/__init__.py": "5" * 64},
+        "export": {"path": "package/__init__.py", "symbol": "LocalError"},
+        "classes": [
+            {
+                "path": "package/errors.py",
+                "name": "LocalError",
+                "class_ast_sha256": "6" * 64,
+                "constructor_ast_sha256": "7" * 64,
+            }
+        ],
+        "assumptions": list(finite_capture._PROVIDER_ASSUMPTIONS),
+    }
+    with pytest.raises(RuntimeAuditError, match="E_ANALYSIS_PROFILE"):
+        finite_capture.provider_analysis_profile(
+            "trusted-dependencies-v1", (unsupported_contract,)
+        )
 
 
 def _provider_record308(monkeypatch, constructor=None, base_body="pass", prefix=""):
@@ -820,6 +967,261 @@ def test_provider_profile308_mutation_index_tracks_keyword_escape(source, escape
     assert (("package.provider.Record", "*") in facts) is escaped
 
 
+def _provider_cache351_inputs():
+    import hashlib
+    from pathlib import Path
+
+    tree = ast.parse("import requests\nrequests.get('https://example.com')\n")
+    raw = b"import requests\nrequests.get('https://example.com')\n"
+    sources = {
+        "main.py": raw,
+        "peer.py": b"import requests\nrequests.get = replacement\n",
+    }
+    tree._oracle_source_sha256 = hashlib.sha256(raw).hexdigest()
+    tree._security_source_context = (Path("."), sources)
+    tree._security_oracle_context = {"_security_provider_mutation_cache": {}}
+    nodes = tuple(ast.walk(tree))
+    parents = {
+        id(child): node for node in nodes for child in ast.iter_child_nodes(node)
+    }
+    return tree, sources, nodes, parents
+
+
+def test_provider_cache351_reuses_foreign_facts_without_mutable_result_leak(
+    monkeypatch,
+):
+    from factoryline import finite_capture
+
+    tree, sources, nodes, parents = _provider_cache351_inputs()
+    original = ast.parse
+    parsed = []
+
+    def counted(*args, **kwargs):
+        parsed.append(args[0])
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(ast, "parse", counted)
+    first = finite_capture.finite_provider_mutation_index(
+        nodes, {"requests": "requests"}, review_audits, parents
+    )
+    assert ("requests", "get") in first
+    first.clear()
+    second = finite_capture.finite_provider_mutation_index(
+        nodes, {"requests": "requests"}, review_audits, parents
+    )
+    assert ("requests", "get") in second
+    assert len(parsed) == 1
+
+
+def test_provider_cache351_changed_peer_and_helper_cannot_reuse_stale_facts(
+    monkeypatch,
+):
+    from factoryline import finite_capture
+
+    tree, sources, nodes, parents = _provider_cache351_inputs()
+
+    def scan():
+        return finite_capture.finite_provider_mutation_index(
+            nodes, {"requests": "requests"}, review_audits, parents
+        )
+
+    assert ("requests", "get") in scan()
+    sources["peer.py"] = b"import requests\nrequests.post = replacement\n"
+    assert ("requests", "get") not in scan()
+    assert ("requests", "post") in scan()
+    original = finite_capture._provider_mutation_facts
+
+    def changed(*args):
+        original(*args)
+        args[5].add(("requests", "changed_helper"))
+
+    monkeypatch.setattr(finite_capture, "_provider_mutation_facts", changed)
+    assert ("requests", "changed_helper") in scan()
+
+
+@pytest.mark.parametrize("predicate", ["capture_predicate", "argument_predicate"])
+def test_provider_cache351_predicated_and_invalid_sources_remain_conservative(
+    predicate,
+):
+    from factoryline import finite_capture
+
+    tree, sources, nodes, parents = _provider_cache351_inputs()
+
+    def scan(**kwargs):
+        return finite_capture.finite_provider_mutation_index(
+            nodes, {"requests": "requests"}, review_audits, parents, **kwargs
+        )
+
+    assert ("requests", "get") in scan(**{predicate: lambda *args: False})
+    assert all(
+        key[0] == "parsed"
+        for key in tree._security_oracle_context["_security_provider_mutation_cache"]
+    )
+    scan()
+    sources["peer.py"] = b"invalid ("
+    assert ("requests", "*") in scan()
+
+
+def test_provider_cache351_native_scan_shares_only_one_lifecycle(tmp_path, monkeypatch):
+    from factoryline import finite_capture
+
+    (tmp_path / "main.py").write_text(
+        "import requests\nrequests.get('https://example.com')\n"
+    )
+    (tmp_path / "peer.py").write_text("import requests\nrequests.get = replacement\n")
+    original = finite_capture._foreign_provider_mutation_cache
+    caches = []
+
+    def observed(*args):
+        result = original(*args)
+        if result[0] is not None:
+            caches.append(result[0])
+        return result
+
+    monkeypatch.setattr(finite_capture, "_foreign_provider_mutation_cache", observed)
+    with review_audits._security_only_scan_context(True):
+        review_audits.security_scan(
+            tmp_path, cache_enabled=False, defect_policy="source-role-v2"
+        )
+        split = len(caches)
+        review_audits.security_scan(
+            tmp_path, cache_enabled=False, defect_policy="source-role-v2"
+        )
+    assert split and len(caches) > split
+    assert all(cache is caches[0] for cache in caches[:split])
+    assert all(cache is caches[split] for cache in caches[split:])
+    assert caches[0] is not caches[split]
+
+
+def test_provider_cache351_each_capture_predicate_is_reevaluated():
+    from factoryline import finite_capture
+
+    tree, sources, nodes, parents = _provider_cache351_inputs()
+    sources["peer.py"] = b"import requests\nselected = requests.get\n"
+
+    def scan(accepted):
+        return finite_capture.finite_provider_mutation_index(
+            nodes,
+            {"requests": "requests"},
+            review_audits,
+            parents,
+            capture_predicate=lambda node: accepted,
+        )
+
+    assert ("requests.get", "*") not in scan(False)
+    assert ("requests.get", "*") in scan(True)
+    assert ("requests.get", "*") not in scan(False)
+
+
+def test_foreign_provider360_indexes_events_without_caching_predicate_results():
+    from factoryline import finite_capture as finite
+
+    tree, _, _, _ = _provider_cache351_inputs()
+    raw = (
+        b"import requests\nvalues = [1, 2, 3, 4]\n"
+        b"selected = requests.get\nrequests.post = replacement\n"
+        b"setattr(requests, 'put', replacement)\n"
+        b"def consume():\n    accept(requests)\n    return requests\n"
+    )
+    digest = hashlib.sha256(raw).hexdigest()
+    indexed, aliases, parents, bindings = finite._foreign_provider_inputs(
+        tree, raw, digest, review_audits._security_aliases
+    )
+    full = tuple(ast.walk(ast.parse(raw)))
+    full_parents = {
+        id(child): node for node in full for child in ast.iter_child_nodes(node)
+    }
+    full_aliases = review_audits._security_aliases(full)
+    full_bindings = finite._provider_alias_bindings(full)
+    assert len(indexed) < len(full) / 2
+    for accepted in (False, True, False):
+        observations = []
+
+        def capture(node):
+            observations.append(("capture", ast.dump(node)))
+            return accepted
+
+        def argument(node, _aliases, _parents):
+            observations.append(("argument", ast.dump(node)))
+            return accepted
+
+        expected, actual = set(), set()
+        finite._provider_mutation_facts(
+            full,
+            full_aliases,
+            review_audits,
+            full_parents,
+            full_bindings,
+            expected,
+            capture,
+            argument,
+        )
+        expected_calls = list(observations)
+        observations.clear()
+        finite._provider_mutation_facts(
+            indexed,
+            aliases,
+            review_audits,
+            parents,
+            bindings,
+            actual,
+            capture,
+            argument,
+        )
+        assert actual == expected
+        assert observations == expected_calls
+        assert ("requests", "post") in actual and ("requests", "put") in actual
+        repeated = finite._foreign_provider_inputs(
+            tree, raw, digest, review_audits._security_aliases
+        )
+        assert repeated[0] is indexed
+
+
+@pytest.mark.parametrize(
+    "expression",
+    [
+        "os.path.join(base, leaf)",
+        "os.path.join('relative', leaf)",
+        "os.path.join('/fixed')",
+        "os.path.join('/fixed', leaf, option=True)",
+    ],
+)
+def test_upload361_rejects_impossible_barrier_before_provider_scan(expression):
+    from factoryline.intent_quality import fixed_root_filename_path
+
+    def forbidden(*args):
+        pytest.fail(
+            "impossible path barrier must not trigger a workspace provider scan"
+        )
+
+    assert (
+        fixed_root_filename_path(
+            ast.parse(expression, mode="eval").body, set(), {}, forbidden
+        )
+        is False
+    )
+
+
+def test_upload361_valid_barrier_still_requires_provider_and_leaf_proofs():
+    from factoryline.intent_quality import fixed_root_filename_path
+
+    node = ast.parse("os.path.join('/fixed', leaf)", mode="eval").body
+    calls = []
+
+    def provider(call, aliases, expected):
+        calls.append(expected)
+        return True
+
+    assert fixed_root_filename_path(
+        node, {("secure-upload-leaf", "leaf")}, {}, provider
+    )
+    assert calls == ["os.path.join"]
+    assert not fixed_root_filename_path(node, set(), {}, provider)
+    assert not fixed_root_filename_path(
+        node, {("secure-upload-leaf", "leaf")}, {}, lambda *_: False
+    )
+
+
 def test_provider_profile308_security_only_seal_retains_outer_scope(monkeypatch):
     from factoryline import audit_action_refs
 
@@ -867,9 +1269,19 @@ def test_provider_profile308_public_api_rejects_before_source_inventory(
 @pytest.mark.parametrize(
     "source", [b"\x00", b"value = 'unclosed", b"# coding: unknown-codec\nvalue = 1\n"]
 )
+@pytest.mark.parametrize("legacy_null_error", [False, True])
 def test_source_diagnostic318_missing_coordinates_retains_parse_failure(
-    tmp_path, source
+    tmp_path, source, legacy_null_error, monkeypatch
 ):
+    if legacy_null_error:
+        parse = ast.parse
+
+        def legacy_parse(data, *args, **kwargs):
+            if isinstance(data, bytes) and b"\x00" in data:
+                raise ValueError("source code string cannot contain null bytes")
+            return parse(data, *args, **kwargs)
+
+        monkeypatch.setattr(ast, "parse", legacy_parse)
     (tmp_path / "broken.py").write_bytes(source)
     report = review_audits.security_scan(tmp_path, cache_enabled=False)
     assert report["parse_errors"] == 1
@@ -887,6 +1299,41 @@ def test_source_diagnostic318_known_coordinates_are_preserved():
         "QUALITY_SYNTAX_ERROR", "broken.py", node, "Invalid syntax", "HIGH"
     )
     assert (row["line"], row["column"]) == (7, 3)
+
+
+@pytest.mark.parametrize(
+    ("error", "expected_code", "expected_outcome"),
+    [
+        (ValueError("null bytes"), "QUALITY_SYNTAX_ERROR", "syntax_error"),
+        (SyntaxError("invalid syntax"), "QUALITY_SYNTAX_ERROR", "syntax_error"),
+        (
+            UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid byte"),
+            "SECURITY_SOURCE_UNREADABLE",
+            "unreadable",
+        ),
+    ],
+)
+def test_source_diagnostic318_parser_error_classes_stay_distinct(
+    tmp_path, monkeypatch, error, expected_code, expected_outcome
+):
+    from factoryline import context_efficiency
+
+    path = tmp_path / "source.py"
+    source = b"value = 1\n"
+    path.write_bytes(source)
+
+    def reject_tree(*args, **kwargs):
+        raise error
+
+    monkeypatch.setattr(context_efficiency, "_verified_security_tree", reject_tree)
+    binding, findings, outcome = context_efficiency._scan_security_source(
+        tmp_path, path, (), (), {}, (), source
+    )
+    assert binding["path"] == "source.py"
+    assert outcome == expected_outcome
+    assert len(findings) == 1
+    assert findings[0]["code"] == expected_code
+    assert findings[0]["severity"] == "HIGH"
 
 
 def test_provider_profile308_public_scan_preserves_raw_and_default(
@@ -1484,6 +1931,64 @@ def test_sink_context_unknowns_reflection_and_wildcard_imports(tmp_path):
     assert evidence["callee_binding"]["reason"] == "wildcard_import_may_bind_name"
 
 
+@pytest.mark.parametrize("sink_name", ["eval", "exec"])
+def test_sink_context_selected_dynamic_sink_does_not_retrospectively_unknown_input(
+    tmp_path, sink_name
+):
+    source = f"def run(payload):\n    return {sink_name}(payload)\n"
+    path, _, digest, _, index, sink = _sink_context_index(
+        tmp_path, source, selected_name=sink_name
+    )
+    evidence = runtime.captured_sink_evidence(
+        sink, source_index=index, source_path=path, source_sha256=digest
+    )
+    payload = next(row for row in evidence["values"] if row["name"] == "payload")
+    assert payload["origin"] == "CALLABLE_PARAMETER"
+    assert payload["status"] == "INFERRED"
+
+
+def test_sink_context_reflective_barrier_respects_execution_order(tmp_path):
+    prior = "def run(payload):\n    globals()\n    return eval(payload)\n"
+    path, _, digest, _, index, sink = _sink_context_index(
+        tmp_path, prior, selected_name="eval"
+    )
+    evidence = runtime.captured_sink_evidence(
+        sink, source_index=index, source_path=path, source_sha256=digest
+    )
+    payload = next(row for row in evidence["values"] if row["name"] == "payload")
+    assert payload["status"] == "UNKNOWN"
+    assert payload["reason"] == "reflective_binding_possible"
+
+    after = (
+        "def run(payload):\n"
+        "    result = eval(payload)\n"
+        "    globals()\n"
+        "    return result\n"
+    )
+    path, _, digest, _, index, sink = _sink_context_index(
+        tmp_path, after, selected_name="eval"
+    )
+    evidence = runtime.captured_sink_evidence(
+        sink, source_index=index, source_path=path, source_sha256=digest
+    )
+    payload = next(row for row in evidence["values"] if row["name"] == "payload")
+    assert payload["origin"] == "CALLABLE_PARAMETER"
+    assert payload["status"] == "INFERRED"
+
+
+def test_sink_context_nested_reflection_in_selected_arguments_remains_unknown(tmp_path):
+    source = "def run(payload):\n    return eval(exec(payload))\n"
+    path, _, digest, _, index, sink = _sink_context_index(
+        tmp_path, source, selected_name="eval"
+    )
+    evidence = runtime.captured_sink_evidence(
+        sink, source_index=index, source_path=path, source_sha256=digest
+    )
+    payload = next(row for row in evidence["values"] if row["name"] == "payload")
+    assert payload["status"] == "UNKNOWN"
+    assert payload["reason"] == "reflective_binding_possible"
+
+
 def test_sink_context_rejects_disconnected_ast_and_invalid_source_encoding(tmp_path):
     path, raw, digest, _, index, sink = _sink_context_index(
         tmp_path, "import pickle\ndef restore(data):\n    return pickle.loads(data)\n"
@@ -1937,6 +2442,145 @@ def _witness(source, source_bytes=None):
         "exec",
         source_bytes=source_bytes,
         source_path="case.py",
+    )
+
+
+@pytest.mark.parametrize("profile", ["literal", "declaration", "finite", "generated"])
+@pytest.mark.parametrize("policy", ["legacy-v1", "source-role-v2"])
+def test_program_proof_recomputes_digest_and_captures_complete_inventory(
+    tmp_path, profile, policy
+):
+    sources = {
+        "literal": "exec('VALUE = 1')\n",
+        "declaration": "def run():\n    ctx = {}\n    exec('type Alias = int', ctx, None)\n",
+        "finite": SOURCE,
+        "generated": _SOURCE_GENERATED,
+    }
+    (tmp_path / "app.py").write_text(sources[profile], encoding="utf-8")
+    (tmp_path / "dependency.py").write_text("VALUE = 1\n", encoding="utf-8")
+    report = review_audits.security_scan(
+        tmp_path, cache_enabled=False, defect_policy=policy
+    )
+    observations = [
+        row
+        for row in report.get("primitive_observations", [])
+        if row["code"] == "SECURITY_DYNAMIC_EXECUTION"
+    ]
+    assert observations
+    captured = dict(report._captured_sources)
+    assert set(captured) == {"app.py", "dependency.py"}
+    original = copy.deepcopy(dict(report))
+    original["_primitive_source_bytes"] = captured
+    review_integrity.partition_proven_primitive_observations(original)
+    assert original["primitive_observations"] == report["primitive_observations"]
+    for corrupt in ("digest", "inventory", "extra_fact", "profile"):
+        altered = copy.deepcopy(dict(report))
+        altered["_primitive_source_bytes"] = dict(captured)
+        if corrupt == "digest":
+            for row in altered["primitive_observations"]:
+                row["facts"]["program_sha256"] = "0" * 64
+        elif corrupt == "inventory":
+            altered["_primitive_source_bytes"].pop("dependency.py")
+        else:
+            for row in altered["primitive_observations"]:
+                row["facts"][corrupt] = {"scope": "untrusted-caller-profile"}
+        review_integrity.partition_proven_primitive_observations(altered)
+        assert not altered.get("primitive_observations")
+        rejected = [
+            row
+            for row in altered["findings"]
+            if row["code"] == "SECURITY_DYNAMIC_EXECUTION"
+        ]
+        assert len(rejected) == len(observations)
+        assert all(row["severity"] == "HIGH" for row in rejected)
+
+
+@pytest.mark.parametrize(
+    "producer",
+    [
+        "p = Path(__file__).parent / 'payload.py'\nwith p.open() as f:\n    exec(f.read())\n",
+        "p = Path(__file__).parent / 'payload.py'\nexec(p.read_text())\n",
+        "p = Path(__file__).parent / 'payload.py'\nwith open(p) as f:\n    code = compile(f.read(), 'payload', 'exec')\n    exec(code, globals(), locals())\n",
+    ],
+)
+def test_captured_file_program_role_changes_native_context_queue(tmp_path, producer):
+    """captured_file_program_role preserves source-bound file producers in the native context queue."""
+    source = "from pathlib import Path\n" + producer
+    (tmp_path / "app.py").write_text(source, encoding="utf-8")
+    (tmp_path / "payload.py").write_text("VALUE = 1\n", encoding="utf-8")
+    report = review_audits.security_scan(
+        tmp_path, cache_enabled=False, defect_policy="source-role-v2"
+    )
+    reviews = [
+        row
+        for row in report.get("context_reviews", [])
+        if row["code"] == "SECURITY_DYNAMIC_EXECUTION"
+    ]
+    assert len(reviews) == 1
+    assert reviews[0]["severity"] == "HIGH"
+    ledger = next(
+        row
+        for row in report["finding_tier_report"]["ledger"]
+        if row["raw_finding"]["code"] == "SECURITY_DYNAMIC_EXECUTION"
+    )
+    assert ledger["source_role_review"]["payload_path"] == "payload.py"
+    assert ledger["source_role_review"]["safe_execution"] is False
+    assert ledger["raw_finding"] == reviews[0]
+    assert ledger["tier"] == "NEEDS_CONTEXT"
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        "f = incoming\n",
+        "saved = f\n",
+        "mutate(f)\n",
+        "f.read = incoming\n",
+    ],
+)
+def test_captured_file_program_role_rejects_handle_replacement_and_escape(
+    tmp_path, change
+):
+    source = (
+        "from pathlib import Path\np = Path(__file__).parent / 'payload.py'\n"
+        "with p.open() as f:\n    " + change + "    exec(f.read())\n"
+    )
+    (tmp_path / "app.py").write_text(source, encoding="utf-8")
+    (tmp_path / "payload.py").write_text("VALUE = 1\n", encoding="utf-8")
+    report = review_audits.security_scan(
+        tmp_path, cache_enabled=False, defect_policy="source-role-v2"
+    )
+    assert any(
+        row["code"] == "SECURITY_DYNAMIC_EXECUTION" for row in report["findings"]
+    )
+    assert not report.get("context_reviews")
+
+
+@pytest.mark.parametrize(
+    "caller", ["self.build('VALUE = 1')", "self.build(incoming)", "saved = self.build"]
+)
+def test_literal_caller_program_role_requires_complete_literal_callers(
+    tmp_path, caller
+):
+    """captured_literal_caller_program_role requires a complete literal caller set and rejects unknown callers."""
+    source = (
+        "import textwrap\nclass Example:\n"
+        "    def build(self, source):\n        namespace = {}\n"
+        "        exec(textwrap.dedent(source), namespace)\n        return namespace\n"
+        f"    def test_value(self):\n        {caller}\n"
+    )
+    (tmp_path / "example.py").write_text(source, encoding="utf-8")
+    report = review_audits.security_scan(
+        tmp_path, cache_enabled=False, defect_policy="source-role-v2"
+    )
+    reviewed = any(
+        row["code"] == "SECURITY_DYNAMIC_EXECUTION"
+        for row in report.get("context_reviews", [])
+    )
+    assert reviewed is (caller == "self.build('VALUE = 1')")
+    assert any(
+        row["raw_finding"]["code"] == "SECURITY_DYNAMIC_EXECUTION"
+        for row in report["finding_tier_report"]["ledger"]
     )
 
 
@@ -3072,6 +3716,7 @@ def test_source_generated_eval_partition_rejects_unhashable_or_wrong_fact_types(
     assert len(report["primitive_observations"]) == 1
     assert len(report["findings"]) == 1
     assert report["findings"][0]["severity"] == "HIGH"
+    json.dumps(report)
 
 
 @pytest.mark.parametrize(
@@ -3149,6 +3794,150 @@ def test_extracted_runtime_helpers_invalidate_native_cache(
     assert audit._oracle_context_cache_key(tmp_path, [], {}) == before
 
 
+@pytest.mark.parametrize("mutation", ["binding", "code"])
+def test_pickle_model_implementation_invalidates_runtime_oracle_cache(
+    tmp_path, monkeypatch, mutation
+):
+    from factoryline import pickle_model_audit as pickle_model
+    from factoryline import review_audits as audit
+    from factoryline import runtime_audit_integrity as runtime
+
+    expected = {
+        pickle_model._closed_literal_pickle_input,
+        pickle_model._closed_literal_pickle_source_evidence,
+        pickle_model.closed_literal_pickle_witness,
+        pickle_model._closed_local_pickle_scope,
+        pickle_model._closed_local_pickle_dump,
+        pickle_model.closed_local_pickle_origin,
+        pickle_model._provider_v3_export_rows,
+        pickle_model._provider_v3_export_target,
+        pickle_model.provider_export_chain_v3,
+    }
+    for helpers in (
+        runtime.native_execution_helpers(),
+        runtime.finite_template_input_helpers(),
+        runtime.workspace_builtin_helpers(),
+    ):
+        assert expected <= set(helpers)
+
+    original = pickle_model._closed_local_pickle_dump
+    before = audit._oracle_context_cache_key(tmp_path, [], {})
+
+    def replacement(*args, **kwargs):
+        return None
+
+    with monkeypatch.context() as patch:
+        if mutation == "binding":
+            patch.setattr(pickle_model, "_closed_local_pickle_dump", replacement)
+        else:
+            patch.setattr(original, "__code__", replacement.__code__)
+        assert audit._oracle_context_cache_key(tmp_path, [], {}) != before
+    assert audit._oracle_context_cache_key(tmp_path, [], {}) == before
+
+
+def test_pickle_model_inventory_tracks_owned_callables_and_class_methods():
+    from factoryline import pickle_model_audit as pickle_model
+    from factoryline import runtime_audit_integrity as runtime
+
+    expected = {
+        value
+        for value in vars(pickle_model).values()
+        if callable(value)
+        and getattr(value, "__module__", None) == pickle_model.__name__
+    }
+    expected_methods = {
+        member
+        for owner in expected
+        if isinstance(owner, type)
+        for member in vars(owner).values()
+        if callable(member)
+        and getattr(member, "__module__", None) == pickle_model.__name__
+    }
+    expected.update(expected_methods)
+    expected.update(
+        {
+            pickle_model._ProviderV4Graph.edge,
+            pickle_model._ProviderV4SourceInterpreter.value,
+            pickle_model._fixed_literal_value,
+            pickle_model._fixed_program_span,
+            pickle_model._captured_sink_parameter_names,
+        }
+    )
+
+    for helpers in (
+        runtime.native_execution_helpers(),
+        runtime.finite_template_input_helpers(),
+        runtime.workspace_builtin_helpers(),
+    ):
+        assert expected <= set(helpers)
+
+
+@pytest.mark.parametrize(
+    ("surface", "mutation"),
+    [
+        ("class", "binding"),
+        ("class-method", "code"),
+        ("wrapper", "binding"),
+        ("wrapper", "code"),
+        ("inventory", "binding"),
+        ("inventory", "code"),
+    ],
+)
+def test_pickle_model_class_and_wrapper_mutations_invalidate_runtime_oracle_cache(
+    tmp_path, monkeypatch, surface, mutation
+):
+    from factoryline import pickle_model_audit as pickle_model
+    from factoryline import review_audits as audit
+
+    before = audit._oracle_context_cache_key(tmp_path, [], {})
+
+    def replacement(*args, **kwargs):
+        return None
+
+    if surface == "class":
+        _assert_pickle_class_binding_mutations(
+            tmp_path, monkeypatch, pickle_model, audit, before
+        )
+    elif surface == "class-method":
+        _assert_pickle_class_method_mutation(
+            tmp_path, monkeypatch, pickle_model, audit, replacement, before
+        )
+    else:
+        attribute = (
+            "cache_helpers" if surface == "inventory" else "_fixed_literal_value"
+        )
+        original = getattr(pickle_model, attribute)
+        if mutation == "binding":
+            if surface == "inventory":
+                first, second = _inventory_binding_replacements(original)
+            else:
+
+                def second(*args, **kwargs):
+                    return None
+
+                first = replacement
+            _assert_cache_binding_swap_changes_key(
+                tmp_path,
+                monkeypatch,
+                pickle_model,
+                audit,
+                attribute,
+                first,
+                second,
+                before,
+            )
+        elif surface == "inventory":
+            _assert_inventory_code_mutation_changes_key(
+                tmp_path, monkeypatch, original, audit, before
+            )
+        else:
+            with monkeypatch.context() as patch:
+                patch.setattr(original, "__code__", replacement.__code__)
+                assert audit._oracle_context_cache_key(tmp_path, [], {}) != before
+
+    assert audit._oracle_context_cache_key(tmp_path, [], {}) == before
+
+
 def test_tenant_scope_read_retains_unique_binding_and_rejects_ambiguity():
     row = runtime.tenant_scope_read(
         review_audits, "Tenant.get", {"Tenant.get": ["tenant_id"]}
@@ -3212,6 +4001,237 @@ def test_fixed_literal_program_witness_binds_literal_bytes_and_refuses_mutation(
             source_path="app.py",
         )
         == {}
+    )
+
+
+def test_werkzeug_source_built_ast_proof_recomputes_and_rejects_mutations(tmp_path):
+    from pathlib import Path
+
+    from factoryline.finite_capture import (
+        source_built_ast_program_witness,
+        source_built_ast_workspace_provider_clear,
+    )
+    from factoryline import finite_capture
+
+    checkout = Path(r"C:/Users/rkatz/Documents/Codex/cf-gate-consolidation162/.factory")
+    capture_root = (
+        checkout / "precision280/official-fresh/capture/sources/pallets--werkzeug"
+    )
+    source_path = "src/werkzeug/routing/rules.py"
+    source = capture_root / source_path
+    case_map_path = checkout / "precision290/pyflow66-case-map.json"
+    if not source.is_file() or not case_map_path.is_file():
+        pytest.skip("the hash-bound parent-managed H280-032 capture is unavailable")
+    raw = source.read_bytes()
+    case = next(
+        item
+        for item in json.loads(case_map_path.read_text(encoding="utf-8"))["cases"]
+        if item.get("packet") == "H280-032"
+    )
+    assert hashlib.sha256(raw).hexdigest() == case["source_sha256"]
+    assert case["paired_label"] == "FP" and case["source_hash_match"] is True
+    tree = ast.parse(raw, filename=source_path)
+    calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "exec"
+        and node.lineno == case["line"]
+    ]
+    assert len(calls) == 1
+    sources = {path: path.read_bytes() for path in capture_root.rglob("*.py")}
+    assert source_built_ast_workspace_provider_clear(sources, source_path, capture_root)
+    witness = source_built_ast_program_witness(
+        calls[0], "exec", source_bytes=raw, source_path=source_path
+    )
+    assert witness["disposition"] == "PROVEN_SOURCE_BUILT_AST_PROGRAM"
+    assert witness["runtime_assurance"] == "INCOMPLETE"
+    assert witness["target_execution"] == "not_performed"
+    sealed_helpers = primitive.fixed_program_workspace_helpers(review_integrity)
+    for name in (
+        "_source_built_ast_annotations_static",
+        "_source_built_ast_builder",
+        "_source_built_ast_constants",
+        "_source_built_ast_effects_closed",
+        "_source_built_ast_module_alias",
+        "_source_built_ast_owned_values",
+        "_source_built_ast_provider_expr",
+        "_source_built_ast_scope",
+        "_source_built_ast_sensitive_attribute",
+        "_source_built_ast_sink",
+    ):
+        assert getattr(finite_capture, name) in sealed_helpers
+
+    relative_sources = {
+        path.relative_to(capture_root).as_posix(): content
+        for path, content in sources.items()
+    }
+    rows = sorted(
+        [
+            {
+                "path": path,
+                "sha256": hashlib.sha256(content).hexdigest(),
+            }
+            for path, content in relative_sources.items()
+        ],
+        key=lambda row: row["path"],
+    )
+    bindings = {row["path"]: row["sha256"] for row in rows}
+    facts = {
+        **witness,
+        "call": "exec",
+        "workspace_sources_sha256": hashlib.sha256(
+            json.dumps(
+                [(row["path"], row["sha256"]) for row in rows], separators=(",", ":")
+            ).encode()
+        ).hexdigest(),
+    }
+    finding = {
+        "code": "SECURITY_DYNAMIC_EXECUTION",
+        "path": source_path,
+        "line": calls[0].lineno,
+        "column": calls[0].col_offset,
+        "facts": facts,
+    }
+    assert primitive._fixed_program_binding(
+        finding, facts, rows, bindings, review_integrity, relative_sources
+    )
+    changed_facts = {**facts, "builder_ast_sha256": "0" * 64}
+    assert not primitive._fixed_program_binding(
+        {**finding, "facts": changed_facts},
+        changed_facts,
+        rows,
+        bindings,
+        review_integrity,
+        relative_sources,
+    )
+
+    workspace_root = tmp_path / "capture"
+    for path, content in relative_sources.items():
+        target = workspace_root / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(content)
+    with review_audits._security_only_scan_context(True):
+        original_report = review_audits.security_scan(
+            workspace_root, cache_enabled=False, defect_policy="source-role-v2"
+        )
+    original_proofs = [
+        item
+        for item in original_report["primitive_observations"]
+        if item["code"] == "SECURITY_DYNAMIC_EXECUTION"
+        and item["path"] == source_path
+        and item["facts"].get("disposition") == "PROVEN_SOURCE_BUILT_AST_PROGRAM"
+    ]
+    assert len(original_proofs) == 1
+    assert not any(
+        item["code"] == "SECURITY_DYNAMIC_EXECUTION" and item["path"] == source_path
+        for item in original_report["findings"]
+    )
+
+    altered = raw.replace(
+        b'code = compile(module, "<werkzeug routing>", "exec")',
+        b'code = compile(module, "<werkzeug routing>", "exec")\n        code = self.rule',
+        1,
+    )
+    (workspace_root / source_path).write_bytes(altered)
+    with review_audits._security_only_scan_context(True):
+        altered_report = review_audits.security_scan(
+            workspace_root, cache_enabled=False, defect_policy="source-role-v2"
+        )
+    assert not any(
+        item["code"] == "SECURITY_DYNAMIC_EXECUTION"
+        and item["path"] == source_path
+        and item["facts"].get("disposition") == "PROVEN_SOURCE_BUILT_AST_PROGRAM"
+        for item in altered_report.get("primitive_observations", [])
+    )
+    active = [
+        item
+        for item in altered_report["findings"]
+        if item["code"] == "SECURITY_DYNAMIC_EXECUTION" and item["path"] == source_path
+    ]
+    assert len(active) == 1
+    assert active[0]["severity"] == "HIGH"
+
+    attacks = (
+        raw.replace(
+            b'code = compile(module, "<werkzeug routing>", "exec")',
+            b'code = compile(module, "<werkzeug routing>", "exec")\n        code = self.rule',
+            1,
+        ),
+        raw.replace(
+            b'module = ast.parse("")',
+            b'module = ast.parse("")\n        module = self.rule',
+            1,
+        ),
+        raw.replace(
+            b'func_ast = _prefix_names("def _(): pass", ast.FunctionDef)',
+            b'func_ast = _prefix_names("def _(): pass", ast.FunctionDef)\n        func_ast = self.rule',
+            1,
+        ),
+        raw.replace(
+            b'func_ast.args.kwarg = ast.arg(".kwargs", None)',
+            b"func_ast.args = self.rule",
+            1,
+        ),
+        raw.replace(
+            b'func_ast = _prefix_names("def _(): pass", ast.FunctionDef)',
+            b'func_ast = _prefix_names("def _(): pass", ast.FunctionDef)\n        args = func_ast.args',
+            1,
+        ),
+        raw.replace(b"ast.parse(src).body[0]", b"ast.parse(untrusted).body[0]", 1),
+        raw.replace(
+            b'"def _(): pass"', b'"@danger\\ndef _(x=evil()) -> evil(): pass"', 1
+        ),
+        raw.replace(b"import ast", b"import ast; ast.parse = evil", 1),
+        raw.replace(b"import ast", b"import ast; compile = replacement", 1),
+        raw.replace(b"import ast", b"import ast; exec = replacement", 1),
+        raw + b"\nRule._get_func_code(code, name)\n",
+        raw + b"\nRule._get_func_code = replacement\n",
+        raw.replace(
+            b"body = []",
+            b"body = [ast.Expr(ast.Call(ast.Name('evil', ast.Load()), [], []))]",
+            1,
+        ),
+    )
+    for attacked in attacks:
+        attacked_tree = ast.parse(attacked, filename=source_path)
+        attacked_calls = [
+            node
+            for node in ast.walk(attacked_tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "exec"
+        ]
+        assert len(attacked_calls) == 1
+        attacked_call = attacked_calls[0]
+        assert (
+            source_built_ast_program_witness(
+                attacked_call, "exec", source_bytes=attacked, source_path=source_path
+            )
+            == {}
+        )
+
+    extra_provider = dict(relative_sources)
+    extra_provider["foreign.py"] = b"import ast\n"
+    assert not source_built_ast_workspace_provider_clear(
+        extra_provider, source_path, capture_root
+    )
+    for mutation in (
+        b"import sys\nsys.modules['ast'].parse = replacement\n",
+        b"import builtins\nbuiltins.compile = replacement\n",
+        b"import sys\nsetattr(sys.modules['builtins'], 'exec', replacement)\n",
+        b"from werkzeug.routing import rules\nprovider = rules.ast\nprovider.parse = replacement\n",
+        b"from werkzeug.routing import rules\nprovider = rules.ast\nsetattr(provider, 'parse', replacement)\n",
+    ):
+        extra_provider = dict(relative_sources)
+        extra_provider["foreign.py"] = mutation
+        assert not source_built_ast_workspace_provider_clear(
+            extra_provider, source_path, capture_root
+        )
+    same_file_alias = raw + b"\na = ast\nsetattr(a, 'parse', replacement)\n"
+    assert not source_built_ast_workspace_provider_clear(
+        {**relative_sources, source_path: same_file_alias}, source_path, capture_root
     )
 
 
@@ -3383,6 +4403,12 @@ def test_local_eval_def_use_binding_recomputes_source_and_rejects_stale_or_forge
     assert primitive.fixed_primitive_binding(
         finding, sources, bindings, review_audits, source_bytes
     )
+    for wrong_scope in ("module", "unrecognized-source-scope"):
+        wrong_profile = json.loads(json.dumps(finding))
+        wrong_profile["facts"]["profile"]["scope"] = wrong_scope
+        assert not primitive.fixed_primitive_binding(
+            wrong_profile, sources, bindings, review_audits, source_bytes
+        )
     assert not primitive.fixed_primitive_binding(
         finding, sources, bindings, review_audits
     )
@@ -4628,6 +5654,46 @@ def test_workspace_v2_security_only_keeps_security_findings_without_oracle_analy
     assert quality_calls == []
 
 
+@pytest.mark.parametrize(
+    "missing_snapshot", [False, True], ids=["snapshot", "fallback"]
+)
+def test_security_only_contextvar_skips_quality_in_source_scanner_paths(
+    tmp_path, monkeypatch, missing_snapshot
+):
+    from factoryline import review_audits
+
+    (tmp_path / "settings.py").write_text(
+        'GITHUB_TOKEN = "ghp_abcdefghijklmnop"\n', encoding="utf-8"
+    )
+    quality_calls = []
+
+    def forbidden_quality(*args, **kwargs):
+        quality_calls.append(True)
+        raise AssertionError("security-only scan must skip quality analysis")
+
+    monkeypatch.setattr(review_audits, "_test_oracle_findings", forbidden_quality)
+    monkeypatch.setattr(
+        review_audits.contracts, "implementation_findings", forbidden_quality
+    )
+    if missing_snapshot:
+        original_project = review_audits._project_oracle_context
+
+        def without_snapshot_consumer(*args, **kwargs):
+            kwargs.pop("security_snapshot_consumer", None)
+            return original_project(*args, **kwargs)
+
+        monkeypatch.setattr(
+            review_audits, "_project_oracle_context", without_snapshot_consumer
+        )
+
+    with review_audits._security_only_scan_context(True):
+        report = review_audits.security_scan(tmp_path, cache_enabled=False)
+
+    assert report["audit_coverage"]["complete"]
+    assert any(row["code"] == "SECURITY_HARDCODED_SECRET" for row in report["findings"])
+    assert quality_calls == []
+
+
 def test_default_security_tree_keeps_test_oracle_analysis(tmp_path, monkeypatch):
     (tmp_path / "settings.py").write_text(
         "def test_empty():\n    pass\n", encoding="utf-8"
@@ -4690,6 +5756,106 @@ def test_security_only_contextvar_restores_nested_success_and_failure():
     assert review_audits._SECURITY_ONLY_SCAN.get() is False
 
 
+def test_oracle_cache_identity_separates_strict_security_only_mode(tmp_path):
+    audit = review_audits
+    audit._oracle_context_cache_clear()
+    default_key = audit._oracle_context_cache_key(tmp_path, [], {})
+    with audit._security_only_scan_context(True):
+        security_key = audit._oracle_context_cache_key(tmp_path, [], {})
+        assert security_key != default_key
+    assert audit._oracle_context_cache_key(tmp_path, [], {}) == default_key
+    with audit._security_only_scan_context(1):
+        assert audit._oracle_context_cache_key(tmp_path, [], {}) == default_key
+
+
+def test_security_only_projection_skips_quality_helpers_and_keeps_security_context(
+    tmp_path, monkeypatch
+):
+    from factoryline import context_efficiency, test_oracle_misuse
+
+    source = tmp_path / "app.py"
+    source.write_text(
+        "from flask import request\n"
+        "def endpoint():\n    return eval(request.args['q'])\n",
+        encoding="utf-8",
+    )
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("quality-only oracle analysis ran in security-only mode")
+
+    for name in (
+        "_imported_oracle_helper_sets",
+        "_imported_unittest_mixins",
+        "_bind_imported_pytest_bases",
+    ):
+        monkeypatch.setattr(review_audits, name, forbidden)
+    monkeypatch.setattr(test_oracle_misuse, "source_callback_invokers", forbidden)
+    monkeypatch.setattr(test_oracle_misuse, "source_callback_snapshot_state", forbidden)
+    monkeypatch.setattr(
+        review_audits.integrity, "_structural_oracle_context", forbidden
+    )
+    monkeypatch.setattr(context_efficiency, "protocol_call_context", forbidden)
+
+    with review_audits._security_only_scan_context(True):
+        report = review_audits.security_scan(tmp_path, cache_enabled=False)
+    assert report["sources"][0]["path"] == "app.py"
+    assert any(
+        row["code"] == "SECURITY_DYNAMIC_EXECUTION" for row in report["findings"]
+    )
+
+
+@pytest.mark.parametrize(
+    "first_mode", [False, True], ids=["mixed-first", "security-first"]
+)
+def test_warm_oracle_cache_keeps_security_and_mixed_projections_separate(
+    tmp_path, first_mode
+):
+    helper = tmp_path / "helpers.py"
+    helper.write_text(
+        "def assert_valid(value):\n    assert value == 'expected'\n",
+        encoding="utf-8",
+    )
+    test_file = tmp_path / "test_use.py"
+    test_file.write_text(
+        "from helpers import assert_valid\n"
+        "def test_value():\n    assert_valid('expected')\n",
+        encoding="utf-8",
+    )
+    review_audits._oracle_context_cache_clear()
+    modes = [first_mode, not first_mode, first_mode, not first_mode]
+    projections = {}
+    for security_only in modes:
+        with review_audits._security_only_scan_context(security_only):
+            contexts, _bindings, _edges, _source_bytes = (
+                review_audits._project_oracle_context(
+                    tmp_path, [helper, test_file], cache_enabled=True
+                )
+            )
+        projections[security_only] = contexts[test_file]["helpers"]
+    assert projections[True] == set()
+    assert any(name.endswith("assert_valid") for name in projections[False])
+    assert review_audits._oracle_context_cache_info()["hits"] == 2
+
+
+def test_security_scan_cached_and_uncached_preserve_security_proofs(tmp_path):
+    source = tmp_path / "app.py"
+    source.write_text(
+        "from flask import request\n"
+        "TOKEN = 'ghp_abcdefghijklmnopqrstuvwxyz123456'\n"
+        "def endpoint():\n    return eval(request.args['q'])\n",
+        encoding="utf-8",
+    )
+    review_audits._oracle_context_cache_clear()
+    with review_audits._security_only_scan_context(True):
+        cached = review_audits.security_scan(tmp_path, cache_enabled=True)
+    review_audits._oracle_context_cache_clear()
+    with review_audits._security_only_scan_context(True):
+        uncached = review_audits.security_scan(tmp_path, cache_enabled=False)
+    assert cached["sources"] == uncached["sources"]
+    assert cached["findings"] == uncached["findings"]
+    assert cached["finding_tier_report"] == uncached["finding_tier_report"]
+
+
 def _trusted_core_policy316_seal(tmp_path, source):
     path = tmp_path / "app.py"
     path.write_bytes(source)
@@ -4725,7 +5891,7 @@ def test_trusted_core_policy316_review_queue_is_not_clean_or_approved(tmp_path):
     report = _trusted_core_policy316_seal(tmp_path, b"eval(user_data)\n")
     decision = report["defect_policy_decision"]
     assert decision["state"] == "NO_SUPPORTED_DEFECTS_REVIEW_REQUIRED"
-    assert decision["exit_code"] == 0
+    assert decision["exit_code"] == 2
     assert decision["supported_defect_count"] == 0
     assert decision["needs_context_count"] == 1
     assert decision["passed"] is False
@@ -5578,3 +6744,512 @@ def test_pickle_reconstruction317_model_rejects_exponential_fstring_growth(monke
         )
         is None
     )
+
+
+_TYPED_SOURCE = "from flask import request\n"
+
+
+def _typed_origin_findings(source):
+    from pathlib import Path
+
+    root = Path.cwd()
+    return review_audits._security_scan_tree(
+        root, root / "app.py", ast.parse(source), security_only=True
+    )
+
+
+@pytest.mark.parametrize(
+    "imports,body,sink,rule",
+    [
+        ("", 'alias = "(" + value + ")"', "eval", "SECURITY_DYNAMIC_EXECUTION"),
+        ("import os\n", 'alias = "echo " + value', "os.system", "SECURITY_OS_COMMAND"),
+        (
+            "import subprocess\n",
+            'alias = f"echo {value}"',
+            "subprocess.run",
+            "SECURITY_SHELL_COMMAND",
+        ),
+        (
+            "import yaml\n",
+            'alias = value + " "',
+            "yaml.unsafe_load",
+            "SECURITY_UNSAFE_YAML",
+        ),
+        (
+            "import pickle\n",
+            "alias = b'' + value",
+            "pickle.loads",
+            "SECURITY_UNSAFE_DESERIALIZATION",
+        ),
+        (
+            "import pickle\n",
+            "alias = value.encode()",
+            "pickle.loads",
+            "SECURITY_UNSAFE_DESERIALIZATION",
+        ),
+    ],
+)
+def test_native_typed_origin_common_transforms_reach_five_sink_families(
+    imports, body, sink, rule
+):
+    binary = "b''" in body
+    payload = "request.get_data()" if binary else "request.get_data(as_text=True)"
+    options = ", shell=True" if sink == "subprocess.run" else ""
+    source = (
+        imports
+        + _TYPED_SOURCE
+        + f"def transform(value):\n    {body}\n    return alias\n{sink}(transform({payload}){options})\n"
+    )
+    (finding,) = [row for row in _typed_origin_findings(source) if row["code"] == rule]
+    premise = finding["facts"]["security_precondition"]
+    trace = premise["input_value_flow"]
+    assert premise["status"] == "SUPPORTED"
+    assert trace["value_kind"] == ("bytes" if binary or "encode" in body else "text")
+    assert len(trace["trace_sha256"]) == 64
+    assert any(step["operation"] == "HELPER_RETURN" for step in trace["steps"])
+    assert all(len(step["ast_sha256"]) == 64 for step in trace["steps"])
+    assert trace["runtime_execution"] == "not_performed"
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        _TYPED_SOURCE
+        + "def transform(value):\n    alias = 'prefix' + opaque()\n    return alias\neval(transform(request.get_data(as_text=True)))\n",
+        _TYPED_SOURCE
+        + "def transform(value):\n    alias = b'prefix' + value\n    return alias\neval(transform(request.get_data(as_text=True)))\n",
+        _TYPED_SOURCE
+        + "def transform(value):\n    alias = value + opaque()\n    return alias\neval(transform(request.get_data(as_text=True)))\n",
+        _TYPED_SOURCE
+        + "def transform(value):\n    alias = f'{value!r}'\n    return alias\neval(transform(request.get_data(as_text=True)))\n",
+        _TYPED_SOURCE
+        + "def transform(value):\n    alias = 'fixed'\n    return alias\neval(transform(request.get_data(as_text=True)))\n",
+        _TYPED_SOURCE
+        + "def transform(value):\n    return transform(value)\neval(transform(request.get_data(as_text=True)))\n",
+        "import pickle\n"
+        + _TYPED_SOURCE
+        + "def transform(value):\n    return value.encode()\nvalue = request.get_json()['payload']\npickle.loads(transform(value))\n",
+        "import pickle\n"
+        + _TYPED_SOURCE
+        + "def transform(value):\n    return value.encode()\nvalue = request.json['payload']\npickle.loads(transform(value))\n",
+        "import pickle\n"
+        + _TYPED_SOURCE
+        + "def transform(value):\n    return value + ''\npickle.loads(transform(request.get_data(as_text=True)))\n",
+        _TYPED_SOURCE
+        + "def transform(value):\n    return value + ')'\ntransform.__code__ = supplied\neval(transform(request.get_data(as_text=True)))\n",
+    ],
+)
+def test_native_typed_origin_declines_unknown_mixed_overwritten_and_mutated_inputs(
+    source,
+):
+    rows = _typed_origin_findings(source)
+    assert any(
+        row["code"] in {"SECURITY_DYNAMIC_EXECUTION", "SECURITY_UNSAFE_DESERIALIZATION"}
+        for row in rows
+    )
+    assert not any(row.get("facts", {}).get("security_precondition") for row in rows)
+
+
+def test_native_typed_origin_nested_helper_preserves_known_untainted_prefix():
+    source = (
+        _TYPED_SOURCE
+        + "def combine(prefix, value):\n    return prefix + value\ndef transform(value):\n    prefix = '('\n    return combine(prefix, value)\neval(transform(request.get_data(as_text=True)))\n"
+    )
+    (row,) = [
+        row
+        for row in _typed_origin_findings(source)
+        if row["code"] == "SECURITY_DYNAMIC_EXECUTION"
+    ]
+    assert (
+        row["facts"]["security_precondition"]["input_value_flow"]["value_kind"]
+        == "text"
+    )
+
+
+def test_native_typed_origin_public_source_bound_tier_and_reseal(tmp_path):
+    source = (
+        _TYPED_SOURCE
+        + "def transform(value):\n    return '(' + value + ')'\neval(transform(request.get_data(as_text=True)))\n"
+    )
+    (tmp_path / "app.py").write_text(source, encoding="utf8")
+    report = review_audits.security_scan(tmp_path, cache_enabled=False)
+    (row,) = [
+        row
+        for row in report["finding_tier_report"]["ledger"]
+        if row["raw_finding"]["code"] == "SECURITY_DYNAMIC_EXECUTION"
+    ]
+    assert row["tier"] == "SUPPORTED_DEFECT"
+    assert (
+        review_audits._seal_security_scan(report.copy())["finding_tier_report"]
+        == report["finding_tier_report"]
+    )
+
+
+def test_native_typed_origin_helpers_enrolled_in_cache_identity():
+    from factoryline import finite_capture as finite
+    from factoryline import runtime_audit_integrity as runtime
+
+    helpers = runtime.credential_validation_helpers()
+    assert all(
+        helper in helpers
+        for helper in (
+            finite._SecurityFlowValue,
+            finite._security_flow_shaped,
+            finite.security_helper_return_value,
+            finite.security_helper_return_kind,
+            finite.security_input_value_flow,
+        )
+    )
+
+
+_REQUEST_SINK_SOURCE = "import requests, sqlite3\nfrom flask import request\nopen(request.args['path'], 'w')\nrequests.get(request.args['url'])\nconnection = sqlite3.connect(':memory:')\nconnection.execute('SELECT * FROM users WHERE name=' + request.args['name'])\n"
+
+
+def test_native_request_sink_families_share_typed_input_trace_and_strict_consumers(
+    tmp_path,
+):
+    (tmp_path / "app.py").write_text(_REQUEST_SINK_SOURCE, encoding="utf8")
+    report = review_audits.security_scan(tmp_path, cache_enabled=False)
+    selected = [
+        row
+        for row in report["finding_tier_report"]["ledger"]
+        if row["raw_finding"]["code"]
+        in {"SECURITY_PATH_TRAVERSAL", "SECURITY_SSRF", "SECURITY_SQL_INJECTION"}
+    ]
+    assert len(selected) == 3
+    assert all(row["tier"] == "SUPPORTED_DEFECT" for row in selected)
+    for row in selected:
+        evidence = row["raw_finding"]["facts"]["security_precondition"]
+        assert evidence["source_role"] == "untrusted_request"
+        assert evidence["input_value_flow"]["value_kind"] == "text"
+        assert evidence["input_slot_span"]
+    assert (
+        review_audits._seal_security_scan(report.copy())["finding_tier_report"]
+        == report["finding_tier_report"]
+    )
+
+
+@pytest.mark.parametrize(
+    "block",
+    [
+        "try:\n    requests.get(request.args['url'])\nexcept ValueError:\n    pass",
+        "with manager():\n    requests.get(request.args['url'])",
+        "match selector:\n    case _:\n        requests.get(request.args['url'])",
+        "for item in items:\n    pass\nelse:\n    requests.get(request.args['url'])",
+    ],
+)
+def test_native_source_sink_traverses_structured_blocks(block):
+    source = (
+        "import requests\nfrom flask import request\ndef view():\n    "
+        + block.replace("\n", "\n    ")
+        + "\n"
+    )
+    rows = _typed_origin_findings(source)
+    finding = next(row for row in rows if row["code"] == "SECURITY_SSRF")
+    assert (
+        finding["facts"]["security_precondition"]["source_role"] == "untrusted_request"
+    )
+
+
+@pytest.mark.parametrize(
+    "block",
+    [
+        "with request.args['ctx'] as value:\n    requests.get(value)",
+        "match request.args['url']:\n    case value:\n        requests.get(value)",
+    ],
+)
+def test_native_source_sink_taints_with_and_match_bindings(block):
+    source = (
+        "import requests\nfrom flask import request\ndef view():\n    "
+        + block.replace("\n", "\n    ")
+        + "\n"
+    )
+    rows = _typed_origin_findings(source)
+    finding = next(row for row in rows if row["code"] == "SECURITY_SSRF")
+    assert finding["severity"] == "HIGH"
+    assert finding["facts"]["call"] == "requests.get"
+
+
+def test_native_structured_control_flow_public_cross_family_batch(tmp_path):
+    source = (
+        "import requests, sqlite3\nfrom flask import request\n"
+        "def view(items):\n"
+        "    if items:\n        requests.get(request.args['other_url'])\n"
+        "    try:\n        requests.get(request.args['url'])\n    except ValueError:\n        pass\n"
+        "    with manager():\n        open(request.args['path'], 'w')\n"
+        "    match request.args['kind']:\n        case _:\n"
+        "            connection = sqlite3.connect(':memory:')\n"
+        "            connection.execute('SELECT ' + request.args['name'])\n"
+        "    for item in items:\n        pass\n    else:\n"
+        "        requests.get(request.args['loop_url'])\n"
+    )
+    (tmp_path / "app.py").write_text(source, encoding="utf8")
+    report = review_audits.security_scan(tmp_path, cache_enabled=False)
+    selected = [
+        row
+        for row in report["finding_tier_report"]["ledger"]
+        if row["raw_finding"]["code"]
+        in {"SECURITY_SSRF", "SECURITY_PATH_TRAVERSAL", "SECURITY_SQL_INJECTION"}
+    ]
+    assert {row["raw_finding"]["code"] for row in selected} == {
+        "SECURITY_SSRF",
+        "SECURITY_PATH_TRAVERSAL",
+        "SECURITY_SQL_INJECTION",
+    }
+    assert all(row["tier"] == "SUPPORTED_DEFECT" for row in selected)
+
+
+@pytest.mark.parametrize(
+    "block",
+    [
+        "try:\n    value = 'public'\nexcept Exception:\n    pass",
+        "for item in items:\n    value = 'public'\nelse:\n    pass",
+    ],
+)
+def test_native_source_sink_keeps_taint_across_uncertain_structured_paths(block):
+    source = (
+        "import requests\nfrom flask import request\n"
+        "value = request.args['url']\n"
+        "def view():\n"
+        "    value = request.args['url']\n"
+        "    " + block.replace("\n", "\n    ") + "\n"
+        "    requests.get(value)\n"
+    )
+    rows = _typed_origin_findings(source)
+    finding = next(row for row in rows if row["code"] == "SECURITY_SSRF")
+    assert finding["severity"] == "HIGH"
+    assert finding["facts"]["call"] == "requests.get"
+
+
+@pytest.mark.parametrize(
+    "replacement,rule",
+    [
+        ("requests.get = replacement\n", "SECURITY_SSRF"),
+        ("requests.get.__code__ = supplied\n", "SECURITY_SSRF"),
+        ("sqlite3.connect = replacement\n", "SECURITY_SQL_INJECTION"),
+        ("open = replacement\n", "SECURITY_PATH_TRAVERSAL"),
+    ],
+)
+def test_native_request_sink_provider_replacement_cannot_gain_support(
+    replacement, rule
+):
+    source = _REQUEST_SINK_SOURCE.replace(
+        "open(request.args", replacement + "open(request.args", 1
+    )
+    rows = _typed_origin_findings(source)
+    assert not any(
+        row["code"] == rule and row.get("facts", {}).get("security_precondition")
+        for row in rows
+    )
+
+
+@pytest.mark.parametrize(
+    "source,rule",
+    [
+        (
+            "import sqlite3\ndef query(value):\n    connection=sqlite3.connect(':memory:')\n    connection.execute('SELECT '+value)\n",
+            "SECURITY_SQL_INJECTION",
+        ),
+        (
+            _REQUEST_SINK_SOURCE.replace(
+                "connection.execute(",
+                "connection.execute = replacement\nconnection.execute(",
+            ),
+            "SECURITY_SQL_INJECTION",
+        ),
+        (
+            _REQUEST_SINK_SOURCE.replace(
+                "connection.execute(", "escape(connection)\nconnection.execute("
+            ),
+            "SECURITY_SQL_INJECTION",
+        ),
+        (
+            _REQUEST_SINK_SOURCE.replace(
+                "connection.execute(",
+                "connection.__setattr__('execute', replacement)\nconnection.execute(",
+            ),
+            "SECURITY_SQL_INJECTION",
+        ),
+        (
+            _REQUEST_SINK_SOURCE.replace("request.args['url']", "request.json['url']"),
+            "SECURITY_SSRF",
+        ),
+        (
+            _REQUEST_SINK_SOURCE.replace(
+                "requests.get(request.args['url'])",
+                "requests.get(request.args['url'], None, None)",
+            ),
+            "SECURITY_SSRF",
+        ),
+        (
+            _REQUEST_SINK_SOURCE.replace(
+                "requests.get(request.args['url'])",
+                "requests.get(request.args['url'], unknown=True)",
+            ),
+            "SECURITY_SSRF",
+        ),
+        (
+            _REQUEST_SINK_SOURCE.replace(
+                "open(request.args['path'], 'w')",
+                "open(request.args['path'], unknown=True)",
+            ),
+            "SECURITY_PATH_TRAVERSAL",
+        ),
+        (
+            _REQUEST_SINK_SOURCE.replace(
+                "open(request.args['path'], 'w')",
+                "open(request.args['path'], 1,2,3,4,5,6,7,8)",
+            ),
+            "SECURITY_PATH_TRAVERSAL",
+        ),
+        (
+            _REQUEST_SINK_SOURCE.replace(
+                "connection.execute('SELECT * FROM users WHERE name=' + request.args['name'])",
+                "connection.execute('SELECT '+request.args['name'], sql='other')",
+            ),
+            "SECURITY_SQL_INJECTION",
+        ),
+        (
+            _REQUEST_SINK_SOURCE.replace(
+                "requests.get(request.args['url'])",
+                "requests.get(request.args['url'], url=request.args['url'])",
+            ),
+            "SECURITY_SSRF",
+        ),
+        (
+            _REQUEST_SINK_SOURCE.replace(
+                "requests.get(request.args['url'])",
+                "requests.get(*values, url=request.args['url'])",
+            ),
+            "SECURITY_SSRF",
+        ),
+        (
+            _REQUEST_SINK_SOURCE.replace(
+                "open(request.args['path'], 'w')",
+                "open(request.args['path'], file=request.args['path'])",
+            ),
+            "SECURITY_PATH_TRAVERSAL",
+        ),
+        (
+            _REQUEST_SINK_SOURCE.replace(
+                "connection.execute('SELECT * FROM users WHERE name=' + request.args['name'])",
+                "connection.execute('SELECT * FROM users WHERE name=?', (request.args['name'],))",
+            ),
+            "SECURITY_SQL_INJECTION",
+        ),
+        (
+            _REQUEST_SINK_SOURCE.replace(
+                "open(request.args['path'], 'w')",
+                "if False:\n    open(request.args['path'], 'w')",
+            ),
+            "SECURITY_PATH_TRAVERSAL",
+        ),
+    ],
+)
+def test_native_request_sink_declines_ambiguous_untyped_and_unproven_consumers(
+    source, rule
+):
+    rows = _typed_origin_findings(source)
+    assert not any(
+        row["code"] == rule and row.get("facts", {}).get("security_precondition")
+        for row in rows
+    )
+
+
+@pytest.mark.parametrize(
+    "rule",
+    [
+        "SECURITY_PATH_TRAVERSAL",
+        "SECURITY_SSRF",
+        "SECURITY_SQL_INJECTION",
+    ],
+)
+@pytest.mark.parametrize("tamper", ["slot", "trace", "source", "missing_capture"])
+def test_native_request_sink_consumer_rebuild_rejects_forged_evidence(
+    tmp_path, rule, tamper
+):
+    from factoryline.primitive_observation_binding import build_finding_tier_report
+
+    (tmp_path / "app.py").write_text(_REQUEST_SINK_SOURCE, encoding="utf8")
+    scanned = review_audits.security_scan(tmp_path, cache_enabled=False)
+    original = next(
+        row
+        for row in scanned["finding_tier_report"]["ledger"]
+        if row["raw_finding"]["code"] == rule
+    )
+    assert original["tier"] == "SUPPORTED_DEFECT"
+    finding = copy.deepcopy(original["raw_finding"])
+    captured = dict(scanned._captured_sources)
+    premise = finding["facts"]["security_precondition"]
+    if tamper == "slot":
+        premise["input_slot_span"][0] += 1
+    elif tamper == "trace":
+        premise["input_value_flow"]["value_kind"] = "bytes"
+    elif tamper == "source":
+        captured["app.py"] = _REQUEST_SINK_SOURCE.replace(
+            "request.args", "public.args"
+        ).encode()
+    else:
+        captured.clear()
+    checked = build_finding_tier_report(
+        [finding],
+        [],
+        scanned["sources"],
+        captured,
+        coverage_state="COMPLETE",
+        partition_state="PASS",
+    )
+    assert checked["ledger"][0]["tier"] == "NEEDS_CONTEXT"
+    assert checked["raw_diagnostics"]["count"] == 1
+
+
+@pytest.mark.parametrize(
+    "supported, unresolved, expected",
+    [(0, 0, 0), (0, 1, 2), (0, 9, 2), (1, 0, 1), (1, 3, 1)],
+)
+def test_trusted_core_unresolved_admission_exit_contract(
+    supported, unresolved, expected
+):
+    from factoryline.primitive_observation_binding import _trusted_core_policy_result
+
+    result = _trusted_core_policy_result(
+        {"sources_sha256": "a" * 64}, (supported, unresolved)
+    )
+    assert result["exit_code"] == expected
+    assert result["supported_defect_count"] == supported
+    assert result["needs_context_count"] == unresolved
+    assert result["passed"] is result["clean"] is result["release_approved"] is False
+
+
+def test_trusted_core_unresolved_serialized_zero_exit_cannot_bypass_current_evidence(
+    tmp_path,
+):
+    report = _trusted_core_policy316_seal(tmp_path, b"eval(user_data)\n")
+    expected = copy.deepcopy(report["defect_policy_decision"])
+    assert expected["exit_code"] == 2
+    core = copy.deepcopy(dict(report))
+    core["_primitive_source_bytes"] = dict(report._captured_sources)
+    core["defect_policy_decision"] = {**expected, "exit_code": 0}
+    checked = review_audits._seal_security_scan(core)
+    assert checked["defect_policy_decision"] == expected
+    assert checked["findings"] == report["findings"]
+
+
+def test_blocked_security_scan_report_keeps_source_limit_incomplete(
+    tmp_path, monkeypatch
+):
+    from factoryline import audit_action_refs, review_audits
+
+    monkeypatch.setattr(review_audits, "MAX_SECURITY_SOURCE_FILES", 1)
+    report = audit_action_refs.blocked_security_scan_report(
+        review_audits, tmp_path, [tmp_path / "a.py", tmp_path / "b.py"], (), {}
+    )
+    assert report["state"] == "BLOCKED"
+    assert report["sources"] == []
+    assert report["files_scanned"] == 0
+    assert report["audit_coverage"]["files_discovered"] == 2
+    assert report["audit_coverage"]["files_attempted"] == 0
+    assert report["audit_coverage"]["complete"] is False
+    assert not any(report["authority"].values())
+    assert [row["code"] for row in report["findings"]] == ["SECURITY_AUDIT_INCOMPLETE"]
+    assert report["findings"][0]["severity"] == "HIGH"

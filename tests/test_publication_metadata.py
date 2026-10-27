@@ -78,8 +78,8 @@ def test_public_audit_condition_count_is_recomputed_from_source():
     assert not module.NON_CONDITION_MODULES
     assert process_codes <= set(result["crosscutting_condition_codes"])
     assert "E_CONTEXT_CONFIG" in result["crosscutting_condition_codes"]
-    assert result["crosscutting_rejection_conditions"] == 97
-    assert result["total_coded_rejection_conditions"] == 185
+    assert result["crosscutting_rejection_conditions"] == 98
+    assert result["total_coded_rejection_conditions"] == 186
     claim = module.public_claim(result)
     breakdown = module.public_breakdown(result)
     for relative in ("docs/LLM_PRODUCT_CARD.md", "docs/AUDIT_CONDITION_INVENTORY.md"):
@@ -628,7 +628,7 @@ def test_hosted_release_and_editor_versions_are_declared():
     )
     assert "0.48.0 candidate" not in vscode_readme
     assert "factoryline-vscode-1.3.0.vsix" in release_channels
-    assert 'version = "1.3.0"' in gradle
+    assert 'version = "1.3.1"' in gradle
     assert "postgres:17" in hosted_workflow
     assert "FACTORY_TEST_POSTGRES_DSN" in hosted_workflow
     assert (
@@ -679,7 +679,7 @@ def test_jetbrains_listing_is_outcome_led_and_first_proof_is_discoverable():
         in plugin_xml
     )
     assert latest_changelog_version == plugin_version
-    assert f"New in {plugin_version} —" in plugin_xml
+    assert f"Updated in {plugin_version} —" in plugin_xml
     assert (
         "OAuth/OIDC identity, tenant authorization, checkout, webhook, entitlement, feature access, and revocation"
         in plugin_xml

@@ -24,53 +24,121 @@ def _premise_scan(source):
     )
 
 
-@pytest.mark.parametrize("helper, invocation", [
-    ("def identity(value):\n    alias = value\n    return alias\n", "identity(request.get_data(as_text=True))"),
-    ("def identity(value, /, *, extra=''):\n    alias = value\n    return alias\n", "identity(request.get_data(as_text=True), extra='')"),
-    ("def identity(value, fallback=''):\n    alias = value\n    return alias\n", "identity(value=request.get_data(as_text=True))"),
-])
+@pytest.mark.parametrize(
+    "helper, invocation",
+    [
+        (
+            "def identity(value):\n    alias = value\n    return alias\n",
+            "identity(request.get_data(as_text=True))",
+        ),
+        (
+            "def identity(value, /, *, extra=''):\n    alias = value\n    return alias\n",
+            "identity(request.get_data(as_text=True), extra='')",
+        ),
+        (
+            "def identity(value, fallback=''):\n    alias = value\n    return alias\n",
+            "identity(value=request.get_data(as_text=True))",
+        ),
+    ],
+)
 def test_native_flow_helper_return_reaches_primary_verdict(helper, invocation):
-    findings = _premise_scan("from flask import request\n" + helper + f"eval({invocation})\n")
+    """Native precondition binding follows the exact request argument through one supported helper return."""
+    findings = _premise_scan(
+        "from flask import request\n" + helper + f"eval({invocation})\n"
+    )
     dynamic = [x for x in findings if x["code"] == "SECURITY_DYNAMIC_EXECUTION"]
     assert len(dynamic) == 1
     assert dynamic[0]["facts"]["security_precondition"]["status"] == "SUPPORTED"
 
 
-@pytest.mark.parametrize("body, invocation", [
-    ("alias = value\n    eval(alias)", "consume(request.get_data(as_text=True))"),
-    ("eval(value)", "consume(value=request.get_data(as_text=True))"),
-])
+@pytest.mark.parametrize(
+    "body, invocation",
+    [
+        ("alias = value\n    eval(alias)", "consume(request.get_data(as_text=True))"),
+        ("eval(value)", "consume(value=request.get_data(as_text=True))"),
+    ],
+)
 def test_native_flow_actual_argument_reaches_callee_sink(body, invocation):
-    findings = _premise_scan("from flask import request\ndef consume(value):\n    " + body + "\n" + invocation + "\n")
+    """security_forward_helper_sources and bind_native_input_precondition map the request actual only to the callee's modeled sink."""
+    findings = _premise_scan(
+        "from flask import request\ndef consume(value):\n    "
+        + body
+        + "\n"
+        + invocation
+        + "\n"
+    )
     dynamic = [x for x in findings if x["code"] == "SECURITY_DYNAMIC_EXECUTION"]
     assert len(dynamic) == 1
     assert dynamic[0]["facts"]["security_precondition"]["status"] == "SUPPORTED"
 
 
-@pytest.mark.parametrize("helper, invocation, mutation", [
-    ("def identity(value):\n    value = '1'\n    return value\n", "identity(request.get_data(as_text=True))", ""),
-    ("def identity(value):\n    alias = opaque(value)\n    return alias\n", "identity(request.get_data(as_text=True))", ""),
-    ("def identity(value):\n    return value\n", "identity(*values)", ""),
-    ("def identity(value='1'):\n    return value\n", "identity()", "value = request.get_data(as_text=True)\n"),
-    ("def identity(value):\n    return value\n", "identity(request.get_data(as_text=True))", "identity.__code__ = replacement\n"),
-    ("@decorate\ndef identity(value):\n    return value\n", "identity(request.get_data(as_text=True))", ""),
-    ("def identity(value):\n    return identity(value)\n", "identity(request.get_data(as_text=True))", ""),
-])
-def test_native_flow_unproved_helpers_retain_raw_without_support(helper, invocation, mutation):
-    findings = _premise_scan("from flask import request\n" + helper + mutation + f"eval({invocation})\n")
+@pytest.mark.parametrize(
+    "helper, invocation, mutation",
+    [
+        (
+            "def identity(value):\n    value = '1'\n    return value\n",
+            "identity(request.get_data(as_text=True))",
+            "",
+        ),
+        (
+            "def identity(value):\n    alias = opaque(value)\n    return alias\n",
+            "identity(request.get_data(as_text=True))",
+            "",
+        ),
+        ("def identity(value):\n    return value\n", "identity(*values)", ""),
+        (
+            "def identity(value='1'):\n    return value\n",
+            "identity()",
+            "value = request.get_data(as_text=True)\n",
+        ),
+        (
+            "def identity(value):\n    return value\n",
+            "identity(request.get_data(as_text=True))",
+            "identity.__code__ = replacement\n",
+        ),
+        (
+            "@decorate\ndef identity(value):\n    return value\n",
+            "identity(request.get_data(as_text=True))",
+            "",
+        ),
+        (
+            "def identity(value):\n    return identity(value)\n",
+            "identity(request.get_data(as_text=True))",
+            "",
+        ),
+    ],
+)
+def test_native_flow_unproved_helpers_retain_raw_without_support(
+    helper, invocation, mutation
+):
+    findings = _premise_scan(
+        "from flask import request\n" + helper + mutation + f"eval({invocation})\n"
+    )
     dynamic = [x for x in findings if x["code"] == "SECURITY_DYNAMIC_EXECUTION"]
     assert len(dynamic) == 1
     assert "security_precondition" not in dynamic[0]["facts"]
 
 
-@pytest.mark.parametrize("body, suffix", [
-    ("value = '1'\n    eval(value)", "consume(request.get_data(as_text=True))"),
-    ("eval(value)", "consume(opaque(request.get_data(as_text=True)))"),
-    ("return\n    eval(value)", "consume(request.get_data(as_text=True))"),
-    ("eval(value)", "consume.__code__ = replacement\nconsume(request.get_data(as_text=True))"),
-])
+@pytest.mark.parametrize(
+    "body, suffix",
+    [
+        ("value = '1'\n    eval(value)", "consume(request.get_data(as_text=True))"),
+        ("eval(value)", "consume(opaque(request.get_data(as_text=True)))"),
+        ("return\n    eval(value)", "consume(request.get_data(as_text=True))"),
+        (
+            "eval(value)",
+            "consume.__code__ = replacement\nconsume(request.get_data(as_text=True))",
+        ),
+    ],
+)
 def test_native_flow_callee_unknown_or_killed_flow_retains_raw(body, suffix):
-    findings = _premise_scan("from flask import request\ndef consume(value):\n    " + body + "\n" + suffix + "\n")
+    findings = _premise_scan(
+        "from flask import request\ndef consume(value):\n    "
+        + body
+        + "\n"
+        + suffix
+        + "\n"
+    )
     dynamic = [x for x in findings if x["code"] == "SECURITY_DYNAMIC_EXECUTION"]
     assert len(dynamic) == 1
     assert "security_precondition" not in dynamic[0]["facts"]
@@ -88,16 +156,20 @@ def test_native_flow_pickle_argument_kind_preserved(as_text, supported):
     assert bool(dynamic[0]["facts"].get("security_precondition")) is supported
 
 
-@pytest.mark.parametrize("mutation", [
-    "alias = identity\nalias.__code__ = replacement\n",
-    "setattr(identity, '__code__', replacement)\n",
-    "mutator(identity)\n",
-    "identity.__defaults__ = (replacement,)\n",
-])
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "alias = identity\nalias.__code__ = replacement\n",
+        "setattr(identity, '__code__', replacement)\n",
+        "mutator(identity)\n",
+        "identity.__defaults__ = (replacement,)\n",
+    ],
+)
 def test_native_flow_provider_capability_mutation_abstains(mutation):
     findings = _premise_scan(
         "from flask import request\ndef identity(value):\n    alias = value\n    return alias\n"
-        + mutation + "eval(identity(request.get_data(as_text=True)))\n"
+        + mutation
+        + "eval(identity(request.get_data(as_text=True)))\n"
     )
     dynamic = [x for x in findings if x["code"] == "SECURITY_DYNAMIC_EXECUTION"]
     assert len(dynamic) == 1
@@ -105,34 +177,70 @@ def test_native_flow_provider_capability_mutation_abstains(mutation):
 
 
 def test_native_flow_precondition_is_independently_recomputed():
+    """Independent binding recomputation preserves a source-bound helper alias and rejects changed code."""
     source = (
         "from flask import request\ndef identity(value):\n    alias = value\n    return alias\n"
         "eval(identity(request.get_data(as_text=True)))\n"
     )
     report = _private_key_auth_tiers(source)
-    row = next(x for x in report["ledger"] if x["raw_finding"]["code"] == "SECURITY_DYNAMIC_EXECUTION")
+    row = next(
+        x
+        for x in report["ledger"]
+        if x["raw_finding"]["code"] == "SECURITY_DYNAMIC_EXECUTION"
+    )
     assert row["tier"] == "SUPPORTED_DEFECT"
     # Keep the claimed fact but replace the helper's actual implementation.
     changed = source.replace("alias = value", "alias = '1'")
     report = _private_key_auth_tiers(changed, findings=_premise_scan(source))
-    row = next(x for x in report["ledger"] if x["raw_finding"]["code"] == "SECURITY_DYNAMIC_EXECUTION")
+    row = next(
+        x
+        for x in report["ledger"]
+        if x["raw_finding"]["code"] == "SECURITY_DYNAMIC_EXECUTION"
+    )
     assert row["tier"] == "NEEDS_CONTEXT"
 
 
-@pytest.mark.parametrize("source", [
-    "def identity(value):\n    return value\n    yield None\neval(identity(request.get_data(as_text=True)))\n",
-    "def consume(value):\n    yield None\n    eval(value)\nconsume(request.get_data(as_text=True))\n",
-    "def consume(value):\n    opaque_effect()\n    eval(value)\nconsume(request.get_data(as_text=True))\n",
-    "def identity(value, other=opaque_effect()):\n    return value\neval(identity(request.get_data(as_text=True)))\n",
-    "def consume(value):\n    doomed = 1 / 0\n    eval(value)\nconsume(request.get_data(as_text=True))\n",
-    "def identity(value: 1 / 0):\n    return value\neval(identity(request.get_data(as_text=True)))\n",
-    "def consume(value):\n    alias: opaque_effect() = value\n    eval(alias)\nconsume(request.get_data(as_text=True))\n",
-    "def consume(value):\n    doomed = value / 2\n    eval(value)\nconsume(request.get_data(as_text=True))\n",
-    "def identity(value):\n    return value / 2\neval(identity(request.get_data(as_text=True)))\n",
-    "def consume(value):\n    eval(value)\nconsume(request.get_data(as_text=True) / 2)\n",
-    "def identity(value):\n    alias: opaque_effect() = value\n    return alias\neval(identity(request.get_data(as_text=True)))\n",
-    "def identity(value=undefined_default):\n    return value\neval(identity(request.get_data(as_text=True)))\n",
-])
+@pytest.mark.parametrize("tamper", ["trace", "empty", "none", "extra"])
+def test_native_flow_witness378_supplied_claims_are_not_discarded(tamper):
+    from factoryline.primitive_observation_binding import _regenerate_native_findings
+
+    source = (
+        "from flask import request\ndef identity(value):\n    return value\n"
+        "eval(identity(request.get_data(as_text=True)))\n"
+    )
+    findings = _regenerate_native_findings("application.py", source.encode())
+    premise = findings[0]["facts"]["security_precondition"]
+    assert "input_value_flow" in premise
+    if tamper == "trace":
+        premise["input_value_flow"]["trace_sha256"] = "0" * 64
+    elif tamper == "empty":
+        premise["input_value_flow"] = {}
+    elif tamper == "none":
+        premise["input_value_flow"] = None
+    else:
+        premise.pop("input_value_flow")
+        premise["unverified_field"] = True
+    report = _private_key_auth_tiers(source, findings=findings)
+    assert report["ledger"][0]["tier"] == "NEEDS_CONTEXT"
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "def identity(value):\n    return value\n    yield None\neval(identity(request.get_data(as_text=True)))\n",
+        "def consume(value):\n    yield None\n    eval(value)\nconsume(request.get_data(as_text=True))\n",
+        "def consume(value):\n    opaque_effect()\n    eval(value)\nconsume(request.get_data(as_text=True))\n",
+        "def identity(value, other=opaque_effect()):\n    return value\neval(identity(request.get_data(as_text=True)))\n",
+        "def consume(value):\n    doomed = 1 / 0\n    eval(value)\nconsume(request.get_data(as_text=True))\n",
+        "def identity(value: 1 / 0):\n    return value\neval(identity(request.get_data(as_text=True)))\n",
+        "def consume(value):\n    alias: opaque_effect() = value\n    eval(alias)\nconsume(request.get_data(as_text=True))\n",
+        "def consume(value):\n    doomed = value / 2\n    eval(value)\nconsume(request.get_data(as_text=True))\n",
+        "def identity(value):\n    return value / 2\neval(identity(request.get_data(as_text=True)))\n",
+        "def consume(value):\n    eval(value)\nconsume(request.get_data(as_text=True) / 2)\n",
+        "def identity(value):\n    alias: opaque_effect() = value\n    return alias\neval(identity(request.get_data(as_text=True)))\n",
+        "def identity(value=undefined_default):\n    return value\neval(identity(request.get_data(as_text=True)))\n",
+    ],
+)
 def test_native_flow_generator_or_opaque_effect_does_not_certify(source):
     findings = _premise_scan("from flask import request\n" + source)
     dynamic = [x for x in findings if x["code"] == "SECURITY_DYNAMIC_EXECUTION"]
@@ -159,7 +267,9 @@ def test_native_flow_provider_guard_reuse_is_limited_to_one_source_scan(monkeypa
     )
     assert len(_premise_scan(source)) == 2
     assert len(inspected) == 1
-    mutated = source.replace("eval(identity", "identity.__code__ = replacement\neval(identity", 1)
+    mutated = source.replace(
+        "eval(identity", "identity.__code__ = replacement\neval(identity", 1
+    )
     findings = _premise_scan(mutated)
     assert len(inspected) == 2
     assert all("security_precondition" not in finding["facts"] for finding in findings)
@@ -169,11 +279,12 @@ def test_native_flow_provider_guard_reuse_is_limited_to_one_source_scan(monkeypa
 def test_native_flow_helper_depth_cutoff_never_becomes_support(length, supported):
     functions = [
         f"def helper{i}(value):\n    return "
-        + (f"helper{i+1}(value)\n" if i + 1 < length else "value\n")
+        + (f"helper{i + 1}(value)\n" if i + 1 < length else "value\n")
         for i in range(length)
     ]
     findings = _premise_scan(
-        "from flask import request\n" + "".join(functions)
+        "from flask import request\n"
+        + "".join(functions)
         + "eval(helper0(request.get_data(as_text=True)))\n"
     )
     dynamic = [x for x in findings if x["code"] == "SECURITY_DYNAMIC_EXECUTION"]
@@ -214,6 +325,226 @@ def _configuration_files277(runner):
     }
 
 
+_FLASK_AUTHORITY_SOURCE314 = """
+from flask import Flask, redirect, request, session
+
+ADMIN_PASSWORD = "source-bound-admin-password"
+SECRET_KEY = "source-bound-session-secret"
+app = Flask(__name__)
+app.config.from_object(__name__)
+
+def login_required(fn):
+    def inner(*args, **kwargs):
+        if session.get("logged_in"):
+            return fn(*args, **kwargs)
+        return redirect("/login")
+    return inner
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    password = request.form.get("password")
+    if password == app.config["ADMIN_PASSWORD"]:
+        session["logged_in"] = True
+        return redirect("/")
+    return redirect("/login")
+
+@app.route("/create")
+@login_required
+def create():
+    return "created"
+"""
+
+
+def _flask_authority_tiers314(source=_FLASK_AUTHORITY_SOURCE314, extra_sources=None):
+    from hashlib import sha256
+    from pathlib import Path
+    from factoryline.primitive_observation_binding import build_finding_tier_report
+
+    path = "examples/blog/app.py"
+    sources = {
+        "examples/blog/__init__.py": b"",
+        path: source.encode(),
+    }
+    sources.update(
+        {name: value.encode() for name, value in (extra_sources or {}).items()}
+    )
+    findings = audit._security_scan_tree(Path("."), Path(path), ast.parse(source))
+    selected = [
+        finding
+        for finding in findings
+        if finding.get("code") == "SECURITY_HARDCODED_SECRET"
+        and (
+            finding.get("facts", {}).get("name") == "SECRET_KEY"
+            or "PASSWORD" in finding.get("facts", {}).get("name", "")
+        )
+    ]
+    return build_finding_tier_report(
+        selected,
+        [],
+        [
+            {"path": name, "sha256": sha256(raw).hexdigest()}
+            for name, raw in sources.items()
+        ],
+        sources,
+        coverage_state=True,
+        partition_state="VALIDATED",
+    )
+
+
+def test_tier314_flask_session_authority_preserves_both_source_diagnostics():
+    """flask_credential_authority_evidence ties both source diagnostics to complete captured session transfers."""
+    report = _flask_authority_tiers314()
+    rows = report["ledger"]
+    assert len(rows) == 2
+    assert {row["raw_finding"]["facts"]["name"] for row in rows} == {
+        "ADMIN_PASSWORD",
+        "SECRET_KEY",
+    }
+    assert {row["tier"] for row in rows} == {"SUPPORTED_DEFECT"}
+    assert {row["evidence"] for row in rows} == {"source_bound_flask_session_authority"}
+    for row in rows:
+        observation = row["credential_authority_observation"]
+        assert observation["proof_scope"] == "source_bound_flask_session_authority"
+        assert observation["runtime_execution"] == "not_performed"
+        assert observation["deployment"] == "UNASSESSED"
+        expected_transfers = (
+            9 if row["raw_finding"]["facts"]["name"] == "ADMIN_PASSWORD" else 8
+        )
+        assert len(observation["transfers"]) == expected_transfers
+        assert all(
+            transfer["sha256"] == row["source_identity"]["source_sha256"]
+            for transfer in observation["transfers"]
+        )
+
+
+def test_tier314_flask_authority_tracks_renamed_password_configuration_key():
+    source = _FLASK_AUTHORITY_SOURCE314.replace("ADMIN_PASSWORD", "DASHBOARD_PASSWORD")
+    report = _flask_authority_tiers314(source)
+    assert {row["raw_finding"]["facts"]["name"] for row in report["ledger"]} == {
+        "DASHBOARD_PASSWORD",
+        "SECRET_KEY",
+    }
+    assert {row["tier"] for row in report["ledger"]} == {"SUPPORTED_DEFECT"}
+
+
+def _flask_authority_counterexample_source(replacement):
+    source = _FLASK_AUTHORITY_SOURCE314
+
+    def insert(text):
+        return source.replace(
+            "def login_required(fn):", text + "\n\ndef login_required(fn):"
+        )
+
+    return {
+        'ADMIN_PASSWORD = "overwritten-admin-password"': lambda: insert(
+            'ADMIN_PASSWORD = "overwritten-admin-password"'
+        ),
+        'app.config["ADMIN_PASSWORD"] = "overwritten-admin-password"': lambda: insert(
+            'app.config["ADMIN_PASSWORD"] = "overwritten-admin-password"'
+        ),
+        'app.config.update(ADMIN_PASSWORD="overwritten-admin-password")': lambda: insert(
+            'app.config.update(ADMIN_PASSWORD="overwritten-admin-password")'
+        ),
+        "app = object()": lambda: insert("app = object()"),
+        "Flask = object": lambda: insert("Flask = object"),
+        'app.config.from_object("other.settings")': lambda: source.replace(
+            "app.config.from_object(__name__)",
+            'app.config.from_object("other.settings")',
+        ),
+        'other = Flask(__name__)\n@other.route("/login", methods=["GET", "POST"])': lambda: source.replace(
+            '@app.route("/login", methods=["GET", "POST"])', replacement
+        ),
+        "if password == app.config[config_key]:": lambda: source.replace(
+            'if password == app.config["ADMIN_PASSWORD"]:', replacement
+        ),
+        'if password == app.config["ADMIN_PASSWORD"]:\n        pass': lambda: source.replace(
+            'if password == app.config["ADMIN_PASSWORD"]:\n'
+            '        session["logged_in"] = True',
+            replacement,
+        ),
+        "dead_comparison": lambda: source.replace(
+            '    if password == app.config["ADMIN_PASSWORD"]:\n'
+            '        session["logged_in"] = True\n'
+            '        return redirect("/")',
+            "    if False:\n"
+            '        if password == app.config["ADMIN_PASSWORD"]:\n'
+            '            session["logged_in"] = True\n'
+            '            return redirect("/")',
+        ),
+        "missing_login_consumer": lambda: source.replace("@login_required\n", ""),
+    }[replacement]()
+
+
+@pytest.mark.parametrize(
+    "replacement",
+    [
+        'ADMIN_PASSWORD = "overwritten-admin-password"',
+        'app.config["ADMIN_PASSWORD"] = "overwritten-admin-password"',
+        'app.config.update(ADMIN_PASSWORD="overwritten-admin-password")',
+        "app = object()",
+        "Flask = object",
+        'app.config.from_object("other.settings")',
+        'other = Flask(__name__)\n@other.route("/login", methods=["GET", "POST"])',
+        "if password == app.config[config_key]:",
+        'if password == app.config["ADMIN_PASSWORD"]:\n        pass',
+        "dead_comparison",
+        "missing_login_consumer",
+    ],
+)
+def test_tier314_flask_authority_counterexamples_abstain(replacement):
+    report = _flask_authority_tiers314(
+        _flask_authority_counterexample_source(replacement)
+    )
+    admin_rows = [
+        row
+        for row in report["ledger"]
+        if row["raw_finding"].get("facts", {}).get("name") == "ADMIN_PASSWORD"
+    ]
+    assert admin_rows
+    assert all(row["tier"] == "NEEDS_CONTEXT" for row in admin_rows)
+    assert all("credential_authority_observation" not in row for row in admin_rows)
+
+
+def test_tier314_flask_configuration_load_alone_does_not_promote_secret_key():
+    source = """
+from flask import Flask
+SECRET_KEY = "published-weak-value"
+app = Flask(__name__)
+app.config.from_object(__name__)
+"""
+    report = _flask_authority_tiers314(source)
+    assert report["ledger"]
+    assert all(row["tier"] == "NEEDS_CONTEXT" for row in report["ledger"])
+
+
+def test_tier314_flask_authority_proves_star_imports_only_from_closed_sources():
+    safe = _flask_authority_tiers314(
+        "from examples.safe_imports import *\n" + _FLASK_AUTHORITY_SOURCE314,
+        {"examples/safe_imports.py": "PUBLIC_VALUE = 1\n"},
+    )
+    assert {row["tier"] for row in safe["ledger"]} == {"SUPPORTED_DEFECT"}
+
+    shadowed = _flask_authority_tiers314(
+        "from examples.shadow_imports import *\n" + _FLASK_AUTHORITY_SOURCE314,
+        {"examples/shadow_imports.py": "Flask = object\n"},
+    )
+    assert {row["tier"] for row in shadowed["ledger"]} == {"NEEDS_CONTEXT"}
+
+    opaque = _flask_authority_tiers314(
+        "from missing_provider import *\n" + _FLASK_AUTHORITY_SOURCE314
+    )
+    assert {row["tier"] for row in opaque["ledger"]} == {"NEEDS_CONTEXT"}
+
+    dynamic = _flask_authority_tiers314(
+        "from examples.dynamic_exports import *\n" + _FLASK_AUTHORITY_SOURCE314,
+        {
+            "examples/dynamic_exports.py": "__all__ = ['SAFE_VALUE']\n"
+            "__all__.append('Flask')\nSAFE_VALUE = 1\nFlask = object\n"
+        },
+    )
+    assert {row["tier"] for row in dynamic["ledger"]} == {"NEEDS_CONTEXT"}
+
+
 def _private_key_auth_tiers(source, findings=None):
     from hashlib import sha256
     from factoryline.primitive_observation_binding import build_finding_tier_report
@@ -230,7 +561,7 @@ def _private_key_auth_tiers(source, findings=None):
     )
 
 
-_PRIVATE_KEY_AUTH_SOURCE = '''
+_PRIVATE_KEY_AUTH_SOURCE = """
 from Crypto.PublicKey import RSA as KeyFactory
 from Crypto.Cipher import PKCS1_v1_5 as Cipher
 import base64
@@ -255,18 +586,25 @@ def login(request):
     if check_password(password, stored_hash):
         return "ok"
     return "denied"
-'''
+"""
 
 
 def test_private_key_decryption_of_post_password_recomputes_authority():
+    """private_key_authentication_evidence requires captured decryption, POST routing, and password verification."""
     import copy
 
     report = _private_key_auth_tiers(_PRIVATE_KEY_AUTH_SOURCE)
-    row = next(item for item in report["ledger"] if item["raw_finding"]["code"] == "SECURITY_HARDCODED_SECRET")
+    row = next(
+        item
+        for item in report["ledger"]
+        if item["raw_finding"]["code"] == "SECURITY_HARDCODED_SECRET"
+    )
     assert row["tier"] == "SUPPORTED_DEFECT"
     assert row["evidence"] == "source_bound_private_key_http_authentication_flow"
     assert row["raw_finding"]["severity"] == "CRITICAL"
-    assert row["raw_finding"] == copy.deepcopy(_premise_scan(_PRIVATE_KEY_AUTH_SOURCE)[0])
+    assert row["raw_finding"] == copy.deepcopy(
+        _premise_scan(_PRIVATE_KEY_AUTH_SOURCE)[0]
+    )
     observation = row["credential_authority_observation"]
     assert observation["source_role"] == "embedded_private_key"
     assert observation["consumer_role"] == "django_password_verifier"
@@ -337,6 +675,7 @@ def test_private_key_authority_rejects_stale_string_finding_after_type_change():
     report = _private_key_auth_tiers(wrong_type, findings)
     assert report["tier_counts"]["SUPPORTED_DEFECT"] == 0
     assert report["ledger"][0]["raw_finding"]["severity"] == "CRITICAL"
+
 
 @pytest.mark.parametrize(
     "runner",
@@ -554,6 +893,21 @@ def test_tier277_rebinding_decision_invalidates_native_epoch(tmp_path, monkeypat
     assert audit._oracle_context_cache_key(tmp_path, [], {}) != before
 
 
+def test_tier314_flask_authority_implementation_invalidates_native_epoch(
+    tmp_path, monkeypatch
+):
+    from factoryline import primitive_observation_binding as tiers
+
+    before = audit._oracle_context_cache_key(tmp_path, [], {})
+    original = tiers._finding_flask_session_authority_evidence
+
+    def replacement(*args, **kwargs):
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(tiers, "_finding_flask_session_authority_evidence", replacement)
+    assert audit._oracle_context_cache_key(tmp_path, [], {}) != before
+
+
 def test_tier275_recomputes_positive_preserves_raw_and_names_abstention():
     import copy
 
@@ -611,10 +965,14 @@ def test_tier275_known_format_preserved_in_any_source_role(path, name):
     )
     assert report["tier_counts"]["NEEDS_CONTEXT"] == 1
     assert report["ledger"][0]["raw_finding"]["severity"] == "CRITICAL"
-    assert report["ledger"][0]["material_observation"]["kind"] == "KNOWN_CREDENTIAL_FORMAT"
+    assert (
+        report["ledger"][0]["material_observation"]["kind"] == "KNOWN_CREDENTIAL_FORMAT"
+    )
 
 
-@pytest.mark.parametrize("value", ["ordinary-value", "ghp_", "ghp_short", "not-a-provider-token"])
+@pytest.mark.parametrize(
+    "value", ["ordinary-value", "ghp_", "ghp_short", "not-a-provider-token"]
+)
 def test_tier277_noncredential_names_need_known_format(value):
     source = f"value = {value!r}\n"
     assert not any(
@@ -625,7 +983,11 @@ def test_tier277_noncredential_names_need_known_format(value):
 
 @pytest.mark.parametrize(
     "literal",
-    ["ghp_" + "A" * 36, "-----BEGIN PRIVATE KEY-----\\npublic vector", "AKIA" + "A" * 16],
+    [
+        "ghp_" + "A" * 36,
+        "-----BEGIN PRIVATE KEY-----\\npublic vector",
+        "AKIA" + "A" * 16,
+    ],
 )
 def test_tier279_known_material_is_not_authority(literal):
     source = f"ACCESS_TOKEN = {literal!r}\n"
@@ -646,7 +1008,7 @@ def test_tier279_known_material_is_not_authority(literal):
     "runner",
     [
         'from flask import Flask\napp=Flask(__name__)\napp.config.from_object("service.settings")\n',
-        'import os\nfrom django.core.wsgi import get_wsgi_application\n'
+        "import os\nfrom django.core.wsgi import get_wsgi_application\n"
         'os.environ.setdefault("DJANGO_SETTINGS_MODULE", "service.settings")\napplication=get_wsgi_application()\n',
     ],
 )
@@ -706,6 +1068,7 @@ def test_tier275_changed_captured_bytes_abstain():
     ],
 )
 def test_http_body275_supported_precondition_keeps_raw_sink(imports, sink, code):
+    """bind_request_sink_precondition supports only the captured request-body path and retains its raw sink finding."""
     payload = "body" if code == "SECURITY_UNSAFE_DESERIALIZATION" else "body.decode()"
     source = (
         imports + "from django.views.decorators.http import require_http_methods\n"
@@ -728,114 +1091,214 @@ def test_http_body275_supported_precondition_keeps_raw_sink(imports, sink, code)
     assert premise["sink_span"][0] == finding["line"]
 
 
-@pytest.mark.parametrize("arguments,bytes_input", [
-    ("", True), ("as_text=False", True), ("False, False", True),
-    ("cache=False, parse_form_data=True", True), ("as_text=True", False),
-])
+@pytest.mark.parametrize(
+    "arguments,bytes_input",
+    [
+        ("", True),
+        ("as_text=False", True),
+        ("False, False", True),
+        ("cache=False, parse_form_data=True", True),
+        ("as_text=True", False),
+    ],
+)
 @pytest.mark.parametrize("sink", ["pickle.loads(payload)", "eval(payload)"])
-def test_sink_context_flask_body_method_preserves_source_kind(arguments, bytes_input, sink):
+def test_sink_context_flask_body_method_preserves_source_kind(
+    arguments, bytes_input, sink
+):
+    """bind_request_sink_precondition preserves bytes-versus-text source kind for the exact Flask body call shape."""
     source = (
         "import pickle\nfrom flask import request\ndef view():\n"
         f"    payload = request.get_data({arguments})\n    {sink}\n"
     )
-    findings = [row for row in _premise_scan(source)
-                if row["code"] in {"SECURITY_UNSAFE_DESERIALIZATION", "SECURITY_DYNAMIC_EXECUTION"}]
+    findings = [
+        row
+        for row in _premise_scan(source)
+        if row["code"]
+        in {"SECURITY_UNSAFE_DESERIALIZATION", "SECURITY_DYNAMIC_EXECUTION"}
+    ]
     assert len(findings) == 1
     expected = bytes_input or sink.startswith("eval")
     assert bool(findings[0]["facts"].get("security_precondition")) is expected
 
 
-@pytest.mark.parametrize("arguments", [
-    "*values", "**options", "as_text=unknown", "as_text='yes'",
-    "False, False, False, False", "False, cache=True", "other=True",
-])
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        "*values",
+        "**options",
+        "as_text=unknown",
+        "as_text='yes'",
+        "False, False, False, False",
+        "False, cache=True",
+        "other=True",
+    ],
+)
 def test_sink_context_flask_body_ambiguous_call_is_not_a_source_certificate(arguments):
     source = f"from flask import request\ndef view():\n    eval(request.get_data({arguments}))\n"
-    assert not any(row.get("facts", {}).get("security_precondition") for row in _premise_scan(source))
+    assert not any(
+        row.get("facts", {}).get("security_precondition")
+        for row in _premise_scan(source)
+    )
 
 
-@pytest.mark.parametrize("mutation", [
-    "request.get_data = replacement", "request = replacement",
-])
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "request.get_data = replacement",
+        "request = replacement",
+    ],
+)
 def test_sink_context_flask_body_replaced_provider_is_not_certified(mutation):
     source = f"from flask import request\n{mutation}\ndef view():\n    eval(request.get_data())\n"
-    assert not any(row.get("facts", {}).get("security_precondition") for row in _premise_scan(source))
+    assert not any(
+        row.get("facts", {}).get("security_precondition")
+        for row in _premise_scan(source)
+    )
 
 
-@pytest.mark.parametrize("framework,expression", [
-    ("flask", 'request.args["cmd"]'),
-    ("flask", 'request.form.get("cmd")'),
-    ("flask", 'request.json["cmd"]'),
-    ("flask", 'request.get_json()["cmd"]'),
-    ("django", 'request.GET["cmd"]'),
-    ("django", 'request.POST.get("cmd", "")'),
-])
-@pytest.mark.parametrize("sink", ["eval(payload)", "os.system(payload)", "pickle.loads(payload.encode())"])
+@pytest.mark.parametrize(
+    "framework,expression",
+    [
+        ("flask", 'request.args["cmd"]'),
+        ("flask", 'request.form.get("cmd")'),
+        ("flask", 'request.json["cmd"]'),
+        ("flask", 'request.get_json()["cmd"]'),
+        ("django", 'request.GET["cmd"]'),
+        ("django", 'request.POST.get("cmd", "")'),
+    ],
+)
+@pytest.mark.parametrize(
+    "sink", ["eval(payload)", "os.system(payload)", "pickle.loads(payload.encode())"]
+)
 def test_http279_mapping_value_reaches_modeled_sink(framework, expression, sink):
+    """http_request_payload and request_payload_value_kind accept only selected Flask or Django mapping values with matching sink types."""
     imports = "import os\nimport pickle\n"
     if framework == "flask":
         source = imports + "from flask import request\ndef view():\n"
     else:
-        source = imports + "from django.views.decorators.http import require_POST\n@require_POST\ndef view(request):\n"
+        source = (
+            imports
+            + "from django.views.decorators.http import require_POST\n@require_POST\ndef view(request):\n"
+        )
     source += f"    payload = {expression}\n    {sink}\n"
     findings = _premise_scan(source)
-    assert any(row.get("facts", {}).get("security_precondition") for row in findings)
+    opaque_json_codec = sink == "pickle.loads(payload.encode())" and expression in {
+        'request.json["cmd"]',
+        'request.get_json()["cmd"]',
+    }
+    supported = any(
+        row.get("facts", {}).get("security_precondition") for row in findings
+    )
+    assert supported is not opaque_json_codec
+    if opaque_json_codec:
+        assert any(
+            row["code"] == "SECURITY_UNSAFE_DESERIALIZATION"
+            and row["severity"] == "HIGH"
+            for row in findings
+        )
 
 
-@pytest.mark.parametrize("expression", [
-    "request.args.keys()", "request.form.items()", "request.args.getlist('cmd')",
-    "request.args.get()", "request.args.get(*values)", "request.args.get('cmd', default='', **opts)",
-    "request.get_json(*values)['cmd']", "request.get_json(silent=True)['cmd']",
-])
+@pytest.mark.parametrize(
+    "expression",
+    [
+        "request.args.keys()",
+        "request.form.items()",
+        "request.args.getlist('cmd')",
+        "request.args.get()",
+        "request.args.get(*values)",
+        "request.args.get('cmd', default='', **opts)",
+        "request.get_json(*values)['cmd']",
+        "request.get_json(silent=True)['cmd']",
+    ],
+)
 def test_http279_nonvalue_or_ambiguous_access_cannot_support(expression):
     source = f"from flask import request\ndef view():\n    payload = {expression}\n    eval(payload)\n"
-    assert not any(row.get("facts", {}).get("security_precondition") for row in _premise_scan(source))
+    assert not any(
+        row.get("facts", {}).get("security_precondition")
+        for row in _premise_scan(source)
+    )
 
 
-@pytest.mark.parametrize("mutation", [
-    'request.json = {"cmd": "2+2"}',
-    'request.get_json = replacement',
-    'request = replacement',
-    'flask.request = replacement',
-])
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        'request.json = {"cmd": "2+2"}',
+        "request.get_json = replacement",
+        "request = replacement",
+        "flask.request = replacement",
+    ],
+)
 def test_http279_changed_request_provider_abstains(mutation):
-    source = "import flask\nfrom flask import request\n" + mutation + '\ndef view():\n    eval(request.get_json()["cmd"])\n'
-    assert not any(row.get("facts", {}).get("security_precondition") for row in _premise_scan(source))
+    source = (
+        "import flask\nfrom flask import request\n"
+        + mutation
+        + '\ndef view():\n    eval(request.get_json()["cmd"])\n'
+    )
+    assert not any(
+        row.get("facts", {}).get("security_precondition")
+        for row in _premise_scan(source)
+    )
 
 
-@pytest.mark.parametrize("body", [
-    'payload = request.POST.get("cmd"); payload = "2+2"; eval(payload)',
-    'request.POST = {}; eval(request.POST["cmd"])',
-    'request = replacement; eval(request.POST["cmd"])',
-    'eval(request.POST.getlist("cmd"))',
-    'eval(request.POST.keys())',
-])
+@pytest.mark.parametrize(
+    "body",
+    [
+        'payload = request.POST.get("cmd"); payload = "2+2"; eval(payload)',
+        'request.POST = {}; eval(request.POST["cmd"])',
+        'request = replacement; eval(request.POST["cmd"])',
+        'eval(request.POST.getlist("cmd"))',
+        "eval(request.POST.keys())",
+    ],
+)
 def test_http279_django_overwrite_or_nonvalue_abstains(body):
-    source = "from django.views.decorators.http import require_POST\n@require_POST\ndef view(request):\n    " + body + "\n"
-    assert not any(row.get("facts", {}).get("security_precondition") for row in _premise_scan(source))
+    source = (
+        "from django.views.decorators.http import require_POST\n@require_POST\ndef view(request):\n    "
+        + body
+        + "\n"
+    )
+    assert not any(
+        row.get("facts", {}).get("security_precondition")
+        for row in _premise_scan(source)
+    )
 
 
-@pytest.mark.parametrize("mutation", [
-    'request.POST["cmd"] = "2+2"',
-    'request.POST.update({"cmd": "2+2"})',
-    'values = request.POST; values["cmd"] = "2+2"',
-    'values = request.POST; values.update({"cmd": "2+2"})',
-    'alter(request.POST)',
-    'values = request.POST; alter(values)',
-])
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        'request.POST["cmd"] = "2+2"',
+        'request.POST.update({"cmd": "2+2"})',
+        'values = request.POST; values["cmd"] = "2+2"',
+        'values = request.POST; values.update({"cmd": "2+2"})',
+        "alter(request.POST)",
+        "values = request.POST; alter(values)",
+    ],
+)
 def test_http279_django_selected_mapping_mutation_abstains(mutation):
-    source = "from django.views.decorators.http import require_POST\n@require_POST\ndef view(request):\n    " + mutation + '\n    eval(request.POST.get("cmd"))\n'
-    assert not any(row.get("facts", {}).get("security_precondition") for row in _premise_scan(source))
+    source = (
+        "from django.views.decorators.http import require_POST\n@require_POST\ndef view(request):\n    "
+        + mutation
+        + '\n    eval(request.POST.get("cmd"))\n'
+    )
+    assert not any(
+        row.get("facts", {}).get("security_precondition")
+        for row in _premise_scan(source)
+    )
 
 
 def test_http279_django_other_mapping_key_does_not_erase_input():
     source = 'from django.views.decorators.http import require_POST\n@require_POST\ndef view(request):\n    request.POST["other"] = "safe"\n    eval(request.POST.get("cmd"))\n'
-    assert any(row.get("facts", {}).get("security_precondition") for row in _premise_scan(source))
+    assert any(
+        row.get("facts", {}).get("security_precondition")
+        for row in _premise_scan(source)
+    )
 
 
 def test_http279_cached_json_mapping_overwrite_abstains():
     source = 'from flask import request\ndef view():\n    values = request.get_json()\n    values["cmd"] = "2+2"\n    eval(request.get_json()["cmd"])\n'
-    assert not any(row.get("facts", {}).get("security_precondition") for row in _premise_scan(source))
+    assert not any(
+        row.get("facts", {}).get("security_precondition")
+        for row in _premise_scan(source)
+    )
 
 
 def test_http279_text_request_does_not_satisfy_bytes_only_sink():
@@ -846,7 +1309,7 @@ def test_http279_text_request_does_not_satisfy_bytes_only_sink():
 
 
 def test_http279_decoded_body_is_not_pickle_bytes():
-    source = 'import pickle\nfrom flask import request\ndef view():\n    payload=request.data.decode()\n    pickle.loads(payload)\n'
+    source = "import pickle\nfrom flask import request\ndef view():\n    payload=request.data.decode()\n    pickle.loads(payload)\n"
     rows = _premise_scan(source)
     assert any(row["code"] == "SECURITY_UNSAFE_DESERIALIZATION" for row in rows)
     assert not any(row.get("facts", {}).get("security_precondition") for row in rows)
@@ -854,7 +1317,10 @@ def test_http279_decoded_body_is_not_pickle_bytes():
 
 def test_http279_bytes_type_evidence_requires_every_branch():
     source = 'import pickle\nfrom flask import request\ndef view(flag):\n    if flag:\n        payload=request.data\n    else:\n        payload=request.form.get("data")\n    pickle.loads(payload)\n'
-    assert not any(row.get("facts", {}).get("security_precondition") for row in _premise_scan(source))
+    assert not any(
+        row.get("facts", {}).get("security_precondition")
+        for row in _premise_scan(source)
+    )
 
 
 @pytest.mark.parametrize(
@@ -966,6 +1432,67 @@ def test_log275_replaced_provider_preserves_raw_without_support():
     assert "security_precondition" not in logs[0]["facts"]
 
 
+@pytest.mark.parametrize(
+    "source,expected",
+    [
+        ("import pickle\ndef decode(payload): return pickle.loads(payload)\n", True),
+        ("import sys\nsys.modules['pickle'] = replacement\n", False),
+    ],
+)
+def test_security_precondition_provider_identity_rejects_registry_replacement(
+    source, expected
+):
+    tree = ast.parse(source)
+    nodes = list(ast.walk(tree))
+    aliases = _security_aliases(nodes)
+    assert (
+        sensors.security_precondition_providers_stable(tree, aliases, nodes) is expected
+    )
+
+
+@pytest.mark.parametrize(
+    "source,expected",
+    [
+        ("import logging\nlogging.warning('safe')\n", True),
+        ("import logging\nlogging.warning = replacement\n", False),
+    ],
+)
+def test_log_provider_identity_requires_unmodified_logging_provider(source, expected):
+    tree = ast.parse(source)
+    nodes = list(ast.walk(tree))
+    aliases = _security_aliases(nodes)
+    assert sensors.log_security_provider_stable(tree, aliases, nodes) is expected
+
+
+def test_log_percent_slots_exclude_escaped_percent_and_preserve_real_slots():
+    assert sensors.log_percent_slots(
+        "level=%(levelname)s escaped=%% payload=%s width=%*.*f"
+    ) == ["s", "s", "f"]
+
+
+def test_log_security_precondition_requires_stability_and_a_possible_sink_path():
+    """log_scalar_metadata supports only stable log metadata with a reachable consumer sink."""
+    from types import SimpleNamespace
+
+    stable = SimpleNamespace(_security_log_provider_stable=True)
+    call = ast.parse("logging.warning(user_input)").body[0].value
+    fact = sensors.log_security_precondition(stable, call)["security_precondition"]
+    assert fact["status"] == "SUPPORTED"
+    assert fact["source_role"] == "untrusted_input"
+    assert fact["consumer_role"] == "log_message"
+
+    unstable = SimpleNamespace(_security_log_provider_stable=False)
+    assert sensors.log_security_precondition(unstable, call) == {}
+
+    dead = ast.parse("if False:\n    logging.warning(user_input)\n")
+    dead_if = dead.body[0]
+    dead_statement = dead_if.body[0]
+    dead_call = dead_statement.value
+    dead_call._security_parent = dead_statement
+    dead_statement._security_parent = dead_if
+    assert sensors.log_security_precondition(stable, dead_call) == {}
+
+
 @pytest.mark.parametrize("mutation", ["", "requests.get = replacement\n"])
 @pytest.mark.parametrize("inventory", [list, tuple, iter])
 def test_reused_inventory_preserves_credentials_and_provider_mutation(
@@ -1029,6 +1556,44 @@ def test_reports_direct_basic_auth_password_and_ignores_username_only():
     assert findings[0]["facts"]["credential_slot"] == "password"
 
 
+@pytest.mark.parametrize("value", ["placeholder", "example", "changeme", "replace-me"])
+def test_literal_placeholder_is_reported_only_when_used_as_http_auth(value):
+    findings = _scan(
+        "import requests\n"
+        f"PASSWORD = {value!r}\n"
+        f"requests.get('https://host.test', auth=('user', {value!r}))\n"
+    )
+    assert len(findings) == 1
+    assert findings[0]["facts"]["consumer_role"] == "http_auth"
+    assert value not in repr(findings[0]["facts"])
+
+
+def test_public_native_scan_keeps_auth_placeholder_separate_from_metadata_and_templates(
+    tmp_path,
+):
+    (tmp_path / "app.py").write_text(
+        "import requests\n"
+        "PASSWORD = 'placeholder'\n"
+        "requests.get('https://host.test', auth=('user', 'placeholder'))\n"
+        "requests.get('https://host.test', auth=('user', '${PASSWORD}'))\n"
+        "requests.get('https://host.test', headers={'X-Note': 'placeholder'})\n"
+        "requests.get('https://host.test', headers={'Authorization': f'Bearer {PASSWORD}'})\n",
+        encoding="utf-8",
+    )
+    report = audit.security_scan(tmp_path, cache_enabled=False)
+    findings = [
+        item
+        for item in report["findings"]
+        if item["code"] == "SECURITY_LITERAL_HTTP_CREDENTIAL"
+    ]
+    assert len(findings) == 1
+    assert findings[0]["line"] == 3
+    assert findings[0]["facts"]["consumer_role"] == "http_auth"
+    assert findings[0]["facts"]["credential_validity"] == "not_established"
+    assert findings[0]["facts"]["proof_scope"] == "local_static_wiring"
+    assert "placeholder" not in repr(findings[0]["facts"])
+
+
 def test_ignores_urls_schemes_placeholders_and_noncanonical_calls():
     findings = _scan(
         "import requests\n"
@@ -1068,7 +1633,7 @@ def test_basic_auth_keyword_binding_requires_exact_valid_call_shape():
         "HTTPBasicAuth('name', 'positional-password', password='invalid-duplicate')\n"
         "HTTPBasicAuth(username='name', password='placeholder')\n"
     )
-    assert len(findings) == 1
+    assert len(findings) == 2
     assert findings[0]["facts"]["credential_slot"] == "password"
 
 
@@ -1110,16 +1675,18 @@ def test_shadowed_import_and_parameter_are_not_canonical_http_sinks():
 
 
 @pytest.mark.parametrize(
-    "mutation",
+    "mutation, surviving_provider",
     [
-        "requests.get = fake_get",
-        "setattr(requests.auth, 'HTTPBasicAuth', fake_auth)",
-        "saved_provider = requests",
-        "requests.auth.HTTPBasicAuth = fake_auth",
-        "httpx.Client = FakeClient",
+        ("requests.get = fake_get", "httpx"),
+        ("setattr(requests.auth, 'HTTPBasicAuth', fake_auth)", "httpx"),
+        ("saved_provider = requests", "httpx"),
+        ("requests.auth.HTTPBasicAuth = fake_auth", "httpx"),
+        ("httpx.Client = FakeClient", "requests"),
     ],
 )
-def test_each_provider_mutation_vetoes_http_credential_proof(mutation):
+def test_provider_mutation_only_vetoes_its_credential_proofs(
+    mutation, surviving_provider
+):
     findings = _scan(
         "import requests\n"
         "import httpx\n"
@@ -1129,13 +1696,16 @@ def test_each_provider_mutation_vetoes_http_credential_proof(mutation):
         "    requests.auth.HTTPBasicAuth('user', 'literal-password')\n"
         "    httpx.Client().post('https://host.test', headers={'Authorization': 'Bearer token-value'})\n"
     )
-    assert findings == []
+    assert len(findings) == (1 if surviving_provider == "httpx" else 2)
+    expected_role = "http_header" if surviving_provider == "httpx" else "http_auth"
+    assert all(item["facts"]["consumer_role"] == expected_role for item in findings)
 
 
-def test_your_prefixed_literal_is_not_a_new_placeholder_waiver():
+@pytest.mark.parametrize("password", ["your-password", "your_password"])
+def test_your_prefixed_literal_is_not_a_new_placeholder_waiver(password):
     findings = _scan(
         "import requests\n"
-        "requests.get('https://host.test', auth=('user', 'your-password'))\n"
+        f"requests.get('https://host.test', auth=('user', {password!r}))\n"
     )
     assert len(findings) == 1
 
@@ -1173,7 +1743,7 @@ def test_provider_mutation_index_is_skipped_without_literal_candidate(monkeypatc
         "requests.get('https://host.test')\n"
         "requests.get('https://host.test', auth=('user', dynamic_password))\n"
         "requests.get('https://host.test', auth=('user', ''))\n"
-        "requests.get('https://host.test', auth=('user', 'placeholder'))\n"
+        "requests.get('https://host.test', auth=('user', '${PASSWORD}'))\n"
     )
     assert findings == []
     assert calls == []
@@ -1203,6 +1773,155 @@ def test_provider_mutation_index_runs_once_for_literal_candidate(
     )
     assert len(findings) == expected
     assert calls == [None]
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "yaml.SafeLoader.yaml_constructors['tag'] = replacement",
+        "del yaml.SafeLoader.yaml_constructors['tag']",
+        "registry = yaml.SafeLoader.yaml_constructors\nregistry['tag'] = replacement",
+    ],
+)
+def test_provider_mutation_index_tracks_subscript_writes_and_deletes(mutation):
+    from types import SimpleNamespace
+
+    from factoryline.finite_capture import finite_provider_mutation_index
+
+    tree = ast.parse("import yaml\n" + mutation + "\n")
+    nodes = tuple(ast.walk(tree))
+    parents = {
+        id(child): node for node in nodes for child in ast.iter_child_nodes(node)
+    }
+    mutations = finite_provider_mutation_index(
+        nodes,
+        _security_aliases(nodes),
+        SimpleNamespace(_resolved_ast_name=audit._resolved_ast_name),
+        parents,
+    )
+    assert ("yaml.SafeLoader.yaml_constructors", "*") in mutations
+
+
+@pytest.mark.parametrize(
+    "foreign_source",
+    [
+        "import yaml\nyaml.safe_load(other)\n",
+        "import yaml\nyaml.dump(other, Dumper=yaml.SafeDumper)\n",
+        "import yaml\nyaml.compose(other, Loader=yaml.SafeLoader)\n",
+    ],
+)
+def test_yaml_safe_loader_survives_typed_sibling_consumers(tmp_path, foreign_source):
+    (tmp_path / "parse.py").write_text(
+        "import yaml\nyaml.load(data, Loader=yaml.SafeLoader)\n", encoding="utf-8"
+    )
+    (tmp_path / "sibling.py").write_text(foreign_source, encoding="utf-8")
+
+    findings = audit.security_scan(tmp_path, cache_enabled=False)["findings"]
+
+    assert not any(item["code"] == "SECURITY_UNSAFE_YAML" for item in findings)
+
+
+@pytest.mark.parametrize(
+    "foreign_source",
+    [
+        "import yaml\nyaml.SafeLoader.yaml_constructors['tag'] = replacement\n",
+        "import yaml\nyaml.load = wrapper\n",
+        "import yaml\nyaml.compose = wrapper\n",
+        "import yaml\nyaml.dump = wrapper\n",
+        "from yaml import SafeLoader as Exported\nexported_loader = Exported\n",
+        "import yaml\ncustom_consumer(yaml.SafeLoader)\n",
+        "import yaml\nyaml.compose(other, Loader=yaml.SafeLoader, **options)\n",
+    ],
+)
+def test_yaml_safe_loader_keeps_adversarial_sibling_events_unknown(
+    tmp_path, foreign_source
+):
+    """yaml_loader_provider_uncertain retains unsafe findings when sibling consumers escape or mutate loader state."""
+    (tmp_path / "parse.py").write_text(
+        "import yaml\nyaml.load(data, Loader=yaml.SafeLoader)\n", encoding="utf-8"
+    )
+    (tmp_path / "sibling.py").write_text(foreign_source, encoding="utf-8")
+
+    findings = audit.security_scan(tmp_path, cache_enabled=False)["findings"]
+
+    assert any(item["code"] == "SECURITY_UNSAFE_YAML" for item in findings)
+
+
+def test_yaml_typed_consumer_filter_respects_foreign_scope_shadowing(tmp_path):
+    """Typed YAML argument consumers reject a foreign-scope loader shadow."""
+    (tmp_path / "parse.py").write_text(
+        "import yaml\nyaml.load(data, Loader=yaml.SafeLoader)\n", encoding="utf-8"
+    )
+    (tmp_path / "sibling.py").write_text(
+        "from yaml import SafeLoader as SL\n"
+        "import yaml\n"
+        "def run(yaml):\n"
+        "    yaml.compose(data, Loader=SL)\n",
+        encoding="utf-8",
+    )
+
+    findings = audit.security_scan(tmp_path, cache_enabled=False)["findings"]
+
+    assert any(item["code"] == "SECURITY_UNSAFE_YAML" for item in findings)
+
+
+def test_yaml_load_signature_and_loader_consumer_use_exact_slots():
+    """YAML call-shape validation binds one stream and loader slot and rejects duplicates."""
+    valid = ast.parse("import yaml\nyaml.load(data, Loader=yaml.SafeLoader)\n")
+    nodes = list(ast.walk(valid))
+    parents = {
+        id(child): node for node in nodes for child in ast.iter_child_nodes(node)
+    }
+    call = next(node for node in nodes if isinstance(node, ast.Call))
+    loader = next(
+        node
+        for node in nodes
+        if isinstance(node, ast.Attribute) and node.attr == "SafeLoader"
+    )
+    aliases = audit._security_aliases(nodes)
+    assert sensors.yaml_load_call_signature(call)
+    assert (
+        sensors.yaml_loader_argument_consumer(loader, aliases, parents) == "yaml.load"
+    )
+
+    malformed = ast.parse(
+        "import yaml\nyaml.load(data, stream=data, Loader=yaml.Loader)\n"
+    )
+    malformed_nodes = list(ast.walk(malformed))
+    malformed_parents = {
+        id(child): node
+        for node in malformed_nodes
+        for child in ast.iter_child_nodes(node)
+    }
+    malformed_call = next(
+        node for node in malformed_nodes if isinstance(node, ast.Call)
+    )
+    malformed_loader = next(
+        node
+        for node in malformed_nodes
+        if isinstance(node, ast.Attribute) and node.attr == "Loader"
+    )
+    assert not sensors.yaml_load_call_signature(malformed_call)
+    assert (
+        sensors.yaml_loader_argument_consumer(
+            malformed_loader,
+            audit._security_aliases(malformed_nodes),
+            malformed_parents,
+        )
+        is None
+    )
+
+
+def test_security_precondition_call_shape_requires_one_modeled_argument():
+    eval_call = ast.parse("eval(source)").body[0].value
+    expanded_eval = ast.parse("eval(*values)").body[0].value
+    shell_call = ast.parse("subprocess.run(command, shell=True)").body[0].value
+    unsafe_shell = ast.parse("subprocess.run(command, shell=False)").body[0].value
+
+    assert sensors.security_precondition_call_shape(eval_call, "eval")
+    assert not sensors.security_precondition_call_shape(expanded_eval, "eval")
+    assert sensors.security_precondition_call_shape(shell_call, "subprocess.run")
+    assert not sensors.security_precondition_call_shape(unsafe_shell, "subprocess.run")
 
 
 """Native semantic sensing preserves existing defects and separates source claims."""
@@ -1401,44 +2120,169 @@ def test_precision257_semantic_sensor_request_upload_and_password_comparison():
     )
 
 
-@pytest.mark.parametrize("source", [
-    pytest.param(_PRIVATE_KEY_AUTH_SOURCE.replace("def login(request):", "def login(request, decode_secret=None):"), id="decryptor-parameter-shadow"),
-    pytest.param(_PRIVATE_KEY_AUTH_SOURCE.replace('@require_http_methods(["POST"])', 'decode_secret = opaque_provider\n@require_http_methods(["POST"])'), id="decryptor-module-rebind"),
-    pytest.param(_PRIVATE_KEY_AUTH_SOURCE.replace("def login(request):", "def login(request, check_password=None):"), id="verifier-parameter-shadow"),
-    pytest.param(_PRIVATE_KEY_AUTH_SOURCE.replace("def decode_secret(ciphertext):", "def decode_secret(ciphertext, KeyFactory=None):"), id="key-factory-parameter-shadow"),
-    pytest.param(_PRIVATE_KEY_AUTH_SOURCE.replace("def decode_secret(ciphertext):", "def decode_secret(ciphertext, credential_material=None):"), id="material-parameter-shadow"),
-    pytest.param(_PRIVATE_KEY_AUTH_SOURCE.replace("check_password(password, stored_hash)", "check_password(password)"), id="missing-encoded-verifier-argument"),
-    pytest.param(_PRIVATE_KEY_AUTH_SOURCE.replace("check_password(password, stored_hash)", "check_password(password, stored_hash, *extra)"), id="expanded-verifier-arguments"),
-    pytest.param(_PRIVATE_KEY_AUTH_SOURCE.replace("def decode_secret(ciphertext):\n", "def decode_secret(ciphertext):\n    raise RuntimeError\n"), id="unreachable-decryptor"),
-    pytest.param(_PRIVATE_KEY_AUTH_SOURCE.replace("def login(request):\n", "def login(request):\n    raise RuntimeError\n"), id="unreachable-endpoint-transfer"),
-    pytest.param(_PRIVATE_KEY_AUTH_SOURCE.replace("def login(request):\n", "def login(request):\n    from opaque import decode_secret\n"), id="function-import-shadows-decryptor"),
-    pytest.param(_PRIVATE_KEY_AUTH_SOURCE.replace("def login(request):\n", "def login(request):\n    try:\n        opaque()\n    except Exception as decode_secret:\n        pass\n"), id="except-alias-shadows-decryptor"),
-    pytest.param(_PRIVATE_KEY_AUTH_SOURCE.replace("def decode_secret(ciphertext):\n", "def decode_secret(ciphertext):\n    from opaque import KeyFactory\n"), id="function-import-shadows-provider"),
-    pytest.param(_PRIVATE_KEY_AUTH_SOURCE.replace("    body_text = request.body.decode()\n    payload = json.loads(body_text)", "    payload = json.loads(body_text)\n    body_text = request.body.decode()"), id="body-text-assignment-after-use"),
-    pytest.param(_PRIVATE_KEY_AUTH_SOURCE.replace("    payload = json.loads(body_text)\n    encrypted = payload.get(\"password\")\n    password = decode_secret(encrypted)", "    payload = json.loads(body_text)\n    password = decode_secret(encrypted)\n    encrypted = payload.get(\"password\")"), id="encrypted-assignment-after-use"),
-    pytest.param(_PRIVATE_KEY_AUTH_SOURCE.replace('MIICXAIBAAKBgQDPkDtDFKUZbN6vpevpgZIGc5DzH1UB9oK48MxNATjKPxqv+wsW', "fixture-only"), id="invalid-pem-material-never-imports"),
-])
+@pytest.mark.parametrize(
+    "source",
+    [
+        pytest.param(
+            _PRIVATE_KEY_AUTH_SOURCE.replace(
+                "def login(request):", "def login(request, decode_secret=None):"
+            ),
+            id="decryptor-parameter-shadow",
+        ),
+        pytest.param(
+            _PRIVATE_KEY_AUTH_SOURCE.replace(
+                '@require_http_methods(["POST"])',
+                'decode_secret = opaque_provider\n@require_http_methods(["POST"])',
+            ),
+            id="decryptor-module-rebind",
+        ),
+        pytest.param(
+            _PRIVATE_KEY_AUTH_SOURCE.replace(
+                "def login(request):", "def login(request, check_password=None):"
+            ),
+            id="verifier-parameter-shadow",
+        ),
+        pytest.param(
+            _PRIVATE_KEY_AUTH_SOURCE.replace(
+                "def decode_secret(ciphertext):",
+                "def decode_secret(ciphertext, KeyFactory=None):",
+            ),
+            id="key-factory-parameter-shadow",
+        ),
+        pytest.param(
+            _PRIVATE_KEY_AUTH_SOURCE.replace(
+                "def decode_secret(ciphertext):",
+                "def decode_secret(ciphertext, credential_material=None):",
+            ),
+            id="material-parameter-shadow",
+        ),
+        pytest.param(
+            _PRIVATE_KEY_AUTH_SOURCE.replace(
+                "check_password(password, stored_hash)", "check_password(password)"
+            ),
+            id="missing-encoded-verifier-argument",
+        ),
+        pytest.param(
+            _PRIVATE_KEY_AUTH_SOURCE.replace(
+                "check_password(password, stored_hash)",
+                "check_password(password, stored_hash, *extra)",
+            ),
+            id="expanded-verifier-arguments",
+        ),
+        pytest.param(
+            _PRIVATE_KEY_AUTH_SOURCE.replace(
+                "def decode_secret(ciphertext):\n",
+                "def decode_secret(ciphertext):\n    raise RuntimeError\n",
+            ),
+            id="unreachable-decryptor",
+        ),
+        pytest.param(
+            _PRIVATE_KEY_AUTH_SOURCE.replace(
+                "def login(request):\n", "def login(request):\n    raise RuntimeError\n"
+            ),
+            id="unreachable-endpoint-transfer",
+        ),
+        pytest.param(
+            _PRIVATE_KEY_AUTH_SOURCE.replace(
+                "def login(request):\n",
+                "def login(request):\n    from opaque import decode_secret\n",
+            ),
+            id="function-import-shadows-decryptor",
+        ),
+        pytest.param(
+            _PRIVATE_KEY_AUTH_SOURCE.replace(
+                "def login(request):\n",
+                "def login(request):\n    try:\n        opaque()\n    except Exception as decode_secret:\n        pass\n",
+            ),
+            id="except-alias-shadows-decryptor",
+        ),
+        pytest.param(
+            _PRIVATE_KEY_AUTH_SOURCE.replace(
+                "def decode_secret(ciphertext):\n",
+                "def decode_secret(ciphertext):\n    from opaque import KeyFactory\n",
+            ),
+            id="function-import-shadows-provider",
+        ),
+        pytest.param(
+            _PRIVATE_KEY_AUTH_SOURCE.replace(
+                "    body_text = request.body.decode()\n    payload = json.loads(body_text)",
+                "    payload = json.loads(body_text)\n    body_text = request.body.decode()",
+            ),
+            id="body-text-assignment-after-use",
+        ),
+        pytest.param(
+            _PRIVATE_KEY_AUTH_SOURCE.replace(
+                '    payload = json.loads(body_text)\n    encrypted = payload.get("password")\n    password = decode_secret(encrypted)',
+                '    payload = json.loads(body_text)\n    password = decode_secret(encrypted)\n    encrypted = payload.get("password")',
+            ),
+            id="encrypted-assignment-after-use",
+        ),
+        pytest.param(
+            _PRIVATE_KEY_AUTH_SOURCE.replace(
+                "MIICXAIBAAKBgQDPkDtDFKUZbN6vpevpgZIGc5DzH1UB9oK48MxNATjKPxqv+wsW",
+                "fixture-only",
+            ),
+            id="invalid-pem-material-never-imports",
+        ),
+    ],
+)
 def test_private_key_authority_reviewer_adversarial_controls(source):
     report = _private_key_auth_tiers(source)
-    row = next(r for r in report["ledger"] if r["raw_finding"]["code"] == "SECURITY_HARDCODED_SECRET")
+    row = next(
+        r
+        for r in report["ledger"]
+        if r["raw_finding"]["code"] == "SECURITY_HARDCODED_SECRET"
+    )
     assert row["raw_finding"]["severity"] == "CRITICAL"
     assert row["tier"] == "NEEDS_CONTEXT"
 
 
 def test_private_key_authority_unrelated_zero_argument_call_does_not_crash():
-    source = _PRIVATE_KEY_AUTH_SOURCE.replace("def decode_secret(ciphertext):\n", "def decode_secret(ciphertext):\n    unused = opaque()\n")
+    source = _PRIVATE_KEY_AUTH_SOURCE.replace(
+        "def decode_secret(ciphertext):\n",
+        "def decode_secret(ciphertext):\n    unused = opaque()\n",
+    )
     report = _private_key_auth_tiers(source)
-    assert any(r["raw_finding"]["code"] == "SECURITY_HARDCODED_SECRET" for r in report["ledger"])
+    assert any(
+        r["raw_finding"]["code"] == "SECURITY_HARDCODED_SECRET"
+        for r in report["ledger"]
+    )
 
 
-@pytest.mark.parametrize("source, supported", [
-    (_PRIVATE_KEY_AUTH_SOURCE.replace('    if check_password(password, stored_hash):\n        return "ok"', '    try:\n        if check_password(password, stored_hash):\n            return "ok"\n    except ValueError:\n        return "bad"'), True),
-    (_PRIVATE_KEY_AUTH_SOURCE.replace('    password = decode_secret(encrypted)\n', '    try:\n        password = decode_secret(encrypted)\n    except ValueError:\n        pass\n'), False),
-    (_PRIVATE_KEY_AUTH_SOURCE.replace('    password = decode_secret(encrypted)\n    if check_password(password, stored_hash):\n        return "ok"', '    try:\n        password = decode_secret(encrypted)\n    except ValueError:\n        if check_password(password, stored_hash):\n            return "ok"'), False),
-], ids=["outer-to-try-body", "try-body-to-outside", "try-body-to-handler"])
+@pytest.mark.parametrize(
+    "source, supported",
+    [
+        (
+            _PRIVATE_KEY_AUTH_SOURCE.replace(
+                '    if check_password(password, stored_hash):\n        return "ok"',
+                '    try:\n        if check_password(password, stored_hash):\n            return "ok"\n    except ValueError:\n        return "bad"',
+            ),
+            True,
+        ),
+        (
+            _PRIVATE_KEY_AUTH_SOURCE.replace(
+                "    password = decode_secret(encrypted)\n",
+                "    try:\n        password = decode_secret(encrypted)\n    except ValueError:\n        pass\n",
+            ),
+            False,
+        ),
+        (
+            _PRIVATE_KEY_AUTH_SOURCE.replace(
+                '    password = decode_secret(encrypted)\n    if check_password(password, stored_hash):\n        return "ok"',
+                '    try:\n        password = decode_secret(encrypted)\n    except ValueError:\n        if check_password(password, stored_hash):\n            return "ok"',
+            ),
+            False,
+        ),
+    ],
+    ids=["outer-to-try-body", "try-body-to-outside", "try-body-to-handler"],
+)
 def test_private_key_transfer_to_nested_try_body_requires_dominance(source, supported):
     report = _private_key_auth_tiers(source)
-    row = next(r for r in report["ledger"] if r["raw_finding"]["code"] == "SECURITY_HARDCODED_SECRET")
+    row = next(
+        r
+        for r in report["ledger"]
+        if r["raw_finding"]["code"] == "SECURITY_HARDCODED_SECRET"
+    )
     assert (row["tier"] == "SUPPORTED_DEFECT") is supported
 
 
@@ -1446,3 +2290,244 @@ def test_private_key_authority_rejects_mismatched_pem_labels():
     source = _PRIVATE_KEY_AUTH_SOURCE.replace("END RSA PRIVATE KEY", "END PRIVATE KEY")
     report = _private_key_auth_tiers(source)
     assert all(r["tier"] != "SUPPORTED_DEFECT" for r in report["ledger"])
+
+
+@pytest.mark.parametrize(
+    "before, after",
+    [
+        (
+            '    if password == app.config["ADMIN_PASSWORD"]:',
+            '    password = "fixed-unrelated-value"\n    if password == app.config["ADMIN_PASSWORD"]:',
+        ),
+        (
+            '    password = request.form.get("password")',
+            '    return "public-no-auth"\n    password = request.form.get("password")',
+        ),
+        (
+            '        session["logged_in"] = True',
+            '        session["logged_in"] = True\n        session["logged_in"] = False',
+        ),
+        (
+            '@app.route("/create")\n@login_required',
+            '@login_required\n@app.route("/create")',
+        ),
+    ],
+)
+def test_flask_authority326_public_scanner_rejects_broken_custody(
+    tmp_path, before, after
+):
+    source = _FLASK_AUTHORITY_SOURCE314.replace(before, after)
+    assert source != _FLASK_AUTHORITY_SOURCE314
+    (tmp_path / "app.py").write_text(source)
+    with audit._security_only_scan_context(True):
+        report = audit.security_scan(
+            tmp_path, cache_enabled=False, defect_policy="source-role-v1"
+        )
+    assert report["audit_coverage"]["complete"] is True
+    rows = report["finding_tier_report"]["ledger"]
+    credentials = [
+        row
+        for row in rows
+        if row["raw_finding"].get("code") == "SECURITY_HARDCODED_SECRET"
+        and row["raw_finding"].get("facts", {}).get("name")
+        in {"ADMIN_PASSWORD", "SECRET_KEY"}
+    ]
+    assert {row["raw_finding"]["facts"]["name"] for row in credentials} == {
+        "ADMIN_PASSWORD",
+        "SECRET_KEY",
+    }
+    assert {row["tier"] for row in credentials} == {"NEEDS_CONTEXT"}
+    assert all("credential_authority_observation" not in row for row in credentials)
+
+
+@pytest.mark.parametrize(
+    "before, after",
+    [
+        ("def login_required(fn):", "def login_required(fn):\n    return fn"),
+        (
+            '        session["logged_in"] = True',
+            '        session["logged_in"] = True\n        saved = session\n        saved.clear()',
+        ),
+        (
+            '    password = request.form.get("password")\n    if password == app.config["ADMIN_PASSWORD"]:\n        session["logged_in"] = True\n        return redirect("/")',
+            '    password = request.form.get("password")\n    if False:\n        pass\n    else:\n        password = "fixed-unrelated-value"\n        if password == app.config["ADMIN_PASSWORD"]:\n            session["logged_in"] = True\n            return redirect("/")',
+        ),
+        (
+            '@app.route("/create")\n@login_required',
+            'def discard_guard(fn):\n    return lambda: "created"\n\n@app.route("/create")\n@discard_guard\n@login_required',
+        ),
+    ],
+)
+def test_flask_authority326_public_scanner_rejects_adjacent_broken_custody(
+    tmp_path, before, after
+):
+    source = _FLASK_AUTHORITY_SOURCE314.replace(before, after)
+    assert source != _FLASK_AUTHORITY_SOURCE314
+    (tmp_path / "app.py").write_text(source)
+    with audit._security_only_scan_context(True):
+        report = audit.security_scan(
+            tmp_path, cache_enabled=False, defect_policy="source-role-v1"
+        )
+    assert report["audit_coverage"]["complete"] is True
+    rows = report["finding_tier_report"]["ledger"]
+    credentials = [
+        row
+        for row in rows
+        if row["raw_finding"].get("facts", {}).get("name")
+        in {"ADMIN_PASSWORD", "SECRET_KEY"}
+    ]
+    assert {row["raw_finding"]["facts"]["name"] for row in credentials} == {
+        "ADMIN_PASSWORD",
+        "SECRET_KEY",
+    }
+    assert {row["tier"] for row in credentials} == {"NEEDS_CONTEXT"}
+    assert all("credential_authority_observation" not in row for row in credentials)
+
+
+@pytest.mark.parametrize(
+    "binding",
+    [
+        "for value in payload:\n        SINK",
+        "with payload as value:\n        SINK",
+        "match payload:\n        case value:\n            SINK",
+    ],
+)
+@pytest.mark.parametrize("origin", ["parameter", "request", "safe-rebind"])
+@pytest.mark.parametrize(
+    "sink, code",
+    [
+        ("open(value)", "SECURITY_PATH_TRAVERSAL"),
+        ("requests.get(value)", "SECURITY_SSRF"),
+    ],
+)
+def test_control_binding_keeps_parameter_and_request_origins_distinct(
+    binding, origin, sink, code
+):
+    setup = ""
+    if origin == "request":
+        setup = "    payload = request.args.get('path')\n"
+    elif origin == "safe-rebind":
+        setup = "    value = request.args.get('path')\n    payload = ('fixed',)\n"
+    source = (
+        "from flask import request\nimport requests\n"
+        "def consume(payload):\n"
+        + setup
+        + "    "
+        + binding.replace("SINK", sink)
+        + "\n"
+    )
+    findings = _premise_scan(source)
+    selected = [row for row in findings if row["code"] == code]
+    assert bool(selected) is (origin == "request")
+
+
+@pytest.mark.parametrize(
+    "binding",
+    [
+        "for value in payload:\n        cursor.execute(f'SELECT * FROM records WHERE id={value}')",
+        "with payload as value:\n        cursor.execute(f'SELECT * FROM records WHERE id={value}')",
+        "match payload:\n        case value:\n            cursor.execute(f'SELECT * FROM records WHERE id={value}')",
+    ],
+)
+def test_control_binding_keeps_generic_sql_parameter_candidates(binding):
+    findings = _premise_scan(
+        "import sqlite3\ndef consume(payload):\n"
+        "    cursor = sqlite3.connect(':memory:').cursor()\n    " + binding + "\n"
+    )
+    assert any(row["code"] == "SECURITY_SQL_INJECTION" for row in findings)
+
+
+@pytest.mark.parametrize(
+    "source, expected",
+    [
+        ("request.args.get('path')", True),
+        ("payload", False),
+    ],
+)
+def test_multi_item_with_inspects_each_context_after_prior_binding(source, expected):
+    # Static abstract-flow ordering only; captured target code is never executed.
+    findings = _premise_scan(
+        "from flask import request\nimport requests\ndef consume(payload):\n"
+        f"    with {source} as first, requests.get(first) as second:\n"
+        "        pass\n"
+    )
+    assert any(row["code"] == "SECURITY_SSRF" for row in findings) is expected
+
+
+@pytest.mark.parametrize(
+    "guard, body_possible",
+    [
+        ("False", False),
+        ("True", True),
+        ("not True", False),
+        ("1 == 2", False),
+        ("'x' in ['y']", False),
+        ("True and False", False),
+        ("False or True", True),
+        ("unknown", None),
+        ("check()", None),
+        ("config.enabled", None),
+        ("values[0]", None),
+        ("0 is 1", None),
+        ("unknown or True", None),
+        ("unknown and False", None),
+        ("{'x': 1} == {'x': 1}", True),
+    ],
+)
+@pytest.mark.parametrize("source_in_body", [False, True])
+@pytest.mark.parametrize(
+    "sink, code",
+    [
+        ("requests.get(value)", "SECURITY_SSRF"),
+        ("open(value)", "SECURITY_PATH_TRAVERSAL"),
+        ("eval(value)", "SECURITY_DYNAMIC_EXECUTION"),
+        ("cursor.execute('SELECT ' + value)", "SECURITY_SQL_INJECTION"),
+    ],
+)
+def test_literal_branch_reaching_definitions_keep_only_possible_source_writes(
+    guard, body_possible, source_in_body, sink, code
+):
+    dangerous = "value = request.args['url']"
+    source = (
+        "from flask import request\nimport requests, sqlite3\n"
+        "def consume(unknown, config, values):\n"
+        "    cursor = sqlite3.connect(':memory:').cursor()\n"
+        "    value = 'fixed'\n"
+        f"    if {guard}:\n        {dangerous if source_in_body else 'pass'}\n"
+        f"    else:\n        {'pass' if source_in_body else dangerous}\n"
+        f"    {sink}\n"
+    )
+    selected = [
+        row
+        for row in _premise_scan(source)
+        if row["code"] == code
+        and (
+            code != "SECURITY_DYNAMIC_EXECUTION"
+            or row.get("facts", {}).get("security_precondition", {}).get("status")
+            == "SUPPORTED"
+        )
+    ]
+    expected = body_possible is None or body_possible == source_in_body
+    assert bool(selected) is expected
+
+
+@pytest.mark.parametrize("guard", ["False", "True", "unknown", "check()"])
+def test_literal_branch_overwrite_keeps_possible_taint_until_proven_killed(guard):
+    source = (
+        "from flask import request\nimport requests\ndef consume(unknown):\n"
+        "    value = request.args['url']\n"
+        f"    if {guard}:\n        value = 'fixed'\n"
+        "    else:\n        value = 'also-fixed'\n"
+        "    requests.get(value)\n"
+    )
+    assert not any(row["code"] == "SECURITY_SSRF" for row in _premise_scan(source))
+
+
+@pytest.mark.parametrize(
+    "guard", ["[*items]", "{**items}", "1 < 'x'", "[0] * 100", "(flag := False)"]
+)
+def test_literal_guard_unknown_syntax_never_removes_a_branch(guard):
+    from factoryline.finite_capture import security_literal_branch_blocks
+
+    branch = ast.parse(f"if {guard}:\n    dangerous()\nelse:\n    other()\n").body[0]
+    assert security_literal_branch_blocks(branch) == (branch.body, branch.orelse)

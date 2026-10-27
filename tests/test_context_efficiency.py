@@ -1384,11 +1384,8 @@ def test_security_scan_rechecks_sources_after_cold_and_warm_consumption(
     review_audits._oracle_context_cache_clear()
     if cache_enabled:
         review_audits.security_scan(tmp_path, cache_enabled=True)
-        scanner = review_audits._security_scan_file
-        scanner_name = "_security_scan_file"
-    else:
-        scanner = review_audits._security_scan_file_snapshot
-        scanner_name = "_security_scan_file_snapshot"
+    scanner = review_audits._security_scan_file_snapshot
+    scanner_name = "_security_scan_file_snapshot"
 
     def mutate_after_scan(*args, **kwargs):
         result = scanner(*args, **kwargs)
@@ -3724,14 +3721,53 @@ def test_pickle_colocation_uses_current_exact_byte_occurrence_guard(
     )
 
 
+def _test_pickle_runtime_identities():
+    base = {
+        "implementation": "cpython",
+        "version": "3.11.9",
+        "executable_sha256": "1" * 64,
+        "pickle_source_sha256": "2" * 64,
+        "pickle_implementation_sha256": "3" * 64,
+    }
+    v3 = {
+        **base,
+        "enum_source_sha256": "4" * 64,
+        "typing_source_sha256": "5" * 64,
+        "python_runtime_sha256": "6" * 64,
+    }
+    v4 = {
+        **v3,
+        "copyreg_source_sha256": "7" * 64,
+        "collections_source_sha256": "8" * 64,
+        "http_cookiejar_source_sha256": "9" * 64,
+        "threading_source_sha256": "a" * 64,
+    }
+    return base, v3, v4
+
+
+def _patch_test_pickle_runtime_identities(monkeypatch, finite):
+    base, v3, v4 = _test_pickle_runtime_identities()
+    monkeypatch.setattr(finite, "_provider_runtime_identity", lambda: dict(base))
+    monkeypatch.setattr(finite, "provider_runtime_identity_v3", lambda: dict(v3))
+    monkeypatch.setattr(finite, "provider_runtime_identity_v4", lambda: dict(v4))
+
+
 def _typed_pickle_v3_fixture(
-    tmp_path, *, model_source=None, api_source=None, caller_source=None, model_version=3
+    tmp_path,
+    monkeypatch,
+    *,
+    model_source=None,
+    api_source=None,
+    caller_source=None,
+    model_version=3,
 ):
     import ast
     import hashlib
 
     from factoryline import finite_capture as finite
     from factoryline.runtime_audit_common import canonical_bytes
+
+    _patch_test_pickle_runtime_identities(monkeypatch, finite)
 
     model_source = model_source or (
         "from enum import IntEnum\n\n"
@@ -3836,9 +3872,11 @@ def _typed_pickle_v3_fixture(
     return finite, profile, view, raw_sources, source_path, caller_bytes, call
 
 
-def test_typed_pickle_v3_reconstructs_source_bound_intenum_and_build_state(tmp_path):
+def test_typed_pickle_v3_reconstructs_source_bound_intenum_and_build_state(
+    tmp_path, monkeypatch
+):
     finite, profile, view, source, source_path, caller, call = _typed_pickle_v3_fixture(
-        tmp_path
+        tmp_path, monkeypatch
     )
 
     binding = finite.provider_constructor_binding(
@@ -3940,10 +3978,10 @@ def test_typed_pickle_v3_reconstructs_source_bound_intenum_and_build_state(tmp_p
     ],
 )
 def test_typed_pickle_v3_rejects_unknown_reducer_state_enum_and_values(
-    tmp_path, model_source, caller_source, instance_state
+    tmp_path, monkeypatch, model_source, caller_source, instance_state
 ):
     finite, profile, view, source, source_path, _, call = _typed_pickle_v3_fixture(
-        tmp_path, model_source=model_source, caller_source=caller_source
+        tmp_path, monkeypatch, model_source=model_source, caller_source=caller_source
     )
 
     assert (
@@ -3960,10 +3998,10 @@ def test_typed_pickle_v3_rejects_unknown_reducer_state_enum_and_values(
 
 
 def test_typed_pickle_v3_rejects_aliased_build_containers_and_reexport_rebinding(
-    tmp_path,
+    tmp_path, monkeypatch
 ):
     finite, profile, view, source, source_path, _, call = _typed_pickle_v3_fixture(
-        tmp_path
+        tmp_path, monkeypatch
     )
     shared = []
     assert (
@@ -3979,7 +4017,7 @@ def test_typed_pickle_v3_rejects_aliased_build_containers_and_reexport_rebinding
     )
 
     finite, profile, view, source, source_path, _, call = _typed_pickle_v3_fixture(
-        tmp_path
+        tmp_path, monkeypatch
     )
     assert (
         finite.provider_exception_record(
@@ -3995,6 +4033,7 @@ def test_typed_pickle_v3_rejects_aliased_build_containers_and_reexport_rebinding
 
     finite, profile, view, source, source_path, _, call = _typed_pickle_v3_fixture(
         tmp_path,
+        monkeypatch,
         api_source="from .middle import WebSocketError, WSCloseCode\nWebSocketError = other\n",
     )
     assert (
@@ -4010,9 +4049,9 @@ def test_typed_pickle_v3_rejects_aliased_build_containers_and_reexport_rebinding
     )
 
 
-def test_v2_exception_model_does_not_gain_v3_intenum_semantics(tmp_path):
+def test_v2_exception_model_does_not_gain_v3_intenum_semantics(tmp_path, monkeypatch):
     finite, profile, view, source, _, _, call = _typed_pickle_v3_fixture(
-        tmp_path, model_version=2
+        tmp_path, monkeypatch, model_version=2
     )
 
     assert (
@@ -4078,11 +4117,13 @@ def test_pickle_colocation_helpers_participate_in_runtime_proof_identity():
     )
 
 
-def _generic_pickle_v4_fixture(provider, caller):
+def _generic_pickle_v4_fixture(provider, caller, monkeypatch):
     import ast
     import hashlib
     from factoryline import finite_capture as finite
     from factoryline.runtime_audit_common import canonical_bytes
+
+    _patch_test_pickle_runtime_identities(monkeypatch, finite)
 
     sources = {
         "pkg/models.py": provider.encode(),
@@ -4157,11 +4198,230 @@ _GENERIC_PICKLE_V4_CALLER = (
 )
 
 
-def test_pickle_generic_v4_source_graph_preserves_shared_identity_and_protocol_recipes():
+def test_pickle_generic_v4_models_baseexception_args_before_and_after_init(
+    monkeypatch,
+):
+    from factoryline import finite_capture as finite
+
+    provider = (
+        "class Child:\n    pass\n"
+        "class Record(Exception):\n"
+        "    def __init__(self, value):\n"
+        "        self.value = value\n"
+        "        self.args = (value,)\n"
+    )
+    caller = 'from pkg import Record\ndef build():\n    return Record("fixed")\n'
+    sources, profile, view, expression = _generic_pickle_v4_fixture(
+        provider, caller, monkeypatch
+    )
+
+    record = finite.provider_pickle_graph_record(
+        profile,
+        sources,
+        expression,
+        selected_contract_view=view,
+        source_path="caller.py",
+    )
+
+    assert record is not None
+    node = record["typed_graph"]["nodes"][record["typed_graph"]["root"]["id"]]
+    assert node["base_kind"] == "exception"
+    assert node["base_args"]["tag"] == "ref"
+    args = record["typed_graph"]["nodes"][node["base_args"]["id"]]
+    assert args["tag"] == "tuple"
+    assert args["items"][0]["value"] == "fixed"
+    assert [row["allocation"] for row in node["protocol_recipes"]] == [
+        "REDUCE_EXCEPTION_CLASS_CALL",
+        "REDUCE_EXCEPTION_CLASS_CALL",
+        "REDUCE_EXCEPTION_CLASS_CALL",
+        "REDUCE_EXCEPTION_CLASS_CALL",
+        "REDUCE_EXCEPTION_CLASS_CALL",
+        "REDUCE_EXCEPTION_CLASS_CALL",
+    ]
+
+
+def test_pickle_generic_v4_replays_initializer_with_reduced_args(monkeypatch):
+    from factoryline import finite_capture as finite
+
+    provider = (
+        "class Child:\n    pass\n"
+        "class Record(Exception):\n"
+        "    def __init__(self, value):\n"
+        "        if value is None:\n            print('restore effect')\n"
+        "        self.value = value\n        self.args = (None,)\n"
+    )
+    caller = 'from pkg import Record\ndef build():\n    return Record("fixed")\n'
+    sources, profile, view, expression = _generic_pickle_v4_fixture(
+        provider, caller, monkeypatch
+    )
+    assert (
+        finite.provider_pickle_graph_record(
+            profile,
+            sources,
+            expression,
+            selected_contract_view=view,
+            source_path="caller.py",
+        )
+        is None
+    )
+
+
+@pytest.mark.parametrize("field", ["__cause__", "__context__", "__traceback__"])
+def test_pickle_generic_v4_rejects_exception_native_descriptor_state(
+    field, monkeypatch
+):
+    from factoryline import finite_capture as finite
+
+    provider = (
+        "class Child:\n    pass\n"
+        "class Record(Exception):\n"
+        "    def __init__(self, value):\n        self." + field + " = None\n"
+    )
+    caller = 'from pkg import Record\ndef build():\n    return Record("fixed")\n'
+    sources, profile, view, expression = _generic_pickle_v4_fixture(
+        provider, caller, monkeypatch
+    )
+    assert (
+        finite.provider_pickle_graph_record(
+            profile,
+            sources,
+            expression,
+            selected_contract_view=view,
+            source_path="caller.py",
+        )
+        is None
+    )
+
+
+def test_pickle_native_leaf_requires_explicit_current_profile():
+    from factoryline import pickle_model_audit as model
+
+    assert model._provider_v4_native_binding({}) is None
+    assert (
+        model._provider_v4_native_binding({"native_artifacts": {"id": "invented"}})
+        is None
+    )
+
+
+def test_pickle_exception_restore_does_not_mutate_original_model(monkeypatch):
+    from factoryline import finite_capture as finite
+
+    provider = (
+        "class Child:\n    pass\n"
+        "class Record(Exception):\n"
+        "    def __init__(self, value):\n"
+        "        value.append('again')\n        self.value = value\n"
+    )
+    caller = "from pkg import Record\ndef build():\n    return Record([])\n"
+    sources, profile, view, expression = _generic_pickle_v4_fixture(
+        provider, caller, monkeypatch
+    )
+    assert (
+        finite.provider_pickle_graph_record(
+            profile,
+            sources,
+            expression,
+            selected_contract_view=view,
+            source_path="caller.py",
+        )
+        is None
+    )
+
+
+def test_pickle_exception_restore_preserves_cross_field_alias_topology(monkeypatch):
+    from factoryline import finite_capture as finite
+
+    provider = (
+        "class Child:\n    pass\n"
+        "class Record(Exception):\n"
+        "    def __init__(self, value):\n"
+        "        self.args = (list(value),)\n        self.value = self.args[0]\n"
+    )
+    caller = "from pkg import Record\ndef build():\n    return Record([])\n"
+    sources, profile, view, expression = _generic_pickle_v4_fixture(
+        provider, caller, monkeypatch
+    )
+    assert (
+        finite.provider_pickle_graph_record(
+            profile,
+            sources,
+            expression,
+            selected_contract_view=view,
+            source_path="caller.py",
+        )
+        is None
+    )
+
+
+@pytest.mark.parametrize(
+    "path", ["multidict.py", "multidict/__init__.py", "src/multidict/__init__.py"]
+)
+def test_native_mapping_selection_rejects_captured_import_shadow(path):
+    from factoryline import pickle_model_audit as model
+
+    contract = {"native_artifacts": model._NATIVE_EMPTY_MAPPING}
+    assert model.provider_native_sources_clear(contract, {"caller.py": b"pass"})
+    assert not model.provider_native_sources_clear(
+        contract, {path: b"class CIMultiDict: pass"}
+    )
+
+
+def test_pickle_base_alias_definition_does_not_hide_write_through_alias():
+    import ast
+    from factoryline import review_audits as audit, runtime_audit_integrity as runtime
+
+    source = "class Other(Exception):\n    __reduce__ = BaseException.__reduce__\n"
+    tree = ast.parse(source)
+    assert not runtime._conditional_enum_base_mutated(list(ast.walk(tree)), {}, audit)
+    poisoned = ast.parse(
+        source + "alias = BaseException\nalias.__reduce__ = replacement\n"
+    )
+    assert runtime._conditional_enum_base_mutated(list(ast.walk(poisoned)), {}, audit)
+
+
+@pytest.mark.parametrize(
+    "insertion",
+    [
+        "    def __reduce__(self):\n        return super().__reduce__()\n",
+        "    def __getstate__(self):\n        return self.__dict__.copy()\n"
+        "    def __setstate__(self, state):\n        self.__dict__.update(state)\n",
+        "    def __setattr__(self, name, value):\n        object.__setattr__(self, name, value)\n",
+    ],
+)
+def test_pickle_generic_v4_exception_rejects_custom_reconstruction_effects(
+    insertion, monkeypatch
+):
+    from factoryline import finite_capture as finite
+
+    provider = (
+        "class Child:\n    pass\n"
+        "class Record(Exception):\n"
+        "    def __init__(self, value):\n        self.value = value\n" + insertion
+    )
+    caller = 'from pkg import Record\ndef build():\n    return Record("fixed")\n'
+    sources, profile, view, expression = _generic_pickle_v4_fixture(
+        provider, caller, monkeypatch
+    )
+
+    assert (
+        finite.provider_pickle_graph_record(
+            profile,
+            sources,
+            expression,
+            selected_contract_view=view,
+            source_path="caller.py",
+        )
+        is None
+    )
+
+
+def test_pickle_generic_v4_source_graph_preserves_shared_identity_and_protocol_recipes(
+    monkeypatch,
+):
     from factoryline import finite_capture as finite
 
     sources, profile, view, expression = _generic_pickle_v4_fixture(
-        _GENERIC_PICKLE_V4_PROVIDER, _GENERIC_PICKLE_V4_CALLER
+        _GENERIC_PICKLE_V4_PROVIDER, _GENERIC_PICKLE_V4_CALLER, monkeypatch
     )
     record = finite.provider_pickle_graph_record(
         profile,
@@ -4191,12 +4451,14 @@ def test_pickle_generic_v4_source_graph_preserves_shared_identity_and_protocol_r
         "    @property\n    def value(self):\n        return external()\n",
     ],
 )
-def test_pickle_generic_v4_declines_unmodeled_reconstruction_callbacks(insertion):
+def test_pickle_generic_v4_declines_unmodeled_reconstruction_callbacks(
+    insertion, monkeypatch
+):
     from factoryline import finite_capture as finite
 
     provider = _GENERIC_PICKLE_V4_PROVIDER + insertion
     sources, profile, view, expression = _generic_pickle_v4_fixture(
-        provider, _GENERIC_PICKLE_V4_CALLER
+        provider, _GENERIC_PICKLE_V4_CALLER, monkeypatch
     )
     assert (
         finite.provider_pickle_graph_record(
@@ -4210,7 +4472,7 @@ def test_pickle_generic_v4_declines_unmodeled_reconstruction_callbacks(insertion
     )
 
 
-def test_pickle_generic_v4_replays_paired_source_state_hooks_and_slots():
+def test_pickle_generic_v4_replays_paired_source_state_hooks_and_slots(monkeypatch):
     from factoryline import finite_capture as finite
 
     provider = (
@@ -4226,7 +4488,9 @@ def test_pickle_generic_v4_replays_paired_source_state_hooks_and_slots():
         '        self.token = state["token"]\n'
     )
     caller = 'from pkg import Record\ndef build():\n    return Record("fixed")\n'
-    sources, profile, view, expression = _generic_pickle_v4_fixture(provider, caller)
+    sources, profile, view, expression = _generic_pickle_v4_fixture(
+        provider, caller, monkeypatch
+    )
 
     record = finite.provider_pickle_graph_record(
         profile,
@@ -4264,11 +4528,13 @@ def test_pickle_generic_v4_replays_paired_source_state_hooks_and_slots():
         "    def __setstate__(self, state):\n        external(state)\n",
     ],
 )
-def test_pickle_generic_v4_rejects_unbounded_slots_or_state_hook_effects(provider):
+def test_pickle_generic_v4_rejects_unbounded_slots_or_state_hook_effects(
+    provider, monkeypatch
+):
     from factoryline import finite_capture as finite
 
     sources, profile, view, expression = _generic_pickle_v4_fixture(
-        provider, _GENERIC_PICKLE_V4_CALLER
+        provider, _GENERIC_PICKLE_V4_CALLER, monkeypatch
     )
     assert (
         finite.provider_pickle_graph_record(
@@ -4306,7 +4572,7 @@ def test_pickle_generic_v4_graph_mutable_cycle_and_tuple_cycle_have_distinct_out
     ],
 )
 def test_pickle_generic_v4_shared_constructor_handles_builtin_container_bases(
-    base, initializer, base_tag
+    base, initializer, base_tag, monkeypatch
 ):
     from factoryline import finite_capture as finite
 
@@ -4315,7 +4581,9 @@ def test_pickle_generic_v4_shared_constructor_handles_builtin_container_bases(
         "    def __init__(self):\n" + initializer + '        self.metadata = "owned"\n'
     )
     caller = "from pkg import Record\ndef build():\n    return Record()\n"
-    sources, profile, view, expression = _generic_pickle_v4_fixture(provider, caller)
+    sources, profile, view, expression = _generic_pickle_v4_fixture(
+        provider, caller, monkeypatch
+    )
     record = finite.provider_pickle_graph_record(
         profile,
         sources,
@@ -4332,11 +4600,13 @@ def test_pickle_generic_v4_shared_constructor_handles_builtin_container_bases(
         assert root["protocol_recipes"][0]["insertion"] == "BASE_VALUE_IN_RECONSTRUCTOR"
 
 
-def test_pickle_generic_v4_stale_source_and_supplied_state_are_not_authority():
+def test_pickle_generic_v4_stale_source_and_supplied_state_are_not_authority(
+    monkeypatch,
+):
     from factoryline import finite_capture as finite
 
     sources, profile, view, expression = _generic_pickle_v4_fixture(
-        _GENERIC_PICKLE_V4_PROVIDER, _GENERIC_PICKLE_V4_CALLER
+        _GENERIC_PICKLE_V4_PROVIDER, _GENERIC_PICKLE_V4_CALLER, monkeypatch
     )
     assert (
         finite.provider_pickle_graph_record(
@@ -4363,7 +4633,7 @@ def test_pickle_generic_v4_stale_source_and_supplied_state_are_not_authority():
 
 
 def test_pickle_generic_v4_native_scan_uses_one_graph_for_multiple_source_types(
-    tmp_path,
+    tmp_path, monkeypatch
 ):
     import ast
     from factoryline import review_audits as audit
@@ -4374,7 +4644,7 @@ def test_pickle_generic_v4_native_scan_uses_one_graph_for_multiple_source_types(
         "    payload = pickle.dumps(obj)\n    return pickle.loads(payload)\n"
     )
     sources, profile, _, _ = _generic_pickle_v4_fixture(
-        _GENERIC_PICKLE_V4_PROVIDER, caller
+        _GENERIC_PICKLE_V4_PROVIDER, caller, monkeypatch
     )
     for relative, raw in sources.items():
         target = tmp_path / relative
@@ -4877,6 +5147,28 @@ def test_workspace_checkpoint_revalidates_or_rejects_changed_authority(
         engine.full_repository_scan(root, resume=True, context_profile="workspace-v2")
 
 
+def test_workspace_checkpoint_rejects_legacy_schema_without_rewriting(tmp_path):
+    from factoryline import deep_audit_io as engine
+
+    (tmp_path / "app.py").write_text("value = 1\n", encoding="utf-8")
+    engine.full_repository_scan(tmp_path, context_profile="workspace-v2")
+    checkpoint_path = tmp_path / (
+        ".factory/deep-runs/f2110000000000000000000000000002/checkpoint.json"
+    )
+    checkpoint = json.loads(checkpoint_path.read_text(encoding="utf-8"))
+    checkpoint["schema"] = "factory.full-repository-checkpoint.workspace-v2"
+    checkpoint.pop("source_configuration_sha256")
+    legacy_bytes = engine.canonical_bytes(checkpoint)
+    checkpoint_path.write_bytes(legacy_bytes)
+
+    with pytest.raises(engine.RuntimeAuditError, match="INVALID_CHECKPOINT"):
+        engine.full_repository_scan(
+            tmp_path, resume=True, context_profile="workspace-v2"
+        )
+
+    assert checkpoint_path.read_bytes() == legacy_bytes
+
+
 def test_workspace_resume_does_not_trust_mutated_returned_report(tmp_path):
     from factoryline.deep_audit_io import full_repository_scan
 
@@ -5209,7 +5501,7 @@ def test_full_repository_symlink_source_is_explicitly_unreadable(tmp_path):
 def test_full_repository_runtime_epoch_covers_every_profile_helper(
     tmp_path, monkeypatch
 ):
-    from factoryline import deep_audit_io, review_audits
+    from factoryline import context_efficiency, deep_audit_io, review_audits
 
     epoch = deep_audit_io._full_repository_runtime_epoch
     before = epoch(tmp_path, "fixed-configuration", review_audits)
@@ -5222,6 +5514,17 @@ def test_full_repository_runtime_epoch_covers_every_profile_helper(
     for name in helpers:
         with monkeypatch.context() as patch:
             patch.setattr(deep_audit_io, name, lambda *args, **kwargs: None)
+            assert epoch(tmp_path, "fixed-configuration", review_audits) != before, name
+        assert epoch(tmp_path, "fixed-configuration", review_audits) == before, name
+    cache_helpers = {
+        name: helper
+        for name, helper in vars(context_efficiency).items()
+        if name.startswith("_full_repository_workspace_cache_") and callable(helper)
+    }
+    assert cache_helpers
+    for name in cache_helpers:
+        with monkeypatch.context() as patch:
+            patch.setattr(context_efficiency, name, lambda *args, **kwargs: None)
             assert epoch(tmp_path, "fixed-configuration", review_audits) != before, name
         assert epoch(tmp_path, "fixed-configuration", review_audits) == before, name
     with monkeypatch.context() as patch:
@@ -5339,6 +5642,7 @@ def test_new_shared_provider_helpers_are_epoch_enrolled():
         for helper in (
             _context_refactor._cached_import_binding,
             _context_refactor._cached_import_path,
+            _context_refactor._fixture_literal_candidates,
             _context_refactor._fixture_literal_evidence,
         )
     )
@@ -5386,8 +5690,14 @@ def test_precision257_context_profiles_and_fixture_binders_fail_closed():
     from factoryline import intent_quality
 
     raw = b"requests==2.31.0\n"
+
+    def read_requirement(_root, name):
+        if name != "requirements.txt":
+            raise FileNotFoundError(name)
+        return raw
+
     rows, binding, eligible = application_profile_configuration(
-        "root", lambda _root, name: raw if name == "requirements.txt" else b"", 64
+        "root", read_requirement, 64
     )
     assert rows == [
         {
@@ -5396,13 +5706,19 @@ def test_precision257_context_profiles_and_fixture_binders_fail_closed():
             "bytes": len(raw),
         }
     ]
-    assert binding == rows[0] and eligible is True
+    assert (
+        binding["requirements.txt"] == {**rows[0], "state": "read"} and eligible is True
+    )
+    names = {"requirements.txt", "pytest.ini", ".pytest.ini", "setup.cfg"}
     assert application_profile_configuration(
         "root", lambda *_: (_ for _ in ()).throw(FileNotFoundError()), 64
-    ) == ([], {"path": "requirements.txt", "state": "missing"}, True)
+    ) == ([], {name: {"path": name, "state": "missing"} for name in names}, True)
     assert application_profile_configuration("root", lambda *_: raw, 2) == (
         [],
-        {"path": "requirements.txt", "state": "oversized"},
+        {
+            name: {"path": name, "state": "oversized", "bytes": len(raw)}
+            for name in names
+        },
         False,
     )
     snapshots, contexts, bindings = {}, {}, []
@@ -5478,3 +5794,390 @@ def test_precision257_fixture_context_binders_record_empty_evidence_for_valid_ca
         source_inventory=inventory,
     )
     assert "django_fixture_evidence" not in django_contexts[source_path]
+
+
+def test_application_fixture_context_skips_index_without_literal_demand(
+    tmp_path, monkeypatch
+):
+    import ast
+    import hashlib
+    from pathlib import Path
+    from factoryline import (
+        context_efficiency as context,
+        credential_role_constructor_provider as roles,
+    )
+    from factoryline import mock_fixture_provenance as fixture
+
+    source = Path(tmp_path) / "app.py"
+    raw = b"VALUE = 'ordinary'\n"
+    tree = ast.parse(raw)
+    contexts = {source: {"application_fixture_evidence": {"stale": True}}}
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError(
+            "no literal demand must avoid fixture indexes and config reads"
+        )
+
+    monkeypatch.setattr(context, "_application_profile_bytes", forbidden)
+    monkeypatch.setattr(fixture, "application_test_index", forbidden)
+    monkeypatch.setattr(roles, "SourceSnapshotIndex", forbidden)
+    context.bind_application_fixture_context(
+        tmp_path,
+        {source: tree},
+        contexts,
+        [],
+        forbidden,
+        4096,
+        source_bytes={source: raw},
+        source_inventory={source: hashlib.sha256(raw).hexdigest()},
+    )
+    assert contexts[source]["application_fixture_evidence"] == {}
+
+
+def test_application_fixture_literal_demand_keeps_config_and_source_validation(
+    tmp_path, monkeypatch
+):
+    import ast
+    import hashlib
+    from pathlib import Path
+    from factoryline import (
+        context_efficiency as context,
+        credential_role_constructor_provider as roles,
+    )
+
+    source = Path(tmp_path) / "tests" / "test_auth.py"
+    raw = b"def test_auth():\n    PASSWORD: str = 'secret-value'\n"
+    tree = ast.parse(raw)
+    configs = {
+        "pyproject.toml": b"[tool.pytest.ini_options]\n",
+        "tox.ini": b"[pytest]\n",
+    }
+    bindings = [
+        {"path": name, "sha256": hashlib.sha256(data).hexdigest()}
+        for name, data in configs.items()
+    ]
+    indexes = []
+    original = roles.SourceSnapshotIndex
+
+    def counted(*args, **kwargs):
+        indexes.append(1)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(roles, "SourceSnapshotIndex", counted)
+
+    def read_source(_root, name):
+        return configs[name]
+
+    inventory = {source: hashlib.sha256(raw).hexdigest()}
+    contexts = {source: {}}
+    context.bind_application_fixture_context(
+        tmp_path,
+        {source: tree},
+        contexts,
+        bindings,
+        read_source,
+        4096,
+        source_bytes={source: raw},
+        source_inventory=inventory,
+    )
+    assert indexes
+
+    configs["tox.ini"] = b"[pytest]\nchanged = true\n"
+    declined = {source: {}}
+    context.bind_application_fixture_context(
+        tmp_path,
+        {source: tree},
+        declined,
+        bindings,
+        read_source,
+        4096,
+        source_bytes={source: raw},
+        source_inventory=inventory,
+    )
+    assert len(indexes) == 1
+    assert declined[source]["application_fixture_evidence"] == {}
+
+    configs["tox.ini"] = b"[pytest]\n"
+    bad_inventory = {source: "0" * 64}
+    declined_source = {source: {}}
+    context.bind_application_fixture_context(
+        tmp_path,
+        {source: tree},
+        declined_source,
+        bindings,
+        read_source,
+        4096,
+        source_bytes={source: raw},
+        source_inventory=bad_inventory,
+    )
+    assert len(indexes) > 1
+    assert declined_source[source]["application_fixture_evidence"] == {}
+
+
+def test_shared_source_model_outlives_consumed_snapshot_map(tmp_path):
+    import hashlib
+    from factoryline.context_efficiency import _consume_security_snapshots
+
+    path = tmp_path / "app.py"
+    raw = b"VALUE = 1\n"
+    tree = ast.parse(raw)
+    tree._oracle_source_sha256 = hashlib.sha256(raw).hexdigest()
+    snapshots = {path: tree}
+    from factoryline.credential_role_constructor_provider import security_snapshot_model
+
+    fingerprints = {path: _audit_refactor._oracle_tree_fingerprint(tree)}
+    model_out, models = (
+        {
+            "source": security_snapshot_model(
+                tmp_path, snapshots, {path: raw}, fingerprints
+            )
+        },
+        [],
+    )
+
+    def scan(*args):
+        models.append(args[4]["_security_source_model"])
+        return None, [], "audited"
+
+    rows = _consume_security_snapshots(
+        tmp_path,
+        [path],
+        snapshots,
+        {path: _audit_refactor._oracle_tree_fingerprint(tree)},
+        {},
+        {path: raw},
+        {},
+        (),
+        {},
+        set(),
+        scan,
+        model_out,
+    )
+    assert snapshots == {}
+    assert rows[path][2] == "audited"
+    assert models == [model_out["source"]]
+    assert model_out["source"].snapshots[path] is tree
+    assert model_out["source"].validate(path)
+
+
+def test_shared_source_model_rejects_changed_producer_structure(tmp_path):
+    import hashlib
+    from factoryline.credential_role_constructor_provider import (
+        security_snapshot_model as _security_snapshot_model,
+    )
+
+    path = tmp_path / "app.py"
+    raw = b"VALUE = 1\n"
+    tree = ast.parse(raw)
+    tree._oracle_source_sha256 = hashlib.sha256(raw).hexdigest()
+    fingerprint = _audit_refactor._oracle_tree_fingerprint(tree)
+    tree.body[0].value.value = 2
+    assert (
+        _security_snapshot_model(
+            tmp_path, {path: tree}, {path: raw}, {path: fingerprint}
+        )
+        is None
+    )
+
+
+def test_shared_source_model_reused_by_application_index(tmp_path):
+    import hashlib
+    from factoryline.credential_role_constructor_provider import (
+        security_snapshot_model as _security_snapshot_model,
+    )
+    from factoryline.mock_fixture_provenance import application_test_index
+
+    path = tmp_path / "app.py"
+    raw = b"VALUE = 1\n"
+    tree = ast.parse(raw)
+    tree._oracle_source_sha256 = hashlib.sha256(raw).hexdigest()
+    modules, sources = {path: tree}, {path: raw}
+    inventory = {path: tree._oracle_source_sha256}
+    model = _security_snapshot_model(
+        tmp_path,
+        modules,
+        sources,
+        {path: _audit_refactor._oracle_tree_fingerprint(tree)},
+    )
+    first = application_test_index(
+        tmp_path, modules, sources, inventory, source_index=model
+    )
+    second = application_test_index(
+        tmp_path, modules, sources, inventory, source_index=model
+    )
+    assert first["source"] is second["source"] is model
+    assert first["profiles"] is not second["profiles"]
+    assert first["imports"] is not second["imports"]
+    tree.body[0].value.value = 2
+    assert (
+        application_test_index(
+            tmp_path, modules, sources, inventory, source_index=model
+        )
+        is None
+    )
+
+
+@pytest.mark.parametrize("name", ["pytest.ini", ".pytest.ini", "setup.cfg"])
+def test_shared_configuration374_complete_producer_sealer_verifier(tmp_path, name):
+    import hashlib
+    from factoryline.import_context import application_profile_configuration
+    from factoryline.context_efficiency import _application_profile_bytes
+    from factoryline.audit_action_refs import _application_configuration_hashes
+    from factoryline.primitive_observation_binding import (
+        _application_class_source_inputs,
+    )
+
+    selector = b"[pytest]\nDJANGO_SETTINGS_MODULE = checks.settings\n"
+    (tmp_path / name).write_bytes(selector)
+
+    def read(root, relative):
+        return (root / relative).read_bytes()
+
+    rows, identity, valid = application_profile_configuration(tmp_path, read, 1024)
+    assert valid and len(rows) == 1 and identity[name]["state"] == "read"
+    configs = _application_profile_bytes(tmp_path, rows, read, 1024)
+    assert configs == {name: selector}
+    hashes = {name: hashlib.sha256(selector).hexdigest()}
+    assert (
+        _application_configuration_hashes([{"configuration_sha256": hashes}]) == hashes
+    )
+    sources = {"app.py": b"VALUE = 1\n", name: selector}
+    bindings = {key: hashlib.sha256(raw).hexdigest() for key, raw in sources.items()}
+    from factoryline.audit_action_refs import _captured_application_source_bytes
+
+    (tmp_path / "app.py").write_bytes(sources["app.py"])
+    finding = {
+        "code": "SECURITY_HARDCODED_SECRET",
+        "path": "app.py",
+        "facts": {
+            "fixture_evidence": {
+                "classification": "APPLICATION_TEST_CREDENTIAL_ROLE",
+                "configuration_sha256": hashes,
+            }
+        },
+    }
+    assert (
+        _captured_application_source_bytes(
+            tmp_path,
+            [finding],
+            [{"path": "app.py", "sha256": bindings["app.py"]}],
+            {tmp_path / "app.py": sources["app.py"]},
+        )
+        == sources
+    )
+    rebuilt = _application_class_source_inputs(sources, bindings, hashes)
+    assert rebuilt is not None and rebuilt[Path(name)] == selector
+    assert (
+        _application_class_source_inputs(
+            {**sources, name: selector + b"#stale"}, bindings, hashes
+        )
+        is None
+    )
+    (tmp_path / name).write_bytes(selector + b"#changed selector\n")
+    assert _application_profile_bytes(tmp_path, rows, read, 1024) is None
+    _, changed, _ = application_profile_configuration(tmp_path, read, 1024)
+    assert changed != identity
+
+
+@pytest.mark.parametrize("failure", ["missing", "unreadable", "oversized"])
+def test_shared_configuration374_capture_failure_is_visible(failure):
+    from factoryline.import_context import application_profile_configuration
+
+    def read(_root, name):
+        if name != "setup.cfg" or failure == "missing":
+            raise FileNotFoundError(name)
+        if failure == "unreadable":
+            raise PermissionError(name)
+        return b"large config"
+
+    rows, identity, valid = application_profile_configuration(Path("root"), read, 4)
+    assert rows == [] and valid is (failure == "missing")
+    assert (
+        identity["setup.cfg"]["state"]
+        == {
+            "missing": "missing",
+            "unreadable": "PermissionError",
+            "oversized": "oversized",
+        }[failure]
+    )
+
+
+def test_shared_configuration374_unknown_config_cannot_enter_verifier():
+    import hashlib
+    from factoryline.import_context import (
+        application_configuration_names,
+        import_resolution_helpers,
+    )
+    from factoryline.context_efficiency import provider_context_cache_helpers
+    from factoryline.audit_action_refs import _application_configuration_hashes
+    from factoryline.primitive_observation_binding import (
+        _application_class_source_inputs,
+    )
+    from factoryline import intent_quality
+
+    raw = b"x=1\n"
+    digest = hashlib.sha256(raw).hexdigest()
+    sources = {"app.py": raw, "pytest.ini.extra": raw}
+    assert (
+        _application_class_source_inputs(
+            sources, dict.fromkeys(sources, digest), {"pytest.ini.extra": digest}
+        )
+        is None
+    )
+    assert (
+        _application_configuration_hashes(
+            [{"configuration_sha256": {"pytest.ini.extra": digest}}]
+        )
+        == {}
+    )
+    assert application_configuration_names in import_resolution_helpers()
+    assert application_configuration_names in provider_context_cache_helpers(
+        intent_quality
+    )
+
+
+def test_shared_configuration374_invalid_capture_cannot_bind_fixture(tmp_path):
+    import hashlib
+    from factoryline.context_efficiency import bind_application_fixture_context
+
+    path = tmp_path / "test_flow.py"
+    raw = b"def test_flow():\n    password = 'runtime-material'\n"
+    contexts = {path: {}}
+
+    def forbidden(*args):
+        raise AssertionError("Invalid configuration cannot reach a role classifier")
+
+    bind_application_fixture_context(
+        tmp_path,
+        {path: ast.parse(raw)},
+        contexts,
+        [],
+        forbidden,
+        1024,
+        source_bytes={path: raw},
+        source_inventory={path: hashlib.sha256(raw).hexdigest()},
+        configuration_valid=False,
+    )
+    assert contexts[path]["application_fixture_evidence"] == {}
+
+
+@pytest.mark.parametrize("name", ["pytest.ini", ".pytest.ini", "setup.cfg"])
+def test_shared_configuration374_native_scan_records_selector_without_admission(
+    tmp_path, name
+):
+    import hashlib
+
+    raw = b"[pytest]\nDJANGO_SETTINGS_MODULE = runtime.settings\n"
+    (tmp_path / name).write_bytes(raw)
+    (tmp_path / "app.py").write_text("PASSWORD = 'runtime-material'\n")
+    with _audit_refactor._security_only_scan_context(True):
+        report = _audit_refactor.security_scan(
+            tmp_path, cache_enabled=False, defect_policy="source-role-v3"
+        )
+    bindings = {
+        row["path"]: row["sha256"]
+        for row in report["oracle_context"]["configuration_sources"]
+    }
+    assert bindings[name] == hashlib.sha256(raw).hexdigest()
+    assert any(row["code"] == "SECURITY_HARDCODED_SECRET" for row in report["findings"])
+    assert not report.get("primitive_observations")

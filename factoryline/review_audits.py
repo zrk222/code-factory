@@ -7,13 +7,11 @@ certification. A declared guard must raise on denial and must not be rebound.
 from __future__ import annotations
 
 import ast
-import configparser
 from collections import OrderedDict
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from hashlib import sha256
-from fnmatch import fnmatchcase
 import json
 import operator
 import os
@@ -24,10 +22,32 @@ from threading import RLock
 import time
 from typing import Any
 
-try:
-    import tomllib
-except ModuleNotFoundError:  # Python 3.10
-    import tomli as tomllib
+from .pytest_collection_audit import (
+    configparser as configparser,
+    fnmatchcase as fnmatchcase,
+    tomllib as tomllib,
+    _pytest_collection_settings as _pytest_collection_settings,
+    _pytest_name_matches as _pytest_name_matches,
+    _pytest_file_matches as _pytest_file_matches,
+    _pytest_test_disabled as _pytest_test_disabled,
+    _pytest_scope_test_disabled as _pytest_scope_test_disabled,
+    _pytest_function_test_disabled as _pytest_function_test_disabled,
+    _pytest_collection_config as _pytest_collection_config,
+    _pytest_collection_source_identity as _pytest_collection_source_identity,
+    _pytest_plugin_declaration_active as _pytest_plugin_declaration_active,
+    _pytest_config_file as _pytest_config_file,
+    _pytest_config_data as _pytest_config_data,
+    _pytest_pattern_value as _pytest_pattern_value,
+    _toml_pytest_pattern_value as _toml_pytest_pattern_value,
+    _supported_pytest_function_patterns as _supported_pytest_function_patterns,
+    _pytest_patterns_from_options as _pytest_patterns_from_options,
+    _pytest_config_uses_custom_collection as _pytest_config_uses_custom_collection,
+    _pytest_pattern_list as _pytest_pattern_list,
+    _ABSENT_PYTEST_SECTION as _ABSENT_PYTEST_SECTION,
+    _INVALID_PYTEST_CONFIG as _INVALID_PYTEST_CONFIG,
+    _UNSUPPORTED_PYTEST_CONFIG as _UNSUPPORTED_PYTEST_CONFIG,
+)
+
 from .audit_action_refs import (
     _captured_application_source_bytes as _app_source_bytes,
     audit_remediation_packet as audit_remediation_packet,
@@ -77,6 +97,8 @@ MAX_PATHS = 64
 MAX_ORACLE_CONTEXT_CACHE_ENTRIES = 16
 MAX_ORACLE_CONTEXT_CACHE_BYTES = 4 * 1024 * 1024
 ORACLE_CONTEXT_CACHE_TTL_SECONDS = 300
+DEFAULT_ORACLE_SOURCE_RETENTION_BYTES = 16 * 1024 * 1024
+MAX_ORACLE_SOURCE_RETENTION_BYTES = 64 * 1024 * 1024
 _ORACLE_CONTEXT_CACHE: OrderedDict[str, tuple[str, int, float]] = OrderedDict()
 _ORACLE_CONTEXT_CACHE_BYTES = 0
 _ORACLE_CONTEXT_CACHE_HITS = 0
@@ -3552,14 +3574,19 @@ def _oracle_imports(
                     item.name if isinstance(node, ast.ImportFrom) else None,
                     source,
                     captured=captured,
+                    captured_inventory=eligible if captured else None,
                 ),
             )
     return imports
 
 
 def _oracle_source_inputs(
-    root: Path, files: list[Path]
+    root: Path,
+    files: list[Path],
+    *,
+    retention_limit: int = DEFAULT_ORACLE_SOURCE_RETENTION_BYTES,
 ) -> tuple[dict, list, list, bool]:
+    retention_limit = _validate_oracle_source_retention_limit(retention_limit)
     return contracts._oracle_source_inputs(
         root,
         files,
@@ -3569,8 +3596,18 @@ def _oracle_source_inputs(
         sha256,
         RuntimeAuditError,
         MAX_BYTES,
-        16 * 1024 * 1024,
+        retention_limit,
     )
+
+
+def _validate_oracle_source_retention_limit(retention_limit: int) -> int:
+    if (
+        type(retention_limit) is not int
+        or retention_limit <= 0
+        or retention_limit > MAX_ORACLE_SOURCE_RETENTION_BYTES
+    ):
+        raise ValueError("oracle source retention limit is outside the declared budget")
+    return retention_limit
 
 
 def _oracle_snapshots(root: Path, files: list[Path], source_bytes: dict) -> dict:
@@ -3602,8 +3639,14 @@ def _declared_typecheck_sources(
 
 
 def _oracle_context_cache_key(
-    root: Path, manifest: list, config_identity: dict, *, captured: bool = False
+    root: Path,
+    manifest: list,
+    config_identity: dict,
+    *,
+    captured: bool = False,
+    retention_limit: int = DEFAULT_ORACLE_SOURCE_RETENTION_BYTES,
 ) -> str:
+    retention_limit = _validate_oracle_source_retention_limit(retention_limit)
     import builtins
     from . import test_oracle_misuse as oracle_misuse
     from . import test_callback_closure
@@ -3624,11 +3667,20 @@ def _oracle_context_cache_key(
     helpers = (
         ast.parse,
         _build_oracle_context,
+        _oracle_helper_edges,
         _completion_only_oracle,
         integrity._completion_only_oracle,
         integrity._builtin_repr_names_shadowed,
         integrity._security_module_scope,
         integrity._security_scope_local_names,
+        integrity._security_if_block_findings,
+        integrity._security_loop_block_findings,
+        integrity._security_try_block_flow,
+        integrity._security_with_block_findings,
+        integrity._security_match_block_findings,
+        integrity._security_bind_flow_targets,
+        integrity._security_clear_flow_names,
+        integrity._security_statement_operand_flow,
         contracts._static_type_edges,
         contracts.native_import_profile,
         contracts.import_configuration,
@@ -3738,13 +3790,17 @@ def _oracle_context_cache_key(
             "_structural_oracle_context",
         )
     )
+    from .credential_role_identity_effects import security_value_helper_epoch
+
+    helpers += security_value_helper_epoch()
     identity = {
         "schema": integrity.credential_context_cache_schema(),
         "root": root.as_posix() if captured else root.resolve().as_posix(),
         "sources": manifest,
         "config": config_identity,
+        "security_only": _SECURITY_ONLY_SCAN.get() is True,
         "source_limit": MAX_BYTES,
-        "source_retention_limit": 16 * 1024 * 1024,
+        "source_retention_limit": retention_limit,
         "python": [sys.implementation.name, *sys.version_info[:3]],
         "helpers": [
             (id(helper), id(getattr(helper, "__code__", None))) for helper in helpers
@@ -3880,6 +3936,7 @@ def _project_oracle_context(
     python_inventory_out: list | None = None,
     database_context_out: dict | None = None,
     security_snapshot_consumer=None,
+    producer_source_model_out=None,
 ) -> tuple[dict, list, list, dict]:
     """Resolve local imports and return retained bytes without executing repository code."""
     if database_context_out is not None:
@@ -3916,35 +3973,36 @@ def _project_oracle_context(
         if cached is not None:
             contexts, edges = cached
             bind_provider_inventory(contexts, python_inventory)
+            if security_snapshot_consumer is not None:
+                from .credential_role_constructor_provider import (
+                    consume_cached_security_snapshots,
+                )
+                import sys
+
+                consume_cached_security_snapshots(
+                    sys.modules[__name__],
+                    root,
+                    files,
+                    source_bytes,
+                    source_bindings,
+                    contexts,
+                    security_snapshot_consumer,
+                    producer_source_model_out,
+                )
             return contexts, bindings, edges, source_bytes
-    snapshots = contracts.bound_snapshots(root, files, source_bytes, source_bindings)
-    file_paths = set(files)
-    source_hashes = {
-        root / binding["path"]: binding["sha256"] for binding in source_bindings
-    }
-    for path, tree in tuple(snapshots.items()):
-        if path not in file_paths:
-            snapshots.pop(path)
-            continue
-        if isinstance(tree, ast.Module) and getattr(
-            tree, "_oracle_source_sha256", None
-        ) == source_hashes.get(path):
-            continue
-        snapshots.pop(path)
-        snapshots.update(
-            contracts._oracle_source_snapshots(
-                root,
-                [path],
-                source_bytes,
-                _security_source_bytes,
-                _measure_parse,
-                RuntimeAuditError,
-                MAX_BYTES,
-            )
+    from .credential_role_constructor_provider import security_source_snapshots
+    import sys
+
+    snapshots, snapshot_fingerprints = security_source_snapshots(
+        sys.modules[__name__], root, files, source_bytes, source_bindings
+    )
+    source_hashes = {root / row["path"]: row["sha256"] for row in source_bindings}
+    if producer_source_model_out is not None:
+        from .credential_role_constructor_provider import security_snapshot_model
+
+        producer_source_model_out["source"] = security_snapshot_model(
+            root, snapshots, source_bytes, snapshot_fingerprints
         )
-    snapshot_fingerprints = {
-        path: _oracle_tree_fingerprint(tree) for path, tree in snapshots.items()
-    }
     from .context_efficiency import _populate_oracle_database_context
 
     _populate_oracle_database_context(
@@ -3992,6 +4050,8 @@ def _project_oracle_context(
         source_bytes=source_bytes,
         source_inventory=source_hashes,
         imports=resolved,
+        source_index=(producer_source_model_out or {}).get("source"),
+        configuration_valid=config_cacheable,
     )
     integrity.bind_fixed_program_workspace(
         root, contexts, snapshots, files, source_bytes, resolved
@@ -4105,6 +4165,35 @@ def _test_has_captured_autouse(node, context):
     )
 
 
+def _oracle_helper_edges(root, caller, imports, snapshots, helper_summaries, edges):
+    for local, (source, symbol) in imports.items():
+        target = source.relative_to(root).as_posix()
+        target_tree = snapshots.get(source)
+        if target_tree is None:
+            continue
+        _, strong_summary, weak_summary, exported_assertions = helper_summaries[
+            target_tree
+        ]
+        strong_names = {
+            name for name in strong_summary if _is_oracle_helper_name(name)
+        } | exported_assertions
+        weak_names = {name for name in weak_summary if _is_oracle_helper_name(name)}
+        selected = (
+            [symbol]
+            if symbol in strong_names
+            else [f"{local}.{name}" for name in strong_names]
+        )
+        for resolved_symbol in selected:
+            edges.add((caller, target, "assertion_helper", resolved_symbol, "strong"))
+        selected_weak = (
+            [symbol]
+            if symbol in weak_names
+            else [f"{local}.{name}" for name in weak_names]
+        )
+        for resolved_symbol in selected_weak:
+            edges.add((caller, target, "assertion_helper", resolved_symbol, "weak"))
+
+
 def _build_oracle_context(
     root: Path,
     files: list[Path],
@@ -4113,6 +4202,7 @@ def _build_oracle_context(
     ty_sources: set | None = None,
     import_views: dict | None = None,
 ) -> tuple[dict, list]:
+    security_only = _SECURITY_ONLY_SCAN.get() is True
     from . import mock_fixture_provenance
     from .context_efficiency import (
         async_runner_fixture_context,
@@ -4128,9 +4218,11 @@ def _build_oracle_context(
             root, snapshots, eligible, _oracle_imports, with_initializers=True
         )
     )
-    protocols = protocol_call_context(
-        root, files, snapshots, import_resolver=resolve_imports, eligible=eligible
-    )
+    protocols = {}
+    if not security_only:
+        protocols = protocol_call_context(
+            root, files, snapshots, import_resolver=resolve_imports, eligible=eligible
+        )
     fixture_sources = [
         (
             path,
@@ -4230,80 +4322,60 @@ def _build_oracle_context(
             initializer_lookup,
         )
         contracts._capture_project_imports(import_views, path, imports, eligible)
-        contexts[path].update(
-            integrity._structural_oracle_context(tree, imports, snapshots)
-        )
-        from . import test_oracle_misuse as oracle_misuse
+        if not security_only:
+            contexts[path].update(
+                integrity._structural_oracle_context(tree, imports, snapshots)
+            )
+            from . import test_oracle_misuse as oracle_misuse
 
-        contexts[path]["callback_invokers"] = oracle_misuse.source_callback_invokers(
-            imports, snapshots, callback_summaries
-        )
-        contexts[path]["helpers"], contexts[path]["weak_helpers"] = (
-            _imported_oracle_helper_sets(imports, snapshots, aliases, helper_summaries)
-        )
-        edges.update(
-            (
-                caller,
-                Path(profile["source"]).relative_to(root).as_posix(),
-                "callback_parameter",
-                local + "." + parameter,
-                "source_resolved",
-            )
-            for local, profile in contexts[path]["callback_invokers"].items()
-            for parameter in profile["invoked"]
-        )
-        edges.update(
-            (
-                caller,
-                Path(profile["source"]).relative_to(root).as_posix(),
-                "default_virtual_dispatch",
-                local + "." + method,
-                "source_resolved",
-            )
-            for local, profile in contexts[path]["callback_invokers"].items()
-            for method in profile.get("virtual_dispatch", {}).get("methods", [])
-        )
-        for local, (source, symbol) in imports.items():
-            target = source.relative_to(root).as_posix()
-            target_tree = snapshots.get(source)
-            if target_tree is None:
-                continue
-            _, strong_summary, weak_summary, exported_assertions = helper_summaries[
-                target_tree
-            ]
-            strong_names = {
-                name for name in strong_summary if _is_oracle_helper_name(name)
-            } | exported_assertions
-            weak_names = {name for name in weak_summary if _is_oracle_helper_name(name)}
-            selected = (
-                [symbol]
-                if symbol in strong_names
-                else [f"{local}.{name}" for name in strong_names]
-            )
-            for resolved_symbol in selected:
-                edges.add(
-                    (caller, target, "assertion_helper", resolved_symbol, "strong")
+            contexts[path]["callback_invokers"] = (
+                oracle_misuse.source_callback_invokers(
+                    imports, snapshots, callback_summaries
                 )
-            selected_weak = (
-                [symbol]
-                if symbol in weak_names
-                else [f"{local}.{name}" for name in weak_names]
             )
-            for resolved_symbol in selected_weak:
-                edges.add((caller, target, "assertion_helper", resolved_symbol, "weak"))
-        for source, symbol in _imported_unittest_mixins(tree, aliases, imports):
-            if source in contexts:
-                contexts[source]["mixins"].add(symbol)
-                edges.add(
-                    (
-                        path.relative_to(root).as_posix(),
-                        source.relative_to(root).as_posix(),
-                        "unittest_mixin",
-                        symbol,
-                        "trusted",
+            contexts[path]["helpers"], contexts[path]["weak_helpers"] = (
+                _imported_oracle_helper_sets(
+                    imports, snapshots, aliases, helper_summaries
+                )
+            )
+            edges.update(
+                (
+                    caller,
+                    Path(profile["source"]).relative_to(root).as_posix(),
+                    "callback_parameter",
+                    local + "." + parameter,
+                    "source_resolved",
+                )
+                for local, profile in contexts[path]["callback_invokers"].items()
+                for parameter in profile["invoked"]
+            )
+            edges.update(
+                (
+                    caller,
+                    Path(profile["source"]).relative_to(root).as_posix(),
+                    "default_virtual_dispatch",
+                    local + "." + method,
+                    "source_resolved",
+                )
+                for local, profile in contexts[path]["callback_invokers"].items()
+                for method in profile.get("virtual_dispatch", {}).get("methods", [])
+            )
+            _oracle_helper_edges(
+                root, caller, imports, snapshots, helper_summaries, edges
+            )
+            for source, symbol in _imported_unittest_mixins(tree, aliases, imports):
+                if source in contexts:
+                    contexts[source]["mixins"].add(symbol)
+                    edges.add(
+                        (
+                            path.relative_to(root).as_posix(),
+                            source.relative_to(root).as_posix(),
+                            "unittest_mixin",
+                            symbol,
+                            "trusted",
+                        )
                     )
-                )
-        _bind_imported_pytest_bases(tree, imports, snapshots, contexts)
+            _bind_imported_pytest_bases(tree, imports, snapshots, contexts)
     edges = [
         {
             "caller": caller,
@@ -5229,375 +5301,6 @@ _PYTEST_COLLECTION_HOOKS = {
 _FUNCTION_NODES = (ast.FunctionDef, ast.AsyncFunctionDef)
 
 
-def _pytest_collection_settings(value=None):
-    """Normalize captured pytest file, function, and class patterns."""
-    if isinstance(value, dict):
-        return {
-            "python_files": list(value.get("python_files", _TEST_FILE_PATTERNS)),
-            "python_functions": list(
-                value.get("python_functions", _TEST_FUNCTION_PATTERNS)
-            ),
-            "python_classes": list(value.get("python_classes", _TEST_CLASS_PATTERNS)),
-        }
-    files = (
-        sorted(value)
-        if isinstance(value, (set, frozenset))
-        else list(_pytest_pattern_list(value))
-        if value is not None
-        else list(_TEST_FILE_PATTERNS)
-    )
-    return {
-        "python_files": files,
-        "python_functions": list(_TEST_FUNCTION_PATTERNS),
-        "python_classes": list(_TEST_CLASS_PATTERNS),
-    }
-
-
-def _pytest_name_matches(name, patterns):
-    """Apply pytest's prefix-or-glob rule used for function and class names."""
-    return any(
-        name.startswith(pattern)
-        or (any(marker in pattern for marker in "*?[") and fnmatchcase(name, pattern))
-        for pattern in patterns
-    )
-
-
-def _pytest_file_matches(relative, patterns):
-    """Match basename globs and slash-containing globs against full paths."""
-    path = Path(relative)
-    normalized = path.as_posix()
-    return any(
-        fnmatchcase(normalized, pattern.replace("\\", "/"))
-        if "/" in pattern or "\\" in pattern
-        else fnmatchcase(path.name, pattern)
-        for pattern in patterns
-    )
-
-
-def _pytest_test_disabled(node, parents, nodes):
-    """Honor statically false module/class/function __test__ markers."""
-    scopes = [
-        nodes[0],
-        *(
-            parent
-            for parent, _child in parents.get(id(node), ())
-            if isinstance(parent, ast.ClassDef)
-        ),
-    ]
-    return any(_pytest_scope_test_disabled(scope) for scope in scopes) or any(
-        _pytest_function_test_disabled(statement, node.name)
-        for scope in scopes
-        for statement in getattr(scope, "body", ())
-    )
-
-
-def _pytest_scope_test_disabled(scope):
-    for statement in getattr(scope, "body", ()):
-        targets = (
-            statement.targets
-            if isinstance(statement, ast.Assign)
-            else [statement.target]
-            if isinstance(statement, ast.AnnAssign)
-            else []
-        )
-        value = getattr(statement, "value", None)
-        if (
-            isinstance(value, ast.Constant)
-            and value.value is False
-            and any(
-                isinstance(target, ast.Name) and target.id == "__test__"
-                for target in targets
-            )
-        ):
-            return True
-    return False
-
-
-def _pytest_function_test_disabled(statement, function_name):
-    if not isinstance(statement, ast.Assign) or not (
-        isinstance(statement.value, ast.Constant) and statement.value.value is False
-    ):
-        return False
-    return any(
-        isinstance(target, ast.Attribute)
-        and target.attr == "__test__"
-        and isinstance(target.value, ast.Name)
-        and target.value.id == function_name
-        for target in statement.targets
-    )
-
-
-def _pytest_collection_config(root, source_files=None):
-    """Read pytest selected root config; malformed config is incomplete."""
-    defaults = set(_TEST_FILE_PATTERNS)
-    candidates = (
-        ("pytest.toml", "toml-pytest"),
-        (".pytest.toml", "toml-pytest"),
-        ("pytest.ini", "pytest"),
-        (".pytest.ini", "pytest"),
-        ("pyproject.toml", "pyproject"),
-        ("tox.ini", "pytest"),
-        ("setup.cfg", "tool:pytest"),
-    )
-    for relative, section in candidates:
-        result = _pytest_config_file(root, relative, section, defaults)
-        if result is not None and result[1].get("state") != "absent-section":
-            if result[1].get("state") in {
-                "invalid",
-                "oversized",
-                "unreadable",
-                "unsupported",
-            }:
-                raise ReviewAuditError(
-                    f"Cannot determine pytest test collection from {relative}: "
-                    f"{result[1]['state']} configuration."
-                )
-            patterns, identity = result
-            identity = _pytest_collection_source_identity(root, identity, source_files)
-            return patterns, identity
-    patterns, identity = (
-        defaults,
-        {
-            "path": None,
-            "state": "missing",
-            "python_files": sorted(defaults),
-            "python_functions": list(_TEST_FUNCTION_PATTERNS),
-            "python_classes": list(_TEST_CLASS_PATTERNS),
-        },
-    )
-    return patterns, _pytest_collection_source_identity(root, identity, source_files)
-
-
-def _pytest_collection_source_identity(root, identity, source_files=None):
-    """Bind and reject project-local hooks that can change pytest collection."""
-    sources = []
-    hooks = []
-    settings = _pytest_collection_settings(identity)
-    files = _security_source_files(root) if source_files is None else source_files
-    for path in files:
-        relative = path.relative_to(root).as_posix()
-        is_conftest = path.name == "conftest.py"
-        is_test_module = _pytest_file_matches(relative, settings["python_files"])
-        if not is_conftest and not is_test_module:
-            continue
-        try:
-            data = _security_source_bytes(root, relative)
-            tree = ast.parse(data, filename=relative)
-        except (OSError, UnicodeError, SyntaxError, RuntimeAuditError, RecursionError):
-            if is_conftest:
-                raise ReviewAuditError(
-                    f"Cannot determine pytest test collection from {relative}: "
-                    "unreadable or invalid hook source."
-                )
-            continue
-        found = []
-        for node in ast.walk(tree):
-            if not isinstance(node, _FUNCTION_NODES):
-                continue
-            if (is_conftest and node.name in _PYTEST_COLLECTION_HOOKS) or (
-                is_test_module and node.name == "pytest_generate_tests"
-            ):
-                found.append(node.name)
-        plugin_assignment = (is_conftest or is_test_module) and any(
-            _pytest_plugin_declaration_active(node) for node in tree.body
-        )
-        if found or plugin_assignment:
-            hooks.append(
-                {
-                    "path": relative,
-                    "names": sorted(set(found)),
-                    "pytest_plugins": plugin_assignment,
-                }
-            )
-        if is_conftest:
-            sources.append(
-                {
-                    "path": relative,
-                    "sha256": sha256(data).hexdigest(),
-                    "bytes": len(data),
-                }
-            )
-    if hooks:
-        raise ReviewAuditError(
-            "Cannot determine pytest test collection: custom collection hooks "
-            "or pytest plugins are unsupported."
-        )
-    return {**identity, "conftest_sources": sources}
-
-
-def _pytest_plugin_declaration_active(node):
-    if not isinstance(node, (ast.Assign, ast.AnnAssign)):
-        return False
-    targets = node.targets if isinstance(node, ast.Assign) else [node.target]
-    if not any(
-        isinstance(target, ast.Name) and target.id == "pytest_plugins"
-        for target in targets
-    ):
-        return False
-    try:
-        value = ast.literal_eval(node.value)
-    except (ValueError, TypeError):
-        return True
-    return not (type(value) in {list, tuple} and len(value) == 0)
-
-
-def _pytest_config_file(root, relative, section, defaults):
-    try:
-        path = local_file(root, relative)
-        size = path.stat().st_size
-        if size > MAX_BYTES:
-            return set(), {"path": relative, "state": "oversized", "bytes": size}
-        data = path.read_bytes()
-    except RuntimeAuditError as exc:
-        if exc.code == "E_SOURCE_MISSING":
-            return None
-        return set(), {"path": relative, "state": "unreadable"}
-    except OSError:
-        return set(), {"path": relative, "state": "unreadable"}
-    return _pytest_config_data(data, relative, section, defaults)
-
-
-def _pytest_config_data(data, relative, section, defaults):
-    identity = {
-        "path": relative,
-        "sha256": sha256(data).hexdigest(),
-        "bytes": len(data),
-        "state": "read",
-    }
-    if len(data) > MAX_BYTES:
-        return set(), {**identity, "state": "oversized"}
-    try:
-        text = data.decode("utf-8")
-        configured = _pytest_pattern_value(text, section)
-    except (UnicodeError, ValueError, configparser.Error):
-        return set(), {**identity, "state": "invalid"}
-    if configured is _INVALID_PYTEST_CONFIG:
-        return set(), {**identity, "state": "invalid"}
-    if configured is _UNSUPPORTED_PYTEST_CONFIG:
-        return defaults, {**identity, "state": "unsupported"}
-    if configured is _ABSENT_PYTEST_SECTION:
-        if relative in {"pytest.toml", ".pytest.toml", "pytest.ini", ".pytest.ini"}:
-            identity.update(
-                {
-                    "python_files": sorted(defaults),
-                    "python_functions": list(_TEST_FUNCTION_PATTERNS),
-                    "python_classes": list(_TEST_CLASS_PATTERNS),
-                }
-            )
-            return defaults, identity
-        return defaults, {**identity, "state": "absent-section"}
-    settings = (
-        configured
-        if configured is not None
-        else {
-            "python_files": sorted(defaults),
-            "python_functions": list(_TEST_FUNCTION_PATTERNS),
-            "python_classes": list(_TEST_CLASS_PATTERNS),
-        }
-    )
-    return set(settings["python_files"]), {**identity, **settings}
-
-
-def _pytest_pattern_value(text, section):
-    if section in {"pyproject", "toml-pytest"}:
-        return _toml_pytest_pattern_value(text, section)
-    parser = configparser.ConfigParser()
-    parser.read_string(text)
-    if section not in parser:
-        return _ABSENT_PYTEST_SECTION
-    options = dict(parser.items(section))
-    if not _supported_pytest_function_patterns(options):
-        return _UNSUPPORTED_PYTEST_CONFIG
-    if _pytest_config_uses_custom_collection(options):
-        return _UNSUPPORTED_PYTEST_CONFIG
-    return _pytest_patterns_from_options(options)
-
-
-def _toml_pytest_pattern_value(text, section):
-    document = tomllib.loads(text)
-    pytest = (
-        document.get("pytest")
-        if section == "toml-pytest"
-        else document.get("tool", {}).get("pytest")
-    )
-    if pytest is None:
-        return _ABSENT_PYTEST_SECTION
-    options = pytest.get("ini_options", pytest)
-    if not isinstance(options, dict):
-        return _INVALID_PYTEST_CONFIG
-    if not _supported_pytest_function_patterns(options):
-        return _UNSUPPORTED_PYTEST_CONFIG
-    if _pytest_config_uses_custom_collection(options):
-        return _UNSUPPORTED_PYTEST_CONFIG
-    return _pytest_patterns_from_options(options)
-
-
-def _supported_pytest_function_patterns(options):
-    for option in ("python_files", "python_functions", "python_classes"):
-        if option not in options:
-            continue
-        patterns = _pytest_pattern_list(options[option])
-        if not isinstance(patterns, list) or any(
-            not isinstance(pattern, str)
-            or not pattern.strip()
-            or len(pattern) > 256
-            or any(ord(character) < 32 for character in pattern)
-            for pattern in patterns
-        ):
-            return False
-        if len(patterns) > 64:
-            return False
-    return True
-
-
-def _pytest_patterns_from_options(options):
-    defaults = {
-        "python_files": list(_TEST_FILE_PATTERNS),
-        "python_functions": list(_TEST_FUNCTION_PATTERNS),
-        "python_classes": list(_TEST_CLASS_PATTERNS),
-    }
-    return {
-        name: _pytest_pattern_list(options[name]) if name in options else values
-        for name, values in defaults.items()
-    }
-
-
-def _pytest_config_uses_custom_collection(options):
-    if "pytest_plugins" in options:
-        return True
-    addopts = options.get("addopts", "")
-    if not isinstance(addopts, str):
-        return True
-    tokens = addopts.split()
-    return any(
-        token == "-p"
-        or token.startswith("-p")
-        or token.split("=", 1)[0]
-        in {
-            "--ignore",
-            "--ignore-glob",
-            "--deselect",
-            "--doctest-modules",
-            "--pyargs",
-            "--confcutdir",
-            "--noconftest",
-            "--collect-in-virtualenv",
-            "--import-mode",
-            "--override-ini",
-        }
-        for token in tokens
-    )
-
-
-def _pytest_pattern_list(value):
-    return value.split() if isinstance(value, str) else value
-
-
-_ABSENT_PYTEST_SECTION = object()
-_INVALID_PYTEST_CONFIG = object()
-_UNSUPPORTED_PYTEST_CONFIG = object()
-
-
 def _security_node_findings(
     relative: str,
     node: ast.AST,
@@ -5690,6 +5393,9 @@ def _security_scan_tree(
     tree._security_source_context = (oracle_context or {}).get(
         "_security_source_context"
     )
+    tree._security_source_model = (oracle_context or {}).get(
+        "_security_source_model"
+    ) or getattr(tree, "_security_source_model", None)
     tree._security_oracle_context = oracle_context or {}
     tree._fixed_program_workspace = (oracle_context or {}).get(
         "fixed_program_workspace", {}
@@ -5705,6 +5411,7 @@ def _security_scan_tree(
     for node in nodes:
         if isinstance(node, ast.Call):
             node._security_supported_precondition = None
+            node._security_structural_values = None
         for child in ast.iter_child_nodes(node):
             child._security_parent = node
         node._scan_bound_names = None
@@ -5868,76 +5575,23 @@ def _verify_security_bindings(workspace: Path, bindings: list[dict[str, Any]]) -
 
 
 def _blocked_security_scan_report(
-    workspace: Path,
-    files: list[Path],
-    tenant_read_calls: tuple[str, ...],
-    tenant_read_bindings: dict[str, tuple[str, ...]],
-    tenant_policy_applies: bool = False,
-) -> dict[str, Any]:
-    """Return a fail-closed receipt when the bounded inventory is exceeded."""
-    relative_paths = [path.relative_to(workspace).as_posix() for path in files]
-    finding = _security_finding(
-        "SECURITY_AUDIT_INCOMPLETE",
-        ".",
-        ast.Module(body=[], type_ignores=[]),
-        (
-            f"Eligible Python source inventory contains {len(files)} files, above "
-            f"the {MAX_SECURITY_SOURCE_FILES}-file scan limit. No files were "
-            "scanned; partition the workspace or use a reviewed larger limit."
-        ),
-        "HIGH",
-        files_discovered=len(files),
-        files_scanned=0,
+    workspace,
+    files,
+    tenant_read_calls,
+    tenant_read_bindings,
+    tenant_policy_applies=False,
+):
+    from .audit_action_refs import blocked_security_scan_report
+    import sys
+
+    return blocked_security_scan_report(
+        sys.modules[__name__],
+        workspace,
+        files,
+        tenant_read_calls,
+        tenant_read_bindings,
+        tenant_policy_applies,
     )
-    core = {
-        "schema": SECURITY_SCHEMA,
-        "marker": "SECURITY_AUDIT_COMPLETE",
-        "state": "BLOCKED",
-        "files_scanned": 0,
-        "parse_errors": 0,
-        "unreadable_sources": 0,
-        "oversized_sources": 0,
-        "audit_coverage": {
-            "language": "Python",
-            "files_discovered": len(files),
-            "files_attempted": 0,
-            "files_audited": 0,
-            "audit_rate": 0.0,
-            "rate_defined": True,
-            "measurement_state": "blocked",
-            "inventory_complete": True,
-            "complete": False,
-            "limit": MAX_SECURITY_SOURCE_FILES,
-            "inventory_sha256": sha256(
-                "\n".join(relative_paths).encode("utf-8")
-            ).hexdigest(),
-        },
-        "tenant_read_contract": _tenant_read_contract(
-            tenant_read_calls, tenant_read_bindings, tenant_policy_applies
-        ),
-        "sources": [],
-        "oracle_context": {
-            "mode": "not_assessed_source_limit",
-            "configuration_sources": [],
-        },
-        "findings": [finding],
-        "finding_counts": {finding["code"]: 1},
-        "governance": "human_controlled",
-        "authority": {
-            "execution": False,
-            "approval": False,
-            "publication": False,
-            "deployment": False,
-        },
-        "claim_boundary": (
-            "No security analysis completed because the eligible Python source "
-            "inventory exceeded the configured scan limit. Other languages, "
-            "runtime behavior, dependency advisories, and release approval are "
-            "outside this scanner's scope."
-        ),
-        "action_summary": finding["message"],
-    }
-    return _seal_security_scan(core)
 
 
 def _tenant_read_contract(
@@ -5982,6 +5636,7 @@ def _scan_security_sources(
     database_context: dict | None = None,
     primitive_source_bytes_out: dict[str, bytes] | None = None,
     capture_all_sources: bool = False,
+    producer_source_model_out: dict | None = None,
 ) -> tuple[
     list[dict[str, Any]],
     list[dict[str, Any]],
@@ -6038,6 +5693,7 @@ def _scan_security_sources(
                 tenant_read_bindings,
                 test_file_patterns,
                 _security_scan_file_snapshot,
+                producer_source_model_out,
             )
         )
 
@@ -6049,6 +5705,7 @@ def _scan_security_sources(
         python_inventory_out=python_inventory,
         database_context_out=database_projection,
         security_snapshot_consumer=consume_security_snapshots,
+        producer_source_model_out=producer_source_model_out,
     )
     from .context_efficiency import (
         _scan_missing_security_snapshot,
@@ -6103,12 +5760,16 @@ def _scan_security_sources(
     return bindings, findings, counts, outcomes, oracle_edges, extra_bindings
 
 
-def _seal_security_scan(core: dict[str, Any]) -> dict[str, Any]:
+def _seal_security_scan(
+    core: dict[str, Any], *, producer_source_model=None
+) -> dict[str, Any]:
     import sys
 
     from .audit_action_refs import seal_security_scan
 
-    return seal_security_scan(sys.modules[__name__], core)
+    return seal_security_scan(
+        sys.modules[__name__], core, producer_source_model=producer_source_model
+    )
 
 
 def _security_scan_report(
@@ -6244,6 +5905,7 @@ def security_scan(
         )
     database_context = {}
     primitive_source_bytes = {}
+    producer_source_model = {}
     bindings, findings, counts, outcomes, oracle_edges, oracle_configuration = (
         _scan_security_sources(
             workspace,
@@ -6256,6 +5918,7 @@ def security_scan(
             primitive_source_bytes_out=primitive_source_bytes,
             capture_all_sources=profile["conditional"]
             or selected_policy != "legacy-v1",
+            producer_source_model_out=producer_source_model,
         )
     )
     result = _security_scan_report(
@@ -6280,7 +5943,9 @@ def security_scan(
         )
     if selected_policy != "legacy-v1":
         result["selected_defect_policy"] = selected_policy
-        result = _seal_security_scan(result)
+        result = _seal_security_scan(
+            result, producer_source_model=producer_source_model.get("source")
+        )
     return (
         _reconcile_runtime_oracles(workspace, result, evidence)
         if any(value is not None for value in evidence)

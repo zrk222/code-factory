@@ -7,7 +7,7 @@
 
 <p>FactoryLine AI Proof is free, local IDE Guardian + AI proof for JetBrains. Guardian Core records a bounded, in-memory IDE-health sample; it does not diagnose a cause or change IDE settings.</p>
 
-<p><strong>New in 1.3.0 — </strong>Proof Review supports the current diff or active file, and Verified Repair Sandbox seals one native Change List for a manual, supervised agent handoff.</p>
+<p><strong>Updated in 1.3.1 — </strong>Project-contained Proof Review and Verified Repair Sandbox links return to source using the current IntelliJ navigation API, with workspace boundaries and focus behavior preserved.</p>
 
 <p><strong>Run First Proof</strong> is a setup demonstration that checks the local CLI; it does not assess repository code. To assess a repository, run <code>factory scan --root .</code>. Then use Proof Review to inspect the current diff or active file and see what evidence supports, what remains unproven, and the next review step. Find it at <strong>Tools | FactoryLine | Run First Proof</strong>.</p>
 
@@ -31,6 +31,7 @@
 <p><a href="https://github.com/zrk222/code-factory">Read the documentation and inspect the source.</a></p>
         ]]></description>
     <change-notes><![CDATA[
+        <p><strong>1.3.1 patch:</strong> Return from Proof Review and Verified Repair Sandbox to project files on current IntelliJ builds, with the existing workspace boundary checks preserved. Pairs with Code Factory 0.49.0.</p>
         <p><strong>1.3.0 preview:</strong> Begin with the change in front of you. Review its source and recorded checks, keep an agent handoff inside one selected Change List, and return to the evidence before accepting the repair. Pairs with Code Factory 0.49.0; publication remains a separate step.</p>
         <ul>
             <li>Make First Proof the front door: check whether an AI-generated test can actually fail before trusting a green result.</li>

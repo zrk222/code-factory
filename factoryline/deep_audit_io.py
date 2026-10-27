@@ -20,6 +20,15 @@ from collections import Counter
 from pathlib import Path, PureWindowsPath
 from urllib.parse import unquote
 
+from .repository_checkpoint_audit import (
+    _full_repository_checkpoint_identity as _full_repository_checkpoint_identity,
+    _full_repository_checkpoint_rows as _full_repository_checkpoint_rows,
+    _full_repository_result_valid as _full_repository_result_valid,
+    _validate_full_repository_checkpoint as _validate_full_repository_checkpoint,
+    _full_repository_discovery_policy as _full_repository_discovery_policy,
+    _full_repository_trusted_core_decision as _full_repository_trusted_core_decision,
+)
+
 from .runtime_audit_common import (
     RuntimeAuditError,
     canonical_bytes,
@@ -137,8 +146,7 @@ def strict_json(raw: bytes) -> dict:
     return value
 
 
-# Execution inventory is a separate versioned contract; v1 signed intake keeps
-# its original bounds and semantics.
+# Execution inventory is versioned; v1 signed intake keeps its bounds and semantics.
 INVENTORY_LIMIT = 50_000
 SOURCE_LIMIT = 16 * 1024 * 1024
 SNAPSHOT_LIMIT = 1024 * 1024 * 1024
@@ -585,8 +593,9 @@ FULL_REPOSITORY_BATCH_LIMIT = 460
 FULL_REPOSITORY_CONTEXT_PROFILE = "workspace-v2"
 FULL_REPOSITORY_CONTEXT_SCHEMA = "factory.full-repository-context.v2"
 FULL_REPOSITORY_CONTEXT_SCAN_SCHEMA = "factory.full-repository-scan.workspace-v2"
+FULL_REPOSITORY_WORKSPACE_SOURCE_RETENTION_LIMIT = 64 * 1024 * 1024
 FULL_REPOSITORY_CONTEXT_CHECKPOINT_SCHEMA = (
-    "factory.full-repository-checkpoint.workspace-v2"
+    "factory.full-repository-checkpoint.workspace-v3"
 )
 FULL_REPOSITORY_CONTEXT_RUN_ID = "f2110000000000000000000000000002"
 FULL_REPOSITORY_CONTEXT_DEADLINE_SECONDS = 180
@@ -788,12 +797,19 @@ def _full_repository_stat_identity(info) -> tuple[int, int, int, int]:
     return info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns
 
 
-def _full_repository_runtime_epoch(root: Path, configuration: str, audit) -> str:
+def _full_repository_runtime_epoch(
+    root: Path, configuration: str, audit, *, retention_limit: int | None = None
+) -> str:
     """Bind only the in-process cache shortcut to live native helper objects."""
-    from .context_efficiency import _scan_security_source
+    from . import context_efficiency as context_cache
 
+    retention_limit = (
+        audit.DEFAULT_ORACLE_SOURCE_RETENTION_BYTES
+        if retention_limit is None
+        else retention_limit
+    )
     helpers = (
-        _scan_security_source,
+        context_cache._scan_security_source,
         audit._security_source_files,
         audit._security_source_bytes,
         audit._security_scan_tree,
@@ -804,6 +820,7 @@ def _full_repository_runtime_epoch(root: Path, configuration: str, audit) -> str
     )
     # Owned profile helpers retain their live binding in the resume-cache identity.
     from . import runtime_audit_integrity as workspace_engine
+    from . import repository_checkpoint_audit as checkpoint_admission
 
     full_repository_workspace_scan_batch = (
         workspace_engine.full_repository_workspace_scan_batch
@@ -820,7 +837,18 @@ def _full_repository_runtime_epoch(root: Path, configuration: str, audit) -> str
             for name, helper in sorted(vars(workspace_engine).items())
             if name.startswith("_full_repository_workspace_") and callable(helper)
         )
+        + tuple(
+            helper
+            for name, helper in sorted(vars(context_cache).items())
+            if name.startswith("_full_repository_workspace_cache_") and callable(helper)
+        )
         + (
+            checkpoint_admission._full_repository_checkpoint_identity,
+            checkpoint_admission._full_repository_checkpoint_rows,
+            checkpoint_admission._full_repository_result_valid,
+            checkpoint_admission._trusted_core_ledger_matches,
+            checkpoint_admission._trusted_core_ledger_counts,
+            require_digest,
             full_repository_workspace_scan_batch,
             _validate_full_repository_checkpoint,
             full_repository_scan,
@@ -835,7 +863,10 @@ def _full_repository_runtime_epoch(root: Path, configuration: str, audit) -> str
     return digest(
         {
             "native_cache_epoch": audit._oracle_context_cache_key(
-                root, [], {"configuration_sha256": configuration}
+                root,
+                [],
+                {"configuration_sha256": configuration},
+                retention_limit=retention_limit,
             ),
             "full_profile_helpers": [
                 (id(helper), id(getattr(helper, "__code__", None)))
@@ -1029,147 +1060,6 @@ def _full_repository_import_edge(
     return None, None
 
 
-def _validate_full_repository_checkpoint(
-    value: dict,
-    root: Path,
-    scanner: str,
-    configuration: str,
-    inventory: list[dict],
-    context_profile: str = "isolated-v1",
-) -> list[dict]:
-    """Validate generation identity and the exact saved primary prefix."""
-    _full_repository_checkpoint_identity(
-        value, root, scanner, configuration, inventory, context_profile
-    )
-    results = _full_repository_checkpoint_rows(value, inventory)
-    if not all(_full_repository_result_valid(row) for row in results):
-        raise RuntimeAuditError(
-            "INVALID_CHECKPOINT", "checkpoint primary result is malformed"
-        )
-    return results
-
-
-def _full_repository_checkpoint_identity(
-    value, root, scanner, configuration, inventory, context_profile="isolated-v1"
-):
-    """Reject altered profile, schema, scanner or source-generation bindings."""
-    workspace = context_profile == FULL_REPOSITORY_CONTEXT_PROFILE
-    keys = {
-        "schema",
-        "root",
-        "scanner_identity_sha256",
-        "configuration_sha256",
-        "inventory_sha256",
-        "inventory",
-        "batch_primary_limit",
-        "primary_results",
-        "result_digest",
-    }
-    if workspace:
-        keys.update({"context_profile", "context_generation_sha256"})
-    expected_schema = (
-        FULL_REPOSITORY_CONTEXT_CHECKPOINT_SCHEMA
-        if workspace
-        else FULL_REPOSITORY_CHECKPOINT_SCHEMA
-    )
-    if (
-        set(value) != keys
-        or value["schema"] != expected_schema
-        or (workspace and value["context_profile"] != context_profile)
-        or (
-            workspace
-            and (
-                not isinstance(value["context_generation_sha256"], str)
-                or len(value["context_generation_sha256"]) != 64
-            )
-        )
-        or value["batch_primary_limit"] != FULL_REPOSITORY_BATCH_LIMIT
-    ):
-        raise RuntimeAuditError(
-            "INVALID_CHECKPOINT", "checkpoint fields or schema differ"
-        )
-    if value["scanner_identity_sha256"] != scanner:
-        raise RuntimeAuditError(
-            "SCANNER_DRIFT", "scanner identity changed since checkpoint"
-        )
-    if (
-        value["root"] != root.as_posix()
-        or value["configuration_sha256"] != configuration
-        or value["inventory_sha256"] != digest(inventory)
-        or value["inventory"] != inventory
-    ):
-        raise RuntimeAuditError(
-            "SOURCE_DRIFT", "source inventory or configuration changed since checkpoint"
-        )
-
-
-def _full_repository_checkpoint_rows(value, inventory):
-    """Require an ordered, duplicate-free prefix with an intact result digest."""
-    results = value["primary_results"]
-    if (
-        not isinstance(results, list)
-        or len(results) > len(inventory)
-        or value["result_digest"] != digest(results)
-    ):
-        raise RuntimeAuditError(
-            "INVALID_CHECKPOINT", "checkpoint result digest or list is malformed"
-        )
-    paths = [row["path"] for row in inventory]
-    if (
-        paths != sorted(paths)
-        or [row.get("path") for row in results if isinstance(row, dict)]
-        != paths[: len(results)]
-    ):
-        raise RuntimeAuditError(
-            "INVALID_CHECKPOINT", "checkpoint primary partition differs from inventory"
-        )
-    if len({row.get("path") for row in results if isinstance(row, dict)}) != len(
-        results
-    ):
-        raise RuntimeAuditError(
-            "INVALID_CHECKPOINT", "duplicate checkpoint primary path"
-        )
-    return results
-
-
-def _full_repository_result_valid(row):
-    """Check the saved result shape before any native revalidation or reuse."""
-    return (
-        isinstance(row, dict)
-        and set(row)
-        == {
-            "path",
-            "input_sha256",
-            "input_state",
-            "bytes",
-            "status",
-            "findings",
-            "dependencies",
-        }
-        and row["status"]
-        in {"audited", "syntax_error", "unreadable", "too_large", "unsupported"}
-        and isinstance(row["findings"], list)
-        and isinstance(row["dependencies"], dict)
-    )
-
-
-def _full_repository_discovery_policy(audit) -> dict:
-    constants = audit._security_source_files.__code__.co_consts
-    ignored = next((item for item in constants if isinstance(item, frozenset)), None)
-    pattern = next((item for item in constants if item == "*.py"), None)
-    if ignored is None or pattern is None:
-        raise RuntimeAuditError(
-            "SCANNER_DRIFT", "native source discovery policy is not inspectable"
-        )
-    return {
-        "engine": "native _security_source_files",
-        "include_pattern": pattern,
-        "include": "all discovered Python paths, including untracked files",
-        "ignored_directory_names": sorted(ignored),
-        "symlink_python_paths": "accounted as unreadable; never followed",
-    }
-
-
 def _full_repository_scan_digest(
     generation, inventory, results, accounting, coverage, dependencies, counts, pending
 ):
@@ -1214,158 +1104,6 @@ def _full_repository_scan_digest(
     return digest(payload)
 
 
-def _full_repository_trusted_core_decision(generation, results):
-    """Format a decision only after native workspace evidence passes admission."""
-    from . import primitive_observation_binding as primitive
-
-    blocked = primitive._trusted_core_policy_result()
-    evidence = generation.get("workspace_evidence")
-    if not isinstance(evidence, dict):
-        return blocked
-    sources = evidence.get("sources")
-    oracle = evidence.get("oracle_context")
-    coverage = evidence.get("audit_coverage")
-    partition = evidence.get("primitive_partition")
-    tiers = evidence.get("finding_tiers")
-    findings = evidence.get("raw_findings")
-    inventory = generation.get("inventory")
-    if not all(
-        isinstance(value, dict)
-        for value in (sources, oracle, coverage, partition, tiers)
-    ):
-        return blocked
-    if not isinstance(findings, list) or not isinstance(inventory, list):
-        return blocked
-    expected_paths = {row.get("path") for row in inventory if isinstance(row, dict)}
-    source_rows = {row.get("path"): row for row in inventory if isinstance(row, dict)}
-    if (
-        len(source_rows) != len(inventory)
-        or generation.get("collection_incomplete") is not False
-        or sources.get("capture_complete") is not True
-        or sources.get("files_discovered") != len(inventory)
-        or sources.get("files_bound") != len(inventory)
-        or oracle.get("state") != "captured"
-        or coverage.get("complete") is not True
-        or coverage.get("files_processed") != len(inventory)
-        or partition.get("state") != "VALIDATED"
-        or len(results) != len(inventory)
-        or any(
-            not isinstance(row, dict) or row.get("status") != "audited"
-            for row in results
-        )
-        or not expected_paths
-    ):
-        return blocked
-    try:
-        current_tier_policy = primitive.finding_tier_policy_sha256()
-        gate = tiers.get("defect_gate")
-        ledger = tiers.get("ledger")
-        supported = sum(
-            isinstance(row, dict)
-            and row.get("tier") == "SUPPORTED_DEFECT"
-            and row.get("gate_relevant") is True
-            for row in ledger or ()
-        )
-        unresolved = sum(
-            isinstance(row, dict)
-            and row.get("tier") == "NEEDS_CONTEXT"
-            and row.get("gate_relevant") is True
-            for row in ledger or ()
-        )
-        expected_completeness = (
-            "INCOMPLETE" if unresolved else "ASSESSED_WITHIN_DECLARED_SCOPE"
-        )
-        if (
-            tiers.get("policy_sha256") != current_tier_policy
-            or not isinstance(ledger, list)
-            or not isinstance(findings, list)
-            or len(ledger) != len(findings)
-            or not isinstance(gate, dict)
-            or gate.get("state")
-            not in {"DEFECTS_PRESENT", "NO_SUPPORTED_DEFECTS_OBSERVED"}
-            or gate.get("passed") is not False
-            or gate.get("clean") is not False
-            or gate.get("completeness_state") != expected_completeness
-            or type(gate.get("supported_defect_count")) is not int
-            or type(gate.get("needs_context_count")) is not int
-            or gate.get("supported_defect_count") < 0
-            or gate.get("needs_context_count") < 0
-            or gate.get("supported_defect_count") != supported
-            or gate.get("needs_context_count") != unresolved
-            or not isinstance(tiers.get("tier_counts"), dict)
-            or tiers["tier_counts"].get("SUPPORTED_DEFECT")
-            != sum(
-                isinstance(row, dict) and row.get("tier") == "SUPPORTED_DEFECT"
-                for row in ledger or ()
-            )
-            or tiers["tier_counts"].get("NEEDS_CONTEXT")
-            != sum(
-                isinstance(row, dict) and row.get("tier") == "NEEDS_CONTEXT"
-                for row in ledger or ()
-            )
-            or tiers.get("ledger_sha256") != digest(ledger)
-        ):
-            return blocked
-        report_body = {
-            key: value for key, value in tiers.items() if key != "report_sha256"
-        }
-        if tiers.get("report_sha256") != digest(report_body):
-            return blocked
-        for index, (raw, row) in enumerate(zip(findings, ledger, strict=True)):
-            identity = row.get("source_identity") if isinstance(row, dict) else None
-            if (
-                not isinstance(raw, dict)
-                or row.get("index") != index
-                or row.get("raw_finding") != raw
-                or not isinstance(identity, dict)
-                or identity.get("path") != raw.get("path")
-                or identity.get("path") not in expected_paths
-                or identity.get("source_sha256")
-                != source_rows[identity["path"]].get("sha256")
-                or source_rows[identity["path"]].get("state") != "ready"
-                or identity.get("identity_sha256")
-                != primitive._tier_sha256(
-                    {
-                        "index": index,
-                        "path": identity.get("path"),
-                        "source_sha256": identity.get("source_sha256"),
-                        "code": raw.get("code"),
-                        "line": raw.get("line"),
-                        "column": raw.get("column"),
-                        "original_severity": raw.get("severity"),
-                        "raw_finding": raw,
-                    }
-                )
-            ):
-                return blocked
-        source_manifest_hash = sources.get("source_manifest_sha256")
-        if (
-            not isinstance(source_manifest_hash, str)
-            or len(source_manifest_hash) != 64
-            or any(char not in "0123456789abcdef" for char in source_manifest_hash)
-        ):
-            return blocked
-        policy_sha = blocked["policy_sha256"]
-        evidence_payload = {
-            "policy_id": "trusted-core-v1",
-            "policy_sha256": policy_sha,
-            "sources_sha256": sources["source_manifest_sha256"],
-            "inventory_sha256": generation["inventory_hash"],
-            "context_generation_sha256": generation.get("context_generation_sha256"),
-            "scanner_identity_sha256": generation["scanner"],
-            "configuration_sha256": generation["configuration"],
-            "finding_tier_policy_sha256": current_tier_policy,
-            "tier_report_sha256": tiers["report_sha256"],
-            "tier_ledger_sha256": tiers["ledger_sha256"],
-        }
-        counts = (gate["supported_defect_count"], gate["needs_context_count"])
-        if any(type(value) is not int for value in counts):
-            return blocked
-        return primitive._trusted_core_policy_result(evidence_payload, counts)
-    except (KeyError, TypeError, ValueError, RuntimeAuditError):
-        return blocked
-
-
 def _full_repository_generation(
     root: Path, audit, context_profile="isolated-v1", defect_policy="legacy-v1"
 ) -> dict:
@@ -1381,9 +1119,12 @@ def _full_repository_generation(
         "tenant_reads": [],
         "oracle_context": None,
     }
+    source_retention_limit_bytes = audit.DEFAULT_ORACLE_SOURCE_RETENTION_BYTES
     if context_profile == FULL_REPOSITORY_CONTEXT_PROFILE:
+        source_retention_limit_bytes = FULL_REPOSITORY_WORKSPACE_SOURCE_RETENTION_LIMIT
         config_identity["context_profile"] = FULL_REPOSITORY_CONTEXT_PROFILE
         config_identity["context_profile_schema"] = FULL_REPOSITORY_CONTEXT_SCHEMA
+        config_identity["source_retention_limit_bytes"] = source_retention_limit_bytes
     elif context_profile != "isolated-v1":
         raise RuntimeAuditError(
             "E_CONTEXT_PROFILE", "unsupported full-repository context profile"
@@ -1398,8 +1139,11 @@ def _full_repository_generation(
             "finding_tier_policy_sha256": primitive.finding_tier_policy_sha256(),
         }
     configuration = digest(config_identity)
+    source_configuration = digest(frame["candidates"])
     scanner, inventory_hash = _full_repository_scanner_identity(), digest(inventory)
-    runtime_epoch = _full_repository_runtime_epoch(root, configuration, audit)
+    runtime_epoch = _full_repository_runtime_epoch(
+        root, configuration, audit, retention_limit=source_retention_limit_bytes
+    )
     discovery = _full_repository_discovery_policy(audit)
     workspace = context_profile == FULL_REPOSITORY_CONTEXT_PROFILE
     context_profile_schema = FULL_REPOSITORY_CONTEXT_SCHEMA if workspace else None
@@ -1438,6 +1182,9 @@ def _full_repository_resume_generation(generation: dict, audit):
             generation["configuration"],
             generation["inventory"],
             generation["context_profile"],
+            generation["source_configuration"]
+            if generation["context_profile"] == FULL_REPOSITORY_CONTEXT_PROFILE
+            else None,
         )
     except RuntimeAuditError as exc:
         if exc.code in {"SCANNER_DRIFT", "SOURCE_DRIFT", "INVALID_CHECKPOINT"}:
@@ -1555,6 +1302,15 @@ def _full_repository_workspace_scan_batch(
 
 def _full_repository_verify_generation(generation: dict, audit) -> None:
     root = generation["root"]
+    expected_retention_limit = (
+        FULL_REPOSITORY_WORKSPACE_SOURCE_RETENTION_LIMIT
+        if generation["context_profile"] == FULL_REPOSITORY_CONTEXT_PROFILE
+        else audit.DEFAULT_ORACLE_SOURCE_RETENTION_BYTES
+    )
+    if generation.get("source_retention_limit_bytes") != expected_retention_limit:
+        raise RuntimeAuditError(
+            "SOURCE_DRIFT", "source retention configuration changed during the batch"
+        )
     files = audit._security_source_files(root)
     inventory = _full_repository_inventory(root, files)
     patterns, frame, _collection_incomplete = _full_repository_profile_configuration(
@@ -1567,6 +1323,9 @@ def _full_repository_verify_generation(generation: dict, audit) -> None:
         "oracle_context": None,
     }
     if generation["context_profile"] == FULL_REPOSITORY_CONTEXT_PROFILE:
+        config_identity["source_retention_limit_bytes"] = generation[
+            "source_retention_limit_bytes"
+        ]
         config_identity["context_profile"] = FULL_REPOSITORY_CONTEXT_PROFILE
         config_identity["context_profile_schema"] = FULL_REPOSITORY_CONTEXT_SCHEMA
     if generation.get("defect_policy") == "trusted-core-v1":
@@ -1589,7 +1348,12 @@ def _full_repository_verify_generation(generation: dict, audit) -> None:
         )
     if (
         _full_repository_scanner_identity() != generation["scanner"]
-        or _full_repository_runtime_epoch(root, configuration, audit)
+        or _full_repository_runtime_epoch(
+            root,
+            configuration,
+            audit,
+            retention_limit=generation["source_retention_limit_bytes"],
+        )
         != generation["runtime_epoch"]
     ):
         raise RuntimeAuditError(
@@ -1616,6 +1380,7 @@ def _full_repository_store_checkpoint(generation: dict, results: list[dict]) -> 
             {
                 "context_profile": generation["context_profile"],
                 "context_generation_sha256": generation["context_generation_sha256"],
+                "source_configuration_sha256": generation["source_configuration"],
             }
         )
     write_run_json(generation["directory"], "checkpoint.json", checkpoint)
@@ -1625,15 +1390,24 @@ def _full_repository_store_checkpoint(generation: dict, results: list[dict]) -> 
         generation["runtime_epoch"],
     )
     if workspace and generation.get("workspace_prefix_raw_rows") is not None:
-        from .runtime_audit_integrity import _full_repository_workspace_store_prefix
+        from .runtime_audit_integrity import (
+            _full_repository_workspace_cache_identity,
+            _full_repository_workspace_store_prefix,
+        )
 
-        _full_repository_workspace_store_prefix(
+        cache_bytes = _full_repository_workspace_store_prefix(
             _FULL_REPOSITORY_TRUSTED_CHECKPOINT,
             checkpoint["result_digest"],
             checkpoint["context_generation_sha256"],
             generation["workspace_prefix_raw_rows"],
             digest,
+            generation.get("workspace_source_capture_for_cache"),
+            _full_repository_workspace_cache_identity(
+                generation, _FULL_REPOSITORY_TRUSTED_CHECKPOINT
+            ),
         )
+        processing = generation["workspace_evidence"]["primary_processing"]
+        processing["cache_accounted_bytes"] = cache_bytes
 
 
 def _full_repository_dependency_index(results: list[dict]) -> dict:

@@ -2482,6 +2482,19 @@ def _suppression(result: dict) -> list:
     return sorted(output, key=lambda item: (item["kind"], item["status"]))
 
 
+def _usable_native_fingerprint(analyzer: dict, native: dict) -> bool:
+    semgrep = analyzer["driver"].lower() in {"semgrep", "semgrep oss"}
+    return any(
+        value.strip()
+        and not (
+            semgrep
+            and name == "fingerprints:matchBasedId/v1"
+            and value.strip().lower() == "requires login"
+        )
+        for name, value in native.items()
+    )
+
+
 def _finding(result: object, analyzer: dict, sources: dict) -> dict:
     result = _object(result)
     if "rule" in result:
@@ -2497,7 +2510,7 @@ def _finding(result: object, analyzer: dict, sources: dict) -> dict:
     native_fingerprint_sha256 = digest(native)
     identity_basis = "sarif_native_fingerprint"
     identity_native = native
-    if not any(value.strip() for value in native.values()):
+    if not _usable_native_fingerprint(analyzer, native):
         identity_basis = "source_location_fallback"
         identity_native = {
             "native_fingerprint_sha256": native_fingerprint_sha256,

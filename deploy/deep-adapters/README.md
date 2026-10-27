@@ -10,7 +10,7 @@ timeouts, memory limits, challenge outcomes, and report completeness.
 | `codeql-python-worker` | CodeQL 2.27.1 Python bundle | SARIF | Full interprocedural Python query suite; this target covers Python only. |
 | `codeql-javascript-worker` | CodeQL 2.27.1, JavaScript queries 2.4.6 | SARIF with source-bound code flows | Full JavaScript/TypeScript security-extended suite, including modeled cross-module flows. Candidate extraction and framework models determine coverage. |
 | `codeql-actions-worker` | CodeQL 2.27.1, Actions queries 0.6.36 | SARIF with workflow source-to-sink flows | Full GitHub Actions security-extended suite; workflow injection and trust-boundary models depend on extracted YAML. This does not execute workflows or prove external actions safe. |
-| `semgrep-worker` | Semgrep 1.141.0, ten local Python/JavaScript/TypeScript rules | SARIF | Tracks declared request sources through local aliases into SQL, command, HTML and filesystem-path sinks; also checks unsafe Python deserialization and disabled TLS. Pattern-limited only: it cannot satisfy the `interprocedural-full` static gate. Candidate `.semgrepignore` still requires native source accounting. |
+| `semgrep-worker` | Semgrep 1.141.0, fifteen local Python/JavaScript/TypeScript/PHP rules | SARIF | Tracks declared request sources through local aliases into SQL, command, HTML and filesystem-path sinks; also checks unsafe Python deserialization and disabled TLS. Pattern-limited only: it cannot satisfy the `interprocedural-full` static gate. Candidate `.semgrepignore` still requires native source accounting. |
 | `osv-worker` | OSV-Scanner 2.2.0 + immutable PyPI database snapshot | OSV JSON | Offline PyPI dependency scanning only; the pinned database snapshot ages and does not cover other ecosystems. |
 | `syft-worker` | Syft 1.33.0 | Syft JSON | Inventory only; this is not a vulnerability scan. |
 | `gitleaks-worker` | Gitleaks 8.28.0 | SARIF | Built-in rules are pinned with the image; native accounting limitations remain. |
@@ -33,7 +33,7 @@ The vendored Gitleaks rules come from the official [v8.28.0 configuration](https
 CodeQL's immutable official 2.27.1 bundle digest pins the CLI and its Python
 and JavaScript query packs. These targets do not claim compiled-language coverage. OSV uses
 offline mode because the signed host run uses `--network=none`. This
-image bundles the verified PyPI snapshot at GCS generation 1792067584457782;
+image bundles the verified PyPI snapshot at GCS generation 1792839797362039;
 it does not include other ecosystems. Trivy config scanning does not
 update the vulnerability database. The source-bound runtime and fuzz harnesses
 are candidate inputs, never copied into these images. No image should set deep
@@ -119,7 +119,7 @@ This refresh does not establish vulnerability-free images or full audit coverage
 The Semgrep profile disables inline `nosemgrep` suppression and requests
 data-flow traces. The pinned community engine did not emit SARIF code-flow
 traces in native controls, so trace coverage is recorded as `NOT_MEASURED`.
-Its ruleset hash binds ten rules to the image profile.
+Its ruleset hash binds fifteen rules to the image profile.
 Request-to-sink rules follow assignments and concatenations within supported
 local flows. Parameterized SQL, argv execution without a shell, static HTML,
 safe YAML loading, enabled TLS, and values rebound to constants have negative
@@ -173,3 +173,42 @@ In-process instrumentation can be forged or disabled by candidate code;
 observed line hits do not prove authenticity, complete branches, vulnerability
 causality or detection accuracy. ASGI, WSGI and other runtimes need separate
 providers and remain unsupported by this tracing provider.
+
+### Bounded PHP security review
+
+The supplemental Semgrep lane adds `php.request-command-injection`,
+`php.request-sql-injection`, `php.request-path-traversal`,
+`php.request-file-inclusion` and `php.request-unsafe-deserialization`.
+These are local request-to-operation candidates, with unresolved PHP callee
+provider identity; a same-named namespaced/user-defined function may match.
+Object methods are excluded. No finding proves exploitability or gadget execution.
+Sources are exact reads from GET/POST/REQUEST/COOKIE superglobals. Sink operands
+exclude SQL bound-value arrays and file-write content. HTML escaping, trimming,
+decoding and `allowed_classes=false` do not clear taint. Shell escaping and
+filesystem guards require review, not a universal sanitizer exemption.
+
+Only ordinary `.php` files are in scope. Blade `.blade.php`, `.phtml`, `.inc`,
+Twig, dynamic invocations, references, variable variables, framework sources,
+PDO, closures/cross-function/cross-file flows, XSS, SSRF, CSRF and access control
+are unsupported/unresolved, never safe negatives. The basic Python security
+scan remains Python-only. PHP requires the configured signed supplemental
+Semgrep worker through `factory scan --root PATH --deep --worker-config
+.factory/worker-config.json --json`; this cannot satisfy `interprocedural-full`.
+Missing authorization, native execution, challenge or source evidence remains
+INCOMPLETE. Source accounting COMPLETE means processed paths, not full security.
+
+Native fixture preparation: copy `rules/tests/php-controls.php` as
+`semgrep-pattern-limited.php` alongside the matching rules YAML, then run the
+existing pinned image's `semgrep --test --metrics=off --disable-version-check`
+fixture command. Do not execute the PHP fixture. Native parser behavior and
+PHP JSON/SARIF-to-signed-CLI ingestion must be measured separately; authored
+fixtures or Python validator tests do not establish native execution or accuracy.
+
+
+PHP 8 named operands are supported for every procedural sink, including reordered
+names and mixed positional/named forms. Sink parameter names follow PHP's
+standard/mysqli/pgsql stubs: `command`, `filename`, `data`, and SQL `query`.
+The PostgreSQL two-argument legacy overload is modeled separately so bound
+parameter arrays do not become SQL-text sinks. Inclusion syntax has no named
+argument form. Native named-operand controls include all fifteen functions,
+33 positive candidates and 18 safe operand/provider controls.

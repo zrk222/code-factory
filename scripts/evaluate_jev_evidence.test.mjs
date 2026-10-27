@@ -6,6 +6,7 @@ import test from 'node:test';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
+import { createEvidenceValidators } from './jev_evidence.mjs';
 import {
   ENDPOINT, MODEL, evaluateCases as evaluateCasesRaw, loadTrial, parseArgs, runCli as runCliRaw,
   summarizeCosts, summarizeLatency, verifyJournal, recordOperatorFeedback,
@@ -26,6 +27,24 @@ function answer(probability, extra = {}, evidenceProbability = 0.99) {
   }), { status: 200 });
 }
 const mock = (responses) => async () => responses.shift();
+
+test('evidence validator services stay captured when the caller mutates its dependency object', () => {
+  const dependencies = {
+    requireValue(value, reason) { assert.ok(value, reason); },
+    object: value => value !== null && typeof value === 'object' && !Array.isArray(value),
+    sha: value => createHash('sha256').update(value).digest('hex'),
+    TrialError: Error,
+    readBounded: readFile,
+  };
+  const first = createEvidenceValidators(dependencies);
+  assert.throws(() => first.validateNoRawSecrets({ password: 'example' }), /raw_secret_field_forbidden/);
+  dependencies.requireValue = () => {};
+  dependencies.object = () => false;
+  assert.throws(() => first.validateNoRawSecrets({ password: 'example' }), /raw_secret_field_forbidden/);
+  const second = createEvidenceValidators(dependencies);
+  first.EVIDENCE_PROFILES.add('local-only');
+  assert.equal(second.EVIDENCE_PROFILES.has('local-only'), false);
+});
 
 async function informedFixture(root) {
   const hash = value => createHash('sha256').update(value).digest('hex');

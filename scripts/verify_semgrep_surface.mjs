@@ -13,7 +13,7 @@ const rulesPath = 'deploy/deep-adapters/rules/semgrep-pattern-limited.yml';
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const receipt = { schema: 'factory.semgrep-surface-controls.v1', state: 'BLOCKED',
   observed_at: new Date().toISOString(), image, source: {},
-  claim_boundary: 'Native positive, safe and detector-removal controls for all ten bundled rules in Python, JavaScript and TypeScript; no general detection-accuracy or interprocedural-coverage claim.' };
+  claim_boundary: 'Native positive, safe and detector-removal controls for all fifteen bundled rules in Python, JavaScript, TypeScript and PHP; no general detection-accuracy or interprocedural-coverage claim.' };
 const temp = mkdtempSync(join(tmpdir(), 'cf-semgrep-surface-'));
 function docker(args) {
   const run = spawnSync('docker', args, { encoding: 'utf8', timeout: 120000, maxBuffer: 16 * 1024 * 1024 });
@@ -22,7 +22,7 @@ function docker(args) {
 }
 try {
   for (const path of [rulesPath, 'deploy/deep-adapters/profiles/semgrep-pattern-limited.json',
-    'deploy/deep-adapters/rules/tests/python-controls.txt', 'deploy/deep-adapters/rules/tests/javascript-controls.js',
+    'deploy/deep-adapters/rules/tests/python-controls.txt', 'deploy/deep-adapters/rules/tests/javascript-controls.js', 'deploy/deep-adapters/rules/tests/php-controls.php',
     'scripts/verify_semgrep_surface.mjs', 'scripts/semgrep_mutation_controls.mjs']) {
     receipt.source[path] = hash(readFileSync(path));
   }
@@ -40,6 +40,7 @@ try {
   copyFileSync(rulesPath, join(temp, 'semgrep-pattern-limited.yml'));
   copyFileSync('deploy/deep-adapters/rules/tests/python-controls.txt', join(temp, 'semgrep-pattern-limited.py'));
   for (const extension of ['js', 'ts']) copyFileSync('deploy/deep-adapters/rules/tests/javascript-controls.js', join(temp, `semgrep-pattern-limited.${extension}`));
+  copyFileSync('deploy/deep-adapters/rules/tests/php-controls.php', join(temp, 'semgrep-pattern-limited.php'));
   // mkdtempSync defaults to 0700. The hardened image runs Semgrep as a
   // non-root user, so make only these synthetic, read-only test inputs
   // traversable before mounting the directory with Docker's readonly option.
@@ -49,7 +50,7 @@ try {
     '--entrypoint', '/usr/bin/semgrep', id, '--test', '--json', '--metrics=off', '--disable-version-check', '--disable-nosem', '/cases']);
   receipt.controls = JSON.parse(controls);
   const tested = Object.values(receipt.controls.results ?? {}).flatMap(result => Object.entries(result.checks ?? {}));
-  if (tested.length !== 10 || tested.some(([, check]) => check.passed !== true || check.errors?.length)) {
+  if (tested.length !== 15 || tested.some(([, check]) => check.passed !== true || check.errors?.length)) {
     throw new Error('Incomplete or failing rule controls');
   }
   if (receipt.controls.config_missing_tests?.length || receipt.controls.config_with_errors?.length) {
@@ -59,17 +60,19 @@ try {
   // Exercise suppression only after annotation testing: Semgrep's test runner
   // interprets nosemgrep comments differently from production scan output.
   const annotated = [];
-  for (const extension of ['py', 'js', 'ts']) {
+  for (const extension of ['py', 'js', 'ts', 'php']) {
     const fixture = join(temp, `semgrep-pattern-limited.${extension}`);
     const content = readFileSync(fixture, 'utf8');
     const vulnerableCall = ['child_process.', 'exec', '(alias);'].join('');
     const suppressed = extension === 'py'
       ? content.replace('os.system(alias)', 'os.system(alias)  # nosemgrep: python.request-command-injection')
+      : extension === 'php'
+      ? content.replace("system($_GET['cmd']);", "system($_GET['cmd']); // nosemgrep: php.request-command-injection")
       : content.replace(vulnerableCall, vulnerableCall + ' // nosemgrep: javascript.request-command-injection');
     if (suppressed === content) throw new Error('Missing suppression control');
     const lines = suppressed.split(/\r?\n/);
     const line = lines.findIndex(value => value.includes('nosemgrep:')) + 1;
-    annotated.push(`opt.factory.rules.${extension === 'py' ? 'python' : 'javascript'}.request-command-injection|semgrep-pattern-limited.${extension}|${line}`);
+    annotated.push(`opt.factory.rules.${extension === 'py' ? 'python' : extension === 'php' ? 'php' : 'javascript'}.request-command-injection|semgrep-pattern-limited.${extension}|${line}`);
     writeFileSync(fixture, suppressed);
   }
   const argv = profile.commands[0].argv.slice(1);
@@ -82,7 +85,7 @@ try {
   mkdirSync(dirname(resolve(root, output)), { recursive: true });
   writeFileSync(`${output}.sarif`, native);
   const findings = (sarif.runs ?? []).flatMap(run => run.results ?? []);
-  if (findings.length !== 29) throw new Error(`Native profile expected 29 control findings, observed ${findings.length}`);
+  if (findings.length !== 73) throw new Error(`Native profile expected 73 control findings, observed ${findings.length}`);
   const active = results => results.filter(result => !(result.suppressions ?? []).some(suppression => suppression.status !== 'rejected'));
   const keys = results => results.map(result => {
     const locations = result.locations ?? [];
@@ -94,7 +97,7 @@ try {
   // Semgrep retains inSource metadata even with --disable-nosem. The worker
   // consumes all results from this profile; only the enabled scan excludes it.
   const disabledKeys = keys(findings);
-  if (new Set(disabledKeys).size !== 29 || annotated.some(key => !disabledKeys.includes(key))) {
+  if (new Set(disabledKeys).size !== 73 || annotated.some(key => !disabledKeys.includes(key))) {
     throw new Error('Disabled suppression omitted or duplicated an exact control finding');
   }
   if (!argv.includes('--disable-nosem')) throw new Error('Production profile must disable inline suppression');
@@ -106,7 +109,7 @@ try {
   const enabledKeys = keys(active(enabledFindings));
   const expectedKeys = disabledKeys.filter(key => !annotated.includes(key));
   if (JSON.stringify(enabledKeys) !== JSON.stringify(expectedKeys)) {
-    throw new Error('Enabled suppression did not remove exactly the three annotated findings');
+    throw new Error('Enabled suppression did not remove exactly the four annotated findings');
   }
   receipt.native_findings = findings.length;
   receipt.inline_suppression_control = 'PASS';
@@ -116,7 +119,7 @@ try {
   receipt.native_sarif_sha256 = hash(Buffer.from(native));
   receipt.native_dataflow_findings = findings.filter(result => result.codeFlows?.length).length;
   receipt.dataflow_trace_state = receipt.native_dataflow_findings > 0 ? 'OBSERVED' : 'NOT_MEASURED';
-  if (receipt.native_rule_ids.length !== 10) throw new Error('Native profile omitted rules');
+  if (receipt.native_rule_ids.length !== 15) throw new Error('Native profile omitted rules');
   receipt.detector_mutations = [];
   for (const ruleId of receipt.native_rule_ids) {
     const mutationArgv = [...argv.filter(value => value !== '{source}'),
@@ -136,6 +139,7 @@ try {
   receipt.state = 'PASS';
 } catch (error) {
   receipt.error = error.message;
+  receipt.error_stack = error.stack;
 } finally {
   // Only the exact temporary directory created by this process is removed.
   rmSync(temp, { recursive: true, force: true });

@@ -15,15 +15,25 @@ LANE_MODULES = {
     "migration integrity": "runtime_audit_migration.py",
     "performance and resources": "runtime_audit_performance.py",
 }
-CROSSCUT_MODULES = (
-    "runtime_audit_contract.py",
-    "runtime_audit_common.py",
-    "runtime_audit_policy.py",
-    "runtime_audit_runner.py",
-    "runtime_audit_integrity.py",
-    "runtime_audit.py",
-    "runtime_audit_process.py",
-)
+
+
+def _source_crosscut_modules() -> tuple[str, ...]:
+    tree = ast.parse(
+        (ROOT / "factoryline" / "audit_rule_search.py").read_text(encoding="utf-8")
+    )
+    declaration = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == "_CROSSCUTTING_MODULES"
+            for target in node.targets
+        )
+    )
+    return tuple(ast.literal_eval(declaration.value))
+
+
+CROSSCUT_MODULES = _source_crosscut_modules()
 NON_CONDITION_MODULES: set[str] = set()
 REJECTION_PREFIXES = ("E_", "RUNTIME_", "CROSS_", "HOLLOW_", "INCOMPLETE_")
 LANE_LABELS = {

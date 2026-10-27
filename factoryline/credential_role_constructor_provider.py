@@ -725,6 +725,230 @@ def _binding_precedes_sibling(binding, use, owner):
     )
 
 
+class _SourceBuiltAstWorkspace:
+    def __init__(self, sources, source_path, root):
+        self.sources = sources
+        self.source_path = source_path
+        self.root = root
+        from .finite_capture import (
+            _source_built_ast_module_alias,
+            _source_built_ast_provider_expr,
+            _source_built_ast_sensitive_attribute,
+        )
+
+        self.module_alias = _source_built_ast_module_alias
+        self.provider_expr = _source_built_ast_provider_expr
+        self.sensitive_attribute = _source_built_ast_sensitive_attribute
+        self.total = 0
+        self.ast_imports = []
+        self.targets = []
+        self.aliases = {"ast", "builtins", "__builtins__"}
+        self.trees = []
+
+    def capture_sources(self):
+        """Parse all captured source bytes and stop immediately when any source violates the workspace bounds or source rules."""
+        return all(self.capture_source(path, raw) for path, raw in self.sources.items())
+
+    def capture_source(self, path, raw):
+        """Validate one byte snapshot, account its size, parse it, and inspect every node for provider hazards."""
+        if not isinstance(raw, bytes):
+            return False
+        self.total += len(raw)
+        if self.total > 64 * 1024 * 1024:
+            return False
+        relative = self.relative_path(path)
+        self.add_target(relative)
+        try:
+            tree = ast.parse(raw, filename=relative)
+        except (SyntaxError, ValueError, MemoryError, RecursionError, UnicodeError):
+            return False
+        self.trees.append((tree, relative))
+        return all(self.capture_item(item, tree, relative) for item in ast.walk(tree))
+
+    def relative_path(self, path):
+        """Return a stable workspace-relative path, falling back to normalized path text when roots do not match."""
+        try:
+            return (
+                path.relative_to(self.root).as_posix()
+                if self.root is not None
+                else str(path).replace("\\", "/")
+            )
+        except (AttributeError, ValueError):
+            return (
+                path.as_posix()
+                if hasattr(path, "as_posix")
+                else str(path).replace("\\", "/")
+            )
+
+    def add_target(self, relative):
+        """Record only the selected source module, including an unrooted path with the expected suffix."""
+        if (
+            relative == self.source_path
+            or self.root is None
+            and relative.endswith("/" + self.source_path)
+        ):
+            self.targets.append(relative)
+
+    def capture_item(self, item, tree, relative):
+        """Inspect one parsed source node for imports, foreign rule calls, direct writes, and reflective writes."""
+        return (
+            self._capture_import(item, relative)
+            and not self.foreign_rule_call(item, relative)
+            and not self.rule_provider_write(item)
+            and self.reflective_provider_write(item)
+        )
+
+    def _capture_import(self, item, relative):
+        if isinstance(item, ast.Import):
+            if any(
+                alias.name == "ast" and alias.asname is None for alias in item.names
+            ):
+                self.ast_imports.append((relative, item))
+            elif any(alias.name == "ast" for alias in item.names):
+                return False
+            if any(alias.name == "builtins" for alias in item.names):
+                return False
+            self.add_rule_aliases(item)
+        elif isinstance(item, ast.ImportFrom):
+            if item.module == "builtins" or self.rule_exports_imported(item):
+                return False
+            self.add_rule_from_aliases(item)
+        if isinstance(item, ast.Name) and item.id == "__builtins__":
+            return False
+        return True
+
+    def add_rule_aliases(self, item):
+        """Track local aliases imported from the routing rules module for later source-bound provider checks."""
+        self.aliases.update(
+            alias.asname or alias.name.rsplit(".", 1)[-1]
+            for alias in item.names
+            if alias.name.replace(".", "/").endswith("werkzeug/routing/rules")
+        )
+
+    def rule_exports_imported(self, item):
+        """Detect imports of private routing-rule builders whose behavior would bypass the modeled source path."""
+        return bool(
+            item.module
+            and item.module.replace(".", "/").endswith("werkzeug/routing/rules")
+            and any(
+                alias.name
+                in {
+                    "_get_func_code",
+                    "_prefix_names",
+                    "_IF_KWARGS_URL_ENCODE_AST",
+                    "_URL_ENCODE_AST_NAMES",
+                    "_CALL_CONVERTER_CODE_FMT",
+                }
+                for alias in item.names
+            )
+        )
+
+    def add_rule_from_aliases(self, item):
+        """Track module and rules aliases imported from Werkzeug routing packages without resolving external code."""
+        if item.module and item.module.replace(".", "/").endswith(
+            "werkzeug/routing/rules"
+        ):
+            self.aliases.add(item.module.rsplit(".", 1)[-1])
+        if item.module and item.module.replace(".", "/").endswith("werkzeug/routing"):
+            self.aliases.update(
+                alias.asname or alias.name
+                for alias in item.names
+                if alias.name == "rules"
+            )
+
+    def foreign_rule_call(self, item, relative):
+        """Reject private rule-builder calls found outside the selected source module in the captured workspace."""
+        return (
+            isinstance(item, ast.Call)
+            and isinstance(item.func, ast.Attribute)
+            and item.func.attr in {"_get_func_code", "_prefix_names"}
+            and relative != self.source_path
+        )
+
+    def rule_provider_write(self, item):
+        """Recognize direct attribute or item writes that can replace the routing-rule provider or modeled builders."""
+        if isinstance(item, ast.Attribute) and isinstance(
+            item.ctx, (ast.Store, ast.Del)
+        ):
+            return self.provider_expr(item.value, self.aliases) or item.attr in {
+                "_get_func_code",
+                "_prefix_names",
+            }
+        return (
+            isinstance(item, ast.Subscript)
+            and isinstance(item.ctx, (ast.Store, ast.Del))
+            and self.provider_expr(item.value, self.aliases)
+        )
+
+    def reflective_provider_write(self, item):
+        """Reject reflective provider mutation while allowing unrelated reflection on values outside the provider."""
+        if not isinstance(item, ast.Call) or ast.unparse(item.func) not in {
+            "setattr",
+            "delattr",
+        }:
+            return True
+        if item.args and self.provider_expr(item.args[0], self.aliases):
+            return False
+        if len(item.args) > 1 and self.sensitive_attribute(item.args[1]):
+            return not (item.args and self.provider_expr(item.args[0], self.aliases))
+        return True
+
+    def close_aliases(self):
+        """Reach a fixed point over stored aliases so later provider-write checks include indirect local references."""
+        changed = True
+        while changed:
+            changed = False
+            for tree, _relative in self.trees:
+                for item in ast.walk(tree):
+                    roots = self.assignment_roots(item)
+                    if (
+                        roots is None
+                        or item.value is None
+                        or not self.module_alias(item.value, self.aliases)
+                    ):
+                        continue
+                    changed = self.add_stored_names(roots) or changed
+        return True
+
+    def assignment_roots(self, item):
+        """Return assignment targets for supported binding statements and no roots for other syntax forms."""
+        if isinstance(item, ast.Assign):
+            return item.targets
+        if isinstance(item, (ast.AnnAssign, ast.NamedExpr)):
+            return [item.target]
+        return None
+
+    def add_stored_names(self, roots):
+        """Add names stored beneath proven provider aliases and report whether the alias set changed."""
+        changed = False
+        for root_target in roots:
+            for target in ast.walk(root_target):
+                if (
+                    isinstance(target, ast.Name)
+                    and isinstance(target.ctx, ast.Store)
+                    and target.id not in self.aliases
+                ):
+                    self.aliases.add(target.id)
+                    changed = True
+        return changed
+
+    def close_writes(self):
+        """Recheck every captured node after alias closure and reject any direct or reflective provider write."""
+        return all(
+            not self.rule_provider_write(item) and self.reflective_provider_write(item)
+            for tree, _relative in self.trees
+            for item in ast.walk(tree)
+        )
+
+    def unique_target(self):
+        """Require one selected source path and exactly one direct AST import belonging to that path."""
+        return (
+            len(self.targets) == 1
+            and len(self.ast_imports) == 1
+            and self.ast_imports[0][0] == self.targets[0]
+        )
+
+
 class SourceSnapshotIndex:
     """Lazily bind used ASTs to producer-owned source bytes and inventory hashes."""
 
@@ -1323,6 +1547,10 @@ class PresentationRoleIndex:
         roles = {
             "os.getenv": ("key", "ENVIRONMENT_NAME"),
             "os.environ.get": ("key", "ENVIRONMENT_NAME"),
+            "keystoneauth1.loading.get_auth_plugin_conf_options": (
+                "plugin",
+                "PLUGIN_LOADER_NAME",
+            ),
         }
         selected = roles.get(canonical)
         if selected is None or not self._data_provider_stable(
@@ -1330,6 +1558,8 @@ class PresentationRoleIndex:
         ):
             return None
         keyword, role = selected
+        if role == "PLUGIN_LOADER_NAME" and len(call.args) + len(call.keywords) != 1:
+            return None
         actuals = [
             *call.args[:1],
             *(kw.value for kw in call.keywords if kw.arg == keyword),
@@ -2183,7 +2413,9 @@ def _direct_terminal_import(index, path, alias):
         index.snapshots[path], alias
     ):
         return None
-    selected = statement.names[0]
+    selected = next(
+        item for item in statement.names if (item.asname or item.name) == alias
+    )
     return f"{statement.module}.{selected.name}", statement
 
 
@@ -2198,11 +2430,11 @@ def _direct_terminal_import_statement(index, path, alias):
         index.parents[path].get(id(statement)) is not index.snapshots[path]
         or statement.level
         or not statement.module
-        or len(statement.names) != 1
+        or any(item.name == "*" for item in statement.names)
     ):
         return None
-    selected = statement.names[0]
-    if (selected.asname or selected.name) != alias or selected.name == "*":
+    selected = [item for item in statement.names if (item.asname or item.name) == alias]
+    if len(selected) != 1:
         return None
     return statement
 
@@ -2223,11 +2455,14 @@ def _terminal_alias_unmodified(tree, alias):
 
 def _captured_module_shadows_terminal(index, path, statement, canonical):
     try:
-        from .import_context import import_source_bases
+        from .import_context import captured_import_inventory, import_source_bases
 
         module_parts = canonical.rpartition(".")[0].split(".")
-        captured = set(index.snapshots)
-        for base in import_source_bases(index.root, path, statement):
+        inventory = captured_import_inventory(index)
+        captured = inventory.paths
+        for base in import_source_bases(
+            index.root, path, statement, captured_inventory=inventory
+        ):
             for size in range(1, len(module_parts) + 1):
                 target = base.joinpath(*module_parts[:size])
                 if target.with_suffix(".py") in captured:
@@ -2239,35 +2474,230 @@ def _captured_module_shadows_terminal(index, path, statement, canonical):
         return True
 
 
-def _captured_terminal_provider_mutation(index, audit, canonical):
+def _captured_terminal_provider_mutation(
+    index,
+    audit,
+    canonical,
+    *,
+    readonly_argument=None,
+    local_binding=None,
+    additional_bindings=(),
+):
+    from .runtime_audit_integrity import _conditional_module_name
+
+    providers = ((canonical, local_binding), *additional_bindings)
+    covered_contexts = set()
     for path, tree in index.snapshots.items():
         if not index.validate(path):
             return True
-        aliases = audit._module_security_aliases(tree)
+        if not _terminal_source_context_valid(index, tree, covered_contexts):
+            return True
         nodes = list(ast.walk(tree))
-        if _terminal_registry_mutation(nodes, aliases, audit, canonical):
-            return True
-        if not any(
-            isinstance(value, str) and _terminal_provider_related(value, canonical)
-            for value in aliases.values()
-        ):
-            continue
-        parents = {
-            id(child): node for node in nodes for child in ast.iter_child_nodes(node)
-        }
-        mutations = finite_provider_mutation_index(nodes, aliases, audit, parents)
-        if any(
-            _terminal_mutation_overlaps(provider, attribute, canonical)
-            for provider, attribute in mutations
-        ):
-            return True
+        relative = index.relative(path)
+        module = _conditional_module_name(relative)
+        package = (
+            module if relative.endswith("/__init__.py") else module.rpartition(".")[0]
+        )
+        for canonical, local_binding in providers:
+            if _terminal_provider_mutated(
+                nodes,
+                audit,
+                canonical,
+                path,
+                local_binding,
+                package,
+                readonly_argument,
+            ):
+                return True
     return False
+
+
+def _terminal_source_context_valid(index, tree, covered):
+    context = getattr(tree, "_security_source_context", None)
+    if context is None:
+        return True
+    if (
+        not isinstance(context, tuple)
+        or len(context) != 2
+        or not isinstance(context[1], dict)
+    ):
+        return False
+    sources = context[1]
+    if id(sources) in covered:
+        return True
+    covered.add(id(sources))
+    return not any(
+        str(path).lower().endswith(".py")
+        and (
+            Path(path) not in index.source_bytes
+            or index.source_bytes[Path(path)] != raw
+        )
+        for path, raw in sources.items()
+    )
+
+
+def _terminal_provider_mutated(
+    nodes, audit, canonical, path, local_binding, package, readonly_argument
+):
+    aliases = finite_capture._shell_import_aliases(
+        nodes, audit, canonical, package=package
+    )
+    if aliases is None:
+        return True
+    if local_binding is not None and path == local_binding[0]:
+        aliases = {**aliases, local_binding[1]: canonical}
+    if _terminal_registry_mutation(nodes, aliases, audit, canonical):
+        return True
+    if not any(
+        isinstance(value, str) and _terminal_provider_related(value, canonical)
+        for value in aliases.values()
+    ):
+        return False
+    parents = {
+        id(child): node for node in nodes for child in ast.iter_child_nodes(node)
+    }
+    mutations, receiver_facts = set(), {}
+    # The validated outer inventory owns the full closure; avoid rewalking foreign sources.
+    finite_capture._provider_mutation_facts(
+        nodes,
+        aliases,
+        audit,
+        parents,
+        finite_capture._provider_alias_bindings(nodes),
+        mutations,
+        None,
+        lambda node, current_aliases, current_parents: not (
+            _terminal_imported_module_receiver(
+                node, current_parents, audit, canonical, facts=receiver_facts
+            )
+            or readonly_argument is not None
+            and readonly_argument(node, current_aliases, current_parents)
+        ),
+    )
+    return any(
+        _terminal_mutation_overlaps(provider, attribute, canonical)
+        for provider, attribute in mutations
+    )
+
+
+def _terminal_imported_module_receiver(node, parents, audit, canonical, *, facts=None):
+    """A proven import namespace receiver is not the value passed to a call.
+
+    Keep actual module arguments, bound object/class receivers and reflective
+    namespace access conservative. Only explicit, unshadowed import prefixes
+    qualify; this does not establish the safety of the leaf argument.
+    """
+    parent = parents.get(id(node))
+    if not isinstance(parent, ast.Attribute) or parent.value is not node:
+        return False
+    if parent.attr.startswith("__"):
+        return False
+    parts, root = _terminal_attribute_parts(node)
+    if root is None:
+        return False
+    facts = {} if facts is None else facts
+    module = _terminal_receiver_module_scope(node, root.id, parents, audit, facts)
+    if not isinstance(module, ast.Module):
+        return False
+    key = (module, root.id)
+    if key not in facts:
+        facts[key] = (
+            _terminal_alias_unmodified(module, root.id),
+            any(
+                isinstance(item, ast.arg) and item.arg == root.id
+                for item in ast.walk(module)
+            ),
+            binding_occurrences(module.body, root.id),
+        )
+    unmodified, argument_shadow, bindings = facts[key]
+    if not unmodified or argument_shadow:
+        return False
+    if not bindings or any(
+        not isinstance(item, (ast.Import, ast.ImportFrom)) for item in bindings
+    ):
+        return False
+    prefix = _terminal_namespace_import_prefix(bindings, root.id, canonical)
+    return bool(prefix and parts == prefix[: len(parts)])
+
+
+def _terminal_receiver_module_scope(node, name, parents, audit, facts):
+    current = node
+    while parents.get(id(current)) is not None:
+        current = parents[id(current)]
+        if isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            key = (current, name)
+            if key not in facts:
+                facts[key] = (
+                    binding_occurrences(current.body, name)
+                    if isinstance(current, ast.ClassDef)
+                    else function_bindings(current, name, audit)
+                )
+            if facts[key] != []:
+                return None
+    return current if isinstance(current, ast.Module) else None
+
+
+def _terminal_attribute_parts(node):
+    parts, root = [], node
+    while isinstance(root, ast.Attribute):
+        parts.insert(0, root.attr)
+        root = root.value
+    if not isinstance(root, ast.Name):
+        return parts, None
+    return [root.id, *parts], root
+
+
+def _terminal_namespace_import_prefix(bindings, name, canonical):
+    ordinary = [
+        item
+        for statement in bindings
+        if isinstance(statement, ast.Import)
+        for item in statement.names
+        if (item.asname or item.name.split(".")[0]) == name
+    ]
+    if len(bindings) > 1 or len(ordinary) > 1:
+        if (
+            not all(isinstance(statement, ast.Import) for statement in bindings)
+            or not ordinary
+            or any(item.asname or item.name.split(".")[0] != name for item in ordinary)
+        ):
+            return None
+        return [name]
+    statement = bindings[0]
+    imports = [
+        item
+        for item in statement.names
+        if (item.asname or item.name.split(".")[0]) == name
+    ]
+    if len(imports) != 1:
+        return None
+    selected = imports[0]
+    if isinstance(statement, ast.Import):
+        return [selected.asname] if selected.asname else selected.name.split(".")
+    # A proper module prefix of the explicitly contracted external class is a
+    # namespace. The class itself never receives this exemption.
+    module = f"{statement.module}.{selected.name}"
+    if (
+        statement.level
+        or not statement.module
+        or not canonical.startswith(module + ".")
+    ):
+        return None
+    return [selected.asname or selected.name]
 
 
 def _terminal_registry_mutation(nodes, aliases, audit, canonical):
     from .finite_capture import _provider_alias_bindings
     from .finite_capture import _provider_paths
 
+    if not any(
+        isinstance(value, str)
+        and (
+            value == "sys" or value == "sys.modules" or value.startswith("sys.modules.")
+        )
+        for value in aliases.values()
+    ):
+        return False
     bindings = _provider_alias_bindings(nodes)
     parents = {
         id(child): node for node in nodes for child in ast.iter_child_nodes(node)
@@ -2286,6 +2716,175 @@ def _terminal_registry_mutation(nodes, aliases, audit, canonical):
         ):
             return True
     return False
+
+
+def django_user_identifier_contract(index):
+    """Model default User identifiers independently of its password value.
+
+    The caller must bind the exact fresh built-in User creation and receiver.
+    This contract never validates an arbitrary object or downstream consumer.
+    Source-visible model hooks or provider changes decline this bounded profile.
+    """
+    from . import review_audits as audit
+
+    source = index["source"]
+    dependencies = (
+        "django.contrib.auth",
+        "django.db.models.Model",
+        "django.db.models.base.Model",
+        "django.db.models.AutoField",
+        "django.db.models.BigAutoField",
+        "builtins.object",
+        "builtins.super",
+    )
+    if not source.bounded or not _django_user_projection_hooks_clear(source, audit):
+        return None
+    if any(
+        _captured_terminal_provider_mutation(source, audit, name)
+        for name in dependencies
+    ):
+        return None
+    return {
+        "contract": "django.default-user-generated-identifier.v1",
+        "provider": "django.contrib.auth.models.User",
+        "projections": ("pk", "id"),
+        "role": "NON_SECRET_PROJECTION",
+        "downstream_authorization": "UNASSESSED",
+        "runtime_assurance": "INCOMPLETE",
+    }
+
+
+def _django_user_projection_hooks_clear(source, audit):
+    roots = (
+        "django.db.models.signals",
+        "django.dispatch",
+        "django.contrib.auth.signals",
+        "django.contrib.auth.get_user_model",
+    )
+    imports = {
+        path: audit._oracle_imports(
+            source.root, path, tree, source.snapshots, captured=True
+        )
+        for path, tree in source.snapshots.items()
+    }
+    if not _django_unbound_constructors_absent(source, audit):
+        return False
+    for path, tree in source.snapshots.items():
+        if not source.validate(path):
+            return False
+        aliases = audit._module_security_aliases(tree)
+        for node in ast.walk(tree):
+            if _django_user_identifier_write(
+                node, source, path, imports, audit, aliases
+            ):
+                return False
+            name = (
+                audit._resolved_ast_name(node, aliases)
+                if isinstance(node, (ast.Name, ast.Attribute))
+                else None
+            )
+            if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                name = node.value
+            if name and any(
+                name == root or name.startswith(root + ".") for root in roots
+            ):
+                return False
+        if any(
+            name == root or name.startswith(root + ".")
+            for name in aliases.values()
+            for root in roots
+        ):
+            return False
+    return True
+
+
+def _django_user_identifier_write(node, source, path, imports, audit, aliases):
+    """Unknown class aliases must not overwrite generated identifier semantics."""
+    fields = {
+        "pk",
+        "id",
+        "__getattribute__",
+        "__getattr__",
+        "__class__",
+        "__setattr__",
+        "__delattr__",
+        "__init__",
+        "__new__",
+        "objects",
+        "_default_manager",
+        "_base_manager",
+        "_meta",
+    }
+    if isinstance(node, ast.Attribute) and isinstance(node.ctx, (ast.Store, ast.Del)):
+        return node.attr in fields
+    if not isinstance(node, ast.Call):
+        return False
+    name = audit._resolved_ast_name(node.func, aliases)
+    if name not in {
+        "setattr",
+        "delattr",
+        "builtins.setattr",
+        "builtins.delattr",
+        "type.__setattr__",
+        "type.__delattr__",
+    }:
+        return False
+    if len(node.args) > 1 and isinstance(node.args[1], ast.Constant):
+        return node.args[1].value in fields
+    return not _django_ordinary_constructor_write(node, source, path, imports)
+
+
+def _django_ordinary_constructor_write(node, source, path, imports):
+    """Reuse captured receiver and provider closure, never infer from self alone."""
+    parents = source.parents[path]
+    target = node.args[0] if node.args else None
+    current = node
+    while current is not None and not isinstance(current, ast.FunctionDef):
+        current = parents.get(id(current))
+    owner = parents.get(id(current))
+    if not (
+        isinstance(current, ast.FunctionDef)
+        and current.name == "__init__"
+        and isinstance(owner, ast.ClassDef)
+        and _class_binding_is_exact(source, path, owner.name, owner)
+        and instance_receiver(target, current, owner, source, path)
+        and not binding_occurrences(owner.body, "__new__")
+        and (
+            not owner.bases
+            or len(owner.bases) == 1
+            and isinstance(owner.bases[0], ast.Name)
+            and owner.bases[0].id == "object"
+            and not binding_occurrences(source.snapshots[path].body, "object")
+        )
+    ):
+        return False
+    return constructor_bindings_inert([(path, owner.name, owner)], source, imports)
+
+
+def _django_unbound_constructors_absent(source, audit):
+    """Do not let source borrow an ordinary initializer for a foreign receiver."""
+    for path, tree in source.snapshots.items():
+        aliases = audit._module_security_aliases(tree)
+        parents = {
+            id(child): parent
+            for parent in ast.walk(tree)
+            for child in ast.iter_child_nodes(parent)
+        }
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Attribute) or node.attr != "__init__":
+                continue
+            call = parents.get(id(node))
+            proxy = node.value
+            if not (
+                isinstance(call, ast.Call)
+                and call.func is node
+                and isinstance(proxy, ast.Call)
+                and audit._resolved_ast_name(proxy.func, aliases)
+                in {"super", "builtins.super"}
+                and not binding_occurrences(tree.body, "super")
+            ):
+                return False
+    return True
 
 
 def _terminal_registry_augmented_alias(node, aliases, audit, bindings):
@@ -2447,6 +3046,16 @@ def _terminal_registry_escape(
 def _terminal_registry_escape_use(
     node, parent, paths, aliases, audit, bindings, canonical
 ):
+    if (
+        paths == {"sys.modules"}
+        and isinstance(parent, ast.Compare)
+        and len(parent.ops) == len(parent.comparators) == 1
+        and isinstance(parent.ops[0], (ast.In, ast.NotIn))
+        and parent.comparators[0] is node
+    ):
+        # The registry identity is not transferred to the key. This says
+        # nothing about unknown key protocol effects in the effect analyzer.
+        return False
     if isinstance(parent, ast.Subscript) and parent.value is node:
         return False
     if _terminal_registry_alias_assignment(parent, node, paths):
@@ -2500,6 +3109,7 @@ def _terminal_provider_related(provider, canonical):
 
 
 def _terminal_mutation_overlaps(provider, attribute, canonical):
+    provider = provider.partition(".__dict__")[0]
     target = provider if attribute == "*" else provider + "." + attribute
     return _terminal_provider_related(target, canonical)
 
@@ -3511,6 +4121,8 @@ def _owner_container_paths(nodes, aliases, audit, parents, mutations):
 
 def constructor_provider_helper_epoch():
     """Return semantic helper identities for batch-cache freshness checks."""
+    from .mock_fixture_provenance import _django_import_rows
+    from .runtime_audit_integrity import _conditional_module_name
     from .credential_role_constructor_provider import _import_binding_is_exact
     from .credential_role_constructor_provider import _terminal_contracts
     from .credential_role_constructor_provider import _valid_terminal_contract
@@ -3556,6 +4168,14 @@ def constructor_provider_helper_epoch():
     from .review_audits import _name
 
     model_helpers = constructor_provider_model_helper_epoch()
+    source_workspace_helpers = (
+        _SourceBuiltAstWorkspace,
+        *(
+            helper
+            for helper in vars(_SourceBuiltAstWorkspace).values()
+            if callable(helper)
+        ),
+    )
     return (
         constructor_provider_bindings_inert,
         constructor_provider_model,
@@ -3574,6 +4194,16 @@ def constructor_provider_helper_epoch():
         _terminal_alias_unmodified,
         _captured_module_shadows_terminal,
         _captured_terminal_provider_mutation,
+        finite_capture._shell_import_aliases,
+        _django_import_rows,
+        _conditional_module_name,
+        _terminal_imported_module_receiver,
+        _terminal_namespace_import_prefix,
+        django_user_identifier_contract,
+        _django_user_projection_hooks_clear,
+        _django_user_identifier_write,
+        _django_ordinary_constructor_write,
+        _django_unbound_constructors_absent,
         _terminal_provider_related,
         _terminal_mutation_overlaps,
         _terminal_registry_mutation,
@@ -3619,8 +4249,10 @@ def constructor_provider_helper_epoch():
         finite_capture._record_provider_capture,
         finite_capture._provider_alias_bindings,
         finite_capture._provider_paths,
+        finite_capture._provider_mutation_facts,
         _provider_mutation_for_node,
         finite_capture._reflective_provider_write,
+        *source_workspace_helpers,
         *model_helpers,
     )
 
@@ -4427,3 +5059,794 @@ def build_hops(
     ]
     hops = [_hop(index, path, node, role) for path, node, role in nodes]
     return hops if all(hops) else None
+
+
+def security_snapshot_model(root, snapshots, sources, fingerprints, *, existing=None):
+    """Own the producer maps; reject trees whose captured structure changed."""
+    from .review_audits import _oracle_tree_fingerprint
+
+    selected = {path: sources.get(path) for path in snapshots}
+    if not _security_snapshot_inputs_valid(
+        snapshots, selected, fingerprints, _oracle_tree_fingerprint
+    ):
+        return None
+    inventory = {
+        path: hashlib.sha256(raw).hexdigest() for path, raw in selected.items()
+    }
+    if existing is not None:
+        return _reuse_security_snapshot(
+            existing, root, snapshots, selected, inventory, fingerprints
+        )
+    model = SourceSnapshotIndex(root, dict(snapshots), selected, inventory)
+    model.producer_fingerprints = dict(fingerprints)
+    return model if model.bounded else None
+
+
+def _security_snapshot_inputs_valid(snapshots, sources, fingerprints, fingerprint_tree):
+    return all(isinstance(raw, bytes) for raw in sources.values()) and all(
+        fingerprint_tree(tree) == fingerprints.get(path)
+        for path, tree in snapshots.items()
+    )
+
+
+def _reuse_security_snapshot(
+    existing, root, snapshots, sources, inventory, fingerprints
+):
+    if not _security_snapshot_matches(
+        existing, root, snapshots, sources, inventory, fingerprints
+    ):
+        return None
+    return existing if existing.bounded else None
+
+
+def _security_snapshot_matches(
+    existing, root, snapshots, sources, inventory, fingerprints
+):
+    return (
+        type(existing) is SourceSnapshotIndex
+        and existing.root == root
+        and existing.source_bytes == sources
+        and existing.inventory == inventory
+        and set(existing.snapshots) == set(snapshots)
+        and all(existing.snapshots[path] is tree for path, tree in snapshots.items())
+        and getattr(existing, "producer_fingerprints", None) == dict(fingerprints)
+    )
+
+
+def application_snapshot_index(root, modules, source_bytes, inventory, source_index):
+    """Create a fresh capture or match the exact producer generation before reuse."""
+    if source_index is None:
+        return SourceSnapshotIndex(root, modules, source_bytes, inventory)
+    from .review_audits import _oracle_tree_fingerprint
+
+    source = security_snapshot_model(
+        root,
+        modules,
+        source_bytes,
+        {path: _oracle_tree_fingerprint(tree) for path, tree in modules.items()},
+        existing=source_index,
+    )
+    return source if source is not None and source.inventory == inventory else None
+
+
+def verified_security_tree(
+    audit, workspace, path, data, binding, tree, fingerprint, *, source_context=None
+):
+    """Validate transported producer trees; bind a fresh local model on cache fallbacks."""
+    if (
+        not isinstance(tree, ast.Module)
+        or getattr(tree, "_oracle_source_sha256", None) != binding["sha256"]
+        or fingerprint is None
+        or audit._oracle_tree_fingerprint(tree) != fingerprint
+    ):
+        tree = audit._measure_parse(ast.parse, data, workspace, path)
+    else:
+        audit.contracts._clear_analysis_sidecars(tree)
+    tree._oracle_source_sha256 = binding["sha256"]
+    if (source_context or {}).get("_security_source_model") is None:
+        tree._security_source_model = (
+            SourceSnapshotIndex(
+                workspace, {path: tree}, {path: data}, {path: binding["sha256"]}
+            )
+            if fingerprint is None
+            else security_snapshot_model(
+                workspace,
+                {path: tree},
+                {path: data},
+                {path: audit._oracle_tree_fingerprint(tree)},
+            )
+        )
+    return tree
+
+
+def security_source_snapshots(audit, root, files, source_bytes, source_bindings):
+    """Validate one source-owned AST generation for cold scans and cached contexts."""
+    snapshots = audit.contracts.bound_snapshots(
+        root, files, source_bytes, source_bindings
+    )
+    file_paths = set(files)
+    source_hashes = {
+        root / binding["path"]: binding["sha256"] for binding in source_bindings
+    }
+    for path, tree in tuple(snapshots.items()):
+        if path not in file_paths:
+            snapshots.pop(path)
+            continue
+        if isinstance(tree, ast.Module) and getattr(
+            tree, "_oracle_source_sha256", None
+        ) == source_hashes.get(path):
+            continue
+        snapshots.pop(path)
+        snapshots.update(
+            audit.contracts._oracle_source_snapshots(
+                root,
+                [path],
+                source_bytes,
+                audit._security_source_bytes,
+                audit._measure_parse,
+                audit.RuntimeAuditError,
+                audit.MAX_BYTES,
+            )
+        )
+    snapshot_fingerprints = {
+        path: audit._oracle_tree_fingerprint(tree) for path, tree in snapshots.items()
+    }
+    return snapshots, snapshot_fingerprints
+
+
+def consume_cached_security_snapshots(
+    audit, root, files, source_bytes, bindings, contexts, consumer, model_out
+):
+    """Reuse cached context data while deriving current scan-local source facts."""
+    snapshots, fingerprints = security_source_snapshots(
+        audit, root, files, source_bytes, bindings
+    )
+    if model_out is not None:
+        model_out["source"] = security_snapshot_model(
+            root, snapshots, source_bytes, fingerprints
+        )
+    try:
+        consumer(snapshots, fingerprints, contexts, source_bytes)
+    finally:
+        snapshots.clear()
+
+
+def model_field_identities(source_index):
+    """Return source-bound declared model fields from a validated captured index."""
+    from . import intent_quality as iq
+
+    if not isinstance(source_index, SourceSnapshotIndex) or not source_index.bounded:
+        return {}
+    captured = _db_python_captured_index(source_index)
+    if captured is None:
+        return {}
+    inputs, trees, path_lookup = captured
+    modules, paths, parsed = iq._db_python_parse_modules(inputs, trees)
+    exports = iq._db_python_project_exports(inputs, modules=modules, paths=paths)
+    contracted = _db_python_flask_contract_classes(source_index)
+    return _db_python_model_field_rows(
+        source_index, parsed, exports, path_lookup, contracted
+    )
+
+
+def _db_python_captured_index(source_index):
+    inputs, trees, path_lookup = [], {}, {}
+    for path, raw in source_index.source_bytes.items():
+        if not source_index.validate(path):
+            return None
+        relative = source_index.relative(path)
+        if relative is not None and not relative.lower().endswith(".py"):
+            continue
+        if relative is None:
+            return None
+        trees[relative] = source_index.snapshots[path]
+        path_lookup[relative] = path
+        inputs.append((relative, raw, source_index.inventory[path], "python"))
+    return inputs, trees, path_lookup
+
+
+def _db_python_model_field_rows(source_index, parsed, exports, path_lookup, contracted):
+    from . import intent_quality as iq
+    from .mock_fixture_provenance import _app_source_symbol
+
+    app_index = {
+        "source": source_index,
+        "modules": source_index.snapshots,
+        "module_paths": source_index.module_paths() or {},
+    }
+    result = {}
+    for path, tree in parsed.items():
+        if tree is None:
+            continue
+        project = exports.get(path, {})
+        symbols, shadowed = iq._db_python_symbols(tree)
+        symbols.update(
+            {k: v for k, v in project.get("symbols", {}).items() if k not in shadowed}
+        )
+        bases = iq._db_python_base_names(tree, symbols, shadowed) | {
+            name for name in project.get("bases", ()) if name not in shadowed
+        }
+        model_bases = project.get("model_bases", {})
+        model_bases = {
+            name: value
+            for name, value in model_bases.items()
+            if value.get("class") == "flask_sqlalchemy.SQLAlchemy"
+            or (value.get("source_path"), value.get("class")) in contracted
+        }
+        digest = source_index.inventory[path_lookup[path]]
+        for node in tree.body:
+            if not isinstance(node, ast.ClassDef) or not _db_python_has_model_base(
+                node, bases, model_bases
+            ):
+                continue
+            if not _db_python_exact_model_source(
+                app_index, path_lookup[path], node, model_bases, _app_source_symbol
+            ):
+                continue
+            table = iq._db_python_literal(node, "__tablename__")
+            if table is None:
+                continue
+            identity = {
+                "path": path,
+                "sha256": digest,
+                "line": node.lineno,
+                "class": node.name,
+            }
+            fields = {}
+            for child in node.body:
+                target = (
+                    child.targets[0]
+                    if isinstance(child, ast.Assign) and len(child.targets) == 1
+                    else getattr(child, "target", None)
+                )
+                if isinstance(target, ast.Name):
+                    column = iq._db_python_column(
+                        child.value, target.id, symbols, shadowed
+                    )
+                    if column:
+                        fields[target.id] = {
+                            "attribute": target.id,
+                            "column": column["name"],
+                            "type": column["type"],
+                            "source": {
+                                "path": path,
+                                "sha256": digest,
+                                "line": child.lineno,
+                            },
+                        }
+            result[(path, node.name)] = {
+                "table": table,
+                "identity": identity,
+                "api_contract_assumptions": _db_python_model_assumptions(
+                    node, model_bases
+                ),
+                "fields": fields,
+            }
+    return result
+
+
+def _db_python_flask_contract_classes(source_index):
+    from . import intent_quality as iq
+    from types import SimpleNamespace
+    from .credential_role_constructor_provider import (
+        resolve_class_chain_with_terminals,
+        _external_class_terminal,
+    )
+    from .review_audits import (
+        _module_security_aliases,
+        _security_aliases,
+        _resolved_ast_name,
+    )
+
+    classes = {
+        (path, node.name): node
+        for path, tree in source_index.snapshots.items()
+        if source_index.validate(path)
+        for node in tree.body
+        if isinstance(node, ast.ClassDef)
+    }
+    audit = SimpleNamespace(
+        _name=ast.unparse,
+        _module_security_aliases=_module_security_aliases,
+        _security_aliases=_security_aliases,
+        _resolved_ast_name=_resolved_ast_name,
+    )
+    contract = {
+        "flask_sqlalchemy.SQLAlchemy": "Unpinned Flask-SQLAlchemy default Model and SQLAlchemy(app) constructor assumption"
+    }
+    result = set()
+    for (path, name), owner in classes.items():
+        if not any(
+            iq._db_python_resolve(
+                base, iq._db_python_symbols(source_index.snapshots[path])[0], set()
+            )
+            == "flask_sqlalchemy.SQLAlchemy"
+            for base in owner.bases
+        ):
+            continue
+        resolved = resolve_class_chain_with_terminals(
+            source_index, path, name, {}, classes, audit, contract
+        )
+        if resolved and any(
+            item["canonical"] == "flask_sqlalchemy.SQLAlchemy"
+            for item in resolved["terminal_assumptions"]
+        ):
+            result.add((source_index.relative(path), name))
+    for path, tree in source_index.snapshots.items():
+        if not source_index.validate(path):
+            continue
+        symbols, shadowed = iq._db_python_symbols(tree)
+        for statement in tree.body:
+            value = getattr(statement, "value", None)
+            if (
+                not isinstance(value, ast.Call)
+                or iq._db_python_resolve(value.func, symbols, shadowed)
+                != "flask_sqlalchemy.SQLAlchemy"
+            ):
+                continue
+            if _external_class_terminal(
+                source_index, path, value.func, {}, audit, contract
+            ) == (None, "flask_sqlalchemy.SQLAlchemy"):
+                result.add((source_index.relative(path), "flask_sqlalchemy.SQLAlchemy"))
+    return result
+
+
+def _db_python_exact_model_source(app_index, source_path, node, model_bases, resolver):
+    for base in node.bases:
+        if not (
+            isinstance(base, ast.Attribute)
+            and base.attr == "Model"
+            and isinstance(base.value, ast.Name)
+            and base.value.id in model_bases
+        ):
+            continue
+        expected = model_bases[base.value.id]
+        if resolver(app_index, source_path, base.value) != (
+            app_index["source"].root / expected["source_path"],
+            expected["binding"],
+        ):
+            return False
+    return True
+
+
+def bind_flask_model_exports(unique):
+    """Add only source-bound default Flask-SQLAlchemy member exports."""
+    from . import intent_quality as iq
+
+    for module, row in unique.items():
+        row[3].update(
+            _db_python_flask_model_bases(
+                module, row, unique, iq._db_python_symbols, iq._db_python_resolve
+            )
+        )
+    iq._db_python_local_reexports(unique)
+    _db_python_flask_mutation_closure(unique, iq._db_python_import_module)
+    iq._db_python_local_reexports(unique)
+
+
+def database_project_exports(paths, unique, import_module):
+    """Resolve captured local imports to source-owned exported schema/provider facts."""
+    result = {}
+    for path, module in paths.items():
+        _, tree, shadowed, _ = unique.get(module, (None, None, set(), {}))
+        result[path] = (
+            _db_python_imported_bindings(module, tree, shadowed, unique, import_module)
+            if tree is not None
+            else {}
+        )
+    return result
+
+
+def _db_python_imported_bindings(module, tree, shadowed, unique, import_module):
+    symbols, bases, metadatas, model_bases = {}, set(), set(), {}
+    bound = {
+        node.id
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del))
+    }
+    for node in tree.body:
+        if not isinstance(node, ast.ImportFrom):
+            continue
+        provider = unique.get(import_module(module, node))
+        if provider is None:
+            continue
+        for alias in node.names:
+            local = alias.asname or alias.name
+            if local in shadowed or local in bound:
+                continue
+            kind, value = provider[3].get(alias.name, (None, None))
+            if kind == "symbol":
+                symbols[local] = value
+            elif kind == "base":
+                bases.add(local)
+            elif kind == "metadata":
+                metadatas.add(local)
+            elif kind == "model_base":
+                model_bases[local] = value
+    return {
+        "symbols": symbols,
+        "bases": bases,
+        "metadatas": metadatas,
+        "model_bases": model_bases,
+    }
+
+
+def _db_python_flask_model_bases(module, row, unique, symbols_for, resolve):
+    path, tree, shadowed, _ = row
+    symbols, _ = symbols_for(tree)
+    result = {}
+    for statement in tree.body:
+        if not isinstance(statement, (ast.Assign, ast.AnnAssign)):
+            continue
+        targets = (
+            statement.targets
+            if isinstance(statement, ast.Assign)
+            else [statement.target]
+        )
+        value = statement.value
+        if (
+            not isinstance(value, ast.Call)
+            or len(targets) != 1
+            or not isinstance(targets[0], ast.Name)
+        ):
+            continue
+        if (
+            len(value.args) != 1
+            or not isinstance(value.args[0], ast.Name)
+            or value.args[0].id != "app"
+            or value.keywords
+            or _db_python_flask_mutated(tree, targets[0].id)
+        ):
+            continue
+        class_name = value.func.id if isinstance(value.func, ast.Name) else None
+        selected = _db_python_flask_model_class(
+            class_name, path, tree, symbols, shadowed, unique, resolve
+        )
+        if selected is None:
+            continue
+        result[targets[0].id] = (
+            "model_base",
+            {
+                **selected,
+                "source_path": path,
+                "binding": statement,
+                "receiver": targets[0].id,
+            },
+        )
+    return result
+
+
+def _db_python_flask_mutation_closure(unique, import_module):
+    mutated = set()
+    for module, (_, tree, _, _) in unique.items():
+        for statement in tree.body:
+            if not isinstance(statement, ast.ImportFrom):
+                continue
+            provider = unique.get(import_module(module, statement))
+            if provider is None:
+                continue
+            for alias in statement.names:
+                local = alias.asname or alias.name
+                kind, value = provider[3].get(alias.name, (None, None))
+                if kind == "model_base" and _db_python_flask_mutated(tree, local):
+                    mutated.add((value["source_path"], value["receiver"]))
+    for _, (_, _, _, exports) in unique.items():
+        for name, (kind, value) in list(exports.items()):
+            if (
+                kind == "model_base"
+                and (value["source_path"], value["receiver"]) in mutated
+            ):
+                exports.pop(name)
+
+
+def _db_python_flask_model_class(name, path, tree, symbols, shadowed, unique, resolve):
+    if not name or name in shadowed:
+        return None
+    if any(
+        module.split(".")[0] == "flask_sqlalchemy"
+        for module, rows in unique.items()
+        if rows[0][0] == "flask_sqlalchemy.py"
+        or rows[0][0].endswith("/flask_sqlalchemy/__init__.py")
+    ):
+        return None
+    classes = [
+        node
+        for node in tree.body
+        if isinstance(node, ast.ClassDef) and node.name == name
+    ]
+    if len(classes) > 1:
+        return None
+    if classes:
+        owner = classes[0]
+        terminal = any(
+            resolve(base, symbols, shadowed) == "flask_sqlalchemy.SQLAlchemy"
+            for base in owner.bases
+        )
+        if (
+            not terminal
+            or _db_python_flask_mutated(tree, name)
+            or any(
+                isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and item.name
+                in {
+                    "__init__",
+                    "__new__",
+                    "__getattr__",
+                    "__getattribute__",
+                    "__setattr__",
+                    "Model",
+                    "model_class",
+                    "make_declarative_base",
+                }
+                for item in owner.body
+            )
+        ):
+            return None
+        for method in (
+            item
+            for item in owner.body
+            if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+        ):
+            if any(
+                isinstance(node, ast.Attribute)
+                and isinstance(node.ctx, (ast.Store, ast.Del))
+                and isinstance(node.value, ast.Name)
+                and node.value.id == "self"
+                and node.attr != "session"
+                for node in ast.walk(method)
+            ):
+                return None
+            if any(
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "setattr"
+                and len(node.args) >= 2
+                and isinstance(node.args[0], ast.Name)
+                and node.args[0].id == "self"
+                and isinstance(node.args[1], ast.Constant)
+                and node.args[1].value in {"Model", "model_class", "__dict__"}
+                for node in ast.walk(method)
+            ) or any(
+                isinstance(node, ast.Attribute)
+                and node.attr in {"Model", "model_class", "__dict__"}
+                and isinstance(node.value, ast.Name)
+                and node.value.id == "self"
+                for node in ast.walk(method)
+            ):
+                return None
+        return {
+            "class": name,
+            "path": path,
+            "line": owner.lineno,
+            "api_contract_assumptions": [
+                "flask_sqlalchemy.SQLAlchemy default Model semantics"
+            ],
+        }
+    if (
+        resolve(ast.Name(id=name, ctx=ast.Load()), symbols, shadowed)
+        == "flask_sqlalchemy.SQLAlchemy"
+    ):
+        return {
+            "class": "flask_sqlalchemy.SQLAlchemy",
+            "path": path,
+            "api_contract_assumptions": [
+                "flask_sqlalchemy.SQLAlchemy default Model semantics"
+            ],
+        }
+    return None
+
+
+def _db_python_flask_mutated(tree, receiver):
+    receivers = {receiver}
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, (ast.Assign, ast.AnnAssign))
+            and isinstance(node.value, ast.Name)
+            and node.value.id in receivers
+        ):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            receivers.update(
+                target.id for target in targets if isinstance(target, ast.Name)
+            )
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute) and isinstance(
+            node.ctx, (ast.Store, ast.Del)
+        ):
+            root = node.value
+            while isinstance(root, ast.Attribute):
+                root = root.value
+            if (
+                isinstance(root, ast.Name)
+                and root.id in receivers
+                and node.attr in {"Model", "model_class", "__dict__"}
+            ):
+                return True
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "setattr"
+            and len(node.args) >= 2
+        ):
+            if (
+                isinstance(node.args[0], ast.Name)
+                and node.args[0].id in receivers
+                and isinstance(node.args[1], ast.Constant)
+                and node.args[1].value in {"Model", "model_class"}
+            ):
+                return True
+        if _db_python_receiver_escape(node, receivers):
+            return True
+    return False
+
+
+def _db_python_receiver_escape(node, receivers):
+    children = (
+        [*node.args, *(keyword.value for keyword in node.keywords)]
+        if isinstance(node, ast.Call)
+        else list(ast.iter_child_nodes(node))
+    )
+    return isinstance(node, (ast.Call, ast.List, ast.Tuple, ast.Set, ast.Dict)) and any(
+        isinstance(item, ast.Name) and item.id in receivers
+        for child in children
+        for item in ast.walk(child)
+    )
+
+
+def _db_python_has_model_base(node, bases, model_bases):
+    return any(
+        isinstance(base, ast.Name) and base.id in bases for base in node.bases
+    ) or any(
+        isinstance(base, ast.Attribute)
+        and base.attr == "Model"
+        and isinstance(base.value, ast.Name)
+        and base.value.id in model_bases
+        for base in node.bases
+    )
+
+
+def _db_python_model_assumptions(node, model_bases):
+    return (
+        ["flask_sqlalchemy.SQLAlchemy default Model semantics"]
+        if any(
+            isinstance(base, ast.Attribute)
+            and isinstance(base.value, ast.Name)
+            and base.value.id in model_bases
+            for base in node.bases
+        )
+        else []
+    )
+
+
+def _db_python_model(
+    node,
+    table_name,
+    path,
+    digest,
+    symbols,
+    shadowed,
+    dialect,
+    exp,
+    tables,
+    gaps,
+    *,
+    model_bases,
+):
+    import json
+
+    """Project a source-owned ORM class, its model identity, and declared fields."""
+    from .intent_quality import (
+        _db_empty_table,
+        _db_merge_python_column,
+        _db_python_annotated,
+        _db_python_column,
+        _db_python_duplicate_table,
+        _db_python_is_mapped_annotation,
+    )
+
+    if _db_python_duplicate_table(tables, table_name, path):
+        gaps.append("duplicate_orm_table_declaration:" + table_name)
+        return
+    model_identity = {
+        "path": path,
+        "sha256": digest,
+        "line": node.lineno,
+        "class": node.name,
+    }
+    table = tables.setdefault(table_name, _db_empty_table(table_name))
+    table.setdefault("models", []).append(
+        {
+            "class": node.name,
+            "source": {
+                "path": path,
+                "sha256": digest,
+                "line": node.lineno,
+                "kind": "sqlalchemy_declarative",
+            },
+            "identity": model_identity,
+            "api_contract_assumptions": _db_python_model_assumptions(node, model_bases),
+        }
+    )
+    for child in node.body:
+        if (
+            isinstance(child, ast.Assign)
+            and len(child.targets) == 1
+            and isinstance(child.targets[0], ast.Name)
+        ):
+            if child.targets[0].id == "__table_args__":
+                gaps.append("unsupported_orm_table_args:" + path)
+                continue
+            column = _db_python_column(
+                child.value, child.targets[0].id, symbols, shadowed
+            )
+            if column:
+                column["field_identity"] = {
+                    "model": model_identity,
+                    "attribute": child.targets[0].id,
+                    "column": column["name"],
+                }
+                _db_merge_python_column(table, column, path, digest, child.lineno)
+            elif isinstance(child.value, ast.Call) and child.targets[0].id not in {
+                "__tablename__",
+                "__table_args__",
+            }:
+                gaps.append("unsupported_orm_column:" + path)
+        elif isinstance(child, ast.AnnAssign) and isinstance(child.target, ast.Name):
+            column = _db_python_annotated(
+                child.annotation, child.value, child.target.id, symbols, shadowed
+            )
+            if column:
+                column["field_identity"] = {
+                    "model": model_identity,
+                    "attribute": child.target.id,
+                    "column": column["name"],
+                }
+                _db_merge_python_column(table, column, path, digest, child.lineno)
+            elif child.value or _db_python_is_mapped_annotation(
+                child.annotation, symbols, shadowed
+            ):
+                gaps.append("unsupported_orm_annotation:" + path)
+    table["columns"].sort(key=lambda column: column["name"])
+    table["primary_key"] = sorted(set(table["primary_key"]))
+    table["unique"] = sorted(
+        {
+            json.dumps(item, separators=(",", ":")): item for item in table["unique"]
+        }.values(),
+        key=lambda item: json.dumps(item),
+    )
+    table["foreign_keys"].sort(key=lambda item: json.dumps(item, sort_keys=True))
+
+
+def _db_python_unmutated_model_bases(tree, model_bases, shadowed):
+    return {
+        name: value
+        for name, value in model_bases.items()
+        if name not in shadowed and not _db_python_flask_mutated(tree, name)
+    }
+
+
+def flask_model_identity_functions():
+    """Return the exact source/provider helpers that affect Flask model identity."""
+    return (
+        flask_model_identity_functions,
+        bind_flask_model_exports,
+        database_project_exports,
+        _db_python_imported_bindings,
+        model_field_identities,
+        _db_python_captured_index,
+        _db_python_model_field_rows,
+        _db_python_flask_contract_classes,
+        _db_python_exact_model_source,
+        _db_python_flask_model_bases,
+        _db_python_flask_mutation_closure,
+        _db_python_flask_model_class,
+        _db_python_flask_mutated,
+        _db_python_receiver_escape,
+        _db_python_has_model_base,
+        _db_python_model_assumptions,
+        _db_python_unmutated_model_bases,
+        SourceSnapshotIndex,
+        resolve_class_chain_with_terminals,
+        _class_mro,
+        _external_class_terminal,
+        _captured_terminal_provider_mutation,
+    )

@@ -542,6 +542,208 @@ second = sa.Table("users", metadata, sa.Column("email", sa.String))
     assert len(table["models"]) == 1
 
 
+def test_shared_flask_model376_captures_default_model_base_and_field_identity():
+    source = {
+        "service/api/db.py": b"""from flask_sqlalchemy import SQLAlchemy as BaseSQLAlchemy
+class SQLAlchemy(BaseSQLAlchemy):
+    def auto_commit_db(self):
+        self.session.commit()
+db = SQLAlchemy(app)
+""",
+        "service/api/models.py": b"""from sqlalchemy import Column, Text
+from service.api.db import db
+class Payment(db.Model):
+    __tablename__ = "payments"
+    config = Column("config_json", Text)
+""",
+    }
+    graph = intent_quality_module.database_structure(source, "sqlite")
+    payment = next(row for row in graph["tables"] if row["name"] == "payments")
+    model = payment["models"][0]
+    column = payment["columns"][0]
+    assert model["identity"] == {
+        "path": "service/api/models.py",
+        "sha256": sha256(source["service/api/models.py"]).hexdigest(),
+        "line": 3,
+        "class": "Payment",
+    }
+    assert column["field_identity"] == {
+        "model": model["identity"],
+        "attribute": "config",
+        "column": "config_json",
+    }
+    assert (
+        "flask_sqlalchemy.SQLAlchemy default Model semantics"
+        in model["api_contract_assumptions"]
+    )
+
+
+def test_shared_flask_model376_accepts_direct_default_and_captured_reexport():
+    source = {
+        "service/api/db.py": b"""from flask_sqlalchemy import SQLAlchemy
+db = SQLAlchemy(app)
+""",
+        "service/api/reexports.py": b"from service.api.db import db\n",
+        "service/api/models.py": b"""from sqlalchemy import Column, Integer
+from service.api.reexports import db as database
+class Payment(database.Model):
+    __tablename__ = "payments"
+    id = Column(Integer, primary_key=True)
+""",
+    }
+    graph = intent_quality_module.database_structure(source, "sqlite")
+    payment = next(row for row in graph["tables"] if row["name"] == "payments")
+    assert payment["models"][0]["identity"]["class"] == "Payment"
+    assert payment["columns"][0]["field_identity"]["attribute"] == "id"
+
+
+def test_shared_flask_model376_indexes_fields_from_validated_source_snapshot(tmp_path):
+    from factoryline.credential_role_constructor_provider import SourceSnapshotIndex
+
+    raw = {
+        "service/__init__.py": b"",
+        "service/api/__init__.py": b"",
+        "service/api/db.py": b"""from flask_sqlalchemy import SQLAlchemy as BaseSQLAlchemy
+class SQLAlchemy(BaseSQLAlchemy):
+    def auto_commit_db(self):
+        self.session.commit()
+db = SQLAlchemy(app)
+""",
+        "service/api/models.py": b"""from sqlalchemy import Column, Text
+from service.api.db import db
+class Payment(db.Model):
+    __tablename__ = "payments"
+    config = Column("config_json", Text)
+""",
+        "service/api/legacy.py": b"""from sqlalchemy import Column, Integer
+from sqlalchemy.orm import declarative_base
+Base = declarative_base()
+class LegacyPayment(Base):
+    __tablename__ = "legacy_payments"
+    id = Column(Integer, primary_key=True)
+""",
+    }
+    snapshots, source_bytes, inventory = {}, {}, {}
+    for relative, content in raw.items():
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(content)
+        digest = sha256(content).hexdigest()
+        tree = ast.parse(content.decode(), filename=str(path))
+        tree._oracle_source_sha256 = digest
+        snapshots[path] = tree
+        source_bytes[path] = content
+        inventory[path] = digest
+    index = SourceSnapshotIndex(tmp_path, snapshots, source_bytes, inventory)
+    from factoryline.credential_role_constructor_provider import model_field_identities
+
+    fields = model_field_identities(index)
+    payment = fields[("service/api/models.py", "Payment")]
+    assert (
+        payment["identity"]["sha256"] == inventory[tmp_path / "service/api/models.py"]
+    )
+    assert payment["fields"]["config"]["column"] == "config_json"
+    assert payment["fields"]["config"]["type"] == "TEXT"
+    assert ("service/api/legacy.py", "LegacyPayment") in fields, fields
+    assert (
+        fields[("service/api/legacy.py", "LegacyPayment")]["fields"]["id"]["column"]
+        == "id"
+    )
+
+
+@pytest.mark.parametrize(
+    "provider,base",
+    [
+        (
+            "class SQLAlchemy: pass\ndb = SQLAlchemy()\n",
+            "db.Model",
+        ),
+        (
+            "from flask_sqlalchemy import SQLAlchemy\n"
+            "db = SQLAlchemy(app, model_class=CustomBase)\n",
+            "db.Model",
+        ),
+        (
+            "from flask_sqlalchemy import SQLAlchemy as BaseSQLAlchemy\n"
+            "class SQLAlchemy(BaseSQLAlchemy):\n"
+            "    @property\n    def Model(self):\n        return CustomBase\n"
+            "db = SQLAlchemy(app)\n",
+            "db.Model",
+        ),
+        (
+            "from flask_sqlalchemy import SQLAlchemy\n"
+            "db = SQLAlchemy(app)\n"
+            "db.Model = CustomBase\n",
+            "db.Model",
+        ),
+        (
+            "from flask_sqlalchemy import SQLAlchemy\n"
+            "db = SQLAlchemy(app)\n"
+            "alias = db\n"
+            "alias.Model = CustomBase\n",
+            "db.Model",
+        ),
+        (
+            "from flask_sqlalchemy import SQLAlchemy\n"
+            "db = SQLAlchemy(app)\n"
+            "register_provider(db)\n",
+            "db.Model",
+        ),
+    ],
+)
+def test_shared_flask_model376_rejects_custom_factory_or_model_mutation(provider, base):
+    source = {
+        "service/api/db.py": provider.encode(),
+        "service/api/models.py": (
+            "from sqlalchemy import Column, Text\n"
+            f"class Payment({base}):\n"
+            "    __tablename__ = 'payments'\n"
+            "    config = Column(Text)\n"
+        ).encode(),
+    }
+    graph = intent_quality_module.database_structure(source, "sqlite")
+    assert "unproven_orm_declaration:service/api/models.py" in graph["gaps"]
+    assert not any(row["name"] == "payments" for row in graph["tables"])
+
+
+def test_shared_flask_model376_rejects_shadowed_db_binding():
+    source = {
+        "service/api/db.py": b"""from flask_sqlalchemy import SQLAlchemy
+db = SQLAlchemy(app)
+""",
+        "service/api/models.py": b"""from sqlalchemy import Column, Text
+from service.api.db import db
+db = make_custom_db()
+class Payment(db.Model):
+    __tablename__ = "payments"
+    config = Column(Text)
+""",
+    }
+    graph = intent_quality_module.database_structure(source, "sqlite")
+    assert "unproven_orm_declaration:service/api/models.py" in graph["gaps"]
+    assert not any(row["name"] == "payments" for row in graph["tables"])
+
+
+def test_shared_flask_model376_rejects_cross_module_provider_mutation():
+    source = {
+        "service/api/db.py": b"""from flask_sqlalchemy import SQLAlchemy
+db = SQLAlchemy(app)
+""",
+        "service/api/patch.py": b"""from service.api.db import db as provider
+provider.Model = CustomBase
+""",
+        "service/api/models.py": b"""from sqlalchemy import Column, Text
+from service.api.db import db
+class Payment(db.Model):
+    __tablename__ = "payments"
+    config = Column(Text)
+""",
+    }
+    graph = intent_quality_module.database_structure(source, "sqlite")
+    assert "unproven_orm_declaration:service/api/models.py" in graph["gaps"]
+    assert not any(row["name"] == "payments" for row in graph["tables"])
+
+
 @pytest.mark.parametrize(
     "state,retained,gap",
     [
@@ -6042,6 +6244,7 @@ def test_shared_source_binding_changes_invalidate_oracle_cache(
 def test_shared_source_binding_taint_keeps_explicit_defaults_policy(
     expression, expected
 ):
+    from factoryline import finite_capture
     from factoryline import review_integrity as integrity
     from factoryline.review_integrity import _security_helper_return_tainted
 
@@ -6051,9 +6254,13 @@ def test_shared_source_binding_taint_keeps_explicit_defaults_policy(
     integrity.bind_security_call_scopes(module)
     function, call = module.body[0], module.body[1].value
     assert (
-        _security_helper_return_tainted(
+        finite_capture.security_helper_return_tainted(
             call, function, set(), {"tainted"}, {}
         )
+        is expected
+    )
+    assert (
+        _security_helper_return_tainted(call, function, set(), {"tainted"}, {})
         is expected
     )
     assert not getattr(function, "_security_helper_active", False)
@@ -7053,16 +7260,23 @@ def test_precision257_intent_quality_guard_and_sanitizer_bindings():
     from factoryline import intent_quality as iq
     from factoryline.security_configuration import yaml_safe_loader
 
+    def bound_yaml_call(expression):
+        from factoryline.review_integrity import bind_security_call_scopes
+
+        module = ast.parse("import yaml\n" + expression)
+        bind_security_call_scopes(module)
+        return module.body[1].value
+
     assert (
         yaml_safe_loader(
-            ast.parse("yaml.load(data, Loader=yaml.SafeLoader)", mode="eval").body,
+            bound_yaml_call("yaml.load(data, Loader=yaml.SafeLoader)"),
             {"yaml": "yaml"},
         )
         is True
     )
     assert (
         yaml_safe_loader(
-            ast.parse("yaml.load(data, Loader=yaml.Loader)", mode="eval").body,
+            bound_yaml_call("yaml.load(data, Loader=yaml.Loader)"),
             {"yaml": "yaml"},
         )
         is False
@@ -7267,6 +7481,7 @@ def test_application_capture_refactor_keeps_exact_config_hash_and_source_boundar
     (tmp_path / "pyproject.toml").write_bytes(config)
     digest = hashlib.sha256(config).hexdigest()
     evidence = {
+        "classification": "APPLICATION_TEST_CREDENTIAL_ROLE",
         "profile": "DJANGO_CLASS_LOCAL_ACCOUNT_ENROLLMENT",
         "configuration_sha256": {
             "pyproject.toml": digest,
