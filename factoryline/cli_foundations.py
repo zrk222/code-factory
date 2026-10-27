@@ -12,6 +12,11 @@ from typing import Any
 
 from .failure_guidance import explain_failure
 
+_SCRIPT_LANGUAGE_SUFFIXES = {
+    "javascript": (".js", ".jsx", ".mjs", ".cjs"),
+    "typescript": (".ts", ".tsx", ".mts", ".cts"),
+}
+
 
 def _script_directory(current, ignored, entries, max_entries, deadline):
     children, suffixes = [], set()
@@ -60,7 +65,7 @@ def project_script_inventory(
         ".cache",
         "target",
     }
-    scripts = {".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".mts", ".cts"}
+    scripts = set().union(*_SCRIPT_LANGUAGE_SUFFIXES.values())
     suffixes: set[str] = set()
     roots: list[Path] = []
     pending = [(Path(root), 0)]

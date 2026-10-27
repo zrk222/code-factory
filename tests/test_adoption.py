@@ -658,6 +658,70 @@ def test_repo_scan_identity_changes_when_source_finding_changes(tmp_path):
     )
 
 
+def test_script_language_inventory_includes_module_and_declaration_variants(tmp_path):
+    from factoryline.cli_foundations import project_script_inventory
+
+    typescript = [
+        "app.ts",
+        "ui.tsx",
+        "module.mts",
+        "module.cts",
+        "types.d.ts",
+        "types.d.mts",
+        "types.d.cts",
+        "UPPER.MTS",
+    ]
+    javascript = ["app.js", "ui.jsx", "module.mjs", "module.cjs"]
+    for name in [*typescript, *javascript]:
+        (tmp_path / name).write_text("", encoding="utf-8")
+    inventory = _workspace_inventory(tmp_path)
+    suffixes, roots, complete = project_script_inventory(tmp_path)
+    assert inventory["file_types"]["typescript"] == len(typescript)
+    assert inventory["file_types"]["javascript"] == len(javascript)
+    assert suffixes == {
+        Path(name).suffix.lower() for name in [*typescript, *javascript]
+    }
+    assert complete and roots == [tmp_path]
+
+
+def test_scan_identity_roundtrip_recomputes_producer_hash(tmp_path):
+    (tmp_path / "app.py").write_text("value = 1\n", encoding="utf-8")
+    report = run_repo_scan(tmp_path)
+    serialized = json.dumps(report, sort_keys=True)
+    restored = json.loads(serialized)
+    assert restored["scan_sha256"] == _sha(_scan_identity_projection(restored))
+    assert restored["run_receipt_sha256"] == _sha(
+        {key: value for key, value in restored.items() if key != "run_receipt_sha256"}
+    )
+    assert json.dumps(report, sort_keys=True) == serialized
+
+
+def test_scan_identity_roundtrip_does_not_depend_on_native_observation_aliases():
+    domain = {
+        "measurement_id": "native_runtime",
+        "result": {"run_id": "run-1", "state": "NOT_RUN", "sources_sha256": "a" * 64},
+    }
+    report = {
+        "deep_audit": {
+            "lanes": [
+                {
+                    "measurement_id": "runtime_coverage",
+                    "result": {"native_observations": domain},
+                }
+            ],
+            "native_domains": {"domains": [domain]},
+        }
+    }
+    restored = json.loads(json.dumps(report))
+    expected = _scan_identity_projection(report)
+    assert _scan_identity_projection(restored) == expected
+    assert domain["result"]["run_id"] == "run-1"
+    restored["deep_audit"]["lanes"][0]["result"]["native_observations"]["result"][
+        "sources_sha256"
+    ] = "b" * 64
+    assert _scan_identity_projection(restored) != expected
+
+
 def test_scan_identity_projection_drops_run_envelopes_but_keeps_semantic_fields():
     def run_result(run_id, event_hash, action_id):
         return {

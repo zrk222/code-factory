@@ -28,6 +28,7 @@ from .e2e_proof import (
     write_e2e_proof_artifacts,
 )
 from .review_audits import MAX_SECURITY_SOURCE_FILES
+from .cli_foundations import _SCRIPT_LANGUAGE_SUFFIXES
 
 
 FIRST_PROOF_SCHEMA = "factory.first-proof.v1"
@@ -80,6 +81,11 @@ def _project_native_worker_execution(result: dict[str, Any]) -> None:
             lane.pop("action_id", None)
 
 
+def _project_native_observation(domain: object) -> None:
+    if isinstance(domain, dict) and isinstance(domain.get("result"), dict):
+        domain["result"].pop("run_id", None)
+
+
 def _scan_identity_projection(result: dict[str, Any]) -> dict[str, Any]:
     """Return deterministic scan content while excluding run receipt evidence."""
     identity = copy.deepcopy(result)
@@ -90,17 +96,20 @@ def _scan_identity_projection(result: dict[str, Any]) -> dict[str, Any]:
         deep_audit.pop("telemetry", None)
         deep_audit.pop("audit_sha256", None)
         for lane in deep_audit.get("lanes", []):
-            if (
-                isinstance(lane, dict)
-                and lane.get("measurement_id") == "native_worker_execution"
-                and isinstance(lane.get("result"), dict)
-            ):
-                _project_native_worker_execution(lane["result"])
+            if isinstance(lane, dict) and isinstance(lane.get("result"), dict):
+                if lane.get("measurement_id") == "native_worker_execution":
+                    _project_native_worker_execution(lane["result"])
+                if lane.get("measurement_id") in {
+                    "runtime_coverage",
+                    "dependencies_and_supply_chain",
+                }:
+                    _project_native_observation(
+                        lane["result"].get("native_observations")
+                    )
         native_domains = deep_audit.get("native_domains")
         if isinstance(native_domains, dict):
             for domain in native_domains.get("domains", []):
-                if isinstance(domain, dict) and isinstance(domain.get("result"), dict):
-                    domain["result"].pop("run_id", None)
+                _project_native_observation(domain)
             for finding in native_domains.get("findings", []):
                 if isinstance(finding, dict):
                     finding.pop("run_id", None)
@@ -157,8 +166,7 @@ def _workspace_inventory(workspace: Path, *, limit: int = 10_000) -> dict[str, A
             break
     suffixes = {
         "python": (".py",),
-        "javascript": (".js", ".jsx", ".mjs", ".cjs"),
-        "typescript": (".ts", ".tsx"),
+        **_SCRIPT_LANGUAGE_SUFFIXES,
         "docs": (".md", ".rst"),
         "go": (".go",),
         "rust": (".rs",),
