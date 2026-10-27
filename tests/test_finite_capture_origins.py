@@ -23,6 +23,100 @@ from factoryline.independent_execution import (
 )
 
 
+def test_assignment_expression_reuses_one_projection_in_real_assignment(monkeypatch):
+    from factoryline.credential_role_identity_effects import _Value
+
+    statement = ast.parse("result = payload").body[0]
+    requests = finite._SecurityFlowState(
+        {"payload"}, {"payload": _Value(roots=frozenset({"request"}))}
+    )
+    original = finite.security_structural_value
+    seen = []
+
+    def counted(node, *args, **kwargs):
+        if node is statement.value:
+            seen.append(node)
+        return original(node, *args, **kwargs)
+
+    monkeypatch.setattr(finite, "security_structural_value", counted)
+    review_integrity._security_flow_source_assignment(
+        statement, {}, requests, set(), set(), set(), set(), {}
+    )
+    assert len(seen) == 1
+    assert "result" in requests
+    assert requests.values["result"].roots == frozenset({"request"})
+
+
+@pytest.mark.parametrize("change", ["state", "aliases", "ast", "branch", "provider"])
+def test_assignment_expression_never_reuses_stale_context(monkeypatch, change):
+    from factoryline.credential_role_identity_effects import _Value
+
+    statement = ast.parse("result = payload").body[0]
+    aliases = {"provider": "original"}
+    requests = finite._SecurityFlowState(
+        values={"payload": _Value(roots=frozenset({"request"}))}
+    )
+    provider = ["original"]
+    observations = []
+
+    def project(expression, state, source_aliases):
+        current = (
+            expression.id == "payload"
+            and bool(state.values["payload"].roots)
+            and source_aliases["provider"] == "original"
+            and provider[0] == "original"
+        )
+        observations.append(current)
+        return _Value(roots=frozenset({"request" if current else "changed"}))
+
+    monkeypatch.setattr(review_integrity, "_security_structural_expression", project)
+
+    def assign(state):
+        review_integrity._security_flow_source_assignment(
+            statement, aliases, state, set(), set(), set(), set(), {}
+        )
+
+    assign(requests)
+    assert requests.values["result"].roots == frozenset({"request"})
+    if change in {"state", "branch"}:
+        if change == "branch":
+            requests = requests.copy()
+        requests.values["payload"] = _Value()
+    elif change == "aliases":
+        aliases["provider"] = "changed"
+    elif change == "ast":
+        statement.value.id = "changed"
+    else:
+        provider[0] = "changed"
+    assign(requests)
+    assert requests.values["result"].roots == frozenset({"changed"})
+    assert observations == [True, False]
+
+
+def test_assignment_expression_unknown_keeps_payload_fallback(monkeypatch):
+    from factoryline.credential_role_identity_effects import _Value
+    from factoryline import semantic_credential_sensor
+
+    statement = ast.parse("result = payload").body[0]
+    requests = finite._SecurityFlowState()
+    monkeypatch.setattr(
+        review_integrity,
+        "_security_structural_expression",
+        lambda *_: _Value(unknown=True),
+    )
+    calls = []
+    monkeypatch.setattr(
+        semantic_credential_sensor,
+        "request_payload_value_kind",
+        lambda *args: calls.append(args[0]) or "text",
+    )
+    review_integrity._security_flow_source_assignment(
+        statement, {}, requests, set(), set(), set(), set(), {}
+    )
+    assert calls == [statement.value]
+    assert ("request-type:text", "result") in requests
+
+
 @pytest.mark.parametrize(
     "sink,code",
     [
