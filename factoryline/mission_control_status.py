@@ -457,22 +457,30 @@ def _security_scan_report_error(report: Any) -> str | None:
     return None
 
 
-def security_scan_pytest_collection_snapshot(root: Path) -> dict[str, Any]:
+def security_scan_pytest_collection_snapshot(
+    root: Path, *, security_only: bool = False
+) -> dict[str, Any]:
     """Capture effective pytest collection settings without executing project code."""
     from .review_audits import _pytest_collection_config
 
-    patterns, identity = _pytest_collection_config(Path(root).resolve())
+    patterns, identity = _pytest_collection_config(
+        Path(root).resolve(), allow_unknown=security_only
+    )
     return {**identity, "patterns": sorted(patterns)}
 
 
 def prepare_security_scan_receipt_report(
-    root: Path, report: dict[str, Any], before_collection: dict[str, Any]
+    root: Path,
+    report: dict[str, Any],
+    before_collection: dict[str, Any],
+    *,
+    security_only: bool = False,
 ) -> dict[str, Any]:
     """Bind pre/post scan pytest config observations before writing a local receipt."""
     from .review_audits import _seal_security_scan
 
     prepared = copy.deepcopy(report)
-    after = security_scan_pytest_collection_snapshot(root)
+    after = security_scan_pytest_collection_snapshot(root, security_only=security_only)
     stable = before_collection == after
     collection = {
         **after,
@@ -743,7 +751,9 @@ def _security_scan_pytest_collection(
     try:
         from .review_audits import ReviewAuditError, _pytest_collection_config
 
-        current_patterns, current_identity = _pytest_collection_config(root)
+        current_patterns, current_identity = _pytest_collection_config(
+            root, allow_unknown=identity.get("mode") == "security_only"
+        )
     except Exception as exc:
         from .review_audits import ReviewAuditError
 
@@ -770,7 +780,11 @@ def _security_scan_pytest_collection(
             for row in selected
         ):
             return "PYTEST_COLLECTION_SOURCE_NOT_BOUND"
-    return "CURRENT_PYTEST_COLLECTION_VERIFIED"
+    return (
+        "PYTEST_COLLECTION_UNKNOWN"
+        if current_identity.get("collection_state") == "UNKNOWN"
+        else "CURRENT_PYTEST_COLLECTION_VERIFIED"
+    )
 
 
 def _security_probe_projection(value: Any) -> dict[str, Any] | None:
@@ -894,6 +908,11 @@ def _security_scan_projection(
         "candidate_sha256": report.get("candidate_sha256"),
         "source_manifest_sha256": report.get("source_manifest_sha256"),
         "candidate_freshness": freshness,
+        "source_freshness": (
+            "CURRENT_SOURCE_HASHES_VERIFIED"
+            if freshness == "PYTEST_COLLECTION_UNKNOWN"
+            else freshness
+        ),
         "source_count": coverage["files_audited"],
         "finding_count": len(report["findings"]),
         "finding_counts": counts,

@@ -78,6 +78,11 @@ def add_parser(sub: Any) -> None:
     )
     code_audit.add_argument("--json", action="store_true")
     code_audit.add_argument(
+        "--security-only",
+        action="store_true",
+        help="analyze security without test-oracle credit; unsupported collection stays UNKNOWN (security audit only)",
+    )
+    code_audit.add_argument(
         "--defect-policy",
         choices=[
             "legacy-v1",
@@ -636,7 +641,10 @@ def _run_bounded_security(args: Any) -> int:
         )
         from .mission_control_status import security_scan_pytest_collection_snapshot
 
-        before_collection = security_scan_pytest_collection_snapshot(Path(args.root))
+        security_only = getattr(args, "security_only", False)
+        before_collection = security_scan_pytest_collection_snapshot(
+            Path(args.root), security_only=security_only
+        )
         result = security_scan(
             Path(args.root),
             tenant_read_calls=calls,
@@ -647,6 +655,7 @@ def _run_bounded_security(args: Any) -> int:
             oracle_trust_root=getattr(args, "oracle_trust_root", None),
             oracle_trust_sha256=getattr(args, "oracle_trust_sha256", None),
             oracle_environment_sha256=getattr(args, "oracle_environment_sha256", None),
+            **({"security_only": True} if security_only else {}),
             **(
                 {"defect_policy": args.defect_policy}
                 if getattr(args, "defect_policy", "legacy-v1") != "legacy-v1"
@@ -669,7 +678,10 @@ def _run_bounded_security(args: Any) -> int:
         )
 
         result = prepare_security_scan_receipt_report(
-            Path(args.root), result, before_collection=before_collection
+            Path(args.root),
+            result,
+            before_collection=before_collection,
+            security_only=security_only,
         )
         write_security_scan_receipt(Path(args.root), result)
     except (ReviewAuditError, OSError, ValueError) as error:
@@ -706,6 +718,8 @@ def _finish_bounded_security(args, result):
             )
         print(result["action_summary"])
         _print_finding_tier_report(result.get("finding_tier_report"))
+    if result.get("oracle_context", {}).get("pytest_collection", {}).get("collection_state") == "UNKNOWN":
+        return 2
     if getattr(args, "defect_policy", "legacy-v1") != "legacy-v1":
         return result.get("defect_policy_decision", {}).get("exit_code", 2)
     return 0 if result["state"] == "CLEAN" else 2 if result["state"] == "BLOCKED" else 1
@@ -821,6 +835,21 @@ def _run_code(args: Any) -> int:
 def run(args: Any) -> int:
     """Run one audit command, importing the engine only after selection."""
     from .review_audits import ReviewAuditError
+
+    if getattr(args, "security_only", False) and (
+        args.tool != "security" or getattr(args, "full_repository", False)
+    ):
+        print(
+            json.dumps(
+                {
+                    "state": "INVALID",
+                    "code": "E_SECURITY_ONLY_SCOPE",
+                    "message": "--security-only requires the bounded audit security command",
+                }
+            ),
+            file=sys.stderr,
+        )
+        return 2
 
     if args.tool != "security" and hasattr(args, "defect_policy"):
         print(

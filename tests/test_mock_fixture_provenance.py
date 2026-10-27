@@ -21,6 +21,115 @@ def _codes(report):
     return [finding["code"] for finding in report["findings"]]
 
 
+def _unknown_collection_core(raw=b"value = 1\n"):
+    return {
+        "state": "CLEAN",
+        "sources": [{"path": "app.py", "sha256": hashlib.sha256(raw).hexdigest()}],
+        "audit_coverage": {"complete": True},
+        "findings": [],
+        "finding_counts": {},
+        "oracle_context": {
+            "pytest_collection": {
+                "state": "unsupported",
+                "mode": "security_only",
+                "collection_state": "UNKNOWN",
+                "capture_state": "stable_pre_post",
+                "python_files": [],
+                "python_functions": [],
+                "python_classes": [],
+            }
+        },
+        "tenant_read_contract": {"configuration": {"state": "loaded"}},
+    }
+
+
+def test_unknown_collection_rejects_trusted_core_despite_stable_capture():
+    from factoryline import primitive_observation_binding as binding
+    from factoryline import review_audits as audit
+
+    core = _unknown_collection_core()
+    assert binding._trusted_core_tenant_arguments(core, audit) is None
+    core["oracle_context"]["pytest_collection"]["collection_state"] = "KNOWN"
+    assert binding._trusted_core_tenant_arguments(core, audit) == ((), {}, False)
+
+
+@pytest.mark.parametrize(
+    "policy", ["source-role-v1", "source-role-v2", "source-role-v3"]
+)
+@pytest.mark.parametrize("state", ["CLEAN", "FINDINGS", "REVIEW_REQUIRED"])
+def test_unknown_collection_source_role_policy_retains_incomplete(policy, state):
+    from factoryline import primitive_observation_binding as binding
+
+    core = _unknown_collection_core()
+    core.update(state=state, selected_defect_policy=policy)
+    captured = {"app.py": b"value = 1\n"}
+    assert binding._pickle_role_sources(core, captured) is None
+    binding.apply_pickle_source_role_policy(core, captured)
+    decision = core["defect_policy_decision"]
+    assert core["state"] == "INCOMPLETE"
+    assert decision["exit_code"] == 2
+    assert not any(decision[key] for key in ("clean", "passed", "release_approved"))
+    core["oracle_context"]["pytest_collection"]["collection_state"] = "KNOWN"
+    binding.apply_pickle_source_role_policy(core, captured)
+    assert core["state"] == "REVIEW_REQUIRED"
+    assert core["defect_policy_decision"]["exit_code"] == 0
+
+
+@pytest.mark.parametrize(
+    "disposition",
+    [
+        "TEST_OWNED_LOCAL_FIXTURE",
+        "TEST_OWNED_APPLICATION_CREDENTIAL",
+        "PROVEN_LOCAL_CRYPTO_TEST_PRIMITIVE",
+    ],
+)
+def test_unknown_collection_does_not_consult_fixture_proof_provider(
+    monkeypatch, disposition
+):
+    from factoryline import primitive_observation_binding as binding
+    from factoryline import review_integrity as audit
+
+    calls = []
+    monkeypatch.setattr(
+        audit, "_fixed_primitive_binding", lambda *args: calls.append(args) or True
+    )
+    finding = {"facts": {"disposition": disposition}}
+    core = _unknown_collection_core()
+    assert not binding._current_primitive_binding(finding, core, {}, audit, {})
+    assert calls == []
+    core["oracle_context"]["pytest_collection"]["collection_state"] = "KNOWN"
+    assert binding._current_primitive_binding(finding, core, {}, audit, {})
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize("policy", ["trusted-core-v1", "source-role-v3"])
+def test_unknown_collection_reseal_revokes_real_application_fixture(tmp_path, policy):
+    from factoryline import review_audits as audit
+
+    _write(tmp_path, "checks/login.py", _APP133_DRF)
+    report = audit.security_scan(tmp_path, cache_enabled=False)
+    assert any(
+        row["facts"].get("disposition") == "TEST_OWNED_APPLICATION_CREDENTIAL"
+        for row in report.get("primitive_observations", [])
+    )
+    bound_sources = list(report["sources"])
+    report["oracle_context"]["pytest_collection"] = _unknown_collection_core()[
+        "oracle_context"
+    ]["pytest_collection"]
+    report["selected_defect_policy"] = policy
+    sealed = audit._seal_security_scan(report.copy())
+    assert sealed["state"] == "INCOMPLETE"
+    assert sealed["sources"] == bound_sources
+    assert not sealed.get("primitive_observations")
+    assert not sealed.get("context_reviews")
+    secrets = [
+        row for row in sealed["findings"] if row["code"] == "SECURITY_HARDCODED_SECRET"
+    ]
+    assert secrets and all(row["severity"] == "CRITICAL" for row in secrets)
+    assert sealed["defect_policy_decision"]["exit_code"] == 2
+    assert sealed["defect_policy_decision"]["clean"] is False
+
+
 def test_magicmock_annotation_without_fixture_is_unknown(tmp_path):
     _write(
         tmp_path,

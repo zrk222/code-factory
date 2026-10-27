@@ -331,12 +331,18 @@ def _trusted_core_database_context_valid(value):
     }
 
 
+def _unknown_collection(core):
+    oracle = core.get("oracle_context")
+    capture = oracle.get("pytest_collection") if isinstance(oracle, dict) else None
+    return isinstance(capture, dict) and capture.get("collection_state") == "UNKNOWN"
+
+
 def _trusted_core_tenant_arguments(core, audit):
     oracle_context = core.get("oracle_context", {})
     if not isinstance(oracle_context, dict):
         return None
     pytest_capture = oracle_context.get("pytest_collection")
-    if (
+    if _unknown_collection(core) or (
         isinstance(pytest_capture, dict)
         and pytest_capture.get("capture_state") != "stable_pre_post"
     ):
@@ -1774,6 +1780,7 @@ def apply_pickle_source_role_policy(core, captured, *, source_model=None):
     ledger = core.get("finding_tier_report", {}).get("ledger", [])
     reviewed_ids = {_pickle_role_identity(row) for row in reviews}
     for row in ledger:
+        row.pop("source_role_review", None)
         finding = row.get("raw_finding", {})
         if _pickle_role_identity(finding) in reviewed_ids:
             row["source_role_review"] = _pickle_source_role_witness(finding, roles)
@@ -1785,7 +1792,12 @@ def apply_pickle_source_role_policy(core, captured, *, source_model=None):
     core["defect_policy_decision"] = _pickle_source_role_decision(
         roles, active, reviews, ledger, policy_id
     )
-    if roles is not None:
+    if _unknown_collection(core):
+        core["state"] = "INCOMPLETE"
+        core["action_summary"] = (
+            "Pytest collection is UNKNOWN; fixture and oracle authority remain unassessed."
+        )
+    elif roles is not None:
         core["state"] = "FINDINGS" if active else "REVIEW_REQUIRED"
         core["action_summary"] = (
             f"{len(active)} active diagnostics; {len(reviews)} unresolved source-context reviews. No clean security result established."
@@ -1814,8 +1826,10 @@ def _pickle_role_identity(finding):
 
 
 def _pickle_role_sources(core, captured):
-    if core.get("audit_coverage", {}).get("complete") is not True or not isinstance(
-        captured, dict
+    if (
+        _unknown_collection(core)
+        or core.get("audit_coverage", {}).get("complete") is not True
+        or not isinstance(captured, dict)
     ):
         return None
     rows = core.get("sources")
@@ -3291,6 +3305,11 @@ def _partition_proven_primitive_observations(core, audit):
         if coverage.get("complete") is True
         else "INCOMPLETE",
     )
+    if _unknown_collection(core):
+        core["state"] = "INCOMPLETE"
+        core["action_summary"] = (
+            "Pytest collection is UNKNOWN; fixture and oracle authority remain unassessed."
+        )
 
 
 def _primitive_source_capture(core):
@@ -3307,6 +3326,12 @@ def _primitive_source_capture(core):
 
 
 def _current_primitive_binding(finding, core, bindings, audit, captured=None):
+    if _unknown_collection(core) and finding.get("facts", {}).get("disposition") in {
+        "TEST_OWNED_LOCAL_FIXTURE",
+        "TEST_OWNED_APPLICATION_CREDENTIAL",
+        "PROVEN_LOCAL_CRYPTO_TEST_PRIMITIVE",
+    }:
+        return False
     if _valid_security_precondition(
         finding.get("facts", {}).get("security_precondition"), finding
     ):
@@ -4676,6 +4701,7 @@ def primitive_binding_helpers():
 
     return (
         _primitive_source_capture,
+        _unknown_collection,
         captured_literal_caller_program_role,
         captured_file_program_role,
         captured_registered_fixture_helper_role,

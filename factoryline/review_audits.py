@@ -4018,7 +4018,14 @@ def _project_oracle_context(
     ty_sources = {root / item for item in ty_identity.get("selected", [])}
     import_views = contracts.new_import_views(len(files))
     contexts, edges = _build_oracle_context(
-        root, files, snapshots, typecheck_sources, ty_sources, import_views
+        root,
+        files,
+        snapshots,
+        typecheck_sources,
+        ty_sources,
+        import_views,
+        collection_known=(collection_identity or {}).get("collection_state")
+        != "UNKNOWN",
     )
     type_intent_hollow.bind_negative_checker_context(
         root, contexts, config_identity["typecheck"]
@@ -4030,16 +4037,17 @@ def _project_oracle_context(
         bind_application_fixture_context,
     )
 
-    bind_django_fixture_context(
-        root,
-        snapshots,
-        contexts,
-        config_bindings,
-        _security_source_bytes,
-        MAX_BYTES,
-        source_bytes=source_bytes,
-        source_inventory=source_hashes,
-    )
+    if (collection_identity or {}).get("collection_state") != "UNKNOWN":
+        bind_django_fixture_context(
+            root,
+            snapshots,
+            contexts,
+            config_bindings,
+            _security_source_bytes,
+            MAX_BYTES,
+            source_bytes=source_bytes,
+            source_inventory=source_hashes,
+        )
     resolved = contracts._project_import_views(import_views, snapshots)
     bind_application_fixture_context(
         root,
@@ -4052,7 +4060,8 @@ def _project_oracle_context(
         source_inventory=source_hashes,
         imports=resolved,
         source_index=(producer_source_model_out or {}).get("source"),
-        configuration_valid=config_cacheable,
+        configuration_valid=config_cacheable
+        and (collection_identity or {}).get("collection_state") != "UNKNOWN",
     )
     integrity.bind_fixed_program_workspace(
         root, contexts, snapshots, files, source_bytes, resolved
@@ -4202,6 +4211,8 @@ def _build_oracle_context(
     typecheck_sources: set,
     ty_sources: set | None = None,
     import_views: dict | None = None,
+    *,
+    collection_known: bool = True,
 ) -> tuple[dict, list]:
     security_only = _SECURITY_ONLY_SCAN.get() is True
     from . import mock_fixture_provenance
@@ -4212,7 +4223,9 @@ def _build_oracle_context(
         protocol_call_context,
     )
 
-    async_fixtures = async_runner_fixture_context(root, files, snapshots)
+    async_fixtures = (
+        async_runner_fixture_context(root, files, snapshots) if collection_known else {}
+    )
     eligible = {path.resolve(): path for path in files}
     resolve_imports, initializer_lookup, validate_initializers = (
         captured_import_resolver(
@@ -4224,31 +4237,47 @@ def _build_oracle_context(
         protocols = protocol_call_context(
             root, files, snapshots, import_resolver=resolve_imports, eligible=eligible
         )
-    fixture_sources = [
-        (
-            path,
-            _click_runner_fixtures(
-                tree, _scope_security_aliases(_module_security_aliases(tree), tree)
-            ),
-        )
-        for path, tree in snapshots.items()
-        if path.name == "conftest.py"
-    ]
+    fixture_sources = (
+        [
+            (
+                path,
+                _click_runner_fixtures(
+                    tree, _scope_security_aliases(_module_security_aliases(tree), tree)
+                ),
+            )
+            for path, tree in snapshots.items()
+            if path.name == "conftest.py"
+        ]
+        if collection_known
+        else []
+    )
     fixture_sources.sort(key=lambda item: len(item[0].parts))
-    requested_fixture_sources = {
-        path: _autouse_fixture_names(
-            tree.body, _module_security_aliases(tree), autouse_only=False
-        )
-        for path, tree in snapshots.items()
-    }
-    lifecycle_sources = {
-        path: _autouse_fixture_names(tree.body, _module_security_aliases(tree))
-        for path, tree in snapshots.items()
-    }
-    mock_fixture_sources = {
-        path: mock_fixture_provenance.fixture_bindings_for_source(tree)
-        for path, tree in snapshots.items()
-    }
+    requested_fixture_sources = (
+        {
+            path: _autouse_fixture_names(
+                tree.body, _module_security_aliases(tree), autouse_only=False
+            )
+            for path, tree in snapshots.items()
+        }
+        if collection_known
+        else {}
+    )
+    lifecycle_sources = (
+        {
+            path: _autouse_fixture_names(tree.body, _module_security_aliases(tree))
+            for path, tree in snapshots.items()
+        }
+        if collection_known
+        else {}
+    )
+    mock_fixture_sources = (
+        {
+            path: mock_fixture_provenance.fixture_bindings_for_source(tree)
+            for path, tree in snapshots.items()
+        }
+        if collection_known
+        else {}
+    )
     contexts = {
         path: {
             "helpers": set(),
@@ -4299,7 +4328,9 @@ def _build_oracle_context(
         for source, declared in fixture_sources:
             if path.parent.is_relative_to(source.parent):
                 fixtures.update(declared)
-        fixtures.update(_click_runner_fixtures(tree, aliases))
+        fixtures.update(
+            _click_runner_fixtures(tree, aliases) if collection_known else {}
+        )
         contexts[path]["click_runners"] = {
             name for name, trusted in fixtures.items() if trusted
         }
@@ -5639,6 +5670,7 @@ def _scan_security_sources(
     primitive_source_bytes_out: dict[str, bytes] | None = None,
     capture_all_sources: bool = False,
     producer_source_model_out: dict | None = None,
+    collection_identity_out: dict | None = None,
 ) -> tuple[
     list[dict[str, Any]],
     list[dict[str, Any]],
@@ -5652,28 +5684,14 @@ def _scan_security_sources(
     outcomes = {"syntax_error": 0, "unreadable": 0, "too_large": 0, "audited": 0}
     if test_file_patterns is None:
         test_file_patterns, collection_identity = _pytest_collection_config(
-            workspace, files
+            workspace, files, allow_unknown=_SECURITY_ONLY_SCAN.get() is True
         )
         test_file_patterns = _pytest_collection_settings(collection_identity)
     else:
         test_file_patterns = _pytest_collection_settings(test_file_patterns)
         collection_identity = {"state": "supplied", **test_file_patterns}
-    if collection_identity.get("state") in {
-        "invalid",
-        "oversized",
-        "unreadable",
-        "unsupported",
-    }:
-        findings.append(
-            _security_finding(
-                "QUALITY_TEST_COLLECTION_CONFIG_INCOMPLETE",
-                collection_identity.get("path") or "pytest configuration",
-                ast.Module(),
-                "Pytest collection configuration could not be fully interpreted; hollow-test coverage is incomplete.",
-                "INFO",
-                state=collection_identity["state"],
-            )
-        )
+    if collection_identity_out is not None:
+        collection_identity_out.update(collection_identity)
     python_inventory = []
     database_projection = {}
     snapshot_rows = {}
@@ -5790,6 +5808,7 @@ def _security_scan_report(
     *,
     security_only: bool = False,
     source_limit: int | None = None,
+    collection_identity: dict | None = None,
 ) -> dict[str, Any]:
     from .audit_action_refs import security_scan_report
 
@@ -5811,6 +5830,7 @@ def _security_scan_report(
             tenant_policy_applies,
             primitive_source_bytes,
             source_limit=source_limit,
+            collection_identity=collection_identity,
         )
 
 
@@ -5870,92 +5890,27 @@ def security_scan(
     provider_contracts: tuple[dict, ...] = (),
     defect_policy: str = "legacy-v1",
     max_files: int | None = None,
+    security_only: bool = False,
 ) -> dict[str, Any]:
-    """Run a bounded AST scan with content-bound process-local context reuse."""
-    from .finite_capture import provider_analysis_profile
-    from .primitive_observation_binding import validate_security_defect_policy
+    from .audit_action_refs import security_scan as scan
 
-    selected_policy = validate_security_defect_policy(defect_policy)
-    source_limit = _validate_source_file_limit(max_files)
-    profile = provider_analysis_profile(analysis_profile, provider_contracts)
-    workspace = Path(root).resolve()
-    if not isinstance(tenant_policy_applies, bool):
-        raise ReviewAuditError("tenant_policy_applies must be a boolean.")
-    tenant_read_calls = _tenant_contract_calls(tenant_read_calls)
-    tenant_read_bindings = _tenant_contract_bindings(
-        tenant_read_bindings, tenant_read_calls
-    )
-    tenant_read_scopes = _validate_tenant_scopes(workspace, tenant_read_scopes)
-    cache_enabled = _validate_cache_enabled(cache_enabled)
-    evidence = (
-        oracle_evidence,
-        oracle_trust_root,
-        oracle_trust_sha256,
-        oracle_environment_sha256,
-    )
-    files = _security_source_files(workspace)
-    if tenant_policy_applies:
-        tenant_read_scopes[""] = {"calls": (), "bindings": {}, "_policy_applies": True}
-    if len(files) > source_limit:
-        return _security_source_limit_report(
-            workspace,
-            files,
-            tenant_read_calls,
-            tenant_read_bindings,
-            tenant_policy_applies,
-            evidence,
-            profile,
-            selected_policy,
-            source_limit,
-        )
-    database_context = {}
-    primitive_source_bytes = {}
-    producer_source_model = {}
-    bindings, findings, counts, outcomes, oracle_edges, oracle_configuration = (
-        _scan_security_sources(
-            workspace,
-            files,
-            tenant_read_calls,
-            tenant_read_bindings,
-            tenant_read_scopes,
-            cache_enabled=cache_enabled and not profile["conditional"],
-            database_context=database_context,
-            primitive_source_bytes_out=primitive_source_bytes,
-            capture_all_sources=profile["conditional"]
-            or selected_policy != "legacy-v1",
-            producer_source_model_out=producer_source_model,
-        )
-    )
-    result = _security_scan_report(
-        files,
-        findings,
-        bindings,
-        counts,
-        outcomes,
-        tenant_read_calls,
-        tenant_read_bindings,
-        oracle_edges,
-        oracle_configuration,
-        database_context,
-        tenant_policy_applies,
-        primitive_source_bytes,
-        source_limit=source_limit,
-    )
-    if profile["conditional"]:
-        from .primitive_observation_binding import apply_conditional_provider_profile
-
-        result = apply_conditional_provider_profile(
-            result, profile, primitive_source_bytes
-        )
-    if selected_policy != "legacy-v1":
-        result["selected_defect_policy"] = selected_policy
-        result = _seal_security_scan(
-            result, producer_source_model=producer_source_model.get("source")
-        )
-    return (
-        _reconcile_runtime_oracles(workspace, result, evidence)
-        if any(value is not None for value in evidence)
-        else result
+    return scan(
+        sys.modules[__name__],
+        root,
+        tenant_read_calls=tenant_read_calls,
+        tenant_read_bindings=tenant_read_bindings,
+        tenant_read_scopes=tenant_read_scopes,
+        tenant_policy_applies=tenant_policy_applies,
+        cache_enabled=cache_enabled,
+        oracle_evidence=oracle_evidence,
+        oracle_trust_root=oracle_trust_root,
+        oracle_trust_sha256=oracle_trust_sha256,
+        oracle_environment_sha256=oracle_environment_sha256,
+        analysis_profile=analysis_profile,
+        provider_contracts=provider_contracts,
+        defect_policy=defect_policy,
+        max_files=max_files,
+        security_only=security_only,
     )
 
 
