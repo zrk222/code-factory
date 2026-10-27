@@ -5053,7 +5053,7 @@ def _captured_sink_guards(node, scope, parents, fact, excerpt):
         ast.AsyncFor,
         ast.While,
         ast.Try,
-        ast.TryStar,
+        getattr(ast, "TryStar", ast.Try),
         ast.With,
         ast.AsyncWith,
         ast.Match,

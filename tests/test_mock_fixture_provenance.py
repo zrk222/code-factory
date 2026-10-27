@@ -540,6 +540,7 @@ def test_django_fixture_requires_captured_bytes_and_resolves_local_authority(tmp
 
 
 def test_django_fixture_allows_only_source_bound_literal_model_projections(tmp_path):
+    """bind_flask_model_exports, database_project_exports, and flask_model_identity_functions expose only captured model fields."""
     model = _authority128_MODEL.replace(
         "class ClientApplication(Record):\n    objects = RecordManager()",
         "class ClientApplication(Record):\n"
@@ -892,6 +893,7 @@ def test_django_external_transport_is_not_misreported_as_role_guard(tmp_path):
 
 
 def test_django_fixture_scanner_cold_warm_and_config_drift(tmp_path):
+    """security_source_snapshots and consume_cached_security_snapshots preserve scan evidence across cold and warm runs."""
     _authority128_fixture_project(tmp_path)
     for _ in range(2):
         report = security_scan(tmp_path)
@@ -1782,6 +1784,7 @@ def test_repair260_fixture_role_recompute_helper_tracks_cold_warm_epoch(monkeypa
 def test_repair260_actual_closure_callees_invalidate_warm_effect_cache(
     tmp_path, monkeypatch, module_name, helper_name, replacement_kind
 ):
+    """security_value_helper_epoch includes actual closure callees so replacing their binding or code invalidates cached effects."""
     from factoryline import credential_role_constructor_provider as provider
     from factoryline import credential_role_identity_effects as identity
     from factoryline import finite_capture
@@ -4826,6 +4829,7 @@ def _testrole367_fixture_evidence(tmp_path, source, extras=None):
 def test_testrole367_registered_django_helper_requires_complete_authority_closure(
     tmp_path,
 ):
+    """django_testcase_helper_secret_evidence requires closed account, client, and credential-use consumers."""
     evidence = _testrole367_fixture_evidence(tmp_path, _TESTROLE367_DJANGO_HELPER)
     assert evidence["eligible"] is True
     assert evidence["profile"] == "SOURCE_BOUND_FACTORY_TEST_AUTHORITY"
@@ -4980,6 +4984,7 @@ def test_testrole367_registered_django_helper_keeps_escaped_or_rebound_authority
 
 
 def test_shared_source_inventory_reuses_validated_trees(tmp_path, monkeypatch):
+    """A current SourceSnapshotIndex lets the pickle inventory reuse its validated AST without reparsing."""
     import ast
     import hashlib
     from factoryline import review_audits as audit
@@ -5011,6 +5016,7 @@ def test_shared_source_inventory_reuses_validated_trees(tmp_path, monkeypatch):
 
 @pytest.mark.parametrize("corruption", ["bytes", "tree", "inventory"])
 def test_shared_source_inventory_declines_stale_capture(tmp_path, corruption):
+    """Source inventory admission declines changed bytes, AST structure, or digest bindings."""
     import ast
     import hashlib
     from factoryline import review_audits as audit
@@ -5037,6 +5043,70 @@ def test_shared_source_inventory_declines_stale_capture(tmp_path, corruption):
     else:
         model.inventory[path] = "0" * 64
     assert _pickle_role_inventory({"sample.py": raw}, source_model=model) is None
+
+
+def test_security_snapshot_index_and_verified_tree_require_current_source(tmp_path):
+    """Snapshot index reuse requires exact bytes and inventory, while stale tree fingerprints force reparsing."""
+    import ast
+    import hashlib
+    from factoryline import review_audits as audit
+    from factoryline.credential_role_constructor_provider import (
+        SourceSnapshotIndex,
+        application_snapshot_index,
+        verified_security_tree,
+    )
+
+    path = tmp_path / "sample.py"
+    raw = b"VALUE = 1\n"
+    digest = hashlib.sha256(raw).hexdigest()
+    tree = ast.parse(raw, filename=str(path))
+    tree._oracle_source_sha256 = digest
+    fingerprint = audit._oracle_tree_fingerprint(tree)
+    modules, sources = {path: tree}, {path: raw}
+    inventory = {path: digest}
+
+    index = application_snapshot_index(tmp_path, modules, sources, inventory, None)
+    assert isinstance(index, SourceSnapshotIndex)
+    index.producer_fingerprints = {path: fingerprint}
+    assert (
+        application_snapshot_index(tmp_path, modules, sources, inventory, index)
+        is index
+    )
+    assert (
+        application_snapshot_index(
+            tmp_path, modules, {path: b"VALUE = 2\n"}, inventory, index
+        )
+        is None
+    )
+
+    context = {"_security_source_model": index}
+    assert (
+        verified_security_tree(
+            audit,
+            tmp_path,
+            path,
+            raw,
+            {"sha256": digest},
+            tree,
+            fingerprint,
+            source_context=context,
+        )
+        is tree
+    )
+    reparsed = verified_security_tree(
+        audit,
+        tmp_path,
+        path,
+        raw,
+        {"sha256": digest},
+        tree,
+        "stale-fingerprint",
+        source_context=context,
+    )
+    assert reparsed is not tree
+    assert ast.dump(reparsed, include_attributes=True) == ast.dump(
+        tree, include_attributes=True
+    )
 
 
 @pytest.mark.parametrize(

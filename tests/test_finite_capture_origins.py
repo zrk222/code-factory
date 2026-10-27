@@ -34,6 +34,7 @@ from factoryline.independent_execution import (
 def test_shared_storage376_request_writer_reaches_exact_declared_field(
     tmp_path, sink, code
 ):
+    """persisted_field_input follows a request writer only to its exact declared model field and sink."""
     (tmp_path / "empty.py").write_bytes(b"")
     (tmp_path / "metadata.py").write_text(
         "import os\nfrom flask import request\n"
@@ -977,6 +978,7 @@ def test_pickle_nested_origin_is_separate_from_reconstruction_effect_proof():
 
 
 def test_pickle_origin_keeps_import_identity_and_rejects_local_serializer_rebinding():
+    """pickle_serializer_imports_closed requires the captured serializer identity and rejects local rebinding."""
     source = (
         "import pickle as serializer\n"
         "def run(obj):\n"
@@ -2169,6 +2171,7 @@ def test_registered_fixture_module_rejects_entry_and_builtin_replacement(source)
 
 
 def test_registered_fixture_policy_is_explicit_and_defaults_compatible(tmp_path):
+    """security_defect_policy_decision, fixed_program_proof_dispositions, and apply_pickle_source_role_policy retain the raw finding under source-role policy."""
     source = "import yaml\ndef test_handler(data):\n    value = yaml.load(data, Loader=yaml.Loader)\n    assert value\n"
     v1 = _pickle_role_report(tmp_path, source)
     v2 = _pickle_role_report(tmp_path, source, policy="source-role-v2")
@@ -2397,6 +2400,83 @@ def test_shared_call_result_selects_container_value_and_keeps_return_effect(tmp_
     assert dict(selected.items)["selected"].roots == frozenset({"request-body"})
 
 
+def test_captured_branch_transfer_binds_literal_caller_and_selected_field(tmp_path):
+    """Scalar branch selection transfers only the source-bound actual assigned to the chosen field."""
+    from factoryline.credential_role_constructor_provider import SourceSnapshotIndex
+
+    source = (
+        "class Entry:\n"
+        "    def __init__(self, choice, primary, fallback):\n"
+        "        if choice == 'primary':\n"
+        "            self.token = primary\n"
+        "        else:\n"
+        "            self.token = fallback\n"
+        "\n"
+        "def caller(raw):\n"
+        "    choice = 'primary'\n"
+        "    fixed = 'safe'\n"
+        "    return Entry(choice, raw, fixed)\n"
+    )
+    path = tmp_path / "branch.py"
+    raw = source.encode("utf-8")
+    digest = hashlib.sha256(raw).hexdigest()
+    tree = ast.parse(raw, filename=str(path))
+    tree._oracle_source_sha256 = digest
+    index = SourceSnapshotIndex(tmp_path, {path: tree}, {path: raw}, {path: digest})
+    constructor = tree.body[0].body[0]
+    caller = tree.body[1]
+    call = caller.body[-1].value
+    bound = dict(zip(("choice", "primary", "fallback"), call.args))
+
+    assert finite.captured_call_scalar(index, path, caller, bound["choice"], path) == (
+        "primary",
+    )
+    known = {"choice": "primary"}
+
+    def guard(expression, values):
+        return finite.captured_scalar_guard(expression, values, lambda _node: True)
+
+    assert guard(constructor.body[0].test, known) is True
+    selected = finite.captured_selected_field_assignments(
+        constructor.body, "self", "token", known, guard, [32]
+    )
+    assert selected == [constructor.body[0].body[0]]
+
+    transfer = finite.captured_literal_branch_field_transfer(
+        index, path, constructor, bound, path, caller, "token", lambda _node: True
+    )
+    assert transfer["profile"] == "SOURCE_LITERAL_SELECTED_BRANCH"
+    assert transfer["formal"] == "primary"
+    assert transfer["actual"] is call.args[1]
+    assert transfer["source_sha256"] == digest
+
+    unknown_source = source.replace("choice = 'primary'", "choice = opaque()")
+    unknown_raw = unknown_source.encode("utf-8")
+    unknown_digest = hashlib.sha256(unknown_raw).hexdigest()
+    unknown_tree = ast.parse(unknown_raw, filename=str(path))
+    unknown_tree._oracle_source_sha256 = unknown_digest
+    unknown_index = SourceSnapshotIndex(
+        tmp_path, {path: unknown_tree}, {path: unknown_raw}, {path: unknown_digest}
+    )
+    unknown_constructor = unknown_tree.body[0].body[0]
+    unknown_caller = unknown_tree.body[1]
+    unknown_call = unknown_caller.body[-1].value
+    unknown_bound = dict(zip(("choice", "primary", "fallback"), unknown_call.args))
+    assert (
+        finite.captured_literal_branch_field_transfer(
+            unknown_index,
+            path,
+            unknown_constructor,
+            unknown_bound,
+            path,
+            unknown_caller,
+            "token",
+            lambda _node: True,
+        )
+        is None
+    )
+
+
 def test_shared_constant_return_kills_value_but_retains_argument_effects(tmp_path):
     from factoryline import credential_role_identity_effects as identity
 
@@ -2460,6 +2540,7 @@ def test_shared_unknown_call_and_branch_keep_known_may_origins(tmp_path):
 
 
 def test_shared_import_reexport_return_uses_captured_symbol_binding(tmp_path):
+    """Captured source lookup resolves an imported re-export and retains the helper's selected return items."""
     from pathlib import Path
     from factoryline import credential_role_identity_effects as identity
     from factoryline.credential_role_constructor_provider import SourceSnapshotIndex
@@ -2492,6 +2573,28 @@ def test_shared_import_reexport_return_uses_captured_symbol_binding(tmp_path):
     call = caller.body[0].value
     call._security_lexical_scope = caller
     call._security_flow_statement = caller.body[0]
+    wrapper = identity.source_symbol_index(index)
+    assert wrapper is identity.source_symbol_index(index)
+    resolved = identity.resolve_source_identity_call(
+        call, paths["sample.py"], index, lexical_scope=caller
+    )
+    assert resolved.path == paths["provider.py"]
+    assert resolved.function is trees[paths["provider.py"]].body[0]
+    assert resolved.arguments["value"] is call.args[0]
+    captured = identity.captured_source_call_result(
+        call,
+        paths["sample.py"],
+        index,
+        {
+            "raw": identity._Value(
+                roots=frozenset({"request-body"}), scalar_kind="bytes"
+            )
+        },
+    )
+    assert captured is not None
+    assert dict(captured["value"].items)["selected"].roots == frozenset(
+        {"request-body"}
+    )
     value = finite.security_structural_value(
         call,
         {
@@ -2645,6 +2748,7 @@ def test_shared_opaque_scalar_call_does_not_invalidate_unrelated_scalar():
 
 
 def test_shared_nested_value_join_retains_origin_as_unknown():
+    """Both identity join entry points preserve a nested may-origin while marking the selected value unknown."""
     from factoryline import credential_role_identity_effects as identity
 
     left = identity.identity_value(
@@ -2659,7 +2763,9 @@ def test_shared_nested_value_join_retains_origin_as_unknown():
         ast.parse("{'outer': {'selected': b'fixed'}}", mode="eval").body,
         {},
     )
-    joined = finite.security_structural_join([left, right])
+    joined = identity.join_identity_values([left, right])
+    wrapped = identity.structural_value_join([left, right])
+    assert wrapped == joined
     selected = dict(dict(joined.items)["outer"].items)["selected"]
     assert joined.unknown
     assert selected.unknown

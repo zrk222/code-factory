@@ -2459,6 +2459,7 @@ def test_program_proof_recomputes_digest_and_captures_complete_inventory(
     ],
 )
 def test_captured_file_program_role_changes_native_context_queue(tmp_path, producer):
+    """captured_file_program_role preserves source-bound file producers in the native context queue."""
     source = "from pathlib import Path\n" + producer
     (tmp_path / "app.py").write_text(source, encoding="utf-8")
     (tmp_path / "payload.py").write_text("VALUE = 1\n", encoding="utf-8")
@@ -2516,6 +2517,7 @@ def test_captured_file_program_role_rejects_handle_replacement_and_escape(
 def test_literal_caller_program_role_requires_complete_literal_callers(
     tmp_path, caller
 ):
+    """captured_literal_caller_program_role requires a complete literal caller set and rejects unknown callers."""
     source = (
         "import textwrap\nclass Example:\n"
         "    def build(self, source):\n        namespace = {}\n"
@@ -7186,3 +7188,23 @@ def test_trusted_core_unresolved_serialized_zero_exit_cannot_bypass_current_evid
     checked = review_audits._seal_security_scan(core)
     assert checked["defect_policy_decision"] == expected
     assert checked["findings"] == report["findings"]
+
+
+def test_blocked_security_scan_report_keeps_source_limit_incomplete(
+    tmp_path, monkeypatch
+):
+    from factoryline import audit_action_refs, review_audits
+
+    monkeypatch.setattr(review_audits, "MAX_SECURITY_SOURCE_FILES", 1)
+    report = audit_action_refs.blocked_security_scan_report(
+        review_audits, tmp_path, [tmp_path / "a.py", tmp_path / "b.py"], (), {}
+    )
+    assert report["state"] == "BLOCKED"
+    assert report["sources"] == []
+    assert report["files_scanned"] == 0
+    assert report["audit_coverage"]["files_discovered"] == 2
+    assert report["audit_coverage"]["files_attempted"] == 0
+    assert report["audit_coverage"]["complete"] is False
+    assert not any(report["authority"].values())
+    assert [row["code"] for row in report["findings"]] == ["SECURITY_AUDIT_INCOMPLETE"]
+    assert report["findings"][0]["severity"] == "HIGH"

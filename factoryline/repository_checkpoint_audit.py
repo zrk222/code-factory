@@ -4,7 +4,13 @@ from __future__ import annotations
 
 
 def _full_repository_checkpoint_identity(
-    value, root, scanner, configuration, inventory, context_profile="isolated-v1"
+    value,
+    root,
+    scanner,
+    configuration,
+    inventory,
+    context_profile="isolated-v1",
+    source_configuration=None,
 ):
     """Reject altered profile, schema, scanner or source-generation bindings."""
     from .deep_audit_io import (
@@ -29,7 +35,13 @@ def _full_repository_checkpoint_identity(
         "result_digest",
     }
     if workspace:
-        keys.update({"context_profile", "context_generation_sha256"})
+        keys.update(
+            {
+                "context_profile",
+                "context_generation_sha256",
+                "source_configuration_sha256",
+            }
+        )
     expected_schema = (
         FULL_REPOSITORY_CONTEXT_CHECKPOINT_SCHEMA
         if workspace
@@ -44,6 +56,8 @@ def _full_repository_checkpoint_identity(
             and (
                 not isinstance(value["context_generation_sha256"], str)
                 or len(value["context_generation_sha256"]) != 64
+                or not isinstance(value["source_configuration_sha256"], str)
+                or len(value["source_configuration_sha256"]) != 64
             )
         )
         or value["batch_primary_limit"] != FULL_REPOSITORY_BATCH_LIMIT
@@ -55,15 +69,21 @@ def _full_repository_checkpoint_identity(
         raise RuntimeAuditError(
             "SCANNER_DRIFT", "scanner identity changed since checkpoint"
         )
+    if workspace and value["source_configuration_sha256"] != source_configuration:
+        raise RuntimeAuditError(
+            "SOURCE_DRIFT", "captured configuration sources changed since checkpoint"
+        )
     if (
         value["root"] != root.as_posix()
-        or value["configuration_sha256"] != configuration
         or value["inventory_sha256"] != digest(inventory)
         or value["inventory"] != inventory
     ):
         raise RuntimeAuditError(
-            "SOURCE_DRIFT", "source inventory or configuration changed since checkpoint"
+            "SOURCE_DRIFT", "source inventory changed since checkpoint"
         )
+    if value["configuration_sha256"] != configuration:
+        code = "INVALID_CHECKPOINT" if workspace else "SOURCE_DRIFT"
+        raise RuntimeAuditError(code, "checkpoint execution configuration changed")
 
 
 def _full_repository_checkpoint_rows(value, inventory):
@@ -119,6 +139,35 @@ def _full_repository_result_valid(row):
         and isinstance(row["findings"], list)
         and isinstance(row["dependencies"], dict)
     )
+
+
+def _validate_full_repository_checkpoint(
+    value,
+    root,
+    scanner,
+    configuration,
+    inventory,
+    context_profile="isolated-v1",
+    source_configuration=None,
+):
+    """Validate checkpoint identity and its ordered primary prefix."""
+    from .deep_audit_io import RuntimeAuditError
+
+    _full_repository_checkpoint_identity(
+        value,
+        root,
+        scanner,
+        configuration,
+        inventory,
+        context_profile,
+        source_configuration,
+    )
+    results = _full_repository_checkpoint_rows(value, inventory)
+    if not all(_full_repository_result_valid(row) for row in results):
+        raise RuntimeAuditError(
+            "INVALID_CHECKPOINT", "checkpoint primary result is malformed"
+        )
+    return results
 
 
 def _full_repository_discovery_policy(audit) -> dict:

@@ -24,6 +24,7 @@ from .repository_checkpoint_audit import (
     _full_repository_checkpoint_identity as _full_repository_checkpoint_identity,
     _full_repository_checkpoint_rows as _full_repository_checkpoint_rows,
     _full_repository_result_valid as _full_repository_result_valid,
+    _validate_full_repository_checkpoint as _validate_full_repository_checkpoint,
     _full_repository_discovery_policy as _full_repository_discovery_policy,
     _full_repository_trusted_core_decision as _full_repository_trusted_core_decision,
 )
@@ -594,7 +595,7 @@ FULL_REPOSITORY_CONTEXT_SCHEMA = "factory.full-repository-context.v2"
 FULL_REPOSITORY_CONTEXT_SCAN_SCHEMA = "factory.full-repository-scan.workspace-v2"
 FULL_REPOSITORY_WORKSPACE_SOURCE_RETENTION_LIMIT = 64 * 1024 * 1024
 FULL_REPOSITORY_CONTEXT_CHECKPOINT_SCHEMA = (
-    "factory.full-repository-checkpoint.workspace-v2"
+    "factory.full-repository-checkpoint.workspace-v3"
 )
 FULL_REPOSITORY_CONTEXT_RUN_ID = "f2110000000000000000000000000002"
 FULL_REPOSITORY_CONTEXT_DEADLINE_SECONDS = 180
@@ -842,6 +843,9 @@ def _full_repository_runtime_epoch(
             if name.startswith("_full_repository_workspace_cache_") and callable(helper)
         )
         + (
+            checkpoint_admission._full_repository_checkpoint_identity,
+            checkpoint_admission._full_repository_checkpoint_rows,
+            checkpoint_admission._full_repository_result_valid,
             checkpoint_admission._trusted_core_ledger_matches,
             checkpoint_admission._trusted_core_ledger_counts,
             require_digest,
@@ -1056,26 +1060,6 @@ def _full_repository_import_edge(
     return None, None
 
 
-def _validate_full_repository_checkpoint(
-    value: dict,
-    root: Path,
-    scanner: str,
-    configuration: str,
-    inventory: list[dict],
-    context_profile: str = "isolated-v1",
-) -> list[dict]:
-    """Validate generation identity and the exact saved primary prefix."""
-    _full_repository_checkpoint_identity(
-        value, root, scanner, configuration, inventory, context_profile
-    )
-    results = _full_repository_checkpoint_rows(value, inventory)
-    if not all(_full_repository_result_valid(row) for row in results):
-        raise RuntimeAuditError(
-            "INVALID_CHECKPOINT", "checkpoint primary result is malformed"
-        )
-    return results
-
-
 def _full_repository_scan_digest(
     generation, inventory, results, accounting, coverage, dependencies, counts, pending
 ):
@@ -1155,6 +1139,7 @@ def _full_repository_generation(
             "finding_tier_policy_sha256": primitive.finding_tier_policy_sha256(),
         }
     configuration = digest(config_identity)
+    source_configuration = digest(frame["candidates"])
     scanner, inventory_hash = _full_repository_scanner_identity(), digest(inventory)
     runtime_epoch = _full_repository_runtime_epoch(
         root, configuration, audit, retention_limit=source_retention_limit_bytes
@@ -1190,14 +1175,6 @@ def _full_repository_resume_generation(generation: dict, audit):
     root = generation["root"]
     try:
         checkpoint = read_run_json(generation["directory"], "checkpoint.json")
-        if (
-            generation["context_profile"] == FULL_REPOSITORY_CONTEXT_PROFILE
-            and isinstance(checkpoint, dict)
-            and checkpoint.get("configuration_sha256") != generation["configuration"]
-        ):
-            raise RuntimeAuditError(
-                "SOURCE_DRIFT", "workspace checkpoint configuration changed"
-            )
         results = _validate_full_repository_checkpoint(
             checkpoint,
             root,
@@ -1205,6 +1182,9 @@ def _full_repository_resume_generation(generation: dict, audit):
             generation["configuration"],
             generation["inventory"],
             generation["context_profile"],
+            generation["source_configuration"]
+            if generation["context_profile"] == FULL_REPOSITORY_CONTEXT_PROFILE
+            else None,
         )
     except RuntimeAuditError as exc:
         if exc.code in {"SCANNER_DRIFT", "SOURCE_DRIFT", "INVALID_CHECKPOINT"}:
@@ -1400,6 +1380,7 @@ def _full_repository_store_checkpoint(generation: dict, results: list[dict]) -> 
             {
                 "context_profile": generation["context_profile"],
                 "context_generation_sha256": generation["context_generation_sha256"],
+                "source_configuration_sha256": generation["source_configuration"],
             }
         )
     write_run_json(generation["directory"], "checkpoint.json", checkpoint)

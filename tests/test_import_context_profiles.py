@@ -1027,6 +1027,7 @@ def test_captured_import_resolution_uses_exact_lexical_inventory(
 
 
 def test_captured_import_inventory_is_owned_and_requires_current_caller():
+    """captured_import_inventory owns immutable paths and rejects imports absent from the captured caller inventory."""
     root, caller, target = (
         Path("repository"),
         Path("repository/consumer.py"),

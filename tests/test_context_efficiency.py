@@ -5147,6 +5147,28 @@ def test_workspace_checkpoint_revalidates_or_rejects_changed_authority(
         engine.full_repository_scan(root, resume=True, context_profile="workspace-v2")
 
 
+def test_workspace_checkpoint_rejects_legacy_schema_without_rewriting(tmp_path):
+    from factoryline import deep_audit_io as engine
+
+    (tmp_path / "app.py").write_text("value = 1\n", encoding="utf-8")
+    engine.full_repository_scan(tmp_path, context_profile="workspace-v2")
+    checkpoint_path = tmp_path / (
+        ".factory/deep-runs/f2110000000000000000000000000002/checkpoint.json"
+    )
+    checkpoint = json.loads(checkpoint_path.read_text(encoding="utf-8"))
+    checkpoint["schema"] = "factory.full-repository-checkpoint.workspace-v2"
+    checkpoint.pop("source_configuration_sha256")
+    legacy_bytes = engine.canonical_bytes(checkpoint)
+    checkpoint_path.write_bytes(legacy_bytes)
+
+    with pytest.raises(engine.RuntimeAuditError, match="INVALID_CHECKPOINT"):
+        engine.full_repository_scan(
+            tmp_path, resume=True, context_profile="workspace-v2"
+        )
+
+    assert checkpoint_path.read_bytes() == legacy_bytes
+
+
 def test_workspace_resume_does_not_trust_mutated_returned_report(tmp_path):
     from factoryline.deep_audit_io import full_repository_scan
 

@@ -252,6 +252,7 @@ _CROSSCUTTING_MODULES = (
     "runtime_audit_policy.py",
     "runtime_audit_runner.py",
     "runtime_audit_integrity.py",
+    "import_context.py",
     "runtime_audit.py",
     "runtime_audit_process.py",
 )

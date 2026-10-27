@@ -42,6 +42,7 @@ def _premise_scan(source):
     ],
 )
 def test_native_flow_helper_return_reaches_primary_verdict(helper, invocation):
+    """Native precondition binding follows the exact request argument through one supported helper return."""
     findings = _premise_scan(
         "from flask import request\n" + helper + f"eval({invocation})\n"
     )
@@ -58,6 +59,7 @@ def test_native_flow_helper_return_reaches_primary_verdict(helper, invocation):
     ],
 )
 def test_native_flow_actual_argument_reaches_callee_sink(body, invocation):
+    """security_forward_helper_sources and bind_native_input_precondition map the request actual only to the callee's modeled sink."""
     findings = _premise_scan(
         "from flask import request\ndef consume(value):\n    "
         + body
@@ -175,6 +177,7 @@ def test_native_flow_provider_capability_mutation_abstains(mutation):
 
 
 def test_native_flow_precondition_is_independently_recomputed():
+    """Independent binding recomputation preserves a source-bound helper alias and rejects changed code."""
     source = (
         "from flask import request\ndef identity(value):\n    alias = value\n    return alias\n"
         "eval(identity(request.get_data(as_text=True)))\n"
@@ -389,6 +392,7 @@ def _flask_authority_tiers314(source=_FLASK_AUTHORITY_SOURCE314, extra_sources=N
 
 
 def test_tier314_flask_session_authority_preserves_both_source_diagnostics():
+    """flask_credential_authority_evidence ties both source diagnostics to complete captured session transfers."""
     report = _flask_authority_tiers314()
     rows = report["ledger"]
     assert len(rows) == 2
@@ -586,6 +590,7 @@ def login(request):
 
 
 def test_private_key_decryption_of_post_password_recomputes_authority():
+    """private_key_authentication_evidence requires captured decryption, POST routing, and password verification."""
     import copy
 
     report = _private_key_auth_tiers(_PRIVATE_KEY_AUTH_SOURCE)
@@ -1063,6 +1068,7 @@ def test_tier275_changed_captured_bytes_abstain():
     ],
 )
 def test_http_body275_supported_precondition_keeps_raw_sink(imports, sink, code):
+    """bind_request_sink_precondition supports only the captured request-body path and retains its raw sink finding."""
     payload = "body" if code == "SECURITY_UNSAFE_DESERIALIZATION" else "body.decode()"
     source = (
         imports + "from django.views.decorators.http import require_http_methods\n"
@@ -1099,6 +1105,7 @@ def test_http_body275_supported_precondition_keeps_raw_sink(imports, sink, code)
 def test_sink_context_flask_body_method_preserves_source_kind(
     arguments, bytes_input, sink
 ):
+    """bind_request_sink_precondition preserves bytes-versus-text source kind for the exact Flask body call shape."""
     source = (
         "import pickle\nfrom flask import request\ndef view():\n"
         f"    payload = request.get_data({arguments})\n    {sink}\n"
@@ -1164,6 +1171,7 @@ def test_sink_context_flask_body_replaced_provider_is_not_certified(mutation):
     "sink", ["eval(payload)", "os.system(payload)", "pickle.loads(payload.encode())"]
 )
 def test_http279_mapping_value_reaches_modeled_sink(framework, expression, sink):
+    """http_request_payload and request_payload_value_kind accept only selected Flask or Django mapping values with matching sink types."""
     imports = "import os\nimport pickle\n"
     if framework == "flask":
         source = imports + "from flask import request\ndef view():\n"
@@ -1463,6 +1471,7 @@ def test_log_percent_slots_exclude_escaped_percent_and_preserve_real_slots():
 
 
 def test_log_security_precondition_requires_stability_and_a_possible_sink_path():
+    """log_scalar_metadata supports only stable log metadata with a reachable consumer sink."""
     from types import SimpleNamespace
 
     stable = SimpleNamespace(_security_log_provider_stable=True)
@@ -1827,6 +1836,7 @@ def test_yaml_safe_loader_survives_typed_sibling_consumers(tmp_path, foreign_sou
 def test_yaml_safe_loader_keeps_adversarial_sibling_events_unknown(
     tmp_path, foreign_source
 ):
+    """yaml_loader_provider_uncertain retains unsafe findings when sibling consumers escape or mutate loader state."""
     (tmp_path / "parse.py").write_text(
         "import yaml\nyaml.load(data, Loader=yaml.SafeLoader)\n", encoding="utf-8"
     )
@@ -1838,6 +1848,7 @@ def test_yaml_safe_loader_keeps_adversarial_sibling_events_unknown(
 
 
 def test_yaml_typed_consumer_filter_respects_foreign_scope_shadowing(tmp_path):
+    """Typed YAML argument consumers reject a foreign-scope loader shadow."""
     (tmp_path / "parse.py").write_text(
         "import yaml\nyaml.load(data, Loader=yaml.SafeLoader)\n", encoding="utf-8"
     )
@@ -1852,6 +1863,65 @@ def test_yaml_typed_consumer_filter_respects_foreign_scope_shadowing(tmp_path):
     findings = audit.security_scan(tmp_path, cache_enabled=False)["findings"]
 
     assert any(item["code"] == "SECURITY_UNSAFE_YAML" for item in findings)
+
+
+def test_yaml_load_signature_and_loader_consumer_use_exact_slots():
+    """YAML call-shape validation binds one stream and loader slot and rejects duplicates."""
+    valid = ast.parse("import yaml\nyaml.load(data, Loader=yaml.SafeLoader)\n")
+    nodes = list(ast.walk(valid))
+    parents = {
+        id(child): node for node in nodes for child in ast.iter_child_nodes(node)
+    }
+    call = next(node for node in nodes if isinstance(node, ast.Call))
+    loader = next(
+        node
+        for node in nodes
+        if isinstance(node, ast.Attribute) and node.attr == "SafeLoader"
+    )
+    aliases = audit._security_aliases(nodes)
+    assert sensors.yaml_load_call_signature(call)
+    assert (
+        sensors.yaml_loader_argument_consumer(loader, aliases, parents) == "yaml.load"
+    )
+
+    malformed = ast.parse(
+        "import yaml\nyaml.load(data, stream=data, Loader=yaml.Loader)\n"
+    )
+    malformed_nodes = list(ast.walk(malformed))
+    malformed_parents = {
+        id(child): node
+        for node in malformed_nodes
+        for child in ast.iter_child_nodes(node)
+    }
+    malformed_call = next(
+        node for node in malformed_nodes if isinstance(node, ast.Call)
+    )
+    malformed_loader = next(
+        node
+        for node in malformed_nodes
+        if isinstance(node, ast.Attribute) and node.attr == "Loader"
+    )
+    assert not sensors.yaml_load_call_signature(malformed_call)
+    assert (
+        sensors.yaml_loader_argument_consumer(
+            malformed_loader,
+            audit._security_aliases(malformed_nodes),
+            malformed_parents,
+        )
+        is None
+    )
+
+
+def test_security_precondition_call_shape_requires_one_modeled_argument():
+    eval_call = ast.parse("eval(source)").body[0].value
+    expanded_eval = ast.parse("eval(*values)").body[0].value
+    shell_call = ast.parse("subprocess.run(command, shell=True)").body[0].value
+    unsafe_shell = ast.parse("subprocess.run(command, shell=False)").body[0].value
+
+    assert sensors.security_precondition_call_shape(eval_call, "eval")
+    assert not sensors.security_precondition_call_shape(expanded_eval, "eval")
+    assert sensors.security_precondition_call_shape(shell_call, "subprocess.run")
+    assert not sensors.security_precondition_call_shape(unsafe_shell, "subprocess.run")
 
 
 """Native semantic sensing preserves existing defects and separates source claims."""
