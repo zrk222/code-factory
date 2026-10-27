@@ -516,8 +516,9 @@ def bind_application_fixture_context(
     imports=None,
     source_index=None,
     configuration_valid=True,
+    collection_known=True,
 ):
-    """Bind eligible application-fixture evidence to the captured source inventory and hashed configuration without asserting runtime isolation."""
+    """Bind source roles independently of collection-dependent fixture authority."""
     from . import (
         mock_fixture_provenance as fixture,
         credential_role_constructor_provider as roles,
@@ -543,8 +544,12 @@ def bind_application_fixture_context(
         return
     captured = {path: source_bytes.get(path) for path in snapshots}
     inventory = {path: source_inventory.get(path) for path in snapshots}
-    index = fixture.application_test_index(
-        root, snapshots, captured, inventory, configs, source_index=source_index
+    index = (
+        fixture.application_test_index(
+            root, snapshots, captured, inventory, configs, source_index=source_index
+        )
+        if collection_known is True
+        else None
     )
     source = (
         index["source"]
