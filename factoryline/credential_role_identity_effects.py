@@ -2694,8 +2694,9 @@ def summarize_identity_effect(
 ):
     """Summarize captured ASTs without executing target code.
 
-    Callers prove exact bindings, branches, descriptors, allocation and current
-    field ownership; initial field projections are not admission evidence.
+    Callers prove exact bindings, branches, descriptors, allocation, method
+    dispatch and current field ownership; a resolver is not itself proof of
+    heap or dispatch stability. Initial field projections are not admission evidence.
     Unknown protocols, heap escapes and overwritten projections fail closed.
     Strict mode also rejects unresolved calls without explicit root arguments.
     Source-backed parameter literals retain their value role rather than becoming
@@ -2868,13 +2869,22 @@ class _Analyzer:
     def _visit(self, nodes, function, path, aliases, depth, active, out):
         exported = exported_names(nodes)
         parents = self.index.parents[path]
+        resolved_method_attributes = set()
         for node in nodes:
             if (
                 self.role_view
                 and isinstance(node, ast.Attribute)
                 and isinstance(node.ctx, ast.Load)
             ):
-                self._attribute_role(node, path, function, aliases, parents, out)
+                self._attribute_role(
+                    node,
+                    path,
+                    function,
+                    aliases,
+                    parents,
+                    out,
+                    resolved_method_attributes,
+                )
             if self.strict_calls:
                 strict_read_effects(node, aliases, parents, out)
                 strict_protocol_effects(node, aliases, parents, out)
@@ -2910,7 +2920,9 @@ class _Analyzer:
                     event_kind="return_escape",
                 )
             elif isinstance(node, ast.Call):
-                self._call(node, path, aliases, depth, active, out)
+                resolved = self._call(node, path, aliases, depth, active, out)
+                if resolved and isinstance(node.func, ast.Attribute):
+                    resolved_method_attributes.add(id(node.func))
 
     def _aliases(self, function, path, roots, nodes, out):
         args = function.args
@@ -3034,7 +3046,9 @@ class _Analyzer:
                 changed = True
         return changed
 
-    def _attribute_role(self, node, path, function, aliases, parents, out):
+    def _attribute_role(
+        self, node, path, function, aliases, parents, out, resolved_methods
+    ):
         receiver = _role_expression_roots(
             node.value, aliases, strict_calls=self.strict_calls
         )
@@ -3042,6 +3056,8 @@ class _Analyzer:
             return
         projected = [aliases.get((root, node.attr)) for root in receiver]
         known = [value for value in projected if value is not None]
+        parent = parents.get(id(node))
+        call_target = isinstance(parent, ast.Call) and parent.func is node
         if known:
             roots = set().union(*(tracked_roots(value) for value in known))
             _add_role_event(
@@ -3052,9 +3068,12 @@ class _Analyzer:
                 node,
                 node.attr,
                 receiver_roots=receiver,
-                uncertain=len(receiver) != 1
+                uncertain=call_target
+                or len(receiver) != 1
                 or any(value.unknown or _has_unknown_content(value) for value in known),
             )
+            if call_target:
+                out.unknowns.add("tracked method may be shadowed by a field")
             if node.attr not in self.ordinary_fields and not _ordinary_field_dispatch(
                 function, node.attr, parents
             ):
@@ -3070,7 +3089,8 @@ class _Analyzer:
                     uncertain=True,
                 )
             return
-        parent = parents.get(id(node))
+        if call_target and id(node) in resolved_methods:
+            return
         bound = (isinstance(parent, ast.Call) and parent.func is node) or (
             isinstance(parent, (ast.Assign, ast.AnnAssign, ast.NamedExpr))
             and getattr(parent, "value", None) is node
@@ -3256,6 +3276,9 @@ class _Analyzer:
                 for projection in nested.return_values
             ]
         out.merge(nested, include_returns=capture_returns)
+        return not nested.unknowns and not any(
+            event.uncertain for event in nested.role_events
+        )
 
 
 def _fixture_symbol(index, path, expression, function=None):

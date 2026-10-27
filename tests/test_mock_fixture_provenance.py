@@ -3729,6 +3729,117 @@ class TestSigning:
 """
 
 
+@pytest.mark.parametrize(
+    "variant",
+    [
+        "closed",
+        "descriptor",
+        "instance_shadow",
+        "instance_shadow_literal",
+        "custom_dispatch",
+        "owner_escape",
+        "key_escape",
+        "provider_write",
+        "raw_export",
+    ],
+)
+def test_constructor_source_method_role_native(tmp_path, variant):
+    prefix = "        self.validate()\n"
+    method = "    def validate(self):\n        pass\n"
+    if variant == "descriptor":
+        method = "    @property\n    def validate(self):\n        return send\n"
+    elif variant == "instance_shadow":
+        prefix = "        self.validate = send\n" + prefix
+    elif variant == "instance_shadow_literal":
+        prefix = "        self.validate = None\n" + prefix
+    elif variant == "custom_dispatch":
+        method += "    def __getattribute__(self, name):\n        return send\n"
+    elif variant == "owner_escape":
+        method = "    def validate(self):\n        send(self)\n"
+    elif variant == "key_escape":
+        prefix = "        self.validate(key)\n"
+        method = "    def validate(self, key):\n        send(key)\n"
+    text = _OBJECT_SIGNING265.replace(
+        "        self._key = key\n    def check",
+        prefix + "        self._key = key\n" + method + "    def check",
+    )
+    if variant == "provider_write":
+        text += "Gate.validate = send\n"
+    if variant == "raw_export":
+        text += "send(TestSigning.signing_secret)\n"
+    _write(tmp_path, "test_signing.py", text)
+    report = security_scan(tmp_path, cache_enabled=False)
+    active = [
+        row for row in report["findings"] if row["code"] == "SECURITY_HARDCODED_SECRET"
+    ]
+    if variant == "closed":
+        assert not active and report.get("primitive_observations"), report
+    else:
+        assert active and all(row["severity"] == "CRITICAL" for row in active), report
+
+
+def test_constructor_source_method_role_cli_retains_raw_and_live(tmp_path, capsys):
+    import json
+    from factoryline.cli import main
+    from factoryline.mission_control_status import security_scan_status
+
+    text = _OBJECT_SIGNING265.replace(
+        "        self._key = key\n    def check",
+        "        self.validate()\n        self._key = key\n"
+        "    def validate(self):\n        pass\n    def check",
+    )
+    _write(tmp_path, "test_signing.py", text)
+    _write(
+        tmp_path,
+        "live.py",
+        "PASSWORD = 'operational-credential-value'\ninstall_user(password=PASSWORD)\n",
+    )
+    exit_code = main(
+        [
+            "audit",
+            "security",
+            "--root",
+            str(tmp_path),
+            "--security-only",
+            "--defect-policy",
+            "source-role-v3",
+            "--json",
+        ]
+    )
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    report = json.loads(captured.out)
+    assert exit_code == report["defect_policy_decision"]["exit_code"]
+    assert exit_code in {1, 2} and not report["defect_policy_decision"]["clean"]
+    active = [
+        row for row in report["findings"] if row["code"] == "SECURITY_HARDCODED_SECRET"
+    ]
+    assert [(row["path"], row["severity"]) for row in active] == [
+        ("live.py", "CRITICAL")
+    ]
+    observations = [
+        row
+        for row in report["primitive_observations"]
+        if row["code"] == "SECURITY_HARDCODED_SECRET"
+    ]
+    assert len(observations) == 1 and observations[0]["path"] == "test_signing.py"
+    assert observations[0]["severity"] == "CRITICAL"
+    assert any(
+        row["raw_finding"]["path"] == "test_signing.py"
+        and row["raw_finding"]["severity"] == "CRITICAL"
+        for row in report["finding_tier_report"]["ledger"]
+    )
+    status = security_scan_status(tmp_path)
+    assert status["candidate_freshness"] == "CURRENT_SOURCE_HASHES_VERIFIED"
+    assert status["candidate_sha256"] == report["candidate_sha256"]
+    with (tmp_path / "test_signing.py").open("a", encoding="utf-8") as stream:
+        stream.write("\nGate.validate = send\n")
+    assert (
+        security_scan_status(tmp_path)["candidate_freshness"]
+        != "CURRENT_SOURCE_HASHES_VERIFIED"
+    )
+
+
 _REQUEST_SIGNING273 = """from slack_sdk.signature import SignatureVerifier
 from typing import Optional, Dict, Sequence, Union
 class Response:

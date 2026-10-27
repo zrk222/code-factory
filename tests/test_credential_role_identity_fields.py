@@ -258,6 +258,69 @@ def test_unknown_property_and_bound_method_keep_owner_attribution():
     )
 
 
+@pytest.mark.parametrize(
+    "variant",
+    [
+        "closed",
+        "invalid_mapping",
+        "missing_callee",
+        "unknown_callee",
+        "owner_escape",
+        "key_escape",
+        "shadow",
+    ],
+)
+def test_exact_constructor_method_resolution_preserves_effects(variant):
+    method_body = {
+        "unknown_callee": "opaque()",
+        "owner_escape": "send(self)",
+        "key_escape": "send(key)",
+    }.get(variant, "pass")
+    shadow = "self.check = None\n                " if variant == "shadow" else ""
+    path, tree, index = _index(f"""
+        class Owner:
+            def __init__(self, key):
+                {shadow}self.check(key)
+                self.secret = key
+            def check(self, key):
+                {method_body}
+    """)
+    constructor = _function(tree, "__init__")
+    method = _function(tree, "check")
+    if variant == "missing_callee":
+        method = ast.parse("def check(self, key): pass").body[0]
+    calls = []
+
+    def resolve(call, call_path):
+        calls.append(call)
+        if isinstance(call.func, ast.Attribute) and call.func.attr == "check":
+            mapping = {"self": call.func.value, "key": call.args[0]}
+            if variant == "invalid_mapping":
+                mapping.pop("key")
+            return ResolvedIdentityCall(method, call_path, mapping)
+        return None
+
+    result = summarize_identity_effect(
+        constructor,
+        path,
+        index,
+        {"self": "owner", "key": "candidate"},
+        resolve_call=resolve,
+        strict_calls=True,
+        role_view=True,
+    )
+    method_events = [event for event in result.role_events if event.relevant == "check"]
+    if variant == "closed":
+        assert len(calls) == 1
+        assert not result.unknowns
+        assert not method_events
+    elif variant in {"owner_escape", "key_escape"}:
+        assert ("owner" if variant == "owner_escape" else "candidate") in result.escapes
+        assert result.unknowns or any(event.uncertain for event in method_events)
+    else:
+        assert result.unknowns or any(event.uncertain for event in method_events)
+
+
 def test_legacy_summary_keeps_default_aggregate_and_role_view_is_opt_in():
     source = "def inspect(self, key): self.value = key; return self.value"
     legacy = _summarize(source, "inspect", {"self": "owner", "key": "candidate"})
