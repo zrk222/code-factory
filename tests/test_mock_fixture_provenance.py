@@ -4100,6 +4100,90 @@ def test_object_signing_constructor_scalar_context_native(tmp_path, variant, clo
 
 
 @pytest.mark.parametrize(
+    ("variant", "closed"),
+    [
+        ("default", True),
+        ("false", True),
+        ("true", False),
+        ("unknown", False),
+        ("rebound", False),
+        ("nested_rebound", False),
+        ("nested_key_escape", False),
+    ],
+)
+def test_object_signing_constructor_guard_native(tmp_path, variant, closed):
+    text = _OBJECT_SIGNING265.replace(
+        "    def __init__(self, key):\n        self._key = key",
+        "    def __init__(self, key, remote=False):\n"
+        "        if remote:\n            send(key)\n        self._key = key",
+    )
+    arguments = {"false": "False", "true": "True", "unknown": "unknown"}
+    if variant in arguments:
+        text = text.replace(
+            "Gate(self.signing_secret)",
+            f"Gate(self.signing_secret, {arguments[variant]})",
+        )
+    if variant == "rebound":
+        text = text.replace(
+            "        if remote:", "        remote = True\n        if remote:"
+        )
+    if variant == "nested_rebound":
+        text = text.replace(
+            "        if remote:",
+            "        def inner():\n            remote = True\n        if remote:",
+        )
+    if variant == "nested_key_escape":
+        text = text.replace(
+            "        if remote:",
+            "        def inner():\n            send(key)\n        if remote:",
+        )
+    _write(tmp_path, "test_signing.py", text)
+    report = security_scan(tmp_path, cache_enabled=False)
+    active = [
+        row for row in report["findings"] if row["code"] == "SECURITY_HARDCODED_SECRET"
+    ]
+    if closed:
+        assert not active and report.get("primitive_observations"), report
+    else:
+        assert active and all(row["severity"] == "CRITICAL" for row in active), report
+
+
+@pytest.mark.parametrize(
+    ("variant", "closed"),
+    [
+        ("default", True),
+        ("false", True),
+        ("alias", True),
+        ("true", False),
+        ("unknown", False),
+    ],
+)
+def test_object_signing_constructor_if_expression_native(tmp_path, variant, closed):
+    selected = "value" if variant == "alias" else "None"
+    prefix = "        value = None\n" if variant == "alias" else ""
+    text = _OBJECT_SIGNING265.replace(
+        "    def __init__(self, key):\n        self._key = key",
+        "    def __init__(self, key, remote=False):\n"
+        f"{prefix}        self._key = key\n"
+        f"        self.unused = send(key) if remote else {selected}",
+    )
+    if variant in {"false", "true", "unknown"}:
+        argument = {"false": "False", "true": "True", "unknown": "unknown"}[variant]
+        text = text.replace(
+            "Gate(self.signing_secret)", f"Gate(self.signing_secret, {argument})"
+        )
+    _write(tmp_path, "test_signing.py", text)
+    report = security_scan(tmp_path, cache_enabled=False)
+    active = [
+        row for row in report["findings"] if row["code"] == "SECURITY_HARDCODED_SECRET"
+    ]
+    if closed:
+        assert not active and report.get("primitive_observations"), report
+    else:
+        assert active and all(row["severity"] == "CRITICAL" for row in active), report
+
+
+@pytest.mark.parametrize(
     "variant",
     [
         "closed",
@@ -5654,6 +5738,71 @@ def test_object_signing_constructor_scalar_context_public_cli_receipt(tmp_path, 
     )
     assert resealed["finding_tier_report"] == report["finding_tier_report"]
     assert resealed["defect_policy_decision"] == report["defect_policy_decision"]
+    with (tmp_path / "test_signing.py").open("a", encoding="utf-8") as stream:
+        stream.write("\nSignatureVerifier.generate_signature = send\n")
+    assert (
+        security_scan_status(tmp_path)["candidate_freshness"]
+        != "CURRENT_SOURCE_HASHES_VERIFIED"
+    )
+
+
+def test_object_signing_constructor_guard_public_cli_receipt(tmp_path, capsys):
+    import json
+    from factoryline.cli import main
+    from factoryline.mission_control_status import security_scan_status
+    from factoryline import review_audits as audit
+
+    text = _OBJECT_SIGNING265.replace(
+        "    def __init__(self, key):\n        self._key = key",
+        "    def __init__(self, key, remote=False, mode='private-scalar-marker'):\n"
+        "        if remote:\n            send(key)\n        self._key = key\n        self.mode = mode",
+    )
+    _write(tmp_path, "test_signing.py", text)
+    _write(
+        tmp_path,
+        "live.py",
+        "PASSWORD = 'operational-credential-value'\ninstall_user(password=PASSWORD)\n",
+    )
+    exit_code = main(
+        [
+            "audit",
+            "security",
+            "--root",
+            str(tmp_path),
+            "--security-only",
+            "--defect-policy",
+            "source-role-v3",
+            "--json",
+        ]
+    )
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    report = json.loads(captured.out)
+    assert "class-owned-signing-material" not in captured.out
+    assert "private-scalar-marker" not in captured.out
+    assert exit_code == report["defect_policy_decision"]["exit_code"]
+    active = [
+        row for row in report["findings"] if row["code"] == "SECURITY_HARDCODED_SECRET"
+    ]
+    assert [(row["path"], row["severity"]) for row in active] == [
+        ("live.py", "CRITICAL")
+    ]
+    assert any(
+        row["path"] == "test_signing.py" for row in report["primitive_observations"]
+    )
+    status = security_scan_status(tmp_path)
+    assert status["candidate_freshness"] == "CURRENT_SOURCE_HASHES_VERIFIED"
+    assert status["candidate_sha256"] == report["candidate_sha256"]
+    current = {
+        row["path"]: (tmp_path / row["path"]).read_bytes() for row in report["sources"]
+    }
+    resealed = audit._seal_security_scan(
+        {**json.loads(json.dumps(report)), "_primitive_source_bytes": current}
+    )
+    assert resealed["finding_tier_report"] == report["finding_tier_report"]
+    assert resealed["defect_policy_decision"] == report["defect_policy_decision"]
+    assert "class-owned-signing-material" not in json.dumps(resealed)
+    assert "private-scalar-marker" not in json.dumps(resealed)
     with (tmp_path / "test_signing.py").open("a", encoding="utf-8") as stream:
         stream.write("\nSignatureVerifier.generate_signature = send\n")
     assert (

@@ -1035,3 +1035,170 @@ def test_captured_parameter_literals_preserve_real_key_escape(tmp_path):
     )
     assert summary.status == "UNKNOWN"
     assert "candidate" in summary.escapes
+
+
+@pytest.mark.parametrize("form", ["statement", "expression"])
+@pytest.mark.parametrize(
+    ("flag", "closed"), [(False, True), (True, False), (None, False)]
+)
+def test_captured_scalar_parameter_selects_only_proven_branch(
+    tmp_path, form, flag, closed
+):
+    from factoryline.credential_role_identity_effects import SourceFieldLiteral
+
+    body = (
+        "if remote:\n        send(key)"
+        if form == "statement"
+        else "send(key) if remote else None"
+    )
+    raw = f"def apply(key, remote=False):\n    {body}\n".encode()
+    path = tmp_path / "guard.py"
+    tree = ast.parse(raw)
+    digest = hashlib.sha256(raw).hexdigest()
+    tree._oracle_source_sha256 = digest
+    index = SourceSnapshotIndex(tmp_path, {path: tree}, {path: raw}, {path: digest})
+    function = tree.body[0]
+    literal = function.args.defaults[0]
+    if flag is True:
+        raw = raw.replace(b"remote=False", b"remote=True")
+        tree = ast.parse(raw)
+        digest = hashlib.sha256(raw).hexdigest()
+        tree._oracle_source_sha256 = digest
+        index = SourceSnapshotIndex(tmp_path, {path: tree}, {path: raw}, {path: digest})
+        function = tree.body[0]
+        literal = function.args.defaults[0]
+    roots = {"key": "candidate"}
+    if flag is not None:
+        roots["remote"] = SourceFieldLiteral(path, literal)
+    summary = summarize_identity_effect(
+        function, path, index, roots, strict_calls=True, role_view=True
+    )
+    if closed:
+        assert "candidate" not in summary.escapes and not summary.unknowns
+    else:
+        assert "candidate" in summary.escapes
+
+
+def test_scalar_identity_preserves_only_exact_immutable_values():
+    from factoryline import credential_role_identity_effects as effects
+
+    flag = effects.identity_value(ast.Constant(False), {})
+    traced = effects.identity_value(ast.Name(id="flag", ctx=ast.Load()), {"flag": flag})
+    assert traced._exact_scalar == (False,)
+    assert effects.join_identity_values([flag, flag])._exact_scalar == (False,)
+    integer = effects.identity_value(ast.Constant(0), {})
+    assert not effects.join_identity_values([flag, integer])._exact_scalar
+    unknown = effects._Value(unknown=True, _exact_scalar=(False,))
+    assert not effects.join_identity_values([unknown, unknown])._exact_scalar
+    assert not effects.identity_value(
+        ast.Name(id="flag", ctx=ast.Load()), {"flag": unknown}
+    )._exact_scalar
+    secret = effects.identity_value(ast.Constant("private-scalar-marker"), {})
+    assert "private-scalar-marker" not in repr(secret)
+
+
+@pytest.mark.parametrize(
+    "binding",
+    [
+        "import external as remote",
+        "try:\n        risky()\n    except Exception as remote:\n        pass",
+    ],
+)
+def test_scalar_guard_declines_non_name_rebindings(tmp_path, binding):
+    from factoryline.credential_role_identity_effects import SourceFieldLiteral
+
+    raw = f"def apply(key, remote=False):\n    {binding}\n    if remote:\n        send(key)\n".encode()
+    path = tmp_path / "guard.py"
+    tree = ast.parse(raw)
+    digest = hashlib.sha256(raw).hexdigest()
+    tree._oracle_source_sha256 = digest
+    index = SourceSnapshotIndex(tmp_path, {path: tree}, {path: raw}, {path: digest})
+    function = tree.body[0]
+    summary = summarize_identity_effect(
+        function,
+        path,
+        index,
+        {
+            "key": "candidate",
+            "remote": SourceFieldLiteral(path, function.args.defaults[0]),
+        },
+        strict_calls=True,
+        role_view=True,
+    )
+    assert "candidate" in summary.escapes
+
+
+def test_forged_guard_scalar_never_executes_user_methods(tmp_path):
+    from factoryline import credential_role_identity_effects as effects
+
+    class Trap:
+        def __bool__(self):
+            raise AssertionError("untrusted truth conversion")
+
+        def __eq__(self, other):
+            raise AssertionError("untrusted comparison")
+
+    raw = b"def apply(key, remote):\n    if remote:\n        send(key)\n"
+    path = tmp_path / "guard.py"
+    tree = ast.parse(raw)
+    digest = hashlib.sha256(raw).hexdigest()
+    tree._oracle_source_sha256 = digest
+    index = SourceSnapshotIndex(tmp_path, {path: tree}, {path: raw}, {path: digest})
+    summary = summarize_identity_effect(
+        tree.body[0],
+        path,
+        index,
+        {"key": "candidate", "remote": effects._Value(_exact_scalar=(Trap(),))},
+        strict_calls=True,
+        role_view=True,
+    )
+    assert "candidate" in summary.escapes
+
+
+def test_scalar_guard_rebinding_walk_has_fixed_bound(monkeypatch):
+    from factoryline import credential_role_identity_effects as effects
+
+    function = ast.parse("def apply(remote=False):\n" + "    pass\n" * 900).body[0]
+    original = ast.walk
+    visits = []
+
+    def observed(node):
+        for child in original(node):
+            if node is function:
+                visits.append(child)
+                assert len(visits) <= 513
+            yield child
+
+    monkeypatch.setattr(ast, "walk", observed)
+    value = effects.identity_value(function.args.defaults[0], {})
+    assert effects._initial_scalar_guards(function, {"remote": value}) == {}
+    assert len(visits) == 513
+
+
+@pytest.mark.parametrize("replacement_kind", ["binding", "code"])
+def test_scalar_guard_binding_helper_invalidates_cached_role_evidence(
+    monkeypatch, replacement_kind
+):
+    from factoryline import credential_identity_audit as audit
+    from factoryline import credential_role_identity_effects as effects
+
+    path, tree, index = _application_role_index(
+        "def view():\n    credential = 'ordinary text'\n    return credential\n"
+    )
+    assignment = next(node for node in ast.walk(tree) if isinstance(node, ast.Assign))
+    args = (index, path, assignment.value, assignment, "credential")
+    audit.application_plaintext_effect_evidence(*args)
+    assert len(index["profiles"]) == 1
+    epoch = audit._app_source_role_epoch(index)
+    original = effects._scope_bindings._binds
+
+    def replacement(*args, **kwargs):
+        return False
+
+    if replacement_kind == "binding":
+        monkeypatch.setattr(effects._scope_bindings, "_binds", replacement)
+    else:
+        monkeypatch.setattr(original, "__code__", replacement.__code__)
+    assert audit._app_source_role_epoch(index) != epoch
+    audit.application_plaintext_effect_evidence(*args)
+    assert len(index["profiles"]) == 2

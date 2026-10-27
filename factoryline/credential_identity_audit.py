@@ -552,11 +552,6 @@ def _app_signing_constructor_transfer(index, chain, caller_path, caller, call, a
     formals = [name for name, value in bound.items() if value is actual]
     if len(formals) != 1:
         return None
-    transfer = _app_signing_parameter_field(
-        index, constructor_path, constructor, formals[0]
-    )
-    if transfer is None:
-        return None
     constructor_args = [*constructor.args.posonlyargs, *constructor.args.args]
     if not constructor_args:
         return None
@@ -571,6 +566,18 @@ def _app_signing_constructor_transfer(index, chain, caller_path, caller, call, a
             if name not in roots and isinstance(value, ast.Constant)
         }
     )
+    parameters = _legacy._captured_parameter_values(roots, source)
+    if parameters is None:
+        return None
+    transfer = _app_signing_parameter_field(
+        index,
+        constructor_path,
+        constructor,
+        formals[0],
+        _legacy._initial_scalar_guards(constructor, parameters),
+    )
+    if transfer is None:
+        return None
     inert_nodes, metadata_fields = _app_signing_metadata_assignments(
         index, constructor_path, constructor, receiver
     )
@@ -1134,7 +1141,7 @@ def _app_annotation_reference_only(node, parents, aliases, audit):
     return False
 
 
-def _app_signing_parameter_field(index, path, constructor, formal):
+def _app_signing_parameter_field(index, path, constructor, formal, known_scalars=None):
     """Require the non-null actual to enter one exact instance field."""
     parents = index["source"].parents[path]
     args = [*constructor.args.posonlyargs, *constructor.args.args]
@@ -1142,7 +1149,21 @@ def _app_signing_parameter_field(index, path, constructor, formal):
         return None
     receiver = args[0].arg
     transfer = None
-    for node in ast.walk(constructor):
+    nodes = _legacy.own_function_nodes(
+        constructor, path, index["source"], known_scalars
+    )
+    # Retain the prior rejection of nested captures. Only outer lexical guards
+    # use constructor parameter facts; nested scopes have their own bindings.
+    nodes += [
+        child
+        for scope in nodes
+        if scope is not constructor
+        and isinstance(
+            scope, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)
+        )
+        for child in ast.walk(scope)
+    ]
+    for node in nodes:
         if not isinstance(node, ast.Name) or node.id != formal:
             continue
         parent = parents.get(id(node))
