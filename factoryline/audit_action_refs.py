@@ -411,6 +411,7 @@ def _security_scan_action_summary(state: str) -> str:
 def _application_configuration_hashes(class_profiles):
     """Select only bounded configuration digests from explicit class profiles."""
     from .import_context import application_configuration_names
+
     config_hashes = {}
     for evidence in class_profiles:
         configured = evidence.get("configuration_sha256", {})
@@ -436,7 +437,8 @@ def _captured_application_source_bytes(
         finding.get("path")
         for finding in findings
         if finding.get("facts", {}).get("disposition")
-        in program_proofs | {
+        in program_proofs
+        | {
             "TEST_OWNED_APPLICATION_CREDENTIAL",
             "PROVEN_CLOSED_OPERATION_COMMAND_SYNTAX",
             "PROVEN_CLOSED_LITERAL_PICKLE_BYTES",
@@ -551,7 +553,9 @@ def _preserve_security_scan_incomplete_state(audit, core, prior_state, prior_sum
         )
 
 
-def _apply_security_scan_policy(audit, core, captured, prior_tier_report, prior_state, producer_source_model=None):
+def _apply_security_scan_policy(
+    audit, core, captured, prior_tier_report, prior_state, producer_source_model=None
+):
     """Recompute only the explicitly selected defect policy after integrity runs."""
     if "selected_defect_policy" in core:
         from . import primitive_observation_binding as primitive
@@ -568,7 +572,9 @@ def _apply_security_scan_policy(audit, core, captured, prior_tier_report, prior_
                 prior_source_state=prior_state,
             )
         elif policy in {"source-role-v1", "source-role-v2", "source-role-v3"}:
-            primitive.apply_pickle_source_role_policy(core, captured, source_model=producer_source_model)
+            primitive.apply_pickle_source_role_policy(
+                core, captured, source_model=producer_source_model
+            )
     else:
         core.pop("defect_policy_decision", None)
 
@@ -599,7 +605,9 @@ def _finish_security_scan_seal(audit, core, captured):
     return core
 
 
-def seal_security_scan(audit, core: dict[str, Any], *, producer_source_model=None) -> dict[str, Any]:
+def seal_security_scan(
+    audit, core: dict[str, Any], *, producer_source_model=None
+) -> dict[str, Any]:
     """Revalidate local captures on every seal; never serialize their source bytes."""
     prior_state, prior_summary = core.get("state"), core.get("action_summary")
     prior_tier_report = core.get("finding_tier_report")
@@ -609,7 +617,9 @@ def seal_security_scan(audit, core: dict[str, Any], *, producer_source_model=Non
     finally:
         core.pop("_primitive_source_bytes", None)
     _preserve_security_scan_incomplete_state(audit, core, prior_state, prior_summary)
-    _apply_security_scan_policy(audit, core, captured, prior_tier_report, prior_state, producer_source_model)
+    _apply_security_scan_policy(
+        audit, core, captured, prior_tier_report, prior_state, producer_source_model
+    )
     return _finish_security_scan_seal(audit, core, captured)
 
 

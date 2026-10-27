@@ -3793,6 +3793,8 @@ def _db_load_parser():
 
 
 def _db_code_identity(inspect, digest_fn):
+    from .credential_role_constructor_provider import _db_python_model
+
     helpers = (
         _db_result,
         _db_inventory,
@@ -3884,8 +3886,7 @@ def _db_code_identity(inspect, digest_fn):
     from .credential_role_constructor_provider import flask_model_identity_functions
 
     source = "".join(
-        inspect.getsource(fn)
-        for fn in (*helpers, *flask_model_identity_functions())
+        inspect.getsource(fn) for fn in (*helpers, *flask_model_identity_functions())
     )
     return digest_fn(
         (inspect.getsource(database_structure) + source).encode()
@@ -4063,6 +4064,7 @@ def _db_python_update_module_reexports(module, tree, shadowed, exports, unique):
 
 def _db_python_export_result(paths, unique):
     from .credential_role_constructor_provider import database_project_exports
+
     return database_project_exports(paths, unique, _db_python_import_module)
 
 
@@ -4072,6 +4074,7 @@ def _db_python_project_exports(inputs, *, modules=None, paths=None):
     unique = {name: values[0] for name, values in modules.items() if len(values) == 1}
     _db_python_local_reexports(unique)
     from .credential_role_constructor_provider import bind_flask_model_exports
+
     bind_flask_model_exports(unique)
     return _db_python_export_result(paths, unique)
 
@@ -4081,7 +4084,11 @@ def _db_declaration_facts(table):
     return {
         "columns": sorted(
             (
-                {key: value for key, value in column.items() if key not in {"source", "field_identity"}}
+                {
+                    key: value
+                    for key, value in column.items()
+                    if key not in {"source", "field_identity"}
+                }
                 for column in table["columns"]
             ),
             key=lambda row: row["name"],
@@ -4296,6 +4303,7 @@ def _db_read_python(
         name for name in project_exports.get("bases", ()) if name not in shadowed
     }
     from .credential_role_constructor_provider import _db_python_unmutated_model_bases
+
     model_bases = _db_python_unmutated_model_bases(
         tree, project_exports.get("model_bases", {}), shadowed
     )
@@ -4335,15 +4343,38 @@ def _db_python_has_unimplemented_migration(tree):
 
 
 def _db_python_class_declaration(
-    node, path, digest, dialect, exp, symbols, shadowed, bases, model_bases, tables, gaps
+    node,
+    path,
+    digest,
+    dialect,
+    exp,
+    symbols,
+    shadowed,
+    bases,
+    model_bases,
+    tables,
+    gaps,
 ):
     """Project or mark one SQLAlchemy ORM class declaration."""
     name = _db_python_literal(node, "__tablename__")
-    from .credential_role_constructor_provider import _db_python_has_model_base
+    from .credential_role_constructor_provider import (
+        _db_python_has_model_base,
+        _db_python_model,
+    )
+
     inherited = _db_python_has_model_base(node, bases, model_bases)
     if name is not None and inherited:
         _db_python_model(
-            node, name, path, digest, symbols, shadowed, dialect, exp, tables, gaps,
+            node,
+            name,
+            path,
+            digest,
+            symbols,
+            shadowed,
+            dialect,
+            exp,
+            tables,
+            gaps,
             model_bases=model_bases,
         )
     elif name is not None or inherited:
@@ -4351,15 +4382,34 @@ def _db_python_class_declaration(
 
 
 def _db_python_declarations(
-    tree, path, digest, dialect, exp, symbols, shadowed, bases, model_bases, metadatas,
-    tables, gaps
+    tree,
+    path,
+    digest,
+    dialect,
+    exp,
+    symbols,
+    shadowed,
+    bases,
+    model_bases,
+    metadatas,
+    tables,
+    gaps,
 ):
     """Project ORM and Core declarations from one retained Python module."""
     for node in tree.body:
         if isinstance(node, ast.ClassDef):
             _db_python_class_declaration(
-                node, path, digest, dialect, exp, symbols, shadowed, bases, model_bases,
-                tables, gaps
+                node,
+                path,
+                digest,
+                dialect,
+                exp,
+                symbols,
+                shadowed,
+                bases,
+                model_bases,
+                tables,
+                gaps,
             )
         elif (
             isinstance(node, (ast.Assign, ast.AnnAssign))
@@ -4633,74 +4683,6 @@ def _db_python_column(value, name, symbols, shadowed, core=False):
     }
 
 
-def _db_python_model(
-    node, table_name, path, digest, symbols, shadowed, dialect, exp, tables, gaps,
-    *, model_bases,
-):
-    from .credential_role_constructor_provider import _db_python_model_assumptions
-
-    if _db_python_duplicate_table(tables, table_name, path):
-        gaps.append("duplicate_orm_table_declaration:" + table_name)
-        return
-    model_identity = {"path": path, "sha256": digest, "line": node.lineno, "class": node.name}
-    table = tables.setdefault(table_name, _db_empty_table(table_name))
-    table.setdefault("models", []).append(
-        {
-            "class": node.name,
-            "source": {
-                "path": path,
-                "sha256": digest,
-                "line": node.lineno,
-                "kind": "sqlalchemy_declarative",
-            },
-            "identity": model_identity,
-            "api_contract_assumptions": _db_python_model_assumptions(node, model_bases),
-        }
-    )
-    for child in node.body:
-        if (
-            isinstance(child, ast.Assign)
-            and len(child.targets) == 1
-            and isinstance(child.targets[0], ast.Name)
-        ):
-            if child.targets[0].id == "__table_args__":
-                gaps.append("unsupported_orm_table_args:" + path)
-                continue
-            column = _db_python_column(
-                child.value, child.targets[0].id, symbols, shadowed
-            )
-            if column:
-                column["field_identity"] = {"model": model_identity,
-                    "attribute": child.targets[0].id, "column": column["name"]}
-                _db_merge_python_column(table, column, path, digest, child.lineno)
-            elif isinstance(child.value, ast.Call) and child.targets[0].id not in {
-                "__tablename__",
-                "__table_args__",
-            }:
-                gaps.append("unsupported_orm_column:" + path)
-        elif isinstance(child, ast.AnnAssign) and isinstance(child.target, ast.Name):
-            column = _db_python_annotated(
-                child.annotation, child.value, child.target.id, symbols, shadowed
-            )
-            if column:
-                column["field_identity"] = {"model": model_identity,
-                    "attribute": child.target.id, "column": column["name"]}
-                _db_merge_python_column(table, column, path, digest, child.lineno)
-            elif child.value or _db_python_is_mapped_annotation(
-                child.annotation, symbols, shadowed
-            ):
-                gaps.append("unsupported_orm_annotation:" + path)
-    table["columns"].sort(key=lambda column: column["name"])
-    table["primary_key"] = sorted(set(table["primary_key"]))
-    table["unique"] = sorted(
-        {
-            json.dumps(item, separators=(",", ":")): item for item in table["unique"]
-        }.values(),
-        key=lambda item: json.dumps(item),
-    )
-    table["foreign_keys"].sort(key=lambda item: json.dumps(item, sort_keys=True))
-
-
 def _db_python_annotated(annotation, value, name, symbols, shadowed):
     base = annotation
     metadata = None
@@ -4782,7 +4764,11 @@ def _db_merge_python_column(table, column, path, digest, line):
                 "line": line,
                 "kind": "sqlalchemy_column",
             },
-            **({"field_identity": column["field_identity"]} if column.get("field_identity") else {}),
+            **(
+                {"field_identity": column["field_identity"]}
+                if column.get("field_identity")
+                else {}
+            ),
         }
     )
     if column["primary_key"]:

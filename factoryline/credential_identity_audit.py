@@ -40,8 +40,10 @@ def _app_digest_provider_binding(index, path, owner, call):
         return None
     canonical = fixture._app_expression_name(index, path, call.func, owner)
     if canonical is None or any(
-        isinstance(node, ast.ImportFrom) and any(alias.name == "*" for alias in node.names)
-        for selected_path in {path, target} for node in ast.walk(index["modules"][selected_path])
+        isinstance(node, ast.ImportFrom)
+        and any(alias.name == "*" for alias in node.names)
+        for selected_path in {path, target}
+        for node in ast.walk(index["modules"][selected_path])
     ):
         return None
     return target, helper
@@ -60,47 +62,90 @@ def _app_digest_call(index, path, owner, call, actual, secret):
     result = _app_digest_wrapper_return(helper, values)
     if result is None:
         return None
-    if not (isinstance(result, ast.Call) and not result.args and not result.keywords
-            and isinstance(result.func, ast.Attribute) and result.func.attr in {"digest", "hexdigest"}):
+    if not (
+        isinstance(result, ast.Call)
+        and not result.args
+        and not result.keywords
+        and isinstance(result.func, ast.Attribute)
+        and result.func.attr in {"digest", "hexdigest"}
+    ):
         return None
     constructor = result.func.value
-    if not isinstance(constructor, ast.Call) or constructor.keywords or len(constructor.args) != 3:
+    if (
+        not isinstance(constructor, ast.Call)
+        or constructor.keywords
+        or len(constructor.args) != 3
+    ):
         return None
-    if fixture._app_expression_name(index, target, constructor.func, helper) != "hmac.new":
+    if (
+        fixture._app_expression_name(index, target, constructor.func, helper)
+        != "hmac.new"
+    ):
         return None
     key, message, algorithm = constructor.args
-    if (fixture._app_expression_name(index, target, algorithm, helper) != "hashlib.sha256"
-            or not _app_digest_bytes(key, values, {secret})):
+    if fixture._app_expression_name(
+        index, target, algorithm, helper
+    ) != "hashlib.sha256" or not _app_digest_bytes(key, values, {secret}):
         return None
     if not _app_digest_bytes(message, values, set()):
         return None
     if not _app_digest_provider_closed(index, path, owner, call, target, helper):
         return None
-    return _app_credential_source_row(index, target, helper, "captured_pure_digest_wrapper")
+    return _app_credential_source_row(
+        index, target, helper, "captured_pure_digest_wrapper"
+    )
 
 
 def _app_digest_provider_closed(index, path, owner, call, target, helper):
     from . import mock_fixture_provenance as fixture, review_audits as audit
 
     canonical = fixture._app_expression_name(index, path, call.func, owner)
-    key = ("digest-provider-closed", canonical, target, id(helper), _app_source_role_epoch(index))
+    key = (
+        "digest-provider-closed",
+        canonical,
+        target,
+        id(helper),
+        _app_source_role_epoch(index),
+    )
     cache = index.setdefault("profiles", {})
     if key in cache:
         return cache[key]
     provider = _legacy._class_binding._captured_terminal_provider_mutation
-    if any(provider(index["source"], audit, name) for name in (canonical, fixture._django_name(index, target) + "." + helper.name, "hmac.new")):
+    if any(
+        provider(index["source"], audit, name)
+        for name in (
+            canonical,
+            fixture._django_name(index, target) + "." + helper.name,
+            "hmac.new",
+        )
+    ):
         return False
-    if provider(index["source"], audit, "hashlib.sha256", readonly_argument=_app_digest_algorithm_argument):
+    if provider(
+        index["source"],
+        audit,
+        "hashlib.sha256",
+        readonly_argument=_app_digest_algorithm_argument,
+    ):
         return False
-    if any(fixture._django_provider_root_shadowed(index["module_paths"], name) for name in ("hmac", "hashlib")):
+    if any(
+        fixture._django_provider_root_shadowed(index["module_paths"], name)
+        for name in ("hmac", "hashlib")
+    ):
         return False
     cache[key] = True
     return True
 
 
 def _app_digest_bytes(node, values, roots):
-    value = _legacy.identity_value(node, values, strict_calls=True, material_values=True)
-    return not value.unknown and not value.content_unknown and value.scalar_kind == "bytes" and value.roots == roots
+    value = _legacy.identity_value(
+        node, values, strict_calls=True, material_values=True
+    )
+    return (
+        not value.unknown
+        and not value.content_unknown
+        and value.scalar_kind == "bytes"
+        and value.roots == roots
+    )
 
 
 def _app_digest_bound_values(call, helper, actual, secret, owner, fixture):
@@ -117,8 +162,14 @@ def _app_digest_bound_values(call, helper, actual, secret, owner, fixture):
         else:
             if isinstance(expression, ast.Name):
                 assignment = fixture._app_local_assignment(owner, expression.id)
-                expression = assignment.value if assignment is not None and assignment.lineno < call.lineno else None
-            value = _legacy.identity_value(expression, {}, strict_calls=True, material_values=True)
+                expression = (
+                    assignment.value
+                    if assignment is not None and assignment.lineno < call.lineno
+                    else None
+                )
+            value = _legacy.identity_value(
+                expression, {}, strict_calls=True, material_values=True
+            )
             if value.unknown or value.content_unknown or not value.scalar_kind:
                 return None
             values[name] = value
@@ -126,13 +177,31 @@ def _app_digest_bound_values(call, helper, actual, secret, owner, fixture):
 
 
 def _app_digest_wrapper_return(helper, values):
-    statements = [n for n in helper.body if not (isinstance(n, ast.Expr) and isinstance(n.value, ast.Constant) and isinstance(n.value.value, str))]
-    if not statements or len(statements) > 8 or not isinstance(statements[-1], ast.Return):
+    statements = [
+        n
+        for n in helper.body
+        if not (
+            isinstance(n, ast.Expr)
+            and isinstance(n.value, ast.Constant)
+            and isinstance(n.value.value, str)
+        )
+    ]
+    if (
+        not statements
+        or len(statements) > 8
+        or not isinstance(statements[-1], ast.Return)
+    ):
         return None
     for statement in statements[:-1]:
-        if not isinstance(statement, ast.Assign) or len(statement.targets) != 1 or not isinstance(statement.targets[0], ast.Name):
+        if (
+            not isinstance(statement, ast.Assign)
+            or len(statement.targets) != 1
+            or not isinstance(statement.targets[0], ast.Name)
+        ):
             return None
-        value = _legacy.identity_value(statement.value, values, strict_calls=True, material_values=True)
+        value = _legacy.identity_value(
+            statement.value, values, strict_calls=True, material_values=True
+        )
         if value.unknown or value.content_unknown or not value.scalar_kind:
             return None
         values[statement.targets[0].id] = value
@@ -146,9 +215,14 @@ def _app_digest_algorithm_argument(node, aliases, parents):
     call = parents.get(id(node))
     if not _app_digest_lexical_read(call, node, parents):
         return False
-    return (isinstance(call, ast.Call) and not call.keywords and len(call.args) == 3
-        and call.args[2] is node and audit._resolved_ast_name(call.func, aliases) == "hmac.new"
-        and audit._resolved_ast_name(node, aliases) == "hashlib.sha256")
+    return (
+        isinstance(call, ast.Call)
+        and not call.keywords
+        and len(call.args) == 3
+        and call.args[2] is node
+        and audit._resolved_ast_name(call.func, aliases) == "hmac.new"
+        and audit._resolved_ast_name(node, aliases) == "hashlib.sha256"
+    )
 
 
 def _app_digest_lexical_read(call, node, parents):
@@ -160,7 +234,10 @@ def _app_digest_lexical_read(call, node, parents):
             roots.append(expression.id)
     scope = parents.get(id(node))
     while scope is not None and not isinstance(scope, ast.Module):
-        if isinstance(scope, (ast.Lambda, ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)):
+        if isinstance(
+            scope,
+            (ast.Lambda, ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp),
+        ):
             return False
         if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             if any(_legacy.binding_occurrences(scope.body, root) for root in roots):
@@ -177,23 +254,49 @@ def _app_digest_test_owner(index, path, function, parents, fixture):
     cls = parents.get(id(function))
     if not isinstance(cls, ast.ClassDef):
         return None
-    chain = fixture._django_class_chain(index, path, cls, "django.test.TestCase") or fixture._django_class_chain(index, path, cls, "unittest.TestCase")
+    chain = fixture._django_class_chain(
+        index, path, cls, "django.test.TestCase"
+    ) or fixture._django_class_chain(index, path, cls, "unittest.TestCase")
     if not chain or not function.args.args:
         return None
     if not _app_digest_receiver_closed(index, chain):
         return None
     receiver = function.args.args[0].arg
-    assertions = {"assertEqual", "assertNotEqual", "assertTrue", "assertFalse", "assertIsNone", "assertIsNotNone"}
-    if any(_legacy.binding_occurrences(owner.body, name) for _, _, owner in chain for name in assertions | {"__getattribute__", "__getattr__"}):
+    assertions = {
+        "assertEqual",
+        "assertNotEqual",
+        "assertTrue",
+        "assertFalse",
+        "assertIsNone",
+        "assertIsNotNone",
+    }
+    if any(
+        _legacy.binding_occurrences(owner.body, name)
+        for _, _, owner in chain
+        for name in assertions | {"__getattribute__", "__getattr__"}
+    ):
         return None
     from . import review_audits as audit
-    if any(_legacy._class_binding._captured_terminal_provider_mutation(index["source"], audit, name,
-                readonly_argument=lambda node, aliases, parents: _app_digest_unrelated_provider_argument(node, aliases, parents, name))
-            for name in ("unittest.TestCase", "django.test.TestCase")):
+
+    if any(
+        _legacy._class_binding._captured_terminal_provider_mutation(
+            index["source"],
+            audit,
+            name,
+            readonly_argument=lambda node,
+            aliases,
+            parents: _app_digest_unrelated_provider_argument(
+                node, aliases, parents, name
+            ),
+        )
+        for name in ("unittest.TestCase", "django.test.TestCase")
+    ):
         return None
     if _legacy.binding_occurrences(function.body, receiver):
         return None
-    if any(not _app_signing_class_stable(index, (path, cls), name) for name in assertions):
+    if any(
+        not _app_signing_class_stable(index, (path, cls), name) for name in assertions
+    ):
         return None
     return receiver, assertions
 
@@ -203,14 +306,20 @@ def _app_digest_unrelated_provider_argument(node, aliases, parents, canonical):
     from . import review_audits as audit
 
     selected = node
-    while isinstance((parent := parents.get(id(selected))), ast.Attribute) and parent.value is selected:
+    while (
+        isinstance((parent := parents.get(id(selected))), ast.Attribute)
+        and parent.value is selected
+    ):
         if parent.attr.startswith("__"):
             return False
         selected = parent
     resolved = audit._resolved_ast_name(selected, aliases)
-    return (isinstance(resolved, str) and resolved.partition(".")[0] == canonical.partition(".")[0]
+    return (
+        isinstance(resolved, str)
+        and resolved.partition(".")[0] == canonical.partition(".")[0]
         and not _legacy._class_binding._terminal_provider_related(resolved, canonical)
-        and _app_digest_lexical_read(parents.get(id(node)), node, parents))
+        and _app_digest_lexical_read(parents.get(id(node)), node, parents)
+    )
 
 
 def _app_digest_receiver_closed(index, chain):
@@ -235,7 +344,11 @@ def _app_digest_receiver_closed(index, chain):
 
 def _app_digest_receiver_reads_closed(method, aliases, parents):
     for node in ast.walk(method):
-        if not isinstance(node, ast.Name) or node.id not in aliases or not isinstance(node.ctx, ast.Load):
+        if (
+            not isinstance(node, ast.Name)
+            or node.id not in aliases
+            or not isinstance(node.ctx, ast.Load)
+        ):
             continue
         nested = _legacy._enclosing_function(node, parents)
         if nested is not method and node.id in _legacy._argument_names(nested):
@@ -256,12 +369,20 @@ def _app_digest_receiver_aliases(method, receiver, parents):
     for _ in range(8):
         previous = set(aliases)
         for node in ast.walk(method):
-            if not isinstance(node, ast.Assign) or not isinstance(node.value, ast.Name) or node.value.id not in aliases:
+            if (
+                not isinstance(node, ast.Assign)
+                or not isinstance(node.value, ast.Name)
+                or node.value.id not in aliases
+            ):
                 continue
             if len(node.targets) != 1 or not isinstance(node.targets[0], ast.Name):
                 return None
             target = node.targets[0]
-            if _legacy._enclosing_function(node, parents) is not method or _legacy.binding_occurrences(method.body, target.id) != [target]:
+            if _legacy._enclosing_function(
+                node, parents
+            ) is not method or _legacy.binding_occurrences(method.body, target.id) != [
+                target
+            ]:
                 return None
             aliases.add(target.id)
         if aliases == previous:
@@ -281,7 +402,10 @@ def _app_digest_operation_witnesses(index, path, owner, operations, witnesses, p
         closure = _app_digest_result_closure(owner, call, parents, receiver, assertions)
         if closure is None:
             return None
-        rows.extend(_app_credential_source_row(index, path, node, "test_digest_oracle") for node in closure["sinks"])
+        rows.extend(
+            _app_credential_source_row(index, path, node, "test_digest_oracle")
+            for node in closure["sinks"]
+        )
     return rows
 
 
@@ -290,15 +414,26 @@ def _app_digest_result_closure(function, call, parents, receiver, assertions):
 
     def oracle(scope, value):
         parent = parents.get(id(value))
-        if (isinstance(parent, ast.Call) and value in parent.args and not parent.keywords
-                and isinstance(parent.func, ast.Attribute) and parent.func.attr in assertions
-                and isinstance(parent.func.value, ast.Name) and parent.func.value.id == receiver):
+        if (
+            isinstance(parent, ast.Call)
+            and value in parent.args
+            and not parent.keywords
+            and isinstance(parent.func, ast.Attribute)
+            and parent.func.attr in assertions
+            and isinstance(parent.func.value, ast.Name)
+            and parent.func.value.id == receiver
+        ):
             return parent
         return None
-    return captured_value_use_closure(function, call, parents,
-        lambda node: _legacy._enclosing_function(node, parents), lambda scope: (), oracle)
 
-
+    return captured_value_use_closure(
+        function,
+        call,
+        parents,
+        lambda node: _legacy._enclosing_function(node, parents),
+        lambda scope: (),
+        oracle,
+    )
 
 
 def _app_object_signing_authority(index, path, assignment, secret):
@@ -2725,7 +2860,9 @@ def _app_signing_authority(index, path, assignment, secret):
     if not loads:
         return None
     digest = any(row.get("role") == "captured_pure_digest_wrapper" for row in witnesses)
-    if digest and fixture._app_known_credential_format(getattr(assignment.value, "value", "")):
+    if digest and fixture._app_known_credential_format(
+        getattr(assignment.value, "value", "")
+    ):
         return None
     origin = _app_credential_source_row(
         index, path, assignment, "synthetic_signing_origin", secret
@@ -2736,7 +2873,9 @@ def _app_signing_authority(index, path, assignment, secret):
         "source": source.relative(path),
         "source_sha256": source.inventory[path],
         "declaration_span": fixture._evidence_node_span(assignment),
-        "profile": "SOURCE_BOUND_DIGEST_TEST_AUTHORITY" if digest else "LOCAL_SOURCE_SIGNING_AUTHORITY",
+        "profile": "SOURCE_BOUND_DIGEST_TEST_AUTHORITY"
+        if digest
+        else "LOCAL_SOURCE_SIGNING_AUTHORITY",
         "runtime_assurance": "INCOMPLETE",
         "transport_role": "UNASSESSED",
         "target_execution": "not_performed",
@@ -3070,7 +3209,9 @@ def _app_signing_scope_edges(index, path, owner, loads):
         operations[id(call)] = (call, kind, payload)
         witnesses.extend(rows)
     if loads and {kind for _, kind, _ in operations.values()} == {"digest"}:
-        return _app_digest_operation_witnesses(index, path, owner, operations, witnesses, parents)
+        return _app_digest_operation_witnesses(
+            index, path, owner, operations, witnesses, parents
+        )
     if not loads or not {kind for _, kind, _ in operations.values()} == {
         "encode",
         "decode",
@@ -4880,10 +5021,16 @@ def _app_plaintext_test_uses(index, path, function, secret, pair):
         ("transform_payload_input", pair["encrypt"].args[0]),
         ("local_roundtrip_comparison", pair["assertion"].test.comparators[0]),
     ]
-    closure = _legacy._structural_closed_consumer_uses(function, secret, roots,
+    closure = _legacy._structural_closed_consumer_uses(
+        function,
+        secret,
+        roots,
         index["source"].parents[path],
         lambda node: _legacy._enclosing_function(node, index["source"].parents[path]),
-        lambda expression: fixture._app_credential_lineage(index, path, function, expression, secret))
+        lambda expression: fixture._app_credential_lineage(
+            index, path, function, expression, secret
+        ),
+    )
     if closure is None:
         return None
     _, loads, roles = closure

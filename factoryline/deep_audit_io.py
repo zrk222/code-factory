@@ -1193,11 +1193,10 @@ def _full_repository_resume_generation(generation: dict, audit):
         if (
             generation["context_profile"] == FULL_REPOSITORY_CONTEXT_PROFILE
             and isinstance(checkpoint, dict)
-            and checkpoint.get("configuration_sha256")
-            != generation["configuration"]
+            and checkpoint.get("configuration_sha256") != generation["configuration"]
         ):
             raise RuntimeAuditError(
-                "INVALID_CHECKPOINT", "workspace checkpoint configuration changed"
+                "SOURCE_DRIFT", "workspace checkpoint configuration changed"
             )
         results = _validate_full_repository_checkpoint(
             checkpoint,
@@ -1426,7 +1425,8 @@ def _full_repository_store_checkpoint(generation: dict, results: list[dict]) -> 
                 generation, _FULL_REPOSITORY_TRUSTED_CHECKPOINT
             ),
         )
-        generation["workspace_evidence"]["primary_processing"]["cache_accounted_bytes"] = cache_bytes
+        processing = generation["workspace_evidence"]["primary_processing"]
+        processing["cache_accounted_bytes"] = cache_bytes
 
 
 def _full_repository_dependency_index(results: list[dict]) -> dict:

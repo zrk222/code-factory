@@ -1,6 +1,10 @@
 """Runtime evidence joins, callback reconciliation, and advisory repair routing."""
 
 import ast
+from .import_context import (
+    _full_repository_workspace_security_context as _full_repository_workspace_security_context,
+)
+
 import copy
 import hashlib
 import re
@@ -75,14 +79,24 @@ from .provenance import _LiteralConsumers as _LiteralConsumers
 
 
 def _full_repository_workspace_store_prefix(
-    checkpoint_key, result_digest, context_digest, rows, digest,
-    source_capture=None, source_identity=None,
+    checkpoint_key,
+    result_digest,
+    context_digest,
+    rows,
+    digest,
+    source_capture=None,
+    source_identity=None,
 ):
     from .context_efficiency import _full_repository_workspace_cache_store_prefix
 
     return _full_repository_workspace_cache_store_prefix(
-        checkpoint_key, result_digest, context_digest, rows, digest,
-        source_capture, source_identity,
+        checkpoint_key,
+        result_digest,
+        context_digest,
+        rows,
+        digest,
+        source_capture,
+        source_identity,
     )
 
 
@@ -1995,7 +2009,9 @@ def _pickle_load_call_shape(node, loaded_name, *, allow_nested=False):
     )
 
 
-def closed_local_pickle_origin(node, loaded_name, aliases, audit, *, serializer_namespace_only=False):
+def closed_local_pickle_origin(
+    node, loaded_name, aliases, audit, *, serializer_namespace_only=False
+):
     """Retain the runtime facade while delegating native origin proof."""
     from .pickle_model_audit import closed_local_pickle_origin as find_origin
 
@@ -2110,9 +2126,14 @@ def _pickle_byte_edge_window_closed(scope, statements, assignment, load, name):
         return False
     target = _pickle_statement_target(assignment)
     nodes = [node for statement in statements for node in ast.walk(statement)]
-    observations = [statement.test for statement in statements
-                    if isinstance(statement, ast.Assert) and statement.msg is None
-                    and isinstance(statement.test, ast.Name) and statement.test.id == name]
+    observations = [
+        statement.test
+        for statement in statements
+        if isinstance(statement, ast.Assert)
+        and statement.msg is None
+        and isinstance(statement.test, ast.Name)
+        and statement.test.id == name
+    ]
     return _capability_uses_match(nodes, name, [target, load.args[0], *observations])
 
 
@@ -2159,11 +2180,32 @@ def _pickle_direct_protocol(call):
 
 
 def _pickle_direct_serializer_imports_closed(
-    module, scope, dump_index, load_index, dump_call, load_call, aliases, audit,
-    *, serializer_namespace_only=False,
+    module,
+    scope,
+    dump_index,
+    load_index,
+    dump_call,
+    load_call,
+    aliases,
+    audit,
+    *,
+    serializer_namespace_only=False,
 ):
     from .pickle_model_audit import pickle_serializer_imports_closed
-    return pickle_serializer_imports_closed(module, scope, dump_index, load_index, dump_call, load_call, aliases, audit, _pickle_call_imported, _conditional_v3_alias_closure, serializer_namespace_only)
+
+    return pickle_serializer_imports_closed(
+        module,
+        scope,
+        dump_index,
+        load_index,
+        dump_call,
+        load_call,
+        aliases,
+        audit,
+        _pickle_call_imported,
+        _conditional_v3_alias_closure,
+        serializer_namespace_only,
+    )
 
 
 def _pickle_direct_scope_index(node, scope, audit):
@@ -2355,7 +2397,20 @@ def _pickle_serializer_imports_closed(
 ):
     index = scope.body.index(scope_statement)
     from .pickle_model_audit import pickle_serializer_imports_closed
-    return pickle_serializer_imports_closed(module, scope, index, index, dump_call, load_call, aliases, audit, _pickle_call_imported, _conditional_v3_alias_closure, serializer_namespace_only)
+
+    return pickle_serializer_imports_closed(
+        module,
+        scope,
+        index,
+        index,
+        dump_call,
+        load_call,
+        aliases,
+        audit,
+        _pickle_call_imported,
+        _conditional_v3_alias_closure,
+        serializer_namespace_only,
+    )
 
 
 def _closed_pickle_object_flow(scope, loop, loop_statement, dump_call, audit):
@@ -2841,6 +2896,7 @@ def _conditional_provider_v4_witness(
 ):
     """Admit only independently regenerated generic source-object graphs."""
     from .pickle_model_audit import provider_native_sources_clear
+
     if not provider_native_sources_clear(view["contract"], source_bytes):
         return None
     context = _conditional_provider_v2_context(view["contract"], source_bytes, caller)
@@ -2863,8 +2919,13 @@ def _conditional_provider_v4_witness(
         return None
     classes = _conditional_selected_descendants(rows, aliases, classes, audit)
     if record["typed_graph"].get("native_runtime_binding"):
-        classes = {*classes, "multidict.CIMultiDict", "multidict.MultiDict",
-                   "multidict._multidict.CIMultiDict", "multidict._multidict.MultiDict"}
+        classes = {
+            *classes,
+            "multidict.CIMultiDict",
+            "multidict.MultiDict",
+            "multidict._multidict.CIMultiDict",
+            "multidict._multidict.MultiDict",
+        }
     if not _conditional_provider_mutations(
         rows,
         aliases,
@@ -2910,13 +2971,24 @@ def _conditional_v4_active_nodes(record, flow, caller, trees, aliases, audit):
     if scope is None or load is None:
         return None
     active[caller].update(id(node) for node in ast.walk(scope))
-    native_calls = frozenset(
-        _conditional_span_tuple(node) for node in ast.walk(scope)
-        if isinstance(node, ast.Call) and not node.args and not node.keywords
-        and audit._resolved_ast_name(node.func, aliases[caller]) == "multidict.CIMultiDict"
-    ) if record["typed_graph"].get("native_runtime_binding") else frozenset()
+    native_calls = (
+        frozenset(
+            _conditional_span_tuple(node)
+            for node in ast.walk(scope)
+            if isinstance(node, ast.Call)
+            and not node.args
+            and not node.keywords
+            and audit._resolved_ast_name(node.func, aliases[caller])
+            == "multidict.CIMultiDict"
+        )
+        if record["typed_graph"].get("native_runtime_binding")
+        else frozenset()
+    )
     if not _conditional_v3_frame_calls_closed(
-        scope, {**flow, "scope": scope, "load_call": load}, aliases[caller], audit,
+        scope,
+        {**flow, "scope": scope, "load_call": load},
+        aliases[caller],
+        audit,
         additional_calls=native_calls,
     ):
         return None
@@ -3305,7 +3377,9 @@ def _conditional_v3_current_node(tree, original):
     return matches[0] if len(matches) == 1 else None
 
 
-def _conditional_v3_frame_calls_closed(scope, flow, aliases, audit, *, additional_calls=frozenset()):
+def _conditional_v3_frame_calls_closed(
+    scope, flow, aliases, audit, *, additional_calls=frozenset()
+):
     """Unknown active callbacks cannot inherit the deferred-body exception."""
     if any(
         isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda))
@@ -4159,11 +4233,16 @@ def _conditional_enum_base_mutated(
             value = getattr(node, "value", None)
             # Creating a fresh name for a canonical descriptor does not write
             # through it. Keep subsequent writes via that alias visible.
-            if isinstance(node, (ast.Assign, ast.AnnAssign)) and isinstance(
-                value, (ast.Name, ast.Attribute)
-            ) and _conditional_enum_root_path(value, aliases, roots, audit):
-                targets = [target for target in targets
-                           if not isinstance(target, ast.Name) or target.id in roots]
+            if (
+                isinstance(node, (ast.Assign, ast.AnnAssign))
+                and isinstance(value, (ast.Name, ast.Attribute))
+                and _conditional_enum_root_path(value, aliases, roots, audit)
+            ):
+                targets = [
+                    target
+                    for target in targets
+                    if not isinstance(target, ast.Name) or target.id in roots
+                ]
             if any(
                 _conditional_enum_root_path(target, aliases, roots, audit)
                 for target in targets
@@ -4333,7 +4412,8 @@ def _conditional_selected_reference(
     node, aliases, audit, selected_classes, module_exports
 ):
     if _conditional_selected_path(node, aliases, audit, selected_classes) or (
-        isinstance(node, ast.Name) and audit._resolved_ast_name(node, aliases) in module_exports
+        isinstance(node, ast.Name)
+        and audit._resolved_ast_name(node, aliases) in module_exports
     ):
         return True
     if isinstance(node, ast.Subscript):
@@ -5254,9 +5334,7 @@ def _full_repository_workspace_batch_capture(
             else "INCOMPLETE",
             "binding_count": len(context_bindings),
             "edge_count": len(oracle_edges),
-            "source_retention_limit_bytes": generation[
-                "source_retention_limit_bytes"
-            ],
+            "source_retention_limit_bytes": generation["source_retention_limit_bytes"],
             "global_consumer_closure_verified": False,
         },
         "primitive_observations": [],
@@ -5843,123 +5921,6 @@ def _full_repository_workspace_dependency_tree(
         raise RuntimeAuditError(
             "SOURCE_DRIFT", "audited dependency source no longer parses"
         ) from exc
-
-
-def _full_repository_workspace_security_context(engine, generation, audit):
-    from .context_efficiency import (
-        _full_repository_workspace_cache_load_source,
-        bind_application_fixture_context,
-    )
-    from .import_context import CapturedImportInventory
-    root, files = generation["root"], generation["files"]
-    retention_limit = generation.get("source_retention_limit_bytes")
-    capture_options = {} if retention_limit is None else {"retention_limit": retention_limit}
-    reused = _full_repository_workspace_cache_load_source(generation)
-    if reused is None:
-        generation["workspace_source_capture_reuse"] = {"files": 0, "bytes": 0}
-        captured, bindings, _manifest, _cacheable = audit._oracle_source_inputs(root, files, **capture_options)
-    else:
-        captured, bindings = reused
-    inventory = {row["path"]: row for row in generation.get("inventory", ())}
-    for binding in bindings:
-        prior = inventory.get(binding["path"])
-        if prior is not None and prior.get("sha256") != binding.get("sha256"):
-            raise RuntimeAuditError(
-                "SOURCE_DRIFT", "source changed between inventory and context capture"
-            )
-    if len(captured) < len(bindings):
-        raise RuntimeAuditError(
-            "E_SOURCE_RETENTION", "workspace source retention budget exhausted"
-        )
-    if len(captured) == len(files) == len(bindings):
-        generation["workspace_source_capture_for_cache"] = (
-            {path.relative_to(root).as_posix(): data for path, data in captured.items()},
-            bindings,
-        )
-    snapshots = audit.contracts.bound_snapshots(root, files, captured, bindings)
-    hashes = {root / row["path"]: row["sha256"] for row in bindings}
-    contexts = {path: {} for path in snapshots}
-    config_bindings = []
-    config_bytes = {}
-    names = {row["path"] for row in generation["frame"]["candidates"]}
-    names.add("requirements.txt")
-    config_identity = []
-    for name in sorted(names):
-        row = engine._full_repository_configuration_binding(root, name)
-        config_identity.append(row)
-        if row.get("state") != "read":
-            if row.get("state") != "absent":
-                raise RuntimeAuditError(
-                    "E_CONTEXT_CONFIG", "security config unavailable"
-                )
-            continue
-        raw = audit._security_source_bytes(root, name)
-        if len(raw) > audit.MAX_BYTES or engine.sha256_bytes(raw) != row["sha256"]:
-            raise RuntimeAuditError("SOURCE_DRIFT", "captured security config changed")
-        config_bytes[name] = raw
-        config_bindings.append(
-            {"path": name, "sha256": row["sha256"], "bytes": len(raw)}
-        )
-    def captured_config(_root, name):
-        if name not in config_bytes:
-            raise FileNotFoundError(name)
-        return config_bytes[name]
-    symbolic_imports = {}
-    source_paths = set(snapshots)
-    binding_paths = [root / row["path"] for row in bindings]
-    symbolic_inputs_complete = (
-        callable(getattr(audit, "_oracle_imports", None))
-        and source_paths == set(captured) == set(hashes)
-        and len(binding_paths) == len(set(binding_paths)) == len(source_paths)
-        and all(
-            isinstance(hashes[path], str)
-            and len(hashes[path]) == 64
-            and hashes[path] == hashlib.sha256(captured[path]).hexdigest()
-            for path in source_paths
-        )
-    )
-    if symbolic_inputs_complete:
-        eligible = CapturedImportInventory(root, tuple(snapshots))
-        symbolic_imports = {
-            path: audit._oracle_imports(root, path, tree, eligible, captured=True)
-            for path, tree in snapshots.items()
-        }
-        symbolic_inputs_complete = set(symbolic_imports) == source_paths
-    if symbolic_inputs_complete:
-        from .provenance import bind_credential_consumers
-
-        bind_credential_consumers(
-            audit.integrity,
-            root,
-            snapshots,
-            symbolic_imports,
-            contexts,
-            captured,
-            inventory=hashes,
-        )
-    bind_application_fixture_context(
-        root,
-        snapshots,
-        contexts,
-        config_bindings,
-        captured_config,
-        audit.MAX_BYTES,
-        source_bytes=captured,
-        source_inventory=hashes,
-        imports=symbolic_imports if symbolic_inputs_complete else None,
-    )
-    audit.integrity.bind_fixed_program_workspace(
-        root, contexts, snapshots, files, captured
-    )
-    return {
-        "contexts": contexts,
-        "source_bytes": captured,
-        "bindings": bindings + config_bindings,
-        "snapshots": snapshots,
-        "symbolic_imports": symbolic_imports if symbolic_inputs_complete else {},
-        "fingerprints": {},
-        "config_identity": config_identity,
-    }
 
 
 def _pickle_direct_dump_origin(node, scope, load_index, loaded_name, aliases, audit):

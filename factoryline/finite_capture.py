@@ -7,6 +7,43 @@ import re
 from collections import defaultdict
 from dataclasses import dataclass as dataclass
 from .import_context import _shell_import_aliases as _shell_import_aliases
+from .semantic_credential_sensor import (
+    _SecurityFlowValue as _SecurityFlowValue,
+    _captured_path_expression as _captured_path_expression,
+    _captured_sink_arguments as _captured_sink_arguments,
+    _captured_sink_callee_binding as _captured_sink_callee_binding,
+    _captured_sink_enclosing_callable as _captured_sink_enclosing_callable,
+    _captured_sink_excerpt as _captured_sink_excerpt,
+    _captured_sink_fact as _captured_sink_fact,
+    _captured_sink_failure as _captured_sink_failure,
+    _captured_sink_guards as _captured_sink_guards,
+    _captured_sink_imports as _captured_sink_imports,
+    _captured_sink_index as _captured_sink_index,
+    _captured_sink_location as _captured_sink_location,
+    _captured_sink_parameter_names as _captured_sink_parameter_names,
+    _captured_sink_raw_tree as _captured_sink_raw_tree,
+    _captured_sink_scope as _captured_sink_scope,
+    _captured_sink_source as _captured_sink_source,
+    _captured_sink_value as _captured_sink_value,
+    _captured_sink_values as _captured_sink_values,
+    _captured_sink_reflective_barrier as _captured_sink_reflective_barrier,
+    _captured_method_path_call as _captured_method_path_call,
+    _captured_standard_path_call as _captured_standard_path_call,
+    _legacy_security_value as _legacy_security_value,
+    _security_flow_combine as _security_flow_combine,
+    _security_flow_name_value as _security_flow_name_value,
+    _security_flow_request_leaf as _security_flow_request_leaf,
+    _security_flow_shaped as _security_flow_shaped,
+    _security_flow_step as _security_flow_step,
+    _security_flow_tainted as _security_flow_tainted,
+    _security_flow_value as _security_flow_value,
+    _security_helper_initial as _security_helper_initial,
+    _security_helper_source_context as _security_helper_source_context,
+    _security_source_path as _security_source_path,
+    security_helper_return_value as security_helper_return_value,
+    security_input_value_flow as security_input_value_flow,
+    source_built_ast_program_witness as source_built_ast_program_witness,
+)
 
 
 from .pickle_model_audit import _PROVIDER_ASSUMPTIONS as _PROVIDER_ASSUMPTIONS
@@ -378,32 +415,27 @@ def _security_helper_provider_stable(module, call, function):
     return not cache[key]
 
 
-@dataclass(frozen=True)
-class _SecurityFlowValue:
-    """Scanner-owned scalar shape and source trace, never an executed value."""
-
-    tainted: bool
-    kind: str
-    steps: tuple = ()
-
-
 class _SecurityFlowState(set):
     """Compatibility tags with the canonical structural value per reaching name."""
 
     def __init__(self, tags=(), values=None):
+        """Initialize legacy tags and their source-bound structural values."""
         super().__init__(tags)
         self.values = dict(values or {})
 
     def copy(self):
+        """Copy tags and the structural value map as one flow state."""
         return type(self)(self, self.values)
 
     def difference_update(self, names):
+        """Remove names from both compatibility tags and stored values."""
         names = tuple(names)
         super().difference_update(names)
         for name in names:
             self.values.pop(name, None)
 
     def discard(self, name):
+        """Discard one name from both compatibility tags and stored values."""
         super().discard(name)
         self.values.pop(name, None)
 
@@ -415,10 +447,12 @@ def _security_merge_structural_states(target, branches):
         return
     names = set().union(*(getattr(branch, "values", {}) for branch in branches))
     target.values = {
-        name: security_structural_join([
-            getattr(branch, "values", {}).get(name, _Value(unknown=True))
-            for branch in branches
-        ])
+        name: security_structural_join(
+            [
+                getattr(branch, "values", {}).get(name, _Value(unknown=True))
+                for branch in branches
+            ]
+        )
         for name in names
     }
 
@@ -430,263 +464,12 @@ def _security_structural_expression(node, requests, aliases):
 
 
 def _security_store_structural_targets(statement, environment, value):
-    targets = getattr(statement, "targets", None) or [getattr(statement, "target", None)]
+    targets = getattr(statement, "targets", None) or [
+        getattr(statement, "target", None)
+    ]
     for target in targets:
         if isinstance(target, ast.Name):
             environment[target.id] = value
-
-
-def _security_flow_tainted(value):
-    return value is True or isinstance(value, _SecurityFlowValue) and value.tainted
-
-
-def _security_flow_step(expression, operation):
-    return (operation, tuple(_finite_source_span(expression) or ()),
-            hashlib.sha256(ast.dump(expression, include_attributes=False).encode()).hexdigest())
-
-
-def _security_flow_combine(expression, values, kind, operation):
-    if not values or any(not isinstance(value, _SecurityFlowValue) or value.kind != kind for value in values):
-        return False, None
-    steps = tuple(dict.fromkeys(step for value in values for step in value.steps))
-    if len(steps) >= 64:
-        return False, None
-    return True, _SecurityFlowValue(any(value.tainted for value in values), kind,
-        (*steps, _security_flow_step(expression, operation)))
-
-
-def _security_flow_shaped(expression, environment, aliases):
-    if isinstance(expression, ast.BinOp):
-        if not isinstance(expression.op, ast.Add):
-            return False, None
-        parts = [_security_flow_value(value, environment, aliases)[1]
-                 for value in (expression.left, expression.right)]
-        kind = parts[0].kind if isinstance(parts[0], _SecurityFlowValue) else None
-        return _security_flow_combine(expression, parts, kind, "SCALAR_CONCAT")
-    if isinstance(expression, ast.JoinedStr):
-        values = []
-        for part in expression.values:
-            if isinstance(part, ast.FormattedValue):
-                if part.conversion != -1 or part.format_spec is not None:
-                    return False, None
-                part = part.value
-            known, value = _security_flow_value(part, environment, aliases)
-            if not known:
-                return False, None
-            values.append(value)
-        return _security_flow_combine(expression, values, "text", "TEXT_INTERPOLATION")
-    receiver = expression.func.value
-    if expression.args or expression.keywords:
-        return False, None
-    known, value = _security_flow_value(receiver, environment, aliases)
-    incoming, outgoing = ("text", "bytes") if expression.func.attr == "encode" else ("bytes", "text")
-    if not known or not isinstance(value, _SecurityFlowValue) or value.kind != incoming or len(value.steps) >= 64:
-        return False, None
-    return True, _SecurityFlowValue(value.tainted, outgoing,
-        (*value.steps, _security_flow_step(expression, "BUILTIN_" + expression.func.attr.upper())))
-
-
-def _security_flow_request_leaf(expression, environment, aliases):
-    from . import review_integrity as flow
-    from .semantic_credential_sensor import http_request_payload, _request_payload_source_kind
-
-    if not http_request_payload(expression, aliases,
-        getattr(expression, "_security_lexical_scope", None),
-        getattr(expression, "_security_flow_statement", None), flow._security_scope_request_aliases):
-        return False, None
-    kind = _request_payload_source_kind(expression, aliases, flow._security_scope_request_aliases)
-    if kind is None:
-        return True, True
-    return True, _SecurityFlowValue(True, kind, (_security_flow_step(expression, "REQUEST_SOURCE"),))
-
-
-def _security_flow_name_value(expression, environment):
-    value = environment.get(expression.id)
-    if isinstance(value, _SecurityFlowValue):
-        if len(value.steps) >= 64:
-            return False, None
-        value = _SecurityFlowValue(value.tainted, value.kind,
-            (*value.steps, _security_flow_step(expression, "ALIAS_USE")))
-    return value is not None, value
-
-
-def _security_flow_value(expression, environment, aliases):
-    from . import review_integrity as flow
-
-    if sum(1 for _ in ast.walk(expression)) > 512:
-        return False, None
-    if isinstance(expression, ast.Name):
-        return _security_flow_name_value(expression, environment)
-    if isinstance(expression, ast.Constant) and type(expression.value) in {str, bytes}:
-        return True, _SecurityFlowValue(False, "text" if type(expression.value) is str else "bytes",
-            (_security_flow_step(expression, "FIXED_LITERAL"),))
-    if _fixed_literal_value(expression):
-        return True, False
-    shaped = isinstance(expression, (ast.BinOp, ast.JoinedStr)) or (
-        isinstance(expression, ast.Call) and isinstance(expression.func, ast.Attribute)
-        and expression.func.attr in {"encode", "decode"})
-    if shaped:
-        return _security_flow_shaped(expression, environment, aliases)
-    if not isinstance(expression, (ast.Call, ast.Attribute, ast.Subscript)):
-        # A may-taint arithmetic expression is not a proved evaluable value.
-        return False, None
-    if isinstance(expression, ast.Call) and flow.security_call_name(
-        expression, aliases
-    ) in {
-        "os.path.join",
-        "pathlib.Path",
-        "pathlib.PurePath",
-        "werkzeug.utils.secure_filename",
-    }:
-        return False, None
-    leaf = _security_flow_request_leaf(expression, environment, aliases)
-    if leaf[0]:
-        return leaf
-    tainted = {name for name, value in environment.items() if isinstance(name, str) and _security_flow_tainted(value)}
-    if isinstance(expression, ast.Call):
-        function = flow._security_local_helper_definition(expression)
-        if function is not None:
-            for name, value in environment.items():
-                if isinstance(value, _SecurityFlowValue) and value.tainted:
-                    tainted.add(("request-type:" + value.kind, name))
-            value = security_helper_return_value(expression, function, tainted, set(), aliases,
-                caller_values=environment)
-            return value is not None, value
-    if flow._security_expr_tainted(expression, tainted, set(), aliases):
-        return True, True
-    return False, None
-
-
-def _security_helper_initial(call, actuals, requests, parameters, aliases, caller_values=None):
-    supplied = {id(value) for value in call.args}
-    supplied.update(id(keyword.value) for keyword in call.keywords)
-    caller = dict(caller_values or {})
-    caller.update({name: True for name in requests | parameters if isinstance(name, str)})
-    for item in requests:
-        if isinstance(item, tuple) and len(item) == 2 and item[0] in {"request-type:text", "request-type:bytes"}:
-            caller[item[1]] = _SecurityFlowValue(True, item[0].split(":", 1)[1])
-    initial = {}
-    for name, value in actuals.items():
-        # Omitted defaults belong to the definition, never to the caller's scope.
-        if _fixed_literal_value(value):
-            initial[name] = _security_flow_value(value, {}, aliases)[1]
-        elif id(value) in supplied:
-            known, tainted = _security_flow_value(value, caller, aliases)
-            initial[name] = tainted if known else None
-        else:
-            initial[name] = None
-    return initial
-
-
-def security_helper_return_value(
-    call,
-    function,
-    requests,
-    parameters,
-    aliases,
-    *,
-    caller_values=None,
-    source_index=None,
-    source_path=None,
-    structural_values=None,
-    resolve_call=None,
-):
-    """Trace an exact source helper return from the supplied request roots without executing it."""
-    if not isinstance(call, ast.Call):
-        return None
-    if source_index is None:
-        module, source_index, source_path = _security_helper_source_context(
-            call, function
-        )
-        if source_index is not None and source_path is not None:
-            structural_values = structural_values or getattr(requests, "values", None)
-    if source_index is not None and source_path is not None:
-        roots = structural_values
-        if roots is None:
-            roots = getattr(requests, "values", None)
-        if roots is None:
-            roots = caller_values or {}
-        summary = security_structural_helper_summary(
-            call,
-            function,
-            roots,
-            path=source_path,
-            index=source_index,
-            resolve_call=resolve_call,
-        )
-        if summary.return_status != "COMPLETE" or len(summary.return_values) != 1:
-            return None
-        return _legacy_security_value(summary.return_values[0].value)
-    binding = _security_helper_binding(call, function)
-    if binding is None:
-        return None
-    module, actuals = binding
-    initial = _security_helper_initial(call, actuals, requests, parameters, aliases, caller_values)
-    if any(value is None for value in initial.values()):
-        return None
-    function._security_helper_active = True
-    module._security_helper_flow_depth = (
-        getattr(module, "_security_helper_flow_depth", 0) + 1
-    )
-    try:
-        result = evaluate_helper_flow(
-            function,
-            initial,
-            lambda expression, environment: _security_flow_value(
-                expression, environment, aliases
-            ),
-        )
-        value = result["return_values"][0] if result["status"] == "COMPLETE" and len(result["return_values"]) == 1 else None
-        if isinstance(value, _SecurityFlowValue):
-            if len(value.steps) >= 62:
-                return None
-            value = _SecurityFlowValue(value.tainted, value.kind, (*value.steps,
-                _security_flow_step(call, "ACTUAL_TO_FORMAL"),
-                _security_flow_step(function, "HELPER_RETURN")))
-        return value
-    finally:
-        function._security_helper_active = False
-        module._security_helper_flow_depth -= 1
-
-
-def _legacy_security_value(value):
-    """Project shared origins into the old scalar API without discarding unknownness."""
-    from .credential_role_identity_effects import _Value
-
-    if not isinstance(value, _Value) or value.unknown or value.content_unknown:
-        return None
-    kind = value.scalar_kind
-    if kind not in {"text", "bytes"}:
-        return None
-    steps = tuple(
-        step
-        for step in value.trace
-        if isinstance(step, tuple) and len(step) == 3
-    )
-    return _SecurityFlowValue(bool(value.roots), kind, steps)
-
-
-def _security_source_path(index, module):
-    """Resolve an already captured module by identity, caching only its path map."""
-    snapshots = getattr(index, "snapshots", None)
-    if not isinstance(snapshots, dict) or not isinstance(module, ast.Module):
-        return None
-    cache = getattr(index, "_finite_capture_module_paths", None)
-    if cache is None:
-        cache = {id(tree): path for path, tree in snapshots.items()}
-        index._finite_capture_module_paths = cache
-    path = cache.get(id(module))
-    return path if path is not None and snapshots.get(path) is module else None
-
-
-def _security_helper_source_context(call, function):
-    from . import review_integrity as flow
-
-    module = flow._security_module_scope(
-        getattr(call, "_security_lexical_scope", None)
-    )
-    index = getattr(module, "_security_source_model", None)
-    return module, index, _security_source_path(index, module)
 
 
 def security_structural_value(
@@ -702,112 +485,118 @@ def security_structural_value(
 
     if not isinstance(expression, ast.expr) or not isinstance(environment, dict):
         return _Value(unknown=True)
-    request_aliases = dict(request_aliases if request_aliases is not None else aliases or {})
-    aliases = {name: _structural_compat_value(value, name)
-               for name, value in environment.items() if isinstance(name, str)}
+    request_aliases = dict(
+        request_aliases if request_aliases is not None else aliases or {}
+    )
+    aliases = {
+        name: _structural_compat_value(value, name)
+        for name, value in environment.items()
+        if isinstance(name, str)
+    }
     if isinstance(expression, ast.Call):
-        if (
-            isinstance(expression.func, ast.Attribute)
-            and expression.func.attr in {"encode", "decode"}
-            and not expression.args
-            and not expression.keywords
-        ):
-            receiver = security_structural_value(
-                expression.func.value,
-                environment,
-                request_aliases,
-                request_aliases=request_aliases,
-            )
-            from .credential_role_identity_effects import _Value
-
-            incoming, outgoing = (
-                ("text", "bytes")
-                if expression.func.attr == "encode"
-                else ("bytes", "text")
-            )
-            if (
-                isinstance(receiver, _Value)
-                and receiver.scalar_kind == incoming
-                and not receiver.unknown
-                and not receiver.content_unknown
-            ):
-                from dataclasses import replace
-
-                return replace(
-                    receiver,
-                    scalar_kind=outgoing,
-                    trace=(*receiver.trace, _security_flow_step(expression, "BUILTIN_CODEC")),
-                )
-        from . import review_integrity as flow
-
-        function = flow._security_local_helper_definition(expression)
-        module, source_index, source_path = _security_helper_source_context(
-            expression, function
-        )
-        if function is not None and source_index is not None and source_path is not None:
-            summary = security_structural_helper_summary(
-                expression,
-                function,
-                aliases,
-                path=source_path,
-                index=source_index,
-                    request_aliases=request_aliases,
-            )
-            if summary.return_values:
-                return security_structural_join(
-                    [projection.value for projection in summary.return_values]
-                )
-            return _Value(unknown=True)
-        if source_index is not None and source_path is not None:
-            from .credential_role_identity_effects import resolve_source_identity_call
-
-            resolved = resolve_source_identity_call(
-                expression, source_path, source_index, defer_negative_binding=True
-            )
-            if resolved is not None:
-                summary = security_structural_helper_summary(
-                    expression,
-                    resolved.function,
-                    aliases,
-                    path=source_path,
-                    index=source_index,
-                    callee_path=resolved.path,
-                    source_resolved=True,
-                    negative_binding_closed=resolved.negative_binding_closed,
-                    negative_binding_check=resolved.negative_binding_check,
-                    request_aliases=request_aliases,
-                    resolve_call=lambda candidate, candidate_path: resolve_source_identity_call(
-                        candidate, candidate_path, source_index, defer_negative_binding=True
-                    ),
-                )
-                if summary.return_values:
-                    return security_structural_join(
-                        [projection.value for projection in summary.return_values]
-                    )
-                return _Value(unknown=True)
+        codec = _security_structural_codec(expression, environment, request_aliases)
+        if codec is not None:
+            return codec
+        result = _security_structural_helper_call(expression, aliases, request_aliases)
+        if result is not None:
+            return result
     leaf_known, leaf = _security_flow_request_leaf(
         expression, environment, request_aliases
     )
     if leaf_known:
-        if isinstance(leaf, _SecurityFlowValue):
-            source_steps = tuple(leaf.steps)
-            source_digest = next(
-                (step[2] for step in source_steps if isinstance(step, tuple) and len(step) == 3),
-                "unknown-source",
-            )
-            return _Value(
-                roots=frozenset({"source:" + source_digest}) if leaf.tainted else frozenset(),
-                unknown=False,
-                scalar_kind=leaf.kind,
-                trace=source_steps,
-            )
-        return _Value(
-            roots=frozenset({"source:unknown-request-kind"}),
-            unknown=True,
-            content_unknown=True,
-            trace=(_security_flow_step(expression, "REQUEST_SOURCE_UNKNOWN_KIND"),),
-        )
+        from .credential_role_identity_effects import _security_structural_request_value
+
+        return _security_structural_request_value(expression, leaf, _Value)
     return identity_value(expression, aliases, strict_calls=True, material_values=True)
+
+
+def _security_structural_codec(expression, environment, request_aliases):
+    from .credential_role_identity_effects import _Value
+
+    if not (
+        isinstance(expression.func, ast.Attribute)
+        and expression.func.attr in {"encode", "decode"}
+        and not expression.args
+        and not expression.keywords
+    ):
+        return None
+    receiver = security_structural_value(
+        expression.func.value,
+        environment,
+        request_aliases,
+        request_aliases=request_aliases,
+    )
+    incoming, outgoing = (
+        ("text", "bytes") if expression.func.attr == "encode" else ("bytes", "text")
+    )
+    if (
+        not isinstance(receiver, _Value)
+        or receiver.scalar_kind != incoming
+        or receiver.unknown
+        or receiver.content_unknown
+    ):
+        return None
+    from dataclasses import replace
+
+    return replace(
+        receiver,
+        scalar_kind=outgoing,
+        trace=(*receiver.trace, _security_flow_step(expression, "BUILTIN_CODEC")),
+    )
+
+
+def _security_structural_helper_call(expression, aliases, request_aliases):
+    from .credential_role_identity_effects import _Value, resolve_source_identity_call
+    from . import review_integrity as flow
+
+    function = flow._security_local_helper_definition(expression)
+    module, source_index, source_path = _security_helper_source_context(
+        expression, function
+    )
+    if function is not None and source_index is not None and source_path is not None:
+        summary = security_structural_helper_summary(
+            expression,
+            function,
+            aliases,
+            path=source_path,
+            index=source_index,
+            request_aliases=request_aliases,
+        )
+        return _security_summary_value(summary, _Value)
+    if source_index is None or source_path is None:
+        return None
+    resolved = resolve_source_identity_call(
+        expression, source_path, source_index, defer_negative_binding=True
+    )
+    if resolved is None:
+        return None
+    summary = security_structural_helper_summary(
+        expression,
+        resolved.function,
+        aliases,
+        path=source_path,
+        index=source_index,
+        callee_path=resolved.path,
+        source_resolved=True,
+        negative_binding_closed=resolved.negative_binding_closed,
+        negative_binding_check=resolved.negative_binding_check,
+        request_aliases=request_aliases,
+        resolve_call=lambda candidate, candidate_path: resolve_source_identity_call(
+            candidate,
+            candidate_path,
+            source_index,
+            defer_negative_binding=True,
+        ),
+    )
+    return _security_summary_value(summary, _Value)
+
+
+def _security_summary_value(summary, value_type):
+    if summary.return_values:
+        return security_structural_join(
+            [projection.value for projection in summary.return_values]
+        )
+    return value_type(unknown=True)
 
 
 def _structural_compat_value(value, name):
@@ -817,11 +606,16 @@ def _structural_compat_value(value, name):
         return value
     if isinstance(value, _SecurityFlowValue):
         source = next(
-            (step[2] for step in value.steps if isinstance(step, tuple) and len(step) == 3),
+            (
+                step[2]
+                for step in value.steps
+                if isinstance(step, tuple) and len(step) == 3
+            ),
             "unknown-source",
         )
         return _Value(
             roots=frozenset({"source:" + source}) if value.tainted else frozenset(),
+            inert_kind="scalar" if value.kind in {"text", "bytes"} else None,
             unknown=False,
             scalar_kind=value.kind,
             trace=tuple(value.steps),
@@ -838,6 +632,7 @@ def _structural_compat_value(value, name):
 
 
 def security_structural_join(values):
+    """Join source-origin values while preserving unknown and may-origin facts."""
     from .credential_role_identity_effects import structural_value_join
 
     return structural_value_join(values)
@@ -863,65 +658,44 @@ def security_structural_helper_summary(
     from .credential_role_identity_effects import (
         IdentityEffectSummary,
         IdentityReturnProjection,
-        ResolvedIdentityCall,
         _Value,
+        _security_structural_exact_resolver,
+        _source_index_request_leaf_values,
+        _security_structural_summary_context,
         summarize_identity_call,
     )
 
     empty = IdentityEffectSummary(
-        "UNKNOWN", unknowns=("invalid structural helper context",), return_status="UNKNOWN"
+        "UNKNOWN",
+        unknowns=("invalid structural helper context",),
+        return_status="UNKNOWN",
     )
-    if not isinstance(call, ast.Call) or not isinstance(function, ast.FunctionDef) or function.decorator_list:
+    context = _security_structural_summary_context(
+        call, function, roots, path, index, source_resolved, callee_path
+    )
+    if context is None:
         return empty
-    if not isinstance(roots, dict):
-        return empty
-    if source_resolved:
-        if not isinstance(call.func, ast.expr):
-            return empty
-        from .review_integrity import bind_source_call
-
-        try:
-            actuals = bind_source_call(call, function, apply_defaults=True)
-        except (TypeError, ValueError):
-            return empty
-        module = None
-    else:
-        if not isinstance(call.func, ast.Name):
-            return empty
-        binding = _security_helper_binding(call, function)
-        if binding is None:
-            return empty
-        module, actuals = binding
-    callee_path = path if callee_path is None else callee_path
-    source_index = getattr(module, "_security_source_model", None)
-    if source_index is not None and source_index is not index:
+    if isinstance(context, str):
         return IdentityEffectSummary(
-            "UNKNOWN", unknowns=("mixed source snapshot generation",), return_status="UNKNOWN"
+            "UNKNOWN", unknowns=(context,), return_status="UNKNOWN"
         )
-    if (
-        not index.validate(path)
-        or not index.validate(callee_path)
-        or id(function) not in index.parents[callee_path]
-    ):
-        return IdentityEffectSummary(
-            "UNKNOWN", unknowns=("helper is outside validated source snapshot",), return_status="UNKNOWN"
-        )
-    def exact_resolver(candidate, candidate_path):
-        if candidate is call:
-            return ResolvedIdentityCall(
-                function, callee_path, actuals,
-                negative_binding_closed=not source_resolved or negative_binding_closed,
-                negative_binding_check=negative_binding_check,
-            )
-        return resolve_call(candidate, candidate_path) if callable(resolve_call) else None
-
+    _module, actuals, callee_path, _source_index = context
+    resolver = _security_structural_exact_resolver(
+        call,
+        function,
+        callee_path,
+        actuals,
+        source_resolved,
+        negative_binding_closed,
+        negative_binding_check,
+        resolve_call,
+    )
     bound_roots = dict(roots)
+    bound_roots.update(_source_index_request_leaf_values(function, callee_path, index))
     if request_aliases is not None:
         for actual in actuals.values():
             projected = security_structural_value(
-                actual,
-                roots,
-                request_aliases=request_aliases,
+                actual, roots, request_aliases=request_aliases
             )
             if isinstance(projected, _Value):
                 bound_roots[("expression", id(actual))] = projected
@@ -930,40 +704,89 @@ def security_structural_helper_summary(
         path,
         index,
         bound_roots,
-        resolve_call=exact_resolver,
+        resolve_call=resolver,
         field_roots=field_roots,
         role_view=role_view,
     )
     if summary.return_values:
         return summary
+    return _structural_unknown_return(
+        summary, call, path, _Value, IdentityReturnProjection
+    )
+
+
+def _structural_helper_binding(call, function, source_resolved):
+    if source_resolved:
+        if not isinstance(call.func, ast.expr):
+            return None
+        from .review_integrity import bind_source_call
+
+        try:
+            return None, bind_source_call(call, function, apply_defaults=True)
+        except (TypeError, ValueError):
+            return None
+    if not isinstance(call.func, ast.Name):
+        return None
+    return _security_helper_binding(call, function)
+
+
+def _structural_helper_invalid_reason(source_index, index, path, callee_path, function):
+    if source_index is not None and source_index is not index:
+        return "mixed source snapshot generation"
+    if (
+        not index.validate(path)
+        or not index.validate(callee_path)
+        or id(function) not in index.parents[callee_path]
+    ):
+        return "helper is outside validated source snapshot"
+    return None
+
+
+def _structural_unknown_return(summary, call, path, value_type, projection_type):
     from dataclasses import replace
 
-    unknown = _Value(
-        unknown=True,
-        trace=(_security_flow_step(call, "NO_RETURN_PROJECTION"),),
+    unknown = value_type(
+        unknown=True, trace=(_security_flow_step(call, "NO_RETURN_PROJECTION"),)
     )
     return replace(
         summary,
-        return_values=(IdentityReturnProjection(
-            path,
-            (str(path), call.lineno, call.col_offset, call.end_lineno, call.end_col_offset),
-            unknown,
-        ),),
+        return_values=(
+            projection_type(
+                path,
+                (
+                    str(path),
+                    call.lineno,
+                    call.col_offset,
+                    call.end_lineno,
+                    call.end_col_offset,
+                ),
+                unknown,
+            ),
+        ),
         return_status="UNKNOWN",
     )
 
 
 def security_helper_return_tainted(call, function, requests, parameters, aliases):
     """Boolean compatibility view of the one native helper summary."""
-    return _security_flow_tainted(security_helper_return_value(call, function, requests, parameters, aliases))
+    return _security_flow_tainted(
+        security_helper_return_value(call, function, requests, parameters, aliases)
+    )
 
 
 def security_helper_return_kind(call, requests, aliases):
+    """Return the exact scalar kind only when a helper result is source-traced."""
     from . import review_integrity as flow
 
-    function = flow._security_local_helper_definition(call) if isinstance(call, ast.Call) else None
+    function = (
+        flow._security_local_helper_definition(call)
+        if isinstance(call, ast.Call)
+        else None
+    )
     value = security_helper_return_value(call, function, requests, set(), aliases)
-    return value.kind if isinstance(value, _SecurityFlowValue) and value.tainted else None
+    return (
+        value.kind if isinstance(value, _SecurityFlowValue) and value.tainted else None
+    )
 
 
 def security_literal_branch_blocks(statement):
@@ -971,71 +794,49 @@ def security_literal_branch_blocks(statement):
     from .review_audits import _constant_truth_value
 
     nodes = tuple(ast.walk(statement.test))
-    allowed = (ast.Constant, ast.List, ast.Tuple, ast.Set, ast.Dict, ast.Load,
-               ast.UnaryOp, ast.Not, ast.BoolOp, ast.And, ast.Or, ast.Compare,
-               ast.Eq, ast.NotEq, ast.Lt, ast.LtE, ast.Gt, ast.GtE, ast.In, ast.NotIn)
-    if (len(nodes) > 128 or any(not isinstance(node, allowed) for node in nodes)
-            or any(isinstance(node, ast.Constant) and (
-                type(node.value) in {str, bytes} and len(node.value) > 4096
-                or type(node.value) is int and node.value.bit_length() > 1024
-            ) for node in nodes)):
+    allowed = (
+        ast.Constant,
+        ast.List,
+        ast.Tuple,
+        ast.Set,
+        ast.Dict,
+        ast.Load,
+        ast.UnaryOp,
+        ast.Not,
+        ast.BoolOp,
+        ast.And,
+        ast.Or,
+        ast.Compare,
+        ast.Eq,
+        ast.NotEq,
+        ast.Lt,
+        ast.LtE,
+        ast.Gt,
+        ast.GtE,
+        ast.In,
+        ast.NotIn,
+    )
+    if (
+        len(nodes) > 128
+        or any(not isinstance(node, allowed) for node in nodes)
+        or any(
+            isinstance(node, ast.Constant)
+            and (
+                type(node.value) in {str, bytes}
+                and len(node.value) > 4096
+                or type(node.value) is int
+                and node.value.bit_length() > 1024
+            )
+            for node in nodes
+        )
+    ):
         return statement.body, statement.orelse
     truth = _constant_truth_value(statement.test, {})
-    return (statement.body if truth else statement.orelse,) if truth is not None else (statement.body, statement.orelse)
-
-
-def security_input_value_flow(expression, requests, aliases):
-    """Return a regenerable scalar input trace, not runtime authority or safety."""
-    import json
-
-    if hasattr(requests, "values"):
-        from .credential_role_identity_effects import _Value
-
-        value = security_structural_value(
-            expression,
-            requests.values,
-            aliases,
-            request_aliases=aliases,
-        )
-        if (
-            not isinstance(value, _Value)
-            or value.unknown
-            or value.content_unknown
-            or not value.roots
-            or value.scalar_kind not in {"text", "bytes"}
-        ):
-            return None
-        evidence = {
-            "schema": "factory.security.scalar-input-flow.v1",
-            "value_kind": value.scalar_kind,
-            "scope": "dangerous_argument_only",
-            "runtime_execution": "not_performed",
-            "steps": [
-                {"operation": operation, "span": list(span), "ast_sha256": digest}
-                for operation, span, digest in value.trace
-                if isinstance(operation, str)
-                and isinstance(span, tuple)
-                and isinstance(digest, str)
-            ],
-        }
-        evidence["trace_sha256"] = hashlib.sha256(
-            json.dumps(evidence, sort_keys=True, separators=(",", ":")).encode()
-        ).hexdigest()
-        return evidence
-
-    environment = {name: True for name in requests if isinstance(name, str)}
-    for item in requests:
-        if isinstance(item, tuple) and len(item) == 2 and item[0] in {"request-type:text", "request-type:bytes"}:
-            environment[item[1]] = _SecurityFlowValue(True, item[0].split(":", 1)[1])
-    known, value = _security_flow_value(expression, environment, aliases)
-    if not known or not isinstance(value, _SecurityFlowValue) or not value.tainted:
-        return None
-    evidence = {"schema": "factory.security.scalar-input-flow.v1", "value_kind": value.kind,
-        "scope": "dangerous_argument_only", "runtime_execution": "not_performed",
-        "steps": [{"operation": operation, "span": list(span), "ast_sha256": digest}
-                  for operation, span, digest in value.steps]}
-    evidence["trace_sha256"] = hashlib.sha256(json.dumps(evidence,sort_keys=True,separators=(",", ":")).encode()).hexdigest()
-    return evidence
+    return (
+        (statement.body if truth else statement.orelse,)
+        if truth is not None
+        else (statement.body, statement.orelse)
+    )
 
 
 def _security_forward_helper_candidate(call, requests, aliases, flow):
@@ -1077,8 +878,13 @@ def _security_forward_helper_request_sources(
 ):
     for name in tuple(sources):
         value = initial[name]
-        kind = value.kind if isinstance(value, _SecurityFlowValue) else request_payload_value_kind(
-            actuals[name], requests, aliases, flow._security_scope_request_aliases)
+        kind = (
+            value.kind
+            if isinstance(value, _SecurityFlowValue)
+            else request_payload_value_kind(
+                actuals[name], requests, aliases, flow._security_scope_request_aliases
+            )
+        )
         if kind:
             sources.add(("request-type:" + kind, name))
 
@@ -1333,33 +1139,16 @@ def captured_value_use_closure(
         if edge is not None:
             sinks[id(edge)] = edge
             continue
-        successors = None
-        if field_successors is not None:
-            successors = field_successors(current, value, parents)
-            if successors is not None:
-                from itertools import islice
-
-                try:
-                    edges = tuple(
-                        islice(iter(successors), max_states - len(seen) + 1)
-                    )
-                except (TypeError, ValueError):
-                    return None
-                if len(edges) > max_states - len(seen) or not edges:
-                    return None
-                if any(
-                    not isinstance(edge, (tuple, list)) or len(edge) != 2
-                    for edge in edges
-                ):
-                    return None
-                successors = tuple((edge[0], edge[1]) for edge in edges)
-                if any(
-                    not isinstance(scope, ast.AST)
-                    or not isinstance(child, ast.AST)
-                    or scope_of(child) is not scope
-                    for scope, child in successors
-                ):
-                    return None
+        successors = _captured_field_successors(
+            current,
+            value,
+            parents,
+            scope_of,
+            field_successors,
+            max_states - len(seen),
+        )
+        if successors is _INVALID_CAPTURED_SUCCESSORS:
+            return None
         if successors is None:
             successors = _captured_value_use_successors(
                 current, value, parents, scope_of, return_callers
@@ -1370,119 +1159,355 @@ def captured_value_use_closure(
     return {"sinks": tuple(sinks.values()), "nodes": tuple(nodes)} if sinks else None
 
 
+_INVALID_CAPTURED_SUCCESSORS = object()
+
+
+def _captured_field_successors(
+    function, value, parents, scope_of, field_successors, budget
+):
+    if field_successors is None:
+        return None
+    successors = field_successors(function, value, parents)
+    if successors is None:
+        return None
+    from itertools import islice
+
+    try:
+        edges = tuple(islice(iter(successors), budget + 1))
+    except (TypeError, ValueError):
+        return _INVALID_CAPTURED_SUCCESSORS
+    if len(edges) > budget or not edges:
+        return _INVALID_CAPTURED_SUCCESSORS
+    if any(not isinstance(edge, (tuple, list)) or len(edge) != 2 for edge in edges):
+        return _INVALID_CAPTURED_SUCCESSORS
+    normalized = tuple((edge[0], edge[1]) for edge in edges)
+    if any(
+        not isinstance(scope, ast.AST)
+        or not isinstance(child, ast.AST)
+        or scope_of(child) is not scope
+        for scope, child in normalized
+    ):
+        return _INVALID_CAPTURED_SUCCESSORS
+    return normalized
+
+
 def captured_registered_fixture_helper_role(finding, inventory):
     """Bind a one-return eval helper to registered fixture-test callers."""
+    context = _registered_fixture_helper_context(finding, inventory)
+    if context is None:
+        return None
+    roles, path, trees, sources, tree, sink, helper, parents, calls = context
+    if not _registered_fixture_peers_closed(roles, path, helper, trees, sources):
+        return None
+    if not _registered_fixture_bindings_closed(roles, tree, helper, parents, calls):
+        return None
+    callers = []
+    for call in calls:
+        row = _registered_fixture_caller(
+            roles, finding, inventory, path, tree, helper, call, trees, sources
+        )
+        if row is None:
+            return None
+        callers.append(row)
+    return _registered_fixture_report(
+        roles, finding, path, helper, sink, inventory, sources, callers
+    )
+
+
+def _registered_fixture_helper_context(finding, inventory):
     from . import primitive_observation_binding as roles
-    from .credential_role_constructor_provider import _ast_matches_source, binding_occurrences
+    from .credential_role_constructor_provider import (
+        binding_occurrences,
+    )
+
     if not isinstance(inventory, dict):
         return None
     path = finding.get("path")
     trees, sources = inventory.get("trees"), inventory.get("sources")
-    if (not isinstance(trees, dict)
-            or finding.get("code") != "SECURITY_DYNAMIC_EXECUTION" or path not in trees
-            or not isinstance(sources, dict) or path not in sources
-            or roles._pickle_operational_importer(path, trees)
-            or not _ast_matches_source(sources[path], trees[path])):
+    if not _registered_fixture_file_valid(roles, finding, path, trees, sources):
         return None
     tree = trees[path]
-    sinks = [n for n in ast.walk(tree) if isinstance(n, ast.Call)
-             and (n.lineno, n.col_offset) == (finding.get("line"), finding.get("column", 0))]
-    if len(sinks) != 1:
+    sink = _registered_fixture_sink(tree, finding)
+    if sink is None:
         return None
-    sink = sinks[0]
-    owners = [n for n in tree.body if isinstance(n, ast.FunctionDef) and sink in ast.walk(n)]
-    if len(owners) != 1:
+    helper = _registered_fixture_owner(tree, sink)
+    if helper is None or not _registered_fixture_wrapper_shape(helper):
         return None
-    helper = owners[0]
-    if (helper.decorator_list or helper.returns or len(helper.args.args) != 1
-            or helper.args.posonlyargs or helper.args.kwonlyargs or helper.args.vararg
-            or helper.args.kwarg or helper.args.defaults or helper.args.kw_defaults
-            or helper.args.args[0].annotation or len(helper.body) != 1
-            or not isinstance(helper.body[0], ast.Return)):
-        return None
-    expression = helper.body[0].value
-    if (not isinstance(expression, ast.Call) or not isinstance(expression.func, ast.Name)
-            or expression.func.id != "eval" or len(expression.args) != 1 or expression.keywords
-            or not isinstance(expression.args[0], ast.Name)
-            or expression.args[0].id != helper.args.args[0].arg):
-        return None
-    if binding_occurrences(tree.body, "eval"):
+    if not _registered_fixture_eval_body(helper) or binding_occurrences(
+        tree.body, "eval"
+    ):
         return None
     if roles._pickle_role_native_match(finding, inventory) is not True:
         return None
-    callers, parents = [], {id(child): node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
-    calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call)
-             and isinstance(n.func, ast.Name) and n.func.id == helper.name]
+    parents = {
+        id(child): node
+        for node in ast.walk(tree)
+        for child in ast.iter_child_nodes(node)
+    }
+    calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == helper.name
+    ]
     if not calls:
         return None
+    return roles, path, trees, sources, tree, sink, helper, parents, calls
+
+
+def _registered_fixture_file_valid(roles, finding, path, trees, sources):
+    from .credential_role_constructor_provider import _ast_matches_source
+
+    return (
+        isinstance(trees, dict)
+        and finding.get("code") == "SECURITY_DYNAMIC_EXECUTION"
+        and path in trees
+        and isinstance(sources, dict)
+        and path in sources
+        and not roles._pickle_operational_importer(path, trees)
+        and _ast_matches_source(sources[path], trees[path])
+    )
+
+
+def _registered_fixture_sink(tree, finding):
+    matches = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and (node.lineno, node.col_offset)
+        == (finding.get("line"), finding.get("column", 0))
+    ]
+    if (
+        len(matches) != 1
+        or not isinstance(matches[0].func, ast.Name)
+        or matches[0].func.id != "eval"
+    ):
+        return None
+    return matches[0]
+
+
+def _registered_fixture_owner(tree, sink):
+    owners = [
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and sink in ast.walk(node)
+    ]
+    return owners[0] if len(owners) == 1 else None
+
+
+def _registered_fixture_wrapper_shape(helper):
+    args = helper.args
+    return not (
+        helper.decorator_list
+        or helper.returns
+        or len(args.args) != 1
+        or args.posonlyargs
+        or args.kwonlyargs
+        or args.vararg
+        or args.kwarg
+        or args.defaults
+        or args.kw_defaults
+        or args.args[0].annotation
+        or len(helper.body) != 1
+        or not isinstance(helper.body[0], ast.Return)
+    )
+
+
+def _registered_fixture_eval_body(helper):
+    expression = helper.body[0].value
+    return (
+        isinstance(expression, ast.Call)
+        and isinstance(expression.func, ast.Name)
+        and expression.func.id == "eval"
+        and len(expression.args) == 1
+        and not expression.keywords
+        and isinstance(expression.args[0], ast.Name)
+        and expression.args[0].id == helper.args.args[0].arg
+    )
+
+
+def _registered_fixture_peers_closed(roles, path, helper, trees, sources):
+    from .credential_role_constructor_provider import _ast_matches_source
+
     module_name = path[:-3].replace("/", ".") if path.endswith(".py") else ""
     parts = module_name.split(".")
-    module_candidates = {".".join(parts[index:]) for index in range(len(parts))}
+    candidates = {".".join(parts[index:]) for index in range(len(parts))}
     for other_path, other in trees.items():
         if other_path == path:
             continue
-        if other_path not in sources or not _ast_matches_source(sources[other_path], other):
-            return None
-        for item in ast.walk(other):
-            if isinstance(item, ast.ImportFrom) and roles._pickle_role_imports_target(item, other_path, module_candidates):
-                return None
-            if isinstance(item, ast.Import) and any(alias.name in module_candidates for alias in item.names):
-                if any(isinstance(n, ast.Attribute) and n.attr == helper.name for n in ast.walk(other)):
-                    return None
-            if isinstance(item, ast.Attribute) and item.attr in {helper.name, "eval"} and isinstance(item.ctx, (ast.Store, ast.Del)):
-                return None
-            if isinstance(item, ast.Subscript) and isinstance(item.ctx, (ast.Store, ast.Del)) and isinstance(item.slice, ast.Constant) and item.slice.value in {helper.name, "eval"}:
-                return None
-            if isinstance(item, ast.Call) and isinstance(item.func, ast.Name) and item.func.id in {"setattr", "delattr"} and len(item.args) >= 2 and isinstance(item.args[1], ast.Constant) and item.args[1].value in {helper.name, "eval"}:
-                return None
-    for reference in (n for n in ast.walk(tree) if isinstance(n, ast.Name) and n.id == helper.name and isinstance(n.ctx, ast.Load)):
+        if other_path not in sources or not _ast_matches_source(
+            sources[other_path], other
+        ):
+            return False
+        if not _registered_fixture_peer_tree_clear(
+            roles, other, other_path, candidates, helper.name
+        ):
+            return False
+    return True
+
+
+def _registered_fixture_peer_tree_clear(roles, tree, path, candidates, helper_name):
+    for item in ast.walk(tree):
+        if isinstance(item, ast.ImportFrom) and roles._pickle_role_imports_target(
+            item, path, candidates
+        ):
+            return False
+        if (
+            isinstance(item, ast.Import)
+            and any(alias.name in candidates for alias in item.names)
+            and any(
+                isinstance(node, ast.Attribute) and node.attr == helper_name
+                for node in ast.walk(tree)
+            )
+        ):
+            return False
+        if _registered_fixture_mutates_name(item, {helper_name, "eval"}):
+            return False
+    return True
+
+
+def _registered_fixture_mutates_name(node, names):
+    if (
+        isinstance(node, ast.Attribute)
+        and node.attr in names
+        and isinstance(node.ctx, (ast.Store, ast.Del))
+    ):
+        return True
+    if (
+        isinstance(node, ast.Subscript)
+        and isinstance(node.ctx, (ast.Store, ast.Del))
+        and isinstance(node.slice, ast.Constant)
+        and node.slice.value in names
+    ):
+        return True
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id in {"setattr", "delattr"}
+        and len(node.args) >= 2
+        and isinstance(node.args[1], ast.Constant)
+        and node.args[1].value in names
+    )
+
+
+def _registered_fixture_bindings_closed(roles, tree, helper, parents, calls):
+    from .credential_role_constructor_provider import binding_occurrences
+
+    for reference in (
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Name)
+        and node.id == helper.name
+        and isinstance(node.ctx, ast.Load)
+    ):
         parent = parents.get(id(reference))
-        if not isinstance(parent, ast.Call) or parent.func is not reference or parent not in calls:
-            return None
-    if binding_occurrences(tree.body, helper.name) != [helper]:
+        if (
+            not isinstance(parent, ast.Call)
+            or parent.func is not reference
+            or parent not in calls
+        ):
+            return False
+    return binding_occurrences(tree.body, helper.name) == [helper]
+
+
+def _registered_fixture_caller(
+    roles, finding, inventory, path, tree, helper, call, trees, sources
+):
+    from .credential_role_constructor_provider import binding_occurrences
+
+    owners = [
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and call in ast.walk(node)
+    ]
+    if (
+        len(owners) != 1
+        or len(call.args) != 1
+        or call.keywords
+        or any(isinstance(node, ast.Starred) for node in call.args)
+    ):
         return None
-    for call in calls:
-        owner_rows = [n for n in tree.body if isinstance(n, ast.FunctionDef) and call in ast.walk(n)]
-        if (len(owner_rows) != 1 or len(call.args) != 1 or call.keywords
-                or any(isinstance(n, ast.Starred) for n in call.args)):
-            return None
-        owner = owner_rows[0]
-        if (binding_occurrences(owner.body, helper.name)
-                or any(arg.arg == helper.name for arg in (*owner.args.posonlyargs, *owner.args.args, *owner.args.kwonlyargs))):
-            return None
-        registration = roles._registered_fixture_registration(tree, owner)
-        if registration is None:
-            return None
-        statement, marker, parameters = registration
-        entry = roles._registered_fixture_entry(tree, path, marker, inventory)
-        projected_owner = copy.deepcopy(owner)
-        projected_call = next((node for node in ast.walk(projected_owner)
-                               if isinstance(node, ast.Call)
-                               and roles._pickle_span(node) == roles._pickle_span(call)), None)
-        if projected_call is None:
-            return None
-        projected_call.func = ast.copy_location(ast.Name(id="eval", ctx=ast.Load()), projected_call.func)
-        flow = roles._registered_fixture_flow(projected_owner, projected_call, parameters, tree)
-        if (entry is None or flow is None
-                or entry["path"] not in sources
-                or not _ast_matches_source(sources[entry["path"]], trees.get(entry["path"]))
-                or not roles._registered_fixture_module_clear(tree, entry["entry_span"])):
-            return None
-        callers.append({"function_span": roles._pickle_span(owner),
-                         "registration_span": roles._pickle_span(statement),
-                         "call_span": roles._pickle_span(call), "harness": entry,
-                         "transparent_wrapper_span": roles._pickle_span(helper),
-                         "wrapper_ast_sha256": roles._tier_sha256(ast.dump(helper, include_attributes=False)),
-                         "input_flow": flow})
-    return {"schema": "factory.security.registered-fixture-helper-context.v1",
-            "role": "REGISTERED_FIXTURE_HARNESS_OPERATION", "tier": "NEEDS_CONTEXT",
-            "source_path": path, "source_sha256": hashlib.sha256(sources[path]).hexdigest(),
-            "sources_sha256": inventory["sources_sha256"],
-            "helper_span": roles._pickle_span(helper), "sink_span": roles._pickle_span(sink),
-            "callers": callers, "safe_operation": False, "fixture_payloads": "UNASSESSED",
-            "filesystem_authority": "UNASSESSED", "dynamic_deployment": "UNASSESSED",
-            "original_severity": finding.get("severity"),
-            "policy_sha256": roles._tier_sha256(roles._SOURCE_ROLE_POLICY_V2)}
+    owner = owners[0]
+    if binding_occurrences(owner.body, helper.name) or any(
+        arg.arg == helper.name
+        for arg in (*owner.args.posonlyargs, *owner.args.args, *owner.args.kwonlyargs)
+    ):
+        return None
+    registration = roles._registered_fixture_registration(tree, owner)
+    if registration is None:
+        return None
+    statement, marker, parameters = registration
+    entry = roles._registered_fixture_entry(tree, path, marker, inventory)
+    flow = _registered_fixture_projected_flow(roles, tree, owner, call, parameters)
+    if not _registered_fixture_entry_valid(roles, entry, flow, tree, trees, sources):
+        return None
+    return {
+        "function_span": roles._pickle_span(owner),
+        "registration_span": roles._pickle_span(statement),
+        "call_span": roles._pickle_span(call),
+        "harness": entry,
+        "transparent_wrapper_span": roles._pickle_span(helper),
+        "wrapper_ast_sha256": roles._tier_sha256(
+            ast.dump(helper, include_attributes=False)
+        ),
+        "input_flow": flow,
+    }
+
+
+def _registered_fixture_projected_flow(roles, tree, owner, call, parameters):
+    projected_owner = copy.deepcopy(owner)
+    projected_call = next(
+        (
+            node
+            for node in ast.walk(projected_owner)
+            if isinstance(node, ast.Call)
+            and roles._pickle_span(node) == roles._pickle_span(call)
+        ),
+        None,
+    )
+    if projected_call is None:
+        return None
+    projected_call.func = ast.copy_location(
+        ast.Name(id="eval", ctx=ast.Load()), projected_call.func
+    )
+    return roles._registered_fixture_flow(
+        projected_owner, projected_call, parameters, tree
+    )
+
+
+def _registered_fixture_entry_valid(roles, entry, flow, tree, trees, sources):
+    from .credential_role_constructor_provider import _ast_matches_source
+
+    return (
+        entry is not None
+        and flow is not None
+        and entry["path"] in sources
+        and _ast_matches_source(sources[entry["path"]], trees.get(entry["path"]))
+        and roles._registered_fixture_module_clear(tree, entry["entry_span"])
+    )
+
+
+def _registered_fixture_report(
+    roles, finding, path, helper, sink, inventory, sources, callers
+):
+    return {
+        "schema": "factory.security.registered-fixture-helper-context.v1",
+        "role": "REGISTERED_FIXTURE_HARNESS_OPERATION",
+        "tier": "NEEDS_CONTEXT",
+        "source_path": path,
+        "source_sha256": hashlib.sha256(sources[path]).hexdigest(),
+        "sources_sha256": inventory["sources_sha256"],
+        "helper_span": roles._pickle_span(helper),
+        "sink_span": roles._pickle_span(sink),
+        "callers": callers,
+        "safe_operation": False,
+        "fixture_payloads": "UNASSESSED",
+        "filesystem_authority": "UNASSESSED",
+        "dynamic_deployment": "UNASSESSED",
+        "original_severity": finding.get("severity"),
+        "policy_sha256": roles._tier_sha256(roles._SOURCE_ROLE_POLICY_V2),
+    }
 
 
 def _captured_value_use_successors(function, value, parents, scope_of, return_callers):
@@ -2157,9 +2182,18 @@ def _shell_namespace_queries_closed(nodes, aliases, audit, parents, provider):
         if canonical not in {"globals", "locals", "vars"}:
             continue
         scope = _scope_scope_bindings(node, parents, None)
-        if (isinstance(node, ast.Name) and isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef))
-                and not any(isinstance(item, (ast.Global, ast.Nonlocal)) and node.id in item.names for item in ast.walk(scope))
-                and (node.id in audit._scope_parameters(scope) or audit._scope_binds_name(scope, node.id))):
+        if (
+            isinstance(node, ast.Name)
+            and isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and not any(
+                isinstance(item, (ast.Global, ast.Nonlocal)) and node.id in item.names
+                for item in ast.walk(scope)
+            )
+            and (
+                node.id in audit._scope_parameters(scope)
+                or audit._scope_binds_name(scope, node.id)
+            )
+        ):
             continue
         call = parents.get(id(node))
         comparison = parents.get(id(call))
@@ -2895,103 +2929,409 @@ def _finite_template_program_hash(program, value):
 
 def captured_literal_caller_program_role(finding, inventory):
     """Bind a method's program argument to every source-visible literal caller."""
+    context = _literal_caller_context(finding, inventory)
+    if context is None:
+        return None
+    (
+        binding_occurrences,
+        path,
+        tree,
+        parents,
+        sink,
+        owner,
+        helper,
+        receiver,
+        argument,
+        value,
+    ) = context
+    if not _literal_caller_uses_closed(tree, owner, helper, argument, value):
+        return None
+    programs = _literal_caller_programs(
+        inventory, tree, parents, owner, helper, binding_occurrences
+    )
+    if not programs or len(programs) > 64:
+        return None
+    return _literal_caller_report(finding, inventory, path, sink, programs)
+
+
+def _literal_caller_context(finding, inventory):
     from .credential_role_constructor_provider import binding_occurrences
+
     path = finding.get("path")
-    if finding.get("code") != "SECURITY_DYNAMIC_EXECUTION" or path not in inventory["trees"]:
+    trees = inventory.get("trees") if isinstance(inventory, dict) else None
+    if (
+        finding.get("code") != "SECURITY_DYNAMIC_EXECUTION"
+        or not isinstance(trees, dict)
+        or path not in trees
+    ):
         return None
-    tree = inventory["trees"][path]
-    parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
-    calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call)
-             and (node.lineno, node.col_offset) == (finding.get("line"), finding.get("column", 0))]
-    if len(calls) != 1 or not isinstance(calls[0].func, ast.Name) or calls[0].func.id != "exec":
-        return None
-    sink = calls[0]
-    helper = _source_built_ast_scope(sink, parents)
-    owner = parents.get(helper)
-    if (not isinstance(helper, ast.FunctionDef) or helper.decorator_list
-            or not isinstance(owner, ast.ClassDef) or owner.bases or owner.keywords
-            or helper.args.posonlyargs or helper.args.kwonlyargs or helper.args.defaults
-            or helper.args.vararg or helper.args.kwarg or len(helper.args.args) != 2
-            or len(sink.args) != 2 or sink.keywords):
+    tree = trees[path]
+    parents = {
+        child: parent
+        for parent in ast.walk(tree)
+        for child in ast.iter_child_nodes(parent)
+    }
+    sink = _literal_caller_sink(tree, finding)
+    helper = _source_built_ast_scope(sink, parents) if sink is not None else None
+    owner = parents.get(helper) if helper is not None else None
+    if not _literal_caller_method_shape(sink, helper, owner):
         return None
     if binding_occurrences(owner.body, helper.name) != [helper]:
         return None
     receiver, argument = (item.arg for item in helper.args.args)
+    value = _literal_caller_argument(tree, sink, argument, inventory)
+    if value is None:
+        return None
+    return (
+        binding_occurrences,
+        path,
+        tree,
+        parents,
+        sink,
+        owner,
+        helper,
+        receiver,
+        argument,
+        value,
+    )
+
+
+def _literal_caller_sink(tree, finding):
+    calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and (node.lineno, node.col_offset)
+        == (finding.get("line"), finding.get("column", 0))
+    ]
+    if (
+        len(calls) != 1
+        or not isinstance(calls[0].func, ast.Name)
+        or calls[0].func.id != "exec"
+    ):
+        return None
+    return calls[0]
+
+
+def _literal_caller_method_shape(sink, helper, owner):
+    return not (
+        not isinstance(helper, ast.FunctionDef)
+        or helper.decorator_list
+        or not isinstance(owner, ast.ClassDef)
+        or owner.bases
+        or owner.keywords
+        or helper.args.posonlyargs
+        or helper.args.kwonlyargs
+        or helper.args.defaults
+        or helper.args.vararg
+        or helper.args.kwarg
+        or len(helper.args.args) != 2
+        or len(sink.args) != 2
+        or sink.keywords
+    )
+
+
+def _literal_caller_argument(tree, sink, argument, inventory):
     value = sink.args[0]
     if isinstance(value, ast.Call):
-        if (ast.unparse(value.func) != "textwrap.dedent" or len(value.args) != 1 or value.keywords
-                or not any(isinstance(node, ast.Import) and any(a.name == "textwrap" and a.asname is None for a in node.names) for node in tree.body)):
+        if (
+            ast.unparse(value.func) != "textwrap.dedent"
+            or len(value.args) != 1
+            or value.keywords
+            or not any(
+                isinstance(node, ast.Import)
+                and any(
+                    alias.name == "textwrap" and alias.asname is None
+                    for alias in node.names
+                )
+                for node in tree.body
+            )
+        ):
             return None
+        imports = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, (ast.Import, ast.ImportFrom))
+            for alias in node.names
+            if (alias.asname or alias.name.split(".")[0]) == "textwrap"
+        ]
+        if (
+            len(imports) != 1
+            or imports[0] not in tree.body
+            or not isinstance(imports[0], ast.Import)
+        ):
+            return None
+        from . import review_audits as audit
+
+        for peer in inventory["trees"].values():
+            risks = finite_provider_mutation_index(
+                ast.walk(peer),
+                audit._security_aliases(ast.walk(peer)),
+                audit,
+                {
+                    id(child): parent
+                    for parent in ast.walk(peer)
+                    for child in ast.iter_child_nodes(parent)
+                },
+            )
+            if any(
+                provider == "textwrap" or provider.startswith("textwrap.")
+                for provider, _ in risks
+            ):
+                return None
         value = value.args[0]
     if not isinstance(value, ast.Name) or value.id != argument:
         return None
-    if isinstance(sink.args[0], ast.Call):
-        from . import review_audits as audit
+    return value
 
-        imports = [node for node in ast.walk(tree) if isinstance(node, (ast.Import, ast.ImportFrom))
-                   for alias in node.names if (alias.asname or alias.name.split(".")[0]) == "textwrap"]
-        if len(imports) != 1 or imports[0] not in tree.body or not isinstance(imports[0], ast.Import):
-            return None
-        for peer in inventory["trees"].values():
-            risks = finite_provider_mutation_index(
-                ast.walk(peer), audit._security_aliases(ast.walk(peer)), audit,
-                {id(child): parent for parent in ast.walk(peer) for child in ast.iter_child_nodes(parent)},
-            )
-            if any(provider == "textwrap" or provider.startswith("textwrap.") for provider, _ in risks):
-                return None
-    if any(isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
-           and node.func.id in {"getattr", "setattr", "vars", "globals", "locals", "__import__"}
-           for node in ast.walk(owner)):
-        return None
-    if any(isinstance(node, ast.Name) and node.id in {argument, "exec", "textwrap"}
-           and isinstance(node.ctx, (ast.Store, ast.Del)) for node in ast.walk(helper)):
-        return None
-    loads = [node for node in ast.walk(helper) if isinstance(node, ast.Name)
-             and isinstance(node.ctx, ast.Load) and node.id == argument]
-    if loads != [value]:
-        return None
+
+def _literal_caller_uses_closed(tree, owner, helper, argument, value):
+    if any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id
+        in {"getattr", "setattr", "vars", "globals", "locals", "__import__"}
+        for node in ast.walk(owner)
+    ):
+        return False
+    if any(
+        isinstance(node, ast.Name)
+        and node.id in {argument, "exec", "textwrap"}
+        and isinstance(node.ctx, (ast.Store, ast.Del))
+        for node in ast.walk(helper)
+    ):
+        return False
+    loads = [
+        node
+        for node in ast.walk(helper)
+        if isinstance(node, ast.Name)
+        and isinstance(node.ctx, ast.Load)
+        and node.id == argument
+    ]
+    return loads == [value] and _literal_caller_tree_names_closed(
+        tree, owner, helper.name
+    )
+
+
+def _literal_caller_tree_names_closed(tree, owner, helper_name):
     for node in ast.walk(tree):
-        if isinstance(node, ast.Name) and node.id in {"textwrap", "exec"} and isinstance(node.ctx, (ast.Store, ast.Del)):
-            return None
+        if (
+            isinstance(node, ast.Name)
+            and node.id in {"textwrap", "exec"}
+            and isinstance(node.ctx, (ast.Store, ast.Del))
+        ):
+            return False
         if isinstance(node, ast.arg) and node.arg in {"textwrap", "exec"}:
-            return None
-        if isinstance(node, (ast.FunctionDef, ast.ClassDef)) and node.name in {"textwrap", "exec"}:
-            return None
-        if isinstance(node, ast.Attribute) and node.attr in {"dedent", helper.name} and isinstance(node.ctx, (ast.Store, ast.Del)):
-            return None
-        if isinstance(node, ast.ImportFrom) and any(a.name == "*" for a in node.names):
-            return None
+            return False
+        if isinstance(node, (ast.FunctionDef, ast.ClassDef)) and node.name in {
+            "textwrap",
+            "exec",
+        }:
+            return False
+        if (
+            isinstance(node, ast.Attribute)
+            and node.attr in {"dedent", helper_name}
+            and isinstance(node.ctx, (ast.Store, ast.Del))
+        ):
+            return False
+        if isinstance(node, ast.ImportFrom) and any(
+            alias.name == "*" for alias in node.names
+        ):
+            return False
         if isinstance(node, ast.Name) and node.id == owner.name:
-            return None
+            return False
+    return True
+
+
+def _literal_caller_programs(
+    inventory, tree, parents, owner, helper, binding_occurrences
+):
     programs = []
-    for other_path, other in inventory["trees"].items():
-        for node in ast.walk(other):
-            if not isinstance(node, ast.Attribute) or node.attr != helper.name:
-                continue
-            caller = parents.get(node) if other is tree else None
-            scope = _source_built_ast_scope(node, parents) if other is tree else None
-            if (not isinstance(caller, ast.Call) or caller.func is not node
-                    or scope not in owner.body or not isinstance(scope, ast.FunctionDef)
-                    or not scope.name.startswith("test_") or not scope.args.args
-                    or not isinstance(node.value, ast.Name) or node.value.id != scope.args.args[0].arg
-                    or binding_occurrences(scope.body, scope.args.args[0].arg)
-                    or len(caller.args) != 1 or caller.keywords
-                    or not isinstance(caller.args[0], ast.Constant) or type(caller.args[0].value) is not str
-                    or len(caller.args[0].value.encode()) > 16 * 1024):
-                return None
-            programs.append({"caller_span": _fixed_program_span(caller),
-                             "program_sha256": hashlib.sha256(caller.args[0].value.encode()).hexdigest()})
-    if not programs or len(programs) > 64:
-        return None
+    for other in inventory["trees"].values():
+        if not _literal_caller_tree_programs(
+            other, tree, parents, owner, helper, binding_occurrences, programs
+        ):
+            return None
+    return programs
+
+
+def _literal_caller_tree_programs(
+    other, tree, parents, owner, helper, binding_occurrences, programs
+):
+    for node in ast.walk(other):
+        if not isinstance(node, ast.Attribute) or node.attr != helper.name:
+            continue
+        if other is not tree or not _literal_test_call(
+            node, parents, owner, binding_occurrences
+        ):
+            return False
+        caller = parents.get(node)
+        programs.append(
+            {
+                "caller_span": _fixed_program_span(caller),
+                "program_sha256": hashlib.sha256(
+                    caller.args[0].value.encode()
+                ).hexdigest(),
+            }
+        )
+    return True
+
+
+def _literal_test_call(node, parents, owner, binding_occurrences):
+    caller = parents.get(node)
+    scope = _source_built_ast_scope(node, parents)
+    return (
+        isinstance(caller, ast.Call)
+        and caller.func is node
+        and scope in owner.body
+        and isinstance(scope, ast.FunctionDef)
+        and scope.name.startswith("test_")
+        and bool(scope.args.args)
+        and isinstance(node.value, ast.Name)
+        and node.value.id == scope.args.args[0].arg
+        and not binding_occurrences(scope.body, scope.args.args[0].arg)
+        and len(caller.args) == 1
+        and not caller.keywords
+        and isinstance(caller.args[0], ast.Constant)
+        and type(caller.args[0].value) is str
+        and len(caller.args[0].value.encode()) <= 16 * 1024
+    )
+
+
+def _literal_caller_report(finding, inventory, path, sink, programs):
     return {
         "schema": "factory.security.literal-caller-program-context.v1",
-        "role": "CAPTURED_TEST_LITERAL_PROGRAM_INPUT", "tier": "NEEDS_CONTEXT",
-        "source_path": path, "source_sha256": hashlib.sha256(inventory["sources"][path]).hexdigest(),
-        "sources_sha256": inventory["sources_sha256"], "call_span": _fixed_program_span(sink),
-        "literal_callers": programs, "program_effects": "UNASSESSED",
-        "external_callers": "UNASSESSED", "safe_execution": False,
-        "target_execution": "not_performed", "original_severity": finding.get("severity"),
+        "role": "CAPTURED_TEST_LITERAL_PROGRAM_INPUT",
+        "tier": "NEEDS_CONTEXT",
+        "source_path": path,
+        "source_sha256": hashlib.sha256(inventory["sources"][path]).hexdigest(),
+        "sources_sha256": inventory["sources_sha256"],
+        "call_span": _fixed_program_span(sink),
+        "literal_callers": programs,
+        "program_effects": "UNASSESSED",
+        "external_callers": "UNASSESSED",
+        "safe_execution": False,
+        "target_execution": "not_performed",
+        "original_severity": finding.get("severity"),
     }
+
+
+class _CapturedFileProgramTrace:
+    def __init__(self, path, tree, sink, parents, scopes, aliases, binding_occurrences):
+        """Store one captured file-input context for bounded path resolution."""
+        from pathlib import PurePosixPath
+
+        self.path = path
+        self.tree = tree
+        self.sink = sink
+        self.parents = parents
+        self.scopes = scopes
+        self.aliases = aliases
+        self.binding_occurrences = binding_occurrences
+        self.path_type = PurePosixPath
+        self.steps = []
+
+    def callee(self, node):
+        """Resolve a captured name or attribute through the module aliases."""
+        if isinstance(node, ast.Name):
+            return self.aliases.get(node.id, node.id)
+        if isinstance(node, ast.Attribute):
+            return self.callee(node.value) + "." + node.attr
+        return ""
+
+    def preceding(self, owner, scope):
+        """Require an assignment to precede the sink on an unconditional path."""
+        current = self.sink
+        while current in self.parents:
+            container = self.parents[current]
+            if container is scope or isinstance(container, ast.With):
+                if owner in container.body and current in container.body:
+                    return container.body.index(owner) < container.body.index(current)
+            if isinstance(
+                container,
+                (ast.If, ast.For, ast.AsyncFor, ast.While, ast.Try, ast.Match),
+            ):
+                return False
+            current = container
+        return False
+
+    def definition(self, node, seen):
+        """Resolve one unique prior local binding without crossing control flow."""
+        if node.id in seen:
+            return None
+        for scope in self.scopes:
+            parameters = getattr(scope, "args", None)
+            if parameters and any(
+                arg.arg == node.id
+                for arg in ast.walk(parameters)
+                if isinstance(arg, ast.arg)
+            ):
+                return None
+            bindings = self.binding_occurrences(scope.body, node.id)
+            if self.scopes[0] is self.tree:
+                bindings = [item for item in bindings if item.lineno < self.sink.lineno]
+            if not bindings:
+                continue
+            if len(bindings) != 1 or not isinstance(bindings[0], ast.Name):
+                return None
+            owner = self.parents.get(bindings[0])
+            if not isinstance(owner, (ast.Assign, ast.AnnAssign)) or not self.preceding(
+                owner, scope
+            ):
+                return None
+            targets = owner.targets if isinstance(owner, ast.Assign) else [owner.target]
+            if len(targets) != 1 or targets[0] is not bindings[0]:
+                return None
+            self.steps.append(_fixed_program_span(owner))
+            return self.resolve(owner.value, seen | {node.id})
+        return None
+
+    def resolve(self, node, seen=frozenset()):
+        """Resolve the bounded path expressions accepted for captured inputs."""
+        if len(seen) > 24:
+            return None
+        if isinstance(node, ast.Constant) and type(node.value) is str:
+            return node.value
+        if isinstance(node, ast.Name):
+            return (
+                self.path_type(self.path)
+                if node.id == "__file__"
+                else self.definition(node, seen)
+            )
+        if isinstance(node, (ast.Attribute, ast.BinOp, ast.Call)):
+            return _captured_path_expression(
+                node, seen, self.resolve, self.callee, self.path_type
+            )
+        return None
+
+    def read_input(self, node, seen=frozenset()):
+        """Trace a sink argument to a captured file read or compiled input."""
+        if len(seen) > 24:
+            return None
+        if isinstance(node, ast.Name):
+            return _captured_read_binding(
+                node,
+                seen,
+                self.scopes,
+                self.tree,
+                self.sink,
+                self.parents,
+                self.preceding,
+                self.steps,
+                self.read_input,
+                self.binding_occurrences,
+            )
+        if isinstance(node, ast.Call):
+            return _captured_read_call(
+                node,
+                seen,
+                self.resolve,
+                self.read_input,
+                self.callee,
+                self.sink,
+                self.parents,
+            )
+        return None
 
 
 def captured_file_program_role(finding, inventory):
@@ -2999,19 +3339,68 @@ def captured_file_program_role(finding, inventory):
     from pathlib import PurePosixPath
     import posixpath
     from .credential_role_constructor_provider import binding_occurrences
-    from .review_audits import _security_aliases
 
     path = finding.get("path")
-    if finding.get("code") != "SECURITY_DYNAMIC_EXECUTION" or path not in inventory["trees"]:
+    context = _captured_file_program_context(
+        finding, inventory, path, binding_occurrences
+    )
+    if context is None:
+        return None
+    path, tree, parents, sink, scopes, aliases = context
+    tracer = _CapturedFileProgramTrace(
+        path, tree, sink, parents, scopes, aliases, binding_occurrences
+    )
+    resolved = tracer.read_input(sink.args[0])
+    if not isinstance(resolved, PurePosixPath):
+        return None
+    payload = posixpath.normpath(resolved.as_posix())
+    if (
+        payload.startswith("../")
+        or payload.startswith("/")
+        or payload not in inventory["sources"]
+    ):
+        return None
+    return dict(
+        schema="factory.security.captured-file-program-context.v1",
+        role="CAPTURED_SOURCE_FILE_PROGRAM_INPUT",
+        tier="NEEDS_CONTEXT",
+        source_path=path,
+        source_sha256=hashlib.sha256(inventory["sources"][path]).hexdigest(),
+        sources_sha256=inventory["sources_sha256"],
+        call_span=_fixed_program_span(sink),
+        producer_spans=tracer.steps,
+        payload_path=payload,
+        payload_sha256=hashlib.sha256(inventory["sources"][payload]).hexdigest(),
+        runtime_file_authority="UNASSESSED",
+        program_effects="UNASSESSED",
+        safe_execution=False,
+        target_execution="not_performed",
+        original_severity=finding.get("severity"),
+    )
+
+
+def _captured_file_program_context(finding, inventory, path, binding_occurrences):
+    if (
+        finding.get("code") != "SECURITY_DYNAMIC_EXECUTION"
+        or path not in inventory["trees"]
+    ):
         return None
     tree = inventory["trees"][path]
-    parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
-    calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call)
-             and (node.lineno, node.col_offset) == (finding.get("line"), finding.get("column", 0))]
-    if len(calls) != 1 or not isinstance(calls[0].func, ast.Name) or calls[0].func.id != "exec":
+    parents = {
+        child: parent
+        for parent in ast.walk(tree)
+        for child in ast.iter_child_nodes(parent)
+    }
+    span = (finding.get("line"), finding.get("column", 0))
+    calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and (node.lineno, node.col_offset) == span
+    ]
+    if len(calls) != 1 or not isinstance(calls[0].func, ast.Name):
         return None
     sink = calls[0]
-    if not sink.args or sink.keywords or len(sink.args) > 3:
+    if sink.func.id != "exec" or not sink.args or sink.keywords or len(sink.args) > 3:
         return None
     scopes = [tree]
     current = sink
@@ -3020,364 +3409,242 @@ def captured_file_program_role(finding, inventory):
         if isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef)):
             scopes.insert(0, current)
             break
+    from .review_audits import _security_aliases
+
     aliases = _security_aliases(tree.body)
     protected = {"exec", "compile", "open", "__file__", "__builtins__"}
-    provider_roots = {name for name, value in aliases.items()
-                      if value in {"os", "os.path", "pathlib", "pathlib.Path"}}
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)) and node.id in protected | provider_roots:
-            return None
-        if isinstance(node, ast.arg) and node.arg in protected | provider_roots:
-            return None
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and node.name in protected | provider_roots:
-            return None
-        if isinstance(node, ast.ImportFrom) and any(item.name == "*" for item in node.names):
-            if scopes[0] is not tree or node.lineno <= sink.lineno:
-                return None
-        if isinstance(node, (ast.Import, ast.ImportFrom)) and any(
-            (item.asname or item.name.split(".")[0]) in protected
-            or node not in tree.body and (item.asname or item.name.split(".")[0]) in provider_roots
-            or item.name == "builtins" or isinstance(node, ast.ImportFrom) and node.module == "builtins"
-            for item in node.names
-        ):
-            return None
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in {"globals", "locals", "vars", "setattr", "delattr", "__import__"}:
-            # Namespace arguments at this very sink do not define its input.
-            owner = parents.get(node)
-            while owner is not None and not isinstance(owner, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef)):
-                owner = parents.get(owner)
-            if node not in sink.args[1:] and node.lineno <= sink.lineno and owner in scopes:
-                return None
-        if isinstance(node, (ast.Attribute, ast.Subscript)) and isinstance(node.ctx, (ast.Store, ast.Del)):
-            if any(isinstance(part, ast.Name) and part.id in provider_roots | {"__builtins__"} for part in ast.walk(node)):
-                return None
-
-    def callee(node):
-        if isinstance(node, ast.Name):
-            return aliases.get(node.id, node.id)
-        if isinstance(node, ast.Attribute):
-            return callee(node.value) + "." + node.attr
-        return ""
-
-    steps = []
-
-    def preceding(owner, scope):
-        current = sink
-        while current in parents:
-            container = parents[current]
-            if container is scope or isinstance(container, ast.With):
-                if owner in container.body and current in container.body:
-                    return container.body.index(owner) < container.body.index(current)
-            if isinstance(container, (ast.If, ast.For, ast.AsyncFor, ast.While, ast.Try, ast.Match)):
-                return False
-            current = container
-        return False
-
-    def definition(node, seen):
-        if node.id in seen:
-            return None
-        for scope in scopes:
-            parameters = getattr(scope, "args", None)
-            if parameters and any(arg.arg == node.id for arg in ast.walk(parameters) if isinstance(arg, ast.arg)):
-                return None
-            bindings = binding_occurrences(scope.body, node.id)
-            if scopes[0] is tree:
-                bindings = [item for item in bindings if item.lineno < sink.lineno]
-            if not bindings:
-                continue
-            if len(bindings) != 1 or not isinstance(bindings[0], ast.Name):
-                return None
-            owner = parents.get(bindings[0])
-            if not isinstance(owner, (ast.Assign, ast.AnnAssign)) or not preceding(owner, scope):
-                return None
-            targets = owner.targets if isinstance(owner, ast.Assign) else [owner.target]
-            if len(targets) != 1 or targets[0] is not bindings[0]:
-                return None
-            steps.append(_fixed_program_span(owner))
-            return resolve(owner.value, seen | {node.id})
-        return None
-
-    def resolve(node, seen=frozenset()):
-        if len(seen) > 24:
-            return None
-        if isinstance(node, ast.Constant) and type(node.value) is str:
-            return node.value
-        if isinstance(node, ast.Name):
-            return PurePosixPath(path) if node.id == "__file__" else definition(node, seen)
-        if isinstance(node, ast.Attribute) and node.attr == "parent":
-            value = resolve(node.value, seen)
-            return value.parent if isinstance(value, PurePosixPath) else None
-        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
-            left, right = resolve(node.left, seen), resolve(node.right, seen)
-            return left / right if isinstance(left, PurePosixPath) and type(right) is str else None
-        if not isinstance(node, ast.Call) or node.keywords:
-            return None
-        name = callee(node.func)
-        values = [resolve(arg, seen) for arg in node.args]
-        if name == "pathlib.Path" and len(values) == 1 and isinstance(values[0], PurePosixPath):
-            return values[0]
-        if name in {"os.path.abspath", "os.path.dirname"} and len(values) == 1 and isinstance(values[0], PurePosixPath):
-            return values[0].parent if name.endswith("dirname") else values[0]
-        if name == "os.path.join" and values and isinstance(values[0], PurePosixPath) and all(type(v) is str for v in values[1:]):
-            return values[0].joinpath(*values[1:])
-        if isinstance(node.func, ast.Attribute):
-            value = resolve(node.func.value, seen)
-            if isinstance(value, PurePosixPath):
-                if node.func.attr in {"absolute", "resolve"} and not values:
-                    return value
-                if node.func.attr == "joinpath" and all(type(v) is str for v in values):
-                    return value.joinpath(*values)
-        return None
-
-    def read_input(node, seen=frozenset()):
-        if len(seen) > 24:
-            return None
-        if isinstance(node, ast.Name):
-            for scope in scopes:
-                matches = binding_occurrences(scope.body, node.id)
-                if scopes[0] is tree:
-                    matches = [item for item in matches if item.lineno < sink.lineno]
-                if not matches:
-                    continue
-                if len(matches) != 1 or not isinstance(matches[0], ast.Name):
-                    return None
-                owner = parents.get(matches[0])
-                if not isinstance(owner, (ast.Assign, ast.AnnAssign)) or not preceding(owner, scope) or node.id in seen:
-                    return None
-                targets = owner.targets if isinstance(owner, ast.Assign) else [owner.target]
-                if len(targets) != 1 or targets[0] is not matches[0]:
-                    return None
-                steps.append(_fixed_program_span(owner))
-                return read_input(owner.value, seen | {node.id})
-            return None
-        if not isinstance(node, ast.Call) or node.keywords:
-            return None
-        if callee(node.func) == "compile" and len(node.args) == 3 and isinstance(node.args[2], ast.Constant) and node.args[2].value == "exec":
-            return read_input(node.args[0], seen)
-        if not isinstance(node.func, ast.Attribute) or node.args:
-            return None
-        if node.func.attr == "read_text":
-            return resolve(node.func.value)
-        if node.func.attr != "read" or not isinstance(node.func.value, ast.Name):
-            return None
-        handle = node.func.value.id
-        ancestors, current = [], sink
-        while current in parents:
-            current = parents[current]
-            ancestors.append(current)
-        handles = [item for owner in ancestors if isinstance(owner, ast.With) for item in owner.items
-                   if isinstance(item.optional_vars, ast.Name) and item.optional_vars.id == handle]
-        if len(handles) != 1:
-            return None
-        handle_scope = next(owner for owner in ancestors if isinstance(owner, ast.With)
-                            and handles[0] in owner.items)
-        if any(
-            isinstance(part, ast.Name) and part.id == handle and isinstance(part.ctx, (ast.Store, ast.Del))
-            and part is not handles[0].optional_vars
-            or isinstance(part, (ast.Attribute, ast.Subscript)) and isinstance(part.ctx, (ast.Store, ast.Del))
-            and any(isinstance(name, ast.Name) and name.id == handle for name in ast.walk(part))
-            for part in ast.walk(handle_scope)
-        ):
-            return None
-        if any(
-            isinstance(part, ast.Name) and part.id == handle and isinstance(part.ctx, ast.Load)
-            and not (parents.get(part) is node.func and node.func.value is part)
-            for part in ast.walk(handle_scope)
-        ):
-            return None
-        opened = handles[0].context_expr
-        if not isinstance(opened, ast.Call) or opened.keywords:
-            return None
-        if callee(opened.func) == "open" and len(opened.args) in {1, 2}:
-            if len(opened.args) == 2 and not (isinstance(opened.args[1], ast.Constant) and opened.args[1].value in {"r", "rt"}):
-                return None
-            return resolve(opened.args[0])
-        if isinstance(opened.func, ast.Attribute) and opened.func.attr == "open" and not opened.args:
-            return resolve(opened.func.value)
-        return None
-
-    resolved = read_input(sink.args[0])
-    if not isinstance(resolved, PurePosixPath):
-        return None
-    payload = posixpath.normpath(resolved.as_posix())
-    if payload.startswith("../") or payload.startswith("/") or payload not in inventory["sources"]:
-        return None
-    return {
-        "schema": "factory.security.captured-file-program-context.v1",
-        "role": "CAPTURED_SOURCE_FILE_PROGRAM_INPUT", "tier": "NEEDS_CONTEXT",
-        "source_path": path, "source_sha256": hashlib.sha256(inventory["sources"][path]).hexdigest(),
-        "sources_sha256": inventory["sources_sha256"], "call_span": _fixed_program_span(sink),
-        "producer_spans": steps, "payload_path": payload,
-        "payload_sha256": hashlib.sha256(inventory["sources"][payload]).hexdigest(),
-        "runtime_file_authority": "UNASSESSED", "program_effects": "UNASSESSED",
-        "safe_execution": False, "target_execution": "not_performed",
-        "original_severity": finding.get("severity"),
+    provider_roots = {
+        name
+        for name, value in aliases.items()
+        if value in {"os", "os.path", "pathlib", "pathlib.Path"}
     }
-
-
-def source_built_ast_program_witness(
-    node, call_name, *, source_bytes, source_path
-):
-    """Prove a closed AST-to-code builder without executing its generated code."""
-    if (
-        call_name != "exec"
-        or not isinstance(node, ast.Call)
-        or not isinstance(node.func, ast.Name)
-        or node.func.id != "exec"
-        or len(node.args) != 3
-        or node.keywords
-        or not isinstance(source_bytes, bytes)
-        or len(source_bytes) > 128 * 1024
-        or not isinstance(source_path, str)
+    if not _captured_file_provider_guard(
+        tree, sink, parents, scopes, protected, provider_roots
     ):
-        return {}
-    try:
-        tree = ast.parse(source_bytes, filename=source_path)
-    except (SyntaxError, ValueError, MemoryError, RecursionError, UnicodeError):
-        return {}
-    parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
-    span = _fixed_program_span(node)
-    calls = [item for item in ast.walk(tree) if isinstance(item, ast.Call) and _fixed_program_span(item) == span]
-    if span is None or len(calls) != 1 or ast.unparse(calls[0]) != ast.unparse(node):
-        return {}
-    source_call = calls[0]
-    sink = _source_built_ast_scope(source_call, parents)
-    if sink is None or sink.name != "_get_func_code" or not _source_built_ast_sink(sink, source_call):
-        return {}
-    owner = parents.get(sink)
-    if not isinstance(owner, ast.ClassDef):
-        return {}
-    builders = [item for item in owner.body if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)) and item.name == "_compile_builder"]
-    if len(builders) != 1:
-        return {}
-    builder = builders[0]
-    if not _source_built_ast_builder(tree, builder, sink, parents):
-        return {}
-    profile_nodes = (sink, builder, *[item for item in owner.body if isinstance(item, ast.FunctionDef) and item.name == "_prefix_names"])
-    profile = hashlib.sha256("\n".join(ast.dump(item, include_attributes=False) for item in profile_nodes).encode()).hexdigest()
-    return {
-        "schema": "factory.source-built-ast-program.v1",
-        "disposition": "PROVEN_SOURCE_BUILT_AST_PROGRAM",
-        "source_path": source_path,
-        "source_sha256": hashlib.sha256(source_bytes).hexdigest(),
-        "call_span": span,
-        "builder_ast_sha256": profile,
-        "program_shape": "one-generated-function-with-closed-ast-construction",
-        "input_effect": "data-enters-identifiers-or-constant-values-only",
-        "runtime_assurance": "INCOMPLETE",
-        "target_execution": "not_performed",
-    }
+        return None
+    return path, tree, parents, sink, scopes, aliases
+
+
+def _captured_file_provider_guard(
+    tree, sink, parents, scopes, protected, provider_roots
+):
+    return all(
+        _captured_file_provider_node_clear(
+            node, tree, sink, parents, scopes, protected, provider_roots
+        )
+        for node in ast.walk(tree)
+    )
+
+
+def _captured_file_provider_node_clear(
+    node, tree, sink, parents, scopes, protected, provider_roots
+):
+    protected_names = protected | provider_roots
+    if (
+        isinstance(node, ast.Name)
+        and isinstance(node.ctx, (ast.Store, ast.Del))
+        and node.id in protected_names
+    ):
+        return False
+    if isinstance(node, ast.arg) and node.arg in protected_names:
+        return False
+    if (
+        isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+        and node.name in protected_names
+    ):
+        return False
+    if isinstance(node, ast.ImportFrom) and any(
+        item.name == "*" for item in node.names
+    ):
+        if scopes[0] is not tree or node.lineno <= sink.lineno:
+            return False
+    if isinstance(
+        node, (ast.Import, ast.ImportFrom)
+    ) and _captured_file_import_conflict(node, tree, protected, provider_roots):
+        return False
+    if _captured_file_reflective_call(node, sink, parents, scopes):
+        return False
+    if isinstance(node, (ast.Attribute, ast.Subscript)) and isinstance(
+        node.ctx, (ast.Store, ast.Del)
+    ):
+        return not any(
+            isinstance(part, ast.Name) and part.id in provider_roots | {"__builtins__"}
+            for part in ast.walk(node)
+        )
+    return True
+
+
+def _captured_file_import_conflict(node, tree, protected, provider_roots):
+    return any(
+        (item.asname or item.name.split(".")[0]) in protected
+        or node not in tree.body
+        and (item.asname or item.name.split(".")[0]) in provider_roots
+        or item.name == "builtins"
+        or isinstance(node, ast.ImportFrom)
+        and node.module == "builtins"
+        for item in node.names
+    )
+
+
+def _captured_file_reflective_call(node, sink, parents, scopes):
+    if not (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id
+        in {"globals", "locals", "vars", "setattr", "delattr", "__import__"}
+    ):
+        return False
+    owner = parents.get(node)
+    while owner is not None and not isinstance(
+        owner, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef)
+    ):
+        owner = parents.get(owner)
+    return node not in sink.args[1:] and node.lineno <= sink.lineno and owner in scopes
+
+
+def _captured_read_binding(
+    node,
+    seen,
+    scopes,
+    tree,
+    sink,
+    parents,
+    preceding,
+    steps,
+    read_input,
+    binding_occurrences,
+):
+    for scope in scopes:
+        matches = binding_occurrences(scope.body, node.id)
+        if scopes[0] is tree:
+            matches = [item for item in matches if item.lineno < sink.lineno]
+        if not matches:
+            continue
+        if len(matches) != 1 or not isinstance(matches[0], ast.Name):
+            return None
+        owner = parents.get(matches[0])
+        if (
+            not isinstance(owner, (ast.Assign, ast.AnnAssign))
+            or not preceding(owner, scope)
+            or node.id in seen
+        ):
+            return None
+        targets = owner.targets if isinstance(owner, ast.Assign) else [owner.target]
+        if len(targets) != 1 or targets[0] is not matches[0]:
+            return None
+        steps.append(_fixed_program_span(owner))
+        return read_input(owner.value, seen | {node.id})
+    return None
+
+
+def _captured_read_call(node, seen, resolve, read_input, callee, sink, parents):
+    if node.keywords:
+        return None
+    if (
+        callee(node.func) == "compile"
+        and len(node.args) == 3
+        and isinstance(node.args[2], ast.Constant)
+        and node.args[2].value == "exec"
+    ):
+        return read_input(node.args[0], seen)
+    if not isinstance(node.func, ast.Attribute) or node.args:
+        return None
+    if node.func.attr == "read_text":
+        return resolve(node.func.value)
+    if node.func.attr != "read" or not isinstance(node.func.value, ast.Name):
+        return None
+    return _captured_read_handle(node, sink, parents, callee, resolve)
+
+
+def _captured_read_handle(node, sink, parents, callee, resolve):
+    handle = node.func.value.id
+    ancestors, current = [], sink
+    while current in parents:
+        current = parents[current]
+        ancestors.append(current)
+    handles = [
+        item
+        for owner in ancestors
+        if isinstance(owner, ast.With)
+        for item in owner.items
+        if isinstance(item.optional_vars, ast.Name) and item.optional_vars.id == handle
+    ]
+    if len(handles) != 1:
+        return None
+    scope = next(
+        owner
+        for owner in ancestors
+        if isinstance(owner, ast.With) and handles[0] in owner.items
+    )
+    if not _captured_handle_uses_closed(scope, handles[0], handle, node, parents):
+        return None
+    return _captured_open_path(handles[0].context_expr, callee, resolve)
+
+
+def _captured_handle_uses_closed(scope, binding, handle, node, parents):
+    for part in ast.walk(scope):
+        if (
+            isinstance(part, ast.Name)
+            and part.id == handle
+            and isinstance(part.ctx, (ast.Store, ast.Del))
+            and part is not binding.optional_vars
+        ):
+            return False
+        if (
+            isinstance(part, (ast.Attribute, ast.Subscript))
+            and isinstance(part.ctx, (ast.Store, ast.Del))
+            and any(
+                isinstance(name, ast.Name) and name.id == handle
+                for name in ast.walk(part)
+            )
+        ):
+            return False
+        if (
+            isinstance(part, ast.Name)
+            and part.id == handle
+            and isinstance(part.ctx, ast.Load)
+            and not (parents.get(part) is node.func and node.func.value is part)
+        ):
+            return False
+    return True
+
+
+def _captured_open_path(opened, callee, resolve):
+    if not isinstance(opened, ast.Call) or opened.keywords:
+        return None
+    if callee(opened.func) == "open" and len(opened.args) in {1, 2}:
+        if len(opened.args) == 2 and not (
+            isinstance(opened.args[1], ast.Constant)
+            and opened.args[1].value in {"r", "rt"}
+        ):
+            return None
+        return resolve(opened.args[0])
+    if (
+        isinstance(opened.func, ast.Attribute)
+        and opened.func.attr == "open"
+        and not opened.args
+    ):
+        return resolve(opened.func.value)
+    return None
 
 
 def source_built_ast_workspace_provider_clear(sources, source_path, root=None):
     """Require source-visible AST and builtin providers to have closed import/write paths."""
-    if not isinstance(sources, dict) or not isinstance(source_path, str) or len(sources) > 2048:
+    if (
+        not isinstance(sources, dict)
+        or not isinstance(source_path, str)
+        or len(sources) > 2048
+    ):
         return False
-    total = 0
-    ast_imports = []
-    targets = []
-    rule_module_aliases = {"ast", "builtins", "__builtins__"}
-    workspace_trees = []
-    for path, raw in sources.items():
-        if not isinstance(raw, bytes):
-            return False
-        total += len(raw)
-        if total > 64 * 1024 * 1024:
-            return False
-        try:
-            relative = path.relative_to(root).as_posix() if root is not None else str(path).replace("\\", "/")
-        except (AttributeError, ValueError):
-            relative = path.as_posix() if hasattr(path, "as_posix") else str(path).replace("\\", "/")
-        if relative == source_path or root is None and relative.endswith("/" + source_path):
-            targets.append(relative)
-        try:
-            tree = ast.parse(raw, filename=relative)
-        except (SyntaxError, ValueError, MemoryError, RecursionError, UnicodeError):
-            return False
-        workspace_trees.append((tree, relative))
-        for item in ast.walk(tree):
-            if isinstance(item, ast.Import):
-                if any(alias.name == "ast" and alias.asname is None for alias in item.names):
-                    ast_imports.append((relative, item))
-                elif any(alias.name == "ast" for alias in item.names):
-                    return False
-                if any(alias.name == "builtins" for alias in item.names):
-                    return False
-                rule_module_aliases.update(
-                    alias.asname or alias.name.rsplit(".", 1)[-1]
-                    for alias in item.names
-                    if alias.name.replace(".", "/").endswith("werkzeug/routing/rules")
-                )
-            elif isinstance(item, ast.ImportFrom):
-                if item.module == "builtins":
-                    return False
-                if item.module and item.module.replace(".", "/").endswith("werkzeug/routing/rules") and any(
-                    alias.name in {
-                        "_get_func_code", "_prefix_names", "_IF_KWARGS_URL_ENCODE_AST",
-                        "_URL_ENCODE_AST_NAMES", "_CALL_CONVERTER_CODE_FMT",
-                    } for alias in item.names
-                ):
-                    return False
-                if item.module and item.module.replace(".", "/").endswith("werkzeug/routing/rules"):
-                    rule_module_aliases.add(item.module.rsplit(".", 1)[-1])
-                if item.module and item.module.replace(".", "/").endswith("werkzeug/routing"):
-                    rule_module_aliases.update(
-                        alias.asname or alias.name for alias in item.names
-                        if alias.name == "rules"
-                    )
-            if isinstance(item, ast.Name) and item.id == "__builtins__":
-                return False
-            if isinstance(item, ast.Call) and isinstance(item.func, ast.Attribute) and item.func.attr in {
-                "_get_func_code", "_prefix_names",
-            } and relative != source_path:
-                return False
-            if isinstance(item, ast.Attribute) and isinstance(item.ctx, (ast.Store, ast.Del)):
-                if _source_built_ast_provider_expr(item.value, rule_module_aliases):
-                    return False
-                if item.attr in {"_get_func_code", "_prefix_names"}:
-                    return False
-            if isinstance(item, ast.Subscript) and isinstance(item.ctx, (ast.Store, ast.Del)):
-                if _source_built_ast_provider_expr(item.value, rule_module_aliases):
-                    return False
-            if isinstance(item, ast.Call) and ast.unparse(item.func) in {"setattr", "delattr"}:
-                if item.args and _source_built_ast_provider_expr(item.args[0], rule_module_aliases):
-                    return False
-                if len(item.args) > 1 and _source_built_ast_sensitive_attribute(item.args[1]):
-                    if item.args and _source_built_ast_provider_expr(item.args[0], rule_module_aliases):
-                        return False
-    # Resolve workspace-local aliases before checking writes, so a provider
-    # imported in one module cannot be hidden behind a local name in another.
-    changed = True
-    while changed:
-        changed = False
-        for tree, relative in workspace_trees:
-            for item in ast.walk(tree):
-                if isinstance(item, ast.Assign):
-                    roots = item.targets
-                elif isinstance(item, (ast.AnnAssign, ast.NamedExpr)):
-                    roots = [item.target]
-                else:
-                    continue
-                if item.value is None or not _source_built_ast_module_alias(item.value, rule_module_aliases):
-                    continue
-                for root_target in roots:
-                    for target in ast.walk(root_target):
-                        if isinstance(target, ast.Name) and isinstance(target.ctx, ast.Store):
-                            if target.id not in rule_module_aliases:
-                                rule_module_aliases.add(target.id)
-                                changed = True
-    for tree, relative in workspace_trees:
-        for item in ast.walk(tree):
-            if isinstance(item, ast.Attribute) and isinstance(item.ctx, (ast.Store, ast.Del)):
-                if _source_built_ast_provider_expr(item.value, rule_module_aliases):
-                    return False
-            if isinstance(item, ast.Subscript) and isinstance(item.ctx, (ast.Store, ast.Del)):
-                if _source_built_ast_provider_expr(item.value, rule_module_aliases):
-                    return False
-            if isinstance(item, ast.Call) and ast.unparse(item.func) in {"setattr", "delattr"}:
-                if item.args and _source_built_ast_provider_expr(item.args[0], rule_module_aliases):
-                    return False
-    return len(targets) == 1 and len(ast_imports) == 1 and ast_imports[0][0] == targets[0]
+    from .credential_role_constructor_provider import _SourceBuiltAstWorkspace
+
+    workspace = _SourceBuiltAstWorkspace(sources, source_path, root)
+    return (
+        workspace.capture_sources()
+        and workspace.close_aliases()
+        and workspace.close_writes()
+        and workspace.unique_target()
+    )
 
 
 def _source_built_ast_module_alias(node, aliases):
@@ -3386,9 +3653,11 @@ def _source_built_ast_module_alias(node, aliases):
         return node.id in aliases
     if isinstance(node, ast.Attribute):
         if isinstance(node.value, ast.Name):
-            return node.value.id in aliases and node.value.id not in {
-                "ast", "builtins", "__builtins__"
-            } and node.attr == "ast"
+            return (
+                node.value.id in aliases
+                and node.value.id not in {"ast", "builtins", "__builtins__"}
+                and node.attr == "ast"
+            )
         return _source_built_ast_module_alias(node.value, aliases)
     if isinstance(node, ast.Subscript):
         if (
@@ -3417,29 +3686,48 @@ def _source_built_ast_provider_expr(node, rule_module_aliases):
     if any(isinstance(item, ast.Name) and item.id in names for item in parts):
         return True
     if any(
-        isinstance(item, ast.Attribute) and item.attr == "modules"
-        and isinstance(item.value, ast.Name) and item.value.id == "sys"
+        isinstance(item, ast.Attribute)
+        and item.attr == "modules"
+        and isinstance(item.value, ast.Name)
+        and item.value.id == "sys"
         for item in parts
     ):
         return True
     return any(
         isinstance(item, ast.Call)
-        and (ast.unparse(item.func) == "__import__" or ast.unparse(item.func).endswith(".import_module"))
+        and (
+            ast.unparse(item.func) == "__import__"
+            or ast.unparse(item.func).endswith(".import_module")
+        )
         for item in parts
     )
 
 
 def _source_built_ast_sensitive_attribute(node):
     return isinstance(node, ast.Constant) and node.value in {
-        "compile", "exec", "parse", "walk", "FunctionDef", "Call", "Name",
-        "Constant", "Return", "Tuple", "JoinedStr", "_get_func_code",
-        "_prefix_names", "_IF_KWARGS_URL_ENCODE_AST", "_URL_ENCODE_AST_NAMES",
+        "compile",
+        "exec",
+        "parse",
+        "walk",
+        "FunctionDef",
+        "Call",
+        "Name",
+        "Constant",
+        "Return",
+        "Tuple",
+        "JoinedStr",
+        "_get_func_code",
+        "_prefix_names",
+        "_IF_KWARGS_URL_ENCODE_AST",
+        "_URL_ENCODE_AST_NAMES",
     }
 
 
 def _source_built_ast_scope(node, parents):
     current = parents.get(node)
-    while current is not None and not isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef)):
+    while current is not None and not isinstance(
+        current, (ast.FunctionDef, ast.AsyncFunctionDef)
+    ):
         current = parents.get(current)
     return current
 
@@ -3452,7 +3740,8 @@ def _source_built_ast_sink(function, node):
         " exec(code, globs, locs)\n return locs[name]\n"
     ).body[0]
     return bool(
-        ast.dump(function, include_attributes=False) == ast.dump(expected, include_attributes=False)
+        ast.dump(function, include_attributes=False)
+        == ast.dump(expected, include_attributes=False)
         and len(function.decorator_list) == 1
         and isinstance(function.decorator_list[0], ast.Name)
         and function.decorator_list[0].id == "staticmethod"
@@ -3467,6 +3756,7 @@ def _source_built_ast_builder(tree, builder, sink, parents):
         or ast.unparse(builder.returns) != "t.Callable[..., tuple[str, str]]"
     ):
         return False
+
     def name(item):
         return ast.unparse(item.func) if isinstance(item, ast.Call) else ""
 
@@ -3480,7 +3770,8 @@ def _source_built_ast_builder(tree, builder, sink, parents):
         or not isinstance(helper_calls[0].func, ast.Attribute)
         or ast.unparse(helper_calls[0]) != "self._get_func_code(code, func_ast.name)"
         or not isinstance(helper_calls[0], ast.Call)
-        or helper_calls[0] not in [item for item in ast.walk(builder) if isinstance(item, ast.Call)]
+        or helper_calls[0]
+        not in [item for item in ast.walk(builder) if isinstance(item, ast.Call)]
         or not isinstance(parents.get(helper_calls[0]), ast.Return)
         or parents[helper_calls[0]].value is not helper_calls[0]
     ):
@@ -3534,7 +3825,8 @@ def _source_built_ast_builder(tree, builder, sink, parents):
 def _source_built_ast_owned_values(builder, compiled, parents):
     """Keep generated code and its AST inputs under one closed set of writes."""
     writes = [
-        item for item in ast.walk(builder)
+        item
+        for item in ast.walk(builder)
         if isinstance(item, (ast.Assign, ast.AnnAssign, ast.AugAssign, ast.NamedExpr))
     ]
 
@@ -3547,8 +3839,12 @@ def _source_built_ast_owned_values(builder, compiled, parents):
 
     def name_writes(name):
         return [
-            statement for statement in writes
-            if any(isinstance(target, ast.Name) and target.id == name for target in targets(statement))
+            statement
+            for statement in writes
+            if any(
+                isinstance(target, ast.Name) and target.id == name
+                for target in targets(statement)
+            )
         ]
 
     def exact_name_write(name, value):
@@ -3559,34 +3855,61 @@ def _source_built_ast_owned_values(builder, compiled, parents):
         exact_name_write("code", "compile(module, '<werkzeug routing>', 'exec')")
         and name_writes("code")[0].value is compiled
         and exact_name_write("module", "ast.parse('')")
-        and exact_name_write("func_ast", "_prefix_names('def _(): pass', ast.FunctionDef)")
+        and exact_name_write(
+            "func_ast", "_prefix_names('def _(): pass', ast.FunctionDef)"
+        )
     ):
         return False
 
-    # These are the only permitted writes to the owned objects. In particular,
-    # replacing module.body, func_ast, func_ast.args, or their generated code
-    # after construction would invalidate the reaching-definition claim.
-    allowed_attribute_writes = {
+    return _source_built_ast_owned_mutations_closed(writes, compiled)
+
+
+def _source_built_ast_owned_mutations_closed(writes, compiled):
+    """Close writes and aliases over the owned generated AST objects."""
+    observed = _source_built_ast_observed_writes(writes)
+    allowed = {
         "module.body": 1,
         "func_ast.name": 1,
         "func_ast.args.kwarg": 1,
         "func_ast.body": 1,
     }
+    if observed is None or observed != allowed:
+        return False
+    return _source_built_ast_aliases_closed(writes, compiled)
+
+
+def _source_built_ast_targets(statement):
+    if isinstance(statement, ast.Assign):
+        return statement.targets
+    if isinstance(statement, (ast.AnnAssign, ast.AugAssign, ast.NamedExpr)):
+        return [statement.target]
+    return []
+
+
+def _source_built_ast_observed_writes(writes):
     observed = {}
     for statement in writes:
-        for root in targets(statement):
+        for root in _source_built_ast_targets(statement):
             for target in ast.walk(root):
-                if isinstance(target, ast.Attribute) and isinstance(target.ctx, (ast.Store, ast.Del)):
+                if isinstance(target, ast.Attribute) and isinstance(
+                    target.ctx, (ast.Store, ast.Del)
+                ):
                     text = ast.unparse(target)
                     if text.startswith(("module", "func_ast")):
                         observed[text] = observed.get(text, 0) + 1
-                if isinstance(target, ast.Subscript) and isinstance(target.ctx, (ast.Store, ast.Del)):
-                    if any(isinstance(part, ast.Name) and part.id in {"module", "func_ast", "code"}
-                           for part in ast.walk(target.value)):
-                        return False
-    if observed != allowed_attribute_writes:
-        return False
+                if isinstance(target, ast.Subscript) and isinstance(
+                    target.ctx, (ast.Store, ast.Del)
+                ):
+                    if any(
+                        isinstance(part, ast.Name)
+                        and part.id in {"module", "func_ast", "code"}
+                        for part in ast.walk(target.value)
+                    ):
+                        return None
+    return observed
 
+
+def _source_built_ast_aliases_closed(writes, compiled):
     # Reject copied aliases of owned objects. Their later mutation or use in a
     # different call would otherwise escape the local write inventory.
     for statement in writes:
@@ -3594,8 +3917,10 @@ def _source_built_ast_owned_values(builder, compiled, parents):
         if value is None:
             continue
         owned_loads = {
-            item.id for item in ast.walk(value)
-            if isinstance(item, ast.Name) and isinstance(item.ctx, ast.Load)
+            item.id
+            for item in ast.walk(value)
+            if isinstance(item, ast.Name)
+            and isinstance(item.ctx, ast.Load)
             and item.id in {"module", "func_ast", "code"}
         }
         if owned_loads and not (
@@ -3609,42 +3934,71 @@ def _source_built_ast_owned_values(builder, compiled, parents):
     return True
 
 
-def _source_built_ast_effects_closed(tree, builder, sink, parents):
+def _source_built_ast_initial_mutations_closed(tree):
     module_ast_imports = [
-        item for item in tree.body if isinstance(item, ast.Import)
+        item
+        for item in tree.body
+        if isinstance(item, ast.Import)
         and any(alias.name == "ast" and alias.asname is None for alias in item.names)
     ]
     if len(module_ast_imports) != 1:
         return False
     if any(
-        isinstance(item, ast.Name) and item.id in {"ast", "compile", "exec"}
+        isinstance(item, ast.Name)
+        and item.id in {"ast", "compile", "exec"}
         and isinstance(item.ctx, (ast.Store, ast.Del))
         for item in ast.walk(tree)
     ):
         return False
     if any(
-        isinstance(item, ast.Attribute) and item.attr in {
-            "parse", "walk", "FunctionDef", "arg", "Call", "Name", "Constant",
-            "Load", "Return", "Tuple", "JoinedStr", "If",
-        } and isinstance(item.ctx, (ast.Store, ast.Del))
+        isinstance(item, ast.Attribute)
+        and item.attr
+        in {
+            "parse",
+            "walk",
+            "FunctionDef",
+            "arg",
+            "Call",
+            "Name",
+            "Constant",
+            "Load",
+            "Return",
+            "Tuple",
+            "JoinedStr",
+            "If",
+        }
+        and isinstance(item.ctx, (ast.Store, ast.Del))
         for item in ast.walk(tree)
     ):
         return False
     if any(
-        isinstance(item, ast.Attribute) and isinstance(item.ctx, (ast.Store, ast.Del))
+        isinstance(item, ast.Attribute)
+        and isinstance(item.ctx, (ast.Store, ast.Del))
         and (
-            isinstance(item.value, ast.Name) and item.value.id == "ast"
-            or isinstance(item.value, ast.Name) and item.value.id == "func_ast"
+            isinstance(item.value, ast.Name)
+            and item.value.id == "ast"
+            or isinstance(item.value, ast.Name)
+            and item.value.id == "func_ast"
             and item.attr not in {"name", "args", "body"}
-            or isinstance(item.value, ast.Name) and item.value.id == "module"
+            or isinstance(item.value, ast.Name)
+            and item.value.id == "module"
             and item.attr != "body"
-            or isinstance(item.value, ast.Name) and item.value.id == "ret"
+            or isinstance(item.value, ast.Name)
+            and item.value.id == "ret"
             and item.attr != "args"
         )
         for item in ast.walk(tree)
     ):
         return False
-    prefix = [item for item in ast.walk(tree) if isinstance(item, ast.FunctionDef) and item.name == "_prefix_names"]
+    return True
+
+
+def _source_built_ast_prefix_closed(tree):
+    prefix = [
+        item
+        for item in ast.walk(tree)
+        if isinstance(item, ast.FunctionDef) and item.name == "_prefix_names"
+    ]
     expected_prefix = ast.parse('''
 def _prefix_names(src: str, expected_type: type[_ASTT]) -> _ASTT:
     """ast parse and prefix names with `.` to avoid collision with user vars"""
@@ -3658,9 +4012,15 @@ def _prefix_names(src: str, expected_type: type[_ASTT]) -> _ASTT:
             node.id = f".{node.id}"
     return tree
 ''').body[0]
-    if len(prefix) != 1 or ast.dump(prefix[0], include_attributes=False) != ast.dump(expected_prefix, include_attributes=False):
+    if len(prefix) != 1 or ast.dump(prefix[0], include_attributes=False) != ast.dump(
+        expected_prefix, include_attributes=False
+    ):
         return False
-    prefix_calls = [item for item in ast.walk(tree) if isinstance(item, ast.Call) and ast.unparse(item.func) == "_prefix_names"]
+    prefix_calls = [
+        item
+        for item in ast.walk(tree)
+        if isinstance(item, ast.Call) and ast.unparse(item.func) == "_prefix_names"
+    ]
     expected_prefix_calls = {
         "_prefix_names(_IF_KWARGS_URL_ENCODE_CODE, ast.If)",
         "_prefix_names('q', ast.Name)",
@@ -3668,78 +4028,88 @@ def _prefix_names(src: str, expected_type: type[_ASTT]) -> _ASTT:
         "_prefix_names(_CALL_CONVERTER_CODE_FMT.format(elem=elem), ast.Call)",
         "_prefix_names('def _(): pass', ast.FunctionDef)",
     }
-    if len(prefix_calls) != len(expected_prefix_calls) or {ast.unparse(item) for item in prefix_calls} != expected_prefix_calls:
-        return False
-    for global_name in {"_IF_KWARGS_URL_ENCODE_AST", "_URL_ENCODE_AST_NAMES"}:
-        writes = [
-            item for item in ast.walk(tree) if isinstance(item, ast.Name)
-            and item.id == global_name and isinstance(item.ctx, (ast.Store, ast.Del))
-        ]
-        if len(writes) != 1 or not isinstance(parents.get(writes[0]), ast.Assign):
-            return False
-    parse_calls = [item for item in ast.walk(tree) if isinstance(item, ast.Call) and ast.unparse(item.func) == "ast.parse"]
-    if {ast.unparse(item) for item in parse_calls} != {"ast.parse(src)", "ast.parse('')"} or len(parse_calls) != 2:
-        return False
-    if len([item for item in ast.walk(tree) if isinstance(item, ast.Call) and isinstance(item.func, ast.Name) and item.func.id == "exec"]) != 1:
-        return False
-    if len([item for item in ast.walk(tree) if isinstance(item, ast.FunctionDef) and item.name == "_get_func_code"]) != 1:
-        return False
-    if any(
-        isinstance(item, ast.Attribute) and item.attr in {"_get_func_code", "_compile_builder"}
-        and isinstance(item.ctx, (ast.Store, ast.Del))
-        for item in ast.walk(tree)
+    if (
+        len(prefix_calls) != len(expected_prefix_calls)
+        or {ast.unparse(item) for item in prefix_calls} != expected_prefix_calls
     ):
         return False
-    if not _source_built_ast_constants(tree, builder, parents):
-        return False
+    return True
+
+
+def _source_built_ast_builder_conforms(tree, builder, parents):
     nested = [item for item in builder.body if isinstance(item, ast.FunctionDef)]
-    if {item.name for item in nested} != {"_convert", "_parts", "_join"} or len(nested) != 3:
+    if {item.name for item in nested} != {"_convert", "_parts", "_join"} or len(
+        nested
+    ) != 3:
         return False
     if any(
-        item.decorator_list or item.args.defaults or item.args.kw_defaults
-        or item.args.kwarg is not None or item.args.vararg is not None
+        item.decorator_list
+        or item.args.defaults
+        or item.args.kw_defaults
+        or item.args.kwarg is not None
+        or item.args.vararg is not None
         or not _source_built_ast_annotations_static(item)
         for item in nested
     ):
         return False
     body_assignments = [
-        item for item in ast.walk(builder)
-        if isinstance(item, ast.Assign) and len(item.targets) == 1
-        and isinstance(item.targets[0], ast.Name) and item.targets[0].id == "body"
+        item
+        for item in ast.walk(builder)
+        if isinstance(item, ast.Assign)
+        and len(item.targets) == 1
+        and isinstance(item.targets[0], ast.Name)
+        and item.targets[0].id == "body"
     ]
-    if len(body_assignments) != 2 or {ast.unparse(item) for item in body_assignments} != {
-        "body = []", "body = [_IF_KWARGS_URL_ENCODE_AST]",
+    if len(body_assignments) != 2 or {
+        ast.unparse(item) for item in body_assignments
+    } != {
+        "body = []",
+        "body = [_IF_KWARGS_URL_ENCODE_AST]",
     }:
         return False
     if not any(
-        isinstance(item, ast.Assign) and len(item.targets) == 1
-        and isinstance(item.targets[0], ast.Attribute) and ast.unparse(item.targets[0]) == "func_ast.body"
+        isinstance(item, ast.Assign)
+        and len(item.targets) == 1
+        and isinstance(item.targets[0], ast.Attribute)
+        and ast.unparse(item.targets[0]) == "func_ast.body"
         and ast.unparse(item.value) == "body"
         for item in ast.walk(builder)
     ):
         return False
     if not any(
-        isinstance(item, ast.Assign) and len(item.targets) == 1
-        and isinstance(item.targets[0], ast.Attribute) and ast.unparse(item.targets[0]) == "func_ast.args.kwarg"
+        isinstance(item, ast.Assign)
+        and len(item.targets) == 1
+        and isinstance(item.targets[0], ast.Attribute)
+        and ast.unparse(item.targets[0]) == "func_ast.args.kwarg"
         and ast.unparse(item.value) == "ast.arg('.kwargs', None)"
         for item in ast.walk(builder)
     ):
         return False
     if not any(
-        isinstance(item, ast.Assign) and len(item.targets) == 1
-        and isinstance(item.targets[0], ast.Attribute) and ast.unparse(item.targets[0]) == "func_ast.name"
+        isinstance(item, ast.Assign)
+        and len(item.targets) == 1
+        and isinstance(item.targets[0], ast.Attribute)
+        and ast.unparse(item.targets[0]) == "func_ast.name"
         and ast.unparse(item.value) == "f'<builder:{self.rule!r}>'"
         for item in ast.walk(builder)
     ):
         return False
     generated_defaults = [
-        item for item in ast.walk(builder) if isinstance(item, ast.Call)
+        item
+        for item in ast.walk(builder)
+        if isinstance(item, ast.Call)
         and ast.unparse(item.func) == "func_ast.args.defaults.append"
     ]
-    if len(generated_defaults) != 1 or ast.unparse(generated_defaults[0]) != "func_ast.args.defaults.append(ast.Constant(''))":
+    if (
+        len(generated_defaults) != 1
+        or ast.unparse(generated_defaults[0])
+        != "func_ast.args.defaults.append(ast.Constant(''))"
+    ):
         return False
     generated_args = [
-        item for item in ast.walk(builder) if isinstance(item, ast.Call)
+        item
+        for item in ast.walk(builder)
+        if isinstance(item, ast.Call)
         and ast.unparse(item.func) == "func_ast.args.args.append"
     ]
     if {ast.unparse(item) for item in generated_args} != {
@@ -3747,8 +4117,77 @@ def _prefix_names(src: str, expected_type: type[_ASTT]) -> _ASTT:
         "func_ast.args.args.append(ast.arg(arg, None))",
     } or len(generated_args) != 2:
         return False
+    return True
+
+
+def _source_built_ast_workspace_contract(tree, builder, parents):
+    for global_name in {"_IF_KWARGS_URL_ENCODE_AST", "_URL_ENCODE_AST_NAMES"}:
+        writes = [
+            item
+            for item in ast.walk(tree)
+            if isinstance(item, ast.Name)
+            and item.id == global_name
+            and isinstance(item.ctx, (ast.Store, ast.Del))
+        ]
+        if len(writes) != 1 or not isinstance(parents.get(writes[0]), ast.Assign):
+            return False
+    parse_calls = [
+        item
+        for item in ast.walk(tree)
+        if isinstance(item, ast.Call) and ast.unparse(item.func) == "ast.parse"
+    ]
+    if {ast.unparse(item) for item in parse_calls} != {
+        "ast.parse(src)",
+        "ast.parse('')",
+    } or len(parse_calls) != 2:
+        return False
+    if (
+        len(
+            [
+                item
+                for item in ast.walk(tree)
+                if isinstance(item, ast.Call)
+                and isinstance(item.func, ast.Name)
+                and item.func.id == "exec"
+            ]
+        )
+        != 1
+    ):
+        return False
+    if (
+        len(
+            [
+                item
+                for item in ast.walk(tree)
+                if isinstance(item, ast.FunctionDef) and item.name == "_get_func_code"
+            ]
+        )
+        != 1
+    ):
+        return False
     if any(
-        isinstance(item, ast.Call) and ast.unparse(item.func) == "ast.parse"
+        isinstance(item, ast.Attribute)
+        and item.attr in {"_get_func_code", "_compile_builder"}
+        and isinstance(item.ctx, (ast.Store, ast.Del))
+        for item in ast.walk(tree)
+    ):
+        return False
+    return True
+
+
+def _source_built_ast_effects_closed(tree, builder, sink, parents):
+    if not _source_built_ast_declaration_contract(tree):
+        return False
+    if not _source_built_ast_workspace_contract(tree, builder, parents):
+        return False
+    if not _source_built_ast_constants(tree, builder, parents):
+        return False
+    if not _source_built_ast_builder_conforms(tree, builder, parents):
+        return False
+    nested = [item for item in builder.body if isinstance(item, ast.FunctionDef)]
+    if any(
+        isinstance(item, ast.Call)
+        and ast.unparse(item.func) == "ast.parse"
         and _source_built_ast_scope(item, parents) in {builder, *nested}
         and ast.unparse(item) != "ast.parse('')"
         for item in ast.walk(builder)
@@ -3756,37 +4195,89 @@ def _prefix_names(src: str, expected_type: type[_ASTT]) -> _ASTT:
         return False
     builder_scopes = {builder, *nested}
     for item in ast.walk(builder):
-        if isinstance(item, ast.Call) and _source_built_ast_scope(item, parents) in builder_scopes:
+        if (
+            isinstance(item, ast.Call)
+            and _source_built_ast_scope(item, parents) in builder_scopes
+        ):
             callee = ast.unparse(item.func)
             if callee in {"compile", "self._get_func_code"}:
                 continue
             if callee not in {
-                "_parts", "_join", "body.append", "_prefix_names", "ast.parse", "ast.walk",
-                "ast.arg", "func_ast.args.args.append", "func_ast.args.defaults.append",
-                "ast.Constant", "ast.Name", "ast.Load", "ast.JoinedStr", "ast.Return",
-                "ast.Tuple", "str", "quote", "self._converters[data].to_url",
-                "_CALL_CONVERTER_CODE_FMT.format", "_convert", "len", "isinstance",
-                "opl.append", "ret.append", "url_parts.extend",
+                "_parts",
+                "_join",
+                "body.append",
+                "_prefix_names",
+                "ast.parse",
+                "ast.walk",
+                "ast.arg",
+                "func_ast.args.args.append",
+                "func_ast.args.defaults.append",
+                "ast.Constant",
+                "ast.Name",
+                "ast.Load",
+                "ast.JoinedStr",
+                "ast.Return",
+                "ast.Tuple",
+                "str",
+                "quote",
+                "self._converters[data].to_url",
+                "_CALL_CONVERTER_CODE_FMT.format",
+                "_convert",
+                "len",
+                "isinstance",
+                "opl.append",
+                "ret.append",
+                "url_parts.extend",
             }:
                 return False
     return True
 
 
+def _source_built_ast_declaration_contract(tree):
+    return _source_built_ast_initial_mutations_closed(
+        tree
+    ) and _source_built_ast_prefix_closed(tree)
+
+
 def _source_built_ast_annotations_static(function):
-    allowed = (ast.Name, ast.Attribute, ast.Subscript, ast.Tuple, ast.Constant, ast.Load)
+    allowed = (
+        ast.Name,
+        ast.Attribute,
+        ast.Subscript,
+        ast.Tuple,
+        ast.Constant,
+        ast.Load,
+    )
     annotations = [
-        arg.annotation for arg in (*function.args.posonlyargs, *function.args.args, *function.args.kwonlyargs)
+        arg.annotation
+        for arg in (
+            *function.args.posonlyargs,
+            *function.args.args,
+            *function.args.kwonlyargs,
+        )
         if arg.annotation is not None
     ]
-    annotations.extend(item for item in (function.args.vararg, function.args.kwarg) if item is not None for item in (item.annotation,))
+    annotations.extend(
+        item
+        for item in (function.args.vararg, function.args.kwarg)
+        if item is not None
+        for item in (item.annotation,)
+    )
     annotations.extend(item for item in (function.returns,) if item is not None)
-    return all(all(isinstance(node, allowed) for node in ast.walk(annotation)) for annotation in annotations)
+    return all(
+        all(isinstance(node, allowed) for node in ast.walk(annotation))
+        for annotation in annotations
+    )
 
 
 def _source_built_ast_constants(tree, builder, parents):
     values = {}
     for item in tree.body:
-        if isinstance(item, ast.Assign) and len(item.targets) == 1 and isinstance(item.targets[0], ast.Name):
+        if (
+            isinstance(item, ast.Assign)
+            and len(item.targets) == 1
+            and isinstance(item.targets[0], ast.Name)
+        ):
             try:
                 values[item.targets[0].id] = ast.literal_eval(item.value)
             except (ValueError, TypeError):
@@ -3794,29 +4285,50 @@ def _source_built_ast_constants(tree, builder, parents):
     if values.get("_CALL_CONVERTER_CODE_FMT") != "self._converters[{elem!r}].to_url()":
         return False
     expected = (
-        'if kwargs:\n'
-        '    params = self._encode_query_vars(kwargs)\n'
+        "if kwargs:\n"
+        "    params = self._encode_query_vars(kwargs)\n"
         '    q = "?" if params else ""\n'
-        'else:\n'
+        "else:\n"
         '    q = params = ""\n'
     )
     if values.get("_IF_KWARGS_URL_ENCODE_CODE") != expected:
         return False
-    if len([
-        item for item in tree.body if isinstance(item, ast.Assign) and len(item.targets) == 1
-        and isinstance(item.targets[0], ast.Name) and item.targets[0].id == "_CALL_CONVERTER_CODE_FMT"
-    ]) != 1:
+    if (
+        len(
+            [
+                item
+                for item in tree.body
+                if isinstance(item, ast.Assign)
+                and len(item.targets) == 1
+                and isinstance(item.targets[0], ast.Name)
+                and item.targets[0].id == "_CALL_CONVERTER_CODE_FMT"
+            ]
+        )
+        != 1
+    ):
         return False
     rule_re = next(
-        (item for item in tree.body if isinstance(item, ast.Assign) and len(item.targets) == 1
-         and isinstance(item.targets[0], ast.Name) and item.targets[0].id == "_part_re"),
+        (
+            item
+            for item in tree.body
+            if isinstance(item, ast.Assign)
+            and len(item.targets) == 1
+            and isinstance(item.targets[0], ast.Name)
+            and item.targets[0].id == "_part_re"
+        ),
         None,
     )
-    if rule_re is None or not isinstance(rule_re.value, ast.Call) or ast.unparse(rule_re.value.func) != "re.compile":
+    if (
+        rule_re is None
+        or not isinstance(rule_re.value, ast.Call)
+        or ast.unparse(rule_re.value.func) != "re.compile"
+    ):
         return False
     pattern = rule_re.value.args[0] if rule_re.value.args else None
-    if not isinstance(pattern, ast.Constant) or type(pattern.value) is not str or not re.search(
-        r"\(\?P<variable>\[a-zA-Z_\]\[a-zA-Z0-9_\]\*\)", pattern.value
+    if (
+        not isinstance(pattern, ast.Constant)
+        or type(pattern.value) is not str
+        or not re.search(r"\(\?P<variable>\[a-zA-Z_\]\[a-zA-Z0-9_\]\*\)", pattern.value)
     ):
         return False
     return True
@@ -3872,7 +4384,14 @@ def finite_template_program_hashes(template, parameter, values):
 
 
 def _provider_mutation_for_node(
-    node, aliases, audit, parents, bindings, facts, capture_predicate, argument_predicate
+    node,
+    aliases,
+    audit,
+    parents,
+    bindings,
+    facts,
+    capture_predicate,
+    argument_predicate,
 ):
     if isinstance(node, ast.Attribute) and isinstance(node.ctx, (ast.Store, ast.Del)):
         _record_provider_paths(node.value, node.attr, aliases, audit, bindings, facts)
@@ -3893,8 +4412,15 @@ def _provider_mutation_for_node(
 
 
 def finite_provider_mutation_index(
-    nodes, aliases, audit, parents, *, capture_predicate=None, argument_predicate=None,
-    inventory_projector=None, inventory_dependencies=()
+    nodes,
+    aliases,
+    audit,
+    parents,
+    *,
+    capture_predicate=None,
+    argument_predicate=None,
+    inventory_projector=None,
+    inventory_dependencies=(),
 ):
     """Collect provider mutation facts from writes, reflective calls, captured assignments, passed aliases, and returned aliases."""
     nodes = tuple(nodes)
@@ -3910,6 +4436,30 @@ def finite_provider_mutation_index(
         capture_predicate,
         argument_predicate,
     )
+    facts.update(
+        _foreign_provider_mutation_facts(
+            nodes,
+            aliases,
+            audit,
+            capture_predicate,
+            argument_predicate,
+            inventory_projector,
+            inventory_dependencies,
+        )
+    )
+    return facts
+
+
+def _foreign_provider_mutation_facts(
+    nodes,
+    aliases,
+    audit,
+    capture_predicate,
+    argument_predicate,
+    inventory_projector,
+    inventory_dependencies,
+):
+    facts = set()
     module = next((node for node in nodes if isinstance(node, ast.Module)), None)
     context = getattr(module, "_security_source_context", None)
     current_hash = getattr(module, "_oracle_source_sha256", None)
@@ -3924,60 +4474,92 @@ def finite_provider_mutation_index(
             for source_path, source in () if len(sources) > 2048 else sources.items():
                 if not str(source_path).lower().endswith(".py"):
                     continue
-                try:
-                    data = source.encode() if isinstance(source, str) else source
-                    if not isinstance(data, bytes):
-                        raise TypeError("captured source is not bytes")
-                    total += len(data)
-                    if total > 64 * 1024 * 1024:
-                        facts.update(
-                            (path.partition(".")[0], "*") for path in aliases.values()
-                        )
-                        break
-                    source_hash = hashlib.sha256(data).hexdigest()
-                    if source_hash == current_hash:
-                        continue
-                    cache, key = _foreign_provider_mutation_cache(
-                        module,
-                        source_hash,
-                        audit,
-                        _security_aliases,
-                        capture_predicate,
-                        argument_predicate, inventory_projector, inventory_dependencies,
-                    )
-                    if cache is not None and key in cache:
-                        facts.update(cache[key])
-                        continue
-                    foreign_nodes, foreign_aliases, foreign_parents, foreign_bindings = (
-                        _foreign_provider_inputs(module, data, source_hash, _security_aliases)
-                    )
-                except (
-                    SyntaxError,
-                    UnicodeError,
-                    AttributeError,
-                    TypeError,
-                    ValueError,
-                ):
+                data = _foreign_provider_source_bytes(source)
+                if data is None:
                     facts.update(
                         (path.partition(".")[0], "*") for path in aliases.values()
                     )
                     continue
-                foreign_nodes, foreign_bindings = _project_provider_inventory(
-                    foreign_nodes, foreign_aliases, foreign_parents, foreign_bindings, inventory_projector)
-                foreign_facts = set()
-                _provider_mutation_facts(
-                    foreign_nodes,
-                    foreign_aliases,
-                    audit,
-                    foreign_parents,
-                    foreign_bindings,
-                    foreign_facts,
-                    capture_predicate,
-                    argument_predicate,
+                total += len(data)
+                if total > 64 * 1024 * 1024:
+                    facts.update(
+                        (path.partition(".")[0], "*") for path in aliases.values()
+                    )
+                    break
+                source_hash = hashlib.sha256(data).hexdigest()
+                if source_hash == current_hash:
+                    continue
+                facts.update(
+                    _foreign_provider_source_mutations(
+                        module,
+                        data,
+                        source_hash,
+                        audit,
+                        aliases,
+                        _security_aliases,
+                        capture_predicate,
+                        argument_predicate,
+                        inventory_projector,
+                        inventory_dependencies,
+                    )
                 )
-                facts.update(foreign_facts)
-                if cache is not None and len(cache) < 2048:
-                    cache[key] = frozenset(foreign_facts)
+    return facts
+
+
+def _foreign_provider_source_bytes(source):
+    try:
+        data = source.encode() if isinstance(source, str) else source
+    except (UnicodeError, AttributeError, TypeError, ValueError):
+        return None
+    return data if isinstance(data, bytes) else None
+
+
+def _foreign_provider_source_mutations(
+    module,
+    data,
+    source_hash,
+    audit,
+    aliases,
+    alias_reader,
+    capture_predicate,
+    argument_predicate,
+    inventory_projector,
+    inventory_dependencies,
+):
+    try:
+        cache, key = _foreign_provider_mutation_cache(
+            module,
+            source_hash,
+            audit,
+            alias_reader,
+            capture_predicate,
+            argument_predicate,
+            inventory_projector,
+            inventory_dependencies,
+        )
+        if cache is not None and key in cache:
+            return cache[key]
+        nodes, foreign_aliases, parents, bindings = _foreign_provider_inputs(
+            module, data, source_hash, alias_reader
+        )
+    except (SyntaxError, UnicodeError, AttributeError, TypeError, ValueError):
+        return {(path.partition(".")[0], "*") for path in aliases.values()}
+    nodes, bindings = _project_provider_inventory(
+        nodes, foreign_aliases, parents, bindings, inventory_projector
+    )
+    facts = set()
+    _provider_mutation_facts(
+        nodes,
+        foreign_aliases,
+        audit,
+        parents,
+        bindings,
+        facts,
+        capture_predicate,
+        argument_predicate,
+    )
+    if cache is not None and len(cache) < 2048:
+        cache[key] = frozenset(facts)
     return facts
 
 
@@ -3992,24 +4574,53 @@ def _project_provider_inventory(nodes, aliases, parents, bindings, projector):
 def _foreign_provider_inputs(module, data, source_hash, aliases):
     """Reuse native parse inputs; predicates and mutation interpretation still run."""
     context = getattr(module, "_security_oracle_context", {})
-    cache = context.get("_security_provider_mutation_cache") if isinstance(context, dict) else None
-    helpers = (ast.parse, ast.walk, ast.iter_child_nodes, aliases, _provider_alias_bindings,
-               _provider_call_argument)
-    key = ("parsed", source_hash, tuple(
-        (fn, getattr(fn, "__code__", None), id(getattr(fn, "__defaults__", None)))
-        for fn in helpers
-    ))
+    cache = (
+        context.get("_security_provider_mutation_cache")
+        if isinstance(context, dict)
+        else None
+    )
+    helpers = (
+        ast.parse,
+        ast.walk,
+        ast.iter_child_nodes,
+        aliases,
+        _provider_alias_bindings,
+        _provider_call_argument,
+    )
+    key = (
+        "parsed",
+        source_hash,
+        tuple(
+            (fn, getattr(fn, "__code__", None), id(getattr(fn, "__defaults__", None)))
+            for fn in helpers
+        ),
+    )
     if isinstance(cache, dict) and key in cache:
         return cache[key]
     nodes = tuple(ast.walk(ast.parse(data.decode("utf-8"))))
     parents = {
         id(child): node for node in nodes for child in ast.iter_child_nodes(node)
     }
-    events = tuple(node for node in nodes if
-        isinstance(node, (ast.Call, ast.Assign, ast.AnnAssign, ast.NamedExpr,
-                          ast.Return, ast.Yield, ast.YieldFrom))
-        or isinstance(node, (ast.Attribute, ast.Subscript)) and isinstance(node.ctx, (ast.Store, ast.Del))
-        or isinstance(node, (ast.Name, ast.Attribute)) and _provider_call_argument(node, parents))
+    events = tuple(
+        node
+        for node in nodes
+        if isinstance(
+            node,
+            (
+                ast.Call,
+                ast.Assign,
+                ast.AnnAssign,
+                ast.NamedExpr,
+                ast.Return,
+                ast.Yield,
+                ast.YieldFrom,
+            ),
+        )
+        or isinstance(node, (ast.Attribute, ast.Subscript))
+        and isinstance(node.ctx, (ast.Store, ast.Del))
+        or isinstance(node, (ast.Name, ast.Attribute))
+        and _provider_call_argument(node, parents)
+    )
     # Keep source order and reevaluate every predicate; only inert nodes are omitted.
     result = (events, aliases(nodes), parents, _provider_alias_bindings(nodes))
     if isinstance(cache, dict) and len(cache) < 4096:
@@ -4018,7 +4629,14 @@ def _foreign_provider_inputs(module, data, source_hash, aliases):
 
 
 def _foreign_provider_mutation_cache(
-    module, source_hash, audit, aliases, capture, argument, inventory_projector=None, inventory_dependencies=()
+    module,
+    source_hash,
+    audit,
+    aliases,
+    capture,
+    argument,
+    inventory_projector=None,
+    inventory_dependencies=(),
 ):
     """Reuse only unpredicated, content-bound facts inside one native scan."""
     context = getattr(module, "_security_oracle_context", {})
@@ -4054,15 +4672,27 @@ def _foreign_provider_mutation_cache(
         )
         for helper in helpers
     )
-    projector_identity = (inventory_projector, getattr(inventory_projector, "__code__", None),
-                          inventory_dependencies)
+    projector_identity = (
+        inventory_projector,
+        getattr(inventory_projector, "__code__", None),
+        inventory_dependencies,
+    )
     return cache, (source_hash, identity, projector_identity)
 
 
-def _provider_mutation_facts(nodes, aliases, audit, parents, bindings, facts, predicate, argument_predicate):
+def _provider_mutation_facts(
+    nodes, aliases, audit, parents, bindings, facts, predicate, argument_predicate
+):
     for node in nodes:
         _provider_mutation_for_node(
-            node, aliases, audit, parents, bindings, facts, predicate, argument_predicate
+            node,
+            aliases,
+            audit,
+            parents,
+            bindings,
+            facts,
+            predicate,
+            argument_predicate,
         )
 
 
@@ -4892,686 +5522,6 @@ def captured_sink_evidence(
             schema, "SINK_BUDGET_EXHAUSTED", "max_output_bytes", base
         )
     )
-
-
-def _captured_sink_failure(schema, code, reason, base=None):
-    return {
-        **(base or {"schema": schema, "status": "INCOMPLETE"}),
-        "code": code,
-        "truncation": [reason],
-    }
-
-
-def _captured_sink_source(
-    path_arg, expected, index, raw, tree, max_sources, max_states, max_output, schema
-):
-    import io
-    import tokenize
-
-    limits = (max_sources, max_states, max_output)
-    if any(type(value) is not int or value < 1 for value in limits) or max_output < 256:
-        return {
-            "error": _captured_sink_failure(
-                schema, "SINK_BUDGET_INVALID", "invalid_limit"
-            )
-        }
-    limits = tuple(
-        min(value, ceiling) for value, ceiling in zip(limits, (64, 512, 64000))
-    )
-    path = path_arg.as_posix() if hasattr(path_arg, "as_posix") else path_arg
-    tree_supplied = tree is not None
-    indexed = index is not None
-    if indexed:
-        capture = _captured_sink_index(index, path_arg, raw, path, schema)
-        if "error" in capture:
-            return capture
-        raw, tree, parents = capture["raw"], capture["tree"], capture["parents"]
-    else:
-        parents = None
-    if not isinstance(path, str) or not path:
-        return {
-            "error": _captured_sink_failure(
-                schema, "SINK_SOURCE_STALE", "invalid_source_path"
-            )
-        }
-    if not isinstance(raw, bytes) or len(raw) > 1_000_000:
-        return {
-            "error": _captured_sink_failure(
-                schema, "SINK_BUDGET_EXHAUSTED", "max_source_bytes"
-            )
-        }
-    digest = hashlib.sha256(raw).hexdigest()
-    if not isinstance(expected, str) or expected != digest:
-        return {
-            "error": _captured_sink_failure(
-                schema, "SINK_SOURCE_STALE", "source_hash_mismatch"
-            )
-        }
-    if not indexed:
-        capture = _captured_sink_raw_tree(path, raw, tree, schema)
-        if "error" in capture:
-            return capture
-        tree, parents = capture["tree"], capture["parents"]
-    try:
-        encoding, _ = tokenize.detect_encoding(io.BytesIO(raw).readline)
-        text = raw.decode(encoding)
-    except (SyntaxError, UnicodeError, LookupError):
-        return {
-            "error": _captured_sink_failure(
-                schema, "SINK_SOURCE_STALE", "source_encoding_invalid"
-            )
-        }
-    base = {
-        "schema": schema,
-        "status": "INCOMPLETE",
-        "source": {"path": path[:1024], "sha256": digest, "bytes": len(raw)},
-        "source_count": 1,
-    }
-    return {
-        "tree": tree,
-        "parents": parents,
-        "text": text,
-        "base": base,
-        "digest": digest,
-        "limits": limits,
-        "indexed": indexed,
-        "tree_supplied": tree_supplied,
-    }
-
-
-def _captured_sink_index(index, path_arg, raw, path, schema):
-    inventory = getattr(index, "source_bytes", {})
-    if not isinstance(path, str) or path_arg not in getattr(index, "snapshots", {}):
-        return {
-            "error": _captured_sink_failure(
-                schema, "SINK_SOURCE_STALE", "source_not_indexed"
-            )
-        }
-    if (
-        sum(len(value) for value in inventory.values() if isinstance(value, bytes))
-        > 32_000_000
-    ):
-        return {
-            "error": _captured_sink_failure(
-                schema, "SINK_BUDGET_EXHAUSTED", "max_inventory_bytes"
-            )
-        }
-    captured = inventory.get(path_arg)
-    if raw is not None and raw != captured:
-        return {
-            "error": _captured_sink_failure(
-                schema, "SINK_SOURCE_STALE", "source_bytes_changed"
-            )
-        }
-    if not isinstance(captured, bytes) or len(captured) > 1_000_000:
-        return {
-            "error": _captured_sink_failure(
-                schema, "SINK_BUDGET_EXHAUSTED", "max_source_bytes"
-            )
-        }
-    validation_inputs = getattr(index, "_validation_inputs", None)
-    if not isinstance(validation_inputs, dict):
-        return {
-            "error": _captured_sink_failure(
-                schema, "SINK_SOURCE_STALE", "source_validation_cache_unavailable"
-            )
-        }
-    validation_inputs.pop(path_arg, None)
-    if not index.validate(path_arg):
-        return {
-            "error": _captured_sink_failure(
-                schema, "SINK_SOURCE_STALE", "source_snapshot_invalid"
-            )
-        }
-    return {
-        "raw": captured,
-        "tree": index.snapshots[path_arg],
-        "parents": index.parents[path_arg],
-    }
-
-
-def _captured_sink_raw_tree(path, raw, tree, schema):
-    try:
-        parsed = ast.parse(raw, filename=path)
-        if tree is not None and ast.dump(parsed, include_attributes=True) != ast.dump(
-            tree, include_attributes=True
-        ):
-            return {
-                "error": _captured_sink_failure(
-                    schema, "SINK_SOURCE_STALE", "ast_source_mismatch"
-                )
-            }
-        tree = tree or parsed
-    except (SyntaxError, ValueError, TypeError, MemoryError, RecursionError):
-        return {
-            "error": _captured_sink_failure(
-                schema, "SINK_SOURCE_STALE", "source_parse_failed"
-            )
-        }
-    return {"tree": tree, "parents": {}}
-
-
-def _captured_sink_location(node, ctx):
-    base, tree, parents = ctx["base"], ctx["tree"], ctx["parents"]
-    schema = base["schema"]
-    span = _fixed_program_span(node) if isinstance(node, ast.AST) else None
-    if span is None:
-        return {
-            "error": _captured_sink_failure(
-                schema, "SINK_LOCATION_UNRESOLVED", "invalid_sink_span", base
-            )
-        }
-    if ctx["indexed"] and isinstance(node, ast.Call) and id(node) in parents:
-        return {"node": node, "parents": parents, "source_ast_nodes_examined": 0}
-    if ctx["indexed"]:
-        return {
-            "error": _captured_sink_failure(
-                schema, "SINK_LOCATION_UNRESOLVED", "sink_not_in_captured_tree", base
-            )
-        }
-    matches = []
-    for count, item in enumerate(ast.walk(tree), 1):
-        if count > 200_000:
-            return {
-                "error": _captured_sink_failure(
-                    schema, "SINK_BUDGET_EXHAUSTED", "max_source_ast_nodes", base
-                )
-            }
-        parents.update({id(child): item for child in ast.iter_child_nodes(item)})
-        if (
-            isinstance(item, ast.Call)
-            and _fixed_program_span(item) == span
-            and ast.dump(item, include_attributes=True)
-            == ast.dump(node, include_attributes=True)
-        ):
-            matches.append(item)
-    if ctx["tree_supplied"] and id(node) not in parents:
-        return {
-            "error": _captured_sink_failure(
-                schema, "SINK_LOCATION_UNRESOLVED", "sink_not_in_supplied_tree", base
-            )
-        }
-    if len(matches) == 1:
-        return {
-            "node": matches[0],
-            "parents": parents,
-            "source_ast_nodes_examined": count,
-        }
-    return {
-        "error": _captured_sink_failure(
-            schema, "SINK_LOCATION_UNRESOLVED", "sink_span_not_unique", base
-        )
-    }
-
-
-def _captured_sink_fact(item, path, digest, status="OBSERVED"):
-    span = _fixed_program_span(item)
-    return (
-        {"status": status, "source": {"path": path, "sha256": digest, "span": span}}
-        if span is not None
-        else {"status": "UNKNOWN", "reason": "span_unavailable"}
-    )
-
-
-def _captured_sink_excerpt(item, text, truncation):
-    excerpt = ast.get_source_segment(text, item)
-    if not isinstance(excerpt, str):
-        return ""
-    if len(excerpt) > 512:
-        if "excerpt_truncated" not in truncation:
-            truncation.append("excerpt_truncated")
-        return excerpt[:512] + "[truncated]"
-    return excerpt
-
-
-def _captured_sink_scope(node, parents, fact, budget, base):
-    scope = node
-    while id(scope) in parents:
-        scope = parents[id(scope)]
-        if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
-            break
-    else:
-        scope = None
-    row, body, statement = (
-        {"status": "UNKNOWN", "reason": "no_enclosing_callable"},
-        None,
-        None,
-    )
-    if scope is not None:
-        statement = node
-        while id(statement) in parents and parents[id(statement)] is not scope:
-            statement = parents[id(statement)]
-        if (
-            isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef))
-            and statement in scope.body
-        ):
-            body = scope.body
-            row = {
-                "status": "OBSERVED",
-                "name": scope.name,
-                "kind": type(scope).__name__,
-                **fact(scope),
-            }
-        else:
-            row = {
-                "status": "UNKNOWN",
-                "reason": "sink_outside_callable_body",
-                **fact(scope),
-            }
-    nodes, stack = [], [scope] if body is not None else []
-    while stack:
-        item = stack.pop()
-        nodes.append(item)
-        if len(nodes) > budget:
-            return {
-                "error": _captured_sink_failure(
-                    base["schema"], "SINK_BUDGET_EXHAUSTED", "max_states", base
-                )
-            }
-        if item is not scope and isinstance(
-            item, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
-        ):
-            continue
-        stack.extend(ast.iter_child_nodes(item))
-    return {
-        "scope": scope,
-        "body": body,
-        "statement": statement,
-        "nodes": nodes,
-        "row": row,
-    }
-
-
-def _captured_sink_arguments(node, fact, excerpt):
-    arguments, names = [], set()
-    for index, value in enumerate(node.args):
-        arguments.append(
-            {
-                "position": index,
-                "kind": "starred" if isinstance(value, ast.Starred) else "positional",
-                "expression": excerpt(value),
-                "span": _fixed_program_span(value),
-                **fact(value),
-            }
-        )
-        names.update(
-            item.id
-            for item in ast.walk(value)
-            if isinstance(item, ast.Name) and isinstance(item.ctx, ast.Load)
-        )
-    for keyword in node.keywords:
-        value = keyword.value
-        arguments.append(
-            {
-                "keyword": keyword.arg,
-                "kind": "expanded_keyword" if keyword.arg is None else "keyword",
-                "expression": excerpt(value),
-                "span": _fixed_program_span(value),
-                **fact(value),
-            }
-        )
-        names.update(
-            item.id
-            for item in ast.walk(value)
-            if isinstance(item, ast.Name) and isinstance(item.ctx, ast.Load)
-        )
-    callees = [
-        item
-        for item in ast.walk(node.func)
-        if isinstance(item, ast.Name) and isinstance(item.ctx, ast.Load)
-    ]
-    names.update(item.id for item in callees)
-    return arguments, names, callees
-
-
-def _captured_sink_imports(tree, scope, nodes, parents, fact, budget, base):
-    from .credential_role_constructor_provider import binding_occurrences
-
-    modules = [
-        item for item in tree.body if isinstance(item, (ast.Import, ast.ImportFrom))
-    ]
-    if len(nodes) + len(modules) > budget:
-        return {
-            "error": _captured_sink_failure(
-                base["schema"], "SINK_BUDGET_EXHAUSTED", "max_states", base
-            )
-        }
-    rows, params = [], _captured_sink_parameter_names(scope)
-    for item in modules + [
-        row for row in nodes if isinstance(row, (ast.Import, ast.ImportFrom))
-    ]:
-        owner = _captured_sink_enclosing_callable(item, parents)
-        if owner not in (None, scope):
-            continue
-        container = owner.body if owner is not None else tree.body
-        for alias in item.names:
-            name = alias.asname or (
-                alias.name.split(".")[0] if isinstance(item, ast.Import) else alias.name
-            )
-            wildcard = isinstance(item, ast.ImportFrom) and alias.name == "*"
-            stable = (
-                not wildcard
-                and binding_occurrences(container, name) == [item]
-                and name not in params
-            )
-            status = "OBSERVED" if stable else "UNKNOWN"
-            rows.append(
-                {
-                    "name": name,
-                    "module": item.module
-                    if isinstance(item, ast.ImportFrom)
-                    else alias.name,
-                    "kind": type(item).__name__,
-                    "status": status,
-                    "reason": None if stable else "binding_replaced_or_ambiguous",
-                    "span": _fixed_program_span(item),
-                    **fact(item, status),
-                }
-            )
-    return {
-        "rows": rows,
-        "module_imports": modules,
-        "states_used": sum(len(item.names) for item in modules),
-        "binding_occurrences": binding_occurrences,
-    }
-
-
-def _captured_sink_values(
-    node, names, scope, body, statement, nodes, parents, tree, fact, excerpt
-):
-    from .credential_role_constructor_provider import binding_occurrences
-
-    if body is None:
-        return [
-            {
-                "name": name,
-                "status": "UNKNOWN",
-                "reason": "no_supported_callable_scope",
-                "origin": "UNRESOLVED",
-                "definitions": [],
-                "replacements": [],
-            }
-            for name in sorted(names)
-        ]
-    params = _captured_sink_parameter_names(scope)
-    reflective = _captured_sink_reflective_barrier(node, scope, nodes, parents)
-    pending, visited, result = sorted(names), set(), []
-    while pending:
-        name = pending.pop(0)
-        if name in visited:
-            continue
-        visited.add(name)
-        evidence = _captured_sink_value(
-            name,
-            scope,
-            body,
-            statement,
-            parents,
-            tree,
-            params,
-            fact,
-            excerpt,
-            binding_occurrences,
-        )
-        value, assignment = evidence["value"], evidence["assignment"]
-        if assignment is not None:
-            pending.extend(
-                row.id
-                for row in ast.walk(assignment.value)
-                if isinstance(row, ast.Name)
-                and isinstance(row.ctx, ast.Load)
-                and row.id not in visited
-                and row.id not in pending
-            )
-        if reflective:
-            value.update(
-                status="UNKNOWN",
-                reason="reflective_binding_possible",
-                origin="UNRESOLVED",
-            )
-            value["replacements"].append(
-                {"kind": "REFLECTIVE_WRITE_POSSIBLE", **fact(node, "UNKNOWN")}
-            )
-        result.append(value)
-    return result
-
-
-def _captured_sink_reflective_barrier(node, scope, nodes, parents):
-    """Return whether a reflective call can precede or feed this selected sink."""
-    reflective_names = {"exec", "eval", "globals", "locals", "vars", "setattr", "delattr"}
-    selected_span = _fixed_program_span(node)
-    selected_start = tuple(selected_span[:2]) if selected_span else None
-    selected_subtree = {id(item) for item in ast.walk(node)}
-    for item in nodes:
-        if (
-            not isinstance(item, ast.Call)
-            or not isinstance(item.func, ast.Name)
-            or item.func.id not in reflective_names
-            or item is node
-        ):
-            continue
-        if id(item) in selected_subtree:
-            return True
-        if _captured_sink_enclosing_callable(item, parents) is not scope:
-            continue
-        span = _fixed_program_span(item)
-        if selected_start is None or span is None:
-            return True
-        if tuple(span[:2]) <= selected_start:
-            return True
-    return False
-
-
-def _captured_sink_value(
-    name,
-    scope,
-    body,
-    statement,
-    parents,
-    tree,
-    params,
-    fact,
-    excerpt,
-    binding_occurrences,
-):
-    bindings = binding_occurrences(body, name)
-    rows = []
-    for binding in bindings:
-        statement_node = (
-            parents.get(id(binding)) if isinstance(binding, ast.Name) else binding
-        )
-        if statement_node is None:
-            statement_node = binding
-        rows.append(
-            {
-                "kind": type(binding).__name__,
-                "binding_span": _fixed_program_span(binding),
-                "expression": excerpt(statement_node),
-                **fact(statement_node, "UNKNOWN"),
-            }
-        )
-    assignment = None
-    if (
-        len(bindings) == 1
-        and isinstance(bindings[0], ast.Name)
-        and isinstance(bindings[0].ctx, ast.Store)
-    ):
-        candidate = parents.get(id(bindings[0]))
-        targets = (
-            candidate.targets
-            if isinstance(candidate, ast.Assign)
-            else [candidate.target]
-            if isinstance(candidate, ast.AnnAssign)
-            else []
-        )
-        if (
-            candidate in body
-            and body.index(candidate) < body.index(statement)
-            and getattr(candidate, "value", None) is not None
-            and len(targets) == 1
-            and targets[0] is bindings[0]
-        ):
-            assignment = candidate
-    if assignment is not None:
-        value = {
-            "name": name,
-            "status": "INFERRED",
-            "reason": None,
-            "origin": "LOCAL_DEFINITION",
-            "definitions": [
-                {
-                    "expression": excerpt(assignment.value),
-                    "span": _fixed_program_span(assignment),
-                    **fact(assignment),
-                }
-            ],
-            "replacements": [],
-        }
-        value["definitions"][0]["target_source"] = fact(
-            assignment.targets[0]
-            if isinstance(assignment, ast.Assign)
-            else assignment.target
-        )
-    elif not bindings and name in params:
-        args = (
-            *scope.args.posonlyargs,
-            *scope.args.args,
-            *scope.args.kwonlyargs,
-            *([scope.args.vararg] if scope.args.vararg else []),
-            *([scope.args.kwarg] if scope.args.kwarg else []),
-        )
-        arg = next(row for row in args if row.arg == name)
-        value = {
-            "name": name,
-            "status": "INFERRED",
-            "reason": None,
-            "origin": "CALLABLE_PARAMETER",
-            "definitions": [
-                {"kind": "PARAMETER", "span": _fixed_program_span(arg), **fact(arg)}
-            ],
-            "replacements": [],
-        }
-    elif not bindings and any(
-        row in tree.body for row in binding_occurrences(tree.body, name)
-    ):
-        module_bindings = binding_occurrences(tree.body, name)
-        if len(module_bindings) == 1 and isinstance(
-            module_bindings[0], (ast.Import, ast.ImportFrom)
-        ):
-            value = {
-                "name": name,
-                "status": "INFERRED",
-                "reason": None,
-                "origin": "LEXICAL_IMPORT",
-                "definitions": [
-                    {
-                        "kind": type(module_bindings[0]).__name__,
-                        "span": _fixed_program_span(module_bindings[0]),
-                        **fact(module_bindings[0]),
-                    }
-                ],
-                "replacements": [],
-            }
-        else:
-            value = {
-                "name": name,
-                "status": "UNKNOWN",
-                "reason": "module_binding_ambiguous",
-                "origin": "UNRESOLVED",
-                "definitions": [],
-                "replacements": rows,
-            }
-    else:
-        value = {
-            "name": name,
-            "status": "UNKNOWN",
-            "reason": "binding_replaced_or_not_straight_line"
-            if bindings
-            else "no_source_definition_or_parameter",
-            "origin": "UNRESOLVED",
-            "definitions": [],
-            "replacements": rows,
-        }
-    return {"value": value, "assignment": assignment}
-
-
-def _captured_sink_guards(node, scope, parents, fact, excerpt):
-    guards, current = [], node
-    control = (
-        ast.If,
-        ast.For,
-        ast.AsyncFor,
-        ast.While,
-        ast.Try,
-        ast.TryStar,
-        ast.With,
-        ast.AsyncWith,
-        ast.Match,
-        ast.Assert,
-    )
-    while id(current) in parents and parents[id(current)] is not scope:
-        current = parents[id(current)]
-        if isinstance(current, control):
-            test = getattr(current, "test", None) or getattr(current, "subject", None)
-            guards.append(
-                {
-                    "kind": type(current).__name__,
-                    "expression": excerpt(test) if test is not None else "",
-                    "semantics": "UNKNOWN",
-                    "span": _fixed_program_span(current),
-                    **fact(current),
-                }
-            )
-    return guards
-
-
-def _captured_sink_callee_binding(names, scope, body, tree, module_imports, fact):
-    from .credential_role_constructor_provider import binding_occurrences
-
-    name = names[0].id if names else None
-    row = {"status": "UNKNOWN", "reason": "unresolved_callee_binding", "name": name}
-    if name is None or body is None:
-        return row
-    if any(
-        isinstance(item, ast.ImportFrom)
-        and any(alias.name == "*" for alias in item.names)
-        for item in module_imports
-    ):
-        row["reason"] = "wildcard_import_may_bind_name"
-    elif not binding_occurrences(
-        body, name
-    ) and name not in _captured_sink_parameter_names(scope):
-        bindings = binding_occurrences(tree.body, name)
-        if (
-            len(bindings) == 1
-            and bindings[0] in tree.body
-            and isinstance(bindings[0], (ast.Import, ast.ImportFrom))
-        ):
-            row = {
-                "status": "INFERRED",
-                "reason": None,
-                "name": name,
-                "declaration": fact(bindings[0]),
-            }
-    return row
-
-
-def _captured_sink_enclosing_callable(node, parents):
-    current = node
-    while id(current) in parents:
-        current = parents[id(current)]
-        if isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
-            return current
-    return None
-
-
-def _captured_sink_parameter_names(scope):
-    if not isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
-        return set()
-    args = scope.args
-    parameters = [*args.posonlyargs, *args.args, *args.kwonlyargs]
-    parameters.extend(item for item in (args.vararg, args.kwarg) if item is not None)
-    return {item.arg for item in parameters}
 
 
 def _fixed_eval_sink_context(node, call_name, source_bytes, source_path):

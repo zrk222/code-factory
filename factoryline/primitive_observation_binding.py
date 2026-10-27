@@ -62,7 +62,13 @@ _MISSING_PREMISES = {
 }
 
 _SECURITY_DEFECT_POLICIES = frozenset(
-    {"legacy-v1", "trusted-core-v1", "source-role-v1", "source-role-v2", "source-role-v3"}
+    {
+        "legacy-v1",
+        "trusted-core-v1",
+        "source-role-v1",
+        "source-role-v2",
+        "source-role-v3",
+    }
 )
 _PICKLE_SOURCE_ROLE_POLICY = {
     "schema": "factory.security.source-role-policy.v1",
@@ -92,7 +98,10 @@ _SOURCE_ROLE_POLICY_V3 = {
     "schema": "factory.security.source-role-policy.v3",
     "policy_id": "source-role-v3",
     "effect": "v2 plus captured literal process inputs become NEEDS_CONTEXT reviews; every raw diagnostic and severity retained",
-    "unassessed": [*_SOURCE_ROLE_POLICY_V2["unassessed"], "command effects, shell interpretation, executable/environment, filesystem/cwd, credentials/network and deployment authority"],
+    "unassessed": [
+        *_SOURCE_ROLE_POLICY_V2["unassessed"],
+        "command effects, shell interpretation, executable/environment, filesystem/cwd, credentials/network and deployment authority",
+    ],
 }
 _TRUSTED_CORE_POLICY = {
     "schema": "factory.security.defect-policy.v1",
@@ -582,7 +591,9 @@ def _finding_native_rows(finding, captured, bound, cache, sources=None, bindings
         key = ("independent_source_model",)
         if key not in cache:
             cache[key] = _regenerate_source_model(sources, bindings)
-        cache[path] = _regenerate_native_findings(path, captured, source_model=cache[key])
+        cache[path] = _regenerate_native_findings(
+            path, captured, source_model=cache[key]
+        )
     return cache[path]
 
 
@@ -851,17 +862,26 @@ def _regenerate_native_findings(path, source_bytes, *, source_model=None):
             tree = ast.parse(source_bytes)
             tree._oracle_source_sha256 = hashlib.sha256(source_bytes).hexdigest()
             model = security_snapshot_model(
-                root, {source_path: tree}, {source_path: source_bytes},
+                root,
+                {source_path: tree},
+                {source_path: source_bytes},
                 {source_path: audit._oracle_tree_fingerprint(tree)},
             )
         else:
             model = source_model
-            if model.source_bytes.get(source_path) != source_bytes or not model.validate(source_path):
+            if model.source_bytes.get(
+                source_path
+            ) != source_bytes or not model.validate(source_path):
                 return []
             tree = model.snapshots[source_path]
         return audit._security_scan_tree(
-            root, source_path, tree, oracle_context={"_security_source_model": model,
-                "_security_source_context": (root, model.source_bytes)}
+            root,
+            source_path,
+            tree,
+            oracle_context={
+                "_security_source_model": model,
+                "_security_source_context": (root, model.source_bytes),
+            },
         )
     except Exception:
         return []
@@ -872,19 +892,31 @@ def _regenerate_source_model(sources, bindings):
     if not isinstance(sources, dict) or not isinstance(bindings, dict):
         return None
     selected = {name: raw for name, raw in sources.items() if str(name).endswith(".py")}
-    hashes = {name: digest for name, digest in bindings.items() if str(name).endswith(".py")}
+    hashes = {
+        name: digest for name, digest in bindings.items() if str(name).endswith(".py")
+    }
     captured = _jwt_bound_source_inventory(selected, hashes)
-    if captured is None or len(captured) > 2000 or any(len(raw) > 1_000_000 for raw in captured.values()) or sum(map(len, captured.values())) > 32_000_000:
+    if (
+        captured is None
+        or len(captured) > 2000
+        or any(len(raw) > 1_000_000 for raw in captured.values())
+        or sum(map(len, captured.values())) > 32_000_000
+    ):
         return None
     from .credential_role_constructor_provider import security_snapshot_model
     from .review_audits import _oracle_tree_fingerprint
 
     try:
-        trees = {path: ast.parse(raw, filename=path.as_posix()) for path, raw in captured.items()}
+        trees = {
+            path: ast.parse(raw, filename=path.as_posix())
+            for path, raw in captured.items()
+        }
         for path, tree in trees.items():
             tree._oracle_source_sha256 = hashes[path.as_posix()]
         return security_snapshot_model(
-            Path("."), trees, captured,
+            Path("."),
+            trees,
+            captured,
             {path: _oracle_tree_fingerprint(tree) for path, tree in trees.items()},
         )
     except (SyntaxError, ValueError, TypeError, RecursionError, MemoryError):
@@ -910,9 +942,14 @@ def _matches_regenerated_precondition_finding(finding, native_rows):
     if not _valid_security_precondition(premise, finding):
         return False
     for candidate in native_rows:
-        if not isinstance(candidate, dict) or not isinstance(candidate.get("facts"), dict):
+        if not isinstance(candidate, dict) or not isinstance(
+            candidate.get("facts"), dict
+        ):
             continue
-        if any(candidate.get(key) != finding.get(key) for key in ("code", "path", "line", "column")):
+        if any(
+            candidate.get(key) != finding.get(key)
+            for key in ("code", "path", "line", "column")
+        ):
             continue
         regenerated = candidate["facts"].get("security_precondition")
         if regenerated == premise:
@@ -920,7 +957,11 @@ def _matches_regenerated_precondition_finding(finding, native_rows):
         if isinstance(regenerated, dict) and "input_value_flow" not in premise:
             # Independent reconstruction may add a witness to a minimal v1
             # claim. Every supplied field still requires exact equality.
-            core = {key: value for key, value in regenerated.items() if key != "input_value_flow"}
+            core = {
+                key: value
+                for key, value in regenerated.items()
+                if key != "input_value_flow"
+            }
             if core == premise:
                 return True
     return False
@@ -1190,10 +1231,14 @@ def _jwt_operation_spans_valid(facts, integrity):
 
 def fixed_program_proof_dispositions():
     """One capture/admission registry for independently rechecked program proofs."""
-    return frozenset({
-        "PROVEN_FIXED_LITERAL_PROGRAM", "PROVEN_SOURCE_BUILT_AST_PROGRAM",
-        "PROVEN_FINITE_LITERAL_EVAL_INPUT", "PROVEN_CLOSED_DECLARATION_INPUT",
-    })
+    return frozenset(
+        {
+            "PROVEN_FIXED_LITERAL_PROGRAM",
+            "PROVEN_SOURCE_BUILT_AST_PROGRAM",
+            "PROVEN_FINITE_LITERAL_EVAL_INPUT",
+            "PROVEN_CLOSED_DECLARATION_INPUT",
+        }
+    )
 
 
 def _fixed_program_binding(
@@ -1248,13 +1293,15 @@ def _fixed_program_disposition_bound(finding, facts, integrity):
 
 
 def _fixed_program_chain_binding(finding, facts, sources, source_bytes, integrity):
+    from .review_integrity import bind_security_call_scopes
+
     source_path = finding.get("path")
     raw = source_bytes.get(source_path)
     if raw is None:
         raw = source_bytes.get(Path(source_path))
-    if not isinstance(raw, bytes):
-        return False
-    if hashlib.sha256(raw).hexdigest() != facts.get("source_sha256"):
+    if (not isinstance(raw, bytes)) or (
+        hashlib.sha256(raw).hexdigest() != facts.get("source_sha256")
+    ):
         return False
     call_span = facts.get("call_span")
     if not valid_source_span(call_span) or call_span[:2] != [
@@ -1264,7 +1311,7 @@ def _fixed_program_chain_binding(finding, facts, sources, source_bytes, integrit
         return False
     try:
         tree = ast.parse(raw, filename=source_path)
-        integrity.bind_security_call_scopes(tree)
+        bind_security_call_scopes(tree)
     except (SyntaxError, ValueError, TypeError, MemoryError, RecursionError):
         return False
     calls = [
@@ -1281,17 +1328,21 @@ def _fixed_program_chain_binding(finding, facts, sources, source_bytes, integrit
         fixed_eval_workspace_provider_clear,
     )
 
-    if (
-        facts.get("disposition") == "PROVEN_FIXED_LITERAL_PROGRAM"
-        and not fixed_eval_workspace_provider_clear(source_bytes, sources)
+    if facts.get(
+        "disposition"
+    ) == "PROVEN_FIXED_LITERAL_PROGRAM" and not fixed_eval_workspace_provider_clear(
+        source_bytes, sources
     ):
         return False
     node = calls[0]
-    if facts.get("disposition") in {
-        "PROVEN_FIXED_LITERAL_PROGRAM", "PROVEN_SOURCE_BUILT_AST_PROGRAM",
-    } and not _fixed_eval_builtin_source_clear(tree, node):
-        return False
-    if not fixed_program_builtin_identity(integrity, node, tree, facts.get("call")):
+    if (
+        facts.get("disposition")
+        in {
+            "PROVEN_FIXED_LITERAL_PROGRAM",
+            "PROVEN_SOURCE_BUILT_AST_PROGRAM",
+        }
+        and not _fixed_eval_builtin_source_clear(tree, node)
+    ) or (not fixed_program_builtin_identity(integrity, node, tree, facts.get("call"))):
         return False
     expected = _fixed_program_expected_witness(
         node, facts, raw, source_path, source_bytes, sources, integrity, tree
@@ -1303,7 +1354,14 @@ def _fixed_program_chain_binding(finding, facts, sources, source_bytes, integrit
 
 
 def _fixed_program_expected_witness(
-    node, facts, raw, source_path, source_bytes=None, sources=None, integrity=None, tree=None
+    node,
+    facts,
+    raw,
+    source_path,
+    source_bytes=None,
+    sources=None,
+    integrity=None,
+    tree=None,
 ):
     disposition = facts.get("disposition")
     if disposition != "PROVEN_FIXED_LITERAL_PROGRAM" and (
@@ -1311,11 +1369,13 @@ def _fixed_program_expected_witness(
         or not isinstance(sources, (list, tuple))
         or _jwt_bound_source_inventory(
             source_bytes, {row["path"]: row["sha256"] for row in sources}
-        ) is None
+        )
+        is None
     ):
         return {}
     if disposition in {
-        "PROVEN_CLOSED_DECLARATION_INPUT", "PROVEN_FINITE_LITERAL_EVAL_INPUT",
+        "PROVEN_CLOSED_DECLARATION_INPUT",
+        "PROVEN_FINITE_LITERAL_EVAL_INPUT",
     }:
         from .runtime_audit_integrity import (
             closed_declaration_input_witness,
@@ -1332,7 +1392,10 @@ def _fixed_program_expected_witness(
             witness = finite_literal_eval_input_witness(
                 node, call, source_bytes=raw, source_path=source_path
             ) or source_generated_eval_input_witness(
-                node, call, source_bytes=raw, source_path=source_path,
+                node,
+                call,
+                source_bytes=raw,
+                source_path=source_path,
                 builtin_identity_proven=fixed_program_builtin_identity(
                     integrity, node, tree, call
                 ),
@@ -1347,31 +1410,58 @@ def _fixed_program_expected_witness(
             source_built_ast_workspace_provider_clear,
         )
 
-        if (
-            not source_built_ast_workspace_provider_clear(source_bytes, source_path)
-            or not fixed_program_builtin_identity(integrity, node, tree, "exec")
-        ):
+        if not source_built_ast_workspace_provider_clear(
+            source_bytes, source_path
+        ) or not fixed_program_builtin_identity(integrity, node, tree, "exec"):
             return {}
         witness = source_built_ast_program_witness(
             node, "exec", source_bytes=raw, source_path=source_path
         )
         if not witness:
             return {}
-        workspace_sources = sorted((row["path"], row["sha256"]) for row in sources or [])
+        workspace_sources = sorted(
+            (row["path"], row["sha256"]) for row in sources or []
+        )
         witness["workspace_sources_sha256"] = hashlib.sha256(
             json.dumps(workspace_sources, separators=(",", ":")).encode()
         ).hexdigest()
         return witness
     from .runtime_audit_integrity import fixed_literal_program_witness
 
+    scope_profile = _fixed_program_verified_scope(node, facts)
+    if scope_profile is None:
+        return {}
     return fixed_literal_program_witness(
         node,
         facts.get("call"),
         source_bytes=raw,
         builtin_identity_proven=True,
         source_path=source_path,
-        scope_profile="native-module-or-function-omitted-namespaces",
+        scope_profile=scope_profile,
     )
+
+
+def _fixed_program_verified_scope(node, facts):
+    profile = facts.get("profile")
+    if not isinstance(profile, dict):
+        return None
+    scope = getattr(node, "_security_lexical_scope", None)
+    if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        actual = "function"
+    elif isinstance(scope, ast.Module):
+        actual = "module"
+    else:
+        return None
+    claimed = profile.get("scope")
+    if claimed == actual:
+        return actual
+    if (
+        claimed == "native-module-or-function-omitted-namespaces"
+        and len(node.args) == 1
+        and not node.keywords
+    ):
+        return claimed
+    return None
 
 
 def closed_shell_binding(finding, sources, bindings, source_bytes):
@@ -1668,7 +1758,11 @@ def apply_pickle_source_role_policy(core, captured, *, source_model=None):
     original = [*core.get("findings", []), *core.get("context_reviews", [])]
     core["context_reviews"] = []
     sources = _pickle_role_sources(core, captured)
-    roles = None if sources is None else _pickle_role_inventory(sources, source_model=source_model)
+    roles = (
+        None
+        if sources is None
+        else _pickle_role_inventory(sources, source_model=source_model)
+    )
     if roles is not None:
         roles["policy_id"] = policy_id
     active, reviews = _pickle_role_partition(original, roles)
@@ -1741,8 +1835,11 @@ def _pickle_role_sources(core, captured):
 
 def _pickle_role_inventory(sources, *, source_model=None):
     try:
-        trees = (_pickle_role_model_trees(sources, source_model) if source_model is not None
-                 else {path: ast.parse(raw) for path, raw in sources.items()})
+        trees = (
+            _pickle_role_model_trees(sources, source_model)
+            if source_model is not None
+            else {path: ast.parse(raw) for path, raw in sources.items()}
+        )
     except (SyntaxError, ValueError, RecursionError):
         return None
     if trees is None:
@@ -1753,9 +1850,12 @@ def _pickle_role_inventory(sources, *, source_model=None):
 
         snapshots = {Path(path): tree for path, tree in trees.items()}
         for path, tree in snapshots.items():
-            tree._oracle_source_sha256 = hashlib.sha256(sources[path.as_posix()]).hexdigest()
+            tree._oracle_source_sha256 = hashlib.sha256(
+                sources[path.as_posix()]
+            ).hexdigest()
         source_model = security_snapshot_model(
-            Path("."), snapshots,
+            Path("."),
+            snapshots,
             {Path(path): raw for path, raw in sources.items()},
             {path: _oracle_tree_fingerprint(tree) for path, tree in snapshots.items()},
         )
@@ -1789,8 +1889,9 @@ def _pickle_role_model_trees(sources, model):
     fingerprints = getattr(model, "producer_fingerprints", {})
     trees = {}
     for path, tree in model.snapshots.items():
-        if (_oracle_tree_fingerprint(tree) != fingerprints.get(path)
-                or not model.validate(path)):
+        if _oracle_tree_fingerprint(tree) != fingerprints.get(
+            path
+        ) or not model.validate(path):
             return None
         trees[model.relative(path)] = tree
     return trees
@@ -1806,25 +1907,42 @@ def _pickle_test_path(path):
 
 
 def _pickle_source_role_witness(finding, inventory):
-    from .finite_capture import captured_file_program_role, captured_literal_caller_program_role, captured_registered_fixture_helper_role
+    from .finite_capture import (
+        captured_file_program_role,
+        captured_literal_caller_program_role,
+        captured_registered_fixture_helper_role,
+    )
 
     return (
-        (_authored_shell_source_role_witness(finding, inventory)
-         if inventory.get("policy_id") == "source-role-v3" else None)
-        or (captured_registered_fixture_helper_role(finding, inventory)
+        (
+            _authored_shell_source_role_witness(finding, inventory)
             if inventory.get("policy_id") == "source-role-v3"
-            and not _valid_security_precondition(finding.get("facts", {}).get("security_precondition"), finding) else None)
+            else None
+        )
+        or (
+            captured_registered_fixture_helper_role(finding, inventory)
+            if inventory.get("policy_id") == "source-role-v3"
+            and not _valid_security_precondition(
+                finding.get("facts", {}).get("security_precondition"), finding
+            )
+            else None
+        )
         or _pickle_test_role_witness(finding, inventory)
         or _pickle_worker_role_witness(finding, inventory)
         or (
             _registered_fixture_role_witness(finding, inventory)
-            or ((captured_file_program_role(finding, inventory)
-                 or captured_literal_caller_program_role(finding, inventory))
+            or (
+                (
+                    captured_file_program_role(finding, inventory)
+                    or captured_literal_caller_program_role(finding, inventory)
+                )
                 if finding.get("code") == "SECURITY_DYNAMIC_EXECUTION"
                 and _pickle_role_native_match(finding, inventory)
                 and not _valid_security_precondition(
                     finding.get("facts", {}).get("security_precondition"), finding
-                ) else None)
+                )
+                else None
+            )
             if inventory.get("policy_id") in {"source-role-v2", "source-role-v3"}
             else None
         )
@@ -1833,18 +1951,37 @@ def _pickle_source_role_witness(finding, inventory):
 
 def _authored_shell_source_role_witness(finding, inventory):
     """Classify literal input origin; never establish operation or shell safety."""
-    from .finite_capture import _closed_shell_provider, closed_shell_workspace, shell_execution_calls
-    if finding.get("code") not in {"SECURITY_OS_COMMAND", "SECURITY_SHELL_COMMAND"} or not _pickle_role_native_match(finding, inventory):
+    from .finite_capture import (
+        _closed_shell_provider,
+        closed_shell_workspace,
+        shell_execution_calls,
+    )
+
+    if finding.get("code") not in {
+        "SECURITY_OS_COMMAND",
+        "SECURITY_SHELL_COMMAND",
+    } or not _pickle_role_native_match(finding, inventory):
         return None
-    if _valid_security_precondition(finding.get("facts", {}).get("security_precondition"), finding):
+    if _valid_security_precondition(
+        finding.get("facts", {}).get("security_precondition"), finding
+    ):
         return None
     path = finding.get("path")
     tree = inventory["trees"].get(path)
-    calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call) and (n.lineno, n.col_offset) == (finding.get("line"), finding.get("column", 0))]
+    calls = [
+        n
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Call)
+        and (n.lineno, n.col_offset) == (finding.get("line"), finding.get("column", 0))
+    ]
     if len(calls) != 1:
         return None
     call = calls[0]
-    providers = [name for name in shell_execution_calls() if _closed_shell_provider(tree, call, name, shell_execution_calls())]
+    providers = [
+        name
+        for name in shell_execution_calls()
+        if _closed_shell_provider(tree, call, name, shell_execution_calls())
+    ]
     if len(providers) != 1 or len(call.args) != 1:
         return None
     provider = providers[0]
@@ -1855,12 +1992,27 @@ def _authored_shell_source_role_witness(finding, inventory):
         return None
     return {
         "schema": "factory.security.authored-command-context.v1",
-        "role": "CAPTURED_LITERAL_PROCESS_COMMAND_INPUT", "tier": "NEEDS_CONTEXT",
-        "source_path": path, "source_sha256": hashlib.sha256(inventory["sources"][path]).hexdigest(),
-        "sources_sha256": inventory["sources_sha256"], "call_span": _pickle_span(call),
-        "provider": provider, "command_expression_sha256": _tier_sha256(ast.dump(argument)),
-        "policy_sha256": _tier_sha256(_SOURCE_ROLE_POLICY_V3), "original_severity": finding.get("severity"),
-        **{key: "UNASSESSED" for key in ("command_effects", "shell_runtime_interpretation", "environment_and_executable_identity", "filesystem_and_cwd_authority", "credential_or_network_effects", "deployment_authorization")},
+        "role": "CAPTURED_LITERAL_PROCESS_COMMAND_INPUT",
+        "tier": "NEEDS_CONTEXT",
+        "source_path": path,
+        "source_sha256": hashlib.sha256(inventory["sources"][path]).hexdigest(),
+        "sources_sha256": inventory["sources_sha256"],
+        "call_span": _pickle_span(call),
+        "provider": provider,
+        "command_expression_sha256": _tier_sha256(ast.dump(argument)),
+        "policy_sha256": _tier_sha256(_SOURCE_ROLE_POLICY_V3),
+        "original_severity": finding.get("severity"),
+        **{
+            key: "UNASSESSED"
+            for key in (
+                "command_effects",
+                "shell_runtime_interpretation",
+                "environment_and_executable_identity",
+                "filesystem_and_cwd_authority",
+                "credential_or_network_effects",
+                "deployment_authorization",
+            )
+        },
         "safe_execution": False,
     }
 
@@ -1869,17 +2021,41 @@ def _authored_shell_literal_input(call, provider, *, inventory=None):
     """Keep command origin literal without interpreting command effects."""
     argument = call.args[0]
     original = argument
-    if inventory is not None and not isinstance(argument, (ast.Constant, ast.List, ast.Tuple)):
+    if inventory is not None and not isinstance(
+        argument, (ast.Constant, ast.List, ast.Tuple)
+    ):
         argument = _authored_shell_bound_input(call, inventory)
         if argument is None:
             return None
-    pieces = argument.elts if isinstance(argument, (ast.List, ast.Tuple)) else [argument]
-    if not pieces or len(pieces) > 64 or not all(isinstance(n, ast.Constant) and type(n.value) is str and n.value for n in pieces):
+    pieces = (
+        argument.elts if isinstance(argument, (ast.List, ast.Tuple)) else [argument]
+    )
+    if (
+        not pieces
+        or len(pieces) > 64
+        or not all(
+            isinstance(n, ast.Constant) and type(n.value) is str and n.value
+            for n in pieces
+        )
+    ):
         return None
     values = [n.value for n in pieces]
-    if sum(map(len, values)) > 4096 or any(not 32 <= ord(char) <= 126 or char in "|&;<>`$%'\"\\" for value in values for char in value):
-        return None
-    if any(token.strip("'\"").lower().startswith(("-c", "/c", "--command", "-encodedcommand")) for value in values for token in value.split()):
+    if (
+        sum(map(len, values)) > 4096
+        or any(
+            not 32 <= ord(char) <= 126 or char in "|&;<>`$%'\"\\"
+            for value in values
+            for char in value
+        )
+    ) or (
+        any(
+            token.strip("'\"")
+            .lower()
+            .startswith(("-c", "/c", "--command", "-encodedcommand"))
+            for value in values
+            for token in value.split()
+        )
+    ):
         return None
     keys = [kw.arg for kw in call.keywords]
     if None in keys or len(keys) != len(set(keys)):
@@ -1887,9 +2063,28 @@ def _authored_shell_literal_input(call, provider, *, inventory=None):
     if provider == "os.system":
         if keys or not isinstance(argument, ast.Constant):
             return None
-    elif not any(kw.arg == "shell" and isinstance(kw.value, ast.Constant) and kw.value.value is True for kw in call.keywords):
+    elif not any(
+        kw.arg == "shell"
+        and isinstance(kw.value, ast.Constant)
+        and kw.value.value is True
+        for kw in call.keywords
+    ):
         return None
-    if any(kw.arg not in {"shell", "cwd", "text", "encoding", "errors", "capture_output", "check", "timeout"} or (kw.arg != "cwd" and not isinstance(kw.value, ast.Constant)) for kw in call.keywords):
+    if any(
+        kw.arg
+        not in {
+            "shell",
+            "cwd",
+            "text",
+            "encoding",
+            "errors",
+            "capture_output",
+            "check",
+            "timeout",
+        }
+        or (kw.arg != "cwd" and not isinstance(kw.value, ast.Constant))
+        for kw in call.keywords
+    ):
         return None
     return original
 
@@ -1903,33 +2098,72 @@ def _authored_shell_bound_input(call, inventory):
     if not isinstance(environment, dict):
         return None
     value = security_structural_value(call.args[0], environment)
-    constants = inventory.get("literal_nodes")
-    if constants is None:
-        constants = {}
-        for tree in inventory["trees"].values():
-            for node in ast.walk(tree):
-                if isinstance(node, ast.Constant) and type(node.value) is str:
-                    key = (tuple(_pickle_span(node)), hashlib.sha256(ast.dump(node, include_attributes=False).encode()).hexdigest())
-                    constants.setdefault(key, []).append(node)
-        inventory["literal_nodes"] = constants
-    allowed = {"CONSTANT", "CONTAINER", "ALIAS_USE", "BOUND_EXPRESSION", "CONTAINER_SELECT", "FIELD_SELECT", "HELPER_RETURN"}
+    constants = _authored_shell_literal_index(inventory)
+    allowed = {
+        "CONSTANT",
+        "CONTAINER",
+        "ALIAS_USE",
+        "BOUND_EXPRESSION",
+        "CONTAINER_SELECT",
+        "FIELD_SELECT",
+        "HELPER_RETURN",
+    }
+
     def literal(item):
-        if (not isinstance(item, _Value) or item.roots or item.class_roots or item.unknown
-                or item.content_unknown or any(step[0] not in allowed for step in item.trace)):
+        if (
+            not isinstance(item, _Value)
+            or item.roots
+            or item.class_roots
+            or item.unknown
+            or item.content_unknown
+            or any(step[0] not in allowed for step in item.trace)
+        ):
             return None
         if item.scalar_kind in {"list", "tuple"} and 0 < len(item.items) <= 64:
-            if any(isinstance(n, ast.Call) for kw in call.keywords for n in ast.walk(kw.value)):
+            if any(
+                isinstance(n, ast.Call)
+                for kw in call.keywords
+                for n in ast.walk(kw.value)
+            ):
                 return None
             children = [literal(child) for _, child in item.items]
             return ast.List(elts=children, ctx=ast.Load()) if all(children) else None
         if item.scalar_kind != "text":
             return None
-        selected = [constants.get((tuple(step[1]), step[2]), ()) for step in item.trace if step[0] == "CONSTANT"]
+        selected = [
+            constants.get((tuple(step[1]), step[2]), ())
+            for step in item.trace
+            if step[0] == "CONSTANT"
+        ]
         nodes = [node for group in selected for node in group]
-        if not selected or any(not group for group in selected) or len({node.value for node in nodes}) != 1:
+        if (
+            not selected
+            or any(not group for group in selected)
+            or len({node.value for node in nodes}) != 1
+        ):
             return None
         return ast.Constant(value=nodes[0].value)
+
     return literal(value)
+
+
+def _authored_shell_literal_index(inventory):
+    constants = inventory.get("literal_nodes")
+    if constants is not None:
+        return constants
+    constants = {}
+    for tree in inventory["trees"].values():
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Constant) and type(node.value) is str:
+                key = (
+                    tuple(_pickle_span(node)),
+                    hashlib.sha256(
+                        ast.dump(node, include_attributes=False).encode()
+                    ).hexdigest(),
+                )
+                constants.setdefault(key, []).append(node)
+    inventory["literal_nodes"] = constants
+    return constants
 
 
 def _pickle_worker_role_witness(finding, inventory):
@@ -2472,7 +2706,8 @@ def _pickle_role_test_scope(tree, finding, inventory=None):
     )
     asserted = any(isinstance(node, ast.Assert) for node in ast.walk(scope))
     registered_owner = (
-        isinstance(owner, ast.ClassDef) and inventory is not None
+        isinstance(owner, ast.ClassDef)
+        and inventory is not None
         and id(owner) in _pickle_role_unittest_owners(inventory)
     )
     collected_owner = (
@@ -2484,7 +2719,11 @@ def _pickle_role_test_scope(tree, finding, inventory=None):
             or registered_owner
         )
     )
-    return scope if collected_owner and (framework or asserted or registered_owner) else None
+    return (
+        scope
+        if collected_owner and (framework or asserted or registered_owner)
+        else None
+    )
 
 
 def _pickle_role_unittest_owners(inventory):
@@ -2534,12 +2773,19 @@ def _pickle_role_unittest_graph(trees):
                     classes[local[node.name]] = (node, bases)
     selected = {"unittest.TestCase"}
     # Framework contracts are conditional on unshadowed dependency identities.
-    if not any(PurePosixPath(path).stem == "django" or "django" in PurePosixPath(path).parts[:-1] for path in trees):
+    if not any(
+        PurePosixPath(path).stem == "django"
+        or "django" in PurePosixPath(path).parts[:-1]
+        for path in trees
+    ):
         selected.update(
-            f"{module}.{base}" for module in ("django.test", "django.test.testcases")
+            f"{module}.{base}"
+            for module in ("django.test", "django.test.testcases")
             for base in ("SimpleTestCase", "TransactionTestCase", "TestCase")
-            if not any(_pickle_role_class_path_written(f"{alias}.{base}", writes)
-                       for alias in ("django.test", "django.test.testcases"))
+            if not any(
+                _pickle_role_class_path_written(f"{alias}.{base}", writes)
+                for alias in ("django.test", "django.test.testcases")
+            )
         )
     for _ in range(len(classes) + 1):
         before = set(selected)
@@ -2567,59 +2813,90 @@ def _pickle_role_class_writes(trees, modules):
     from . import review_audits as audit
     from .runtime_audit_integrity import _conditional_file_aliases
 
-    imports = {path: _conditional_file_aliases(path, tree, modules) for path, tree in trees.items()}
+    imports = {
+        path: _conditional_file_aliases(path, tree, modules)
+        for path, tree in trees.items()
+    }
     exports = {modules[path]: aliases for path, aliases in imports.items()}
-    def canonical(name):
-        seen = set()
-        for _ in range(12):
-            if name in seen:
-                return name
-            seen.add(name)
-            parts = name.split(".")
-            for length in range(len(parts) - 1, 0, -1):
-                selected = (exports.get(".".join(parts[:length])) or {}).get(parts[length])
-                if selected:
-                    name = ".".join([selected, *parts[length + 1:]])
-                    break
-            else:
-                return name
-        return name
+
     writes = set()
     for path, tree in trees.items():
-        uncertain = imports[path] is None
-        aliases = dict(imports[path] or {})
-        aliases.update(
-            {
-                node.name: f"{modules[path]}.{node.name}"
-                for node in tree.body
-                if isinstance(node, ast.ClassDef)
-            }
+        writes.update(
+            _pickle_role_tree_writes(path, tree, modules, imports, exports, audit)
         )
-        for node in ast.walk(tree):
-            if isinstance(node, (ast.Name, ast.Attribute)) and isinstance(
-                node.ctx, (ast.Store, ast.Del)
-            ):
-                root = node
-                while isinstance(root, ast.Attribute):
-                    root = root.value
-                if isinstance(root, ast.Name) and (uncertain or root.id in aliases):
-                    original = audit._resolved_ast_name(node, aliases)
-                    writes.update((original, canonical(original)))
-            if isinstance(node, ast.Call) and audit._resolved_ast_name(
-                node.func, aliases
-            ).removeprefix("builtins.") in {"setattr", "delattr"}:
-                if (
-                    len(node.args) >= 2
-                    and isinstance(node.args[1], ast.Constant)
-                    and isinstance(node.args[1].value, str)
-                ):
-                    receiver = node.args[0]
-                    while isinstance(receiver, ast.Attribute):
-                        receiver = receiver.value
-                    if isinstance(receiver, ast.Name) and (uncertain or receiver.id in aliases):
-                        original = audit._resolved_ast_name(node.args[0], aliases) + "." + node.args[1].value
-                        writes.update((original, canonical(original)))
     return writes
+
+
+def _pickle_role_canonical_name(name, exports):
+    seen = set()
+    for _ in range(12):
+        if name in seen:
+            return name
+        seen.add(name)
+        parts = name.split(".")
+        for length in range(len(parts) - 1, 0, -1):
+            selected = (exports.get(".".join(parts[:length])) or {}).get(parts[length])
+            if selected:
+                name = ".".join([selected, *parts[length + 1 :]])
+                break
+        else:
+            return name
+    return name
+
+
+def _pickle_role_tree_writes(path, tree, modules, imports, exports, audit):
+    uncertain = imports[path] is None
+    aliases = dict(imports[path] or {})
+    aliases.update(
+        {
+            node.name: f"{modules[path]}.{node.name}"
+            for node in tree.body
+            if isinstance(node, ast.ClassDef)
+        }
+    )
+    writes = set()
+    for node in ast.walk(tree):
+        if _pickle_role_write_target(node, aliases, uncertain):
+            original = audit._resolved_ast_name(node, aliases)
+            writes.update((original, _pickle_role_canonical_name(original, exports)))
+        writes.update(
+            _pickle_role_reflective_writes(node, aliases, uncertain, exports, audit)
+        )
+    return writes
+
+
+def _pickle_role_write_target(node, aliases, uncertain):
+    if not (
+        isinstance(node, (ast.Name, ast.Attribute))
+        and isinstance(node.ctx, (ast.Store, ast.Del))
+    ):
+        return False
+    root = node
+    while isinstance(root, ast.Attribute):
+        root = root.value
+    return isinstance(root, ast.Name) and (uncertain or root.id in aliases)
+
+
+def _pickle_role_reflective_writes(node, aliases, uncertain, exports, audit):
+    if not isinstance(node, ast.Call) or audit._resolved_ast_name(
+        node.func, aliases
+    ).removeprefix("builtins.") not in {"setattr", "delattr"}:
+        return set()
+    if (
+        len(node.args) < 2
+        or not isinstance(node.args[1], ast.Constant)
+        or not isinstance(node.args[1].value, str)
+    ):
+        return set()
+    receiver = node.args[0]
+    while isinstance(receiver, ast.Attribute):
+        receiver = receiver.value
+    if not isinstance(receiver, ast.Name) or not (uncertain or receiver.id in aliases):
+        return set()
+    original = (
+        audit._resolved_ast_name(node.args[0], aliases) + "." + node.args[1].value
+    )
+    return {original, _pickle_role_canonical_name(original, exports)}
 
 
 def _pickle_role_import_rebound(tree, aliases):
@@ -2849,9 +3126,7 @@ def _pickle_role_callback_risk(tree, trees=None):
             return True
         referenced = {name.rsplit(".", 1)[-1] for name in names}
         pending.extend(
-            (node, owner)
-            for node, owner in functions
-            if node.name in referenced
+            (node, owner) for node, owner in functions if node.name in referenced
         )
     return False
 
@@ -3046,9 +3321,7 @@ def _current_primitive_binding(finding, core, bindings, audit, captured=None):
         finding.get("facts", {}).get("disposition")
         == "PROVEN_CLOSED_OPERATION_COMMAND_SYNTAX"
     ):
-        return closed_shell_binding(
-            finding, sources, bindings, captured
-        )
+        return closed_shell_binding(finding, sources, bindings, captured)
     if finding.get("facts", {}).get("disposition") in {
         "TEST_OWNED_LOCAL_FIXTURE",
         "TEST_OWNED_APPLICATION_CREDENTIAL",
@@ -3057,9 +3330,7 @@ def _current_primitive_binding(finding, core, bindings, audit, captured=None):
         configs = core.get("oracle_context", {}).get("configuration_sources", [])
         sources = [*sources, *configs]
         bindings = {row["path"]: row["sha256"] for row in sources}
-    return audit._fixed_primitive_binding(
-        finding, sources, bindings, captured
-    )
+    return audit._fixed_primitive_binding(finding, sources, bindings, captured)
 
 
 def annotate_application_fixture(finding, node):
@@ -3968,6 +4239,7 @@ def finite_eval_binding(finding, audit):
 
 def fixed_program_builtin_identity(audit, node, module, call_name):
     """Confirm exec or eval resolves to an unshadowed builtin without module-level indirection through sensitive builtin names."""
+    audit = getattr(audit, "integrity", audit)
     if not _fixed_builtin_call_identity(audit, node, call_name):
         return False
     return _fixed_builtin_source_unshadowed(audit, node, module)
@@ -4158,8 +4430,14 @@ def _fixed_program_native_witness(
                     )
                     return witness
             if witness := _source_built_ast_native_witness(
-                audit, relative, node, call_name, module,
-                workspace_profile, context, raw,
+                audit,
+                relative,
+                node,
+                call_name,
+                module,
+                workspace_profile,
+                context,
+                raw,
             ):
                 witness["workspace_sources_sha256"] = workspace_profile.get(
                     "sources_sha256"
@@ -4602,7 +4880,9 @@ def _finding_tier_ledger_row(
     path, source_hash, captured, bound_source = _finding_source_binding(
         finding, bindings, source_bytes
     )
-    native_rows = _finding_native_rows(finding, captured, bound_source, regenerated, source_bytes, bindings)
+    native_rows = _finding_native_rows(
+        finding, captured, bound_source, regenerated, source_bytes, bindings
+    )
     signing_evidence = _finding_signing_evidence(
         finding,
         native_rows,
@@ -4696,9 +4976,14 @@ def _finding_tier_ledger_row(
     return row
 
 
-def _pickle_source_role_decision(roles, active, reviews, ledger, policy_id="source-role-v1"):
+def _pickle_source_role_decision(
+    roles, active, reviews, ledger, policy_id="source-role-v1"
+):
     """Describe unresolved context review without claiming safe reconstruction."""
-    policy = {"source-role-v2": _SOURCE_ROLE_POLICY_V2, "source-role-v3": _SOURCE_ROLE_POLICY_V3}.get(policy_id, _PICKLE_SOURCE_ROLE_POLICY)
+    policy = {
+        "source-role-v2": _SOURCE_ROLE_POLICY_V2,
+        "source-role-v3": _SOURCE_ROLE_POLICY_V3,
+    }.get(policy_id, _PICKLE_SOURCE_ROLE_POLICY)
     return {
         **policy,
         "policy_sha256": _tier_sha256(policy),
@@ -4756,7 +5041,9 @@ def _registered_fixture_recipe_ast(tree, marker, directory):
     }
     for node in ast.walk(tree):
         if "type_params" in node._fields and not node.type_params:
-            node._fields = tuple(field for field in node._fields if field != "type_params")
+            node._fields = tuple(
+                field for field in node._fields if field != "type_params"
+            )
         if isinstance(node, ast.FunctionDef):
             node.name = names.get(node.name, node.name)
         elif isinstance(node, ast.Name):
@@ -4778,17 +5065,22 @@ def _registered_fixture_recipe(tree, marker):
     Its digest is of canonical executable AST, not a repository or file hash.
     """
     anchors = [
-        node for node in tree.body
-        if isinstance(node, ast.Assign) and len(node.targets) == 1
-        and isinstance(node.targets[0], ast.Name) and node.targets[0].id == "DATA"
+        node
+        for node in tree.body
+        if isinstance(node, ast.Assign)
+        and len(node.targets) == 1
+        and isinstance(node.targets[0], ast.Name)
+        and node.targets[0].id == "DATA"
     ]
     if len(anchors) != 1:
         return None
     anchor = anchors[0]
     expr = anchor.value
     if not (
-        isinstance(expr, ast.Call) and ast.unparse(expr.func) == "str"
-        and len(expr.args) == 1 and not expr.keywords
+        isinstance(expr, ast.Call)
+        and ast.unparse(expr.func) == "str"
+        and len(expr.args) == 1
+        and not expr.keywords
         and isinstance(expr.args[0], ast.BinOp)
         and isinstance(expr.args[0].op, ast.Div)
         and ast.unparse(expr.args[0].left) == "pathlib.Path(__file__).parent"
@@ -4804,146 +5096,310 @@ def _registered_fixture_recipe(tree, marker):
     if recipe != _registered_fixture_profile():
         return None
     functions = [node for node in tree.body if isinstance(node, ast.FunctionDef)]
-    return {"profile": "registered-fixture-runner-v1", "ast_sha256": recipe,
-            "data_anchor_span": _pickle_span(anchor),
-            "stage_spans": [_pickle_span(node) for node in functions]}
+    return {
+        "profile": "registered-fixture-runner-v1",
+        "ast_sha256": recipe,
+        "data_anchor_span": _pickle_span(anchor),
+        "stage_spans": [_pickle_span(node) for node in functions],
+    }
 
 
 def _registered_fixture_registration(tree, function):
-    registrations = []
-    for node in tree.body:
-        if not isinstance(node, ast.Assign) or len(node.targets) != 1:
-            continue
-        target = node.targets[0]
-        if (isinstance(target, ast.Attribute) and isinstance(target.value, ast.Name)
-                and target.value.id == function.name and isinstance(node.value, ast.List)):
-            suffixes = [item.value for item in node.value.elts if isinstance(item, ast.Constant)]
-            if (len(suffixes) == len(node.value.elts) and suffixes
-                    and all(type(item) is str and re.fullmatch(r"\.[A-Za-z0-9_-]+", item)
-                            for item in suffixes)):
-                registrations.append((node, target, suffixes))
-    if len(registrations) != 1 or function.decorator_list or _pickle_role_disabled(function):
+    registrations = [
+        item
+        for node in tree.body
+        if (item := _registered_fixture_registration_row(node, function))
+    ]
+    if (
+        len(registrations) != 1
+        or function.decorator_list
+        or _pickle_role_disabled(function)
+    ):
         return None
     registration, target, suffixes = registrations[0]
     if registration.lineno <= function.end_lineno:
         return None
+    if not _registered_fixture_namespace_closed(tree, function, target):
+        return None
+    parameters = _registered_fixture_signature(function, suffixes)
+    if parameters is None:
+        return None
+    return registration, target.attr, parameters
+
+
+def _registered_fixture_registration_row(node, function):
+    if (
+        not isinstance(node, ast.Assign)
+        or len(node.targets) != 1
+        or not isinstance(node.value, ast.List)
+    ):
+        return None
+    target = node.targets[0]
+    if not (
+        isinstance(target, ast.Attribute)
+        and isinstance(target.value, ast.Name)
+        and target.value.id == function.name
+    ):
+        return None
+    suffixes = [
+        item.value for item in node.value.elts if isinstance(item, ast.Constant)
+    ]
+    if (
+        len(suffixes) != len(node.value.elts)
+        or not suffixes
+        or not all(
+            type(item) is str and re.fullmatch(r"\.[A-Za-z0-9_-]+", item)
+            for item in suffixes
+        )
+    ):
+        return None
+    return node, target, suffixes
+
+
+def _registered_fixture_namespace_closed(tree, function, target):
     for node in ast.walk(tree):
-        if isinstance(node, ast.Subscript) and isinstance(node.slice, ast.Constant) and node.slice.value == function.name:
-            return None
-        if isinstance(node, ast.Subscript) and ast.unparse(node.value) in {"globals()", "locals()"}:
-            if not isinstance(node.ctx, ast.Load) or not isinstance(node.slice, ast.Constant) or node.slice.value == function.name:
-                return None
-        if isinstance(node, ast.Call) and ast.unparse(node.func) in {"globals().update", "locals().update"}:
-            return None
+        if (
+            isinstance(node, ast.Subscript)
+            and isinstance(node.slice, ast.Constant)
+            and node.slice.value == function.name
+        ):
+            return False
+        if isinstance(node, ast.Subscript) and ast.unparse(node.value) in {
+            "globals()",
+            "locals()",
+        }:
+            if (
+                not isinstance(node.ctx, ast.Load)
+                or not isinstance(node.slice, ast.Constant)
+                or node.slice.value == function.name
+            ):
+                return False
+        if isinstance(node, ast.Call) and ast.unparse(node.func) in {
+            "globals().update",
+            "locals().update",
+        }:
+            return False
     allowed = {id(target.value)}
-    if any(isinstance(node, ast.Name) and node.id == function.name and id(node) not in allowed
-           for node in ast.walk(tree)):
-        return None
-    if sum(isinstance(node, (ast.FunctionDef, ast.ClassDef)) and node.name == function.name
-           for node in ast.walk(tree)) != 1:
-        return None
+    if any(
+        isinstance(node, ast.Name)
+        and node.id == function.name
+        and id(node) not in allowed
+        for node in ast.walk(tree)
+    ):
+        return False
+    definitions = sum(
+        isinstance(node, (ast.FunctionDef, ast.ClassDef)) and node.name == function.name
+        for node in ast.walk(tree)
+    )
+    return definitions == 1
+
+
+def _registered_fixture_signature(function, suffixes):
     parameters = function.args.posonlyargs + function.args.args
-    if (function.args.vararg or function.args.kwarg or function.args.kwonlyargs
-            or len(parameters) != len(suffixes) + 1
-            or parameters[-1].arg != "verbose" or len(function.args.defaults) != 1
-            or not isinstance(function.args.defaults[0], ast.Constant)
-            or function.args.defaults[0].value is not False):
+    if (
+        function.args.vararg
+        or function.args.kwarg
+        or function.args.kwonlyargs
+        or len(parameters) != len(suffixes) + 1
+        or parameters[-1].arg != "verbose"
+        or len(function.args.defaults) != 1
+        or not isinstance(function.args.defaults[0], ast.Constant)
+        or function.args.defaults[0].value is not False
+    ):
         return None
-    return registration, target.attr, [item.arg for item in parameters[:-1]]
+    return [item.arg for item in parameters[:-1]]
 
 
 def _registered_fixture_entry(tree, path, marker, inventory):
-    entries = []
-    for node in tree.body:
-        if not isinstance(node, ast.If) or ast.unparse(node.test) != "__name__ == '__main__'" or node.orelse:
-            continue
-        if len(node.body) != 2 or not isinstance(node.body[0], ast.Import):
-            continue
-        imported = node.body[0]
-        if len(imported.names) != 1 or "." in imported.names[0].name:
-            continue
-        alias = imported.names[0]
-        expr = node.body[1]
-        if not isinstance(expr, ast.Expr) or not isinstance(expr.value, ast.Call):
-            continue
-        call = expr.value
-        if (not isinstance(call.func, ast.Attribute) or not isinstance(call.func.value, ast.Name)
-                or call.func.value.id != (alias.asname or alias.name) or call.keywords
-                or len(call.args) != 1 or ast.unparse(call.args[0]) != "globals()"):
-            continue
-        parent = PurePosixPath(path).parent
-        harness_path = str(parent / (alias.name + ".py"))
-        harness = inventory["trees"].get(harness_path)
-        if harness is None:
-            continue
-        providers = {alias.name.split(".")[0] for item in harness.body
-                     if isinstance(item, ast.Import) for alias in item.names}
-        if any(PurePosixPath(name).stem in providers
-               or PurePosixPath(name).name == "__init__.py" and PurePosixPath(name).parent.name in providers
-               for name in inventory["trees"]):
-            continue
-        module_paths = [name for name in inventory["trees"]
-                        if PurePosixPath(name).stem == alias.name
-                        or name.endswith("/" + alias.name + "/__init__.py")]
-        if module_paths != [harness_path]:
-            continue
-        recipe = _registered_fixture_recipe(harness, marker)
-        functions = [item.name for item in harness.body if isinstance(item, ast.FunctionDef)]
-        if recipe and functions and call.func.attr == functions[-1]:
-            entries.append({"path": harness_path, "sha256": hashlib.sha256(
-                inventory["sources"][harness_path]).hexdigest(), "entry_span": _pickle_span(call),
-                "recipe": recipe})
+    entries = [
+        entry
+        for node in tree.body
+        if (entry := _registered_fixture_entry_candidate(node, path, marker, inventory))
+    ]
     return entries[0] if len(entries) == 1 else None
+
+
+def _registered_fixture_entry_candidate(node, path, marker, inventory):
+    call = _registered_fixture_main_call(node)
+    if call is None:
+        return None
+    alias = node.body[0].names[0]
+    harness_path = str(PurePosixPath(path).parent / (alias.name + ".py"))
+    harness = inventory["trees"].get(harness_path)
+    if harness is None or not _registered_fixture_harness_unique(
+        alias.name, harness_path, inventory
+    ):
+        return None
+    recipe = _registered_fixture_recipe(harness, marker)
+    functions = [
+        item.name for item in harness.body if isinstance(item, ast.FunctionDef)
+    ]
+    if not recipe or not functions or call.func.attr != functions[-1]:
+        return None
+    return {
+        "path": harness_path,
+        "sha256": hashlib.sha256(inventory["sources"][harness_path]).hexdigest(),
+        "entry_span": _pickle_span(call),
+        "recipe": recipe,
+    }
+
+
+def _registered_fixture_main_call(node):
+    if (
+        not isinstance(node, ast.If)
+        or ast.unparse(node.test) != "__name__ == '__main__'"
+        or node.orelse
+    ):
+        return None
+    if len(node.body) != 2 or not isinstance(node.body[0], ast.Import):
+        return None
+    imported = node.body[0]
+    if len(imported.names) != 1 or "." in imported.names[0].name:
+        return None
+    expr = node.body[1]
+    if not isinstance(expr, ast.Expr) or not isinstance(expr.value, ast.Call):
+        return None
+    call = expr.value
+    alias = imported.names[0]
+    if (
+        not isinstance(call.func, ast.Attribute)
+        or not isinstance(call.func.value, ast.Name)
+        or call.func.value.id != (alias.asname or alias.name)
+        or call.keywords
+        or len(call.args) != 1
+        or ast.unparse(call.args[0]) != "globals()"
+    ):
+        return None
+    return call
+
+
+def _registered_fixture_harness_unique(module_name, harness_path, inventory):
+    harness = inventory["trees"][harness_path]
+    providers = {
+        alias.name.split(".")[0]
+        for item in harness.body
+        if isinstance(item, ast.Import)
+        for alias in item.names
+    }
+    if any(
+        PurePosixPath(name).stem in providers
+        or PurePosixPath(name).name == "__init__.py"
+        and PurePosixPath(name).parent.name in providers
+        for name in inventory["trees"]
+    ):
+        return False
+    module_paths = [
+        name
+        for name in inventory["trees"]
+        if PurePosixPath(name).stem == module_name
+        or name.endswith("/" + module_name + "/__init__.py")
+    ]
+    return module_paths == [harness_path]
 
 
 def _registered_fixture_expr(node, bindings):
     """Trace source-visible fixture dependencies; opaque calls do not prove effects."""
-    if not isinstance(node, ast.expr):
-        return None
-    if ast.unparse(node).startswith(("os.environ", "sys.argv", "request.", "requests.", "socket.")):
+    if not _registered_fixture_expr_is_supported(node):
         return None
     if isinstance(node, ast.Constant):
         return frozenset()
     if isinstance(node, ast.Name):
         return bindings.get(node.id)
-    if isinstance(node, ast.Call):
-        name = ast.unparse(node.func)
-        aliases = bindings.get(None, {})
-        root = name.split(".")[0]
-        name = aliases.get(root, root) + name[len(root):]
-        if name.startswith(("request.", "requests.", "socket.", "os.environ", "sys.argv")):
-            return None
-        if isinstance(node.func, ast.Name) and node.func.id not in bindings and node.func.id not in {
-            "list", "str", "bytes", "len", "eval", "exec", "globals", "locals", "open",
-        }:
-            return None
-        values = node.args + [keyword.value for keyword in node.keywords
-                              if _registered_fixture_expr(keyword.value, bindings) != frozenset({"provider"})]
-        if isinstance(node.func, ast.Attribute):
-            receiver = _registered_fixture_expr(node.func.value, bindings)
-            if receiver != frozenset({"provider"}):
-                values = [node.func.value, *values]
-    elif isinstance(node, ast.Subscript):
-        origin = _registered_fixture_expr(node.value, bindings)
-        if not origin or not origin.intersection({"fixture", "sink"}):
-            return None
-        values = [node.value, node.slice]
-    elif isinstance(node, ast.Attribute):
+    if isinstance(node, ast.Attribute):
         return _registered_fixture_expr(node.value, bindings)
+    if isinstance(node, ast.Subscript):
+        return _registered_fixture_subscript_expr(node, bindings)
+    if isinstance(node, ast.Call):
+        result = _registered_fixture_call_expr(node, bindings)
+        if result is None:
+            return None
+        values = result
     else:
         values = list(ast.iter_child_nodes(node))
         values = [item for item in values if isinstance(item, ast.expr)]
     parts = [_registered_fixture_expr(value, bindings) for value in values]
-    if any(part is None for part in parts) or (
-        isinstance(node, ast.Call) and any("provider" in part for part in parts)
+    if (
+        any(part is None for part in parts)
+        or isinstance(node, ast.Call)
+        and any("provider" in part for part in parts)
     ):
         return None
     result = frozenset().union(*parts)
-    if isinstance(node, ast.Call) and not result and ast.unparse(node.func) not in {
-        "globals", "locals", "list", "str", "bytes", "globals().copy", "locals().copy",
-    }:
+    if (
+        isinstance(node, ast.Call)
+        and not result
+        and not _registered_fixture_pure_call(node)
+    ):
         return None
     return result
+
+
+def _registered_fixture_expr_is_supported(node):
+    return isinstance(node, ast.expr) and not ast.unparse(node).startswith(
+        ("os.environ", "sys.argv", "request.", "requests.", "socket.")
+    )
+
+
+def _registered_fixture_subscript_expr(node, bindings):
+    origin = _registered_fixture_expr(node.value, bindings)
+    if not origin or not origin.intersection({"fixture", "sink"}):
+        return None
+    return _registered_fixture_join_values([node.value, node.slice], bindings)
+
+
+def _registered_fixture_join_values(values, bindings):
+    parts = [_registered_fixture_expr(value, bindings) for value in values]
+    if any(part is None for part in parts):
+        return None
+    return frozenset().union(*parts)
+
+
+def _registered_fixture_call_expr(node, bindings):
+    name = ast.unparse(node.func)
+    aliases = bindings.get(None, {})
+    root = name.split(".")[0]
+    name = aliases.get(root, root) + name[len(root) :]
+    if name.startswith(("request.", "requests.", "socket.", "os.environ", "sys.argv")):
+        return None
+    if (
+        isinstance(node.func, ast.Name)
+        and node.func.id not in bindings
+        and node.func.id
+        not in {
+            "list",
+            "str",
+            "bytes",
+            "len",
+            "eval",
+            "exec",
+            "globals",
+            "locals",
+            "open",
+        }
+    ):
+        return None
+    values = node.args + [
+        keyword.value
+        for keyword in node.keywords
+        if _registered_fixture_expr(keyword.value, bindings) != frozenset({"provider"})
+    ]
+    if isinstance(node.func, ast.Attribute) and _registered_fixture_expr(
+        node.func.value, bindings
+    ) != frozenset({"provider"}):
+        values = [node.func.value, *values]
+    return values
+
+
+def _registered_fixture_pure_call(node):
+    return ast.unparse(node.func) in {
+        "globals",
+        "locals",
+        "list",
+        "str",
+        "bytes",
+        "globals().copy",
+        "locals().copy",
+    }
 
 
 def _registered_fixture_assign(node, bindings, sink):
@@ -4965,34 +5421,68 @@ def _registered_fixture_step(node, bindings, paths, sink):
     if isinstance(node, ast.For) and isinstance(node.target, ast.Name):
         bindings[node.target.id] = frozenset()
     if isinstance(node, ast.With):
-        for item in node.items:
-            if isinstance(item.optional_vars, ast.Name):
-                bindings[item.optional_vars.id] = None
-            call = item.context_expr
-            if (isinstance(call, ast.Call) and ast.unparse(call.func) == "open"
-                    and call.args and isinstance(call.args[0], ast.Name)
-                    and call.args[0].id in paths and len(call.args) <= 2 and not call.keywords
-                    and bindings.get(call.args[0].id) == frozenset({"path:" + call.args[0].id})
-                    and (len(call.args) == 1 or isinstance(call.args[1], ast.Constant)
-                         and call.args[1].value in {"r", "rb"})
-                    and isinstance(item.optional_vars, ast.Name)):
-                bindings[item.optional_vars.id] = frozenset({"fixture"})
+        _registered_fixture_with_items(node, bindings, paths)
     _registered_fixture_assign(node, bindings, sink)
     if isinstance(node, ast.Expr) and isinstance(node.value, ast.Call):
-        call = node.value
-        if isinstance(call.func, ast.Attribute) and isinstance(call.func.value, ast.Name):
-            name = call.func.value.id
-            origin = bindings.get(name)
-            if origin is not None and "provider" not in origin:
-                effect = _registered_fixture_expr(call, bindings)
-                if effect is None:
-                    bindings[name] = None
-                elif call.func.attr in {"append", "extend"}:
-                    bindings[name] |= effect
-    if isinstance(node, ast.Expr) and isinstance(node.value, ast.Call) and node.value is sink:
+        _registered_fixture_mutation(node.value, bindings)
+    if (
+        isinstance(node, ast.Expr)
+        and isinstance(node.value, ast.Call)
+        and node.value is sink
+    ):
         # exec's explicit namespace receives the output of this test operation.
-        if ast.unparse(sink.func) == "exec" and len(sink.args) > 1 and isinstance(sink.args[1], ast.Name):
+        if (
+            ast.unparse(sink.func) == "exec"
+            and len(sink.args) > 1
+            and isinstance(sink.args[1], ast.Name)
+        ):
             bindings[sink.args[1].id] = frozenset({"sink"})
+
+
+def _registered_fixture_with_items(node, bindings, paths):
+    for item in node.items:
+        if isinstance(item.optional_vars, ast.Name):
+            bindings[item.optional_vars.id] = None
+        call = item.context_expr
+        if _registered_fixture_open_call(call, item.optional_vars, bindings, paths):
+            bindings[item.optional_vars.id] = frozenset({"fixture"})
+
+
+def _registered_fixture_open_call(call, optional, bindings, paths):
+    if not (
+        isinstance(call, ast.Call)
+        and ast.unparse(call.func) == "open"
+        and call.args
+        and isinstance(call.args[0], ast.Name)
+        and call.args[0].id in paths
+        and len(call.args) <= 2
+        and not call.keywords
+        and isinstance(optional, ast.Name)
+    ):
+        return False
+    name = call.args[0].id
+    valid_mode = (
+        len(call.args) == 1
+        or isinstance(call.args[1], ast.Constant)
+        and call.args[1].value in {"r", "rb"}
+    )
+    return bindings.get(name) == frozenset({"path:" + name}) and valid_mode
+
+
+def _registered_fixture_mutation(call, bindings):
+    if not isinstance(call.func, ast.Attribute) or not isinstance(
+        call.func.value, ast.Name
+    ):
+        return
+    name = call.func.value.id
+    origin = bindings.get(name)
+    if origin is None or "provider" in origin:
+        return
+    effect = _registered_fixture_expr(call, bindings)
+    if effect is None:
+        bindings[name] = None
+    elif call.func.attr in {"append", "extend"}:
+        bindings[name] |= effect
 
 
 def _registered_fixture_namespace(tree):
@@ -5004,31 +5494,56 @@ def _registered_fixture_namespace(tree):
             for alias in node.names:
                 local = alias.asname or alias.name.split(".")[0]
                 bindings[local] = frozenset({"provider"})
-                bindings[None][local] = (node.module + "." + alias.name
-                    if isinstance(node, ast.ImportFrom) and node.module else alias.name)
+                bindings[None][local] = (
+                    node.module + "." + alias.name
+                    if isinstance(node, ast.ImportFrom) and node.module
+                    else alias.name
+                )
     return bindings
 
 
 def _registered_fixture_prefix(function, sink, bindings):
-    if any(isinstance(node, ast.If) and node.lineno < sink.lineno
-           and any(isinstance(item, (ast.Assign, ast.AnnAssign, ast.AugAssign))
-                   for item in ast.walk(node)) for node in ast.walk(function)):
+    if any(
+        isinstance(node, ast.If)
+        and node.lineno < sink.lineno
+        and any(
+            isinstance(item, (ast.Assign, ast.AnnAssign, ast.AugAssign))
+            for item in ast.walk(node)
+        )
+        for node in ast.walk(function)
+    ):
         return False
-    if any(isinstance(node, (ast.AugAssign, ast.NamedExpr, ast.Delete, ast.Global, ast.Nonlocal))
-           for node in ast.walk(function)):
+    if any(
+        isinstance(
+            node, (ast.AugAssign, ast.NamedExpr, ast.Delete, ast.Global, ast.Nonlocal)
+        )
+        for node in ast.walk(function)
+    ):
         return False
-    if any(isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda))
-           and node is not function for node in ast.walk(function)):
+    if any(
+        isinstance(
+            node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
+        )
+        and node is not function
+        for node in ast.walk(function)
+    ):
         return False
     for node in ast.walk(function):
         if isinstance(node, (ast.For, ast.AsyncFor)) and node.lineno < sink.lineno:
-            if not isinstance(node.target, ast.Name) or not isinstance(node.iter, (ast.List, ast.Tuple)):
+            if not isinstance(node.target, ast.Name) or not isinstance(
+                node.iter, (ast.List, ast.Tuple)
+            ):
                 return False
             if not all(isinstance(item, ast.Constant) for item in node.iter.elts):
                 return False
-        if isinstance(node, ast.Try) and node.lineno < sink.lineno and any(
-            isinstance(item, (ast.Assign, ast.AnnAssign, ast.AugAssign))
-            for handler in node.handlers for item in ast.walk(handler)
+        if (
+            isinstance(node, ast.Try)
+            and node.lineno < sink.lineno
+            and any(
+                isinstance(item, (ast.Assign, ast.AnnAssign, ast.AugAssign))
+                for handler in node.handlers
+                for item in ast.walk(handler)
+            )
         ):
             return False
     return True
@@ -5040,81 +5555,206 @@ def _registered_fixture_flow(function, sink, parameters, tree):
     observations, transformations, reads, saw_sink = [], [], [], False
     if not _registered_fixture_prefix(function, sink, bindings):
         return None
-    nodes = sorted((node for node in ast.walk(function) if isinstance(
-        node, (ast.Assign, ast.AnnAssign, ast.With, ast.For, ast.Expr, ast.Assert, ast.Try))),
-        key=lambda node: (node.lineno, node.col_offset))
+    nodes = sorted(
+        (
+            node
+            for node in ast.walk(function)
+            if isinstance(
+                node,
+                (
+                    ast.Assign,
+                    ast.AnnAssign,
+                    ast.With,
+                    ast.For,
+                    ast.Expr,
+                    ast.Assert,
+                    ast.Try,
+                ),
+            )
+        ),
+        key=lambda node: (node.lineno, node.col_offset),
+    )
     for node in nodes:
         if not saw_sink and node.lineno >= sink.lineno:
-            origin = _registered_fixture_expr(sink.args[0], bindings) if sink.args else None
+            origin = (
+                _registered_fixture_expr(sink.args[0], bindings) if sink.args else None
+            )
             if origin is None or "fixture" not in origin:
                 return None
             saw_sink = True
         _registered_fixture_step(node, bindings, parameters, sink)
-        if isinstance(node, ast.With):
-            reads.extend(_pickle_span(item.context_expr) for item in node.items
-                         if isinstance(item.optional_vars, ast.Name)
-                         and bindings.get(item.optional_vars.id) == frozenset({"fixture"}))
-        if isinstance(node, (ast.Assign, ast.AnnAssign)):
-            value = _registered_fixture_expr(node.value, bindings)
-            if value and value.intersection({"fixture", "sink"}):
-                transformations.append({"span": _pickle_span(node),
-                    "ast_sha256": _tier_sha256(ast.dump(node, include_attributes=False))})
-        if saw_sink and isinstance(node, ast.Assert):
-            value = _registered_fixture_expr(node.test, bindings)
-            if value is not None and "sink" in value:
-                observations.append(_pickle_span(node))
-        if saw_sink and isinstance(node, ast.Try) and node.orelse and node.handlers:
-            calls = [item for statement in node.body for item in ast.walk(statement)
-                     if isinstance(item, ast.Call)]
-            linked = any("sink" in (_registered_fixture_expr(call, bindings) or ()) for call in calls)
-            raises = [item for statement in node.orelse for item in ast.walk(statement)
-                      if isinstance(item, ast.Raise) and item.exc is not None
-                      and ast.unparse(item.exc).startswith("AssertionError(")]
-            if linked and raises:
-                observations.append(_pickle_span(node))
-    return {"oracle_spans": observations, "read_spans": reads,
-            "registered_filename_parameters": parameters, "transformations": transformations,
-            "sink_input_ast_sha256": _tier_sha256(ast.dump(sink.args[0], include_attributes=False)),
-            "effects": "UNASSESSED"} if observations else None
+        node_reads, node_transformations, node_observations = (
+            _registered_fixture_node_evidence(node, bindings, sink, saw_sink)
+        )
+        reads.extend(node_reads)
+        transformations.extend(node_transformations)
+        observations.extend(node_observations)
+    return (
+        {
+            "oracle_spans": observations,
+            "read_spans": reads,
+            "registered_filename_parameters": parameters,
+            "transformations": transformations,
+            "sink_input_ast_sha256": _tier_sha256(
+                ast.dump(sink.args[0], include_attributes=False)
+            ),
+            "effects": "UNASSESSED",
+        }
+        if observations
+        else None
+    )
+
+
+def _registered_fixture_node_evidence(node, bindings, sink, saw_sink):
+    reads = _registered_fixture_read_spans(node, bindings)
+    transformations = _registered_fixture_transformations(node, bindings)
+    observations = _registered_fixture_observations(node, bindings, sink, saw_sink)
+    return reads, transformations, observations
+
+
+def _registered_fixture_read_spans(node, bindings):
+    if not isinstance(node, ast.With):
+        return []
+    return [
+        _pickle_span(item.context_expr)
+        for item in node.items
+        if isinstance(item.optional_vars, ast.Name)
+        and bindings.get(item.optional_vars.id) == frozenset({"fixture"})
+    ]
+
+
+def _registered_fixture_transformations(node, bindings):
+    if not isinstance(node, (ast.Assign, ast.AnnAssign)):
+        return []
+    value = _registered_fixture_expr(node.value, bindings)
+    if not value or not value.intersection({"fixture", "sink"}):
+        return []
+    return [
+        {
+            "span": _pickle_span(node),
+            "ast_sha256": _tier_sha256(ast.dump(node, include_attributes=False)),
+        }
+    ]
+
+
+def _registered_fixture_observations(node, bindings, sink, saw_sink):
+    if not saw_sink:
+        return []
+    if isinstance(node, ast.Assert):
+        value = _registered_fixture_expr(node.test, bindings)
+        return [_pickle_span(node)] if value is not None and "sink" in value else []
+    if isinstance(node, ast.Try) and node.orelse and node.handlers:
+        return (
+            [_pickle_span(node)]
+            if _registered_fixture_try_is_observation(node, bindings)
+            else []
+        )
+    return []
+
+
+def _registered_fixture_try_is_observation(node, bindings):
+    calls = [
+        item
+        for statement in node.body
+        for item in ast.walk(statement)
+        if isinstance(item, ast.Call)
+    ]
+    linked = any(
+        "sink" in (_registered_fixture_expr(call, bindings) or ()) for call in calls
+    )
+    raises = any(
+        isinstance(item, ast.Raise)
+        and item.exc is not None
+        and ast.unparse(item.exc).startswith("AssertionError(")
+        for statement in node.orelse
+        for item in ast.walk(statement)
+    )
+    return linked and raises
 
 
 def _registered_fixture_module_clear(tree, entry_span=None):
-    protected = {"open", "globals", "locals", "list", "str", "bytes", "len", "eval", "exec", "__name__", "__builtins__"}
-    parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
+    protected = {
+        "open",
+        "globals",
+        "locals",
+        "list",
+        "str",
+        "bytes",
+        "len",
+        "eval",
+        "exec",
+        "__name__",
+        "__builtins__",
+    }
+    parents = {
+        child: parent
+        for parent in ast.walk(tree)
+        for child in ast.iter_child_nodes(parent)
+    }
     for node in ast.walk(tree):
-        if isinstance(node, ast.Name) and node.id in protected and not isinstance(node.ctx, ast.Load):
+        if (
+            isinstance(node, ast.Name)
+            and node.id in protected
+            and not isinstance(node.ctx, ast.Load)
+        ):
             return False
         if isinstance(node, ast.arg) and node.arg in protected:
             return False
         if isinstance(node, (ast.FunctionDef, ast.ClassDef)) and node.name in protected:
             return False
-        if isinstance(node, ast.alias) and (node.asname or node.name.split(".")[0]) in protected:
+        if (
+            isinstance(node, ast.alias)
+            and (node.asname or node.name.split(".")[0]) in protected
+        ):
             return False
-        if isinstance(node, ast.Call) and ast.unparse(node.func) in {"globals", "locals", "vars"}:
+        if isinstance(node, ast.Call) and ast.unparse(node.func) in {
+            "globals",
+            "locals",
+            "vars",
+        }:
             parent = parents.get(node)
             copied = isinstance(parent, ast.Attribute) and parent.attr == "copy"
-            passed = (isinstance(parent, ast.Call) and parent.args == [node]
-                      and _pickle_span(parent) == entry_span)
+            passed = (
+                isinstance(parent, ast.Call)
+                and parent.args == [node]
+                and _pickle_span(parent) == entry_span
+            )
             if not copied and not passed:
                 return False
     return not _pickle_role_disabled(tree)
 
 
 def _registered_fixture_role_witness(finding, inventory):
-    if (finding.get("code") not in {"SECURITY_UNSAFE_YAML", "SECURITY_DYNAMIC_EXECUTION"}
-            or _valid_security_precondition(finding.get("facts", {}).get("security_precondition"), finding)
-            or finding.get("path") not in inventory["trees"]):
+    if (
+        finding.get("code")
+        not in {"SECURITY_UNSAFE_YAML", "SECURITY_DYNAMIC_EXECUTION"}
+        or _valid_security_precondition(
+            finding.get("facts", {}).get("security_precondition"), finding
+        )
+        or finding.get("path") not in inventory["trees"]
+    ):
         return None
     path = finding["path"]
-    if _pickle_operational_importer(path, inventory["trees"]) or not _pickle_role_native_match(finding, inventory):
+    if _pickle_operational_importer(
+        path, inventory["trees"]
+    ) or not _pickle_role_native_match(finding, inventory):
         return None
     tree = inventory["trees"][path]
-    calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call)
-             and (node.lineno, node.col_offset) == (finding.get("line"), finding.get("column", 0))]
+    calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and (node.lineno, node.col_offset)
+        == (finding.get("line"), finding.get("column", 0))
+    ]
     if len(calls) != 1:
         return None
     sink = calls[0]
-    owners = [node for node in tree.body if isinstance(node, ast.FunctionDef) and sink in ast.walk(node)]
+    owners = [
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and sink in ast.walk(node)
+    ]
     if len(owners) != 1:
         return None
     function = owners[0]
@@ -5124,17 +5764,31 @@ def _registered_fixture_role_witness(finding, inventory):
     statement, marker, parameters = registration
     entry = _registered_fixture_entry(tree, path, marker, inventory)
     flow = _registered_fixture_flow(function, sink, parameters, tree)
-    if entry is None or flow is None or not _registered_fixture_module_clear(tree, entry["entry_span"]):
+    if (
+        entry is None
+        or flow is None
+        or not _registered_fixture_module_clear(tree, entry["entry_span"])
+    ):
         return None
-    return {"schema": "factory.security.registered-fixture-context.v1",
-            "role": "REGISTERED_FIXTURE_HARNESS_OPERATION", "tier": "NEEDS_CONTEXT",
-            "source_path": path, "source_sha256": hashlib.sha256(inventory["sources"][path]).hexdigest(),
-            "sources_sha256": inventory["sources_sha256"], "sink_span": _pickle_span(sink),
-            "function_span": _pickle_span(function), "registration_span": _pickle_span(statement),
-            "harness": entry, "input_flow": flow, "safe_operation": False,
-            "fixture_payloads": "UNASSESSED", "filesystem_authority": "UNASSESSED",
-            "dynamic_deployment": "UNASSESSED", "original_severity": finding.get("severity"),
-            "policy_sha256": _tier_sha256(_SOURCE_ROLE_POLICY_V2)}
+    return {
+        "schema": "factory.security.registered-fixture-context.v1",
+        "role": "REGISTERED_FIXTURE_HARNESS_OPERATION",
+        "tier": "NEEDS_CONTEXT",
+        "source_path": path,
+        "source_sha256": hashlib.sha256(inventory["sources"][path]).hexdigest(),
+        "sources_sha256": inventory["sources_sha256"],
+        "sink_span": _pickle_span(sink),
+        "function_span": _pickle_span(function),
+        "registration_span": _pickle_span(statement),
+        "harness": entry,
+        "input_flow": flow,
+        "safe_operation": False,
+        "fixture_payloads": "UNASSESSED",
+        "filesystem_authority": "UNASSESSED",
+        "dynamic_deployment": "UNASSESSED",
+        "original_severity": finding.get("severity"),
+        "policy_sha256": _tier_sha256(_SOURCE_ROLE_POLICY_V2),
+    }
 
 
 # The canonical executable-AST profile is reconstructed and independently reviewed

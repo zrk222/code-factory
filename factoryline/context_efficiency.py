@@ -22,7 +22,10 @@ from math import ceil
 from pathlib import Path
 from statistics import median
 from typing import Any, NoReturn
-from .import_context import application_configuration_names, application_profile_configuration
+from .import_context import (
+    application_configuration_names,
+    application_profile_configuration,
+)
 
 from .context_protocol_audit import (
     protocol_call_context as protocol_call_context,
@@ -97,6 +100,11 @@ from .type_intent_provider_provenance import (
     _capability_reflection_names as _capability_reflection_names,
 )
 
+from .import_context import (
+    _full_repository_workspace_cached_source_entry as _full_repository_workspace_cached_source_entry,
+    _full_repository_workspace_cache_load_source as _full_repository_workspace_cache_load_source,
+)
+
 _FULL_REPOSITORY_WORKSPACE_PREFIX_CACHE = None
 # 64 MiB source retention plus 16 MiB for measured cache rows and containers.
 FULL_REPOSITORY_WORKSPACE_CACHE_MAX_BYTES = 80 * 1024 * 1024
@@ -135,12 +143,25 @@ def _full_repository_workspace_cache_store_prefix(
 ):
     global _FULL_REPOSITORY_WORKSPACE_PREFIX_CACHE
     try:
-        _full_repository_workspace_cache_size((key, result_digest, context_digest, rows, source_capture, identity))
-        source = None if source_capture is None else (
-            dict(source_capture[0]), deepcopy(source_capture[1])
+        _full_repository_workspace_cache_size(
+            (key, result_digest, context_digest, rows, source_capture, identity)
+        )
+        source = (
+            None
+            if source_capture is None
+            else (dict(source_capture[0]), deepcopy(source_capture[1]))
         )
         owned = deepcopy(rows)
-        entry = (key, result_digest, context_digest, digest(owned), owned, source, identity, 0)
+        entry = (
+            key,
+            result_digest,
+            context_digest,
+            digest(owned),
+            owned,
+            source,
+            identity,
+            0,
+        )
         size = _full_repository_workspace_cache_size(entry)
         entry = (*entry[:-1], size)
         measured = _full_repository_workspace_cache_size(entry)
@@ -155,83 +176,42 @@ def _full_repository_workspace_cache_store_prefix(
 
 def _full_repository_workspace_cache_identity(generation, key):
     return (
-        generation["root"].as_posix(), generation["inventory_hash"],
-        generation["configuration"], generation["scanner"],
-        generation["runtime_epoch"], generation["source_retention_limit_bytes"],
+        generation["root"].as_posix(),
+        generation["inventory_hash"],
+        generation["configuration"],
+        generation["scanner"],
+        generation["runtime_epoch"],
+        generation["source_retention_limit_bytes"],
         key[1],
     )
-
-
-def _full_repository_workspace_cache_load_source(generation):
-    cached, key = _FULL_REPOSITORY_WORKSPACE_PREFIX_CACHE, generation.get("workspace_prefix_cache_key")
-    valid_size = False
-    if type(cached) is tuple and len(cached) == 8:
-        try:
-            valid_size = cached[7] == _full_repository_workspace_cache_size(cached)
-        except Exception:
-            pass
-    if (
-        not valid_size or key is None
-        or type(key) is not tuple or len(key) != 3
-        or cached[0] != key or cached[5] is None
-        or cached[7] > FULL_REPOSITORY_WORKSPACE_CACHE_MAX_BYTES
-    ):
-        return None
-    if cached[6] != _full_repository_workspace_cache_identity(generation, key):
-        return None
-    if not isinstance(cached[5], tuple) or len(cached[5]) != 2:
-        return None
-    source_bytes, bindings = cached[5]
-    if not isinstance(source_bytes, dict) or not isinstance(bindings, list):
-        return None
-    inventory = {row["path"]: row for row in generation["inventory"]}
-    names = [item.get("path") for item in bindings if isinstance(item, dict)]
-    if len(names) != len(inventory) or set(names) != set(inventory) or set(source_bytes) != set(inventory):
-        return None
-    file_by_name = {path.relative_to(generation["root"]).as_posix(): path for path in generation["files"]}
-    if set(file_by_name) != set(inventory) or any(
-        not isinstance(value, bytes) for value in source_bytes.values()
-    ) or sum(map(len, source_bytes.values())) > generation["source_retention_limit_bytes"]:
-        return None
-    captured = {}
-    for binding in bindings:
-        name, data = binding["path"], source_bytes.get(binding["path"])
-        row = inventory[name]
-        if (
-            not isinstance(data, bytes) or len(data) != binding.get("bytes")
-            or binding.get("sha256") != row.get("sha256")
-            or hashlib.sha256(data).hexdigest() != row.get("sha256")
-            or file_by_name[name].is_symlink()
-        ):
-            return None
-        captured[file_by_name[name]] = data
-    if len(captured) != len(generation["files"]):
-        return None
-    generation["workspace_source_capture_reuse"] = {
-        "files": len(captured), "bytes": sum(map(len, captured.values())),
-        "cache_accounted_bytes": cached[7],
-    }
-    return captured, deepcopy(bindings)
 
 
 def _full_repository_workspace_cache_load_prefix(
     engine, generation, results, files, source_by_name, context_digest
 ):
-    cached, key = _FULL_REPOSITORY_WORKSPACE_PREFIX_CACHE, generation.get("workspace_prefix_cache_key")
+    cached, key = (
+        _FULL_REPOSITORY_WORKSPACE_PREFIX_CACHE,
+        generation.get("workspace_prefix_cache_key"),
+    )
     try:
-        valid_size = type(cached) is tuple and len(cached) == 8 and (
-            cached[7] == _full_repository_workspace_cache_size(cached)
+        valid_size = (
+            type(cached) is tuple
+            and len(cached) == 8
+            and (cached[7] == _full_repository_workspace_cache_size(cached))
         )
     except Exception:
         valid_size = False
     if (
-        not valid_size or key is None or cached[0] != key
+        not valid_size
+        or key is None
+        or cached[0] != key
         or cached[7] > FULL_REPOSITORY_WORKSPACE_CACHE_MAX_BYTES
         or cached[1] != engine.digest(results)
         or cached[1] != generation.get("saved_result_digest")
         or cached[2] != context_digest
         or cached[2] != generation.get("saved_context_generation_sha256")
-        or cached[3] != engine.digest(cached[4]) or len(cached[4]) != len(results)
+        or cached[3] != engine.digest(cached[4])
+        or len(cached[4]) != len(results)
     ):
         return None
     rows = deepcopy(cached[4])
@@ -252,6 +232,7 @@ def _full_repository_workspace_cache_load_prefix(
         ):
             return None
     return rows
+
 
 REQUEST_SCHEMA = "factory.context-efficiency-request.v1"
 PACKET_SCHEMA = "factory.context-efficiency-packet.v1"
@@ -537,15 +518,23 @@ def bind_application_fixture_context(
     configuration_valid=True,
 ):
     """Bind eligible application-fixture evidence to the captured source inventory and hashed configuration without asserting runtime isolation."""
-    from . import mock_fixture_provenance as fixture, credential_role_constructor_provider as roles
+    from . import (
+        mock_fixture_provenance as fixture,
+        credential_role_constructor_provider as roles,
+    )
     from . import review_audits as audit
 
     for path in snapshots:
         contexts.setdefault(path, {})["application_fixture_evidence"] = {}
-    if configuration_valid is not True or not isinstance(source_bytes, dict) or not isinstance(source_inventory, dict):
+    if (
+        configuration_valid is not True
+        or not isinstance(source_bytes, dict)
+        or not isinstance(source_inventory, dict)
+    ):
         return
     candidates = {
-        path: _fixture_literal_candidates(tree, audit) for path, tree in snapshots.items()
+        path: _fixture_literal_candidates(tree, audit)
+        for path, tree in snapshots.items()
     }
     if not any(candidates.values()):
         return
@@ -711,8 +700,11 @@ def provider_context_cache_helpers(contracts):
     from . import credential_role_constructor_provider as roles
 
     return (
-        roles.security_snapshot_model, roles.application_snapshot_index, roles.verified_security_tree,
-        roles.security_source_snapshots, roles.consume_cached_security_snapshots,
+        roles.security_snapshot_model,
+        roles.application_snapshot_index,
+        roles.verified_security_tree,
+        roles.security_source_snapshots,
+        roles.consume_cached_security_snapshots,
         roles.PresentationRoleIndex,
         *(
             getattr(roles, name)
@@ -810,17 +802,21 @@ def _consume_security_snapshots(
     tenant_read_calls,
     tenant_read_bindings,
     test_file_patterns,
-    scan_snapshot, source_model_out=None,
+    scan_snapshot,
+    source_model_out=None,
 ):
     """Consume trees while retaining an owned source model for later consumers."""
     from . import test_oracle_misuse as oracle
     from . import review_audits as audit
 
     security_only = audit._SECURITY_ONLY_SCAN.get() is True
-    rows, state = {}, (
-        ({}, {})
-        if security_only
-        else oracle.source_callback_snapshot_state(snapshots, fingerprints)
+    rows, state = (
+        {},
+        (
+            ({}, {})
+            if security_only
+            else oracle.source_callback_snapshot_state(snapshots, fingerprints)
+        ),
     )
     provider_mutations = {}
     try:
@@ -841,7 +837,9 @@ def _consume_security_snapshots(
             }
             if not security_only:
                 bind = oracle.source_callback_snapshot_context
-                context.update(bind(context.get("captured_imports", {}), workspace, *state))
+                context.update(
+                    bind(context.get("captured_imports", {}), workspace, *state)
+                )
             rows[path] = scan_snapshot(
                 workspace,
                 path,
@@ -1011,7 +1009,14 @@ def _scan_security_source(
             "bytes": len(data),
         }
         tree = _verified_security_tree(
-            audit, workspace, path, data, binding, tree, fingerprint, source_context=oracle_context
+            audit,
+            workspace,
+            path,
+            data,
+            binding,
+            tree,
+            fingerprint,
+            source_context=oracle_context,
         )
         tree._oracle_source_sha256 = binding["sha256"]
         encoding, _ = tokenize.detect_encoding(io.BytesIO(data).readline)

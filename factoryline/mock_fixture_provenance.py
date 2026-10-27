@@ -3873,12 +3873,20 @@ def _closed_jwt_test_evidence(
 
 
 def application_test_index(
-    root, modules, source_bytes, inventory, configuration_bytes=None, *, source_index=None
+    root,
+    modules,
+    source_bytes,
+    inventory,
+    configuration_bytes=None,
+    *,
+    source_index=None,
 ):
     """Reuse the captured snapshot graph for application credential role slices."""
     from .credential_role_constructor_provider import application_snapshot_index
 
-    source = application_snapshot_index(root, modules, source_bytes, inventory, source_index)
+    source = application_snapshot_index(
+        root, modules, source_bytes, inventory, source_index
+    )
     if source is None or not source.bounded:
         return None
     paths = source.module_paths()
@@ -4077,10 +4085,6 @@ def _app_request_secret_values(operation):
     ]
 
 
-
-
-
-
 def _app_closed_consumer_uses(index, path, function, secret, secret_value, witness):
     """Bind every local secret use to the supported enrollment and exercise path."""
     nodes = list(ast.walk(function))
@@ -4095,12 +4099,21 @@ def _app_closed_consumer_uses(index, path, function, secret, secret_value, witne
     ):
         return None
     roots = _app_consumer_roots(index, path, function, secret, witness)
-    from .credential_role_identity_effects import _structural_closed_consumer_uses, _enclosing_function
+    from .credential_role_identity_effects import (
+        _structural_closed_consumer_uses,
+        _enclosing_function,
+    )
 
-    closure = _structural_closed_consumer_uses(function, secret, roots,
+    closure = _structural_closed_consumer_uses(
+        function,
+        secret,
+        roots,
         index["source"].parents[path],
         lambda node: _enclosing_function(node, index["source"].parents[path]),
-        lambda expression: _app_credential_lineage(index, path, function, expression, secret))
+        lambda expression: _app_credential_lineage(
+            index, path, function, expression, secret
+        ),
+    )
     if closure is None:
         return None
     used, loads, allowed = closure
@@ -4687,7 +4700,11 @@ def _app_source_function(index, path, expression, function=None):
     if _app_expression_name(index, path, expression, function) is None:
         return None
     selected = _app_source_symbol(index, path, expression, function)
-    return selected if selected is not None and isinstance(selected[1], ast.FunctionDef) else None
+    return (
+        selected
+        if selected is not None and isinstance(selected[1], ast.FunctionDef)
+        else None
+    )
 
 
 def _app_fixture_provider(index, path, name):
@@ -4842,20 +4859,7 @@ def _app_pytest_store_enrollment(index, path, function, secret):
     }
 
 
-def _app_source_symbol(index, path, expression, function=None, seen=(), provider_chain=None):
-    """Resolve captured imports/reexports to one exact module declaration."""
-    canonical = _app_expression_name(index, path, expression, function)
-    if canonical is None and isinstance(expression, ast.Name):
-        from .credential_role_constructor_provider import binding_occurrences
-
-        from .credential_role_identity_effects import _argument_names
-
-        if function is not None and (expression.id in _argument_names(function)
-                                    or binding_occurrences(function.body, expression.id)):
-            return None
-        canonical = _django_name(index, path) + "." + expression.id
-    if not canonical or canonical in seen or len(seen) >= 12:
-        return None
+def _app_source_symbol_module(index, path, canonical):
     module, _, name = canonical.rpartition(".")
     target, tree = _django_mod(index, module)
     if module.partition(".")[0] not in _DJANGO_CANONICAL_PROVIDER_ROOTS:
@@ -4864,6 +4868,29 @@ def _app_source_symbol(index, path, expression, function=None, seen=(), provider
         imported, candidate = captured_import_module(index["source"], path, module)
         if imported:
             target, tree = candidate, index["modules"].get(candidate)
+    return target, tree, name
+
+
+def _app_source_symbol(
+    index, path, expression, function=None, seen=(), provider_chain=None
+):
+    """Resolve captured imports/reexports to one exact module declaration."""
+    canonical = _app_expression_name(index, path, expression, function)
+    if canonical is None and isinstance(expression, ast.Name):
+        from .credential_role_constructor_provider import binding_occurrences
+
+        from .credential_role_identity_effects import _argument_names
+
+        if function is not None and (
+            expression.id in _argument_names(function)
+            or binding_occurrences(function.body, expression.id)
+        ):
+            return None
+        canonical = _django_name(index, path) + "." + expression.id
+    if not canonical or canonical in seen or len(seen) >= 12:
+        return None
+
+    target, tree, name = _app_source_symbol_module(index, path, canonical)
     if tree is None:
         return None
     if provider_chain is not None:
@@ -4875,7 +4902,10 @@ def _app_source_symbol(index, path, expression, function=None, seen=(), provider
         return None
     if isinstance(rows[0], (ast.Import, ast.ImportFrom)):
         return _app_source_symbol(
-            index, target, ast.Name(id=name, ctx=ast.Load()), seen=(*seen, canonical),
+            index,
+            target,
+            ast.Name(id=name, ctx=ast.Load()),
+            seen=(*seen, canonical),
             provider_chain=provider_chain,
         )
     binding = rows[0]

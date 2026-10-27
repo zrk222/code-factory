@@ -79,7 +79,13 @@ def add_parser(sub: Any) -> None:
     code_audit.add_argument("--json", action="store_true")
     code_audit.add_argument(
         "--defect-policy",
-        choices=["legacy-v1", "trusted-core-v1", "source-role-v1", "source-role-v2", "source-role-v3"],
+        choices=[
+            "legacy-v1",
+            "trusted-core-v1",
+            "source-role-v1",
+            "source-role-v2",
+            "source-role-v3",
+        ],
         default=argparse.SUPPRESS,
         help="explicit bounded security defect policy; trusted-core keeps unresolved items visible without establishing a clean security result",
     )
@@ -558,9 +564,11 @@ def _finish_full_security(args, result, policy_options):
 
 
 def _run_security(args: Any) -> int:
-    if getattr(args, "defect_policy", "legacy-v1") in {"source-role-v1", "source-role-v2", "source-role-v3"} and getattr(
-        args, "full_repository", False
-    ):
+    if getattr(args, "defect_policy", "legacy-v1") in {
+        "source-role-v1",
+        "source-role-v2",
+        "source-role-v3",
+    } and getattr(args, "full_repository", False):
         print(
             json.dumps(
                 {
@@ -720,7 +728,11 @@ def _print_selected_security_policy(result):
         "finding_tier_report",
         result.get("workspace_evidence", {}).get("finding_tiers", {}),
     )
-    if result.get("selected_defect_policy") in {"source-role-v1", "source-role-v2", "source-role-v3"}:
+    if result.get("selected_defect_policy") in {
+        "source-role-v1",
+        "source-role-v2",
+        "source-role-v3",
+    }:
         for raw in result.get("findings", []):
             print(
                 f"ACTIVE [{raw['severity']}] {raw['code']}: {raw['path']}:{raw['line']} — {raw['message']}"

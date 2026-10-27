@@ -3,6 +3,7 @@
 Inputs are hash-bound observations, not aggregate scores. This checks their
 internal consistency; source execution and label provenance require review.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -43,13 +44,20 @@ def _index(rows: list[dict]) -> dict[str, dict]:
 
 
 def _metrics(rows: dict, labels: dict, population: str) -> dict:
-    counts = Counter(labels[key]["label"] for key, row in rows.items() if _member(row, population))
+    counts = Counter(
+        labels[key]["label"] for key, row in rows.items() if _member(row, population)
+    )
     tp, fp, unclear = (counts[name] for name in ("TP", "FP", "UNCLEAR"))
     decided = tp + fp
     return {
-        "TP": tp, "FP": fp, "UNCLEAR": unclear, "decided": decided,
+        "TP": tp,
+        "FP": fp,
+        "UNCLEAR": unclear,
+        "decided": decided,
         "precision": tp / decided if decided else None,
-        "unclear_inclusive_rate": tp / (decided + unclear) if decided + unclear else None,
+        "unclear_inclusive_rate": tp / (decided + unclear)
+        if decided + unclear
+        else None,
         "wilson_95": _wilson(tp, decided),
     }
 
@@ -58,7 +66,9 @@ def _member(row: dict, field: str) -> bool:
     return row["active"] or row["review"] if field == "active_or_review" else row[field]
 
 
-def _version_rows(name: str, version: dict, contract: dict, labels: dict) -> tuple[dict, list]:
+def _version_rows(
+    name: str, version: dict, contract: dict, labels: dict
+) -> tuple[dict, list]:
     if not isinstance(version, dict):
         raise ValueError(f"{name}: observation must be an object")
     for key in ("context_sha256", "labels_sha256", "policy", "assumptions_sha256"):
@@ -95,54 +105,115 @@ def _validate_row(name: str, key: str, row: dict, label: dict) -> None:
         raise ValueError(f"{name}: supported defect must be active")
 
 
-def evaluate(contract: dict, baseline: dict, candidate: dict) -> dict:
-    """Reject omitted coverage, changed premises, lost TPs and unsupported gains."""
-    if not isinstance(contract, dict) or contract.get("schema") != SCHEMA or contract.get("scope") != "fixed_panel":
+def _contract_labels(contract):
+    if (
+        not isinstance(contract, dict)
+        or contract.get("schema") != SCHEMA
+        or contract.get("scope") != "fixed_panel"
+    ):
         raise ValueError("require a fixed-panel contract")
     labels = _index(contract["cases"])
-    if any(row.get("label") not in {"TP", "FP", "UNCLEAR"}
-           or not _hash(row.get("source_sha256")) for row in labels.values()):
+    if any(
+        row.get("label") not in {"TP", "FP", "UNCLEAR"}
+        or not _hash(row.get("source_sha256"))
+        for row in labels.values()
+    ):
         raise ValueError("invalid source digest or actionable label")
-    label_hash = digest(json.dumps(contract["cases"], sort_keys=True, separators=(",", ":")).encode())
+    label_hash = digest(
+        json.dumps(contract["cases"], sort_keys=True, separators=(",", ":")).encode()
+    )
     if contract.get("labels_sha256") != label_hash:
         raise ValueError("label seal mismatch")
-    if not all(_hash(contract.get(key)) for key in ("context_sha256", "assumptions_sha256")) or not contract.get("policy"):
+    if not all(
+        _hash(contract.get(key)) for key in ("context_sha256", "assumptions_sha256")
+    ) or not contract.get("policy"):
         raise ValueError("missing context, assumptions or policy")
+    return labels
+
+
+def _lost_label_memberships(before, after, labels, label, populations):
+    return {
+        field: [
+            key
+            for key in labels
+            if labels[key]["label"] == label
+            and _member(before[key], field)
+            and not _member(after[key], field)
+        ]
+        for field in populations
+    }
+
+
+def _measurement_state(reasons, gain):
+    if reasons:
+        return "BLOCKED"
+    if gain and gain > 0:
+        return "ACTIVE_PRECISION_GAIN_FIXED_PANEL"
+    return "NO_PRECISION_GAIN"
+
+
+def evaluate(contract: dict, baseline: dict, candidate: dict) -> dict:
+    """Reject omitted coverage, changed premises, lost TPs and unsupported gains."""
+    labels = _contract_labels(contract)
     reasons, versions = [], []
     for name, version in (("baseline", baseline), ("candidate", candidate)):
         rows, incomplete = _version_rows(name, version, contract, labels)
         reasons.extend(incomplete)
         versions.append(rows)
     before, after = versions
-    changed = {key: {"before": [f for f in FIELDS if before[key][f]],
-                     "after": [f for f in FIELDS if after[key][f]]}
-               for key in labels if any(before[key][f] != after[key][f] for f in FIELDS)}
+    changed = {
+        key: {
+            "before": [f for f in FIELDS if before[key][f]],
+            "after": [f for f in FIELDS if after[key][f]],
+        }
+        for key in labels
+        if any(before[key][f] != after[key][f] for f in FIELDS)
+    }
     if changed != contract.get("expected_changes"):
         reasons.append("observed changes differ from the registered repair impact")
-    lost = {field: [key for key in labels if labels[key]["label"] == "TP"
-                    and _member(before[key], field) and not _member(after[key], field)]
-            for field in ("raw", "active", "supported", "active_or_review")}
+    lost = _lost_label_memberships(
+        before, after, labels, "TP", ("raw", "active", "supported", "active_or_review")
+    )
     if any(lost.values()):
         reasons.append("true-positive retention failed")
-    lost_unclear = {field: [key for key in labels if labels[key]["label"] == "UNCLEAR"
-                           and _member(before[key], field) and not _member(after[key], field)]
-                    for field in ("raw", "active_or_review")}
+    lost_unclear = _lost_label_memberships(
+        before, after, labels, "UNCLEAR", ("raw", "active_or_review")
+    )
     if any(lost_unclear.values()):
         reasons.append("unresolved claims were removed from review")
-    metrics = {name: {field: _metrics(rows, labels, field) for field in (*FIELDS, "active_or_review")}
-               for name, rows in (("baseline", before), ("candidate", after))}
-    old, new = (metrics[name]["active"]["precision"] for name in ("baseline", "candidate"))
+    metrics = {
+        name: {
+            field: _metrics(rows, labels, field)
+            for field in (*FIELDS, "active_or_review")
+        }
+        for name, rows in (("baseline", before), ("candidate", after))
+    }
+    old, new = (
+        metrics[name]["active"]["precision"] for name in ("baseline", "candidate")
+    )
     gain = new - old if old is not None and new is not None else None
-    state = "BLOCKED" if reasons else "ACTIVE_PRECISION_GAIN_FIXED_PANEL" if gain and gain > 0 else "NO_PRECISION_GAIN"
-    selection = any(not before[key]["review"] and after[key]["review"] for key in labels)
+    state = _measurement_state(reasons, gain)
+    selection = any(
+        not before[key]["review"] and after[key]["review"] for key in labels
+    )
     return {
-        "schema": SCHEMA, "state": state, "reasons": reasons, "metrics": metrics,
-        "active_precision_delta": gain, "changed_claims": changed, "lost_TPs": lost,
+        "schema": SCHEMA,
+        "state": state,
+        "reasons": reasons,
+        "metrics": metrics,
+        "active_precision_delta": gain,
+        "changed_claims": changed,
+        "lost_TPs": lost,
         "lost_unclear": lost_unclear,
-        "change_kind": "SELECTION_WITH_ABSTENTION" if selection else "ACTIVE_OUTPUT_CHANGE",
-        "scope": "fixed_panel", "registered_claims": len(labels),
-        "unlabelled_outputs": {name: value["unlabelled_outputs"]
-                               for name, value in (("baseline", baseline), ("candidate", candidate))},
+        "change_kind": "SELECTION_WITH_ABSTENTION"
+        if selection
+        else "ACTIVE_OUTPUT_CHANGE",
+        "scope": "fixed_panel",
+        "registered_claims": len(labels),
+        "unlabelled_outputs": {
+            name: value["unlabelled_outputs"]
+            for name, value in (("baseline", baseline), ("candidate", candidate))
+        },
         "publication_eligible": False,
         "claim_boundary": "Paired supplied observations only; no proof of fresh sampling, label independence, execution truth or whole-scanner precision.",
     }
@@ -170,13 +241,18 @@ def main() -> int:
         contract = json.loads(payload)
         if not isinstance(contract, dict):
             raise ValueError("contract must be an object")
-        result = evaluate(contract, _read_bound(args.contract.parent, contract["baseline"]),
-                          _read_bound(args.contract.parent, contract["candidate"]))
+        result = evaluate(
+            contract,
+            _read_bound(args.contract.parent, contract["baseline"]),
+            _read_bound(args.contract.parent, contract["candidate"]),
+        )
         result["contract_sha256"] = digest(payload)
         result["evidence"] = {key: contract[key] for key in ("baseline", "candidate")}
     except (OSError, ValueError, KeyError, TypeError) as exc:
         result = {"schema": SCHEMA, "state": "INVALID", "reason": str(exc)}
-    args.out.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    args.out.write_text(
+        json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
     print(json.dumps({"state": result["state"], "out": str(args.out)}))
     return 0 if result["state"] == "ACTIVE_PRECISION_GAIN_FIXED_PANEL" else 2
 

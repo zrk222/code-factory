@@ -3667,11 +3667,20 @@ def _oracle_context_cache_key(
     helpers = (
         ast.parse,
         _build_oracle_context,
+        _oracle_helper_edges,
         _completion_only_oracle,
         integrity._completion_only_oracle,
         integrity._builtin_repr_names_shadowed,
         integrity._security_module_scope,
         integrity._security_scope_local_names,
+        integrity._security_if_block_findings,
+        integrity._security_loop_block_findings,
+        integrity._security_try_block_flow,
+        integrity._security_with_block_findings,
+        integrity._security_match_block_findings,
+        integrity._security_bind_flow_targets,
+        integrity._security_clear_flow_names,
+        integrity._security_statement_operand_flow,
         contracts._static_type_edges,
         contracts.native_import_profile,
         contracts.import_configuration,
@@ -3782,6 +3791,7 @@ def _oracle_context_cache_key(
         )
     )
     from .credential_role_identity_effects import security_value_helper_epoch
+
     helpers += security_value_helper_epoch()
     identity = {
         "schema": integrity.credential_context_cache_schema(),
@@ -3964,12 +3974,20 @@ def _project_oracle_context(
             contexts, edges = cached
             bind_provider_inventory(contexts, python_inventory)
             if security_snapshot_consumer is not None:
-                from .credential_role_constructor_provider import consume_cached_security_snapshots
+                from .credential_role_constructor_provider import (
+                    consume_cached_security_snapshots,
+                )
                 import sys
 
                 consume_cached_security_snapshots(
-                    sys.modules[__name__], root, files, source_bytes, source_bindings,
-                    contexts, security_snapshot_consumer, producer_source_model_out,
+                    sys.modules[__name__],
+                    root,
+                    files,
+                    source_bytes,
+                    source_bindings,
+                    contexts,
+                    security_snapshot_consumer,
+                    producer_source_model_out,
                 )
             return contexts, bindings, edges, source_bytes
     from .credential_role_constructor_provider import security_source_snapshots
@@ -4147,6 +4165,35 @@ def _test_has_captured_autouse(node, context):
     )
 
 
+def _oracle_helper_edges(root, caller, imports, snapshots, helper_summaries, edges):
+    for local, (source, symbol) in imports.items():
+        target = source.relative_to(root).as_posix()
+        target_tree = snapshots.get(source)
+        if target_tree is None:
+            continue
+        _, strong_summary, weak_summary, exported_assertions = helper_summaries[
+            target_tree
+        ]
+        strong_names = {
+            name for name in strong_summary if _is_oracle_helper_name(name)
+        } | exported_assertions
+        weak_names = {name for name in weak_summary if _is_oracle_helper_name(name)}
+        selected = (
+            [symbol]
+            if symbol in strong_names
+            else [f"{local}.{name}" for name in strong_names]
+        )
+        for resolved_symbol in selected:
+            edges.add((caller, target, "assertion_helper", resolved_symbol, "strong"))
+        selected_weak = (
+            [symbol]
+            if symbol in weak_names
+            else [f"{local}.{name}" for name in weak_names]
+        )
+        for resolved_symbol in selected_weak:
+            edges.add((caller, target, "assertion_helper", resolved_symbol, "weak"))
+
+
 def _build_oracle_context(
     root: Path,
     files: list[Path],
@@ -4280,11 +4327,16 @@ def _build_oracle_context(
                 integrity._structural_oracle_context(tree, imports, snapshots)
             )
             from . import test_oracle_misuse as oracle_misuse
-            contexts[path]["callback_invokers"] = oracle_misuse.source_callback_invokers(
-                imports, snapshots, callback_summaries
+
+            contexts[path]["callback_invokers"] = (
+                oracle_misuse.source_callback_invokers(
+                    imports, snapshots, callback_summaries
+                )
             )
             contexts[path]["helpers"], contexts[path]["weak_helpers"] = (
-                _imported_oracle_helper_sets(imports, snapshots, aliases, helper_summaries)
+                _imported_oracle_helper_sets(
+                    imports, snapshots, aliases, helper_summaries
+                )
             )
             edges.update(
                 (
@@ -4308,36 +4360,9 @@ def _build_oracle_context(
                 for local, profile in contexts[path]["callback_invokers"].items()
                 for method in profile.get("virtual_dispatch", {}).get("methods", [])
             )
-            for local, (source, symbol) in imports.items():
-                target = source.relative_to(root).as_posix()
-                target_tree = snapshots.get(source)
-                if target_tree is None:
-                    continue
-                _, strong_summary, weak_summary, exported_assertions = helper_summaries[
-                    target_tree
-                ]
-                strong_names = {
-                    name for name in strong_summary if _is_oracle_helper_name(name)
-                } | exported_assertions
-                weak_names = {
-                    name for name in weak_summary if _is_oracle_helper_name(name)
-                }
-                selected = (
-                    [symbol]
-                    if symbol in strong_names
-                    else [f"{local}.{name}" for name in strong_names]
-                )
-                for resolved_symbol in selected:
-                    edges.add(
-                        (caller, target, "assertion_helper", resolved_symbol, "strong")
-                    )
-                selected_weak = (
-                    [symbol]
-                    if symbol in weak_names
-                    else [f"{local}.{name}" for name in weak_names]
-                )
-                for resolved_symbol in selected_weak:
-                    edges.add((caller, target, "assertion_helper", resolved_symbol, "weak"))
+            _oracle_helper_edges(
+                root, caller, imports, snapshots, helper_summaries, edges
+            )
             for source, symbol in _imported_unittest_mixins(tree, aliases, imports):
                 if source in contexts:
                     contexts[source]["mixins"].add(symbol)
@@ -5368,7 +5393,9 @@ def _security_scan_tree(
     tree._security_source_context = (oracle_context or {}).get(
         "_security_source_context"
     )
-    tree._security_source_model = (oracle_context or {}).get("_security_source_model") or getattr(tree, "_security_source_model", None)
+    tree._security_source_model = (oracle_context or {}).get(
+        "_security_source_model"
+    ) or getattr(tree, "_security_source_model", None)
     tree._security_oracle_context = oracle_context or {}
     tree._fixed_program_workspace = (oracle_context or {}).get(
         "fixed_program_workspace", {}
@@ -5547,13 +5574,24 @@ def _verify_security_bindings(workspace: Path, bindings: list[dict[str, Any]]) -
     )
 
 
-def _blocked_security_scan_report(workspace, files, tenant_read_calls,
-                                  tenant_read_bindings, tenant_policy_applies=False):
+def _blocked_security_scan_report(
+    workspace,
+    files,
+    tenant_read_calls,
+    tenant_read_bindings,
+    tenant_policy_applies=False,
+):
     from .audit_action_refs import blocked_security_scan_report
     import sys
 
-    return blocked_security_scan_report(sys.modules[__name__], workspace, files,
-                                       tenant_read_calls, tenant_read_bindings, tenant_policy_applies)
+    return blocked_security_scan_report(
+        sys.modules[__name__],
+        workspace,
+        files,
+        tenant_read_calls,
+        tenant_read_bindings,
+        tenant_policy_applies,
+    )
 
 
 def _tenant_read_contract(
@@ -5722,12 +5760,16 @@ def _scan_security_sources(
     return bindings, findings, counts, outcomes, oracle_edges, extra_bindings
 
 
-def _seal_security_scan(core: dict[str, Any], *, producer_source_model=None) -> dict[str, Any]:
+def _seal_security_scan(
+    core: dict[str, Any], *, producer_source_model=None
+) -> dict[str, Any]:
     import sys
 
     from .audit_action_refs import seal_security_scan
 
-    return seal_security_scan(sys.modules[__name__], core, producer_source_model=producer_source_model)
+    return seal_security_scan(
+        sys.modules[__name__], core, producer_source_model=producer_source_model
+    )
 
 
 def _security_scan_report(
@@ -5901,7 +5943,9 @@ def security_scan(
         )
     if selected_policy != "legacy-v1":
         result["selected_defect_policy"] = selected_policy
-        result = _seal_security_scan(result, producer_source_model=producer_source_model.get("source"))
+        result = _seal_security_scan(
+            result, producer_source_model=producer_source_model.get("source")
+        )
     return (
         _reconcile_runtime_oracles(workspace, result, evidence)
         if any(value is not None for value in evidence)

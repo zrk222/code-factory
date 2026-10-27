@@ -55,7 +55,11 @@ _NATIVE_EMPTY_MAPPING = {
         "multidict/_abc.py": "7bfd090c98bb13a2d64b4037814275ed29200cb96683c7df8dfca54eefef6e87",
         "multidict/_multidict.cp311-win_amd64.pyd": "fb947865c6931152dc3bfc8aa0c7a44483872a1ae41fdadc872bfcca24644e70",
     },
-    "assumptions": ["native export selected", "initialized immutable provider", "no preloaded module mutation"],
+    "assumptions": [
+        "native export selected",
+        "initialized immutable provider",
+        "no preloaded module mutation",
+    ],
 }
 _PROVIDER_MODEL_V4["native_leaf_profile"] = _NATIVE_EMPTY_MAPPING
 _PROVIDER_MODELS = {
@@ -387,14 +391,7 @@ class _ProviderV4SourceInterpreter:
         if self.remaining < 0 or len(self.stack) > 8:
             raise ValueError("source interpreter budget exhausted")
         if isinstance(node, ast.Name):
-            if node.id in env:
-                return env[node.id]
-            symbol = _provider_v4_resolve_symbol(path, node.id, self.trees)
-            if isinstance(symbol, _ProviderV4Module):
-                return symbol
-            if symbol == "pickle.HIGHEST_PROTOCOL":
-                return self._pickle_highest_protocol()
-            raise ValueError("unbound source name")
+            return self.name_value(node.id, env, path)
         if isinstance(node, ast.Constant):
             _provider_v4_scalar(node.value)
             return node.value
@@ -408,36 +405,53 @@ class _ProviderV4SourceInterpreter:
             return self.subscript(node, env, path)
         raise ValueError("unsupported source expression")
 
+    def name_value(self, name, env, path):
+        """Resolve a name using the captured local environment and source module."""
+        if name in env:
+            return env[name]
+        symbol = _provider_v4_resolve_symbol(path, name, self.trees)
+        if isinstance(symbol, _ProviderV4Module):
+            return symbol
+        if symbol == "pickle.HIGHEST_PROTOCOL":
+            return self._pickle_highest_protocol()
+        raise ValueError("unbound source name")
+
     def attribute(self, node, env, path):
         """Resolve a captured field or method while rejecting unknown descriptor and provider behavior."""
         receiver = self.value(node.value, env, path)
         if isinstance(receiver, _ProviderV4Module):
-            if receiver.name == "pickle" and node.attr == "HIGHEST_PROTOCOL":
-                return self._pickle_highest_protocol()
-            if receiver.path:
-                symbol = _provider_v4_resolve_symbol(
-                    receiver.path, node.attr, self.trees
-                )
-                if isinstance(symbol, tuple):
-                    return symbol
-            raise ValueError("unresolved source module attribute")
+            return self.module_attribute(receiver, node.attr)
         if type(receiver) is _ProviderV4SourceObject:
-            if receiver.base_kind == "exception":
-                descriptor = _provider_v4_exception_data_descriptor(node.attr)
-                if descriptor is not None:
-                    if (
-                        descriptor[0] is BaseException
-                        and descriptor[1] is vars(BaseException).get("args")
-                    ):
-                        return receiver.base_args
-                    raise ValueError("unmodeled native exception descriptor read")
-            if node.attr in receiver.state:
-                return receiver.state[node.attr]
-            if node.attr in receiver.slots and node.attr in receiver.slot_state:
-                return receiver.slot_state[node.attr]
-            model = self.classes[receiver.path, receiver.name]
-            if node.attr in model.get("class_values", {}):
-                return model["class_values"][node.attr]
+            return self.object_attribute(receiver, node.attr)
+        raise ValueError("unresolved source attribute")
+
+    def module_attribute(self, receiver, name):
+        """Resolve a modeled attribute without importing or executing a module."""
+        if receiver.name == "pickle" and name == "HIGHEST_PROTOCOL":
+            return self._pickle_highest_protocol()
+        if receiver.path:
+            symbol = _provider_v4_resolve_symbol(receiver.path, name, self.trees)
+            if isinstance(symbol, tuple):
+                return symbol
+        raise ValueError("unresolved source module attribute")
+
+    def object_attribute(self, receiver, name):
+        """Project a supported captured object attribute or return an unknown value."""
+        if receiver.base_kind == "exception":
+            descriptor = _provider_v4_exception_data_descriptor(name)
+            if descriptor is not None:
+                if descriptor[0] is BaseException and descriptor[1] is vars(
+                    BaseException
+                ).get("args"):
+                    return receiver.base_args
+                raise ValueError("unmodeled native exception descriptor read")
+        if name in receiver.state:
+            return receiver.state[name]
+        if name in receiver.slots and name in receiver.slot_state:
+            return receiver.slot_state[name]
+        model = self.classes[receiver.path, receiver.name]
+        if name in model.get("class_values", {}):
+            return model["class_values"][name]
         raise ValueError("unresolved source attribute")
 
     def collection(self, node, env, path):
@@ -481,31 +495,37 @@ class _ProviderV4SourceInterpreter:
         if _provider_v4_super_call_shape(call):
             return self.super_method(call.func.attr, args, kwargs, env, path)
         if isinstance(call.func, ast.Name):
-            if call.func.id in env:
-                raise ValueError("local callable shadows a source provider or builtin")
-            symbol = _provider_v4_resolve_symbol(path, call.func.id, self.trees)
-            if symbol in self.classes:
-                return self.construct(symbol, call, args, kwargs)
-            if symbol == "multidict.CIMultiDict":
-                return self.native_cimultidict(args, kwargs)
-            return _provider_v4_builtin_call(symbol, args, kwargs)
+            return self.name_call(call, env, path, args, kwargs)
         if isinstance(call.func, ast.Attribute):
-            receiver = self.value(call.func.value, env, path)
-            if isinstance(receiver, _ProviderV4Module):
-                symbol = (
-                    _provider_v4_resolve_symbol(
-                        receiver.path, call.func.attr, self.trees
-                    )
-                    if receiver.path
-                    else f"{receiver.name}.{call.func.attr}"
-                )
-                if symbol in self.classes:
-                    return self.construct(symbol, call, args, kwargs)
-                if symbol == "multidict.CIMultiDict":
-                    return self.native_cimultidict(args, kwargs)
-                raise ValueError("unmodeled source module call")
-            return self.method(receiver, call.func.attr, call, args, kwargs)
+            return self.attribute_call(call, env, path, args, kwargs)
         raise ValueError("indirect source call")
+
+    def name_call(self, call, env, path, args, kwargs):
+        """Evaluate a supported source-bound name call with captured arguments."""
+        if call.func.id in env:
+            raise ValueError("local callable shadows a source provider or builtin")
+        symbol = _provider_v4_resolve_symbol(path, call.func.id, self.trees)
+        if symbol in self.classes:
+            return self.construct(symbol, call, args, kwargs)
+        if symbol == "multidict.CIMultiDict":
+            return self.native_cimultidict(args, kwargs)
+        return _provider_v4_builtin_call(symbol, args, kwargs)
+
+    def attribute_call(self, call, env, path, args, kwargs):
+        """Dispatch a modeled attribute call while retaining receiver identity."""
+        receiver = self.value(call.func.value, env, path)
+        if not isinstance(receiver, _ProviderV4Module):
+            return self.method(receiver, call.func.attr, call, args, kwargs)
+        symbol = (
+            _provider_v4_resolve_symbol(receiver.path, call.func.attr, self.trees)
+            if receiver.path
+            else f"{receiver.name}.{call.func.attr}"
+        )
+        if symbol in self.classes:
+            return self.construct(symbol, call, args, kwargs)
+        if symbol == "multidict.CIMultiDict":
+            return self.native_cimultidict(args, kwargs)
+        raise ValueError("unmodeled source module call")
 
     def _pickle_highest_protocol(self):
         if self.contract["runtime"].get("version") != "3.11.9":
@@ -513,8 +533,11 @@ class _ProviderV4SourceInterpreter:
         return 5
 
     def native_cimultidict(self, args, kwargs):
+        """Model a canonical CIMultiDict construction from captured arguments."""
         if _provider_v4_native_binding(self.contract) is None:
-            raise ValueError("native provider requires an explicit current qualified profile")
+            raise ValueError(
+                "native provider requires an explicit current qualified profile"
+            )
         if kwargs or len(args) > 1 or args and (type(args[0]) is not list or args[0]):
             raise ValueError("native mapping constructor is not the exact empty form")
         return _ProviderV4NativeCIMultiDict()
@@ -659,7 +682,9 @@ class _ProviderV4SourceInterpreter:
             if restored.state.keys() == obj.state.keys():
                 restored.state = {name: restored.state[name] for name in obj.state}
             if not _provider_v4_replayed_state_matches(obj, restored):
-                raise ValueError("Exception REDUCE/BUILD does not reconstruct the modeled state")
+                raise ValueError(
+                    "Exception REDUCE/BUILD does not reconstruct the modeled state"
+                )
         obj.state_recipe = (
             "DEFAULT_DICT_AND_SLOT_BUILD" if obj.slots else "DEFAULT_DICT_BUILD"
         )
@@ -992,42 +1017,58 @@ def _provider_v4_replayed_state_matches(original, restored):
             return False
         if type(left) in {str, bytes, int, float, bool, type(None)}:
             return left == right
-        if forward.get(id(left), id(right)) != id(right) or reverse.get(id(right), id(left)) != id(left):
+        if forward.get(id(left), id(right)) != id(right) or reverse.get(
+            id(right), id(left)
+        ) != id(left):
             return False
         forward[id(left)], reverse[id(right)] = id(right), id(left)
         pair = (id(left), id(right))
         if pair in pairs:
             return True
         pairs.add(pair)
-        if type(left) is dict:
-            return left.keys() == right.keys() and all(
-                same(key, key2) and same(left[key], right[key])
-                for key, key2 in zip(left, right)
-            )
-        if type(left) in {tuple, list}:
-            return len(left) == len(right) and all(
-                same(a, b) for a, b in zip(left, right)
-            )
-        if type(left) is _ProviderV4OrderedDict:
-            return same(left.items, right.items)
-        if type(left) is _ProviderV4NativeCIMultiDict:
-            return not left.items and not right.items
-        if type(left) is _ProviderV4SourceObject:
-            return (
-                left.path == right.path
-                and left.name == right.name
-                and same(left.base_items, right.base_items)
-                and same(left.base_args, right.base_args)
-                and same(left.state, right.state)
-                and same(left.slot_state, right.slot_state)
-            )
-        return False
+        return _provider_v4_object_state_matches(left, right, same)
 
     return (
         same(original.base_items, restored.base_items)
         and same(original.base_args, restored.base_args)
         and same(original.state, restored.state)
         and same(original.slot_state, restored.slot_state)
+    )
+
+
+def _provider_v4_mapping_state_matches(left, right, same):
+    return left.keys() == right.keys() and all(
+        same(key, key2) and same(left[key], right[key])
+        for key, key2 in zip(left, right)
+    )
+
+
+def _provider_v4_sequence_state_matches(left, right, same):
+    return len(left) == len(right) and all(same(a, b) for a, b in zip(left, right))
+
+
+def _provider_v4_object_state_matches(left, right, same):
+    if type(left) is dict:
+        return _provider_v4_mapping_state_matches(left, right, same)
+    if type(left) in {tuple, list}:
+        return _provider_v4_sequence_state_matches(left, right, same)
+    if type(left) is _ProviderV4OrderedDict:
+        return same(left.items, right.items)
+    if type(left) is _ProviderV4NativeCIMultiDict:
+        return not left.items and not right.items
+    if type(left) is _ProviderV4SourceObject:
+        return _provider_v4_source_object_state_matches(left, right, same)
+    return False
+
+
+def _provider_v4_source_object_state_matches(left, right, same):
+    return (
+        left.path == right.path
+        and left.name == right.name
+        and same(left.base_items, right.base_items)
+        and same(left.base_args, right.base_args)
+        and same(left.state, right.state)
+        and same(left.slot_state, right.slot_state)
     )
 
 
@@ -1059,11 +1100,7 @@ def _provider_v4_class_model(cls, tree, row, trees):
         _provider_v4_base_symbol(node, row["path"], trees) for node in cls.bases
     ] or ["object"]
     base = next(
-        (
-            value
-            for value in bases
-            if value in {"object", "list", "dict", "exception"}
-        ),
+        (value for value in bases if value in {"object", "list", "dict", "exception"}),
         "object",
     )
     methods = {}
@@ -1343,7 +1380,6 @@ def _provider_v4_reduce_delegation(method):
 
 
 def _provider_v4_resolve_symbol(path, name, trees, visited=()):
-    from pathlib import PurePosixPath
     from .credential_role_constructor_provider import binding_occurrences
 
     tree = trees[path]
@@ -1360,42 +1396,62 @@ def _provider_v4_resolve_symbol(path, name, trees, visited=()):
     if isinstance(node, ast.ClassDef):
         return path, name
     if isinstance(node, ast.Import):
-        matches = [item for item in node.names if (item.asname or item.name.split('.')[0]) == name]
+        matches = [
+            item
+            for item in node.names
+            if (item.asname or item.name.split(".")[0]) == name
+        ]
         if len(matches) == 1 and matches[0].name in {"pickle", "multidict"}:
             return _ProviderV4Module(matches[0].name)
-    if isinstance(node, ast.ImportFrom) and not any(
-        alias.name == "*" for alias in node.names
-    ):
-        (alias,) = [item for item in node.names if (item.asname or item.name) == name]
-        if node.level:
-            package = PurePosixPath(path).parent.parts
-            if node.level > len(package):
-                raise ValueError("import outside captured package")
-            module = ".".join(
-                [
-                    *package[: len(package) - node.level + 1],
-                    *(node.module or "").split("."),
-                ]
-            )
-        else:
-            module = node.module or ""
-        targets = [
-            candidate
-            for candidate in (
-                module.replace(".", "/") + ".py",
-                module.replace(".", "/") + "/__init__.py",
-            )
-            if candidate in trees
-        ]
-        submodule = (module + "." + alias.name).replace(".", "/") + ".py"
-        if submodule in trees and (not targets or not binding_occurrences(trees[targets[0]].body, alias.name)):
-            return _ProviderV4Module(module + "." + alias.name, submodule)
-        if len(targets) == 1:
-            return _provider_v4_resolve_symbol(targets[0], alias.name, trees, visited)
-        if len(targets) > 1:
-            raise ValueError("competing module identities")
-        return module + "." + alias.name
+    if isinstance(node, ast.ImportFrom):
+        return _provider_v4_resolve_from_import(path, name, trees, node, visited)
     raise ValueError("source symbol is not a class or explicit import")
+
+
+def _provider_v4_resolve_from_import(path, name, trees, node, visited):
+    from pathlib import PurePosixPath
+    from .credential_role_constructor_provider import binding_occurrences
+
+    if any(alias.name == "*" for alias in node.names):
+        raise ValueError("wildcard source import")
+    matches = [item for item in node.names if (item.asname or item.name) == name]
+    if len(matches) != 1:
+        raise ValueError("ambiguous imported symbol")
+    alias = matches[0]
+    module = _provider_v4_import_module(path, node, PurePosixPath)
+    targets = _provider_v4_module_targets(module, trees)
+    submodule = (module + "." + alias.name).replace(".", "/") + ".py"
+    if submodule in trees and (
+        not targets or not binding_occurrences(trees[targets[0]].body, alias.name)
+    ):
+        return _ProviderV4Module(module + "." + alias.name, submodule)
+    if len(targets) == 1:
+        return _provider_v4_resolve_symbol(targets[0], alias.name, trees, visited)
+    if len(targets) > 1:
+        raise ValueError("competing module identities")
+    return module + "." + alias.name
+
+
+def _provider_v4_import_module(path, node, path_type):
+    if not node.level:
+        return node.module or ""
+    package = path_type(path).parent.parts
+    if node.level > len(package):
+        raise ValueError("import outside captured package")
+    return ".".join(
+        [*package[: len(package) - node.level + 1], *(node.module or "").split(".")]
+    )
+
+
+def _provider_v4_module_targets(module, trees):
+    return [
+        candidate
+        for candidate in (
+            module.replace(".", "/") + ".py",
+            module.replace(".", "/") + "/__init__.py",
+        )
+        if candidate in trees
+    ]
 
 
 def _provider_v4_bind_values(method, args, kwargs):
@@ -1652,15 +1708,38 @@ def _provider_v4_source_root(interpreter, scope, expression, path):
             raise ValueError("root expression has no direct frame statement")
     if isinstance(statement, ast.For):
         from . import review_audits as audit
-        from .runtime_audit_integrity import closed_local_pickle_flow, _conditional_file_aliases, _conditional_module_name, _conditional_provider_parents
+        from .runtime_audit_integrity import (
+            closed_local_pickle_flow,
+            _conditional_file_aliases,
+            _conditional_module_name,
+            _conditional_provider_parents,
+        )
 
         _conditional_provider_parents(interpreter.trees[path])
-        aliases = _conditional_file_aliases(path, interpreter.trees[path], {path: _conditional_module_name(path)})
-        loads = [node for node in ast.walk(statement) if isinstance(node, ast.Call)
-                 and audit._normalized_call_name(node, aliases) in {"pickle.loads", "_pickle.loads"}]
-        flow = closed_local_pickle_flow(loads[0], audit._normalized_call_name(loads[0], aliases), aliases, audit,
-                                       serializer_namespace_only=True) if len(loads) == 1 else None
-        if flow is None or _fixed_program_span(flow["object_expression"]) != _fixed_program_span(expression):
+        aliases = _conditional_file_aliases(
+            path, interpreter.trees[path], {path: _conditional_module_name(path)}
+        )
+        loads = [
+            node
+            for node in ast.walk(statement)
+            if isinstance(node, ast.Call)
+            and audit._normalized_call_name(node, aliases)
+            in {"pickle.loads", "_pickle.loads"}
+        ]
+        flow = (
+            closed_local_pickle_flow(
+                loads[0],
+                audit._normalized_call_name(loads[0], aliases),
+                aliases,
+                audit,
+                serializer_namespace_only=True,
+            )
+            if len(loads) == 1
+            else None
+        )
+        if flow is None or _fixed_program_span(
+            flow["object_expression"]
+        ) != _fixed_program_span(expression):
             raise ValueError("loop root lacks exact closed serializer/object flow")
     elif not isinstance(statement, (ast.Assign, ast.AnnAssign, ast.Return, ast.Expr)):
         raise ValueError("uncertain control flow around root")
@@ -1961,7 +2040,10 @@ def _provider_contract_valid(contract, runtime, *, allow_v2=False):
         "classes",
         "assumptions",
     }
-    if not isinstance(contract, dict) or set(contract) not in (keys, keys | {"native_artifacts"}):
+    if not isinstance(contract, dict) or set(contract) not in (
+        keys,
+        keys | {"native_artifacts"},
+    ):
         return False
     model, export = contract["model"], contract["export"]
     if (
@@ -2015,22 +2097,32 @@ def _provider_v4_native_binding(contract):
     import sysconfig
     from pathlib import Path
 
-    if (contract.get("native_artifacts") != _NATIVE_EMPTY_MAPPING
-            or sys.version_info[:3] != (3, 11, 9)
-            or sys.implementation.name != "cpython"
-            or sysconfig.get_platform() != "win-amd64"
-            or os.environ.get("MULTIDICT_NO_EXTENSIONS")):
+    if (
+        contract.get("native_artifacts") != _NATIVE_EMPTY_MAPPING
+        or sys.version_info[:3] != (3, 11, 9)
+        or sys.implementation.name != "cpython"
+        or sysconfig.get_platform() != "win-amd64"
+        or os.environ.get("MULTIDICT_NO_EXTENSIONS")
+    ):
         return None
     try:
         distribution = importlib.metadata.distribution("multidict")
         if distribution.version != "6.7.0":
             return None
-        observed = {path: hashlib.sha256(Path(distribution.locate_file(path)).read_bytes()).hexdigest()
-                    for path in _NATIVE_EMPTY_MAPPING["files"]}
+        observed = {
+            path: hashlib.sha256(
+                Path(distribution.locate_file(path)).read_bytes()
+            ).hexdigest()
+            for path in _NATIVE_EMPTY_MAPPING["files"]
+        }
         if observed != _NATIVE_EMPTY_MAPPING["files"]:
             return None
-        return {"profile": _NATIVE_EMPTY_MAPPING["id"], "observed_file_sha256": observed,
-                "selector": "CONDITIONAL_NOT_EXECUTED", "deployment": "NOT_VERIFIED"}
+        return {
+            "profile": _NATIVE_EMPTY_MAPPING["id"],
+            "observed_file_sha256": observed,
+            "selector": "CONDITIONAL_NOT_EXECUTED",
+            "deployment": "NOT_VERIFIED",
+        }
     except (OSError, ValueError, importlib.metadata.PackageNotFoundError):
         return None
 
@@ -2049,9 +2141,15 @@ def provider_native_sources_clear(contract, sources):
 
 
 def _provider_v4_native_mapping_recipes():
-    return [{"protocol": protocol, "allocation": "REDUCE_EXACT_NATIVE_CIMULTIDICT",
-             "arguments": "ONE_EXACT_EMPTY_LIST", "state": "NONE"}
-            for protocol in range(6)]
+    return [
+        {
+            "protocol": protocol,
+            "allocation": "REDUCE_EXACT_NATIVE_CIMULTIDICT",
+            "arguments": "ONE_EXACT_EMPTY_LIST",
+            "state": "NONE",
+        }
+        for protocol in range(6)
+    ]
 
 
 def provider_analysis_profile(
@@ -2769,21 +2867,31 @@ def pickle_serializer_imports_closed(
     stable = _pickle_serializer_identity_aliases(
         audit._unmodified_serialization_aliases(nodes, aliases)
     )
-    if not _pickle_serializer_provider_unmodified(module, aliases, audit, alias_closure):
+    if not _pickle_serializer_provider_unmodified(
+        module, aliases, audit, alias_closure
+    ):
         return False
     if serializer_namespace_only and stable != identity:
         return False
-    if not serializer_namespace_only and audit._unmodified_serialization_aliases(
-        nodes, aliases
-    ) != aliases:
+    if (
+        not serializer_namespace_only
+        and audit._unmodified_serialization_aliases(nodes, aliases) != aliases
+    ):
         return False
-    return call_imported(module, scope, dump_call, dump_index, aliases, audit) and call_imported(
-        module, scope, load_call, load_index, aliases, audit
-    )
+    return call_imported(
+        module, scope, dump_call, dump_index, aliases, audit
+    ) and call_imported(module, scope, load_call, load_index, aliases, audit)
 
 
 def _pickle_serializer_identity_aliases(aliases):
-    origins = {"pickle", "_pickle", "pickle.loads", "pickle.dumps", "_pickle.loads", "_pickle.dumps"}
+    origins = {
+        "pickle",
+        "_pickle",
+        "pickle.loads",
+        "pickle.dumps",
+        "_pickle.loads",
+        "_pickle.dumps",
+    }
     return {name: origin for name, origin in aliases.items() if origin in origins}
 
 
@@ -2804,7 +2912,9 @@ def _pickle_serializer_provider_unmodified(module, aliases, audit, alias_closure
             for part in ast.walk(target)
         ):
             return False
-    parents = {id(child): parent for parent in nodes for child in ast.iter_child_nodes(parent)}
+    parents = {
+        id(child): parent for parent in nodes for child in ast.iter_child_nodes(parent)
+    }
     facts = finite_provider_mutation_index(nodes, resolved, audit, parents)
     if not _pickle_serializer_module_uses_closed(nodes, resolved, parents, audit):
         return False
@@ -2812,7 +2922,13 @@ def _pickle_serializer_provider_unmodified(module, aliases, audit, alias_closure
         (owner == root or owner.startswith(root + "."))
         and not (
             attribute == "*"
-            and owner in {"pickle", "_pickle", "pickle.HIGHEST_PROTOCOL", "_pickle.HIGHEST_PROTOCOL"}
+            and owner
+            in {
+                "pickle",
+                "_pickle",
+                "pickle.HIGHEST_PROTOCOL",
+                "_pickle.HIGHEST_PROTOCOL",
+            }
         )
         for owner, attribute in facts
         for root in {"pickle", "_pickle"}
@@ -2823,29 +2939,38 @@ def _pickle_serializer_module_uses_closed(nodes, resolved, parents, audit):
     for node in nodes:
         if not isinstance(node, ast.Name) or not isinstance(node.ctx, ast.Load):
             continue
-        origin = audit._resolved_ast_name(node, resolved)
-        root = origin.split(".", 1)[0]
-        if root not in {"pickle", "_pickle", "sys", "importlib", "builtins"}:
-            continue
-        if origin != root:
-            if _pickle_serializer_imported_value_use(origin, parents.get(id(node)), node):
-                continue
+        if not _pickle_serializer_module_name_is_closed(node, resolved, parents, audit):
             return False
-        attribute = parents.get(id(node))
-        if not isinstance(attribute, ast.Attribute) or attribute.value is not node:
-            return False
-        owner = parents.get(id(attribute))
-        if origin not in {"pickle", "_pickle"}:
-            if _pickle_serializer_namespace_data_read(origin, attribute, owner):
-                continue
-            return False
-        if attribute.attr in {"loads", "dumps"} and isinstance(owner, ast.Call) and owner.func is attribute:
-            continue
-        if attribute.attr == "HIGHEST_PROTOCOL":
-            # This integer is data, not a reference to the module or serializer.
-            continue
-        return False
     return True
+
+
+def _pickle_serializer_module_name_is_closed(node, resolved, parents, audit):
+    origin = audit._resolved_ast_name(node, resolved)
+    root = origin.split(".", 1)[0]
+    if root not in {"pickle", "_pickle", "sys", "importlib", "builtins"}:
+        return True
+    if origin != root:
+        return _pickle_serializer_imported_value_use(
+            origin, parents.get(id(node)), node
+        )
+    attribute = parents.get(id(node))
+    if not isinstance(attribute, ast.Attribute) or attribute.value is not node:
+        return False
+    owner = parents.get(id(attribute))
+    if origin not in {"pickle", "_pickle"}:
+        return _pickle_serializer_namespace_data_read(origin, attribute, owner)
+    return _pickle_serializer_is_supported_value(attribute, owner)
+
+
+def _pickle_serializer_is_supported_value(attribute, owner):
+    if (
+        attribute.attr in {"loads", "dumps"}
+        and isinstance(owner, ast.Call)
+        and owner.func is attribute
+    ):
+        return True
+    # This integer is data, not a reference to the module or serializer.
+    return attribute.attr == "HIGHEST_PROTOCOL"
 
 
 def _pickle_serializer_namespace_data_read(origin, attribute, owner):
@@ -2861,12 +2986,28 @@ def _pickle_serializer_namespace_data_read(origin, attribute, owner):
 
 def _pickle_serializer_imported_value_use(origin, owner, node):
     """From-import aliases retain the capability/data distinction of their origin."""
-    if origin in {"pickle.HIGHEST_PROTOCOL", "_pickle.HIGHEST_PROTOCOL",
-                  "sys.version_info", "sys.maxsize", "sys.executable"}:
+    if origin in {
+        "pickle.HIGHEST_PROTOCOL",
+        "_pickle.HIGHEST_PROTOCOL",
+        "sys.version_info",
+        "sys.maxsize",
+        "sys.executable",
+    }:
         return True
     if origin == "sys.path":
         return isinstance(owner, ast.Compare)
-    return origin in {"pickle.loads", "pickle.dumps", "_pickle.loads", "_pickle.dumps", "sys.getrefcount"} and isinstance(owner, ast.Call) and owner.func is node
+    return (
+        origin
+        in {
+            "pickle.loads",
+            "pickle.dumps",
+            "_pickle.loads",
+            "_pickle.dumps",
+            "sys.getrefcount",
+        }
+        and isinstance(owner, ast.Call)
+        and owner.func is node
+    )
 
 
 def _provider_v3_export_chain(contract, trees, target, binding_occurrences):
