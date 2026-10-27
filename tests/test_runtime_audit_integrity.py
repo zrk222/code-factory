@@ -16,6 +16,64 @@ from factoryline.runtime_audit_integrity import finite_literal_eval_input_witnes
 from factoryline.runtime_audit_integrity import source_generated_eval_input_witness
 
 
+@pytest.mark.parametrize(
+    "code",
+    ["SECURITY_DYNAMIC_EXECUTION", "SECURITY_OS_COMMAND", "SECURITY_SQL_INJECTION"],
+)
+def test_all_finding_source_binding_keeps_bytes_without_inventing_a_proof(
+    tmp_path, code
+):
+    from factoryline.audit_action_refs import _captured_application_source_bytes
+
+    data = b"def invoke(program):\n    exec(program)\n"
+    bindings = [{"path": "app.py", "sha256": hashlib.sha256(data).hexdigest()}]
+    captured = _captured_application_source_bytes(
+        tmp_path,
+        [{"code": code, "path": "app.py", "facts": {}}],
+        bindings,
+        {tmp_path / "app.py": data},
+    )
+    assert captured == {"app.py": data}
+
+
+@pytest.mark.parametrize(
+    "relative", ["app.py", "../outside.py", "/absolute.py", "C:/outside.py"]
+)
+def test_all_finding_source_binding_rejects_stale_or_escaping_bytes(tmp_path, relative):
+    from factoryline.audit_action_refs import _captured_application_source_bytes
+
+    data = b"exec(program)\n"
+    bindings = [{"path": relative, "sha256": hashlib.sha256(data).hexdigest()}]
+    # Stale bytes must not gain credit even on an otherwise valid bound path.
+    actual = b"exec(changed)\n" if relative == "app.py" else data
+    assert (
+        _captured_application_source_bytes(
+            tmp_path,
+            [{"code": "SECURITY_DYNAMIC_EXECUTION", "path": relative, "facts": {}}],
+            bindings,
+            {tmp_path / relative: actual},
+        )
+        == {}
+    )
+
+
+def test_all_finding_source_binding_native_exec_stays_contextual(tmp_path):
+    (tmp_path / "app.py").write_text(
+        "def invoke(program):\n    exec(program)\n", encoding="utf-8"
+    )
+    with review_audits._security_only_scan_context(True):
+        report = review_audits.security_scan(
+            tmp_path, cache_enabled=False, defect_policy="legacy-v1"
+        )
+    row = next(
+        row
+        for row in report["finding_tier_report"]["ledger"]
+        if row["raw_finding"]["code"] == "SECURITY_DYNAMIC_EXECUTION"
+    )
+    assert "source_byte_binding" not in row["missing_premises"]
+    assert row["tier"] == "NEEDS_CONTEXT"
+
+
 def _assert_cache_binding_swap_changes_key(
     tmp_path, monkeypatch, pickle_model, audit, attribute, first, second, before
 ):

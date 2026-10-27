@@ -433,20 +433,8 @@ def _captured_application_source_bytes(
     from .primitive_observation_binding import fixed_program_proof_dispositions
 
     program_proofs = fixed_program_proof_dispositions()
-    paths = {
-        finding.get("path")
-        for finding in findings
-        if finding.get("facts", {}).get("disposition")
-        in program_proofs
-        | {
-            "TEST_OWNED_APPLICATION_CREDENTIAL",
-            "PROVEN_CLOSED_OPERATION_COMMAND_SYNTAX",
-            "PROVEN_CLOSED_LITERAL_PICKLE_BYTES",
-        }
-        or finding.get("code")
-        in {"SECURITY_HARDCODED_SECRET", "SECURITY_UNSAFE_DESERIALIZATION"}
-        or isinstance(finding.get("facts", {}).get("security_precondition"), dict)
-    }
+    # Byte binding is evidence substrate for every finding, never defect credit.
+    paths = {finding.get("path") for finding in findings}
     for finding in findings:
         evidence = finding.get("facts", {}).get("fixture_evidence", {})
         closure = evidence.get("consumer_use_closure", {})
@@ -501,7 +489,12 @@ def _captured_application_source_bytes(
         paths.update(hashes)
     captured = {}
     for relative in paths:
-        if not isinstance(relative, str):
+        if (
+            not isinstance(relative, str)
+            or relative.startswith(("/", "\\"))
+            or ":" in relative
+            or ".." in relative.replace("\\", "/").split("/")
+        ):
             continue
         data = source_bytes.get(workspace / relative)
         if relative in config_hashes and not isinstance(data, bytes):
