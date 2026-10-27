@@ -5824,6 +5824,19 @@ def _db_python_unmutated_model_bases(tree, model_bases, shadowed):
     }
 
 
+def credential_scope_api_contract(
+    canonical, receiver, arguments, keywords, *, provider_stable
+):
+    """Delegate captured role contracts to the shared scope model."""
+    from .credential_role_method_use_getter_audit import (
+        credential_scope_api_contract as contract,
+    )
+
+    return contract(
+        canonical, receiver, arguments, keywords, provider_stable=provider_stable
+    )
+
+
 def flask_model_identity_functions():
     """Return the exact source/provider helpers that affect Flask model identity."""
     return (

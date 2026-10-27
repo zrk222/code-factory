@@ -11,6 +11,218 @@ from factoryline.review_audits import security_scan
 import pytest
 
 
+def test_scope_api_jwt_roles_decline_payload_leaks_and_mutations():
+    from factoryline.credential_role_constructor_provider import (
+        credential_scope_api_contract as contract,
+    )
+    from factoryline.credential_role_identity_effects import _Value
+
+    key = _Value(roots=frozenset({"secret"}), inert_kind="scalar", scalar_kind="text")
+    payload = _Value(inert_kind="dict")
+    token = _Value(
+        roots=frozenset({"derived:secret"}), inert_kind="scalar", scalar_kind="text"
+    )
+    assert contract("jwt.encode", None, (payload, key), {}, provider_stable=True) == (
+        "derive",
+        key,
+    )
+    assert contract("jwt.decode", None, (token, key), {}, provider_stable=True) == (
+        "consume",
+        token,
+    )
+    none_value = _Value(inert_kind="scalar", scalar_kind="none", _exact_scalar=(None,))
+    assert contract(
+        "jwt.encode",
+        None,
+        (payload, key),
+        {"json_encoder": none_value},
+        provider_stable=True,
+    ) == ("derive", key)
+    assert (
+        contract(
+            "jwt.encode",
+            None,
+            (payload, key),
+            {"json_encoder": _Value(class_roots=frozenset({"custom"}))},
+            provider_stable=True,
+        )
+        is None
+    )
+    assert (
+        contract("jwt.encode", None, (key, payload), {}, provider_stable=True) is None
+    )
+    assert (
+        contract("jwt.encode", None, (payload, key), {}, provider_stable=False) is None
+    )
+    assert (
+        contract("jwt.encode", None, (payload, key, key), {}, provider_stable=True)
+        is None
+    )
+    assert (
+        contract(
+            "jwt.encode", None, (payload, key), {"key": payload}, provider_stable=True
+        )
+        is None
+    )
+    assert (
+        contract("jwt.decode", None, (key, payload), {}, provider_stable=True) is None
+    )
+    nested = _Value(items=(("password", key),), inert_kind="dict")
+    assert contract("jwt.encode", None, (nested, key), {}, provider_stable=True) is None
+    assert (
+        contract(
+            "jwt.encode", None, (_Value(unknown=True), key), {}, provider_stable=True
+        )
+        is None
+    )
+
+
+def test_scope_api_registry_and_typed_preparation_are_allocation_sensitive():
+    from factoryline.credential_role_constructor_provider import (
+        credential_scope_api_contract as contract,
+    )
+    from factoryline.credential_role_identity_effects import _Value
+
+    def text(s):
+        return _Value(inert_kind="scalar", scalar_kind="text", _exact_scalar=(s,))
+
+    key = _Value(roots=frozenset({"secret"}), inert_kind="scalar", scalar_kind="text")
+    jws = ("jws", _Value(class_roots=frozenset({"jws:1"})), frozenset({"ES256"}))
+    other = ("jws", _Value(class_roots=frozenset({"jws:2"})), frozenset())
+    assert contract("jwt.api_jws.PyJWS", None, (), {}, provider_stable=True) == (
+        "allocate",
+    )
+    assert contract(
+        "jwt.api_jws.PyJWS.get_algorithm_by_name",
+        jws,
+        (text("ES256"),),
+        {},
+        provider_stable=True,
+    ) == ("algorithm", "ES256")
+    assert (
+        contract(
+            "jwt.api_jws.PyJWS.get_algorithm_by_name",
+            other,
+            (text("ES256"),),
+            {},
+            provider_stable=True,
+        )
+        is None
+    )
+    assert (
+        contract(
+            "jwt.api_jws.PyJWS.get_algorithm_by_name",
+            ("jws", jws[1], frozenset({"CUSTOM"})),
+            (text("CUSTOM"),),
+            {},
+            provider_stable=True,
+        )
+        is None
+    )
+    assert contract(
+        "jwt.api_jws.PyJWS.unregister_algorithm",
+        jws,
+        (),
+        {"alg_id": text("ES256")},
+        provider_stable=True,
+    ) == ("unregister", "ES256")
+    algorithm = ("algorithm", _Value(class_roots=frozenset({"alg:1"})), "ES256")
+    prepare = "jwt.algorithms.ECAlgorithm.prepare_key"
+    assert contract(prepare, algorithm, (key,), {}, provider_stable=True) == (
+        "prepare",
+        key,
+    )
+    assert (
+        contract(
+            prepare,
+            ("algorithm", algorithm[1], "CUSTOM"),
+            (key,),
+            {},
+            provider_stable=True,
+        )
+        is None
+    )
+    assert (
+        contract("other.prepare_key", algorithm, (key,), {}, provider_stable=True)
+        is None
+    )
+    assert (
+        contract(prepare, ("jws", jws[1], "ES256"), (key,), {}, provider_stable=True)
+        is None
+    )
+
+
+def test_scope_api_builtin_and_assertion_roles():
+    from factoryline.credential_role_constructor_provider import (
+        credential_scope_api_contract as contract,
+    )
+    from factoryline.credential_role_identity_effects import _Value
+
+    token = _Value(
+        roots=frozenset({"derived:secret"}), inert_kind="scalar", scalar_kind="text"
+    )
+    secret = _Value(
+        roots=frozenset({"secret"}), inert_kind="scalar", scalar_kind="text"
+    )
+    plain = _Value(inert_kind="scalar", scalar_kind="text")
+    string = ("builtin", token, "str")
+    assert contract("builtins.str.encode", string, (), {}, provider_stable=True) == (
+        "propagate",
+        token,
+    )
+    custom_errors = _Value(
+        inert_kind="scalar", scalar_kind="text", _exact_scalar=("custom",)
+    )
+    assert (
+        contract(
+            "builtins.str.encode",
+            string,
+            (),
+            {"errors": custom_errors},
+            provider_stable=True,
+        )
+        is None
+    )
+    assert (
+        contract("builtins.str.split", string, (secret,), {}, provider_stable=True)
+        is None
+    )
+    assert (
+        contract(
+            "builtins.str.encode",
+            ("builtin", token, "bytes"),
+            (),
+            {},
+            provider_stable=True,
+        )
+        is None
+    )
+    owner = ("testcase", _Value(class_roots=frozenset({"test:1"})), True)
+    assert contract(
+        "unittest.TestCase.assertEqual", owner, (token, plain), {}, provider_stable=True
+    ) == ("observe",)
+    assert (
+        contract(
+            "unittest.TestCase.assertEqual",
+            owner,
+            (secret, plain),
+            {},
+            provider_stable=True,
+        )
+        is None
+    )
+    assert (
+        contract(
+            "unittest.TestCase.assertEqual",
+            ("testcase", owner[1], False),
+            (token, plain),
+            {},
+            provider_stable=True,
+        )
+        is None
+    )
+
+
 def _write(tmp_path, relative, source):
     path = tmp_path / relative
     path.parent.mkdir(parents=True, exist_ok=True)

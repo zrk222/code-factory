@@ -75,6 +75,14 @@ class _Value:
     _exact_scalar: tuple = _dataclass_field(default=(), repr=False)
 
 
+def captured_credential_role_closure(*args, **kwargs):
+    from .credential_role_method_use_getter_audit import (
+        captured_credential_role_closure as evaluate,
+    )
+
+    return evaluate(*args, **kwargs)
+
+
 @dataclass(frozen=True)
 class IdentityReturnProjection:
     """One source-bound possible return value; it does not replace return effects."""
@@ -5461,6 +5469,7 @@ def security_value_helper_epoch():
     from . import finite_capture
     from . import semantic_credential_sensor
     from . import credential_role_identity_effects as effects
+    from . import credential_role_method_use_getter_audit as getter
     from . import review_audits as audit
     from .import_context import import_resolution_helpers
     from .credential_role_constructor_provider import (
@@ -5494,6 +5503,7 @@ def security_value_helper_epoch():
         audit._oracle_tree_fingerprint,
         audit.integrity._security_local_helper_definition,
         *_module_function_binding_epoch(effects),
+        *_module_function_binding_epoch(getter),
         *_module_function_binding_epoch(finite_capture),
         *_module_function_binding_epoch(semantic_credential_sensor),
         identity_value,

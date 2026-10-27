@@ -40,6 +40,188 @@ def _summary(source, fields, *, resolve=False, role_view=False):
 FIELDS = {("fixture", "backend"): "backend"}
 
 
+def test_captured_credential_role_closure_allocations_and_finite_iteration():
+    from factoryline.credential_role_identity_effects import (
+        _Value,
+        captured_credential_role_closure,
+    )
+
+    path, tree, index = _index("""
+        def setup(self, key):
+            self.a = make(key)
+            self.b = make('other')
+            self.items = (self.a, self.b)
+        def exercise(self):
+            for value in self.items:
+                check(value)
+    """)
+    observed = []
+
+    def contract(flow, call_path, call, receiver, args, kwargs):
+        if isinstance(call.func, ast.Name) and call.func.id == "make":
+            obj = flow.allocate(call_path, call, "object")
+            flow.write_field(obj, "key", args[0])
+            return obj
+        if isinstance(call.func, ast.Name) and call.func.id == "check":
+            observed.append(flow.read_field(args[0], "key").roots)
+            return _Value(inert_kind="scalar")
+        return None
+
+    owner = _Value(class_roots=frozenset({"test-instance"}))
+    result = captured_credential_role_closure(
+        index,
+        [
+            (
+                path,
+                _function(tree, "setup"),
+                {"self": owner, "key": _Value(roots=frozenset({"candidate"}))},
+            ),
+            (path, _function(tree, "exercise"), {"self": owner}),
+        ],
+        resolve_call=lambda path, call, receiver: None,
+        contract=contract,
+    )
+    assert result.complete, result.unknowns
+    assert observed == [frozenset({"candidate"}), frozenset()]
+
+
+def test_captured_credential_role_closure_rejects_opaque_recipient():
+    from factoryline.credential_role_identity_effects import (
+        captured_credential_role_closure,
+    )
+
+    path, tree, index = _index("def exercise(key): send(key)")
+    result = captured_credential_role_closure(
+        index,
+        [(path, _function(tree, "exercise"), {"key": "candidate"})],
+        resolve_call=lambda path, call, receiver: None,
+        contract=lambda flow, path, call, receiver, args, kwargs: None,
+    )
+    assert not result.complete and result.unknowns
+
+
+@pytest.mark.parametrize(
+    "variant", ["closed", "invalid_map", "stale_callee", "raw_return"]
+)
+def test_captured_credential_role_closure_source_call(variant):
+    from factoryline.credential_role_identity_effects import (
+        captured_credential_role_closure,
+    )
+
+    path, tree, index = _index("""
+        def caller(key):
+            helper(key)
+        def helper(value):
+            return value
+    """)
+    caller, helper = _function(tree, "caller"), _function(tree, "helper")
+    if variant == "stale_callee":
+        helper = ast.parse("def helper(value): return value").body[0]
+    if variant == "raw_return":
+        caller = helper
+
+    def resolver(call_path, call, receiver):
+        return ResolvedIdentityCall(
+            helper,
+            call_path,
+            {} if variant == "invalid_map" else {"value": call.args[0]},
+        )
+
+    formal = "value" if variant == "raw_return" else "key"
+    result = captured_credential_role_closure(
+        index,
+        [(path, caller, {formal: "candidate"})],
+        resolve_call=resolver,
+        contract=lambda *args: None,
+    )
+    assert result.complete is (variant == "closed"), result.unknowns
+
+
+def test_captured_credential_role_closure_rejects_stale_ast_and_empty_entries():
+    from factoryline.credential_role_identity_effects import (
+        captured_credential_role_closure,
+    )
+
+    path, tree, index = _index("def inspect(): pass")
+    assert index.validate(path)
+    tree.body[0].body[0] = ast.parse("send() ").body[0]
+    kwargs = {"resolve_call": lambda *args: None, "contract": lambda *args: None}
+    result = captured_credential_role_closure(
+        index, [(path, tree.body[0], {})], **kwargs
+    )
+    assert not result.complete
+    assert not captured_credential_role_closure(index, [], **kwargs).complete
+
+
+def test_captured_credential_role_closure_modeled_with_and_exception_prefixes():
+    from factoryline.credential_role_identity_effects import (
+        _Value,
+        captured_credential_role_closure,
+    )
+
+    path, tree, index = _index("""
+        def exercise(key):
+            with scope():
+                try:
+                    first(key)
+                    second(key)
+                except Exception:
+                    recover(key)
+    """)
+    seen = []
+
+    def contract(flow, path, call, receiver, args, kwargs):
+        name = call.func.id
+        seen.append(name)
+        return _Value(inert_kind="scope_context" if name == "scope" else "scalar")
+
+    result = captured_credential_role_closure(
+        index,
+        [(path, _function(tree, "exercise"), {"key": "candidate"})],
+        resolve_call=lambda *args: None,
+        contract=contract,
+    )
+    assert result.complete, result.unknowns
+    assert {"scope", "first", "second", "recover"}.issubset(seen)
+
+
+def test_captured_credential_role_closure_checks_mutated_exception_prefix():
+    from factoryline.credential_role_identity_effects import (
+        _Value,
+        captured_credential_role_closure,
+    )
+
+    path, tree, index = _index("""
+        def exercise(self, key):
+            try:
+                first(self, key)
+                second()
+            except Exception:
+                recover(self)
+    """)
+
+    def contract(flow, path, call, receiver, args, kwargs):
+        if call.func.id == "first":
+            flow.write_field(args[0], "key", args[1])
+        elif call.func.id == "recover" and flow.read_field(args[0], "key").roots:
+            return None
+        return _Value(inert_kind="scalar")
+
+    result = captured_credential_role_closure(
+        index,
+        [
+            (
+                path,
+                _function(tree, "exercise"),
+                {"self": _Value(class_roots=frozenset({"owner"})), "key": "candidate"},
+            )
+        ],
+        resolve_call=lambda *args: None,
+        contract=contract,
+    )
+    assert not result.complete
+
+
 @pytest.mark.parametrize(
     "body,status,roots",
     [

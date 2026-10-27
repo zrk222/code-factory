@@ -1,6 +1,24 @@
 """Bounded getter and reflective-use closure over validated source snapshots."""
 
 import ast
+from dataclasses import dataclass, replace
+import hashlib
+from .credential_role_identity_effects import (
+    _Value,
+    _event_span,
+    _constant_identity_value,
+    _validated_exact_scalar,
+    _call_has_expansion,
+    _has_unknown_content,
+    ResolvedIdentityCall,
+    _declared_call_defaults,
+    _immutable_default,
+    _resolved_parameter_names,
+    captured_function_valid,
+    _captured_parameter_values,
+    tracked_roots,
+    join_identity_values,
+)
 from .credential_role_constructor_provider import (
     binding_occurrences,
     class_chain,
@@ -2698,3 +2716,906 @@ def snapshot_candidates(index):
         rows.append((path, tree, candidates))
     index._credential_method_getter_candidates = (signature, rows)
     return rows
+
+
+@dataclass(frozen=True)
+class CapturedCredentialRoleClosure:
+    """Bounded transfer observations; completion is not test-authority proof."""
+
+    complete: bool
+    unknowns: tuple
+    returns: tuple
+    edges: tuple
+
+
+class _CredentialRoleFlow:
+    """Interpret captured transfers only; external behavior belongs to the contract."""
+
+    def __init__(
+        self, index, resolver, contract, budget, resolve_name, resolve_attribute
+    ):
+        self.index, self.resolver, self.contract = index, resolver, contract
+        self.resolve_name, self.resolve_attribute = resolve_name, resolve_attribute
+        self.budget, self.steps, self.counter = budget, 0, 0
+        self.heap, self.unknowns, self.edges, self.active = {}, [], [], set()
+        self.prefix_frames = []
+        self.environments = []
+
+    def fail(self, reason, path, node):
+        self.unknowns.append((reason, _event_span(path, node)))
+
+    def tick(self, path, node):
+        self.steps += 1
+        if self.steps > self.budget:
+            self.fail("transfer state budget exceeded", path, node)
+            return False
+        self.snapshot(path, node)
+        return True
+
+    def snapshot(self, path, node):
+        for env, prefixes in self.prefix_frames:
+            if len(prefixes) >= self.budget:
+                self.fail("exception prefix budget exceeded", path, node)
+                return
+            prefixes.append((dict(env), dict(self.heap)))
+
+    def allocate(self, path, node, kind):
+        self.counter += 1
+        key = f"{path}:{getattr(node, 'lineno', 0)}:{getattr(node, 'col_offset', 0)}:{self.counter}:{kind}"
+        self.edges.append(("allocation", _event_span(path, node), key))
+        return _Value(class_roots=frozenset({key}))
+
+    def allocate_container(self, path, node, kind, items):
+        self.counter += 1
+        key = f"{path}:{getattr(node, 'lineno', 0)}:{getattr(node, 'col_offset', 0)}:{self.counter}:container"
+        return _Value(items=tuple(items), inert_kind=kind, container_id=key)
+
+    def read_field(self, receiver, name):
+        if len(receiver.class_roots) != 1:
+            return _Value(unknown=True)
+        return self.heap.get(
+            (next(iter(receiver.class_roots)), name), _Value(unknown=True)
+        )
+
+    def write_field(self, receiver, name, value):
+        if len(receiver.class_roots) != 1 or receiver.unknown:
+            return False
+        self.heap[(next(iter(receiver.class_roots)), name)] = value
+        self.snapshot(None, None)
+        return True
+
+    def expression(self, path, node, env):
+        if not self.tick(path, node):
+            return _Value(unknown=True)
+        if isinstance(node, (ast.Constant, ast.Name)):
+            return self.leaf(path, node, env)
+        if isinstance(node, (ast.Tuple, ast.List)):
+            values = tuple(
+                (i, self.expression(path, v, env)) for i, v in enumerate(node.elts)
+            )
+            return _Value(
+                items=values,
+                inert_kind="tuple" if isinstance(node, ast.Tuple) else "list",
+            )
+        if isinstance(node, ast.Dict):
+            return self.literal_dict(path, node, env)
+        if isinstance(node, (ast.UnaryOp, ast.BinOp, ast.Compare, ast.BoolOp)):
+            return self.scalar_operation(path, node, env)
+        if isinstance(node, (ast.Attribute, ast.Subscript)):
+            return self.projection(path, node, env)
+        if isinstance(node, ast.Call):
+            return self.call(path, node, env)
+        if isinstance(node, ast.IfExp):
+            test = self.expression(path, node.test, env)
+            exact = _validated_exact_scalar(test)
+            if exact:
+                return self.expression(
+                    path, node.body if exact[0] else node.orelse, env
+                )
+        self.fail("unsupported expression", path, node)
+        return _Value(unknown=True)
+
+    def projection(self, path, node, env):
+        if isinstance(node, ast.Attribute):
+            return self.attribute(path, node, env)
+        base = self.expression(path, node.value, env)
+        key = self.expression(path, node.slice, env)
+        exact = _validated_exact_scalar(key)
+        return (
+            dict(base.items).get(exact[0], _Value(unknown=True))
+            if exact
+            else _Value(unknown=True)
+        )
+
+    def leaf(self, path, node, env):
+        if isinstance(node, ast.Constant):
+            return _constant_identity_value(node)
+        if node.id in env:
+            return env[node.id]
+        value = self.resolve_name(path, node) if self.resolve_name else None
+        return value if isinstance(value, _Value) else _Value(unknown=True)
+
+    def literal_dict(self, path, node, env):
+        items = []
+        for key, expression in zip(node.keys, node.values):
+            if not isinstance(key, ast.Constant) or type(key.value) not in {str, int}:
+                self.fail("unsupported dictionary key", path, node)
+                return _Value(unknown=True)
+            if any(existing == key.value for existing, _ in items):
+                self.fail("duplicate dictionary key", path, node)
+                return _Value(unknown=True)
+            items.append((key.value, self.expression(path, expression, env)))
+        return self.allocate_container(path, node, "dict", items)
+
+    def scalar_operation(self, path, node, env):
+        if isinstance(node, ast.Compare):
+            return self.scalar_compare(path, node, env)
+        if isinstance(node, ast.BoolOp):
+            return self.scalar_boolean(path, node, env)
+        if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
+            value = self.expression(path, node.operand, env)
+            exact = _validated_exact_scalar(value)
+            if exact:
+                return _constant_identity_value(ast.Constant(value=not exact[0]))
+            if value.inert_kind == "scalar" and not _has_unknown_content(value):
+                return _Value(
+                    roots=frozenset(tracked_roots(value)),
+                    inert_kind="scalar",
+                    scalar_kind="boolean",
+                )
+        if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.USub, ast.UAdd)):
+            value = self.expression(path, node.operand, env)
+            exact = _validated_exact_scalar(value)
+            if exact and type(exact[0]) in (int, float):
+                result = -exact[0] if isinstance(node.op, ast.USub) else +exact[0]
+                return _constant_identity_value(ast.Constant(value=result))
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+            left = self.expression(path, node.left, env)
+            right = self.expression(path, node.right, env)
+            if (
+                left.inert_kind == right.inert_kind == "scalar"
+                and left.scalar_kind == right.scalar_kind
+                and left.scalar_kind in {"text", "bytes"}
+                and not _has_unknown_content(left)
+                and not _has_unknown_content(right)
+            ):
+                return _Value(
+                    roots=frozenset(tracked_roots(left) | tracked_roots(right)),
+                    inert_kind="scalar",
+                    scalar_kind=left.scalar_kind,
+                )
+        self.fail("unsupported scalar operation", path, node)
+        return _Value(unknown=True)
+
+    def scalar_compare(self, path, node, env):
+        if len(node.ops) != 1 or not isinstance(
+            node.ops[0], (ast.Eq, ast.NotEq, ast.Is, ast.IsNot)
+        ):
+            self.fail("unsupported comparison", path, node)
+            return _Value(unknown=True)
+        values = [
+            self.expression(path, node.left, env),
+            self.expression(path, node.comparators[0], env),
+        ]
+        if any(
+            value.inert_kind != "scalar"
+            or value.class_roots
+            or _has_unknown_content(value)
+            for value in values
+        ):
+            self.fail("unresolved comparison operand", path, node)
+            return _Value(unknown=True)
+        roots = frozenset().union(*(tracked_roots(value) for value in values))
+        exact = [_validated_exact_scalar(value) for value in values]
+        if all(exact):
+            a, b = exact[0][0], exact[1][0]
+            if (
+                isinstance(node.ops[0], (ast.Is, ast.IsNot))
+                and type(a) not in (bool, type(None))
+                and type(b) not in (bool, type(None))
+            ):
+                self.fail("unsupported identity comparison", path, node)
+                return _Value(unknown=True)
+            same = (
+                (type(a) is type(b) and a == b)
+                if isinstance(node.ops[0], (ast.Is, ast.IsNot))
+                else a == b
+            )
+            result = (
+                not same if isinstance(node.ops[0], (ast.NotEq, ast.IsNot)) else same
+            )
+            return replace(
+                _constant_identity_value(ast.Constant(value=result)), roots=roots
+            )
+        return _Value(roots=roots, inert_kind="scalar", scalar_kind="boolean")
+
+    def scalar_boolean(self, path, node, env):
+        for position, expression in enumerate(node.values):
+            value = self.expression(path, expression, env)
+            if position == len(node.values) - 1:
+                return value
+            exact = _validated_exact_scalar(value)
+            if not exact:
+                self.fail("unresolved short-circuit operand", path, expression)
+                return _Value(unknown=True)
+            if bool(exact[0]) == isinstance(node.op, ast.Or):
+                return value
+        return _Value(unknown=True)
+
+    def attribute(self, path, node, env):
+        receiver = self.expression(path, node.value, env)
+        value = self.read_field(receiver, node.attr)
+        if value.unknown and self.resolve_attribute:
+            resolved = self.resolve_attribute(self, path, node, receiver)
+            if isinstance(resolved, _Value):
+                return resolved
+        if value.unknown and (tracked_roots(receiver) or receiver.class_roots):
+            self.fail("unresolved tracked attribute dispatch", path, node)
+        return value
+
+    def call(self, path, node, env):
+        if _call_has_expansion(node):
+            self.fail("expanded call", path, node)
+            return _Value(unknown=True)
+        receiver = (
+            self.expression(path, node.func.value, env)
+            if isinstance(node.func, ast.Attribute)
+            else None
+        )
+        args = tuple(self.expression(path, item, env) for item in node.args)
+        kwargs = {
+            item.arg: self.expression(path, item.value, env) for item in node.keywords
+        }
+        if any(
+            v.unknown or _has_unknown_content(v)
+            for v in (*args, *kwargs.values(), *((receiver,) if receiver else ()))
+        ):
+            self.fail("unresolved call operand", path, node)
+            return _Value(unknown=True)
+        if self.method_shadowed(node, receiver):
+            self.fail("instance field shadows callable dispatch", path, node)
+            return _Value(unknown=True)
+        selected = self.resolver(path, node, receiver)
+        if selected is not None:
+            evaluated = {id(expr): value for expr, value in zip(node.args, args)}
+            evaluated.update(
+                (id(item.value), kwargs[item.arg]) for item in node.keywords
+            )
+            if isinstance(node.func, ast.Attribute):
+                evaluated[id(node.func.value)] = receiver
+            return self.source_call(path, node, selected, evaluated)
+        value = self.contract(self, path, node, receiver, args, kwargs)
+        self.snapshot(path, node)
+        if not isinstance(value, _Value) or value.unknown or value.content_unknown:
+            self.fail("unmodeled call or unresolved contract result", path, node)
+            return _Value(unknown=True)
+        self.edges.append(("contract", _event_span(path, node)))
+        return value
+
+    def method_shadowed(self, node, receiver):
+        return (
+            isinstance(node.func, ast.Attribute)
+            and receiver is not None
+            and any(
+                (root, node.func.attr) in self.heap for root in receiver.class_roots
+            )
+        )
+
+    def source_call(self, path, node, selected, evaluated):
+        if not isinstance(selected, ResolvedIdentityCall):
+            self.fail("invalid source call resolution", path, node)
+            return _Value(unknown=True)
+        from .review_integrity import bind_source_call
+
+        receiver = (
+            node.func.value
+            if isinstance(node.func, ast.Attribute)
+            and any(value is node.func.value for value in selected.arguments.values())
+            else None
+        )
+        try:
+            bound = bind_source_call(
+                node, selected.function, receiver, apply_defaults=False
+            )
+        except (TypeError, ValueError):
+            self.fail("invalid source call binding", path, node)
+            return _Value(unknown=True)
+        if set(bound) != set(selected.arguments) or any(
+            bound[k] is not selected.arguments[k] for k in bound
+        ):
+            self.fail("source call mapping differs from exact binding", path, node)
+            return _Value(unknown=True)
+        values = {name: evaluated[id(expr)] for name, expr in bound.items()}
+        defaults = _declared_call_defaults(selected.function)
+        for name in _resolved_parameter_names(selected.function) - values.keys():
+            default = defaults.get(name)
+            if not _immutable_default(default):
+                self.fail("unbound source call formal", path, node)
+                return _Value(unknown=True)
+            values[name] = self.expression(selected.path, default, {})
+        return self.run(selected.path, selected.function, values, nested=True)
+
+    def assign(self, path, target, value, env):
+        if isinstance(target, ast.Name):
+            env[target.id] = value
+            return
+        if isinstance(target, ast.Subscript):
+            container = self.expression(path, target.value, env)
+            key = _validated_exact_scalar(self.expression(path, target.slice, env))
+            if (
+                container.inert_kind == "dict"
+                and container.container_id
+                and key
+                and type(key[0]) in {str, int}
+            ):
+                if not self.update_container(container, key[0], value, env):
+                    self.fail("container alias crosses source call", path, target)
+                return
+        if isinstance(target, ast.Attribute):
+            if self.write_field(
+                self.expression(path, target.value, env), target.attr, value
+            ):
+                self.edges.append(
+                    ("field_store", _event_span(path, target), target.attr)
+                )
+                return
+        self.fail("unresolved or external assignment", path, target)
+
+    def update_container(self, container, key, value, env):
+        items = dict(container.items)
+        items[key] = value
+        updated = replace(container, items=tuple(items.items()))
+
+        def substitute(current):
+            if current.container_id == container.container_id:
+                return updated
+            if current.items:
+                return replace(
+                    current, items=tuple((k, substitute(v)) for k, v in current.items)
+                )
+            return current
+
+        def contains(current):
+            return current.container_id == container.container_id or any(
+                contains(item) for _, item in current.items
+            )
+
+        if any(
+            contains(value)
+            for scope in self.environments
+            if scope is not env
+            for value in scope.values()
+        ):
+            return False
+
+        for name, current in tuple(env.items()):
+            env[name] = substitute(current)
+        for field, current in tuple(self.heap.items()):
+            self.heap[field] = substitute(current)
+        self.snapshot(None, None)
+        return True
+
+    def statements(self, path, body, env):
+        for node in body:
+            if not self.tick(path, node) or self.unknowns:
+                break
+            if isinstance(node, (ast.For, ast.If, ast.With, ast.Try)):
+                methods = {
+                    ast.For: self.loop,
+                    ast.If: self.branch,
+                    ast.With: self.with_scope,
+                    ast.Try: self.try_scope,
+                }
+                returned, result = methods[type(node)](path, node, env)
+                if returned or self.unknowns:
+                    return returned, result
+            else:
+                returned, result = self.simple_statement(path, node, env)
+                if returned:
+                    return returned, result
+        return False, _constant_identity_value(ast.Constant(value=None))
+
+    def simple_statement(self, path, node, env):
+        if isinstance(node, (ast.Assign, ast.AnnAssign)):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            if len(targets) != 1 or node.value is None:
+                self.fail("unsupported assignment", path, node)
+            else:
+                self.assign(
+                    path, targets[0], self.expression(path, node.value, env), env
+                )
+        elif isinstance(node, ast.Expr):
+            self.expression(path, node.value, env)
+        elif isinstance(node, ast.Return):
+            return "return", self.expression(
+                path, node.value, env
+            ) if node.value else _constant_identity_value(ast.Constant(value=None))
+        elif isinstance(node, ast.Pass):
+            pass
+        elif isinstance(node, ast.Raise):
+            if node.exc is not None:
+                self.expression(path, node.exc, env)
+            if node.cause is not None:
+                cause = self.expression(path, node.cause, env)
+                if _has_unknown_content(cause):
+                    self.fail("unresolved raise cause", path, node.cause)
+            return "raise", _constant_identity_value(ast.Constant(value=None))
+        else:
+            self.fail("unsupported statement", path, node)
+        return False, _constant_identity_value(ast.Constant(value=None))
+
+    def loop(self, path, node, env):
+        iterable = self.expression(path, node.iter, env)
+        if (
+            iterable.inert_kind not in {"tuple", "list"}
+            or iterable.unknown
+            or _has_unknown_content(iterable)
+        ):
+            self.fail("unresolved iterable", path, node)
+            return False, _Value(unknown=True)
+        for _, value in iterable.items:
+            self.assign(path, node.target, value, env)
+            returned, result = self.statements(path, node.body, env)
+            if returned or self.unknowns:
+                return returned, result
+        return self.statements(path, node.orelse, env)
+
+    def merge_states(self, states, env):
+        def merge(maps):
+            keys = set().union(*(value.keys() for value in maps))
+            return {
+                key: join_identity_values(
+                    [value.get(key, _Value(unknown=True)) for value in maps]
+                )
+                for key in keys
+            }
+
+        env.clear()
+        env.update(merge([state[0] for state in states]))
+        self.heap = merge([state[1] for state in states])
+
+    def with_scope(self, path, node, env):
+        for item in node.items:
+            value = self.expression(path, item.context_expr, env)
+            if value.inert_kind != "scope_context" or _has_unknown_content(value):
+                self.fail("unmodeled context enter and exit", path, item.context_expr)
+                return False, _Value(unknown=True)
+            if item.optional_vars:
+                self.assign(path, item.optional_vars, value, env)
+        prefixes = []
+        self.prefix_frames.append((env, prefixes))
+        returned, result = self.statements(path, node.body, env)
+        self.prefix_frames.pop()
+        if returned:
+            self.fail("context return or raise needs path-sensitive exit", path, node)
+            return False, _Value(unknown=True)
+        self.merge_states([*prefixes, (dict(env), dict(self.heap))], env)
+        return False, result
+
+    def try_scope(self, path, node, env):
+        if any(
+            handler.type is not None and not isinstance(handler.type, ast.Name)
+            for handler in node.handlers
+        ):
+            self.fail("unmodeled exception type", path, node)
+            return False, _Value(unknown=True)
+        prefixes = []
+        self.prefix_frames.append((env, prefixes))
+        returned, result = self.statements(path, node.body, env)
+        self.prefix_frames.pop()
+        else_prefixes = []
+        if returned:
+            normal = (returned, result)
+        else:
+            self.prefix_frames.append((env, else_prefixes))
+            normal = self.statements(path, node.orelse, env)
+            self.prefix_frames.pop()
+        states = [(dict(env), dict(self.heap))]
+        handler_states, handler_outcomes, handler_prefixes = self.handler_states(
+            path, node.handlers, prefixes, env
+        )
+        states.extend(handler_states)
+        if node.finalbody:
+            final_states = []
+            for state_env, state_heap in [
+                *states,
+                *prefixes,
+                *else_prefixes,
+                *handler_prefixes,
+            ]:
+                env.clear()
+                env.update(state_env)
+                self.heap = dict(state_heap)
+                final_result = self.statements(path, node.finalbody, env)
+                if final_result[0]:
+                    self.fail("finally return needs path-sensitive exit", path, node)
+                final_states.append((dict(env), dict(self.heap)))
+            states = final_states
+        self.merge_states(states, env)
+        return self.try_outcome(path, node, normal, handler_outcomes)
+
+    def handler_states(self, path, handlers, prefixes, env):
+        states, outcomes, exceptions = [], [], []
+        for prefix_env, prefix_heap in prefixes:
+            for handler in handlers:
+                env.clear()
+                env.update(prefix_env)
+                self.heap = dict(prefix_heap)
+                if handler.name:
+                    env[handler.name] = _Value(unknown=True)
+                handler_prefixes = []
+                self.prefix_frames.append((env, handler_prefixes))
+                handler_result = self.statements(path, handler.body, env)
+                self.prefix_frames.pop()
+                exceptions.extend(handler_prefixes)
+                outcomes.append(handler_result)
+                if handler.name:
+                    env.pop(handler.name, None)
+                states.append((dict(env), dict(self.heap)))
+        return states, outcomes, exceptions
+
+    def try_outcome(self, path, node, normal, handlers):
+        outcomes = [normal, *handlers]
+        continuing = [value for value in outcomes if value[0] != "raise"]
+        returns = [value for value in continuing if value[0] == "return"]
+        if returns and len(returns) != len(continuing):
+            self.fail("mixed try return and continuation", path, node)
+            return False, _Value(unknown=True)
+        if returns:
+            return "return", join_identity_values([value[1] for value in returns])
+        if not continuing:
+            return "raise", _constant_identity_value(ast.Constant(value=None))
+        return False, _constant_identity_value(ast.Constant(value=None))
+
+    def branch(self, path, node, env):
+        value = self.expression(path, node.test, env)
+        exact = _validated_exact_scalar(value)
+        if exact:
+            return self.statements(path, node.body if exact[0] else node.orelse, env)
+        if value.unknown or value.class_roots or tracked_roots(value):
+            self.fail("unresolved branch protocol", path, node.test)
+            return False, _Value(unknown=True)
+        before_env, before_heap = dict(env), dict(self.heap)
+        left_return, left = self.statements(path, node.body, env)
+        left_env, left_heap = dict(env), dict(self.heap)
+        env.clear()
+        env.update(before_env)
+        self.heap = dict(before_heap)
+        right_return, right = self.statements(path, node.orelse, env)
+        if left_return != right_return:
+            self.fail("ambiguous branch termination", path, node)
+            return False, _Value(unknown=True)
+        right_state = (dict(env), dict(self.heap))
+        self.merge_states([(left_env, left_heap), right_state], env)
+        return left_return, join_identity_values([left, right])
+
+    def run(self, path, function, bindings, *, nested=False):
+        key = (path, id(function))
+        raw = self.index.source_bytes.get(path)
+        digest = hashlib.sha256(raw).hexdigest() if isinstance(raw, bytes) else None
+        current = self.index._matches_snapshot(
+            path, self.index.snapshots.get(path), raw, digest
+        )
+        if (
+            key in self.active
+            or not current
+            or not captured_function_valid(function, path, self.index)
+        ):
+            self.fail("cyclic or stale captured function", path, function)
+            return _Value(unknown=True)
+        self.active.add(key)
+        env = dict(bindings)
+        self.environments.append(env)
+        returned, value = self.statements(path, function.body, env)
+        self.environments.pop()
+        self.active.remove(key)
+        if returned == "raise":
+            self.fail("source call may only raise", path, function)
+        if returned == "return" and _has_unknown_content(value):
+            self.fail("unresolved return value", path, function)
+        if not nested and returned and (tracked_roots(value) or value.class_roots):
+            self.fail("tracked entry return escapes authority", path, function)
+        return value
+
+
+def captured_credential_role_closure(
+    index,
+    entries,
+    *,
+    resolve_call,
+    contract,
+    resolve_name=None,
+    resolve_attribute=None,
+    max_states=2048,
+):
+    """Transfer captured values and exact allocations; caller proves dispatch and authority.
+
+    Unknown calls and unsupported control flow fail closed. Contract callbacks must
+    prove that modeled calls cannot access unpassed candidate state indirectly.
+    """
+    flow = _CredentialRoleFlow(
+        index, resolve_call, contract, max_states, resolve_name, resolve_attribute
+    )
+    returns = []
+    if not entries:
+        flow.fail("no captured entry", None, None)
+    for path, function, bindings in entries:
+        values = _captured_parameter_values(bindings, index)
+        if values is None:
+            flow.fail("invalid captured entry binding", path, function)
+            break
+        if any(not isinstance(value, (_Value, str)) for value in values.values()):
+            flow.fail("invalid entry value", path, function)
+            break
+        values = {
+            name: value
+            if isinstance(value, _Value)
+            else _Value(roots=frozenset({value}))
+            for name, value in values.items()
+        }
+        returns.append(flow.run(path, function, values))
+        if flow.unknowns:
+            break
+    return CapturedCredentialRoleClosure(
+        not flow.unknowns, tuple(flow.unknowns), tuple(returns), tuple(flow.edges)
+    )
+
+
+SCOPE_API_CONTRACT_EPOCH = "test-scope-pyjwt-2.10.1-v1"
+
+
+def _scope_value_roots(value):
+    """Return all roots only for closed, non-escaping modeled values."""
+    if value.unknown or value.content_unknown or value.class_roots:
+        return None
+    roots = set(value.roots)
+    for _, item in value.items:
+        nested = _scope_value_roots(item)
+        if nested is None:
+            return None
+        roots.update(nested)
+    return roots
+
+
+def _scope_bind(arguments, keywords, names, required):
+    if len(arguments) > len(names) or set(keywords) - set(names):
+        return None
+    bound = dict(zip(names, arguments))
+    if set(bound) & set(keywords):
+        return None
+    bound.update(keywords)
+    return bound if set(required) <= set(bound) else None
+
+
+def _scope_closed(bound, tracked_roles):
+    for role, value in bound.items():
+        roots = _scope_value_roots(value)
+        if roots is None or (roots and role not in tracked_roles):
+            return False
+    return True
+
+
+def _scope_exact_text(value):
+    scalar = value._exact_scalar
+    if _scope_value_roots(value) == set() and len(scalar) == 1:
+        return scalar[0] if type(scalar[0]) is str else None
+    return None
+
+
+def credential_scope_api_contract(
+    canonical, receiver, arguments, keywords, *, provider_stable
+):
+    """Return an inert transfer contract, or None when role/identity is unknown.
+
+    Caller proves exact canonical binding, provider stability and receiver state.
+    Receiver is (kind, value, state), with state supplied by the owned heap:
+    jws: frozenset of present default algorithms; algorithm: its default name;
+    builtin: exact 'str' or 'bytes'; testcase: True for the captured owner.
+    PyJWT 2.10.1 semantics are modeled; the installed runtime is unassessed.
+    The caller owns allocation, registry updates, exceptions and derivation tags.
+    """
+    if provider_stable is not True or not isinstance(keywords, dict):
+        return None
+    if canonical in {"jwt.encode", "jwt.decode", "jwt.api_jws.PyJWS.decode"}:
+        return _scope_jwt_contract(canonical, receiver, arguments, keywords)
+    if canonical == "jwt.api_jws.PyJWS":
+        if receiver is None and not arguments and not keywords:
+            return ("allocate",)
+        return None
+    if canonical in {
+        "jwt.api_jws.PyJWS.get_algorithm_by_name",
+        "jwt.api_jws.PyJWS.unregister_algorithm",
+    }:
+        return _scope_registry_contract(canonical, receiver, arguments, keywords)
+    if canonical in dict(_SCOPE_PREPARE_METHODS):
+        return _scope_prepare_contract(canonical, receiver, arguments, keywords)
+    if canonical in {
+        "builtins.str.encode",
+        "builtins.bytes.decode",
+        "builtins.str.split",
+        "builtins.bytes.split",
+    }:
+        return _scope_builtin_contract(canonical, receiver, arguments, keywords)
+    if (
+        canonical in _SCOPE_ASSERTIONS
+        and receiver
+        and receiver[0] == "testcase"
+        and receiver[2] is True
+    ):
+        names = (
+            ("expr", "msg")
+            if canonical in _SCOPE_UNARY_ASSERTIONS
+            else ("first", "second", "msg")
+        )
+        bound = _scope_bind(arguments, keywords, names, names[:-1])
+        values = tuple(bound.values()) if bound is not None else ()
+        roots = [_scope_value_roots(value) for value in values]
+        if values and all(
+            root is not None and all(item.startswith("derived:") for item in root)
+            for root in roots
+        ):
+            return ("observe",)
+    return None
+
+
+def _scope_registry_contract(canonical, receiver, arguments, keywords):
+    lookup = canonical.endswith("get_algorithm_by_name")
+    argument = "alg_name" if lookup else "alg_id"
+    bound = _scope_bind(arguments, keywords, (argument,), (argument,))
+    if (
+        not bound
+        or not receiver
+        or receiver[0] != "jws"
+        or type(receiver[2]) is not frozenset
+    ):
+        return None
+    name = _scope_exact_text(bound[argument])
+    if name not in receiver[2] or name not in _SCOPE_DEFAULT_ALGORITHMS:
+        return None
+    return ("algorithm" if lookup else "unregister", name)
+
+
+def _scope_prepare_contract(canonical, receiver, arguments, keywords):
+    bound = _scope_bind(arguments, keywords, ("key",), ("key",))
+    if not bound or not receiver or receiver[0] != "algorithm":
+        return None
+    if receiver[2] not in dict(_SCOPE_PREPARE_METHODS)[canonical] or not _scope_closed(
+        bound, {"key"}
+    ):
+        return None
+    return ("prepare", bound["key"])
+
+
+_SCOPE_DEFAULT_ALGORITHMS = frozenset(
+    {
+        "HS256",
+        "HS384",
+        "HS512",
+        "RS256",
+        "RS384",
+        "RS512",
+        "ES256",
+        "ES256K",
+        "ES384",
+        "ES521",
+        "ES512",
+        "PS256",
+        "PS384",
+        "PS512",
+        "EdDSA",
+    }
+)
+_SCOPE_PREPARE_METHODS = (
+    (
+        "jwt.algorithms.HMACAlgorithm.prepare_key",
+        frozenset({"HS256", "HS384", "HS512"}),
+    ),
+    (
+        "jwt.algorithms.RSAAlgorithm.prepare_key",
+        frozenset({"RS256", "RS384", "RS512", "PS256", "PS384", "PS512"}),
+    ),
+    (
+        "jwt.algorithms.ECAlgorithm.prepare_key",
+        frozenset({"ES256", "ES256K", "ES384", "ES521", "ES512"}),
+    ),
+    ("jwt.algorithms.OKPAlgorithm.prepare_key", frozenset({"EdDSA"})),
+)
+_SCOPE_ASSERTIONS = frozenset(
+    "unittest.TestCase." + name
+    for name in (
+        "assertEqual",
+        "assertNotEqual",
+        "assertTrue",
+        "assertFalse",
+        "assertIs",
+        "assertIsNot",
+        "assertIn",
+        "assertNotIn",
+        "assertIsNone",
+        "assertIsNotNone",
+        "assertGreater",
+        "assertLess",
+        "assertRegex",
+        "assertNotRegex",
+    )
+)
+_SCOPE_UNARY_ASSERTIONS = frozenset(
+    "unittest.TestCase." + name
+    for name in ("assertTrue", "assertFalse", "assertIsNone", "assertIsNotNone")
+)
+
+
+def _scope_jwt_contract(canonical, receiver, arguments, keywords):
+    encode = canonical == "jwt.encode"
+    bound_method = canonical == "jwt.api_jws.PyJWS.decode"
+    if bound_method:
+        if not receiver or receiver[0] != "jws" or type(receiver[2]) is not frozenset:
+            return None
+    elif receiver is not None:
+        return None
+    if encode:
+        names = (
+            "payload",
+            "key",
+            "algorithm",
+            "headers",
+            "json_encoder",
+            "sort_headers",
+        )
+    elif bound_method:
+        names = ("jwt", "key", "algorithms", "options", "detached_payload")
+    else:
+        names = (
+            "jwt",
+            "key",
+            "algorithms",
+            "options",
+            "verify",
+            "detached_payload",
+            "audience",
+            "subject",
+            "issuer",
+            "leeway",
+        )
+    bound = _scope_bind(
+        arguments, keywords, names, ("payload", "key") if encode else ("jwt",)
+    )
+    if not bound or not _scope_closed(bound, {"key"} if encode else {"jwt", "key"}):
+        return None
+    if "json_encoder" in bound and bound["json_encoder"]._exact_scalar != (None,):
+        return None
+    if not encode and any(
+        not root.startswith("derived:") for root in _scope_value_roots(bound["jwt"])
+    ):
+        return None
+    return ("derive", bound["key"]) if encode else ("consume", bound["jwt"])
+
+
+def _scope_builtin_contract(canonical, receiver, arguments, keywords):
+    kind = "str" if ".str." in canonical else "bytes"
+    if not receiver or receiver[0] != "builtin" or receiver[2] != kind:
+        return None
+    value = receiver[1]
+    if value.inert_kind != "scalar" or value.scalar_kind != (
+        "text" if kind == "str" else "bytes"
+    ):
+        return None
+    names = (
+        ("sep", "maxsplit") if canonical.endswith(".split") else ("encoding", "errors")
+    )
+    bound = _scope_bind(arguments, keywords, names, ())
+    if (
+        bound is None
+        or not _scope_closed(bound, set())
+        or _scope_value_roots(value) is None
+    ):
+        return None
+    if not canonical.endswith(".split"):
+        if "encoding" in bound and _scope_exact_text(bound["encoding"]) not in {
+            "utf-8",
+            "ascii",
+        }:
+            return None
+        if "errors" in bound and _scope_exact_text(bound["errors"]) != "strict":
+            return None
+    return ("propagate", value)
