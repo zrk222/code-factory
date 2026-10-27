@@ -3472,8 +3472,13 @@ def security_precondition_providers_stable(tree, aliases, nodes):
             "dill",
             "yaml",
             "builtins",
-            "flask",
-            "django",
+            # Unrelated framework components do not alias an imported provider.
+            # Parent namespace escapes still conflict through selected_paths.
+            *(
+                path
+                for path in aliases.values()
+                if path.split(".")[0] in {"flask", "django"}
+            ),
         ),
         selected_paths=True,
         nodes=inventory,

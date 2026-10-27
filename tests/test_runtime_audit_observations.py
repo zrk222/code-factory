@@ -1526,3 +1526,82 @@ def test_foreign_provider_request_alias_memo_restores_outer(raises):
         assert intent_quality._SECURITY_REQUEST_ALIAS_MEMO.get() is memo
     finally:
         intent_quality._SECURITY_REQUEST_ALIAS_MEMO.reset(token)
+
+
+@pytest.mark.parametrize(
+    ("foreign", "decorated", "supported"),
+    [
+        (
+            "from django.contrib import admin\n"
+            "from django.urls import path\n"
+            "urlpatterns = [path('admin/', admin.site.urls)]\n"
+            "from django.core.management.commands.runserver import Command\n"
+            "Command.default_port = '9000'\n",
+            True,
+            True,
+        ),
+        (
+            "import django.views.decorators.http as http\n"
+            "http.require_http_methods = replacement\n",
+            True,
+            False,
+        ),
+        ("import django\nunknown(django)\n", True, False),
+        ("import builtins\nbuiltins.eval = replacement\n", True, False),
+        ("from django.contrib import admin\n", False, False),
+    ],
+)
+def test_framework_provider_relevance_native_cli(
+    tmp_path, capsys, foreign, decorated, supported
+):
+    from factoryline.cli import main
+    from factoryline import review_audits as audit
+
+    source = "from django.views.decorators.http import require_http_methods\n"
+    if decorated:
+        source += "@require_http_methods(['POST'])\n"
+    source += (
+        "def view(request):\n"
+        "    body = request.body\n"
+        "    text = body.decode()\n"
+        "    return eval(text)\n"
+    )
+    (tmp_path / "app.py").write_text(source, encoding="utf-8")
+    (tmp_path / "other.py").write_text(foreign, encoding="utf-8")
+    main(
+        [
+            "audit",
+            "security",
+            "--root",
+            str(tmp_path),
+            "--security-only",
+            "--defect-policy",
+            "source-role-v3",
+            "--json",
+        ]
+    )
+    output = capsys.readouterr()
+    assert output.err == ""
+    report = json.loads(output.out)
+    rows = report["finding_tier_report"]["ledger"]
+    selected = [
+        r for r in rows if r["raw_finding"]["code"] == "SECURITY_DYNAMIC_EXECUTION"
+    ]
+    assert len(selected) == 1
+    assert selected[0]["tier"] == ("SUPPORTED_DEFECT" if supported else "NEEDS_CONTEXT")
+    assert any(f["code"] == "SECURITY_DYNAMIC_EXECUTION" for f in report["findings"])
+    receipt = json.loads((tmp_path / ".factory/security-scan/latest.json").read_text())
+    assert receipt["report"] == report
+    core = copy.deepcopy(report)
+    raw = [r["raw_finding"] for r in rows]
+    core["_primitive_source_bytes"] = audit._app_source_bytes(
+        tmp_path,
+        raw,
+        report["sources"],
+        {p: p.read_bytes() for p in (tmp_path / "app.py", tmp_path / "other.py")},
+        capture_all_sources=True,
+    )
+    assert (
+        audit._seal_security_scan(core)["finding_tier_report"]
+        == report["finding_tier_report"]
+    )
