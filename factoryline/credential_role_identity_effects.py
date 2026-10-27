@@ -5341,6 +5341,7 @@ def security_value_helper_epoch():
         ResolvedIdentityCall.__init__,
         SourceSnapshotIndex.validate,
         audit._oracle_tree_fingerprint,
+        audit.integrity._security_local_helper_definition,
         *_module_function_binding_epoch(effects),
         *_module_function_binding_epoch(finite_capture),
         *_module_function_binding_epoch(semantic_credential_sensor),

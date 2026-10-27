@@ -5441,9 +5441,124 @@ def _security_structural_helper_return(
         index=source_index,
         resolve_call=resolve_call,
     )
+    return _security_structural_helper_flow_value(
+        call, function, summary, source_path, source_index
+    )
+
+
+def _security_structural_helper_flow_value(
+    call, function, summary, source_path, source_index
+):
+    """Project one exact structural helper result into legacy flow steps."""
     if summary.return_status != "COMPLETE" or len(summary.return_values) != 1:
         return None
-    return _legacy_security_value(summary.return_values[0].value)
+    value = summary.return_values[0].value
+    from .credential_role_identity_effects import _Value
+
+    if (
+        not isinstance(value, _Value)
+        or value.unknown
+        or value.content_unknown
+        or value.scalar_kind not in {"text", "bytes"}
+    ):
+        return None
+    from .review_integrity import bind_source_call
+
+    try:
+        actuals = bind_source_call(call, function, apply_defaults=True)
+    except (TypeError, ValueError):
+        return None
+    actual_steps = {
+        _security_flow_step(expression, "BOUND_EXPRESSION")
+        for expression in actuals.values()
+        if isinstance(expression, ast.expr)
+    }
+    from .credential_role_identity_effects import own_function_nodes
+
+    function_nodes = own_function_nodes(function, source_path, source_index)
+    actual_steps.update(
+        _security_flow_step(node, "BOUND_EXPRESSION")
+        for node in function_nodes
+        if isinstance(node, ast.Name)
+        and isinstance(node.ctx, ast.Load)
+        and node.id in actuals
+    )
+    matched_actual_steps = {
+        step
+        for step in value.trace
+        if step and step[0] == "BOUND_EXPRESSION" and step in actual_steps
+    }
+    trace = [
+        step
+        for step in value.trace
+        if not (value.roots and step in matched_actual_steps)
+    ]
+    helper_returns = {
+        _security_flow_step(node, "HELPER_RETURN")
+        for node in function_nodes
+        if isinstance(node, ast.Return)
+    }
+    replace_return = bool(
+        trace and trace[-1][0] == "HELPER_RETURN" and trace[-1] in helper_returns
+    )
+    if replace_return:
+        trace[-1] = _security_flow_step(function, "HELPER_RETURN")
+    if value.roots and matched_actual_steps:
+        trace.insert(
+            -1 if replace_return else len(trace),
+            _security_flow_step(call, "ACTUAL_TO_FORMAL"),
+        )
+    return _SecurityFlowValue(bool(value.roots), value.scalar_kind, tuple(trace))
+
+
+def _security_structural_call_flow_value(call, requests, aliases):
+    """Resolve a captured helper call and project its exact source-bound return."""
+    from . import review_integrity as flow
+    from .credential_role_identity_effects import resolve_source_identity_call
+    from .finite_capture import security_structural_helper_summary
+
+    function = flow._security_local_helper_definition(call)
+    _module, source_index, source_path = _security_helper_source_context(call, function)
+    roots = getattr(requests, "values", None)
+    if source_index is None or source_path is None or not isinstance(roots, dict):
+        return None
+    if function is not None:
+        summary = security_structural_helper_summary(
+            call,
+            function,
+            roots,
+            path=source_path,
+            index=source_index,
+            request_aliases=aliases,
+        )
+    else:
+        resolved = resolve_source_identity_call(
+            call, source_path, source_index, defer_negative_binding=True
+        )
+        if resolved is None:
+            return None
+        function = resolved.function
+        summary = security_structural_helper_summary(
+            call,
+            function,
+            roots,
+            path=source_path,
+            index=source_index,
+            callee_path=resolved.path,
+            source_resolved=True,
+            negative_binding_closed=resolved.negative_binding_closed,
+            negative_binding_check=resolved.negative_binding_check,
+            request_aliases=aliases,
+            resolve_call=lambda candidate, candidate_path: resolve_source_identity_call(
+                candidate,
+                candidate_path,
+                source_index,
+                defer_negative_binding=True,
+            ),
+        )
+    return _security_structural_helper_flow_value(
+        call, function, summary, source_path, source_index
+    )
 
 
 def _legacy_security_value(value):
@@ -5628,6 +5743,15 @@ def _source_built_ast_profile(sink, builder, owner):
 def security_input_value_flow(expression, requests, aliases):
     """Return a regenerable scalar input trace, not runtime authority or safety."""
     if hasattr(requests, "values"):
+        if isinstance(expression, ast.Call):
+            helper_value = _security_structural_call_flow_value(
+                expression, requests, aliases
+            )
+            if helper_value is not None:
+                if evidence := _security_input_flow_evidence(
+                    helper_value, value_type=_SecurityFlowValue
+                ):
+                    return evidence
         from .credential_role_identity_effects import _Value
 
         from .finite_capture import security_structural_value

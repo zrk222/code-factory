@@ -2581,6 +2581,34 @@ def test_shared_import_reexport_return_uses_captured_symbol_binding(tmp_path):
     assert resolved.path == paths["provider.py"]
     assert resolved.function is trees[paths["provider.py"]].body[0]
     assert resolved.arguments["value"] is call.args[0]
+    from factoryline.semantic_credential_sensor import _security_flow_step
+
+    roots = {
+        "raw": identity._Value(
+            roots=frozenset({"request-body"}),
+            scalar_kind="bytes",
+            trace=(_security_flow_step(call.args[0], "BOUND_EXPRESSION"),),
+        )
+    }
+    summary = finite.security_structural_helper_summary(
+        call,
+        resolved.function,
+        roots,
+        path=paths["sample.py"],
+        index=index,
+        callee_path=resolved.path,
+        source_resolved=True,
+        negative_binding_closed=resolved.negative_binding_closed,
+        negative_binding_check=resolved.negative_binding_check,
+    )
+    assert summary.return_status == "COMPLETE"
+    summary_value = summary.return_values[0].value
+    selected_trace = dict(summary_value.items)["selected"].trace
+    structural_operations = {
+        step[0] for step in (*summary_value.trace, *selected_trace)
+    }
+    assert {"BOUND_EXPRESSION", "HELPER_RETURN"} <= structural_operations
+    assert "ACTUAL_TO_FORMAL" not in structural_operations
     captured = identity.captured_source_call_result(
         call,
         paths["sample.py"],
@@ -2597,11 +2625,7 @@ def test_shared_import_reexport_return_uses_captured_symbol_binding(tmp_path):
     )
     value = finite.security_structural_value(
         call,
-        {
-            "raw": identity._Value(
-                roots=frozenset({"request-body"}), scalar_kind="bytes"
-            )
-        },
+        roots,
     )
     assert not value.unknown
     selected = dict(value.items)["selected"]
@@ -3258,3 +3282,20 @@ def test_shared_import375_unknown_leaf_does_not_demand_negative_proof(
     assert returned.scalar_kind == value.scalar_kind
     if not expected_checks:
         assert any("UNPROVED_HELPER_PROVIDER" in step for step in returned.trace)
+
+
+def test_security_value_helper_epoch_tracks_actual_local_definition_binding(
+    monkeypatch,
+):
+    from factoryline import credential_role_identity_effects as effects
+
+    original = review_integrity._security_local_helper_definition
+    assert original in effects.security_value_helper_epoch()
+
+    def replacement(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(
+        review_integrity, "_security_local_helper_definition", replacement
+    )
+    assert replacement in effects.security_value_helper_epoch()

@@ -710,45 +710,11 @@ def security_structural_helper_summary(
         field_roots=field_roots,
         role_view=role_view,
     )
-    summary = _structural_helper_return_trace(summary, call, function, actuals)
     if summary.return_values:
         return summary
     return _structural_unknown_return(
         summary, call, path, _Value, IdentityReturnProjection
     )
-
-
-def _structural_helper_return_trace(summary, call, function, actuals):
-    """Use the same actual-to-formal and helper-return steps as legacy capture."""
-    if summary.return_status != "COMPLETE" or len(summary.return_values) != 1:
-        return summary
-    from dataclasses import replace
-    from .credential_role_identity_effects import _Value
-
-    projection = summary.return_values[0]
-    value = projection.value
-    if not isinstance(value, _Value):
-        return summary
-    actual_steps = {
-        _security_flow_step(expression, "BOUND_EXPRESSION")
-        for expression in actuals.values()
-        if isinstance(expression, ast.expr)
-    }
-    trace = [
-        step
-        for step in value.trace
-        if not (step and step[0] == "BOUND_EXPRESSION" and step in actual_steps)
-    ]
-    if trace and trace[-1][0] == "HELPER_RETURN":
-        trace.pop()
-    trace.extend(
-        (
-            _security_flow_step(call, "ACTUAL_TO_FORMAL"),
-            _security_flow_step(function, "HELPER_RETURN"),
-        )
-    )
-    updated = replace(projection, value=replace(value, trace=tuple(trace)))
-    return replace(summary, return_values=(updated,))
 
 
 def _structural_helper_binding(call, function, source_resolved):
