@@ -633,6 +633,7 @@ def security_scan_report(
     *,
     source_limit: int | None = None,
     collection_identity: dict | None = None,
+    security_only: bool = False,
 ) -> dict[str, Any]:
     """Assemble and seal the bounded Python security scan report with coverage, source bindings, findings, and its non-runtime, non-approval limits."""
     audit_coverage = audit._security_scan_coverage(
@@ -674,12 +675,14 @@ def security_scan_report(
         },
         "claim_boundary": "Bounded Python AST pattern scan only. Declared tenant argument bindings verify syntactic pass-through, not tenant identity, authorization, or access isolation; this is not a penetration test, runtime exploit proof, dependency advisory, or release approval.",
     }
-    if audit._SECURITY_ONLY_SCAN.get() is True:
+    if security_only is True:
         core["oracle_context"]["test_oracle_assessment"] = "NOT_ASSESSED_SECURITY_ONLY"
-    if collection_identity is not None:
+    if (
+        collection_identity is not None
+        and collection_identity.get("collection_state") == "UNKNOWN"
+    ):
         core["oracle_context"]["pytest_collection"] = dict(collection_identity)
-        if collection_identity.get("collection_state") == "UNKNOWN":
-            core["state"] = "INCOMPLETE"
+        core["state"] = "INCOMPLETE"
     core["source_manifest_sha256"] = audit.sha256(
         json.dumps(
             {
@@ -694,6 +697,18 @@ def security_scan_report(
     ).hexdigest()
     core["action_summary"] = audit._security_scan_action_summary(state)
     return audit._seal_security_scan(core)
+
+
+def _security_scan_context(audit, security_only, evidence):
+    """Keep effective security-only mode and its oracle boundary together."""
+    if type(security_only) is not bool:
+        raise audit.ReviewAuditError("security_only must be a boolean.")
+    enabled = security_only or audit._SECURITY_ONLY_SCAN.get() is True
+    if enabled and any(value is not None for value in evidence):
+        raise audit.ReviewAuditError(
+            "security_only cannot credit runtime test-oracle evidence."
+        )
+    return audit._security_only_scan_context(enabled)
 
 
 def security_scan(
@@ -716,11 +731,13 @@ def security_scan(
     security_only: bool = False,
 ) -> dict[str, Any]:
     """Run a bounded AST scan with content-bound process-local context reuse."""
-    if type(security_only) is not bool:
-        raise audit.ReviewAuditError("security_only must be a boolean.")
-    with audit._security_only_scan_context(
-        security_only or audit._SECURITY_ONLY_SCAN.get() is True
-    ):
+    evidence = (
+        oracle_evidence,
+        oracle_trust_root,
+        oracle_trust_sha256,
+        oracle_environment_sha256,
+    )
+    with _security_scan_context(audit, security_only, evidence):
         from .finite_capture import provider_analysis_profile
         from .primitive_observation_binding import validate_security_defect_policy
 
@@ -738,16 +755,6 @@ def security_scan(
             workspace, tenant_read_scopes
         )
         cache_enabled = audit._validate_cache_enabled(cache_enabled)
-        evidence = (
-            oracle_evidence,
-            oracle_trust_root,
-            oracle_trust_sha256,
-            oracle_environment_sha256,
-        )
-        if audit._SECURITY_ONLY_SCAN.get() is True and any(value is not None for value in evidence):
-            raise audit.ReviewAuditError(
-                "security_only cannot credit runtime test-oracle evidence."
-            )
         files = audit._security_source_files(workspace)
         if tenant_policy_applies:
             tenant_read_scopes[""] = {
@@ -801,9 +808,8 @@ def security_scan(
             tenant_policy_applies,
             primitive_source_bytes,
             source_limit=source_limit,
-            collection_identity=collection_identity
-            if collection_identity.get("collection_state") == "UNKNOWN"
-            else None,
+            collection_identity=collection_identity,
+            security_only=audit._SECURITY_ONLY_SCAN.get() is True,
         )
         if profile["conditional"]:
             from .primitive_observation_binding import (

@@ -15031,7 +15031,9 @@ def test_shared_native_summary_kernel_owner_change_invalidates_cache(
 
 
 @pytest.mark.parametrize("cache_enabled", [False, True])
-def test_security_only_unknown_collection_retains_security_findings(tmp_path, cache_enabled):
+def test_security_only_unknown_collection_retains_security_findings(
+    tmp_path, cache_enabled
+):
     from factoryline import review_audits as audit
 
     hook = tmp_path / "conftest.py"
@@ -15039,26 +15041,37 @@ def test_security_only_unknown_collection_retains_security_findings(tmp_path, ca
     (tmp_path / "app.py").write_text(
         "def apply(program):\n    exec(program)\n", encoding="utf-8"
     )
-    (tmp_path / "test_case.py").write_text("def test_dead():\n    pass\n", encoding="utf-8")
+    (tmp_path / "test_case.py").write_text(
+        "def test_dead():\n    pass\n", encoding="utf-8"
+    )
     with pytest.raises(audit.ReviewAuditError, match="collection"):
         audit.security_scan(tmp_path, cache_enabled=cache_enabled)
     report = audit.security_scan(
-        tmp_path, cache_enabled=cache_enabled, security_only=True,
+        tmp_path,
+        cache_enabled=cache_enabled,
+        security_only=True,
         defect_policy="source-role-v3",
     )
     identity = report["oracle_context"]["pytest_collection"]
     assert identity["collection_state"] == "UNKNOWN"
-    assert all(identity[name] == [] for name in ("python_files", "python_functions", "python_classes"))
+    assert all(
+        identity[name] == []
+        for name in ("python_files", "python_functions", "python_classes")
+    )
     assert report["state"] == "INCOMPLETE"
     assert report["audit_coverage"]["complete"] is True
     assert report["files_scanned"] == 3
     assert report["defect_policy_decision"]["exit_code"] == 2
-    assert any(row["code"] == "SECURITY_DYNAMIC_EXECUTION" for row in report["findings"])
+    assert any(
+        row["code"] == "SECURITY_DYNAMIC_EXECUTION" for row in report["findings"]
+    )
     assert not any(row["code"].startswith("QUALITY_") for row in report["findings"])
     assert not report["context_reviews"]
     hook.write_text("pytest_plugins = ['changed_plugin']\n", encoding="utf-8")
     changed = audit.security_scan(
-        tmp_path, cache_enabled=cache_enabled, security_only=True,
+        tmp_path,
+        cache_enabled=cache_enabled,
+        security_only=True,
         defect_policy="source-role-v3",
     )
     assert changed["oracle_context"]["pytest_collection"] != identity
@@ -15076,9 +15089,15 @@ def test_security_only_unknown_collection_rejects_invalid_mode(tmp_path, value):
 
 
 @pytest.mark.parametrize("inherited", [False, True])
-def test_security_only_unknown_collection_rejects_runtime_oracle_credit(tmp_path, inherited):
+def test_security_only_unknown_collection_rejects_runtime_oracle_credit(
+    tmp_path, inherited
+):
     from factoryline import review_audits as audit
 
     with audit._security_only_scan_context(inherited):
-        with pytest.raises(audit.ReviewAuditError, match="runtime test-oracle evidence"):
-            audit.security_scan(tmp_path, security_only=not inherited, oracle_evidence="evidence.json")
+        with pytest.raises(
+            audit.ReviewAuditError, match="runtime test-oracle evidence"
+        ):
+            audit.security_scan(
+                tmp_path, security_only=not inherited, oracle_evidence="evidence.json"
+            )

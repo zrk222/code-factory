@@ -16,14 +16,22 @@ from factoryline.runtime_audit_integrity import finite_literal_eval_input_witnes
 from factoryline.runtime_audit_integrity import source_generated_eval_input_witness
 
 
-@pytest.mark.parametrize("source", ["pytest_plugins = ['plugin']\n", "def pytest_generate_tests(metafunc): pass\n"])
-def test_collection_unknown_profile_rejects_each_test_module_declaration_by_default(tmp_path, source):
+@pytest.mark.parametrize(
+    "source",
+    ["pytest_plugins = ['plugin']\n", "def pytest_generate_tests(metafunc): pass\n"],
+)
+def test_collection_unknown_profile_rejects_each_test_module_declaration_by_default(
+    tmp_path, source
+):
     from factoryline.pytest_collection_audit import _pytest_collection_config
 
     (tmp_path / "test_example.py").write_text(source, encoding="utf-8")
     with pytest.raises(review_audits.ReviewAuditError, match="custom collection hooks"):
         _pytest_collection_config(tmp_path)
-    assert _pytest_collection_config(tmp_path, allow_unknown=True)[1]["collection_state"] == "UNKNOWN"
+    assert (
+        _pytest_collection_config(tmp_path, allow_unknown=True)[1]["collection_state"]
+        == "UNKNOWN"
+    )
 
 
 def test_collection_unknown_profile_binds_hooks_and_config_without_execution(tmp_path):
@@ -32,7 +40,9 @@ def test_collection_unknown_profile_binds_hooks_and_config_without_execution(tmp
     config = tmp_path / "pytest.ini"
     config.write_text("[pytest]\npython_files = test_*.py\n", encoding="utf-8")
     conftest = tmp_path / "conftest.py"
-    conftest.write_text("def pytest_collection_modifyitems(items): pass\n", encoding="utf-8")
+    conftest.write_text(
+        "def pytest_collection_modifyitems(items): pass\n", encoding="utf-8"
+    )
     test_module = tmp_path / "test_example.py"
     test_module.write_text(
         "raise RuntimeError('must not execute')\n"
@@ -45,54 +55,86 @@ def test_collection_unknown_profile_binds_hooks_and_config_without_execution(tmp
 
     patterns, identity = _pytest_collection_config(tmp_path, allow_unknown=True)
     assert patterns == set()
-    assert {key: identity[key] for key in ("state", "collection_state", "mode", "reason")} == {
-        "state": "unsupported", "collection_state": "UNKNOWN", "mode": "security_only",
+    assert {
+        key: identity[key] for key in ("state", "collection_state", "mode", "reason")
+    } == {
+        "state": "unsupported",
+        "collection_state": "UNKNOWN",
+        "mode": "security_only",
         "reason": "custom_collection_hooks_or_pytest_plugins",
     }
-    assert all(identity[key] == [] for key in ("python_files", "python_functions", "python_classes"))
+    assert all(
+        identity[key] == []
+        for key in ("python_files", "python_functions", "python_classes")
+    )
     assert identity["path"] == "pytest.ini"
     assert identity["sha256"] == hashlib.sha256(config.read_bytes()).hexdigest()
     assert identity["bytes"] == len(config.read_bytes())
     hooks = {entry["path"]: entry for entry in identity["collection_hook_sources"]}
     assert set(hooks) == {"conftest.py", "test_example.py"}
     for path in (conftest, test_module):
-        assert hooks[path.name]["sha256"] == hashlib.sha256(path.read_bytes()).hexdigest()
+        assert (
+            hooks[path.name]["sha256"] == hashlib.sha256(path.read_bytes()).hexdigest()
+        )
         assert hooks[path.name]["bytes"] == len(path.read_bytes())
     assert hooks["conftest.py"]["names"] == ["pytest_collection_modifyitems"]
     assert hooks["test_example.py"]["names"] == ["pytest_generate_tests"]
     assert hooks["test_example.py"]["pytest_plugins"] is True
 
     for path in (conftest, test_module, config):
-        path.write_text(path.read_text(encoding="utf-8") + "\n# changed\n", encoding="utf-8")
+        path.write_text(
+            path.read_text(encoding="utf-8") + "\n# changed\n", encoding="utf-8"
+        )
         changed = _pytest_collection_config(tmp_path, allow_unknown=True)[1]
         assert changed != identity
         identity = changed
 
 
-@pytest.mark.parametrize("kind", ["invalid_config", "oversized_config", "unreadable_config", "unsupported_config", "invalid_hook", "oversized_hook", "unreadable_hook", "invalid_test_module", "oversized_test_module"])
-def test_collection_unknown_profile_does_not_relax_invalid_inputs(tmp_path, monkeypatch, kind):
+@pytest.mark.parametrize(
+    "kind",
+    [
+        "invalid_config",
+        "oversized_config",
+        "unreadable_config",
+        "unsupported_config",
+        "invalid_hook",
+        "oversized_hook",
+        "unreadable_hook",
+        "invalid_test_module",
+        "oversized_test_module",
+    ],
+)
+def test_collection_unknown_profile_does_not_relax_invalid_inputs(
+    tmp_path, monkeypatch, kind
+):
     from factoryline.pytest_collection_audit import _pytest_collection_config
     from factoryline.runtime_audit_common import RuntimeAuditError
 
-    (tmp_path / "conftest.py").write_text("def pytest_collection_modifyitems(items): pass\n", encoding="utf-8")
+    (tmp_path / "conftest.py").write_text(
+        "def pytest_collection_modifyitems(items): pass\n", encoding="utf-8"
+    )
     if kind == "invalid_config":
         (tmp_path / "pytest.ini").write_text("[pytest\n", encoding="utf-8")
     elif kind == "oversized_config":
         (tmp_path / "pytest.ini").write_bytes(b" " * (review_audits.MAX_BYTES + 1))
-    elif kind == "unreadable_config":
-        def unreadable_config(*args):
+    elif kind in {"unreadable_config", "unreadable_hook"}:
+
+        def unreadable(*args):
             raise RuntimeAuditError("E_SOURCE_UNREADABLE", "unreadable")
-        monkeypatch.setattr(review_audits, "local_file", unreadable_config)
+
+        target = {
+            "unreadable_config": "local_file",
+            "unreadable_hook": "_security_source_bytes",
+        }[kind]
+        monkeypatch.setattr(review_audits, target, unreadable)
     elif kind == "unsupported_config":
-        (tmp_path / "pytest.ini").write_text("[pytest]\naddopts = -p plugin\n", encoding="utf-8")
+        (tmp_path / "pytest.ini").write_text(
+            "[pytest]\naddopts = -p plugin\n", encoding="utf-8"
+        )
     elif kind == "invalid_hook":
         (tmp_path / "conftest.py").write_text("def broken(:\n", encoding="utf-8")
     elif kind == "oversized_hook":
         (tmp_path / "conftest.py").write_bytes(b" " * (review_audits.MAX_BYTES + 1))
-    elif kind == "unreadable_hook":
-        def unreadable(*args):
-            raise RuntimeAuditError("E_SOURCE_UNREADABLE", "unreadable")
-        monkeypatch.setattr(review_audits, "_security_source_bytes", unreadable)
     elif kind == "invalid_test_module":
         (tmp_path / "test_example.py").write_text("def broken(:\n", encoding="utf-8")
     elif kind == "oversized_test_module":

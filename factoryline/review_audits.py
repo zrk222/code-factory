@@ -5831,6 +5831,7 @@ def _security_scan_report(
             primitive_source_bytes,
             source_limit=source_limit,
             collection_identity=collection_identity,
+            security_only=_SECURITY_ONLY_SCAN.get() is True,
         )
 
 
@@ -5892,6 +5893,7 @@ def security_scan(
     max_files: int | None = None,
     security_only: bool = False,
 ) -> dict[str, Any]:
+    """Scan captured Python sources with bounded security and oracle evidence."""
     from .audit_action_refs import security_scan as scan
 
     return scan(

@@ -718,7 +718,12 @@ def _finish_bounded_security(args, result):
             )
         print(result["action_summary"])
         _print_finding_tier_report(result.get("finding_tier_report"))
-    if result.get("oracle_context", {}).get("pytest_collection", {}).get("collection_state") == "UNKNOWN":
+    if (
+        result.get("oracle_context", {})
+        .get("pytest_collection", {})
+        .get("collection_state")
+        == "UNKNOWN"
+    ):
         return 2
     if getattr(args, "defect_policy", "legacy-v1") != "legacy-v1":
         return result.get("defect_policy_decision", {}).get("exit_code", 2)
@@ -832,48 +837,44 @@ def _run_code(args: Any) -> int:
     return 0 if result["state"] == "no_structural_findings" else 2
 
 
-def run(args: Any) -> int:
-    """Run one audit command, importing the engine only after selection."""
-    from .review_audits import ReviewAuditError
-
+def _audit_option_scope_error(args):
+    """Apply audit option scope precedence before selecting a handler."""
     if getattr(args, "security_only", False) and (
         args.tool != "security" or getattr(args, "full_repository", False)
     ):
-        print(
-            json.dumps(
-                {
-                    "state": "INVALID",
-                    "code": "E_SECURITY_ONLY_SCOPE",
-                    "message": "--security-only requires the bounded audit security command",
-                }
-            ),
-            file=sys.stderr,
+        return (
+            "E_SECURITY_ONLY_SCOPE",
+            "--security-only requires the bounded audit security command",
         )
-        return 2
-
     if args.tool != "security" and hasattr(args, "defect_policy"):
-        print(
-            json.dumps(
-                {
-                    "state": "INVALID",
-                    "code": "E_DEFECT_POLICY_SCOPE",
-                    "message": "--defect-policy is valid only for audit security",
-                }
-            ),
-            file=sys.stderr,
+        return (
+            "E_DEFECT_POLICY_SCOPE",
+            "--defect-policy is valid only for audit security",
         )
-        return 2
     if args.tool != "security" and (
         getattr(args, "full_repository", False)
         or getattr(args, "resume", False)
         or getattr(args, "max_batches", 1) != 1
     ):
+        return (
+            "E_FULL_REPOSITORY_OPTIONS",
+            "full-repository options are valid only for audit security",
+        )
+    return None
+
+
+def run(args: Any) -> int:
+    """Run one audit command, importing the engine only after selection."""
+    from .review_audits import ReviewAuditError
+
+    scope_error = _audit_option_scope_error(args)
+    if scope_error:
         print(
             json.dumps(
                 {
                     "state": "INVALID",
-                    "code": "E_FULL_REPOSITORY_OPTIONS",
-                    "message": "full-repository options are valid only for audit security",
+                    "code": scope_error[0],
+                    "message": scope_error[1],
                 }
             ),
             file=sys.stderr,

@@ -183,10 +183,14 @@ def _pytest_collection_config(root, source_files=None, *, allow_unknown=False):
     identity = _pytest_collection_source_identity(
         root, identity, source_files, allow_unknown=allow_unknown
     )
-    return (set() if identity.get("collection_state") == "UNKNOWN" else patterns), identity
+    return (
+        set() if identity.get("collection_state") == "UNKNOWN" else patterns
+    ), identity
 
 
-def _pytest_collection_source_identity(root, identity, source_files=None, *, allow_unknown=False):
+def _pytest_collection_source_identity(
+    root, identity, source_files=None, *, allow_unknown=False
+):
     """Bind project-local collection hooks; reject them unless explicitly unknown."""
     from .review_audits import (
         ReviewAuditError,
