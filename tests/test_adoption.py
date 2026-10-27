@@ -984,7 +984,7 @@ def test_unified_scan_limit_reports_requested_but_unused_oracles(tmp_path, deep)
         "oracle_trust_sha256": "0" * 64,
         "oracle_environment_sha256": "1" * 64,
     }
-    result = run_repo_scan(tmp_path, deep=deep, oracle_options=options)
+    result = run_repo_scan(tmp_path, deep=deep, oracle_options=options, max_files=460)
     assert result["state"] == "BLOCKED"
     oracle = result["static_security"]["runtime_oracles"]
     assert oracle["state"] == "NOT_VERIFIED"
