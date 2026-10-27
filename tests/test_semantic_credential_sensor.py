@@ -1175,13 +1175,19 @@ def test_http279_mapping_value_reaches_modeled_sink(framework, expression, sink)
     source += f"    payload = {expression}\n    {sink}\n"
     findings = _premise_scan(source)
     opaque_json_codec = sink == "pickle.loads(payload.encode())" and expression in {
-        'request.json["cmd"]', 'request.get_json()["cmd"]'
+        'request.json["cmd"]',
+        'request.get_json()["cmd"]',
     }
-    supported = any(row.get("facts", {}).get("security_precondition") for row in findings)
+    supported = any(
+        row.get("facts", {}).get("security_precondition") for row in findings
+    )
     assert supported is not opaque_json_codec
     if opaque_json_codec:
-        assert any(row["code"] == "SECURITY_UNSAFE_DESERIALIZATION"
-                   and row["severity"] == "HIGH" for row in findings)
+        assert any(
+            row["code"] == "SECURITY_UNSAFE_DESERIALIZATION"
+            and row["severity"] == "HIGH"
+            for row in findings
+        )
 
 
 @pytest.mark.parametrize(
@@ -1567,7 +1573,8 @@ def test_public_native_scan_keeps_auth_placeholder_separate_from_metadata_and_te
     )
     report = audit.security_scan(tmp_path, cache_enabled=False)
     findings = [
-        item for item in report["findings"]
+        item
+        for item in report["findings"]
         if item["code"] == "SECURITY_LITERAL_HTTP_CREDENTIAL"
     ]
     assert len(findings) == 1
@@ -2218,22 +2225,47 @@ def test_private_key_authority_rejects_mismatched_pem_labels():
 @pytest.mark.parametrize(
     "before, after",
     [
-        ('    if password == app.config["ADMIN_PASSWORD"]:', '    password = "fixed-unrelated-value"\n    if password == app.config["ADMIN_PASSWORD"]:'),
-        ('    password = request.form.get("password")', '    return "public-no-auth"\n    password = request.form.get("password")'),
-        ('        session["logged_in"] = True', '        session["logged_in"] = True\n        session["logged_in"] = False'),
-        ('@app.route("/create")\n@login_required', '@login_required\n@app.route("/create")'),
+        (
+            '    if password == app.config["ADMIN_PASSWORD"]:',
+            '    password = "fixed-unrelated-value"\n    if password == app.config["ADMIN_PASSWORD"]:',
+        ),
+        (
+            '    password = request.form.get("password")',
+            '    return "public-no-auth"\n    password = request.form.get("password")',
+        ),
+        (
+            '        session["logged_in"] = True',
+            '        session["logged_in"] = True\n        session["logged_in"] = False',
+        ),
+        (
+            '@app.route("/create")\n@login_required',
+            '@login_required\n@app.route("/create")',
+        ),
     ],
 )
-def test_flask_authority326_public_scanner_rejects_broken_custody(tmp_path, before, after):
+def test_flask_authority326_public_scanner_rejects_broken_custody(
+    tmp_path, before, after
+):
     source = _FLASK_AUTHORITY_SOURCE314.replace(before, after)
     assert source != _FLASK_AUTHORITY_SOURCE314
     (tmp_path / "app.py").write_text(source)
     with audit._security_only_scan_context(True):
-        report = audit.security_scan(tmp_path, cache_enabled=False, defect_policy="source-role-v1")
+        report = audit.security_scan(
+            tmp_path, cache_enabled=False, defect_policy="source-role-v1"
+        )
     assert report["audit_coverage"]["complete"] is True
     rows = report["finding_tier_report"]["ledger"]
-    credentials = [row for row in rows if row["raw_finding"].get("code") == "SECURITY_HARDCODED_SECRET" and row["raw_finding"].get("facts", {}).get("name") in {"ADMIN_PASSWORD", "SECRET_KEY"}]
-    assert {row["raw_finding"]["facts"]["name"] for row in credentials} == {"ADMIN_PASSWORD", "SECRET_KEY"}
+    credentials = [
+        row
+        for row in rows
+        if row["raw_finding"].get("code") == "SECURITY_HARDCODED_SECRET"
+        and row["raw_finding"].get("facts", {}).get("name")
+        in {"ADMIN_PASSWORD", "SECRET_KEY"}
+    ]
+    assert {row["raw_finding"]["facts"]["name"] for row in credentials} == {
+        "ADMIN_PASSWORD",
+        "SECRET_KEY",
+    }
     assert {row["tier"] for row in credentials} == {"NEEDS_CONTEXT"}
     assert all("credential_authority_observation" not in row for row in credentials)
 
@@ -2241,65 +2273,107 @@ def test_flask_authority326_public_scanner_rejects_broken_custody(tmp_path, befo
 @pytest.mark.parametrize(
     "before, after",
     [
-        ('def login_required(fn):', 'def login_required(fn):\n    return fn'),
-        ('        session["logged_in"] = True', '        session["logged_in"] = True\n        saved = session\n        saved.clear()'),
-        ('    password = request.form.get("password")\n    if password == app.config["ADMIN_PASSWORD"]:\n        session["logged_in"] = True\n        return redirect("/")', '    password = request.form.get("password")\n    if False:\n        pass\n    else:\n        password = "fixed-unrelated-value"\n        if password == app.config["ADMIN_PASSWORD"]:\n            session["logged_in"] = True\n            return redirect("/")'),
-        ('@app.route("/create")\n@login_required', 'def discard_guard(fn):\n    return lambda: "created"\n\n@app.route("/create")\n@discard_guard\n@login_required'),
+        ("def login_required(fn):", "def login_required(fn):\n    return fn"),
+        (
+            '        session["logged_in"] = True',
+            '        session["logged_in"] = True\n        saved = session\n        saved.clear()',
+        ),
+        (
+            '    password = request.form.get("password")\n    if password == app.config["ADMIN_PASSWORD"]:\n        session["logged_in"] = True\n        return redirect("/")',
+            '    password = request.form.get("password")\n    if False:\n        pass\n    else:\n        password = "fixed-unrelated-value"\n        if password == app.config["ADMIN_PASSWORD"]:\n            session["logged_in"] = True\n            return redirect("/")',
+        ),
+        (
+            '@app.route("/create")\n@login_required',
+            'def discard_guard(fn):\n    return lambda: "created"\n\n@app.route("/create")\n@discard_guard\n@login_required',
+        ),
     ],
 )
-def test_flask_authority326_public_scanner_rejects_adjacent_broken_custody(tmp_path, before, after):
+def test_flask_authority326_public_scanner_rejects_adjacent_broken_custody(
+    tmp_path, before, after
+):
     source = _FLASK_AUTHORITY_SOURCE314.replace(before, after)
     assert source != _FLASK_AUTHORITY_SOURCE314
     (tmp_path / "app.py").write_text(source)
     with audit._security_only_scan_context(True):
-        report = audit.security_scan(tmp_path, cache_enabled=False, defect_policy="source-role-v1")
+        report = audit.security_scan(
+            tmp_path, cache_enabled=False, defect_policy="source-role-v1"
+        )
     assert report["audit_coverage"]["complete"] is True
     rows = report["finding_tier_report"]["ledger"]
-    credentials = [row for row in rows if row["raw_finding"].get("facts", {}).get("name") in {"ADMIN_PASSWORD", "SECRET_KEY"}]
-    assert {row["raw_finding"]["facts"]["name"] for row in credentials} == {"ADMIN_PASSWORD", "SECRET_KEY"}
+    credentials = [
+        row
+        for row in rows
+        if row["raw_finding"].get("facts", {}).get("name")
+        in {"ADMIN_PASSWORD", "SECRET_KEY"}
+    ]
+    assert {row["raw_finding"]["facts"]["name"] for row in credentials} == {
+        "ADMIN_PASSWORD",
+        "SECRET_KEY",
+    }
     assert {row["tier"] for row in credentials} == {"NEEDS_CONTEXT"}
     assert all("credential_authority_observation" not in row for row in credentials)
 
 
-@pytest.mark.parametrize("binding", [
-    "for value in payload:\n        SINK",
-    "with payload as value:\n        SINK",
-    "match payload:\n        case value:\n            SINK",
-])
+@pytest.mark.parametrize(
+    "binding",
+    [
+        "for value in payload:\n        SINK",
+        "with payload as value:\n        SINK",
+        "match payload:\n        case value:\n            SINK",
+    ],
+)
 @pytest.mark.parametrize("origin", ["parameter", "request", "safe-rebind"])
-@pytest.mark.parametrize("sink, code", [
-    ("open(value)", "SECURITY_PATH_TRAVERSAL"),
-    ("requests.get(value)", "SECURITY_SSRF"),
-])
-def test_control_binding_keeps_parameter_and_request_origins_distinct(binding, origin, sink, code):
+@pytest.mark.parametrize(
+    "sink, code",
+    [
+        ("open(value)", "SECURITY_PATH_TRAVERSAL"),
+        ("requests.get(value)", "SECURITY_SSRF"),
+    ],
+)
+def test_control_binding_keeps_parameter_and_request_origins_distinct(
+    binding, origin, sink, code
+):
     setup = ""
     if origin == "request":
         setup = "    payload = request.args.get('path')\n"
     elif origin == "safe-rebind":
         setup = "    value = request.args.get('path')\n    payload = ('fixed',)\n"
-    source = ("from flask import request\nimport requests\n"
-              "def consume(payload):\n" + setup + "    "
-              + binding.replace("SINK", sink) + "\n")
+    source = (
+        "from flask import request\nimport requests\n"
+        "def consume(payload):\n"
+        + setup
+        + "    "
+        + binding.replace("SINK", sink)
+        + "\n"
+    )
     findings = _premise_scan(source)
     selected = [row for row in findings if row["code"] == code]
     assert bool(selected) is (origin == "request")
 
 
-@pytest.mark.parametrize("binding", [
-    "for value in payload:\n        cursor.execute(f'SELECT * FROM records WHERE id={value}')",
-    "with payload as value:\n        cursor.execute(f'SELECT * FROM records WHERE id={value}')",
-    "match payload:\n        case value:\n            cursor.execute(f'SELECT * FROM records WHERE id={value}')",
-])
+@pytest.mark.parametrize(
+    "binding",
+    [
+        "for value in payload:\n        cursor.execute(f'SELECT * FROM records WHERE id={value}')",
+        "with payload as value:\n        cursor.execute(f'SELECT * FROM records WHERE id={value}')",
+        "match payload:\n        case value:\n            cursor.execute(f'SELECT * FROM records WHERE id={value}')",
+    ],
+)
 def test_control_binding_keeps_generic_sql_parameter_candidates(binding):
-    findings = _premise_scan("import sqlite3\ndef consume(payload):\n"
-                             "    cursor = sqlite3.connect(':memory:').cursor()\n    " + binding + "\n")
+    findings = _premise_scan(
+        "import sqlite3\ndef consume(payload):\n"
+        "    cursor = sqlite3.connect(':memory:').cursor()\n    " + binding + "\n"
+    )
     assert any(row["code"] == "SECURITY_SQL_INJECTION" for row in findings)
 
 
-@pytest.mark.parametrize("source, expected", [
-    ("request.args.get('path')", True),
-    ("payload", False),
-])
+@pytest.mark.parametrize(
+    "source, expected",
+    [
+        ("request.args.get('path')", True),
+        ("payload", False),
+    ],
+)
 def test_multi_item_with_inspects_each_context_after_prior_binding(source, expected):
     # Static abstract-flow ordering only; captured target code is never executed.
     findings = _premise_scan(
@@ -2310,49 +2384,78 @@ def test_multi_item_with_inspects_each_context_after_prior_binding(source, expec
     assert any(row["code"] == "SECURITY_SSRF" for row in findings) is expected
 
 
-@pytest.mark.parametrize("guard, body_possible", [
-    ("False", False), ("True", True), ("not True", False),
-    ("1 == 2", False), ("'x' in ['y']", False),
-    ("True and False", False), ("False or True", True),
-    ("unknown", None), ("check()", None), ("config.enabled", None),
-    ("values[0]", None), ("0 is 1", None),
-    ("unknown or True", None), ("unknown and False", None),
-    ("{'x': 1} == {'x': 1}", True),
-])
+@pytest.mark.parametrize(
+    "guard, body_possible",
+    [
+        ("False", False),
+        ("True", True),
+        ("not True", False),
+        ("1 == 2", False),
+        ("'x' in ['y']", False),
+        ("True and False", False),
+        ("False or True", True),
+        ("unknown", None),
+        ("check()", None),
+        ("config.enabled", None),
+        ("values[0]", None),
+        ("0 is 1", None),
+        ("unknown or True", None),
+        ("unknown and False", None),
+        ("{'x': 1} == {'x': 1}", True),
+    ],
+)
 @pytest.mark.parametrize("source_in_body", [False, True])
-@pytest.mark.parametrize("sink, code", [
-    ("requests.get(value)", "SECURITY_SSRF"),
-    ("open(value)", "SECURITY_PATH_TRAVERSAL"),
-    ("eval(value)", "SECURITY_DYNAMIC_EXECUTION"),
-    ("cursor.execute('SELECT ' + value)", "SECURITY_SQL_INJECTION"),
-])
-def test_literal_branch_reaching_definitions_keep_only_possible_source_writes(guard, body_possible, source_in_body, sink, code):
+@pytest.mark.parametrize(
+    "sink, code",
+    [
+        ("requests.get(value)", "SECURITY_SSRF"),
+        ("open(value)", "SECURITY_PATH_TRAVERSAL"),
+        ("eval(value)", "SECURITY_DYNAMIC_EXECUTION"),
+        ("cursor.execute('SELECT ' + value)", "SECURITY_SQL_INJECTION"),
+    ],
+)
+def test_literal_branch_reaching_definitions_keep_only_possible_source_writes(
+    guard, body_possible, source_in_body, sink, code
+):
     dangerous = "value = request.args['url']"
-    source = ("from flask import request\nimport requests, sqlite3\n"
-              "def consume(unknown, config, values):\n"
-              "    cursor = sqlite3.connect(':memory:').cursor()\n"
-              "    value = 'fixed'\n"
-              f"    if {guard}:\n        {dangerous if source_in_body else 'pass'}\n"
-              f"    else:\n        {'pass' if source_in_body else dangerous}\n"
-              f"    {sink}\n")
-    selected = [row for row in _premise_scan(source) if row["code"] == code
-                and (code != "SECURITY_DYNAMIC_EXECUTION"
-                     or row.get("facts", {}).get("security_precondition", {}).get("status") == "SUPPORTED")]
+    source = (
+        "from flask import request\nimport requests, sqlite3\n"
+        "def consume(unknown, config, values):\n"
+        "    cursor = sqlite3.connect(':memory:').cursor()\n"
+        "    value = 'fixed'\n"
+        f"    if {guard}:\n        {dangerous if source_in_body else 'pass'}\n"
+        f"    else:\n        {'pass' if source_in_body else dangerous}\n"
+        f"    {sink}\n"
+    )
+    selected = [
+        row
+        for row in _premise_scan(source)
+        if row["code"] == code
+        and (
+            code != "SECURITY_DYNAMIC_EXECUTION"
+            or row.get("facts", {}).get("security_precondition", {}).get("status")
+            == "SUPPORTED"
+        )
+    ]
     expected = body_possible is None or body_possible == source_in_body
     assert bool(selected) is expected
 
 
 @pytest.mark.parametrize("guard", ["False", "True", "unknown", "check()"])
 def test_literal_branch_overwrite_keeps_possible_taint_until_proven_killed(guard):
-    source = ("from flask import request\nimport requests\ndef consume(unknown):\n"
-              "    value = request.args['url']\n"
-              f"    if {guard}:\n        value = 'fixed'\n"
-              "    else:\n        value = 'also-fixed'\n"
-              "    requests.get(value)\n")
+    source = (
+        "from flask import request\nimport requests\ndef consume(unknown):\n"
+        "    value = request.args['url']\n"
+        f"    if {guard}:\n        value = 'fixed'\n"
+        "    else:\n        value = 'also-fixed'\n"
+        "    requests.get(value)\n"
+    )
     assert not any(row["code"] == "SECURITY_SSRF" for row in _premise_scan(source))
 
 
-@pytest.mark.parametrize("guard", ["[*items]", "{**items}", "1 < 'x'", "[0] * 100", "(flag := False)"])
+@pytest.mark.parametrize(
+    "guard", ["[*items]", "{**items}", "1 < 'x'", "[0] * 100", "(flag := False)"]
+)
 def test_literal_guard_unknown_syntax_never_removes_a_branch(guard):
     from factoryline.finite_capture import security_literal_branch_blocks
 

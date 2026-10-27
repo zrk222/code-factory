@@ -12,10 +12,29 @@ from factoryline.incremental_scheduler import (
     validate_schedule_manifest,
 )
 import ast
+from copy import deepcopy
 from test_runtime_audit_integrity import _JSON_TEST, _json_enum_graph
 from pathlib import Path
 from factoryline import intent_quality
 from factoryline import review_audits as audit
+
+
+def test_captured_inventory_deepcopy_preserves_immutable_paths_and_copies_containers(
+    tmp_path,
+):
+    path = tmp_path / "module.py"
+    inventory = capture.CapturedImportInventory(tmp_path, [path])
+    tree = ast.parse("value = 1")
+    tree.inventory = inventory
+    copied = deepcopy({"tree": tree, "changes": []})
+    assert copied["tree"] is not tree
+    assert copied["tree"].inventory is inventory
+    copied["changes"].append("new")
+    assert inventory.paths == {path: path}
+    with pytest.raises(TypeError):
+        copied["tree"].inventory.paths[path] = tmp_path / "other.py"
+    with pytest.raises(AttributeError):
+        copied["tree"].inventory.root = tmp_path / "other"
 
 
 @pytest.mark.parametrize(
@@ -1236,23 +1255,39 @@ def test_captured_package_root378_resolves_nested_regular_package_reexport(tmp_p
         root, [caller, package_init, util_init, public_module]
     )
 
-    assert capture.import_source_bases(root, caller, statement) == [caller.parent, root, root / "src"]
+    assert capture.import_source_bases(root, caller, statement) == [
+        caller.parent,
+        root,
+        root / "src",
+    ]
     assert capture.import_source_bases(
         root, caller, statement, captured_inventory=inventory
     ) == [caller.parent, root, root / "src", root / "ajenti-core"]
-    assert capture.resolve_import_source(
-        root, caller, statement, "aj.util.public", inventory, "public", captured=True
-    ) == public_module
-    assert capture.import_source_symbol(
-        root,
-        caller,
-        statement,
-        "aj.util.public",
-        "public",
-        public_module,
-        captured=True,
-        captured_inventory=inventory,
-    ) == "public"
+    assert (
+        capture.resolve_import_source(
+            root,
+            caller,
+            statement,
+            "aj.util.public",
+            inventory,
+            "public",
+            captured=True,
+        )
+        == public_module
+    )
+    assert (
+        capture.import_source_symbol(
+            root,
+            caller,
+            statement,
+            "aj.util.public",
+            "public",
+            public_module,
+            captured=True,
+            captured_inventory=inventory,
+        )
+        == "public"
+    )
 
 
 def test_captured_package_root378_preserves_root_shadow_and_ambiguous_targets(tmp_path):
@@ -1273,20 +1308,35 @@ def test_captured_package_root378_preserves_root_shadow_and_ambiguous_targets(tm
     shadowed = capture.CapturedImportInventory(
         root, [caller, package_init, util_init, public_module, shadow]
     )
-    assert capture.captured_import_parent_modules(
-        root, caller, statement, "aj.util.public", shadowed
-    ) is False
-    assert capture.resolve_import_source(
-        root, caller, statement, "aj.util.public", shadowed, "public", captured=True
-    ) is None
+    assert (
+        capture.captured_import_parent_modules(
+            root, caller, statement, "aj.util.public", shadowed
+        )
+        is False
+    )
+    assert (
+        capture.resolve_import_source(
+            root, caller, statement, "aj.util.public", shadowed, "public", captured=True
+        )
+        is None
+    )
 
     competing = root / "aj" / "util" / "public.py"
     ambiguous = capture.CapturedImportInventory(
         root, [caller, package_init, util_init, public_module, competing]
     )
-    assert capture.resolve_import_source(
-        root, caller, statement, "aj.util.public", ambiguous, "public", captured=True
-    ) is None
+    assert (
+        capture.resolve_import_source(
+            root,
+            caller,
+            statement,
+            "aj.util.public",
+            ambiguous,
+            "public",
+            captured=True,
+        )
+        is None
+    )
 
 
 def test_captured_package_root378_stops_at_missing_regular_package_link(tmp_path):
@@ -1302,7 +1352,9 @@ def test_captured_package_root378_stops_at_missing_regular_package_link(tmp_path
     ) == [caller.parent, root, root / "src", root / "source-tree"]
 
 
-def test_captured_package_root378_module_resolution_uses_same_captured_package_root(tmp_path):
+def test_captured_package_root378_module_resolution_uses_same_captured_package_root(
+    tmp_path,
+):
     import ast
 
     source = tmp_path / "ajenti-core" / "aj" / "plugins.py"
@@ -1342,8 +1394,12 @@ def test_captured_package_root378_module_resolution_uses_same_captured_package_r
 def test_live_import_path_requires_real_contained_file(tmp_path):
     source = tmp_path / "owned.py"
     source.write_text("value = 1\n", encoding="utf-8")
-    assert capture.import_source_bases(tmp_path, source, ast.parse("import dep").body[0]) == [
-        tmp_path, tmp_path, tmp_path / "src",
+    assert capture.import_source_bases(
+        tmp_path, source, ast.parse("import dep").body[0]
+    ) == [
+        tmp_path,
+        tmp_path,
+        tmp_path / "src",
     ]
     assert capture.live_import_path(source, tmp_path) == source.resolve()
     assert capture.live_import_path(tmp_path / "missing.py", tmp_path) is None
@@ -1351,65 +1407,122 @@ def test_live_import_path_requires_real_contained_file(tmp_path):
     assert capture.live_import_path(source, tmp_path / "different-root") is None
 
 
-@pytest.mark.parametrize("imports", [
-    "import pkg.one\nimport pkg.two\nimport pkg\n",
-    "import pkg.one, pkg.two\n",
-    "import pkg\nimport pkg\n",
-])
+@pytest.mark.parametrize(
+    "imports",
+    [
+        "import pkg.one\nimport pkg.two\nimport pkg\n",
+        "import pkg.one, pkg.two\n",
+        "import pkg\nimport pkg\n",
+    ],
+)
 def test_captured_namespace_root378_repeated_imports_keep_namespace_only(imports):
-    from factoryline.credential_role_constructor_provider import _terminal_imported_module_receiver
+    from factoryline.credential_role_constructor_provider import (
+        _terminal_imported_module_receiver,
+    )
 
-    tree = ast.parse(imports + "consume(pkg.context)\nconsume(pkg)\nconsume(pkg.__dict__)\n")
-    parents = {id(child): node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
+    tree = ast.parse(
+        imports + "consume(pkg.context)\nconsume(pkg)\nconsume(pkg.__dict__)\n"
+    )
+    parents = {
+        id(child): node
+        for node in ast.walk(tree)
+        for child in ast.iter_child_nodes(node)
+    }
     calls = [node for node in tree.body if isinstance(node, ast.Expr)]
     namespace = calls[0].value.args[0].value
-    assert _terminal_imported_module_receiver(namespace, parents, audit, "pkg.util.public")
-    assert not _terminal_imported_module_receiver(calls[0].value.args[0], parents, audit, "pkg.util.public")
-    assert not _terminal_imported_module_receiver(calls[1].value.args[0], parents, audit, "pkg.util.public")
-    assert not _terminal_imported_module_receiver(calls[2].value.args[0].value, parents, audit, "pkg.util.public")
+    assert _terminal_imported_module_receiver(
+        namespace, parents, audit, "pkg.util.public"
+    )
+    assert not _terminal_imported_module_receiver(
+        calls[0].value.args[0], parents, audit, "pkg.util.public"
+    )
+    assert not _terminal_imported_module_receiver(
+        calls[1].value.args[0], parents, audit, "pkg.util.public"
+    )
+    assert not _terminal_imported_module_receiver(
+        calls[2].value.args[0].value, parents, audit, "pkg.util.public"
+    )
 
 
-@pytest.mark.parametrize("source", [
-    "import pkg\nimport other as pkg\nconsume(pkg.context)\n",
-    "import pkg\nfrom other import pkg\nconsume(pkg.context)\n",
-    "import pkg\nimport pkg.one as pkg\nconsume(pkg.context)\n",
-    "import pkg\nimport pkg.one\npkg = other\nconsume(pkg.context)\n",
-    "import pkg\nimport pkg.one\ndef f(pkg):\n    consume(pkg.context)\n",
-    "import pkg\nimport pkg.one\ndef f():\n    pkg = other\n    consume(pkg.context)\n",
-])
+@pytest.mark.parametrize(
+    "source",
+    [
+        "import pkg\nimport other as pkg\nconsume(pkg.context)\n",
+        "import pkg\nfrom other import pkg\nconsume(pkg.context)\n",
+        "import pkg\nimport pkg.one as pkg\nconsume(pkg.context)\n",
+        "import pkg\nimport pkg.one\npkg = other\nconsume(pkg.context)\n",
+        "import pkg\nimport pkg.one\ndef f(pkg):\n    consume(pkg.context)\n",
+        "import pkg\nimport pkg.one\ndef f():\n    pkg = other\n    consume(pkg.context)\n",
+    ],
+)
 def test_captured_namespace_root378_rebinding_and_local_shadows_stay_unknown(source):
-    from factoryline.credential_role_constructor_provider import _terminal_imported_module_receiver
+    from factoryline.credential_role_constructor_provider import (
+        _terminal_imported_module_receiver,
+    )
 
     tree = ast.parse(source)
-    parents = {id(child): node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
-    node = next(item for item in ast.walk(tree) if isinstance(item, ast.Attribute) and item.attr == "context")
-    assert not _terminal_imported_module_receiver(node.value, parents, audit, "pkg.util.public")
+    parents = {
+        id(child): node
+        for node in ast.walk(tree)
+        for child in ast.iter_child_nodes(node)
+    }
+    node = next(
+        item
+        for item in ast.walk(tree)
+        if isinstance(item, ast.Attribute) and item.attr == "context"
+    )
+    assert not _terminal_imported_module_receiver(
+        node.value, parents, audit, "pkg.util.public"
+    )
 
 
-@pytest.mark.parametrize("expression,escapes", [
-    ("key in sys.modules", False),
-    ("key not in sys.modules", False),
-    ("sys.modules in values", True),
-    ("low < key in sys.modules", True),
-    ("key in sys.modules is other", True),
-    ("consume(sys.modules)", True),
-    ("[sys.modules]", True),
-])
-def test_captured_registry_membership378_only_observes_exact_right_operand(expression, escapes):
-    from factoryline.credential_role_constructor_provider import _terminal_registry_escape_use
+@pytest.mark.parametrize(
+    "expression,escapes",
+    [
+        ("key in sys.modules", False),
+        ("key not in sys.modules", False),
+        ("sys.modules in values", True),
+        ("low < key in sys.modules", True),
+        ("key in sys.modules is other", True),
+        ("consume(sys.modules)", True),
+        ("[sys.modules]", True),
+    ],
+)
+def test_captured_registry_membership378_only_observes_exact_right_operand(
+    expression, escapes
+):
+    from factoryline.credential_role_constructor_provider import (
+        _terminal_registry_escape_use,
+    )
 
     tree = ast.parse(expression)
-    parents = {id(child): node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
-    node = next(item for item in ast.walk(tree) if isinstance(item, ast.Attribute) and item.attr == "modules")
-    assert _terminal_registry_escape_use(
-        node, parents[id(node)], {"sys.modules"}, {}, audit, {}, "pkg.api"
-    ) is escapes
-    assert _terminal_registry_escape_use(
-        node, parents[id(node)], {"other.modules"}, {}, audit, {}, "pkg.api"
-    ) is True
+    parents = {
+        id(child): node
+        for node in ast.walk(tree)
+        for child in ast.iter_child_nodes(node)
+    }
+    node = next(
+        item
+        for item in ast.walk(tree)
+        if isinstance(item, ast.Attribute) and item.attr == "modules"
+    )
+    assert (
+        _terminal_registry_escape_use(
+            node, parents[id(node)], {"sys.modules"}, {}, audit, {}, "pkg.api"
+        )
+        is escapes
+    )
+    assert (
+        _terminal_registry_escape_use(
+            node, parents[id(node)], {"other.modules"}, {}, audit, {}, "pkg.api"
+        )
+        is True
+    )
 
 
-def test_captured_registry_membership378_unknown_key_effects_are_not_certified(tmp_path):
+def test_captured_registry_membership378_unknown_key_effects_are_not_certified(
+    tmp_path,
+):
     import hashlib
     from factoryline.credential_role_constructor_provider import SourceSnapshotIndex
     from factoryline.credential_role_identity_effects import summarize_identity_effect
@@ -1420,14 +1533,21 @@ def test_captured_registry_membership378_unknown_key_effects_are_not_certified(t
     digest = hashlib.sha256(raw).hexdigest()
     tree._oracle_source_sha256 = digest
     index = SourceSnapshotIndex(tmp_path, {path: tree}, {path: raw}, {path: digest})
-    summary = summarize_identity_effect(tree.body[1], path, index, {"key": "KEY"}, strict_calls=True)
+    summary = summarize_identity_effect(
+        tree.body[1], path, index, {"key": "KEY"}, strict_calls=True
+    )
     assert summary.status == "UNKNOWN"
     assert summary.unknowns
 
 
-@pytest.mark.parametrize("helper_name", [
-    "resolve_import_source", "_captured_regular_package_root", "_captured_path_set",
-])
+@pytest.mark.parametrize(
+    "helper_name",
+    [
+        "resolve_import_source",
+        "_captured_regular_package_root",
+        "_captured_path_set",
+    ],
+)
 def test_import_resolution_helper_binding_and_code_mutation_change_native_epoch(
     tmp_path, monkeypatch, helper_name
 ):

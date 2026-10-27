@@ -23,35 +23,49 @@ from factoryline.independent_execution import (
 )
 
 
-@pytest.mark.parametrize("sink,code", [
-    ("eval(self.config)", "SECURITY_DYNAMIC_EXECUTION"),
-    ("os.system(self.config)", "SECURITY_OS_COMMAND"),
-    ("subprocess.call(self.config, shell=True)", "SECURITY_SHELL_COMMAND"),
-])
-def test_shared_storage376_request_writer_reaches_exact_declared_field(tmp_path, sink, code):
+@pytest.mark.parametrize(
+    "sink,code",
+    [
+        ("eval(self.config)", "SECURITY_DYNAMIC_EXECUTION"),
+        ("os.system(self.config)", "SECURITY_OS_COMMAND"),
+        ("subprocess.call(self.config, shell=True)", "SECURITY_SHELL_COMMAND"),
+    ],
+)
+def test_shared_storage376_request_writer_reaches_exact_declared_field(
+    tmp_path, sink, code
+):
     (tmp_path / "empty.py").write_bytes(b"")
     (tmp_path / "metadata.py").write_text(
         "import os\nfrom flask import request\n"
         "def metadata():\n    log(ip=request.remote_addr)\n"
         "    file = request.files['file']\n    filename = file.filename\n"
         "    log(filename)\n    return os.name\n",
-        encoding="utf-8")
+        encoding="utf-8",
+    )
     (tmp_path / "models.py").write_text(
         "import os, subprocess\nfrom sqlalchemy import Column, Text\n"
         "from sqlalchemy.orm import declarative_base\nBase = declarative_base()\n"
         "class Entry(Base):\n    __tablename__ = 'entry'\n"
         "    config = Column(Text)\n    def consume(self):\n"
-        f"        return {sink}\n", encoding="utf-8")
+        f"        return {sink}\n",
+        encoding="utf-8",
+    )
     (tmp_path / "routes.py").write_text(
         "from flask import Flask, request\nfrom models import Entry\n"
         "app = Flask(__name__)\n@app.route('/set', methods=['POST'])\n"
         "def update():\n    value = request.form['code']\n"
-        "    Entry.query.update({'config': value})\n", encoding="utf-8")
+        "    Entry.query.update({'config': value})\n",
+        encoding="utf-8",
+    )
     with review_audits._security_only_scan_context(True):
-        report = review_audits.security_scan(tmp_path, cache_enabled=False,
-                                            defect_policy="source-role-v3")
-    rows = [row for row in report["finding_tier_report"]["ledger"]
-            if row["raw_finding"]["code"] == code]
+        report = review_audits.security_scan(
+            tmp_path, cache_enabled=False, defect_policy="source-role-v3"
+        )
+    rows = [
+        row
+        for row in report["finding_tier_report"]["ledger"]
+        if row["raw_finding"]["code"] == code
+    ]
     assert len(rows) == 1
     assert rows[0]["tier"] == "SUPPORTED_DEFECT"
     premise = rows[0]["raw_finding"]["facts"]["security_precondition"]
@@ -59,73 +73,127 @@ def test_shared_storage376_request_writer_reaches_exact_declared_field(tmp_path,
     assert witness["field"]["attribute"] == "config"
     assert witness["model"]["class"] == "Entry"
     assert witness["writer"]["path"] == "routes.py"
-    assert witness["writer"]["sha256"] == hashlib.sha256(
-        (tmp_path / "routes.py").read_bytes()).hexdigest()
+    assert (
+        witness["writer"]["sha256"]
+        == hashlib.sha256((tmp_path / "routes.py").read_bytes()).hexdigest()
+    )
     assert premise["runtime_execution"] == "not_performed"
 
 
-@pytest.mark.parametrize("case", [
-    "dead_writer", "duplicate_key", "unpacked_key", "shadowed_str", "mutated_str",
-    "alias_overwrite", "reflective_overwrite", "dict_overwrite", "custom_query", "empty_filter",
-    "different_field", "constant_writer", "unsupported_pickle_kind", "inherited_query", "false_filter",
-    "request_escape", "request_override", "os_escape", "os_override", "selector_escape",
-])
+@pytest.mark.parametrize(
+    "case",
+    [
+        "dead_writer",
+        "duplicate_key",
+        "unpacked_key",
+        "shadowed_str",
+        "mutated_str",
+        "alias_overwrite",
+        "reflective_overwrite",
+        "dict_overwrite",
+        "custom_query",
+        "empty_filter",
+        "different_field",
+        "constant_writer",
+        "unsupported_pickle_kind",
+        "inherited_query",
+        "false_filter",
+        "request_escape",
+        "request_override",
+        "os_escape",
+        "os_override",
+        "selector_escape",
+    ],
+)
 def test_shared_storage376_rejects_unsupported_persisted_premises(tmp_path, case):
-    prefix = {"alias_overwrite": "        alias = self\n        alias.config = '1'\n",
-              "reflective_overwrite": "        setattr(self, 'config', '1')\n",
-              "dict_overwrite": "        self.__dict__['config'] = '1'\n"}.get(case, "")
+    prefix = {
+        "alias_overwrite": "        alias = self\n        alias.config = '1'\n",
+        "reflective_overwrite": "        setattr(self, 'config', '1')\n",
+        "dict_overwrite": "        self.__dict__['config'] = '1'\n",
+    }.get(case, "")
     query = "    query = None\n" if case == "custom_query" else ""
-    sink = "pickle.loads(self.config)" if case == "unsupported_pickle_kind" else "eval(self.config)"
+    sink = (
+        "pickle.loads(self.config)"
+        if case == "unsupported_pickle_kind"
+        else "eval(self.config)"
+    )
     (tmp_path / "models.py").write_text(
         "import pickle\nfrom sqlalchemy import Column, Text\n"
         "from sqlalchemy.orm import declarative_base\nBase = declarative_base()\n"
         + ("Base.query = None\n" if case == "inherited_query" else "")
         + "class Entry(Base):\n    __tablename__ = 'entry'\n    config = Column(Text)\n"
-        + query + "    def consume(self):\n" + prefix + f"        return {sink}\n",
-        encoding="utf-8")
+        + query
+        + "    def consume(self):\n"
+        + prefix
+        + f"        return {sink}\n",
+        encoding="utf-8",
+    )
     argument = "str=lambda value: '1'" if case == "shadowed_str" else ""
-    dictionary = {"duplicate_key": "{'config': value, 'config': '1'}",
-                  "unpacked_key": "{'config': value, **{'config': '1'}}",
-                  "different_field": "{'other': value}",
-                  "constant_writer": "{'config': '1'}"}.get(case, "{'config': value}")
+    dictionary = {
+        "duplicate_key": "{'config': value, 'config': '1'}",
+        "unpacked_key": "{'config': value, **{'config': '1'}}",
+        "different_field": "{'other': value}",
+        "constant_writer": "{'config': '1'}",
+    }.get(case, "{'config': value}")
     if case in {"shadowed_str", "mutated_str"}:
         dictionary = "{'config': str(value)}"
-    receiver = {"empty_filter": "Entry.query.filter(False)",
-                "false_filter": "Entry.query.filter(1 == 2)"}.get(case, "Entry.query")
+    receiver = {
+        "empty_filter": "Entry.query.filter(False)",
+        "false_filter": "Entry.query.filter(1 == 2)",
+    }.get(case, "Entry.query")
     write = f"    {receiver}.update({dictionary})\n"
     if case == "dead_writer":
         write = "    if False:\n    " + write
-    mutation = {"mutated_str": "import builtins\nbuiltins.str = lambda value: '1'\n",
-                "request_escape": "mutate(request)\n",
-                "request_override": "request.form = fake\n",
-                "os_escape": "import os\nmutate(os)\n",
-                "os_override": "import os\nos.system = fake\n",
-                "selector_escape": "import os\nrequest.files[mutate(os)]\n"}.get(case, "")
+    mutation = {
+        "mutated_str": "import builtins\nbuiltins.str = lambda value: '1'\n",
+        "request_escape": "mutate(request)\n",
+        "request_override": "request.form = fake\n",
+        "os_escape": "import os\nmutate(os)\n",
+        "os_override": "import os\nos.system = fake\n",
+        "selector_escape": "import os\nrequest.files[mutate(os)]\n",
+    }.get(case, "")
     (tmp_path / "routes.py").write_text(
-        "from flask import request\nfrom models import Entry\n" + mutation
-        + f"def update({argument}):\n    value = request.form['code']\n" + write,
-        encoding="utf-8")
+        "from flask import request\nfrom models import Entry\n"
+        + mutation
+        + f"def update({argument}):\n    value = request.form['code']\n"
+        + write,
+        encoding="utf-8",
+    )
     with review_audits._security_only_scan_context(True):
-        report = review_audits.security_scan(tmp_path, cache_enabled=False,
-                                            defect_policy="source-role-v3")
-    code = "SECURITY_UNSAFE_DESERIALIZATION" if case == "unsupported_pickle_kind" else "SECURITY_DYNAMIC_EXECUTION"
-    rows = [row for row in report["finding_tier_report"]["ledger"]
-            if row["raw_finding"]["code"] == code]
+        report = review_audits.security_scan(
+            tmp_path, cache_enabled=False, defect_policy="source-role-v3"
+        )
+    code = (
+        "SECURITY_UNSAFE_DESERIALIZATION"
+        if case == "unsupported_pickle_kind"
+        else "SECURITY_DYNAMIC_EXECUTION"
+    )
+    rows = [
+        row
+        for row in report["finding_tier_report"]["ledger"]
+        if row["raw_finding"]["code"] == code
+    ]
     assert len(rows) == 1
     assert rows[0]["tier"] != "SUPPORTED_DEFECT"
 
 
-@pytest.mark.parametrize("source", [
-    "def run():\n    return\n    eval(value)\n",
-    "class Owner:\n    def run(self):\n        return\n        eval(value)\n",
-])
+@pytest.mark.parametrize(
+    "source",
+    [
+        "def run():\n    return\n    eval(value)\n",
+        "class Owner:\n    def run(self):\n        return\n        eval(value)\n",
+    ],
+)
 def test_shared_storage376_lexical_parent_binding_preserves_dead_sink(source):
     tree = ast.parse(source)
     review_integrity.bind_security_call_scopes(tree)
     call = next(node for node in ast.walk(tree) if isinstance(node, ast.Call))
-    from factoryline.semantic_credential_sensor import security_precondition_path_possible
+    from factoryline.semantic_credential_sensor import (
+        security_precondition_path_possible,
+    )
 
     assert not security_precondition_path_possible(call)
+
 
 _CAPTURE = (
     "import pytest\nfrom common import VALUES\n"
@@ -197,32 +265,39 @@ def _owned_field_successors(function, value, parents):
     """Test resolver: expand one class-owned field into every captured read."""
     parent = parents.get(id(value))
     if isinstance(parent, ast.Assign) and parent.value is value:
-        targets = parent.targets
-        if len(targets) != 1 or _field_use_chain(targets[0]) != ["self", "account"]:
-            return None
-        owner = parents.get(id(function))
-        if not isinstance(owner, ast.ClassDef):
-            return ()
-        stores = [
-            node
-            for node in ast.walk(owner)
-            if isinstance(node, ast.Attribute)
-            and _field_use_chain(node) == ["self", "account"]
-            and isinstance(node.ctx, (ast.Store, ast.Del))
-        ]
-        if stores != [targets[0]]:
-            return ()
-        reads = [
-            node
-            for node in ast.walk(owner)
-            if isinstance(node, ast.Attribute)
-            and _field_use_chain(node) == ["self", "account"]
-            and isinstance(node.ctx, ast.Load)
-        ]
-        if not reads:
-            return ()
-        scopes = [( _field_use_scope(read, parents), read) for read in reads]
-        return scopes
+        return _owned_field_assignment_successors(function, parent, parents)
+    return _owned_field_read_successors(function, value, parents)
+
+
+def _owned_field_assignment_successors(function, assignment, parents):
+    targets = assignment.targets
+    if len(targets) != 1 or _field_use_chain(targets[0]) != ["self", "account"]:
+        return None
+    owner = parents.get(id(function))
+    if not isinstance(owner, ast.ClassDef):
+        return ()
+    stores = [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Attribute)
+        and _field_use_chain(node) == ["self", "account"]
+        and isinstance(node.ctx, (ast.Store, ast.Del))
+    ]
+    if stores != [targets[0]]:
+        return ()
+    reads = [
+        node
+        for node in ast.walk(owner)
+        if isinstance(node, ast.Attribute)
+        and _field_use_chain(node) == ["self", "account"]
+        and isinstance(node.ctx, ast.Load)
+    ]
+    if not reads:
+        return ()
+    return [(_field_use_scope(read, parents), read) for read in reads]
+
+
+def _owned_field_read_successors(function, value, parents):
     chain = _field_use_chain(value) if isinstance(value, ast.Attribute) else []
     if chain[:2] == ["self", "account"]:
         parent = parents.get(id(value))
@@ -248,10 +323,16 @@ def _owned_field_successors(function, value, parents):
 def _class_field_graph(source, terminal="consume"):
     tree = ast.parse(source)
     parents = {
-        id(child): node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)
+        id(child): node
+        for node in ast.walk(tree)
+        for child in ast.iter_child_nodes(node)
     }
     owner = tree.body[0]
-    setup = next(node for node in owner.body if isinstance(node, ast.FunctionDef) and node.name == "setUp")
+    setup = next(
+        node
+        for node in owner.body
+        if isinstance(node, ast.FunctionDef) and node.name == "setUp"
+    )
     creation = next(node for node in ast.walk(setup) if isinstance(node, ast.Call))
 
     def scope_of(node):
@@ -312,13 +393,11 @@ def test_captured_value_use_closure_rejects_owned_field_escape_or_rebinding():
 
 
 def test_captured_value_use_closure_does_not_assume_opaque_positional_calls_preserve_values():
-    tree = ast.parse(
-        "def exercise():\n"
-        " result = opaque(build())\n"
-        " consume(result)\n"
-    )
+    tree = ast.parse("def exercise():\n result = opaque(build())\n consume(result)\n")
     parents = {
-        id(child): node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)
+        id(child): node
+        for node in ast.walk(tree)
+        for child in ast.iter_child_nodes(node)
     }
     function = tree.body[0]
     build = next(
@@ -335,20 +414,24 @@ def test_captured_value_use_closure_does_not_assume_opaque_positional_calls_pres
     def consumer(_function, value):
         return (
             value
-            if isinstance(value, ast.Call)
-            and ast.unparse(value.func) == "consume"
+            if isinstance(value, ast.Call) and ast.unparse(value.func) == "consume"
             else None
         )
 
-    assert finite.captured_value_use_closure(
-        function, build, parents, scope_of, lambda _function: None, consumer
-    ) is None
+    assert (
+        finite.captured_value_use_closure(
+            function, build, parents, scope_of, lambda _function: None, consumer
+        )
+        is None
+    )
 
 
 def test_captured_value_use_closure_bounds_caller_supplied_field_edges():
     tree = ast.parse("def exercise():\n    build()\n")
     parents = {
-        id(child): node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)
+        id(child): node
+        for node in ast.walk(tree)
+        for child in ast.iter_child_nodes(node)
     }
     function = tree.body[0]
     call = next(node for node in ast.walk(function) if isinstance(node, ast.Call))
@@ -918,29 +1001,53 @@ def test_pickle_origin_rejects_non_native_serializer_namespace():
     [
         ("", "requests.get = replacement", True),
         ("", "pickle.loads = replacement", False),
-        ("import sys as system\n", "system.modules['pickle'].loads = replacement", False),
-        ("import sys as system\n", "setattr(getattr(system, 'modules')['pickle'], 'loads', replacement)", False),
-        ("import importlib as loader\n", "loader.import_module('pickle').loads = replacement", False),
+        (
+            "import sys as system\n",
+            "system.modules['pickle'].loads = replacement",
+            False,
+        ),
+        (
+            "import sys as system\n",
+            "setattr(getattr(system, 'modules')['pickle'], 'loads', replacement)",
+            False,
+        ),
+        (
+            "import importlib as loader\n",
+            "loader.import_module('pickle').loads = replacement",
+            False,
+        ),
         ("", "other = pickle\n    other.loads = replacement", False),
         ("", "opaque(pickle)", False),
     ],
 )
-def test_pickle_direct_origin_ignores_unrelated_module_mutations(extra_import, write, expected_origin):
+def test_pickle_direct_origin_ignores_unrelated_module_mutations(
+    extra_import, write, expected_origin
+):
     source = (
-        "import pickle\nimport requests\n" + extra_import
-        + "def roundtrip(value):\n    " + write
+        "import pickle\nimport requests\n"
+        + extra_import
+        + "def roundtrip(value):\n    "
+        + write
         + "\n    payload = pickle.dumps(value)\n    return pickle.loads(payload)\n"
     ).encode()
     caller = "test_case.py"
     tree = ast.parse(source)
     runtime._conditional_provider_parents(tree)
     # Resolve the selected call in EACH variant; import insertion changes its line.
-    load = next(node for node in ast.walk(tree) if isinstance(node, ast.Call)
-                and isinstance(node.func, ast.Attribute) and node.func.attr == "loads")
+    load = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "loads"
+    )
     span = runtime._fixed_program_span(load)
-    assert runtime._conditional_provider_v2_direct_origin(
-        {caller: source}, caller, span, review_audits
-    ) is None
+    assert (
+        runtime._conditional_provider_v2_direct_origin(
+            {caller: source}, caller, span, review_audits
+        )
+        is None
+    )
     origin = runtime._conditional_provider_v2_direct_origin(
         {caller: source}, caller, span, review_audits, serializer_namespace_only=True
     )
@@ -948,7 +1055,11 @@ def test_pickle_direct_origin_ignores_unrelated_module_mutations(extra_import, w
     if origin is not None:
         assert origin["status"] == "LOCAL_DIRECT_DUMPS_LOADS_ORIGIN"
         assert origin["origin_kind"] == "named_payload"
-        assert not {"typed_graph", "provider_witness", "negative_security_decision"}.intersection(origin)
+        assert not {
+            "typed_graph",
+            "provider_witness",
+            "negative_security_decision",
+        }.intersection(origin)
 
 
 def test_pickle_protocol_flow_rejects_serializer_alias_writes_and_escapes():
@@ -1012,12 +1123,30 @@ def test_pickle_protocol_flow_rejects_serializer_alias_writes_and_escapes():
             0,
         ),
         ("pickle.loads = replacement\n", 0),
-        ("other = pickle\nother.loads = lambda payload: print('unexpected effect')\n", 0),
-        ("def opaque(module):\n    module.loads = lambda payload: print('unexpected effect')\nopaque(pickle)\n", 0),
-        ("import sys\nversion = sys.version_info[:2]\nlimit = sys.maxsize\nexe = sys.executable\npresent = 'fixed' in sys.path\n", 1),
-        ("import sys\ndef opaque(module):\n    module.modules['pickle'].loads = lambda payload: None\nopaque(sys)\n", 0),
-        ("from sys import modules as mods\nother = mods['pickle']\nother.loads = lambda payload: None\n", 0),
-        ("from importlib import import_module as load\nother = load('pickle')\nother.loads = lambda payload: None\n", 0),
+        (
+            "other = pickle\nother.loads = lambda payload: print('unexpected effect')\n",
+            0,
+        ),
+        (
+            "def opaque(module):\n    module.loads = lambda payload: print('unexpected effect')\nopaque(pickle)\n",
+            0,
+        ),
+        (
+            "import sys\nversion = sys.version_info[:2]\nlimit = sys.maxsize\nexe = sys.executable\npresent = 'fixed' in sys.path\n",
+            1,
+        ),
+        (
+            "import sys\ndef opaque(module):\n    module.modules['pickle'].loads = lambda payload: None\nopaque(sys)\n",
+            0,
+        ),
+        (
+            "from sys import modules as mods\nother = mods['pickle']\nother.loads = lambda payload: None\n",
+            0,
+        ),
+        (
+            "from importlib import import_module as load\nother = load('pickle')\nother.loads = lambda payload: None\n",
+            0,
+        ),
     ],
 )
 def test_pickle_typed_v3_reuses_protocol_loop_origin_after_model_selection(
@@ -1228,13 +1357,16 @@ def _pickle_role_report(root, source, extra=None, policy="source-role-v1"):
 _PICKLE_ROLE_TEST = "import pickle\ndef test_roundtrip():\n    result = pickle.loads(pickle.dumps(object()))\n    assert result\n"
 
 
-@pytest.mark.parametrize("source", [
-    "import os\nos.system('python setup.py sdist bdist_wheel')\n",
-    "import os\nos.system('rm -rf dist build')\n",
-    "import os\nos.system('twine upload -s dist/*')\n",
-    "import subprocess\nsubprocess.check_call(['rmdir', '/s', '/q', 'node_modules'], cwd=selected_root, shell=True)\n",
-    "import subprocess as runner\nrunner.run(('fixed-tool', 'fixed-argument'), shell=True, timeout=1)\n",
-])
+@pytest.mark.parametrize(
+    "source",
+    [
+        "import os\nos.system('python setup.py sdist bdist_wheel')\n",
+        "import os\nos.system('rm -rf dist build')\n",
+        "import os\nos.system('twine upload -s dist/*')\n",
+        "import subprocess\nsubprocess.check_call(['rmdir', '/s', '/q', 'node_modules'], cwd=selected_root, shell=True)\n",
+        "import subprocess as runner\nrunner.run(('fixed-tool', 'fixed-argument'), shell=True, timeout=1)\n",
+    ],
+)
 def test_authored_command352_v3_retains_raw_and_unassessed_effects(tmp_path, source):
     v2 = _pickle_role_report(tmp_path, source, policy="source-role-v2")
     v3 = _pickle_role_report(tmp_path, source, policy="source-role-v3")
@@ -1247,71 +1379,117 @@ def test_authored_command352_v3_retains_raw_and_unassessed_effects(tmp_path, sou
     witness = row["source_role_review"]
     assert witness["role"] == "CAPTURED_LITERAL_PROCESS_COMMAND_INPUT"
     assert witness["safe_execution"] is False
-    assert witness["command_effects"] == witness["filesystem_and_cwd_authority"] == "UNASSESSED"
+    assert (
+        witness["command_effects"]
+        == witness["filesystem_and_cwd_authority"]
+        == "UNASSESSED"
+    )
     assert v3["defect_policy_decision"]["policy_id"] == "source-role-v3"
     assert v3["defect_policy_decision"]["clean"] is False
 
 
-@pytest.mark.parametrize("source,extra", [
-    ("import os\nos.system(command)\n", {}),
-    ("import os\nos.system('fixed ' + command)\n", {}),
-    ("import os\nos.system(f'fixed {command}')\n", {}),
-    ("import os\nos.system('first | second')\n", {}),
-    ("import os\nos.system('first; second')\n", {}),
-    ("import os\nos.system('first > output')\n", {}),
-    ("import os\nos.system('tool $(other)')\n", {}),
-    ("import os\nos.system('tool `other`')\n", {}),
-    ("import os\nos.system('%WINDIR%/tool')\n", {}),
-    ("import os\nos.system('python -cprint(42)')\n", {}),
-    ('import os\nos.system(\'python "-c" "print(42)"\')\n', {}),
-    ('import os\nos.system(\'python -""c "print(42)"\')\n', {}),
-    ('import os\nos.system(\'cmd /""c whoami\')\n', {}),
-    ('import os\nos.system(\'python -\\\\c "print(42)"\')\n', {}),
-    ("import os\nos.system('tool \\ud800')\n", {}),
-    ("import os\nos.system('tool \\u2603')\n", {}),
-    ("import subprocess\nsubprocess.run(['tool', argument], shell=True)\n", {}),
-    ("import subprocess\nsubprocess.run(['tool', *arguments], shell=True)\n", {}),
-    ("import subprocess\nsubprocess.run('tool', shell=enabled)\n", {}),
-    ("import subprocess\nsubprocess.run('tool', shell=True, **options)\n", {}),
-    ("import subprocess\nsubprocess.run('tool', shell=True, executable=other)\n", {}),
-    ("import subprocess\nsubprocess.run('tool', shell=True, env={})\n", {}),
-    ("import os\nos.system = replacement\nos.system('tool')\n", {}),
-    ("import os\ndef entry(os):\n    os.system('tool')\n", {}),
-    ("import os\nos.system('tool')\n", {"os.py": "def system(value): pass\n"}),
-    ("import os\nos.system('tool')\n", {"peer.py": "import os\nos.system = replacement\n"}),
-    ("import os\nos.system('tool')\n", {"peer.py": "import os as provider\nselected = provider\nselected.system = replacement\n"}),
-    ("from os import system as launch\nlaunch('fixed-tool --fixed-option')\n", {}),
-    ("from flask import request\nimport os\ndef entry():\n    os.system(request.args['cmd'])\n", {}),
-])
-def test_authored_command352_dynamic_and_provider_hazards_never_enter_context(tmp_path, source, extra):
+@pytest.mark.parametrize(
+    "source,extra",
+    [
+        ("import os\nos.system(command)\n", {}),
+        ("import os\nos.system('fixed ' + command)\n", {}),
+        ("import os\nos.system(f'fixed {command}')\n", {}),
+        ("import os\nos.system('first | second')\n", {}),
+        ("import os\nos.system('first; second')\n", {}),
+        ("import os\nos.system('first > output')\n", {}),
+        ("import os\nos.system('tool $(other)')\n", {}),
+        ("import os\nos.system('tool `other`')\n", {}),
+        ("import os\nos.system('%WINDIR%/tool')\n", {}),
+        ("import os\nos.system('python -cprint(42)')\n", {}),
+        ('import os\nos.system(\'python "-c" "print(42)"\')\n', {}),
+        ('import os\nos.system(\'python -""c "print(42)"\')\n', {}),
+        ("import os\nos.system('cmd /\"\"c whoami')\n", {}),
+        ("import os\nos.system('python -\\\\c \"print(42)\"')\n", {}),
+        ("import os\nos.system('tool \\ud800')\n", {}),
+        ("import os\nos.system('tool \\u2603')\n", {}),
+        ("import subprocess\nsubprocess.run(['tool', argument], shell=True)\n", {}),
+        ("import subprocess\nsubprocess.run(['tool', *arguments], shell=True)\n", {}),
+        ("import subprocess\nsubprocess.run('tool', shell=enabled)\n", {}),
+        ("import subprocess\nsubprocess.run('tool', shell=True, **options)\n", {}),
+        (
+            "import subprocess\nsubprocess.run('tool', shell=True, executable=other)\n",
+            {},
+        ),
+        ("import subprocess\nsubprocess.run('tool', shell=True, env={})\n", {}),
+        ("import os\nos.system = replacement\nos.system('tool')\n", {}),
+        ("import os\ndef entry(os):\n    os.system('tool')\n", {}),
+        ("import os\nos.system('tool')\n", {"os.py": "def system(value): pass\n"}),
+        (
+            "import os\nos.system('tool')\n",
+            {"peer.py": "import os\nos.system = replacement\n"},
+        ),
+        (
+            "import os\nos.system('tool')\n",
+            {
+                "peer.py": "import os as provider\nselected = provider\nselected.system = replacement\n"
+            },
+        ),
+        ("from os import system as launch\nlaunch('fixed-tool --fixed-option')\n", {}),
+        (
+            "from flask import request\nimport os\ndef entry():\n    os.system(request.args['cmd'])\n",
+            {},
+        ),
+    ],
+)
+def test_authored_command352_dynamic_and_provider_hazards_never_enter_context(
+    tmp_path, source, extra
+):
     prior = _pickle_role_report(tmp_path, source, extra, policy="source-role-v2")
     report = _pickle_role_report(tmp_path, source, extra, policy="source-role-v3")
     assert report["findings"] == prior["findings"]
     assert not report["context_reviews"]
 
 
-def test_authored_command352_reseal_recomputes_witness_and_missing_capture_blocks(tmp_path):
-    report = _pickle_role_report(tmp_path, "import os\nos.system('rm -rf fixed')\n", policy="source-role-v3")
-    report["finding_tier_report"]["ledger"][0]["source_role_review"]["safe_execution"] = True
+def test_authored_command352_reseal_recomputes_witness_and_missing_capture_blocks(
+    tmp_path,
+):
+    report = _pickle_role_report(
+        tmp_path, "import os\nos.system('rm -rf fixed')\n", policy="source-role-v3"
+    )
+    report["finding_tier_report"]["ledger"][0]["source_role_review"][
+        "safe_execution"
+    ] = True
     report["_primitive_source_bytes"] = dict(report._captured_sources)
     rebuilt = review_audits._seal_security_scan(report)
-    assert rebuilt["finding_tier_report"]["ledger"][0]["source_role_review"]["safe_execution"] is False
+    assert (
+        rebuilt["finding_tier_report"]["ledger"][0]["source_role_review"][
+            "safe_execution"
+        ]
+        is False
+    )
     rebuilt["_primitive_source_bytes"] = {}
     blocked = review_audits._seal_security_scan(rebuilt)
     assert blocked["defect_policy_decision"]["state"] == "BLOCKED"
     assert not blocked["context_reviews"] and blocked["findings"]
 
 
-@pytest.mark.parametrize("binding,argument", [
-    ("command = 'fixed-tool --fixed-option'", "command"),
-    ("command = ['fixed-tool', 'fixed-argument']", "command"),
-    ("payload = {'command': 'fixed-tool', 'other': supplied}\n    command = payload['command']", "command"),
-    ("command = fixed(supplied)", "command"),
-    ("command = fixed(supplied)", "fixed(supplied)"),
-])
+@pytest.mark.parametrize(
+    "binding,argument",
+    [
+        ("command = 'fixed-tool --fixed-option'", "command"),
+        ("command = ['fixed-tool', 'fixed-argument']", "command"),
+        (
+            "payload = {'command': 'fixed-tool', 'other': supplied}\n    command = payload['command']",
+            "command",
+        ),
+        ("command = fixed(supplied)", "command"),
+        ("command = fixed(supplied)", "fixed(supplied)"),
+    ],
+)
 def test_shared_command_value369_literal_result_role(tmp_path, binding, argument):
-    source = ("import subprocess\ndef fixed(value):\n    return 'fixed-tool'\n"
-              "def entry(supplied):\n    " + binding + "\n    subprocess.run(" + argument + ", shell=True)\n")
+    source = (
+        "import subprocess\ndef fixed(value):\n    return 'fixed-tool'\n"
+        "def entry(supplied):\n    "
+        + binding
+        + "\n    subprocess.run("
+        + argument
+        + ", shell=True)\n"
+    )
     report = _pickle_role_report(tmp_path, source, policy="source-role-v3")
     assert not report["findings"]
     assert len(report["context_reviews"]) == 1
@@ -1323,36 +1501,79 @@ def test_shared_command_value369_literal_result_role(tmp_path, binding, argument
     assert rebuilt["context_reviews"] == report["context_reviews"]
 
 
-@pytest.mark.parametrize("binding", [
-    "command = supplied",
-    "command = 'fixed ' + supplied",
-    "command = f'fixed {supplied}'",
-    "command = ['fixed-tool', supplied]",
-    "command = {'value': supplied}['value']",
-    "command = opaque(supplied)",
-    "command = 'fixed | other'",
-    "command = 'fixed-tool'\n    if supplied:\n        command = supplied",
-    "command = ['fixed-tool']\n    peer = command\n    peer[0] = supplied",
-    "command = ['fixed-tool']\n    opaque(command)",
-])
+@pytest.mark.parametrize(
+    "operands",
+    [
+        "command, shell=True, cwd=holder.cwd",
+        "command, shell=True, cwd=resolve()",
+        "command, shell=True, cwd=base + 'suffix'",
+        "command, shell=True, cwd={'path': holder.cwd}",
+        "command, shell=True, cwd={key: 1}",
+        "command, shell=True, cwd={**options}",
+        "command, *args, shell=True",
+        "command, shell=True, **options",
+    ],
+)
+def test_current_call_operand_effects_cannot_restore_literal_container(
+    tmp_path, operands
+):
+    source = (
+        "import subprocess\n"
+        "def entry(holder, resolve, base, options, args, key):\n"
+        "    command = ['fixed-tool', 'fixed-argument']\n"
+        f"    subprocess.run({operands})\n"
+    )
+    report = _pickle_role_report(tmp_path, source, policy="source-role-v3")
+    assert [row["code"] for row in report["findings"]] == ["SECURITY_SHELL_COMMAND"]
+    assert not report["context_reviews"]
+    rebuilt = review_audits._seal_security_scan(report.copy())
+    assert rebuilt["findings"] == report["findings"]
+
+
+@pytest.mark.parametrize(
+    "binding",
+    [
+        "command = supplied",
+        "command = 'fixed ' + supplied",
+        "command = f'fixed {supplied}'",
+        "command = ['fixed-tool', supplied]",
+        "command = {'value': supplied}['value']",
+        "command = opaque(supplied)",
+        "command = 'fixed | other'",
+        "command = 'fixed-tool'\n    if supplied:\n        command = supplied",
+        "command = ['fixed-tool']\n    peer = command\n    peer[0] = supplied",
+        "command = ['fixed-tool']\n    opaque(command)",
+    ],
+)
 def test_shared_command_value369_unknown_or_mutated_stays_active(tmp_path, binding):
-    source = ("import subprocess\ndef entry(supplied):\n    " + binding +
-              "\n    subprocess.run(command, shell=True)\n")
+    source = (
+        "import subprocess\ndef entry(supplied):\n    "
+        + binding
+        + "\n    subprocess.run(command, shell=True)\n"
+    )
     report = _pickle_role_report(tmp_path, source, policy="source-role-v3")
     assert any(row["code"] == "SECURITY_SHELL_COMMAND" for row in report["findings"])
     assert not report["context_reviews"]
 
 
-@pytest.mark.parametrize("observation,context", [
-    ("assert payload", True),
-    ("assert opaque(payload)", False),
-    ("opaque(payload)", False),
-    ("assert payload, opaque()", False),
-    ("payload = external_bytes", False),
-])
-def test_pickle_byte_observation369_preserves_closed_edge(tmp_path, observation, context):
-    source = ("import pickle\ndef test_roundtrip():\n    payload = pickle.dumps(object())\n    "
-              + observation + "\n    result = pickle.loads(payload)\n    assert result\n")
+@pytest.mark.parametrize(
+    "observation,context",
+    [
+        ("assert payload", True),
+        ("assert opaque(payload)", False),
+        ("opaque(payload)", False),
+        ("assert payload, opaque()", False),
+        ("payload = external_bytes", False),
+    ],
+)
+def test_pickle_byte_observation369_preserves_closed_edge(
+    tmp_path, observation, context
+):
+    source = (
+        "import pickle\ndef test_roundtrip():\n    payload = pickle.dumps(object())\n    "
+        + observation
+        + "\n    result = pickle.loads(payload)\n    assert result\n"
+    )
     report = _pickle_role_report(tmp_path, source, policy="source-role-v3")
     assert bool(report["context_reviews"]) is context
     assert bool(report["findings"]) is not context
@@ -1362,22 +1583,41 @@ def test_pickle_byte_observation369_preserves_closed_edge(tmp_path, observation,
         assert witness["reconstruction_effects"] == "UNASSESSED"
 
 
-@pytest.mark.parametrize("peer,registered", [
-    ("huey = object()\n", True),
-    ("def unrelated():\n    huey = object()\n    return huey\n", True),
-    ("import huey\nhuey.BaseTestCase = replacement\n", False),
-    ("import huey as package\nsetattr(package, 'BaseTestCase', replacement)\n", False),
-    ("import huey.base\nfrom opaque import *\nhuey.base.BaseTestCase.__bases__ = replacement\n", False),
-    ("from bridge import BaseTestCase as B\nB.__bases__ = replacement\n", False),
-])
-def test_pickle_owner369_distinguishes_local_names_and_provider_writes(peer, registered):
+@pytest.mark.parametrize(
+    "peer,registered",
+    [
+        ("huey = object()\n", True),
+        ("def unrelated():\n    huey = object()\n    return huey\n", True),
+        ("import huey\nhuey.BaseTestCase = replacement\n", False),
+        (
+            "import huey as package\nsetattr(package, 'BaseTestCase', replacement)\n",
+            False,
+        ),
+        (
+            "import huey.base\nfrom opaque import *\nhuey.base.BaseTestCase.__bases__ = replacement\n",
+            False,
+        ),
+        ("from bridge import BaseTestCase as B\nB.__bases__ = replacement\n", False),
+    ],
+)
+def test_pickle_owner369_distinguishes_local_names_and_provider_writes(
+    peer, registered
+):
     import ast
     from factoryline.primitive_observation_binding import _pickle_role_unittest_graph
 
     trees = {
-        "huey/base.py": ast.parse("import unittest\nclass BaseTestCase(unittest.TestCase):\n    pass\n"),
-        "huey/tests/test_owner.py": ast.parse("from huey.base import BaseTestCase\nclass TestQueue(BaseTestCase):\n    def test_value(self):\n        self.assertTrue(True)\n"),
-        "peer.py": ast.parse(peer.replace("huey.BaseTestCase", "huey.base.BaseTestCase").replace("import huey as package", "import huey.base as package")),
+        "huey/base.py": ast.parse(
+            "import unittest\nclass BaseTestCase(unittest.TestCase):\n    pass\n"
+        ),
+        "huey/tests/test_owner.py": ast.parse(
+            "from huey.base import BaseTestCase\nclass TestQueue(BaseTestCase):\n    def test_value(self):\n        self.assertTrue(True)\n"
+        ),
+        "peer.py": ast.parse(
+            peer.replace("huey.BaseTestCase", "huey.base.BaseTestCase").replace(
+                "import huey as package", "import huey.base as package"
+            )
+        ),
         "bridge.py": ast.parse("from huey.base import BaseTestCase\n"),
     }
     owner = trees["huey/tests/test_owner.py"].body[1]
@@ -1389,9 +1629,15 @@ def test_pickle_owner369_conflicting_reexport_never_erases_direct_mutation():
     from factoryline.primitive_observation_binding import _pickle_role_unittest_graph
 
     trees = {
-        "huey/base.py": ast.parse("import unittest\nfrom decoy import BaseTestCase\nclass BaseTestCase(unittest.TestCase):\n    pass\n"),
-        "huey/tests/test_owner.py": ast.parse("from huey.base import BaseTestCase\nclass TestQueue(BaseTestCase):\n    pass\n"),
-        "peer.py": ast.parse("import huey.base\nhuey.base.BaseTestCase.__bases__ = replacement\n"),
+        "huey/base.py": ast.parse(
+            "import unittest\nfrom decoy import BaseTestCase\nclass BaseTestCase(unittest.TestCase):\n    pass\n"
+        ),
+        "huey/tests/test_owner.py": ast.parse(
+            "from huey.base import BaseTestCase\nclass TestQueue(BaseTestCase):\n    pass\n"
+        ),
+        "peer.py": ast.parse(
+            "import huey.base\nhuey.base.BaseTestCase.__bases__ = replacement\n"
+        ),
     }
     owner = trees["huey/tests/test_owner.py"].body[1]
     assert id(owner) not in _pickle_role_unittest_graph(trees)
@@ -1530,7 +1776,9 @@ def test_pickle_role_forged_severity_cannot_qualify(tmp_path):
     assert primitive._pickle_test_role_witness(finding, inventory) is None
 
 
-@pytest.mark.parametrize("policy", ["source-role-v1", "source-role-v2", "source-role-v3"])
+@pytest.mark.parametrize(
+    "policy", ["source-role-v1", "source-role-v2", "source-role-v3"]
+)
 def test_pickle_role_cli_receipt_and_text(tmp_path, capsys, policy):
     from factoryline.cli import main
 
@@ -1742,28 +1990,36 @@ def sample(path, verbose=False):
 
 def _registered_flow(source):
     from factoryline import primitive_observation_binding as primitive
+
     tree = ast.parse(source)
     function = next(node for node in tree.body if isinstance(node, ast.FunctionDef))
-    sink = next(node for node in ast.walk(function) if isinstance(node, ast.Call)
-                and ast.unparse(node.func) == 'yaml.load')
-    return primitive._registered_fixture_flow(function, sink, ['path'], tree)
+    sink = next(
+        node
+        for node in ast.walk(function)
+        if isinstance(node, ast.Call) and ast.unparse(node.func) == "yaml.load"
+    )
+    return primitive._registered_fixture_flow(function, sink, ["path"], tree)
 
 
 def test_registered_fixture_flow_binds_read_transform_and_oracle():
     flow = _registered_flow(_REGISTERED_FLOW_SOURCE)
-    assert flow['registered_filename_parameters'] == ['path']
-    assert flow['read_spans'] and flow['transformations'] and flow['oracle_spans']
-    assert len(flow['sink_input_ast_sha256']) == 64
-    assert flow['effects'] == 'UNASSESSED'
+    assert flow["registered_filename_parameters"] == ["path"]
+    assert flow["read_spans"] and flow["transformations"] and flow["oracle_spans"]
+    assert len(flow["sink_input_ast_sha256"]) == 64
+    assert flow["effects"] == "UNASSESSED"
 
 
-@pytest.mark.parametrize("peer", [None,
-    "from sample import *\n_load_code(external)\n",
-    "from . import sample as mod\nmod._load_code(external)\n",
-    "from .sample import _load_code as run\nrun(external)\n",
-    "import sample as mod\nmod._load_code(external)\n",
-    "import builtins\nbuiltins.eval = replacement\n",
-])
+@pytest.mark.parametrize(
+    "peer",
+    [
+        None,
+        "from sample import *\n_load_code(external)\n",
+        "from . import sample as mod\nmod._load_code(external)\n",
+        "from .sample import _load_code as run\nrun(external)\n",
+        "import sample as mod\nmod._load_code(external)\n",
+        "import builtins\nbuiltins.eval = replacement\n",
+    ],
+)
 def test_registered_fixture_helper_role_reuses_closed_fixture_flow(monkeypatch, peer):
     from factoryline import primitive_observation_binding as roles
 
@@ -1777,22 +2033,48 @@ def test_registered_fixture_helper_role_reuses_closed_fixture_flow(monkeypatch, 
     tree = ast.parse(source)
     from factoryline.primitive_observation_binding import _pickle_role_inventory
 
-    inventory = _pickle_role_inventory({"tests/sample.py": raw, "tests/test_appliance.py": b"pass\n"})
+    inventory = _pickle_role_inventory(
+        {"tests/sample.py": raw, "tests/test_appliance.py": b"pass\n"}
+    )
     if peer:
-        inventory = _pickle_role_inventory({**inventory["sources"], "tests/peer.py": peer.encode()})
-    sink = next(node for node in ast.walk(tree) if isinstance(node, ast.Call) and ast.unparse(node.func) == "eval")
-    finding = {"code": "SECURITY_DYNAMIC_EXECUTION", "path": "tests/sample.py",
-               "line": sink.lineno, "column": sink.col_offset, "severity": "HIGH"}
+        inventory = _pickle_role_inventory(
+            {**inventory["sources"], "tests/peer.py": peer.encode()}
+        )
+    sink = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and ast.unparse(node.func) == "eval"
+    )
+    finding = {
+        "code": "SECURITY_DYNAMIC_EXECUTION",
+        "path": "tests/sample.py",
+        "line": sink.lineno,
+        "column": sink.col_offset,
+        "severity": "HIGH",
+    }
     monkeypatch.setattr(roles, "_pickle_role_native_match", lambda *_: True)
     monkeypatch.setattr(roles, "_pickle_operational_importer", lambda *_: False)
-    monkeypatch.setattr(roles, "_registered_fixture_entry", lambda *_: {
-        "path": "tests/test_appliance.py", "entry_span": [1, 0, 1, 1],
-        "recipe": {"profile": "test-double-attested"},
-    })
-    monkeypatch.setattr(roles, "_registered_fixture_flow", lambda owner, call, *_: {
-        "oracle_spans": [[call.lineno, call.col_offset, call.end_lineno, call.end_col_offset]],
-        "effects": "UNASSESSED",
-    } if ast.unparse(call) == "eval(filename)" else None)
+    monkeypatch.setattr(
+        roles,
+        "_registered_fixture_entry",
+        lambda *_: {
+            "path": "tests/test_appliance.py",
+            "entry_span": [1, 0, 1, 1],
+            "recipe": {"profile": "test-double-attested"},
+        },
+    )
+    monkeypatch.setattr(
+        roles,
+        "_registered_fixture_flow",
+        lambda owner, call, *_: {
+            "oracle_spans": [
+                [call.lineno, call.col_offset, call.end_lineno, call.end_col_offset]
+            ],
+            "effects": "UNASSESSED",
+        }
+        if ast.unparse(call) == "eval(filename)"
+        else None,
+    )
     monkeypatch.setattr(roles, "_registered_fixture_module_clear", lambda *_: True)
     witness = finite.captured_registered_fixture_helper_role(finding, inventory)
     if peer:
@@ -1803,51 +2085,98 @@ def test_registered_fixture_helper_role_reuses_closed_fixture_flow(monkeypatch, 
     assert witness["safe_operation"] is False
 
 
-@pytest.mark.parametrize('changed', [
-    _REGISTERED_FLOW_SOURCE.replace('    with open', '    path = supplied\n    with open'),
-    _REGISTERED_FLOW_SOURCE.replace('    value =', '    injected = fetch()\n    value =').replace('yaml.load(data,', 'yaml.load(data + injected,'),
-    _REGISTERED_FLOW_SOURCE.replace('    value =', '    data += supplied\n    value ='),
-    _REGISTERED_FLOW_SOURCE.replace('    value =', '    for data in supplied:\n        pass\n    value ='),
-    _REGISTERED_FLOW_SOURCE.replace('    value =', "    for data in ['fixed']:\n        pass\n    value ="),
-    _REGISTERED_FLOW_SOURCE.replace('    value =', '    with supplied as handle:\n        pass\n    data = handle.read()\n    value ='),
-    _REGISTERED_FLOW_SOURCE.replace('yaml.load(data,', "yaml.load(data + os.environ['PAYLOAD'],"),
-    _REGISTERED_FLOW_SOURCE.replace('yaml.load(data,', 'yaml.load(data + sys.argv[1],'),
-    _REGISTERED_FLOW_SOURCE.replace('import os', 'from os import environ as environment').replace('yaml.load(data,', "yaml.load(data + environment['PAYLOAD'],"),
-    _REGISTERED_FLOW_SOURCE.replace('import sys', 'from sys import argv as arguments').replace('yaml.load(data,', 'yaml.load(data + arguments[1],'),
-    _REGISTERED_FLOW_SOURCE.replace('yaml.load(data,', "yaml.load(data + globals().copy()['PAYLOAD'],"),
-    _REGISTERED_FLOW_SOURCE.replace('    value =', '    if supplied:\n        data = supplied\n    else:\n        data = handle.read()\n    value ='),
-    _REGISTERED_FLOW_SOURCE.replace('    value =', '    try:\n        data = supplied\n    except Exception:\n        data = handle.read()\n    value ='),
-    _REGISTERED_FLOW_SOURCE.replace('    value =', '    data = [data]\n    data[0] = supplied\n    value =').replace('yaml.load(data,', 'yaml.load(data[0],'),
-    _REGISTERED_FLOW_SOURCE.replace('    value =', '    data = [data]\n    data.append(supplied)\n    value =').replace('yaml.load(data,', 'yaml.load(data[0],'),
-    _REGISTERED_FLOW_SOURCE.replace('assert value == 1', 'assert True'),
-    _REGISTERED_FLOW_SOURCE.replace('        data = handle.read()', '        data = supplied'),
-    _REGISTERED_FLOW_SOURCE.replace('    value =', '    def nested():\n        pass\n    value ='),
-])
+@pytest.mark.parametrize(
+    "changed",
+    [
+        _REGISTERED_FLOW_SOURCE.replace(
+            "    with open", "    path = supplied\n    with open"
+        ),
+        _REGISTERED_FLOW_SOURCE.replace(
+            "    value =", "    injected = fetch()\n    value ="
+        ).replace("yaml.load(data,", "yaml.load(data + injected,"),
+        _REGISTERED_FLOW_SOURCE.replace(
+            "    value =", "    data += supplied\n    value ="
+        ),
+        _REGISTERED_FLOW_SOURCE.replace(
+            "    value =", "    for data in supplied:\n        pass\n    value ="
+        ),
+        _REGISTERED_FLOW_SOURCE.replace(
+            "    value =", "    for data in ['fixed']:\n        pass\n    value ="
+        ),
+        _REGISTERED_FLOW_SOURCE.replace(
+            "    value =",
+            "    with supplied as handle:\n        pass\n    data = handle.read()\n    value =",
+        ),
+        _REGISTERED_FLOW_SOURCE.replace(
+            "yaml.load(data,", "yaml.load(data + os.environ['PAYLOAD'],"
+        ),
+        _REGISTERED_FLOW_SOURCE.replace(
+            "yaml.load(data,", "yaml.load(data + sys.argv[1],"
+        ),
+        _REGISTERED_FLOW_SOURCE.replace(
+            "import os", "from os import environ as environment"
+        ).replace("yaml.load(data,", "yaml.load(data + environment['PAYLOAD'],"),
+        _REGISTERED_FLOW_SOURCE.replace(
+            "import sys", "from sys import argv as arguments"
+        ).replace("yaml.load(data,", "yaml.load(data + arguments[1],"),
+        _REGISTERED_FLOW_SOURCE.replace(
+            "yaml.load(data,", "yaml.load(data + globals().copy()['PAYLOAD'],"
+        ),
+        _REGISTERED_FLOW_SOURCE.replace(
+            "    value =",
+            "    if supplied:\n        data = supplied\n    else:\n        data = handle.read()\n    value =",
+        ),
+        _REGISTERED_FLOW_SOURCE.replace(
+            "    value =",
+            "    try:\n        data = supplied\n    except Exception:\n        data = handle.read()\n    value =",
+        ),
+        _REGISTERED_FLOW_SOURCE.replace(
+            "    value =", "    data = [data]\n    data[0] = supplied\n    value ="
+        ).replace("yaml.load(data,", "yaml.load(data[0],"),
+        _REGISTERED_FLOW_SOURCE.replace(
+            "    value =", "    data = [data]\n    data.append(supplied)\n    value ="
+        ).replace("yaml.load(data,", "yaml.load(data[0],"),
+        _REGISTERED_FLOW_SOURCE.replace("assert value == 1", "assert True"),
+        _REGISTERED_FLOW_SOURCE.replace(
+            "        data = handle.read()", "        data = supplied"
+        ),
+        _REGISTERED_FLOW_SOURCE.replace(
+            "    value =", "    def nested():\n        pass\n    value ="
+        ),
+    ],
+)
 def test_registered_fixture_flow_rejects_unclosed_input_and_oracle(changed):
     assert _registered_flow(changed) is None
 
 
-@pytest.mark.parametrize('source', [
-    'globals = replacement', 'open = supplied', '__name__ = supplied',
-    'namespace = globals(); namespace["sample"] = replacement',
-    'globals().update(replacements)', 'from provider import open',
-    'external.mutate(globals())',
-    "if __name__ == '__main__':\n    external.run(globals())",
-])
+@pytest.mark.parametrize(
+    "source",
+    [
+        "globals = replacement",
+        "open = supplied",
+        "__name__ = supplied",
+        'namespace = globals(); namespace["sample"] = replacement',
+        "globals().update(replacements)",
+        "from provider import open",
+        "external.mutate(globals())",
+        "if __name__ == '__main__':\n    external.run(globals())",
+    ],
+)
 def test_registered_fixture_module_rejects_entry_and_builtin_replacement(source):
     from factoryline import primitive_observation_binding as primitive
+
     assert primitive._registered_fixture_module_clear(ast.parse(source)) is False
 
 
 def test_registered_fixture_policy_is_explicit_and_defaults_compatible(tmp_path):
-    source = 'import yaml\ndef test_handler(data):\n    value = yaml.load(data, Loader=yaml.Loader)\n    assert value\n'
+    source = "import yaml\ndef test_handler(data):\n    value = yaml.load(data, Loader=yaml.Loader)\n    assert value\n"
     v1 = _pickle_role_report(tmp_path, source)
-    v2 = _pickle_role_report(tmp_path, source, policy='source-role-v2')
-    assert v2['findings'] == v1['findings']
-    assert not v2['context_reviews']
-    assert v2['defect_policy_decision']['policy_id'] == 'source-role-v2'
-    assert v2['defect_policy_decision']['clean'] is False
-    assert v2['finding_tier_report']['ledger'][0]['tier'] == 'NEEDS_CONTEXT'
+    v2 = _pickle_role_report(tmp_path, source, policy="source-role-v2")
+    assert v2["findings"] == v1["findings"]
+    assert not v2["context_reviews"]
+    assert v2["defect_policy_decision"]["policy_id"] == "source-role-v2"
+    assert v2["defect_policy_decision"]["clean"] is False
+    assert v2["finding_tier_report"]["ledger"][0]["tier"] == "NEEDS_CONTEXT"
 
 
 def _shared_security_helper_index(tmp_path, source):
@@ -1859,14 +2188,18 @@ def _shared_security_helper_index(tmp_path, source):
     digest = hashlib.sha256(raw).hexdigest()
     tree = ast.parse(raw, filename=str(path))
     tree._oracle_source_sha256 = digest
-    index = SourceSnapshotIndex(Path(tmp_path), {path: tree}, {path: raw}, {path: digest})
+    index = SourceSnapshotIndex(
+        Path(tmp_path), {path: tree}, {path: raw}, {path: digest}
+    )
     tree._security_source_model = index
     helper = next(
-        node for node in tree.body
+        node
+        for node in tree.body
         if isinstance(node, ast.FunctionDef) and node.name == "helper"
     )
     caller = next(
-        node for node in tree.body
+        node
+        for node in tree.body
         if isinstance(node, ast.FunctionDef) and node.name == "caller"
     )
     helper._security_parent_scope = tree
@@ -1877,40 +2210,75 @@ def _shared_security_helper_index(tmp_path, source):
     return path, tree, index, helper, caller, call
 
 
-@pytest.mark.parametrize("signature", ["value, extra=b'fixed'", "value, *, extra=None", "value, extra=b'fixed', *, flag=True"])
+@pytest.mark.parametrize(
+    "signature",
+    [
+        "value, extra=b'fixed'",
+        "value, *, extra=None",
+        "value, extra=b'fixed', *, flag=True",
+    ],
+)
 def test_shared_defaults370_do_not_impersonate_caller_actuals(tmp_path, signature):
     from factoryline import credential_role_identity_effects as identity
 
     path, _tree, index, helper, _caller, call = _shared_security_helper_index(
-        tmp_path, "def helper(" + signature + "):\n    return value\n"
+        tmp_path,
+        "def helper(" + signature + "):\n    return value\n"
         "def caller(raw):\n    return helper(raw)\n",
     )
     summary = finite.security_structural_helper_summary(
-        call, helper,
-        {"raw": identity._Value(roots=frozenset({"request-body"}), scalar_kind="bytes")},
-        path=path, index=index,
+        call,
+        helper,
+        {
+            "raw": identity._Value(
+                roots=frozenset({"request-body"}), scalar_kind="bytes"
+            )
+        },
+        path=path,
+        index=index,
     )
     assert summary.return_status == "COMPLETE"
     assert summary.return_values[0].value.roots == frozenset({"request-body"})
 
 
-@pytest.mark.parametrize("signature,arguments,mapping,accepted", [
-    ("first=None, second=None", "raw", {"second": 0}, False),
-    ("first, second=None", "raw, None", {"first": 1, "second": 0}, False),
-    ("first=None, second=None", "first=raw, first=None", {"first": 0, "second": 1}, False),
-    ("first, second=None", "second=None, first=raw", {"second": 0, "first": 1}, True),
-])
-def test_shared_defaults370_exact_formals_required(signature, arguments, mapping, accepted):
+@pytest.mark.parametrize(
+    "signature,arguments,mapping,accepted",
+    [
+        ("first=None, second=None", "raw", {"second": 0}, False),
+        ("first, second=None", "raw, None", {"first": 1, "second": 0}, False),
+        (
+            "first=None, second=None",
+            "first=raw, first=None",
+            {"first": 0, "second": 1},
+            False,
+        ),
+        (
+            "first, second=None",
+            "second=None, first=raw",
+            {"second": 0, "first": 1},
+            True,
+        ),
+    ],
+)
+def test_shared_defaults370_exact_formals_required(
+    signature, arguments, mapping, accepted
+):
     from factoryline import credential_role_identity_effects as identity
 
     function = ast.parse("def helper(" + signature + "):\n    pass\n").body[0]
     call = ast.parse("helper(" + arguments + ")", mode="eval").body
     actuals = [*call.args, *(keyword.value for keyword in call.keywords)]
-    resolved = identity.ResolvedIdentityCall(function, "captured.py", {key: actuals[pos] for key, pos in mapping.items()})
+    resolved = identity.ResolvedIdentityCall(
+        function, "captured.py", {key: actuals[pos] for key, pos in mapping.items()}
+    )
     effects = identity._Effects()
     result = identity.mapped_call_values(
-        call, {"raw": identity._Value(roots=frozenset({"request"}))}, {"request"},
-        resolved, effects, strict_calls=True,
+        call,
+        {"raw": identity._Value(roots=frozenset({"request"}))},
+        {"request"},
+        resolved,
+        effects,
+        strict_calls=True,
     )
     assert (result is not None) is accepted
     if accepted:
@@ -1919,13 +2287,24 @@ def test_shared_defaults370_exact_formals_required(signature, arguments, mapping
         assert effects.unknowns
 
 
-@pytest.mark.parametrize("expression", ["unknown", "backend.unknown", "backend.lookup()", "backend.__class__()", "backend + 1"])
+@pytest.mark.parametrize(
+    "expression",
+    [
+        "unknown",
+        "backend.unknown",
+        "backend.lookup()",
+        "backend.__class__()",
+        "backend + 1",
+    ],
+)
 def test_shared_value_facets370_keep_material_uncertainty(expression):
     from factoryline import credential_role_identity_effects as identity
 
     node = ast.parse(expression, mode="eval").body
     aliases = {"backend": identity._Value(roots=frozenset({"backend"}))}
-    material = identity.identity_value(node, aliases, strict_calls=True, material_values=True)
+    material = identity.identity_value(
+        node, aliases, strict_calls=True, material_values=True
+    )
     assert material.unknown or material.content_unknown
     if "backend" in expression:
         assert "backend" in identity.tracked_roots(material)
@@ -1941,9 +2320,12 @@ def test_shared_value_facets370_unknown_result_does_not_erase_known_escape(tmp_p
     from factoryline import credential_role_identity_effects as identity
 
     path, _tree, index, _helper, _caller, call = _shared_security_helper_index(
-        tmp_path, "def helper(value):\n    pass\ndef caller(raw):\n    return opaque(raw)\n",
+        tmp_path,
+        "def helper(value):\n    pass\ndef caller(raw):\n    return opaque(raw)\n",
     )
-    summary = identity.summarize_identity_call(call, path, index, {"raw": "request"}, resolve_call=lambda *_: None)
+    summary = identity.summarize_identity_call(
+        call, path, index, {"raw": "request"}, resolve_call=lambda *_: None
+    )
     assert summary.status == "ESCAPE"
     assert summary.escapes == ("request",)
     assert summary.return_status == "UNKNOWN"
@@ -1955,11 +2337,16 @@ def test_shared_value_facets370_unknown_actual_keeps_origin_after_helper(tmp_pat
     from factoryline import credential_role_identity_effects as identity
 
     path, _tree, index, helper, _caller, call = _shared_security_helper_index(
-        tmp_path, "def helper(value):\n    return value\ndef caller(raw):\n    return helper(raw.member)\n",
+        tmp_path,
+        "def helper(value):\n    return value\ndef caller(raw):\n    return helper(raw.member)\n",
     )
     summary = finite.security_structural_helper_summary(
-        call, helper, {"raw": identity._Value(roots=frozenset({"request"}))},
-        path=path, index=index, request_aliases={},
+        call,
+        helper,
+        {"raw": identity._Value(roots=frozenset({"request"}))},
+        path=path,
+        index=index,
+        request_aliases={},
     )
     returned = summary.return_values[0].value
     assert summary.return_status == "UNKNOWN"
@@ -1981,7 +2368,11 @@ def test_shared_call_result_selects_container_value_and_keeps_return_effect(tmp_
     summary = finite.security_structural_helper_summary(
         call,
         helper,
-        {"raw": identity._Value(roots=frozenset({"request-body"}), scalar_kind="bytes")},
+        {
+            "raw": identity._Value(
+                roots=frozenset({"request-body"}), scalar_kind="bytes"
+            )
+        },
         path=path,
         index=index,
     )
@@ -1997,7 +2388,11 @@ def test_shared_call_result_selects_container_value_and_keeps_return_effect(tmp_
     assert summary.return_values[0].source_span[1] == 3
     selected = finite.security_structural_value(
         call,
-        {"raw": identity._Value(roots=frozenset({"request-body"}), scalar_kind="bytes")},
+        {
+            "raw": identity._Value(
+                roots=frozenset({"request-body"}), scalar_kind="bytes"
+            )
+        },
     )
     assert dict(selected.items)["selected"].roots == frozenset({"request-body"})
 
@@ -2077,8 +2472,7 @@ def test_shared_import_reexport_return_uses_captured_symbol_binding(tmp_path):
         ),
         "middle.py": "from provider import choose as selected_helper\n",
         "provider.py": (
-            "def choose(value):\n"
-            "    return {'selected': value, 'fixed': b'fixed'}\n"
+            "def choose(value):\n    return {'selected': value, 'fixed': b'fixed'}\n"
         ),
     }
     paths = {name: Path(tmp_path) / name for name in sources}
@@ -2100,7 +2494,11 @@ def test_shared_import_reexport_return_uses_captured_symbol_binding(tmp_path):
     call._security_flow_statement = caller.body[0]
     value = finite.security_structural_value(
         call,
-        {"raw": identity._Value(roots=frozenset({"request-body"}), scalar_kind="bytes")},
+        {
+            "raw": identity._Value(
+                roots=frozenset({"request-body"}), scalar_kind="bytes"
+            )
+        },
     )
     assert not value.unknown
     selected = dict(value.items)["selected"]
@@ -2139,7 +2537,11 @@ def test_shared_import_return_declines_changed_captured_source(tmp_path):
     raw[paths["provider.py"]] = b"def choose(value):\n    return 'changed'\n"
     value = finite.security_structural_value(
         call,
-        {"raw": identity._Value(roots=frozenset({"request-body"}), scalar_kind="bytes")},
+        {
+            "raw": identity._Value(
+                roots=frozenset({"request-body"}), scalar_kind="bytes"
+            )
+        },
     )
     assert value.unknown
     assert "request-body" in value.roots
@@ -2181,7 +2583,11 @@ def test_shared_import_call_declines_decorated_callable_identity(tmp_path):
     call._security_flow_statement = caller.body[0]
     value = finite.security_structural_value(
         call,
-        {"raw": identity._Value(roots=frozenset({"request-body"}), scalar_kind="bytes")},
+        {
+            "raw": identity._Value(
+                roots=frozenset({"request-body"}), scalar_kind="bytes"
+            )
+        },
     )
     assert value.unknown
     assert "request-body" in value.roots
@@ -2243,7 +2649,11 @@ def test_shared_nested_value_join_retains_origin_as_unknown():
 
     left = identity.identity_value(
         ast.parse("{'outer': {'selected': payload}}", mode="eval").body,
-        {"payload": identity._Value(roots=frozenset({"request-body"}), scalar_kind="bytes")},
+        {
+            "payload": identity._Value(
+                roots=frozenset({"request-body"}), scalar_kind="bytes"
+            )
+        },
     )
     right = identity.identity_value(
         ast.parse("{'outer': {'selected': b'fixed'}}", mode="eval").body,
@@ -2260,30 +2670,36 @@ def test_shared_join_budget_exhaustion_keeps_may_origins():
     from factoryline import credential_role_identity_effects as identity
 
     values = [
-        identity._Value(roots=frozenset({f"origin-{index}"}))
-        for index in range(513)
+        identity._Value(roots=frozenset({f"origin-{index}"})) for index in range(513)
     ]
     joined = finite.security_structural_join(values)
     assert joined.unknown
     assert joined.roots == frozenset(f"origin-{index}" for index in range(513))
 
 
-@pytest.mark.parametrize("expression, known", [
-    ("'{}.{}'.format(payload, 42).encode()", True),
-    ("'{0}:{1}'.format(42, payload)", True),
-    ("'{0.secret}'.format(payload)", False),
-    ("'{0!r}'.format(payload)", False),
-    ("'{0:>9}'.format(payload)", False),
-    ("'{9}'.format(payload)", False),
-    ("'{} {0}'.format(payload)", False),
-    ("'{}'.format(unknown)", False),
-])
+@pytest.mark.parametrize(
+    "expression, known",
+    [
+        ("'{}.{}'.format(payload, 42).encode()", True),
+        ("'{0}:{1}'.format(42, payload)", True),
+        ("'{0.secret}'.format(payload)", False),
+        ("'{0!r}'.format(payload)", False),
+        ("'{0:>9}'.format(payload)", False),
+        ("'{9}'.format(payload)", False),
+        ("'{} {0}'.format(payload)", False),
+        ("'{}'.format(unknown)", False),
+    ],
+)
 def test_shared_format372_material_origins_are_not_exact_identity(expression, known):
     from factoryline import credential_role_identity_effects as identity
 
     node = ast.parse(expression, mode="eval").body
-    values = {"payload": identity._Value(roots=frozenset({"input"}), scalar_kind="text")}
-    material = identity.identity_value(node, values, strict_calls=True, material_values=True)
+    values = {
+        "payload": identity._Value(roots=frozenset({"input"}), scalar_kind="text")
+    }
+    material = identity.identity_value(
+        node, values, strict_calls=True, material_values=True
+    )
     assert (not material.unknown and not material.content_unknown) is known
     if known:
         assert material.roots == frozenset({"input"})
@@ -2292,74 +2708,148 @@ def test_shared_format372_material_origins_are_not_exact_identity(expression, kn
     assert exact.unknown or exact.content_unknown
 
 
-@pytest.mark.parametrize("body, closed", [
-    ("alias = secret\n    consume(alias)", True),
-    ("alias: str = secret\n    consume(alias)", True),
-    ("alias = secret.encode()\n    consume(alias)", True),
-    ("first = secret\n    second = first\n    consume(second)", True),
-    ("alias = secret\n    consume(alias)\n    publish(alias)", False),
-    ("alias = opaque(secret)\n    consume(alias)", False),
-    ("alias = secret\n    alias = 'new'\n    consume(alias)", False),
-    ("consume(secret)\n    del secret", False),
-    ("alias = secret\n    def hidden():\n        publish(alias)\n    consume(alias)", False),
-])
+@pytest.mark.parametrize(
+    "body, closed",
+    [
+        ("alias = secret\n    consume(alias)", True),
+        ("alias: str = secret\n    consume(alias)", True),
+        ("alias = secret.encode()\n    consume(alias)", True),
+        ("first = secret\n    second = first\n    consume(second)", True),
+        ("alias = secret\n    consume(alias)\n    publish(alias)", False),
+        ("alias = opaque(secret)\n    consume(alias)", False),
+        ("alias = secret\n    alias = 'new'\n    consume(alias)", False),
+        ("consume(secret)\n    del secret", False),
+        (
+            "alias = secret\n    def hidden():\n        publish(alias)\n    consume(alias)",
+            False,
+        ),
+    ],
+)
 def test_shared_consumer373_complete_graph_preserves_unknown_uses(body, closed):
     from factoryline import credential_role_identity_effects as identity
 
     tree = ast.parse("def owner():\n    secret = 'owned'\n    " + body + "\n")
     function = tree.body[0]
-    parents = {id(child): node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
-    roots = [("consumer", node.args[0]) for node in ast.walk(function)
-             if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "consume"]
+    parents = {
+        id(child): node
+        for node in ast.walk(tree)
+        for child in ast.iter_child_nodes(node)
+    }
+    roots = [
+        ("consumer", node.args[0])
+        for node in ast.walk(function)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "consume"
+    ]
+
     def shape(expression):
-        return (isinstance(expression, ast.Call) and isinstance(expression.func, ast.Attribute)
-                and expression.func.attr == "encode" and not expression.args and not expression.keywords)
-    result = identity._structural_closed_consumer_uses(function, "secret", roots, parents,
-        lambda node: identity._enclosing_function(node, parents), shape)
+        return (
+            isinstance(expression, ast.Call)
+            and isinstance(expression.func, ast.Attribute)
+            and expression.func.attr == "encode"
+            and not expression.args
+            and not expression.keywords
+        )
+
+    result = identity._structural_closed_consumer_uses(
+        function,
+        "secret",
+        roots,
+        parents,
+        lambda node: identity._enclosing_function(node, parents),
+        shape,
+    )
     assert (result is not None) is closed
 
 
 def test_shared_import_alias_namespace_is_separate_from_value_roots():
     import ast
     from factoryline.finite_capture import security_structural_value
-    value = security_structural_value(ast.parse('os.path.join(value)', mode='eval').body, {}, {'os': 'os'})
+
+    value = security_structural_value(
+        ast.parse("os.path.join(value)", mode="eval").body, {}, {"os": "os"}
+    )
     assert value.unknown
     assert not value.roots
 
 
-@pytest.mark.parametrize('expression', ['module.member', 'values[0]', 'value', '42', 'None'])
+@pytest.mark.parametrize(
+    "expression", ["module.member", "values[0]", "value", "42", "None"]
+)
 def test_shared_non_call_expression_declines_helper_return(expression):
     import ast
     from factoryline.finite_capture import security_helper_return_value
-    node = ast.parse(expression, mode='eval').body
+
+    node = ast.parse(expression, mode="eval").body
     assert security_helper_return_value(node, None, set(), set(), {}) is None
 
 
-@pytest.mark.parametrize("body, closed", [
-    ("alias = secret\n    consume(alias)", True),
-    ("alias = secret\n    consume(alias)\n    publish(alias)", False),
-    ("alias = secret\n    def hidden():\n        nonlocal alias\n        alias = external\n    consume(alias)", False),
-    ("alias = secret\n    def hidden():\n        nonlocal alias\n        del alias\n    consume(alias)", False),
-    ("alias = secret\n    def hidden():\n        return alias\n    consume(alias)", False),
-    ("global alias\n    alias = secret\n    consume(alias)", False),
-    ("alias = secret\n    alias += external\n    consume(alias)", False),
-    ("first = secret\n    second = first\n    def hidden():\n        nonlocal second\n        second = external\n    consume(second)", False),
-    ("alias = secret\n    values = [alias]\n    publish(values)\n    consume(alias)", False),
-    ("alias = secret.encode()\n    consume(alias)\n    alias = external", False),
-])
+@pytest.mark.parametrize(
+    "body, closed",
+    [
+        ("alias = secret\n    consume(alias)", True),
+        ("alias = secret\n    consume(alias)\n    publish(alias)", False),
+        (
+            "alias = secret\n    def hidden():\n        nonlocal alias\n        alias = external\n    consume(alias)",
+            False,
+        ),
+        (
+            "alias = secret\n    def hidden():\n        nonlocal alias\n        del alias\n    consume(alias)",
+            False,
+        ),
+        (
+            "alias = secret\n    def hidden():\n        return alias\n    consume(alias)",
+            False,
+        ),
+        ("global alias\n    alias = secret\n    consume(alias)", False),
+        ("alias = secret\n    alias += external\n    consume(alias)", False),
+        (
+            "first = secret\n    second = first\n    def hidden():\n        nonlocal second\n        second = external\n    consume(second)",
+            False,
+        ),
+        (
+            "alias = secret\n    values = [alias]\n    publish(values)\n    consume(alias)",
+            False,
+        ),
+        ("alias = secret.encode()\n    consume(alias)\n    alias = external", False),
+    ],
+)
 def test_shared_consumer373_adversarial_store_and_capture_closure(body, closed):
     from factoryline import credential_role_identity_effects as identity
 
     tree = ast.parse("def owner():\n    secret = 'owned'\n    " + body + "\n")
     function = tree.body[0]
-    parents = {id(child): node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
-    roots = [("consumer", node.args[0]) for node in ast.walk(function)
-             if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "consume"]
+    parents = {
+        id(child): node
+        for node in ast.walk(tree)
+        for child in ast.iter_child_nodes(node)
+    }
+    roots = [
+        ("consumer", node.args[0])
+        for node in ast.walk(function)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "consume"
+    ]
+
     def transform(expression):
-        return (isinstance(expression, ast.Call) and isinstance(expression.func, ast.Attribute)
-                and expression.func.attr == "encode" and not expression.args and not expression.keywords)
-    result = identity._structural_closed_consumer_uses(function, "secret", roots, parents,
-        lambda node: identity._enclosing_function(node, parents), transform)
+        return (
+            isinstance(expression, ast.Call)
+            and isinstance(expression.func, ast.Attribute)
+            and expression.func.attr == "encode"
+            and not expression.args
+            and not expression.keywords
+        )
+
+    result = identity._structural_closed_consumer_uses(
+        function,
+        "secret",
+        roots,
+        parents,
+        lambda node: identity._enclosing_function(node, parents),
+        transform,
+    )
     assert (result is not None) is closed
     if result is not None:
         assignments, loads, roles = result
@@ -2369,43 +2859,64 @@ def test_shared_consumer373_adversarial_store_and_capture_closure(body, closed):
         assert {roles[id(node)] for node in loads} == {"derived_value", "consumer"}
 
 
-@pytest.mark.parametrize("import_line,callee", [
-    ("from values import constant", "constant"),
-    ("import values as helper", "helper.constant"),
-])
-def test_shared_import375_native_source_to_independent_shell_review(tmp_path, import_line, callee):
+@pytest.mark.parametrize(
+    "import_line,callee",
+    [
+        ("from values import constant", "constant"),
+        ("import values as helper", "helper.constant"),
+    ],
+)
+def test_shared_import375_native_source_to_independent_shell_review(
+    tmp_path, import_line, callee
+):
     folder = tmp_path / "scripts"
     folder.mkdir()
     (folder / "values.py").write_text("def constant(value):\n    return 'status'\n")
     (folder / "main.py").write_text(
         "import subprocess\nfrom flask import request\n" + import_line + "\n"
         "def endpoint():\n    incoming = request.args['q']\n"
-        f"    command = {callee}(incoming)\n    subprocess.call(command, shell=True)\n")
+        f"    command = {callee}(incoming)\n    subprocess.call(command, shell=True)\n"
+    )
     with review_audits._security_only_scan_context(True):
-        report = review_audits.security_scan(tmp_path, cache_enabled=False, defect_policy="source-role-v3")
-    raw = [r["raw_finding"] for r in report["finding_tier_report"]["ledger"]
-           if r["raw_finding"]["code"] == "SECURITY_SHELL_COMMAND"]
+        report = review_audits.security_scan(
+            tmp_path, cache_enabled=False, defect_policy="source-role-v3"
+        )
+    raw = [
+        r["raw_finding"]
+        for r in report["finding_tier_report"]["ledger"]
+        if r["raw_finding"]["code"] == "SECURITY_SHELL_COMMAND"
+    ]
     assert len(raw) == 1 and raw[0]["severity"] == "HIGH"
     assert not [r for r in report["findings"] if r["code"] == "SECURITY_SHELL_COMMAND"]
     assert any(r["code"] == "SECURITY_SHELL_COMMAND" for r in report["context_reviews"])
-    ledger = next(r for r in report["finding_tier_report"]["ledger"] if r["raw_finding"]["code"] == "SECURITY_SHELL_COMMAND")
+    ledger = next(
+        r
+        for r in report["finding_tier_report"]["ledger"]
+        if r["raw_finding"]["code"] == "SECURITY_SHELL_COMMAND"
+    )
     assert ledger["source_role_review"]["safe_execution"] is False
 
 
-@pytest.mark.parametrize("source", [
-    "def inspect(items):\n    for vars in items:\n        print(vars)\n",
-    "def inspect(item):\n    vars = item\n    return vars.result\n",
-])
+@pytest.mark.parametrize(
+    "source",
+    [
+        "def inspect(items):\n    for vars in items:\n        print(vars)\n",
+        "def inspect(item):\n    vars = item\n    return vars.result\n",
+    ],
+)
 def test_shared_namespace375_local_data_names_do_not_expose_builtin_namespace(source):
     assert finite._shell_source_provider_clear(source.encode(), "subprocess")
 
 
-@pytest.mark.parametrize("source", [
-    "lookup = globals\n",
-    "def inspect():\n    return vars()\n",
-    "def inspect():\n    global vars\n    vars()['subprocess'].call = other\n",
-    "import subprocess\nsubprocess.call = other\n",
-])
+@pytest.mark.parametrize(
+    "source",
+    [
+        "lookup = globals\n",
+        "def inspect():\n    return vars()\n",
+        "def inspect():\n    global vars\n    vars()['subprocess'].call = other\n",
+        "import subprocess\nsubprocess.call = other\n",
+    ],
+)
 def test_shared_namespace375_real_namespace_or_provider_escape_still_rejected(source):
     assert not finite._shell_source_provider_clear(source.encode(), "subprocess")
 
@@ -2419,11 +2930,20 @@ def test_imported_helper375_tainted_return_keeps_native_shell_finding(tmp_path):
         {"helper.py": "def passthrough(value):\n    return value\n"},
         policy="source-role-v3",
     )
-    shell = [row for row in report["findings"] if row["code"] == "SECURITY_SHELL_COMMAND"]
+    shell = [
+        row for row in report["findings"] if row["code"] == "SECURITY_SHELL_COMMAND"
+    ]
     assert len(shell) == 1 and shell[0]["severity"] == "HIGH"
-    assert not [row for row in report["context_reviews"] if row["code"] == "SECURITY_SHELL_COMMAND"]
-    ledger = next(row for row in report["finding_tier_report"]["ledger"]
-                  if row["raw_finding"]["code"] == "SECURITY_SHELL_COMMAND")
+    assert not [
+        row
+        for row in report["context_reviews"]
+        if row["code"] == "SECURITY_SHELL_COMMAND"
+    ]
+    ledger = next(
+        row
+        for row in report["finding_tier_report"]["ledger"]
+        if row["raw_finding"]["code"] == "SECURITY_SHELL_COMMAND"
+    )
     assert ledger["raw_finding"] == shell[0]
     assert ledger.get("source_role_review") is None
 
@@ -2434,16 +2954,27 @@ def test_imported_helper375_pickle_bytes_keep_reconstruction_finding(tmp_path):
         "import pickle\nfrom helper import pack\n"
         "def test_roundtrip(value):\n    payload = pack(value)\n"
         "    return pickle.loads(payload)\n",
-        {"helper.py": "import pickle\ndef pack(value):\n    return pickle.dumps(value)\n"},
+        {
+            "helper.py": "import pickle\ndef pack(value):\n    return pickle.dumps(value)\n"
+        },
         policy="source-role-v3",
     )
-    findings = [row for row in report["findings"]
-                if row["code"] == "SECURITY_UNSAFE_DESERIALIZATION"]
+    findings = [
+        row
+        for row in report["findings"]
+        if row["code"] == "SECURITY_UNSAFE_DESERIALIZATION"
+    ]
     assert len(findings) == 1 and findings[0]["severity"] == "HIGH"
-    assert not [row for row in report["context_reviews"]
-                if row["code"] == "SECURITY_UNSAFE_DESERIALIZATION"]
-    ledger = next(row for row in report["finding_tier_report"]["ledger"]
-                  if row["raw_finding"]["code"] == "SECURITY_UNSAFE_DESERIALIZATION")
+    assert not [
+        row
+        for row in report["context_reviews"]
+        if row["code"] == "SECURITY_UNSAFE_DESERIALIZATION"
+    ]
+    ledger = next(
+        row
+        for row in report["finding_tier_report"]["ledger"]
+        if row["raw_finding"]["code"] == "SECURITY_UNSAFE_DESERIALIZATION"
+    )
     assert ledger["raw_finding"] == findings[0]
     assert ledger.get("source_role_review") is None
 
@@ -2451,7 +2982,9 @@ def test_imported_helper375_pickle_bytes_keep_reconstruction_finding(tmp_path):
 def test_imported_helper375_tainted_return_keeps_native_dynamic_exec_finding(tmp_path):
     folder = tmp_path / "scripts"
     folder.mkdir()
-    (folder / "helper.py").write_text("def passthrough(value):\n    return value\n", encoding="utf-8")
+    (folder / "helper.py").write_text(
+        "def passthrough(value):\n    return value\n", encoding="utf-8"
+    )
     (folder / "test_dynamic.py").write_text(
         "from flask import request\nfrom helper import passthrough\n"
         "def test_dynamic():\n    exec(passthrough(request.args['code']))\n",
@@ -2461,11 +2994,15 @@ def test_imported_helper375_tainted_return_keeps_native_dynamic_exec_finding(tmp
         report = review_audits.security_scan(
             tmp_path, cache_enabled=False, defect_policy="source-role-v3"
         )
-    dynamic = [row for row in report["findings"]
-               if row["code"] == "SECURITY_DYNAMIC_EXECUTION"]
+    dynamic = [
+        row for row in report["findings"] if row["code"] == "SECURITY_DYNAMIC_EXECUTION"
+    ]
     assert len(dynamic) == 1 and dynamic[0]["severity"] == "HIGH"
-    assert not [row for row in report["context_reviews"]
-                if row["code"] == "SECURITY_DYNAMIC_EXECUTION"]
+    assert not [
+        row
+        for row in report["context_reviews"]
+        if row["code"] == "SECURITY_DYNAMIC_EXECUTION"
+    ]
 
 
 def test_imported_constant_helper375_shell_context_reseals_without_downgrade(tmp_path):
@@ -2474,31 +3011,45 @@ def test_imported_constant_helper375_shell_context_reseals_without_downgrade(tmp
         "import subprocess\nfrom helper import constant\n"
         "def test_command():\n    command = constant('ignored')\n"
         "    subprocess.call(command, shell=True)\n",
-        {"helper.py": "def constant(value):\n    result = 'status'\n    return result\n"},
+        {
+            "helper.py": "def constant(value):\n    result = 'status'\n    return result\n"
+        },
         policy="source-role-v3",
     )
-    shell = [row for row in report["finding_tier_report"]["ledger"]
-             if row["raw_finding"]["code"] == "SECURITY_SHELL_COMMAND"]
+    shell = [
+        row
+        for row in report["finding_tier_report"]["ledger"]
+        if row["raw_finding"]["code"] == "SECURITY_SHELL_COMMAND"
+    ]
     assert len(shell) == 1
     raw = shell[0]["raw_finding"]
     assert raw["severity"] == "HIGH"
     assert raw in report["context_reviews"]
-    assert not [row for row in report["findings"] if row["code"] == "SECURITY_SHELL_COMMAND"]
+    assert not [
+        row for row in report["findings"] if row["code"] == "SECURITY_SHELL_COMMAND"
+    ]
     assert shell[0]["source_role_review"]["safe_execution"] is False
     resealed = review_audits._seal_security_scan(report.copy())
     assert resealed["context_reviews"] == report["context_reviews"]
     assert resealed["findings"] == report["findings"]
 
 
-def test_shared_import375_provider_closure_does_not_rescan_whole_context(tmp_path, monkeypatch):
+def test_shared_import375_provider_closure_does_not_rescan_whole_context(
+    tmp_path, monkeypatch
+):
     from factoryline.credential_role_constructor_provider import (
-        SourceSnapshotIndex, _captured_terminal_provider_mutation,
+        SourceSnapshotIndex,
+        _captured_terminal_provider_mutation,
     )
 
     sources = {tmp_path / "helper.py": b"def fixed():\n    return 'constant'\n"}
-    sources.update({tmp_path / f"caller_{number}.py":
-                    b"import helper\ndef caller():\n    return helper.fixed()\n"
-                    for number in range(3)})
+    sources.update(
+        {
+            tmp_path
+            / f"caller_{number}.py": b"import helper\ndef caller():\n    return helper.fixed()\n"
+            for number in range(3)
+        }
+    )
     trees = {path: ast.parse(raw) for path, raw in sources.items()}
     digests = {path: hashlib.sha256(raw).hexdigest() for path, raw in sources.items()}
     for path, tree in trees.items():
@@ -2514,41 +3065,64 @@ def test_shared_import375_provider_closure_does_not_rescan_whole_context(tmp_pat
 
     monkeypatch.setattr(finite, "_foreign_provider_inputs", counted)
     assert not _captured_terminal_provider_mutation(
-        index, review_audits, "helper.fixed", local_binding=(tmp_path / "helper.py", "fixed")
+        index,
+        review_audits,
+        "helper.fixed",
+        local_binding=(tmp_path / "helper.py", "fixed"),
     )
-    assert len(foreign_visits) <= len(sources), "Provider closure rescanned the full context per module"
+    assert len(foreign_visits) <= len(sources), (
+        "Provider closure rescanned the full context per module"
+    )
 
 
-@pytest.mark.parametrize("source, ambiguous", [
-    ("import django.db.models.deletion\nimport django.utils.timezone\n", False),
-    ("import django.db\nimport django\n", False),
-    ("import django.db as provider\nimport django.utils as provider\n", True),
-    ("import django.db\nimport unrelated as django\n", True),
-    ("import django.db\nimport django.utils as django\n", True),
-])
+@pytest.mark.parametrize(
+    "source, ambiguous",
+    [
+        ("import django.db.models.deletion\nimport django.utils.timezone\n", False),
+        ("import django.db\nimport django\n", False),
+        ("import django.db as provider\nimport django.utils as provider\n", True),
+        ("import django.db\nimport unrelated as django\n", True),
+        ("import django.db\nimport django.utils as django\n", True),
+    ],
+)
 def test_shared_import375_namespace_binding_matches_python_import(source, ambiguous):
-    aliases = finite._shell_import_aliases(tuple(ast.walk(ast.parse(source))), review_audits, "django")
+    aliases = finite._shell_import_aliases(
+        tuple(ast.walk(ast.parse(source))), review_audits, "django"
+    )
     assert (aliases is None) is ambiguous
     if not ambiguous:
         assert aliases["django"] == "django"
 
 
-@pytest.mark.parametrize("provider, ambiguous", [
-    ("django.test.TestCase", False),
-    ("django.db.models.Model", True),
-])
+@pytest.mark.parametrize(
+    "provider, ambiguous",
+    [
+        ("django.test.TestCase", False),
+        ("django.db.models.Model", True),
+    ],
+)
 def test_shared_import375_ambiguity_is_bound_to_selected_provider(provider, ambiguous):
-    source = "from django.db import models\ndef migrate():\n    from core import models\n"
-    aliases = finite._shell_import_aliases(tuple(ast.walk(ast.parse(source))), review_audits, provider)
+    source = (
+        "from django.db import models\ndef migrate():\n    from core import models\n"
+    )
+    aliases = finite._shell_import_aliases(
+        tuple(ast.walk(ast.parse(source))), review_audits, provider
+    )
     assert (aliases is None) is ambiguous
 
 
-@pytest.mark.parametrize("unknown, populated, expected_checks", [(True, False, 0), (False, False, 1), (True, True, 1)])
-def test_shared_import375_unknown_leaf_does_not_demand_negative_proof(tmp_path, unknown, populated, expected_checks):
+@pytest.mark.parametrize(
+    "unknown, populated, expected_checks",
+    [(True, False, 0), (False, False, 1), (True, True, 1)],
+)
+def test_shared_import375_unknown_leaf_does_not_demand_negative_proof(
+    tmp_path, unknown, populated, expected_checks
+):
     from factoryline import credential_role_identity_effects as identity
 
     path, _tree, index, helper, _caller, call = _shared_security_helper_index(
-        tmp_path, "def helper(value):\n    return value\ndef caller(raw):\n    return helper(raw)\n",
+        tmp_path,
+        "def helper(value):\n    return value\ndef caller(raw):\n    return helper(raw)\n",
     )
     checks = []
 
@@ -2557,14 +3131,24 @@ def test_shared_import375_unknown_leaf_does_not_demand_negative_proof(tmp_path, 
         return True
 
     value = identity._Value(
-        roots=frozenset() if populated else frozenset({"request"}), unknown=unknown, scalar_kind="text",
+        roots=frozenset() if populated else frozenset({"request"}),
+        unknown=unknown,
+        scalar_kind="text",
         items=((0, identity._Value(scalar_kind="text")),) if populated else (),
     )
-    resolved = identity.ResolvedIdentityCall(helper, path, {"value": call.args[0]}, negative_binding_check=prove)
-    summary = identity.summarize_identity_call(call, path, index, {"raw": value}, resolve_call=lambda *_: resolved)
+    resolved = identity.ResolvedIdentityCall(
+        helper, path, {"value": call.args[0]}, negative_binding_check=prove
+    )
+    summary = identity.summarize_identity_call(
+        call, path, index, {"raw": value}, resolve_call=lambda *_: resolved
+    )
     assert len(checks) == expected_checks
     returned = summary.return_values[0].value
-    assert returned.roots == value.roots and returned.unknown is unknown and returned.items == value.items
+    assert (
+        returned.roots == value.roots
+        and returned.unknown is unknown
+        and returned.items == value.items
+    )
     assert returned.scalar_kind == value.scalar_kind
     if not expected_checks:
         assert any("UNPROVED_HELPER_PROVIDER" in step for step in returned.trace)

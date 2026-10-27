@@ -1053,7 +1053,10 @@ def test_provider_cache351_predicated_and_invalid_sources_remain_conservative(
         )
 
     assert ("requests", "get") in scan(**{predicate: lambda *args: False})
-    assert all(key[0] == "parsed" for key in tree._security_oracle_context["_security_provider_mutation_cache"])
+    assert all(
+        key[0] == "parsed"
+        for key in tree._security_oracle_context["_security_provider_mutation_cache"]
+    )
     scan()
     sources["peer.py"] = b"invalid ("
     assert ("requests", "*") in scan()
@@ -1095,11 +1098,16 @@ def test_provider_cache351_each_capture_predicate_is_reevaluated():
 
     tree, sources, nodes, parents = _provider_cache351_inputs()
     sources["peer.py"] = b"import requests\nselected = requests.get\n"
+
     def scan(accepted):
         return finite_capture.finite_provider_mutation_index(
-            nodes, {"requests": "requests"}, review_audits, parents,
+            nodes,
+            {"requests": "requests"},
+            review_audits,
+            parents,
             capture_predicate=lambda node: accepted,
         )
+
     assert ("requests.get", "*") not in scan(False)
     assert ("requests.get", "*") in scan(True)
     assert ("requests.get", "*") not in scan(False)
@@ -1109,52 +1117,89 @@ def test_foreign_provider360_indexes_events_without_caching_predicate_results():
     from factoryline import finite_capture as finite
 
     tree, _, _, _ = _provider_cache351_inputs()
-    raw = (b"import requests\nvalues = [1, 2, 3, 4]\n"
-           b"selected = requests.get\nrequests.post = replacement\n"
-           b"setattr(requests, 'put', replacement)\n"
-           b"def consume():\n    accept(requests)\n    return requests\n")
+    raw = (
+        b"import requests\nvalues = [1, 2, 3, 4]\n"
+        b"selected = requests.get\nrequests.post = replacement\n"
+        b"setattr(requests, 'put', replacement)\n"
+        b"def consume():\n    accept(requests)\n    return requests\n"
+    )
     digest = hashlib.sha256(raw).hexdigest()
     indexed, aliases, parents, bindings = finite._foreign_provider_inputs(
         tree, raw, digest, review_audits._security_aliases
     )
     full = tuple(ast.walk(ast.parse(raw)))
-    full_parents = {id(child): node for node in full for child in ast.iter_child_nodes(node)}
+    full_parents = {
+        id(child): node for node in full for child in ast.iter_child_nodes(node)
+    }
     full_aliases = review_audits._security_aliases(full)
     full_bindings = finite._provider_alias_bindings(full)
     assert len(indexed) < len(full) / 2
     for accepted in (False, True, False):
         observations = []
+
         def capture(node):
             observations.append(("capture", ast.dump(node)))
             return accepted
+
         def argument(node, _aliases, _parents):
             observations.append(("argument", ast.dump(node)))
             return accepted
+
         expected, actual = set(), set()
-        finite._provider_mutation_facts(full, full_aliases, review_audits,
-            full_parents, full_bindings, expected, capture, argument)
+        finite._provider_mutation_facts(
+            full,
+            full_aliases,
+            review_audits,
+            full_parents,
+            full_bindings,
+            expected,
+            capture,
+            argument,
+        )
         expected_calls = list(observations)
         observations.clear()
-        finite._provider_mutation_facts(indexed, aliases, review_audits,
-            parents, bindings, actual, capture, argument)
+        finite._provider_mutation_facts(
+            indexed,
+            aliases,
+            review_audits,
+            parents,
+            bindings,
+            actual,
+            capture,
+            argument,
+        )
         assert actual == expected
         assert observations == expected_calls
         assert ("requests", "post") in actual and ("requests", "put") in actual
-        repeated = finite._foreign_provider_inputs(tree, raw, digest, review_audits._security_aliases)
+        repeated = finite._foreign_provider_inputs(
+            tree, raw, digest, review_audits._security_aliases
+        )
         assert repeated[0] is indexed
 
 
-@pytest.mark.parametrize("expression", [
-    "os.path.join(base, leaf)", "os.path.join('relative', leaf)",
-    "os.path.join('/fixed')", "os.path.join('/fixed', leaf, option=True)",
-])
+@pytest.mark.parametrize(
+    "expression",
+    [
+        "os.path.join(base, leaf)",
+        "os.path.join('relative', leaf)",
+        "os.path.join('/fixed')",
+        "os.path.join('/fixed', leaf, option=True)",
+    ],
+)
 def test_upload361_rejects_impossible_barrier_before_provider_scan(expression):
     from factoryline.intent_quality import fixed_root_filename_path
 
     def forbidden(*args):
-        pytest.fail("impossible path barrier must not trigger a workspace provider scan")
-    assert fixed_root_filename_path(ast.parse(expression, mode="eval").body,
-        set(), {}, forbidden) is False
+        pytest.fail(
+            "impossible path barrier must not trigger a workspace provider scan"
+        )
+
+    assert (
+        fixed_root_filename_path(
+            ast.parse(expression, mode="eval").body, set(), {}, forbidden
+        )
+        is False
+    )
 
 
 def test_upload361_valid_barrier_still_requires_provider_and_leaf_proofs():
@@ -1162,13 +1207,19 @@ def test_upload361_valid_barrier_still_requires_provider_and_leaf_proofs():
 
     node = ast.parse("os.path.join('/fixed', leaf)", mode="eval").body
     calls = []
+
     def provider(call, aliases, expected):
         calls.append(expected)
         return True
-    assert fixed_root_filename_path(node, {("secure-upload-leaf", "leaf")}, {}, provider)
+
+    assert fixed_root_filename_path(
+        node, {("secure-upload-leaf", "leaf")}, {}, provider
+    )
     assert calls == ["os.path.join"]
     assert not fixed_root_filename_path(node, set(), {}, provider)
-    assert not fixed_root_filename_path(node, {("secure-upload-leaf", "leaf")}, {}, lambda *_: False)
+    assert not fixed_root_filename_path(
+        node, {("secure-upload-leaf", "leaf")}, {}, lambda *_: False
+    )
 
 
 def test_provider_profile308_security_only_seal_retains_outer_scope(monkeypatch):
@@ -4305,6 +4356,12 @@ def test_local_eval_def_use_binding_recomputes_source_and_rejects_stale_or_forge
     assert primitive.fixed_primitive_binding(
         finding, sources, bindings, review_audits, source_bytes
     )
+    for wrong_scope in ("module", "unrecognized-source-scope"):
+        wrong_profile = json.loads(json.dumps(finding))
+        wrong_profile["facts"]["profile"]["scope"] = wrong_scope
+        assert not primitive.fixed_primitive_binding(
+            wrong_profile, sources, bindings, review_audits, source_bytes
+        )
     assert not primitive.fixed_primitive_binding(
         finding, sources, bindings, review_audits
     )
@@ -5550,7 +5607,9 @@ def test_workspace_v2_security_only_keeps_security_findings_without_oracle_analy
     assert quality_calls == []
 
 
-@pytest.mark.parametrize("missing_snapshot", [False, True], ids=["snapshot", "fallback"])
+@pytest.mark.parametrize(
+    "missing_snapshot", [False, True], ids=["snapshot", "fallback"]
+)
 def test_security_only_contextvar_skips_quality_in_source_scanner_paths(
     tmp_path, monkeypatch, missing_snapshot
 ):
@@ -5584,10 +5643,7 @@ def test_security_only_contextvar_skips_quality_in_source_scanner_paths(
         report = review_audits.security_scan(tmp_path, cache_enabled=False)
 
     assert report["audit_coverage"]["complete"]
-    assert any(
-        row["code"] == "SECURITY_HARDCODED_SECRET"
-        for row in report["findings"]
-    )
+    assert any(row["code"] == "SECURITY_HARDCODED_SECRET" for row in report["findings"])
     assert quality_calls == []
 
 
@@ -5688,7 +5744,9 @@ def test_security_only_projection_skips_quality_helpers_and_keeps_security_conte
         monkeypatch.setattr(review_audits, name, forbidden)
     monkeypatch.setattr(test_oracle_misuse, "source_callback_invokers", forbidden)
     monkeypatch.setattr(test_oracle_misuse, "source_callback_snapshot_state", forbidden)
-    monkeypatch.setattr(review_audits.integrity, "_structural_oracle_context", forbidden)
+    monkeypatch.setattr(
+        review_audits.integrity, "_structural_oracle_context", forbidden
+    )
     monkeypatch.setattr(context_efficiency, "protocol_call_context", forbidden)
 
     with review_audits._security_only_scan_context(True):
@@ -5699,7 +5757,9 @@ def test_security_only_projection_skips_quality_helpers_and_keeps_security_conte
     )
 
 
-@pytest.mark.parametrize("first_mode", [False, True], ids=["mixed-first", "security-first"])
+@pytest.mark.parametrize(
+    "first_mode", [False, True], ids=["mixed-first", "security-first"]
+)
 def test_warm_oracle_cache_keeps_security_and_mixed_projections_separate(
     tmp_path, first_mode
 ):
@@ -6639,97 +6699,187 @@ def test_pickle_reconstruction317_model_rejects_exponential_fstring_growth(monke
     )
 
 
-_TYPED_SOURCE = 'from flask import request\n'
+_TYPED_SOURCE = "from flask import request\n"
 
 
 def _typed_origin_findings(source):
     from pathlib import Path
 
     root = Path.cwd()
-    return review_audits._security_scan_tree(root, root / 'app.py', ast.parse(source), security_only=True)
+    return review_audits._security_scan_tree(
+        root, root / "app.py", ast.parse(source), security_only=True
+    )
 
 
-@pytest.mark.parametrize('imports,body,sink,rule', [
-    ('', 'alias = "(" + value + ")"', 'eval', 'SECURITY_DYNAMIC_EXECUTION'),
-    ('import os\n', 'alias = "echo " + value', 'os.system', 'SECURITY_OS_COMMAND'),
-    ('import subprocess\n', 'alias = f"echo {value}"', 'subprocess.run', 'SECURITY_SHELL_COMMAND'),
-    ('import yaml\n', 'alias = value + " "', 'yaml.unsafe_load', 'SECURITY_UNSAFE_YAML'),
-    ('import pickle\n', "alias = b'' + value", 'pickle.loads', 'SECURITY_UNSAFE_DESERIALIZATION'),
-    ('import pickle\n', 'alias = value.encode()', 'pickle.loads', 'SECURITY_UNSAFE_DESERIALIZATION'),
-])
-def test_native_typed_origin_common_transforms_reach_five_sink_families(imports, body, sink, rule):
+@pytest.mark.parametrize(
+    "imports,body,sink,rule",
+    [
+        ("", 'alias = "(" + value + ")"', "eval", "SECURITY_DYNAMIC_EXECUTION"),
+        ("import os\n", 'alias = "echo " + value', "os.system", "SECURITY_OS_COMMAND"),
+        (
+            "import subprocess\n",
+            'alias = f"echo {value}"',
+            "subprocess.run",
+            "SECURITY_SHELL_COMMAND",
+        ),
+        (
+            "import yaml\n",
+            'alias = value + " "',
+            "yaml.unsafe_load",
+            "SECURITY_UNSAFE_YAML",
+        ),
+        (
+            "import pickle\n",
+            "alias = b'' + value",
+            "pickle.loads",
+            "SECURITY_UNSAFE_DESERIALIZATION",
+        ),
+        (
+            "import pickle\n",
+            "alias = value.encode()",
+            "pickle.loads",
+            "SECURITY_UNSAFE_DESERIALIZATION",
+        ),
+    ],
+)
+def test_native_typed_origin_common_transforms_reach_five_sink_families(
+    imports, body, sink, rule
+):
     binary = "b''" in body
-    payload = 'request.get_data()' if binary else 'request.get_data(as_text=True)'
-    options = ', shell=True' if sink == 'subprocess.run' else ''
-    source = imports + _TYPED_SOURCE + f'def transform(value):\n    {body}\n    return alias\n{sink}(transform({payload}){options})\n'
-    (finding,) = [row for row in _typed_origin_findings(source) if row['code'] == rule]
-    premise = finding['facts']['security_precondition']
-    trace = premise['input_value_flow']
-    assert premise['status'] == 'SUPPORTED'
-    assert trace['value_kind'] == ('bytes' if binary or 'encode' in body else 'text')
-    assert len(trace['trace_sha256']) == 64
-    assert any(step['operation'] == 'HELPER_RETURN' for step in trace['steps'])
-    assert all(len(step['ast_sha256']) == 64 for step in trace['steps'])
-    assert trace['runtime_execution'] == 'not_performed'
+    payload = "request.get_data()" if binary else "request.get_data(as_text=True)"
+    options = ", shell=True" if sink == "subprocess.run" else ""
+    source = (
+        imports
+        + _TYPED_SOURCE
+        + f"def transform(value):\n    {body}\n    return alias\n{sink}(transform({payload}){options})\n"
+    )
+    (finding,) = [row for row in _typed_origin_findings(source) if row["code"] == rule]
+    premise = finding["facts"]["security_precondition"]
+    trace = premise["input_value_flow"]
+    assert premise["status"] == "SUPPORTED"
+    assert trace["value_kind"] == ("bytes" if binary or "encode" in body else "text")
+    assert len(trace["trace_sha256"]) == 64
+    assert any(step["operation"] == "HELPER_RETURN" for step in trace["steps"])
+    assert all(len(step["ast_sha256"]) == 64 for step in trace["steps"])
+    assert trace["runtime_execution"] == "not_performed"
 
 
-@pytest.mark.parametrize('source', [
-    _TYPED_SOURCE + "def transform(value):\n    alias = 'prefix' + opaque()\n    return alias\neval(transform(request.get_data(as_text=True)))\n",
-    _TYPED_SOURCE + "def transform(value):\n    alias = b'prefix' + value\n    return alias\neval(transform(request.get_data(as_text=True)))\n",
-    _TYPED_SOURCE + "def transform(value):\n    alias = value + opaque()\n    return alias\neval(transform(request.get_data(as_text=True)))\n",
-    _TYPED_SOURCE + "def transform(value):\n    alias = f'{value!r}'\n    return alias\neval(transform(request.get_data(as_text=True)))\n",
-    _TYPED_SOURCE + "def transform(value):\n    alias = 'fixed'\n    return alias\neval(transform(request.get_data(as_text=True)))\n",
-    _TYPED_SOURCE + "def transform(value):\n    return transform(value)\neval(transform(request.get_data(as_text=True)))\n",
-    'import pickle\n' + _TYPED_SOURCE + "def transform(value):\n    return value.encode()\nvalue = request.get_json()['payload']\npickle.loads(transform(value))\n",
-    'import pickle\n' + _TYPED_SOURCE + "def transform(value):\n    return value.encode()\nvalue = request.json['payload']\npickle.loads(transform(value))\n",
-    'import pickle\n' + _TYPED_SOURCE + "def transform(value):\n    return value + ''\npickle.loads(transform(request.get_data(as_text=True)))\n",
-    _TYPED_SOURCE + "def transform(value):\n    return value + ')'\ntransform.__code__ = supplied\neval(transform(request.get_data(as_text=True)))\n",
-])
-def test_native_typed_origin_declines_unknown_mixed_overwritten_and_mutated_inputs(source):
+@pytest.mark.parametrize(
+    "source",
+    [
+        _TYPED_SOURCE
+        + "def transform(value):\n    alias = 'prefix' + opaque()\n    return alias\neval(transform(request.get_data(as_text=True)))\n",
+        _TYPED_SOURCE
+        + "def transform(value):\n    alias = b'prefix' + value\n    return alias\neval(transform(request.get_data(as_text=True)))\n",
+        _TYPED_SOURCE
+        + "def transform(value):\n    alias = value + opaque()\n    return alias\neval(transform(request.get_data(as_text=True)))\n",
+        _TYPED_SOURCE
+        + "def transform(value):\n    alias = f'{value!r}'\n    return alias\neval(transform(request.get_data(as_text=True)))\n",
+        _TYPED_SOURCE
+        + "def transform(value):\n    alias = 'fixed'\n    return alias\neval(transform(request.get_data(as_text=True)))\n",
+        _TYPED_SOURCE
+        + "def transform(value):\n    return transform(value)\neval(transform(request.get_data(as_text=True)))\n",
+        "import pickle\n"
+        + _TYPED_SOURCE
+        + "def transform(value):\n    return value.encode()\nvalue = request.get_json()['payload']\npickle.loads(transform(value))\n",
+        "import pickle\n"
+        + _TYPED_SOURCE
+        + "def transform(value):\n    return value.encode()\nvalue = request.json['payload']\npickle.loads(transform(value))\n",
+        "import pickle\n"
+        + _TYPED_SOURCE
+        + "def transform(value):\n    return value + ''\npickle.loads(transform(request.get_data(as_text=True)))\n",
+        _TYPED_SOURCE
+        + "def transform(value):\n    return value + ')'\ntransform.__code__ = supplied\neval(transform(request.get_data(as_text=True)))\n",
+    ],
+)
+def test_native_typed_origin_declines_unknown_mixed_overwritten_and_mutated_inputs(
+    source,
+):
     rows = _typed_origin_findings(source)
-    assert any(row['code'] in {'SECURITY_DYNAMIC_EXECUTION', 'SECURITY_UNSAFE_DESERIALIZATION'} for row in rows)
-    assert not any(row.get('facts', {}).get('security_precondition') for row in rows)
+    assert any(
+        row["code"] in {"SECURITY_DYNAMIC_EXECUTION", "SECURITY_UNSAFE_DESERIALIZATION"}
+        for row in rows
+    )
+    assert not any(row.get("facts", {}).get("security_precondition") for row in rows)
 
 
 def test_native_typed_origin_nested_helper_preserves_known_untainted_prefix():
-    source = _TYPED_SOURCE + "def combine(prefix, value):\n    return prefix + value\ndef transform(value):\n    prefix = '('\n    return combine(prefix, value)\neval(transform(request.get_data(as_text=True)))\n"
-    (row,) = [row for row in _typed_origin_findings(source) if row['code'] == 'SECURITY_DYNAMIC_EXECUTION']
-    assert row['facts']['security_precondition']['input_value_flow']['value_kind'] == 'text'
+    source = (
+        _TYPED_SOURCE
+        + "def combine(prefix, value):\n    return prefix + value\ndef transform(value):\n    prefix = '('\n    return combine(prefix, value)\neval(transform(request.get_data(as_text=True)))\n"
+    )
+    (row,) = [
+        row
+        for row in _typed_origin_findings(source)
+        if row["code"] == "SECURITY_DYNAMIC_EXECUTION"
+    ]
+    assert (
+        row["facts"]["security_precondition"]["input_value_flow"]["value_kind"]
+        == "text"
+    )
 
 
 def test_native_typed_origin_public_source_bound_tier_and_reseal(tmp_path):
-    source = _TYPED_SOURCE + "def transform(value):\n    return '(' + value + ')'\neval(transform(request.get_data(as_text=True)))\n"
-    (tmp_path / 'app.py').write_text(source, encoding='utf8')
+    source = (
+        _TYPED_SOURCE
+        + "def transform(value):\n    return '(' + value + ')'\neval(transform(request.get_data(as_text=True)))\n"
+    )
+    (tmp_path / "app.py").write_text(source, encoding="utf8")
     report = review_audits.security_scan(tmp_path, cache_enabled=False)
-    (row,) = [row for row in report['finding_tier_report']['ledger'] if row['raw_finding']['code'] == 'SECURITY_DYNAMIC_EXECUTION']
-    assert row['tier'] == 'SUPPORTED_DEFECT'
-    assert review_audits._seal_security_scan(report.copy())['finding_tier_report'] == report['finding_tier_report']
+    (row,) = [
+        row
+        for row in report["finding_tier_report"]["ledger"]
+        if row["raw_finding"]["code"] == "SECURITY_DYNAMIC_EXECUTION"
+    ]
+    assert row["tier"] == "SUPPORTED_DEFECT"
+    assert (
+        review_audits._seal_security_scan(report.copy())["finding_tier_report"]
+        == report["finding_tier_report"]
+    )
 
 
 def test_native_typed_origin_helpers_enrolled_in_cache_identity():
     from factoryline import finite_capture as finite
     from factoryline import runtime_audit_integrity as runtime
+
     helpers = runtime.credential_validation_helpers()
-    assert all(helper in helpers for helper in (finite._SecurityFlowValue, finite._security_flow_shaped,
-        finite.security_helper_return_value, finite.security_helper_return_kind, finite.security_input_value_flow))
+    assert all(
+        helper in helpers
+        for helper in (
+            finite._SecurityFlowValue,
+            finite._security_flow_shaped,
+            finite.security_helper_return_value,
+            finite.security_helper_return_kind,
+            finite.security_input_value_flow,
+        )
+    )
 
 
 _REQUEST_SINK_SOURCE = "import requests, sqlite3\nfrom flask import request\nopen(request.args['path'], 'w')\nrequests.get(request.args['url'])\nconnection = sqlite3.connect(':memory:')\nconnection.execute('SELECT * FROM users WHERE name=' + request.args['name'])\n"
 
 
-def test_native_request_sink_families_share_typed_input_trace_and_strict_consumers(tmp_path):
-    (tmp_path / 'app.py').write_text(_REQUEST_SINK_SOURCE, encoding='utf8')
+def test_native_request_sink_families_share_typed_input_trace_and_strict_consumers(
+    tmp_path,
+):
+    (tmp_path / "app.py").write_text(_REQUEST_SINK_SOURCE, encoding="utf8")
     report = review_audits.security_scan(tmp_path, cache_enabled=False)
-    selected = [row for row in report['finding_tier_report']['ledger'] if row['raw_finding']['code'] in {
-        'SECURITY_PATH_TRAVERSAL','SECURITY_SSRF','SECURITY_SQL_INJECTION'}]
+    selected = [
+        row
+        for row in report["finding_tier_report"]["ledger"]
+        if row["raw_finding"]["code"]
+        in {"SECURITY_PATH_TRAVERSAL", "SECURITY_SSRF", "SECURITY_SQL_INJECTION"}
+    ]
     assert len(selected) == 3
-    assert all(row['tier'] == 'SUPPORTED_DEFECT' for row in selected)
+    assert all(row["tier"] == "SUPPORTED_DEFECT" for row in selected)
     for row in selected:
-        evidence = row['raw_finding']['facts']['security_precondition']
-        assert evidence['source_role'] == 'untrusted_request'
-        assert evidence['input_value_flow']['value_kind'] == 'text'
-        assert evidence['input_slot_span']
-    assert review_audits._seal_security_scan(report.copy())['finding_tier_report'] == report['finding_tier_report']
+        evidence = row["raw_finding"]["facts"]["security_precondition"]
+        assert evidence["source_role"] == "untrusted_request"
+        assert evidence["input_value_flow"]["value_kind"] == "text"
+        assert evidence["input_slot_span"]
+    assert (
+        review_audits._seal_security_scan(report.copy())["finding_tier_report"]
+        == report["finding_tier_report"]
+    )
 
 
 @pytest.mark.parametrize(
@@ -6824,69 +6974,186 @@ def test_native_source_sink_keeps_taint_across_uncertain_structured_paths(block)
     assert finding["facts"]["call"] == "requests.get"
 
 
-@pytest.mark.parametrize('replacement,rule', [
-    ("requests.get = replacement\n", 'SECURITY_SSRF'),
-    ("requests.get.__code__ = supplied\n", 'SECURITY_SSRF'),
-    ("sqlite3.connect = replacement\n", 'SECURITY_SQL_INJECTION'),
-    ("open = replacement\n", 'SECURITY_PATH_TRAVERSAL'),
-])
-def test_native_request_sink_provider_replacement_cannot_gain_support(replacement,rule):
-    source = _REQUEST_SINK_SOURCE.replace("open(request.args", replacement + "open(request.args",1)
+@pytest.mark.parametrize(
+    "replacement,rule",
+    [
+        ("requests.get = replacement\n", "SECURITY_SSRF"),
+        ("requests.get.__code__ = supplied\n", "SECURITY_SSRF"),
+        ("sqlite3.connect = replacement\n", "SECURITY_SQL_INJECTION"),
+        ("open = replacement\n", "SECURITY_PATH_TRAVERSAL"),
+    ],
+)
+def test_native_request_sink_provider_replacement_cannot_gain_support(
+    replacement, rule
+):
+    source = _REQUEST_SINK_SOURCE.replace(
+        "open(request.args", replacement + "open(request.args", 1
+    )
     rows = _typed_origin_findings(source)
-    assert not any(row['code'] == rule and row.get('facts',{}).get('security_precondition') for row in rows)
+    assert not any(
+        row["code"] == rule and row.get("facts", {}).get("security_precondition")
+        for row in rows
+    )
 
 
-@pytest.mark.parametrize('source,rule', [
-    ("import sqlite3\ndef query(value):\n    connection=sqlite3.connect(':memory:')\n    connection.execute('SELECT '+value)\n",'SECURITY_SQL_INJECTION'),
-    (_REQUEST_SINK_SOURCE.replace("connection.execute(", "connection.execute = replacement\nconnection.execute("),'SECURITY_SQL_INJECTION'),
-    (_REQUEST_SINK_SOURCE.replace("connection.execute(", "escape(connection)\nconnection.execute("),'SECURITY_SQL_INJECTION'),
-    (_REQUEST_SINK_SOURCE.replace("connection.execute(", "connection.__setattr__('execute', replacement)\nconnection.execute("),'SECURITY_SQL_INJECTION'),
-    (_REQUEST_SINK_SOURCE.replace("request.args['url']", "request.json['url']"),'SECURITY_SSRF'),
-    (_REQUEST_SINK_SOURCE.replace("requests.get(request.args['url'])", "requests.get(request.args['url'], None, None)"),'SECURITY_SSRF'),
-    (_REQUEST_SINK_SOURCE.replace("requests.get(request.args['url'])", "requests.get(request.args['url'], unknown=True)"),'SECURITY_SSRF'),
-    (_REQUEST_SINK_SOURCE.replace("open(request.args['path'], 'w')", "open(request.args['path'], unknown=True)"),'SECURITY_PATH_TRAVERSAL'),
-    (_REQUEST_SINK_SOURCE.replace("open(request.args['path'], 'w')", "open(request.args['path'], 1,2,3,4,5,6,7,8)"),'SECURITY_PATH_TRAVERSAL'),
-    (_REQUEST_SINK_SOURCE.replace("connection.execute('SELECT * FROM users WHERE name=' + request.args['name'])", "connection.execute('SELECT '+request.args['name'], sql='other')"),'SECURITY_SQL_INJECTION'),
-    (_REQUEST_SINK_SOURCE.replace("requests.get(request.args['url'])", "requests.get(request.args['url'], url=request.args['url'])"),'SECURITY_SSRF'),
-    (_REQUEST_SINK_SOURCE.replace("requests.get(request.args['url'])", "requests.get(*values, url=request.args['url'])"),'SECURITY_SSRF'),
-    (_REQUEST_SINK_SOURCE.replace("open(request.args['path'], 'w')", "open(request.args['path'], file=request.args['path'])"),'SECURITY_PATH_TRAVERSAL'),
-    (_REQUEST_SINK_SOURCE.replace("connection.execute('SELECT * FROM users WHERE name=' + request.args['name'])", "connection.execute('SELECT * FROM users WHERE name=?', (request.args['name'],))"),'SECURITY_SQL_INJECTION'),
-    (_REQUEST_SINK_SOURCE.replace("open(request.args['path'], 'w')", "if False:\n    open(request.args['path'], 'w')"),'SECURITY_PATH_TRAVERSAL'),
-])
-def test_native_request_sink_declines_ambiguous_untyped_and_unproven_consumers(source,rule):
+@pytest.mark.parametrize(
+    "source,rule",
+    [
+        (
+            "import sqlite3\ndef query(value):\n    connection=sqlite3.connect(':memory:')\n    connection.execute('SELECT '+value)\n",
+            "SECURITY_SQL_INJECTION",
+        ),
+        (
+            _REQUEST_SINK_SOURCE.replace(
+                "connection.execute(",
+                "connection.execute = replacement\nconnection.execute(",
+            ),
+            "SECURITY_SQL_INJECTION",
+        ),
+        (
+            _REQUEST_SINK_SOURCE.replace(
+                "connection.execute(", "escape(connection)\nconnection.execute("
+            ),
+            "SECURITY_SQL_INJECTION",
+        ),
+        (
+            _REQUEST_SINK_SOURCE.replace(
+                "connection.execute(",
+                "connection.__setattr__('execute', replacement)\nconnection.execute(",
+            ),
+            "SECURITY_SQL_INJECTION",
+        ),
+        (
+            _REQUEST_SINK_SOURCE.replace("request.args['url']", "request.json['url']"),
+            "SECURITY_SSRF",
+        ),
+        (
+            _REQUEST_SINK_SOURCE.replace(
+                "requests.get(request.args['url'])",
+                "requests.get(request.args['url'], None, None)",
+            ),
+            "SECURITY_SSRF",
+        ),
+        (
+            _REQUEST_SINK_SOURCE.replace(
+                "requests.get(request.args['url'])",
+                "requests.get(request.args['url'], unknown=True)",
+            ),
+            "SECURITY_SSRF",
+        ),
+        (
+            _REQUEST_SINK_SOURCE.replace(
+                "open(request.args['path'], 'w')",
+                "open(request.args['path'], unknown=True)",
+            ),
+            "SECURITY_PATH_TRAVERSAL",
+        ),
+        (
+            _REQUEST_SINK_SOURCE.replace(
+                "open(request.args['path'], 'w')",
+                "open(request.args['path'], 1,2,3,4,5,6,7,8)",
+            ),
+            "SECURITY_PATH_TRAVERSAL",
+        ),
+        (
+            _REQUEST_SINK_SOURCE.replace(
+                "connection.execute('SELECT * FROM users WHERE name=' + request.args['name'])",
+                "connection.execute('SELECT '+request.args['name'], sql='other')",
+            ),
+            "SECURITY_SQL_INJECTION",
+        ),
+        (
+            _REQUEST_SINK_SOURCE.replace(
+                "requests.get(request.args['url'])",
+                "requests.get(request.args['url'], url=request.args['url'])",
+            ),
+            "SECURITY_SSRF",
+        ),
+        (
+            _REQUEST_SINK_SOURCE.replace(
+                "requests.get(request.args['url'])",
+                "requests.get(*values, url=request.args['url'])",
+            ),
+            "SECURITY_SSRF",
+        ),
+        (
+            _REQUEST_SINK_SOURCE.replace(
+                "open(request.args['path'], 'w')",
+                "open(request.args['path'], file=request.args['path'])",
+            ),
+            "SECURITY_PATH_TRAVERSAL",
+        ),
+        (
+            _REQUEST_SINK_SOURCE.replace(
+                "connection.execute('SELECT * FROM users WHERE name=' + request.args['name'])",
+                "connection.execute('SELECT * FROM users WHERE name=?', (request.args['name'],))",
+            ),
+            "SECURITY_SQL_INJECTION",
+        ),
+        (
+            _REQUEST_SINK_SOURCE.replace(
+                "open(request.args['path'], 'w')",
+                "if False:\n    open(request.args['path'], 'w')",
+            ),
+            "SECURITY_PATH_TRAVERSAL",
+        ),
+    ],
+)
+def test_native_request_sink_declines_ambiguous_untyped_and_unproven_consumers(
+    source, rule
+):
     rows = _typed_origin_findings(source)
-    assert not any(row['code']==rule and row.get('facts',{}).get('security_precondition') for row in rows)
+    assert not any(
+        row["code"] == rule and row.get("facts", {}).get("security_precondition")
+        for row in rows
+    )
 
 
-@pytest.mark.parametrize('rule', [
-    'SECURITY_PATH_TRAVERSAL', 'SECURITY_SSRF', 'SECURITY_SQL_INJECTION',
-])
-@pytest.mark.parametrize('tamper', ['slot', 'trace', 'source', 'missing_capture'])
-def test_native_request_sink_consumer_rebuild_rejects_forged_evidence(tmp_path, rule, tamper):
+@pytest.mark.parametrize(
+    "rule",
+    [
+        "SECURITY_PATH_TRAVERSAL",
+        "SECURITY_SSRF",
+        "SECURITY_SQL_INJECTION",
+    ],
+)
+@pytest.mark.parametrize("tamper", ["slot", "trace", "source", "missing_capture"])
+def test_native_request_sink_consumer_rebuild_rejects_forged_evidence(
+    tmp_path, rule, tamper
+):
     from factoryline.primitive_observation_binding import build_finding_tier_report
 
-    (tmp_path / 'app.py').write_text(_REQUEST_SINK_SOURCE, encoding='utf8')
+    (tmp_path / "app.py").write_text(_REQUEST_SINK_SOURCE, encoding="utf8")
     scanned = review_audits.security_scan(tmp_path, cache_enabled=False)
-    original = next(row for row in scanned['finding_tier_report']['ledger']
-                    if row['raw_finding']['code'] == rule)
-    assert original['tier'] == 'SUPPORTED_DEFECT'
-    finding = copy.deepcopy(original['raw_finding'])
+    original = next(
+        row
+        for row in scanned["finding_tier_report"]["ledger"]
+        if row["raw_finding"]["code"] == rule
+    )
+    assert original["tier"] == "SUPPORTED_DEFECT"
+    finding = copy.deepcopy(original["raw_finding"])
     captured = dict(scanned._captured_sources)
-    premise = finding['facts']['security_precondition']
-    if tamper == 'slot':
-        premise['input_slot_span'][0] += 1
-    elif tamper == 'trace':
-        premise['input_value_flow']['value_kind'] = 'bytes'
-    elif tamper == 'source':
-        captured['app.py'] = _REQUEST_SINK_SOURCE.replace('request.args', 'public.args').encode()
+    premise = finding["facts"]["security_precondition"]
+    if tamper == "slot":
+        premise["input_slot_span"][0] += 1
+    elif tamper == "trace":
+        premise["input_value_flow"]["value_kind"] = "bytes"
+    elif tamper == "source":
+        captured["app.py"] = _REQUEST_SINK_SOURCE.replace(
+            "request.args", "public.args"
+        ).encode()
     else:
         captured.clear()
     checked = build_finding_tier_report(
-        [finding], [], scanned['sources'], captured,
-        coverage_state='COMPLETE', partition_state='PASS',
+        [finding],
+        [],
+        scanned["sources"],
+        captured,
+        coverage_state="COMPLETE",
+        partition_state="PASS",
     )
-    assert checked['ledger'][0]['tier'] == 'NEEDS_CONTEXT'
-    assert checked['raw_diagnostics']['count'] == 1
+    assert checked["ledger"][0]["tier"] == "NEEDS_CONTEXT"
+    assert checked["raw_diagnostics"]["count"] == 1
 
 
 @pytest.mark.parametrize(

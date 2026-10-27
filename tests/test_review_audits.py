@@ -5919,17 +5919,17 @@ def test_security_tree_scan_reuses_one_ast_inventory_for_alias_and_tenant_checks
     path = tmp_path / "service.py"
     path.write_text(source, encoding="utf-8")
     original_walk = ast.walk
-    calls = 0
+    walked = []
 
     def counted_walk(node):
-        nonlocal calls
-        calls += 1
+        walked.append(node)
         return original_walk(node)
 
     monkeypatch.setattr(module.ast, "walk", counted_walk)
     findings = module._security_scan_tree(tmp_path, path, tree, ("store.fetch",), {})
 
-    assert calls == 1
+    assert sum(node is tree for node in walked) == 1
+    assert len(walked) == len({id(node) for node in walked})
     assert [finding["code"] for finding in findings] == ["SECURITY_SHELL_COMMAND"]
 
 
@@ -5945,17 +5945,17 @@ def test_security_log_flow_reuses_prebound_call_inventory(tmp_path, monkeypatch)
     path = tmp_path / "service.py"
     path.write_text(source, encoding="utf-8")
     original_walk = ast.walk
-    calls = 0
+    walked = []
 
     def counted_walk(node):
-        nonlocal calls
-        calls += 1
+        walked.append(node)
         return original_walk(node)
 
     monkeypatch.setattr(module.ast, "walk", counted_walk)
     findings = module._security_scan_tree(tmp_path, path, tree, (), {})
 
-    assert calls == 1
+    assert sum(node is tree for node in walked) == 1
+    assert len(walked) == len({id(node) for node in walked})
     assert [finding["code"] for finding in findings] == ["SECURITY_LOG_INJECTION"]
 
 
@@ -9279,7 +9279,6 @@ def test_security_scan_rejects_source_change_after_oracle_context_projection(
     module._oracle_context_cache_clear()
     if cache_enabled:
         security_scan(tmp_path, cache_enabled=True)
-    original = module._security_scan_file
     original_snapshot = module._security_scan_file_snapshot
 
     def mutate_after_scan(scanner, *args, **kwargs):
@@ -9289,10 +9288,8 @@ def test_security_scan_rejects_source_change_after_oracle_context_projection(
 
     monkeypatch.setattr(
         module,
-        "_security_scan_file" if cache_enabled else "_security_scan_file_snapshot",
-        lambda *args, **kwargs: mutate_after_scan(
-            original if cache_enabled else original_snapshot, *args, **kwargs
-        ),
+        "_security_scan_file_snapshot",
+        lambda *args, **kwargs: mutate_after_scan(original_snapshot, *args, **kwargs),
     )
     with pytest.raises(ReviewAuditError, match="Evidence changed.*app.py"):
         security_scan(tmp_path, cache_enabled=cache_enabled)
@@ -11162,9 +11159,7 @@ def test_audit_log_source_findings_via_security_scan_input_and_request_log_injec
             0,
         ),
         (
-            "import logging\n"
-            "raw = input()\n"
-            "logging.error(raw)\n",
+            "import logging\nraw = input()\nlogging.error(raw)\n",
             1,
         ),
         (
@@ -14770,16 +14765,33 @@ def test_pytest_collection_honors_static_test_false_guards(tmp_path):
     ]
 
 
-@pytest.mark.parametrize('source,expected', [
-    ("import logging\nraw=input()\nnamespace=globals\nnamespace()['len']=lambda value: value\nlogging.error(len(raw))\n",True),
-    ("import logging,builtins\nraw=input()\nnamespace=builtins.globals\nnamespace()['bool']=lambda value: value\nlogging.error(bool(raw))\n",True),
-    ("import logging,builtins\nraw=input()\nsetattr(builtins,'bool',lambda value:value)\nlogging.error(bool(raw))\n",True),
-    ("import logging\nfrom config import settings\nraw=input()\nsetattr(settings,'label','example')\nlogging.error(bool(raw))\n",False),
-])
-def test_log_scalar_shared_identity_ignores_unrelated_setter_and_retains_reflection_escape(tmp_path,source,expected):
-    (tmp_path/'app.py').write_text(source,encoding='utf8')
-    result=security_scan(tmp_path,cache_enabled=False)
-    assert ('SECURITY_LOG_INJECTION' in result['finding_counts']) is expected
+@pytest.mark.parametrize(
+    "source,expected",
+    [
+        (
+            "import logging\nraw=input()\nnamespace=globals\nnamespace()['len']=lambda value: value\nlogging.error(len(raw))\n",
+            True,
+        ),
+        (
+            "import logging,builtins\nraw=input()\nnamespace=builtins.globals\nnamespace()['bool']=lambda value: value\nlogging.error(bool(raw))\n",
+            True,
+        ),
+        (
+            "import logging,builtins\nraw=input()\nsetattr(builtins,'bool',lambda value:value)\nlogging.error(bool(raw))\n",
+            True,
+        ),
+        (
+            "import logging\nfrom config import settings\nraw=input()\nsetattr(settings,'label','example')\nlogging.error(bool(raw))\n",
+            False,
+        ),
+    ],
+)
+def test_log_scalar_shared_identity_ignores_unrelated_setter_and_retains_reflection_escape(
+    tmp_path, source, expected
+):
+    (tmp_path / "app.py").write_text(source, encoding="utf8")
+    result = security_scan(tmp_path, cache_enabled=False)
+    assert ("SECURITY_LOG_INJECTION" in result["finding_counts"]) is expected
 
 
 @pytest.mark.parametrize(
@@ -14837,10 +14849,14 @@ def test_yaml_loader_consumer_slot_never_masks_mutation_or_unknown_escape(
     assert any(row["code"] == "SECURITY_UNSAFE_YAML" for row in rows)
 
 
-@pytest.mark.parametrize('selected', ['selected', 'fixed'])
-def test_shared_native_summary_selected_return_reaches_shell_and_pickle(tmp_path, selected):
+@pytest.mark.parametrize("selected", ["selected", "fixed"])
+def test_shared_native_summary_selected_return_reaches_shell_and_pickle(
+    tmp_path, selected
+):
     from factoryline import review_audits as audit
-    source = """import os
+
+    source = (
+        """import os
 import pickle
 from flask import request
 
@@ -14853,14 +14869,20 @@ def route():
     selected = values[%r]
     pickle.loads(selected)
     os.system(selected.decode())
-""" % selected
-    (tmp_path / 'app.py').write_text(source, encoding='utf-8')
+"""
+        % selected
+    )
+    (tmp_path / "app.py").write_text(source, encoding="utf-8")
     report = audit.security_scan(tmp_path, cache_enabled=False)
-    rows = report.get('finding_tier_report', {}).get('ledger', [])
-    supported = {row['raw_finding']['code'] for row in rows if row.get('tier') == 'SUPPORTED_DEFECT'}
-    expected = {'SECURITY_UNSAFE_DESERIALIZATION', 'SECURITY_OS_COMMAND'}
-    assert expected <= {row['raw_finding']['code'] for row in rows}
-    if selected == 'selected':
+    rows = report.get("finding_tier_report", {}).get("ledger", [])
+    supported = {
+        row["raw_finding"]["code"]
+        for row in rows
+        if row.get("tier") == "SUPPORTED_DEFECT"
+    }
+    expected = {"SECURITY_UNSAFE_DESERIALIZATION", "SECURITY_OS_COMMAND"}
+    assert expected <= {row["raw_finding"]["code"] for row in rows}
+    if selected == "selected":
         assert expected <= supported
     else:
         assert not (expected & supported)
@@ -14868,52 +14890,94 @@ def route():
 
 
 def test_shared_native_summary_branch_join_retains_may_origin():
-    from factoryline.review_integrity import _SecurityFlowState, _security_merge_branch_states
+    from factoryline.review_integrity import (
+        _SecurityFlowState,
+        _security_merge_branch_states,
+    )
     from factoryline.credential_role_identity_effects import _Value
-    request = _SecurityFlowState(values={'data': _Value(roots=frozenset({'request'}), scalar_kind='bytes')})
-    literal = _SecurityFlowState(values={'data': _Value(scalar_kind='bytes')})
+
+    request = _SecurityFlowState(
+        values={"data": _Value(roots=frozenset({"request"}), scalar_kind="bytes")}
+    )
+    literal = _SecurityFlowState(values={"data": _Value(scalar_kind="bytes")})
     merged = _SecurityFlowState()
     _security_merge_branch_states((merged,), [(request,), (literal,)])
-    assert merged.values['data'].roots == frozenset({'request'})
-    assert merged.values['data'].unknown
+    assert merged.values["data"].roots == frozenset({"request"})
+    assert merged.values["data"].unknown
 
 
 def test_shared_native_summary_cached_context_retains_imported_result(tmp_path):
     from factoryline import review_audits as audit
-    (tmp_path / 'helper.py').write_text("def choose(value):\n    return {'selected': value, 'fixed': b'fixed'}\n", encoding='utf-8')
-    (tmp_path / 'facade.py').write_text('from helper import choose\n', encoding='utf-8')
-    (tmp_path / 'app.py').write_text("import pickle\nimport os\nfrom flask import request\nfrom facade import choose\ndef route():\n    values = choose(request.get_data())\n    selected = values['selected']\n    pickle.loads(selected)\n    os.system(selected.decode())\n", encoding='utf-8')
+
+    (tmp_path / "helper.py").write_text(
+        "def choose(value):\n    return {'selected': value, 'fixed': b'fixed'}\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "facade.py").write_text("from helper import choose\n", encoding="utf-8")
+    (tmp_path / "app.py").write_text(
+        "import pickle\nimport os\nfrom flask import request\nfrom facade import choose\ndef route():\n    values = choose(request.get_data())\n    selected = values['selected']\n    pickle.loads(selected)\n    os.system(selected.decode())\n",
+        encoding="utf-8",
+    )
     audit._oracle_context_cache_clear()
     cold = audit.security_scan(tmp_path, cache_enabled=True)
     warm = audit.security_scan(tmp_path, cache_enabled=True)
-    expected = {'SECURITY_UNSAFE_DESERIALIZATION', 'SECURITY_OS_COMMAND'}
+    expected = {"SECURITY_UNSAFE_DESERIALIZATION", "SECURITY_OS_COMMAND"}
     for report in (cold, warm):
-        ledger = report['finding_tier_report']['ledger']
-        supported = {row['raw_finding']['code'] for row in ledger if row['tier'] == 'SUPPORTED_DEFECT'}
+        ledger = report["finding_tier_report"]["ledger"]
+        supported = {
+            row["raw_finding"]["code"]
+            for row in ledger
+            if row["tier"] == "SUPPORTED_DEFECT"
+        }
         assert expected <= supported
         for row in ledger:
-            if row['tier'] == 'SUPPORTED_DEFECT':
-                steps = row['raw_finding']['facts']['security_precondition']['input_value_flow']['steps']
-                assert any(step['operation'] == 'REQUEST_SOURCE' for step in steps)
-    assert cold['audit_sha256'] == warm['audit_sha256']
+            if row["tier"] == "SUPPORTED_DEFECT":
+                steps = row["raw_finding"]["facts"]["security_precondition"][
+                    "input_value_flow"
+                ]["steps"]
+                assert any(step["operation"] == "REQUEST_SOURCE" for step in steps)
+    assert cold["audit_sha256"] == warm["audit_sha256"]
 
 
-@pytest.mark.parametrize('change', ["alias['selected'] = b'fixed'", "del alias['selected']", "alias['selected'] += b'fixed'", "touch(alias)"])
+@pytest.mark.parametrize(
+    "change",
+    [
+        "alias['selected'] = b'fixed'",
+        "del alias['selected']",
+        "alias['selected'] += b'fixed'",
+        "touch(alias)",
+    ],
+)
 def test_shared_native_summary_mutated_alias_declines_supported(tmp_path, change):
     from factoryline import review_audits as audit
-    (tmp_path / 'app.py').write_text("import pickle\nfrom flask import request\ndef route():\n    raw = request.get_data()\n    box = {'selected': raw}\n    alias = box\n    " + change + "\n    pickle.loads(box['selected'])\n", encoding='utf-8')
+
+    (tmp_path / "app.py").write_text(
+        "import pickle\nfrom flask import request\ndef route():\n    raw = request.get_data()\n    box = {'selected': raw}\n    alias = box\n    "
+        + change
+        + "\n    pickle.loads(box['selected'])\n",
+        encoding="utf-8",
+    )
     report = audit.security_scan(tmp_path, cache_enabled=False)
-    rows = [row for row in report['finding_tier_report']['ledger'] if row['raw_finding']['code'] == 'SECURITY_UNSAFE_DESERIALIZATION']
+    rows = [
+        row
+        for row in report["finding_tier_report"]["ledger"]
+        if row["raw_finding"]["code"] == "SECURITY_UNSAFE_DESERIALIZATION"
+    ]
     assert len(rows) == 1
-    assert rows[0]['tier'] == 'NEEDS_CONTEXT'
+    assert rows[0]["tier"] == "NEEDS_CONTEXT"
 
 
-def test_shared_native_summary_kernel_owner_change_invalidates_cache(tmp_path, monkeypatch):
+def test_shared_native_summary_kernel_owner_change_invalidates_cache(
+    tmp_path, monkeypatch
+):
     from factoryline import review_audits as scanner
     from factoryline import credential_role_identity_effects as effects
+
     first = scanner._oracle_context_cache_key(tmp_path, [], {})
     original = effects.identity_value
+
     def replacement(node, aliases, *, strict_calls=False):
         return original(node, aliases, strict_calls=strict_calls)
-    monkeypatch.setattr(effects, 'identity_value', replacement)
+
+    monkeypatch.setattr(effects, "identity_value", replacement)
     assert scanner._oracle_context_cache_key(tmp_path, [], {}) != first

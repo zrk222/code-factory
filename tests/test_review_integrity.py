@@ -572,9 +572,10 @@ class Payment(db.Model):
         "attribute": "config",
         "column": "config_json",
     }
-    assert "flask_sqlalchemy.SQLAlchemy default Model semantics" in model[
-        "api_contract_assumptions"
-    ]
+    assert (
+        "flask_sqlalchemy.SQLAlchemy default Model semantics"
+        in model["api_contract_assumptions"]
+    )
 
 
 def test_shared_flask_model376_accepts_direct_default_and_captured_reexport():
@@ -638,11 +639,16 @@ class LegacyPayment(Base):
 
     fields = model_field_identities(index)
     payment = fields[("service/api/models.py", "Payment")]
-    assert payment["identity"]["sha256"] == inventory[tmp_path / "service/api/models.py"]
+    assert (
+        payment["identity"]["sha256"] == inventory[tmp_path / "service/api/models.py"]
+    )
     assert payment["fields"]["config"]["column"] == "config_json"
     assert payment["fields"]["config"]["type"] == "TEXT"
     assert ("service/api/legacy.py", "LegacyPayment") in fields, fields
-    assert fields[("service/api/legacy.py", "LegacyPayment")]["fields"]["id"]["column"] == "id"
+    assert (
+        fields[("service/api/legacy.py", "LegacyPayment")]["fields"]["id"]["column"]
+        == "id"
+    )
 
 
 @pytest.mark.parametrize(
@@ -7254,16 +7260,23 @@ def test_precision257_intent_quality_guard_and_sanitizer_bindings():
     from factoryline import intent_quality as iq
     from factoryline.security_configuration import yaml_safe_loader
 
+    def bound_yaml_call(expression):
+        from factoryline.review_integrity import bind_security_call_scopes
+
+        module = ast.parse("import yaml\n" + expression)
+        bind_security_call_scopes(module)
+        return module.body[1].value
+
     assert (
         yaml_safe_loader(
-            ast.parse("yaml.load(data, Loader=yaml.SafeLoader)", mode="eval").body,
+            bound_yaml_call("yaml.load(data, Loader=yaml.SafeLoader)"),
             {"yaml": "yaml"},
         )
         is True
     )
     assert (
         yaml_safe_loader(
-            ast.parse("yaml.load(data, Loader=yaml.Loader)", mode="eval").body,
+            bound_yaml_call("yaml.load(data, Loader=yaml.Loader)"),
             {"yaml": "yaml"},
         )
         is False
@@ -7468,6 +7481,7 @@ def test_application_capture_refactor_keeps_exact_config_hash_and_source_boundar
     (tmp_path / "pyproject.toml").write_bytes(config)
     digest = hashlib.sha256(config).hexdigest()
     evidence = {
+        "classification": "APPLICATION_TEST_CREDENTIAL_ROLE",
         "profile": "DJANGO_CLASS_LOCAL_ACCOUNT_ENROLLMENT",
         "configuration_sha256": {
             "pyproject.toml": digest,

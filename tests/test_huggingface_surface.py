@@ -16,9 +16,7 @@ def test_preview_separates_candidate_regressions_from_accuracy_and_review() -> N
     readme = (SPACE / "README.md").read_text(encoding="utf-8")
     assert "Seeded demonstration" in page
     assert "Review a finding and a repaired case" in page
-    assert (
-        "This seeded local example applies a declared tenant-read contract" in page
-    )
+    assert "This seeded local example applies a declared tenant-read contract" in page
     assert (
         "This seeded local demonstration shows the workflow using a finding and a"
         in readme
@@ -52,10 +50,7 @@ def test_huggingface_space_has_static_metadata_and_canonical_release_links() -> 
     assert len(short_description) <= 60
     assert "factoryline-code-factory" in page
     assert "Static workflow preview" in page
-    assert (
-        'href="https://github.com/zrk222/code-factory/releases/tag/v0.49.0"'
-        in page
-    )
+    assert 'href="https://github.com/zrk222/code-factory/releases/tag/v0.49.0"' in page
     assert "Specialty AI audit evidence is available" in page
     assert (
         "https://github.com/zrk222/code-factory/pull/131#issuecomment-5980528354"
