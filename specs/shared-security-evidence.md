@@ -72,4 +72,5 @@ No new ordered admission policy. Existing family-specific proof obligations rema
 
 ## Authorized parameters
 timeout = 90
+timeout = 1800
 max_workers = 2

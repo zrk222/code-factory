@@ -1869,3 +1869,56 @@ def test_collection_independent_source_roles_native_receipt_and_reseal(
     rebuilt = audit._seal_security_scan(core)
     for key in ("findings", "context_reviews", "finding_tier_report", "state"):
         assert rebuilt[key] == report[key]
+
+
+@pytest.mark.parametrize("policy", ["legacy-v1", "source-role-v3"])
+def test_shared_configuration_capture_survives_native_copy_and_reseal(
+    tmp_path, monkeypatch, policy
+):
+    from factoryline import review_audits as audit
+    from factoryline import primitive_observation_binding as primitive
+
+    configurations = {
+        "pyproject.toml": b'[project]\nname="capture-control"\nversion="1"\ndescription="private-config-marker"\n',
+        "tox.ini": b"[testenv]\ncommands = pytest\n[pytest]\npython_files = test_*.py\n",
+    }
+    for path, raw in configurations.items():
+        (tmp_path / path).write_bytes(raw)
+    (tmp_path / "app.py").write_text("def run(value):\n    return eval(value)\n")
+    observed = []
+    apply_policy = primitive.apply_pickle_source_role_policy
+
+    def observe_policy(*args, **kwargs):
+        observed.append(kwargs.get("configuration_bytes"))
+        return apply_policy(*args, **kwargs)
+
+    monkeypatch.setattr(primitive, "apply_pickle_source_role_policy", observe_policy)
+    for _ in range(2):
+        report = audit.security_scan(tmp_path, cache_enabled=True, defect_policy=policy)
+        retained = dict(report._captured_sources)
+        assert {name: retained[name] for name in configurations} == configurations
+        assert dict(report.copy()._captured_sources) == retained
+        assert "private-config-marker" not in json.dumps(report)
+        rebuilt = audit._seal_security_scan(copy.deepcopy(report))
+        assert dict(rebuilt._captured_sources) == retained
+        assert rebuilt["findings"] == report["findings"]
+    if policy == "source-role-v3":
+        assert observed and all(row == configurations for row in observed)
+
+
+def test_shared_configuration_capture_rejects_changed_bytes(tmp_path, monkeypatch):
+    import hashlib
+    from factoryline import review_audits as audit
+
+    raw = b"[pytest]\n"
+    (tmp_path / "pytest.ini").write_bytes(raw)
+    binding = {
+        "path": "pytest.ini",
+        "bytes": len(raw),
+        "sha256": hashlib.sha256(raw).hexdigest(),
+    }
+    monkeypatch.setattr(audit, "_security_source_bytes", lambda *_: b"[other!]\n")
+    retained = {}
+    with pytest.raises(audit.ReviewAuditError, match="Evidence changed"):
+        audit._verify_security_bindings(tmp_path, [binding], captured_out=retained)
+    assert retained == {}

@@ -906,6 +906,8 @@ def _verify_source_bindings(
     error_type,
     runtime_error,
     operation,
+    *,
+    captured_out=None,
 ):
     """Reject any source binding whose bounded bytes changed before receipt creation."""
     for binding in bindings:
@@ -926,6 +928,8 @@ def _verify_source_bindings(
             ) from exc
         if len(data) != binding["bytes"] or hash_source(data) != binding["sha256"]:
             raise error_type(f"Evidence changed during {operation}: {binding['path']}")
+        if captured_out is not None:
+            captured_out[binding["path"]] = data
 
 
 def _security_source_failure(

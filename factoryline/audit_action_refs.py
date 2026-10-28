@@ -566,7 +566,18 @@ def _apply_security_scan_policy(
             )
         elif policy in {"source-role-v1", "source-role-v2", "source-role-v3"}:
             primitive.apply_pickle_source_role_policy(
-                core, captured, source_model=producer_source_model
+                core,
+                captured,
+                source_model=producer_source_model,
+                configuration_bytes={
+                    row["path"]: captured[row["path"]]
+                    for row in core.get("oracle_context", {}).get(
+                        "configuration_sources", []
+                    )
+                    if isinstance(captured, dict)
+                    and isinstance(captured.get(row.get("path")), bytes)
+                    and sha256(captured[row["path"]]).hexdigest() == row.get("sha256")
+                },
             )
     else:
         core.pop("defect_policy_decision", None)

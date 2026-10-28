@@ -1756,7 +1756,9 @@ def apply_conditional_provider_profile(report, profile, captured):
     return audit._seal_security_scan(core)
 
 
-def apply_pickle_source_role_policy(core, captured, *, source_model=None):
+def apply_pickle_source_role_policy(
+    core, captured, *, source_model=None, configuration_bytes=None
+):
     """Rebuild context reviews from the native raw ledger on every seal."""
     policy_id = core.get("selected_defect_policy")
     if policy_id not in {"source-role-v1", "source-role-v2", "source-role-v3"}:

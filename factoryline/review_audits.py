@@ -3966,6 +3966,13 @@ def _project_oracle_context(
         config_identity, collection_identity, len(files)
     )
     bindings = source_bindings + config_bindings
+    configuration_owner = (
+        producer_source_model_out if producer_source_model_out is not None else {}
+    )
+    configuration_owner["configuration_bytes"] = {}
+    _verify_security_bindings(
+        root, config_bindings, captured_out=configuration_owner["configuration_bytes"]
+    )
     cache_key = _oracle_context_cache_key(root, manifest, config_identity)
     if _oracle_context_cache_eligible(
         cache_enabled, source_cacheable, config_cacheable
@@ -5591,7 +5598,9 @@ def _oracle_tree_fingerprint(tree):
     return sha256(ast.dump(tree, include_attributes=True).encode("utf-8")).hexdigest()
 
 
-def _verify_security_bindings(workspace: Path, bindings: list[dict[str, Any]]) -> None:
+def _verify_security_bindings(
+    workspace: Path, bindings: list[dict[str, Any]], *, captured_out=None
+) -> None:
     """Reject a source that changes after its scan but before receipt creation."""
     from .context_efficiency import _verify_source_bindings
 
@@ -5604,6 +5613,7 @@ def _verify_security_bindings(workspace: Path, bindings: list[dict[str, Any]]) -
         ReviewAuditError,
         RuntimeAuditError,
         "security scan",
+        captured_out=captured_out,
     )
 
 
@@ -5775,6 +5785,9 @@ def _scan_security_sources(
                 source_bytes,
                 capture_all_sources=capture_all_sources,
             )
+        )
+        primitive_source_bytes_out.update(
+            (producer_source_model_out or {}).get("configuration_bytes", {})
         )
     scanned = {item["path"] for item in bindings}
     extra_bindings = [item for item in context_bindings if item["path"] not in scanned]
