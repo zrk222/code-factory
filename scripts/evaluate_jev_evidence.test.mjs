@@ -65,6 +65,40 @@ async function informedFixture(root) {
     evidence: { location: { path: candidate.path, start_line: 3, end_line: 3 }, artifacts: [artifact], actionability,
       dependencies: [{ path: 'helper.py', sha256: hash(helper) }] } } };
 }
+
+test('retrieval transport rejects missing receipts and dropped or altered source hints', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'jev-retrieval-'));
+  try {
+    const item = await informedFixture(root);
+    const hash = value => createHash('sha256').update(value).digest('hex');
+    const source = item.state.evidence.artifacts[0];
+    item.state.evidence.dependencies.push({ path: source.path, sha256: source.source_binding.sha256 });
+    const record = { schema: 'factory.retrieval-transport.v1', status: 'DELIVERED_UNVALIDATED', authority: 'none',
+      classification_effect: 'NONE', consumption: 'UNASSESSED', validated_trace_edges: 0,
+      coverage: 'RANKED_SUBSET_NOT_EXHAUSTIVE', finding_sha256: 'b'.repeat(64), source_manifest_sha256: 'c'.repeat(64),
+      query_sha256: hash(item.state.requirement), delivered_hints: 1,
+      hint_manifest: [{ ...source.source_binding, content_sha256: source.sha256 }] };
+    const ledger = { retrieval: record };
+    const native = { kind: 'native_sink_evidence', path: 'evidence/native-sink.json', content: JSON.stringify(ledger),
+      candidate_commit: item.state.candidate.commit, candidate_sha256: item.state.candidate.sha256 };
+    native.sha256 = hash(native.content);
+    item.state.evidence.artifacts.push(native);
+    const validators = createEvidenceValidators({ requireValue(value, reason) { assert.ok(value, reason); },
+      object: value => value !== null && typeof value === 'object' && !Array.isArray(value), sha: hash, TrialError: Error, readBounded: readFile });
+    validators.validateActionabilityState(item.state);
+    for (const mutation of ['missing', 'query', 'dropped', 'count', 'authority']) {
+      const copy = structuredClone(item.state);
+      const value = JSON.parse(copy.evidence.artifacts.at(-1).content);
+      if (mutation === 'missing') delete value.retrieval;
+      if (mutation === 'query') value.retrieval.query_sha256 = 'd'.repeat(64);
+      if (mutation === 'dropped') copy.evidence.artifacts.shift();
+      if (mutation === 'count') value.retrieval.delivered_hints = 0;
+      if (mutation === 'authority') value.retrieval.authority = 'safe';
+      copy.evidence.artifacts.at(-1).content = JSON.stringify(value);
+      assert.throws(() => validators.validateActionabilityState(copy), /retrieval/);
+    }
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
 function fixtureBudget(corpus, question = rubric) {
   const rows = corpus.map((item) => ({ id: item.id,
     case_sha256: createHash('sha256').update(JSON.stringify(item)).digest('hex'), risk: 'high',

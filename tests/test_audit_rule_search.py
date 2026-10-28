@@ -243,6 +243,113 @@ def test_hybrid_rejects_corpus_budget_before_embedding(tmp_path):
         HybridSourceRetriever(index, forbidden, model_id="test")
 
 
+@pytest.mark.parametrize(
+    "source", ["credential = 'example'", "credential: str = 'example'"]
+)
+def test_retrieval_transport_assignment_secret_retains_source_and_missing_closure(
+    tmp_path, source
+):
+    from factoryline.audit_rule_search import HybridSourceRetriever
+    from factoryline.jev_classifier import build_informed_actionability_case
+
+    index, finding = _informed_fixture(
+        tmp_path,
+        {
+            "sink.py": source + "\nimport pickle\nx = pickle.loads(b'')\n",
+            "consumer.py": "# credential consumer\ndef consume(value):\n    return value\n",
+        },
+    )
+    assignment = index.snapshots[tmp_path / "sink.py"].body[0]
+    finding.update(
+        code="SECURITY_HARDCODED_SECRET",
+        line=1,
+        column=0,
+        end_line=assignment.end_lineno,
+        end_column=assignment.end_col_offset,
+    )
+    item = build_informed_actionability_case(
+        finding,
+        index,
+        candidate_commit="a" * 40,
+        requirement="credential consumer é",
+        retriever=HybridSourceRetriever(index, _hybrid_encoder, model_id="test-v1"),
+    )
+    evidence = item["state"]["evidence"]
+    ledger = json.loads(
+        next(
+            row["content"]
+            for row in evidence["artifacts"]
+            if row["kind"] == "native_sink_evidence"
+        )
+    )
+    record = ledger["retrieval"]
+    assert record["status"] == "DELIVERED_UNVALIDATED"
+    assert (
+        record["query_sha256"] == sha256("credential consumer é".encode()).hexdigest()
+    )
+    assert record["validated_trace_edges"] == 0
+    assert record["classification_effect"] == "NONE"
+    assert ledger["status"] == "INCOMPLETE"
+    assert ledger["unknowns"][0]["reason"] == "assignment_consumer_closure_unresolved"
+    for hint in record["hint_manifest"]:
+        assert any(
+            row["sha256"] == hint["content_sha256"]
+            and row.get("source_binding")
+            == {key: hint[key] for key in ("path", "sha256", "start_line", "end_line")}
+            for row in evidence["artifacts"]
+        )
+
+
+def test_retrieval_transport_not_configured_is_explicit_and_does_not_clear_unknowns(
+    tmp_path,
+):
+    from factoryline.jev_classifier import build_informed_actionability_case
+
+    index, finding = _informed_fixture(
+        tmp_path, {"sink.py": "import pickle\nx = pickle.loads(b'')\n"}
+    )
+    item = build_informed_actionability_case(
+        finding, index, candidate_commit="a" * 40, requirement="input origin"
+    )
+    ledger = json.loads(
+        next(
+            row["content"]
+            for row in item["state"]["evidence"]["artifacts"]
+            if row["kind"] == "native_sink_evidence"
+        )
+    )
+    assert ledger["retrieval"]["status"] == "NOT_RUN"
+    assert ledger["retrieval"]["hint_manifest"] == []
+    assert ledger["retrieval"]["consumption"] == "UNASSESSED"
+    assert ledger["retrieval"]["coverage"] == "RANKED_SUBSET_NOT_EXHAUSTIVE"
+
+
+def test_retrieval_transport_native_ledger_accounts_for_every_raw_candidate():
+    from factoryline.primitive_observation_binding import build_finding_tier_report
+
+    findings = [
+        {"path": "missing.py", "line": 1, "column": 0, "code": code, "severity": "HIGH"}
+        for code in [
+            "SECURITY_HARDCODED_SECRET",
+            "SECURITY_UNSAFE_DESERIALIZATION",
+            "SECURITY_SHELL_COMMAND",
+            "SECURITY_DYNAMIC_EXECUTION",
+            "SECURITY_SQL_INJECTION",
+        ]
+    ]
+    report = build_finding_tier_report(
+        findings, [], [], {}, coverage_state="INCOMPLETE", partition_state="UNASSESSED"
+    )
+    assert len(report["ledger"]) == len(findings)
+    for row in report["ledger"]:
+        assert row["retrieval_transport"]["status"] == "NOT_RUN"
+        assert (
+            row["retrieval_transport"]["finding_identity_sha256"]
+            == row["source_identity"]["identity_sha256"]
+        )
+        assert row["tier"] == "NEEDS_CONTEXT"
+
+
 def _informed_fixture(tmp_path, sources):
     from factoryline.credential_role_constructor_provider import SourceSnapshotIndex
 

@@ -5965,6 +5965,7 @@ def build_informed_actionability_case(
 ) -> dict[str, Any]:
     """Project captured evidence without granting authority or admission."""
     from .jev_classifier import JevClassificationError, _digest
+    from .audit_rule_search import build_retrieval_context
 
     if (
         not isinstance(candidate_commit, str)
@@ -5975,16 +5976,12 @@ def build_informed_actionability_case(
         or len(requirement.encode("utf-8")) > 8192
     ):
         raise JevClassificationError("invalid informed review criterion or revision")
-    context = build_informed_sink_context(finding, source_index)
-    if context["status"] not in {"CAPTURED", "INCOMPLETE"}:
-        raise JevClassificationError(context["status"])
+    context = build_retrieval_context(finding, source_index, requirement, retriever)
     candidate = {
         "commit": candidate_commit,
         "path": finding["path"],
         "sha256": source_index.inventory[source_index.root / finding["path"]],
     }
-    if retriever is not None:
-        retriever.enrich(context, source_index, requirement)
     artifacts = _informed_actionability_artifacts(context, candidate_commit, candidate)
     return _informed_actionability_item(
         finding,

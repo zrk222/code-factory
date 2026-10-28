@@ -480,6 +480,7 @@ def _security_tier_rows(report):
                 "static_consumer_observation": row.get("static_consumer_observation"),
                 "byte_origin_observation": row.get("byte_origin_observation"),
                 "missing_premises": row.get("missing_premises"),
+                "retrieval_transport": row.get("retrieval_transport"),
             }
         )
     return sorted(rows, key=_tier_sha256)
@@ -4993,6 +4994,14 @@ def _finding_tier_ledger_row(
             "identity_sha256": identity,
         },
         "raw_finding": finding,
+        "retrieval_transport": {
+            "schema": "factory.retrieval-native-status.v1",
+            "finding_identity_sha256": identity,
+            "status": "NOT_RUN",
+            "reason": "native_deterministic_scan_does_not_invoke_secondary_retrieval",
+            "classification_effect": "NONE",
+            "coverage": "UNASSESSED",
+        },
     }
     if (
         bound_source

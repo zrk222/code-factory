@@ -6420,7 +6420,7 @@ def test_trusted_core_policy316_review_queue_is_not_clean_or_approved(tmp_path):
     assert "unresolved item(s) remain" in decision["action_summary"]
 
 
-@pytest.mark.parametrize("tamper", ["tier", "removed_raw_row", "capture_hash"])
+@pytest.mark.parametrize("tamper", ["tier", "removed_raw_row", "capture_hash", "retrieval_status", "retrieval_removed"])
 def test_trusted_core_policy316_forged_or_stale_evidence_blocks(tmp_path, tamper):
     path = tmp_path / "app.py"
     path.write_bytes(b'GITHUB_TOKEN = "ghp_abcdefghijklmnop"\n')
@@ -6439,6 +6439,10 @@ def test_trusted_core_policy316_forged_or_stale_evidence_blocks(tmp_path, tamper
             "NEEDS_CONTEXT": 0,
             "PROVEN_PRIMITIVE": 0,
         }
+    elif tamper == "retrieval_status":
+        core["finding_tier_report"]["ledger"][0]["retrieval_transport"]["status"] = "COMPLETE"
+    elif tamper == "retrieval_removed":
+        del core["finding_tier_report"]["ledger"][0]["retrieval_transport"]
     else:
         captured["app.py"] = b'GITHUB_TOKEN = "ghp_changedvalue123"\n'
     checked = review_audits._seal_security_scan(core)
@@ -7801,6 +7805,8 @@ def test_trusted_core_advisory_admission_native_cli_receipt_and_reseal(
     ledger = report["finding_tier_report"]["ledger"]
     assert ledger[0]["raw_finding"] == report["findings"][0]
     assert ledger[0]["tier"] == expected_tier
+    assert ledger[0]["retrieval_transport"]["status"] == "NOT_RUN"
+    assert ledger[0]["retrieval_transport"]["finding_identity_sha256"] == ledger[0]["source_identity"]["identity_sha256"]
     if unknown_collection:
         assert decision["state"] == "BLOCKED"
         assert report["oracle_context"]["pytest_collection"]["collection_state"] == "UNKNOWN"

@@ -18,6 +18,98 @@ from typing import Any, Callable, Mapping
 from array import array
 
 
+def build_retrieval_context(finding, index, requirement, retriever):
+    """Carry every supported source location into secondary review, with gaps explicit."""
+    from .context_efficiency import build_informed_sink_context, _informed_failure
+    from .jev_classifier import JevClassificationError, _digest
+
+    context = build_informed_sink_context(finding, index)
+    if context["status"] == "SINK_LOCATION_UNRESOLVED":
+        path = index.root / finding["path"]
+        matches = [
+            node
+            for node in ast.walk(index.snapshots[path])
+            if isinstance(node, (ast.Assign, ast.AnnAssign))
+            and node.lineno == finding.get("line")
+            and node.col_offset == finding.get("column")
+            and all(
+                finding.get(key, getattr(node, attr)) == getattr(node, attr)
+                for key, attr in [
+                    ("end_line", "end_lineno"),
+                    ("end_column", "end_col_offset"),
+                ]
+            )
+        ]
+        if (
+            not str(finding.get("code", "")).startswith("SECURITY_")
+            or len(matches) != 1
+        ):
+            raise JevClassificationError(context["status"])
+        node = matches[0]
+        context = _informed_failure(
+            "INCOMPLETE", "assignment_consumer_closure_unresolved"
+        )
+        context["excerpts"] = [
+            {
+                "path": finding["path"],
+                "sha256": index.inventory[path],
+                "start_line": node.lineno,
+                "end_line": node.end_lineno,
+                "kind": "declaration",
+                "content": "".join(
+                    index.source_bytes[path]
+                    .decode("utf-8")
+                    .splitlines(keepends=True)[node.lineno - 1 : node.end_lineno]
+                ),
+            }
+        ]
+        context["dependency_sources"] = [
+            {"path": finding["path"], "sha256": index.inventory[path]}
+        ]
+    if context["status"] not in {"CAPTURED", "INCOMPLETE"}:
+        raise JevClassificationError(context["status"])
+    if retriever is not None:
+        retriever.enrich(context, index, requirement)
+    else:
+        context["retrieval"] = {
+            "status": "NOT_RUN",
+            "reason": "local_encoder_not_configured",
+            "authority": "none",
+        }
+    hints = [row for row in context["excerpts"] if row["kind"] == "retrieval_hint"]
+    context["retrieval"].update(
+        {
+            "schema": "factory.retrieval-transport.v1",
+            "finding_sha256": _digest(finding),
+            "query_sha256": sha256(requirement.encode("utf-8")).hexdigest(),
+            "source_manifest_sha256": _digest(
+                sorted(
+                    (index.relative(path), digest)
+                    for path, digest in index.inventory.items()
+                )
+            ),
+            "hint_manifest": [
+                {
+                    **{
+                        key: row[key]
+                        for key in ("path", "sha256", "start_line", "end_line")
+                    },
+                    "content_sha256": sha256(
+                        row["content"].encode("utf-8")
+                    ).hexdigest(),
+                }
+                for row in hints
+            ],
+            "delivered_hints": len(hints),
+            "coverage": "RANKED_SUBSET_NOT_EXHAUSTIVE",
+            "validated_trace_edges": 0,
+            "classification_effect": "NONE",
+            "consumption": "UNASSESSED",
+        }
+    )
+    return context
+
+
 def _hybrid_vectors(rows, count, width=None):
     """Validate and normalize bounded embeddings without a mandatory ML runtime."""
     if len(rows) != count:
@@ -173,6 +265,7 @@ class HybridSourceRetriever:
         context["dependency_sources"] = list(dependencies.values())
         context["excerpts"].extend(hits)
         context["retrieval"] = {
+            "status": "DELIVERED_UNVALIDATED",
             "method": "bm25+exact-cosine+rrf60",
             "model_id": self.model_id,
             "corpus_chunks": len(self.documents),
