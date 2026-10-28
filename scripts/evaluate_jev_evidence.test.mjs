@@ -185,6 +185,19 @@ test('informed excerpts retain original line coordinates and revalidate every de
     assert.equal(report.results[0].prediction, true);
     assert.equal(report.state, 'ADVISORY_REVIEW');
     assert.equal(report.metrics.precision, null);
+    const excerpt = item.state.evidence.artifacts[0];
+    const references = [{ ...excerpt.source_binding, excerpt_sha256: excerpt.sha256 }];
+    assert.deepEqual(report.results[0].source_references, references);
+    assert.equal(report.results[0].source_verification, 'VERIFIED_CURRENT');
+    const dryRun = await evaluateCases([item], rubric, { profile: 'security_actionability', sourceRoot: root });
+    assert.deepEqual(dryRun.results[0].source_references, references);
+    assert.equal(dryRun.results[0].source_verification, 'SUPPLIED_UNVERIFIED');
+    const duplicated = structuredClone(item);
+    delete duplicated.state.evidence.actionability;
+    duplicated.state.evidence.artifacts.push(structuredClone(excerpt));
+    const deduplicated = await evaluateCases([duplicated], rubric, { profile: 'security_actionability', sourceRoot: root });
+    assert.deepEqual(deduplicated.results[0].source_references, references);
+    assert.equal(deduplicated.results[0].source_verification, 'SUPPLIED_UNVERIFIED');
     assert.equal(calls, 1);
     await writeFile(join(root, 'helper.py'), '# changed dependency\n');
     const stale = await evaluateCases([item], rubric, options);
@@ -195,6 +208,46 @@ test('informed excerpts retain original line coordinates and revalidate every de
       fetchImpl: async () => { calls++; await writeFile(join(root, 'helper.py'), '# replaced during request\n'); return answer(0.99); } });
     assert.equal(changedDuringRequest.results[0].prediction, null);
     assert.equal(changedDuringRequest.results[0].error, 'source_binding_stale');
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('full source evidence rejects absent and stale files before and after dispatch', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'cf-jev-full-source-'));
+  try {
+    const item = await informedFixture(root);
+    const artifact = item.state.evidence.artifacts[0];
+    const content = await readFile(join(root, artifact.path), 'utf8');
+    artifact.kind = 'source'; artifact.content = content; artifact.sha256 = item.state.candidate.sha256;
+    delete artifact.source_binding;
+    delete item.state.evidence.dependencies;
+    for (const slot of Object.values(item.state.evidence.actionability)) {
+      slot.artifacts = [{ path: artifact.path, sha256: artifact.sha256, start_line: 1, end_line: 3 }];
+    }
+    let calls = 0;
+    const options = { live: true, profile: 'security_actionability', sourceRoot: root, apiKey: 'mock',
+      fetchImpl: async () => { calls++; return answer(0.99); } };
+    await rm(join(root, artifact.path));
+    const absent = await evaluateCases([item], rubric, options);
+    assert.equal(absent.results[0].error, 'source_read_error');
+    assert.equal(absent.results[0].prediction, null);
+    assert.equal(absent.results[0].source_verification, 'SUPPLIED_UNVERIFIED');
+    assert.equal(calls, 0);
+    await writeFile(join(root, artifact.path), '# changed source\n');
+    const stale = await evaluateCases([item], rubric, options);
+    assert.equal(stale.results[0].error, 'source_binding_stale');
+    assert.equal(calls, 0);
+    await writeFile(join(root, artifact.path), content);
+    const current = await evaluateCases([item], rubric, options);
+    assert.equal(current.results[0].prediction, true);
+    assert.equal(current.results[0].source_verification, 'VERIFIED_CURRENT');
+    assert.deepEqual(current.results[0].source_references, [{ path: artifact.path, sha256: artifact.sha256 }]);
+    const replaced = await evaluateCases([item], rubric, { ...options, fetchImpl: async () => {
+      calls++; await writeFile(join(root, artifact.path), '# replaced during request\n'); return answer(0.99);
+    } });
+    assert.equal(replaced.results[0].error, 'source_binding_stale');
+    assert.equal(replaced.results[0].prediction, null);
+    assert.equal(replaced.results[0].source_verification, 'SUPPLIED_UNVERIFIED');
+    assert.equal(calls, 2);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
@@ -398,6 +451,8 @@ test('security actionability profile dispatches only candidate-bound source cont
     const commit = 'e'.repeat(40), sourcePath = 'src/endpoint.py';
     const candidateSource = 'def load(payload):\n    return pickle.loads(payload)\n';
     const candidateSha = hash(candidateSource);
+    await mkdir(join(dir, 'src'));
+    await writeFile(join(dir, sourcePath), candidateSource);
     const makeArtifact = (kind, path, content) => ({ kind, path, content, sha256: hash(content),
       candidate_commit: commit, candidate_sha256: candidateSha });
     const artifacts = [
@@ -429,7 +484,7 @@ test('security actionability profile dispatches only candidate-bound source cont
     const archiveRoot = join(dir, 'evaluations');
     await writeFile(casesPath, JSON.stringify([item]));
     await writeFile(rubricPath, await readFile(framework));
-    const selected = await loadTrial(casesPath, rubricPath, 'security_actionability');
+    const selected = await loadTrial(casesPath, rubricPath, 'security_actionability', undefined, dir);
     assert.equal(selected.framework.review_profile, 'security_actionability');
     await writeFile(policyPath, JSON.stringify(fixtureBudget([item], selected.rubric)));
     let endpoint, request;
@@ -508,11 +563,13 @@ test('security actionability profile locally abstains on missing or unknown cont
         evidence: { ...baseEvidence, actionability: { ...completeShapeUnknown,
           input_origin: { status: 'known', artifacts: [{ path: sourcePath, sha256: candidateSha }] } } } } },
     ];
+    await mkdir(join(dir, 'src'));
+    await writeFile(join(dir, sourcePath), source);
     const casesPath = join(dir, 'cases.json'), rubricPath = join(dir, 'framework.json'), policyPath = join(dir, 'budget.json');
     const archiveRoot = join(dir, 'evaluations');
     await writeFile(casesPath, JSON.stringify(cases));
     await writeFile(rubricPath, await readFile(framework));
-    const selected = await loadTrial(casesPath, rubricPath, 'security_actionability');
+    const selected = await loadTrial(casesPath, rubricPath, 'security_actionability', undefined, dir);
     await writeFile(policyPath, JSON.stringify(fixtureBudget(cases, selected.rubric)));
     let calls = 0;
     const report = await runCliRaw(['--cases', casesPath, '--rubric', rubricPath,
