@@ -6290,7 +6290,7 @@ def test_trusted_core_policy316_review_queue_is_not_clean_or_approved(tmp_path):
     report = _trusted_core_policy316_seal(tmp_path, b"eval(user_data)\n")
     decision = report["defect_policy_decision"]
     assert decision["state"] == "NO_SUPPORTED_DEFECTS_REVIEW_REQUIRED"
-    assert decision["exit_code"] == 2
+    assert decision["exit_code"] == 0
     assert decision["supported_defect_count"] == 0
     assert decision["needs_context_count"] == 1
     assert decision["passed"] is False
@@ -7604,7 +7604,7 @@ def test_native_request_sink_consumer_rebuild_rejects_forged_evidence(
 
 @pytest.mark.parametrize(
     "supported, unresolved, expected",
-    [(0, 0, 0), (0, 1, 2), (0, 9, 2), (1, 0, 1), (1, 3, 1)],
+    [(0, 0, 0), (0, 1, 0), (0, 9, 0), (1, 0, 1), (1, 3, 1)],
 )
 def test_trusted_core_unresolved_admission_exit_contract(
     supported, unresolved, expected
@@ -7620,18 +7620,92 @@ def test_trusted_core_unresolved_admission_exit_contract(
     assert result["passed"] is result["clean"] is result["release_approved"] is False
 
 
-def test_trusted_core_unresolved_serialized_zero_exit_cannot_bypass_current_evidence(
+def test_trusted_core_unresolved_serialized_defect_exit_cannot_override_current_evidence(
     tmp_path,
 ):
     report = _trusted_core_policy316_seal(tmp_path, b"eval(user_data)\n")
     expected = copy.deepcopy(report["defect_policy_decision"])
-    assert expected["exit_code"] == 2
+    assert expected["exit_code"] == 0
     core = copy.deepcopy(dict(report))
     core["_primitive_source_bytes"] = dict(report._captured_sources)
-    core["defect_policy_decision"] = {**expected, "exit_code": 0}
+    core["defect_policy_decision"] = {**expected, "exit_code": 1}
     checked = review_audits._seal_security_scan(core)
     assert checked["defect_policy_decision"] == expected
     assert checked["findings"] == report["findings"]
+
+
+@pytest.mark.parametrize(
+    "source, unknown_collection, expected_exit, expected_tier",
+    [
+        (b"eval(user_data)\n", False, 0, "NEEDS_CONTEXT"),
+        (
+            b"from flask import request\neval(request.get_data(as_text=True))\n",
+            False,
+            1,
+            "SUPPORTED_DEFECT",
+        ),
+        (b"eval(user_data)\n", True, 2, "NEEDS_CONTEXT"),
+    ],
+)
+def test_trusted_core_advisory_admission_native_cli_receipt_and_reseal(
+    tmp_path, capsys, source, unknown_collection, expected_exit, expected_tier
+):
+    from factoryline.cli import main
+    from factoryline import mission_control_status as receipts
+
+    (tmp_path / "app.py").write_bytes(source)
+    (tmp_path / ".factory").mkdir()
+    (tmp_path / ".factory" / "tenant-read-contract.json").write_text(
+        json.dumps({"schema": "factory.tenant-read-contract.v1", "reads": []}),
+        encoding="utf-8",
+    )
+    captured = {"app.py": source}
+    if unknown_collection:
+        hook = b"def pytest_collect_file(file_path, parent):\n    raise RuntimeError('must never execute')\n"
+        (tmp_path / "conftest.py").write_bytes(hook)
+        captured["conftest.py"] = hook
+    code = main([
+        "audit", "security", "--root", str(tmp_path), "--security-only",
+        "--defect-policy", "trusted-core-v1", "--json",
+    ])
+    output = capsys.readouterr()
+    assert output.err == ""
+    report = json.loads(output.out)
+    assert code == expected_exit
+    decision = report["defect_policy_decision"]
+    assert decision["exit_code"] == expected_exit
+    assert decision["clean"] is decision["passed"] is decision["release_approved"] is False
+    assert report["findings"][0]["code"] == "SECURITY_DYNAMIC_EXECUTION"
+    assert report["findings"][0]["severity"] == "HIGH"
+    ledger = report["finding_tier_report"]["ledger"]
+    assert ledger[0]["raw_finding"] == report["findings"][0]
+    assert ledger[0]["tier"] == expected_tier
+    if unknown_collection:
+        assert decision["state"] == "BLOCKED"
+        assert report["oracle_context"]["pytest_collection"]["collection_state"] == "UNKNOWN"
+    elif expected_tier == "NEEDS_CONTEXT":
+        assert decision["state"] == "NO_SUPPORTED_DEFECTS_REVIEW_REQUIRED"
+        assert "unresolved item(s) remain" in decision["action_summary"]
+        from types import SimpleNamespace
+        from factoryline.cli_audit import _finish_bounded_security
+
+        assert _finish_bounded_security(
+            SimpleNamespace(json=False, defect_policy="trusted-core-v1"), report
+        ) == 0
+        human = capsys.readouterr().out
+        assert "NEEDS_CONTEXT" in human
+        assert "SECURITY_DYNAMIC_EXECUTION" in human
+        assert "app.py:1" in human
+    envelope, truncated = receipts._security_scan_read_receipt(tmp_path)
+    assert envelope is not None and not truncated
+    persisted, _bindings, error = receipts._security_scan_receipt_report(envelope)
+    assert error is None and persisted == report
+    rebuilt = copy.deepcopy(report)
+    rebuilt["_primitive_source_bytes"] = captured
+    resealed = review_audits._seal_security_scan(rebuilt)
+    assert resealed["defect_policy_decision"] == decision
+    assert resealed["finding_tier_report"] == report["finding_tier_report"]
+    assert resealed["findings"] == report["findings"]
 
 
 def test_blocked_security_scan_report_keeps_source_limit_incomplete(
