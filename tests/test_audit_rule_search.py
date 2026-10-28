@@ -508,6 +508,79 @@ def test_native_producer_transport_has_no_secondary_rescan(
         packet()
 
 
+def test_native_observation_boundary_requires_exact_capture_generation(tmp_path):
+    from factoryline.audit_rule_search import (
+        build_retrieval_context,
+        retain_native_observations,
+    )
+
+    index, finding = _informed_fixture(
+        tmp_path, {"sink.py": "import pickle\nx = pickle.loads(b'local')\n"}
+    )
+    path = tmp_path / "sink.py"
+    tree = index.snapshots[path]
+    tree._security_source_model = index
+    finding["code"] = "SECURITY_UNSAFE_DESERIALIZATION"
+    reported = {"status": "SUPPORTED", "source_sha256": index.inventory[path]}
+    producer = {**finding, "facts": {"security_precondition": reported}}
+    retain_native_observations(tree, path, [producer])
+    reported["status"] = "changed after retention"
+
+    context = build_retrieval_context(finding, index, "serialized input origin", None)
+    observation = context["producer_reported_preconditions"]
+    assert observation["authority"] == "none"
+    assert observation["status"] == "REPORTED_NOT_INDEPENDENTLY_VERIFIED"
+    assert observation["observations"][0]["security_precondition"] == {
+        "status": "SUPPORTED",
+        "source_sha256": index.inventory[path],
+    }
+    assert context["retrieval"]["status"] == "NOT_RUN"
+
+    impostor = ast.parse(index.source_bytes[path])
+    impostor._security_source_model = index
+    retain_native_observations(impostor, path, [producer])
+    assert not hasattr(impostor, "_secondary_native_observations")
+    index.source_bytes[path] = bytes(bytearray(index.source_bytes[path]))
+    assert index.validate(path)
+    rebuilt = build_retrieval_context(finding, index, "serialized input origin", None)
+    assert "producer_reported_preconditions" not in rebuilt
+
+
+def test_hybrid_enrich_boundary_preserves_capture_and_advisory_authority(tmp_path):
+    from factoryline.audit_rule_search import (
+        HybridSourceRetriever,
+        build_retrieval_context,
+    )
+
+    source = {"sink.py": "import pickle\nx = pickle.loads(b'local')\n"}
+    index, finding = _informed_fixture(tmp_path, source)
+    other, _ = _informed_fixture(tmp_path / "other", source)
+    retriever = HybridSourceRetriever(index, _hybrid_encoder, model_id="boundary-v1")
+    context = build_retrieval_context(finding, index, "deserialize input origin", None)
+    before = json.loads(json.dumps(context))
+    with pytest.raises(ValueError, match="different capture"):
+        retriever.enrich(context, other, "deserialize input origin")
+    assert context == before
+
+    retriever.enrich(context, index, "deserialize input origin")
+    assert context["retrieval"]["status"] == "DELIVERED_UNVALIDATED"
+    assert context["retrieval"]["authority"] == "none"
+    assert context["retrieval"]["trace_validation"] == "required"
+    assert context["unknowns"][: len(before["unknowns"])] == before["unknowns"]
+    hints = [row for row in context["excerpts"] if row["kind"] == "retrieval_hint"]
+    assert hints
+    for hint in hints:
+        path = index.root / hint["path"]
+        assert hint["sha256"] == sha256(index.source_bytes[path]).hexdigest()
+        lines = index.source_bytes[path].decode().splitlines(keepends=True)
+        assert hint["content"] == "".join(
+            lines[hint["start_line"] - 1 : hint["end_line"]]
+        )
+        assert {"path": hint["path"], "sha256": hint["sha256"]} in context[
+            "dependency_sources"
+        ]
+
+
 def _informed_fixture(tmp_path, sources):
     from factoryline.credential_role_constructor_provider import SourceSnapshotIndex
 

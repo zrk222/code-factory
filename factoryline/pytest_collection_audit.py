@@ -390,7 +390,7 @@ def _pytest_pattern_value(text, section):
         return _ABSENT_PYTEST_SECTION
     options = dict(parser.items(section))
     if not _supported_pytest_function_patterns(options):
-        return _UNSUPPORTED_PYTEST_CONFIG
+        return _INVALID_PYTEST_CONFIG
     if _pytest_config_uses_custom_collection(options):
         return _pytest_custom_collection_state(options)
     return _pytest_patterns_from_options(options)
@@ -409,7 +409,7 @@ def _toml_pytest_pattern_value(text, section):
     if not isinstance(options, dict):
         return _INVALID_PYTEST_CONFIG
     if not _supported_pytest_function_patterns(options):
-        return _UNSUPPORTED_PYTEST_CONFIG
+        return _INVALID_PYTEST_CONFIG
     if _pytest_config_uses_custom_collection(options):
         return _pytest_custom_collection_state(options)
     return _pytest_patterns_from_options(options)
@@ -486,7 +486,7 @@ def _pytest_custom_collection_state(options):
     if isinstance(addopts, list) and all(isinstance(value, str) for value in addopts):
         addopts = " ".join(addopts)
     if not isinstance(addopts, str):
-        return _UNSUPPORTED_PYTEST_CONFIG
+        return _INVALID_PYTEST_CONFIG
     tokens = iter(addopts.split())
     remaining = []
     for token in tokens:
@@ -499,7 +499,7 @@ def _pytest_custom_collection_state(options):
                 else token.partition("=")[2]
             )
             if mode not in {"prepend", "append", "importlib"}:
-                return _UNSUPPORTED_PYTEST_CONFIG
+                return _INVALID_PYTEST_CONFIG
             continue
         remaining.append(token)
     if _pytest_config_uses_custom_collection({**options, "addopts": remaining}):

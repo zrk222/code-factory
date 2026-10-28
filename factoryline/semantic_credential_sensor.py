@@ -2808,19 +2808,37 @@ def _persisted_query_witness(index, wrapper, models, selected, field):
     for path, tree in index.snapshots.items():
         if not index.validate(path):
             return None
-        calls = [
-            (node, _persisted_query_receiver(node))
-            for node in ast.walk(tree)
-            if isinstance(node, ast.Call)
-        ]
+        nodes = list(ast.walk(tree))
         candidates = [
-            (call, receiver) for call, receiver in calls if receiver is not None
+            (node, receiver)
+            for node in nodes
+            if isinstance(node, ast.Call)
+            if (receiver := _persisted_query_receiver(node)) is not None
         ]
         if not candidates:
             continue
         if not hasattr(tree, "_security_scope_kind"):
             flow.bind_security_call_scopes(tree)
-        aliases = audit._security_aliases(list(ast.walk(tree)))
+        aliases = audit._security_aliases(nodes)
+        if _provider_identity_uncertain(
+            tree,
+            aliases,
+            roots=("flask.request",),
+            nodes=(
+                node
+                for node in nodes
+                if node is not tree
+                and (
+                    getattr(node, "_security_lexical_scope", tree) is tree
+                    or isinstance(node, ast.Call)
+                    or isinstance(node, (ast.Attribute, ast.Subscript))
+                    and isinstance(node.ctx, (ast.Store, ast.Del))
+                )
+            ),
+            parents=index.parents[path],
+            selected_paths=True,
+        ):
+            continue
         analyzed = set()
         for call, receiver in candidates:
             scope = getattr(call, "_security_lexical_scope", None)
@@ -2829,11 +2847,9 @@ def _persisted_query_witness(index, wrapper, models, selected, field):
                 resolved
                 and isinstance(resolved[1], ast.ClassDef)
                 and (index.relative(resolved[0]), resolved[1].name) == selected
+                and isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and security_precondition_path_possible(call)
             ):
-                continue
-            if not isinstance(
-                scope, (ast.FunctionDef, ast.AsyncFunctionDef)
-            ) or not security_precondition_path_possible(call):
                 continue
             witness = _persisted_update_witness(
                 index,

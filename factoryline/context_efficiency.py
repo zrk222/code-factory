@@ -531,10 +531,12 @@ def bind_application_fixture_context(
 
     for path in snapshots:
         contexts.setdefault(path, {})["application_fixture_evidence"] = {}
-    if (
-        configuration_valid is not True
-        or not isinstance(source_bytes, dict)
-        or not isinstance(source_inventory, dict)
+    if not all(
+        (
+            configuration_valid is True,
+            isinstance(source_bytes, dict),
+            isinstance(source_inventory, dict),
+        )
     ):
         return
     candidates = {

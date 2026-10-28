@@ -2742,9 +2742,11 @@ class _CredentialRoleFlow:
         self.environments = []
 
     def fail(self, reason, path, node):
+        """Record an unresolved transfer with its captured source span."""
         self.unknowns.append((reason, _event_span(path, node)))
 
     def tick(self, path, node):
+        """Charge a transfer step and snapshot state within the shared budget."""
         self.steps += 1
         if self.steps > self.budget:
             self.fail("transfer state budget exceeded", path, node)
@@ -2753,6 +2755,7 @@ class _CredentialRoleFlow:
         return True
 
     def snapshot(self, path, node):
+        """Retain bounded environment and heap prefixes for exception paths."""
         for env, prefixes in self.prefix_frames:
             if len(prefixes) >= self.budget:
                 self.fail("exception prefix budget exceeded", path, node)
@@ -2760,17 +2763,20 @@ class _CredentialRoleFlow:
             prefixes.append((dict(env), dict(self.heap)))
 
     def allocate(self, path, node, kind):
+        """Create a distinct captured object identity and record its allocation."""
         self.counter += 1
         key = f"{path}:{getattr(node, 'lineno', 0)}:{getattr(node, 'col_offset', 0)}:{self.counter}:{kind}"
         self.edges.append(("allocation", _event_span(path, node), key))
         return _Value(class_roots=frozenset({key}))
 
     def allocate_container(self, path, node, kind, items):
+        """Create a distinct container identity holding the supplied item values."""
         self.counter += 1
         key = f"{path}:{getattr(node, 'lineno', 0)}:{getattr(node, 'col_offset', 0)}:{self.counter}:container"
         return _Value(items=tuple(items), inert_kind=kind, container_id=key)
 
     def read_field(self, receiver, name):
+        """Read a modeled field only when the receiver has one object identity."""
         if len(receiver.class_roots) != 1:
             return _Value(unknown=True)
         return self.heap.get(
@@ -2778,6 +2784,7 @@ class _CredentialRoleFlow:
         )
 
     def write_field(self, receiver, name, value):
+        """Store a modeled field on one resolved receiver and snapshot the heap."""
         if len(receiver.class_roots) != 1 or receiver.unknown:
             return False
         self.heap[(next(iter(receiver.class_roots)), name)] = value
@@ -2785,6 +2792,7 @@ class _CredentialRoleFlow:
         return True
 
     def expression(self, path, node, env):
+        """Interpret supported captured expressions, recording unknown transfers."""
         if not self.tick(path, node):
             return _Value(unknown=True)
         if isinstance(node, (ast.Constant, ast.Name)):
@@ -2816,6 +2824,7 @@ class _CredentialRoleFlow:
         return _Value(unknown=True)
 
     def projection(self, path, node, env):
+        """Resolve a modeled attribute or an item selected by an exact scalar."""
         if isinstance(node, ast.Attribute):
             return self.attribute(path, node, env)
         base = self.expression(path, node.value, env)
@@ -2828,6 +2837,7 @@ class _CredentialRoleFlow:
         )
 
     def leaf(self, path, node, env):
+        """Resolve a constant or name from bindings and the caller's resolver."""
         if isinstance(node, ast.Constant):
             return _constant_identity_value(node)
         if node.id in env:
@@ -2836,6 +2846,7 @@ class _CredentialRoleFlow:
         return value if isinstance(value, _Value) else _Value(unknown=True)
 
     def literal_dict(self, path, node, env):
+        """Build a modeled dictionary with unique literal string or integer keys."""
         items = []
         for key, expression in zip(node.keys, node.values):
             if not isinstance(key, ast.Constant) or type(key.value) not in {str, int}:
@@ -2848,6 +2859,7 @@ class _CredentialRoleFlow:
         return self.allocate_container(path, node, "dict", items)
 
     def scalar_operation(self, path, node, env):
+        """Evaluate supported scalar operations without invoking object protocols."""
         if isinstance(node, ast.Compare):
             return self.scalar_compare(path, node, env)
         if isinstance(node, ast.BoolOp):
@@ -2888,6 +2900,7 @@ class _CredentialRoleFlow:
         return _Value(unknown=True)
 
     def scalar_compare(self, path, node, env):
+        """Model supported scalar comparisons while retaining tracked origins."""
         if len(node.ops) != 1 or not isinstance(
             node.ops[0], (ast.Eq, ast.NotEq, ast.Is, ast.IsNot)
         ):
@@ -2930,6 +2943,7 @@ class _CredentialRoleFlow:
         return _Value(roots=roots, inert_kind="scalar", scalar_kind="boolean")
 
     def scalar_boolean(self, path, node, env):
+        """Follow boolean short circuits only when preceding operands are exact."""
         for position, expression in enumerate(node.values):
             value = self.expression(path, expression, env)
             if position == len(node.values) - 1:
@@ -2943,6 +2957,7 @@ class _CredentialRoleFlow:
         return _Value(unknown=True)
 
     def attribute(self, path, node, env):
+        """Read a modeled field or delegate unresolved attributes to the resolver."""
         receiver = self.expression(path, node.value, env)
         value = self.read_field(receiver, node.attr)
         if value.unknown and self.resolve_attribute:
@@ -2954,6 +2969,7 @@ class _CredentialRoleFlow:
         return value
 
     def call(self, path, node, env):
+        """Dispatch resolved operands to captured code or an explicit call contract."""
         if _call_has_expansion(node):
             self.fail("expanded call", path, node)
             return _Value(unknown=True)
@@ -2993,6 +3009,7 @@ class _CredentialRoleFlow:
         return value
 
     def method_shadowed(self, node, receiver):
+        """Detect instance fields that would override the selected method name."""
         return (
             isinstance(node.func, ast.Attribute)
             and receiver is not None
@@ -3002,6 +3019,7 @@ class _CredentialRoleFlow:
         )
 
     def source_call(self, path, node, selected, evaluated):
+        """Validate exact argument binding before interpreting a captured call."""
         if not isinstance(selected, ResolvedIdentityCall):
             self.fail("invalid source call resolution", path, node)
             return _Value(unknown=True)
@@ -3036,6 +3054,7 @@ class _CredentialRoleFlow:
         return self.run(selected.path, selected.function, values, nested=True)
 
     def assign(self, path, target, value, env):
+        """Transfer a value into supported local, container or object-field targets."""
         if isinstance(target, ast.Name):
             env[target.id] = value
             return
@@ -3062,6 +3081,7 @@ class _CredentialRoleFlow:
         self.fail("unresolved or external assignment", path, target)
 
     def update_container(self, container, key, value, env):
+        """Update known container aliases unless they cross a source-call frame."""
         items = dict(container.items)
         items[key] = value
         updated = replace(container, items=tuple(items.items()))
@@ -3096,6 +3116,7 @@ class _CredentialRoleFlow:
         return True
 
     def statements(self, path, body, env):
+        """Interpret a statement sequence until termination, uncertainty or budget."""
         for node in body:
             if not self.tick(path, node) or self.unknowns:
                 break
@@ -3116,6 +3137,7 @@ class _CredentialRoleFlow:
         return False, _constant_identity_value(ast.Constant(value=None))
 
     def simple_statement(self, path, node, env):
+        """Handle supported assignments, expressions, returns and explicit raises."""
         if isinstance(node, (ast.Assign, ast.AnnAssign)):
             targets = node.targets if isinstance(node, ast.Assign) else [node.target]
             if len(targets) != 1 or node.value is None:
@@ -3145,6 +3167,7 @@ class _CredentialRoleFlow:
         return False, _constant_identity_value(ast.Constant(value=None))
 
     def loop(self, path, node, env):
+        """Interpret each modeled tuple or list item and the loop's else block."""
         iterable = self.expression(path, node.iter, env)
         if (
             iterable.inert_kind not in {"tuple", "list"}
@@ -3161,6 +3184,8 @@ class _CredentialRoleFlow:
         return self.statements(path, node.orelse, env)
 
     def merge_states(self, states, env):
+        """Join environment and heap alternatives, marking missing values unknown."""
+
         def merge(maps):
             keys = set().union(*(value.keys() for value in maps))
             return {
@@ -3175,6 +3200,7 @@ class _CredentialRoleFlow:
         self.heap = merge([state[1] for state in states])
 
     def with_scope(self, path, node, env):
+        """Interpret contracted context scopes and merge possible prefix states."""
         for item in node.items:
             value = self.expression(path, item.context_expr, env)
             if value.inert_kind != "scope_context" or _has_unknown_content(value):
@@ -3193,6 +3219,7 @@ class _CredentialRoleFlow:
         return False, result
 
     def try_scope(self, path, node, env):
+        """Interpret exception alternatives and merge supported finalizer paths."""
         if any(
             handler.type is not None and not isinstance(handler.type, ast.Name)
             for handler in node.handlers
@@ -3235,6 +3262,7 @@ class _CredentialRoleFlow:
         return self.try_outcome(path, node, normal, handler_outcomes)
 
     def handler_states(self, path, handlers, prefixes, env):
+        """Evaluate each handler from every recorded possible exception prefix."""
         states, outcomes, exceptions = [], [], []
         for prefix_env, prefix_heap in prefixes:
             for handler in handlers:
@@ -3255,6 +3283,7 @@ class _CredentialRoleFlow:
         return states, outcomes, exceptions
 
     def try_outcome(self, path, node, normal, handlers):
+        """Join try outcomes while rejecting mixed return and continuation paths."""
         outcomes = [normal, *handlers]
         continuing = [value for value in outcomes if value[0] != "raise"]
         returns = [value for value in continuing if value[0] == "return"]
@@ -3268,6 +3297,7 @@ class _CredentialRoleFlow:
         return False, _constant_identity_value(ast.Constant(value=None))
 
     def branch(self, path, node, env):
+        """Select exact scalar branches or merge compatible modeled alternatives."""
         value = self.expression(path, node.test, env)
         exact = _validated_exact_scalar(value)
         if exact:
@@ -3290,6 +3320,7 @@ class _CredentialRoleFlow:
         return left_return, join_identity_values([left, right])
 
     def run(self, path, function, bindings, *, nested=False):
+        """Interpret a current captured function, rejecting cycles and root escapes."""
         key = (path, id(function))
         raw = self.index.source_bytes.get(path)
         digest = hashlib.sha256(raw).hexdigest() if isinstance(raw, bytes) else None
@@ -3414,45 +3445,59 @@ def credential_scope_api_contract(
     PyJWT 2.10.1 semantics are modeled; the installed runtime is unassessed.
     The caller owns allocation, registry updates, exceptions and derivation tags.
     """
-    if provider_stable is not True or not isinstance(keywords, dict):
+    if not all((provider_stable is True, isinstance(keywords, dict))):
         return None
-    if canonical in {"jwt.encode", "jwt.decode", "jwt.api_jws.PyJWS.decode"}:
-        return _scope_jwt_contract(canonical, receiver, arguments, keywords)
+    contracts = {
+        **dict.fromkeys(
+            {"jwt.encode", "jwt.decode", "jwt.api_jws.PyJWS.decode"},
+            _scope_jwt_contract,
+        ),
+        **dict.fromkeys(
+            {
+                "jwt.api_jws.PyJWS.get_algorithm_by_name",
+                "jwt.api_jws.PyJWS.unregister_algorithm",
+            },
+            _scope_registry_contract,
+        ),
+        **dict.fromkeys(dict(_SCOPE_PREPARE_METHODS), _scope_prepare_contract),
+        **dict.fromkeys(
+            {
+                "builtins.str.encode",
+                "builtins.bytes.decode",
+                "builtins.str.split",
+                "builtins.bytes.split",
+            },
+            _scope_builtin_contract,
+        ),
+    }
+    contract = contracts.get(canonical)
+    if contract is not None:
+        return contract(canonical, receiver, arguments, keywords)
     if canonical == "jwt.api_jws.PyJWS":
-        if receiver is None and not arguments and not keywords:
+        if all((receiver is None, not arguments, not keywords)):
             return ("allocate",)
         return None
-    if canonical in {
-        "jwt.api_jws.PyJWS.get_algorithm_by_name",
-        "jwt.api_jws.PyJWS.unregister_algorithm",
-    }:
-        return _scope_registry_contract(canonical, receiver, arguments, keywords)
-    if canonical in dict(_SCOPE_PREPARE_METHODS):
-        return _scope_prepare_contract(canonical, receiver, arguments, keywords)
-    if canonical in {
-        "builtins.str.encode",
-        "builtins.bytes.decode",
-        "builtins.str.split",
-        "builtins.bytes.split",
-    }:
-        return _scope_builtin_contract(canonical, receiver, arguments, keywords)
-    if (
-        canonical in _SCOPE_ASSERTIONS
-        and receiver
-        and receiver[0] == "testcase"
-        and receiver[2] is True
-    ):
-        names = (
-            ("expr", "msg")
-            if canonical in _SCOPE_UNARY_ASSERTIONS
-            else ("first", "second", "msg")
+    testcase = receiver and receiver[0] == "testcase"
+    if all((canonical in _SCOPE_ASSERTIONS, bool(testcase))):
+        if receiver[2] is not True:
+            return None
+        names = dict.fromkeys(_SCOPE_UNARY_ASSERTIONS, ("expr", "msg")).get(
+            canonical, ("first", "second", "msg")
         )
         bound = _scope_bind(arguments, keywords, names, names[:-1])
         values = tuple(bound.values()) if bound is not None else ()
         roots = [_scope_value_roots(value) for value in values]
-        if values and all(
-            root is not None and all(item.startswith("derived:") for item in root)
-            for root in roots
+        if all(
+            (
+                bool(values),
+                all(root is not None for root in roots),
+                all(
+                    item.startswith("derived:")
+                    for root in roots
+                    if root is not None
+                    for item in root
+                ),
+            )
         ):
             return ("observe",)
     return None
@@ -3654,19 +3699,23 @@ class _SourceTestScope:
         self.fact = declaration_fact(self.source, path, assignment)
 
     def witness(self, path, node, role):
+        """Retain one source-bound witness for each span and observed role."""
         row = self.audit._app_credential_source_row(self.index, path, node, role)
         key = (row["path"], tuple(row["span"]), role)
         self.witnesses[key] = row
 
     def canonical(self, path, node):
+        """Resolve an expression name within its captured enclosing function."""
         owner = self.audit._legacy._enclosing_function(node, self.source.parents[path])
         return self.fixture._app_expression_name(self.index, path, node, owner)
 
     def declaration(self, path, node):
+        """Resolve the captured declaration selected by an expression's scope."""
         owner = self.audit._legacy._enclosing_function(node, self.source.parents[path])
         return self.fixture._app_source_symbol(self.index, path, node, owner)
 
     def owner_for(self, path, node):
+        """Find a validated test class owning a test method or setup occurrence."""
         parents = self.source.parents[path]
         function = self.audit._legacy._enclosing_function(node, parents)
         owner = parents.get(id(function)) if function is not None else None
@@ -3677,6 +3726,7 @@ class _SourceTestScope:
         return owner
 
     def test_owner(self, path, owner):
+        """Check supported test inheritance, definition effects and namespace closure."""
         if owner.decorator_list or owner.keywords or len(owner.bases) != 1:
             return False
         if self.canonical(path, owner.bases[0]) not in {
@@ -3711,6 +3761,7 @@ class _SourceTestScope:
         return self.owner_namespace_closed(path, owner)
 
     def owner_namespace_closed(self, path, owner):
+        """Reject captured references or imports that expose the test owner."""
         module_name = self.fixture._django_name(self.index, path)
         for other_path, tree in self.index["modules"].items():
             package = self.fixture._django_name(self.index, other_path).rpartition(".")[
@@ -3739,6 +3790,7 @@ class _SourceTestScope:
         return True
 
     def origin_use(self, path, node):
+        """Record an origin read only when it belongs to a validated test owner."""
         owner = self.owner_for(path, node)
         if owner is None:
             return None
@@ -3747,6 +3799,7 @@ class _SourceTestScope:
         return "TEST_ORIGIN_READ"
 
     def resolve_name(self, path, node):
+        """Resolve the candidate origin, inert declarations and supported namespaces."""
         selected = self.declaration(path, node)
         if selected is not None:
             origin_path, declaration = selected
@@ -3766,11 +3819,13 @@ class _SourceTestScope:
         return None
 
     def object_class(self, value):
+        """Find the captured class registered for a single modeled object root."""
         if value is not None and len(value.class_roots) == 1:
             return self.objects.get(next(iter(value.class_roots)))
         return None
 
     def resolve_call(self, path, call, receiver):
+        """Bind a modeled receiver's captured method and retain its witness."""
         from .review_integrity import bind_source_call
 
         selected = self.object_class(receiver)
@@ -3787,6 +3842,7 @@ class _SourceTestScope:
         return ResolvedIdentityCall(function, target_path, bound)
 
     def resolve_attribute(self, flow, path, node, receiver):
+        """Evaluate a supported captured cached property and store its result."""
         selected = self.object_class(receiver)
         if selected is None:
             return None
@@ -3813,6 +3869,7 @@ class _SourceTestScope:
         return value
 
     def construct(self, flow, path, call, args, kwargs):
+        """Construct a modeled source object only after class and binding checks."""
         from .review_integrity import bind_source_call
 
         selected = self.declaration(path, call.func)
@@ -3858,6 +3915,7 @@ class _SourceTestScope:
         return obj
 
     def class_source_closed(self, path, owner):
+        """Check captured class stability and reject unsupported definition effects."""
         if not self.audit._app_signing_captured_provider_stable(
             self.index, [(path, owner)]
         ):
@@ -3885,12 +3943,14 @@ class _SourceTestScope:
         return True
 
     def resolve_literal(self, path, node):
+        """Resolve inert literal content only from a current captured source node."""
         if not self.source.validate(path) or id(node) not in self.source.parents[path]:
             return None
         value = self.audit._legacy.identity_value(node, {})
         return value if value.inert_kind and not _has_unknown_content(value) else None
 
     def contract(self, flow, path, call, receiver, args, kwargs):
+        """Apply supported construction or API transfers and record their witnesses."""
         self.flow = flow
         created = self.construct(flow, path, call, args, kwargs)
         if created is not None:
@@ -3927,6 +3987,7 @@ class _SourceTestScope:
         return None
 
     def exercise(self):
+        """Check all captured origin uses and exercise every validated test owner."""
         if (
             not self.view
             or not self.view.complete
@@ -3945,6 +4006,7 @@ class _SourceTestScope:
         return True
 
     def exercise_owner(self, path, owner):
+        """Interpret setup and each declared test with a distinct modeled receiver."""
         setup = next(
             (
                 n

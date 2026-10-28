@@ -54,9 +54,9 @@ def build_retrieval_context(finding, index, requirement, retriever):
             node
             for node in ast.walk(index.snapshots[path])
             if isinstance(node, (ast.Assign, ast.AnnAssign))
-            and node.lineno == finding.get("line")
-            and node.col_offset == finding.get("column")
-            and all(
+            if node.lineno == finding.get("line")
+            if node.col_offset == finding.get("column")
+            if all(
                 finding.get(key, getattr(node, attr)) == getattr(node, attr)
                 for key, attr in [
                     ("end_line", "end_lineno"),
@@ -246,6 +246,7 @@ class HybridSourceRetriever:
         return result
 
     def search(self, query, *, limit=6):
+        """Rank bounded captured-source hints without granting evidence authority."""
         if (
             not isinstance(query, str)
             or not query.strip()

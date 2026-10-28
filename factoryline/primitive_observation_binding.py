@@ -1830,6 +1830,8 @@ def _pickle_role_identity(finding):
 
 
 def _pickle_role_sources(core, captured):
+    if _unknown_collection(core):
+        return None
     if core.get("audit_coverage", {}).get("complete") is not True or not isinstance(
         captured, dict
     ):

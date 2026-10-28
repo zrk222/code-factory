@@ -76,6 +76,7 @@ class _Value:
 
 
 def captured_credential_role_closure(*args, **kwargs):
+    """Forward closure evaluation lazily to the captured credential transfer engine."""
     from .credential_role_method_use_getter_audit import (
         captured_credential_role_closure as evaluate,
     )

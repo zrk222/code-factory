@@ -59,9 +59,13 @@ def startup(scanner, workspace, profile, expected_files):
     for path in files:
         relative = path.relative_to(workspace).as_posix()
         try:
-            ast.parse(audit._security_source_bytes(workspace, relative), filename=relative)
+            ast.parse(
+                audit._security_source_bytes(workspace, relative), filename=relative
+            )
         except (SyntaxError, ValueError, RecursionError) as error:
-            raise ValueError("unsupported captured Python syntax: " + relative) from error
+            raise ValueError(
+                "unsupported captured Python syntax: " + relative
+            ) from error
     _, collection = audit._pytest_collection_config(
         workspace, files, allow_unknown=profile["security_only"] is True
     )
@@ -129,7 +133,7 @@ def inputs(study):
                 }
             )
     identities = [(r["repository"], r["arm"]) for r in jobs]
-    if not identities or len(set(identities)) != len(identities):
+    if not all((bool(identities), len(set(identities)) == len(identities))):
         raise ValueError("empty or duplicate cohort identities")
     return jobs, bindings, controller
 
@@ -195,7 +199,7 @@ def preflight(study):
 
 
 def validate(receipt):
-    if receipt.get("schema") != SCHEMA or receipt.get("state") != "PASS":
+    if (receipt.get("schema"), receipt.get("state")) != (SCHEMA, "PASS"):
         raise ValueError("cohort startup preflight has not passed")
     core = {k: v for k, v in receipt.items() if k != "receipt_sha256"}
     if receipt.get("receipt_sha256") != canonical(core):
@@ -203,7 +207,7 @@ def validate(receipt):
     jobs, bindings, controller = inputs(receipt["study"])
     identities = [[row["repository"], row["arm"]] for row in jobs]
     observed = [[row["repository"], row["arm"]] for row in receipt["checks"]]
-    if receipt["expected"] != identities or observed != identities:
+    if not all((receipt["expected"] == identities, observed == identities)):
         raise ValueError("missing, duplicate or unexpected startup check")
     if receipt["inputs"] != bindings or receipt["controller"] != str(controller):
         raise ValueError("stale startup receipt")
