@@ -1287,7 +1287,9 @@ def test_native_provider_epoch_binds_noncallable_contracts(monkeypatch, mutation
 
     first = sensor._native_input_inventory_epoch()
     if mutation == "signature":
-        monkeypatch.setattr(sensor, "_FLASK_BODY_SIGNATURE", ast.parse("def other(): pass"))
+        monkeypatch.setattr(
+            sensor, "_FLASK_BODY_SIGNATURE", ast.parse("def other(): pass")
+        )
     elif mutation == "node_types":
         monkeypatch.setattr(review_audits, "_FUNCTION_NODES", (ast.FunctionDef,))
     elif mutation == "memo":
@@ -1345,7 +1347,9 @@ def test_provider_cache351_reuses_foreign_facts_without_mutable_result_leak(
     assert len(parsed) == 1
 
 
-@pytest.mark.parametrize("parsed_entries, expected_computations", [(2048, 1), (4096, 2)])
+@pytest.mark.parametrize(
+    "parsed_entries, expected_computations", [(2048, 1), (4096, 2)]
+)
 def test_provider_cache386_parsed_entries_do_not_starve_foreign_fact_reuse(
     monkeypatch, parsed_entries, expected_computations
 ):
@@ -6420,7 +6424,16 @@ def test_trusted_core_policy316_review_queue_is_not_clean_or_approved(tmp_path):
     assert "unresolved item(s) remain" in decision["action_summary"]
 
 
-@pytest.mark.parametrize("tamper", ["tier", "removed_raw_row", "capture_hash", "retrieval_status", "retrieval_removed"])
+@pytest.mark.parametrize(
+    "tamper",
+    [
+        "tier",
+        "removed_raw_row",
+        "capture_hash",
+        "retrieval_status",
+        "retrieval_removed",
+    ],
+)
 def test_trusted_core_policy316_forged_or_stale_evidence_blocks(tmp_path, tamper):
     path = tmp_path / "app.py"
     path.write_bytes(b'GITHUB_TOKEN = "ghp_abcdefghijklmnop"\n')
@@ -6440,7 +6453,9 @@ def test_trusted_core_policy316_forged_or_stale_evidence_blocks(tmp_path, tamper
             "PROVEN_PRIMITIVE": 0,
         }
     elif tamper == "retrieval_status":
-        core["finding_tier_report"]["ledger"][0]["retrieval_transport"]["status"] = "COMPLETE"
+        core["finding_tier_report"]["ledger"][0]["retrieval_transport"]["status"] = (
+            "COMPLETE"
+        )
     elif tamper == "retrieval_removed":
         del core["finding_tier_report"]["ledger"][0]["retrieval_transport"]
     else:
@@ -7789,36 +7804,55 @@ def test_trusted_core_advisory_admission_native_cli_receipt_and_reseal(
         hook = b"def pytest_collect_file(file_path, parent):\n    raise RuntimeError('must never execute')\n"
         (tmp_path / "conftest.py").write_bytes(hook)
         captured["conftest.py"] = hook
-    code = main([
-        "audit", "security", "--root", str(tmp_path), "--security-only",
-        "--defect-policy", "trusted-core-v1", "--json",
-    ])
+    code = main(
+        [
+            "audit",
+            "security",
+            "--root",
+            str(tmp_path),
+            "--security-only",
+            "--defect-policy",
+            "trusted-core-v1",
+            "--json",
+        ]
+    )
     output = capsys.readouterr()
     assert output.err == ""
     report = json.loads(output.out)
     assert code == expected_exit
     decision = report["defect_policy_decision"]
     assert decision["exit_code"] == expected_exit
-    assert decision["clean"] is decision["passed"] is decision["release_approved"] is False
+    assert (
+        decision["clean"] is decision["passed"] is decision["release_approved"] is False
+    )
     assert report["findings"][0]["code"] == "SECURITY_DYNAMIC_EXECUTION"
     assert report["findings"][0]["severity"] == "HIGH"
     ledger = report["finding_tier_report"]["ledger"]
     assert ledger[0]["raw_finding"] == report["findings"][0]
     assert ledger[0]["tier"] == expected_tier
     assert ledger[0]["retrieval_transport"]["status"] == "NOT_RUN"
-    assert ledger[0]["retrieval_transport"]["finding_identity_sha256"] == ledger[0]["source_identity"]["identity_sha256"]
+    assert (
+        ledger[0]["retrieval_transport"]["finding_identity_sha256"]
+        == ledger[0]["source_identity"]["identity_sha256"]
+    )
     if unknown_collection:
         assert decision["state"] == "BLOCKED"
-        assert report["oracle_context"]["pytest_collection"]["collection_state"] == "UNKNOWN"
+        assert (
+            report["oracle_context"]["pytest_collection"]["collection_state"]
+            == "UNKNOWN"
+        )
     elif expected_tier == "NEEDS_CONTEXT":
         assert decision["state"] == "NO_SUPPORTED_DEFECTS_REVIEW_REQUIRED"
         assert "unresolved item(s) remain" in decision["action_summary"]
         from types import SimpleNamespace
         from factoryline.cli_audit import _finish_bounded_security
 
-        assert _finish_bounded_security(
-            SimpleNamespace(json=False, defect_policy="trusted-core-v1"), report
-        ) == 0
+        assert (
+            _finish_bounded_security(
+                SimpleNamespace(json=False, defect_policy="trusted-core-v1"), report
+            )
+            == 0
+        )
         human = capsys.readouterr().out
         assert "NEEDS_CONTEXT" in human
         assert "SECURITY_DYNAMIC_EXECUTION" in human

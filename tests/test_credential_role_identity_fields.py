@@ -772,7 +772,9 @@ def test_immutable_defaults_seed_separate_callee_values(signature):
         ("target, mode=0", "mode is None", ()),
     ],
 )
-def test_immutable_default_guards_report_only_reachable_writes(signature, guard, writes):
+def test_immutable_default_guards_report_only_reachable_writes(
+    signature, guard, writes
+):
     result = _run(signature, f"if {guard}: target.data = None")
     assert result.status == "NO_CLASS_EFFECT"
     assert result.field_writes == writes

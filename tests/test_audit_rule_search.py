@@ -444,12 +444,20 @@ def test_hybrid_checkpoint_marks_late_truncation_incomplete_in_delivered_ledger(
     )
 
 
-@pytest.mark.parametrize("consumer,code", [
-    ("os.system", "SECURITY_OS_COMMAND"),
-    ("pickle.loads", "SECURITY_UNSAFE_DESERIALIZATION"),
-])
-def test_native_producer_transport_has_no_secondary_rescan(tmp_path, monkeypatch, consumer, code):
-    from factoryline.primitive_observation_binding import _regenerate_source_model, _regenerate_native_findings
+@pytest.mark.parametrize(
+    "consumer,code",
+    [
+        ("os.system", "SECURITY_OS_COMMAND"),
+        ("pickle.loads", "SECURITY_UNSAFE_DESERIALIZATION"),
+    ],
+)
+def test_native_producer_transport_has_no_secondary_rescan(
+    tmp_path, monkeypatch, consumer, code
+):
+    from factoryline.primitive_observation_binding import (
+        _regenerate_source_model,
+        _regenerate_native_findings,
+    )
     from factoryline.jev_classifier import build_informed_actionability_case
     from factoryline import review_audits
 
@@ -461,18 +469,36 @@ def test_native_producer_transport_has_no_secondary_rescan(tmp_path, monkeypatch
     finding = next(row for row in rows if row["code"] == code)
     finding = {**finding, "source_sha256": digest}
     expected = finding["facts"]["security_precondition"]
-    monkeypatch.setattr(review_audits, "_security_scan_tree", lambda *a, **k: pytest.fail("secondary rescan"))
+    monkeypatch.setattr(
+        review_audits,
+        "_security_scan_tree",
+        lambda *a, **k: pytest.fail("secondary rescan"),
+    )
+
     def packet():
-        return build_informed_actionability_case(finding, model, candidate_commit="a" * 40,
-                                                 requirement="Assess the exact source-bound defect.")
+        return build_informed_actionability_case(
+            finding,
+            model,
+            candidate_commit="a" * 40,
+            requirement="Assess the exact source-bound defect.",
+        )
+
     item = packet()
-    native = json.loads(next(row["content"] for row in item["state"]["evidence"]["artifacts"]
-                             if row["kind"] == "native_sink_evidence"))
+    native = json.loads(
+        next(
+            row["content"]
+            for row in item["state"]["evidence"]["artifacts"]
+            if row["kind"] == "native_sink_evidence"
+        )
+    )
     observed = native["producer_reported_preconditions"]
     assert observed["status"] == "REPORTED_NOT_INDEPENDENTLY_VERIFIED"
     assert observed["authority"] == "none"
     assert observed["observations"][0]["security_precondition"] == expected
-    assert item["state"]["evidence"]["actionability"]["input_origin"]["status"] == "unknown"
+    assert (
+        item["state"]["evidence"]["actionability"]["input_origin"]["status"]
+        == "unknown"
+    )
     finding["facts"] = {"security_precondition": {"forged": True}}
     assert "forged" not in json.dumps(packet())
     model.snapshots[Path("app.py")]._secondary_native_observations = None

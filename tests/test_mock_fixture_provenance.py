@@ -6224,7 +6224,9 @@ def test_source_bound_test_scope_epoch_uses_actual_contract_bindings(monkeypatch
     assert audit._TEST_SCOPE_CONTRACT_EPOCH.__code__ is after
 
 
-def test_source_bound_test_scope_epoch_retains_one_generation_and_invalidates_restoration(monkeypatch):
+def test_source_bound_test_scope_epoch_retains_one_generation_and_invalidates_restoration(
+    monkeypatch,
+):
     from factoryline import credential_identity_audit as audit
     from factoryline import credential_role_method_use_getter_audit as scope
 
