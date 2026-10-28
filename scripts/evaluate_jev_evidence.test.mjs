@@ -78,7 +78,7 @@ test('retrieval transport rejects missing receipts and dropped or altered source
       coverage: 'RANKED_SUBSET_NOT_EXHAUSTIVE', finding_sha256: 'b'.repeat(64), source_manifest_sha256: 'c'.repeat(64),
       query_sha256: hash(item.state.requirement), delivered_hints: 1,
       hint_manifest: [{ ...source.source_binding, content_sha256: source.sha256 }] };
-    const ledger = { retrieval: record };
+    const ledger = { schema: 'factory.informed-sink-context.v1', status: 'CAPTURED', truncation: [], retrieval: record };
     const native = { kind: 'native_sink_evidence', path: 'evidence/native-sink.json', content: JSON.stringify(ledger),
       candidate_commit: item.state.candidate.commit, candidate_sha256: item.state.candidate.sha256 };
     native.sha256 = hash(native.content);
@@ -86,7 +86,7 @@ test('retrieval transport rejects missing receipts and dropped or altered source
     const validators = createEvidenceValidators({ requireValue(value, reason) { assert.ok(value, reason); },
       object: value => value !== null && typeof value === 'object' && !Array.isArray(value), sha: hash, TrialError: Error, readBounded: readFile });
     validators.validateActionabilityState(item.state);
-    for (const mutation of ['missing', 'query', 'dropped', 'count', 'authority']) {
+    for (const mutation of ['missing', 'query', 'dropped', 'count', 'authority', 'late-truncation', 'missing-status']) {
       const copy = structuredClone(item.state);
       const value = JSON.parse(copy.evidence.artifacts.at(-1).content);
       if (mutation === 'missing') delete value.retrieval;
@@ -94,6 +94,8 @@ test('retrieval transport rejects missing receipts and dropped or altered source
       if (mutation === 'dropped') copy.evidence.artifacts.shift();
       if (mutation === 'count') value.retrieval.delivered_hints = 0;
       if (mutation === 'authority') value.retrieval.authority = 'safe';
+      if (mutation === 'late-truncation') value.truncation.push('max_sources');
+      if (mutation === 'missing-status') delete value.status;
       copy.evidence.artifacts.at(-1).content = JSON.stringify(value);
       assert.throws(() => validators.validateActionabilityState(copy), /retrieval/);
     }

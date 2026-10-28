@@ -166,6 +166,12 @@ function validateRetrievalTransport({ requireValue, object, sha }, state) {
   for (const artifact of state.evidence.artifacts.filter(row => row.kind === 'native_sink_evidence')) {
     let ledger;
     try { ledger = JSON.parse(artifact.content); } catch { requireValue(false, 'invalid_native_sink_ledger'); }
+    requireValue(object(ledger) && ledger.schema === 'factory.informed-sink-context.v1'
+      && ['CAPTURED', 'INCOMPLETE'].includes(ledger.status)
+      && Array.isArray(ledger.truncation) && ledger.truncation.every(reason =>
+        typeof reason === 'string' && reason.length > 0 && reason.length <= 1024)
+      && (ledger.status !== 'CAPTURED' || ledger.truncation.length === 0),
+    'invalid_retrieval_checkpoint');
     const record = ledger?.retrieval;
     requireValue(object(record) && record.schema === 'factory.retrieval-transport.v1'
       && ['NOT_RUN', 'DELIVERED_UNVALIDATED'].includes(record.status)

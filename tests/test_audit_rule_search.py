@@ -405,6 +405,45 @@ def test_hybrid_retrieved_caller_delivers_source_bound_implementation_or_unknown
     assert evidence["actionability"]["input_origin"]["status"] == "unknown"
 
 
+@pytest.mark.parametrize("reason", ["retrieved_callee_expansion_budget", "max_sources"])
+def test_hybrid_checkpoint_marks_late_truncation_incomplete_in_delivered_ledger(
+    tmp_path, monkeypatch, reason
+):
+    from factoryline.audit_rule_search import HybridSourceRetriever
+    from factoryline.jev_classifier import build_informed_actionability_case
+
+    index, finding = _informed_fixture(
+        tmp_path, {"sink.py": "import pickle\nx = pickle.loads(b'')\n"}
+    )
+    retriever = HybridSourceRetriever(index, _hybrid_encoder, model_id="test")
+
+    def exhaust(context, hits):
+        context["truncation"].append(reason)
+
+    monkeypatch.setattr(retriever, "_follow_captured_calls", exhaust)
+    item = build_informed_actionability_case(
+        finding,
+        index,
+        candidate_commit="a" * 40,
+        requirement="trace input",
+        retriever=retriever,
+    )
+    ledger = json.loads(
+        next(
+            row["content"]
+            for row in item["state"]["evidence"]["artifacts"]
+            if row["kind"] == "native_sink_evidence"
+        )
+    )
+    assert ledger["status"] == "INCOMPLETE"
+    assert reason in ledger["truncation"]
+    assert ledger["actionability"] == "NEEDS_CONTEXT"
+    assert (
+        item["state"]["evidence"]["actionability"]["input_origin"]["status"]
+        == "unknown"
+    )
+
+
 def _informed_fixture(tmp_path, sources):
     from factoryline.credential_role_constructor_provider import SourceSnapshotIndex
 

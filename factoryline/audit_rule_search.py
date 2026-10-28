@@ -265,6 +265,8 @@ class HybridSourceRetriever:
         context["dependency_sources"] = list(dependencies.values())
         context["excerpts"].extend(hits)
         self._follow_captured_calls(context, hits)
+        if context["truncation"]:
+            context["status"] = "INCOMPLETE"
         context["retrieval"] = {
             "status": "DELIVERED_UNVALIDATED",
             "method": "bm25+exact-cosine+rrf60",
