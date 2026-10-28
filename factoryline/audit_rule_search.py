@@ -264,6 +264,7 @@ class HybridSourceRetriever:
             raise ValueError("hybrid combined source budget exceeded")
         context["dependency_sources"] = list(dependencies.values())
         context["excerpts"].extend(hits)
+        self._follow_captured_calls(context, hits)
         context["retrieval"] = {
             "status": "DELIVERED_UNVALIDATED",
             "method": "bm25+exact-cosine+rrf60",
@@ -273,6 +274,84 @@ class HybridSourceRetriever:
             "authority": "none",
             "trace_validation": "required",
         }
+
+    def _follow_captured_calls(self, context, hits):
+        """Reuse native source binding for retrieved calls; opaque effects stay unknown."""
+        from .context_efficiency import (
+            _informed_target,
+            _informed_edges,
+            _informed_excerpt,
+        )
+        from .import_context import CapturedImportInventory
+
+        index = self.index
+        inventory = getattr(self, "_callee_inventory", None) or CapturedImportInventory(
+            index.root, tuple(index.snapshots)
+        )
+        self._callee_inventory = inventory
+        capture = {
+            "dependencies": {
+                index.root / row["path"]: row["sha256"]
+                for row in context["dependency_sources"]
+            },
+            "max_sources": 64,
+            "truncation": context["truncation"],
+            "stale": False,
+        }
+        visited, remaining = set(), 512
+        for hit in hits:
+            path = index.root / hit["path"]
+            calls = (
+                node
+                for node in ast.walk(index.snapshots[path])
+                if isinstance(node, ast.Call)
+                and hit["start_line"] <= node.lineno <= hit["end_line"]
+            )
+            for call in calls:
+                remaining -= 1
+                if remaining < 0 or len(visited) >= 8:
+                    context["truncation"].append("retrieved_callee_expansion_budget")
+                    remaining = -1
+                    break
+                target = _informed_target(index, path, call, inventory, capture)
+                if target is None:
+                    context["unknowns"].append(
+                        {
+                            "path": hit["path"],
+                            "line": call.lineno,
+                            "status": "UNKNOWN",
+                            "reason": "retrieved_callee_binding_unresolved",
+                        }
+                    )
+                    continue
+                try:
+                    edges = _informed_edges(index, path, call, target)
+                except ValueError:
+                    context["unknowns"].append(
+                        {
+                            "path": hit["path"],
+                            "line": call.lineno,
+                            "status": "UNKNOWN",
+                            "reason": "retrieved_argument_binding_unresolved",
+                        }
+                    )
+                    continue
+                context["edges"].extend(edges)
+                identity = target[0], id(target[1])
+                if identity not in visited:
+                    visited.add(identity)
+                    context["excerpts"].append(
+                        _informed_excerpt(index, target[0], target[1], "helper")
+                    )
+            if remaining < 0:
+                break
+        self._validate()
+        if capture["stale"]:
+            raise ValueError("retrieved callee source is stale")
+        context["dependency_sources"] = [
+            {"path": index.relative(path), "sha256": digest}
+            for path, digest in capture["dependencies"].items()
+        ]
 
 
 class AuditRuleSearchError(ValueError):

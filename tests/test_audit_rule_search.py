@@ -350,6 +350,61 @@ def test_retrieval_transport_native_ledger_accounts_for_every_raw_candidate():
         assert row["tier"] == "NEEDS_CONTEXT"
 
 
+@pytest.mark.parametrize("mutated", [False, True])
+def test_hybrid_retrieved_caller_delivers_source_bound_implementation_or_unknown(
+    tmp_path, monkeypatch, mutated
+):
+    from factoryline.audit_rule_search import HybridSourceRetriever
+    from factoryline.jev_classifier import build_informed_actionability_case
+
+    index, finding = _informed_fixture(
+        tmp_path,
+        {
+            "sink.py": "import pickle\nx = pickle.loads(b'')\n",
+            "caller.py": "from helper import prepare\nresult = prepare(value='input')\n"
+            + ("prepare.__code__ = replacement\n" if mutated else ""),
+            "helper.py": "def prepare(value, mode=True):\n    return value\n",
+        },
+    )
+    retriever = HybridSourceRetriever(index, _hybrid_encoder, model_id="test")
+    hint = next(row for row in retriever.documents if row["path"] == "caller.py")
+    monkeypatch.setattr(
+        retriever, "search", lambda query: [{**hint, "kind": "retrieval_hint"}]
+    )
+    item = build_informed_actionability_case(
+        finding,
+        index,
+        candidate_commit="a" * 40,
+        requirement="trace input producer",
+        retriever=retriever,
+    )
+    evidence = item["state"]["evidence"]
+    ledger = json.loads(
+        next(
+            row["content"]
+            for row in evidence["artifacts"]
+            if row["kind"] == "native_sink_evidence"
+        )
+    )
+    if mutated:
+        assert any(
+            row["reason"] == "retrieved_callee_binding_unresolved"
+            for row in ledger["unknowns"]
+        )
+        assert not any(row["path"] == "helper.py" for row in evidence["artifacts"])
+    else:
+        assert any(
+            row["path"] == "helper.py" and "return value" in row["content"]
+            for row in evidence["artifacts"]
+        )
+        assert any(
+            row["kind"] == "actual_to_formal" and row["formal"] == "value"
+            for row in ledger["edges"]
+        )
+        assert any(row["path"] == "helper.py" for row in evidence["dependencies"])
+    assert evidence["actionability"]["input_origin"]["status"] == "unknown"
+
+
 def _informed_fixture(tmp_path, sources):
     from factoryline.credential_role_constructor_provider import SourceSnapshotIndex
 
