@@ -4479,6 +4479,74 @@ def _security_request_args(node, aliases, scope=None, flow_statement=None):
     ) or _security_django_request_parameter(node, aliases, scope, flow_statement)
 
 
+_NATIVE_INPUT_EPOCH_BINDINGS = (
+    (
+        "factoryline.semantic_credential_sensor",
+        (
+            "_native_input_provider_inventory http_request_payload "
+            "_http_request_subscript_payload _http_request_call_payload "
+            "_http_request_attribute_payload _flask_request_body_kind "
+            "_credential_get_source_key _http_request_mapping "
+            "_request_mapping_value_unchanged _request_mapping_aliases "
+            "_request_mapping_mutation _django_http_body_payload "
+            "_native_request_data_member _new_security_request_alias_memo "
+            "_security_scope_request_aliases _security_scope_request_aliases_uncached "
+            "_security_request_alias_module_bindings _security_store_request_alias_bindings"
+        ).split(),
+    ),
+    (
+        "factoryline.review_integrity",
+        (
+            "bind_security_call_scopes _bind_security_scope_node _bind_security_function "
+            "_bind_security_class _function_annotations _security_scope_local_names "
+            "_security_scope_nonlocal_names _security_scope_declared_names "
+            "_security_module_scope _security_apply_import_bindings "
+            "_security_scope_request_aliases"
+        ).split(),
+    ),
+    (
+        "factoryline.review_audits",
+        (
+            "_name _resolved_ast_name _security_aliases _bound_names "
+            "_binding_name _iter_ast_nodes"
+        ).split(),
+    ),
+    ("factoryline.intent_quality", ("_security_scope_request_aliases",)),
+    (
+        "factoryline",
+        ("_source_binding_helpers", "_bind_source_call", "_source_call_signature"),
+    ),
+)
+
+
+def _native_input_inventory_epoch():
+    from importlib import import_module
+    from . import review_audits, intent_quality, semantic_credential_sensor
+
+    functions = [
+        getattr(import_module(module), name)
+        for module, names in _NATIVE_INPUT_EPOCH_BINDINGS
+        for name in names
+    ]
+    identity = (
+        tuple(
+            (fn, getattr(fn, "__code__", None), id(getattr(fn, "__defaults__", None)))
+            for fn in functions
+        ),
+        ast.dump(semantic_credential_sensor._FLASK_BODY_SIGNATURE),
+        review_audits._FUNCTION_NODES,
+        intent_quality._SECURITY_REQUEST_ALIAS_MEMO,
+        intent_quality._SECURITY_REQUEST_ALIAS_MAX_ENTRIES,
+        intent_quality._SECURITY_REQUEST_ALIAS_MAX_PAIRS,
+        intent_quality._SECURITY_REQUEST_ALIAS_MAX_BYTES,
+    )
+    cached = getattr(_native_input_inventory_epoch, "_cached_epoch", None)
+    if cached is None or cached[0] != identity:
+        cached = (identity, object())
+        _native_input_inventory_epoch._cached_epoch = cached
+    return cached[1]
+
+
 def _security_scope_request_aliases(scope, aliases, flow_statement=None):
     """Resolve scope bindings through the bounded per-scan SQL analysis helper."""
     from .intent_quality import _security_scope_request_aliases as resolve

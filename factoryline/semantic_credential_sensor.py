@@ -3432,15 +3432,9 @@ def _native_input_provider_inventory(tree, aliases, nodes):
 
 
 def _native_input_inventory_epoch():
-    from . import review_integrity, intent_quality
+    from .review_integrity import _native_input_inventory_epoch as epoch
 
-    functions = [
-        value
-        for namespace in (globals(), vars(review_integrity), vars(intent_quality))
-        for value in namespace.values()
-        if callable(value) and hasattr(value, "__code__")
-    ]
-    return tuple((fn, fn.__code__, id(fn.__defaults__)) for fn in functions)
+    return epoch()
 
 
 def security_precondition_providers_stable(tree, aliases, nodes):

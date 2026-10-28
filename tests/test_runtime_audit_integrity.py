@@ -1223,6 +1223,82 @@ def test_provider_profile308_mutation_index_tracks_keyword_escape(source, escape
     assert (("package.provider.Record", "*") in facts) is escaped
 
 
+@pytest.mark.parametrize("mutation", ["replace", "code", "defaults", "partial"])
+def test_native_provider_epoch_reuses_one_token_and_invalidates_helpers(
+    monkeypatch, mutation
+):
+    from factoryline import semantic_credential_sensor as sensor
+
+    first = sensor._native_input_inventory_epoch()
+    assert sensor._native_input_inventory_epoch() is first
+    helper = sensor._native_request_data_member
+
+    def replacement(*args):
+        return False
+
+    if mutation == "replace":
+        monkeypatch.setattr(sensor, "_native_request_data_member", replacement)
+    elif mutation == "partial":
+        from functools import partial
+
+        monkeypatch.setattr(sensor, "_native_request_data_member", partial(replacement))
+    elif mutation == "code":
+        monkeypatch.setattr(helper, "__code__", replacement.__code__)
+    elif mutation == "defaults":
+        monkeypatch.setattr(helper, "__defaults__", (False,))
+    changed = sensor._native_input_inventory_epoch()
+    assert changed is not first
+    assert sensor._native_input_inventory_epoch() is changed
+
+
+def test_native_provider_epoch_excludes_unrelated_helpers(monkeypatch):
+    from factoryline import semantic_credential_sensor as sensor
+    from factoryline.review_integrity import _NATIVE_INPUT_EPOCH_BINDINGS
+
+    assert sum(len(names) for _, names in _NATIVE_INPUT_EPOCH_BINDINGS) == 39
+    first = sensor._native_input_inventory_epoch()
+    monkeypatch.setattr(sensor, "_url_password", lambda *args: None)
+    monkeypatch.setattr(sensor, "_epoch_test_added_helper", lambda: None, raising=False)
+    assert sensor._native_input_inventory_epoch() is first
+
+
+def test_native_provider_epoch_invalidates_every_selected_lookup(monkeypatch):
+    from importlib import import_module
+
+    from factoryline import semantic_credential_sensor as sensor
+    from factoryline.review_integrity import _NATIVE_INPUT_EPOCH_BINDINGS
+
+    for module_name, names in _NATIVE_INPUT_EPOCH_BINDINGS:
+        module = import_module(module_name)
+        for name in names:
+            with monkeypatch.context() as patch:
+                first = sensor._native_input_inventory_epoch()
+                patch.setattr(module, name, lambda *args: None)
+                changed = sensor._native_input_inventory_epoch()
+                assert changed is not first, (module_name, name)
+
+
+@pytest.mark.parametrize("mutation", ["signature", "node_types", "memo", "budget"])
+def test_native_provider_epoch_binds_noncallable_contracts(monkeypatch, mutation):
+    from contextvars import ContextVar
+
+    from factoryline import intent_quality, review_audits
+    from factoryline import semantic_credential_sensor as sensor
+
+    first = sensor._native_input_inventory_epoch()
+    if mutation == "signature":
+        monkeypatch.setattr(sensor, "_FLASK_BODY_SIGNATURE", ast.parse("def other(): pass"))
+    elif mutation == "node_types":
+        monkeypatch.setattr(review_audits, "_FUNCTION_NODES", (ast.FunctionDef,))
+    elif mutation == "memo":
+        monkeypatch.setattr(
+            intent_quality, "_SECURITY_REQUEST_ALIAS_MEMO", ContextVar("changed")
+        )
+    else:
+        monkeypatch.setattr(intent_quality, "_SECURITY_REQUEST_ALIAS_MAX_ENTRIES", 1)
+    assert sensor._native_input_inventory_epoch() is not first
+
+
 def _provider_cache351_inputs():
     import hashlib
     from pathlib import Path
