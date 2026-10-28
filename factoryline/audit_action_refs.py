@@ -701,11 +701,17 @@ def security_scan_report(
     }
     if security_only is True:
         core["oracle_context"]["test_oracle_assessment"] = "NOT_ASSESSED_SECURITY_ONLY"
+    if collection_identity is not None:
+        from copy import deepcopy
+
+        core["oracle_context"]["static_pytest_collection"] = deepcopy(
+            collection_identity
+        )
     if (
         collection_identity is not None
         and collection_identity.get("collection_state") == "UNKNOWN"
     ):
-        core["oracle_context"]["pytest_collection"] = dict(collection_identity)
+        core["oracle_context"]["pytest_collection"] = deepcopy(collection_identity)
         core["state"] = "INCOMPLETE"
     core["source_manifest_sha256"] = audit.sha256(
         json.dumps(

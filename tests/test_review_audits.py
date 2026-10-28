@@ -15030,6 +15030,46 @@ def test_shared_native_summary_kernel_owner_change_invalidates_cache(
     assert scanner._oracle_context_cache_key(tmp_path, [], {}) != first
 
 
+@pytest.mark.parametrize("selector", ["pytest.toml", ".pytest.toml", "pytest.ini"])
+def test_collection_identity_transport_retains_configured_rules(tmp_path, selector):
+    import hashlib
+    from factoryline import review_audits as audit
+
+    config = tmp_path / selector
+    raw = (
+        b'[pytest]\npython_functions = ["check_*"]\n'
+        if selector.endswith(".toml")
+        else b"[pytest]\npython_functions = check_*\n"
+    )
+    config.write_bytes(raw)
+    (tmp_path / "test_case.py").write_text(
+        "def check_dead():\n    pass\n", encoding="utf-8"
+    )
+    cold = audit.security_scan(tmp_path, cache_enabled=False)
+    identity = cold["oracle_context"]["static_pytest_collection"]
+    assert identity["path"] == selector
+    assert identity["sha256"] == hashlib.sha256(raw).hexdigest()
+    assert identity["python_functions"] == ["check_*"]
+    assert identity.get("collection_state") != "UNKNOWN"
+    warm = audit.security_scan(tmp_path, cache_enabled=True)
+    assert warm["oracle_context"]["static_pytest_collection"] == identity
+    assert "pytest_collection" not in cold["oracle_context"]
+    assert warm["source_manifest_sha256"] == cold["source_manifest_sha256"]
+    assert warm["findings"] == cold["findings"]
+    identity["python_functions"].append("tampered_*")
+    assert warm["oracle_context"]["static_pytest_collection"]["python_functions"] == [
+        "check_*"
+    ]
+    config.write_bytes(raw.replace(b"check_*", b"other_*"))
+    changed = audit.security_scan(tmp_path, cache_enabled=True)
+    assert changed["oracle_context"]["static_pytest_collection"][
+        "python_functions"
+    ] == ["other_*"]
+    assert changed["source_manifest_sha256"] != warm["source_manifest_sha256"]
+    assert any(row["code"] == "QUALITY_HOLLOW_TEST" for row in cold["findings"])
+    assert not any(row["code"] == "QUALITY_HOLLOW_TEST" for row in changed["findings"])
+
+
 @pytest.mark.parametrize("cache_enabled", [False, True])
 def test_security_only_unknown_collection_retains_security_findings(
     tmp_path, cache_enabled
