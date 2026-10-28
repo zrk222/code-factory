@@ -40,6 +40,188 @@ def _summary(source, fields, *, resolve=False, role_view=False):
 FIELDS = {("fixture", "backend"): "backend"}
 
 
+def test_captured_credential_role_closure_allocations_and_finite_iteration():
+    from factoryline.credential_role_identity_effects import (
+        _Value,
+        captured_credential_role_closure,
+    )
+
+    path, tree, index = _index("""
+        def setup(self, key):
+            self.a = make(key)
+            self.b = make('other')
+            self.items = (self.a, self.b)
+        def exercise(self):
+            for value in self.items:
+                check(value)
+    """)
+    observed = []
+
+    def contract(flow, call_path, call, receiver, args, kwargs):
+        if isinstance(call.func, ast.Name) and call.func.id == "make":
+            obj = flow.allocate(call_path, call, "object")
+            flow.write_field(obj, "key", args[0])
+            return obj
+        if isinstance(call.func, ast.Name) and call.func.id == "check":
+            observed.append(flow.read_field(args[0], "key").roots)
+            return _Value(inert_kind="scalar")
+        return None
+
+    owner = _Value(class_roots=frozenset({"test-instance"}))
+    result = captured_credential_role_closure(
+        index,
+        [
+            (
+                path,
+                _function(tree, "setup"),
+                {"self": owner, "key": _Value(roots=frozenset({"candidate"}))},
+            ),
+            (path, _function(tree, "exercise"), {"self": owner}),
+        ],
+        resolve_call=lambda path, call, receiver: None,
+        contract=contract,
+    )
+    assert result.complete, result.unknowns
+    assert observed == [frozenset({"candidate"}), frozenset()]
+
+
+def test_captured_credential_role_closure_rejects_opaque_recipient():
+    from factoryline.credential_role_identity_effects import (
+        captured_credential_role_closure,
+    )
+
+    path, tree, index = _index("def exercise(key): send(key)")
+    result = captured_credential_role_closure(
+        index,
+        [(path, _function(tree, "exercise"), {"key": "candidate"})],
+        resolve_call=lambda path, call, receiver: None,
+        contract=lambda flow, path, call, receiver, args, kwargs: None,
+    )
+    assert not result.complete and result.unknowns
+
+
+@pytest.mark.parametrize(
+    "variant", ["closed", "invalid_map", "stale_callee", "raw_return"]
+)
+def test_captured_credential_role_closure_source_call(variant):
+    from factoryline.credential_role_identity_effects import (
+        captured_credential_role_closure,
+    )
+
+    path, tree, index = _index("""
+        def caller(key):
+            helper(key)
+        def helper(value):
+            return value
+    """)
+    caller, helper = _function(tree, "caller"), _function(tree, "helper")
+    if variant == "stale_callee":
+        helper = ast.parse("def helper(value): return value").body[0]
+    if variant == "raw_return":
+        caller = helper
+
+    def resolver(call_path, call, receiver):
+        return ResolvedIdentityCall(
+            helper,
+            call_path,
+            {} if variant == "invalid_map" else {"value": call.args[0]},
+        )
+
+    formal = "value" if variant == "raw_return" else "key"
+    result = captured_credential_role_closure(
+        index,
+        [(path, caller, {formal: "candidate"})],
+        resolve_call=resolver,
+        contract=lambda *args: None,
+    )
+    assert result.complete is (variant == "closed"), result.unknowns
+
+
+def test_captured_credential_role_closure_rejects_stale_ast_and_empty_entries():
+    from factoryline.credential_role_identity_effects import (
+        captured_credential_role_closure,
+    )
+
+    path, tree, index = _index("def inspect(): pass")
+    assert index.validate(path)
+    tree.body[0].body[0] = ast.parse("send() ").body[0]
+    kwargs = {"resolve_call": lambda *args: None, "contract": lambda *args: None}
+    result = captured_credential_role_closure(
+        index, [(path, tree.body[0], {})], **kwargs
+    )
+    assert not result.complete
+    assert not captured_credential_role_closure(index, [], **kwargs).complete
+
+
+def test_captured_credential_role_closure_modeled_with_and_exception_prefixes():
+    from factoryline.credential_role_identity_effects import (
+        _Value,
+        captured_credential_role_closure,
+    )
+
+    path, tree, index = _index("""
+        def exercise(key):
+            with scope():
+                try:
+                    first(key)
+                    second(key)
+                except Exception:
+                    recover(key)
+    """)
+    seen = []
+
+    def contract(flow, path, call, receiver, args, kwargs):
+        name = call.func.id
+        seen.append(name)
+        return _Value(inert_kind="scope_context" if name == "scope" else "scalar")
+
+    result = captured_credential_role_closure(
+        index,
+        [(path, _function(tree, "exercise"), {"key": "candidate"})],
+        resolve_call=lambda *args: None,
+        contract=contract,
+    )
+    assert result.complete, result.unknowns
+    assert {"scope", "first", "second", "recover"}.issubset(seen)
+
+
+def test_captured_credential_role_closure_checks_mutated_exception_prefix():
+    from factoryline.credential_role_identity_effects import (
+        _Value,
+        captured_credential_role_closure,
+    )
+
+    path, tree, index = _index("""
+        def exercise(self, key):
+            try:
+                first(self, key)
+                second()
+            except Exception:
+                recover(self)
+    """)
+
+    def contract(flow, path, call, receiver, args, kwargs):
+        if call.func.id == "first":
+            flow.write_field(args[0], "key", args[1])
+        elif call.func.id == "recover" and flow.read_field(args[0], "key").roots:
+            return None
+        return _Value(inert_kind="scalar")
+
+    result = captured_credential_role_closure(
+        index,
+        [
+            (
+                path,
+                _function(tree, "exercise"),
+                {"self": _Value(class_roots=frozenset({"owner"})), "key": "candidate"},
+            )
+        ],
+        resolve_call=lambda *args: None,
+        contract=contract,
+    )
+    assert not result.complete
+
+
 @pytest.mark.parametrize(
     "body,status,roots",
     [
@@ -256,6 +438,69 @@ def test_unknown_property_and_bound_method_keep_owner_attribution():
         event.kind == "return_escape" and event.roots == ("owner",)
         for event in result.role_events
     )
+
+
+@pytest.mark.parametrize(
+    "variant",
+    [
+        "closed",
+        "invalid_mapping",
+        "missing_callee",
+        "unknown_callee",
+        "owner_escape",
+        "key_escape",
+        "shadow",
+    ],
+)
+def test_exact_constructor_method_resolution_preserves_effects(variant):
+    method_body = {
+        "unknown_callee": "opaque()",
+        "owner_escape": "send(self)",
+        "key_escape": "send(key)",
+    }.get(variant, "pass")
+    shadow = "self.check = None\n                " if variant == "shadow" else ""
+    path, tree, index = _index(f"""
+        class Owner:
+            def __init__(self, key):
+                {shadow}self.check(key)
+                self.secret = key
+            def check(self, key):
+                {method_body}
+    """)
+    constructor = _function(tree, "__init__")
+    method = _function(tree, "check")
+    if variant == "missing_callee":
+        method = ast.parse("def check(self, key): pass").body[0]
+    calls = []
+
+    def resolve(call, call_path):
+        calls.append(call)
+        if isinstance(call.func, ast.Attribute) and call.func.attr == "check":
+            mapping = {"self": call.func.value, "key": call.args[0]}
+            if variant == "invalid_mapping":
+                mapping.pop("key")
+            return ResolvedIdentityCall(method, call_path, mapping)
+        return None
+
+    result = summarize_identity_effect(
+        constructor,
+        path,
+        index,
+        {"self": "owner", "key": "candidate"},
+        resolve_call=resolve,
+        strict_calls=True,
+        role_view=True,
+    )
+    method_events = [event for event in result.role_events if event.relevant == "check"]
+    if variant == "closed":
+        assert len(calls) == 1
+        assert not result.unknowns
+        assert not method_events
+    elif variant in {"owner_escape", "key_escape"}:
+        assert ("owner" if variant == "owner_escape" else "candidate") in result.escapes
+        assert result.unknowns or any(event.uncertain for event in method_events)
+    else:
+        assert result.unknowns or any(event.uncertain for event in method_events)
 
 
 def test_legacy_summary_keeps_default_aggregate_and_role_view_is_opt_in():
@@ -511,9 +756,28 @@ def _run(signature, body, actual="backend"):
     ],
 )
 def test_immutable_defaults_seed_separate_callee_values(signature):
-    result = _run(signature, "if mode is None: target.data = None")
+    result = _run(signature, "target.data = None")
     assert result.status == "NO_CLASS_EFFECT"
     assert result.field_writes == ("backend.data",)
+
+
+@pytest.mark.parametrize(
+    "signature,guard,writes",
+    [
+        ("target, mode=False", "mode is None", ()),
+        ("target, mode=None", "mode is None", ("backend.data",)),
+        ("target, *, mode=None", "mode is None", ("backend.data",)),
+        ("target, /, mode=None", "mode is None", ("backend.data",)),
+        ("target, mode=True", "mode is None", ()),
+        ("target, mode=0", "mode is None", ()),
+    ],
+)
+def test_immutable_default_guards_report_only_reachable_writes(
+    signature, guard, writes
+):
+    result = _run(signature, f"if {guard}: target.data = None")
+    assert result.status == "NO_CLASS_EFFECT"
+    assert result.field_writes == writes
 
 
 def test_explicit_root_actual_never_falls_back_to_literal_default():
@@ -924,4 +1188,305 @@ def test_application_identity_helper_epoch_invalidates_cached_role_evidence(
     identity_audit.application_plaintext_effect_evidence(
         index, path, assignment.value, assignment, "credential"
     )
+    assert len(index["profiles"]) == 2
+
+
+@pytest.mark.parametrize("origin", ["actual", "default"])
+def test_captured_parameter_literals_keep_metadata_separate_from_key(tmp_path, origin):
+    from factoryline.credential_role_identity_effects import SourceFieldLiteral
+
+    path = tmp_path / "wrapper.py"
+    raw = b"class Holder:\n    def __init__(self, key, algorithm='HS256'):\n        self.key = key\n        self.algorithm = algorithm\ndef build(key):\n    return Holder(key, algorithm='HS512')\n"
+    path.write_bytes(raw)
+    tree = ast.parse(raw)
+    digest = hashlib.sha256(raw).hexdigest()
+    tree._oracle_source_sha256 = digest
+    index = SourceSnapshotIndex(tmp_path, {path: tree}, {path: raw}, {path: digest})
+    constructor = tree.body[0].body[0]
+    literal = (
+        constructor.args.defaults[0]
+        if origin == "default"
+        else tree.body[1].body[0].value.keywords[0].value
+    )
+    summary = summarize_identity_effect(
+        constructor,
+        path,
+        index,
+        {
+            "self": "owner",
+            "key": "candidate",
+            "algorithm": SourceFieldLiteral(path, literal),
+        },
+        strict_calls=True,
+        role_view=True,
+        ordinary_fields={"key", "algorithm"},
+    )
+    assert summary.unknowns == ()
+    key_store = next(
+        row
+        for row in summary.role_events
+        if row.kind == "field_store" and row.relevant == "key"
+    )
+    metadata_store = next(
+        row
+        for row in summary.role_events
+        if row.kind == "field_store" and row.relevant == "algorithm"
+    )
+    assert key_store.roots == ("candidate",) and key_store.uncertain is False
+    assert metadata_store.roots == () and metadata_store.uncertain is False
+    assert {
+        row.source_roots for row in summary.field_transfers if row.target_field == "key"
+    } == {("candidate",)}
+
+
+@pytest.mark.parametrize(
+    "mutation", ["forged-node", "wrong-path", "stale-bytes", "opaque-expression"]
+)
+def test_captured_parameter_literals_reject_unbound_or_changed_source(
+    tmp_path, mutation
+):
+    from factoryline.credential_role_identity_effects import SourceFieldLiteral
+
+    path = tmp_path / "wrapper.py"
+    raw = b"def apply(key, metadata='algorithm-name'):\n    return key\ndef obtain():\n    return opaque()\n"
+    tree = ast.parse(raw)
+    digest = hashlib.sha256(raw).hexdigest()
+    tree._oracle_source_sha256 = digest
+    data = {path: raw}
+    index = SourceSnapshotIndex(tmp_path, {path: tree}, data, {path: digest})
+    function = tree.body[0]
+    literal, literal_path = function.args.defaults[0], path
+    if mutation == "forged-node":
+        literal = ast.Constant(value="algorithm-name")
+    elif mutation == "wrong-path":
+        literal_path = tmp_path / "absent.py"
+    elif mutation == "stale-bytes":
+        data[path] += b"# stale\n"
+    else:
+        literal = tree.body[1].body[0].value
+    summary = summarize_identity_effect(
+        function,
+        path,
+        index,
+        {"key": "candidate", "metadata": SourceFieldLiteral(literal_path, literal)},
+        strict_calls=True,
+        role_view=True,
+    )
+    assert summary.status == "UNKNOWN"
+    assert summary.unknowns
+
+
+def test_captured_parameter_literals_preserve_real_key_escape(tmp_path):
+    from factoryline.credential_role_identity_effects import SourceFieldLiteral
+
+    path = tmp_path / "wrapper.py"
+    raw = b"def apply(key, metadata='algorithm-name'):\n    send(key)\n"
+    tree = ast.parse(raw)
+    digest = hashlib.sha256(raw).hexdigest()
+    tree._oracle_source_sha256 = digest
+    index = SourceSnapshotIndex(tmp_path, {path: tree}, {path: raw}, {path: digest})
+    function = tree.body[0]
+    summary = summarize_identity_effect(
+        function,
+        path,
+        index,
+        {
+            "key": "candidate",
+            "metadata": SourceFieldLiteral(path, function.args.defaults[0]),
+        },
+        strict_calls=True,
+        role_view=True,
+    )
+    assert summary.status == "UNKNOWN"
+    assert "candidate" in summary.escapes
+
+
+@pytest.mark.parametrize("form", ["statement", "expression"])
+@pytest.mark.parametrize(
+    ("flag", "closed"), [(False, True), (True, False), (None, False)]
+)
+def test_captured_scalar_parameter_selects_only_proven_branch(
+    tmp_path, form, flag, closed
+):
+    from factoryline.credential_role_identity_effects import SourceFieldLiteral
+
+    body = (
+        "if remote:\n        send(key)"
+        if form == "statement"
+        else "send(key) if remote else None"
+    )
+    raw = f"def apply(key, remote=False):\n    {body}\n".encode()
+    path = tmp_path / "guard.py"
+    tree = ast.parse(raw)
+    digest = hashlib.sha256(raw).hexdigest()
+    tree._oracle_source_sha256 = digest
+    index = SourceSnapshotIndex(tmp_path, {path: tree}, {path: raw}, {path: digest})
+    function = tree.body[0]
+    literal = function.args.defaults[0]
+    if flag is True:
+        raw = raw.replace(b"remote=False", b"remote=True")
+        tree = ast.parse(raw)
+        digest = hashlib.sha256(raw).hexdigest()
+        tree._oracle_source_sha256 = digest
+        index = SourceSnapshotIndex(tmp_path, {path: tree}, {path: raw}, {path: digest})
+        function = tree.body[0]
+        literal = function.args.defaults[0]
+    roots = {"key": "candidate"}
+    if flag is not None:
+        roots["remote"] = SourceFieldLiteral(path, literal)
+    summary = summarize_identity_effect(
+        function, path, index, roots, strict_calls=True, role_view=True
+    )
+    if closed:
+        assert "candidate" not in summary.escapes and not summary.unknowns
+    else:
+        assert "candidate" in summary.escapes
+
+
+def test_scalar_identity_preserves_only_exact_immutable_values():
+    from factoryline import credential_role_identity_effects as effects
+
+    flag = effects.identity_value(ast.Constant(False), {})
+    traced = effects.identity_value(ast.Name(id="flag", ctx=ast.Load()), {"flag": flag})
+    assert traced._exact_scalar == (False,)
+    assert effects.join_identity_values([flag, flag])._exact_scalar == (False,)
+    integer = effects.identity_value(ast.Constant(0), {})
+    assert not effects.join_identity_values([flag, integer])._exact_scalar
+    unknown = effects._Value(unknown=True, _exact_scalar=(False,))
+    assert not effects.join_identity_values([unknown, unknown])._exact_scalar
+    assert not effects.identity_value(
+        ast.Name(id="flag", ctx=ast.Load()), {"flag": unknown}
+    )._exact_scalar
+    secret = effects.identity_value(ast.Constant("private-scalar-marker"), {})
+    assert "private-scalar-marker" not in repr(secret)
+
+
+@pytest.mark.parametrize(
+    "binding",
+    [
+        "import external as remote",
+        "try:\n        risky()\n    except Exception as remote:\n        pass",
+    ],
+)
+def test_scalar_guard_declines_non_name_rebindings(tmp_path, binding):
+    from factoryline.credential_role_identity_effects import SourceFieldLiteral
+
+    raw = f"def apply(key, remote=False):\n    {binding}\n    if remote:\n        send(key)\n".encode()
+    path = tmp_path / "guard.py"
+    tree = ast.parse(raw)
+    digest = hashlib.sha256(raw).hexdigest()
+    tree._oracle_source_sha256 = digest
+    index = SourceSnapshotIndex(tmp_path, {path: tree}, {path: raw}, {path: digest})
+    function = tree.body[0]
+    summary = summarize_identity_effect(
+        function,
+        path,
+        index,
+        {
+            "key": "candidate",
+            "remote": SourceFieldLiteral(path, function.args.defaults[0]),
+        },
+        strict_calls=True,
+        role_view=True,
+    )
+    assert "candidate" in summary.escapes
+
+
+def test_forged_guard_scalar_never_executes_user_methods(tmp_path):
+    from factoryline import credential_role_identity_effects as effects
+
+    class Trap:
+        def __bool__(self):
+            raise AssertionError("untrusted truth conversion")
+
+        def __eq__(self, other):
+            raise AssertionError("untrusted comparison")
+
+    raw = b"def apply(key, remote):\n    if remote:\n        send(key)\n"
+    path = tmp_path / "guard.py"
+    tree = ast.parse(raw)
+    digest = hashlib.sha256(raw).hexdigest()
+    tree._oracle_source_sha256 = digest
+    index = SourceSnapshotIndex(tmp_path, {path: tree}, {path: raw}, {path: digest})
+    summary = summarize_identity_effect(
+        tree.body[0],
+        path,
+        index,
+        {"key": "candidate", "remote": effects._Value(_exact_scalar=(Trap(),))},
+        strict_calls=True,
+        role_view=True,
+    )
+    assert "candidate" in summary.escapes
+
+
+def test_scalar_guard_rebinding_walk_has_fixed_bound(monkeypatch):
+    from factoryline import credential_role_identity_effects as effects
+
+    function = ast.parse("def apply(remote=False):\n" + "    pass\n" * 900).body[0]
+    original = ast.walk
+    visits = []
+
+    def observed(node):
+        for child in original(node):
+            if node is function:
+                visits.append(child)
+                assert len(visits) <= 513
+            yield child
+
+    monkeypatch.setattr(ast, "walk", observed)
+    value = effects.identity_value(function.args.defaults[0], {})
+    assert effects._initial_scalar_guards(function, {"remote": value}) == {}
+    assert len(visits) == 513
+
+
+@pytest.mark.parametrize("mutation", ["digest", "bytes", "tree", "helper", "defaults"])
+def test_role_epoch_reuses_bounded_generation_and_tracks_inputs(monkeypatch, mutation):
+    from factoryline import credential_identity_audit as audit
+    from factoryline import credential_role_identity_effects as effects
+
+    path, tree, index = _application_role_index("value = 'ordinary text'\n")
+    first = audit._app_source_role_epoch(index)
+    assert audit._app_source_role_epoch(index) is first
+    source = index["source"]
+    if mutation == "digest":
+        source.inventory[path] = "0" * 64
+    elif mutation == "bytes":
+        source.source_bytes[path] = b"value = 'changed'\n"
+    elif mutation == "tree":
+        source.snapshots[path] = ast.parse("value = 'changed'\n")
+    elif mutation == "helper":
+        monkeypatch.setattr(effects._scope_bindings, "_binds", lambda *args: None)
+    else:
+        monkeypatch.setattr(effects._scope_bindings._binds, "__defaults__", (None,))
+    changed = audit._app_source_role_epoch(index)
+    assert changed is not first
+    assert audit._app_source_role_epoch(index) is changed
+
+
+@pytest.mark.parametrize("replacement_kind", ["binding", "code"])
+def test_scalar_guard_binding_helper_invalidates_cached_role_evidence(
+    monkeypatch, replacement_kind
+):
+    from factoryline import credential_identity_audit as audit
+    from factoryline import credential_role_identity_effects as effects
+
+    path, tree, index = _application_role_index(
+        "def view():\n    credential = 'ordinary text'\n    return credential\n"
+    )
+    assignment = next(node for node in ast.walk(tree) if isinstance(node, ast.Assign))
+    args = (index, path, assignment.value, assignment, "credential")
+    audit.application_plaintext_effect_evidence(*args)
+    assert len(index["profiles"]) == 1
+    epoch = audit._app_source_role_epoch(index)
+    original = effects._scope_bindings._binds
+
+    def replacement(*args, **kwargs):
+        return False
+
+    if replacement_kind == "binding":
+        monkeypatch.setattr(effects._scope_bindings, "_binds", replacement)
+    else:
+        monkeypatch.setattr(original, "__code__", replacement.__code__)
+    assert audit._app_source_role_epoch(index) != epoch
+    audit.application_plaintext_effect_evidence(*args)
     assert len(index["profiles"]) == 2

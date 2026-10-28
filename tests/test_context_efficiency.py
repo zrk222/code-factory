@@ -5709,7 +5709,14 @@ def test_precision257_context_profiles_and_fixture_binders_fail_closed():
     assert (
         binding["requirements.txt"] == {**rows[0], "state": "read"} and eligible is True
     )
-    names = {"requirements.txt", "pytest.ini", ".pytest.ini", "setup.cfg"}
+    names = {
+        "requirements.txt",
+        "pytest.toml",
+        ".pytest.toml",
+        "pytest.ini",
+        ".pytest.ini",
+        "setup.cfg",
+    }
     assert application_profile_configuration(
         "root", lambda *_: (_ for _ in ()).throw(FileNotFoundError()), 64
     ) == ([], {name: {"path": name, "state": "missing"} for name in names}, True)
@@ -6017,7 +6024,9 @@ def test_shared_source_model_reused_by_application_index(tmp_path):
     )
 
 
-@pytest.mark.parametrize("name", ["pytest.ini", ".pytest.ini", "setup.cfg"])
+@pytest.mark.parametrize(
+    "name", ["pytest.toml", ".pytest.toml", "pytest.ini", ".pytest.ini", "setup.cfg"]
+)
 def test_shared_configuration374_complete_producer_sealer_verifier(tmp_path, name):
     import hashlib
     from factoryline.import_context import application_profile_configuration
@@ -6027,8 +6036,21 @@ def test_shared_configuration374_complete_producer_sealer_verifier(tmp_path, nam
         _application_class_source_inputs,
     )
 
-    selector = b"[pytest]\nDJANGO_SETTINGS_MODULE = checks.settings\n"
+    selector = (
+        b'[pytest]\npython_functions = ["check_*"]\n'
+        if name.endswith(".toml")
+        else (
+            b"[tool:pytest]\npython_functions = check_*\n"
+            if name == "setup.cfg"
+            else b"[pytest]\npython_functions = check_*\n"
+        )
+    )
     (tmp_path / name).write_bytes(selector)
+    from factoryline.pytest_collection_audit import _pytest_collection_config
+
+    _, collection = _pytest_collection_config(tmp_path)
+    assert collection["path"] == name
+    assert collection["python_functions"] == ["check_*"]
 
     def read(root, relative):
         return (root / relative).read_bytes()

@@ -142,6 +142,7 @@ function validateActionabilityState(dependencies, state) {
       && Object.keys(dependency).length === 2 && SAFE_RELPATH.test(dependency.path) && HASH.test(dependency.sha256))),
   'invalid_source_dependencies');
   validateOutboundStrings(dependencies, state);
+  validateRetrievalTransport(dependencies, state);
   if (context === undefined) return; // Missing semantic context abstains locally.
   requireValue(object(context) && Object.keys(context).every(key => Object.hasOwn(ACTIONABILITY_SLOTS, key) || key === 'unknowns')
     && (context.unknowns === undefined || (Array.isArray(context.unknowns) && context.unknowns.length <= 32
@@ -158,6 +159,41 @@ function validateActionabilityState(dependencies, state) {
       && evidence.artifacts.some(artifact => artifact.path === ref.path && artifact.sha256 === ref.sha256)
       && ((ref.start_line === undefined && ref.end_line === undefined) || sourceSpanBound(dependencies, ref, evidence.artifacts)),
     'invalid_actionability_reference');
+  }
+}
+
+function validateRetrievalTransport({ requireValue, object, sha }, state) {
+  for (const artifact of state.evidence.artifacts.filter(row => row.kind === 'native_sink_evidence')) {
+    let ledger;
+    try { ledger = JSON.parse(artifact.content); } catch { requireValue(false, 'invalid_native_sink_ledger'); }
+    requireValue(object(ledger) && ledger.schema === 'factory.informed-sink-context.v1'
+      && ['CAPTURED', 'INCOMPLETE'].includes(ledger.status)
+      && Array.isArray(ledger.truncation) && ledger.truncation.every(reason =>
+        typeof reason === 'string' && reason.length > 0 && reason.length <= 1024)
+      && (ledger.status !== 'CAPTURED' || ledger.truncation.length === 0),
+    'invalid_retrieval_checkpoint');
+    const record = ledger?.retrieval;
+    requireValue(object(record) && record.schema === 'factory.retrieval-transport.v1'
+      && ['NOT_RUN', 'DELIVERED_UNVALIDATED'].includes(record.status)
+      && record.authority === 'none' && record.classification_effect === 'NONE'
+      && record.consumption === 'UNASSESSED' && record.validated_trace_edges === 0
+      && record.coverage === 'RANKED_SUBSET_NOT_EXHAUSTIVE'
+      && HASH.test(record.finding_sha256) && HASH.test(record.source_manifest_sha256)
+      && record.query_sha256 === sha(state.requirement)
+      && Array.isArray(record.hint_manifest) && record.hint_manifest.length <= 8
+      && record.delivered_hints === record.hint_manifest.length,
+    'invalid_retrieval_transport');
+    requireValue(record.status !== 'NOT_RUN' || record.delivered_hints === 0, 'invalid_retrieval_not_run');
+    for (const hint of record.hint_manifest) requireValue(object(hint)
+      && SAFE_RELPATH.test(hint.path) && HASH.test(hint.sha256) && HASH.test(hint.content_sha256)
+      && Number.isInteger(hint.start_line) && Number.isInteger(hint.end_line)
+      && hint.start_line > 0 && hint.end_line >= hint.start_line
+      && state.evidence.dependencies?.some(row => row.path === hint.path && row.sha256 === hint.sha256)
+      && state.evidence.artifacts.some(row => row.kind === 'source_excerpt'
+        && row.path === hint.path && row.sha256 === hint.content_sha256
+        && row.source_binding?.sha256 === hint.sha256
+        && row.source_binding?.start_line === hint.start_line && row.source_binding?.end_line === hint.end_line),
+    'retrieval_hint_not_delivered');
   }
 }
 

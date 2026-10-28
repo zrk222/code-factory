@@ -17,6 +17,84 @@ from factoryline.runtime_audit_integrity import source_generated_eval_input_witn
 
 
 @pytest.mark.parametrize(
+    "config",
+    [
+        '[tool.pytest.ini_options]\naddopts = "--doctest-modules"\n',
+        '[tool.pytest]\nstrict = true\naddopts = ["-ra", "--import-mode=importlib"]\n',
+        '[tool.pytest]\naddopts = "--import-mode append --doctest-modules"\n',
+    ],
+)
+def test_builtin_collection_modes_security_only_native(tmp_path, capsys, config):
+    from factoryline.pytest_collection_audit import _pytest_collection_config
+    from factoryline.cli import main
+    from factoryline.mission_control_status import security_scan_status
+
+    path = tmp_path / "pyproject.toml"
+    path.write_text(config, encoding="utf-8")
+    (tmp_path / "app.py").write_text(
+        "from flask import request\ndef run():\n    return eval(request.args['code'])\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "test_empty.py").write_text(
+        "def test_empty(): pass\n", encoding="utf-8"
+    )
+    with pytest.raises(
+        review_audits.ReviewAuditError, match="unsupported configuration"
+    ):
+        _pytest_collection_config(tmp_path)
+    patterns, identity = _pytest_collection_config(tmp_path, allow_unknown=True)
+    assert patterns == set() and identity["collection_state"] == "UNKNOWN"
+    assert identity["sha256"] == hashlib.sha256(path.read_bytes()).hexdigest()
+    assert all(
+        identity[k] == []
+        for k in ("python_files", "python_functions", "python_classes")
+    )
+    code = main(
+        ["audit", "security", "--root", str(tmp_path), "--security-only", "--json"]
+    )
+    output = capsys.readouterr()
+    assert output.err == "" and code == 2
+    report = json.loads(output.out)
+    assert report["state"] == "INCOMPLETE"
+    assert (
+        report["oracle_context"]["test_oracle_assessment"]
+        == "NOT_ASSESSED_SECURITY_ONLY"
+    )
+    assert any(f["code"] == "SECURITY_DYNAMIC_EXECUTION" for f in report["findings"])
+    assert not any(f["code"].startswith("QUALITY_") for f in report["findings"])
+    receipt = json.loads((tmp_path / ".factory/security-scan/latest.json").read_text())
+    assert receipt["report"] == report
+    status = security_scan_status(tmp_path)
+    assert status["candidate_freshness"] == "PYTEST_COLLECTION_UNKNOWN"
+    assert status["source_freshness"] == "CURRENT_SOURCE_HASHES_VERIFIED"
+    path.write_text(config + "\n# changed\n", encoding="utf-8")
+    assert _pytest_collection_config(tmp_path, allow_unknown=True)[1] != identity
+
+
+@pytest.mark.parametrize(
+    "addopts",
+    ["--import-mode=invalid", "--import-mode", "--doctest-modules -p plugin"],
+)
+def test_builtin_collection_modes_do_not_admit_invalid_or_plugin_options(
+    tmp_path, addopts
+):
+    from factoryline.pytest_collection_audit import _pytest_collection_config
+
+    (tmp_path / "pytest.ini").write_text(
+        "[pytest]\naddopts = " + addopts + "\n", encoding="utf-8"
+    )
+    if addopts == "--doctest-modules -p plugin":
+        patterns, identity = _pytest_collection_config(tmp_path, allow_unknown=True)
+        assert patterns == set()
+        assert identity["collection_state"] == "UNKNOWN"
+        with pytest.raises(review_audits.ReviewAuditError):
+            _pytest_collection_config(tmp_path)
+        return
+    with pytest.raises(review_audits.ReviewAuditError):
+        _pytest_collection_config(tmp_path, allow_unknown=True)
+
+
+@pytest.mark.parametrize(
     "source",
     ["pytest_plugins = ['plugin']\n", "def pytest_generate_tests(metafunc): pass\n"],
 )
@@ -131,6 +209,12 @@ def test_collection_unknown_profile_does_not_relax_invalid_inputs(
         (tmp_path / "pytest.ini").write_text(
             "[pytest]\naddopts = -p plugin\n", encoding="utf-8"
         )
+        patterns, identity = _pytest_collection_config(tmp_path, allow_unknown=True)
+        assert patterns == set()
+        assert identity["collection_state"] == "UNKNOWN"
+        with pytest.raises(review_audits.ReviewAuditError):
+            _pytest_collection_config(tmp_path)
+        return
     elif kind == "invalid_hook":
         (tmp_path / "conftest.py").write_text("def broken(:\n", encoding="utf-8")
     elif kind == "oversized_hook":
@@ -1152,6 +1236,84 @@ def test_provider_profile308_mutation_index_tracks_keyword_escape(source, escape
     assert (("package.provider.Record", "*") in facts) is escaped
 
 
+@pytest.mark.parametrize("mutation", ["replace", "code", "defaults", "partial"])
+def test_native_provider_epoch_reuses_one_token_and_invalidates_helpers(
+    monkeypatch, mutation
+):
+    from factoryline import semantic_credential_sensor as sensor
+
+    first = sensor._native_input_inventory_epoch()
+    assert sensor._native_input_inventory_epoch() is first
+    helper = sensor._native_request_data_member
+
+    def replacement(*args):
+        return False
+
+    if mutation == "replace":
+        monkeypatch.setattr(sensor, "_native_request_data_member", replacement)
+    elif mutation == "partial":
+        from functools import partial
+
+        monkeypatch.setattr(sensor, "_native_request_data_member", partial(replacement))
+    elif mutation == "code":
+        monkeypatch.setattr(helper, "__code__", replacement.__code__)
+    elif mutation == "defaults":
+        monkeypatch.setattr(helper, "__defaults__", (False,))
+    changed = sensor._native_input_inventory_epoch()
+    assert changed is not first
+    assert sensor._native_input_inventory_epoch() is changed
+
+
+def test_native_provider_epoch_excludes_unrelated_helpers(monkeypatch):
+    from factoryline import semantic_credential_sensor as sensor
+    from factoryline.review_integrity import _NATIVE_INPUT_EPOCH_BINDINGS
+
+    assert sum(len(names) for _, names in _NATIVE_INPUT_EPOCH_BINDINGS) == 39
+    first = sensor._native_input_inventory_epoch()
+    monkeypatch.setattr(sensor, "_url_password", lambda *args: None)
+    monkeypatch.setattr(sensor, "_epoch_test_added_helper", lambda: None, raising=False)
+    assert sensor._native_input_inventory_epoch() is first
+
+
+def test_native_provider_epoch_invalidates_every_selected_lookup(monkeypatch):
+    from importlib import import_module
+
+    from factoryline import semantic_credential_sensor as sensor
+    from factoryline.review_integrity import _NATIVE_INPUT_EPOCH_BINDINGS
+
+    for module_name, names in _NATIVE_INPUT_EPOCH_BINDINGS:
+        module = import_module(module_name)
+        for name in names:
+            with monkeypatch.context() as patch:
+                first = sensor._native_input_inventory_epoch()
+                patch.setattr(module, name, lambda *args: None)
+                changed = sensor._native_input_inventory_epoch()
+                assert changed is not first, (module_name, name)
+
+
+@pytest.mark.parametrize("mutation", ["signature", "node_types", "memo", "budget"])
+def test_native_provider_epoch_binds_noncallable_contracts(monkeypatch, mutation):
+    from contextvars import ContextVar
+
+    from factoryline import intent_quality, review_audits
+    from factoryline import semantic_credential_sensor as sensor
+
+    first = sensor._native_input_inventory_epoch()
+    if mutation == "signature":
+        monkeypatch.setattr(
+            sensor, "_FLASK_BODY_SIGNATURE", ast.parse("def other(): pass")
+        )
+    elif mutation == "node_types":
+        monkeypatch.setattr(review_audits, "_FUNCTION_NODES", (ast.FunctionDef,))
+    elif mutation == "memo":
+        monkeypatch.setattr(
+            intent_quality, "_SECURITY_REQUEST_ALIAS_MEMO", ContextVar("changed")
+        )
+    else:
+        monkeypatch.setattr(intent_quality, "_SECURITY_REQUEST_ALIAS_MAX_ENTRIES", 1)
+    assert sensor._native_input_inventory_epoch() is not first
+
+
 def _provider_cache351_inputs():
     import hashlib
     from pathlib import Path
@@ -1196,6 +1358,53 @@ def test_provider_cache351_reuses_foreign_facts_without_mutable_result_leak(
     )
     assert ("requests", "get") in second
     assert len(parsed) == 1
+
+
+@pytest.mark.parametrize(
+    "parsed_entries, expected_computations", [(2048, 1), (4096, 2)]
+)
+def test_provider_cache386_parsed_entries_do_not_starve_foreign_fact_reuse(
+    monkeypatch, parsed_entries, expected_computations
+):
+    import hashlib
+
+    from factoryline import finite_capture
+
+    tree, sources, _, _ = _provider_cache351_inputs()
+    cache = tree._security_oracle_context["_security_provider_mutation_cache"]
+    for number in range(parsed_entries):
+        raw = f"value = {number}\n".encode()
+        finite_capture._foreign_provider_inputs(
+            tree, raw, hashlib.sha256(raw).hexdigest(), review_audits._security_aliases
+        )
+    original = finite_capture._provider_mutation_facts
+    computations = []
+
+    def observed(*args):
+        computations.append(None)
+        return original(*args)
+
+    monkeypatch.setattr(finite_capture, "_provider_mutation_facts", observed)
+    raw = sources["peer.py"]
+
+    def scan():
+        return finite_capture._foreign_provider_source_mutations(
+            tree,
+            raw,
+            hashlib.sha256(raw).hexdigest(),
+            review_audits,
+            {"requests": "requests"},
+            review_audits._security_aliases,
+            None,
+            None,
+            None,
+            (),
+        )
+
+    assert ("requests", "get") in scan()
+    assert ("requests", "get") in scan()
+    assert len(computations) == expected_computations
+    assert len(cache) <= 4096
 
 
 def test_provider_cache351_changed_peer_and_helper_cannot_reuse_stale_facts(
@@ -6219,7 +6428,7 @@ def test_trusted_core_policy316_review_queue_is_not_clean_or_approved(tmp_path):
     report = _trusted_core_policy316_seal(tmp_path, b"eval(user_data)\n")
     decision = report["defect_policy_decision"]
     assert decision["state"] == "NO_SUPPORTED_DEFECTS_REVIEW_REQUIRED"
-    assert decision["exit_code"] == 2
+    assert decision["exit_code"] == 0
     assert decision["supported_defect_count"] == 0
     assert decision["needs_context_count"] == 1
     assert decision["passed"] is False
@@ -6228,7 +6437,16 @@ def test_trusted_core_policy316_review_queue_is_not_clean_or_approved(tmp_path):
     assert "unresolved item(s) remain" in decision["action_summary"]
 
 
-@pytest.mark.parametrize("tamper", ["tier", "removed_raw_row", "capture_hash"])
+@pytest.mark.parametrize(
+    "tamper",
+    [
+        "tier",
+        "removed_raw_row",
+        "capture_hash",
+        "retrieval_status",
+        "retrieval_removed",
+    ],
+)
 def test_trusted_core_policy316_forged_or_stale_evidence_blocks(tmp_path, tamper):
     path = tmp_path / "app.py"
     path.write_bytes(b'GITHUB_TOKEN = "ghp_abcdefghijklmnop"\n')
@@ -6247,6 +6465,12 @@ def test_trusted_core_policy316_forged_or_stale_evidence_blocks(tmp_path, tamper
             "NEEDS_CONTEXT": 0,
             "PROVEN_PRIMITIVE": 0,
         }
+    elif tamper == "retrieval_status":
+        core["finding_tier_report"]["ledger"][0]["retrieval_transport"]["status"] = (
+            "COMPLETE"
+        )
+    elif tamper == "retrieval_removed":
+        del core["finding_tier_report"]["ledger"][0]["retrieval_transport"]
     else:
         captured["app.py"] = b'GITHUB_TOKEN = "ghp_changedvalue123"\n'
     checked = review_audits._seal_security_scan(core)
@@ -7533,7 +7757,7 @@ def test_native_request_sink_consumer_rebuild_rejects_forged_evidence(
 
 @pytest.mark.parametrize(
     "supported, unresolved, expected",
-    [(0, 0, 0), (0, 1, 2), (0, 9, 2), (1, 0, 1), (1, 3, 1)],
+    [(0, 0, 0), (0, 1, 0), (0, 9, 0), (1, 0, 1), (1, 3, 1)],
 )
 def test_trusted_core_unresolved_admission_exit_contract(
     supported, unresolved, expected
@@ -7549,18 +7773,113 @@ def test_trusted_core_unresolved_admission_exit_contract(
     assert result["passed"] is result["clean"] is result["release_approved"] is False
 
 
-def test_trusted_core_unresolved_serialized_zero_exit_cannot_bypass_current_evidence(
+def test_trusted_core_unresolved_serialized_defect_exit_cannot_override_current_evidence(
     tmp_path,
 ):
     report = _trusted_core_policy316_seal(tmp_path, b"eval(user_data)\n")
     expected = copy.deepcopy(report["defect_policy_decision"])
-    assert expected["exit_code"] == 2
+    assert expected["exit_code"] == 0
     core = copy.deepcopy(dict(report))
     core["_primitive_source_bytes"] = dict(report._captured_sources)
-    core["defect_policy_decision"] = {**expected, "exit_code": 0}
+    core["defect_policy_decision"] = {**expected, "exit_code": 1}
     checked = review_audits._seal_security_scan(core)
     assert checked["defect_policy_decision"] == expected
     assert checked["findings"] == report["findings"]
+
+
+@pytest.mark.parametrize(
+    "source, unknown_collection, expected_exit, expected_tier",
+    [
+        (b"eval(user_data)\n", False, 0, "NEEDS_CONTEXT"),
+        (
+            b"from flask import request\neval(request.get_data(as_text=True))\n",
+            False,
+            1,
+            "SUPPORTED_DEFECT",
+        ),
+        (b"eval(user_data)\n", True, 2, "NEEDS_CONTEXT"),
+    ],
+)
+def test_trusted_core_advisory_admission_native_cli_receipt_and_reseal(
+    tmp_path, capsys, source, unknown_collection, expected_exit, expected_tier
+):
+    from factoryline.cli import main
+    from factoryline import mission_control_status as receipts
+
+    (tmp_path / "app.py").write_bytes(source)
+    (tmp_path / ".factory").mkdir()
+    (tmp_path / ".factory" / "tenant-read-contract.json").write_text(
+        json.dumps({"schema": "factory.tenant-read-contract.v1", "reads": []}),
+        encoding="utf-8",
+    )
+    captured = {"app.py": source}
+    if unknown_collection:
+        hook = b"def pytest_collect_file(file_path, parent):\n    raise RuntimeError('must never execute')\n"
+        (tmp_path / "conftest.py").write_bytes(hook)
+        captured["conftest.py"] = hook
+    code = main(
+        [
+            "audit",
+            "security",
+            "--root",
+            str(tmp_path),
+            "--security-only",
+            "--defect-policy",
+            "trusted-core-v1",
+            "--json",
+        ]
+    )
+    output = capsys.readouterr()
+    assert output.err == ""
+    report = json.loads(output.out)
+    assert code == expected_exit
+    decision = report["defect_policy_decision"]
+    assert decision["exit_code"] == expected_exit
+    assert (
+        decision["clean"] is decision["passed"] is decision["release_approved"] is False
+    )
+    assert report["findings"][0]["code"] == "SECURITY_DYNAMIC_EXECUTION"
+    assert report["findings"][0]["severity"] == "HIGH"
+    ledger = report["finding_tier_report"]["ledger"]
+    assert ledger[0]["raw_finding"] == report["findings"][0]
+    assert ledger[0]["tier"] == expected_tier
+    assert ledger[0]["retrieval_transport"]["status"] == "NOT_RUN"
+    assert (
+        ledger[0]["retrieval_transport"]["finding_identity_sha256"]
+        == ledger[0]["source_identity"]["identity_sha256"]
+    )
+    if unknown_collection:
+        assert decision["state"] == "BLOCKED"
+        assert (
+            report["oracle_context"]["pytest_collection"]["collection_state"]
+            == "UNKNOWN"
+        )
+    elif expected_tier == "NEEDS_CONTEXT":
+        assert decision["state"] == "NO_SUPPORTED_DEFECTS_REVIEW_REQUIRED"
+        assert "unresolved item(s) remain" in decision["action_summary"]
+        from types import SimpleNamespace
+        from factoryline.cli_audit import _finish_bounded_security
+
+        assert (
+            _finish_bounded_security(
+                SimpleNamespace(json=False, defect_policy="trusted-core-v1"), report
+            )
+            == 0
+        )
+        human = capsys.readouterr().out
+        assert "NEEDS_CONTEXT" in human
+        assert "SECURITY_DYNAMIC_EXECUTION" in human
+        assert "app.py:1" in human
+    envelope, truncated = receipts._security_scan_read_receipt(tmp_path)
+    assert envelope is not None and not truncated
+    persisted, _bindings, error = receipts._security_scan_receipt_report(envelope)
+    assert error is None and persisted == report
+    rebuilt = copy.deepcopy(report)
+    rebuilt["_primitive_source_bytes"] = captured
+    resealed = review_audits._seal_security_scan(rebuilt)
+    assert resealed["defect_policy_decision"] == decision
+    assert resealed["finding_tier_report"] == report["finding_tier_report"]
+    assert resealed["findings"] == report["findings"]
 
 
 def test_blocked_security_scan_report_keeps_source_limit_incomplete(

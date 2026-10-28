@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 import hashlib
+import sys
 import io
 import re
 import ast
@@ -51,11 +52,8 @@ source_signature, bind_source_call = _package_source_binding_helpers()
 
 def source_binding_helpers():
     """Return the deduplicated package source-binding helpers plus source-call signature and binding utilities."""
-    return tuple(
-        dict.fromkeys(
-            (*_package_source_binding_helpers(), source_signature, bind_source_call)
-        )
-    )
+    helpers = (*_package_source_binding_helpers(), source_signature, bind_source_call)
+    return tuple(dict.fromkeys(helpers))
 
 
 def _name(node: ast.AST | None) -> str:
@@ -120,18 +118,12 @@ def _direct_vacuous_assertions(node, aliases, vacuous_check, remember):
 
 def import_smoke_oracle(node: ast.AST) -> bool:
     """Recognize import-availability/export smoke tests, not semantic coverage."""
-    if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-        return False
-    if not node.name.startswith("test_import_"):
-        return False
-    body = node.body
-    if (
-        body
-        and isinstance(body[0], ast.Expr)
-        and isinstance(body[0].value, ast.Constant)
-        and isinstance(body[0].value.value, str)
+    if not (
+        isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name.startswith("test_import_")
     ):
-        body = body[1:]
+        return False
+    body = _oracle_body(node)
     return bool(body) and all(
         isinstance(statement, ast.Import)
         or (
@@ -700,21 +692,17 @@ def callback_argument(call: ast.Call, function: ast.AST, parameter: str) -> str 
     return value.id if isinstance(value, ast.Name) else None
 
 
-def _callback_registry_store(node: ast.AST, name: str) -> bool:
-    return (
-        isinstance(node, ast.Name)
-        and node.id == name
-        and isinstance(node.ctx, (ast.Store, ast.Del))
-    )
-
-
 def _callback_registry_mutated(
     test: ast.AST, name: str, initial: ast.AST, append: ast.AST
 ) -> bool:
     for node in ast.walk(test):
         if node is initial.targets[0]:
             continue
-        if _callback_registry_store(node, name):
+        if (
+            isinstance(node, ast.Name)
+            and node.id == name
+            and isinstance(node.ctx, (ast.Store, ast.Del))
+        ):
             return True
         if (
             isinstance(node, (ast.Assign, ast.AnnAssign))
@@ -1227,13 +1215,6 @@ def _targets(stmt: ast.AST) -> list[str]:
         for n in ast.walk(t)
         if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store)
     ]
-
-
-def _true_arg(call: ast.AST, key: str) -> bool:
-    return isinstance(call, ast.Call) and any(
-        k.arg == key and isinstance(k.value, ast.Constant) and k.value.value is True
-        for k in call.keywords
-    )
 
 
 def mock_patch_dict_slot(
@@ -2710,7 +2691,6 @@ def security_assignment_findings(relative, node, aliases):
         audit._literal_assignment_diagnostics(relative, node, aliases),
     )
     from .provenance import public_symbolic_findings
-    import sys
 
     literal_findings = public_symbolic_findings(
         relative, node, literal_findings, sys.modules[__name__]
@@ -4160,45 +4140,41 @@ def _security_upload_path_expression(node, aliases, requests, scope, flow_statem
             and ("flask-upload", node.value.id) in requests
         )
     if isinstance(node, ast.JoinedStr):
-        return any(
-            isinstance(value, ast.FormattedValue)
-            and _security_upload_path_expression(
-                value.value, aliases, requests, scope, flow_statement
-            )
+        arguments = [
+            value.value
             for value in node.values
-        )
-    if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Add, ast.Div)):
-        return _security_upload_path_expression(
-            node.left, aliases, requests, scope, flow_statement
-        ) or _security_upload_path_expression(
-            node.right, aliases, requests, scope, flow_statement
-        )
-    if not isinstance(node, ast.Call):
+            if isinstance(value, ast.FormattedValue)
+        ]
+    elif isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Add, ast.Div)):
+        arguments = [node.left, node.right]
+    elif isinstance(node, ast.Call):
+        if _security_is_proven_secure_filename(node, aliases):
+            return False
+        arguments = [*node.args, *(keyword.value for keyword in node.keywords)]
+        if security_call_name(node, aliases) in {
+            "os.path.join",
+            "pathlib.Path",
+            "pathlib.PurePath",
+        } and any(
+            _security_expr_tainted(argument, requests, set(), aliases)
+            and not (
+                isinstance(argument, ast.Call)
+                and _security_is_proven_secure_filename(argument, aliases)
+            )
+            and not (
+                isinstance(argument, ast.Name)
+                and ("secure-upload-leaf", argument.id) in requests
+            )
+            for argument in arguments
+        ):
+            return True
+    else:
         return False
-    if _security_is_proven_secure_filename(node, aliases):
-        return False
-    if security_call_name(node, aliases) in {
-        "os.path.join",
-        "pathlib.Path",
-        "pathlib.PurePath",
-    } and any(
-        _security_expr_tainted(argument, requests, set(), aliases)
-        and not (
-            isinstance(argument, ast.Call)
-            and _security_is_proven_secure_filename(argument, aliases)
-        )
-        and not (
-            isinstance(argument, ast.Name)
-            and ("secure-upload-leaf", argument.id) in requests
-        )
-        for argument in [*node.args, *(keyword.value for keyword in node.keywords)]
-    ):
-        return True
     return any(
         _security_upload_path_expression(
             argument, aliases, requests, scope, flow_statement
         )
-        for argument in [*node.args, *(keyword.value for keyword in node.keywords)]
+        for argument in arguments
     )
 
 
@@ -4477,6 +4453,70 @@ def _security_request_args(node, aliases, scope=None, flow_statement=None):
         _security_flask_request_collection(node, aliases, scope, flow_statement, part)
         for part in ("args", "form")
     ) or _security_django_request_parameter(node, aliases, scope, flow_statement)
+
+
+_NATIVE_INPUT_EPOCH_BINDINGS = tuple(
+    (module, names.split())
+    for module, names in {
+        "factoryline.semantic_credential_sensor": """
+        _native_input_provider_inventory http_request_payload
+        _http_request_subscript_payload _http_request_call_payload
+        _http_request_attribute_payload _flask_request_body_kind
+        _credential_get_source_key _http_request_mapping
+        _request_mapping_value_unchanged _request_mapping_aliases
+        _request_mapping_mutation _django_http_body_payload
+        _native_request_data_member _new_security_request_alias_memo
+        _security_scope_request_aliases _security_scope_request_aliases_uncached
+        _security_request_alias_module_bindings
+        _security_store_request_alias_bindings
+        """,
+        "factoryline.review_integrity": """
+        bind_security_call_scopes _bind_security_scope_node _bind_security_function
+        _bind_security_class _function_annotations _security_scope_local_names
+        _security_scope_nonlocal_names _security_scope_declared_names
+        _security_module_scope _security_apply_import_bindings
+        _security_scope_request_aliases
+        """,
+        "factoryline.review_audits": """
+        _name _resolved_ast_name _security_aliases _bound_names _binding_name
+        _iter_ast_nodes
+        """,
+        "factoryline.intent_quality": """
+        _security_scope_request_aliases
+        """,
+        "factoryline": """
+        _source_binding_helpers _bind_source_call _source_call_signature
+        """,
+    }.items()
+)
+
+
+def _native_input_inventory_epoch():
+    from importlib import import_module
+    from . import review_audits, intent_quality, semantic_credential_sensor
+
+    functions = [
+        getattr(import_module(module), name)
+        for module, names in _NATIVE_INPUT_EPOCH_BINDINGS
+        for name in names
+    ]
+    identity = (
+        tuple(
+            (fn, getattr(fn, "__code__", None), id(getattr(fn, "__defaults__", None)))
+            for fn in functions
+        ),
+        ast.dump(semantic_credential_sensor._FLASK_BODY_SIGNATURE),
+        review_audits._FUNCTION_NODES,
+        intent_quality._SECURITY_REQUEST_ALIAS_MEMO,
+        intent_quality._SECURITY_REQUEST_ALIAS_MAX_ENTRIES,
+        intent_quality._SECURITY_REQUEST_ALIAS_MAX_PAIRS,
+        intent_quality._SECURITY_REQUEST_ALIAS_MAX_BYTES,
+    )
+    cached = getattr(_native_input_inventory_epoch, "_cached_epoch", None)
+    if cached is None or cached[0] != identity:
+        cached = (identity, object())
+        _native_input_inventory_epoch._cached_epoch = cached
+    return cached[1]
 
 
 def _security_scope_request_aliases(scope, aliases, flow_statement=None):
@@ -4859,8 +4899,6 @@ def _discarded_builtin_assertion_error(statement):
 
 def fixed_program_witness(relative, node, call_name):
     """Build a fixed-program witness through the shared primitive-observation validator."""
-    import sys
-
     from .primitive_observation_binding import fixed_program_witness as witness
 
     return witness(sys.modules[__name__], relative, node, call_name)
@@ -4870,8 +4908,6 @@ def bind_fixed_program_workspace(
     root, contexts, snapshots, files, source_bytes=None, imports=None
 ):
     """Populate fixed-program workspace evidence through the shared source and consumer binders."""
-    import sys
-
     from .primitive_observation_binding import (
         bind_fixed_program_workspace as bind_workspace,
     )
@@ -4883,8 +4919,6 @@ def bind_fixed_program_workspace(
 
 def fixed_program_workspace_helpers():
     """Expose the helper functions used to build fixed-program and credential-consumer workspace evidence."""
-    import sys
-
     from .primitive_observation_binding import (
         fixed_program_workspace_helpers as workspace_helpers,
     )
@@ -4893,8 +4927,6 @@ def fixed_program_workspace_helpers():
 
 
 def _fixed_program_builtin_identity(node, module, call_name):
-    import sys
-
     from .primitive_observation_binding import fixed_program_builtin_identity
 
     return fixed_program_builtin_identity(
@@ -4904,8 +4936,6 @@ def _fixed_program_builtin_identity(node, module, call_name):
 
 def partition_proven_primitive_observations(core):
     """Keep proved fixed programs visible without describing them as defects."""
-    import sys
-
     from .primitive_observation_binding import (
         partition_proven_primitive_observations as partition,
     )
@@ -4915,7 +4945,6 @@ def partition_proven_primitive_observations(core):
 
 def _fixed_primitive_binding(finding, sources, bindings, source_bytes=None):
     from .primitive_observation_binding import fixed_primitive_binding
-    import sys
 
     return fixed_primitive_binding(
         finding, sources, bindings, sys.modules[__name__], source_bytes
@@ -4926,7 +4955,6 @@ def bind_credential_consumers(
     root, snapshots, imports, contexts, source_bytes, *, inventory
 ):
     """Bind credential-consumer evidence through the shared provenance analyzer using this module as its audit context."""
-    import sys
     from .provenance import bind_credential_consumers as bind
 
     return bind(
@@ -4942,7 +4970,6 @@ def bind_credential_consumers(
 
 def credential_consumer_helpers():
     """Expose the source-binding and evidence helpers required by credential-consumer analysis."""
-    import sys
     from .provenance import credential_consumer_helpers as helpers
 
     return helpers(sys.modules[__name__])
@@ -4956,8 +4983,6 @@ def credential_context_cache_schema():
 
 
 def _closed_declaration_binding(finding):
-    import sys
-
     from .primitive_observation_binding import closed_declaration_binding
 
     return closed_declaration_binding(finding, sys.modules[__name__])
@@ -4970,7 +4995,6 @@ def _valid_source_span(span):
 
 
 def _finite_eval_binding(finding):
-    import sys
     from .primitive_observation_binding import finite_eval_binding
 
     return finite_eval_binding(finding, sys.modules[__name__])

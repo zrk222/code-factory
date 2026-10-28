@@ -15,6 +15,391 @@ from pathlib import Path
 import math
 import re
 from typing import Any, Callable, Mapping
+from array import array
+
+
+def retain_native_observations(tree, path, findings):
+    """Retain bounded producer reports on their existing source generation only."""
+    model = getattr(tree, "_security_source_model", None)
+    raw = model.source_bytes.get(path) if model is not None else None
+    if (
+        isinstance(raw, bytes)
+        and model.snapshots.get(path) is tree
+        and model.validate(path)
+    ):
+        observations = json.dumps(
+            [
+                {
+                    **{key: row[key] for key in ("code", "path", "line", "column")},
+                    "security_precondition": row["facts"]["security_precondition"],
+                }
+                for row in findings
+                if row.get("facts", {}).get("security_precondition")
+            ],
+            sort_keys=True,
+        )
+        if len(observations.encode("utf-8")) <= 64000:
+            tree._secondary_native_observations = (raw, observations)
+
+
+def build_retrieval_context(finding, index, requirement, retriever):
+    """Carry every supported source location into secondary review, with gaps explicit."""
+    from .context_efficiency import build_informed_sink_context, _informed_failure
+    from .jev_classifier import JevClassificationError, _digest
+
+    context = build_informed_sink_context(finding, index)
+    if context["status"] == "SINK_LOCATION_UNRESOLVED":
+        path = index.root / finding["path"]
+        matches = [
+            node
+            for node in ast.walk(index.snapshots[path])
+            if isinstance(node, (ast.Assign, ast.AnnAssign))
+            if node.lineno == finding.get("line")
+            if node.col_offset == finding.get("column")
+            if all(
+                finding.get(key, getattr(node, attr)) == getattr(node, attr)
+                for key, attr in [
+                    ("end_line", "end_lineno"),
+                    ("end_column", "end_col_offset"),
+                ]
+            )
+        ]
+        if (
+            not str(finding.get("code", "")).startswith("SECURITY_")
+            or len(matches) != 1
+        ):
+            raise JevClassificationError(context["status"])
+        node = matches[0]
+        context = _informed_failure(
+            "INCOMPLETE", "assignment_consumer_closure_unresolved"
+        )
+        context["excerpts"] = [
+            {
+                "path": finding["path"],
+                "sha256": index.inventory[path],
+                "start_line": node.lineno,
+                "end_line": node.end_lineno,
+                "kind": "declaration",
+                "content": "".join(
+                    index.source_bytes[path]
+                    .decode("utf-8")
+                    .splitlines(keepends=True)[node.lineno - 1 : node.end_lineno]
+                ),
+            }
+        ]
+        context["dependency_sources"] = [
+            {"path": finding["path"], "sha256": index.inventory[path]}
+        ]
+    if context["status"] not in {"CAPTURED", "INCOMPLETE"}:
+        raise JevClassificationError(context["status"])
+    path = index.root / finding["path"]
+    observed = getattr(index.snapshots[path], "_secondary_native_observations", None)
+    if (
+        isinstance(observed, tuple)
+        and len(observed) == 2
+        and observed[0] is index.source_bytes[path]
+        and index.validate(path)
+    ):
+        context["producer_reported_preconditions"] = {
+            "status": "REPORTED_NOT_INDEPENDENTLY_VERIFIED",
+            "authority": "none",
+            "source_sha256": index.inventory[path],
+            "observations": [
+                row
+                for row in json.loads(observed[1])
+                if all(
+                    row.get(key) == finding.get(key)
+                    for key in ("code", "path", "line", "column")
+                )
+            ],
+        }
+    if retriever is not None:
+        retriever.enrich(context, index, requirement)
+    else:
+        context["retrieval"] = {
+            "status": "NOT_RUN",
+            "reason": "local_encoder_not_configured",
+            "authority": "none",
+        }
+    hints = [row for row in context["excerpts"] if row["kind"] == "retrieval_hint"]
+    context["retrieval"].update(
+        {
+            "schema": "factory.retrieval-transport.v1",
+            "finding_sha256": _digest(finding),
+            "query_sha256": sha256(requirement.encode("utf-8")).hexdigest(),
+            "source_manifest_sha256": _digest(
+                sorted(
+                    (index.relative(path), digest)
+                    for path, digest in index.inventory.items()
+                )
+            ),
+            "hint_manifest": [
+                {
+                    **{
+                        key: row[key]
+                        for key in ("path", "sha256", "start_line", "end_line")
+                    },
+                    "content_sha256": sha256(
+                        row["content"].encode("utf-8")
+                    ).hexdigest(),
+                }
+                for row in hints
+            ],
+            "delivered_hints": len(hints),
+            "coverage": "RANKED_SUBSET_NOT_EXHAUSTIVE",
+            "validated_trace_edges": 0,
+            "classification_effect": "NONE",
+            "consumption": "UNASSESSED",
+        }
+    )
+    return context
+
+
+def _hybrid_vectors(rows, count, width=None):
+    """Validate and normalize bounded embeddings without a mandatory ML runtime."""
+    if len(rows) != count:
+        raise ValueError("hybrid embedding count mismatch")
+    result = []
+    for row in rows:
+        if not 1 <= len(row) <= 768 or (width is not None and len(row) != width):
+            raise ValueError("hybrid embedding dimension mismatch")
+        values = array("f", (float(value) for value in row))
+        norm = math.sqrt(sum(value * value for value in values))
+        if not math.isfinite(norm) or norm == 0:
+            raise ValueError("hybrid embeddings must be finite and nonzero")
+        width = len(values)
+        result.append(array("f", (value / norm for value in values)))
+    return result
+
+
+class HybridSourceRetriever:
+    """Explicit local evidence locator; similarity never establishes a flow edge.
+
+    The caller owns a local encoder and its model identity. Construct once per
+    immutable capture, reuse its compact vectors across findings, then discard.
+    No model loading, downloads, target execution or persistent index occur here.
+    Exact cosine is bounded to 1024 chunks; it does not claim ANN acceleration.
+    """
+
+    def __init__(self, source_index, encode, *, model_id):
+        if (
+            not callable(encode)
+            or not isinstance(model_id, str)
+            or not 1 <= len(model_id) <= 256
+        ):
+            raise ValueError(
+                "hybrid retrieval requires a local encoder and model identity"
+            )
+        self.index, self.encode, self.model_id = source_index, encode, model_id
+        self.sources = tuple(sorted(source_index.inventory.items()))
+        if not source_index.bounded or len(self.sources) > 2000:
+            raise ValueError("hybrid capture exceeds source budget")
+        self.documents = self._documents()
+        if not self.documents:
+            raise ValueError("hybrid capture is empty")
+        self.vectors = _hybrid_vectors(
+            encode([row["content"] for row in self.documents]), len(self.documents)
+        )
+        self._validate()
+
+    def _validate(self):
+        if tuple(sorted(self.index.inventory.items())) != self.sources:
+            raise ValueError("hybrid source inventory changed")
+        for path, digest in self.sources:
+            if (
+                not self.index.validate(path)
+                or sha256(self.index.source_bytes[path]).hexdigest() != digest
+            ):
+                raise ValueError("hybrid source snapshot is stale")
+
+    def _documents(self):
+        self._validate()
+        result, total = [], 0
+        for path, digest in self.sources:
+            relative = self.index.relative(path)
+            if not relative:
+                raise ValueError("hybrid source escapes captured root")
+            lines = (
+                self.index.source_bytes[path].decode("utf-8").splitlines(keepends=True)
+            )
+            for start in range(0, len(lines), 16):
+                text = "".join(lines[start : start + 16])
+                total += len(text.encode("utf-8"))
+                if (
+                    len(text.encode("utf-8")) > 8192
+                    or total > 2 * 1024 * 1024
+                    or len(result) >= 1024
+                ):
+                    raise ValueError("hybrid chunk or corpus budget exceeded")
+                result.append(
+                    {
+                        "ruleId": str(len(result)),
+                        "description": text,
+                        "path": relative,
+                        "sha256": digest,
+                        "content": text,
+                        "start_line": start + 1,
+                        "end_line": min(start + 16, len(lines)),
+                        "kind": "retrieval_hint",
+                    }
+                )
+        return result
+
+    def search(self, query, *, limit=6):
+        """Rank bounded captured-source hints without granting evidence authority."""
+        if (
+            not isinstance(query, str)
+            or not query.strip()
+            or len(query.encode("utf-8")) > 8192
+        ):
+            raise ValueError("hybrid query must be nonempty and bounded")
+        if type(limit) is not int or not 1 <= limit <= 8:
+            raise ValueError("hybrid result limit must be 1 through 8")
+        self._validate()
+        query_vector = _hybrid_vectors(self.encode([query]), 1, len(self.vectors[0]))[0]
+        lexical = _bm25_scores(self.documents, query, fielded=False)
+        dense = {
+            str(i): sum(a * b for a, b in zip(vector, query_vector))
+            for i, vector in enumerate(self.vectors)
+        }
+        ranks = [
+            {
+                key: rank
+                for rank, key in enumerate(
+                    sorted(
+                        (key for key in scores if scores[key] > 0),
+                        key=lambda key: (-scores[key], int(key)),
+                    )[:32],
+                    1,
+                )
+            }
+            for scores in (lexical, dense)
+        ]
+        selected = sorted(
+            set(ranks[0]) | set(ranks[1]),
+            key=lambda key: (
+                -sum(1 / (60 + lane[key]) for lane in ranks if key in lane),
+                int(key),
+            ),
+        )[:limit]
+        self._validate()
+        return [
+            {
+                **{
+                    key: value
+                    for key, value in self.documents[int(identity)].items()
+                    if key not in {"ruleId", "description"}
+                },
+                "bm25_rank": ranks[0].get(identity),
+                "semantic_rank": ranks[1].get(identity),
+                "semantics": "similarity_hint_only_not_a_verified_trace_or_authority",
+            }
+            for identity in selected
+        ]
+
+    def enrich(self, context, source_index, query):
+        """Deliver source-bound hints to the existing secondary-review envelope."""
+        if source_index is not self.index:
+            raise ValueError("hybrid retriever belongs to a different capture")
+        hits = self.search(query)
+        dependencies = {row["path"]: row for row in context["dependency_sources"]}
+        dependencies.update(
+            {row["path"]: {key: row[key] for key in ("path", "sha256")} for row in hits}
+        )
+        if len(dependencies) > 64:
+            raise ValueError("hybrid combined source budget exceeded")
+        context["dependency_sources"] = list(dependencies.values())
+        context["excerpts"].extend(hits)
+        self._follow_captured_calls(context, hits)
+        if context["truncation"]:
+            context["status"] = "INCOMPLETE"
+        context["retrieval"] = {
+            "status": "DELIVERED_UNVALIDATED",
+            "method": "bm25+exact-cosine+rrf60",
+            "model_id": self.model_id,
+            "corpus_chunks": len(self.documents),
+            "hint_count": len(hits),
+            "authority": "none",
+            "trace_validation": "required",
+        }
+
+    def _follow_captured_calls(self, context, hits):
+        """Reuse native source binding for retrieved calls; opaque effects stay unknown."""
+        from .context_efficiency import (
+            _informed_target,
+            _informed_edges,
+            _informed_excerpt,
+        )
+        from .import_context import CapturedImportInventory
+
+        index = self.index
+        inventory = getattr(self, "_callee_inventory", None) or CapturedImportInventory(
+            index.root, tuple(index.snapshots)
+        )
+        self._callee_inventory = inventory
+        capture = {
+            "dependencies": {
+                index.root / row["path"]: row["sha256"]
+                for row in context["dependency_sources"]
+            },
+            "max_sources": 64,
+            "truncation": context["truncation"],
+            "stale": False,
+        }
+        visited, remaining = set(), 512
+        for hit in hits:
+            path = index.root / hit["path"]
+            calls = (
+                node
+                for node in ast.walk(index.snapshots[path])
+                if isinstance(node, ast.Call)
+                and hit["start_line"] <= node.lineno <= hit["end_line"]
+            )
+            for call in calls:
+                remaining -= 1
+                if remaining < 0 or len(visited) >= 8:
+                    context["truncation"].append("retrieved_callee_expansion_budget")
+                    remaining = -1
+                    break
+                target = _informed_target(index, path, call, inventory, capture)
+                if target is None:
+                    context["unknowns"].append(
+                        {
+                            "path": hit["path"],
+                            "line": call.lineno,
+                            "status": "UNKNOWN",
+                            "reason": "retrieved_callee_binding_unresolved",
+                        }
+                    )
+                    continue
+                try:
+                    edges = _informed_edges(index, path, call, target)
+                except ValueError:
+                    context["unknowns"].append(
+                        {
+                            "path": hit["path"],
+                            "line": call.lineno,
+                            "status": "UNKNOWN",
+                            "reason": "retrieved_argument_binding_unresolved",
+                        }
+                    )
+                    continue
+                context["edges"].extend(edges)
+                identity = target[0], id(target[1])
+                if identity not in visited:
+                    visited.add(identity)
+                    context["excerpts"].append(
+                        _informed_excerpt(index, target[0], target[1], "helper")
+                    )
+            if remaining < 0:
+                break
+        self._validate()
+        if capture["stale"]:
+            raise ValueError("retrieved callee source is stale")
+        context["dependency_sources"] = [
+            {"path": index.relative(path), "sha256": digest}
+            for path, digest in capture["dependencies"].items()
+        ]
 
 
 class AuditRuleSearchError(ValueError):

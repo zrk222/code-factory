@@ -14719,7 +14719,12 @@ def test_pytest_collection351_toml_addopts_array_retains_unknown_collection(
     (tmp_path / "pyproject.toml").write_text(
         f"[tool.pytest.ini_options]\naddopts = {addopts}\n"
     )
-    with pytest.raises(ReviewAuditError, match="unsupported configuration"):
+    reason = (
+        "invalid configuration"
+        if addopts in {"[42]", '["-v", false]'}
+        else "unsupported configuration"
+    )
+    with pytest.raises(ReviewAuditError, match=reason):
         _pytest_collection_config(tmp_path)
 
 
@@ -15028,6 +15033,91 @@ def test_shared_native_summary_kernel_owner_change_invalidates_cache(
 
     monkeypatch.setattr(effects, "identity_value", replacement)
     assert scanner._oracle_context_cache_key(tmp_path, [], {}) != first
+
+
+@pytest.mark.parametrize("selector", ["pytest.toml", ".pytest.toml", "pytest.ini"])
+def test_collection_identity_transport_retains_configured_rules(tmp_path, selector):
+    import hashlib
+    from factoryline import review_audits as audit
+
+    config = tmp_path / selector
+    raw = (
+        b'[pytest]\npython_functions = ["check_*"]\n'
+        if selector.endswith(".toml")
+        else b"[pytest]\npython_functions = check_*\n"
+    )
+    config.write_bytes(raw)
+    (tmp_path / "test_case.py").write_text(
+        "def check_dead():\n    pass\n", encoding="utf-8"
+    )
+    cold = audit.security_scan(tmp_path, cache_enabled=False)
+    identity = cold["oracle_context"]["static_pytest_collection"]
+    assert identity["path"] == selector
+    assert identity["sha256"] == hashlib.sha256(raw).hexdigest()
+    assert identity["python_functions"] == ["check_*"]
+    assert identity.get("collection_state") != "UNKNOWN"
+    warm = audit.security_scan(tmp_path, cache_enabled=True)
+    assert warm["oracle_context"]["static_pytest_collection"] == identity
+    assert "pytest_collection" not in cold["oracle_context"]
+    assert warm["source_manifest_sha256"] == cold["source_manifest_sha256"]
+    assert warm["findings"] == cold["findings"]
+    identity["python_functions"].append("tampered_*")
+    assert warm["oracle_context"]["static_pytest_collection"]["python_functions"] == [
+        "check_*"
+    ]
+    config.write_bytes(raw.replace(b"check_*", b"other_*"))
+    changed = audit.security_scan(tmp_path, cache_enabled=True)
+    assert changed["oracle_context"]["static_pytest_collection"][
+        "python_functions"
+    ] == ["other_*"]
+    assert changed["source_manifest_sha256"] != warm["source_manifest_sha256"]
+    assert any(row["code"] == "QUALITY_HOLLOW_TEST" for row in cold["findings"])
+    assert not any(row["code"] == "QUALITY_HOLLOW_TEST" for row in changed["findings"])
+
+
+@pytest.mark.parametrize(
+    "filename, config",
+    [
+        ("pyproject.toml", '[tool.pytest.ini_options]\naddopts = "-p no:plugin"\n'),
+        ("pytest.toml", '[pytest]\naddopts = ["-p", "external_plugin"]\n'),
+        ("pytest.ini", "[pytest]\npytest_plugins = external_plugin\n"),
+    ],
+)
+def test_security_only_unsupported_collection_preserves_security(
+    tmp_path, filename, config
+):
+    from factoryline import review_audits as audit
+
+    (tmp_path / filename).write_text(config, encoding="utf-8")
+    (tmp_path / "app.py").write_text(
+        "def apply(program):\n    exec(program)\n", encoding="utf-8"
+    )
+    (tmp_path / "test_case.py").write_text(
+        "def test_dead():\n    pass\n", encoding="utf-8"
+    )
+    with pytest.raises(audit.ReviewAuditError, match="collection"):
+        audit.security_scan(tmp_path, cache_enabled=False)
+    report = audit.security_scan(
+        tmp_path,
+        cache_enabled=False,
+        security_only=True,
+        defect_policy="source-role-v3",
+    )
+    identity = report["oracle_context"]["static_pytest_collection"]
+    assert identity["collection_state"] == "UNKNOWN"
+    assert identity["reason"] == "unsupported_collection_configuration"
+    assert identity["python_files"] == identity["python_functions"] == []
+    assert report["state"] == "INCOMPLETE"
+    assert report["audit_coverage"]["complete"] is True
+    assert report["defect_policy_decision"]["exit_code"] == 2
+    assert any(
+        row["code"] == "SECURITY_DYNAMIC_EXECUTION" for row in report["findings"]
+    )
+    assert not any(row["code"].startswith("QUALITY_") for row in report["findings"])
+    assert not report["context_reviews"]
+    (tmp_path / filename).write_text("[unterminated", encoding="utf-8")
+    with pytest.raises(audit.ReviewAuditError, match="collection"):
+        audit.security_scan(tmp_path, cache_enabled=False, security_only=True)
 
 
 @pytest.mark.parametrize("cache_enabled", [False, True])

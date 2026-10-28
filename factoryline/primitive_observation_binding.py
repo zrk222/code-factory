@@ -108,7 +108,7 @@ _TRUSTED_CORE_POLICY = {
     "policy_id": "trusted-core-v1",
     "supported_state": "DEFECTS_PRESENT",
     "review_state": "NO_SUPPORTED_DEFECTS_REVIEW_REQUIRED",
-    "unresolved_exit_code": 2,
+    "unresolved_exit_code": 0,
     "empty_exit_code": 0,
     "incomplete_state": "BLOCKED",
     "claim_boundary": "No clean security result, accuracy gain, or release approval.",
@@ -480,6 +480,7 @@ def _security_tier_rows(report):
                 "static_consumer_observation": row.get("static_consumer_observation"),
                 "byte_origin_observation": row.get("byte_origin_observation"),
                 "missing_premises": row.get("missing_premises"),
+                "retrieval_transport": row.get("retrieval_transport"),
             }
         )
     return sorted(rows, key=_tier_sha256)
@@ -1756,7 +1757,9 @@ def apply_conditional_provider_profile(report, profile, captured):
     return audit._seal_security_scan(core)
 
 
-def apply_pickle_source_role_policy(core, captured, *, source_model=None):
+def apply_pickle_source_role_policy(
+    core, captured, *, source_model=None, configuration_bytes=None
+):
     """Rebuild context reviews from the native raw ledger on every seal."""
     policy_id = core.get("selected_defect_policy")
     if policy_id not in {"source-role-v1", "source-role-v2", "source-role-v3"}:
@@ -1771,6 +1774,7 @@ def apply_pickle_source_role_policy(core, captured, *, source_model=None):
     )
     if roles is not None:
         roles["policy_id"] = policy_id
+        roles["test_collection_known"] = not _unknown_collection(core)
     active, reviews = _pickle_role_partition(original, roles)
     core["findings"], core["context_reviews"] = active, reviews
     core["finding_counts"] = dict(
@@ -1826,10 +1830,8 @@ def _pickle_role_identity(finding):
 
 
 def _pickle_role_sources(core, captured):
-    if (
-        _unknown_collection(core)
-        or core.get("audit_coverage", {}).get("complete") is not True
-        or not isinstance(captured, dict)
+    if core.get("audit_coverage", {}).get("complete") is not True or not isinstance(
+        captured, dict
     ):
         return None
     rows = core.get("sources")
@@ -1936,19 +1938,32 @@ def _pickle_source_role_witness(finding, inventory):
         or (
             captured_registered_fixture_helper_role(finding, inventory)
             if inventory.get("policy_id") == "source-role-v3"
+            and inventory.get("test_collection_known", True)
             and not _valid_security_precondition(
                 finding.get("facts", {}).get("security_precondition"), finding
             )
             else None
         )
-        or _pickle_test_role_witness(finding, inventory)
+        or (
+            _pickle_test_role_witness(finding, inventory)
+            if inventory.get("test_collection_known", True)
+            else None
+        )
         or _pickle_worker_role_witness(finding, inventory)
         or (
-            _registered_fixture_role_witness(finding, inventory)
+            (
+                _registered_fixture_role_witness(finding, inventory)
+                if inventory.get("test_collection_known", True)
+                else None
+            )
             or (
                 (
                     captured_file_program_role(finding, inventory)
-                    or captured_literal_caller_program_role(finding, inventory)
+                    or (
+                        captured_literal_caller_program_role(finding, inventory)
+                        if inventory.get("test_collection_known", True)
+                        else None
+                    )
                 )
                 if finding.get("code") == "SECURITY_DYNAMIC_EXECUTION"
                 and _pickle_role_native_match(finding, inventory)
@@ -3468,6 +3483,15 @@ def _application_fixture_use_proof(evidence, bindings, facts, source_bytes):
                 evidence, bindings, facts, source_bytes
             )
         return _presentation_witness_bindings(evidence, bindings, facts)
+    if evidence.get("profile") == "SOURCE_BOUND_TEST_SCOPE_ONLY":
+        return _application_fixture_role_recomputes(
+            evidence,
+            bindings,
+            facts.get("name"),
+            source_bytes,
+            "factory.test-scope-consumer-closure.v1",
+            "SOURCE_BOUND_TEST_SCOPE_ONLY",
+        )
     if evidence.get("profile") == "DJANGO_CLASS_LOCAL_ACCOUNT_ENROLLMENT":
         return _application_class_role_recomputes(
             evidence, bindings, facts.get("name"), source_bytes
@@ -4970,6 +4994,14 @@ def _finding_tier_ledger_row(
             "identity_sha256": identity,
         },
         "raw_finding": finding,
+        "retrieval_transport": {
+            "schema": "factory.retrieval-native-status.v1",
+            "finding_identity_sha256": identity,
+            "status": "NOT_RUN",
+            "reason": "native_deterministic_scan_does_not_invoke_secondary_retrieval",
+            "classification_effect": "NONE",
+            "coverage": "UNASSESSED",
+        },
     }
     if (
         bound_source
@@ -5006,15 +5038,16 @@ def _pickle_source_role_decision(
         "source-role-v2": _SOURCE_ROLE_POLICY_V2,
         "source-role-v3": _SOURCE_ROLE_POLICY_V3,
     }.get(policy_id, _PICKLE_SOURCE_ROLE_POLICY)
+    blocked = roles is None or roles.get("test_collection_known") is False
     return {
         **policy,
         "policy_sha256": _tier_sha256(policy),
         "state": "BLOCKED"
-        if roles is None
+        if blocked
         else "ALERTS_AND_CONTEXT_REVIEW"
         if active
         else "CONTEXT_REVIEW_REQUIRED",
-        "exit_code": 2 if roles is None else 1 if active else 0,
+        "exit_code": 2 if blocked else 1 if active else 0,
         "active_alert_count": len(active),
         "context_review_count": len(reviews),
         "source_sha256": None if roles is None else roles["sources_sha256"],

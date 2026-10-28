@@ -61,9 +61,17 @@ Scenario: `Wilson95` completion boundary
   Then at least 30 decided alerts and at least 80 percent actionable precision are required with unclear labels and all six TP checks visible
 ```
 ## SHOULD — Technical/structural
+- Cohort startup workers use `timeout = 90` seconds and `max_workers = 2`; startup readiness never guarantees completion of subsequent analysis. Every failed or stale startup check prevents launch.
+- Source completeness and test-collection authority are separate premises. UNKNOWN pytest collection must not erase hash-bound source/value-origin facts used by collection-independent shell, local-worker and literal-program consumers. Test/fixture-dependent projections still require known collection; ordinary input/sink findings, original severity, UNKNOWN collection and INCOMPLETE status remain visible. Producer and independent verifier must reconstruct the same partition.
 - An explicit security-only profile may continue bounded security analysis when custom pytest hooks or plugin declarations make test collection unknown. The strict default still rejects those inputs. The profile must bind selected configuration and relevant hook/plugin source hashes, record UNKNOWN with empty file/function/class collection settings, suppress test-oracle and fixture-role credit, and preserve ordinary security findings and source bytes. Malformed, unreadable or oversized configuration remains an error. UNKNOWN collection must survive native sealing, cache, policy, serialization and persisted read-back as INCOMPLETE with no clean or release credit; source/config/hook drift must invalidate the receipt. A profile change requires a newly frozen evaluation; incomplete Study382 is retained without a score claim.
 - Existing source capture, structural values and finite helper flow are the implementation surface.
 - Delete replaced producer traversals after parity; verifier parsing remains independent.
 - Keep Python, PHP, runtime and oracle frontend identities separate; JEV remains secondary.
 ## Decision logic (factory candidates)
 No new ordered admission policy. Existing family-specific proof obligations remain authoritative.
+The existing opt-in `trusted-core-v1` policy may return a nonblocking review-required decision for a complete, current, independently regenerated scan with zero supported defects and unresolved advisory observations. Supported defects still block with exit1; incomplete coverage, unknown collection and missing/stale/forged evidence remain BLOCKED exit2. Every original diagnostic and missing premise remains visible; exit0 grants no clean, passed or release-approved status. This is admission behavior, not detection or accuracy improvement. Any admitted-only precision study requires a separately frozen protocol and must report raw/admitted TP retention, abstentions, coverage and the all-alert rate separately.
+
+## Authorized parameters
+timeout = 90
+timeout = 1800
+max_workers = 2

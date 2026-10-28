@@ -11,6 +11,218 @@ from factoryline.review_audits import security_scan
 import pytest
 
 
+def test_scope_api_jwt_roles_decline_payload_leaks_and_mutations():
+    from factoryline.credential_role_constructor_provider import (
+        credential_scope_api_contract as contract,
+    )
+    from factoryline.credential_role_identity_effects import _Value
+
+    key = _Value(roots=frozenset({"secret"}), inert_kind="scalar", scalar_kind="text")
+    payload = _Value(inert_kind="dict")
+    token = _Value(
+        roots=frozenset({"derived:secret"}), inert_kind="scalar", scalar_kind="text"
+    )
+    assert contract("jwt.encode", None, (payload, key), {}, provider_stable=True) == (
+        "derive",
+        key,
+    )
+    assert contract("jwt.decode", None, (token, key), {}, provider_stable=True) == (
+        "consume",
+        token,
+    )
+    none_value = _Value(inert_kind="scalar", scalar_kind="none", _exact_scalar=(None,))
+    assert contract(
+        "jwt.encode",
+        None,
+        (payload, key),
+        {"json_encoder": none_value},
+        provider_stable=True,
+    ) == ("derive", key)
+    assert (
+        contract(
+            "jwt.encode",
+            None,
+            (payload, key),
+            {"json_encoder": _Value(class_roots=frozenset({"custom"}))},
+            provider_stable=True,
+        )
+        is None
+    )
+    assert (
+        contract("jwt.encode", None, (key, payload), {}, provider_stable=True) is None
+    )
+    assert (
+        contract("jwt.encode", None, (payload, key), {}, provider_stable=False) is None
+    )
+    assert (
+        contract("jwt.encode", None, (payload, key, key), {}, provider_stable=True)
+        is None
+    )
+    assert (
+        contract(
+            "jwt.encode", None, (payload, key), {"key": payload}, provider_stable=True
+        )
+        is None
+    )
+    assert (
+        contract("jwt.decode", None, (key, payload), {}, provider_stable=True) is None
+    )
+    nested = _Value(items=(("password", key),), inert_kind="dict")
+    assert contract("jwt.encode", None, (nested, key), {}, provider_stable=True) is None
+    assert (
+        contract(
+            "jwt.encode", None, (_Value(unknown=True), key), {}, provider_stable=True
+        )
+        is None
+    )
+
+
+def test_scope_api_registry_and_typed_preparation_are_allocation_sensitive():
+    from factoryline.credential_role_constructor_provider import (
+        credential_scope_api_contract as contract,
+    )
+    from factoryline.credential_role_identity_effects import _Value
+
+    def text(s):
+        return _Value(inert_kind="scalar", scalar_kind="text", _exact_scalar=(s,))
+
+    key = _Value(roots=frozenset({"secret"}), inert_kind="scalar", scalar_kind="text")
+    jws = ("jws", _Value(class_roots=frozenset({"jws:1"})), frozenset({"ES256"}))
+    other = ("jws", _Value(class_roots=frozenset({"jws:2"})), frozenset())
+    assert contract("jwt.api_jws.PyJWS", None, (), {}, provider_stable=True) == (
+        "allocate",
+    )
+    assert contract(
+        "jwt.api_jws.PyJWS.get_algorithm_by_name",
+        jws,
+        (text("ES256"),),
+        {},
+        provider_stable=True,
+    ) == ("algorithm", "ES256")
+    assert (
+        contract(
+            "jwt.api_jws.PyJWS.get_algorithm_by_name",
+            other,
+            (text("ES256"),),
+            {},
+            provider_stable=True,
+        )
+        is None
+    )
+    assert (
+        contract(
+            "jwt.api_jws.PyJWS.get_algorithm_by_name",
+            ("jws", jws[1], frozenset({"CUSTOM"})),
+            (text("CUSTOM"),),
+            {},
+            provider_stable=True,
+        )
+        is None
+    )
+    assert contract(
+        "jwt.api_jws.PyJWS.unregister_algorithm",
+        jws,
+        (),
+        {"alg_id": text("ES256")},
+        provider_stable=True,
+    ) == ("unregister", "ES256")
+    algorithm = ("algorithm", _Value(class_roots=frozenset({"alg:1"})), "ES256")
+    prepare = "jwt.algorithms.ECAlgorithm.prepare_key"
+    assert contract(prepare, algorithm, (key,), {}, provider_stable=True) == (
+        "prepare",
+        key,
+    )
+    assert (
+        contract(
+            prepare,
+            ("algorithm", algorithm[1], "CUSTOM"),
+            (key,),
+            {},
+            provider_stable=True,
+        )
+        is None
+    )
+    assert (
+        contract("other.prepare_key", algorithm, (key,), {}, provider_stable=True)
+        is None
+    )
+    assert (
+        contract(prepare, ("jws", jws[1], "ES256"), (key,), {}, provider_stable=True)
+        is None
+    )
+
+
+def test_scope_api_builtin_and_assertion_roles():
+    from factoryline.credential_role_constructor_provider import (
+        credential_scope_api_contract as contract,
+    )
+    from factoryline.credential_role_identity_effects import _Value
+
+    token = _Value(
+        roots=frozenset({"derived:secret"}), inert_kind="scalar", scalar_kind="text"
+    )
+    secret = _Value(
+        roots=frozenset({"secret"}), inert_kind="scalar", scalar_kind="text"
+    )
+    plain = _Value(inert_kind="scalar", scalar_kind="text")
+    string = ("builtin", token, "str")
+    assert contract("builtins.str.encode", string, (), {}, provider_stable=True) == (
+        "propagate",
+        token,
+    )
+    custom_errors = _Value(
+        inert_kind="scalar", scalar_kind="text", _exact_scalar=("custom",)
+    )
+    assert (
+        contract(
+            "builtins.str.encode",
+            string,
+            (),
+            {"errors": custom_errors},
+            provider_stable=True,
+        )
+        is None
+    )
+    assert (
+        contract("builtins.str.split", string, (secret,), {}, provider_stable=True)
+        is None
+    )
+    assert (
+        contract(
+            "builtins.str.encode",
+            ("builtin", token, "bytes"),
+            (),
+            {},
+            provider_stable=True,
+        )
+        is None
+    )
+    owner = ("testcase", _Value(class_roots=frozenset({"test:1"})), True)
+    assert contract(
+        "unittest.TestCase.assertEqual", owner, (token, plain), {}, provider_stable=True
+    ) == ("observe",)
+    assert (
+        contract(
+            "unittest.TestCase.assertEqual",
+            owner,
+            (secret, plain),
+            {},
+            provider_stable=True,
+        )
+        is None
+    )
+    assert (
+        contract(
+            "unittest.TestCase.assertEqual",
+            ("testcase", owner[1], False),
+            (token, plain),
+            {},
+            provider_stable=True,
+        )
+        is None
+    )
+
+
 def _write(tmp_path, relative, source):
     path = tmp_path / relative
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -63,7 +275,7 @@ def test_unknown_collection_source_role_policy_retains_incomplete(policy, state)
     core = _unknown_collection_core()
     core.update(state=state, selected_defect_policy=policy)
     captured = {"app.py": b"value = 1\n"}
-    assert binding._pickle_role_sources(core, captured) is None
+    assert binding._pickle_role_sources(core, captured) == captured
     binding.apply_pickle_source_role_policy(core, captured)
     decision = core["defect_policy_decision"]
     assert core["state"] == "INCOMPLETE"
@@ -3729,6 +3941,117 @@ class TestSigning:
 """
 
 
+@pytest.mark.parametrize(
+    "variant",
+    [
+        "closed",
+        "descriptor",
+        "instance_shadow",
+        "instance_shadow_literal",
+        "custom_dispatch",
+        "owner_escape",
+        "key_escape",
+        "provider_write",
+        "raw_export",
+    ],
+)
+def test_constructor_source_method_role_native(tmp_path, variant):
+    prefix = "        self.validate()\n"
+    method = "    def validate(self):\n        pass\n"
+    if variant == "descriptor":
+        method = "    @property\n    def validate(self):\n        return send\n"
+    elif variant == "instance_shadow":
+        prefix = "        self.validate = send\n" + prefix
+    elif variant == "instance_shadow_literal":
+        prefix = "        self.validate = None\n" + prefix
+    elif variant == "custom_dispatch":
+        method += "    def __getattribute__(self, name):\n        return send\n"
+    elif variant == "owner_escape":
+        method = "    def validate(self):\n        send(self)\n"
+    elif variant == "key_escape":
+        prefix = "        self.validate(key)\n"
+        method = "    def validate(self, key):\n        send(key)\n"
+    text = _OBJECT_SIGNING265.replace(
+        "        self._key = key\n    def check",
+        prefix + "        self._key = key\n" + method + "    def check",
+    )
+    if variant == "provider_write":
+        text += "Gate.validate = send\n"
+    if variant == "raw_export":
+        text += "send(TestSigning.signing_secret)\n"
+    _write(tmp_path, "test_signing.py", text)
+    report = security_scan(tmp_path, cache_enabled=False)
+    active = [
+        row for row in report["findings"] if row["code"] == "SECURITY_HARDCODED_SECRET"
+    ]
+    if variant == "closed":
+        assert not active and report.get("primitive_observations"), report
+    else:
+        assert active and all(row["severity"] == "CRITICAL" for row in active), report
+
+
+def test_constructor_source_method_role_cli_retains_raw_and_live(tmp_path, capsys):
+    import json
+    from factoryline.cli import main
+    from factoryline.mission_control_status import security_scan_status
+
+    text = _OBJECT_SIGNING265.replace(
+        "        self._key = key\n    def check",
+        "        self.validate()\n        self._key = key\n"
+        "    def validate(self):\n        pass\n    def check",
+    )
+    _write(tmp_path, "test_signing.py", text)
+    _write(
+        tmp_path,
+        "live.py",
+        "PASSWORD = 'operational-credential-value'\ninstall_user(password=PASSWORD)\n",
+    )
+    exit_code = main(
+        [
+            "audit",
+            "security",
+            "--root",
+            str(tmp_path),
+            "--security-only",
+            "--defect-policy",
+            "source-role-v3",
+            "--json",
+        ]
+    )
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    report = json.loads(captured.out)
+    assert exit_code == report["defect_policy_decision"]["exit_code"]
+    assert exit_code in {1, 2} and not report["defect_policy_decision"]["clean"]
+    active = [
+        row for row in report["findings"] if row["code"] == "SECURITY_HARDCODED_SECRET"
+    ]
+    assert [(row["path"], row["severity"]) for row in active] == [
+        ("live.py", "CRITICAL")
+    ]
+    observations = [
+        row
+        for row in report["primitive_observations"]
+        if row["code"] == "SECURITY_HARDCODED_SECRET"
+    ]
+    assert len(observations) == 1 and observations[0]["path"] == "test_signing.py"
+    assert observations[0]["severity"] == "CRITICAL"
+    assert any(
+        row["raw_finding"]["path"] == "test_signing.py"
+        and row["raw_finding"]["severity"] == "CRITICAL"
+        for row in report["finding_tier_report"]["ledger"]
+    )
+    status = security_scan_status(tmp_path)
+    assert status["candidate_freshness"] == "CURRENT_SOURCE_HASHES_VERIFIED"
+    assert status["candidate_sha256"] == report["candidate_sha256"]
+    with (tmp_path / "test_signing.py").open("a", encoding="utf-8") as stream:
+        stream.write("\nGate.validate = send\n")
+    assert (
+        security_scan_status(tmp_path)["candidate_freshness"]
+        != "CURRENT_SOURCE_HASHES_VERIFIED"
+    )
+
+
 _REQUEST_SIGNING273 = """from slack_sdk.signature import SignatureVerifier
 from typing import Optional, Dict, Sequence, Union
 class Response:
@@ -4056,6 +4379,131 @@ def _object_signing265_constructor_variant(variant):
     for before, after in replacements.get(variant, []):
         text = text.replace(before, after)
     return text
+
+
+@pytest.mark.parametrize(
+    ("variant", "closed"),
+    [
+        ("literal", True),
+        ("default", True),
+        ("unknown_argument", False),
+        ("key_escape", False),
+        ("provider_write", False),
+    ],
+)
+def test_object_signing_constructor_scalar_context_native(tmp_path, variant, closed):
+    text = _OBJECT_SIGNING265.replace(
+        "    def __init__(self, key):\n        self._key = key",
+        "    def __init__(self, key, mode='safe'):\n"
+        "        self._key = key\n        self.mode = mode",
+    )
+    if variant in {"literal", "key_escape", "provider_write"}:
+        text = text.replace(
+            "Gate(self.signing_secret)", "Gate(self.signing_secret, 'safe')"
+        )
+    elif variant == "unknown_argument":
+        text = text.replace(
+            "Gate(self.signing_secret)", "Gate(self.signing_secret, unknown)"
+        )
+    if variant == "key_escape":
+        text = text.replace(
+            "        self._key = key", "        self._key = key\n        send(key)"
+        )
+    if variant == "provider_write":
+        text += "SignatureVerifier.generate_signature = send\n"
+    _write(tmp_path, "test_signing.py", text)
+    report = security_scan(tmp_path, cache_enabled=False)
+    active = [
+        row for row in report["findings"] if row["code"] == "SECURITY_HARDCODED_SECRET"
+    ]
+    if closed:
+        assert not active and report.get("primitive_observations"), report
+    else:
+        assert active and all(row["severity"] == "CRITICAL" for row in active), report
+
+
+@pytest.mark.parametrize(
+    ("variant", "closed"),
+    [
+        ("default", True),
+        ("false", True),
+        ("true", False),
+        ("unknown", False),
+        ("rebound", False),
+        ("nested_rebound", False),
+        ("nested_key_escape", False),
+    ],
+)
+def test_object_signing_constructor_guard_native(tmp_path, variant, closed):
+    text = _OBJECT_SIGNING265.replace(
+        "    def __init__(self, key):\n        self._key = key",
+        "    def __init__(self, key, remote=False):\n"
+        "        if remote:\n            send(key)\n        self._key = key",
+    )
+    arguments = {"false": "False", "true": "True", "unknown": "unknown"}
+    if variant in arguments:
+        text = text.replace(
+            "Gate(self.signing_secret)",
+            f"Gate(self.signing_secret, {arguments[variant]})",
+        )
+    if variant == "rebound":
+        text = text.replace(
+            "        if remote:", "        remote = True\n        if remote:"
+        )
+    if variant == "nested_rebound":
+        text = text.replace(
+            "        if remote:",
+            "        def inner():\n            remote = True\n        if remote:",
+        )
+    if variant == "nested_key_escape":
+        text = text.replace(
+            "        if remote:",
+            "        def inner():\n            send(key)\n        if remote:",
+        )
+    _write(tmp_path, "test_signing.py", text)
+    report = security_scan(tmp_path, cache_enabled=False)
+    active = [
+        row for row in report["findings"] if row["code"] == "SECURITY_HARDCODED_SECRET"
+    ]
+    if closed:
+        assert not active and report.get("primitive_observations"), report
+    else:
+        assert active and all(row["severity"] == "CRITICAL" for row in active), report
+
+
+@pytest.mark.parametrize(
+    ("variant", "closed"),
+    [
+        ("default", True),
+        ("false", True),
+        ("alias", True),
+        ("true", False),
+        ("unknown", False),
+    ],
+)
+def test_object_signing_constructor_if_expression_native(tmp_path, variant, closed):
+    selected = "value" if variant == "alias" else "None"
+    prefix = "        value = None\n" if variant == "alias" else ""
+    text = _OBJECT_SIGNING265.replace(
+        "    def __init__(self, key):\n        self._key = key",
+        "    def __init__(self, key, remote=False):\n"
+        f"{prefix}        self._key = key\n"
+        f"        self.unused = send(key) if remote else {selected}",
+    )
+    if variant in {"false", "true", "unknown"}:
+        argument = {"false": "False", "true": "True", "unknown": "unknown"}[variant]
+        text = text.replace(
+            "Gate(self.signing_secret)", f"Gate(self.signing_secret, {argument})"
+        )
+    _write(tmp_path, "test_signing.py", text)
+    report = security_scan(tmp_path, cache_enabled=False)
+    active = [
+        row for row in report["findings"] if row["code"] == "SECURITY_HARDCODED_SECRET"
+    ]
+    if closed:
+        assert not active and report.get("primitive_observations"), report
+    else:
+        assert active and all(row["severity"] == "CRITICAL" for row in active), report
 
 
 @pytest.mark.parametrize(
@@ -5447,3 +5895,421 @@ def test_shared_digest372_adversarial_oracle_and_provider(tmp_path, variant):
         index, tmp_path / "test_flow.py", 5, "owned-digest-input"
     )
     assert evidence.get("eligible") is not True, evidence
+
+
+@pytest.mark.parametrize(
+    "consumer", ["environment-name", "provider-mutation", "credential-escape"]
+)
+def test_source_metadata_unknown_collection_public_cli(
+    tmp_path, capsys, monkeypatch, consumer
+):
+    import json
+    from factoryline.cli import main
+    from factoryline.mission_control_status import security_scan_status
+    from factoryline import mock_fixture_provenance as fixture
+
+    _write(
+        tmp_path,
+        "conftest.py",
+        "pytest_plugins = ['external_plugin']\nraise AssertionError('must not execute')\n",
+    )
+    _write(tmp_path, "pytest.ini", "[pytest]\npython_files = test_*.py\n")
+    text = "import os\nPASSWORD_ENV = 'SERVICE_PASSWORD'\nvalue = os.getenv(PASSWORD_ENV)\n"
+    if consumer == "provider-mutation":
+        text += "os.getenv = send\n"
+    if consumer == "credential-escape":
+        text += "send(PASSWORD_ENV)\n"
+    _write(tmp_path, "selectors.py", text)
+    _write(
+        tmp_path,
+        "app.py",
+        "from flask import request\nPASSWORD = 'operational-credential-value'\ninstall_user(password=PASSWORD)\ndef apply():\n    return eval(request.args['program'])\n",
+    )
+
+    # UNKNOWN may classify source-only metadata, but must never ask a test provider
+    # for lifecycle authority. An unexpected call fails this real CLI control.
+    def no_fixture_authority(*args, **kwargs):
+        raise AssertionError("UNKNOWN collection invoked application test authority")
+
+    monkeypatch.setattr(
+        fixture, "application_test_secret_evidence", no_fixture_authority
+    )
+    argv = [
+        "audit",
+        "security",
+        "--root",
+        str(tmp_path),
+        "--security-only",
+        "--defect-policy",
+        "source-role-v3",
+        "--json",
+    ]
+    reports = []
+    for _ in range(2):
+        assert main(argv) == 2
+        captured = capsys.readouterr()
+        assert captured.err == ""
+        reports.append(json.loads(captured.out))
+    first, warm = reports
+    for key in (
+        "findings",
+        "primitive_observations",
+        "finding_tier_report",
+        "defect_policy_decision",
+    ):
+        assert first.get(key, []) == warm.get(key, [])
+    assert first["oracle_context"]["pytest_collection"]["collection_state"] == "UNKNOWN"
+    assert first["state"] == "INCOMPLETE"
+    assert first["defect_policy_decision"]["clean"] is False
+    metadata = [
+        row
+        for row in first.get("primitive_observations", [])
+        if row["path"] == "selectors.py"
+    ]
+    assert len(metadata) == (1 if consumer == "environment-name" else 0)
+    if metadata:
+        assert metadata[0]["facts"]["disposition"] == "SOURCE_PRESENTATION_METADATA"
+        assert (
+            metadata[0]["facts"]["fixture_evidence"]["profile"]
+            == "STATIC_API_DATA_ROLE"
+        )
+    assert any(
+        row["path"] == "app.py"
+        and row["code"] == "SECURITY_HARDCODED_SECRET"
+        and row["severity"] == "CRITICAL"
+        for row in first["findings"]
+    )
+    assert any(row["code"] == "SECURITY_DYNAMIC_EXECUTION" for row in first["findings"])
+    status = security_scan_status(tmp_path)
+    assert status["source_freshness"] == "CURRENT_SOURCE_HASHES_VERIFIED"
+    assert status["state"] == "INCOMPLETE"
+
+    def identity(row):
+        return row["code"], row["path"], row.get("line"), row["severity"]
+
+    assert list(map(identity, status["findings"])) == list(
+        map(identity, warm["findings"])
+    )
+    # A persisted proof cannot survive an extra credential consumer.
+    with (tmp_path / "selectors.py").open("a", encoding="utf-8") as stream:
+        stream.write("\nsend(PASSWORD_ENV)\n")
+    assert (
+        security_scan_status(tmp_path)["source_freshness"]
+        != "CURRENT_SOURCE_HASHES_VERIFIED"
+    )
+
+
+def test_object_signing_constructor_scalar_context_public_cli_receipt(tmp_path, capsys):
+    import json
+    from factoryline.cli import main
+    from factoryline.mission_control_status import security_scan_status
+    from factoryline import review_audits as audit
+
+    text = _OBJECT_SIGNING265.replace(
+        "    def __init__(self, key):\n        self._key = key",
+        "    def __init__(self, key, mode='safe'):\n        self._key = key\n        self.mode = mode",
+    )
+    _write(tmp_path, "test_signing.py", text)
+    _write(
+        tmp_path,
+        "live.py",
+        "PASSWORD = 'operational-credential-value'\ninstall_user(password=PASSWORD)\n",
+    )
+    exit_code = main(
+        [
+            "audit",
+            "security",
+            "--root",
+            str(tmp_path),
+            "--security-only",
+            "--defect-policy",
+            "source-role-v3",
+            "--json",
+        ]
+    )
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    report = json.loads(captured.out)
+    assert exit_code == report["defect_policy_decision"]["exit_code"]
+    assert exit_code in {1, 2} and report["defect_policy_decision"]["clean"] is False
+    active = [
+        row for row in report["findings"] if row["code"] == "SECURITY_HARDCODED_SECRET"
+    ]
+    assert [(row["path"], row["severity"]) for row in active] == [
+        ("live.py", "CRITICAL")
+    ]
+    observed = [
+        row
+        for row in report.get("primitive_observations", [])
+        if row["code"] == "SECURITY_HARDCODED_SECRET"
+    ]
+    assert len(observed) == 1 and observed[0]["path"] == "test_signing.py"
+    assert observed[0]["severity"] == "CRITICAL"
+    raw_ledger = [row["raw_finding"] for row in report["finding_tier_report"]["ledger"]]
+    assert any(
+        row["path"] == "test_signing.py" and row["severity"] == "CRITICAL"
+        for row in raw_ledger
+    )
+    status = security_scan_status(tmp_path)
+    assert status["candidate_freshness"] == "CURRENT_SOURCE_HASHES_VERIFIED"
+    assert status["candidate_sha256"] == report["candidate_sha256"]
+    current = {
+        row["path"]: (tmp_path / row["path"]).read_bytes() for row in report["sources"]
+    }
+    resealed = audit._seal_security_scan(
+        {**json.loads(json.dumps(report)), "_primitive_source_bytes": current}
+    )
+    assert resealed["finding_tier_report"] == report["finding_tier_report"]
+    assert resealed["defect_policy_decision"] == report["defect_policy_decision"]
+    with (tmp_path / "test_signing.py").open("a", encoding="utf-8") as stream:
+        stream.write("\nSignatureVerifier.generate_signature = send\n")
+    assert (
+        security_scan_status(tmp_path)["candidate_freshness"]
+        != "CURRENT_SOURCE_HASHES_VERIFIED"
+    )
+
+
+def test_object_signing_constructor_guard_public_cli_receipt(tmp_path, capsys):
+    import json
+    from factoryline.cli import main
+    from factoryline.mission_control_status import security_scan_status
+    from factoryline import review_audits as audit
+
+    text = _OBJECT_SIGNING265.replace(
+        "    def __init__(self, key):\n        self._key = key",
+        "    def __init__(self, key, remote=False, mode='private-scalar-marker'):\n"
+        "        if remote:\n            send(key)\n        self._key = key\n        self.mode = mode",
+    )
+    _write(tmp_path, "test_signing.py", text)
+    _write(
+        tmp_path,
+        "live.py",
+        "PASSWORD = 'operational-credential-value'\ninstall_user(password=PASSWORD)\n",
+    )
+    exit_code = main(
+        [
+            "audit",
+            "security",
+            "--root",
+            str(tmp_path),
+            "--security-only",
+            "--defect-policy",
+            "source-role-v3",
+            "--json",
+        ]
+    )
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    report = json.loads(captured.out)
+    assert "class-owned-signing-material" not in captured.out
+    assert "private-scalar-marker" not in captured.out
+    assert exit_code == report["defect_policy_decision"]["exit_code"]
+    active = [
+        row for row in report["findings"] if row["code"] == "SECURITY_HARDCODED_SECRET"
+    ]
+    assert [(row["path"], row["severity"]) for row in active] == [
+        ("live.py", "CRITICAL")
+    ]
+    assert any(
+        row["path"] == "test_signing.py" for row in report["primitive_observations"]
+    )
+    status = security_scan_status(tmp_path)
+    assert status["candidate_freshness"] == "CURRENT_SOURCE_HASHES_VERIFIED"
+    assert status["candidate_sha256"] == report["candidate_sha256"]
+    current = {
+        row["path"]: (tmp_path / row["path"]).read_bytes() for row in report["sources"]
+    }
+    resealed = audit._seal_security_scan(
+        {**json.loads(json.dumps(report)), "_primitive_source_bytes": current}
+    )
+    assert resealed["finding_tier_report"] == report["finding_tier_report"]
+    assert resealed["defect_policy_decision"] == report["defect_policy_decision"]
+    assert "class-owned-signing-material" not in json.dumps(resealed)
+    assert "private-scalar-marker" not in json.dumps(resealed)
+    with (tmp_path / "test_signing.py").open("a", encoding="utf-8") as stream:
+        stream.write("\nSignatureVerifier.generate_signature = send\n")
+    assert (
+        security_scan_status(tmp_path)["candidate_freshness"]
+        != "CURRENT_SOURCE_HASHES_VERIFIED"
+    )
+
+
+@pytest.mark.parametrize(
+    "variant",
+    [
+        "closed",
+        "raw_export",
+        "token_export",
+        "owner_export",
+        "runtime_import",
+        "provider_change",
+        "descriptor",
+        "destructor",
+        "header_effect",
+        "method_shadow",
+        "assertion_shadow",
+    ],
+)
+def test_source_bound_test_scope_native(tmp_path, variant):
+    _write(tmp_path, "fixture_keys.py", "SIGNING_SECRET = 'fixture-owned-key-4791'\n")
+    _write(
+        tmp_path,
+        "signer.py",
+        "import jwt\nclass Signer:\n    def __init__(self, key):\n        self.key = key\n    def sign(self, payload):\n        return jwt.encode(payload, self.key, algorithm='HS256')\n    def verify(self, token):\n        return jwt.decode(token, self.key, algorithms=['HS256'])\n",
+    )
+    source = "from unittest import TestCase\nfrom fixture_keys import SIGNING_SECRET\nfrom signer import Signer\nclass SigningChecks(TestCase):\n    def setUp(self):\n        self.signers = (Signer(SIGNING_SECRET), Signer('other'))\n    def test_tokens(self):\n        for signer in self.signers:\n            token = signer.sign({'purpose': 'local'})\n            self.assertEqual(signer.verify(token), {'purpose': 'local'})\n"
+    if variant == "method_shadow":
+        source = source.replace(
+            "    def test_tokens(self):",
+            "    def test_tokens(self):\n        self.signers[0].sign = send",
+        )
+    if variant == "assertion_shadow":
+        source = source.replace(
+            "    def test_tokens(self):",
+            "    def test_tokens(self):\n        self.assertEqual = send",
+        )
+    source += {
+        "raw_export": "        send(SIGNING_SECRET)\n",
+        "token_export": "        send(token)\n",
+        "owner_export": "        send(self)\n",
+    }.get(variant, "")
+    _write(tmp_path, "test_signing.py", source)
+    if variant == "runtime_import":
+        _write(
+            tmp_path,
+            "runtime.py",
+            "from fixture_keys import SIGNING_SECRET\nsend(SIGNING_SECRET)\n",
+        )
+    if variant == "provider_change":
+        _write(tmp_path, "override.py", "import jwt\njwt.encode = send\n")
+    if variant in {"descriptor", "destructor", "header_effect"}:
+        target = tmp_path / "signer.py"
+        text = target.read_text()
+        text = {
+            "descriptor": text.replace(
+                "class Signer:\n", "class Signer:\n    key = property(get_key, send)\n"
+            ),
+            "destructor": text + "    def __del__(self):\n        send(self.key)\n",
+            "header_effect": text.replace(
+                "def sign(self, payload):", "def sign(self, payload=mutate()):"
+            ),
+        }[variant]
+        target.write_text(text)
+    report = security_scan(tmp_path, cache_enabled=False)
+    active = [f for f in report["findings"] if f["code"] == "SECURITY_HARDCODED_SECRET"]
+    observations = [
+        f
+        for f in report.get("primitive_observations", [])
+        if f["code"] == "SECURITY_HARDCODED_SECRET"
+    ]
+    if variant == "closed":
+        assert not active, report
+        assert any(
+            f["facts"].get("fixture_evidence", {}).get("profile")
+            == "SOURCE_BOUND_TEST_SCOPE_ONLY"
+            for f in observations
+        ), report
+    else:
+        assert active and all(f["severity"] == "CRITICAL" for f in active), report
+
+
+def test_source_bound_test_scope_epoch_uses_actual_contract_bindings(monkeypatch):
+    from factoryline import credential_identity_audit as audit
+    from factoryline import credential_role_method_use_getter_audit as scope
+
+    before = audit._TEST_SCOPE_CONTRACT_EPOCH.__code__
+    monkeypatch.setattr(scope, "_SCOPE_DEFAULT_ALGORITHMS", frozenset({"HS256"}))
+    after = audit._TEST_SCOPE_CONTRACT_EPOCH.__code__
+    assert after is not before
+    assert audit._TEST_SCOPE_CONTRACT_EPOCH.__code__ is after
+
+
+def test_source_bound_test_scope_epoch_retains_one_generation_and_invalidates_restoration(
+    monkeypatch,
+):
+    from factoryline import credential_identity_audit as audit
+    from factoryline import credential_role_method_use_getter_audit as scope
+
+    epoch = audit._TestScopeContractEpoch()
+    original = scope.SCOPE_API_CONTRACT_EPOCH
+    first = epoch.__code__
+    prior = first
+    for _ in range(1000):
+        value = object()
+        monkeypatch.setattr(scope, "SCOPE_API_CONTRACT_EPOCH", value)
+        token = epoch.__code__
+        assert token is not prior
+        assert epoch.__code__ is token
+        assert any(item is value for item in epoch.current[2])
+        prior = token
+    assert set(vars(epoch)) == {"current"}
+    monkeypatch.setattr(scope, "SCOPE_API_CONTRACT_EPOCH", original)
+    assert epoch.__code__ is not first and epoch.__code__ is not prior
+
+
+def test_source_bound_test_scope_cli_receipt_and_recompute(tmp_path, capsys):
+    import copy
+    import json
+    from factoryline.cli import main
+    from factoryline.mission_control_status import security_scan_status
+    from factoryline.primitive_observation_binding import application_fixture_binding
+
+    test_source = "from unittest import TestCase\nfrom fixture_keys import SIGNING_SECRET\nimport jwt\nclass SigningChecks(TestCase):\n    def setUp(self):\n        self.key = SIGNING_SECRET\n    def test_tokens(self):\n        token = jwt.encode({'purpose': 'local'}, self.key, algorithm='HS256')\n        self.assertEqual(jwt.decode(token, self.key, algorithms=['HS256']), {'purpose': 'local'})\n"
+    _write(
+        tmp_path, "fixture_keys.py", "SIGNING_SECRET = 'scope-receipt-marker-4791'\n"
+    )
+    _write(tmp_path, "test_signing.py", test_source)
+    _write(
+        tmp_path,
+        "live.py",
+        "PASSWORD = 'real-operational-password'\ninstall_user(password=PASSWORD)\n",
+    )
+    code = main(
+        [
+            "audit",
+            "security",
+            "--root",
+            str(tmp_path),
+            "--security-only",
+            "--defect-policy",
+            "source-role-v3",
+            "--json",
+        ]
+    )
+    output = capsys.readouterr()
+    assert not output.err
+    report = json.loads(output.out)
+    assert code in {1, 2} and not report["defect_policy_decision"]["clean"]
+    active = [f for f in report["findings"] if f["code"] == "SECURITY_HARDCODED_SECRET"]
+    assert [(f["path"], f["severity"]) for f in active] == [("live.py", "CRITICAL")]
+    primitives = [
+        f
+        for f in report["primitive_observations"]
+        if f["code"] == "SECURITY_HARDCODED_SECRET"
+    ]
+    assert len(primitives) == 1 and primitives[0]["severity"] == "CRITICAL"
+    assert (
+        primitives[0]["facts"]["fixture_evidence"]["profile"]
+        == "SOURCE_BOUND_TEST_SCOPE_ONLY"
+    )
+    assert "scope-receipt-marker-4791" not in output.out
+    rows = report["sources"]
+    bindings = {r["path"]: r["sha256"] for r in rows}
+    sources = {r["path"]: (tmp_path / r["path"]).read_bytes() for r in rows}
+    assert application_fixture_binding(primitives[0], rows, bindings, sources)
+    forged = copy.deepcopy(primitives[0])
+    forged["facts"]["fixture_evidence"]["semantic_model"] = "forged-model"
+    assert not application_fixture_binding(forged, rows, bindings, sources)
+    assert (
+        security_scan_status(tmp_path)["candidate_freshness"]
+        == "CURRENT_SOURCE_HASHES_VERIFIED"
+    )
+    _write(
+        tmp_path,
+        "runtime.py",
+        "from fixture_keys import SIGNING_SECRET\nsend(SIGNING_SECRET)\n",
+    )
+    assert (
+        security_scan_status(tmp_path)["candidate_freshness"]
+        != "CURRENT_SOURCE_HASHES_VERIFIED"
+    )

@@ -57,6 +57,7 @@ def build_informed_actionability_case(
     *,
     candidate_commit: str,
     requirement: str,
+    retriever=None,
 ) -> dict[str, Any]:
     """Build the source-bound secondary review packet through the shared context assembler."""
     from .context_efficiency import build_informed_actionability_case as assemble
@@ -66,6 +67,7 @@ def build_informed_actionability_case(
         source_index,
         candidate_commit=candidate_commit,
         requirement=requirement,
+        retriever=retriever,
     )
 
 

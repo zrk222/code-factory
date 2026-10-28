@@ -566,7 +566,18 @@ def _apply_security_scan_policy(
             )
         elif policy in {"source-role-v1", "source-role-v2", "source-role-v3"}:
             primitive.apply_pickle_source_role_policy(
-                core, captured, source_model=producer_source_model
+                core,
+                captured,
+                source_model=producer_source_model,
+                configuration_bytes={
+                    row["path"]: captured[row["path"]]
+                    for row in core.get("oracle_context", {}).get(
+                        "configuration_sources", []
+                    )
+                    if isinstance(captured, dict)
+                    and isinstance(captured.get(row.get("path")), bytes)
+                    and sha256(captured[row["path"]]).hexdigest() == row.get("sha256")
+                },
             )
     else:
         core.pop("defect_policy_decision", None)
@@ -690,11 +701,17 @@ def security_scan_report(
     }
     if security_only is True:
         core["oracle_context"]["test_oracle_assessment"] = "NOT_ASSESSED_SECURITY_ONLY"
+    if collection_identity is not None:
+        from copy import deepcopy
+
+        core["oracle_context"]["static_pytest_collection"] = deepcopy(
+            collection_identity
+        )
     if (
         collection_identity is not None
         and collection_identity.get("collection_state") == "UNKNOWN"
     ):
-        core["oracle_context"]["pytest_collection"] = dict(collection_identity)
+        core["oracle_context"]["pytest_collection"] = deepcopy(collection_identity)
         core["state"] = "INCOMPLETE"
     core["source_manifest_sha256"] = audit.sha256(
         json.dumps(

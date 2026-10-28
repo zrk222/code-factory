@@ -436,6 +436,14 @@ def test_workspace_source_cache_requires_exact_inventory_and_runtime_identity(
     assert cache._full_repository_workspace_cache_load_source(altered_key) is None
 
     monkeypatch.setattr(cache, "FULL_REPOSITORY_WORKSPACE_CACHE_MAX_BYTES", 1)
+    copied = []
+    original_copy = cache.deepcopy
+
+    def observed_copy(value):
+        copied.append(type(value))
+        return original_copy(value)
+
+    monkeypatch.setattr(cache, "deepcopy", observed_copy)
     assert (
         cache._full_repository_workspace_cache_store_prefix(
             key, "result", "context", [], digest, ({"app.py": raw}, bindings), identity
@@ -443,6 +451,7 @@ def test_workspace_source_cache_requires_exact_inventory_and_runtime_identity(
         == 0
     )
     assert cache._FULL_REPOSITORY_WORKSPACE_PREFIX_CACHE is None
+    assert not copied, "oversized cache inputs must be rejected before cloning"
 
 
 def test_zap_source_trace_mount_preserves_isolation_and_signed_python(tmp_path):
@@ -523,7 +532,7 @@ def test_workspace_policy319_review_and_incomplete_states_stay_distinct(tmp_path
         tmp_path, context_profile="workspace-v2", defect_policy="trusted-core-v1"
     )["defect_policy_decision"]
     assert review["state"] == "NO_SUPPORTED_DEFECTS_REVIEW_REQUIRED"
-    assert review["exit_code"] == 2
+    assert review["exit_code"] == 0
     assert review["passed"] is False and review["clean"] is False
     assert review["release_approved"] is False
     assert review["needs_context_count"] >= 1

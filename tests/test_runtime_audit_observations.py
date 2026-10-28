@@ -1484,3 +1484,531 @@ def test_evidence_policy_remediation_retains_quality_hollow_handoff(tmp_path):
         a["finding_context"]["code"] == "QUALITY_HOLLOW_TEST"
         for a in report["agent_actions"]
     )
+
+
+@pytest.mark.parametrize("raises", [False, True])
+def test_foreign_provider_request_alias_memo_restores_outer(raises):
+    import ast
+    from factoryline import finite_capture, intent_quality, semantic_credential_sensor
+
+    outer = ast.parse("import outer\n")
+    foreign = ast.parse(
+        "from flask import request\ndef view():\n    return request.form['value']\n"
+    )
+    memo = semantic_credential_sensor._new_security_request_alias_memo(outer)
+    token = intent_quality._SECURITY_REQUEST_ALIAS_MEMO.set(memo)
+    nodes = list(ast.walk(foreign))
+    parents = {
+        id(child): parent for parent in nodes for child in ast.iter_child_nodes(parent)
+    }
+    observed = []
+
+    def projector(tree, aliases, input_nodes):
+        current = intent_quality._SECURITY_REQUEST_ALIAS_MEMO.get()
+        observed.append(current["tree"] is tree)
+        assert current["tree"] is foreign
+        if raises:
+            raise ValueError("projector failure")
+        return input_nodes
+
+    try:
+        if raises:
+            with pytest.raises(ValueError, match="projector failure"):
+                finite_capture._project_provider_inventory(
+                    nodes, {}, parents, {}, projector
+                )
+        else:
+            actual, _ = finite_capture._project_provider_inventory(
+                nodes, {}, parents, {}, projector
+            )
+            assert [id(node) for node in actual] == [id(node) for node in nodes]
+        assert observed == [True]
+        assert intent_quality._SECURITY_REQUEST_ALIAS_MEMO.get() is memo
+    finally:
+        intent_quality._SECURITY_REQUEST_ALIAS_MEMO.reset(token)
+
+
+@pytest.mark.parametrize(
+    ("foreign", "decorated", "supported"),
+    [
+        (
+            "from django.contrib import admin\n"
+            "from django.urls import path\n"
+            "urlpatterns = [path('admin/', admin.site.urls)]\n"
+            "from django.core.management.commands.runserver import Command\n"
+            "Command.default_port = '9000'\n",
+            True,
+            True,
+        ),
+        (
+            "import django.views.decorators.http as http\n"
+            "http.require_http_methods = replacement\n",
+            True,
+            False,
+        ),
+        ("import django\nunknown(django)\n", True, False),
+        (
+            "import django.views.decorators as decorators\n"
+            "decorators.http = replacement\n",
+            True,
+            False,
+        ),
+        ("import django\ndjango.views = replacement\n", True, False),
+        ("import builtins\nbuiltins.eval = replacement\n", True, False),
+        ("from django.contrib import admin\n", False, False),
+    ],
+)
+def test_framework_provider_relevance_native_cli(
+    tmp_path, capsys, foreign, decorated, supported
+):
+    from factoryline.cli import main
+    from factoryline import review_audits as audit
+
+    source = "from django.views.decorators.http import require_http_methods\n"
+    if decorated:
+        source += "@require_http_methods(['POST'])\n"
+    source += (
+        "def view(request):\n"
+        "    body = request.body\n"
+        "    text = body.decode()\n"
+        "    return eval(text)\n"
+    )
+    (tmp_path / "app.py").write_text(source, encoding="utf-8")
+    (tmp_path / "other.py").write_text(foreign, encoding="utf-8")
+    main(
+        [
+            "audit",
+            "security",
+            "--root",
+            str(tmp_path),
+            "--security-only",
+            "--defect-policy",
+            "source-role-v3",
+            "--json",
+        ]
+    )
+    output = capsys.readouterr()
+    assert output.err == ""
+    report = json.loads(output.out)
+    rows = report["finding_tier_report"]["ledger"]
+    selected = [
+        r for r in rows if r["raw_finding"]["code"] == "SECURITY_DYNAMIC_EXECUTION"
+    ]
+    assert len(selected) == 1
+    assert selected[0]["tier"] == ("SUPPORTED_DEFECT" if supported else "NEEDS_CONTEXT")
+    assert any(f["code"] == "SECURITY_DYNAMIC_EXECUTION" for f in report["findings"])
+    receipt = json.loads((tmp_path / ".factory/security-scan/latest.json").read_text())
+    assert receipt["report"] == report
+    core = copy.deepcopy(report)
+    raw = [r["raw_finding"] for r in rows]
+    core["_primitive_source_bytes"] = audit._app_source_bytes(
+        tmp_path,
+        raw,
+        report["sources"],
+        {p: p.read_bytes() for p in (tmp_path / "app.py", tmp_path / "other.py")},
+        capture_all_sources=True,
+    )
+    assert (
+        audit._seal_security_scan(core)["finding_tier_report"]
+        == report["finding_tier_report"]
+    )
+
+
+def test_preflight_bound_path_contains_capture_and_rejects_escape(tmp_path):
+    from scripts.precision_cohort_preflight import bound_path
+
+    assert (
+        bound_path(tmp_path, "capture/app.py")
+        == (tmp_path / "capture" / "app.py").resolve()
+    )
+    for relative in (
+        "../outside.py",
+        "capture/../../outside.py",
+        str(tmp_path / "app.py"),
+    ):
+        with pytest.raises(ValueError, match="unsafe captured path"):
+            bound_path(tmp_path, relative)
+
+
+@pytest.mark.parametrize("mutation", ["manifest", "source"])
+def test_preflight_scanner_bundles_verify_manifest_and_source_seals(tmp_path, mutation):
+    from scripts.precision_cohort_preflight import scanner_bundles
+
+    protocol = {"scanner": {}}
+    expected = {}
+    for arm in ("baseline", "candidate"):
+        bundle = tmp_path / arm
+        scanner = bundle / "scanner"
+        scanner.mkdir(parents=True)
+        source = scanner / "sentinel.py"
+        source.write_text("raise AssertionError('scanner source must not execute')\n")
+        manifest = bundle / "manifest.json"
+        manifest.write_text(
+            json.dumps({"sentinel.py": hashlib.sha256(source.read_bytes()).hexdigest()})
+        )
+        protocol["scanner"][arm] = arm
+        protocol["scanner"][arm + "_manifest_sha256"] = hashlib.sha256(
+            manifest.read_bytes()
+        ).hexdigest()
+        expected[str(manifest)] = protocol["scanner"][arm + "_manifest_sha256"]
+        expected[str(source)] = hashlib.sha256(source.read_bytes()).hexdigest()
+
+    bindings = {}
+    assert scanner_bundles(tmp_path, protocol, bindings) == {
+        arm: tmp_path / arm / "scanner" for arm in ("baseline", "candidate")
+    }
+    assert bindings == expected
+    changed = (
+        tmp_path
+        / "candidate"
+        / ("manifest.json" if mutation == "manifest" else "scanner/sentinel.py")
+    )
+    changed.write_bytes(changed.read_bytes() + b"\n")
+    with pytest.raises(
+        ValueError, match="manifest seal changed|scanner source changed"
+    ):
+        scanner_bundles(tmp_path, protocol, {})
+
+
+@pytest.mark.parametrize("configuration", ["", "[pytest]\naddopts = -p plugin\n"])
+def test_cohort_startup_gate_checks_actual_config_without_target_execution(
+    tmp_path, configuration
+):
+    import platform
+    from scripts.precision_cohort_preflight import startup
+
+    (tmp_path / "app.py").write_text("raise RuntimeError('never execute source')\n")
+    if configuration:
+        (tmp_path / "pytest.ini").write_text(configuration)
+    profile = {
+        "python": platform.python_version(),
+        "dependencies": {},
+        "security_only": True,
+    }
+    if configuration:
+        result = startup(
+            Path(__file__).resolve().parents[1], tmp_path, profile, ["app.py"]
+        )
+        assert result["state"] == "PASS"
+        assert result["collection"]["collection_state"] == "UNKNOWN"
+        assert result["collection"]["python_files"] == []
+        with pytest.raises(Exception, match="unsupported configuration"):
+            startup(
+                Path(__file__).resolve().parents[1],
+                tmp_path,
+                {**profile, "security_only": False},
+                ["app.py"],
+            )
+    else:
+        assert (
+            startup(Path(__file__).resolve().parents[1], tmp_path, profile, ["app.py"])[
+                "state"
+            ]
+            == "PASS"
+        )
+        with pytest.raises(ValueError, match="inventory"):
+            startup(Path(__file__).resolve().parents[1], tmp_path, profile, [])
+
+
+def test_cohort_startup_gate_rejects_unparseable_capture_before_collection(
+    tmp_path, monkeypatch
+):
+    import platform
+
+    from factoryline import review_audits as audit
+    from scripts.precision_cohort_preflight import startup
+
+    (tmp_path / "app.py").write_text("def broken(\n")
+    profile = {
+        "python": platform.python_version(),
+        "dependencies": {},
+        "security_only": True,
+    }
+
+    def collection_must_not_run(*args, **kwargs):
+        pytest.fail("collection ran before captured syntax validation")
+
+    monkeypatch.setattr(audit, "_pytest_collection_config", collection_must_not_run)
+    with pytest.raises(ValueError, match="captured Python syntax.*app.py"):
+        startup(Path(__file__).resolve().parents[1], tmp_path, profile, ["app.py"])
+
+
+@pytest.mark.parametrize(
+    "mutation", ["failed", "omitted", "duplicate", "stale", "unsealed"]
+)
+def test_cohort_startup_gate_never_launches_failed_or_stale_receipt(
+    monkeypatch, tmp_path, mutation
+):
+    from scripts import precision_cohort_preflight as gate
+
+    controller = tmp_path / "study.py"
+    jobs = [
+        {"repository": "example/project", "arm": arm}
+        for arm in ("baseline", "candidate")
+    ]
+    bindings = {str(controller): "current-input-hash"}
+    receipt = {
+        "schema": gate.SCHEMA,
+        "state": "PASS",
+        "study": str(tmp_path),
+        "controller": str(controller),
+        "expected": [[r["repository"], r["arm"]] for r in jobs],
+        "checks": [{**r, "state": "PASS"} for r in jobs],
+        "inputs": bindings,
+        "inputs_unchanged": True,
+    }
+    if mutation == "failed":
+        receipt["checks"][1]["state"] = "BLOCKED"
+    elif mutation == "omitted":
+        receipt["checks"].pop()
+    elif mutation == "duplicate":
+        receipt["checks"][1] = dict(receipt["checks"][0])
+    elif mutation == "stale":
+        receipt["inputs"] = {str(controller): "stale-input-hash"}
+    receipt["receipt_sha256"] = gate.canonical(receipt)
+    if mutation == "unsealed":
+        receipt["state"] = "BLOCKED"
+    monkeypatch.setattr(gate, "inputs", lambda _study: (jobs, bindings, controller))
+
+    def forbidden_launch(*args, **kwargs):
+        pytest.fail("runner must not start before a complete current startup gate")
+
+    monkeypatch.setattr(gate.subprocess, "run", forbidden_launch)
+    with pytest.raises(ValueError):
+        gate.launch(receipt)
+
+
+@pytest.mark.parametrize("mutation", ["added_source", "added_config", "profile"])
+def test_cohort_startup_gate_rechecks_namespace_and_profile_before_launch(
+    monkeypatch, tmp_path, mutation
+):
+    import hashlib
+    import platform
+    from scripts import precision_cohort_preflight as gate
+
+    source = tmp_path / "app.py"
+    source.write_text("VALUE = 1\n")
+    controller = tmp_path / "study.py"
+    controller.write_text("raise RuntimeError('never launch')\n")
+    jobs = [
+        {
+            "repository": "example/project",
+            "arm": arm,
+            "scanner": str(Path(__file__).resolve().parents[1]),
+            "workspace": str(tmp_path),
+            "profile": {
+                "python": platform.python_version(),
+                "dependencies": {},
+                "security_only": True,
+            },
+            "expected_files": ["app.py", "study.py"],
+        }
+        for arm in ("baseline", "candidate")
+    ]
+    bindings = {str(source): hashlib.sha256(source.read_bytes()).hexdigest()}
+    monkeypatch.setattr(gate, "inputs", lambda _study: (jobs, bindings, controller))
+    receipt = gate.preflight(tmp_path)
+    assert receipt["state"] == "PASS"
+    if mutation == "added_source":
+        (tmp_path / "extra.py").write_text("VALUE = 2\n")
+    elif mutation == "added_config":
+        (tmp_path / "pytest.ini").write_text("[pytest]\npython_files = check_*.py\n")
+    else:
+        jobs[0]["profile"]["python"] = "0.0.0"
+    with pytest.raises(ValueError, match="inventory or execution profile"):
+        gate.validate(receipt)
+
+
+@pytest.mark.parametrize("stage", ["input_load", "input_disappeared"])
+def test_cohort_startup_gate_records_structured_input_failures(
+    monkeypatch, tmp_path, stage
+):
+    from scripts import precision_cohort_preflight as gate
+
+    def missing(*_args):
+        raise FileNotFoundError("missing captured input")
+
+    if stage == "input_load":
+        monkeypatch.setattr(gate, "inputs", missing)
+    else:
+        monkeypatch.setattr(
+            gate,
+            "inputs",
+            lambda _: (
+                [{"repository": "example/project", "arm": "candidate"}],
+                {"missing": "hash"},
+                tmp_path / "study.py",
+            ),
+        )
+        monkeypatch.setattr(gate, "worker", lambda _: {"state": "PASS"})
+        monkeypatch.setattr(gate, "digest", missing)
+    receipt = gate.preflight(tmp_path)
+    assert receipt["state"] == "BLOCKED"
+    assert "FileNotFoundError" in receipt["error"]
+    assert receipt["inputs_unchanged"] is False
+
+
+@pytest.mark.parametrize(
+    "source,extra,code,reviewed",
+    [
+        ("import os\nos.system('fixed-command')\n", {}, "SECURITY_OS_COMMAND", True),
+        (
+            "import os\nfrom flask import request\ndef run():\n    os.system(request.args['command'])\n",
+            {},
+            "SECURITY_OS_COMMAND",
+            False,
+        ),
+        (
+            "from pathlib import Path\np = Path(__file__).parent / 'payload.py'\nexec(p.read_text())\n",
+            {"payload.py": "print('captured program')\n"},
+            "SECURITY_DYNAMIC_EXECUTION",
+            True,
+        ),
+        (
+            "import pickle, subprocess, sys\nfrom subprocess import Popen\n"
+            "def start():\n    return Popen([sys.executable, '-m', __name__], stdin=subprocess.PIPE, stdout=subprocess.PIPE)\n"
+            "def worker():\n    stdin = sys.stdin\n    value = pickle.load(stdin.buffer)\n    return pickle.dumps(value)\n"
+            "if __name__ == '__main__':\n    worker()\n",
+            {},
+            "SECURITY_UNSAFE_DESERIALIZATION",
+            True,
+        ),
+        (
+            "def run(data):\n    return eval(data)\n",
+            {},
+            "SECURITY_DYNAMIC_EXECUTION",
+            False,
+        ),
+        (
+            "import os\nos.system('fixed-command')\n",
+            {"other.py": "import os\nos.system = replacement\n"},
+            "SECURITY_OS_COMMAND",
+            False,
+        ),
+        (
+            "",
+            {
+                "test_roundtrip.py": "import pickle\ndef test_roundtrip():\n    result = pickle.loads(pickle.dumps(object()))\n    assert result\n"
+            },
+            "SECURITY_UNSAFE_DESERIALIZATION",
+            False,
+        ),
+        (
+            "import textwrap\nclass Example:\n"
+            "    def build(self, source):\n        namespace = {}\n"
+            "        exec(textwrap.dedent(source), namespace)\n        return namespace\n"
+            "    def test_value(self):\n        self.build('VALUE = 1')\n",
+            {},
+            "SECURITY_DYNAMIC_EXECUTION",
+            False,
+        ),
+    ],
+)
+def test_collection_independent_source_roles_native_receipt_and_reseal(
+    tmp_path, capsys, source, extra, code, reviewed
+):
+    from factoryline import review_audits as audit
+    from factoryline.cli import main
+
+    files = {"app.py": source, **extra}
+    files["conftest.py"] = (
+        "pytest_plugins = ['external_plugin']\nraise RuntimeError('never execute')\n"
+    )
+    for name, text in files.items():
+        (tmp_path / name).write_text(text, encoding="utf-8")
+    result = main(
+        [
+            "audit",
+            "security",
+            "--root",
+            str(tmp_path),
+            "--security-only",
+            "--defect-policy",
+            "source-role-v3",
+            "--json",
+        ]
+    )
+    output = capsys.readouterr()
+    assert result == 2 and not output.err
+    report = json.loads(output.out)
+    assert report["state"] == "INCOMPLETE"
+    assert (
+        report["oracle_context"]["pytest_collection"]["collection_state"] == "UNKNOWN"
+    )
+    assert (
+        report["oracle_context"]["test_oracle_assessment"]
+        == "NOT_ASSESSED_SECURITY_ONLY"
+    )
+    assert not any(row["code"].startswith("QUALITY_") for row in report["findings"])
+    selected = report["context_reviews"] if reviewed else report["findings"]
+    assert any(row["code"] == code for row in selected)
+    assert not any(
+        row["code"] == code
+        for row in (report["findings"] if reviewed else report["context_reviews"])
+    )
+    receipt = json.loads((tmp_path / ".factory/security-scan/latest.json").read_text())
+    assert receipt["report"] == report
+    assert (
+        security_scan_status(tmp_path)["candidate_freshness"]
+        == "PYTEST_COLLECTION_UNKNOWN"
+    )
+    core = copy.deepcopy(report)
+    core["_primitive_source_bytes"] = {
+        name: (tmp_path / name).read_bytes() for name in files
+    }
+    rebuilt = audit._seal_security_scan(core)
+    for key in ("findings", "context_reviews", "finding_tier_report", "state"):
+        assert rebuilt[key] == report[key]
+
+
+@pytest.mark.parametrize("policy", ["legacy-v1", "source-role-v3"])
+def test_shared_configuration_capture_survives_native_copy_and_reseal(
+    tmp_path, monkeypatch, policy
+):
+    from factoryline import review_audits as audit
+    from factoryline import primitive_observation_binding as primitive
+
+    configurations = {
+        "pyproject.toml": b'[project]\nname="capture-control"\nversion="1"\ndescription="private-config-marker"\n',
+        "tox.ini": b"[testenv]\ncommands = pytest\n[pytest]\npython_files = test_*.py\n",
+    }
+    for path, raw in configurations.items():
+        (tmp_path / path).write_bytes(raw)
+    (tmp_path / "app.py").write_text("def run(value):\n    return eval(value)\n")
+    observed = []
+    apply_policy = primitive.apply_pickle_source_role_policy
+
+    def observe_policy(*args, **kwargs):
+        observed.append(kwargs.get("configuration_bytes"))
+        return apply_policy(*args, **kwargs)
+
+    monkeypatch.setattr(primitive, "apply_pickle_source_role_policy", observe_policy)
+    for _ in range(2):
+        report = audit.security_scan(tmp_path, cache_enabled=True, defect_policy=policy)
+        retained = dict(report._captured_sources)
+        assert {name: retained[name] for name in configurations} == configurations
+        assert dict(report.copy()._captured_sources) == retained
+        assert "private-config-marker" not in json.dumps(report)
+        rebuilt = audit._seal_security_scan(copy.deepcopy(report))
+        assert dict(rebuilt._captured_sources) == retained
+        assert rebuilt["findings"] == report["findings"]
+    if policy == "source-role-v3":
+        assert observed and all(row == configurations for row in observed)
+
+
+def test_shared_configuration_capture_rejects_changed_bytes(tmp_path, monkeypatch):
+    import hashlib
+    from factoryline import review_audits as audit
+
+    raw = b"[pytest]\n"
+    (tmp_path / "pytest.ini").write_bytes(raw)
+    binding = {
+        "path": "pytest.ini",
+        "bytes": len(raw),
+        "sha256": hashlib.sha256(raw).hexdigest(),
+    }
+    monkeypatch.setattr(audit, "_security_source_bytes", lambda *_: b"[other!]\n")
+    retained = {}
+    with pytest.raises(audit.ReviewAuditError, match="Evidence changed"):
+        audit._verify_security_bindings(tmp_path, [binding], captured_out=retained)
+    assert retained == {}

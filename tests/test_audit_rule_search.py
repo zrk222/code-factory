@@ -102,6 +102,485 @@ from factoryline.savings import load_savings_pairs
 from factoryline.update_notifier import read_manifest
 
 
+def _hybrid_encoder(texts):
+    return [
+        [1.0, 0.0] if "deserialize" in text or "pickle" in text else [0.0, 1.0]
+        for text in texts
+    ]
+
+
+def test_hybrid_retrieval_fuses_semantic_and_exact_identifier_with_bound_spans(
+    tmp_path,
+):
+    from factoryline.audit_rule_search import HybridSourceRetriever
+
+    index, _ = _informed_fixture(
+        tmp_path,
+        {
+            "sink.py": "import pickle\ndef decode(x):\n    return pickle.loads(x)\n",
+            "rare.py": "# unique_credential_writer\r\ndef save(x):\r\n    return x\r\n",
+            "other.py": "# unrelated\n",
+        },
+    )
+    calls = []
+
+    def encode(texts):
+        calls.append(len(texts))
+        return _hybrid_encoder(texts)
+
+    retriever = HybridSourceRetriever(
+        index, encode, model_id="controlled-test-encoder-v1"
+    )
+    hits = retriever.search("deserialize unique_credential_writer", limit=2)
+    assert {row["path"] for row in hits} == {"sink.py", "rare.py"}
+    assert next(row for row in hits if row["path"] == "rare.py")["bm25_rank"] == 1
+    assert next(row for row in hits if row["path"] == "sink.py")["semantic_rank"] == 1
+    for row in hits:
+        assert row["sha256"] == index.inventory[tmp_path / row["path"]]
+        assert row["content"] == index.source_bytes[tmp_path / row["path"]].decode()
+    retriever.search("deserialize", limit=1)
+    assert calls == [
+        3,
+        1,
+        1,
+    ]  # Corpus embeddings are reused; only queries are encoded again.
+
+
+def test_hybrid_secondary_packet_delivers_hints_without_resolving_native_unknowns(
+    tmp_path,
+):
+    from factoryline.audit_rule_search import HybridSourceRetriever
+    from factoryline.jev_classifier import build_informed_actionability_case
+
+    index, finding = _informed_fixture(
+        tmp_path,
+        {
+            "sink.py": "import pickle\ndef decode(x):\n    return pickle.loads(x)\n",
+            "writer.py": "# deserialize input producer\ndef persist(value):\n    return value\n",
+        },
+    )
+    kwargs = dict(candidate_commit="a" * 40, requirement="deserialize input origin")
+    before = build_informed_actionability_case(finding, index, **kwargs)
+    after = build_informed_actionability_case(
+        finding,
+        index,
+        **kwargs,
+        retriever=HybridSourceRetriever(index, _hybrid_encoder, model_id="test-v1"),
+    )
+    old, new = (item["state"]["evidence"] for item in (before, after))
+    assert new["actionability"] == old["actionability"]
+    assert all(
+        row["status"] == "unknown"
+        for name, row in new["actionability"].items()
+        if name != "unknowns"
+    )
+    assert any(
+        row["path"] == "writer.py" and row["kind"] == "source_excerpt"
+        for row in new["artifacts"]
+    )
+    ledger = json.loads(
+        next(
+            row["content"]
+            for row in new["artifacts"]
+            if row["kind"] == "native_sink_evidence"
+        )
+    )
+    assert ledger["retrieval"]["authority"] == "none"
+    assert ledger["retrieval"]["trace_validation"] == "required"
+    assert not any(row.get("kind") == "retrieval_hint" for row in ledger["edges"])
+
+
+@pytest.mark.parametrize(
+    "vectors",
+    [[[0.0, 0.0]], [[float("nan"), 1.0]], [[float("inf"), 1.0]], [], [[1.0], [1.0]]],
+)
+def test_hybrid_rejects_invalid_embeddings(tmp_path, vectors):
+    from factoryline.audit_rule_search import HybridSourceRetriever
+
+    index, _ = _informed_fixture(
+        tmp_path, {"sink.py": "import pickle\nx = pickle.loads(b'')\n"}
+    )
+    with pytest.raises(ValueError):
+        HybridSourceRetriever(index, lambda texts: vectors, model_id="test")
+
+
+@pytest.mark.parametrize("mutation", ["bytes", "inventory", "during_query"])
+def test_hybrid_rejects_stale_captured_sources(tmp_path, mutation):
+    from factoryline.audit_rule_search import HybridSourceRetriever
+
+    index, _ = _informed_fixture(
+        tmp_path, {"sink.py": "import pickle\nx = pickle.loads(b'')\n"}
+    )
+    retriever = HybridSourceRetriever(index, _hybrid_encoder, model_id="test")
+    path = tmp_path / "sink.py"
+    if mutation == "bytes":
+        index.source_bytes[path] += b"# changed\n"
+    elif mutation == "inventory":
+        index.inventory[path] = "b" * 64
+    else:
+
+        def mutate(texts):
+            index.source_bytes[path] += b"# changed\n"
+            return _hybrid_encoder(texts)
+
+        retriever.encode = mutate
+    with pytest.raises(ValueError, match="stale|changed"):
+        retriever.search("deserialize")
+
+
+def test_hybrid_rejects_corpus_budget_before_embedding(tmp_path):
+    from factoryline.audit_rule_search import HybridSourceRetriever
+
+    index, _ = _informed_fixture(
+        tmp_path,
+        {"sink.py": "import pickle\nx = pickle.loads(b'')\n" + "# x\n" * 16384},
+    )
+
+    def forbidden(texts):
+        pytest.fail("oversized corpus reached encoder")
+
+    with pytest.raises(ValueError, match="budget"):
+        HybridSourceRetriever(index, forbidden, model_id="test")
+
+
+@pytest.mark.parametrize(
+    "source", ["credential = 'example'", "credential: str = 'example'"]
+)
+def test_retrieval_transport_assignment_secret_retains_source_and_missing_closure(
+    tmp_path, source
+):
+    from factoryline.audit_rule_search import HybridSourceRetriever
+    from factoryline.jev_classifier import build_informed_actionability_case
+
+    index, finding = _informed_fixture(
+        tmp_path,
+        {
+            "sink.py": source + "\nimport pickle\nx = pickle.loads(b'')\n",
+            "consumer.py": "# credential consumer\ndef consume(value):\n    return value\n",
+        },
+    )
+    assignment = index.snapshots[tmp_path / "sink.py"].body[0]
+    finding.update(
+        code="SECURITY_HARDCODED_SECRET",
+        line=1,
+        column=0,
+        end_line=assignment.end_lineno,
+        end_column=assignment.end_col_offset,
+    )
+    item = build_informed_actionability_case(
+        finding,
+        index,
+        candidate_commit="a" * 40,
+        requirement="credential consumer é",
+        retriever=HybridSourceRetriever(index, _hybrid_encoder, model_id="test-v1"),
+    )
+    evidence = item["state"]["evidence"]
+    ledger = json.loads(
+        next(
+            row["content"]
+            for row in evidence["artifacts"]
+            if row["kind"] == "native_sink_evidence"
+        )
+    )
+    record = ledger["retrieval"]
+    assert record["status"] == "DELIVERED_UNVALIDATED"
+    assert (
+        record["query_sha256"] == sha256("credential consumer é".encode()).hexdigest()
+    )
+    assert record["validated_trace_edges"] == 0
+    assert record["classification_effect"] == "NONE"
+    assert ledger["status"] == "INCOMPLETE"
+    assert ledger["unknowns"][0]["reason"] == "assignment_consumer_closure_unresolved"
+    for hint in record["hint_manifest"]:
+        assert any(
+            row["sha256"] == hint["content_sha256"]
+            and row.get("source_binding")
+            == {key: hint[key] for key in ("path", "sha256", "start_line", "end_line")}
+            for row in evidence["artifacts"]
+        )
+
+
+def test_retrieval_transport_not_configured_is_explicit_and_does_not_clear_unknowns(
+    tmp_path,
+):
+    from factoryline.jev_classifier import build_informed_actionability_case
+
+    index, finding = _informed_fixture(
+        tmp_path, {"sink.py": "import pickle\nx = pickle.loads(b'')\n"}
+    )
+    item = build_informed_actionability_case(
+        finding, index, candidate_commit="a" * 40, requirement="input origin"
+    )
+    ledger = json.loads(
+        next(
+            row["content"]
+            for row in item["state"]["evidence"]["artifacts"]
+            if row["kind"] == "native_sink_evidence"
+        )
+    )
+    assert ledger["retrieval"]["status"] == "NOT_RUN"
+    assert ledger["retrieval"]["hint_manifest"] == []
+    assert ledger["retrieval"]["consumption"] == "UNASSESSED"
+    assert ledger["retrieval"]["coverage"] == "RANKED_SUBSET_NOT_EXHAUSTIVE"
+
+
+def test_retrieval_transport_native_ledger_accounts_for_every_raw_candidate():
+    from factoryline.primitive_observation_binding import build_finding_tier_report
+
+    findings = [
+        {"path": "missing.py", "line": 1, "column": 0, "code": code, "severity": "HIGH"}
+        for code in [
+            "SECURITY_HARDCODED_SECRET",
+            "SECURITY_UNSAFE_DESERIALIZATION",
+            "SECURITY_SHELL_COMMAND",
+            "SECURITY_DYNAMIC_EXECUTION",
+            "SECURITY_SQL_INJECTION",
+        ]
+    ]
+    report = build_finding_tier_report(
+        findings, [], [], {}, coverage_state="INCOMPLETE", partition_state="UNASSESSED"
+    )
+    assert len(report["ledger"]) == len(findings)
+    for row in report["ledger"]:
+        assert row["retrieval_transport"]["status"] == "NOT_RUN"
+        assert (
+            row["retrieval_transport"]["finding_identity_sha256"]
+            == row["source_identity"]["identity_sha256"]
+        )
+        assert row["tier"] == "NEEDS_CONTEXT"
+
+
+@pytest.mark.parametrize("mutated", [False, True])
+def test_hybrid_retrieved_caller_delivers_source_bound_implementation_or_unknown(
+    tmp_path, monkeypatch, mutated
+):
+    from factoryline.audit_rule_search import HybridSourceRetriever
+    from factoryline.jev_classifier import build_informed_actionability_case
+
+    index, finding = _informed_fixture(
+        tmp_path,
+        {
+            "sink.py": "import pickle\nx = pickle.loads(b'')\n",
+            "caller.py": "from helper import prepare\nresult = prepare(value='input')\n"
+            + ("prepare.__code__ = replacement\n" if mutated else ""),
+            "helper.py": "def prepare(value, mode=True):\n    return value\n",
+        },
+    )
+    retriever = HybridSourceRetriever(index, _hybrid_encoder, model_id="test")
+    hint = next(row for row in retriever.documents if row["path"] == "caller.py")
+    monkeypatch.setattr(
+        retriever, "search", lambda query: [{**hint, "kind": "retrieval_hint"}]
+    )
+    item = build_informed_actionability_case(
+        finding,
+        index,
+        candidate_commit="a" * 40,
+        requirement="trace input producer",
+        retriever=retriever,
+    )
+    evidence = item["state"]["evidence"]
+    ledger = json.loads(
+        next(
+            row["content"]
+            for row in evidence["artifacts"]
+            if row["kind"] == "native_sink_evidence"
+        )
+    )
+    if mutated:
+        assert any(
+            row["reason"] == "retrieved_callee_binding_unresolved"
+            for row in ledger["unknowns"]
+        )
+        assert not any(row["path"] == "helper.py" for row in evidence["artifacts"])
+    else:
+        assert any(
+            row["path"] == "helper.py" and "return value" in row["content"]
+            for row in evidence["artifacts"]
+        )
+        assert any(
+            row["kind"] == "actual_to_formal" and row["formal"] == "value"
+            for row in ledger["edges"]
+        )
+        assert any(row["path"] == "helper.py" for row in evidence["dependencies"])
+    assert evidence["actionability"]["input_origin"]["status"] == "unknown"
+
+
+@pytest.mark.parametrize("reason", ["retrieved_callee_expansion_budget", "max_sources"])
+def test_hybrid_checkpoint_marks_late_truncation_incomplete_in_delivered_ledger(
+    tmp_path, monkeypatch, reason
+):
+    from factoryline.audit_rule_search import HybridSourceRetriever
+    from factoryline.jev_classifier import build_informed_actionability_case
+
+    index, finding = _informed_fixture(
+        tmp_path, {"sink.py": "import pickle\nx = pickle.loads(b'')\n"}
+    )
+    retriever = HybridSourceRetriever(index, _hybrid_encoder, model_id="test")
+
+    def exhaust(context, hits):
+        context["truncation"].append(reason)
+
+    monkeypatch.setattr(retriever, "_follow_captured_calls", exhaust)
+    item = build_informed_actionability_case(
+        finding,
+        index,
+        candidate_commit="a" * 40,
+        requirement="trace input",
+        retriever=retriever,
+    )
+    ledger = json.loads(
+        next(
+            row["content"]
+            for row in item["state"]["evidence"]["artifacts"]
+            if row["kind"] == "native_sink_evidence"
+        )
+    )
+    assert ledger["status"] == "INCOMPLETE"
+    assert reason in ledger["truncation"]
+    assert ledger["actionability"] == "NEEDS_CONTEXT"
+    assert (
+        item["state"]["evidence"]["actionability"]["input_origin"]["status"]
+        == "unknown"
+    )
+
+
+@pytest.mark.parametrize(
+    "consumer,code",
+    [
+        ("os.system", "SECURITY_OS_COMMAND"),
+        ("pickle.loads", "SECURITY_UNSAFE_DESERIALIZATION"),
+    ],
+)
+def test_native_producer_transport_has_no_secondary_rescan(
+    tmp_path, monkeypatch, consumer, code
+):
+    from factoryline.primitive_observation_binding import (
+        _regenerate_source_model,
+        _regenerate_native_findings,
+    )
+    from factoryline.jev_classifier import build_informed_actionability_case
+    from factoryline import review_audits
+
+    argument = "request.data" if consumer == "pickle.loads" else "request.args['cmd']"
+    raw = f"from flask import request\nimport os, pickle\ndef endpoint():\n    {consumer}({argument})\n".encode()
+    digest = sha256(raw).hexdigest()
+    model = _regenerate_source_model({"app.py": raw}, {"app.py": digest})
+    rows = _regenerate_native_findings("app.py", raw, source_model=model)
+    finding = next(row for row in rows if row["code"] == code)
+    finding = {**finding, "source_sha256": digest}
+    expected = finding["facts"]["security_precondition"]
+    monkeypatch.setattr(
+        review_audits,
+        "_security_scan_tree",
+        lambda *a, **k: pytest.fail("secondary rescan"),
+    )
+
+    def packet():
+        return build_informed_actionability_case(
+            finding,
+            model,
+            candidate_commit="a" * 40,
+            requirement="Assess the exact source-bound defect.",
+        )
+
+    item = packet()
+    native = json.loads(
+        next(
+            row["content"]
+            for row in item["state"]["evidence"]["artifacts"]
+            if row["kind"] == "native_sink_evidence"
+        )
+    )
+    observed = native["producer_reported_preconditions"]
+    assert observed["status"] == "REPORTED_NOT_INDEPENDENTLY_VERIFIED"
+    assert observed["authority"] == "none"
+    assert observed["observations"][0]["security_precondition"] == expected
+    assert (
+        item["state"]["evidence"]["actionability"]["input_origin"]["status"]
+        == "unknown"
+    )
+    finding["facts"] = {"security_precondition": {"forged": True}}
+    assert "forged" not in json.dumps(packet())
+    model.snapshots[Path("app.py")]._secondary_native_observations = None
+    assert "producer_reported_preconditions" not in json.dumps(packet())
+    model.source_bytes[Path("app.py")] = raw + b"# changed\n"
+    with pytest.raises(JevClassificationError):
+        packet()
+
+
+def test_native_observation_boundary_requires_exact_capture_generation(tmp_path):
+    from factoryline.audit_rule_search import (
+        build_retrieval_context,
+        retain_native_observations,
+    )
+
+    index, finding = _informed_fixture(
+        tmp_path, {"sink.py": "import pickle\nx = pickle.loads(b'local')\n"}
+    )
+    path = tmp_path / "sink.py"
+    tree = index.snapshots[path]
+    tree._security_source_model = index
+    finding["code"] = "SECURITY_UNSAFE_DESERIALIZATION"
+    reported = {"status": "SUPPORTED", "source_sha256": index.inventory[path]}
+    producer = {**finding, "facts": {"security_precondition": reported}}
+    retain_native_observations(tree, path, [producer])
+    reported["status"] = "changed after retention"
+
+    context = build_retrieval_context(finding, index, "serialized input origin", None)
+    observation = context["producer_reported_preconditions"]
+    assert observation["authority"] == "none"
+    assert observation["status"] == "REPORTED_NOT_INDEPENDENTLY_VERIFIED"
+    assert observation["observations"][0]["security_precondition"] == {
+        "status": "SUPPORTED",
+        "source_sha256": index.inventory[path],
+    }
+    assert context["retrieval"]["status"] == "NOT_RUN"
+
+    impostor = ast.parse(index.source_bytes[path])
+    impostor._security_source_model = index
+    retain_native_observations(impostor, path, [producer])
+    assert not hasattr(impostor, "_secondary_native_observations")
+    index.source_bytes[path] = bytes(bytearray(index.source_bytes[path]))
+    assert index.validate(path)
+    rebuilt = build_retrieval_context(finding, index, "serialized input origin", None)
+    assert "producer_reported_preconditions" not in rebuilt
+
+
+def test_hybrid_enrich_boundary_preserves_capture_and_advisory_authority(tmp_path):
+    from factoryline.audit_rule_search import (
+        HybridSourceRetriever,
+        build_retrieval_context,
+    )
+
+    source = {"sink.py": "import pickle\nx = pickle.loads(b'local')\n"}
+    index, finding = _informed_fixture(tmp_path, source)
+    other, _ = _informed_fixture(tmp_path / "other", source)
+    retriever = HybridSourceRetriever(index, _hybrid_encoder, model_id="boundary-v1")
+    context = build_retrieval_context(finding, index, "deserialize input origin", None)
+    before = json.loads(json.dumps(context))
+    with pytest.raises(ValueError, match="different capture"):
+        retriever.enrich(context, other, "deserialize input origin")
+    assert context == before
+
+    retriever.enrich(context, index, "deserialize input origin")
+    assert context["retrieval"]["status"] == "DELIVERED_UNVALIDATED"
+    assert context["retrieval"]["authority"] == "none"
+    assert context["retrieval"]["trace_validation"] == "required"
+    assert context["unknowns"][: len(before["unknowns"])] == before["unknowns"]
+    hints = [row for row in context["excerpts"] if row["kind"] == "retrieval_hint"]
+    assert hints
+    for hint in hints:
+        path = index.root / hint["path"]
+        assert hint["sha256"] == sha256(index.source_bytes[path]).hexdigest()
+        lines = index.source_bytes[path].decode().splitlines(keepends=True)
+        assert hint["content"] == "".join(
+            lines[hint["start_line"] - 1 : hint["end_line"]]
+        )
+        assert {"path": hint["path"], "sha256": hint["sha256"]} in context[
+            "dependency_sources"
+        ]
+
+
 def _informed_fixture(tmp_path, sources):
     from factoryline.credential_role_constructor_provider import SourceSnapshotIndex
 

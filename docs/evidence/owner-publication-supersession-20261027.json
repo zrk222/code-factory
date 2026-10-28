@@ -1,0 +1,135 @@
+{
+  "schema": "factory.owner-publication-supersession.v1",
+  "recorded_on": "2026-10-27",
+  "purpose": "Reconcile the historical owner publication HOLD with the later requested and verified v0.49.0 shipment. This record does not rewrite the historical decision or qualify a precision result.",
+  "authority": {
+    "source": "Later direct user instruction in the active Codex conversation to finish, commit, merge, and publish the authorized pickle/source-role work; relayed as the governing scope for this reconciliation.",
+    "scope": "Shipment status only. It does not assert measured precision improvement, completion of the 80% precision target, editor-marketplace approval, or a release-cadence exception."
+  },
+  "historical_hold": {
+    "path": "docs/evidence/owner-publication-hold251.json",
+    "sha256": "6e9fd5ea404c8feba4c544dff8ba1fac7b64c8608cc30cd4691eb844716e2926",
+    "recorded_at": "2026-10-23T02:48:56.774919+00:00",
+    "historical_state": "HOLD",
+    "study": 249,
+    "actionable_precision": 0.55,
+    "precision_target": 0.8,
+    "preserved_unchanged": true,
+    "supersession_boundary": "The later shipment instruction supersedes the publication hold for the authorized 0.49.0 shipment only. The recorded 55% result and 80% target remain unchanged; no new comparable precision measurement or gain is claimed."
+  },
+  "github_release": {
+    "url": "https://github.com/zrk222/code-factory/releases/tag/v0.49.0",
+    "state": "PUBLISHED",
+    "tag": "v0.49.0",
+    "target_commit": "818c1068bcc5b0773739179d44b60b87d1f598d5",
+    "published_at": "2026-10-25T07:26:45Z",
+    "assets": [
+      {
+        "filename": "factoryline_code_factory-0.49.0-py3-none-any.whl",
+        "sha256": "30ca2a506e662d074fae66aac57823b5be6a5370274af74ec10c857ad42e217f"
+      },
+      {
+        "filename": "factoryline_code_factory-0.49.0.tar.gz",
+        "sha256": "d649cf9d5ccf8d07a98d8ed9b12c60346469857b8a51caf5b2cd388d1098f782"
+      },
+      {
+        "filename": "factoryline-vscode-1.3.0.vsix",
+        "sha256": "e4cc354c514e17f634bfcf0c36be6fd9509526728c667686427a2d39e50f7435",
+        "provider_acceptance": "NOT_VERIFIED_BY_ASSET_ATTACHMENT"
+      },
+      {
+        "filename": "factoryline-intellij-1.3.0.zip",
+        "sha256": "821ff1bae97418b5b15b62f7051b4d9c995528592766fe2a027a85070dd06156",
+        "provider_acceptance": "NOT_VERIFIED_BY_ASSET_ATTACHMENT"
+      },
+      {
+        "filename": "factoryline-intellij-1.3.1.zip",
+        "sha256": "9c1b979e0061a04619b8b5c6806f9489ff2149d9febb1b8f1c517c905d9ef469",
+        "provider_acceptance": "NOT_VERIFIED_BY_ASSET_ATTACHMENT"
+      }
+    ]
+  },
+  "pypi": {
+    "project": "factoryline-code-factory",
+    "version": "0.49.0",
+    "state": "PUBLISHED",
+    "metadata_url": "https://pypi.org/pypi/factoryline-code-factory/0.49.0/json",
+    "artifacts": [
+      {
+        "filename": "factoryline_code_factory-0.49.0-py3-none-any.whl",
+        "uploaded_at": "2026-10-25T07:26:39.765686Z",
+        "sha256": "30ca2a506e662d074fae66aac57823b5be6a5370274af74ec10c857ad42e217f"
+      },
+      {
+        "filename": "factoryline_code_factory-0.49.0.tar.gz",
+        "uploaded_at": "2026-10-25T07:26:42.188462Z",
+        "sha256": "d649cf9d5ccf8d07a98d8ed9b12c60346469857b8a51caf5b2cd388d1098f782"
+      }
+    ]
+  },
+  "hugging_face_preview": {
+    "space_id": "zrk222/code-factory",
+    "public_url": "https://huggingface.co/spaces/zrk222/code-factory",
+    "state": "PUBLIC_SPACE_UPDATED",
+    "last_modified": "2026-10-25T07:35:07Z",
+    "space_revision": "3f4fa1983cf9873e45df39a7cd778c0ba558675e",
+    "upload_source_commit": "9e53634937eda834f55e74ea7ba73020a32ffc03",
+    "relationship_to_release_tag": "DESCENDANT_NOT_IDENTICAL",
+    "changes_after_release_tag": [
+      ".github/workflows/huggingface-space.yml",
+      "deploy/huggingface/README.md",
+      "deploy/huggingface/index.html",
+      "tests/test_huggingface_surface.py"
+    ],
+    "claim_boundary": "The Space is live from a descendant source commit. This record does not claim that its rendered content is built from the exact v0.49.0 tag."
+  },
+  "editor_marketplaces": {
+    "vs_code": {
+      "artifact_version": "1.3.0",
+      "github_release_asset_present": true,
+      "marketplace_acceptance": "NOT_VERIFIED"
+    },
+    "jetbrains": {
+      "github_release_assets": ["1.3.0", "1.3.1"],
+      "marketplace_acceptance": "NOT_VERIFIED"
+    }
+  },
+  "release_cadence": {
+    "policy_path": "release-train.json",
+    "policy_sha256": "eb431a96278c831f7ece40120209997e09a4d2d479803013d4d5fe9a1b9897ae",
+    "scope": "core channel; policy reads published v* release timestamps",
+    "effective_at": "2026-09-21T15:01:54Z",
+    "window_start": "2026-09-25T07:26:45Z",
+    "window_end": "2026-10-25T07:26:45Z",
+    "published_core_releases_in_window": [
+      {"tag": "v0.46.9", "published_at": "2026-09-26T06:09:50Z"},
+      {"tag": "v0.47.0", "published_at": "2026-10-04T14:50:25Z"},
+      {"tag": "v0.48.0", "published_at": "2026-10-09T13:19:37Z"},
+      {"tag": "v0.48.1", "published_at": "2026-10-10T11:52:03Z"},
+      {"tag": "v0.48.2", "published_at": "2026-10-15T16:12:10Z"},
+      {"tag": "v0.49.0", "published_at": "2026-10-25T07:26:45Z"}
+    ],
+    "observed_count": 6,
+    "maximum_releases_per_30_days": 4,
+    "minimum_days_between_releases": 7,
+    "intervals_under_7_days": [
+      {"from": "v0.47.0", "to": "v0.48.0", "elapsed": "4 days 22 hours 29 minutes 12 seconds"},
+      {"from": "v0.48.0", "to": "v0.48.1", "elapsed": "0 days 22 hours 32 minutes 26 seconds"},
+      {"from": "v0.48.1", "to": "v0.48.2", "elapsed": "5 days 4 hours 20 minutes 7 seconds"}
+    ],
+    "admission_state_for_observed_history": "NONCOMPLIANT",
+    "exceptions_enabled_by_policy": false,
+    "retroactive_exception_created": false,
+    "claim_boundary": "v0.49.0 is verifiably published. Its later user authorization does not erase the historical cadence-policy breach or create a retroactive exception."
+  },
+  "precision": {
+    "latest_historical_measurement_in_hold": {
+      "study": 249,
+      "actionable_precision": 0.55
+    },
+    "new_comparable_measurement": null,
+    "precision_gain_claim": null,
+    "80_percent_target_state": "NOT_ESTABLISHED"
+  },
+  "evidence_boundary": "GitHub/PyPI public metadata and the public HF Space pointer establish publication state. GitHub release attachment proves only that editor artifacts are attached to the release, not that VS Code or JetBrains accepted or approved them. This record makes no product-accuracy, security-certification, or 80% precision claim."
+}

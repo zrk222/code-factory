@@ -346,7 +346,7 @@ test('PRD, PR and test-oracle profiles select criteria through the operator CLI'
         assert.deepEqual(request.questions.finding.criteria, selected.rubric.criteria);
         assert.ok(request.questions.finding.instructions.includes('Test names, docstrings, comments, type annotations'));
         assert.ok(request.questions.finding.instructions.includes('exception merely possible during setup is not'));
-        assert.equal(selected.framework.version, '1.2.6');
+        assert.equal(selected.framework.version, '1.2.7');
         assert.ok(request.questions.finding.instructions.includes('ANY-effective-check rule'));
         assert.equal(request.questions.evidence_sufficient.instructions.endsWith(selected.rubric.evidence_instructions), true);
         assert.deepEqual(request.questions.evidence_sufficient.criteria, selected.rubric.evidence_criteria);

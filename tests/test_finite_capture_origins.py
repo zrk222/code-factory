@@ -195,6 +195,13 @@ def test_shared_storage376_request_writer_reaches_exact_declared_field(
         "false_filter",
         "request_escape",
         "request_override",
+        "request_module_override",
+        "request_args_item_mutation",
+        "request_args_escape",
+        "request_local_override",
+        "request_local_setattr",
+        "request_foreign_escape",
+        "request_foreign_override",
         "os_escape",
         "os_override",
         "selector_escape",
@@ -243,17 +250,36 @@ def test_shared_storage376_rejects_unsupported_persisted_premises(tmp_path, case
         "mutated_str": "import builtins\nbuiltins.str = lambda value: '1'\n",
         "request_escape": "mutate(request)\n",
         "request_override": "request.form = fake\n",
+        "request_module_override": "import flask\nflask.request = fake\n",
+        "request_args_item_mutation": "request.args['code'] = fake\n",
+        "request_args_escape": "mutate(request.args)\n",
         "os_escape": "import os\nmutate(os)\n",
         "os_override": "import os\nos.system = fake\n",
         "selector_escape": "import os\nrequest.files[mutate(os)]\n",
     }.get(case, "")
+    local_mutation = {
+        "request_local_override": "    request.form = fake\n",
+        "request_local_setattr": "    setattr(request, 'form', fake)\n",
+    }.get(case, "")
     (tmp_path / "routes.py").write_text(
         "from flask import request\nfrom models import Entry\n"
         + mutation
-        + f"def update({argument}):\n    value = request.form['code']\n"
+        + f"def update({argument}):\n"
+        + local_mutation
+        + "    value = request.form['code']\n"
         + write,
         encoding="utf-8",
     )
+    if case in {"request_foreign_escape", "request_foreign_override"}:
+        (tmp_path / "mutation.py").write_text(
+            "from flask import request\n"
+            + (
+                "mutate(request)\n"
+                if case.endswith("escape")
+                else "request.form = fake\n"
+            ),
+            encoding="utf-8",
+        )
     with review_audits._security_only_scan_context(True):
         report = review_audits.security_scan(
             tmp_path, cache_enabled=False, defect_policy="source-role-v3"

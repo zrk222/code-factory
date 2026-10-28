@@ -3,6 +3,7 @@
 import ast
 import hashlib
 from collections import deque
+from itertools import islice
 from collections.abc import Callable, Mapping
 
 from dataclasses import dataclass, field as _dataclass_field
@@ -71,6 +72,16 @@ class _Value:
     scalar_kind: str | None = None
     trace: tuple[tuple[object, ...], ...] = ()
     container_id: str | None = None
+    _exact_scalar: tuple = _dataclass_field(default=(), repr=False)
+
+
+def captured_credential_role_closure(*args, **kwargs):
+    """Forward closure evaluation lazily to the captured credential transfer engine."""
+    from .credential_role_method_use_getter_audit import (
+        captured_credential_role_closure as evaluate,
+    )
+
+    return evaluate(*args, **kwargs)
 
 
 @dataclass(frozen=True)
@@ -581,8 +592,32 @@ def _constant_identity_value(node):
         type(node.value), "none" if node.value is None else "scalar"
     )
     return _Value(
-        inert_kind="scalar", scalar_kind=scalar, trace=(_value_trace(node, "CONSTANT"),)
+        inert_kind="scalar",
+        scalar_kind=scalar,
+        trace=(_value_trace(node, "CONSTANT"),),
+        _exact_scalar=(node.value,) if _bounded_guard_scalar(node.value) else (),
     )
+
+
+def _bounded_guard_scalar(value):
+    if type(value) not in {str, bytes, bool, int, float, type(None)}:
+        return False
+    if isinstance(value, (str, bytes)):
+        return len(value) <= 4096
+    if type(value) is int:
+        return value.bit_length() <= 4096
+    if type(value) is float:
+        from math import isfinite
+
+        return isfinite(value)
+    return True
+
+
+def _validated_exact_scalar(value):
+    scalar = value._exact_scalar
+    if type(scalar) is tuple and len(scalar) == 1 and _bounded_guard_scalar(scalar[0]):
+        return scalar
+    return ()
 
 
 def _name_identity_value(node, aliases, material_values):
@@ -800,6 +835,9 @@ def _value_with_trace(value, node, operation):
         scalar_kind=value.scalar_kind,
         trace=trace[:64],
         container_id=value.container_id,
+        _exact_scalar=_validated_exact_scalar(value)
+        if not exhausted and not value.unknown and not value.content_unknown
+        else (),
     )
 
 
@@ -929,11 +967,13 @@ def _join_identity_values(selected, states, max_states, max_depth, depth):
         )
     if all(value == selected[0] for value in selected[1:]):
         value = selected[0]
-        return (
-            _unknown_value(value, "VALUE_TRACE_BUDGET")
-            if len(value.trace) > 64
-            else value
-        )
+        if len(value.trace) > 64:
+            return _unknown_value(value, "VALUE_TRACE_BUDGET")
+        if value.unknown or value.content_unknown:
+            from dataclasses import replace
+
+            return replace(value, _exact_scalar=())
+        return value
     maps = [dict(value.items) for value in selected]
     keys = list(dict.fromkeys(key for mapping in maps for key in mapping))
     if len(keys) > 128:
@@ -2149,13 +2189,17 @@ def captured_function_valid(function, path, index):
     )
 
 
-def own_function_nodes(function, path, index):
+def own_function_nodes(function, path, index, known_scalars=None):
     """Walk lexical bodies and eager nested headers without trusting parent metadata."""
     scopes = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)
     pending, result = deque([function]), []
     while pending:
         node = pending.popleft()
         result.append(node)
+        selected = _selected_scalar_children(node, known_scalars)
+        if selected is not None:
+            pending.extend(selected)
+            continue
         if node is function or not isinstance(node, scopes):
             pending.extend(ast.iter_child_nodes(node))
             continue
@@ -2169,6 +2213,54 @@ def own_function_nodes(function, path, index):
             elif isinstance(value, list):
                 pending.extend(child for child in value if isinstance(child, ast.AST))
     return result
+
+
+def _selected_scalar_children(node, known_scalars):
+    if not known_scalars or not isinstance(node, (ast.If, ast.IfExp)):
+        return None
+    from .finite_capture import captured_scalar_guard
+
+    truth = captured_scalar_guard(node.test, known_scalars, lambda _node: False)
+    if truth is None:
+        return None
+    if isinstance(node, ast.If):
+        return [node.test, *(node.body if truth else node.orelse)]
+    return [node.test, node.body if truth else node.orelse]
+
+
+def _initial_scalar_guards(function, roots):
+    nodes = tuple(islice(ast.walk(function), 513))
+    if len(nodes) > 512:
+        return {}
+    parameters = {
+        arg.arg
+        for arg in [
+            *function.args.posonlyargs,
+            *function.args.args,
+            *function.args.kwonlyargs,
+        ]
+    }
+    rebound = {
+        name
+        for name in parameters
+        if any(
+            node is not function and _scope_bindings._binds(node, name)
+            for node in nodes
+        )
+    }
+    return {
+        name: _validated_exact_scalar(value)[0]
+        for name, value in roots.items()
+        if name in parameters
+        and name not in rebound
+        and isinstance(value, _Value)
+        and _validated_exact_scalar(value)
+        and not value.unknown
+        and not value.content_unknown
+        and not value.roots
+        and not value.class_roots
+        and not value.items
+    }
 
 
 def exported_names(nodes):
@@ -2584,11 +2676,21 @@ def _function(node, parents):
     return None
 
 
+def _captured_parameter_values(roots, index):
+    parameters = {
+        name: _source_literal(value, index)
+        if isinstance(value, SourceFieldLiteral)
+        else value
+        for name, value in roots.items()
+    }
+    return None if any(value is None for value in parameters.values()) else parameters
+
+
 def summarize_identity_effect(
     function,
     path,
     index: SourceSnapshotIndex,
-    roots: Mapping[str, str],
+    roots: Mapping[str, str | SourceFieldLiteral | _Value],
     *,
     resolve_call: CallResolver | None = None,
     field_roots: Mapping[tuple[str, str], str | SourceFieldLiteral] | None = None,
@@ -2601,11 +2703,19 @@ def summarize_identity_effect(
 ):
     """Summarize captured ASTs without executing target code.
 
-    Callers prove exact bindings, branches, descriptors, allocation and current
-    field ownership; initial field projections are not admission evidence.
+    Callers prove exact bindings, branches, descriptors, allocation, method
+    dispatch and current field ownership; a resolver is not itself proof of
+    heap or dispatch stability. Initial field projections are not admission evidence.
     Unknown protocols, heap escapes and overwritten projections fail closed.
     Strict mode also rejects unresolved calls without explicit root arguments.
+    Source-backed parameter literals retain their value role rather than becoming
+    identity roots. The caller still proves the exact actual/default binding.
     """
+    parameters = _captured_parameter_values(roots, index)
+    if parameters is None:
+        return IdentityEffectSummary(
+            "UNKNOWN", unknowns=("invalid captured parameter literal",)
+        )
     return (
         _Analyzer(
             index,
@@ -2618,7 +2728,7 @@ def summarize_identity_effect(
             ordinary_fields,
             source_inert_nodes,
         )
-        .run(function, path, dict(roots), 0, frozenset())
+        .run(function, path, parameters, 0, frozenset())
         .freeze()
     )
 
@@ -2663,15 +2773,18 @@ class _Analyzer:
         if not captured_function_valid(function, path, self.index):
             out.unknowns.add("callee is not a validated captured function")
             return out
-        nodes = [
-            node
-            for node in own_function_nodes(function, path, self.index)
-            if (path, id(node)) not in self.source_inert_nodes
-        ]
-        self.states += len(nodes)
+        all_nodes = own_function_nodes(function, path, self.index)
+        self.states += len(all_nodes)
         if self.states > self.budget:
             out.unknowns.add("AST state budget exceeded")
             return out
+        nodes = [
+            node
+            for node in own_function_nodes(
+                function, path, self.index, _initial_scalar_guards(function, roots)
+            )
+            if (path, id(node)) not in self.source_inert_nodes
+        ]
         aliases = self._aliases(
             function,
             path,
@@ -2765,13 +2878,22 @@ class _Analyzer:
     def _visit(self, nodes, function, path, aliases, depth, active, out):
         exported = exported_names(nodes)
         parents = self.index.parents[path]
+        resolved_method_attributes = set()
         for node in nodes:
             if (
                 self.role_view
                 and isinstance(node, ast.Attribute)
                 and isinstance(node.ctx, ast.Load)
             ):
-                self._attribute_role(node, path, function, aliases, parents, out)
+                self._attribute_role(
+                    node,
+                    path,
+                    function,
+                    aliases,
+                    parents,
+                    out,
+                    resolved_method_attributes,
+                )
             if self.strict_calls:
                 strict_read_effects(node, aliases, parents, out)
                 strict_protocol_effects(node, aliases, parents, out)
@@ -2807,7 +2929,9 @@ class _Analyzer:
                     event_kind="return_escape",
                 )
             elif isinstance(node, ast.Call):
-                self._call(node, path, aliases, depth, active, out)
+                resolved = self._call(node, path, aliases, depth, active, out)
+                if resolved and isinstance(node.func, ast.Attribute):
+                    resolved_method_attributes.add(id(node.func))
 
     def _aliases(self, function, path, roots, nodes, out):
         args = function.args
@@ -2824,7 +2948,16 @@ class _Analyzer:
             if isinstance(n, (ast.Assign, ast.AnnAssign, ast.NamedExpr))
         ]
         self._record_root_parameter_rebindings(function, params, roots, env, out)
-        self._resolve_alias_assignments(function, path, assigns, env, out)
+        expressions = [node for node in nodes if isinstance(node, ast.IfExp)]
+        self._resolve_alias_assignments(
+            function,
+            path,
+            assigns,
+            env,
+            out,
+            expressions,
+            _initial_scalar_guards(function, roots),
+        )
         return env
 
     @staticmethod
@@ -2842,9 +2975,11 @@ class _Analyzer:
             ):
                 out.unknowns.add(f"root parameter rebound: {param.arg}")
 
-    def _resolve_alias_assignments(self, function, path, assigns, env, out):
-        for _ in range(min(len(assigns) + 1, 32)):
-            changed = False
+    def _resolve_alias_assignments(
+        self, function, path, assigns, env, out, expressions, known
+    ):
+        for _ in range(min(len(assigns) + len(expressions) + 1, 32)):
+            changed = self._update_selected_expressions(expressions, known, env)
             field_writes = {}
             for node in assigns:
                 changed |= self._alias_assignment_update(
@@ -2855,6 +2990,19 @@ class _Analyzer:
                 break
         else:
             out.unknowns.add("alias fixed-point limit")
+
+    def _update_selected_expressions(self, expressions, known, env):
+        changed = False
+        for node in reversed(expressions):
+            selected = _selected_scalar_children(node, known)
+            if selected is None:
+                continue
+            value = identity_value(selected[1], env, strict_calls=self.strict_calls)
+            key = ("expression", id(node))
+            if env.get(key) != value:
+                env[key] = value
+                changed = True
+        return changed
 
     def _alias_assignment_update(self, node, function, path, env, field_writes):
         target = assignment_target(node)
@@ -2907,7 +3055,9 @@ class _Analyzer:
                 changed = True
         return changed
 
-    def _attribute_role(self, node, path, function, aliases, parents, out):
+    def _attribute_role(
+        self, node, path, function, aliases, parents, out, resolved_methods
+    ):
         receiver = _role_expression_roots(
             node.value, aliases, strict_calls=self.strict_calls
         )
@@ -2915,6 +3065,8 @@ class _Analyzer:
             return
         projected = [aliases.get((root, node.attr)) for root in receiver]
         known = [value for value in projected if value is not None]
+        parent = parents.get(id(node))
+        call_target = isinstance(parent, ast.Call) and parent.func is node
         if known:
             roots = set().union(*(tracked_roots(value) for value in known))
             _add_role_event(
@@ -2925,9 +3077,12 @@ class _Analyzer:
                 node,
                 node.attr,
                 receiver_roots=receiver,
-                uncertain=len(receiver) != 1
+                uncertain=call_target
+                or len(receiver) != 1
                 or any(value.unknown or _has_unknown_content(value) for value in known),
             )
+            if call_target:
+                out.unknowns.add("tracked method may be shadowed by a field")
             if node.attr not in self.ordinary_fields and not _ordinary_field_dispatch(
                 function, node.attr, parents
             ):
@@ -2943,7 +3098,8 @@ class _Analyzer:
                     uncertain=True,
                 )
             return
-        parent = parents.get(id(node))
+        if call_target and id(node) in resolved_methods:
+            return
         bound = (isinstance(parent, ast.Call) and parent.func is node) or (
             isinstance(parent, (ast.Assign, ast.AnnAssign, ast.NamedExpr))
             and getattr(parent, "value", None) is node
@@ -3129,6 +3285,9 @@ class _Analyzer:
                 for projection in nested.return_values
             ]
         out.merge(nested, include_returns=capture_returns)
+        return not nested.unknowns and not any(
+            event.uncertain for event in nested.role_events
+        )
 
 
 def _fixture_symbol(index, path, expression, function=None):
@@ -5311,6 +5470,7 @@ def security_value_helper_epoch():
     from . import finite_capture
     from . import semantic_credential_sensor
     from . import credential_role_identity_effects as effects
+    from . import credential_role_method_use_getter_audit as getter
     from . import review_audits as audit
     from .import_context import import_resolution_helpers
     from .credential_role_constructor_provider import (
@@ -5330,6 +5490,7 @@ def security_value_helper_epoch():
         _Value.__init__,
         IdentityEffectSummary,
         *import_resolution_helpers(),
+        _scope_bindings._binds,
         _presentation_provider_shadow,
         *constructor_provider_helper_epoch(),
         _app_source_symbol,
@@ -5343,6 +5504,7 @@ def security_value_helper_epoch():
         audit._oracle_tree_fingerprint,
         audit.integrity._security_local_helper_definition,
         *_module_function_binding_epoch(effects),
+        *_module_function_binding_epoch(getter),
         *_module_function_binding_epoch(finite_capture),
         *_module_function_binding_epoch(semantic_credential_sensor),
         identity_value,

@@ -143,9 +143,13 @@ def _full_repository_workspace_cache_store_prefix(
 ):
     global _FULL_REPOSITORY_WORKSPACE_PREFIX_CACHE
     try:
-        _full_repository_workspace_cache_size(
-            (key, result_digest, context_digest, rows, source_capture, identity)
-        )
+        if (
+            _full_repository_workspace_cache_size(
+                (key, result_digest, context_digest, rows, source_capture, identity)
+            )
+            > FULL_REPOSITORY_WORKSPACE_CACHE_MAX_BYTES
+        ):
+            raise ValueError("cache input exceeds retention bound")
         source = (
             None
             if source_capture is None
@@ -516,8 +520,9 @@ def bind_application_fixture_context(
     imports=None,
     source_index=None,
     configuration_valid=True,
+    collection_known=True,
 ):
-    """Bind eligible application-fixture evidence to the captured source inventory and hashed configuration without asserting runtime isolation."""
+    """Bind source roles independently of collection-dependent fixture authority."""
     from . import (
         mock_fixture_provenance as fixture,
         credential_role_constructor_provider as roles,
@@ -526,10 +531,12 @@ def bind_application_fixture_context(
 
     for path in snapshots:
         contexts.setdefault(path, {})["application_fixture_evidence"] = {}
-    if (
-        configuration_valid is not True
-        or not isinstance(source_bytes, dict)
-        or not isinstance(source_inventory, dict)
+    if not all(
+        (
+            configuration_valid is True,
+            isinstance(source_bytes, dict),
+            isinstance(source_inventory, dict),
+        )
     ):
         return
     candidates = {
@@ -543,8 +550,12 @@ def bind_application_fixture_context(
         return
     captured = {path: source_bytes.get(path) for path in snapshots}
     inventory = {path: source_inventory.get(path) for path in snapshots}
-    index = fixture.application_test_index(
-        root, snapshots, captured, inventory, configs, source_index=source_index
+    index = (
+        fixture.application_test_index(
+            root, snapshots, captured, inventory, configs, source_index=source_index
+        )
+        if collection_known is True
+        else None
     )
     source = (
         index["source"]
@@ -901,6 +912,8 @@ def _verify_source_bindings(
     error_type,
     runtime_error,
     operation,
+    *,
+    captured_out=None,
 ):
     """Reject any source binding whose bounded bytes changed before receipt creation."""
     for binding in bindings:
@@ -921,6 +934,8 @@ def _verify_source_bindings(
             ) from exc
         if len(data) != binding["bytes"] or hash_source(data) != binding["sha256"]:
             raise error_type(f"Evidence changed during {operation}: {binding['path']}")
+        if captured_out is not None:
+            captured_out[binding["path"]] = data
 
 
 def _security_source_failure(
@@ -5951,13 +5966,11 @@ def build_informed_actionability_case(
     *,
     candidate_commit: str,
     requirement: str,
+    retriever=None,
 ) -> dict[str, Any]:
-    """Project native captured evidence into the bounded secondary-review envelope.
-
-    Captured source is evidence, not a trust contract. Unresolved native facts
-    stay unresolved; this builder never manufactures admission from packet shape.
-    """
+    """Project captured evidence without granting authority or admission."""
     from .jev_classifier import JevClassificationError, _digest
+    from .audit_rule_search import build_retrieval_context
 
     if (
         not isinstance(candidate_commit, str)
@@ -5968,9 +5981,7 @@ def build_informed_actionability_case(
         or len(requirement.encode("utf-8")) > 8192
     ):
         raise JevClassificationError("invalid informed review criterion or revision")
-    context = build_informed_sink_context(finding, source_index)
-    if context["status"] not in {"CAPTURED", "INCOMPLETE"}:
-        raise JevClassificationError(context["status"])
+    context = build_retrieval_context(finding, source_index, requirement, retriever)
     candidate = {
         "commit": candidate_commit,
         "path": finding["path"],

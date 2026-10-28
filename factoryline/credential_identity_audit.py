@@ -19,13 +19,47 @@ def application_value_role_evidence(index, path, literal, assignment, secret):
     if object_signing is not None:
         return object_signing
     factory = _app_factory_test_authority(index, path, assignment, secret)
-    return (
-        factory
-        if factory is not None
-        else _legacy.application_plaintext_effect_evidence(
-            index, path, literal, assignment, secret
-        )
+    if factory is not None:
+        return factory
+    plaintext = _legacy.application_plaintext_effect_evidence(
+        index, path, literal, assignment, secret
     )
+    return plaintext or application_test_scope_role_evidence(
+        index, path, assignment, secret
+    )
+
+
+def application_test_scope_role_evidence(index, path, assignment, secret):
+    """Recompute test-invocation scope independently of crypto validity."""
+    from .credential_role_method_use_getter_audit import _source_test_scope_evidence
+
+    return _source_test_scope_evidence(index, path, assignment, secret)
+
+
+class _TestScopeContractEpoch:
+    """Retain actual immutable model bindings for role-cache generations."""
+
+    __name__ = "test_scope_contract_epoch"
+
+    @property
+    def __code__(self):
+        from . import credential_role_method_use_getter_audit as getter
+
+        names = sorted(
+            name
+            for name in vars(getter)
+            if name.startswith("_SCOPE_") or name == "SCOPE_API_CONTRACT_EPOCH"
+        )
+        values = tuple(getattr(getter, name) for name in names)
+        key = tuple((name, id(value)) for name, value in zip(names, values))
+        current = getattr(self, "current", None)
+        if current is None or current[0] != key:
+            current = (key, object(), values)
+            self.current = current
+        return current[1]
+
+
+_TEST_SCOPE_CONTRACT_EPOCH = _TestScopeContractEpoch()
 
 
 def _app_digest_provider_binding(index, path, owner, call):
@@ -491,7 +525,9 @@ def _app_signing_constructor_flow(index, path, function, call, actual, seen=()):
     chain = _app_signing_transfer_chain(index, target_path, owner)
     if not chain or not _app_signing_captured_provider_stable(index, chain):
         return None
-    transfer = _app_signing_constructor_transfer(index, chain, call, actual)
+    transfer = _app_signing_constructor_transfer(
+        index, chain, path, function, call, actual
+    )
     if transfer is None:
         return None
     constructor_path, field, statement = transfer
@@ -513,9 +549,16 @@ def _app_signing_constructor_flow(index, path, function, call, actual, seen=()):
     ]
 
 
-def _app_signing_constructor_transfer(index, chain, call, actual):
+def _app_signing_constructor_transfer(index, chain, caller_path, caller, call, actual):
     from .review_integrity import bind_source_call
 
+    source = index["source"]
+    if (
+        not source.validate(caller_path)
+        or id(caller) not in source.parents[caller_path]
+        or not any(node is call for node in ast.walk(caller))
+    ):
+        return None
     constructors = [
         (p, n)
         for p, cls in chain
@@ -532,20 +575,43 @@ def _app_signing_constructor_transfer(index, chain, call, actual):
             ast.Name(id="_instance", ctx=ast.Load()),
             apply_defaults=False,
         )
+        with_defaults = bind_source_call(
+            call,
+            constructor,
+            ast.Name(id="_instance", ctx=ast.Load()),
+            apply_defaults=True,
+        )
     except (TypeError, ValueError):
         return None
     formals = [name for name, value in bound.items() if value is actual]
     if len(formals) != 1:
         return None
-    transfer = _app_signing_parameter_field(
-        index, constructor_path, constructor, formals[0]
-    )
-    if transfer is None:
-        return None
     constructor_args = [*constructor.args.posonlyargs, *constructor.args.args]
     if not constructor_args:
         return None
     receiver = constructor_args[0].arg
+    roots = {receiver: "owner", formals[0]: "candidate"}
+    roots.update(
+        {
+            name: _legacy.SourceFieldLiteral(
+                caller_path if name in bound else constructor_path, value
+            )
+            for name, value in with_defaults.items()
+            if name not in roots and isinstance(value, ast.Constant)
+        }
+    )
+    parameters = _legacy._captured_parameter_values(roots, source)
+    if parameters is None:
+        return None
+    transfer = _app_signing_parameter_field(
+        index,
+        constructor_path,
+        constructor,
+        formals[0],
+        _legacy._initial_scalar_guards(constructor, parameters),
+    )
+    if transfer is None:
+        return None
     inert_nodes, metadata_fields = _app_signing_metadata_assignments(
         index, constructor_path, constructor, receiver
     )
@@ -559,7 +625,7 @@ def _app_signing_constructor_transfer(index, chain, call, actual):
         constructor,
         constructor_path,
         index["source"],
-        {receiver: "owner", formals[0]: "candidate"},
+        roots,
         resolve_call=resolver,
         strict_calls=True,
         role_view=True,
@@ -1109,7 +1175,7 @@ def _app_annotation_reference_only(node, parents, aliases, audit):
     return False
 
 
-def _app_signing_parameter_field(index, path, constructor, formal):
+def _app_signing_parameter_field(index, path, constructor, formal, known_scalars=None):
     """Require the non-null actual to enter one exact instance field."""
     parents = index["source"].parents[path]
     args = [*constructor.args.posonlyargs, *constructor.args.args]
@@ -1117,7 +1183,21 @@ def _app_signing_parameter_field(index, path, constructor, formal):
         return None
     receiver = args[0].arg
     transfer = None
-    for node in ast.walk(constructor):
+    nodes = _legacy.own_function_nodes(
+        constructor, path, index["source"], known_scalars
+    )
+    # Retain the prior rejection of nested captures. Only outer lexical guards
+    # use constructor parameter facts; nested scopes have their own bindings.
+    nodes += [
+        child
+        for scope in nodes
+        if scope is not constructor
+        and isinstance(
+            scope, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)
+        )
+        for child in ast.walk(scope)
+    ]
+    for node in nodes:
         if not isinstance(node, ast.Name) or node.id != formal:
             continue
         parent = parents.get(id(node))
@@ -3670,7 +3750,16 @@ def _app_signing_provider_private_access(index, path, node, parents, fixture):
 def _app_source_role_epoch(index):
     """Scope reusable role facts to current immutable inputs and actual callees."""
     source = index["source"]
-    return (
+    dependencies = tuple(
+        (
+            h,
+            getattr(h, "__code__", h),
+            getattr(h, "__defaults__", None),
+            getattr(h, "__kwdefaults__", None),
+        )
+        for h in _legacy.module_fixture_helper_epoch()
+    )
+    identity = (
         tuple(
             sorted(
                 (
@@ -3682,16 +3771,13 @@ def _app_source_role_epoch(index):
                 for p, digest in source.inventory.items()
             )
         ),
-        tuple(
-            (
-                id(h),
-                id(getattr(h, "__code__", h)),
-                id(getattr(h, "__defaults__", None)),
-                id(getattr(h, "__kwdefaults__", None)),
-            )
-            for h in _legacy.module_fixture_helper_epoch()
-        ),
+        tuple(tuple(id(value) for value in row) for row in dependencies),
     )
+    cached = index.get("_source_role_generation")
+    if cached is None or cached[0] != identity:
+        cached = (identity, object(), dependencies)
+        index["_source_role_generation"] = cached
+    return cached[1]
 
 
 def _app_signing_exception_projection(index, path, node, parents):
@@ -5115,6 +5201,8 @@ def application_identity_helper_epoch():
     """Bind every moved application audit predicate and its core callees."""
     return (
         _legacy._APP_RECEIVER_HOOKS_CACHE_TOKEN,
+        _TEST_SCOPE_CONTRACT_EPOCH,
+        application_test_scope_role_evidence,
         application_value_role_evidence,
         _app_digest_call,
         _app_digest_bytes,

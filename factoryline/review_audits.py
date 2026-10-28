@@ -3966,6 +3966,13 @@ def _project_oracle_context(
         config_identity, collection_identity, len(files)
     )
     bindings = source_bindings + config_bindings
+    configuration_owner = (
+        producer_source_model_out if producer_source_model_out is not None else {}
+    )
+    configuration_owner["configuration_bytes"] = {}
+    _verify_security_bindings(
+        root, config_bindings, captured_out=configuration_owner["configuration_bytes"]
+    )
     cache_key = _oracle_context_cache_key(root, manifest, config_identity)
     if _oracle_context_cache_eligible(
         cache_enabled, source_cacheable, config_cacheable
@@ -4060,8 +4067,9 @@ def _project_oracle_context(
         source_inventory=source_hashes,
         imports=resolved,
         source_index=(producer_source_model_out or {}).get("source"),
-        configuration_valid=config_cacheable
-        and (collection_identity or {}).get("collection_state") != "UNKNOWN",
+        configuration_valid=config_cacheable,
+        collection_known=(collection_identity or {}).get("collection_state")
+        != "UNKNOWN",
     )
     integrity.bind_fixed_program_workspace(
         root, contexts, snapshots, files, source_bytes, resolved
@@ -5422,6 +5430,7 @@ def _security_scan_tree(
     security_only: bool = False,
 ) -> list[dict[str, Any]]:
     relative = path.relative_to(root).as_posix()
+    tree._secondary_native_observations = None
     tree._security_source_context = (oracle_context or {}).get(
         "_security_source_context"
     )
@@ -5522,6 +5531,9 @@ def _security_scan_tree(
         )
     findings.extend(configuration_findings(tree, aliases, relative, nodes=nodes))
     findings.extend(redirect_source_findings(relative, tree, aliases, nodes))
+    from .audit_rule_search import retain_native_observations
+
+    retain_native_observations(tree, path, findings)
     return findings
 
 
@@ -5590,7 +5602,9 @@ def _oracle_tree_fingerprint(tree):
     return sha256(ast.dump(tree, include_attributes=True).encode("utf-8")).hexdigest()
 
 
-def _verify_security_bindings(workspace: Path, bindings: list[dict[str, Any]]) -> None:
+def _verify_security_bindings(
+    workspace: Path, bindings: list[dict[str, Any]], *, captured_out=None
+) -> None:
     """Reject a source that changes after its scan but before receipt creation."""
     from .context_efficiency import _verify_source_bindings
 
@@ -5603,6 +5617,7 @@ def _verify_security_bindings(workspace: Path, bindings: list[dict[str, Any]]) -
         ReviewAuditError,
         RuntimeAuditError,
         "security scan",
+        captured_out=captured_out,
     )
 
 
@@ -5774,6 +5789,9 @@ def _scan_security_sources(
                 source_bytes,
                 capture_all_sources=capture_all_sources,
             )
+        )
+        primitive_source_bytes_out.update(
+            (producer_source_model_out or {}).get("configuration_bytes", {})
         )
     scanned = {item["path"] for item in bindings}
     extra_bindings = [item for item in context_bindings if item["path"] not in scanned]

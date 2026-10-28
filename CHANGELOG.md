@@ -1,9 +1,17 @@
 # Changelog
 
-## 0.49.0 (candidate; publication pending)
+## 0.49.0 — Published 2026-10-25
 
-- Coordinate Code Factory 0.49.0 and VS Code / JetBrains 1.3.0 under the
-  existing package and extension identities.
+- Publish `factoryline-code-factory` 0.49.0 to PyPI and GitHub from tag
+  `v0.49.0` at commit `818c1068bcc5b0773739179d44b60b87d1f598d5`. The GitHub
+  release contains the Python wheel and source archive, the VS Code 1.3.0 VSIX,
+  and JetBrains 1.3.0 and 1.3.1 ZIP artifacts. Asset attachment does not prove
+  acceptance or approval by either editor marketplace.
+- The public Hugging Face Space was updated from descendant commit
+  `9e53634937eda834f55e74ea7ba73020a32ffc03`, at Space revision
+  `3f4fa1983cf9873e45df39a7cd778c0ba558675e`; it is not the exact tagged source
+  revision. See the [publication reconciliation](docs/evidence/owner-publication-supersession-20261027.json)
+  for channel hashes, the retained historical precision HOLD, and cadence facts.
 - Add an explicit source-role review policy for captured pickle test and worker
   contexts. Preserve original diagnostics and severity, unresolved authority and
   the default scan policy. A context review does not establish safe deserialization.

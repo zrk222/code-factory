@@ -65,6 +65,42 @@ async function informedFixture(root) {
     evidence: { location: { path: candidate.path, start_line: 3, end_line: 3 }, artifacts: [artifact], actionability,
       dependencies: [{ path: 'helper.py', sha256: hash(helper) }] } } };
 }
+
+test('retrieval transport rejects missing receipts and dropped or altered source hints', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'jev-retrieval-'));
+  try {
+    const item = await informedFixture(root);
+    const hash = value => createHash('sha256').update(value).digest('hex');
+    const source = item.state.evidence.artifacts[0];
+    item.state.evidence.dependencies.push({ path: source.path, sha256: source.source_binding.sha256 });
+    const record = { schema: 'factory.retrieval-transport.v1', status: 'DELIVERED_UNVALIDATED', authority: 'none',
+      classification_effect: 'NONE', consumption: 'UNASSESSED', validated_trace_edges: 0,
+      coverage: 'RANKED_SUBSET_NOT_EXHAUSTIVE', finding_sha256: 'b'.repeat(64), source_manifest_sha256: 'c'.repeat(64),
+      query_sha256: hash(item.state.requirement), delivered_hints: 1,
+      hint_manifest: [{ ...source.source_binding, content_sha256: source.sha256 }] };
+    const ledger = { schema: 'factory.informed-sink-context.v1', status: 'CAPTURED', truncation: [], retrieval: record };
+    const native = { kind: 'native_sink_evidence', path: 'evidence/native-sink.json', content: JSON.stringify(ledger),
+      candidate_commit: item.state.candidate.commit, candidate_sha256: item.state.candidate.sha256 };
+    native.sha256 = hash(native.content);
+    item.state.evidence.artifacts.push(native);
+    const validators = createEvidenceValidators({ requireValue(value, reason) { assert.ok(value, reason); },
+      object: value => value !== null && typeof value === 'object' && !Array.isArray(value), sha: hash, TrialError: Error, readBounded: readFile });
+    validators.validateActionabilityState(item.state);
+    for (const mutation of ['missing', 'query', 'dropped', 'count', 'authority', 'late-truncation', 'missing-status']) {
+      const copy = structuredClone(item.state);
+      const value = JSON.parse(copy.evidence.artifacts.at(-1).content);
+      if (mutation === 'missing') delete value.retrieval;
+      if (mutation === 'query') value.retrieval.query_sha256 = 'd'.repeat(64);
+      if (mutation === 'dropped') copy.evidence.artifacts.shift();
+      if (mutation === 'count') value.retrieval.delivered_hints = 0;
+      if (mutation === 'authority') value.retrieval.authority = 'safe';
+      if (mutation === 'late-truncation') value.truncation.push('max_sources');
+      if (mutation === 'missing-status') delete value.status;
+      copy.evidence.artifacts.at(-1).content = JSON.stringify(value);
+      assert.throws(() => validators.validateActionabilityState(copy), /retrieval/);
+    }
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
 function fixtureBudget(corpus, question = rubric) {
   const rows = corpus.map((item) => ({ id: item.id,
     case_sha256: createHash('sha256').update(JSON.stringify(item)).digest('hex'), risk: 'high',
@@ -74,6 +110,47 @@ function fixtureBudget(corpus, question = rubric) {
     seed: 'fixed-test-seed', max_cases: 100, max_cost_usd: 1, max_latency_ms: 120_000,
     fractions: { low: 1, medium: 1, high: 1 }, cases: rows };
 }
+
+test('sufficiency-only dispatch preserves unknowns and cannot produce actionability credit', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'jev-sufficiency-only-'));
+  try {
+    const item = await informedFixture(root);
+    for (const slot of Object.values(item.state.evidence.actionability)) {
+      slot.status = 'unknown'; slot.artifacts = [];
+    }
+    item.state.evidence.actionability.unknowns = ['Caller authority is unresolved.'];
+    let calls = 0;
+    const transport = async (_url, request) => {
+      calls++;
+      const body = JSON.parse(request.body);
+      assert.equal(body.state.evidence.actionability.input_origin.status, 'unknown');
+      assert.deepEqual(body.state.evidence.actionability.unknowns, ['Caller authority is unresolved.']);
+      return answer(0.99);
+    };
+    const options = { live: true, apiKey: 'mock', profile: 'security_actionability', sourceRoot: root, fetchImpl: transport };
+    const normal = await evaluateCases([item], rubric, options);
+    assert.equal(calls, 0);
+    assert.equal(normal.results[0].admission, 'not_run');
+    const diagnostic = await evaluateCases([item], rubric, { ...options, evidenceSufficiencyOnly: true });
+    assert.equal(calls, 1);
+    assert.equal(diagnostic.results[0].provider_finding_probability, 0.99);
+    assert.equal(diagnostic.results[0].evidence_probability, 0.99);
+    assert.equal(diagnostic.results[0].prediction, null);
+    assert.equal(diagnostic.results[0].probability, null);
+    assert.equal(diagnostic.results[0].status, 'abstain');
+    assert.equal(diagnostic.results[0].diagnostic_only, true);
+    assert.equal(diagnostic.metrics.decided, 0);
+    const denied = fixtureBudget([item]); denied.max_cost_usd = 0.0001;
+    const deniedReport = await evaluateCases([item], rubric, { ...options, evidenceSufficiencyOnly: true, budgetPolicy: denied });
+    assert.equal(deniedReport.results[0].admission, 'denied');
+    await writeFile(join(root, 'endpoint.py'), '# changed source\n');
+    const stale = await evaluateCases([item], rubric, { ...options, evidenceSufficiencyOnly: true });
+    assert.equal(stale.results[0].status, 'error');
+    assert.equal(calls, 1);
+    await assert.rejects(evaluateCases([item], rubric, { ...options, profile: undefined, evidenceSufficiencyOnly: true }), /invalid_sufficiency_mode/);
+    assert.equal(parseArgs(['--cases', 'a', '--rubric', 'b', '--profile', 'security_actionability', '--evidence-sufficiency-only']).evidenceSufficiencyOnly, true);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
 async function evaluateCases(corpus, question, options = {}) {
   const supplied = options.live && options.budgetPolicy === undefined
     ? { ...options, budgetPolicy: fixtureBudget(corpus, question) } : options;

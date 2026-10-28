@@ -239,6 +239,7 @@ def _provider_path_conflicts(path, attribute, selected):
     return (
         effective == selected
         or effective.startswith(selected + ".")
+        or selected.startswith(effective + ".")
         or attribute == "*"
         and selected.startswith(path + ".")
     )
@@ -2804,22 +2805,27 @@ def _persisted_query_witness(index, wrapper, models, selected, field):
     from . import review_integrity as flow, review_audits as audit
     from .mock_fixture_provenance import _app_source_symbol
 
+    if not all(index.validate(path) for path in index.snapshots):
+        return None
+    context = (index.root, index.source_bytes)
     for path, tree in index.snapshots.items():
         if not index.validate(path):
             return None
-        calls = [
-            (node, _persisted_query_receiver(node))
-            for node in ast.walk(tree)
-            if isinstance(node, ast.Call)
-        ]
+        tree._security_source_context = context
+        nodes = list(ast.walk(tree))
         candidates = [
-            (call, receiver) for call, receiver in calls if receiver is not None
+            (node, receiver)
+            for node in nodes
+            if isinstance(node, ast.Call)
+            if (receiver := _persisted_query_receiver(node)) is not None
         ]
         if not candidates:
             continue
         if not hasattr(tree, "_security_scope_kind"):
             flow.bind_security_call_scopes(tree)
-        aliases = audit._security_aliases(list(ast.walk(tree)))
+        aliases = audit._security_aliases(nodes)
+        if not security_precondition_providers_stable(tree, aliases, nodes):
+            continue
         analyzed = set()
         for call, receiver in candidates:
             scope = getattr(call, "_security_lexical_scope", None)
@@ -2828,11 +2834,9 @@ def _persisted_query_witness(index, wrapper, models, selected, field):
                 resolved
                 and isinstance(resolved[1], ast.ClassDef)
                 and (index.relative(resolved[0]), resolved[1].name) == selected
+                and isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and security_precondition_path_possible(call)
             ):
-                continue
-            if not isinstance(
-                scope, (ast.FunctionDef, ast.AsyncFunctionDef)
-            ) or not security_precondition_path_possible(call):
                 continue
             witness = _persisted_update_witness(
                 index,
@@ -3431,15 +3435,9 @@ def _native_input_provider_inventory(tree, aliases, nodes):
 
 
 def _native_input_inventory_epoch():
-    from . import review_integrity, intent_quality
+    from .review_integrity import _native_input_inventory_epoch as epoch
 
-    functions = [
-        value
-        for namespace in (globals(), vars(review_integrity), vars(intent_quality))
-        for value in namespace.values()
-        if callable(value) and hasattr(value, "__code__")
-    ]
-    return tuple((fn, fn.__code__, id(fn.__defaults__)) for fn in functions)
+    return epoch()
 
 
 def security_precondition_providers_stable(tree, aliases, nodes):
@@ -3472,8 +3470,13 @@ def security_precondition_providers_stable(tree, aliases, nodes):
             "dill",
             "yaml",
             "builtins",
-            "flask",
-            "django",
+            # Unrelated framework components do not alias an imported provider.
+            # Parent namespace escapes still conflict through selected_paths.
+            *(
+                path
+                for path in aliases.values()
+                if path.split(".")[0] in {"flask", "django"}
+            ),
         ),
         selected_paths=True,
         nodes=inventory,
