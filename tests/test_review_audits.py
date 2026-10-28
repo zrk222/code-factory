@@ -15070,6 +15070,51 @@ def test_collection_identity_transport_retains_configured_rules(tmp_path, select
     assert not any(row["code"] == "QUALITY_HOLLOW_TEST" for row in changed["findings"])
 
 
+@pytest.mark.parametrize(
+    "filename, config",
+    [
+        ("pyproject.toml", '[tool.pytest.ini_options]\naddopts = "-p no:plugin"\n'),
+        ("pytest.toml", '[pytest]\naddopts = ["-p", "external_plugin"]\n'),
+        ("pytest.ini", "[pytest]\npytest_plugins = external_plugin\n"),
+    ],
+)
+def test_security_only_unsupported_collection_preserves_security(
+    tmp_path, filename, config
+):
+    from factoryline import review_audits as audit
+
+    (tmp_path / filename).write_text(config, encoding="utf-8")
+    (tmp_path / "app.py").write_text(
+        "def apply(program):\n    exec(program)\n", encoding="utf-8"
+    )
+    (tmp_path / "test_case.py").write_text(
+        "def test_dead():\n    pass\n", encoding="utf-8"
+    )
+    with pytest.raises(audit.ReviewAuditError, match="collection"):
+        audit.security_scan(tmp_path, cache_enabled=False)
+    report = audit.security_scan(
+        tmp_path,
+        cache_enabled=False,
+        security_only=True,
+        defect_policy="source-role-v3",
+    )
+    identity = report["oracle_context"]["static_pytest_collection"]
+    assert identity["collection_state"] == "UNKNOWN"
+    assert identity["reason"] == "unsupported_collection_configuration"
+    assert identity["python_files"] == identity["python_functions"] == []
+    assert report["state"] == "INCOMPLETE"
+    assert report["audit_coverage"]["complete"] is True
+    assert report["defect_policy_decision"]["exit_code"] == 2
+    assert any(
+        row["code"] == "SECURITY_DYNAMIC_EXECUTION" for row in report["findings"]
+    )
+    assert not any(row["code"].startswith("QUALITY_") for row in report["findings"])
+    assert not report["context_reviews"]
+    (tmp_path / filename).write_text("[unterminated", encoding="utf-8")
+    with pytest.raises(audit.ReviewAuditError, match="collection"):
+        audit.security_scan(tmp_path, cache_enabled=False, security_only=True)
+
+
 @pytest.mark.parametrize("cache_enabled", [False, True])
 def test_security_only_unknown_collection_retains_security_findings(
     tmp_path, cache_enabled

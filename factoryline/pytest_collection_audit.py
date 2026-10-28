@@ -158,8 +158,10 @@ def _pytest_collection_config(root, source_files=None, *, allow_unknown=False):
                 "invalid",
                 "oversized",
                 "unreadable",
-                "unsupported",
-            } or (unmodeled and not allow_unknown):
+            } or (
+                (unmodeled or result[1].get("state") == "unsupported")
+                and not allow_unknown
+            ):
                 raise ReviewAuditError(
                     f"Cannot determine pytest test collection from {relative}: "
                     f"{'unsupported' if unmodeled else result[1]['state']} configuration."
@@ -252,7 +254,7 @@ def _pytest_collection_source_identity(
             "Cannot determine pytest test collection: custom collection hooks "
             "or pytest plugins are unsupported."
         )
-    unmodeled = identity.get("state") == "unmodeled-builtin-collection"
+    unmodeled = identity.get("state") in {"unmodeled-builtin-collection", "unsupported"}
     if hooks or unmodeled:
         return {
             **identity,
@@ -260,7 +262,9 @@ def _pytest_collection_source_identity(
             "collection_state": "UNKNOWN",
             "mode": "security_only",
             "reason": "unmodeled_builtin_collection_options"
-            if unmodeled
+            if identity.get("state") == "unmodeled-builtin-collection"
+            else "unsupported_collection_configuration"
+            if identity.get("state") == "unsupported"
             else "custom_collection_hooks_or_pytest_plugins",
             "python_files": [],
             "python_functions": [],
