@@ -5038,15 +5038,16 @@ def _pickle_source_role_decision(
         "source-role-v2": _SOURCE_ROLE_POLICY_V2,
         "source-role-v3": _SOURCE_ROLE_POLICY_V3,
     }.get(policy_id, _PICKLE_SOURCE_ROLE_POLICY)
+    blocked = roles is None or roles.get("test_collection_known") is False
     return {
         **policy,
         "policy_sha256": _tier_sha256(policy),
         "state": "BLOCKED"
-        if roles is None
+        if blocked
         else "ALERTS_AND_CONTEXT_REVIEW"
         if active
         else "CONTEXT_REVIEW_REQUIRED",
-        "exit_code": 2 if roles is None else 1 if active else 0,
+        "exit_code": 2 if blocked else 1 if active else 0,
         "active_alert_count": len(active),
         "context_review_count": len(reviews),
         "source_sha256": None if roles is None else roles["sources_sha256"],
