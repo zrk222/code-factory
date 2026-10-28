@@ -57,6 +57,8 @@ def application_configuration_names():
             "requirements.txt",
             "pyproject.toml",
             "tox.ini",
+            "pytest.toml",
+            ".pytest.toml",
             "pytest.ini",
             ".pytest.ini",
             "setup.cfg",
