@@ -2805,9 +2805,13 @@ def _persisted_query_witness(index, wrapper, models, selected, field):
     from . import review_integrity as flow, review_audits as audit
     from .mock_fixture_provenance import _app_source_symbol
 
+    if not all(index.validate(path) for path in index.snapshots):
+        return None
+    context = (index.root, index.source_bytes)
     for path, tree in index.snapshots.items():
         if not index.validate(path):
             return None
+        tree._security_source_context = context
         nodes = list(ast.walk(tree))
         candidates = [
             (node, receiver)
@@ -2820,24 +2824,7 @@ def _persisted_query_witness(index, wrapper, models, selected, field):
         if not hasattr(tree, "_security_scope_kind"):
             flow.bind_security_call_scopes(tree)
         aliases = audit._security_aliases(nodes)
-        if _provider_identity_uncertain(
-            tree,
-            aliases,
-            roots=("flask.request",),
-            nodes=(
-                node
-                for node in nodes
-                if node is not tree
-                and (
-                    getattr(node, "_security_lexical_scope", tree) is tree
-                    or isinstance(node, ast.Call)
-                    or isinstance(node, (ast.Attribute, ast.Subscript))
-                    and isinstance(node.ctx, (ast.Store, ast.Del))
-                )
-            ),
-            parents=index.parents[path],
-            selected_paths=True,
-        ):
+        if not security_precondition_providers_stable(tree, aliases, nodes):
             continue
         analyzed = set()
         for call, receiver in candidates:
