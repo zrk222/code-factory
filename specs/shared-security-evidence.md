@@ -69,6 +69,7 @@ Scenario: `Wilson95` completion boundary
 - Keep Python, PHP, runtime and oracle frontend identities separate; JEV remains secondary.
 ## Decision logic (factory candidates)
 No new ordered admission policy. Existing family-specific proof obligations remain authoritative.
+The existing opt-in `trusted-core-v1` policy may return a nonblocking review-required decision for a complete, current, independently regenerated scan with zero supported defects and unresolved advisory observations. Supported defects still block with exit1; incomplete coverage, unknown collection and missing/stale/forged evidence remain BLOCKED exit2. Every original diagnostic and missing premise remains visible; exit0 grants no clean, passed or release-approved status. This is admission behavior, not detection or accuracy improvement. Any admitted-only precision study requires a separately frozen protocol and must report raw/admitted TP retention, abstentions, coverage and the all-alert rate separately.
 
 ## Authorized parameters
 timeout = 90

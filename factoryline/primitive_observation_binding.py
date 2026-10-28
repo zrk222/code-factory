@@ -108,7 +108,7 @@ _TRUSTED_CORE_POLICY = {
     "policy_id": "trusted-core-v1",
     "supported_state": "DEFECTS_PRESENT",
     "review_state": "NO_SUPPORTED_DEFECTS_REVIEW_REQUIRED",
-    "unresolved_exit_code": 2,
+    "unresolved_exit_code": 0,
     "empty_exit_code": 0,
     "incomplete_state": "BLOCKED",
     "claim_boundary": "No clean security result, accuracy gain, or release approval.",
