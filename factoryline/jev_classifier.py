@@ -58,16 +58,43 @@ def build_informed_actionability_case(
     candidate_commit: str,
     requirement: str,
     retriever=None,
+    contextual_configuration=None,
+    contextual_bindings=None,
+    collection_known=False,
 ) -> dict[str, Any]:
     """Build the source-bound secondary review packet through the shared context assembler."""
     from .context_efficiency import build_informed_actionability_case as assemble
 
-    return assemble(
+    case = assemble(
         finding,
         source_index,
         candidate_commit=candidate_commit,
         requirement=requirement,
         retriever=retriever,
+    )
+    if contextual_configuration is not None:
+        case["contextual_assessment"] = contextual_assessment(
+            finding,
+            source_index,
+            contextual_configuration,
+            contextual_bindings,
+            collection_known=collection_known,
+        )
+    return case
+
+
+def contextual_assessment(
+    finding, source_index, configuration, bindings, *, collection_known=False
+):
+    """Project experimental source context separately from native proof authority."""
+    from .audit_rule_search import contextual_assessment as assess
+
+    return assess(
+        finding,
+        source_index,
+        configuration,
+        bindings,
+        collection_known=collection_known,
     )
 
 
