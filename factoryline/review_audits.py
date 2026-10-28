@@ -5430,6 +5430,7 @@ def _security_scan_tree(
     security_only: bool = False,
 ) -> list[dict[str, Any]]:
     relative = path.relative_to(root).as_posix()
+    tree._secondary_native_observations = None
     tree._security_source_context = (oracle_context or {}).get(
         "_security_source_context"
     )
@@ -5530,6 +5531,9 @@ def _security_scan_tree(
         )
     findings.extend(configuration_findings(tree, aliases, relative, nodes=nodes))
     findings.extend(redirect_source_findings(relative, tree, aliases, nodes))
+    from .audit_rule_search import retain_native_observations
+
+    retain_native_observations(tree, path, findings)
     return findings
 
 

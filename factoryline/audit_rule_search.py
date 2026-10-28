@@ -18,6 +18,21 @@ from typing import Any, Callable, Mapping
 from array import array
 
 
+def retain_native_observations(tree, path, findings):
+    """Retain bounded producer reports on their existing source generation only."""
+    model = getattr(tree, "_security_source_model", None)
+    raw = model.source_bytes.get(path) if model is not None else None
+    if (isinstance(raw, bytes) and model.snapshots.get(path) is tree
+            and model.validate(path)):
+        observations = json.dumps([
+            {**{key: row[key] for key in ("code", "path", "line", "column")},
+             "security_precondition": row["facts"]["security_precondition"]}
+            for row in findings if row.get("facts", {}).get("security_precondition")
+        ], sort_keys=True)
+        if len(observations.encode("utf-8")) <= 64000:
+            tree._secondary_native_observations = (raw, observations)
+
+
 def build_retrieval_context(finding, index, requirement, retriever):
     """Carry every supported source location into secondary review, with gaps explicit."""
     from .context_efficiency import build_informed_sink_context, _informed_failure
@@ -68,6 +83,18 @@ def build_retrieval_context(finding, index, requirement, retriever):
         ]
     if context["status"] not in {"CAPTURED", "INCOMPLETE"}:
         raise JevClassificationError(context["status"])
+    path = index.root / finding["path"]
+    observed = getattr(index.snapshots[path], "_secondary_native_observations", None)
+    if (isinstance(observed, tuple) and len(observed) == 2
+            and observed[0] is index.source_bytes[path] and index.validate(path)):
+        context["producer_reported_preconditions"] = {
+            "status": "REPORTED_NOT_INDEPENDENTLY_VERIFIED", "authority": "none",
+            "source_sha256": index.inventory[path],
+            "observations": [row for row in json.loads(observed[1]) if all(
+                row.get(key) == finding.get(key)
+                for key in ("code", "path", "line", "column")
+            )],
+        }
     if retriever is not None:
         retriever.enrich(context, index, requirement)
     else:
