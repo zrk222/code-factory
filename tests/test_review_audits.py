@@ -14719,7 +14719,12 @@ def test_pytest_collection351_toml_addopts_array_retains_unknown_collection(
     (tmp_path / "pyproject.toml").write_text(
         f"[tool.pytest.ini_options]\naddopts = {addopts}\n"
     )
-    with pytest.raises(ReviewAuditError, match="unsupported configuration"):
+    reason = (
+        "invalid configuration"
+        if addopts in {"[42]", '["-v", false]'}
+        else "unsupported configuration"
+    )
+    with pytest.raises(ReviewAuditError, match=reason):
         _pytest_collection_config(tmp_path)
 
 

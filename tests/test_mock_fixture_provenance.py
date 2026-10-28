@@ -275,7 +275,7 @@ def test_unknown_collection_source_role_policy_retains_incomplete(policy, state)
     core = _unknown_collection_core()
     core.update(state=state, selected_defect_policy=policy)
     captured = {"app.py": b"value = 1\n"}
-    assert binding._pickle_role_sources(core, captured) is None
+    assert binding._pickle_role_sources(core, captured) == captured
     binding.apply_pickle_source_role_policy(core, captured)
     decision = core["defect_policy_decision"]
     assert core["state"] == "INCOMPLETE"
