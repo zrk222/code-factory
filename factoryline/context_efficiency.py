@@ -143,9 +143,10 @@ def _full_repository_workspace_cache_store_prefix(
 ):
     global _FULL_REPOSITORY_WORKSPACE_PREFIX_CACHE
     try:
-        _full_repository_workspace_cache_size(
+        if _full_repository_workspace_cache_size(
             (key, result_digest, context_digest, rows, source_capture, identity)
-        )
+        ) > FULL_REPOSITORY_WORKSPACE_CACHE_MAX_BYTES:
+            raise ValueError("cache input exceeds retention bound")
         source = (
             None
             if source_capture is None
