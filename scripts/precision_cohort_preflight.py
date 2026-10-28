@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 import hashlib
@@ -55,6 +56,12 @@ def startup(scanner, workspace, profile, expected_files):
         raise ValueError("source inventory differs from registered capture")
     if len(files) > audit._validate_source_file_limit(None):
         raise ValueError("source inventory exceeds scanner capacity")
+    for path in files:
+        relative = path.relative_to(workspace).as_posix()
+        try:
+            ast.parse(audit._security_source_bytes(workspace, relative), filename=relative)
+        except (SyntaxError, ValueError, RecursionError) as error:
+            raise ValueError("unsupported captured Python syntax: " + relative) from error
     _, collection = audit._pytest_collection_config(
         workspace, files, allow_unknown=profile["security_only"] is True
     )

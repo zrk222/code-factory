@@ -1643,6 +1643,29 @@ def test_cohort_startup_gate_checks_actual_config_without_target_execution(
             startup(Path(__file__).resolve().parents[1], tmp_path, profile, [])
 
 
+def test_cohort_startup_gate_rejects_unparseable_capture_before_collection(
+    tmp_path, monkeypatch
+):
+    import platform
+
+    from factoryline import review_audits as audit
+    from scripts.precision_cohort_preflight import startup
+
+    (tmp_path / "app.py").write_text("def broken(\n")
+    profile = {
+        "python": platform.python_version(),
+        "dependencies": {},
+        "security_only": True,
+    }
+
+    def collection_must_not_run(*args, **kwargs):
+        pytest.fail("collection ran before captured syntax validation")
+
+    monkeypatch.setattr(audit, "_pytest_collection_config", collection_must_not_run)
+    with pytest.raises(ValueError, match="captured Python syntax.*app.py"):
+        startup(Path(__file__).resolve().parents[1], tmp_path, profile, ["app.py"])
+
+
 @pytest.mark.parametrize(
     "mutation", ["failed", "omitted", "duplicate", "stale", "unsealed"]
 )
