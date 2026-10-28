@@ -83,6 +83,13 @@ def test_builtin_collection_modes_do_not_admit_invalid_or_plugin_options(
     (tmp_path / "pytest.ini").write_text(
         "[pytest]\naddopts = " + addopts + "\n", encoding="utf-8"
     )
+    if addopts == "--doctest-modules -p plugin":
+        patterns, identity = _pytest_collection_config(tmp_path, allow_unknown=True)
+        assert patterns == set()
+        assert identity["collection_state"] == "UNKNOWN"
+        with pytest.raises(review_audits.ReviewAuditError):
+            _pytest_collection_config(tmp_path)
+        return
     with pytest.raises(review_audits.ReviewAuditError):
         _pytest_collection_config(tmp_path, allow_unknown=True)
 
@@ -202,6 +209,12 @@ def test_collection_unknown_profile_does_not_relax_invalid_inputs(
         (tmp_path / "pytest.ini").write_text(
             "[pytest]\naddopts = -p plugin\n", encoding="utf-8"
         )
+        patterns, identity = _pytest_collection_config(tmp_path, allow_unknown=True)
+        assert patterns == set()
+        assert identity["collection_state"] == "UNKNOWN"
+        with pytest.raises(review_audits.ReviewAuditError):
+            _pytest_collection_config(tmp_path)
+        return
     elif kind == "invalid_hook":
         (tmp_path / "conftest.py").write_text("def broken(:\n", encoding="utf-8")
     elif kind == "oversized_hook":

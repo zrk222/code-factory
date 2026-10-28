@@ -1614,6 +1614,62 @@ def test_framework_provider_relevance_native_cli(
     )
 
 
+def test_preflight_bound_path_contains_capture_and_rejects_escape(tmp_path):
+    from scripts.precision_cohort_preflight import bound_path
+
+    assert (
+        bound_path(tmp_path, "capture/app.py")
+        == (tmp_path / "capture" / "app.py").resolve()
+    )
+    for relative in (
+        "../outside.py",
+        "capture/../../outside.py",
+        str(tmp_path / "app.py"),
+    ):
+        with pytest.raises(ValueError, match="unsafe captured path"):
+            bound_path(tmp_path, relative)
+
+
+@pytest.mark.parametrize("mutation", ["manifest", "source"])
+def test_preflight_scanner_bundles_verify_manifest_and_source_seals(tmp_path, mutation):
+    from scripts.precision_cohort_preflight import scanner_bundles
+
+    protocol = {"scanner": {}}
+    expected = {}
+    for arm in ("baseline", "candidate"):
+        bundle = tmp_path / arm
+        scanner = bundle / "scanner"
+        scanner.mkdir(parents=True)
+        source = scanner / "sentinel.py"
+        source.write_text("raise AssertionError('scanner source must not execute')\n")
+        manifest = bundle / "manifest.json"
+        manifest.write_text(
+            json.dumps({"sentinel.py": hashlib.sha256(source.read_bytes()).hexdigest()})
+        )
+        protocol["scanner"][arm] = arm
+        protocol["scanner"][arm + "_manifest_sha256"] = hashlib.sha256(
+            manifest.read_bytes()
+        ).hexdigest()
+        expected[str(manifest)] = protocol["scanner"][arm + "_manifest_sha256"]
+        expected[str(source)] = hashlib.sha256(source.read_bytes()).hexdigest()
+
+    bindings = {}
+    assert scanner_bundles(tmp_path, protocol, bindings) == {
+        arm: tmp_path / arm / "scanner" for arm in ("baseline", "candidate")
+    }
+    assert bindings == expected
+    changed = (
+        tmp_path
+        / "candidate"
+        / ("manifest.json" if mutation == "manifest" else "scanner/sentinel.py")
+    )
+    changed.write_bytes(changed.read_bytes() + b"\n")
+    with pytest.raises(
+        ValueError, match="manifest seal changed|scanner source changed"
+    ):
+        scanner_bundles(tmp_path, protocol, {})
+
+
 @pytest.mark.parametrize("configuration", ["", "[pytest]\naddopts = -p plugin\n"])
 def test_cohort_startup_gate_checks_actual_config_without_target_execution(
     tmp_path, configuration
@@ -1630,8 +1686,19 @@ def test_cohort_startup_gate_checks_actual_config_without_target_execution(
         "security_only": True,
     }
     if configuration:
+        result = startup(
+            Path(__file__).resolve().parents[1], tmp_path, profile, ["app.py"]
+        )
+        assert result["state"] == "PASS"
+        assert result["collection"]["collection_state"] == "UNKNOWN"
+        assert result["collection"]["python_files"] == []
         with pytest.raises(Exception, match="unsupported configuration"):
-            startup(Path(__file__).resolve().parents[1], tmp_path, profile, ["app.py"])
+            startup(
+                Path(__file__).resolve().parents[1],
+                tmp_path,
+                {**profile, "security_only": False},
+                ["app.py"],
+            )
     else:
         assert (
             startup(Path(__file__).resolve().parents[1], tmp_path, profile, ["app.py"])[
