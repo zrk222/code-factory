@@ -15,6 +15,171 @@ from pathlib import Path
 import math
 import re
 from typing import Any, Callable, Mapping
+from array import array
+
+
+def _hybrid_vectors(rows, count, width=None):
+    """Validate and normalize bounded embeddings without a mandatory ML runtime."""
+    if len(rows) != count:
+        raise ValueError("hybrid embedding count mismatch")
+    result = []
+    for row in rows:
+        if not 1 <= len(row) <= 768 or (width is not None and len(row) != width):
+            raise ValueError("hybrid embedding dimension mismatch")
+        values = array("f", (float(value) for value in row))
+        norm = math.sqrt(sum(value * value for value in values))
+        if not math.isfinite(norm) or norm == 0:
+            raise ValueError("hybrid embeddings must be finite and nonzero")
+        width = len(values)
+        result.append(array("f", (value / norm for value in values)))
+    return result
+
+
+class HybridSourceRetriever:
+    """Explicit local evidence locator; similarity never establishes a flow edge.
+
+    The caller owns a local encoder and its model identity. Construct once per
+    immutable capture, reuse its compact vectors across findings, then discard.
+    No model loading, downloads, target execution or persistent index occur here.
+    Exact cosine is bounded to 1024 chunks; it does not claim ANN acceleration.
+    """
+
+    def __init__(self, source_index, encode, *, model_id):
+        if (
+            not callable(encode)
+            or not isinstance(model_id, str)
+            or not 1 <= len(model_id) <= 256
+        ):
+            raise ValueError(
+                "hybrid retrieval requires a local encoder and model identity"
+            )
+        self.index, self.encode, self.model_id = source_index, encode, model_id
+        self.sources = tuple(sorted(source_index.inventory.items()))
+        if not source_index.bounded or len(self.sources) > 2000:
+            raise ValueError("hybrid capture exceeds source budget")
+        self.documents = self._documents()
+        if not self.documents:
+            raise ValueError("hybrid capture is empty")
+        self.vectors = _hybrid_vectors(
+            encode([row["content"] for row in self.documents]), len(self.documents)
+        )
+        self._validate()
+
+    def _validate(self):
+        if tuple(sorted(self.index.inventory.items())) != self.sources:
+            raise ValueError("hybrid source inventory changed")
+        for path, digest in self.sources:
+            if (
+                not self.index.validate(path)
+                or sha256(self.index.source_bytes[path]).hexdigest() != digest
+            ):
+                raise ValueError("hybrid source snapshot is stale")
+
+    def _documents(self):
+        self._validate()
+        result, total = [], 0
+        for path, digest in self.sources:
+            relative = self.index.relative(path)
+            if not relative:
+                raise ValueError("hybrid source escapes captured root")
+            lines = (
+                self.index.source_bytes[path].decode("utf-8").splitlines(keepends=True)
+            )
+            for start in range(0, len(lines), 16):
+                text = "".join(lines[start : start + 16])
+                total += len(text.encode("utf-8"))
+                if (
+                    len(text.encode("utf-8")) > 8192
+                    or total > 2 * 1024 * 1024
+                    or len(result) >= 1024
+                ):
+                    raise ValueError("hybrid chunk or corpus budget exceeded")
+                result.append(
+                    {
+                        "ruleId": str(len(result)),
+                        "description": text,
+                        "path": relative,
+                        "sha256": digest,
+                        "content": text,
+                        "start_line": start + 1,
+                        "end_line": min(start + 16, len(lines)),
+                        "kind": "retrieval_hint",
+                    }
+                )
+        return result
+
+    def search(self, query, *, limit=6):
+        if (
+            not isinstance(query, str)
+            or not query.strip()
+            or len(query.encode("utf-8")) > 8192
+        ):
+            raise ValueError("hybrid query must be nonempty and bounded")
+        if type(limit) is not int or not 1 <= limit <= 8:
+            raise ValueError("hybrid result limit must be 1 through 8")
+        self._validate()
+        query_vector = _hybrid_vectors(self.encode([query]), 1, len(self.vectors[0]))[0]
+        lexical = _bm25_scores(self.documents, query, fielded=False)
+        dense = {
+            str(i): sum(a * b for a, b in zip(vector, query_vector))
+            for i, vector in enumerate(self.vectors)
+        }
+        ranks = [
+            {
+                key: rank
+                for rank, key in enumerate(
+                    sorted(
+                        (key for key in scores if scores[key] > 0),
+                        key=lambda key: (-scores[key], int(key)),
+                    )[:32],
+                    1,
+                )
+            }
+            for scores in (lexical, dense)
+        ]
+        selected = sorted(
+            set(ranks[0]) | set(ranks[1]),
+            key=lambda key: (
+                -sum(1 / (60 + lane[key]) for lane in ranks if key in lane),
+                int(key),
+            ),
+        )[:limit]
+        self._validate()
+        return [
+            {
+                **{
+                    key: value
+                    for key, value in self.documents[int(identity)].items()
+                    if key not in {"ruleId", "description"}
+                },
+                "bm25_rank": ranks[0].get(identity),
+                "semantic_rank": ranks[1].get(identity),
+                "semantics": "similarity_hint_only_not_a_verified_trace_or_authority",
+            }
+            for identity in selected
+        ]
+
+    def enrich(self, context, source_index, query):
+        """Deliver source-bound hints to the existing secondary-review envelope."""
+        if source_index is not self.index:
+            raise ValueError("hybrid retriever belongs to a different capture")
+        hits = self.search(query)
+        dependencies = {row["path"]: row for row in context["dependency_sources"]}
+        dependencies.update(
+            {row["path"]: {key: row[key] for key in ("path", "sha256")} for row in hits}
+        )
+        if len(dependencies) > 64:
+            raise ValueError("hybrid combined source budget exceeded")
+        context["dependency_sources"] = list(dependencies.values())
+        context["excerpts"].extend(hits)
+        context["retrieval"] = {
+            "method": "bm25+exact-cosine+rrf60",
+            "model_id": self.model_id,
+            "corpus_chunks": len(self.documents),
+            "hint_count": len(hits),
+            "authority": "none",
+            "trace_validation": "required",
+        }
 
 
 class AuditRuleSearchError(ValueError):

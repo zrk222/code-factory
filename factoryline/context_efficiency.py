@@ -5961,12 +5961,9 @@ def build_informed_actionability_case(
     *,
     candidate_commit: str,
     requirement: str,
+    retriever=None,
 ) -> dict[str, Any]:
-    """Project native captured evidence into the bounded secondary-review envelope.
-
-    Captured source is evidence, not a trust contract. Unresolved native facts
-    stay unresolved; this builder never manufactures admission from packet shape.
-    """
+    """Project captured evidence without granting authority or admission."""
     from .jev_classifier import JevClassificationError, _digest
 
     if (
@@ -5986,6 +5983,8 @@ def build_informed_actionability_case(
         "path": finding["path"],
         "sha256": source_index.inventory[source_index.root / finding["path"]],
     }
+    if retriever is not None:
+        retriever.enrich(context, source_index, requirement)
     artifacts = _informed_actionability_artifacts(context, candidate_commit, candidate)
     return _informed_actionability_item(
         finding,

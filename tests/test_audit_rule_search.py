@@ -102,6 +102,147 @@ from factoryline.savings import load_savings_pairs
 from factoryline.update_notifier import read_manifest
 
 
+def _hybrid_encoder(texts):
+    return [
+        [1.0, 0.0] if "deserialize" in text or "pickle" in text else [0.0, 1.0]
+        for text in texts
+    ]
+
+
+def test_hybrid_retrieval_fuses_semantic_and_exact_identifier_with_bound_spans(
+    tmp_path,
+):
+    from factoryline.audit_rule_search import HybridSourceRetriever
+
+    index, _ = _informed_fixture(
+        tmp_path,
+        {
+            "sink.py": "import pickle\ndef decode(x):\n    return pickle.loads(x)\n",
+            "rare.py": "# unique_credential_writer\r\ndef save(x):\r\n    return x\r\n",
+            "other.py": "# unrelated\n",
+        },
+    )
+    calls = []
+
+    def encode(texts):
+        calls.append(len(texts))
+        return _hybrid_encoder(texts)
+
+    retriever = HybridSourceRetriever(
+        index, encode, model_id="controlled-test-encoder-v1"
+    )
+    hits = retriever.search("deserialize unique_credential_writer", limit=2)
+    assert {row["path"] for row in hits} == {"sink.py", "rare.py"}
+    assert next(row for row in hits if row["path"] == "rare.py")["bm25_rank"] == 1
+    assert next(row for row in hits if row["path"] == "sink.py")["semantic_rank"] == 1
+    for row in hits:
+        assert row["sha256"] == index.inventory[tmp_path / row["path"]]
+        assert row["content"] == index.source_bytes[tmp_path / row["path"]].decode()
+    retriever.search("deserialize", limit=1)
+    assert calls == [
+        3,
+        1,
+        1,
+    ]  # Corpus embeddings are reused; only queries are encoded again.
+
+
+def test_hybrid_secondary_packet_delivers_hints_without_resolving_native_unknowns(
+    tmp_path,
+):
+    from factoryline.audit_rule_search import HybridSourceRetriever
+    from factoryline.jev_classifier import build_informed_actionability_case
+
+    index, finding = _informed_fixture(
+        tmp_path,
+        {
+            "sink.py": "import pickle\ndef decode(x):\n    return pickle.loads(x)\n",
+            "writer.py": "# deserialize input producer\ndef persist(value):\n    return value\n",
+        },
+    )
+    kwargs = dict(candidate_commit="a" * 40, requirement="deserialize input origin")
+    before = build_informed_actionability_case(finding, index, **kwargs)
+    after = build_informed_actionability_case(
+        finding,
+        index,
+        **kwargs,
+        retriever=HybridSourceRetriever(index, _hybrid_encoder, model_id="test-v1"),
+    )
+    old, new = (item["state"]["evidence"] for item in (before, after))
+    assert new["actionability"] == old["actionability"]
+    assert all(
+        row["status"] == "unknown"
+        for name, row in new["actionability"].items()
+        if name != "unknowns"
+    )
+    assert any(
+        row["path"] == "writer.py" and row["kind"] == "source_excerpt"
+        for row in new["artifacts"]
+    )
+    ledger = json.loads(
+        next(
+            row["content"]
+            for row in new["artifacts"]
+            if row["kind"] == "native_sink_evidence"
+        )
+    )
+    assert ledger["retrieval"]["authority"] == "none"
+    assert ledger["retrieval"]["trace_validation"] == "required"
+    assert not any(row.get("kind") == "retrieval_hint" for row in ledger["edges"])
+
+
+@pytest.mark.parametrize(
+    "vectors",
+    [[[0.0, 0.0]], [[float("nan"), 1.0]], [[float("inf"), 1.0]], [], [[1.0], [1.0]]],
+)
+def test_hybrid_rejects_invalid_embeddings(tmp_path, vectors):
+    from factoryline.audit_rule_search import HybridSourceRetriever
+
+    index, _ = _informed_fixture(
+        tmp_path, {"sink.py": "import pickle\nx = pickle.loads(b'')\n"}
+    )
+    with pytest.raises(ValueError):
+        HybridSourceRetriever(index, lambda texts: vectors, model_id="test")
+
+
+@pytest.mark.parametrize("mutation", ["bytes", "inventory", "during_query"])
+def test_hybrid_rejects_stale_captured_sources(tmp_path, mutation):
+    from factoryline.audit_rule_search import HybridSourceRetriever
+
+    index, _ = _informed_fixture(
+        tmp_path, {"sink.py": "import pickle\nx = pickle.loads(b'')\n"}
+    )
+    retriever = HybridSourceRetriever(index, _hybrid_encoder, model_id="test")
+    path = tmp_path / "sink.py"
+    if mutation == "bytes":
+        index.source_bytes[path] += b"# changed\n"
+    elif mutation == "inventory":
+        index.inventory[path] = "b" * 64
+    else:
+
+        def mutate(texts):
+            index.source_bytes[path] += b"# changed\n"
+            return _hybrid_encoder(texts)
+
+        retriever.encode = mutate
+    with pytest.raises(ValueError, match="stale|changed"):
+        retriever.search("deserialize")
+
+
+def test_hybrid_rejects_corpus_budget_before_embedding(tmp_path):
+    from factoryline.audit_rule_search import HybridSourceRetriever
+
+    index, _ = _informed_fixture(
+        tmp_path,
+        {"sink.py": "import pickle\nx = pickle.loads(b'')\n" + "# x\n" * 16384},
+    )
+
+    def forbidden(texts):
+        pytest.fail("oversized corpus reached encoder")
+
+    with pytest.raises(ValueError, match="budget"):
+        HybridSourceRetriever(index, forbidden, model_id="test")
+
+
 def _informed_fixture(tmp_path, sources):
     from factoryline.credential_role_constructor_provider import SourceSnapshotIndex
 
