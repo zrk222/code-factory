@@ -1269,6 +1269,51 @@ def test_provider_cache351_reuses_foreign_facts_without_mutable_result_leak(
     assert len(parsed) == 1
 
 
+@pytest.mark.parametrize("parsed_entries, expected_computations", [(2048, 1), (4096, 2)])
+def test_provider_cache386_parsed_entries_do_not_starve_foreign_fact_reuse(
+    monkeypatch, parsed_entries, expected_computations
+):
+    import hashlib
+
+    from factoryline import finite_capture
+
+    tree, sources, _, _ = _provider_cache351_inputs()
+    cache = tree._security_oracle_context["_security_provider_mutation_cache"]
+    for number in range(parsed_entries):
+        raw = f"value = {number}\n".encode()
+        finite_capture._foreign_provider_inputs(
+            tree, raw, hashlib.sha256(raw).hexdigest(), review_audits._security_aliases
+        )
+    original = finite_capture._provider_mutation_facts
+    computations = []
+
+    def observed(*args):
+        computations.append(None)
+        return original(*args)
+
+    monkeypatch.setattr(finite_capture, "_provider_mutation_facts", observed)
+    raw = sources["peer.py"]
+
+    def scan():
+        return finite_capture._foreign_provider_source_mutations(
+            tree,
+            raw,
+            hashlib.sha256(raw).hexdigest(),
+            review_audits,
+            {"requests": "requests"},
+            review_audits._security_aliases,
+            None,
+            None,
+            None,
+            (),
+        )
+
+    assert ("requests", "get") in scan()
+    assert ("requests", "get") in scan()
+    assert len(computations) == expected_computations
+    assert len(cache) <= 4096
+
+
 def test_provider_cache351_changed_peer_and_helper_cannot_reuse_stale_facts(
     monkeypatch,
 ):

@@ -4574,7 +4574,7 @@ def _foreign_provider_source_mutations(
             capture_predicate,
             argument_predicate,
         )
-        if cache is not None and len(cache) < 2048:
+        if cache is not None and len(cache) < 4096:
             cache[key] = frozenset(facts)
     if split_capture:
         # Full original bindings/parents are needed even for this event subset.
