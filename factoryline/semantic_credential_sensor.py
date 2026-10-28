@@ -2636,8 +2636,6 @@ def _native_input_precondition_eligible(call, canonical, primitive, scope, flow)
 def _native_input_request_is_supported(call, canonical, requests, aliases, scope, flow):
     if not flow._security_expr_tainted(call.args[0], requests, set(), aliases):
         return False
-    if security_input_value_flow(call.args[0], requests, aliases) is None:
-        return False
     if canonical not in {"pickle.loads", "_pickle.loads", "dill.loads"}:
         return True
     return (
