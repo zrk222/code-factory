@@ -110,6 +110,47 @@ function fixtureBudget(corpus, question = rubric) {
     seed: 'fixed-test-seed', max_cases: 100, max_cost_usd: 1, max_latency_ms: 120_000,
     fractions: { low: 1, medium: 1, high: 1 }, cases: rows };
 }
+
+test('sufficiency-only dispatch preserves unknowns and cannot produce actionability credit', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'jev-sufficiency-only-'));
+  try {
+    const item = await informedFixture(root);
+    for (const slot of Object.values(item.state.evidence.actionability)) {
+      slot.status = 'unknown'; slot.artifacts = [];
+    }
+    item.state.evidence.actionability.unknowns = ['Caller authority is unresolved.'];
+    let calls = 0;
+    const transport = async (_url, request) => {
+      calls++;
+      const body = JSON.parse(request.body);
+      assert.equal(body.state.evidence.actionability.input_origin.status, 'unknown');
+      assert.deepEqual(body.state.evidence.actionability.unknowns, ['Caller authority is unresolved.']);
+      return answer(0.99);
+    };
+    const options = { live: true, apiKey: 'mock', profile: 'security_actionability', sourceRoot: root, fetchImpl: transport };
+    const normal = await evaluateCases([item], rubric, options);
+    assert.equal(calls, 0);
+    assert.equal(normal.results[0].admission, 'not_run');
+    const diagnostic = await evaluateCases([item], rubric, { ...options, evidenceSufficiencyOnly: true });
+    assert.equal(calls, 1);
+    assert.equal(diagnostic.results[0].provider_finding_probability, 0.99);
+    assert.equal(diagnostic.results[0].evidence_probability, 0.99);
+    assert.equal(diagnostic.results[0].prediction, null);
+    assert.equal(diagnostic.results[0].probability, null);
+    assert.equal(diagnostic.results[0].status, 'abstain');
+    assert.equal(diagnostic.results[0].diagnostic_only, true);
+    assert.equal(diagnostic.metrics.decided, 0);
+    const denied = fixtureBudget([item]); denied.max_cost_usd = 0.0001;
+    const deniedReport = await evaluateCases([item], rubric, { ...options, evidenceSufficiencyOnly: true, budgetPolicy: denied });
+    assert.equal(deniedReport.results[0].admission, 'denied');
+    await writeFile(join(root, 'endpoint.py'), '# changed source\n');
+    const stale = await evaluateCases([item], rubric, { ...options, evidenceSufficiencyOnly: true });
+    assert.equal(stale.results[0].status, 'error');
+    assert.equal(calls, 1);
+    await assert.rejects(evaluateCases([item], rubric, { ...options, profile: undefined, evidenceSufficiencyOnly: true }), /invalid_sufficiency_mode/);
+    assert.equal(parseArgs(['--cases', 'a', '--rubric', 'b', '--profile', 'security_actionability', '--evidence-sufficiency-only']).evidenceSufficiencyOnly, true);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
 async function evaluateCases(corpus, question, options = {}) {
   const supplied = options.live && options.budgetPolicy === undefined
     ? { ...options, budgetPolicy: fixtureBudget(corpus, question) } : options;

@@ -25,6 +25,8 @@ class TrialError extends Error {
 const requireValue = (condition, code) => { if (!condition) throw new TrialError(code); };
 
 function validate(cases, rubric, options) {
+  requireValue(typeof options.evidenceSufficiencyOnly === 'boolean'
+    && (!options.evidenceSufficiencyOnly || options.profile === 'security_actionability'), 'invalid_sufficiency_mode');
   requireValue(typeof options.live === 'boolean', 'invalid_live_flag');
   requireValue(typeof options.grade === 'boolean', 'invalid_grade_flag');
   requireValue(Array.isArray(cases) && cases.length > 0 && cases.length <= MAX_CASES, 'invalid_corpus');
@@ -258,7 +260,7 @@ function metricsFor(results, live) {
 }
 
 function dispatchOptions(supplied) {
-  const options = { live: false, grade: false, falseThreshold: 0.1, trueThreshold: 0.9,
+  const options = { live: false, grade: false, evidenceSufficiencyOnly: false, falseThreshold: 0.1, trueThreshold: 0.9,
     timeoutMs: 30_000, fetchImpl: globalThis.fetch, ...supplied, latencies: [] };
   if (options.live && options.budgetPolicy && !options.budgetPolicySha256) {
     options.budgetPolicySha256 = sha(encode(options.budgetPolicy));
@@ -268,7 +270,8 @@ function dispatchOptions(supplied) {
 
 function admissionFor(item, options, ledger) {
   const empty = { reserved_cost_usd: 0, reserved_latency_ms: 0 };
-  if (options.profile === 'security_actionability' && !actionabilityContextComplete(item.state.evidence)) {
+  if (options.profile === 'security_actionability' && !options.evidenceSufficiencyOnly
+    && !actionabilityContextComplete(item.state.evidence)) {
     return { ...empty, disposition: 'not_run', actionability_incomplete: true };
   }
   if (!options.live) return { ...empty, disposition: 'not_run' };
@@ -308,6 +311,10 @@ async function executeAdmittedCase(item, rubric, options, ledger, admission) {
   const outcome = await evaluateOne(item, rubric, options,
     Math.max(1, Math.min(options.timeoutMs, admission.reserved_latency_ms, remainingLatency)));
   reconcileDispatch(outcome, options, ledger);
+  if (options.evidenceSufficiencyOnly) return { ...outcome,
+    provider_finding_probability: outcome.probability, probability: null, prediction: null,
+    status: outcome.status === 'error' ? 'error' : 'abstain',
+    abstention_reason: 'evidence_sufficiency_only', diagnostic_only: true };
   return outcome;
 }
 
@@ -414,7 +421,7 @@ function trialConfiguration(options) {
     trueThreshold: options.trueThreshold, timeoutMs: options.timeoutMs, zeroDataRetention: true,
     only: ['typesafe-ai'], maxResponseBytes: MAX_RESPONSE_BYTES, advisoryGrade: options.grade,
     budget_policy_sha256: options.live ? options.budgetPolicySha256 : null,
-    reviewProfile: options.profile ?? 'general',
+    reviewProfile: options.profile ?? 'general', evidenceSufficiencyOnly: options.evidenceSufficiencyOnly,
     questionPolicy: { findingPrefix: UNTRUSTED_STATE_RULE, defaultEvidenceInstructions: EVIDENCE_INSTRUCTIONS } };
 }
 
@@ -522,7 +529,7 @@ export async function loadTrial(casesPath, rubricPath, profile, budgetPolicyPath
     catch { throw new TrialError('invalid_budget_policy_json'); }
     budgetPolicySha256 = sha(bytes);
   }
-  validate(cases, rubric, { live: false, grade: false, falseThreshold: 0.1, trueThreshold: 0.9, timeoutMs: 30_000, profile });
+  validate(cases, rubric, { live: false, grade: false, evidenceSufficiencyOnly: false, falseThreshold: 0.1, trueThreshold: 0.9, timeoutMs: 30_000, profile });
   if (profile === 'test_oracle') validateTestOracleCases(cases);
   if (EVIDENCE_PROFILES.has(profile)) validateEvidenceReviewCases(cases, profile);
   if (profile === 'security_actionability') {
@@ -539,8 +546,8 @@ export function parseArgs(argv) {
     '--true-threshold': 'trueThreshold', '--false-threshold': 'falseThreshold', '--timeout-ms': 'timeoutMs' };
   for (let index = 0; index < argv.length; index++) {
     const flag = argv[index];
-    const booleanOption = { '--live': 'live', '--grade': 'grade' }[flag];
-    if (booleanOption && options[booleanOption] === false) { options[booleanOption] = true; continue; }
+    const booleanOption = { '--live': 'live', '--grade': 'grade', '--evidence-sufficiency-only': 'evidenceSufficiencyOnly' }[flag];
+    if (booleanOption && options[booleanOption] !== true) { options[booleanOption] = true; continue; }
     const name = names[flag];
     requireValue(name && options[name] === undefined && argv[index + 1]
       && !argv[index + 1].startsWith('--'), 'invalid_arguments');
@@ -562,6 +569,7 @@ function checkOutputPath(options) {
 
 function cliEvaluationOptions(options, trial, env, fetchImpl) {
   return { ...options, budgetPolicy: trial.budgetPolicy, budgetPolicySha256: trial.budgetPolicySha256,
+    evidenceSufficiencyOnly: options.evidenceSufficiencyOnly ?? false,
     apiKey: options.live ? env.AI_GATEWAY_API_KEY : undefined,
     fetchImpl, artifactHashes: trial.hashes, framework: trial.framework, falseThreshold: options.falseThreshold ?? 0.1,
     trueThreshold: options.trueThreshold ?? 0.9, timeoutMs: options.timeoutMs ?? 30_000 };
@@ -875,6 +883,7 @@ async function runOperatorCommand(argv) {
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
   if (process.argv.length === 3 && process.argv[2] === '--help') {
     process.stdout.write(USAGE);
+    process.stdout.write('--evidence-sufficiency-only: security_actionability diagnostic; validates and dispatches partial evidence under budget, preserves unknowns, and always leaves final actionability unresolved.\n');
     process.stdout.write('Verify recorded results offline: --verify-journal .factory/jev/evaluations/<run-id>.jsonl\n');
     process.stdout.write('Record operator correction offline: --record-feedback <journal.jsonl> <feedback.json>\n');
   } else {
