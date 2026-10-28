@@ -756,9 +756,26 @@ def _run(signature, body, actual="backend"):
     ],
 )
 def test_immutable_defaults_seed_separate_callee_values(signature):
-    result = _run(signature, "if mode is None: target.data = None")
+    result = _run(signature, "target.data = None")
     assert result.status == "NO_CLASS_EFFECT"
     assert result.field_writes == ("backend.data",)
+
+
+@pytest.mark.parametrize(
+    "signature,guard,writes",
+    [
+        ("target, mode=False", "mode is None", ()),
+        ("target, mode=None", "mode is None", ("backend.data",)),
+        ("target, *, mode=None", "mode is None", ("backend.data",)),
+        ("target, /, mode=None", "mode is None", ("backend.data",)),
+        ("target, mode=True", "mode is None", ()),
+        ("target, mode=0", "mode is None", ()),
+    ],
+)
+def test_immutable_default_guards_report_only_reachable_writes(signature, guard, writes):
+    result = _run(signature, f"if {guard}: target.data = None")
+    assert result.status == "NO_CLASS_EFFECT"
+    assert result.field_writes == writes
 
 
 def test_explicit_root_actual_never_falls_back_to_literal_default():
