@@ -1771,6 +1771,7 @@ def apply_pickle_source_role_policy(core, captured, *, source_model=None):
     )
     if roles is not None:
         roles["policy_id"] = policy_id
+        roles["test_collection_known"] = not _unknown_collection(core)
     active, reviews = _pickle_role_partition(original, roles)
     core["findings"], core["context_reviews"] = active, reviews
     core["finding_counts"] = dict(
@@ -1826,10 +1827,8 @@ def _pickle_role_identity(finding):
 
 
 def _pickle_role_sources(core, captured):
-    if (
-        _unknown_collection(core)
-        or core.get("audit_coverage", {}).get("complete") is not True
-        or not isinstance(captured, dict)
+    if core.get("audit_coverage", {}).get("complete") is not True or not isinstance(
+        captured, dict
     ):
         return None
     rows = core.get("sources")
@@ -1936,19 +1935,32 @@ def _pickle_source_role_witness(finding, inventory):
         or (
             captured_registered_fixture_helper_role(finding, inventory)
             if inventory.get("policy_id") == "source-role-v3"
+            and inventory.get("test_collection_known", True)
             and not _valid_security_precondition(
                 finding.get("facts", {}).get("security_precondition"), finding
             )
             else None
         )
-        or _pickle_test_role_witness(finding, inventory)
+        or (
+            _pickle_test_role_witness(finding, inventory)
+            if inventory.get("test_collection_known", True)
+            else None
+        )
         or _pickle_worker_role_witness(finding, inventory)
         or (
-            _registered_fixture_role_witness(finding, inventory)
+            (
+                _registered_fixture_role_witness(finding, inventory)
+                if inventory.get("test_collection_known", True)
+                else None
+            )
             or (
                 (
                     captured_file_program_role(finding, inventory)
-                    or captured_literal_caller_program_role(finding, inventory)
+                    or (
+                        captured_literal_caller_program_role(finding, inventory)
+                        if inventory.get("test_collection_known", True)
+                        else None
+                    )
                 )
                 if finding.get("code") == "SECURITY_DYNAMIC_EXECUTION"
                 and _pickle_role_native_match(finding, inventory)
