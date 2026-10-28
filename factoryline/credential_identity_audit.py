@@ -52,11 +52,11 @@ class _TestScopeContractEpoch:
         )
         values = tuple(getattr(getter, name) for name in names)
         key = tuple((name, id(value)) for name, value in zip(names, values))
-        if not hasattr(self, "generations"):
-            self.generations = {}
-        if key not in self.generations:
-            self.generations[key] = (object(), values)
-        return self.generations[key][0]
+        current = getattr(self, "current", None)
+        if current is None or current[0] != key:
+            current = (key, object(), values)
+            self.current = current
+        return current[1]
 
 
 _TEST_SCOPE_CONTRACT_EPOCH = _TestScopeContractEpoch()

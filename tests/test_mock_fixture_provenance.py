@@ -6224,6 +6224,27 @@ def test_source_bound_test_scope_epoch_uses_actual_contract_bindings(monkeypatch
     assert audit._TEST_SCOPE_CONTRACT_EPOCH.__code__ is after
 
 
+def test_source_bound_test_scope_epoch_retains_one_generation_and_invalidates_restoration(monkeypatch):
+    from factoryline import credential_identity_audit as audit
+    from factoryline import credential_role_method_use_getter_audit as scope
+
+    epoch = audit._TestScopeContractEpoch()
+    original = scope.SCOPE_API_CONTRACT_EPOCH
+    first = epoch.__code__
+    prior = first
+    for _ in range(1000):
+        value = object()
+        monkeypatch.setattr(scope, "SCOPE_API_CONTRACT_EPOCH", value)
+        token = epoch.__code__
+        assert token is not prior
+        assert epoch.__code__ is token
+        assert any(item is value for item in epoch.current[2])
+        prior = token
+    assert set(vars(epoch)) == {"current"}
+    monkeypatch.setattr(scope, "SCOPE_API_CONTRACT_EPOCH", original)
+    assert epoch.__code__ is not first and epoch.__code__ is not prior
+
+
 def test_source_bound_test_scope_cli_receipt_and_recompute(tmp_path, capsys):
     import copy
     import json
