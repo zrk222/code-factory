@@ -3750,7 +3750,16 @@ def _app_signing_provider_private_access(index, path, node, parents, fixture):
 def _app_source_role_epoch(index):
     """Scope reusable role facts to current immutable inputs and actual callees."""
     source = index["source"]
-    return (
+    dependencies = tuple(
+        (
+            h,
+            getattr(h, "__code__", h),
+            getattr(h, "__defaults__", None),
+            getattr(h, "__kwdefaults__", None),
+        )
+        for h in _legacy.module_fixture_helper_epoch()
+    )
+    identity = (
         tuple(
             sorted(
                 (
@@ -3762,16 +3771,13 @@ def _app_source_role_epoch(index):
                 for p, digest in source.inventory.items()
             )
         ),
-        tuple(
-            (
-                id(h),
-                id(getattr(h, "__code__", h)),
-                id(getattr(h, "__defaults__", None)),
-                id(getattr(h, "__kwdefaults__", None)),
-            )
-            for h in _legacy.module_fixture_helper_epoch()
-        ),
+        tuple(tuple(id(value) for value in row) for row in dependencies),
     )
+    cached = index.get("_source_role_generation")
+    if cached is None or cached[0] != identity:
+        cached = (identity, object(), dependencies)
+        index["_source_role_generation"] = cached
+    return cached[1]
 
 
 def _app_signing_exception_projection(index, path, node, parents):

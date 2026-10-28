@@ -1420,6 +1420,30 @@ def test_scalar_guard_rebinding_walk_has_fixed_bound(monkeypatch):
     assert len(visits) == 513
 
 
+@pytest.mark.parametrize("mutation", ["digest", "bytes", "tree", "helper", "defaults"])
+def test_role_epoch_reuses_bounded_generation_and_tracks_inputs(monkeypatch, mutation):
+    from factoryline import credential_identity_audit as audit
+    from factoryline import credential_role_identity_effects as effects
+
+    path, tree, index = _application_role_index("value = 'ordinary text'\n")
+    first = audit._app_source_role_epoch(index)
+    assert audit._app_source_role_epoch(index) is first
+    source = index["source"]
+    if mutation == "digest":
+        source.inventory[path] = "0" * 64
+    elif mutation == "bytes":
+        source.source_bytes[path] = b"value = 'changed'\n"
+    elif mutation == "tree":
+        source.snapshots[path] = ast.parse("value = 'changed'\n")
+    elif mutation == "helper":
+        monkeypatch.setattr(effects._scope_bindings, "_binds", lambda *args: None)
+    else:
+        monkeypatch.setattr(effects._scope_bindings._binds, "__defaults__", (None,))
+    changed = audit._app_source_role_epoch(index)
+    assert changed is not first
+    assert audit._app_source_role_epoch(index) is changed
+
+
 @pytest.mark.parametrize("replacement_kind", ["binding", "code"])
 def test_scalar_guard_binding_helper_invalidates_cached_role_evidence(
     monkeypatch, replacement_kind
