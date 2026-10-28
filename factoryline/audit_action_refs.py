@@ -582,8 +582,21 @@ def _finish_security_scan_seal(audit, core, captured):
         ).encode("utf-8")
     ).hexdigest()
     core["candidate_sha256"] = candidate
+    findings = core["findings"]
+    if core.get("selected_defect_policy") not in {None, "legacy-v1"}:
+        supported = {
+            _canonical(row["raw_finding"])
+            for row in core.get("finding_tier_report", {}).get("ledger", [])
+            if row.get("tier") == "SUPPORTED_DEFECT"
+        }
+        findings = [
+            item
+            for item in findings
+            if not item.get("code", "").startswith("SECURITY_")
+            or _canonical(item) in supported
+        ]
     core["agent_actions"] = [
-        audit.audit_remediation_packet(candidate, item) for item in core["findings"]
+        audit.audit_remediation_packet(candidate, item) for item in findings
     ]
     core.pop("audit_sha256", None)
     core["audit_sha256"] = sha256(

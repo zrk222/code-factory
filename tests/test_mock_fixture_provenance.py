@@ -1092,6 +1092,76 @@ def test_application133_credential_role_uses_authority_not_filename(tmp_path):
     assert evidence["witness_sources"]
 
 
+@pytest.mark.parametrize(
+    ("config_name", "config_text"),
+    [
+        ("requirements.txt", "djangorestframework\n"),
+        ("pyproject.toml", '[project]\nname = "consumer-proof"\n'),
+        ("tox.ini", "[testenv]\ncommands = pytest\n"),
+        ("pytest.ini", "[pytest]\npython_files = check_*.py\n"),
+        (".pytest.ini", "[pytest]\npython_files = check_*.py\n"),
+        ("setup.cfg", "[tool:pytest]\npython_files = check_*.py\n"),
+    ],
+)
+def test_application_configuration_catalog_native_cli_and_stale_binding(
+    tmp_path, capsys, config_name, config_text
+):
+    import copy
+    import json
+
+    from factoryline.cli import main
+    from factoryline.mission_control_status import security_scan_status
+    from factoryline.primitive_observation_binding import application_fixture_binding
+    from factoryline.review_audits import _seal_security_scan
+
+    _write(tmp_path, "checks/login.py", _APP133_DRF)
+    _write(tmp_path, config_name, config_text)
+    result = main(
+        ["audit", "security", "--root", str(tmp_path), "--security-only", "--json"]
+    )
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    report = json.loads(captured.out)
+    assert result == 1 and report["state"] == "INCOMPLETE"
+    assert not any(f["code"] == "SECURITY_HARDCODED_SECRET" for f in report["findings"])
+    observations = report["primitive_observations"]
+    finding = next(f for f in observations if f["code"] == "SECURITY_HARDCODED_SECRET")
+    assert finding["facts"]["disposition"] == "TEST_OWNED_APPLICATION_CREDENTIAL"
+    assert finding["severity"] == "CRITICAL"
+    bindings = {r["path"]: r["sha256"] for r in report["sources"]}
+    bindings.update(
+        {
+            r["path"]: r["sha256"]
+            for r in report["oracle_context"]["configuration_sources"]
+        }
+    )
+    source_bytes = {name: (tmp_path / name).read_bytes() for name in bindings}
+    assert application_fixture_binding(
+        finding, report["sources"], bindings, source_bytes
+    )
+    sealed = copy.deepcopy(report)
+    sealed["_primitive_source_bytes"] = source_bytes
+    assert (
+        _seal_security_scan(sealed)["finding_tier_report"]
+        == report["finding_tier_report"]
+    )
+    assert (
+        security_scan_status(tmp_path)["candidate_freshness"]
+        == "CURRENT_SOURCE_HASHES_VERIFIED"
+    )
+    tampered = copy.deepcopy(finding)
+    tampered["facts"]["fixture_evidence"]["configuration_sha256"][
+        "unregistered.cfg"
+    ] = "0" * 64
+    assert not application_fixture_binding(
+        tampered, report["sources"], bindings, source_bytes
+    )
+    source_bytes[config_name] += b"\n# changed\n"
+    assert not application_fixture_binding(
+        finding, report["sources"], bindings, source_bytes
+    )
+
+
 def _app_plaintext_roundtrip_projection(
     tmp_path, test_body, provider_rewrite=None, test_rewrite=None, return_index=False
 ):
