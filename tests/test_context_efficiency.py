@@ -5709,7 +5709,14 @@ def test_precision257_context_profiles_and_fixture_binders_fail_closed():
     assert (
         binding["requirements.txt"] == {**rows[0], "state": "read"} and eligible is True
     )
-    names = {"requirements.txt", "pytest.ini", ".pytest.ini", "setup.cfg"}
+    names = {
+        "requirements.txt",
+        "pytest.toml",
+        ".pytest.toml",
+        "pytest.ini",
+        ".pytest.ini",
+        "setup.cfg",
+    }
     assert application_profile_configuration(
         "root", lambda *_: (_ for _ in ()).throw(FileNotFoundError()), 64
     ) == ([], {name: {"path": name, "state": "missing"} for name in names}, True)
