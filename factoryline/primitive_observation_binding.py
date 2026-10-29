@@ -17,6 +17,8 @@ _FINDING_TIER_POLICY = {
     "tiers": ["SUPPORTED_DEFECT", "NEEDS_CONTEXT", "PROVEN_PRIMITIVE"],
     "supported_evidence": [
         "source_bound_native_security_precondition",
+        "source_bound_flask_session_authority",
+        "source_bound_private_key_http_authentication_flow",
     ],
     "primitive_evidence": "current_native_source_bound_primitive_partition",
     "unknown_evidence": "NEEDS_CONTEXT",
@@ -24,6 +26,7 @@ _FINDING_TIER_POLICY = {
     "known_format_patterns": "factory.context_efficiency._SECRET_BYTES",
     "known_format_policy": "material_observation_only; authority_and_validity_not_established",
     "configuration_load_policy": "static_consumer_observation_only; authority_not_established",
+    "credential_witness_policy": "recognized_scope_and_current_source_bound_spans_required",
     "claims": "no_precision_or_held_out_measurement",
 }
 
@@ -742,19 +745,44 @@ def _finding_flask_session_authority_evidence(
 
 
 def _decide_finding_tier(
-    finding, bound, native_rows, primitives, credential_evidence=None
+    finding, bound, native_rows, primitives, credential_evidence=None, *, source_bindings=None
 ):
-    if bound and credential_evidence is not None:
+    if (
+        bound and isinstance(credential_evidence, dict)
+        and isinstance(credential_evidence.get("transfers"), list)
+        and credential_evidence["transfers"]
+        and isinstance(source_bindings, dict)
+        and all(
+            isinstance(row, dict)
+            and _trusted_core_source_binding(row) is not None
+            and row["sha256"] == source_bindings.get(row["path"])
+            and valid_source_span(row.get("span"))
+            for row in credential_evidence["transfers"]
+        )
+        and credential_evidence["transfers"][0]["path"] == finding.get("path")
+        and credential_evidence["transfers"][0]["span"][:2]
+        == [finding.get("line"), finding.get("column", 0)]
+    ):
         if (
             credential_evidence.get("proof_scope")
             == "source_bound_flask_session_authority"
+            and credential_evidence.get("framework") == "flask"
+            and isinstance(credential_evidence.get("credential_key"), str)
+            and credential_evidence["credential_key"].isidentifier()
+            and isinstance(finding.get("facts"), dict)
+            and credential_evidence.get("credential_key") == finding.get("facts", {}).get("name")
+            and (isinstance(credential_evidence.get("password_key"), str)
+                 and credential_evidence["password_key"].isidentifier()
+                 or credential_evidence.get("consumer_role") == "flask_login_session")
         ):
             return "SUPPORTED_DEFECT", "source_bound_flask_session_authority", None
-        return (
-            "SUPPORTED_DEFECT",
-            "source_bound_private_key_http_authentication_flow",
-            None,
-        )
+        if (
+            credential_evidence.get("proof_scope") == "captured_same_module_static_wiring"
+            and credential_evidence.get("schema") == "factory.security.private-key-auth-flow.v1"
+            and credential_evidence.get("source_role") == "embedded_private_key"
+            and credential_evidence.get("consumer_role") == "django_password_verifier"
+        ):
+            return "SUPPORTED_DEFECT", "source_bound_private_key_http_authentication_flow", None
     if bound and _matches_regenerated_precondition_finding(finding, native_rows):
         return "SUPPORTED_DEFECT", "source_bound_native_security_precondition", None
     if bound and _matches_proven_primitive(finding, primitives):
@@ -4966,6 +4994,7 @@ def _finding_tier_ledger_row(
         native_rows,
         primitive_rows,
         credential_evidence,
+        source_bindings=bindings,
     )
     identity = _tier_sha256(
         {

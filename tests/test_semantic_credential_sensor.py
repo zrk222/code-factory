@@ -530,6 +530,48 @@ def _cross_module_flask_secret_tiers(files, secret_path):
     )
 
 
+@pytest.mark.parametrize("evidence", [
+    {}, {"proof_scope": "future-origin-contract"},
+    {"proof_scope": "captured_same_module_static_wiring"},
+    {"proof_scope": "source_bound_flask_session_authority"},
+    {"schema": "factory.security.private-key-auth-flow.v1", "proof_scope": "captured_same_module_static_wiring", "consumer_role": "metadata_only"},
+    {"proof_scope": "source_bound_flask_session_authority", "framework": "flask", "credential_key": "SECRET_KEY", "consumer_role": "flask_login_session", "transfers": [None]},
+    {"schema": "factory.security.private-key-auth-flow.v1", "proof_scope": "captured_same_module_static_wiring", "source_role": "embedded_private_key", "consumer_role": "django_password_verifier", "transfers": [None]},
+    {"proof_scope": "future-origin-contract", "transfers": [{"path": "config.py", "sha256": "a" * 64, "span": [1, 0, 1, 12]}]},
+    "trusted", [],
+])
+def test_unrecognized_credential_witness_never_grants_admission(evidence):
+    from factoryline.primitive_observation_binding import _decide_finding_tier
+
+    finding = {"code": "SECURITY_HARDCODED_SECRET", "path": "config.py", "line": 1, "facts": {"name": "SECRET_KEY"}}
+    assert _decide_finding_tier(finding, True, [], [], evidence, source_bindings={"config.py": "a" * 64}) == ("NEEDS_CONTEXT", None, None)
+
+
+
+@pytest.mark.parametrize("kind", ["flask", "private-key"])
+@pytest.mark.parametrize("mutation", [None, "stale-source", "wrong-origin", "unbound-transfer", "invalid-span"])
+def test_recognized_credential_witness_binds_every_transfer_and_origin(kind, mutation):
+    from factoryline.primitive_observation_binding import _decide_finding_tier
+
+    finding = {"code": "SECURITY_HARDCODED_SECRET", "path": "config.py", "line": 1, "facts": {"name": "SECRET_KEY"}}
+    transfers = [{"path": "config.py", "sha256": "a" * 64, "span": [1, 0, 1, 12]}]
+    if kind == "flask":
+        evidence = {"proof_scope": "source_bound_flask_session_authority", "framework": "flask", "credential_key": "SECRET_KEY", "consumer_role": "flask_login_session", "transfers": transfers}
+    else:
+        evidence = {"schema": "factory.security.private-key-auth-flow.v1", "proof_scope": "captured_same_module_static_wiring", "source_role": "embedded_private_key", "consumer_role": "django_password_verifier", "transfers": transfers}
+    if mutation == "stale-source":
+        transfers[0]["sha256"] = "b" * 64
+    elif mutation == "wrong-origin":
+        transfers[0]["span"] = [2, 0, 2, 12]
+    elif mutation == "unbound-transfer":
+        transfers.append({"path": "missing.py", "sha256": "b" * 64, "span": [1, 0, 1, 12]})
+    elif mutation == "invalid-span":
+        transfers[0]["span"] = [1, True, 1, 12]
+    tier = _decide_finding_tier(finding, True, [], [], evidence, source_bindings={"config.py": "a" * 64})[0]
+    assert tier == ("SUPPORTED_DEFECT" if mutation is None else "NEEDS_CONTEXT")
+
+
+
 def _flask_login_config_sources(*, target="config", include_login=True, overwrite=""):
     return {
         "requirements.txt": "flask\nflask-login\n",
