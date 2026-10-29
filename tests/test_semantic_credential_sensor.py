@@ -24,6 +24,115 @@ def _premise_scan(source):
     )
 
 
+@pytest.mark.parametrize("member", ["args", "form"])
+def test_request_mapping_data_member_native_sink_admission(tmp_path, member):
+    source = (
+        "import subprocess\nfrom flask import request\n"
+        "def view():\n"
+        f"    value = request.{member}['cmd']\n"
+        "    eval(value)\n"
+        "    subprocess.call(value, shell=True)\n"
+    )
+    (tmp_path / "app.py").write_text(source, encoding="utf-8")
+    with audit._security_only_scan_context(True):
+        report = audit.security_scan(tmp_path, cache_enabled=False)
+    selected = {
+        row["raw_finding"]["code"]: row
+        for row in report["finding_tier_report"]["ledger"]
+        if row["raw_finding"]["code"]
+        in {"SECURITY_DYNAMIC_EXECUTION", "SECURITY_SHELL_COMMAND"}
+    }
+    assert set(selected) == {"SECURITY_DYNAMIC_EXECUTION", "SECURITY_SHELL_COMMAND"}
+    for row in selected.values():
+        assert row["tier"] == "SUPPORTED_DEFECT"
+        assert row["evidence"] == "source_bound_native_security_precondition"
+        assert row["raw_finding"]["facts"]["security_precondition"]["status"] == "SUPPORTED"
+
+
+@pytest.mark.parametrize("member", ["args", "form"])
+@pytest.mark.parametrize(
+    "setup,expression",
+    [
+        ("request = replacement\n", "request.{member}['cmd']"),
+        ("request.{member} = replacement\n", "request.{member}['cmd']"),
+        ("request.{member}['cmd'] = replacement\n", "request.{member}['cmd']"),
+        ("consume(request.{member})\n", "request.{member}['cmd']"),
+        ("", "request.{member}[selector]"),
+    ],
+)
+def test_request_mapping_data_member_preserves_uncertain_providers(
+    member, setup, expression
+):
+    source = (
+        "import subprocess\nfrom flask import request\ndef view():\n    "
+        + setup.format(member=member).replace("\n", "\n    ")
+        + "value = "
+        + expression.format(member=member)
+        + "\n    eval(value)\n    subprocess.call(value, shell=True)\n"
+    )
+    rows = _premise_scan(source)
+    selected = [
+        row
+        for row in rows
+        if row["code"] in {"SECURITY_DYNAMIC_EXECUTION", "SECURITY_SHELL_COMMAND"}
+    ]
+    assert {row["code"] for row in selected} == {
+        "SECURITY_DYNAMIC_EXECUTION",
+        "SECURITY_SHELL_COMMAND",
+    }
+    assert not any(row.get("facts", {}).get("security_precondition") for row in selected)
+
+
+@pytest.mark.parametrize("member", ["args", "form"])
+@pytest.mark.parametrize(
+    "sibling_body",
+    [
+        "mapping['cmd'] = 'fixed'\n",
+        "mutate(mapping)\n",
+        "return mapping\n",
+        "return mapping[selector]\n",
+        "request.{member} = replacement\n",
+        "flask.request = replacement\n",
+    ],
+)
+def test_request_mapping_data_member_captured_sibling_risks_remain_visible(
+    tmp_path, member, sibling_body
+):
+    (tmp_path / "app.py").write_text(
+        "import subprocess\nfrom flask import request\n"
+        "def view():\n"
+        f"    value = request.{member}['cmd']\n"
+        "    eval(value)\n    subprocess.call(value, shell=True)\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "sibling.py").write_text(
+        "import flask\nfrom flask import request\ndef read_mapping():\n"
+        f"    mapping = request.{member}\n"
+        "    " + sibling_body.format(member=member),
+        encoding="utf-8",
+    )
+    with audit._security_only_scan_context(True):
+        report = audit.security_scan(tmp_path, cache_enabled=False)
+    selected = [
+        row
+        for row in report["finding_tier_report"]["ledger"]
+        if row["raw_finding"]["path"] == "app.py"
+        and row["raw_finding"]["code"]
+        in {"SECURITY_DYNAMIC_EXECUTION", "SECURITY_SHELL_COMMAND"}
+    ]
+    assert len(selected) == 2
+    assert all(row["tier"] != "SUPPORTED_DEFECT" for row in selected)
+
+
+@pytest.mark.parametrize("member", ["args", "form"])
+def test_request_mapping_data_member_rejects_shadowed_parameter(member):
+    rows = _premise_scan(
+        "from flask import request\ndef view(request):\n"
+        f"    value = request.{member}['cmd']\n    eval(value)\n"
+    )
+    assert not any(row.get("facts", {}).get("security_precondition") for row in rows)
+
+
 @pytest.mark.parametrize(
     "helper, invocation",
     [
@@ -561,7 +670,6 @@ def test_flask_admission_validator_change_invalidates_warm_native_proof(tmp_path
     assert secret_row(first)["tier"] == "SUPPORTED_DEFECT"
     assert secret_row(second)["tier"] == "NEEDS_CONTEXT"
     assert secret_row(first)["raw_finding"] == secret_row(second)["raw_finding"]
-
 
 
 def test_tier314_flask_session_authority_preserves_both_source_diagnostics():
