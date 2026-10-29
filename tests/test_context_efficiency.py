@@ -5987,6 +5987,59 @@ def test_shared_source_model_rejects_changed_producer_structure(tmp_path):
     )
 
 
+def test_streaming_ast_fingerprint_keeps_structure_locations_and_ignores_sidecars(
+    monkeypatch,
+):
+    tree = ast.parse("value = [1, 2]\n")
+    original = _audit_refactor._oracle_tree_fingerprint(tree)
+    tree.body[0]._security_parent_scope = tree
+    assert _audit_refactor._oracle_tree_fingerprint(tree) == original
+    original_dump = ast.dump
+
+    def bounded_dump(node, **kwargs):
+        assert len(tuple(ast.walk(node))) <= 128
+        return original_dump(node, **kwargs)
+
+    monkeypatch.setattr(ast, "dump", bounded_dump)
+    assert _audit_refactor._oracle_tree_fingerprint(tree) == original
+    tree.body[0].lineno += 1
+    assert _audit_refactor._oracle_tree_fingerprint(tree) != original
+    tree.body[0].lineno -= 1
+    tree.body[0].value.elts.reverse()
+    assert _audit_refactor._oracle_tree_fingerprint(tree) != original
+
+
+def test_streaming_ast_fingerprint_bounds_wide_and_deep_trees():
+    wide = ast.Module(
+        body=[ast.Expr(value=ast.Constant(i)) for i in range(10000)], type_ignores=[]
+    )
+    first = _audit_refactor._oracle_tree_fingerprint(wide)
+    assert len(first) == 64
+    wide.body[-1].value.value = -1
+    assert _audit_refactor._oracle_tree_fingerprint(wide) != first
+    deep = ast.Name(id="value", ctx=ast.Load())
+    for _ in range(2000):
+        deep = ast.UnaryOp(op=ast.Not(), operand=deep)
+    assert len(_audit_refactor._oracle_tree_fingerprint(deep)) == 64
+
+
+def test_streaming_ast_fingerprint_shared_subtrees_and_cycle_rejection():
+    shared = ast.Constant(value="data")
+    for _ in range(24):
+        shared = ast.BinOp(left=shared, op=ast.Add(), right=shared)
+    first = _audit_refactor._oracle_tree_fingerprint(shared)
+    assert len(first) == 64
+    independent = ast.BinOp(left=ast.Constant(1), op=ast.Add(), right=ast.Constant(1))
+    literal = ast.Constant(1)
+    aliased = ast.BinOp(left=literal, op=ast.Add(), right=literal)
+    assert _audit_refactor._oracle_tree_fingerprint(
+        independent
+    ) == _audit_refactor._oracle_tree_fingerprint(aliased)
+    shared.left = shared
+    with pytest.raises(ValueError, match="cyclic AST structural fields"):
+        _audit_refactor._oracle_tree_fingerprint(shared)
+
+
 def test_shared_source_model_reused_by_application_index(tmp_path):
     import hashlib
     from factoryline.credential_role_constructor_provider import (
