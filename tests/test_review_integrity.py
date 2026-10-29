@@ -6080,14 +6080,16 @@ def test_oracle_snapshot_enables_fresh_bound_name_cache(monkeypatch, tmp_path):
         tmp_path, [path], {path: b"values = [x for x in source]"}
     )[path]
     assert all(node._scan_bound_names is None for node in ast.walk(first_tree))
-    original_walk = module._iter_ast_nodes
+    from factoryline import import_context as bindings
+
+    original_walk = bindings._iter_ast_nodes
     walks = []
 
     def counted_walk(node):
         walks.append(node)
         yield from original_walk(node)
 
-    monkeypatch.setattr(module, "_iter_ast_nodes", counted_walk)
+    monkeypatch.setattr(bindings, "_iter_ast_nodes", counted_walk)
     statement = first_tree.body[0]
     first = module._bound_names(statement)
     first_walk_count = len(walks)

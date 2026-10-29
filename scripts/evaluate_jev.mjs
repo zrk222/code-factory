@@ -218,6 +218,7 @@ async function evaluateOne(item, rubric, options, timeoutMs) {
     const prediction = !sufficient ? null : result.probability >= options.trueThreshold ? true
       : result.probability <= options.falseThreshold ? false : null;
     return { ...result, prediction, status: prediction === null ? 'abstain' : 'decided',
+      ...(options.profile === 'security_actionability' ? { source_verification: 'VERIFIED_CURRENT' } : {}),
       ...(prediction === null ? { abstention_reason: sufficient ? 'finding_confidence_band' : 'insufficient_evidence' } : {}) };
   } catch (error) {
     controller.abort();
@@ -326,8 +327,13 @@ function dispatchResult(item, outcome, admission, options) {
     ...(options.profile === 'security_actionability' ? {
       advisory_label: outcome.prediction === true ? 'ACTIONABLE'
         : outcome.prediction === false ? 'NOT_ACTIONABLE' : 'INSUFFICIENT_EVIDENCE',
-      source_references: item.state.evidence.artifacts.filter(artifact => artifact.kind === 'source')
-        .map(({ path, sha256 }) => ({ path, sha256 })),
+      source_verification: outcome.source_verification ?? 'SUPPLIED_UNVERIFIED',
+      source_references: [...new Map(item.state.evidence.artifacts
+        .filter(artifact => ['source', 'source_excerpt'].includes(artifact.kind)).map(artifact => {
+          const ref = artifact.kind === 'source' ? { path: artifact.path, sha256: artifact.sha256 }
+            : { ...artifact.source_binding, excerpt_sha256: artifact.sha256 };
+          return [encode(ref), ref];
+        })).values()],
       decision_boundary: 'Thresholded advisory judgment; source references bind host inputs, not model citations or proven correctness.',
     } : {}) };
 }

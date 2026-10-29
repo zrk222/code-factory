@@ -2588,7 +2588,11 @@ def bind_native_input_precondition(
     """Attach the shared source-owned dangerous-input premise to a native call."""
     from . import review_integrity as flow
 
-    if not _native_input_precondition_eligible(call, canonical, primitive, scope, flow):
+    if hasattr(requests, "supported_view"):
+        requests = requests.supported_view()
+    if requests is None or not _native_input_precondition_eligible(
+        call, canonical, primitive, scope, flow
+    ):
         return
     if _native_input_request_is_supported(
         call, canonical, requests, aliases, scope, flow
@@ -4153,6 +4157,11 @@ def bind_request_sink_precondition(
         return
     argument, provider_roots = selected
     if _provider_identity_uncertain(module, aliases, roots=provider_roots):
+        return
+    if hasattr(requests, "supported_view"):
+        requests = requests.supported_view()
+    if requests is None:
+        finding["facts"]["unresolved_control_flow"] = "unproven_control_edge"
         return
     trace = security_input_value_flow(argument, requests, aliases)
     if trace is None or trace["value_kind"] != "text":
@@ -5826,113 +5835,6 @@ def _security_input_flow_evidence(value, *, value_type):
         json.dumps(evidence, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
     return evidence
-
-
-def _security_if_block_findings(statement, flow, walk, inspect, bind_targets):
-    from .review_integrity import _security_alternative_blocks
-
-    findings = []
-    from .finite_capture import security_literal_branch_blocks
-
-    findings.extend(inspect(statement.test, flow))
-    findings.extend(
-        _security_alternative_blocks(
-            security_literal_branch_blocks(statement), flow, walk
-        )
-    )
-    return findings
-
-
-def _security_loop_block_findings(statement, flow, walk, inspect, bind_targets):
-    from .review_integrity import _security_alternative_blocks
-
-    findings = []
-    expression = (
-        statement.iter
-        if isinstance(statement, (ast.For, ast.AsyncFor))
-        else statement.test
-    )
-    findings.extend(inspect(expression, flow))
-    target_names = set()
-    if isinstance(statement, (ast.For, ast.AsyncFor)):
-        target_names = {
-            node.id
-            for node in ast.walk(statement.target)
-            if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store)
-        }
-    findings.extend(
-        _security_alternative_blocks(
-            ([], statement.body),
-            flow,
-            walk,
-            lambda index, state: bind_targets(expression, target_names, state)
-            if index and target_names
-            else None,
-        )
-    )
-    findings.extend(walk(statement.orelse, flow))
-    return findings
-
-
-def _security_with_block_findings(statement, flow, walk, inspect, bind_targets):
-    from .review_integrity import _security_alternative_blocks
-
-    findings = []
-
-    def bind_with_target(index, state):
-        if index:
-            for item in statement.items:
-                findings.extend(inspect(item.context_expr, state))
-                names = (
-                    {
-                        node.id
-                        for node in ast.walk(item.optional_vars)
-                        if isinstance(node, ast.Name)
-                        and isinstance(node.ctx, ast.Store)
-                    }
-                    if item.optional_vars
-                    else set()
-                )
-                bind_targets(item.context_expr, names, state)
-
-    findings.extend(
-        _security_alternative_blocks(
-            ([], statement.body),
-            flow,
-            walk,
-            bind_with_target,
-        )
-    )
-    return findings
-
-
-def _security_match_block_findings(statement, flow, walk, inspect, bind_targets):
-    from .review_integrity import _security_alternative_blocks
-
-    findings = []
-    findings.extend(inspect(statement.subject, flow))
-    blocks = [[], *(case.body for case in statement.cases)]
-
-    def prepare_case(index, state):
-        if not index:
-            return
-        case = statement.cases[index - 1]
-        names = {
-            node.name
-            for node in ast.walk(case.pattern)
-            if isinstance(node, (ast.MatchAs, ast.MatchStar)) and node.name
-        }
-        names.update(
-            node.rest
-            for node in ast.walk(case.pattern)
-            if isinstance(node, ast.MatchMapping) and node.rest
-        )
-        bind_targets(statement.subject, names, state)
-        if case.guard is not None:
-            findings.extend(inspect(case.guard, state))
-
-    findings.extend(_security_alternative_blocks(blocks, flow, walk, prepare_case))
-    return findings
 
 
 def _captured_path_expression(node, seen, resolve, callee, path_type):

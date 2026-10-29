@@ -65,7 +65,9 @@ async function verifySourceBindings(dependencies, item, root) {
   const { requireValue, TrialError } = dependencies;
   const evidence = item.state?.evidence;
   const excerpts = evidence?.artifacts?.filter(artifact => artifact.kind === 'source_excerpt') ?? [];
-  const descriptors = [...(evidence?.dependencies ?? []), ...excerpts.map(artifact => artifact.source_binding)];
+  const fullSources = evidence?.artifacts?.filter(artifact => artifact.kind === 'source') ?? [];
+  const descriptors = [...(evidence?.dependencies ?? []), ...fullSources.map(({ path, sha256 }) => ({ path, sha256 })),
+    ...excerpts.map(artifact => artifact.source_binding)];
   const sources = new Map();
   let total = 0;
   for (const descriptor of descriptors) {

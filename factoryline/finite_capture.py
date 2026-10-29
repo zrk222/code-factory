@@ -1,6 +1,10 @@
 """Bounded source-origin capture for finite templates."""
 
 import ast
+from .import_context import (
+    security_literal_branch_blocks as security_literal_branch_blocks,
+)
+from .import_context import _SecurityFlowState as _SecurityFlowState
 import copy
 import hashlib
 import re
@@ -417,36 +421,20 @@ def _security_helper_provider_stable(module, call, function):
     return not cache[key]
 
 
-class _SecurityFlowState(set):
-    """Compatibility tags with the canonical structural value per reaching name."""
-
-    def __init__(self, tags=(), values=None):
-        """Initialize legacy tags and their source-bound structural values."""
-        super().__init__(tags)
-        self.values = dict(values or {})
-
-    def copy(self):
-        """Copy tags and the structural value map as one flow state."""
-        return type(self)(self, self.values)
-
-    def difference_update(self, names):
-        """Remove names from both compatibility tags and stored values."""
-        names = tuple(names)
-        super().difference_update(names)
-        for name in names:
-            self.values.pop(name, None)
-
-    def discard(self, name):
-        """Discard one name from both compatibility tags and stored values."""
-        super().discard(name)
-        self.values.pop(name, None)
-
-
 def _security_merge_structural_states(target, branches):
     from .credential_role_identity_effects import _Value
 
     if not isinstance(target, _SecurityFlowState):
         return
+    target.proven = set().union(
+        *(getattr(branch, "proven", set(branch)) for branch in branches)
+    )
+    target.path_supported = any(
+        getattr(branch, "path_supported", True) for branch in branches
+    )
+    target.bound = set.intersection(
+        *(getattr(branch, "bound", set()) for branch in branches)
+    )
     names = set().union(*(getattr(branch, "values", {}) for branch in branches))
     target.values = {
         name: security_structural_join(
@@ -788,56 +776,6 @@ def security_helper_return_kind(call, requests, aliases):
     value = security_helper_return_value(call, function, requests, set(), aliases)
     return (
         value.kind if isinstance(value, _SecurityFlowValue) and value.tainted else None
-    )
-
-
-def security_literal_branch_blocks(statement):
-    """Select only bounded, side-effect-free literal guards; unknown keeps both arms."""
-    from .review_audits import _constant_truth_value
-
-    nodes = tuple(ast.walk(statement.test))
-    allowed = (
-        ast.Constant,
-        ast.List,
-        ast.Tuple,
-        ast.Set,
-        ast.Dict,
-        ast.Load,
-        ast.UnaryOp,
-        ast.Not,
-        ast.BoolOp,
-        ast.And,
-        ast.Or,
-        ast.Compare,
-        ast.Eq,
-        ast.NotEq,
-        ast.Lt,
-        ast.LtE,
-        ast.Gt,
-        ast.GtE,
-        ast.In,
-        ast.NotIn,
-    )
-    if (
-        len(nodes) > 128
-        or any(not isinstance(node, allowed) for node in nodes)
-        or any(
-            isinstance(node, ast.Constant)
-            and (
-                type(node.value) in {str, bytes}
-                and len(node.value) > 4096
-                or type(node.value) is int
-                and node.value.bit_length() > 1024
-            )
-            for node in nodes
-        )
-    ):
-        return statement.body, statement.orelse
-    truth = _constant_truth_value(statement.test, {})
-    return (
-        (statement.body if truth else statement.orelse,)
-        if truth is not None
-        else (statement.body, statement.orelse)
     )
 
 
@@ -5979,3 +5917,34 @@ def _security_transfer_assignment_targets(
                 requests.add(("upload-path", target.id))
             if safe_upload_leaf:
                 requests.add(("secure-upload-leaf", target.id))
+
+
+def _security_merge_exit_states(target, incoming):
+    """Join reaching states only within the same kind of control-flow exit."""
+    for kind, state in incoming.items():
+        if kind not in target:
+            target[kind] = [values.copy() for values in state]
+        else:
+            _security_merge_branch_states(target[kind], [target[kind], state])
+
+
+def _security_merge_branch_states(target, branches):
+    for index, values in enumerate(target):
+        merged = set().union(*(branch[index] for branch in branches))
+        if index == 0:
+            _security_merge_structural_states(
+                values, [branch[index] for branch in branches]
+            )
+            safe = set.intersection(*(branch[index] for branch in branches))
+            unsafe_safety = {
+                item
+                for item in merged
+                if isinstance(item, tuple)
+                and item[0]
+                in {"secure-upload-leaf", "request-type:bytes", "request-type:text"}
+            } - safe
+            merged.difference_update(unsafe_safety)
+        values.clear()
+        values.update(merged)
+        if index == 0 and hasattr(values, "proven"):
+            values.proven.intersection_update(merged)
