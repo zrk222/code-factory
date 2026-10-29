@@ -3592,6 +3592,9 @@ def _oracle_context_cache_key(
     from .import_context import (
         import_resolution_helpers,
         security_literal_branch_blocks,
+        structural_ast_fingerprint,
+        _structural_ast_fields,
+        _structural_ast_leaf_digest,
         _security_loop_outcomes,
         _security_literal_loop_findings,
         _security_fixpoint_loop_findings,
@@ -3619,6 +3622,9 @@ def _oracle_context_cache_key(
         integrity._security_scope_local_names,
         integrity._security_if_block_findings,
         security_literal_branch_blocks,
+        structural_ast_fingerprint,
+        _structural_ast_fields,
+        _structural_ast_leaf_digest,
         integrity._security_loop_block_findings,
         _security_loop_outcomes,
         _security_literal_loop_findings,
@@ -5558,7 +5564,9 @@ def _security_scan_file_snapshot(
 
 def _oracle_tree_fingerprint(tree):
     """Hash AST structure and source locations without considering sidecars."""
-    return sha256(ast.dump(tree, include_attributes=True).encode("utf-8")).hexdigest()
+    from .import_context import structural_ast_fingerprint
+
+    return structural_ast_fingerprint(tree)
 
 
 def _verify_security_bindings(

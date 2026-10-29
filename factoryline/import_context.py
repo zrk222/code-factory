@@ -6,6 +6,85 @@ from pathlib import Path
 import ast
 import hashlib
 from collections import defaultdict
+from collections import OrderedDict
+
+
+def structural_ast_fingerprint(tree):
+    """Hash declared syntax with bounded per-call reuse, excluding sidecars."""
+    memo, active = OrderedDict(), set()
+    frames = [
+        (iter((tree,)), hashlib.sha256(b"factory.structural-ast-digest.v3\0"), None)
+    ]
+    while frames:
+        children, digest, identity = frames[-1]
+        value = next(children, StopIteration)
+        if value is StopIteration:
+            result = digest.digest()
+            frames.pop()
+            active.discard(identity)
+            memo[identity] = result
+            if len(memo) > 512:
+                memo.popitem(last=False)
+            if frames:
+                frames[-1][1].update(result)
+            continue
+        if isinstance(value, (ast.AST, list)):
+            identity = id(value)
+            if identity in memo:
+                digest.update(memo[identity])
+                continue
+            if identity in active:
+                raise ValueError("cyclic AST structural fields")
+            leaf = _structural_ast_leaf_digest(value)
+            if leaf is not None:
+                digest.update(leaf)
+                continue
+            active.add(identity)
+            children = (
+                _structural_ast_fields(value)
+                if isinstance(value, ast.AST)
+                else iter(value)
+            )
+            frames.append(
+                (
+                    children,
+                    hashlib.sha256(type(value).__name__.encode() + b"\0"),
+                    identity,
+                )
+            )
+        else:
+            encoded = repr(value).encode("utf-8", "surrogatepass")
+            digest.update(
+                type(value).__name__.encode()
+                + b":"
+                + str(len(encoded)).encode()
+                + b":"
+                + encoded
+            )
+    return result.hex()
+
+
+def _structural_ast_leaf_digest(value):
+    """Use the compact stdlib encoding only for a bounded syntax subtree."""
+    from itertools import islice
+
+    if (
+        not isinstance(value, ast.AST)
+        or len(tuple(islice(_iter_ast_nodes(value), 129))) > 128
+    ):
+        return None
+    return hashlib.sha256(
+        b"BOUNDED_DUMP\0"
+        + ast.dump(value, include_attributes=True).encode("utf-8", "surrogatepass")
+    ).digest()
+
+
+def _structural_ast_fields(node):
+    """Enumerate canonical syntax fields, excluding mutable scanner sidecars."""
+    for name in (*node._fields, *node._attributes):
+        if hasattr(node, name):
+            yield name
+            yield getattr(node, name)
 
 
 def _shell_import_aliases(nodes, audit, provider, *, package=None):
