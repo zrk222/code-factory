@@ -7554,7 +7554,7 @@ def test_native_structured_control_flow_public_cross_family_batch(tmp_path):
 @pytest.mark.parametrize(
     "block",
     [
-        "try:\n    value = 'public'\nexcept Exception:\n    pass",
+        "try:\n    value = public_value()\nexcept Exception:\n    pass",
         "for item in items:\n    value = 'public'\nelse:\n    pass",
     ],
 )
