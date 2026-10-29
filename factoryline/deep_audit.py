@@ -4131,7 +4131,7 @@ def _agent_actions(candidate_sha256: str, repair_queue: list[dict]) -> list[dict
     rows = []
     for index, item in enumerate(repair_queue, start=1):
         severity = str(item.get("severity", "high")).lower()
-        security = any(
+        security = item.get("review_domain") == "security" or any(
             token in str(item.get("obligation_id", "")).lower()
             for token in ("security", "privacy", "tenant")
         )

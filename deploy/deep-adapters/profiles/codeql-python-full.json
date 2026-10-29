@@ -40,7 +40,7 @@
         "/usr/local/bin/python",
         "-I",
         "-c",
-        "import sys,json,hashlib; from pathlib import Path; p=Path(sys.argv[1]); b=p.open(\"rb\").read(1048577); assert len(b)<=1048576; r=json.loads(b); r.setdefault(\"properties\",{})[\"factory_native_raw_sha256\"]=hashlib.sha256(b).hexdigest(); r[\"properties\"][\"factory_source_root_basis\"]=\"Fixed CodeQL database create --source-root=/src invocation\"; [(run.setdefault(\"originalUriBaseIds\",{}).setdefault(\"%SRCROOT%\",{\"uri\":\"file:///src/\"})) for run in r[\"runs\"]]; assert all(not e.get(\"rules\") and not e.get(\"taxa\") for run in r[\"runs\"] for e in run[\"tool\"].get(\"extensions\",[])); [(run.setdefault(\"properties\",{}).update(factory_native_pack_metadata=run[\"tool\"].pop(\"extensions\",[]))) for run in r[\"runs\"]]; p.write_text(json.dumps(r))",
+        "import sys,json,hashlib; from pathlib import Path; p=Path(sys.argv[1]); b=p.open(\"rb\").read(1048577); assert len(b)<=1048576; r=json.loads(b); r.setdefault(\"properties\",{})[\"factory_native_raw_sha256\"]=hashlib.sha256(b).hexdigest(); r[\"properties\"][\"factory_source_root_basis\"]=\"Fixed CodeQL database create --source-root=/src invocation\"; [(run.setdefault(\"originalUriBaseIds\",{}).setdefault(\"%SRCROOT%\",{\"uri\":\"file:///src/\"})) for run in r[\"runs\"]]; assert all(not e.get(\"rules\") for run in r[\"runs\"] for e in run[\"tool\"].get(\"extensions\",[])); [(run.setdefault(\"properties\",{}).update(factory_native_pack_metadata=run[\"tool\"].pop(\"extensions\",[]))) for run in r[\"runs\"]]; p.write_text(json.dumps(r))",
         "{report}"
       ],
       "accepted_exit_codes": [

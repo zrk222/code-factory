@@ -1,0 +1,69 @@
+{
+  "schema": "factory.security-handoff-checkpoints.v1",
+  "scope": "CodeQL metadata normalization and source-bound security-review delivery",
+  "candidate": [
+    {
+      "path": "factoryline/deep_audit.py",
+      "sha256": "12619883268ee9f7c2c4cf6398f8c941a097b6a50325e8e4f1beffb6f0a5f635"
+    },
+    {
+      "path": "factoryline/deep_audit_sarif.py",
+      "sha256": "3a138589cb15affec08a5ff3a8887a423246b7aa38c0e84ebed86b8f155b93a1"
+    },
+    {
+      "path": "deploy/deep-adapters/profiles/codeql-python-full.json",
+      "sha256": "bdca9c9e2d96b5840cd32f7c2ddda74c0846f3bb027556e330778048f25c6df2"
+    },
+    {
+      "path": "deploy/deep-adapters/profiles/codeql-javascript-full.json",
+      "sha256": "bb29c3ae701d8ad5b1cdb4f6cedc3c1f7ba687c18e821ac3d610b23b0d9da64f"
+    },
+    {
+      "path": "deploy/deep-adapters/profiles/codeql-actions-full.json",
+      "sha256": "99da58515c646ca9bfeeb90caef2b2dcbbd50565ccb75ec8960b69d26ce1dfe8"
+    },
+    {
+      "path": "tests/test_deep_audit_sarif.py",
+      "sha256": "cc30e91bb03af8b14ad8afa1a786263fe70832618d0a553f43108ddef35fede8"
+    },
+    {
+      "path": "tests/test_junie_taxonomy.py",
+      "sha256": "0a5f717c8d2f4068a947ff1d000d1f628530168b57fe69dd4007913b4aac851a"
+    },
+    {
+      "path": "plans/deep-audit-attestation-v1.md",
+      "sha256": "3f0455abe23510d3c27fd2556c0a970e270e3bfe117aa4191670951d9df2ebf8"
+    }
+  ],
+  "tests": {
+    "final-validation": 86,
+    "sarif-final": 224,
+    "surfaces-final": 42
+  },
+  "real_retained_worker_replay": {
+    "raw_results": 78,
+    "normalized_findings": 78,
+    "unique_ids": 78,
+    "security_handoffs": 78,
+    "source_spans_and_flows_preserved": true,
+    "repair_comparison_identity_gate": "PASS",
+    "canonical_lane_state": "INCOMPLETE",
+    "remaining_gaps": [
+      "ANALYZER_INCOMPLETE",
+      "CODEQL_NATIVE_ARTIFACTS_UNVERIFIED",
+      "OBLIGATION_COVERAGE_MISSING"
+    ]
+  },
+  "independent_review": "Read-only Luna ECC diff review: no actionable findings; not runtime certification.",
+  "limits": [
+    "Retained real report replay; no fresh precision claim.",
+    "All 78 observations acknowledged by two reviewers; actionable labels pending.",
+    "Legacy identities retained for correlation; v2 identities bind exact normalized source locations."
+  ],
+  "architecture": {
+    "decision": "HEALTHY",
+    "core_modules": 133,
+    "caps_raised": false
+  },
+  "evidence_directory": ".factory/precision419-external-comparison/repair"
+}
