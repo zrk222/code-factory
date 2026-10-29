@@ -476,9 +476,23 @@ def signing_configuration_inventory(source_bytes, bindings):
 
 
 def _signing_inventory_input_closed(source_bytes, bindings):
+    if not isinstance(source_bytes, dict) or not isinstance(bindings, dict):
+        return False
+    if any(
+        not isinstance(name, str)
+        or not isinstance(raw, bytes)
+        or Path(name).is_absolute()
+        or ".." in Path(name).parts
+        or Path(name).as_posix() != name
+        or len(raw) > 1_000_000
+        for name, raw in source_bytes.items()
+    ) or any(not isinstance(name, str) for name in bindings):
+        return False
     return not (
-        set(source_bytes) != set(bindings)
-        or len(bindings) > 2000
+        not set(bindings).issubset(source_bytes)
+        or {name for name in source_bytes if Path(name).suffix == ".py"}
+        != {name for name in bindings if Path(name).suffix == ".py"}
+        or len(source_bytes) > 2000
         or sum(len(raw) for raw in source_bytes.values() if isinstance(raw, bytes))
         > 32 * 1024 * 1024
     )
@@ -494,10 +508,11 @@ def _signing_inventory_snapshots(source_bytes, bindings, bind_security_call_scop
             or path.is_absolute()
             or ".." in path.parts
             or path.as_posix() != name
-            or path.suffix != ".py"
             or sha256(raw).hexdigest() != digest
         ):
             return None
+        if path.suffix != ".py":
+            continue
         try:
             tree = ast.parse(raw)
         except (SyntaxError, ValueError, UnicodeError, RecursionError):
@@ -572,13 +587,32 @@ def _flask_credential_authority_inputs(finding, context):
 def _flask_credential_authority_for_key(
     finding, context, index, path, declaration, session_secret, key
 ):
-    tree = index.snapshots[path]
-    for app in _flask_configured_apps(path, tree, context, {key, "SECRET_KEY"}):
-        authority = _flask_session_authority_witness(path, tree, context, app, key)
+    for app in _flask_configured_apps(path, context, {key, "SECRET_KEY"}):
+        app_path, tree = app["path"], app["tree"]
+        authority = _flask_session_authority_witness(
+            app_path, tree, context, app, key
+        )
+        if app_path != path:
+            authority = None
+        if key == "SECRET_KEY":
+            login_authority = _flask_login_session_authority_witness(
+                app_path, tree, context, app
+            )
+            if login_authority is not None:
+                return _flask_source_authority_witness(
+                    index,
+                    path,
+                    declaration,
+                    session_secret,
+                    app,
+                    login_authority,
+                )
         if authority is None:
             continue
         password_key = authority["password_key"]
-        password_declaration = _flask_config_key_declaration(index, path, password_key)
+        password_declaration = _flask_config_key_declaration(
+            index, path, password_key
+        )
         if password_declaration is None or not _literal_credential(
             password_declaration.value
         ):
@@ -664,31 +698,49 @@ def _flask_imported_key_written(target, context, key):
     )
 
 
-def _flask_configured_apps(target, tree, context, protected_keys):
+def _flask_configured_apps(target, context, protected_keys):
     if not _signing_framework_external(context, "flask"):
         return []
-    if not _flask_authority_provider_clear(target, tree, context):
-        return []
-    receivers = {}
     configured = []
-    aliases = context["aliases"][target]
-    for statement in tree.body:
-        _flask_bind_created_app(statement, receivers, aliases)
-        call = getattr(statement, "value", None)
-        if not isinstance(call, ast.Call):
+    for path, tree in context["index"].snapshots.items():
+        if not context["index"].validate(path) or not _flask_authority_provider_clear(
+            path, tree, context
+        ):
             continue
-        for receiver, creation in receivers.items():
-            if not _flask_config_load(call, receiver, target, context, target):
-                continue
-            if _flask_config_mutated(tree, receiver, protected_keys):
-                continue
-            if _flask_configuration_reloaded(
-                tree, receiver, target, context, protected_keys, target
-            ):
-                continue
-            configured.append(
-                {"receiver": receiver, "creation": creation, "load": call}
-            )
+        aliases = _flask_module_aliases(path, tree, context)
+        for scope in [
+            tree,
+            *[
+                node
+                for node in tree.body
+                if isinstance(node, ast.FunctionDef) and not node.decorator_list
+            ],
+        ]:
+            receivers = {}
+            for statement in scope.body:
+                _flask_bind_created_app(statement, receivers, aliases)
+                call = getattr(statement, "value", None)
+                if not isinstance(call, ast.Call):
+                    continue
+                for receiver, creation in receivers.items():
+                    if not _flask_config_load(call, receiver, target, context, path):
+                        continue
+                    if _flask_config_mutated(scope, receiver, protected_keys):
+                        continue
+                    if _flask_configuration_reloaded(
+                        scope, receiver, target, context, protected_keys, path
+                    ):
+                        continue
+                    configured.append(
+                        {
+                            "path": path,
+                            "tree": tree,
+                            "scope": scope,
+                            "receiver": receiver,
+                            "creation": creation,
+                            "load": call,
+                        }
+                    )
     return configured
 
 
@@ -700,8 +752,17 @@ def _flask_authority_provider_clear(path, tree, context):
     roots = {
         "flask.Flask",
         "flask.Config.from_object",
+        "flask_login.LoginManager",
+        "flask_login.login_user",
+        "flask_login.login_required",
     }
-    provider_objects = roots | {"flask.request", "flask.session"}
+    provider_objects = roots | {
+        "flask.request",
+        "flask.session",
+        "flask_login.LoginManager",
+        "flask_login.login_user",
+        "flask_login.login_required",
+    }
     names = {
         name
         for name, provider in aliases.items()
@@ -753,6 +814,12 @@ def _flask_star_imports_clear(tree, context):
         provider = _signing_resolve_module(
             context, ast.Constant(value=statement.module)
         )
+        if (
+            provider is None
+            and statement.module == "flask"
+            and _signing_framework_external(context, "flask")
+        ):
+            continue
         if provider is None:
             return False
         exports = _flask_static_module_exports(context, provider, set())
@@ -888,10 +955,100 @@ def _flask_module_exports_dynamic(tree):
     return False
 
 
-def _flask_config_module_matches(context, expression, target, consumer_path):
+def _flask_config_module_matches(
+    context, expression, target, consumer_path, seen=()
+):
     if isinstance(expression, ast.Name) and expression.id == "__name__":
         return consumer_path == target
-    return _signing_resolve_module(context, expression) == target
+    resolved = _signing_resolve_module(context, expression)
+    if resolved is not None:
+        return resolved == target
+    if not isinstance(expression, ast.Name):
+        return False
+    if len(seen) >= 8:
+        return False
+    index = context["index"]
+    parents = index.parents.get(consumer_path)
+    from .credential_role_identity_effects import (
+        _enclosing_function,
+        resolve_source_identity_call,
+    )
+
+    function = _enclosing_function(expression, parents) if parents else None
+    if function is None or expression.id not in {
+        item.arg
+        for item in (*function.args.posonlyargs, *function.args.args, *function.args.kwonlyargs)
+    }:
+        return False
+    marker = (consumer_path, id(function), expression.id)
+    if marker in seen:
+        return False
+    if _name_writes(function, expression.id):
+        return False
+    found = False
+    for caller_path, caller_tree in index.snapshots.items():
+        if not index.validate(caller_path):
+            return False
+        for call in ast.walk(caller_tree):
+            if not isinstance(call, ast.Call):
+                continue
+            resolved_call = resolve_source_identity_call(call, caller_path, index)
+            if (
+                resolved_call is None
+                or resolved_call.path != consumer_path
+                or resolved_call.function is not function
+            ):
+                continue
+            actual = resolved_call.arguments.get(expression.id)
+            if actual is None:
+                return False
+            actual_module = _signing_resolve_module(context, actual)
+            if actual_module is not None:
+                found = found or actual_module == target
+                continue
+            if not isinstance(actual, ast.Name):
+                return False
+            if _flask_config_module_matches(
+                context, actual, target, caller_path, (*seen, marker)
+            ):
+                found = True
+            else:
+                return False
+    return found
+
+
+def _flask_module_aliases(path, tree, context):
+    aliases = dict(context["aliases"].get(path, {}))
+    if (
+        _signing_framework_external(context, "flask")
+        and any(
+            isinstance(node, ast.ImportFrom)
+            and node.module == "flask"
+            and not node.level
+            and any(item.name == "*" for item in node.names)
+            for node in tree.body
+        )
+    ):
+        for name in (
+            "Flask",
+            "request",
+            "session",
+            "redirect",
+            "current_app",
+            "current_user",
+        ):
+            if name not in aliases and not _name_writes(tree, name):
+                aliases[name] = "flask." + name
+    return aliases
+
+
+def _name_writes(scope, name):
+    return any(
+        isinstance(node, ast.Name)
+        and node.id == name
+        and isinstance(node.ctx, (ast.Store, ast.Del))
+        for node in ast.walk(scope)
+    )
 
 
 def _flask_session_authority_witness(path, tree, context, app, credential_key):
@@ -923,6 +1080,143 @@ def _flask_session_authority_witness(path, tree, context, app, credential_key):
                 "protected_route": protected,
             }
     return None
+
+
+def _flask_login_session_authority_witness(path, tree, context, app):
+    """Bind a configured Flask app to Flask-Login session creation and protection."""
+    if not _signing_framework_external(context, "flask_login"):
+        return None
+    aliases = _flask_module_aliases(path, tree, context)
+    from .review_integrity import security_call_name
+    from .review_audits import _resolved_ast_name
+
+    scope = app["scope"]
+    statements = scope.body
+    executable = [
+        node
+        for statement in statements
+        if not isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+        for node in ast.walk(statement)
+    ]
+    managers = [
+        node
+        for node in executable
+        if isinstance(node, ast.Assign)
+        and len(node.targets) == 1
+        and isinstance(node.targets[0], ast.Name)
+        and isinstance(node.value, ast.Call)
+        and security_call_name(node.value, aliases) == "flask_login.LoginManager"
+        and not node.value.args
+        and not node.value.keywords
+    ]
+    if len(managers) != 1:
+        return None
+    manager = managers[0].targets[0].id
+    if sum(
+        isinstance(node, ast.Name)
+        and node.id == manager
+        and isinstance(node.ctx, (ast.Store, ast.Del))
+        for node in ast.walk(scope)
+    ) != 1 or _provider_identity_uncertain(
+        scope,
+        {**aliases, manager: "flask_login.LoginManagerInstance"},
+        roots=("flask_login.LoginManagerInstance",),
+    ):
+        return None
+    initialized = [
+        node
+        for node in executable
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "init_app"
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == manager
+        and len(node.args) == 1
+        and not node.keywords
+        and isinstance(node.args[0], ast.Name)
+        and node.args[0].id == app["receiver"]
+    ]
+    if len(initialized) != 1:
+        return None
+    login_users = []
+    protected = []
+    for function in scope.body:
+        if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if _flask_route_bound_to_app(function, app["receiver"]):
+            for node in ast.walk(function):
+                if (
+                    isinstance(node, ast.Call)
+                    and security_call_name(node, aliases) == "flask_login.login_user"
+                    and _flask_path_conditions_clear(function, node)
+                ):
+                    login_users.append((function, node))
+        decorators = [
+            _resolved_ast_name(
+                decorator.func if isinstance(decorator, ast.Call) else decorator,
+                aliases,
+            )
+            for decorator in function.decorator_list
+        ]
+        if (
+            _flask_route_bound_to_app(function, app["receiver"])
+            and "flask_login.login_required" in decorators
+        ):
+            guard_position = decorators.index("flask_login.login_required")
+            if not any(
+                isinstance(decorator, ast.Call)
+                and isinstance(decorator.func, ast.Attribute)
+                and decorator.func.attr == "route"
+                and isinstance(decorator.func.value, ast.Name)
+                and decorator.func.value.id == app["receiver"]
+                for decorator in function.decorator_list[:guard_position]
+            ):
+                continue
+            protected.append((function, function.decorator_list[decorators.index("flask_login.login_required")]))
+    if len(login_users) != 1 or not protected:
+        return None
+    login_function, login_call = login_users[0]
+    return {
+        "consumer_kind": "flask_login_session",
+        "nodes": [
+            (path, app["creation"]),
+            (path, app["load"]),
+            (path, initialized[0]),
+            (path, login_function),
+            (path, login_call),
+            *(
+                (path, node)
+                for function, decorator in protected
+                for node in (function, decorator)
+            ),
+        ],
+    }
+
+
+def _flask_source_authority_witness(
+    index, path, declaration, session_secret, app, authority
+):
+    nodes = [(path, declaration)]
+    if session_secret is not declaration:
+        nodes.append((path, session_secret))
+    nodes.extend(authority["nodes"])
+    transfers = [
+        _signing_source_span(index, owner_path, node)
+        for owner_path, node in nodes
+    ]
+    return {
+        "framework": "flask",
+        "credential_key": "SECRET_KEY",
+        "consumer_role": authority["consumer_kind"],
+        "transfers": transfers,
+        "proof_scope": "source_bound_flask_session_authority",
+        "runtime_execution": "not_performed",
+        "deployment": "UNASSESSED",
+        "claim": (
+            "Captured configuration source binds this literal default to a "
+            "Flask app with a source-verified session signing consumer."
+        ),
+    }
 
 
 def _flask_route_authority(
@@ -2339,12 +2633,15 @@ def _flask_configuration_reloaded(
     from .review_audits import _name
 
     protected_keys = {"SECRET_KEY"} if protected_keys is None else protected_keys
-    for statement in scope.body:
-        call = getattr(statement, "value", None)
+    for call in ast.walk(scope):
         if not isinstance(call, ast.Call) or not isinstance(call.func, ast.Attribute):
             continue
         if _name(call.func.value) != receiver + ".config":
             continue
+        if call.func.attr not in {
+            "from_object", "update", "from_mapping", "get", "keys", "values", "items", "copy"
+        }:
+            return True
         if call.func.attr == "from_object" and not _flask_config_load(
             call, receiver, target, context, consumer_path
         ):
@@ -2464,12 +2761,24 @@ def _flask_bind_created_app(statement, receivers, aliases):
     for target in statement.targets:
         if isinstance(target, ast.Name):
             receivers.pop(target.id, None)
+            call = statement.value
+            canonical = (
+                security_call_name(call, aliases)
+                if isinstance(call, ast.Call)
+                else ""
+            )
             if (
-                isinstance(statement.value, ast.Call)
-                and security_call_name(statement.value, aliases) == "flask.Flask"
-                and _flask_constructor_arguments(statement.value)
+                not canonical
+                and isinstance(call, ast.Call)
+                and isinstance(call.func, ast.Name)
             ):
-                receivers[target.id] = statement.value
+                canonical = aliases.get(call.func.id, "")
+            if (
+                isinstance(call, ast.Call)
+                and canonical == "flask.Flask"
+                and _flask_constructor_arguments(call)
+            ):
+                receivers[target.id] = call
 
 
 def _flask_constructor_arguments(call):

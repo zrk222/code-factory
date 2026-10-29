@@ -391,6 +391,158 @@ def _flask_authority_tiers314(source=_FLASK_AUTHORITY_SOURCE314, extra_sources=N
     )
 
 
+def _cross_module_flask_secret_tiers(files, secret_path):
+    from hashlib import sha256
+    from pathlib import Path
+    from factoryline.primitive_observation_binding import build_finding_tier_report
+
+    sources = {name: value.encode() for name, value in files.items()}
+    findings = audit._security_scan_tree(
+        Path("."), Path(secret_path), ast.parse(sources[secret_path])
+    )
+    selected = [
+        finding
+        for finding in findings
+        if finding.get("code") == "SECURITY_HARDCODED_SECRET"
+        and finding.get("facts", {}).get("name") == "SECRET_KEY"
+    ]
+    assert selected
+    return build_finding_tier_report(
+        selected,
+        [],
+        [
+            {"path": name, "sha256": sha256(raw).hexdigest()}
+            for name, raw in sources.items()
+            if name.endswith(".py")
+        ],
+        sources,
+        coverage_state=True,
+        partition_state="VALIDATED",
+    )
+
+
+def _flask_login_config_sources(*, target="config", include_login=True, overwrite=""):
+    return {
+        "requirements.txt": "flask\nflask-login\n",
+        "config.py": 'SECRET_KEY = "source-bound-login-signing-key"\n',
+        "app.py": (
+            "from flask import *\n"
+            "from flask_login import LoginManager, login_user, login_required\n"
+            "app = Flask(__name__)\n"
+            f"app.config.from_object('{target}')\n"
+            + overwrite
+            + "login_manager = LoginManager()\n"
+            "login_manager.init_app(app)\n"
+            "@app.route('/login', methods=['POST'])\n"
+            "def login():\n"
+            "    if user.check_password(password):\n"
+            "        login_user(user)\n"
+            "        return 'ok'\n"
+            "    return 'denied'\n"
+            "@app.route('/profile')\n"
+            + ("@login_required\n" if include_login else "")
+            + "def profile():\n"
+            "    return current_user.id\n"
+        ),
+    }
+
+
+def test_tier314_flask_login_session_accepts_cross_module_signing_default():
+    from hashlib import sha256
+
+    files = _flask_login_config_sources()
+    report = _cross_module_flask_secret_tiers(files, "config.py")
+    row = report["ledger"][0]
+    assert row["tier"] == "SUPPORTED_DEFECT"
+    assert row["evidence"] == "source_bound_flask_session_authority"
+    observation = row["credential_authority_observation"]
+    assert observation["credential_key"] == "SECRET_KEY"
+    assert observation["consumer_role"] == "flask_login_session"
+    assert observation["runtime_execution"] == "not_performed"
+    assert observation["deployment"] == "UNASSESSED"
+    assert {transfer["path"] for transfer in observation["transfers"]} == {
+        "config.py",
+        "app.py",
+    }
+    assert all(
+        transfer["sha256"] == sha256(files[transfer["path"]].encode()).hexdigest()
+        for transfer in observation["transfers"]
+    )
+
+
+@pytest.mark.parametrize(
+    "files",
+    [
+        pytest.param(
+            _flask_login_config_sources(include_login=False),
+            id="no-protected-session-route",
+        ),
+        pytest.param(
+            _flask_login_config_sources(overwrite='app.config["SECRET_KEY"] = other\n'),
+            id="post-load-secret-overwrite",
+        ),
+        pytest.param(
+            _flask_login_config_sources(target="other"),
+            id="different-loaded-module",
+        ),
+    ],
+)
+def test_tier314_flask_login_requires_effective_config_and_session_consumers(files):
+    report = _cross_module_flask_secret_tiers(files, "config.py")
+    assert report["tier_counts"]["SUPPORTED_DEFECT"] == 0
+    assert report["ledger"][0]["tier"] == "NEEDS_CONTEXT"
+    assert report["ledger"][0]["raw_finding"]["severity"] == "CRITICAL"
+
+
+@pytest.mark.parametrize("mutation", ["manager-rebound", "init-method-replaced", "reverse-decorators", "later-env-config", "nested-env-config"])
+def test_flask_login_admission_rejects_broken_consumer_identity(mutation):
+    files = _flask_login_config_sources()
+    if mutation == "manager-rebound":
+        files["app.py"] = files["app.py"].replace(
+            "login_manager.init_app(app)",
+            "login_manager = other\nlogin_manager.init_app(app)",
+        )
+    elif mutation == "init-method-replaced":
+        files["app.py"] = files["app.py"].replace(
+            "login_manager.init_app(app)",
+            "login_manager.init_app = other\nlogin_manager.init_app(app)",
+        )
+    elif mutation == "reverse-decorators":
+        files["app.py"] = files["app.py"].replace(
+            "@app.route('/profile')\n@login_required",
+            "@login_required\n@app.route('/profile')",
+        )
+    else:
+        reload = "app.config.from_envvar('APP_CONFIG')\n"
+        if mutation == "nested-env-config":
+            reload = "if enabled:\n    " + reload
+        files["app.py"] = files["app.py"].replace(
+            "login_manager = LoginManager()", reload + "login_manager = LoginManager()"
+        )
+    assert _cross_module_flask_secret_tiers(files, "config.py")["tier_counts"]["SUPPORTED_DEFECT"] == 0
+
+
+@pytest.mark.parametrize("mutation", ["metadata", "bound-metadata", "unbound-python", "missing-python", "changed-python", "changed-bound-metadata"])
+def test_signing_inventory_preserves_python_binding_closure_with_metadata(mutation):
+    from hashlib import sha256
+    from factoryline.semantic_credential_sensor import signing_configuration_inventory
+
+    sources = {"app.py": b"import flask\n", "requirements.txt": b"flask\n"}
+    bindings = {"app.py": sha256(sources["app.py"]).hexdigest()}
+    if mutation in {"bound-metadata", "changed-bound-metadata"}:
+        bindings["requirements.txt"] = sha256(sources["requirements.txt"]).hexdigest()
+    if mutation == "unbound-python":
+        sources["flask.py"] = b""
+    elif mutation == "missing-python":
+        del sources["app.py"]
+    elif mutation == "changed-python":
+        sources["app.py"] += b"# changed\n"
+    elif mutation == "changed-bound-metadata":
+        sources["requirements.txt"] += b"changed\n"
+    result = signing_configuration_inventory(sources, bindings)
+    assert (result is not None) == (mutation in {"metadata", "bound-metadata"})
+
+
 def test_tier314_flask_session_authority_preserves_both_source_diagnostics():
     """flask_credential_authority_evidence ties both source diagnostics to complete captured session transfers."""
     report = _flask_authority_tiers314()
