@@ -323,6 +323,9 @@ def validation_helpers():
     """Return the original HTTPX, JSON assertion, and router validation callables."""
     return _callable_values(
         (
+            '_flask_credential_authority_for_key',
+            '_flask_login_session_authority_witness',
+            '_flask_credential_authority_witness',
             "_request_client_origin",
             "_direct_httpx_fixture",
             "_closed_fixture_decorator",
@@ -2085,3 +2088,199 @@ def _reviewed_publication_matches(review, origin, payload):
         and (review.get("publisher_and_endpoint_context_checked") is True)
         and (review.get("revoked") is False)
     )
+
+
+# Source-bound session authority admission; candidate capture remains in the sensor.
+
+def _flask_credential_authority_for_key(
+    finding, context, index, path, declaration, session_secret, key
+):
+    from .semantic_credential_sensor import (
+        _flask_configured_apps, _flask_session_authority_witness,
+        _flask_config_key_declaration, _literal_credential,
+    )
+
+    for app in _flask_configured_apps(path, context, {key, "SECRET_KEY"}):
+        app_path, tree = app["path"], app["tree"]
+        authority = _flask_session_authority_witness(
+            app_path, tree, context, app, key
+        )
+        if app_path != path:
+            authority = None
+        if key == "SECRET_KEY":
+            login_authority = _flask_login_session_authority_witness(
+                app_path, tree, context, app
+            )
+            if login_authority is not None:
+                return _flask_credential_authority_witness(
+                    index, path, declaration, session_secret, None, app, login_authority, key
+                )
+        if authority is None:
+            continue
+        password_key = authority["password_key"]
+        password_declaration = _flask_config_key_declaration(
+            index, path, password_key
+        )
+        if password_declaration is None or not _literal_credential(
+            password_declaration.value
+        ):
+            continue
+        if key not in {"SECRET_KEY", password_key}:
+            continue
+        return _flask_credential_authority_witness(
+            index,
+            path,
+            declaration,
+            session_secret,
+            password_declaration,
+            app,
+            authority,
+            key,
+        )
+    return None
+
+
+
+def _flask_login_session_authority_witness(path, tree, context, app):
+    """Bind a configured Flask app to Flask-Login session creation and protection."""
+    from .semantic_credential_sensor import (
+        _signing_framework_external, _flask_module_aliases,
+        _provider_identity_uncertain, _flask_path_conditions_clear,
+        _flask_route_bound_to_app,
+    )
+
+    if not _signing_framework_external(context, "flask_login"):
+        return None
+    aliases = _flask_module_aliases(path, tree, context)
+    from .review_integrity import security_call_name
+    from .review_audits import _resolved_ast_name
+
+    scope = app["scope"]
+    statements = scope.body
+    executable = [
+        node
+        for statement in statements
+        if not isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+        for node in ast.walk(statement)
+    ]
+    managers = [
+        node
+        for node in executable
+        if isinstance(node, ast.Assign)
+        and len(node.targets) == 1
+        and isinstance(node.targets[0], ast.Name)
+        and isinstance(node.value, ast.Call)
+        and security_call_name(node.value, aliases) == "flask_login.LoginManager"
+        and not node.value.args
+        and not node.value.keywords
+    ]
+    if len(managers) != 1:
+        return None
+    manager = managers[0].targets[0].id
+    if sum(
+        isinstance(node, ast.Name)
+        and node.id == manager
+        and isinstance(node.ctx, (ast.Store, ast.Del))
+        for node in ast.walk(scope)
+    ) != 1 or _provider_identity_uncertain(
+        scope,
+        {**aliases, manager: "flask_login.LoginManagerInstance"},
+        roots=("flask_login.LoginManagerInstance",),
+    ):
+        return None
+    initialized = [
+        node
+        for node in executable
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "init_app"
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == manager
+        and len(node.args) == 1
+        and not node.keywords
+        and isinstance(node.args[0], ast.Name)
+        and node.args[0].id == app["receiver"]
+    ]
+    if len(initialized) != 1:
+        return None
+    login_users = []
+    protected = []
+    for function in scope.body:
+        if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if _flask_route_bound_to_app(function, app["receiver"]):
+            for node in ast.walk(function):
+                if (
+                    isinstance(node, ast.Call)
+                    and security_call_name(node, aliases) == "flask_login.login_user"
+                    and _flask_path_conditions_clear(function, node)
+                ):
+                    login_users.append((function, node))
+        decorators = [
+            _resolved_ast_name(
+                decorator.func if isinstance(decorator, ast.Call) else decorator,
+                aliases,
+            )
+            for decorator in function.decorator_list
+        ]
+        if (
+            _flask_route_bound_to_app(function, app["receiver"])
+            and "flask_login.login_required" in decorators
+        ):
+            guard_position = decorators.index("flask_login.login_required")
+            if not any(
+                isinstance(decorator, ast.Call)
+                and isinstance(decorator.func, ast.Attribute)
+                and decorator.func.attr == "route"
+                and isinstance(decorator.func.value, ast.Name)
+                and decorator.func.value.id == app["receiver"]
+                for decorator in function.decorator_list[:guard_position]
+            ):
+                continue
+            protected.append((function, function.decorator_list[decorators.index("flask_login.login_required")]))
+    if len(login_users) != 1 or not protected:
+        return None
+    login_function, login_call = login_users[0]
+    return {
+        "consumer_kind": "flask_login_session",
+        "nodes": [
+            (path, app["creation"]),
+            (path, app["load"]),
+            (path, initialized[0]),
+            (path, login_function),
+            (path, login_call),
+            *(
+                (path, node)
+                for function, decorator in protected
+                for node in (function, decorator)
+            ),
+        ],
+    }
+
+
+
+def _flask_credential_authority_witness(
+    index, path, declaration, session_secret, password_declaration, app, authority, key
+):
+    from .semantic_credential_sensor import _signing_source_span
+
+    nodes = [(path, declaration)]
+    if session_secret is not declaration:
+        nodes.append((path, session_secret))
+    if "nodes" in authority:
+        nodes.extend(authority["nodes"])
+        role = {"consumer_role": authority["consumer_kind"]}
+    else:
+        nodes.extend((path, node) for node in (
+            app["creation"], app["load"], password_declaration,
+            authority["comparison"], authority["grant"],
+            authority["login_wrapper"], authority["protected_route"],
+        ))
+        role = {"password_key": authority["password_key"]}
+    return {
+        "framework": "flask", "credential_key": key, **role,
+        "transfers": [_signing_source_span(index, owner, node) for owner, node in nodes],
+        "proof_scope": "source_bound_flask_session_authority",
+        "runtime_execution": "not_performed", "deployment": "UNASSESSED",
+        "claim": "Captured source binds a literal configuration default to same-app session authority.",
+    }

@@ -543,6 +543,27 @@ def test_signing_inventory_preserves_python_binding_closure_with_metadata(mutati
     assert (result is not None) == (mutation in {"metadata", "bound-metadata"})
 
 
+def test_flask_admission_validator_change_invalidates_warm_native_proof(tmp_path, monkeypatch):
+    from factoryline import credential_endpoint_admission as admission
+
+    for name, source in _flask_login_config_sources().items():
+        (tmp_path / name).write_text(source, encoding="utf-8")
+    with audit._security_only_scan_context(True):
+        first = audit.security_scan(tmp_path, cache_enabled=True)
+        monkeypatch.setattr(admission, "_flask_login_session_authority_witness", lambda *args: None)
+        second = audit.security_scan(tmp_path, cache_enabled=True)
+
+    def secret_row(report):
+        return next(row for row in report["finding_tier_report"]["ledger"]
+                    if row["raw_finding"].get("facts", {}).get("name") == "SECRET_KEY")
+
+    assert first["sources"] == second["sources"]
+    assert secret_row(first)["tier"] == "SUPPORTED_DEFECT"
+    assert secret_row(second)["tier"] == "NEEDS_CONTEXT"
+    assert secret_row(first)["raw_finding"] == secret_row(second)["raw_finding"]
+
+
+
 def test_tier314_flask_session_authority_preserves_both_source_diagnostics():
     """flask_credential_authority_evidence ties both source diagnostics to complete captured session transfers."""
     report = _flask_authority_tiers314()
