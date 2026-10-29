@@ -3592,6 +3592,9 @@ def _oracle_context_cache_key(
     from .import_context import (
         import_resolution_helpers,
         security_literal_branch_blocks,
+        _security_loop_outcomes,
+        _security_literal_loop_findings,
+        _security_fixpoint_loop_findings,
     )
     from .context_efficiency import (
         _consume_security_snapshots,
@@ -3617,6 +3620,11 @@ def _oracle_context_cache_key(
         integrity._security_if_block_findings,
         security_literal_branch_blocks,
         integrity._security_loop_block_findings,
+        _security_loop_outcomes,
+        _security_literal_loop_findings,
+        _security_fixpoint_loop_findings,
+        integrity._security_leaf_block_findings,
+        integrity._security_caught_block_findings,
         integrity._security_try_block_flow,
         integrity._security_with_block_findings,
         integrity._security_match_block_findings,

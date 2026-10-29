@@ -3745,18 +3745,6 @@ def _security_analyze_source_sink_block(
         )
         if password_finding is not None:
             findings.append(password_finding)
-        if isinstance(statement, ast.Assert):
-            from . import review_audits as audit
-
-            findings.extend(inspect(statement.test, incoming_flow))
-            truth = audit._constant_truth_value(statement.test, {})
-            if truth is not True and statement.msg is not None:
-                findings.extend(inspect(statement.msg, incoming_flow))
-            if truth is False:
-                _security_merge_exit_states(exits, {"raise": flow})
-                continuing = False
-                break
-            continue
         from .intent_quality import sqlalchemy_with_findings
 
         with_findings = sqlalchemy_with_findings(
@@ -3778,52 +3766,61 @@ def _security_analyze_source_sink_block(
         handler = next(
             (handler for kind, handler in handlers if isinstance(statement, kind)), None
         )
-        if with_findings is not None or handler is not None:
-            emitted, outgoing = (
-                with_findings
-                if with_findings is not None
-                else handler(statement, flow, walk, inspect, bind_targets)
+        emitted, outgoing = (
+            with_findings
+            if with_findings is not None
+            else handler(statement, flow, walk, inspect, bind_targets)
+            if handler is not None
+            else _security_leaf_block_findings(
+                statement, flow, incoming_flow, inspect, aliases, helpers
             )
-            findings.extend(emitted)
-            _security_merge_exit_states(
-                exits,
-                {key: value for key, value in outgoing.items() if key != "normal"},
-            )
-            if "normal" not in outgoing:
-                continuing = False
-                break
-            _security_merge_branch_states(flow, [outgoing["normal"]])
-            continue
-        assignment = isinstance(statement, (ast.Assign, ast.AnnAssign, ast.AugAssign))
-        expression = isinstance(
-            statement, (ast.Expr, ast.Return, ast.Assert, ast.Raise)
         )
-        if assignment or expression:
-            findings.extend(inspect(statement, incoming_flow))
-        if assignment:
-            requests.assign(
-                statement, aliases, flow[1:], helpers, _security_flow_source_assignment
-            )
-        elif not expression:
-            from . import review_audits as audit
-
-            bound = audit._bound_names(statement)
-            _security_clear_flow_names(flow, bound)
-            if isinstance(statement, ast.Delete):
-                requests.bound.difference_update(bound)
-        terminal = {
-            ast.Return: "return",
-            ast.Raise: "raise",
-            ast.Break: "break",
-            ast.Continue: "continue",
-        }.get(type(statement))
-        if terminal:
-            _security_merge_exit_states(exits, {terminal: flow})
+        findings.extend(emitted)
+        _security_merge_exit_states(
+            exits, {key: value for key, value in outgoing.items() if key != "normal"}
+        )
+        if "normal" not in outgoing:
             continuing = False
             break
+        _security_merge_branch_states(flow, [outgoing["normal"]])
     if continuing:
         _security_merge_exit_states(exits, {"normal": flow})
     return (findings, exits) if _with_exits else findings
+
+
+def _security_leaf_block_findings(
+    statement, flow, incoming_flow, inspect, aliases, helpers
+):
+    """Give ordinary statements the same outcome contract as structured blocks."""
+    from . import review_audits as audit
+
+    findings, requests = [], flow[0]
+    if isinstance(statement, ast.Assert):
+        findings.extend(inspect(statement.test, incoming_flow))
+        truth = audit._constant_truth_value(statement.test, {})
+        if truth is not True and statement.msg is not None:
+            findings.extend(inspect(statement.msg, incoming_flow))
+        return findings, {"raise" if truth is False else "normal": flow}
+    assignment = isinstance(statement, (ast.Assign, ast.AnnAssign, ast.AugAssign))
+    expression = isinstance(statement, (ast.Expr, ast.Return, ast.Raise))
+    if assignment or expression:
+        findings.extend(inspect(statement, incoming_flow))
+    if assignment:
+        requests.assign(
+            statement, aliases, flow[1:], helpers, _security_flow_source_assignment
+        )
+    elif not expression:
+        bound = audit._bound_names(statement)
+        _security_clear_flow_names(flow, bound)
+        if isinstance(statement, ast.Delete):
+            requests.bound.difference_update(bound)
+    terminal = {
+        ast.Return: "return",
+        ast.Raise: "raise",
+        ast.Break: "break",
+        ast.Continue: "continue",
+    }.get(type(statement), "normal")
+    return findings, {terminal: flow}
 
 
 def _security_alternative_blocks(blocks, states, walk, prepare=None):
@@ -3836,6 +3833,24 @@ def _security_alternative_blocks(blocks, states, walk, prepare=None):
         findings.extend(emitted)
         _security_merge_exit_states(exits, outgoing)
     return findings, exits
+
+
+def _security_caught_block_findings(handler, raised, walk, inspect):
+    """Unknown handler matching and exception-alias lifetime belong to one block."""
+    findings = []
+    caught = [values.copy() for values in raised]
+    if handler.type is not None:
+        caught[0] = caught[0].unresolved()
+        findings.extend(inspect(handler.type, caught))
+    if handler.name:
+        for state in caught:
+            state.discard(handler.name)
+    emitted, outgoing = walk(handler.body, caught)
+    if handler.name:
+        for state in outgoing.values():
+            _security_clear_flow_names(state, {handler.name})
+            state[0].bound.discard(handler.name)
+    return [*findings, *emitted], outgoing
 
 
 def _security_try_findings(statement, states, walk, inspect, bind_targets=None):
@@ -3851,18 +3866,9 @@ def _security_try_findings(statement, states, walk, inspect, bind_targets=None):
         if not any(handler.type is None for handler in statement.handlers):
             _security_merge_exit_states(exits, {"raise": body["raise"]})
         for handler in statement.handlers:
-            caught = [values.copy() for values in body["raise"]]
-            if handler.type is not None:
-                caught[0] = caught[0].unresolved()
-                findings.extend(inspect(handler.type, caught))
-            if handler.name:
-                for state in caught:
-                    state.discard(handler.name)
-            emitted, outgoing = walk(handler.body, caught)
-            if handler.name:
-                for state in outgoing.values():
-                    _security_clear_flow_names(state, {handler.name})
-                    state[0].bound.discard(handler.name)
+            emitted, outgoing = _security_caught_block_findings(
+                handler, body["raise"], walk, inspect
+            )
             findings.extend(emitted)
             _security_merge_exit_states(exits, outgoing)
     if not statement.finalbody:
@@ -3939,6 +3945,7 @@ def _security_match_block_findings(statement, flow, walk, inspect, bind_targets)
         selection = security_literal_branch_blocks(
             ast.If(test=test or ast.Constant(True), body=case.body, orelse=[]),
             flow[0].values,
+            singleton_identity=isinstance(pattern, ast.MatchSingleton),
         )
         if not selection[0] and len(selection) == 1:
             continue

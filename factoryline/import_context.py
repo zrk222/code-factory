@@ -1013,17 +1013,20 @@ class _SecurityFlowState(set):
         self.path_supported = path_supported
 
     def copy(self):
+        """Clone possible and proven origins without sharing mutable containers."""
         return type(self)(
             self, self.values, self.bound, self.proven, self.path_supported
         )
 
     def unresolved(self):
+        """Retain possible observations while withdrawing unproved path authority."""
         result = self.copy()
         result.path_supported = False
         result.proven.clear()
         return result
 
     def supported_view(self):
+        """Project only origins supported by a proven continuing source path."""
         if not self.path_supported:
             return None
         if self.proven == set(self):
@@ -1036,6 +1039,7 @@ class _SecurityFlowState(set):
         return type(self)(self.proven, values, self.bound)
 
     def assign(self, statement, aliases, other_states, helpers, transfer):
+        """Apply the canonical assignment transfer to possible and proven origins."""
         same = self.path_supported and self.proven == set(self)
         proven = set(self.proven)
         if self.path_supported and not same:
@@ -1051,6 +1055,7 @@ class _SecurityFlowState(set):
         self.bound.update(_bound_names(statement))
 
     def difference_update(self, names):
+        """Remove invalidated bindings from tags, proofs and captured values."""
         names = tuple(names)
         super().difference_update(names)
         self.proven.difference_update(names)
@@ -1058,23 +1063,31 @@ class _SecurityFlowState(set):
             self.values.pop(name, None)
 
     def discard(self, name):
+        """Discard one binding consistently across the captured flow state."""
         super().discard(name)
         self.proven.discard(name)
         self.values.pop(name, None)
 
 
-def security_literal_branch_blocks(statement, values=None):
+def security_literal_branch_blocks(statement, values=None, *, singleton_identity=False):
     """Select only bounded, side-effect-free literal guards; unknown keeps both arms."""
     from .review_audits import _constant_truth_value
 
     from .credential_role_identity_effects import _validated_exact_scalar
 
-    known = {}
-    for name, value in (values or {}).items():
-        if not value.unknown and not value.content_unknown and not value.roots:
-            scalar = _validated_exact_scalar(value)
-            if scalar:
-                known[name] = scalar[0]
+    known = {
+        name: scalar[0]
+        for name, value in (values or {}).items()
+        for scalar in (_validated_exact_scalar(value),)
+        if all(
+            (
+                not value.unknown,
+                not value.content_unknown,
+                not value.roots,
+                bool(scalar),
+            )
+        )
+    }
     nodes = tuple(ast.walk(statement.test))
     allowed = (
         ast.Constant,
@@ -1092,8 +1105,7 @@ def security_literal_branch_blocks(statement, values=None):
         ast.Compare,
         ast.Eq,
         ast.NotEq,
-        ast.Is,
-        ast.IsNot,
+        *((ast.Is,) if singleton_identity else ()),
         ast.Lt,
         ast.LtE,
         ast.Gt,
@@ -1101,20 +1113,22 @@ def security_literal_branch_blocks(statement, values=None):
         ast.In,
         ast.NotIn,
     )
+    literal_budgets = {
+        str: (len, 4096),
+        bytes: (len, 4096),
+        int: (int.bit_length, 1024),
+    }
+    measured_literals = (
+        (node.value, literal_budgets[type(node.value)])
+        for node in nodes
+        if isinstance(node, ast.Constant)
+        if type(node.value) in literal_budgets
+    )
     if (
         len(nodes) > 128
         or any(not isinstance(node, allowed) for node in nodes)
         or any(isinstance(node, ast.Name) and node.id not in known for node in nodes)
-        or any(
-            isinstance(node, ast.Constant)
-            and (
-                type(node.value) in {str, bytes}
-                and len(node.value) > 4096
-                or type(node.value) is int
-                and node.value.bit_length() > 1024
-            )
-            for node in nodes
-        )
+        or any(measure(value) > limit for value, (measure, limit) in measured_literals)
     ):
         return statement.body, statement.orelse
     truth = _constant_truth_value(statement.test, known)
@@ -1127,10 +1141,6 @@ def security_literal_branch_blocks(statement, values=None):
 
 def _security_loop_block_findings(statement, flow, walk, inspect, bind_targets):
     from . import review_audits as audit
-    from .finite_capture import (
-        _security_merge_branch_states,
-        _security_merge_exit_states,
-    )
 
     expression = statement.test if isinstance(statement, ast.While) else statement.iter
     findings = inspect(expression, flow)
@@ -1161,43 +1171,90 @@ def _security_loop_block_findings(statement, flow, walk, inspect, bind_targets):
             for item in elements
         ):
             items = elements
+    runner = (
+        _security_literal_loop_findings
+        if items is not None
+        else _security_fixpoint_loop_findings
+    )
+    emitted, exits = runner(
+        statement,
+        flow,
+        walk,
+        inspect,
+        bind_targets,
+        items,
+        endless,
+        expression,
+        targets,
+    )
+    return [*findings, *emitted], exits
+
+
+def _security_loop_outcomes(outgoing, exits):
+    """Consume loop-local break/continue while preserving nonlocal abrupt exits."""
+    from .finite_capture import _security_merge_exit_states
+
+    _security_merge_exit_states(
+        exits,
+        {key: value for key, value in outgoing.items() if key in {"return", "raise"}},
+    )
+    if "break" in outgoing:
+        _security_merge_exit_states(exits, {"normal": outgoing["break"]})
+    feedback = {}
+    for kind in ("normal", "continue"):
+        if kind in outgoing:
+            _security_merge_exit_states(feedback, {"normal": outgoing[kind]})
+    return feedback
+
+
+def _security_literal_loop_findings(
+    statement, flow, walk, inspect, bind_targets, items, endless, expression, targets
+):
+    """Execute only the captured ordered literal's actual iteration predecessors."""
+    from .finite_capture import _security_merge_exit_states
+
+    findings, exits = [], {}
+    head = [values.copy() for values in flow]
+    for item in items:
+        assignment = ast.copy_location(
+            ast.Assign(targets=[statement.target], value=item), statement
+        )
+        emitted, outgoing = walk([assignment, *statement.body], head)
+        findings.extend(emitted)
+        feedback = _security_loop_outcomes(outgoing, exits)
+        if not feedback:
+            return findings, exits
+        head = feedback["normal"]
+    emitted, outgoing = walk(statement.orelse, head)
+    findings.extend(emitted)
+    _security_merge_exit_states(exits, outgoing)
+    return findings, exits
+
+
+def _security_fixpoint_loop_findings(
+    statement, flow, walk, inspect, bind_targets, items, endless, expression, targets
+):
+    """Unknown iteration counts converge in the existing bounded abstract domain."""
+    from . import review_audits as audit
+    from .finite_capture import (
+        _security_merge_branch_states,
+        _security_merge_exit_states,
+    )
+
+    findings = []
     head = [values.copy() for values in flow]
     exits, exhausted = {}, {}
-    if not endless and (items is None or not items):
+    if not endless:
         _security_merge_exit_states(exhausted, {"normal": flow})
-    for index in range(len(items) if items is not None else 64):
+    for _ in range(64):
         iteration = [values.copy() for values in head]
-        body = statement.body
-        if items is not None:
-            assignment = ast.copy_location(
-                ast.Assign(targets=[statement.target], value=items[index]), statement
-            )
-            body = [assignment, *body]
-        elif targets:
+        if targets:
             bind_targets(expression, targets, iteration)
-        emitted, outgoing = walk(body, iteration)
+        emitted, outgoing = walk(statement.body, iteration)
         findings.extend(emitted)
-        _security_merge_exit_states(
-            exits,
-            {
-                key: value
-                for key, value in outgoing.items()
-                if key in {"return", "raise"}
-            },
-        )
-        if "break" in outgoing:
-            _security_merge_exit_states(exits, {"normal": outgoing["break"]})
-        feedback = {}
-        for kind in ("normal", "continue"):
-            if kind in outgoing:
-                _security_merge_exit_states(feedback, {"normal": outgoing[kind]})
+        feedback = _security_loop_outcomes(outgoing, exits)
         if not feedback:
             break
-        if items is not None:
-            head = feedback["normal"]
-            if index == len(items) - 1:
-                _security_merge_exit_states(exhausted, feedback)
-            continue
         if not endless:
             _security_merge_exit_states(exhausted, feedback)
         next_head = [values.copy() for values in flow]
@@ -1213,17 +1270,16 @@ def _security_loop_block_findings(statement, flow, walk, inspect, bind_targets):
             break
         head = next_head
     else:
-        if items is None:
-            findings.append(
-                audit._security_finding(
-                    "SECURITY_AUDIT_INCOMPLETE",
-                    "<control-flow>",
-                    statement,
-                    "Loop source-flow fixed point exceeded its bounded state iterations.",
-                    "HIGH",
-                    reason="loop_fixed_point_exhausted",
-                )
+        findings.append(
+            audit._security_finding(
+                "SECURITY_AUDIT_INCOMPLETE",
+                "<control-flow>",
+                statement,
+                "Loop source-flow fixed point exceeded its bounded state iterations.",
+                "HIGH",
+                reason="loop_fixed_point_exhausted",
             )
+        )
     if "normal" in exhausted:
         emitted, outgoing = walk(statement.orelse, exhausted["normal"])
         findings.extend(emitted)
