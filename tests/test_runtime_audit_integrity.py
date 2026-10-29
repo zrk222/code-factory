@@ -8074,28 +8074,102 @@ def test_continuation_flow_loop_finding_identity_is_unique(tmp_path):
     assert rows[0]["tier"] == "SUPPORTED_DEFECT"
 
 
-@pytest.mark.parametrize("prefix,block,supported", [
-    ("", "match 0:\n    case False:\n        value = request.args['x']\neval(value)", False),
-    ("", "match 0:\n    case _ if True:\n        pass\n    case 0:\n        value = request.args['x']\neval(value)", False),
-    ("", "match 0:\n    case 1:\n        value = request.args['x']\neval(value)", False),
-    ("", "match 1:\n    case 1:\n        value = request.args['x']\neval(value)", True),
-    ("", "value = request.args['x']\nfor item in (1,):\n    value = '42'\neval(value)", False),
-    ("", "value = request.args['x']\nfor item in ():\n    value = '42'\neval(value)", True),
-    ("", "for item in (0,):\n    if item == 1:\n        value = request.args['x']\neval(value)", False),
-    ("", "carry = '42'\nfor item in (1,):\n    value = carry\n    carry = request.args['x']\neval(value)", False),
-    ("", "try:\n    raise ValueError()\nexcept TypeError:\n    value = request.args['x']\neval(value)", False),
-    ("", "match flag:\n    case _ if False:\n        value = request.args['x']\neval(value)", False),
-    ("from contextlib import nullcontext\n", "with nullcontext():\n    value = request.args['x']\n    raise ValueError()\neval(value)", False),
-    ("", "if flag:\n    try:\n        raise ValueError()\n    except TypeError:\n        value = request.args['x']\neval(value)", False),
-    ("", "if flag:\n    value = request.args['x']\nelse:\n    try:\n        raise ValueError()\n    except TypeError:\n        value = request.args['x']\neval(value)", True),
-    ("", "try:\n    raise ValueError()\nexcept:\n    value = request.args['x']\neval(value)", True),
-    ("", "match request.args['x']:\n    case value if False:\n        pass\neval(value)", True),
-])
-def test_continuation_flow_unresolved_edges_do_not_invent_support(tmp_path, prefix, block, supported):
-    source = prefix + "from flask import request\ndef view(flag):\n    value = '42'\n    " + block.replace("\n", "\n    ") + "\n"
+@pytest.mark.parametrize(
+    "prefix,block,supported",
+    [
+        (
+            "",
+            "match 0:\n    case False:\n        value = request.args['x']\neval(value)",
+            False,
+        ),
+        (
+            "",
+            "match 0:\n    case _ if True:\n        pass\n    case 0:\n        value = request.args['x']\neval(value)",
+            False,
+        ),
+        (
+            "",
+            "match 0:\n    case 1:\n        value = request.args['x']\neval(value)",
+            False,
+        ),
+        (
+            "",
+            "match 1:\n    case 1:\n        value = request.args['x']\neval(value)",
+            True,
+        ),
+        (
+            "",
+            "value = request.args['x']\nfor item in (1,):\n    value = '42'\neval(value)",
+            False,
+        ),
+        (
+            "",
+            "value = request.args['x']\nfor item in ():\n    value = '42'\neval(value)",
+            True,
+        ),
+        (
+            "",
+            "for item in (0,):\n    if item == 1:\n        value = request.args['x']\neval(value)",
+            False,
+        ),
+        (
+            "",
+            "carry = '42'\nfor item in (1,):\n    value = carry\n    carry = request.args['x']\neval(value)",
+            False,
+        ),
+        (
+            "",
+            "try:\n    raise ValueError()\nexcept TypeError:\n    value = request.args['x']\neval(value)",
+            False,
+        ),
+        (
+            "",
+            "match flag:\n    case _ if False:\n        value = request.args['x']\neval(value)",
+            False,
+        ),
+        (
+            "from contextlib import nullcontext\n",
+            "with nullcontext():\n    value = request.args['x']\n    raise ValueError()\neval(value)",
+            False,
+        ),
+        (
+            "",
+            "if flag:\n    try:\n        raise ValueError()\n    except TypeError:\n        value = request.args['x']\neval(value)",
+            False,
+        ),
+        (
+            "",
+            "if flag:\n    value = request.args['x']\nelse:\n    try:\n        raise ValueError()\n    except TypeError:\n        value = request.args['x']\neval(value)",
+            True,
+        ),
+        (
+            "",
+            "try:\n    raise ValueError()\nexcept:\n    value = request.args['x']\neval(value)",
+            True,
+        ),
+        (
+            "",
+            "match request.args['x']:\n    case value if False:\n        pass\neval(value)",
+            True,
+        ),
+    ],
+)
+def test_continuation_flow_unresolved_edges_do_not_invent_support(
+    tmp_path, prefix, block, supported
+):
+    source = (
+        prefix
+        + "from flask import request\ndef view(flag):\n    value = '42'\n    "
+        + block.replace("\n", "\n    ")
+        + "\n"
+    )
     (tmp_path / "app.py").write_text(source, encoding="utf-8")
     with review_audits._security_only_scan_context(True):
         report = review_audits.security_scan(tmp_path, cache_enabled=False)
-    rows = [r for r in report["finding_tier_report"]["ledger"] if r["raw_finding"]["code"] == "SECURITY_DYNAMIC_EXECUTION"]
+    rows = [
+        r
+        for r in report["finding_tier_report"]["ledger"]
+        if r["raw_finding"]["code"] == "SECURITY_DYNAMIC_EXECUTION"
+    ]
     assert len(rows) == 1
     assert (rows[0]["tier"] == "SUPPORTED_DEFECT") is supported
