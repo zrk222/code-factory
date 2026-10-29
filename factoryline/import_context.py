@@ -716,3 +716,516 @@ def _full_repository_workspace_security_context(engine, generation, audit):
         "fingerprints": {},
         "config_identity": config_identity,
     }
+
+
+_FUNCTION_NODES = (ast.FunctionDef, ast.AsyncFunctionDef)
+
+
+_STRUCTURAL_SET_FIELDS = (
+    "module_rebindings",
+    "dynamic_getattr_modules",
+    "source_classes",
+) + ("implementation_contract_lines",)
+_STRUCTURAL_MAP_FIELDS = ("module_imports", "class_imports", "benchmark_constants")
+
+
+def encode_structural_context(context):
+    """Encode all structural oracle bindings for the bounded in-memory cache."""
+    return {
+        **{key: sorted(context.get(key, set())) for key in _STRUCTURAL_SET_FIELDS},
+        **{key: context.get(key, {}) for key in _STRUCTURAL_MAP_FIELDS},
+    }
+
+
+def decode_structural_context(payload):
+    """Restore structural oracle bindings without weakening their source identity."""
+    return {
+        **{key: set(payload.get(key, [])) for key in _STRUCTURAL_SET_FIELDS},
+        **{key: payload.get(key, {}) for key in _STRUCTURAL_MAP_FIELDS},
+    }
+
+
+def bind_security_call_scopes(tree: ast.AST, nodes=None) -> None:
+    """Retain lexical parameter shadowing for nested security call readers."""
+    tree._security_sanitizer_provider_cache = {}
+    tree._security_parent_scope = None
+    tree._security_scope_kind = "module"
+    tree._security_local_names = set()
+    tree._security_nonlocal_names = set()
+    tree._security_calls_by_statement = {}
+    for parent in ast.walk(tree) if nodes is None else nodes:
+        for child in ast.iter_child_nodes(parent):
+            child._security_parent = parent
+    _bind_security_scope_node(tree, tree, set(), tree)
+
+
+def _security_ast_span_contains(node, container):
+    return (container.lineno, container.col_offset) <= (
+        node.lineno,
+        node.col_offset,
+    ) and (node.end_lineno, node.end_col_offset) <= (
+        container.end_lineno,
+        container.end_col_offset,
+    )
+
+
+def _bind_security_scope_node(node, scope, shadowed, tree, flow_statement=None):
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+        _bind_security_function(node, scope, shadowed, tree, flow_statement)
+        return
+    if isinstance(node, ast.ClassDef):
+        _bind_security_class(node, scope, shadowed, tree, flow_statement)
+        return
+    if isinstance(node, ast.Call):
+        node._security_shadowed_names = shadowed
+        node._security_lexical_scope = scope
+        node._security_flow_statement = flow_statement
+        calls = getattr(scope, "_security_calls_by_statement", {})
+        calls.setdefault(id(flow_statement), []).append(node)
+        scope._security_calls_by_statement = calls
+    if isinstance(node, (ast.Assign, ast.AnnAssign)):
+        node._security_lexical_scope = scope
+    if isinstance(node, ast.Attribute):
+        node._security_lexical_scope = scope
+        node._security_flow_statement = flow_statement
+    for child in ast.iter_child_nodes(node):
+        direct = child if node is scope else flow_statement
+        _bind_security_scope_node(child, scope, shadowed, tree, direct)
+
+
+def _bind_security_function(node, scope, shadowed, tree, flow_statement):
+    arguments = node.args
+    body = node.body if isinstance(node.body, list) else [node.body]
+    definition_statement = flow_statement or node
+    for decorator in getattr(node, "decorator_list", []):
+        _bind_security_scope_node(
+            decorator, scope, shadowed, tree, definition_statement
+        )
+    for default in [*arguments.defaults, *arguments.kw_defaults]:
+        if default is not None:
+            _bind_security_scope_node(
+                default, scope, shadowed, tree, definition_statement
+            )
+    for annotation in _function_annotations(node):
+        _bind_security_scope_node(
+            annotation, scope, shadowed, tree, definition_statement
+        )
+    lexical_parent = (
+        getattr(scope, "_security_parent_scope", tree)
+        if isinstance(scope, ast.ClassDef)
+        else scope
+    )
+    node._security_parent_scope = lexical_parent
+    node._security_class_scope = scope if isinstance(scope, ast.ClassDef) else None
+    arguments_names = {
+        argument.arg
+        for argument in [
+            *arguments.posonlyargs,
+            *arguments.args,
+            *arguments.kwonlyargs,
+            *[arg for arg in (arguments.vararg, arguments.kwarg) if arg],
+        ]
+    }
+    node._security_parameter_names = arguments_names
+    node._security_local_names = _security_scope_local_names(node)
+    node._security_nonlocal_names = _security_scope_nonlocal_names(node)
+    node._security_scope_kind = "function"
+    node._security_calls_by_statement = {}
+    child_shadowed = shadowed | arguments_names | node._security_local_names
+    for child in body:
+        _bind_security_scope_node(child, node, child_shadowed, tree, child)
+
+
+def _bind_security_class(node, scope, shadowed, tree, flow_statement):
+    for child in [*node.decorator_list, *node.bases]:
+        _bind_security_scope_node(child, scope, shadowed, tree, flow_statement or node)
+    for keyword in node.keywords:
+        _bind_security_scope_node(
+            keyword.value, scope, shadowed, tree, flow_statement or node
+        )
+    node._security_parent_scope = scope
+    node._security_scope_kind = "class"
+    node._security_local_names = _security_scope_local_names(node)
+    node._security_nonlocal_names = _security_scope_nonlocal_names(node)
+    node._security_calls_by_statement = {}
+    for child in node.body:
+        _bind_security_scope_node(child, node, shadowed, tree, child)
+
+
+def _function_annotations(node):
+    args = node.args
+    values = [
+        arg.annotation for arg in [*args.posonlyargs, *args.args, *args.kwonlyargs]
+    ]
+    values.extend(arg.annotation for arg in (args.vararg, args.kwarg) if arg)
+    if getattr(node, "returns", None) is not None:
+        values.append(node.returns)
+    return [value for value in values if value is not None]
+
+
+def _security_scope_local_names(scope):
+    names = set()
+    body = getattr(scope, "body", [])
+    statements = body if isinstance(body, list) else [body]
+    for statement in statements:
+        if not isinstance(statement, ast.AST):
+            continue
+        names.update(_bound_names(statement))
+    return (
+        names
+        - _security_scope_declared_names(scope, ast.Global)
+        - (_security_scope_declared_names(scope, ast.Nonlocal))
+    )
+
+
+def _security_scope_nonlocal_names(scope):
+    return _security_scope_declared_names(scope, ast.Nonlocal)
+
+
+def _security_scope_declared_names(scope, declaration):
+    body = getattr(scope, "body", [])
+    statements = body if isinstance(body, list) else [body]
+    names = set()
+    pending = list(statements)
+    while pending:
+        node = pending.pop()
+        if not isinstance(node, ast.AST):
+            continue
+        if node is not scope and isinstance(
+            node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
+        ):
+            continue
+        if isinstance(node, declaration):
+            names.update(node.names)
+        pending.extend(ast.iter_child_nodes(node))
+    return names
+
+
+def _security_module_scope(scope):
+    pending = [scope]
+    while pending:
+        current = pending.pop()
+        if isinstance(current, ast.Module):
+            return current
+        parent = getattr(current, "_security_parent_scope", None)
+        if parent is not None:
+            pending.append(parent)
+        class_scope = getattr(current, "_security_class_scope", None)
+        if class_scope is not None:
+            pending.append(class_scope)
+    return None
+
+
+def _security_apply_import_bindings(body, resolved, stop, audit):
+    for statement in body:
+        if statement is stop:
+            break
+        imported = audit._security_aliases([statement])
+        for name in audit._bound_names(statement):
+            resolved.pop(name, None)
+            if name in imported:
+                resolved[name] = imported[name]
+    return resolved
+
+
+def _iter_ast_nodes(node: ast.AST):
+    """Walk one AST without allocating or repeating ``ast.walk`` inventories."""
+    pending = [node]
+    while pending:
+        child = pending.pop()
+        yield child
+        pending.extend(ast.iter_child_nodes(child))
+
+
+def _binding_name(node: ast.AST) -> str | None:
+    if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
+        return node.id
+    if isinstance(node, ast.arg):
+        return node.arg
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        return node.name
+    if isinstance(node, (ast.ExceptHandler, ast.MatchAs, ast.MatchStar)):
+        return node.name
+    if isinstance(node, ast.MatchMapping):
+        return node.rest
+    return None
+
+
+def _bound_names(statement: ast.AST) -> set[str]:
+    if isinstance(statement, (*_FUNCTION_NODES, ast.ClassDef, ast.Lambda)):
+        return {statement.name} if hasattr(statement, "name") else set()
+    if (cached := getattr(statement, "_scan_bound_names", None)) is not None:
+        return set(cached)
+    comprehension_targets = {
+        id(target)
+        for child in _iter_ast_nodes(statement)
+        if isinstance(
+            child, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
+        )
+        for generator in child.generators
+        for target in _iter_ast_nodes(generator.target)
+        if isinstance(target, ast.Name)
+    }
+    names: set[str] = set()
+    pending = [statement]
+    while pending:
+        child = pending.pop()
+        if isinstance(child, (*_FUNCTION_NODES, ast.ClassDef, ast.Lambda)):
+            continue
+        pending.extend(ast.iter_child_nodes(child))
+        if isinstance(child, (ast.Import, ast.ImportFrom)):
+            if any(item.name == "*" for item in child.names):
+                names.add("*")
+            names.update(
+                item.asname
+                or (
+                    item.name.split(".")[0]
+                    if isinstance(child, ast.Import)
+                    else item.name
+                )
+                for item in child.names
+                if item.name != "*"
+            )
+            continue
+        if id(child) in comprehension_targets:
+            continue
+        name = _binding_name(child)
+        if name:
+            names.add(name)
+    if hasattr(statement, "_scan_bound_names"):
+        statement._scan_bound_names = frozenset(names)
+    return names
+
+
+def _security_call_leaf(node):
+    return node.func.attr if isinstance(node.func, ast.Attribute) else ""
+
+
+class _SecurityFlowState(set):
+    """Possible origins, proved origins and definite bindings on one captured path."""
+
+    def __init__(
+        self, tags=(), values=None, bound=(), proven=None, path_supported=True
+    ):
+        super().__init__(tags)
+        self.values, self.bound = dict(values or {}), set(bound)
+        self.proven = set(self if proven is None else proven)
+        self.path_supported = path_supported
+
+    def copy(self):
+        return type(self)(
+            self, self.values, self.bound, self.proven, self.path_supported
+        )
+
+    def unresolved(self):
+        result = self.copy()
+        result.path_supported = False
+        result.proven.clear()
+        return result
+
+    def supported_view(self):
+        if not self.path_supported:
+            return None
+        if self.proven == set(self):
+            return self
+        values = {
+            name: value
+            for name, value in self.values.items()
+            if name not in self or name in self.proven
+        }
+        return type(self)(self.proven, values, self.bound)
+
+    def assign(self, statement, aliases, other_states, helpers, transfer):
+        same = self.path_supported and self.proven == set(self)
+        proven = set(self.proven)
+        if self.path_supported and not same:
+            transfer(
+                statement,
+                aliases,
+                proven,
+                *(values.copy() for values in other_states),
+                helpers,
+            )
+        transfer(statement, aliases, self, *other_states, helpers)
+        self.proven = set(self) if same else proven if self.path_supported else set()
+        self.bound.update(_bound_names(statement))
+
+    def difference_update(self, names):
+        names = tuple(names)
+        super().difference_update(names)
+        self.proven.difference_update(names)
+        for name in names:
+            self.values.pop(name, None)
+
+    def discard(self, name):
+        super().discard(name)
+        self.proven.discard(name)
+        self.values.pop(name, None)
+
+
+def security_literal_branch_blocks(statement, values=None):
+    """Select only bounded, side-effect-free literal guards; unknown keeps both arms."""
+    from .review_audits import _constant_truth_value
+
+    from .credential_role_identity_effects import _validated_exact_scalar
+
+    known = {}
+    for name, value in (values or {}).items():
+        if not value.unknown and not value.content_unknown and not value.roots:
+            scalar = _validated_exact_scalar(value)
+            if scalar:
+                known[name] = scalar[0]
+    nodes = tuple(ast.walk(statement.test))
+    allowed = (
+        ast.Constant,
+        ast.Name,
+        ast.List,
+        ast.Tuple,
+        ast.Set,
+        ast.Dict,
+        ast.Load,
+        ast.UnaryOp,
+        ast.Not,
+        ast.BoolOp,
+        ast.And,
+        ast.Or,
+        ast.Compare,
+        ast.Eq,
+        ast.NotEq,
+        ast.Is,
+        ast.IsNot,
+        ast.Lt,
+        ast.LtE,
+        ast.Gt,
+        ast.GtE,
+        ast.In,
+        ast.NotIn,
+    )
+    if (
+        len(nodes) > 128
+        or any(not isinstance(node, allowed) for node in nodes)
+        or any(isinstance(node, ast.Name) and node.id not in known for node in nodes)
+        or any(
+            isinstance(node, ast.Constant)
+            and (
+                type(node.value) in {str, bytes}
+                and len(node.value) > 4096
+                or type(node.value) is int
+                and node.value.bit_length() > 1024
+            )
+            for node in nodes
+        )
+    ):
+        return statement.body, statement.orelse
+    truth = _constant_truth_value(statement.test, known)
+    return (
+        (statement.body if truth else statement.orelse,)
+        if truth is not None
+        else (statement.body, statement.orelse)
+    )
+
+
+def _security_loop_block_findings(statement, flow, walk, inspect, bind_targets):
+    from . import review_audits as audit
+    from .finite_capture import (
+        _security_merge_branch_states,
+        _security_merge_exit_states,
+    )
+
+    expression = statement.test if isinstance(statement, ast.While) else statement.iter
+    findings = inspect(expression, flow)
+    if statement.body and audit._unreachable_constant_branch(
+        statement, statement.body[0]
+    ):
+        emitted, exits = walk(statement.orelse, flow)
+        return [*findings, *emitted], exits
+    endless = (
+        isinstance(statement, ast.While)
+        and isinstance(statement.test, ast.Constant)
+        and bool(statement.test.value)
+    )
+    targets = (
+        audit._bound_names(statement.target)
+        if isinstance(statement, (ast.For, ast.AsyncFor))
+        else set()
+    )
+    # Exact inert ordered literals are walked once per element, not to a fixed point.
+    items = None
+    if isinstance(statement, ast.For) and isinstance(
+        statement.iter, (ast.Tuple, ast.List)
+    ):
+        elements = statement.iter.elts
+        if len(elements) <= 64 and all(
+            isinstance(item, ast.Constant)
+            and type(item.value) in {str, bytes, int, float, bool, type(None)}
+            for item in elements
+        ):
+            items = elements
+    head = [values.copy() for values in flow]
+    exits, exhausted = {}, {}
+    if not endless and (items is None or not items):
+        _security_merge_exit_states(exhausted, {"normal": flow})
+    for index in range(len(items) if items is not None else 64):
+        iteration = [values.copy() for values in head]
+        body = statement.body
+        if items is not None:
+            assignment = ast.copy_location(
+                ast.Assign(targets=[statement.target], value=items[index]), statement
+            )
+            body = [assignment, *body]
+        elif targets:
+            bind_targets(expression, targets, iteration)
+        emitted, outgoing = walk(body, iteration)
+        findings.extend(emitted)
+        _security_merge_exit_states(
+            exits,
+            {
+                key: value
+                for key, value in outgoing.items()
+                if key in {"return", "raise"}
+            },
+        )
+        if "break" in outgoing:
+            _security_merge_exit_states(exits, {"normal": outgoing["break"]})
+        feedback = {}
+        for kind in ("normal", "continue"):
+            if kind in outgoing:
+                _security_merge_exit_states(feedback, {"normal": outgoing[kind]})
+        if not feedback:
+            break
+        if items is not None:
+            head = feedback["normal"]
+            if index == len(items) - 1:
+                _security_merge_exit_states(exhausted, feedback)
+            continue
+        if not endless:
+            _security_merge_exit_states(exhausted, feedback)
+        next_head = [values.copy() for values in flow]
+        _security_merge_branch_states(next_head, [head, feedback["normal"]])
+        if all(
+            left == right
+            and getattr(left, "values", {}) == getattr(right, "values", {})
+            and getattr(left, "bound", set()) == getattr(right, "bound", set())
+            and getattr(left, "proven", set(left))
+            == getattr(right, "proven", set(right))
+            for left, right in zip(head, next_head)
+        ):
+            break
+        head = next_head
+    else:
+        if items is None:
+            findings.append(
+                audit._security_finding(
+                    "SECURITY_AUDIT_INCOMPLETE",
+                    "<control-flow>",
+                    statement,
+                    "Loop source-flow fixed point exceeded its bounded state iterations.",
+                    "HIGH",
+                    reason="loop_fixed_point_exhausted",
+                )
+            )
+    if "normal" in exhausted:
+        emitted, outgoing = walk(statement.orelse, exhausted["normal"])
+        findings.extend(emitted)
+        _security_merge_exit_states(exits, outgoing)
+    return findings, exits

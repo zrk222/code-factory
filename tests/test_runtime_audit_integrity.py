@@ -7900,3 +7900,202 @@ def test_blocked_security_scan_report_keeps_source_limit_incomplete(
     assert not any(report["authority"].values())
     assert [row["code"] for row in report["findings"]] == ["SECURITY_AUDIT_INCOMPLETE"]
     assert report["findings"][0]["severity"] == "HIGH"
+
+
+@pytest.mark.parametrize("shape", ["terminated_arm", "empty_loop", "live_input"])
+@pytest.mark.parametrize(
+    "imports,sink,code,bytes_input",
+    [
+        ("", "eval(value)", "SECURITY_DYNAMIC_EXECUTION", False),
+        (
+            "import subprocess\n",
+            "subprocess.run(value, shell=True)",
+            "SECURITY_SHELL_COMMAND",
+            False,
+        ),
+        ("import requests\n", "requests.get(value)", "SECURITY_SSRF", False),
+        ("", "open(value, 'w')", "SECURITY_PATH_TRAVERSAL", False),
+        (
+            "import sqlite3\n",
+            "connection.execute('SELECT ' + value)",
+            "SECURITY_SQL_INJECTION",
+            False,
+        ),
+        (
+            "import pickle\n",
+            "pickle.loads(value)",
+            "SECURITY_UNSAFE_DESERIALIZATION",
+            True,
+        ),
+    ],
+)
+def test_continuation_flow_cross_family(
+    tmp_path, shape, imports, sink, code, bytes_input
+):
+    source = imports + "from flask import request\ndef view(flag):\n"
+    if code == "SECURITY_SQL_INJECTION":
+        source += "    connection = sqlite3.connect(':memory:')\n"
+    fixed = "b'fixed'" if bytes_input else "'42'"
+    origin = "request.data" if bytes_input else "request.args['x']"
+    if shape == "terminated_arm":
+        source += f"    value = {fixed}\n    if flag:\n        value = {origin}\n        return\n"
+    elif shape == "empty_loop":
+        source += (
+            f"    value = {fixed}\n    for item in ():\n        value = {origin}\n"
+        )
+    else:
+        source += f"    value = {origin}\n"
+    (tmp_path / "app.py").write_text(source + "    " + sink + "\n", encoding="utf-8")
+    with review_audits._security_only_scan_context(True):
+        report = review_audits.security_scan(tmp_path, cache_enabled=False)
+    rows = [
+        row
+        for row in report["finding_tier_report"]["ledger"]
+        if row["raw_finding"]["code"] == code
+    ]
+    primitive = code in {
+        "SECURITY_DYNAMIC_EXECUTION",
+        "SECURITY_SHELL_COMMAND",
+        "SECURITY_UNSAFE_DESERIALIZATION",
+    }
+    # Pure APIs remain observations; source-dependent rules require a reaching input.
+    assert len(rows) == int(primitive or shape == "live_input")
+    assert any(row["tier"] == "SUPPORTED_DEFECT" for row in rows) is (
+        shape == "live_input"
+    )
+    premise = (
+        rows[0]["raw_finding"]["facts"].get("security_precondition") if rows else None
+    )
+    if shape == "live_input":
+        assert premise["status"] == "SUPPORTED"
+    else:
+        assert premise is None
+    assert (
+        review_audits._seal_security_scan(report.copy())["finding_tier_report"]
+        == report["finding_tier_report"]
+    )
+
+
+@pytest.mark.parametrize(
+    "block,supported",
+    [
+        ("value = request.args['x']\nreturn eval(value)", True),
+        (
+            "try:\n    value = request.args['x']\n    return\nfinally:\n    eval(value)",
+            True,
+        ),
+        (
+            "try:\n    value = request.args['x']\n    raise ValueError\nfinally:\n    return\neval(value)",
+            False,
+        ),
+        (
+            "with manager():\n    value = request.args['x']\n    return\neval(value)",
+            False,
+        ),
+        (
+            "with manager():\n    value = request.args['x']\n    raise ValueError\neval(value)",
+            False,
+        ),
+        (
+            "for item in items:\n    value = request.args['x']\n    break\nelse:\n    value = '42'\neval(value)",
+            True,
+        ),
+        (
+            "for item in items:\n    value = request.args['x']\n    continue\neval(value)",
+            True,
+        ),
+        (
+            "for item in items:\n    value = request.args['x']\n    return\neval(value)",
+            False,
+        ),
+        (
+            "carry = '42'\nfor item in items:\n    value = carry\n    carry = request.args['x']\neval(value)",
+            True,
+        ),
+        ("while False:\n    value = request.args['x']\neval(value)", False),
+        (
+            "while True:\n    value = request.args['x']\n    continue\neval(value)",
+            False,
+        ),
+        (
+            "value = request.args['x']\ntry:\n    value = '42'\nexcept Exception:\n    pass\neval(value)",
+            False,
+        ),
+        (
+            "value = request.args['x']\ntry:\n    value = maybe_public()\nexcept Exception:\n    pass\neval(value)",
+            False,
+        ),
+        (
+            "value = request.args['x']\ntry:\n    raise ValueError\nfinally:\n    pass\neval(value)",
+            False,
+        ),
+        (
+            "match flag:\n    case _:\n        value = request.args['x']\n        return\neval(value)",
+            False,
+        ),
+        ("value = request.json.get('x')\neval(value)", True),
+    ],
+)
+def test_continuation_flow_exit_semantics(tmp_path, block, supported):
+    source = (
+        "from flask import request\ndef view(flag, items):\n    value = '42'\n    "
+        + block.replace("\n", "\n    ")
+        + "\n"
+    )
+    (tmp_path / "app.py").write_text(source, encoding="utf-8")
+    with review_audits._security_only_scan_context(True):
+        report = review_audits.security_scan(tmp_path, cache_enabled=False)
+    rows = [
+        r
+        for r in report["finding_tier_report"]["ledger"]
+        if r["raw_finding"]["code"] == "SECURITY_DYNAMIC_EXECUTION"
+    ]
+    assert len(rows) == 1
+    assert (rows[0]["tier"] == "SUPPORTED_DEFECT") is supported
+    assert not any(
+        r["raw_finding"]["code"] == "SECURITY_AUDIT_INCOMPLETE"
+        for r in report["finding_tier_report"]["ledger"]
+    )
+
+
+def test_continuation_flow_loop_finding_identity_is_unique(tmp_path):
+    (tmp_path / "app.py").write_text(
+        "import requests\nfrom flask import request\ndef view(items):\n    for item in items:\n        requests.get(request.args['url'])\n",
+        encoding="utf-8",
+    )
+    with review_audits._security_only_scan_context(True):
+        report = review_audits.security_scan(tmp_path, cache_enabled=False)
+    rows = [
+        r
+        for r in report["finding_tier_report"]["ledger"]
+        if r["raw_finding"]["code"] == "SECURITY_SSRF"
+    ]
+    assert len(rows) == 1
+    assert rows[0]["tier"] == "SUPPORTED_DEFECT"
+
+
+@pytest.mark.parametrize("prefix,block,supported", [
+    ("", "match 0:\n    case False:\n        value = request.args['x']\neval(value)", False),
+    ("", "match 0:\n    case _ if True:\n        pass\n    case 0:\n        value = request.args['x']\neval(value)", False),
+    ("", "match 0:\n    case 1:\n        value = request.args['x']\neval(value)", False),
+    ("", "match 1:\n    case 1:\n        value = request.args['x']\neval(value)", True),
+    ("", "value = request.args['x']\nfor item in (1,):\n    value = '42'\neval(value)", False),
+    ("", "value = request.args['x']\nfor item in ():\n    value = '42'\neval(value)", True),
+    ("", "for item in (0,):\n    if item == 1:\n        value = request.args['x']\neval(value)", False),
+    ("", "carry = '42'\nfor item in (1,):\n    value = carry\n    carry = request.args['x']\neval(value)", False),
+    ("", "try:\n    raise ValueError()\nexcept TypeError:\n    value = request.args['x']\neval(value)", False),
+    ("", "match flag:\n    case _ if False:\n        value = request.args['x']\neval(value)", False),
+    ("from contextlib import nullcontext\n", "with nullcontext():\n    value = request.args['x']\n    raise ValueError()\neval(value)", False),
+    ("", "if flag:\n    try:\n        raise ValueError()\n    except TypeError:\n        value = request.args['x']\neval(value)", False),
+    ("", "if flag:\n    value = request.args['x']\nelse:\n    try:\n        raise ValueError()\n    except TypeError:\n        value = request.args['x']\neval(value)", True),
+    ("", "try:\n    raise ValueError()\nexcept:\n    value = request.args['x']\neval(value)", True),
+    ("", "match request.args['x']:\n    case value if False:\n        pass\neval(value)", True),
+])
+def test_continuation_flow_unresolved_edges_do_not_invent_support(tmp_path, prefix, block, supported):
+    source = prefix + "from flask import request\ndef view(flag):\n    value = '42'\n    " + block.replace("\n", "\n    ") + "\n"
+    (tmp_path / "app.py").write_text(source, encoding="utf-8")
+    with review_audits._security_only_scan_context(True):
+        report = review_audits.security_scan(tmp_path, cache_enabled=False)
+    rows = [r for r in report["finding_tier_report"]["ledger"] if r["raw_finding"]["code"] == "SECURITY_DYNAMIC_EXECUTION"]
+    assert len(rows) == 1
+    assert (rows[0]["tier"] == "SUPPORTED_DEFECT") is supported

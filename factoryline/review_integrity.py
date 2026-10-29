@@ -6,6 +6,24 @@ import sys
 import io
 import re
 import ast
+from .import_context import (
+    _security_loop_block_findings as _security_loop_block_findings,
+    _bound_names as _bound_names,
+    _security_call_leaf as _security_call_leaf,
+    bind_security_call_scopes as bind_security_call_scopes,
+    _security_ast_span_contains as _security_ast_span_contains,
+    _bind_security_scope_node as _bind_security_scope_node,
+    _bind_security_function as _bind_security_function,
+    _bind_security_class as _bind_security_class,
+    _function_annotations as _function_annotations,
+    _security_scope_local_names as _security_scope_local_names,
+    _security_scope_nonlocal_names as _security_scope_nonlocal_names,
+    _security_scope_declared_names as _security_scope_declared_names,
+    _security_module_scope as _security_module_scope,
+    _security_apply_import_bindings as _security_apply_import_bindings,
+    encode_structural_context as encode_structural_context,
+    decode_structural_context as decode_structural_context,
+)
 import tokenize
 import configparser
 import shlex
@@ -31,15 +49,20 @@ from .runtime_audit_common import RuntimeAuditError
 from .provenance import NativeOraclePayload as NativeOraclePayload
 from . import _source_binding_helpers as _package_source_binding_helpers
 
+from .primitive_observation_binding import (
+    credential_context_cache_schema as credential_context_cache_schema,
+    valid_source_span,
+)
+
 from .semantic_credential_sensor import (
+    _security_scope_request_aliases as _security_scope_request_aliases,
     _security_statement_operand_flow as _security_statement_operand_flow,
-    _security_if_block_findings as _security_if_block_findings,
-    _security_loop_block_findings as _security_loop_block_findings,
-    _security_match_block_findings as _security_match_block_findings,
-    _security_with_block_findings as _security_with_block_findings,
 )
 
 from .finite_capture import (
+    _security_merge_exit_states as _security_merge_exit_states,
+    _security_merge_branch_states as _security_merge_branch_states,
+    security_helper_return_tainted as _security_helper_return_tainted,
     _security_transfer_assignment_targets as _security_transfer_assignment_targets,
     _SecurityFlowState as _SecurityFlowState,
     _security_merge_structural_states as _security_merge_structural_states,
@@ -47,6 +70,7 @@ from .finite_capture import (
     _security_store_structural_targets as _security_store_structural_targets,
 )
 
+_valid_source_span = valid_source_span
 source_signature, bind_source_call = _package_source_binding_helpers()
 
 
@@ -2424,30 +2448,6 @@ def remember_direct_constant_assignment(
             known[target.id] = value
 
 
-_STRUCTURAL_SET_FIELDS = (
-    "module_rebindings",
-    "dynamic_getattr_modules",
-    "source_classes",
-) + ("implementation_contract_lines",)
-_STRUCTURAL_MAP_FIELDS = ("module_imports", "class_imports", "benchmark_constants")
-
-
-def encode_structural_context(context):
-    """Encode all structural oracle bindings for the bounded in-memory cache."""
-    return {
-        **{key: sorted(context.get(key, set())) for key in _STRUCTURAL_SET_FIELDS},
-        **{key: context.get(key, {}) for key in _STRUCTURAL_MAP_FIELDS},
-    }
-
-
-def decode_structural_context(payload):
-    """Restore structural oracle bindings without weakening their source identity."""
-    return {
-        **{key: set(payload.get(key, [])) for key in _STRUCTURAL_SET_FIELDS},
-        **{key: payload.get(key, {}) for key in _STRUCTURAL_MAP_FIELDS},
-    }
-
-
 def tls_verification_disabled(call: str, node: ast.Call) -> bool:
     """Recognize explicit verification bypasses on known TLS API boundaries."""
     if call == "ssl._create_unverified_context":
@@ -2465,164 +2465,6 @@ def tls_verification_disabled(call: str, node: ast.Call) -> bool:
         and keyword.value.value is False
         for keyword in node.keywords
     )
-
-
-def bind_security_call_scopes(tree: ast.AST, nodes=None) -> None:
-    """Retain lexical parameter shadowing for nested security call readers."""
-    tree._security_sanitizer_provider_cache = {}
-    tree._security_parent_scope = None
-    tree._security_scope_kind = "module"
-    tree._security_local_names = set()
-    tree._security_nonlocal_names = set()
-    tree._security_calls_by_statement = {}
-    for parent in ast.walk(tree) if nodes is None else nodes:
-        for child in ast.iter_child_nodes(parent):
-            child._security_parent = parent
-    _bind_security_scope_node(tree, tree, set(), tree)
-
-
-def _security_ast_span_contains(node, container):
-    return (container.lineno, container.col_offset) <= (
-        node.lineno,
-        node.col_offset,
-    ) and (node.end_lineno, node.end_col_offset) <= (
-        container.end_lineno,
-        container.end_col_offset,
-    )
-
-
-def _bind_security_scope_node(node, scope, shadowed, tree, flow_statement=None):
-    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
-        _bind_security_function(node, scope, shadowed, tree, flow_statement)
-        return
-    if isinstance(node, ast.ClassDef):
-        _bind_security_class(node, scope, shadowed, tree, flow_statement)
-        return
-    if isinstance(node, ast.Call):
-        node._security_shadowed_names = shadowed
-        node._security_lexical_scope = scope
-        node._security_flow_statement = flow_statement
-        calls = getattr(scope, "_security_calls_by_statement", {})
-        calls.setdefault(id(flow_statement), []).append(node)
-        scope._security_calls_by_statement = calls
-    if isinstance(node, (ast.Assign, ast.AnnAssign)):
-        node._security_lexical_scope = scope
-    if isinstance(node, ast.Attribute):
-        node._security_lexical_scope = scope
-        node._security_flow_statement = flow_statement
-    for child in ast.iter_child_nodes(node):
-        direct = child if node is scope else flow_statement
-        _bind_security_scope_node(child, scope, shadowed, tree, direct)
-
-
-def _bind_security_function(node, scope, shadowed, tree, flow_statement):
-    arguments = node.args
-    body = node.body if isinstance(node.body, list) else [node.body]
-    definition_statement = flow_statement or node
-    for decorator in getattr(node, "decorator_list", []):
-        _bind_security_scope_node(
-            decorator, scope, shadowed, tree, definition_statement
-        )
-    for default in [*arguments.defaults, *arguments.kw_defaults]:
-        if default is not None:
-            _bind_security_scope_node(
-                default, scope, shadowed, tree, definition_statement
-            )
-    for annotation in _function_annotations(node):
-        _bind_security_scope_node(
-            annotation, scope, shadowed, tree, definition_statement
-        )
-    lexical_parent = (
-        getattr(scope, "_security_parent_scope", tree)
-        if isinstance(scope, ast.ClassDef)
-        else scope
-    )
-    node._security_parent_scope = lexical_parent
-    node._security_class_scope = scope if isinstance(scope, ast.ClassDef) else None
-    arguments_names = {
-        argument.arg
-        for argument in [
-            *arguments.posonlyargs,
-            *arguments.args,
-            *arguments.kwonlyargs,
-            *[arg for arg in (arguments.vararg, arguments.kwarg) if arg],
-        ]
-    }
-    node._security_parameter_names = arguments_names
-    node._security_local_names = _security_scope_local_names(node)
-    node._security_nonlocal_names = _security_scope_nonlocal_names(node)
-    node._security_scope_kind = "function"
-    node._security_calls_by_statement = {}
-    child_shadowed = shadowed | arguments_names | node._security_local_names
-    for child in body:
-        _bind_security_scope_node(child, node, child_shadowed, tree, child)
-
-
-def _bind_security_class(node, scope, shadowed, tree, flow_statement):
-    for child in [*node.decorator_list, *node.bases]:
-        _bind_security_scope_node(child, scope, shadowed, tree, flow_statement or node)
-    for keyword in node.keywords:
-        _bind_security_scope_node(
-            keyword.value, scope, shadowed, tree, flow_statement or node
-        )
-    node._security_parent_scope = scope
-    node._security_scope_kind = "class"
-    node._security_local_names = _security_scope_local_names(node)
-    node._security_nonlocal_names = _security_scope_nonlocal_names(node)
-    node._security_calls_by_statement = {}
-    for child in node.body:
-        _bind_security_scope_node(child, node, shadowed, tree, child)
-
-
-def _function_annotations(node):
-    args = node.args
-    values = [
-        arg.annotation for arg in [*args.posonlyargs, *args.args, *args.kwonlyargs]
-    ]
-    values.extend(arg.annotation for arg in (args.vararg, args.kwarg) if arg)
-    if getattr(node, "returns", None) is not None:
-        values.append(node.returns)
-    return [value for value in values if value is not None]
-
-
-def _security_scope_local_names(scope):
-    from . import review_audits as audit
-
-    names = set()
-    body = getattr(scope, "body", [])
-    statements = body if isinstance(body, list) else [body]
-    for statement in statements:
-        if not isinstance(statement, ast.AST):
-            continue
-        names.update(audit._bound_names(statement))
-    return (
-        names
-        - _security_scope_declared_names(scope, ast.Global)
-        - (_security_scope_declared_names(scope, ast.Nonlocal))
-    )
-
-
-def _security_scope_nonlocal_names(scope):
-    return _security_scope_declared_names(scope, ast.Nonlocal)
-
-
-def _security_scope_declared_names(scope, declaration):
-    body = getattr(scope, "body", [])
-    statements = body if isinstance(body, list) else [body]
-    names = set()
-    pending = list(statements)
-    while pending:
-        node = pending.pop()
-        if not isinstance(node, ast.AST):
-            continue
-        if node is not scope and isinstance(
-            node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
-        ):
-            continue
-        if isinstance(node, declaration):
-            names.update(node.names)
-        pending.extend(ast.iter_child_nodes(node))
-    return names
 
 
 def session_tls_findings(relative, node, aliases, emit):
@@ -3455,21 +3297,6 @@ def _security_scope_body(scope):
     return []
 
 
-def _security_module_scope(scope):
-    pending = [scope]
-    while pending:
-        current = pending.pop()
-        if isinstance(current, ast.Module):
-            return current
-        parent = getattr(current, "_security_parent_scope", None)
-        if parent is not None:
-            pending.append(parent)
-        class_scope = getattr(current, "_security_class_scope", None)
-        if class_scope is not None:
-            pending.append(class_scope)
-    return None
-
-
 def _security_scope_initial(scope, aliases):
     if isinstance(scope, ast.Module):
         return {}, {}
@@ -3701,7 +3528,12 @@ def _security_source_sink_findings_bound(relative, tree, nodes, aliases):
             _security_scope_source_sink_findings(relative, scope, aliases, helpers)
         )
     findings.extend(audit_log_source_findings(relative, tree, nodes, aliases))
-    return findings
+    unique = {}
+    for finding in findings:
+        key = tuple(finding.get(field) for field in ("code", "path", "line", "column"))
+        if key not in unique or finding.get("facts", {}).get("security_precondition"):
+            unique[key] = finding
+    return list(unique.values())
 
 
 def _security_connector_cursor_helpers(tree, aliases):
@@ -3797,13 +3629,9 @@ def _security_helper_call(node, kind, aliases, helpers):
     return helpers.get(name) == kind and _security_call_unshadowed(node, name)
 
 
-def _security_call_leaf(node):
-    return node.func.attr if isinstance(node.func, ast.Attribute) else ""
-
-
 def _security_scope_source_sink_findings(relative, scope, aliases, helpers):
     states = (
-        _SecurityFlowState(),
+        _SecurityFlowState(bound=getattr(scope, "_security_parameter_names", ())),
         set(),
         set(getattr(scope, "_security_parameter_names", ())),
         set(),
@@ -3814,13 +3642,15 @@ def _security_scope_source_sink_findings(relative, scope, aliases, helpers):
     )
 
 
-def _security_try_block_flow(statement, flow, walk, inspect, bind_targets):
-    findings = []
-    findings.extend(_security_try_findings(statement, flow, walk, inspect))
-    return findings
-
-
 def _security_bind_flow_targets(expr, names, state, aliases):
+    supported = (
+        state[0].supported_view()
+        if isinstance(state[0], _SecurityFlowState)
+        else state[0]
+    )
+    confirmed = supported is not None and _security_expr_tainted(
+        expr, supported, set(), aliases
+    )
     flags = [
         _security_expr_tainted(expr, state[0], values, aliases)
         for values in (set(), state[2])
@@ -3830,6 +3660,9 @@ def _security_bind_flow_targets(expr, names, state, aliases):
     _security_clear_upload_tags(state[0], names, state[1])
     for index, flag in zip((0, 2), flags):
         state[index].update(names if flag else ())
+    if isinstance(state[0], _SecurityFlowState):
+        state[0].bound.update(names)
+        state[0].proven.update(names if confirmed else ())
 
 
 def _security_clear_flow_names(flow, bound):
@@ -3849,13 +3682,20 @@ def _security_analyze_source_sink_block(
     connection_names,
     cursor_names,
     helpers,
+    *,
+    _with_exits=False,
 ):
-    findings = []
+    findings, exits = [], {}
+    continuing = True
+    if not isinstance(requests, _SecurityFlowState):
+        requests = _SecurityFlowState(
+            requests, bound=getattr(scope, "_security_parameter_names", ())
+        )
     flow = (requests, password_fields, parameters, connection_names, cursor_names)
 
     def walk(block, state):
         return _security_analyze_source_sink_block(
-            relative, block, scope, aliases, *state, helpers
+            relative, block, scope, aliases, *state, helpers, _with_exits=True
         )
 
     def inspect(expr, state):
@@ -3870,6 +3710,33 @@ def _security_analyze_source_sink_block(
     from .credential_role_identity_effects import invalidate_structural_statement
 
     for statement in body:
+        # Implicit exceptions are separate predecessors, never normal successors.
+        inert = (
+            isinstance(statement, (ast.Pass, ast.Break, ast.Continue))
+            or (
+                isinstance(statement, (ast.Assign, ast.AnnAssign))
+                and isinstance(getattr(statement, "value", None), ast.Constant)
+                and all(
+                    isinstance(target, ast.Name)
+                    for target in getattr(
+                        statement, "targets", [getattr(statement, "target", None)]
+                    )
+                )
+            )
+            or isinstance(statement, ast.Return)
+            and (
+                statement.value is None
+                or isinstance(statement.value, ast.Constant)
+                or isinstance(statement.value, ast.Name)
+                and statement.value.id in getattr(requests, "bound", set())
+            )
+        )
+        if not inert and not isinstance(
+            statement, (ast.Try, getattr(ast, "TryStar", ast.Try))
+        ):
+            _security_merge_exit_states(
+                exits, {"raise": [requests.unresolved(), *flow[1:]]}
+            )
         incoming_flow = _security_statement_operand_flow(statement, scope, flow)
         invalidate_structural_statement(statement, getattr(requests, "values", {}))
         value = getattr(statement, "test", getattr(statement, "value", None))
@@ -3878,6 +3745,18 @@ def _security_analyze_source_sink_block(
         )
         if password_finding is not None:
             findings.append(password_finding)
+        if isinstance(statement, ast.Assert):
+            from . import review_audits as audit
+
+            findings.extend(inspect(statement.test, incoming_flow))
+            truth = audit._constant_truth_value(statement.test, {})
+            if truth is not True and statement.msg is not None:
+                findings.extend(inspect(statement.msg, incoming_flow))
+            if truth is False:
+                _security_merge_exit_states(exits, {"raise": flow})
+                continuing = False
+                break
+            continue
         from .intent_quality import sqlalchemy_with_findings
 
         with_findings = sqlalchemy_with_findings(
@@ -3887,13 +3766,8 @@ def _security_analyze_source_sink_block(
             connection_names,
             cursor_names,
             security_call_name,
-            lambda statements: _security_analyze_source_sink_block(
-                relative, statements, scope, aliases, *flow, helpers
-            ),
+            lambda statements: walk(statements, flow),
         )
-        if with_findings is not None:
-            findings.extend(with_findings)
-            continue
         handlers = (
             (ast.If, _security_if_block_findings),
             ((ast.For, ast.AsyncFor, ast.While), _security_loop_block_findings),
@@ -3904,8 +3778,21 @@ def _security_analyze_source_sink_block(
         handler = next(
             (handler for kind, handler in handlers if isinstance(statement, kind)), None
         )
-        if handler is not None:
-            findings.extend(handler(statement, flow, walk, inspect, bind_targets))
+        if with_findings is not None or handler is not None:
+            emitted, outgoing = (
+                with_findings
+                if with_findings is not None
+                else handler(statement, flow, walk, inspect, bind_targets)
+            )
+            findings.extend(emitted)
+            _security_merge_exit_states(
+                exits,
+                {key: value for key, value in outgoing.items() if key != "normal"},
+            )
+            if "normal" not in outgoing:
+                continuing = False
+                break
+            _security_merge_branch_states(flow, [outgoing["normal"]])
             continue
         assignment = isinstance(statement, (ast.Assign, ast.AnnAssign, ast.AugAssign))
         expression = isinstance(
@@ -3914,73 +3801,170 @@ def _security_analyze_source_sink_block(
         if assignment or expression:
             findings.extend(inspect(statement, incoming_flow))
         if assignment:
-            _security_flow_source_assignment(statement, aliases, *flow, helpers)
+            requests.assign(
+                statement, aliases, flow[1:], helpers, _security_flow_source_assignment
+            )
         elif not expression:
             from . import review_audits as audit
 
             bound = audit._bound_names(statement)
             _security_clear_flow_names(flow, bound)
-    return findings
+            if isinstance(statement, ast.Delete):
+                requests.bound.difference_update(bound)
+        terminal = {
+            ast.Return: "return",
+            ast.Raise: "raise",
+            ast.Break: "break",
+            ast.Continue: "continue",
+        }.get(type(statement))
+        if terminal:
+            _security_merge_exit_states(exits, {terminal: flow})
+            continuing = False
+            break
+    if continuing:
+        _security_merge_exit_states(exits, {"normal": flow})
+    return (findings, exits) if _with_exits else findings
 
 
 def _security_alternative_blocks(blocks, states, walk, prepare=None):
-    branches = [[values.copy() for values in states] for _ in blocks]
-    findings = []
-    for index, (body, branch) in enumerate(zip(blocks, branches)):
+    findings, exits = [], {}
+    for index, body in enumerate(blocks):
+        branch = [values.copy() for values in states]
         if prepare:
             prepare(index, branch)
-        if body:
-            findings.extend(walk(body, branch))
-    _security_merge_branch_states(states, branches)
-    return findings
+        emitted, outgoing = walk(body, branch)
+        findings.extend(emitted)
+        _security_merge_exit_states(exits, outgoing)
+    return findings, exits
 
 
-def _security_try_findings(statement, states, walk, inspect):
-    normal = [values.copy() for values in states]
-    exceptional = [[values.copy() for values in states]]
-    findings = []
-    for child in statement.body:
-        findings.extend(walk([child], normal))
-        exceptional.append([values.copy() for values in normal])
-    findings.extend(walk(statement.orelse, normal))
-    exits = [normal]
-    for handler in statement.handlers:
-        caught = [_SecurityFlowState(), *(set() for _ in states[1:])]
-        _security_merge_branch_states(caught, exceptional)
-        if handler.type is not None:
-            findings.extend(inspect(handler.type, caught))
-        if handler.name:
-            for branch in caught:
-                branch.discard(handler.name)
-        findings.extend(walk(handler.body, caught))
-        exits.append(caught)
-    exceptional_exit = [_SecurityFlowState(), *(set() for _ in states[1:])]
-    _security_merge_branch_states(exceptional_exit, exceptional)
-    exits.append(exceptional_exit)
-    _security_merge_branch_states(states, exits)
-    if statement.finalbody:
-        findings.extend(walk(statement.finalbody, states))
-    return findings
+def _security_try_findings(statement, states, walk, inspect, bind_targets=None):
+    findings, body = walk(statement.body, [values.copy() for values in states])
+    exits = {
+        key: value for key, value in body.items() if key not in {"normal", "raise"}
+    }
+    if "normal" in body:
+        emitted, outgoing = walk(statement.orelse, body["normal"])
+        findings.extend(emitted)
+        _security_merge_exit_states(exits, outgoing)
+    if "raise" in body:
+        if not any(handler.type is None for handler in statement.handlers):
+            _security_merge_exit_states(exits, {"raise": body["raise"]})
+        for handler in statement.handlers:
+            caught = [values.copy() for values in body["raise"]]
+            if handler.type is not None:
+                caught[0] = caught[0].unresolved()
+                findings.extend(inspect(handler.type, caught))
+            if handler.name:
+                for state in caught:
+                    state.discard(handler.name)
+            emitted, outgoing = walk(handler.body, caught)
+            if handler.name:
+                for state in outgoing.values():
+                    _security_clear_flow_names(state, {handler.name})
+                    state[0].bound.discard(handler.name)
+            findings.extend(emitted)
+            _security_merge_exit_states(exits, outgoing)
+    if not statement.finalbody:
+        return findings, exits
+    final_exits = {}
+    for kind, state in exits.items():
+        emitted, outgoing = walk(statement.finalbody, state)
+        findings.extend(emitted)
+        _security_merge_exit_states(
+            final_exits,
+            {key: value for key, value in outgoing.items() if key != "normal"},
+        )
+        if "normal" in outgoing:
+            _security_merge_exit_states(final_exits, {kind: outgoing["normal"]})
+    return findings, final_exits
 
 
-def _security_merge_branch_states(target, branches):
-    for index, values in enumerate(target):
-        merged = set().union(*(branch[index] for branch in branches))
-        if index == 0:
-            _security_merge_structural_states(
-                values, [branch[index] for branch in branches]
+_security_try_block_flow = _security_try_findings
+
+
+def _security_if_block_findings(statement, flow, walk, inspect, bind_targets):
+    from .finite_capture import security_literal_branch_blocks
+
+    findings = inspect(statement.test, flow)
+    emitted, exits = _security_alternative_blocks(
+        security_literal_branch_blocks(statement, flow[0].values), flow, walk
+    )
+    return [*findings, *emitted], exits
+
+
+def _security_with_block_findings(statement, flow, walk, inspect, bind_targets):
+    findings, entered = [], [values.copy() for values in flow]
+    for item in statement.items:
+        findings.extend(inspect(item.context_expr, entered))
+        if item.optional_vars is not None:
+            from . import review_audits as audit
+
+            bind_targets(
+                item.context_expr, audit._bound_names(item.optional_vars), entered
             )
-            safe = set.intersection(*(branch[index] for branch in branches))
-            unsafe_safety = {
-                item
-                for item in merged
-                if isinstance(item, tuple)
-                and item[0]
-                in {"secure-upload-leaf", "request-type:bytes", "request-type:text"}
-            } - safe
-            merged.difference_update(unsafe_safety)
-        values.clear()
-        values.update(merged)
+    emitted, exits = walk(statement.body, entered)
+    findings.extend(emitted)
+    if "raise" in exits:
+        # Opaque __exit__ may suppress an exception, never a return/break/continue.
+        _security_merge_exit_states(
+            exits, {"normal": [exits["raise"][0].unresolved(), *exits["raise"][1:]]}
+        )
+    return findings, exits
+
+
+def _security_match_block_findings(statement, flow, walk, inspect, bind_targets):
+    from .finite_capture import security_literal_branch_blocks
+
+    findings, exits = inspect(statement.subject, flow), {}
+    remaining = True
+    for case in statement.cases:
+        wildcard = (
+            isinstance(case.pattern, ast.MatchAs) and case.pattern.pattern is None
+        )
+        pattern = case.pattern
+        test = None
+        if isinstance(pattern, (ast.MatchValue, ast.MatchSingleton)):
+            value = (
+                pattern.value
+                if isinstance(pattern, ast.MatchValue)
+                else ast.Constant(pattern.value)
+            )
+            operation = (
+                ast.Is() if isinstance(pattern, ast.MatchSingleton) else ast.Eq()
+            )
+            test = ast.Compare(
+                left=statement.subject, ops=[operation], comparators=[value]
+            )
+        selection = security_literal_branch_blocks(
+            ast.If(test=test or ast.Constant(True), body=case.body, orelse=[]),
+            flow[0].values,
+        )
+        if not selection[0] and len(selection) == 1:
+            continue
+        branch = [state.copy() for state in flow]
+        if not wildcard and (test is None or len(selection) != 1):
+            branch[0] = branch[0].unresolved()
+        bind_targets(statement.subject, _bound_names(pattern), branch)
+        if case.guard is not None:
+            findings.extend(inspect(case.guard, branch))
+        blocks = security_literal_branch_blocks(
+            ast.If(test=case.guard or ast.Constant(True), body=case.body, orelse=[]),
+            branch[0].values,
+        )
+        emitted, outgoing = _security_alternative_blocks(blocks, branch, walk)
+        findings.extend(emitted)
+        _security_merge_exit_states(exits, outgoing)
+        if (
+            (wildcard or test is not None and len(selection) == 1)
+            and len(blocks) == 1
+            and blocks[0] is case.body
+        ):
+            remaining = False
+            break
+    if remaining:
+        _security_merge_exit_states(exits, {"normal": flow})
+    return findings, exits
 
 
 def _security_statement_call_findings(
@@ -4014,7 +3998,9 @@ def _security_statement_call_findings(
         from . import review_audits as audit
         from .finite_capture import security_forward_helper_sources
 
-        security_forward_helper_sources(relative, call, aliases, requests, helpers)
+        supported = requests.supported_view()
+        if supported is not None:
+            security_forward_helper_sources(relative, call, aliases, supported, helpers)
 
         primitive = audit._security_call_finding(canonical, relative, call)
         bind_native_input_precondition(
@@ -4442,12 +4428,6 @@ def _security_local_helper_definition(call):
     return None
 
 
-def _security_helper_return_tainted(call, function, requests, parameters, aliases):
-    from .finite_capture import security_helper_return_tainted
-
-    return security_helper_return_tainted(call, function, requests, parameters, aliases)
-
-
 def _security_request_args(node, aliases, scope=None, flow_statement=None):
     return any(
         _security_flask_request_collection(node, aliases, scope, flow_statement, part)
@@ -4517,25 +4497,6 @@ def _native_input_inventory_epoch():
         cached = (identity, object())
         _native_input_inventory_epoch._cached_epoch = cached
     return cached[1]
-
-
-def _security_scope_request_aliases(scope, aliases, flow_statement=None):
-    """Resolve scope bindings through the bounded per-scan SQL analysis helper."""
-    from .intent_quality import _security_scope_request_aliases as resolve
-
-    return resolve(scope, aliases, flow_statement)
-
-
-def _security_apply_import_bindings(body, resolved, stop, audit):
-    for statement in body:
-        if statement is stop:
-            break
-        imported = audit._security_aliases([statement])
-        for name in audit._bound_names(statement):
-            resolved.pop(name, None)
-            if name in imported:
-                resolved[name] = imported[name]
-    return resolved
 
 
 def _security_flow_source_assignment(
@@ -4975,23 +4936,10 @@ def credential_consumer_helpers():
     return helpers(sys.modules[__name__])
 
 
-def credential_context_cache_schema():
-    """Return the credential-context cache schema version selected from the publication catalog."""
-    from .primitive_observation_binding import credential_context_cache_schema as schema
-
-    return schema()
-
-
 def _closed_declaration_binding(finding):
     from .primitive_observation_binding import closed_declaration_binding
 
     return closed_declaration_binding(finding, sys.modules[__name__])
-
-
-def _valid_source_span(span):
-    from .primitive_observation_binding import valid_source_span
-
-    return valid_source_span(span)
 
 
 def _finite_eval_binding(finding):

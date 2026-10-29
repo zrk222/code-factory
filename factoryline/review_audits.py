@@ -7,6 +7,12 @@ certification. A declared guard must raise on denial and must not be rebound.
 from __future__ import annotations
 
 import ast
+from .import_context import (
+    _FUNCTION_NODES,
+    _iter_ast_nodes as _iter_ast_nodes,
+    _binding_name as _binding_name,
+    _bound_names as _bound_names,
+)
 from collections import OrderedDict
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -258,15 +264,6 @@ def _body_nodes(node: ast.AST):
         return
     for child in ast.iter_child_nodes(node):
         yield from _body_nodes(child)
-
-
-def _iter_ast_nodes(node: ast.AST):
-    """Walk one AST without allocating or repeating ``ast.walk`` inventories."""
-    pending = [node]
-    while pending:
-        child = pending.pop()
-        yield child
-        pending.extend(ast.iter_child_nodes(child))
 
 
 def _calls(body: list[ast.stmt]) -> set[str]:
@@ -929,66 +926,6 @@ def _scope_parameters(node: ast.AST) -> set[str]:
     for argument in (arguments.vararg, arguments.kwarg):
         if argument:
             names.add(argument.arg)
-    return names
-
-
-def _binding_name(node: ast.AST) -> str | None:
-    if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
-        return node.id
-    if isinstance(node, ast.arg):
-        return node.arg
-    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-        return node.name
-    if isinstance(node, (ast.ExceptHandler, ast.MatchAs, ast.MatchStar)):
-        return node.name
-    if isinstance(node, ast.MatchMapping):
-        return node.rest
-    return None
-
-
-def _bound_names(statement: ast.AST) -> set[str]:
-    if isinstance(statement, (*_FUNCTION_NODES, ast.ClassDef, ast.Lambda)):
-        return {statement.name} if hasattr(statement, "name") else set()
-    if (cached := getattr(statement, "_scan_bound_names", None)) is not None:
-        return set(cached)
-    comprehension_targets = {
-        id(target)
-        for child in _iter_ast_nodes(statement)
-        if isinstance(
-            child, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
-        )
-        for generator in child.generators
-        for target in _iter_ast_nodes(generator.target)
-        if isinstance(target, ast.Name)
-    }
-    names: set[str] = set()
-    pending = [statement]
-    while pending:
-        child = pending.pop()
-        if isinstance(child, (*_FUNCTION_NODES, ast.ClassDef, ast.Lambda)):
-            continue
-        pending.extend(ast.iter_child_nodes(child))
-        if isinstance(child, (ast.Import, ast.ImportFrom)):
-            if any(item.name == "*" for item in child.names):
-                names.add("*")
-            names.update(
-                item.asname
-                or (
-                    item.name.split(".")[0]
-                    if isinstance(child, ast.Import)
-                    else item.name
-                )
-                for item in child.names
-                if item.name != "*"
-            )
-            continue
-        if id(child) in comprehension_targets:
-            continue
-        name = _binding_name(child)
-        if name:
-            names.add(name)
-    if hasattr(statement, "_scan_bound_names"):
-        statement._scan_bound_names = frozenset(names)
     return names
 
 
@@ -3652,7 +3589,10 @@ def _oracle_context_cache_key(
     from . import test_oracle_misuse as oracle_misuse
     from . import test_callback_closure
     from . import mock_fixture_provenance
-    from .import_context import import_resolution_helpers
+    from .import_context import (
+        import_resolution_helpers,
+        security_literal_branch_blocks,
+    )
     from .context_efficiency import (
         _consume_security_snapshots,
         _module_has_dynamic_capability_access,
@@ -3675,12 +3615,24 @@ def _oracle_context_cache_key(
         integrity._security_module_scope,
         integrity._security_scope_local_names,
         integrity._security_if_block_findings,
+        security_literal_branch_blocks,
         integrity._security_loop_block_findings,
         integrity._security_try_block_flow,
         integrity._security_with_block_findings,
         integrity._security_match_block_findings,
         integrity._security_bind_flow_targets,
         integrity._security_clear_flow_names,
+        integrity._security_merge_exit_states,
+        integrity._security_analyze_source_sink_block,
+        integrity._security_merge_branch_states,
+        integrity._SecurityFlowState.copy,
+        integrity._SecurityFlowState.__init__,
+        integrity._SecurityFlowState.assign,
+        integrity._SecurityFlowState.unresolved,
+        integrity._SecurityFlowState.supported_view,
+        integrity._SecurityFlowState.difference_update,
+        integrity._SecurityFlowState.discard,
+        integrity._security_merge_structural_states,
         integrity._security_statement_operand_flow,
         contracts._static_type_edges,
         contracts.native_import_profile,
@@ -5338,7 +5290,6 @@ _PYTEST_COLLECTION_HOOKS = {
     "pytest_pycollect_makeitem",
     "pytest_pycollect_makemodule",
 }
-_FUNCTION_NODES = (ast.FunctionDef, ast.AsyncFunctionDef)
 
 
 def _security_node_findings(
