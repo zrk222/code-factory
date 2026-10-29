@@ -2732,10 +2732,18 @@ class _CredentialRoleFlow:
     """Interpret captured transfers only; external behavior belongs to the contract."""
 
     def __init__(
-        self, index, resolver, contract, budget, resolve_name, resolve_attribute
+        self,
+        index,
+        resolver,
+        contract,
+        budget,
+        resolve_name,
+        resolve_attribute,
+        resolve_literal,
     ):
         self.index, self.resolver, self.contract = index, resolver, contract
         self.resolve_name, self.resolve_attribute = resolve_name, resolve_attribute
+        self.resolve_literal = resolve_literal
         self.budget, self.steps, self.counter = budget, 0, 0
         self.heap, self.unknowns, self.edges, self.active = {}, [], [], set()
         self.prefix_frames = []
@@ -2839,7 +2847,12 @@ class _CredentialRoleFlow:
     def leaf(self, path, node, env):
         """Resolve a constant or name from bindings and the caller's resolver."""
         if isinstance(node, ast.Constant):
-            return _constant_identity_value(node)
+            value = self.resolve_literal(path, node) if self.resolve_literal else None
+            return (
+                value
+                if isinstance(value, _Value)
+                else _constant_identity_value(node)
+            )
         if node.id in env:
             return env[node.id]
         value = self.resolve_name(path, node) if self.resolve_name else None
@@ -3148,6 +3161,10 @@ class _CredentialRoleFlow:
                 )
         elif isinstance(node, ast.Expr):
             self.expression(path, node.value, env)
+        elif isinstance(node, ast.Assert):
+            self.expression(path, node.test, env)
+            if node.msg is not None:
+                self.expression(path, node.msg, env)
         elif isinstance(node, ast.Return):
             return "return", self.expression(
                 path, node.value, env
@@ -3357,6 +3374,7 @@ def captured_credential_role_closure(
     contract,
     resolve_name=None,
     resolve_attribute=None,
+    resolve_literal=None,
     max_states=2048,
 ):
     """Transfer captured values and exact allocations; caller proves dispatch and authority.
@@ -3365,7 +3383,13 @@ def captured_credential_role_closure(
     prove that modeled calls cannot access unpassed candidate state indirectly.
     """
     flow = _CredentialRoleFlow(
-        index, resolve_call, contract, max_states, resolve_name, resolve_attribute
+        index,
+        resolve_call,
+        contract,
+        max_states,
+        resolve_name,
+        resolve_attribute,
+        resolve_literal,
     )
     returns = []
     if not entries:
@@ -3687,6 +3711,7 @@ class _SourceTestScope:
             + str(assignment.lineno)
         )
         self.objects, self.witnesses, self.owners = {}, {}, {}
+        self.pytest_owners = {}
         self.flow = None
         imports = audit._app_crypto_provider_imports(index)
         from . import review_audits
@@ -3748,6 +3773,9 @@ class _SourceTestScope:
         }
         if any(binding_occurrences(owner.body, name) for name in forbidden):
             return False
+        method_names = [node.name for node in owner.body if isinstance(node, ast.FunctionDef)]
+        if len(method_names) != len(set(method_names)):
+            return False
         for node in owner.body:
             if isinstance(node, ast.FunctionDef):
                 if self.audit._legacy._definition_effects_unknown(node):
@@ -3792,11 +3820,199 @@ class _SourceTestScope:
     def origin_use(self, path, node):
         """Record an origin read only when it belongs to a validated test owner."""
         owner = self.owner_for(path, node)
-        if owner is None:
-            return None
-        self.owners[path, id(owner)] = (path, owner)
+        if owner is not None:
+            self.owners[path, id(owner)] = (path, owner)
+        else:
+            selected = self.pytest_root(path, node)
+            if selected is None:
+                return None
+            function, pytest_owner = selected
+            self.pytest_owners[path, id(function)] = (
+                path,
+                function,
+                pytest_owner,
+            )
         self.witness(path, node, "test_origin_read")
         return "TEST_ORIGIN_READ"
+
+    def _pytest_collection(self):
+        """Rebuild supported pytest selectors from captured configuration bytes only."""
+        from .pytest_collection_audit import (
+            _pytest_collection_hook_names,
+            _pytest_collection_settings,
+            _pytest_config_data,
+            _pytest_file_matches,
+            _pytest_plugin_declaration_active,
+        )
+        from .review_audits import MAX_BYTES, _TEST_FILE_PATTERNS
+
+        configurations = self.index.get("configuration_bytes")
+        if not isinstance(configurations, dict):
+            return None
+        selected = None
+        for name, section in (
+            ("pytest.toml", "toml-pytest"),
+            (".pytest.toml", "toml-pytest"),
+            ("pytest.ini", "pytest"),
+            (".pytest.ini", "pytest"),
+            ("pyproject.toml", "pyproject"),
+            ("tox.ini", "pytest"),
+            ("setup.cfg", "tool:pytest"),
+        ):
+            raw = configurations.get(name)
+            if raw is None:
+                continue
+            if not isinstance(raw, bytes) or len(raw) > MAX_BYTES:
+                return None
+            _patterns, identity = _pytest_config_data(
+                raw, name, section, set(_TEST_FILE_PATTERNS)
+            )
+            state = identity.get("state")
+            if state in {
+                "invalid",
+                "oversized",
+                "unreadable",
+                "unsupported",
+                "unmodeled-builtin-collection",
+            }:
+                return None
+            if state == "absent-section":
+                continue
+            if state != "read":
+                return None
+            selected = identity
+            break
+        if selected is None:
+            # No captured config does not prove absence of a higher-priority config.
+            return None
+        settings = _pytest_collection_settings(selected)
+        for path, tree in self.index["modules"].items():
+            if not self.source.validate(path):
+                return None
+            relative = self.source.relative(path)
+            if not isinstance(relative, str):
+                return None
+            is_test_module = _pytest_file_matches(
+                relative, settings["python_files"]
+            )
+            if path.name == "conftest.py" and _pytest_collection_hook_names(
+                tree, True, False
+            ):
+                return None
+            if is_test_module and (
+                _pytest_collection_hook_names(tree, False, True)
+                or any(
+                    _pytest_plugin_declaration_active(node) for node in tree.body
+                )
+            ):
+                return None
+        return settings
+
+    def pytest_root(self, path, node):
+        """Return one statically selected pytest function or class-method root."""
+        from .pytest_collection_audit import (
+            _pytest_file_matches,
+            _pytest_name_matches,
+            _pytest_test_disabled,
+        )
+        from .review_audits import _oracle_ancestor_map
+
+        settings = self._pytest_collection()
+        parents = self.source.parents[path]
+        tree = self.index["modules"][path]
+        function = self.audit._legacy._enclosing_function(node, parents)
+        if (
+            settings is None
+            or not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef))
+            or function.decorator_list
+            or not self.source.validate(path)
+            or not _pytest_file_matches(
+                self.source.relative(path), settings["python_files"]
+            )
+            or not _pytest_name_matches(
+                function.name, settings["python_functions"]
+            )
+            or _pytest_test_disabled(
+                function, _oracle_ancestor_map(tree.body), [tree]
+            )
+        ):
+            return None
+        suite = parents.get(id(function))
+        owner = suite if isinstance(suite, ast.ClassDef) else None
+        if owner is None:
+            if suite is not self.index["modules"][path]:
+                return None
+        elif not self.pytest_owner(path, owner, function, settings):
+            return None
+        return function, owner
+
+    def pytest_owner(self, path, owner, selected, settings):
+        """Close a collected plain pytest class without hooks or dynamic wrappers."""
+        from .pytest_collection_audit import _pytest_name_matches
+
+        if (
+            owner.decorator_list
+            or owner.bases
+            or owner.keywords
+            or not _pytest_name_matches(owner.name, settings["python_classes"])
+        ):
+            return False
+        forbidden = {
+            "__init__",
+            "__new__",
+            "__getattr__",
+            "__getattribute__",
+            "__setattr__",
+            "__delattr__",
+            "__call__",
+            "__test__",
+            "setup_method",
+            "teardown_method",
+            "setup_class",
+            "teardown_class",
+        }
+        for node in owner.body:
+            if isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant):
+                if type(node.value.value) is str:
+                    continue
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                return False
+            if node.name in forbidden or (node is selected and node.decorator_list):
+                return False
+            allowed = tuple(
+                decorator
+                for decorator in node.decorator_list
+                if self._pytest_parametrize_decorator(path, decorator)
+            )
+            if len(allowed) != len(node.decorator_list) or self.audit._legacy._definition_effects_unknown(
+                node, allowed_decorators=allowed
+            ):
+                return False
+        return self.owner_namespace_closed(path, owner)
+
+    def _pytest_parametrize_decorator(self, path, decorator):
+        """Allow only the exact imported pytest literal-parameter decorator."""
+        if (
+            not isinstance(decorator, ast.Call)
+            or self.canonical(path, decorator.func) != "pytest.mark.parametrize"
+            or not decorator.args
+            or any(item.arg is None for item in decorator.keywords)
+            or len({item.arg for item in decorator.keywords})
+            != len(decorator.keywords)
+            or not self.audit._app_signing_terminal_stable(
+                self.index, "pytest.mark.parametrize"
+            )
+        ):
+            return False
+        try:
+            for value in [
+                *decorator.args,
+                *(item.value for item in decorator.keywords),
+            ]:
+                ast.literal_eval(value)
+        except (ValueError, TypeError, RecursionError):
+            return False
+        return True
 
     def resolve_name(self, path, node):
         """Resolve the candidate origin, inert declarations and supported namespaces."""
@@ -3818,6 +4034,22 @@ class _SourceTestScope:
             return _Value(inert_kind="scope_namespace", _exact_scalar=(canonical,))
         return None
 
+    def resolve_origin_literal(self, path, node):
+        """Attach the origin only to its exact currently validated local literal."""
+        if (
+            self.fact is None
+            or self.fact.source_role != "local_literal"
+            or path != self.path
+            or node is not self.assignment.value
+            or not self.source.validate(path)
+            or self.source.parents[path].get(id(node)) is not self.assignment
+        ):
+            return None
+        value = _constant_identity_value(node)
+        if value.inert_kind != "scalar" or value.scalar_kind != "text":
+            return None
+        return replace(value, roots=frozenset({self.origin}))
+
     def object_class(self, value):
         """Find the captured class registered for a single modeled object root."""
         if value is not None and len(value.class_roots) == 1:
@@ -3837,6 +4069,10 @@ class _SourceTestScope:
         if target is None:
             return None
         target_path, function = target
+        # Descriptor calls have different receiver binding. Until their exact
+        # invocation is modeled, do not treat them as ordinary instance methods.
+        if function.decorator_list:
+            return None
         bound = bind_source_call(call, function, call.func.value, apply_defaults=False)
         self.witness(target_path, function, "captured_test_scope_method")
         return ResolvedIdentityCall(function, target_path, bound)
@@ -3935,9 +4171,30 @@ class _SourceTestScope:
                 d
                 for d in node.decorator_list
                 if self.canonical(path, d) == "functools.cached_property"
+                or (
+                    isinstance(d, ast.Name)
+                    and d.id == "staticmethod"
+                    and self.audit._app_builtin_annotation_inert(self.index, path, d)
+                )
             )
-            if self.audit._legacy._definition_effects_unknown(
-                node, allowed_decorators=allowed
+            annotations = [
+                arg.annotation for arg in ast.walk(node.args)
+                if isinstance(arg, ast.arg) and arg.annotation is not None
+            ]
+            if node.returns is not None:
+                annotations.append(node.returns)
+            # A bare name lookup in this ordinary class namespace cannot invoke
+            # a descriptor. Subscriptions and attributes need explicit models.
+            if (
+                len(allowed) != len(node.decorator_list)
+                or getattr(node, "type_params", ())
+                or any(not _immutable_default(v) for v in node.args.defaults)
+                or any(v is not None and not _immutable_default(v) for v in node.args.kw_defaults)
+                or not all(
+                    isinstance(a, ast.Name)
+                    or self.audit._app_metadata_annotation_inert(self.index, path, a)
+                    for a in annotations
+                )
             ):
                 return False
         return True
@@ -3946,6 +4203,9 @@ class _SourceTestScope:
         """Resolve inert literal content only from a current captured source node."""
         if not self.source.validate(path) or id(node) not in self.source.parents[path]:
             return None
+        origin = self.resolve_origin_literal(path, node)
+        if origin is not None:
+            return origin
         value = self.audit._legacy.identity_value(node, {})
         return value if value.inert_kind and not _has_unknown_content(value) else None
 
@@ -3992,18 +4252,73 @@ class _SourceTestScope:
             not self.view
             or not self.view.complete
             or self.fact is None
-            or self.fact.source_role != "module_literal"
+            or self.fact.source_role not in {"module_literal", "local_literal"}
         ):
             return False
+        if self.fact.source_role == "local_literal":
+            parents = self.source.parents[self.path]
+            function = self.audit._legacy._enclosing_function(
+                self.assignment, parents
+            )
+            targets = (
+                self.assignment.targets
+                if isinstance(self.assignment, ast.Assign)
+                else [self.assignment.target]
+            )
+            if (
+                function is None
+                or parents.get(id(self.assignment)) is not function
+                or len(targets) != 1
+                or not isinstance(targets[0], ast.Name)
+                or targets[0].id != self.secret
+                or binding_occurrences(function.body, self.secret) != targets
+                or self.pytest_root(self.path, self.assignment) is None
+            ):
+                return False
+            owner = parents.get(id(function))
+            if not isinstance(owner, ast.ClassDef):
+                owner = None
+            return self.exercise_pytest_root(self.path, function, owner)
         if self.view._data_reflection_conflict(self.fact):
             return False
         uses = self.view._module_uses(self.fact, self.origin_use)
-        if not uses or not self.owners:
+        if not uses or not (self.owners or self.pytest_owners):
             return False
         for path, owner in self.owners.values():
             if not self.exercise_owner(path, owner):
                 return False
+        for path, function, owner in self.pytest_owners.values():
+            if not self.exercise_pytest_root(path, function, owner):
+                return False
         return True
+
+    def exercise_pytest_root(self, path, function, owner):
+        """Interpret one selected pytest invocation with the shared transfer closure."""
+        bindings = {}
+        if owner is not None:
+            if not function.args.args or function.args.args[0].arg != "self":
+                return False
+            identity = (
+                "pytest-invocation:"
+                + self.source.relative(path)
+                + ":"
+                + str(function.lineno)
+            )
+            receiver = _Value(class_roots=frozenset({identity}))
+            self.objects[identity] = (path, owner)
+            bindings[function.args.args[0].arg] = receiver
+        result = captured_credential_role_closure(
+            self.source,
+            [(path, function, bindings)],
+            resolve_call=self.resolve_call,
+            contract=self.contract,
+            resolve_name=self.resolve_name,
+            resolve_attribute=self.resolve_attribute,
+            resolve_literal=self.resolve_literal,
+        )
+        if result.complete:
+            self.witness(path, function, "declared_pytest_invocation")
+        return result.complete
 
     def exercise_owner(self, path, owner):
         """Interpret setup and each declared test with a distinct modeled receiver."""
@@ -4013,6 +4328,10 @@ class _SourceTestScope:
                 for n in owner.body
                 if isinstance(n, ast.FunctionDef) and n.name == "setUp"
             ),
+            None,
+        )
+        teardown = next(
+            (n for n in owner.body if isinstance(n, ast.FunctionDef) and n.name == "tearDown"),
             None,
         )
         tests = [
@@ -4028,7 +4347,11 @@ class _SourceTestScope:
             )
             receiver = _Value(class_roots=frozenset({identity}))
             self.objects[identity] = (path, owner)
-            functions = ([setup] if setup is not None else []) + [test]
+            functions = (
+                ([setup] if setup is not None else [])
+                + [test]
+                + ([teardown] if teardown is not None else [])
+            )
             entries = [
                 (path, f, {f.args.args[0].arg: receiver})
                 for f in functions
@@ -4043,6 +4366,7 @@ class _SourceTestScope:
                 contract=self.contract,
                 resolve_name=self.resolve_name,
                 resolve_attribute=self.resolve_attribute,
+                resolve_literal=self.resolve_literal,
             )
             if not result.complete:
                 return False
