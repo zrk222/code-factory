@@ -107,6 +107,11 @@ def test_security_handoff_distinguishes_same_line_source_spans(fingerprints):
         )
     assert findings[0]["finding_id"] != findings[1]["finding_id"]
     assert findings[0]["legacy_finding_id"] == findings[1]["legacy_finding_id"]
+    updated_source = _sarif_result_finding(
+        result, {}, {"id": "native", "engine": "codeql"}, {"app.py": "b" * 64}
+    )
+    assert updated_source["source_sha256"] != findings[1]["source_sha256"]
+    assert updated_source["finding_id"] == findings[1]["finding_id"]
 
 
 OSV_CHALLENGE_ALIASES = [

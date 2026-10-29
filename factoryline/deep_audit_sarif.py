@@ -241,7 +241,10 @@ def _sarif_result_finding(result, rules, lane, sources):
             "engine": lane["engine"],
             "rule": finding["rule_id"],
             "native": native,
-            "locations": locations,
+            "locations": [
+                {key: value for key, value in item.items() if key != "source_sha256"}
+                for item in locations
+            ],
         }
     )
     return finding

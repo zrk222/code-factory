@@ -8,7 +8,7 @@
     },
     {
       "path": "factoryline/deep_audit_sarif.py",
-      "sha256": "3a138589cb15affec08a5ff3a8887a423246b7aa38c0e84ebed86b8f155b93a1"
+      "sha256": "f4230e75f7085ba652237ff9db224fd42575d2eee3039f8d8462a377a2482c12"
     },
     {
       "path": "deploy/deep-adapters/profiles/codeql-python-full.json",
@@ -24,7 +24,7 @@
     },
     {
       "path": "tests/test_deep_audit_sarif.py",
-      "sha256": "cc30e91bb03af8b14ad8afa1a786263fe70832618d0a553f43108ddef35fede8"
+      "sha256": "c162fff5806547d87b5ea5a2d3044b2c4a69a89e45d00184949f668d6b9f83b6"
     },
     {
       "path": "tests/test_junie_taxonomy.py",
@@ -38,7 +38,8 @@
   "tests": {
     "final-validation": 86,
     "sarif-final": 224,
-    "surfaces-final": 42
+    "surfaces-final": 42,
+    "identity-final": 266
   },
   "real_retained_worker_replay": {
     "raw_results": 78,
