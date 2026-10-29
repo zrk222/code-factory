@@ -2446,7 +2446,6 @@ def _source_test_call_values_closed(call, node):
 
 
 def _source_callback_profile(source, symbol, tree, audit):
-    from hashlib import sha256
     from . import review_integrity as integrity
 
     classes = [
@@ -2473,9 +2472,7 @@ def _source_callback_profile(source, symbol, tree, audit):
         "call_method": "__call__",
         "source": source.as_posix(),
         "source_sha256": getattr(tree, "_oracle_source_sha256", None),
-        "source_ast_sha256": sha256(
-            ast.dump(tree, include_attributes=True).encode("utf-8")
-        ).hexdigest(),
+        "source_ast_sha256": audit._oracle_tree_fingerprint(tree),
         "symbol": symbol,
         "virtual_dispatch": integrity.virtual_dispatch_defaults(
             methods, aliases, audit._effective_assertion
@@ -2982,8 +2979,9 @@ def _source_virtual_call_binds(call, target, caller, audit):
 
 def _source_profile_identity_closed(tree, raw, snapshot_fingerprint, profile):
     from hashlib import sha256
+    from .import_context import structural_ast_fingerprint
 
-    digest = sha256(ast.dump(tree, include_attributes=True).encode("utf-8")).hexdigest()
+    digest = structural_ast_fingerprint(tree)
     return (
         isinstance(raw, bytes)
         and sha256(raw).hexdigest() == profile.get("source_sha256")
