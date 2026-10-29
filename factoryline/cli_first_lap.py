@@ -289,6 +289,11 @@ def _print_repo_scan(result: dict, code: int) -> None:
     print(
         f"security : {security.get('state', 'unavailable')}; Python audited {coverage.get('files_audited', 0)}/{coverage.get('files_discovered', 0)}, limit {coverage.get('limit', 'unavailable')}"
     )
+    collection = security.get("oracle_context", {}).get("static_pytest_collection", {})
+    if collection.get("collection_state") == "UNKNOWN":
+        print(
+            f"collection: UNKNOWN ({collection.get('path') or 'collection hooks'}; {collection.get('reason', 'unmodeled collection')}); static findings retained, test-oracle authority unavailable."
+        )
     print(
         "scope    : Python AST static checks; JS/shell and other languages require external workers."
     )
