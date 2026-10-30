@@ -46,7 +46,10 @@ def test_request_mapping_data_member_native_sink_admission(tmp_path, member):
     for row in selected.values():
         assert row["tier"] == "SUPPORTED_DEFECT"
         assert row["evidence"] == "source_bound_native_security_precondition"
-        assert row["raw_finding"]["facts"]["security_precondition"]["status"] == "SUPPORTED"
+        assert (
+            row["raw_finding"]["facts"]["security_precondition"]["status"]
+            == "SUPPORTED"
+        )
 
 
 @pytest.mark.parametrize("member", ["args", "form"])
@@ -80,7 +83,9 @@ def test_request_mapping_data_member_preserves_uncertain_providers(
         "SECURITY_DYNAMIC_EXECUTION",
         "SECURITY_SHELL_COMMAND",
     }
-    assert not any(row.get("facts", {}).get("security_precondition") for row in selected)
+    assert not any(
+        row.get("facts", {}).get("security_precondition") for row in selected
+    )
 
 
 @pytest.mark.parametrize("member", ["args", "form"])
@@ -500,7 +505,7 @@ def _flask_authority_tiers314(source=_FLASK_AUTHORITY_SOURCE314, extra_sources=N
     )
 
 
-def _cross_module_flask_secret_tiers(files, secret_path):
+def _captured_secret_tiers(files, secret_path, secret_name="SECRET_KEY"):
     from hashlib import sha256
     from pathlib import Path
     from factoryline.primitive_observation_binding import build_finding_tier_report
@@ -513,7 +518,7 @@ def _cross_module_flask_secret_tiers(files, secret_path):
         finding
         for finding in findings
         if finding.get("code") == "SECURITY_HARDCODED_SECRET"
-        and finding.get("facts", {}).get("name") == "SECRET_KEY"
+        and finding.get("facts", {}).get("name") == secret_name
     ]
     assert selected
     return build_finding_tier_report(
@@ -530,46 +535,608 @@ def _cross_module_flask_secret_tiers(files, secret_path):
     )
 
 
-@pytest.mark.parametrize("evidence", [
-    {}, {"proof_scope": "future-origin-contract"},
-    {"proof_scope": "captured_same_module_static_wiring"},
-    {"proof_scope": "source_bound_flask_session_authority"},
-    {"schema": "factory.security.private-key-auth-flow.v1", "proof_scope": "captured_same_module_static_wiring", "consumer_role": "metadata_only"},
-    {"proof_scope": "source_bound_flask_session_authority", "framework": "flask", "credential_key": "SECRET_KEY", "consumer_role": "flask_login_session", "transfers": [None]},
-    {"schema": "factory.security.private-key-auth-flow.v1", "proof_scope": "captured_same_module_static_wiring", "source_role": "embedded_private_key", "consumer_role": "django_password_verifier", "transfers": [None]},
-    {"proof_scope": "future-origin-contract", "transfers": [{"path": "config.py", "sha256": "a" * 64, "span": [1, 0, 1, 12]}]},
-    "trusted", [],
-])
+def _operative_signing_default_sources(flow, mutation=None):
+    if flow in {"settings-constructor", "settings-factory"}:
+        factory = (
+            "def build_settings():\n    return Settings()\n"
+            if flow == "settings-factory"
+            else ""
+        )
+        constructor = "build_settings()" if factory else "Settings()"
+        files = {
+            "config.py": "from pydantic_settings import BaseSettings\nclass Settings(BaseSettings):\n    secret_key: str = 'signing-seed-9873-product'\n",
+            "signing.py": (
+                "from jwt import encode, decode\nfrom config import Settings\n"
+                + factory
+                + f"key = {constructor}.secret_key\n"
+                "def issue(subject):\n    return encode({'sub': subject}, key, algorithm='HS256')\n"
+                "def verify(token: str):\n    return decode(token, key, algorithms=['HS256'])\n"
+            ),
+            "app.py": (
+                "from fastapi import FastAPI, Depends, HTTPException\n"
+                "from fastapi.security import OAuth2PasswordBearer\n"
+                "from signing import verify\n"
+                "app = FastAPI()\nbearer = OAuth2PasswordBearer(tokenUrl='/token')\n"
+                "users = {'admin': {'private': 'account-data'}}\n"
+                "@app.get('/profile')\n"
+                "def profile(token: str = Depends(bearer)):\n"
+                "    claims = verify(token)\n"
+                "    if not claims:\n        raise HTTPException(status_code=401)\n"
+                "    return users[claims['sub']]\n"
+            ),
+        }
+        if mutation == "override":
+            files["signing.py"] = files["signing.py"].replace(
+                "Settings()", "Settings(secret_key=runtime_key)"
+            )
+        elif mutation == "wrong-origin":
+            files["signing.py"] = files["signing.py"].replace(
+                f"{constructor}.secret_key", "runtime_key"
+            )
+        elif mutation == "no-route":
+            files["app.py"] = files["app.py"].replace("@app.get('/profile')\n", "")
+        elif mutation == "verification-disabled":
+            files["signing.py"] = files["signing.py"].replace(
+                "algorithms=['HS256'])",
+                "algorithms=['HS256'], options={'verify_signature': False})",
+            )
+        return files, "secret_key"
+    files = {
+        "config.py": "SECRET_KEY = 'signing-seed-9873-product'\n",
+        "signing.py": (
+            "from flask import current_app\nfrom itsdangerous import URLSafeTimedSerializer\n"
+            "def get_signer():\n    key = current_app.config['SECRET_KEY']\n"
+            "    signer = URLSafeTimedSerializer(key)\n    return signer\n"
+        ),
+        "routes.py": (
+            "from flask import Blueprint, session\nfrom signing import get_signer\n"
+            "api = Blueprint('accounts', __name__)\n"
+            "@api.route('/confirm/<token>')\n"
+            "def confirm(token):\n    signer = get_signer()\n"
+            "    claims = signer.loads(token, max_age=300)\n"
+            "    session['user_id'] = claims['sub']\n    return 'authenticated'\n"
+        ),
+        "app.py": (
+            "from flask import Flask\nfrom routes import api\n"
+            "app = Flask(__name__)\napp.config.from_object('config')\napp.register_blueprint(api)\n"
+        ),
+    }
+    if mutation == "override":
+        files["app.py"] = files["app.py"].replace(
+            "app.register_blueprint(api)",
+            "app.config['SECRET_KEY'] = runtime_key\napp.register_blueprint(api)",
+        )
+    elif mutation == "wrong-origin":
+        files["signing.py"] = files["signing.py"].replace(
+            "current_app.config['SECRET_KEY']", "runtime_key"
+        )
+    elif mutation == "no-route":
+        files["app.py"] = files["app.py"].replace("app.register_blueprint(api)\n", "")
+    elif mutation == "verification-disabled":
+        files["routes.py"] = files["routes.py"].replace(
+            "signer.loads(token, max_age=300)", "{'sub': token}"
+        )
+    return files, "SECRET_KEY"
+
+
+@pytest.mark.parametrize("flow", ["settings-constructor", "settings-factory"])
+def test_operative_signing_default_origin_family(flow):
+    files, name = _operative_signing_default_sources(flow)
+    row = _captured_secret_tiers(files, "config.py", name)["ledger"][0]
+    assert row["tier"] == "SUPPORTED_DEFECT"
+    assert (
+        row["credential_authority_observation"]["runtime_execution"] == "not_performed"
+    )
+    assert {
+        item["path"] for item in row["credential_authority_observation"]["transfers"]
+    } >= {"config.py", "signing.py", "app.py"}
+
+
+def test_serializer_transfer_without_operative_identity_authority_stays_unresolved():
+    files, name = _operative_signing_default_sources("serializer-helper")
+    row = _captured_secret_tiers(files, "config.py", name)["ledger"][0]
+    assert row["tier"] == "NEEDS_CONTEXT"
+    assert row["raw_finding"]["severity"] == "CRITICAL"
+
+
+@pytest.mark.parametrize(
+    "owner_name,method",
+    [
+        ("CapturedOriginProjection", "expression"),
+        ("CapturedOriginProjection", "conditional"),
+        ("_OperativeCredentialOrigin", "boundary_inventory"),
+        ("_OperativeCredentialOrigin", "witness"),
+        ("_CredentialHandlerIndex", "boundaries"),
+    ],
+)
+def test_shared_credential_method_replacement_changes_native_epoch(
+    tmp_path, monkeypatch, owner_name, method
+):
+    from factoryline import credential_endpoint_admission as admission
+    from factoryline.credential_role_method_use_getter_audit import (
+        CapturedOriginProjection,
+    )
+
+    owner = (
+        CapturedOriginProjection
+        if owner_name == "CapturedOriginProjection"
+        else getattr(admission, owner_name)
+    )
+    before = audit._oracle_context_cache_key(tmp_path, [], {})
+    original = getattr(owner, method)
+
+    def replacement(*args, **kwargs):
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(owner, method, replacement)
+    assert before != audit._oracle_context_cache_key(tmp_path, [], {})
+
+
+def test_shared_origin_replacement_cannot_reuse_warm_admission(tmp_path, monkeypatch):
+    from factoryline.credential_role_method_use_getter_audit import (
+        CapturedOriginProjection,
+    )
+
+    files, _ = _operative_signing_default_sources("settings-factory")
+    for path, source in files.items():
+        (tmp_path / path).write_text(source, encoding="utf-8")
+    first = audit.security_scan(
+        tmp_path, security_only=True, defect_policy="source-role-v3"
+    )
+    monkeypatch.setattr(
+        CapturedOriginProjection, "expression", lambda *args, **kwargs: (False, None)
+    )
+    second = audit.security_scan(
+        tmp_path, security_only=True, defect_policy="source-role-v3"
+    )
+
+    def selected(report):
+        return next(
+            row
+            for row in report["finding_tier_report"]["ledger"]
+            if row["raw_finding"].get("facts", {}).get("name") == "secret_key"
+        )
+
+    assert selected(first)["tier"] == "SUPPORTED_DEFECT"
+    assert selected(second)["tier"] == "NEEDS_CONTEXT"
+    assert selected(first)["raw_finding"] == selected(second)["raw_finding"]
+
+
+_REGISTERED_BEARER_MUTATIONS = {
+    "unrelated-star-import": [
+        ("models.py", "", "class Record: pass\n"),
+        ("maintenance.py", "", "from models import *\n"),
+    ],
+    "bearer-star-import": [
+        ("client.py", "", "from deps import *\nmutate(bearer)\n"),
+    ],
+    "status-401-scalar": [
+        (
+            "deps.py",
+            "from fastapi import Depends",
+            "from fastapi import status\nfrom fastapi import Depends",
+        ),
+        ("deps.py", "status_code=401", "status_code=status.HTTP_401_UNAUTHORIZED"),
+    ],
+    "status-403-scalar": [
+        (
+            "deps.py",
+            "from fastapi import Depends",
+            "from fastapi import status\nfrom fastapi import Depends",
+        ),
+        ("deps.py", "status_code=401", "status_code=status.HTTP_403_FORBIDDEN"),
+    ],
+    "signing-namespace-return": [
+        (
+            "client.py",
+            "",
+            "import signing\ndef exported_namespace():\n    return signing\nexported_namespace().key = runtime_key\n",
+        ),
+    ],
+    "signing-scalar-return": [
+        ("client.py", "", "from signing import key\ndef key_copy():\n    return key\n"),
+    ],
+    "helper-callable-reexport": [
+        ("bridge.py", "", "from signing import verify\n"),
+        (
+            "client.py",
+            "",
+            "from bridge import verify\ndef reject(token):\n    return {}\nverify.__code__ = reject.__code__\n",
+        ),
+    ],
+    "jwt-callable-reexport": [
+        ("bridge.py", "", "from jwt import decode\n"),
+        ("client.py", "", "from bridge import decode\nmutate(decode)\n"),
+    ],
+    "bearer-reexport-mutation": [
+        ("bridge.py", "", "from deps import bearer\n"),
+        ("client.py", "", "from bridge import bearer\nbearer.__class__ = RejectAll\n"),
+    ],
+    "bearer-reexport-alias-mutation": [
+        ("bridge.py", "", "from deps import bearer as selected\nexported = selected\n"),
+        ("client.py", "", "from bridge import exported\nmutate(exported)\n"),
+    ],
+    "bearer-reexport-readonly": [
+        ("bridge.py", "", "from deps import bearer\n"),
+    ],
+    "starlette-route-without-di": [("routes.py", "@router.get(", "@router.route(")],
+    "unrelated-dependency": [
+        (
+            "client.py",
+            "",
+            "from deps import connection, replacement\napp.dependency_overrides[connection] = replacement\n",
+        )
+    ],
+    "auth-override": [
+        (
+            "client.py",
+            "",
+            "from deps import principal, replacement\napp.dependency_overrides[principal] = replacement\n",
+        )
+    ],
+    "unknown-override": [
+        (
+            "client.py",
+            "",
+            "from deps import replacement\napp.dependency_overrides[runtime_selector] = replacement\n",
+        )
+    ],
+    "app-escape": [("client.py", "", "mutate(app)\n")],
+    "provider-replacement": [
+        ("client.py", "", "import jwt\njwt.decode = replacement\n")
+    ],
+    "helper-replacement": [
+        ("client.py", "", "from signing import verify\nverify.__code__ = replacement\n")
+    ],
+    "settings-mutation": [
+        (
+            "client.py",
+            "",
+            "from config import Settings\nSettings.model_fields['secret_key'].default = replacement\n",
+        )
+    ],
+    "custom-settings-hook": [
+        ("config.py", "", "    def custom_source(self):\n        return replacement\n")
+    ],
+    "wrong-type": [("config.py", "secret_key: str", "secret_key: bytes")],
+    "claims-overwrite": [
+        ("deps.py", "    if not claims:", "    claims = token\n    if not claims:")
+    ],
+    "effecting-guard": [("deps.py", "if not claims:", "if not mutate(claims):")],
+    "unregistered": [("app.py", "app.include_router(router)\n", "")],
+    "disabled": [
+        (
+            "signing.py",
+            "algorithms=['HS256'])",
+            "algorithms=['HS256'], options={'verify_signature': False})",
+        )
+    ],
+    "clock-replacement": [("client.py", "", "import time\ntime.time = replacement\n")],
+    "dependency-replacement": [
+        (
+            "client.py",
+            "",
+            "from deps import principal\nprincipal.__code__ = replacement\n",
+        )
+    ],
+    "router-replacement": [
+        ("client.py", "", "from routes import router\nrouter.get = replacement\n")
+    ],
+    "override-update": [
+        (
+            "client.py",
+            "",
+            "from deps import principal, replacement\napp.dependency_overrides.update({principal: replacement})\n",
+        )
+    ],
+    "routes-clear": [("client.py", "", "app.routes.clear()\n")],
+    "settings-dict-update": [
+        (
+            "client.py",
+            "",
+            "from config import Settings\nSettings.model_fields['secret_key'].__dict__.update({'default': replacement})\n",
+        )
+    ],
+    "client-replacement": [
+        (
+            "client.py",
+            "client = TestClient(app)",
+            "TestClient = mutate\nclient = TestClient(app)",
+        )
+    ],
+    "bearer-instance-class": [
+        ("client.py", "", "from deps import bearer\nbearer.__class__ = RejectAll\n")
+    ],
+    "bearer-instance-escape": [
+        ("client.py", "", "from deps import bearer\nmutate(bearer)\n")
+    ],
+    "bearer-instance-dictionary": [
+        (
+            "client.py",
+            "",
+            "from deps import bearer\nbearer.__dict__.update(runtime_overrides)\n",
+        )
+    ],
+    "bearer-instance-alias": [
+        ("client.py", "", "from deps import bearer\nalias = bearer\nmutate(alias)\n")
+    ],
+    "bearer-dependency-override": [
+        (
+            "client.py",
+            "",
+            "from deps import bearer, replacement\napp.dependency_overrides[bearer] = replacement\n",
+        )
+    ],
+    "missing-token-url": [("deps.py", "tokenUrl='/token'", "")],
+    "duplicate-algorithms": [
+        (
+            "signing.py",
+            "algorithms=['HS256'])",
+            "algorithms=['HS256'], algorithms=['HS256'])",
+        )
+    ],
+    "status-replacement": [
+        (
+            "deps.py",
+            "from fastapi import Depends",
+            "from fastapi import status\nfrom fastapi import Depends",
+        ),
+        ("deps.py", "status_code=401", "status_code=status.HTTP_401_UNAUTHORIZED"),
+        (
+            "client.py",
+            "",
+            "from fastapi import status\nstatus.HTTP_401_UNAUTHORIZED = 200\n",
+        ),
+    ],
+    "provider-dictionary": [
+        ("client.py", "", "import jwt\njwt.__dict__.update({'decode': replacement})\n")
+    ],
+    "provider-vars": [
+        (
+            "client.py",
+            "",
+            "import jwt\nnamespace = vars(jwt)\nnamespace['decode'] = replacement\n",
+        )
+    ],
+    "dynamic-provider-execution": [("client.py", "", "exec(runtime_program)\n")],
+}
+
+
+@pytest.mark.parametrize("mutation", [None, *_REGISTERED_BEARER_MUTATIONS])
+def test_registered_bearer_rejection_preserves_source_and_selected_dependency_ownership(
+    mutation,
+):
+    files, name = _operative_signing_default_sources("settings-factory")
+    files["signing.py"] = "import time\n" + files["signing.py"].replace(
+        "return decode(token, key, algorithms=['HS256'])",
+        "claims = decode(token.encode(), key, algorithms=['HS256'])\n    return claims if claims['expires'] >= time.time() else {}",
+    )
+    files["deps.py"] = (
+        "from fastapi import Depends, HTTPException\nfrom fastapi.security import OAuth2PasswordBearer\n"
+        "from signing import verify\nbearer = OAuth2PasswordBearer(tokenUrl='/token')\n"
+        "async def connection():\n    yield None\nasync def replacement():\n    yield None\n"
+        "async def principal(token: str = Depends(bearer)):\n    claims = verify(token)\n"
+        "    if not claims:\n        raise HTTPException(status_code=401)\n    return claims['sub']\n"
+    )
+    files["routes.py"] = (
+        "from fastapi import APIRouter, Depends\nfrom deps import principal\nrouter = APIRouter()\n"
+        "@router.get('/profile')\nasync def profile(identity = Depends(principal)):\n    return identity\n"
+    )
+    files["app.py"] = (
+        "from fastapi import FastAPI\nfrom routes import router\napp = FastAPI()\napp.include_router(router)\n"
+    )
+    files["client.py"] = (
+        "from fastapi.testclient import TestClient\nfrom app import app\nclient = TestClient(app)\n"
+    )
+    for path, before, after in _REGISTERED_BEARER_MUTATIONS.get(mutation, ()):
+        if before:
+            assert before in files[path]
+            files[path] = files[path].replace(before, after)
+        else:
+            files[path] = files.get(path, "") + after
+    row = _captured_secret_tiers(files, "config.py", name)["ledger"][0]
+    assert row["tier"] == (
+        "SUPPORTED_DEFECT"
+        if mutation
+        in {
+            None,
+            "unrelated-dependency",
+            "bearer-reexport-readonly",
+            "signing-scalar-return",
+            "status-401-scalar",
+            "status-403-scalar",
+            "unrelated-star-import",
+        }
+        else "NEEDS_CONTEXT"
+    )
+    assert row["raw_finding"]["severity"] == "CRITICAL"
+    if row["tier"] == "SUPPORTED_DEFECT":
+        assert {
+            item["path"]
+            for item in row["credential_authority_observation"]["transfers"]
+        } >= {"app.py", "config.py", "signing.py", "routes.py", "deps.py"}
+
+
+@pytest.mark.parametrize("flow", ["settings-constructor", "settings-factory"])
+@pytest.mark.parametrize("mutation", [None, "override", "wrong-origin"])
+def test_shared_default_projection_preserves_conditional_origin_across_factories(
+    flow, mutation
+):
+    from hashlib import sha256
+    from pathlib import Path
+    from factoryline.semantic_credential_sensor import signing_configuration_inventory
+    from factoryline.credential_endpoint_admission import (
+        _CredentialHandlerIndex,
+        _OperativeCredentialOrigin,
+    )
+
+    files, name = _operative_signing_default_sources(flow, mutation)
+    sources = {path: value.encode() for path, value in files.items()}
+    context = signing_configuration_inventory(
+        sources, {p: sha256(raw).hexdigest() for p, raw in sources.items()}
+    )
+    index = context["index"]
+    index.validate(Path("config.py"))
+    declaration = next(
+        node
+        for node in ast.walk(index.snapshots[Path("config.py")])
+        if isinstance(node, (ast.Assign, ast.AnnAssign))
+        and isinstance(node.value, ast.Constant)
+    )
+    finding = {"path": "config.py", "facts": {"name": name}}
+    handler = _CredentialHandlerIndex(context).handlers[0]
+    origin = _OperativeCredentialOrigin(context, finding, handler, declaration)
+    path = Path("routes.py" if flow == "serializer-helper" else "signing.py")
+    index.validate(path)
+    assignment = next(
+        n
+        for n in ast.walk(index.snapshots[path])
+        if isinstance(n, ast.Assign)
+        and any(
+            isinstance(target, ast.Name)
+            and target.id == ("signer" if flow == "serializer-helper" else "key")
+            for target in n.targets
+        )
+    )
+    known, value = origin.projection.expression(path, assignment.value)
+    assert known is (mutation is None)
+    if known:
+        assert value.roots == frozenset({origin.root})
+        assert value._exact_scalar == () and value.inert_kind is None
+        assert value.trace
+
+
+@pytest.mark.parametrize(
+    "flow", ["settings-constructor", "settings-factory", "serializer-helper"]
+)
+@pytest.mark.parametrize("mutation", [None, "no-route"])
+def test_credential_route_registration_is_bound_to_captured_application(flow, mutation):
+    from hashlib import sha256
+    from factoryline.semantic_credential_sensor import signing_configuration_inventory
+    from factoryline.credential_endpoint_admission import _CredentialHandlerIndex
+
+    files, _ = _operative_signing_default_sources(flow, mutation)
+    sources = {path: source.encode() for path, source in files.items()}
+    context = signing_configuration_inventory(
+        sources, {path: sha256(raw).hexdigest() for path, raw in sources.items()}
+    )
+    handlers = _CredentialHandlerIndex(context).handlers
+    assert len(handlers) == (0 if mutation else 1)
+    for handler in handlers:
+        assert handler["application"]["path"].as_posix() == "app.py"
+        assert handler["application"]["kind"] == "application"
+
+
+@pytest.mark.parametrize(
+    "flow", ["settings-constructor", "settings-factory", "serializer-helper"]
+)
+@pytest.mark.parametrize(
+    "mutation", ["override", "wrong-origin", "no-route", "verification-disabled"]
+)
+def test_operative_signing_default_origin_family_requires_complete_authority(
+    flow, mutation
+):
+    files, secret_name = _operative_signing_default_sources(flow, mutation)
+    report = _captured_secret_tiers(files, "config.py", secret_name)
+    assert report["ledger"][0]["tier"] == "NEEDS_CONTEXT"
+    assert report["ledger"][0]["raw_finding"]["severity"] == "CRITICAL"
+
+
+@pytest.mark.parametrize(
+    "evidence",
+    [
+        {},
+        {"proof_scope": "future-origin-contract"},
+        {"proof_scope": "captured_same_module_static_wiring"},
+        {"proof_scope": "source_bound_flask_session_authority"},
+        {
+            "schema": "factory.security.private-key-auth-flow.v1",
+            "proof_scope": "captured_same_module_static_wiring",
+            "consumer_role": "metadata_only",
+        },
+        {
+            "proof_scope": "source_bound_flask_session_authority",
+            "framework": "flask",
+            "credential_key": "SECRET_KEY",
+            "consumer_role": "flask_login_session",
+            "transfers": [None],
+        },
+        {
+            "schema": "factory.security.private-key-auth-flow.v1",
+            "proof_scope": "captured_same_module_static_wiring",
+            "source_role": "embedded_private_key",
+            "consumer_role": "django_password_verifier",
+            "transfers": [None],
+        },
+        {
+            "proof_scope": "future-origin-contract",
+            "transfers": [
+                {"path": "config.py", "sha256": "a" * 64, "span": [1, 0, 1, 12]}
+            ],
+        },
+        "trusted",
+        [],
+    ],
+)
 def test_unrecognized_credential_witness_never_grants_admission(evidence):
     from factoryline.primitive_observation_binding import _decide_finding_tier
 
-    finding = {"code": "SECURITY_HARDCODED_SECRET", "path": "config.py", "line": 1, "facts": {"name": "SECRET_KEY"}}
-    assert _decide_finding_tier(finding, True, [], [], evidence, source_bindings={"config.py": "a" * 64}) == ("NEEDS_CONTEXT", None, None)
-
+    finding = {
+        "code": "SECURITY_HARDCODED_SECRET",
+        "path": "config.py",
+        "line": 1,
+        "facts": {"name": "SECRET_KEY"},
+    }
+    assert _decide_finding_tier(
+        finding, True, [], [], evidence, source_bindings={"config.py": "a" * 64}
+    ) == ("NEEDS_CONTEXT", None, None)
 
 
 @pytest.mark.parametrize("kind", ["flask", "private-key"])
-@pytest.mark.parametrize("mutation", [None, "stale-source", "wrong-origin", "unbound-transfer", "invalid-span"])
+@pytest.mark.parametrize(
+    "mutation",
+    [None, "stale-source", "wrong-origin", "unbound-transfer", "invalid-span"],
+)
 def test_recognized_credential_witness_binds_every_transfer_and_origin(kind, mutation):
     from factoryline.primitive_observation_binding import _decide_finding_tier
 
-    finding = {"code": "SECURITY_HARDCODED_SECRET", "path": "config.py", "line": 1, "facts": {"name": "SECRET_KEY"}}
+    finding = {
+        "code": "SECURITY_HARDCODED_SECRET",
+        "path": "config.py",
+        "line": 1,
+        "facts": {"name": "SECRET_KEY"},
+    }
     transfers = [{"path": "config.py", "sha256": "a" * 64, "span": [1, 0, 1, 12]}]
     if kind == "flask":
-        evidence = {"proof_scope": "source_bound_flask_session_authority", "framework": "flask", "credential_key": "SECRET_KEY", "consumer_role": "flask_login_session", "transfers": transfers}
+        evidence = {
+            "proof_scope": "source_bound_flask_session_authority",
+            "framework": "flask",
+            "credential_key": "SECRET_KEY",
+            "consumer_role": "flask_login_session",
+            "transfers": transfers,
+        }
     else:
-        evidence = {"schema": "factory.security.private-key-auth-flow.v1", "proof_scope": "captured_same_module_static_wiring", "source_role": "embedded_private_key", "consumer_role": "django_password_verifier", "transfers": transfers}
+        evidence = {
+            "schema": "factory.security.private-key-auth-flow.v1",
+            "proof_scope": "captured_same_module_static_wiring",
+            "source_role": "embedded_private_key",
+            "consumer_role": "django_password_verifier",
+            "transfers": transfers,
+        }
     if mutation == "stale-source":
         transfers[0]["sha256"] = "b" * 64
     elif mutation == "wrong-origin":
         transfers[0]["span"] = [2, 0, 2, 12]
     elif mutation == "unbound-transfer":
-        transfers.append({"path": "missing.py", "sha256": "b" * 64, "span": [1, 0, 1, 12]})
+        transfers.append(
+            {"path": "missing.py", "sha256": "b" * 64, "span": [1, 0, 1, 12]}
+        )
     elif mutation == "invalid-span":
         transfers[0]["span"] = [1, True, 1, 12]
-    tier = _decide_finding_tier(finding, True, [], [], evidence, source_bindings={"config.py": "a" * 64})[0]
+    tier = _decide_finding_tier(
+        finding, True, [], [], evidence, source_bindings={"config.py": "a" * 64}
+    )[0]
     assert tier == ("SUPPORTED_DEFECT" if mutation is None else "NEEDS_CONTEXT")
-
 
 
 def _flask_login_config_sources(*, target="config", include_login=True, overwrite=""):
@@ -602,7 +1169,7 @@ def test_tier314_flask_login_session_accepts_cross_module_signing_default():
     from hashlib import sha256
 
     files = _flask_login_config_sources()
-    report = _cross_module_flask_secret_tiers(files, "config.py")
+    report = _captured_secret_tiers(files, "config.py")
     row = report["ledger"][0]
     assert row["tier"] == "SUPPORTED_DEFECT"
     assert row["evidence"] == "source_bound_flask_session_authority"
@@ -639,13 +1206,22 @@ def test_tier314_flask_login_session_accepts_cross_module_signing_default():
     ],
 )
 def test_tier314_flask_login_requires_effective_config_and_session_consumers(files):
-    report = _cross_module_flask_secret_tiers(files, "config.py")
+    report = _captured_secret_tiers(files, "config.py")
     assert report["tier_counts"]["SUPPORTED_DEFECT"] == 0
     assert report["ledger"][0]["tier"] == "NEEDS_CONTEXT"
     assert report["ledger"][0]["raw_finding"]["severity"] == "CRITICAL"
 
 
-@pytest.mark.parametrize("mutation", ["manager-rebound", "init-method-replaced", "reverse-decorators", "later-env-config", "nested-env-config"])
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "manager-rebound",
+        "init-method-replaced",
+        "reverse-decorators",
+        "later-env-config",
+        "nested-env-config",
+    ],
+)
 def test_flask_login_admission_rejects_broken_consumer_identity(mutation):
     files = _flask_login_config_sources()
     if mutation == "manager-rebound":
@@ -670,10 +1246,23 @@ def test_flask_login_admission_rejects_broken_consumer_identity(mutation):
         files["app.py"] = files["app.py"].replace(
             "login_manager = LoginManager()", reload + "login_manager = LoginManager()"
         )
-    assert _cross_module_flask_secret_tiers(files, "config.py")["tier_counts"]["SUPPORTED_DEFECT"] == 0
+    assert (
+        _captured_secret_tiers(files, "config.py")["tier_counts"]["SUPPORTED_DEFECT"]
+        == 0
+    )
 
 
-@pytest.mark.parametrize("mutation", ["metadata", "bound-metadata", "unbound-python", "missing-python", "changed-python", "changed-bound-metadata"])
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "metadata",
+        "bound-metadata",
+        "unbound-python",
+        "missing-python",
+        "changed-python",
+        "changed-bound-metadata",
+    ],
+)
 def test_signing_inventory_preserves_python_binding_closure_with_metadata(mutation):
     from hashlib import sha256
     from factoryline.semantic_credential_sensor import signing_configuration_inventory
@@ -694,19 +1283,26 @@ def test_signing_inventory_preserves_python_binding_closure_with_metadata(mutati
     assert (result is not None) == (mutation in {"metadata", "bound-metadata"})
 
 
-def test_flask_admission_validator_change_invalidates_warm_native_proof(tmp_path, monkeypatch):
+def test_flask_admission_validator_change_invalidates_warm_native_proof(
+    tmp_path, monkeypatch
+):
     from factoryline import credential_endpoint_admission as admission
 
     for name, source in _flask_login_config_sources().items():
         (tmp_path / name).write_text(source, encoding="utf-8")
     with audit._security_only_scan_context(True):
         first = audit.security_scan(tmp_path, cache_enabled=True)
-        monkeypatch.setattr(admission, "_flask_login_session_authority_witness", lambda *args: None)
+        monkeypatch.setattr(
+            admission, "_flask_login_session_authority_witness", lambda *args: None
+        )
         second = audit.security_scan(tmp_path, cache_enabled=True)
 
     def secret_row(report):
-        return next(row for row in report["finding_tier_report"]["ledger"]
-                    if row["raw_finding"].get("facts", {}).get("name") == "SECRET_KEY")
+        return next(
+            row
+            for row in report["finding_tier_report"]["ledger"]
+            if row["raw_finding"].get("facts", {}).get("name") == "SECRET_KEY"
+        )
 
     assert first["sources"] == second["sources"]
     assert secret_row(first)["tier"] == "SUPPORTED_DEFECT"

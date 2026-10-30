@@ -5,6 +5,8 @@ from factoryline import review_integrity
 from factoryline import runtime_audit_integrity as runtime
 from factoryline import primitive_observation_binding as primitive
 import pytest
+
+
 from factoryline.runtime_audit import evaluate_runtime_audit
 from factoryline.runtime_audit_integrity import index_executions, repair_guidance
 from factoryline.runtime_audit_common import RuntimeAuditError
@@ -14,6 +16,40 @@ import json
 from factoryline.runtime_audit_integrity import closed_declaration_input_witness
 from factoryline.runtime_audit_integrity import finite_literal_eval_input_witness
 from factoryline.runtime_audit_integrity import source_generated_eval_input_witness
+
+
+@pytest.mark.parametrize(
+    "mutation", [None, "rebind", "replace_attribute", "duplicate", "shadow_parameter"]
+)
+def test_captured_local_helper_identity_has_exact_provider_binding(mutation):
+    import hashlib
+    from pathlib import Path
+    from factoryline.semantic_credential_sensor import signing_configuration_inventory
+    from factoryline.credential_role_identity_effects import (
+        resolve_source_identity_call,
+    )
+
+    source = "def factory():\n    return 42\n\ndef consumer():\n    return factory()\n"
+    if mutation == "rebind":
+        source += "factory = replacement\n"
+    elif mutation == "replace_attribute":
+        source += "factory.__code__ = replacement\n"
+    elif mutation == "duplicate":
+        source += "def factory():\n    return 7\n"
+    elif mutation == "shadow_parameter":
+        source = source.replace("def consumer():", "def consumer(factory):")
+    raw = source.encode()
+    context = signing_configuration_inventory(
+        {"app.py": raw}, {"app.py": hashlib.sha256(raw).hexdigest()}
+    )
+    index = context["index"]
+    path = Path("app.py")
+    index.validate(path)
+    call = next(
+        node for node in ast.walk(index.snapshots[path]) if isinstance(node, ast.Call)
+    )
+    result = resolve_source_identity_call(call, path, index)
+    assert bool(result and result.negative_binding_closed) == (mutation is None)
 
 
 @pytest.mark.parametrize(
