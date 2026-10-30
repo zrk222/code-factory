@@ -3661,8 +3661,6 @@ def log_security_provider_stable(tree, aliases, nodes):
 
 def log_percent_slots(message):
     """Read actual percent-format conversion slots, excluding escaped percent signs."""
-    import re
-
     return [
         code
         for code in re.findall(
@@ -5323,10 +5321,6 @@ def _security_flow_shaped(expression, environment, aliases):
 
 def _security_flow_request_leaf(expression, environment, aliases):
     from . import review_integrity as flow
-    from .semantic_credential_sensor import (
-        http_request_payload,
-        _request_payload_source_kind,
-    )
 
     if not http_request_payload(
         expression,
@@ -5920,8 +5914,6 @@ def security_input_value_flow(expression, requests, aliases):
 
 
 def _security_input_flow_evidence(value, *, value_type):
-    import json
-
     if value_type is _SecurityFlowValue:
         if not isinstance(value, value_type) or not value.tainted:
             return None
