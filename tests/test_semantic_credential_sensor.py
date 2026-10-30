@@ -4124,6 +4124,38 @@ def test_log_effect_rejects_mutated_standard_django_filter_identity(tmp_path):
     assert "security_precondition" not in finding["facts"]
 
 
+@pytest.mark.parametrize(
+    "level, handlers, expected",
+    [
+        ("WARNING", ["console"], True),
+        ("NOTSET", ["console"], False),
+        ("WARNING", [], False),
+        ("CRITICAL", ["console"], False),
+    ],
+)
+def test_log_effect_own_handler_precedes_unspecified_root(
+    tmp_path, level, handlers, expected
+):
+    settings = _PLAIN_DJANGO_LOGGING.replace(
+        " 'root': {'handlers': ['console'], 'level': 'WARNING'},\n",
+        " 'loggers': {'billing': {'handlers': "
+        + repr(handlers)
+        + ", 'level': '"
+        + level
+        + "', 'propagate': True}},\n",
+    )
+    rows = _captured_log_scan(
+        tmp_path,
+        "import logging\nfrom flask import request\nlogger = logging.getLogger('billing')\n"
+        "def record():\n    logger.warning(request.args.get('x'))\n",
+        settings,
+    )
+    finding = next(row for row in rows if row["code"] == "SECURITY_LOG_INJECTION")
+    assert (
+        "effect_witness" in finding["facts"].get("security_precondition", {})
+    ) is expected
+
+
 def test_log_effect_direct_dictconfig_has_source_bound_config_without_startup(tmp_path):
     config = _PLAIN_DJANGO_LOGGING.removeprefix("LOGGING =")
     source = (
