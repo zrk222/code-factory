@@ -647,8 +647,153 @@ def test_security_scan_flask_upload_filename_save_paths(tmp_path, source, expect
     ]
     assert len(findings) == int(expected)
     if findings:
-        assert findings[0]["facts"] == {"call": "flask.FileStorage.save"}
-        assert findings[0]["severity"] == "HIGH"
+        finding = findings[0]
+        facts = finding["facts"]
+        assert facts["call"] == "flask.FileStorage.save"
+        assert finding["severity"] == "HIGH"
+        premise = facts.get("security_precondition")
+        if premise is None:
+            assert facts == {"call": "flask.FileStorage.save"}
+        else:
+            assert set(facts) == {"call", "security_precondition"}
+            expected_premise_fields = {
+                "schema",
+                "status",
+                "source_role",
+                "consumer_role",
+                "sink_span",
+                "proof_scope",
+                "runtime_execution",
+                "deployment",
+                "effect_witness",
+                "input_slot_span",
+            }
+            assert frozenset(premise) in {
+                frozenset(expected_premise_fields),
+                frozenset(expected_premise_fields | {"input_value_flow"}),
+            }
+            assert premise["schema"] == "factory.security.precondition.v1"
+            assert premise["status"] == "SUPPORTED"
+            assert premise["source_role"] == "untrusted_request_filename"
+            assert premise["consumer_role"] == "flask_file_storage_save"
+            assert premise["proof_scope"] == "local_static_wiring"
+            assert premise["runtime_execution"] == "not_performed"
+            assert premise["deployment"] == "UNASSESSED"
+            witness = premise["effect_witness"]
+            assert set(witness) == {
+                "schema",
+                "source_role",
+                "consumer_role",
+                "effect_kind",
+                "source_span",
+                "sink_span",
+                "effect_facts",
+            }
+            assert witness["schema"] == "factory.security.effect-witness.v1"
+            assert witness["source_role"] == premise["source_role"]
+            assert witness["consumer_role"] == premise["consumer_role"]
+            assert witness["effect_kind"] == "path_escape"
+            assert witness["sink_span"] == premise["sink_span"]
+            assert len(witness["source_span"]) == 4
+            assert all(type(value) is int for value in witness["source_span"])
+            source_lines = source.splitlines()
+            source_line, source_column, _end_line, source_end_column = witness[
+                "source_span"
+            ]
+            assert ".filename" in source_lines[source_line - 1][
+                source_column:source_end_column
+            ]
+            effect_facts = witness["effect_facts"]
+            assert set(effect_facts) == {
+                "provider_id",
+                "path_composition",
+                "destination_relation",
+                "normalized_counterexample_relation",
+                "normalization_profile",
+                "intended_base_span",
+            }
+            assert effect_facts["provider_id"] == "werkzeug.FileStorage.save"
+            assert effect_facts["path_composition"] in {
+                "raw_string_concat",
+                "os.path.join",
+            }
+            assert effect_facts["destination_relation"] == "escape_capable"
+            assert effect_facts["normalized_counterexample_relation"] == (
+                "outside_intended_base"
+            )
+            assert effect_facts["normalization_profile"] == "python_os_path"
+            assert len(effect_facts["intended_base_span"]) == 4
+            assert all(
+                type(value) is int for value in effect_facts["intended_base_span"]
+            )
+            assert len(premise["input_slot_span"]) == 4
+            assert all(type(value) is int for value in premise["input_slot_span"])
+            import ast
+
+            tree = ast.parse(source)
+            save_call = next(
+                node
+                for node in ast.walk(tree)
+                if isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "save"
+            )
+            destination = save_call.args[0]
+            assert premise["input_slot_span"] == [
+                destination.lineno,
+                destination.col_offset,
+                destination.end_lineno,
+                destination.end_col_offset,
+            ]
+            assert premise["sink_span"] == [
+                save_call.lineno,
+                save_call.col_offset,
+                save_call.end_lineno,
+                save_call.end_col_offset,
+            ]
+            base_expression = (
+                destination.left
+                if effect_facts["path_composition"] == "raw_string_concat"
+                else next(
+                    node
+                    for node in ast.walk(tree)
+                    if isinstance(node, ast.Call)
+                    and ast.unparse(node.func) == "os.path.join"
+                ).args[0]
+            )
+            assert effect_facts["intended_base_span"] == [
+                base_expression.lineno,
+                base_expression.col_offset,
+                base_expression.end_lineno,
+                base_expression.end_col_offset,
+            ]
+            base_line, base_column, _base_end_line, base_end_column = effect_facts[
+                "intended_base_span"
+            ]
+            assert "/uploads" in source_lines[base_line - 1][
+                base_column:base_end_column
+            ]
+            if "input_value_flow" in premise:
+                trace = premise["input_value_flow"]
+                assert set(trace) == {
+                    "schema",
+                    "value_kind",
+                    "scope",
+                    "runtime_execution",
+                    "steps",
+                    "trace_sha256",
+                }
+                assert trace["schema"] == "factory.security.scalar-input-flow.v1"
+                assert trace["value_kind"] == "text"
+                assert trace["scope"] == "dangerous_argument_only"
+                assert trace["runtime_execution"] == "not_performed"
+                assert trace["steps"]
+                trace_payload = {key: value for key, value in trace.items() if key != "trace_sha256"}
+                assert trace["trace_sha256"] == hashlib.sha256(
+                    json.dumps(
+                        trace_payload, sort_keys=True, separators=(",", ":")
+                    ).encode()
+                ).hexdigest()
 
 
 def test_security_scan_synthetic_django_password_comparison(tmp_path):

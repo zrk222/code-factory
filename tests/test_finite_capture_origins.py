@@ -2002,7 +2002,7 @@ def test_pickle_role_cli_receipt_and_text(tmp_path, capsys, policy):
     assert receipt["report"]["context_reviews"] == report["context_reviews"]
     assert main(argv) == 0
     output = capsys.readouterr().out
-    assert "NEEDS_CONTEXT reviews: 1" in output
+    assert "Finding tiers: supported=0, needs_context=1" in output
     assert "No clean security result" in output
     assert main([*argv, "--full-repository", "--json"]) == 2
     assert json.loads(capsys.readouterr().err)["code"] == "E_DEFECT_POLICY_SCOPE"

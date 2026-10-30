@@ -1472,7 +1472,11 @@ def test_evidence_policy_remediation_requires_native_supported_tier(
         for row in core["finding_tier_report"]["ledger"]:
             row["tier"] = "SUPPORTED_DEFECT"
         core["_primitive_source_bytes"] = {"app.py": (tmp_path / "app.py").read_bytes()}
-        assert audit._seal_security_scan(core)["agent_actions"] == actions
+        rejected = audit._seal_security_scan(core)
+        assert rejected["defect_policy_decision"]["state"] == "BLOCKED"
+        assert rejected["agent_actions"] == []
+        assert rejected["findings"] == report["findings"]
+        assert rejected["defect_policy_decision"]["clean"] is False
 
 
 def test_evidence_policy_remediation_retains_quality_hollow_handoff(tmp_path):
@@ -2056,10 +2060,10 @@ def test_common_admission_is_policy_invariant_and_keeps_raw_diagnostics(
         (row["raw_finding"]["code"], row["raw_finding"]["line"]): row for row in ledger
     }
     expected_supported = {
-        ("SECURITY_LOG_INJECTION", 4),
         ("SECURITY_DYNAMIC_EXECUTION", 6),
     }
     expected_unresolved = {
+        ("SECURITY_LOG_INJECTION", 4),
         ("SECURITY_DYNAMIC_EXECUTION", 8),
         ("SECURITY_OS_COMMAND", 9),
         ("SECURITY_SHELL_COMMAND", 10),
@@ -2074,6 +2078,19 @@ def test_common_admission_is_policy_invariant_and_keeps_raw_diagnostics(
         expected_unresolved
     )
     assert all(rows[key].get("missing_premises") for key in expected_unresolved)
+    log_row = rows[("SECURITY_LOG_INJECTION", 4)]
+    assert log_row["tier"] == "NEEDS_CONTEXT"
+    assert set(log_row["missing_premises"]) == {
+        "untrusted_log_value",
+        "log_record_injection_effect",
+    }
+    assert log_row["raw_finding"]["facts"] == {
+        "call": "logging.error",
+        "cwe": "CWE-117",
+        "source": "input_or_request_parameter",
+    }
+    assert log_row["raw_finding"]["severity"] == "HIGH"
+    assert "security_precondition" not in log_row["raw_finding"]["facts"]
 
     decision = report["defect_policy_decision"]
     assert decision["state"] == "DEFECTS_PRESENT"
@@ -2916,7 +2933,7 @@ def use():
         return False
 
     monkeypatch.setattr(provider, "binding_occurrences", observe_bindings)
-    provider._terminal_provider_mutated(
+    assert provider._terminal_provider_mutated(
         nodes,
         review_audits,
         "requests",
@@ -2926,8 +2943,7 @@ def use():
         readonly_argument,
     )
     assert callback_nodes
-    assert supplied_pass_caches
-    assert all(cache is None for cache in supplied_pass_caches)
+    assert supplied_pass_caches == []
 
 
 def _effect_tier_report(scanned, raw_findings, source_bytes, *, coverage, partition):
