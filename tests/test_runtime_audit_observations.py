@@ -1461,6 +1461,10 @@ def test_evidence_policy_remediation_requires_native_supported_tier(
     assert status["candidate_freshness"] == "CURRENT_SOURCE_HASHES_VERIFIED"
     receipt = json.loads((tmp_path / ".factory/security-scan/latest.json").read_text())
     assert receipt["report"] == report
+    from factoryline.cli_audit import _print_selected_security_policy
+
+    _print_selected_security_policy(report)
+    assert "Tenant scope: NOT_DECLARED" in capsys.readouterr().out
     core = copy.deepcopy(report)
     core["_primitive_source_bytes"] = {"app.py": (tmp_path / "app.py").read_bytes()}
     assert audit._seal_security_scan(core)["agent_actions"] == actions
@@ -2012,3 +2016,483 @@ def test_shared_configuration_capture_rejects_changed_bytes(tmp_path, monkeypatc
     with pytest.raises(audit.ReviewAuditError, match="Evidence changed"):
         audit._verify_security_bindings(tmp_path, [binding], captured_out=retained)
     assert retained == {}
+
+
+@pytest.mark.parametrize(
+    "policy",
+    ["trusted-core-v1", "source-role-v1", "source-role-v2", "source-role-v3"],
+)
+def test_common_admission_is_policy_invariant_and_keeps_raw_diagnostics(
+    tmp_path, capsys, policy
+):
+    from factoryline import review_audits as audit
+    from factoryline.cli_audit import _print_selected_security_policy
+
+    source = (
+        "import logging, os, pickle, sqlite3, subprocess\n"
+        "from flask import request\n"
+        "def request_log():\n"
+        "    logging.error(request.args['message'])\n"
+        "def request_eval():\n"
+        "    eval(request.get_data(as_text=True))\n"
+        "def unknown(value, command, query, payload):\n"
+        "    eval(value)\n"
+        "    os.system(command)\n"
+        "    subprocess.run(command, shell=True)\n"
+        "    connection = sqlite3.connect(':memory:')\n"
+        '    connection.execute("SELECT * FROM t WHERE name=\'" + query + "\'")\n'
+        "    pickle.loads(payload)\n"
+    )
+    (tmp_path / "app.py").write_text(source, encoding="utf-8")
+    report = audit.security_scan(
+        tmp_path,
+        cache_enabled=False,
+        defect_policy=policy,
+        security_only=True,
+    )
+
+    ledger = report["finding_tier_report"]["ledger"]
+    rows = {
+        (row["raw_finding"]["code"], row["raw_finding"]["line"]): row for row in ledger
+    }
+    expected_supported = {
+        ("SECURITY_LOG_INJECTION", 4),
+        ("SECURITY_DYNAMIC_EXECUTION", 6),
+    }
+    expected_unresolved = {
+        ("SECURITY_DYNAMIC_EXECUTION", 8),
+        ("SECURITY_OS_COMMAND", 9),
+        ("SECURITY_SHELL_COMMAND", 10),
+        ("SECURITY_SQL_INJECTION", 12),
+        ("SECURITY_UNSAFE_DESERIALIZATION", 13),
+    }
+    assert set(rows) == expected_supported | expected_unresolved
+    assert {key for key, row in rows.items() if row["tier"] == "SUPPORTED_DEFECT"} == (
+        expected_supported
+    )
+    assert {key for key, row in rows.items() if row["tier"] == "NEEDS_CONTEXT"} == (
+        expected_unresolved
+    )
+    assert all(rows[key].get("missing_premises") for key in expected_unresolved)
+
+    decision = report["defect_policy_decision"]
+    assert decision["state"] == "DEFECTS_PRESENT"
+    assert decision["exit_code"] == 1
+    assert decision["supported_defect_count"] == len(expected_supported)
+    assert decision["needs_context_count"] == len(expected_unresolved)
+    assert (
+        decision["clean"] is decision["passed"] is decision["release_approved"] is False
+    )
+
+    raw_surface = [
+        *report.get("findings", []),
+        *report.get("context_reviews", []),
+        *report.get("primitive_observations", []),
+    ]
+    assert len(raw_surface) == report["finding_tier_report"]["raw_diagnostics"]["count"]
+    assert sorted(
+        (
+            row.get("code"),
+            row.get("path"),
+            row.get("line"),
+            row.get("column", 0),
+            row.get("severity"),
+        )
+        for row in raw_surface
+    ) == sorted(
+        (
+            row["raw_finding"].get("code"),
+            row["raw_finding"].get("path"),
+            row["raw_finding"].get("line"),
+            row["raw_finding"].get("column", 0),
+            row["raw_finding"].get("severity"),
+        )
+        for row in ledger
+    )
+    actionable = {
+        (action["finding_context"]["code"], action["finding_context"]["line"])
+        for action in report["agent_actions"]
+        if action["finding_context"]["code"].startswith("SECURITY_")
+    }
+    assert actionable == expected_supported
+
+    _print_selected_security_policy(report)
+    human = capsys.readouterr().out
+    assert f"Raw diagnostics: {len(ledger)}" in human
+    assert "SUPPORTED_DEFECT" in human and "NEEDS_CONTEXT" in human
+    assert "ACTIVE [" not in human
+    assert "No clean security result" in human
+
+
+@pytest.mark.parametrize(
+    "policy",
+    ["trusted-core-v1", "source-role-v1", "source-role-v2", "source-role-v3"],
+)
+def test_common_admission_unknown_collection_blocks_remediation_but_keeps_raw(
+    tmp_path, policy
+):
+    from factoryline import review_audits as audit
+
+    (tmp_path / "app.py").write_text(
+        "from flask import request\neval(request.get_data(as_text=True))\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "conftest.py").write_text(
+        "def pytest_collect_file(file_path, parent):\n"
+        "    raise RuntimeError('collection must remain unmodeled')\n",
+        encoding="utf-8",
+    )
+    report = audit.security_scan(
+        tmp_path,
+        cache_enabled=False,
+        defect_policy=policy,
+        security_only=True,
+    )
+
+    decision = report["defect_policy_decision"]
+    assert (
+        report["oracle_context"]["pytest_collection"]["collection_state"] == "UNKNOWN"
+    )
+    assert decision["state"] == "BLOCKED" and decision["exit_code"] == 2
+    assert (
+        decision["clean"] is decision["passed"] is decision["release_approved"] is False
+    )
+    assert report["agent_actions"] == []
+    raw_rows = [row["raw_finding"] for row in report["finding_tier_report"]["ledger"]]
+    assert any(row["code"] == "SECURITY_DYNAMIC_EXECUTION" for row in raw_rows)
+    assert any(
+        row["code"] == "SECURITY_DYNAMIC_EXECUTION" for row in report["findings"]
+    )
+
+
+@pytest.mark.parametrize(
+    "policy",
+    ["trusted-core-v1", "source-role-v1", "source-role-v2", "source-role-v3"],
+)
+@pytest.mark.parametrize("tamper", ["valid", "missing", "stale"])
+def test_common_admission_binds_configuration_bytes_for_every_policy(
+    tmp_path, policy, tamper
+):
+    from factoryline import review_audits as audit
+
+    (tmp_path / "app.py").write_text(
+        "from flask import request\n"
+        "eval(request.get_data(as_text=True))\n"
+        "def unresolved(value):\n"
+        "    eval(value)\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "pytest.ini").write_text(
+        "[pytest]\npython_files = test_*.py\n",
+        encoding="utf-8",
+    )
+    report = audit.security_scan(
+        tmp_path,
+        cache_enabled=False,
+        defect_policy=policy,
+        security_only=True,
+    )
+    captured = dict(report._captured_sources)
+    assert "pytest.ini" in captured
+    assert any(
+        row.get("path") == "pytest.ini"
+        for row in report["oracle_context"]["configuration_sources"]
+    )
+    if tamper == "missing":
+        captured.pop("pytest.ini")
+    elif tamper == "stale":
+        captured["pytest.ini"] += b"\n# stale captured config\n"
+
+    core = copy.deepcopy(report)
+    core["_primitive_source_bytes"] = captured
+    sealed = audit._seal_security_scan(core)
+    decision = sealed["defect_policy_decision"]
+    if tamper == "valid":
+        assert decision["state"] == "DEFECTS_PRESENT"
+        assert decision["supported_defect_count"] == 1
+        assert decision["needs_context_count"] == 1
+    else:
+        assert decision["state"] == "BLOCKED" and decision["exit_code"] == 2
+        assert sealed["agent_actions"] == []
+    assert sealed["finding_tier_report"]["raw_diagnostics"]["count"] == 2
+    assert any(
+        row["raw_finding"]["code"] == "SECURITY_DYNAMIC_EXECUTION"
+        for row in sealed["finding_tier_report"]["ledger"]
+    )
+
+
+def test_common_admission_public_cli_missing_tenant_receipt_and_reseal_agree(
+    tmp_path, capsys
+):
+    from factoryline import review_audits as audit
+    from factoryline.cli import main
+
+    (tmp_path / "app.py").write_text(
+        "from flask import request\neval(request.get_data(as_text=True))\n",
+        encoding="utf-8",
+    )
+    assert (
+        main(
+            [
+                "audit",
+                "security",
+                "--root",
+                str(tmp_path),
+                "--security-only",
+                "--defect-policy",
+                "source-role-v3",
+                "--json",
+            ]
+        )
+        == 1
+    )
+    output = capsys.readouterr()
+    assert output.err == ""
+    report = json.loads(output.out)
+    receipt = json.loads(
+        (tmp_path / ".factory/security-scan/latest.json").read_text(encoding="utf-8")
+    )
+    assert receipt["report"] == report
+    assert report["tenant_read_contract"]["configuration"] == {
+        "path": ".factory/tenant-read-contract.json",
+        "state": "missing",
+        "policy_applies": False,
+    }
+    decision = report["defect_policy_decision"]
+    assert decision["state"] == "DEFECTS_PRESENT" and decision["exit_code"] == 1
+    assert decision["supported_defect_count"] == 1
+    assert any(
+        row["tier"] == "SUPPORTED_DEFECT"
+        and row["raw_finding"]["code"] == "SECURITY_DYNAMIC_EXECUTION"
+        for row in report["finding_tier_report"]["ledger"]
+    )
+
+    captured_scan = audit.security_scan(
+        tmp_path,
+        cache_enabled=True,
+        defect_policy="source-role-v3",
+        security_only=True,
+    )
+    core = copy.deepcopy(report)
+    core["_primitive_source_bytes"] = dict(captured_scan._captured_sources)
+    resealed = audit._seal_security_scan(core)
+    assert resealed["defect_policy_decision"] == decision
+    from factoryline.primitive_observation_binding import _tier_sha256
+
+    assert decision["evidence_sha256"] == _tier_sha256(
+        {
+            "sources": decision["source_sha256"],
+            "reviews": [
+                row.get("source_role_review")
+                for row in report["finding_tier_report"]["ledger"]
+            ],
+            "admission": decision["admission"],
+        }
+    )
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    [
+        "extra_configuration_bytes",
+        "duplicate_configuration_binding",
+        "malformed_database_graph",
+        "missing_tenant_with_calls",
+        "missing_tenant_policy_enabled",
+        "missing_tenant_configuration_null",
+    ],
+)
+def test_common_admission_rejects_unbound_extensions_and_missing_tenant_authority(
+    tmp_path, capsys, tamper
+):
+    from factoryline import primitive_observation_binding as primitive
+    from factoryline import review_audits as audit
+    from factoryline.cli import main
+
+    (tmp_path / "app.py").write_text(
+        "import sqlite3\n"
+        "from flask import request\n"
+        "eval(request.get_data(as_text=True))\n"
+        "sqlite3.connect(':memory:')\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "pytest.ini").write_text(
+        "[pytest]\npython_files = test_*.py\n", encoding="utf-8"
+    )
+    assert (
+        main(
+            [
+                "audit",
+                "security",
+                "--root",
+                str(tmp_path),
+                "--security-only",
+                "--defect-policy",
+                "source-role-v3",
+                "--json",
+            ]
+        )
+        == 1
+    )
+    output = capsys.readouterr()
+    assert output.err == ""
+    report = json.loads(output.out)
+    assert report["defect_policy_decision"]["state"] == "DEFECTS_PRESENT"
+    assert report["database_context"]["status"] == "INCOMPLETE"
+    assert report["tenant_read_contract"]["configuration"]["state"] == "missing"
+
+    captured_scan = audit.security_scan(
+        tmp_path,
+        cache_enabled=True,
+        defect_policy="source-role-v3",
+        security_only=True,
+    )
+    captured = dict(captured_scan._captured_sources)
+    core = copy.deepcopy(report)
+    core["_primitive_source_bytes"] = captured
+    if tamper == "extra_configuration_bytes":
+        captured["tox.ini"] = b"[testenv]\ncommands = pytest\n"
+    elif tamper == "duplicate_configuration_binding":
+        bindings = core["oracle_context"]["configuration_sources"]
+        bindings.append(copy.deepcopy(bindings[0]))
+    elif tamper == "malformed_database_graph":
+        database = core["database_context"]
+        database["gaps"].append(None)
+        database["graph_digest"] = primitive._tier_sha256(
+            {key: value for key, value in database.items() if key != "graph_digest"}
+        )
+    elif tamper == "missing_tenant_with_calls":
+        core["tenant_read_contract"]["calls"] = ["connection.execute"]
+    elif tamper == "missing_tenant_policy_enabled":
+        core["tenant_read_contract"]["policy_applies"] = True
+    elif tamper == "missing_tenant_configuration_null":
+        core["tenant_read_contract"]["configuration"] = None
+
+    sealed = audit._seal_security_scan(core)
+    assert sealed["defect_policy_decision"]["state"] == "BLOCKED"
+    assert sealed["defect_policy_decision"]["exit_code"] == 2
+    assert sealed["agent_actions"] == []
+    assert any(
+        row["raw_finding"]["code"] == "SECURITY_DYNAMIC_EXECUTION"
+        for row in sealed["finding_tier_report"]["ledger"]
+    )
+
+
+def test_finding_identity_is_stable_across_quality_prefix_and_order(tmp_path):
+    from factoryline import review_audits as audit
+    from factoryline.primitive_observation_binding import build_finding_tier_report
+
+    source = b"from flask import request\neval(request.get_data(as_text=True))\n"
+    (tmp_path / "app.py").write_bytes(source)
+    scanned = audit.security_scan(
+        tmp_path,
+        cache_enabled=False,
+        defect_policy="trusted-core-v1",
+        security_only=True,
+    )
+    raw_security = next(
+        row
+        for row in scanned["findings"]
+        if row["code"] == "SECURITY_DYNAMIC_EXECUTION"
+    )
+    source_bytes = dict(scanned._captured_sources)
+    source_bindings = [
+        {
+            "path": path,
+            "sha256": hashlib.sha256(content).hexdigest(),
+        }
+        for path, content in source_bytes.items()
+        if path.endswith(".py")
+    ]
+    quality = {
+        "code": "QUALITY_HOLLOW_TEST",
+        "path": "tests/test_quality.py",
+        "line": 1,
+        "severity": "MEDIUM",
+    }
+
+    def tier(raw_findings):
+        return build_finding_tier_report(
+            raw_findings,
+            scanned.get("primitive_observations", []),
+            source_bindings,
+            source_bytes,
+            coverage_state=True,
+            partition_state="VALIDATED",
+        )
+
+    security_only = tier([raw_security])
+    quality_prefixed = tier([quality, raw_security])
+    quality_suffixed = tier([raw_security, quality])
+
+    def security_row(report):
+        return next(
+            row
+            for row in report["ledger"]
+            if row["raw_finding"].get("code") == "SECURITY_DYNAMIC_EXECUTION"
+        )
+
+    baseline_row = security_row(security_only)
+    prefixed_row = security_row(quality_prefixed)
+    suffixed_row = security_row(quality_suffixed)
+    baseline_identity = baseline_row["source_identity"]["identity_sha256"]
+    assert prefixed_row["index"] == 1 and suffixed_row["index"] == 0
+    assert prefixed_row["source_identity"]["identity_sha256"] == baseline_identity
+    assert suffixed_row["source_identity"]["identity_sha256"] == baseline_identity
+    assert security_only["raw_diagnostics"]["count"] == 1
+    assert quality_prefixed["raw_diagnostics"]["count"] == 2
+    assert [row["raw_finding"] for row in quality_prefixed["ledger"]] == [
+        quality,
+        raw_security,
+    ]
+
+
+@pytest.mark.parametrize(
+    "policy",
+    ["trusted-core-v1", "source-role-v1", "source-role-v2", "source-role-v3"],
+)
+@pytest.mark.parametrize("security_only", [False, True])
+def test_common_admission_preserves_incomplete_oracle_scope(
+    tmp_path, policy, security_only
+):
+    from factoryline import review_audits as audit
+
+    (tmp_path / "test_registry_completion.py").write_text(
+        "from sys import modules as loaded\n"
+        "async def compute():\n"
+        "    return 3\n"
+        "def fail():\n"
+        "    raise RuntimeError()\n"
+        "loaded[__name__].compute = fail\n"
+        "def test_behavior():\n"
+        "    compute()\n",
+        encoding="utf-8",
+    )
+    report = audit.security_scan(
+        tmp_path,
+        cache_enabled=False,
+        defect_policy=policy,
+        security_only=security_only,
+    )
+    assert report["audit_coverage"]["complete"] is True
+    assert report["database_context"]["status"] == "NOT_APPLICABLE"
+    unknown = [
+        row
+        for row in report["finding_tier_report"]["ledger"]
+        if row["raw_finding"]["code"] == "QUALITY_UNKNOWN_TEST_ORACLE"
+    ]
+    decision = report["defect_policy_decision"]
+    assert decision["clean"] is decision.get("passed", False) is False
+    assert not any(
+        row["finding_context"]["code"].startswith("SECURITY_")
+        for row in report["agent_actions"]
+    )
+    if security_only:
+        assert unknown == []
+        assert decision["exit_code"] == 0
+    else:
+        assert len(unknown) == 1
+        assert unknown[0]["tier"] == "NEEDS_CONTEXT"
+        assert report["state"] == "INCOMPLETE"
+        assert decision["state"] == "BLOCKED"
+        assert decision["exit_code"] == 2

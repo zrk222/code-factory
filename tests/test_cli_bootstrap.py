@@ -912,7 +912,7 @@ def test_trusted_core_policy316_late_collection_change_blocks_final_receipt(
     )
 
 
-def test_trusted_core_policy316_missing_tenant_scope_cannot_be_masked_by_high_finding(
+def test_trusted_core_policy316_no_tenant_policy_keeps_unknown_input_for_review(
     tmp_path, capsys
 ):
     from factoryline.cli import main as cli_main
@@ -932,12 +932,20 @@ def test_trusted_core_policy316_missing_tenant_scope_cannot_be_masked_by_high_fi
                 "--json",
             ]
         )
-        == 2
+        == 0
     )
     result = json.loads(capsys.readouterr().out)
     assert result["tenant_read_contract"]["configuration"]["state"] == "missing"
-    assert result["defect_policy_decision"]["state"] == "BLOCKED"
-    assert result["defect_policy_decision"]["exit_code"] == 2
+    assert result["tenant_read_contract"]["policy_applies"] is False
+    decision = result["defect_policy_decision"]
+    assert decision["state"] == "NO_SUPPORTED_DEFECTS_REVIEW_REQUIRED"
+    assert decision["exit_code"] == 0
+    assert decision["supported_defect_count"] == 0
+    assert decision["needs_context_count"] == 1
+    assert decision["clean"] is decision["passed"] is False
+    assert result["agent_actions"] == []
+    assert len(result["findings"]) == 1
+    assert result["finding_tier_report"]["ledger"][0]["tier"] == "NEEDS_CONTEXT"
 
 
 @pytest.mark.parametrize(
