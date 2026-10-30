@@ -8,8 +8,124 @@ from importlib import resources
 import json
 import re
 import threading
+from types import MappingProxyType
 from pathlib import Path
 from urllib.parse import urlsplit
+
+HTTP_CLIENT_METHODS = frozenset(
+    {"get", "post", "put", "patch", "delete", "head", "options", "request"}
+)
+
+SECURITY_EFFECT_WITNESS_SCHEMA = "factory.security.effect-witness.v1"
+SECURITY_EFFECT_CONTRACTS = MappingProxyType(
+    {
+        "SECURITY_PATH_TRAVERSAL": MappingProxyType(
+            {
+                "source_role": "untrusted_request_filename",
+                "consumer_role": "flask_file_storage_save",
+                "effect_kind": "path_escape",
+                "effect_facts": MappingProxyType(
+                    {
+                        "provider_id": "werkzeug.FileStorage.save",
+                        "path_composition": ("os.path.join", "raw_string_concat"),
+                        "destination_relation": "escape_capable",
+                        "normalized_counterexample_relation": "outside_intended_base",
+                        "normalization_profile": "python_os_path",
+                        "intended_base_span": None,
+                    }
+                ),
+            }
+        ),
+        "SECURITY_TLS_VERIFY_DISABLED": MappingProxyType(
+            {
+                "source_role": "tls_verification_configuration",
+                "consumer_role": "known_tls_client_request",
+                "effect_kind": "tls_peer_authentication_bypass",
+                "effect_facts": MappingProxyType(
+                    {
+                        "provider_id": tuple(
+                            sorted(
+                                {
+                                    *(
+                                        f"{module}.{method}"
+                                        for module in ("requests", "httpx")
+                                        for method in HTTP_CLIENT_METHODS
+                                    ),
+                                    "httpx.Client",
+                                    "httpx.AsyncClient",
+                                    "httpx.stream",
+                                }
+                            )
+                        ),
+                        "verification_setting": "literal_false",
+                        "transport_relation": ("static_https", "https_capable"),
+                        "https_operation_span": None,
+                    }
+                ),
+            }
+        ),
+        "SECURITY_LOG_INJECTION": MappingProxyType(
+            {
+                "source_role": "newline_capable_untrusted_text",
+                "consumer_role": "line_delimited_log",
+                "effect_kind": "log_record_boundary_injection",
+                "effect_facts": MappingProxyType(
+                    {
+                        "provider_id": tuple(
+                            f"logging.{level}"
+                            for level in (
+                                "debug",
+                                "info",
+                                "warning",
+                                "error",
+                                "critical",
+                                "exception",
+                                "log",
+                            )
+                        ),
+                        "newline_capability": "CR_LF",
+                        "neutralization": "none",
+                        "consumer_format": "%(message)s",
+                        "consumer_config_path": None,
+                        "consumer_config_sha256": None,
+                        "consumer_config_span": None,
+                        "consumer_handler_id": (
+                            "logging.FileHandler",
+                            "logging.StreamHandler",
+                            "logging.handlers.RotatingFileHandler",
+                            "logging.handlers.TimedRotatingFileHandler",
+                            "logging.handlers.WatchedFileHandler",
+                        ),
+                        "consumer_handler_span": None,
+                        "consumer_handler_key": None,
+                        "consumer_logger_id": None,
+                        "consumer_call_level": (
+                            "debug",
+                            "info",
+                            "warning",
+                            "error",
+                            "critical",
+                        ),
+                        "consumer_effective_level": (
+                            "NOTSET",
+                            "DEBUG",
+                            "INFO",
+                            "WARNING",
+                            "ERROR",
+                            "CRITICAL",
+                        ),
+                        "consumer_formatter_id": "logging.Formatter",
+                        "consumer_formatter_span": None,
+                        "consumer_formatter_key": None,
+                        "activation_path": None,
+                        "activation_sha256": None,
+                        "activation_span": None,
+                    }
+                ),
+            }
+        ),
+    }
+)
 
 
 _WORKSPACES = OrderedDict()

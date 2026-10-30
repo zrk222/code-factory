@@ -4122,52 +4122,13 @@ def _security_unsafe_flask_file_save(call, aliases, requests):
     )
 
 
-def _security_upload_path_expression(node, aliases, requests, scope, flow_statement):
-    if isinstance(node, ast.Name):
-        return ("upload-path", node.id) in requests
-    if isinstance(node, ast.Attribute) and node.attr == "filename":
-        return _security_flask_upload_expression(
-            node.value, aliases, scope, flow_statement
-        ) or (
-            isinstance(node.value, ast.Name)
-            and ("flask-upload", node.value.id) in requests
-        )
-    if isinstance(node, ast.JoinedStr):
-        arguments = [
-            value.value
-            for value in node.values
-            if isinstance(value, ast.FormattedValue)
-        ]
-    elif isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Add, ast.Div)):
-        arguments = [node.left, node.right]
-    elif isinstance(node, ast.Call):
-        if _security_is_proven_secure_filename(node, aliases):
-            return False
-        arguments = [*node.args, *(keyword.value for keyword in node.keywords)]
-        if security_call_name(node, aliases) in {
-            "os.path.join",
-            "pathlib.Path",
-            "pathlib.PurePath",
-        } and any(
-            _security_expr_tainted(argument, requests, set(), aliases)
-            and not (
-                isinstance(argument, ast.Call)
-                and _security_is_proven_secure_filename(argument, aliases)
-            )
-            and not (
-                isinstance(argument, ast.Name)
-                and ("secure-upload-leaf", argument.id) in requests
-            )
-            for argument in arguments
-        ):
-            return True
-    else:
-        return False
-    return any(
-        _security_upload_path_expression(
-            argument, aliases, requests, scope, flow_statement
-        )
-        for argument in arguments
+def _security_upload_path_expression(
+    node, aliases, requests, scope, flow_statement, effect_evidence=None, seen=None
+):
+    from .credential_role_paths import upload_path_expression
+
+    return upload_path_expression(
+        node, aliases, requests, scope, flow_statement, effect_evidence, seen
     )
 
 
@@ -4456,6 +4417,8 @@ _NATIVE_INPUT_EPOCH_BINDINGS = tuple(
         _security_scope_request_aliases _security_scope_request_aliases_uncached
         _security_request_alias_module_bindings
         _security_store_request_alias_bindings
+        supported_security_precondition tls_finding log_security_precondition
+        bind_request_sink_precondition _security_request_sink_slot
         """,
         "factoryline.review_integrity": """
         bind_security_call_scopes _bind_security_scope_node _bind_security_function
@@ -4463,6 +4426,41 @@ _NATIVE_INPUT_EPOCH_BINDINGS = tuple(
         _security_scope_nonlocal_names _security_scope_declared_names
         _security_module_scope _security_apply_import_bindings
         _security_scope_request_aliases
+        _security_unsafe_flask_file_save _security_upload_path_expression
+        tls_verification_disabled
+        """,
+        "factoryline.audit_log_flow": """
+        audit_log_source_findings
+        """,
+        "factoryline.finite_capture": """
+        finite_provider_mutation_index _provider_mutation_for_node
+        _provider_mutation_facts _record_provider_paths _record_provider_capture
+        _provider_alias_bindings _provider_paths _provider_call_argument
+        _reflective_provider_write _foreign_provider_inputs
+        _foreign_provider_source_mutations _project_provider_inventory
+        """,
+        "factoryline.credential_role_paths": """
+        matches_regenerated_security_precondition valid_security_precondition
+        security_effect_fact_matches logging_consumer_configuration
+        logging_security_effect_witness logging_security_precondition source_span
+        upload_path_expression bind_request_sink_precondition tls_security_finding
+        upload_name_origin upload_join_effect upload_concat_effect source_domain_guarded
+        _upload_filename_domain_kind _upload_guard_dominates
+        _upload_control_path _upload_definition_reaches _upload_receiver_names
+        _upload_prior_field_write _upload_filename_mutated
+        bind_upload_sink_precondition
+        regenerate_security_source_model
+        _logging_configuration _logging_direct_configuration
+        _logging_declared_configuration _logging_active_settings
+        _logging_node_possible _logging_reference _logging_dict_fields
+        _logging_literal _logging_assignment _logging_receiver
+        _logging_receiver_name _logging_receiver_assignments _logging_call_level
+        _logging_logger_route _logging_logger_entry _logging_root_route
+        _logging_plain_handler_routes _logging_plain_handler_route
+        _logging_plain_formatter _logging_route_facts _logging_config_sections
+        _logging_mutation_present _logging_local_mutation_present
+        _logging_filter_provider_uncertain
+        logging_input_value_trace logging_merge_log_flow
         """,
         "factoryline.review_audits": """
         _name _resolved_ast_name _security_aliases _bound_names _binding_name
@@ -4481,6 +4479,8 @@ _NATIVE_INPUT_EPOCH_BINDINGS = tuple(
 def _native_input_inventory_epoch():
     from importlib import import_module
     from . import review_audits, intent_quality, semantic_credential_sensor
+    from . import credential_role_paths
+    from . import audit_log_flow
 
     functions = [
         getattr(import_module(module), name)
@@ -4492,6 +4492,19 @@ def _native_input_inventory_epoch():
             (fn, getattr(fn, "__code__", None), id(getattr(fn, "__defaults__", None)))
             for fn in functions
         ),
+        semantic_credential_sensor.SECURITY_EFFECT_WITNESS_SCHEMA,
+        semantic_credential_sensor.SECURITY_EFFECT_CONTRACTS,
+        semantic_credential_sensor._SECURITY_EFFECT_WITNESS_SCHEMA_BASELINE,
+        semantic_credential_sensor._SECURITY_EFFECT_CONTRACTS_BASELINE,
+        tuple(sorted(credential_role_paths._LOG_LEVEL_VALUES.items())),
+        tuple(sorted(credential_role_paths._LOG_STANDARD_HANDLERS)),
+        tuple(
+            (name, fn, getattr(fn, "__code__", None))
+            for name, fn in vars(audit_log_flow._LogReader).items()
+            if callable(fn)
+        ),
+        audit_log_flow._LOGGING_LEVELS,
+        audit_log_flow.log_evidence,
         ast.dump(semantic_credential_sensor._FLASK_BODY_SIGNATURE),
         review_audits._FUNCTION_NODES,
         intent_quality._SECURITY_REQUEST_ALIAS_MEMO,

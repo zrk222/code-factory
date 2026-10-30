@@ -531,6 +531,9 @@ def _security_tier_rows(report):
                 "tier": row.get("tier"),
                 "evidence": row.get("evidence"),
                 "evidence_details": row.get("evidence_details"),
+                "source_bound_security_precondition": row.get(
+                    "source_bound_security_precondition"
+                ),
                 "credential_authority_observation": row.get(
                     "credential_authority_observation"
                 ),
@@ -606,6 +609,9 @@ def build_finding_tier_report(
     }
     total = len(ledger)
     abstentions = tiers["NEEDS_CONTEXT"]
+    source_model_failed = ("independent_source_model",) in regenerated and regenerated[
+        ("independent_source_model",)
+    ] is None
     report = {
         "schema": _FINDING_TIER_POLICY["schema"],
         "policy_sha256": finding_tier_policy_sha256(),
@@ -638,32 +644,42 @@ def build_finding_tier_report(
         "validation": {
             "coverage_state": coverage_state,
             "partition_state": partition_state,
+            "native_source_model": "UNAVAILABLE"
+            if source_model_failed
+            else "NO_REGENERATION_FAILURE_RECORDED",
         },
         "defect_gate": _finding_tier_defect_gate(
-            tiers, ledger, coverage_state, partition_state
+            tiers,
+            ledger,
+            False if source_model_failed else coverage_state,
+            partition_state,
         ),
         "ledger": ledger,
     }
+    if source_model_failed:
+        report["defect_gate"]["reason"] = "native_source_model_unavailable"
     report["ledger_sha256"] = _tier_sha256(ledger)
     report["report_sha256"] = _tier_sha256(report)
     return report
 
 
 def _finding_native_rows(finding, captured, bound, cache, sources=None, bindings=None):
-    facts = finding.get("facts", {})
-    if not bound or not (
-        finding.get("code") == "SECURITY_HARDCODED_SECRET"
-        or isinstance(facts, dict)
-        and isinstance(facts.get("security_precondition"), dict)
-    ):
+    if not bound or not str(finding.get("code", "")).startswith("SECURITY_"):
         return []
     path = finding["path"]
     if path not in cache:
         key = ("independent_source_model",)
         if key not in cache:
             cache[key] = _regenerate_source_model(sources, bindings)
+        if cache[key] is None:
+            return []
         cache[path] = _regenerate_native_findings(
-            path, captured, source_model=cache[key]
+            path,
+            captured,
+            source_model=cache[key],
+            provider_mutation_cache=cache.setdefault(
+                ("independent_provider_mutations",), {}
+            ),
         )
     return cache[path]
 
@@ -877,8 +893,16 @@ def _decide_finding_tier(
                 "source_bound_private_key_http_authentication_flow",
                 None,
             )
-    if bound and _matches_regenerated_precondition_finding(finding, native_rows):
-        return "SUPPORTED_DEFECT", "source_bound_native_security_precondition", None
+    regenerated_precondition = {}
+    if bound and _matches_regenerated_precondition_finding(
+        finding, native_rows, regenerated_precondition
+    ):
+        details = {
+            "source_bound_security_precondition": copy.deepcopy(
+                regenerated_precondition
+            )
+        }
+        return "SUPPORTED_DEFECT", "source_bound_native_security_precondition", details
     if bound and _matches_proven_primitive(finding, primitives):
         return (
             "PROVEN_PRIMITIVE",
@@ -975,7 +999,9 @@ def _tier_sha256(value):
     ).hexdigest()
 
 
-def _regenerate_native_findings(path, source_bytes, *, source_model=None):
+def _regenerate_native_findings(
+    path, source_bytes, *, source_model=None, provider_mutation_cache=None
+):
     """Re-run only the native security producer against the bound source bytes."""
     try:
         relative = PurePosixPath(path)
@@ -1010,46 +1036,18 @@ def _regenerate_native_findings(path, source_bytes, *, source_model=None):
             oracle_context={
                 "_security_source_model": model,
                 "_security_source_context": (root, model.source_bytes),
+                "_security_provider_mutation_cache": provider_mutation_cache,
             },
+            security_only=True,
         )
     except Exception:
         return []
 
 
 def _regenerate_source_model(sources, bindings):
-    """Build a verifier-owned graph once from the complete hash-checked Python set."""
-    if not isinstance(sources, dict) or not isinstance(bindings, dict):
-        return None
-    selected = {name: raw for name, raw in sources.items() if str(name).endswith(".py")}
-    hashes = {
-        name: digest for name, digest in bindings.items() if str(name).endswith(".py")
-    }
-    captured = _jwt_bound_source_inventory(selected, hashes)
-    if (
-        captured is None
-        or len(captured) > 2000
-        or any(len(raw) > 1_000_000 for raw in captured.values())
-        or sum(map(len, captured.values())) > 32_000_000
-    ):
-        return None
-    from .credential_role_constructor_provider import security_snapshot_model
-    from .review_audits import _oracle_tree_fingerprint
+    from .credential_role_paths import regenerate_security_source_model
 
-    try:
-        trees = {
-            path: ast.parse(raw, filename=path.as_posix())
-            for path, raw in captured.items()
-        }
-        for path, tree in trees.items():
-            tree._oracle_source_sha256 = hashes[path.as_posix()]
-        return security_snapshot_model(
-            Path("."),
-            trees,
-            captured,
-            {path: _oracle_tree_fingerprint(tree) for path, tree in trees.items()},
-        )
-    except (SyntaxError, ValueError, TypeError, RecursionError, MemoryError):
-        return None
+    return regenerate_security_source_model(sources, bindings)
 
 
 def _matches_regenerated_finding(finding, native_rows):
@@ -1065,52 +1063,19 @@ def _matches_regenerated_finding(finding, native_rows):
     )
 
 
-def _matches_regenerated_precondition_finding(finding, native_rows):
-    facts = finding.get("facts", {})
-    premise = facts.get("security_precondition") if isinstance(facts, dict) else None
-    if not _valid_security_precondition(premise, finding):
-        return False
-    for candidate in native_rows:
-        if not isinstance(candidate, dict) or not isinstance(
-            candidate.get("facts"), dict
-        ):
-            continue
-        if any(
-            candidate.get(key) != finding.get(key)
-            for key in ("code", "path", "line", "column")
-        ):
-            continue
-        regenerated = candidate["facts"].get("security_precondition")
-        if regenerated == premise:
-            return True
-        if isinstance(regenerated, dict) and "input_value_flow" not in premise:
-            # Independent reconstruction may add a witness to a minimal v1
-            # claim. Every supplied field still requires exact equality.
-            core = {
-                key: value
-                for key, value in regenerated.items()
-                if key != "input_value_flow"
-            }
-            if core == premise:
-                return True
-    return False
+def _matches_regenerated_precondition_finding(finding, native_rows, regenerated_proof):
+    from .credential_role_paths import matches_regenerated_security_precondition
+
+    return matches_regenerated_security_precondition(
+        finding, native_rows, regenerated_proof
+    )
 
 
-def _valid_security_precondition(premise, finding):
-    return (
-        isinstance(premise, dict)
-        and premise.get("schema") == "factory.security.precondition.v1"
-        and premise.get("status") == "SUPPORTED"
-        and premise.get("source_role") in {"untrusted_request", "untrusted_input"}
-        and isinstance(premise.get("consumer_role"), str)
-        and bool(premise.get("consumer_role"))
-        and premise.get("proof_scope") == "local_static_wiring"
-        and premise.get("runtime_execution") == "not_performed"
-        and premise.get("deployment") == "UNASSESSED"
-        and isinstance(premise.get("sink_span"), list)
-        and len(premise["sink_span"]) == 4
-        and all(type(value) is int and value >= 0 for value in premise["sink_span"])
-        and premise["sink_span"][:2] == [finding.get("line"), finding.get("column", 0)]
+def _valid_security_precondition(premise, finding, *, require_effect_witness=False):
+    from .credential_role_paths import valid_security_precondition
+
+    return valid_security_precondition(
+        premise, finding, require_effect_witness=require_effect_witness
     )
 
 
@@ -4831,6 +4796,12 @@ def fixed_program_workspace_helpers(audit):
 def primitive_binding_helpers():
     """Return primitive-binding validators for endpoint, fixture, declaration, finite-eval, workspace, and symbolic-identifier evidence."""
     from .credential_role_identity_effects import security_value_helper_epoch
+    from .credential_role_paths import (
+        matches_regenerated_security_precondition,
+        regenerate_security_source_model,
+        security_effect_fact_matches,
+        valid_security_precondition,
+    )
     from .audit_action_refs import (
         _captured_application_source_bytes,
         _application_configuration_hashes,
@@ -4857,6 +4828,12 @@ def primitive_binding_helpers():
     )
 
     return (
+        matches_regenerated_security_precondition,
+        regenerate_security_source_model,
+        security_effect_fact_matches,
+        valid_security_precondition,
+        _matches_regenerated_precondition_finding,
+        _valid_security_precondition,
         _primitive_source_capture,
         _unknown_collection,
         captured_literal_caller_program_role,
@@ -5163,7 +5140,17 @@ def _finding_tier_ledger_row(
     if credential_evidence is not None:
         row["credential_authority_observation"] = credential_evidence
     if evidence_details is not None:
-        row["evidence_details"] = evidence_details
+        witness = evidence_details.get("source_bound_security_precondition")
+        if isinstance(witness, dict) and bound_source:
+            row["source_bound_security_precondition"] = {
+                "source_path": path,
+                "source_sha256": source_hash,
+                "finding_identity_sha256": identity,
+                "precondition_sha256": _tier_sha256(witness),
+                "precondition": copy.deepcopy(witness),
+            }
+        else:
+            row["evidence_details"] = evidence_details
     return row
 
 

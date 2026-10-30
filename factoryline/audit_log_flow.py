@@ -6,6 +6,7 @@ import ast
 from dataclasses import dataclass
 from itertools import chain
 from .semantic_credential_sensor import log_percent_slots, log_scalar_metadata
+from . import credential_role_paths as log_evidence
 
 _LOGGING_LEVELS = frozenset("debug info warning error critical exception log".split())
 
@@ -90,7 +91,7 @@ class _LogReader:
                 self._block(statement.body, branches[0], snapshots)
                 self._block(statement.orelse, branches[1], snapshots)
                 tainted.clear()
-                tainted.update(_merge_flow(branches))
+                tainted.update(log_evidence.logging_merge_log_flow(branches))
                 continue
             if isinstance(statement, (ast.With, ast.AsyncWith)):
                 self._with_block(statement, tainted, snapshots)
@@ -107,7 +108,6 @@ class _LogReader:
     def _with_block(self, statement, tainted, snapshots):
         for item in statement.items:
             self._calls(item.context_expr, tainted, statement)
-        for item in statement.items:
             if item.optional_vars is not None:
                 for name in self.audit._bound_names(item.optional_vars):
                     tainted.pop(name, None)
@@ -127,7 +127,7 @@ class _LogReader:
         self._block(statement.body, body)
         self._block(statement.orelse, body)
         tainted.clear()
-        tainted.update(_merge_flow([entry, body]))
+        tainted.update(log_evidence.logging_merge_log_flow([entry, body]))
 
     def _try_block(self, statement, tainted):
         normal, snapshots = dict(tainted), []
@@ -137,13 +137,13 @@ class _LogReader:
         outcomes = [normal]
         for handler in statement.handlers:
             state = (
-                _merge_flow(snapshots)
+                log_evidence.logging_merge_log_flow(snapshots)
                 if snapshots and _catches_value_error(handler.type)
                 else dict(tainted)
             )
             self._block(handler.body, state)
             outcomes.append(state)
-        merged = _merge_flow(outcomes)
+        merged = log_evidence.logging_merge_log_flow(outcomes)
         self._block(statement.finalbody, merged)
         tainted.clear()
         tainted.update(merged)
@@ -156,9 +156,9 @@ class _LogReader:
             if not self.span_contains(call, expression):
                 continue
             name = self._logging_name(call)
-            if name and self._unsafe(call, tainted, name):
-                from .semantic_credential_sensor import log_security_precondition
-
+            source_value = self._unsafe(call, tainted, name) if name else None
+            if source_value is not None:
+                module = self.module_scope(self.scope)
                 self.findings.append(
                     self.audit._security_finding(
                         "SECURITY_LOG_INJECTION",
@@ -169,8 +169,8 @@ class _LogReader:
                         call=name,
                         source="input_or_request_parameter",
                         cwe="CWE-117",
-                        **log_security_precondition(
-                            self.module_scope(self.scope), call
+                        **log_evidence.logging_security_precondition(
+                            module, call, source_value, name, self.aliases, tainted
                         ),
                     )
                 )
@@ -207,15 +207,22 @@ class _LogReader:
             item.value for item in call.keywords if item.arg in {"args", "values"}
         )
         if self._percent_repr(message, values[1:], tainted):
-            return False
-        return any(
-            self._flow(value, tainted) and not self._safe(value, tainted)
-            for value in values
+            return None
+        return next(
+            (
+                value
+                for value in values
+                if self._flow(value, tainted) and not self._safe(value, tainted)
+            ),
+            None,
         )
 
     def _flow(self, node, tainted, provenance=False):
         if isinstance(node, ast.Name):
-            return node.id in tainted if provenance else tainted.get(node.id, False)
+            value = tainted.get(node.id, False)
+            return (
+                node.id in tainted if provenance else getattr(value, "tainted", value)
+            )
         if log_scalar_metadata(node, self):
             return False
         if self._source(node):
@@ -234,22 +241,27 @@ class _LogReader:
                 node, name
             ):
                 return True
-        base = (
-            node.value
-            if isinstance(node, ast.Subscript)
-            else getattr(node.func, "value", None)
-            if isinstance(node, ast.Call)
+        if isinstance(node, ast.Subscript):
+            base = node.value
+        elif (
+            isinstance(node, ast.Call)
             and isinstance(node.func, ast.Attribute)
             and node.func.attr == "get"
-            else None
-        )
+        ):
+            base = node.func.value
+        else:
+            return False
         if not isinstance(base, ast.Attribute):
             return False
         flow = getattr(node, "_security_flow_statement", None)
-        return (
-            base.attr in {"args", "form"}
-            and self.flask_source(base, self.aliases, self.scope, flow, base.attr)
-        ) or self.django_source(base, self.aliases, self.scope, flow)
+        flask_parameter = base.attr in {"args", "form"} and self.flask_source(
+            base, self.aliases, self.scope, flow, base.attr
+        )
+        django_parameter = self.django_source(base, self.aliases, self.scope, flow)
+        if flask_parameter or django_parameter:
+            node._security_log_newline_source = True
+            return True
+        return False
 
     def _safe(self, node, tainted):
         if isinstance(node, ast.JoinedStr):
@@ -292,8 +304,8 @@ class _LogReader:
             and len(current.args) == 2
         ):
             old, new = current.args[:2]
-            if not all(
-                isinstance(item, ast.Constant) and isinstance(item.value, str)
+            if any(
+                not isinstance(item, ast.Constant) or not isinstance(item.value, str)
                 for item in (old, new)
             ) or any(char in new.value for char in "\r\n"):
                 return False
@@ -316,11 +328,7 @@ class _LogReader:
         if isinstance(node, ast.Lambda):
             return []
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Lambda):
-            return [
-                node.func.body,
-                *node.args,
-                *(keyword.value for keyword in node.keywords),
-            ]
+            return [node.func.body, *node.args, *(kw.value for kw in node.keywords)]
         return [
             child
             for child in ast.iter_child_nodes(node)
@@ -333,9 +341,7 @@ class _LogReader:
         resolved, _constants = self.flow_bindings(call, self.aliases)
         if canonical.startswith("builtins."):
             return resolved.get(raw) in {"builtins", canonical}
-        if raw != expected:
-            return False
-        if raw in getattr(call, "_security_shadowed_names", set()):
+        if raw != expected or raw in getattr(call, "_security_shadowed_names", set()):
             return False
         scope = getattr(call, "_security_lexical_scope", self.scope)
         module = self.module_scope(scope)
@@ -343,12 +349,12 @@ class _LogReader:
             return True
         if scope is module:
             target = getattr(call, "_security_flow_statement", None)
-            for statement in module.body:
-                if statement is target:
-                    break
-                if raw in self.audit._bound_names(statement):
-                    return False
-            return True
+            return not any(
+                raw in self.audit._bound_names(statement)
+                for statement in module.body
+                if statement is not target
+                and (target is None or statement.lineno < target.lineno)
+            )
         return raw not in self.module_names(module)
 
     def _assign(self, statement, tainted, snapshots):
@@ -366,11 +372,16 @@ class _LogReader:
             snapshots.append(dict(tainted))
         marked = isinstance(value, ast.AST) and self._flow(value, tainted, True)
         unsafe = isinstance(value, ast.AST) and self._flow(value, tainted)
+        trace = (
+            log_evidence.logging_input_value_trace(value, tainted, "LOCAL_ASSIGN")
+            if unsafe
+            else None
+        )
         for target in targets:
             if isinstance(target, ast.Name):
                 tainted.pop(target.id, None)
                 if marked:
-                    tainted[target.id] = unsafe
+                    tainted[target.id] = trace if trace is not None else unsafe
 
 
 def _catches_value_error(node):
@@ -385,10 +396,3 @@ def _catches_value_error(node):
             )
         )
     )
-
-
-def _merge_flow(states):
-    return {
-        name: any(state.get(name, False) for state in states)
-        for name in set().union(*states)
-    }
