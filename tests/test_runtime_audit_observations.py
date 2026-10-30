@@ -2496,3 +2496,184 @@ def test_common_admission_preserves_incomplete_oracle_scope(
         assert report["state"] == "INCOMPLETE"
         assert decision["state"] == "BLOCKED"
         assert decision["exit_code"] == 2
+
+
+def test_independent_native_replay_reuses_fresh_provider_mutation_cache(
+    monkeypatch,
+):
+    from factoryline import finite_capture, primitive_observation_binding, review_audits
+
+    captured = {
+        "control_a.py": (
+            b"import pickle\nimport mutator\n"
+            b"def decode(payload):\n    return pickle.loads(payload)\n"
+        ),
+        "control_b.py": (
+            b"import pickle\nimport mutator\n"
+            b"def decode(payload):\n    return pickle.loads(payload)\n"
+        ),
+        "mutator.py": b"import pickle\npickle.loads = replacement\n",
+    }
+    tenant = ((), {}, False)
+    mutator_hash = hashlib.sha256(captured["mutator.py"]).hexdigest()
+    parse_calls = []
+    original_parse = finite_capture.ast.parse
+
+    def counted_parse(source, filename="<unknown>", *args, **kwargs):
+        if (
+            filename == "<unknown>"
+            and isinstance(source, str)
+            and hashlib.sha256(source.encode("utf-8")).hexdigest() == mutator_hash
+        ):
+            parse_calls.append(mutator_hash)
+        return original_parse(source, filename, *args, **kwargs)
+
+    monkeypatch.setattr(finite_capture.ast, "parse", counted_parse)
+    original_scan_tree = review_audits._security_scan_tree
+
+    def uncached_scan_tree(
+        root,
+        path,
+        tree,
+        tenant_read_calls=(),
+        tenant_read_bindings=None,
+        oracle_context=None,
+        *args,
+        **kwargs,
+    ):
+        context = dict(oracle_context or {})
+        context.pop("_security_provider_mutation_cache", None)
+        return original_scan_tree(
+            root,
+            path,
+            tree,
+            tenant_read_calls,
+            tenant_read_bindings,
+            context,
+            *args,
+            **kwargs,
+        )
+
+    monkeypatch.setattr(review_audits, "_security_scan_tree", uncached_scan_tree)
+    uncached_rows = primitive_observation_binding._trusted_core_native_security_rows(
+        captured, tenant, review_audits
+    )
+    assert any(
+        row["code"] == "SECURITY_UNSAFE_DESERIALIZATION" for row in uncached_rows
+    )
+    parse_calls.clear()
+
+    replay_caches = []
+
+    def record_cache_scan_tree(
+        root,
+        path,
+        tree,
+        tenant_read_calls=(),
+        tenant_read_bindings=None,
+        oracle_context=None,
+        *args,
+        **kwargs,
+    ):
+        replay_caches.append(
+            (
+                path.as_posix(),
+                (oracle_context or {}).get("_security_provider_mutation_cache"),
+            )
+        )
+        return original_scan_tree(
+            root,
+            path,
+            tree,
+            tenant_read_calls,
+            tenant_read_bindings,
+            oracle_context,
+            *args,
+            **kwargs,
+        )
+
+    monkeypatch.setattr(review_audits, "_security_scan_tree", record_cache_scan_tree)
+    first_replay = primitive_observation_binding._trusted_core_native_security_rows(
+        captured, tenant, review_audits
+    )
+    first_parse_count = len(parse_calls)
+    second_replay = primitive_observation_binding._trusted_core_native_security_rows(
+        captured, tenant, review_audits
+    )
+
+    assert first_replay == uncached_rows
+    assert second_replay == uncached_rows
+    assert first_parse_count == 1
+    assert len(parse_calls) == 2
+    assert len(replay_caches) == 6
+    first_cache = replay_caches[0][1]
+    second_cache = replay_caches[3][1]
+    assert isinstance(first_cache, dict) and isinstance(second_cache, dict)
+    assert all(cache is first_cache for _path, cache in replay_caches[:3])
+    assert all(cache is second_cache for _path, cache in replay_caches[3:])
+    assert first_cache is not second_cache
+
+
+def test_foreign_provider_input_cache_invalidates_source_and_helper_epoch(
+    monkeypatch,
+):
+    from types import SimpleNamespace
+
+    from factoryline import finite_capture, review_audits
+
+    cache = {}
+    module = SimpleNamespace(
+        _security_oracle_context={"_security_provider_mutation_cache": cache}
+    )
+    first_source = b"import pickle\nvalue = pickle.loads\n"
+    changed_source = b"import json\nvalue = json.loads\n"
+    parse_calls = []
+    original_parse = finite_capture.ast.parse
+
+    def counted_parse(source, filename="<unknown>", *args, **kwargs):
+        if filename == "<unknown>":
+            parse_calls.append(hashlib.sha256(source.encode("utf-8")).hexdigest())
+        return original_parse(source, filename, *args, **kwargs)
+
+    monkeypatch.setattr(finite_capture.ast, "parse", counted_parse)
+    alias_reader = review_audits._security_aliases
+    first_hash = hashlib.sha256(first_source).hexdigest()
+    changed_hash = hashlib.sha256(changed_source).hexdigest()
+    first = finite_capture._foreign_provider_inputs(
+        module, first_source, first_hash, alias_reader
+    )
+    repeated = finite_capture._foreign_provider_inputs(
+        module, first_source, first_hash, alias_reader
+    )
+    assert repeated == first
+    assert len(parse_calls) == 1
+
+    changed = finite_capture._foreign_provider_inputs(
+        module, changed_source, changed_hash, alias_reader
+    )
+    assert changed != first
+    assert len(parse_calls) == 2
+
+    original_bindings = finite_capture._provider_alias_bindings
+
+    def changed_helper(nodes):
+        return original_bindings(nodes)
+
+    monkeypatch.setattr(finite_capture, "_provider_alias_bindings", changed_helper)
+    refreshed = finite_capture._foreign_provider_inputs(
+        module, changed_source, changed_hash, alias_reader
+    )
+    assert tuple(finite_capture.ast.dump(node) for node in refreshed[0]) == tuple(
+        finite_capture.ast.dump(node) for node in changed[0]
+    )
+    assert refreshed[1] == changed[1]
+    assert len(refreshed[2]) == len(changed[2])
+    assert {
+        name: tuple(finite_capture.ast.dump(node) for node in nodes)
+        for name, nodes in refreshed[3].items()
+    } == {
+        name: tuple(finite_capture.ast.dump(node) for node in nodes)
+        for name, nodes in changed[3].items()
+    }
+    assert parse_calls == [first_hash, changed_hash, changed_hash]
+    assert len(parse_calls) == 3
