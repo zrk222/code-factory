@@ -484,23 +484,72 @@ def _binds(node, name):
     return isinstance(node, ast.MatchMapping) and node.rest == name
 
 
-def binding_occurrences(statements, name):
+def binding_occurrences(statements, name, *, per_pass_facts=None):
     """Collect name bindings while respecting nested scopes and named-expression targets in comprehensions."""
-    found, pending = [], list(statements)
+    record_events = isinstance(per_pass_facts, dict)
+    statement_nodes = tuple(statements) if record_events else statements
+    if record_events:
+        walker_epoch = (
+            (
+                binding_occurrences,
+                getattr(binding_occurrences, "__code__", None),
+                id(getattr(binding_occurrences, "__defaults__", None)),
+            ),
+            (
+                _binds,
+                getattr(_binds, "__code__", None),
+                id(getattr(_binds, "__defaults__", None)),
+            ),
+            (
+                ast.walk,
+                getattr(ast.walk, "__code__", None),
+                id(getattr(ast.walk, "__defaults__", None)),
+            ),
+            (
+                ast.iter_child_nodes,
+                getattr(ast.iter_child_nodes, "__code__", None),
+                id(getattr(ast.iter_child_nodes, "__defaults__", None)),
+            ),
+            (
+                ast.iter_fields,
+                getattr(ast.iter_fields, "__code__", None),
+                id(getattr(ast.iter_fields, "__defaults__", None)),
+            ),
+            ast.NamedExpr,
+            _SCOPES,
+            _COMPREHENSIONS,
+        )
+        cache_key = (
+            "binding-occurrence-events",
+            id(statements),
+            statement_nodes,
+            walker_epoch,
+        )
+        if cache_key in per_pass_facts:
+            return [node for node in per_pass_facts[cache_key] if _binds(node, name)]
+
+    found, events, pending = [], [] if record_events else None, list(statement_nodes)
     while pending:
         node = pending.pop()
+        if events is not None:
+            events.append(node)
         if _binds(node, name):
             found.append(node)
         if isinstance(node, _SCOPES):
             continue
         if isinstance(node, _COMPREHENSIONS):
-            found.extend(
-                n.target
-                for n in ast.walk(node)
-                if isinstance(n, ast.NamedExpr) and _binds(n.target, name)
+            targets = tuple(
+                nested.target
+                for nested in ast.walk(node)
+                if isinstance(nested, ast.NamedExpr)
             )
+            if events is not None:
+                events.extend(targets)
+            found.extend(target for target in targets if _binds(target, name))
             continue
         pending.extend(ast.iter_child_nodes(node))
+    if events is not None:
+        per_pass_facts[cache_key] = tuple(events)
     return found
 
 
@@ -2439,7 +2488,52 @@ def _direct_terminal_import_statement(index, path, alias):
     return statement
 
 
-def _terminal_alias_unmodified(tree, alias):
+def _terminal_alias_unmodified(tree, alias, *, per_pass_facts=None):
+    if isinstance(per_pass_facts, dict):
+        walk_epoch = (
+            (
+                ast.walk,
+                getattr(ast.walk, "__code__", None),
+                id(getattr(ast.walk, "__defaults__", None)),
+            ),
+            (
+                ast.iter_child_nodes,
+                getattr(ast.iter_child_nodes, "__code__", None),
+                id(getattr(ast.iter_child_nodes, "__defaults__", None)),
+            ),
+            (
+                ast.iter_fields,
+                getattr(ast.iter_fields, "__code__", None),
+                id(getattr(ast.iter_fields, "__defaults__", None)),
+            ),
+            ast.Name,
+            ast.Global,
+            ast.arg,
+            ast.Store,
+            ast.Del,
+        )
+        cache_key = ("terminal-module-name-facts", id(tree), tree)
+        cached = per_pass_facts.get(cache_key)
+        if cached is None or cached[0] != walk_epoch:
+            modified, declared_globals, arguments = set(), set(), set()
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Name) and isinstance(
+                    node.ctx, (ast.Store, ast.Del)
+                ):
+                    modified.add(node.id)
+                elif isinstance(node, ast.Global):
+                    declared_globals.update(node.names)
+                elif isinstance(node, ast.arg):
+                    arguments.add(node.arg)
+            cached = (
+                walk_epoch,
+                frozenset(modified),
+                frozenset(declared_globals),
+                frozenset(arguments),
+            )
+            per_pass_facts[cache_key] = cached
+        _epoch, modified, declared_globals, _arguments = cached
+        return alias not in modified and alias not in declared_globals
     nodes = ast.walk(tree)
     if any(
         isinstance(node, ast.Name)
@@ -2556,7 +2650,8 @@ def _terminal_provider_mutated(
     parents = {
         id(child): node for node in nodes for child in ast.iter_child_nodes(node)
     }
-    mutations, receiver_facts = set(), {}
+    mutations = set()
+    receiver_facts = {} if readonly_argument is None else None
     # The validated outer inventory owns the full closure; avoid rewalking foreign sources.
     finite_capture._provider_mutation_facts(
         nodes,
@@ -2595,19 +2690,47 @@ def _terminal_imported_module_receiver(node, parents, audit, canonical, *, facts
     parts, root = _terminal_attribute_parts(node)
     if root is None:
         return False
+    per_pass_facts = facts
     facts = {} if facts is None else facts
-    module = _terminal_receiver_module_scope(node, root.id, parents, audit, facts)
+    module = _terminal_receiver_module_scope(
+        node,
+        root.id,
+        parents,
+        audit,
+        facts,
+        per_pass_facts=(per_pass_facts if isinstance(per_pass_facts, dict) else None),
+    )
     if not isinstance(module, ast.Module):
         return False
     key = (module, root.id)
     if key not in facts:
+        unmodified = _terminal_alias_unmodified(
+            module,
+            root.id,
+            per_pass_facts=(
+                per_pass_facts if isinstance(per_pass_facts, dict) else None
+            ),
+        )
+        module_facts = (
+            per_pass_facts.get(("terminal-module-name-facts", id(module), module))
+            if isinstance(per_pass_facts, dict)
+            else None
+        )
         facts[key] = (
-            _terminal_alias_unmodified(module, root.id),
-            any(
+            unmodified,
+            root.id in module_facts[3]
+            if module_facts is not None
+            else any(
                 isinstance(item, ast.arg) and item.arg == root.id
                 for item in ast.walk(module)
             ),
-            binding_occurrences(module.body, root.id),
+            binding_occurrences(
+                module.body,
+                root.id,
+                per_pass_facts=(
+                    per_pass_facts if isinstance(per_pass_facts, dict) else None
+                ),
+            ),
         )
     unmodified, argument_shadow, bindings = facts[key]
     if not unmodified or argument_shadow:
@@ -2620,7 +2743,9 @@ def _terminal_imported_module_receiver(node, parents, audit, canonical, *, facts
     return bool(prefix and parts == prefix[: len(parts)])
 
 
-def _terminal_receiver_module_scope(node, name, parents, audit, facts):
+def _terminal_receiver_module_scope(
+    node, name, parents, audit, facts, *, per_pass_facts=None
+):
     current = node
     while parents.get(id(current)) is not None:
         current = parents[id(current)]
@@ -2628,7 +2753,9 @@ def _terminal_receiver_module_scope(node, name, parents, audit, facts):
             key = (current, name)
             if key not in facts:
                 facts[key] = (
-                    binding_occurrences(current.body, name)
+                    binding_occurrences(
+                        current.body, name, per_pass_facts=per_pass_facts
+                    )
                     if isinstance(current, ast.ClassDef)
                     else function_bindings(current, name, audit)
                 )
