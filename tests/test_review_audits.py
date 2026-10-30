@@ -4107,6 +4107,77 @@ def test_unsupported_or_malformed_pytest_collection_config_fails_closed(
         security_scan(tmp_path)
 
 
+@pytest.mark.parametrize(
+    "filename,section",
+    [
+        ("pytest.ini", "pytest"),
+        (".pytest.ini", "pytest"),
+        ("tox.ini", "pytest"),
+        ("setup.cfg", "tool:pytest"),
+    ],
+)
+def test_pytest_ini_literal_percent_keeps_collection_and_security_packets(
+    tmp_path, filename, section
+):
+    from factoryline.pytest_collection_audit import _pytest_collection_config
+
+    (tmp_path / filename).write_text(
+        f"[{section}]\n"
+        "python_files = check_*.py\n"
+        "log_cli_format = %(asctime)s [%(levelname)8s] %(message)s "
+        "(%(filename)s:%(lineno)s)\n"
+        "log_cli_date_format = %Y-%m-%d %H:%M:%S\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "app.py").write_text(
+        "from flask import request\neval(request.get_data(as_text=True))\n",
+        encoding="utf-8",
+    )
+    patterns, identity = _pytest_collection_config(tmp_path)
+    assert patterns == {"check_*.py"}
+    assert identity["state"] == "read"
+    report = security_scan(
+        tmp_path,
+        cache_enabled=False,
+        security_only=True,
+        defect_policy="source-role-v3",
+    )
+    assert report["audit_coverage"]["complete"] is True
+    assert report["defect_policy_decision"]["supported_defect_count"] == 1
+    assert any(
+        action["finding_context"]["code"] == "SECURITY_DYNAMIC_EXECUTION"
+        for action in report["agent_actions"]
+    )
+
+
+def test_pytest_ini_literal_percent_does_not_expand_collection_pattern(tmp_path):
+    from factoryline.pytest_collection_audit import _pytest_collection_config
+
+    (tmp_path / "pytest.ini").write_text(
+        "[pytest]\npython_files = check_%(suite)s_*.py\nsuite = other\n",
+        encoding="utf-8",
+    )
+    patterns, _identity = _pytest_collection_config(tmp_path)
+    assert patterns == {"check_%(suite)s_*.py"}
+
+
+@pytest.mark.parametrize(
+    "config",
+    [
+        "[pytest]\nPYTHON_FILES = check_*.py\n",
+        "[DEFAULT]\npython_files = check_*.py\n[pytest]\n",
+    ],
+)
+def test_pytest_ini_literal_percent_keeps_case_and_default_section_boundaries(
+    tmp_path, config
+):
+    from factoryline.pytest_collection_audit import _pytest_collection_config
+
+    (tmp_path / "pytest.ini").write_text(config, encoding="utf-8")
+    patterns, _identity = _pytest_collection_config(tmp_path)
+    assert patterns == {"test_*.py", "*_test.py"}
+
+
 @pytest.mark.parametrize("filename", ["pytest.toml", ".pytest.toml"])
 def test_toml_pytest_config_file_patterns_are_honored(tmp_path, filename):
     (tmp_path / filename).write_text(
