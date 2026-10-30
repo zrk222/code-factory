@@ -682,12 +682,12 @@ def _flask_configured_apps(target, context, protected_keys):
                 if not isinstance(call, ast.Call):
                     continue
                 for receiver, creation in receivers.items():
-                    if not _flask_config_load(call, receiver, target, context, path):
-                        continue
-                    if _flask_config_mutated(scope, receiver, protected_keys):
-                        continue
-                    if _flask_configuration_reloaded(
-                        scope, receiver, target, context, protected_keys, path
+                    if (
+                        not _flask_config_load(call, receiver, target, context, path)
+                        or _flask_config_mutated(scope, receiver, protected_keys)
+                        or _flask_configuration_reloaded(
+                            scope, receiver, target, context, protected_keys, path
+                        )
                     ):
                         continue
                     configured.append(
@@ -920,9 +920,7 @@ def _flask_config_module_matches(context, expression, target, consumer_path, see
     resolved = _signing_resolve_module(context, expression)
     if resolved is not None:
         return resolved == target
-    if not isinstance(expression, ast.Name):
-        return False
-    if len(seen) >= 8:
+    if not isinstance(expression, ast.Name) or len(seen) >= 8:
         return False
     index = context["index"]
     parents = index.parents.get(consumer_path)
@@ -932,49 +930,47 @@ def _flask_config_module_matches(context, expression, target, consumer_path, see
     )
 
     function = _enclosing_function(expression, parents) if parents else None
-    if function is None or expression.id not in {
-        item.arg
-        for item in (
-            *function.args.posonlyargs,
-            *function.args.args,
-            *function.args.kwonlyargs,
-        )
-    }:
-        return False
     marker = (consumer_path, id(function), expression.id)
-    if marker in seen:
-        return False
-    if _name_writes(function, expression.id):
+    if (
+        function is None
+        or expression.id
+        not in {
+            item.arg
+            for item in (
+                *function.args.posonlyargs,
+                *function.args.args,
+                *function.args.kwonlyargs,
+            )
+        }
+        or marker in seen
+        or _name_writes(function, expression.id)
+    ):
         return False
     found = False
     for caller_path, caller_tree in index.snapshots.items():
         if not index.validate(caller_path):
             return False
-        for call in ast.walk(caller_tree):
-            if not isinstance(call, ast.Call):
-                continue
-            resolved_call = resolve_source_identity_call(call, caller_path, index)
-            if (
-                resolved_call is None
-                or resolved_call.path != consumer_path
-                or resolved_call.function is not function
-            ):
-                continue
+        for resolved_call in (
+            resolved
+            for call in ast.walk(caller_tree)
+            if isinstance(call, ast.Call)
+            for resolved in (resolve_source_identity_call(call, caller_path, index),)
+            if resolved is not None
+            and resolved.path == consumer_path
+            and resolved.function is function
+        ):
             actual = resolved_call.arguments.get(expression.id)
             if actual is None:
                 return False
             actual_module = _signing_resolve_module(context, actual)
-            if actual_module is not None:
-                found = found or actual_module == target
-                continue
-            if not isinstance(actual, ast.Name):
-                return False
-            if _flask_config_module_matches(
-                context, actual, target, caller_path, (*seen, marker)
+            if actual_module is None and (
+                not isinstance(actual, ast.Name)
+                or not _flask_config_module_matches(
+                    context, actual, target, caller_path, (*seen, marker)
+                )
             ):
-                found = True
-            else:
                 return False
+            found = found or actual_module == target or actual_module is None
     return found
 
 

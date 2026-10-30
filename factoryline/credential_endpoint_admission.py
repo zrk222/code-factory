@@ -3216,17 +3216,19 @@ def _flask_login_session_authority_witness(path, tree, context, app):
         return None
     login_users = []
     protected = []
-    for function in scope.body:
-        if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue
+    for function in (
+        item
+        for item in scope.body
+        if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+    ):
         if _flask_route_bound_to_app(function, app["receiver"]):
-            for node in ast.walk(function):
-                if (
-                    isinstance(node, ast.Call)
-                    and security_call_name(node, aliases) == "flask_login.login_user"
-                    and _flask_path_conditions_clear(function, node)
-                ):
-                    login_users.append((function, node))
+            login_users.extend(
+                (function, node)
+                for node in ast.walk(function)
+                if isinstance(node, ast.Call)
+                and security_call_name(node, aliases) == "flask_login.login_user"
+                and _flask_path_conditions_clear(function, node)
+            )
         decorators = [
             _resolved_ast_name(
                 decorator.func if isinstance(decorator, ast.Call) else decorator,

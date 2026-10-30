@@ -3157,27 +3157,26 @@ class _CredentialRoleFlow:
                 self.assign(
                     path, targets[0], self.expression(path, node.value, env), env
                 )
-        elif isinstance(node, ast.Expr):
-            self.expression(path, node.value, env)
-        elif isinstance(node, ast.Assert):
-            self.expression(path, node.test, env)
-            if node.msg is not None:
-                self.expression(path, node.msg, env)
+        elif isinstance(node, (ast.Expr, ast.Assert)):
+            self.expression(
+                path, node.test if isinstance(node, ast.Assert) else node.value, env
+            )
+            message = getattr(node, "msg", None)
+            if message is not None:
+                self.expression(path, message, env)
         elif isinstance(node, ast.Return):
             return "return", self.expression(
                 path, node.value, env
             ) if node.value else _constant_identity_value(ast.Constant(value=None))
-        elif isinstance(node, ast.Pass):
-            pass
         elif isinstance(node, ast.Raise):
             if node.exc is not None:
                 self.expression(path, node.exc, env)
-            if node.cause is not None:
-                cause = self.expression(path, node.cause, env)
-                if _has_unknown_content(cause):
-                    self.fail("unresolved raise cause", path, node.cause)
+            if node.cause is not None and _has_unknown_content(
+                self.expression(path, node.cause, env)
+            ):
+                self.fail("unresolved raise cause", path, node.cause)
             return "raise", _constant_identity_value(ast.Constant(value=None))
-        else:
+        elif not isinstance(node, ast.Pass):
             self.fail("unsupported statement", path, node)
         return False, _constant_identity_value(ast.Constant(value=None))
 
@@ -4313,32 +4312,25 @@ class _SourceTestScope:
         if not isinstance(configurations, dict):
             return None
         selected = None
-        for name, section in (
-            ("pytest.toml", "toml-pytest"),
-            (".pytest.toml", "toml-pytest"),
-            ("pytest.ini", "pytest"),
-            (".pytest.ini", "pytest"),
-            ("pyproject.toml", "pyproject"),
-            ("tox.ini", "pytest"),
-            ("setup.cfg", "tool:pytest"),
+        for name, section, raw in (
+            (name, section, configurations[name])
+            for name, section in (
+                ("pytest.toml", "toml-pytest"),
+                (".pytest.toml", "toml-pytest"),
+                ("pytest.ini", "pytest"),
+                (".pytest.ini", "pytest"),
+                ("pyproject.toml", "pyproject"),
+                ("tox.ini", "pytest"),
+                ("setup.cfg", "tool:pytest"),
+            )
+            if configurations.get(name) is not None
         ):
-            raw = configurations.get(name)
-            if raw is None:
-                continue
             if not isinstance(raw, bytes) or len(raw) > MAX_BYTES:
                 return None
             _patterns, identity = _pytest_config_data(
                 raw, name, section, set(_TEST_FILE_PATTERNS)
             )
             state = identity.get("state")
-            if state in {
-                "invalid",
-                "oversized",
-                "unreadable",
-                "unsupported",
-                "unmodeled-builtin-collection",
-            }:
-                return None
             if state == "absent-section":
                 continue
             if state != "read":
@@ -4350,19 +4342,22 @@ class _SourceTestScope:
             return None
         settings = _pytest_collection_settings(selected)
         for path, tree in self.index["modules"].items():
-            if not self.source.validate(path):
-                return None
-            relative = self.source.relative(path)
-            if not isinstance(relative, str):
-                return None
-            is_test_module = _pytest_file_matches(relative, settings["python_files"])
-            if path.name == "conftest.py" and _pytest_collection_hook_names(
-                tree, True, False
+            if not self.source.validate(path) or not isinstance(
+                relative := self.source.relative(path), str
             ):
                 return None
-            if is_test_module and (
-                _pytest_collection_hook_names(tree, False, True)
-                or any(_pytest_plugin_declaration_active(node) for node in tree.body)
+            is_test_module = _pytest_file_matches(relative, settings["python_files"])
+            if (
+                path.name == "conftest.py"
+                and _pytest_collection_hook_names(tree, True, False)
+            ) or (
+                is_test_module
+                and (
+                    _pytest_collection_hook_names(tree, False, True)
+                    or any(
+                        _pytest_plugin_declaration_active(node) for node in tree.body
+                    )
+                )
             ):
                 return None
         return settings
@@ -4742,13 +4737,12 @@ class _SourceTestScope:
         uses = self.view._module_uses(self.fact, self.origin_use)
         if not uses or not (self.owners or self.pytest_owners):
             return False
-        for path, owner in self.owners.values():
-            if not self.exercise_owner(path, owner):
-                return False
-        for path, function, owner in self.pytest_owners.values():
-            if not self.exercise_pytest_root(path, function, owner):
-                return False
-        return True
+        return all(
+            self.exercise_owner(path, owner) for path, owner in self.owners.values()
+        ) and all(
+            self.exercise_pytest_root(path, function, owner)
+            for path, function, owner in self.pytest_owners.values()
+        )
 
     def exercise_pytest_root(self, path, function, owner):
         """Interpret one selected pytest invocation with the shared transfer closure."""
