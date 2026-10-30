@@ -110,6 +110,7 @@ def test_agent_repair_packet_is_stable_bound_and_untrusted():
 
 
 def test_agent_repair_packet_carries_only_hash_bound_untrusted_effect_evidence():
+    from collections import UserDict
     from copy import deepcopy
 
     from factoryline import canonical_json_bytes
@@ -180,6 +181,11 @@ def test_agent_repair_packet_carries_only_hash_bound_untrusted_effect_evidence()
     wrong_witness = deepcopy(witness_ref)
     wrong_witness["precondition"]["effect_kind"] = "forged"
     stale_bindings.append(wrong_witness)
+    stale_bindings.append(UserDict(witness_ref))
+    stale_bindings.append({**witness_ref, "unexpected": True})
+    stale_bindings.append({**witness_ref, "source_path": 1})
+    stale_bindings.append({**witness_ref, "source_sha256": 1})
+    stale_bindings.append({**witness_ref, "precondition": UserDict(witness)})
     for stale in stale_bindings:
         rejected = audit_remediation_packet(
             candidate_sha256, finding, source_bound_security_precondition=stale
