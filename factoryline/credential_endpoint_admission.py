@@ -2568,10 +2568,10 @@ class _OperativeCredentialOrigin:
             roots=self.key.roots, container_id=allocation, trace=self.key.trace
         )
 
-    def token_inputs(self):
+    def token_inputs(self, *, structural_only=False):
         from .mock_fixture_provenance import _app_source_symbol
 
-        function, path = self.handler["function"], self.handler["path"]
+        function, path = (self.handler["function"], self.handler["path"])
         args = [*function.args.posonlyargs, *function.args.args]
         count = len(function.args.defaults)
         defaults = zip(args[-count:], function.args.defaults) if count else ()
@@ -2580,9 +2580,8 @@ class _OperativeCredentialOrigin:
             if not (
                 isinstance(value, ast.Call)
                 and len(value.args) == 1
-                and not value.keywords
-                and self.canonical(path, value.func, function) == "fastapi.Depends"
-                and self.provider(path, "fastapi.Depends")
+                and (not value.keywords)
+                and (self.canonical(path, value.func, function) == "fastapi.Depends")
             ):
                 continue
             selected = _app_source_symbol(self.projection.symbols, path, value.args[0])
@@ -2592,40 +2591,49 @@ class _OperativeCredentialOrigin:
                     len(selected[1].targets) == 1
                     and isinstance(selected[1].targets[0], ast.Name)
                     and isinstance(factory, ast.Call)
-                    and not factory.args
-                    and len(factory.keywords) == 1
+                    and (not factory.args)
+                    and (len(factory.keywords) == 1)
                     and all(
-                        k.arg == "tokenUrl"
-                        and isinstance(k.value, ast.Constant)
-                        and isinstance(k.value.value, str)
-                        for k in factory.keywords
+                        (
+                            k.arg == "tokenUrl"
+                            and isinstance(k.value, ast.Constant)
+                            and isinstance(k.value.value, str)
+                            for k in factory.keywords
+                        )
                     )
-                    and self.canonical(selected[0], factory.func, None)
-                    == "fastapi.security.OAuth2PasswordBearer"
-                    and self.provider(
-                        selected[0], "fastapi.security.OAuth2PasswordBearer"
-                    )
-                    and self.projection._symbol_closed(
-                        [
-                            (
-                                selected[1].targets[0].id,
-                                selected[0],
-                                selected[1].targets[0].id,
-                            )
-                        ],
-                        self.value_type(),
-                        readonly_argument=lambda item: id(item)
-                        in self.dependency_arguments,
+                    and (
+                        self.canonical(selected[0], factory.func, None)
+                        == "fastapi.security.OAuth2PasswordBearer"
                     )
                 ):
-                    inputs[arg.arg] = self.value_type(
-                        roots=frozenset({"request-token"}), scalar_kind="text"
-                    )
+                    if structural_only:
+                        return True
+                    if (
+                        self.provider(path, "fastapi.Depends")
+                        and self.provider(
+                            selected[0], "fastapi.security.OAuth2PasswordBearer"
+                        )
+                        and self.projection._symbol_closed(
+                            [
+                                (
+                                    selected[1].targets[0].id,
+                                    selected[0],
+                                    selected[1].targets[0].id,
+                                )
+                            ],
+                            self.value_type(),
+                            readonly_argument=lambda item: id(item)
+                            in self.dependency_arguments,
+                        )
+                    ):
+                        inputs[arg.arg] = self.value_type(
+                            roots=frozenset({"request-token"}), scalar_kind="text"
+                        )
         return inputs
 
     def handler_authority(self):
         function, path = self.handler["function"], self.handler["path"]
-        if not self.boundary_closed():
+        if not self.token_inputs(structural_only=True) or not self.boundary_closed():
             return None
         environment = self.token_inputs()
         if not environment:
