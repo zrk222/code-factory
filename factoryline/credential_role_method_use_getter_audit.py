@@ -3474,29 +3474,35 @@ class CapturedOriginProjection:
         outer = self._depth == 0
         if outer:
             self._states = 0
-        if (
-            type(self.max_states) is not int
-            or self.max_states < 1
-            or type(self.max_depth) is not int
-            or self.max_depth < 1
-            or not callable(self.project_leaf)
-            or self._inputs is None
-            or outer
-            and self._generation_inputs() != self._inputs
-            or self._depth >= self.max_depth
-            or self._states >= self.max_states
-            or not isinstance(node, ast.expr)
-            or not self._current(path, node)
-        ):
+        limits = (self.max_states, self.max_depth)
+        if tuple(map(type, limits)) != (int, int) or min(limits) < 1:
             return False, None
+        match (callable(self.project_leaf), self._inputs is not None):
+            case (True, True):
+                pass
+            case _:
+                return False, None
+        match outer:
+            case True if self._generation_inputs() != self._inputs:
+                return False, None
+        match (self._depth < self.max_depth, self._states < self.max_states, node):
+            case (True, True, ast.expr() as expression) if self._current(
+                path, expression
+            ):
+                pass
+            case _:
+                return False, None
         from .credential_role_identity_effects import _enclosing_function
 
+        requested_function = function
         lexical = _enclosing_function(node, self.index.parents[path])
-        if function is not None and lexical is not function:
-            return False, None
-        function = lexical
-        if environment is not None and not isinstance(environment, dict):
-            return False, None
+        match (requested_function, environment):
+            case (None, None | dict()):
+                function = lexical
+            case (requested, None | dict()) if lexical is requested:
+                function = lexical
+            case _:
+                return False, None
         self._states += 1
         self._depth += 1
         previous = self.context
@@ -3505,12 +3511,14 @@ class CapturedOriginProjection:
             known, value = self._expression(
                 path, node, function, dict(environment or {})
             )
-            if not (known is True and isinstance(value, _Value)):
-                return False, None
-            if value.unknown or value.content_unknown:
-                return False, None
-            if outer and self._generation_inputs() != self._inputs:
-                return False, None
+            match (known, value):
+                case (True, _Value(unknown=False, content_unknown=False)):
+                    pass
+                case _:
+                    return False, None
+            match outer:
+                case True if self._generation_inputs() != self._inputs:
+                    return False, None
             return True, replace(
                 value,
                 trace=(
@@ -3555,18 +3563,27 @@ class CapturedOriginProjection:
         exact = _validated_exact_scalar(condition)
         if exact:
             return self.expression(
-                path, node.body if exact[0] else node.orelse, function, environment
+                path,
+                (node.orelse, node.body)[bool(exact[0])],
+                function,
+                environment,
             )
-        if condition.scalar_kind != "boolean" or condition.inert_kind != "scalar":
+        if (condition.scalar_kind, condition.inert_kind) != ("boolean", "scalar"):
             return False, None
-        left_known, left = self.expression(path, node.body, function, environment)
-        right_known, right = self.expression(path, node.orelse, function, environment)
-        if not left_known or not right_known or left.class_roots or right.class_roots:
+        branches = tuple(
+            self.expression(path, branch, function, environment)
+            for branch in (node.body, node.orelse)
+        )
+        if any(not known or value.class_roots for known, value in branches):
             return False, None
-        empty_left = left.inert_kind == "dict" and not left.items and not left.roots
-        empty_right = right.inert_kind == "dict" and not right.items and not right.roots
-        if left.roots != right.roots and not (empty_left or empty_right):
-            return False, None
+        left, right = (value for _, value in branches)
+        has_empty_branch = any(
+            value.inert_kind == "dict" and not value.items and not value.roots
+            for value in (left, right)
+        )
+        match (left.roots != right.roots, has_empty_branch):
+            case (True, False):
+                return False, None
         traces = tuple(dict.fromkeys((*left.trace, *right.trace)))
         return True, _Value(
             roots=left.roots | right.roots,
@@ -3811,6 +3828,7 @@ class CapturedOriginProjection:
     def mutable_calls_closed(
         self, nodes, aliases, audit, bindings, canonical, readonly_call
     ):
+        """Keep calls through mutable or unresolved constructor aliases unclosed."""
         from .finite_capture import _provider_paths
 
         for node in nodes:

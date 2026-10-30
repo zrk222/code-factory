@@ -3465,7 +3465,7 @@ def _django_http_body_payload(node, scope, resolved, attributes=frozenset({"body
 
 
 def _native_request_data_member(node, aliases):
-    """Separate request-owned data projections from the imported provider object."""
+    """Separate intact request data projections from provider-object escapes."""
     from .review_integrity import _security_scope_request_aliases
     from .review_audits import _resolved_ast_name
 
@@ -3498,7 +3498,10 @@ def _native_request_data_member(node, aliases):
         if isinstance(node, ast.Subscript):
             if not isinstance(node.slice, ast.Constant) or type(
                 node.slice.value
-            ) not in {str, int}:
+            ) not in {
+                str,
+                int,
+            }:
                 return False
         else:
             if node.attr.startswith("_"):
@@ -3510,7 +3513,27 @@ def _native_request_data_member(node, aliases):
                     getattr(node, "_security_flow_statement", None),
                 )
                 if _resolved_ast_name(node.value, bindings) == "flask.request":
-                    return True
+                    scope = getattr(node, "_security_lexical_scope", None)
+                    if not isinstance(scope, ast.AST):
+                        return False
+                    nodes = list(ast.walk(scope))
+                    references = _request_mapping_aliases(node, nodes)
+                    return not any(
+                        _request_mapping_mutation(
+                            item,
+                            references,
+                            item.slice.value
+                            if isinstance(item, ast.Subscript)
+                            and isinstance(item.slice, ast.Constant)
+                            else None,
+                        )
+                        or (
+                            isinstance(item, (ast.Return, ast.Yield))
+                            and item.value is not None
+                            and any(references(value) for value in ast.walk(item.value))
+                        )
+                        for item in nodes
+                    )
         node = node.value
     return False
 
@@ -4098,6 +4121,7 @@ def legacy_tls_verification_risk(call, node, aliases=None):
 
 
 def tls_finding(call, relative, node, aliases=None):
+    """Classify a captured TLS call while retaining transport-effect evidence."""
     from .credential_role_paths import tls_security_finding
 
     return tls_security_finding(call, relative, node, aliases)
@@ -4257,6 +4281,7 @@ def literal_exec_rejected(node):
 def bind_request_sink_precondition(
     finding, call, aliases, requests, connections, cursors, helpers
 ):
+    """Bind captured request input and its security-relevant sink precondition."""
     from .credential_role_paths import bind_request_sink_precondition as bind
 
     return bind(finding, call, aliases, requests, connections, cursors, helpers)

@@ -569,11 +569,11 @@ def build_finding_tier_report(
         primitive_observations if isinstance(primitive_observations, list) else []
     )
     bindings = {
-        row.get("path"): row.get("sha256")
+        path: digest
         for row in sources
         if isinstance(row, dict)
-        and isinstance(row.get("path"), str)
-        and isinstance(row.get("sha256"), str)
+        for path, digest in ((row.get("path"), row.get("sha256")),)
+        if isinstance(path, str) and isinstance(digest, str)
     }
     regenerated = {}
     if _verifier_native_rows is not None:
@@ -609,9 +609,17 @@ def build_finding_tier_report(
     }
     total = len(ledger)
     abstentions = tiers["NEEDS_CONTEXT"]
-    source_model_failed = ("independent_source_model",) in regenerated and regenerated[
-        ("independent_source_model",)
-    ] is None
+    if total:
+        abstention_fraction = abstentions / total
+        retention_fraction = len(ledger) / total
+    else:
+        abstention_fraction = retention_fraction = None
+    source_model_failed = regenerated.get(("independent_source_model",), False) is None
+    native_model_state, gate_coverage = (
+        ("UNAVAILABLE", False)
+        if source_model_failed
+        else ("NO_REGENERATION_FAILURE_RECORDED", coverage_state)
+    )
     report = {
         "schema": _FINDING_TIER_POLICY["schema"],
         "policy_sha256": finding_tier_policy_sha256(),
@@ -621,7 +629,7 @@ def build_finding_tier_report(
         "abstention": {
             "count": abstentions,
             "denominator": total,
-            "fraction": abstentions / total if total else None,
+            "fraction": abstention_fraction,
             "scope": "this_run_raw_diagnostics",
         },
         "retention_metrics": {
@@ -629,7 +637,7 @@ def build_finding_tier_report(
             "raw_diagnostic_retention": {
                 "retained": len(ledger),
                 "denominator": total,
-                "fraction": len(ledger) / total if total else None,
+                "fraction": retention_fraction,
             },
             "known_true_positive_retention": "NOT_MEASURED_NO_LABELLED_HELD_OUT_COHORT",
             "supported_defect_retention": "NOT_MEASURED_NO_LABELLED_HELD_OUT_COHORT",
@@ -644,14 +652,12 @@ def build_finding_tier_report(
         "validation": {
             "coverage_state": coverage_state,
             "partition_state": partition_state,
-            "native_source_model": "UNAVAILABLE"
-            if source_model_failed
-            else "NO_REGENERATION_FAILURE_RECORDED",
+            "native_source_model": native_model_state,
         },
         "defect_gate": _finding_tier_defect_gate(
             tiers,
             ledger,
-            False if source_model_failed else coverage_state,
+            gate_coverage,
             partition_state,
         ),
         "ledger": ledger,
@@ -1895,19 +1901,20 @@ def apply_pickle_source_role_policy(
     core["defect_policy_decision"] = _pickle_source_role_decision(
         roles, active, reviews, ledger, policy_id, admission=admission
     )
-    if _unknown_collection(core):
-        core["state"] = "INCOMPLETE"
-        core["action_summary"] = (
-            "Pytest collection is UNKNOWN; fixture and oracle authority remain unassessed."
-        )
-    elif prior_source_state == "INCOMPLETE" and admission["state"] == "BLOCKED":
-        core["state"] = "INCOMPLETE"
-        core["action_summary"] = admission["action_summary"]
-    elif roles is not None:
-        core["state"] = "FINDINGS" if active else "REVIEW_REQUIRED"
-        core["action_summary"] = (
-            f"{len(active)} active diagnostics; {len(reviews)} unresolved source-context reviews. No clean security result established."
-        )
+    match (_unknown_collection(core), prior_source_state, roles is not None):
+        case (True, _, _):
+            core["state"] = "INCOMPLETE"
+            core["action_summary"] = (
+                "Pytest collection is UNKNOWN; fixture and oracle authority remain unassessed."
+            )
+        case (False, "INCOMPLETE", _) if admission["state"] == "BLOCKED":
+            core["state"] = "INCOMPLETE"
+            core["action_summary"] = admission["action_summary"]
+        case (False, _, True):
+            core["state"] = "FINDINGS" if active else "REVIEW_REQUIRED"
+            core["action_summary"] = (
+                f"{len(active)} active diagnostics; {len(reviews)} unresolved source-context reviews. No clean security result established."
+            )
 
 
 def _pickle_role_partition(original, roles):
