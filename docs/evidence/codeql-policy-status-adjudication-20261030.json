@@ -1,0 +1,62 @@
+{
+  "schema": "factory.codeql-policy-status-adjudication.v1",
+  "review_class": "OWNER_ADJUDICATED_WITH_SEPARATE_AI_SOURCE_REVIEW",
+  "rule": "py/clear-text-logging-sensitive-data",
+  "alerts": [
+    92,
+    93,
+    94,
+    98
+  ],
+  "analysis_id": 2063639513,
+  "candidate_commit": "e786dd3618cf2c0039191cf8ad5f79ebfbf8600c",
+  "source": {
+    "path": "factoryline/primitive_observation_binding.py",
+    "sha256": "8f2b4bb2abe62e5e5850b026f4a93f72fdab48f471f5d15dccba7b4cac321c5b",
+    "function": "_trusted_core_policy_result",
+    "function_sha256": "6f778cd25d71c7d984ba104f453b0af907509cd1d055eef67899643c5839eb78",
+    "permalink": "https://github.com/zrk222/code-factory/blob/e786dd3618cf2c0039191cf8ad5f79ebfbf8600c/factoryline/primitive_observation_binding.py#L137"
+  },
+  "observation": "All sixteen SARIF paths start at the no-argument _trusted_core_policy_result() call in _pickle_source_role_decision. That default branch returns static policy identifiers/messages, BLOCKED/exit2, false authority flags, zero counts and null source/evidence hashes. It returns before accessing evidence_payload or counts. The identified sinks print state, action_summary or the report containing those fixed policy fields; these reported paths do not transport credential material.",
+  "disposition": "FALSE_POSITIVE_FOR_THE_CAPTURED_POLICY_STATUS_PATHS",
+  "boundaries": [
+    "This classification covers only the source and paths identified in the captured CodeQL analysis.",
+    "It does not establish that every scanner diagnostic is sanitized or approve logging arbitrary report contents.",
+    "Retain other findings and rerun analysis on the final candidate."
+  ],
+  "sarif_flow_sha256": "626aad23fec2faa5b0440accffcdf6ee795f7f8f92323fda40a99d8e5e76cd63",
+  "independent_ai_review": {
+    "model": "gpt-6-luna",
+    "scope": "The captured sixteen dataflow paths and the no-argument default policy-result branch; not an external human security review.",
+    "result": "Agrees that the identified fields are fixed policy metadata, not credential material. Exact dict/source/hash/size boundaries in the packet refactor were also reviewed."
+  },
+  "flow_origin": {
+    "path": "factoryline/primitive_observation_binding.py",
+    "line": 5166,
+    "expression": "_trusted_core_policy_result()",
+    "arguments": [],
+    "flow_count": 16
+  },
+  "sinks": [
+    {
+      "alert": 92,
+      "path": "factoryline/cli_audit.py",
+      "line": 696
+    },
+    {
+      "alert": 93,
+      "path": "factoryline/cli_audit.py",
+      "line": 737
+    },
+    {
+      "alert": 94,
+      "path": "factoryline/cli_audit.py",
+      "line": 740
+    },
+    {
+      "alert": 98,
+      "path": "factoryline/cli_first_lap.py",
+      "line": 273
+    }
+  ]
+}

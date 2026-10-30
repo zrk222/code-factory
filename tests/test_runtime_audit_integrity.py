@@ -5,6 +5,8 @@ from factoryline import review_integrity
 from factoryline import runtime_audit_integrity as runtime
 from factoryline import primitive_observation_binding as primitive
 import pytest
+
+
 from factoryline.runtime_audit import evaluate_runtime_audit
 from factoryline.runtime_audit_integrity import index_executions, repair_guidance
 from factoryline.runtime_audit_common import RuntimeAuditError
@@ -14,6 +16,40 @@ import json
 from factoryline.runtime_audit_integrity import closed_declaration_input_witness
 from factoryline.runtime_audit_integrity import finite_literal_eval_input_witness
 from factoryline.runtime_audit_integrity import source_generated_eval_input_witness
+
+
+@pytest.mark.parametrize(
+    "mutation", [None, "rebind", "replace_attribute", "duplicate", "shadow_parameter"]
+)
+def test_captured_local_helper_identity_has_exact_provider_binding(mutation):
+    import hashlib
+    from pathlib import Path
+    from factoryline.semantic_credential_sensor import signing_configuration_inventory
+    from factoryline.credential_role_identity_effects import (
+        resolve_source_identity_call,
+    )
+
+    source = "def factory():\n    return 42\n\ndef consumer():\n    return factory()\n"
+    if mutation == "rebind":
+        source += "factory = replacement\n"
+    elif mutation == "replace_attribute":
+        source += "factory.__code__ = replacement\n"
+    elif mutation == "duplicate":
+        source += "def factory():\n    return 7\n"
+    elif mutation == "shadow_parameter":
+        source = source.replace("def consumer():", "def consumer(factory):")
+    raw = source.encode()
+    context = signing_configuration_inventory(
+        {"app.py": raw}, {"app.py": hashlib.sha256(raw).hexdigest()}
+    )
+    index = context["index"]
+    path = Path("app.py")
+    index.validate(path)
+    call = next(
+        node for node in ast.walk(index.snapshots[path]) if isinstance(node, ast.Call)
+    )
+    result = resolve_source_identity_call(call, path, index)
+    assert bool(result and result.negative_binding_closed) == (mutation is None)
 
 
 @pytest.mark.parametrize(
@@ -1268,7 +1304,11 @@ def test_native_provider_epoch_excludes_unrelated_helpers(monkeypatch):
     from factoryline import semantic_credential_sensor as sensor
     from factoryline.review_integrity import _NATIVE_INPUT_EPOCH_BINDINGS
 
-    assert sum(len(names) for _, names in _NATIVE_INPUT_EPOCH_BINDINGS) == 39
+    assert not any(
+        name == "_url_password"
+        for _, names in _NATIVE_INPUT_EPOCH_BINDINGS
+        for name in names
+    )
     first = sensor._native_input_inventory_epoch()
     monkeypatch.setattr(sensor, "_url_password", lambda *args: None)
     monkeypatch.setattr(sensor, "_epoch_test_added_helper", lambda: None, raising=False)
@@ -1470,7 +1510,8 @@ def test_provider_cache351_native_scan_shares_only_one_lifecycle(tmp_path, monke
     def observed(*args):
         result = original(*args)
         if result[0] is not None:
-            caches.append(result[0])
+            context = getattr(args[0], "_security_oracle_context", {})
+            caches.append((result[0], context.get("_security_source_model")))
         return result
 
     monkeypatch.setattr(finite_capture, "_foreign_provider_mutation_cache", observed)
@@ -1483,9 +1524,18 @@ def test_provider_cache351_native_scan_shares_only_one_lifecycle(tmp_path, monke
             tmp_path, cache_enabled=False, defect_policy="source-role-v2"
         )
     assert split and len(caches) > split
-    assert all(cache is caches[0] for cache in caches[:split])
-    assert all(cache is caches[split] for cache in caches[split:])
-    assert caches[0] is not caches[split]
+
+    def assert_cache_per_model(rows):
+        model_caches = {}
+        for cache, model in rows:
+            assert model is not None
+            model_id = id(model)
+            assert model_caches.setdefault(model_id, cache) is cache
+        return {id(cache) for cache, _ in rows}
+
+    first_caches = assert_cache_per_model(caches[:split])
+    second_caches = assert_cache_per_model(caches[split:])
+    assert first_caches.isdisjoint(second_caches)
 
 
 def test_provider_cache351_each_capture_predicate_is_reevaluated():

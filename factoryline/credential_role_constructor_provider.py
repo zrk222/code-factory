@@ -484,23 +484,63 @@ def _binds(node, name):
     return isinstance(node, ast.MatchMapping) and node.rest == name
 
 
-def binding_occurrences(statements, name):
+def binding_occurrences(statements, name, *, per_pass_facts=None):
     """Collect name bindings while respecting nested scopes and named-expression targets in comprehensions."""
-    found, pending = [], list(statements)
+    match per_pass_facts:
+        case dict() as cache:
+            record_events = True
+            statement_nodes = tuple(statements)
+            walker_epoch = tuple(
+                (
+                    helper,
+                    getattr(helper, "__code__", None),
+                    id(getattr(helper, "__defaults__", None)),
+                )
+                for helper in (
+                    binding_occurrences,
+                    _binds,
+                    ast.walk,
+                    ast.iter_child_nodes,
+                    ast.iter_fields,
+                )
+            ) + (ast.NamedExpr, _SCOPES, _COMPREHENSIONS)
+            cache_key = (
+                "binding-occurrence-events",
+                id(statements),
+                statement_nodes,
+                walker_epoch,
+            )
+            if cache_key in cache:
+                return [node for node in cache[cache_key] if _binds(node, name)]
+        case _:
+            record_events = False
+            statement_nodes = statements
+
+    events = [] if record_events else None
+    found, pending = [], list(statement_nodes)
     while pending:
         node = pending.pop()
+        if events is not None:
+            events.append(node)
         if _binds(node, name):
             found.append(node)
-        if isinstance(node, _SCOPES):
-            continue
-        if isinstance(node, _COMPREHENSIONS):
-            found.extend(
-                n.target
-                for n in ast.walk(node)
-                if isinstance(n, ast.NamedExpr) and _binds(n.target, name)
-            )
-            continue
-        pending.extend(ast.iter_child_nodes(node))
+        match node:
+            case ast.AST() if isinstance(node, _SCOPES):
+                continue
+            case ast.ListComp() | ast.SetComp() | ast.DictComp() | ast.GeneratorExp():
+                targets = tuple(
+                    nested.target
+                    for nested in ast.walk(node)
+                    if isinstance(nested, ast.NamedExpr)
+                )
+                if events is not None:
+                    events.extend(targets)
+                found.extend(target for target in targets if _binds(target, name))
+                continue
+            case _:
+                pending.extend(ast.iter_child_nodes(node))
+    if events is not None:
+        cache[cache_key] = tuple(events)
     return found
 
 
@@ -528,7 +568,6 @@ def module_literal_binding(fact, path, index, node, audit):
         statements[0], (ast.Assign, ast.AnnAssign)
     ):
         return False
-    from .credential_role_constructor_provider import _literal_target
 
     statement = statements[0]
     return bool(
@@ -564,15 +603,12 @@ def match_name(fact, path, node, function, index, imports, classes, audit, seen)
 
 
 def _scope_assignments_for(function, name):
-    from .credential_role_constructor_provider import _scope_assignments
-
     return _scope_assignments(function).get(name, ())
 
 
 def _local_fact_match(fact, path, node, function, index, imports, classes, audit, seen):
     if function is None:
         return None
-    from .credential_role_constructor_provider import matches_fact
 
     values = _scope_assignments_for(function, node.id)
     bindings = function_bindings(function, node.id, audit)
@@ -1360,16 +1396,11 @@ class PresentationRoleIndex:
         }
 
     def _chain(self, path, name):
-        from .credential_role_constructor_provider import class_chain
-
         return class_chain(
             self.source, path, name, self.imports, self.classes, self.audit
         )
 
     def _schema_uses(self, fact):
-        from .credential_role_constructor_provider import _scope
-        from .credential_role_constructor_provider import binding_occurrences
-
         selected = self._chain(self.source.root / fact.path, fact.owner)
         if not selected or not _presentation_literal_matches(
             selected, fact, self.source.root
@@ -1422,8 +1453,6 @@ class PresentationRoleIndex:
         return _presentation_literal_matches(chain, fact, self.source.root)
 
     def _reflection_conflict(self, fact, keys=()):
-        from .credential_role_constructor_provider import resolve_class
-
         for path, call in self.calls:
             if path not in self.reflective_paths or not call.args:
                 continue
@@ -1462,7 +1491,6 @@ class PresentationRoleIndex:
 
     def _module_uses(self, fact, classify):
         """Share exact import/rebinding closure across modeled scalar roles."""
-        from .credential_role_constructor_provider import matches_fact
 
         uses = []
         if fact.member in self.reflected_members or self._reflection_conflict(fact):
@@ -1633,8 +1661,6 @@ class PresentationRoleIndex:
 
 
 def _presentation_literal_matches(chain, fact, root):
-    from .credential_role_constructor_provider import binding_occurrences
-
     for path, _, owner in chain:
         bindings = binding_occurrences(owner.body, fact.member)
         if not bindings:
@@ -1661,8 +1687,6 @@ def _presentation_literal_matches(chain, fact, root):
 
 
 def _presentation_class_receiver(node, function, owner, source, path):
-    from .credential_role_constructor_provider import binding_occurrences
-
     args = [*function.args.posonlyargs, *function.args.args]
     return (
         source.parents[path].get(id(function)) is owner
@@ -1744,8 +1768,6 @@ def _presentation_active_statement(statement, function):
 
 
 def _presentation_unique_binding(function, name, statement):
-    from .credential_role_constructor_provider import binding_occurrences
-
     bindings = binding_occurrences(function.body, name)
     return len(bindings) == 1 and _presentation_assignment_name(statement) == name
 
@@ -1916,8 +1938,6 @@ def _presentation_mask_restore(node, parents):
 
 
 def _presentation_output_copy(function, name, parents):
-    from .credential_role_constructor_provider import binding_occurrences
-
     bindings = binding_occurrences(function.body, name)
     rows = [row for row in function.body if _presentation_assignment_name(row) == name]
     if len(bindings) != 1 or len(rows) != 1:
@@ -1953,19 +1973,11 @@ def _presentation_assignment_name(node):
 
 
 def _presentation_global_match(fact, path, node, source, audit, imports=None):
-    from .credential_role_constructor_provider import _scope
-    from .credential_role_constructor_provider import (
-        function_bindings,
-        module_literal_binding,
-    )
-
     if (
         isinstance(node, ast.Attribute)
         and node.attr == fact.member
         and isinstance(node.value, ast.Name)
     ):
-        from .credential_role_constructor_provider import import_is_stable
-
         alias = node.value.id
         function, _ = _scope(node, source, path)
         return (
@@ -1984,8 +1996,6 @@ def _presentation_global_match(fact, path, node, source, audit, imports=None):
 
 
 def _presentation_restore_flow(loop, name, parents):
-    from .credential_role_constructor_provider import binding_occurrences
-
     function = parents.get(id(loop))
     if not isinstance(function, ast.FunctionDef) or not _presentation_active_statement(
         loop, function
@@ -2038,8 +2048,6 @@ def _presentation_restore_flow(loop, name, parents):
 
 
 def _presentation_namespace_binding(source, path, alias, binding):
-    from .credential_role_constructor_provider import binding_occurrences
-
     if binding[1] is None:
         return True
     rows = binding_occurrences(source.snapshots[path].body, alias)
@@ -2376,8 +2384,6 @@ def _class_mro(
 
 
 def _class_base_reference(index, path, expression, imports, classes, audit, contracts):
-    from .credential_role_constructor_provider import _class_ref
-
     base = _class_ref(path, expression, imports, classes, audit, index)
     if base is None and contracts:
         return _external_class_terminal(
@@ -2420,8 +2426,6 @@ def _direct_terminal_import(index, path, alias):
 
 
 def _direct_terminal_import_statement(index, path, alias):
-    from .credential_role_constructor_provider import binding_occurrences
-
     rows = binding_occurrences(index.snapshots[path].body, alias)
     if len(rows) != 1 or not isinstance(rows[0], ast.ImportFrom):
         return None
@@ -2439,7 +2443,52 @@ def _direct_terminal_import_statement(index, path, alias):
     return statement
 
 
-def _terminal_alias_unmodified(tree, alias):
+def _terminal_alias_unmodified(tree, alias, *, per_pass_facts=None):
+    if isinstance(per_pass_facts, dict):
+        walk_epoch = (
+            (
+                ast.walk,
+                getattr(ast.walk, "__code__", None),
+                id(getattr(ast.walk, "__defaults__", None)),
+            ),
+            (
+                ast.iter_child_nodes,
+                getattr(ast.iter_child_nodes, "__code__", None),
+                id(getattr(ast.iter_child_nodes, "__defaults__", None)),
+            ),
+            (
+                ast.iter_fields,
+                getattr(ast.iter_fields, "__code__", None),
+                id(getattr(ast.iter_fields, "__defaults__", None)),
+            ),
+            ast.Name,
+            ast.Global,
+            ast.arg,
+            ast.Store,
+            ast.Del,
+        )
+        cache_key = ("terminal-module-name-facts", id(tree), tree)
+        cached = per_pass_facts.get(cache_key)
+        if cached is None or cached[0] != walk_epoch:
+            modified, declared_globals, arguments = set(), set(), set()
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Name) and isinstance(
+                    node.ctx, (ast.Store, ast.Del)
+                ):
+                    modified.add(node.id)
+                elif isinstance(node, ast.Global):
+                    declared_globals.update(node.names)
+                elif isinstance(node, ast.arg):
+                    arguments.add(node.arg)
+            cached = (
+                walk_epoch,
+                frozenset(modified),
+                frozenset(declared_globals),
+                frozenset(arguments),
+            )
+            per_pass_facts[cache_key] = cached
+        _epoch, modified, declared_globals, _arguments = cached
+        return alias not in modified and alias not in declared_globals
     nodes = ast.walk(tree)
     if any(
         isinstance(node, ast.Name)
@@ -2556,7 +2605,8 @@ def _terminal_provider_mutated(
     parents = {
         id(child): node for node in nodes for child in ast.iter_child_nodes(node)
     }
-    mutations, receiver_facts = set(), {}
+    mutations = set()
+    receiver_facts = {} if readonly_argument is None else None
     # The validated outer inventory owns the full closure; avoid rewalking foreign sources.
     finite_capture._provider_mutation_facts(
         nodes,
@@ -2574,6 +2624,10 @@ def _terminal_provider_mutated(
             and readonly_argument(node, current_aliases, current_parents)
         ),
     )
+    if receiver_facts is not None and receiver_facts.get(
+        "terminal-shadowed-provider-use"
+    ):
+        return True
     return any(
         _terminal_mutation_overlaps(provider, attribute, canonical)
         for provider, attribute in mutations
@@ -2588,26 +2642,54 @@ def _terminal_imported_module_receiver(node, parents, audit, canonical, *, facts
     qualify; this does not establish the safety of the leaf argument.
     """
     parent = parents.get(id(node))
-    if not isinstance(parent, ast.Attribute) or parent.value is not node:
+    namespace_receiver = isinstance(parent, ast.Attribute) and parent.value is node
+    if not namespace_receiver and not finite_capture._provider_call_argument(
+        node, parents
+    ):
         return False
-    if parent.attr.startswith("__"):
+    if namespace_receiver and parent.attr.startswith("__"):
         return False
     parts, root = _terminal_attribute_parts(node)
     if root is None:
         return False
+    per_pass_facts = facts if isinstance(facts, dict) else None
     facts = {} if facts is None else facts
-    module = _terminal_receiver_module_scope(node, root.id, parents, audit, facts)
-    if not isinstance(module, ast.Module):
+    module = _terminal_receiver_module_scope(
+        node,
+        root.id,
+        parents,
+        audit,
+        facts,
+        canonical=canonical,
+        per_pass_facts=per_pass_facts,
+    )
+    if not isinstance(module, ast.Module) or not namespace_receiver:
         return False
     key = (module, root.id)
     if key not in facts:
+        unmodified = _terminal_alias_unmodified(
+            module,
+            root.id,
+            per_pass_facts=per_pass_facts,
+        )
+        module_facts = (
+            per_pass_facts.get(("terminal-module-name-facts", id(module), module))
+            if isinstance(per_pass_facts, dict)
+            else None
+        )
         facts[key] = (
-            _terminal_alias_unmodified(module, root.id),
-            any(
+            unmodified,
+            root.id in module_facts[3]
+            if module_facts is not None
+            else any(
                 isinstance(item, ast.arg) and item.arg == root.id
                 for item in ast.walk(module)
             ),
-            binding_occurrences(module.body, root.id),
+            binding_occurrences(
+                module.body,
+                root.id,
+                per_pass_facts=per_pass_facts,
+            ),
         )
     unmodified, argument_shadow, bindings = facts[key]
     if not unmodified or argument_shadow:
@@ -2620,7 +2702,9 @@ def _terminal_imported_module_receiver(node, parents, audit, canonical, *, facts
     return bool(prefix and parts == prefix[: len(parts)])
 
 
-def _terminal_receiver_module_scope(node, name, parents, audit, facts):
+def _terminal_receiver_module_scope(
+    node, name, parents, audit, facts, *, canonical, per_pass_facts=None
+):
     current = node
     while parents.get(id(current)) is not None:
         current = parents[id(current)]
@@ -2628,12 +2712,32 @@ def _terminal_receiver_module_scope(node, name, parents, audit, facts):
             key = (current, name)
             if key not in facts:
                 facts[key] = (
-                    binding_occurrences(current.body, name)
+                    binding_occurrences(
+                        current.body, name, per_pass_facts=per_pass_facts
+                    )
                     if isinstance(current, ast.ClassDef)
                     else function_bindings(current, name, audit)
                 )
             if facts[key] != []:
-                return None
+                local_bindings = facts[key]
+                if local_bindings is None or any(
+                    not isinstance(item, (ast.Import, ast.ImportFrom))
+                    for item in local_bindings
+                ):
+                    module_scope = current
+                    while parents.get(id(module_scope)) is not None:
+                        module_scope = parents[id(module_scope)]
+                    if isinstance(module_scope, ast.Module):
+                        top_bindings = binding_occurrences(
+                            module_scope.body,
+                            name,
+                            per_pass_facts=per_pass_facts,
+                        )
+                        if _terminal_namespace_import_prefix(
+                            top_bindings, name, canonical
+                        ):
+                            facts["terminal-shadowed-provider-use"] = True
+                return current
     return current if isinstance(current, ast.Module) else None
 
 
@@ -2648,6 +2752,8 @@ def _terminal_attribute_parts(node):
 
 
 def _terminal_namespace_import_prefix(bindings, name, canonical):
+    if not bindings:
+        return None
     ordinary = [
         item
         for statement in bindings
@@ -3122,7 +3228,6 @@ def _class_binding_is_exact(index, path, name, owner):
         or not index.validate(path)
     ):
         return False
-    from .credential_role_constructor_provider import binding_occurrences
 
     definitions = binding_occurrences(index.snapshots[path].body, name)
     return len(definitions) == 1 and definitions[0] is owner
@@ -3154,7 +3259,6 @@ def _c3_merge(sequences):
 def _import_binding_is_exact(index, path, name, imported):
     if not index.validate(path):
         return False
-    from .credential_role_constructor_provider import binding_occurrences
 
     definitions = binding_occurrences(index.snapshots[path].body, name)
     if len(definitions) != 1:
@@ -3756,7 +3860,6 @@ def _class_ref(path, node, imports, classes, audit, index=None):
     if len(parts) == 1 and (path, parts[0]) in classes:
         if index is None:
             return path, parts[0]
-        from .credential_role_constructor_provider import binding_occurrences
 
         if index.validate(path):
             owner = classes[(path, parts[0])]
@@ -3781,8 +3884,6 @@ def class_chain(index, path, name, imports, classes, audit):
 
 
 def _uncached_class_chain(index, path, name, imports, classes, audit):
-    from .credential_role_constructor_provider import resolve_class_chain
-
     return resolve_class_chain(index, path, name, imports, classes, audit)
 
 
@@ -3851,7 +3952,6 @@ def _match_attribute(fact, path, node, owner, index, imports, classes, audit):
         )
     function, _ = _scope(node, index, path)
     root = node.value
-    from .credential_role_constructor_provider import function_bindings
 
     if isinstance(root, ast.Attribute):
         while isinstance(root, ast.Attribute):
@@ -4036,8 +4136,6 @@ def _shared_function_mutation(provider, attribute, function):
 
 
 def _source_aliases(path, tree, imports, index):
-    from .credential_role_constructor_provider import _import_binding_is_exact
-
     module, aliases = _source_module(path), {}
     for node in tree.body:
         if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -4123,40 +4221,6 @@ def constructor_provider_helper_epoch():
     """Return semantic helper identities for batch-cache freshness checks."""
     from .mock_fixture_provenance import _django_import_rows
     from .runtime_audit_integrity import _conditional_module_name
-    from .credential_role_constructor_provider import _import_binding_is_exact
-    from .credential_role_constructor_provider import _terminal_contracts
-    from .credential_role_constructor_provider import _valid_terminal_contract
-    from .credential_role_constructor_provider import _class_base_reference
-    from .credential_role_constructor_provider import _external_class_terminal
-    from .credential_role_constructor_provider import _direct_terminal_import
-    from .credential_role_constructor_provider import _direct_terminal_import_statement
-    from .credential_role_constructor_provider import _terminal_alias_unmodified
-    from .credential_role_constructor_provider import _captured_module_shadows_terminal
-    from .credential_role_constructor_provider import (
-        _captured_terminal_provider_mutation,
-    )
-    from .credential_role_constructor_provider import _terminal_provider_related
-    from .credential_role_constructor_provider import _terminal_mutation_overlaps
-    from .credential_role_constructor_provider import _terminal_registry_mutation
-    from .credential_role_constructor_provider import _terminal_registry_node_targets
-    from .credential_role_constructor_provider import _terminal_registry_augmented_alias
-    from .credential_role_constructor_provider import _terminal_registry_target
-    from .credential_role_constructor_provider import _terminal_registry_target_paths
-    from .credential_role_constructor_provider import _terminal_registry_paths
-    from .credential_role_constructor_provider import _terminal_registry_call
-    from .credential_role_constructor_provider import _terminal_registry_call_items
-    from .credential_role_constructor_provider import _terminal_registry_call_operands
-    from .credential_role_constructor_provider import _terminal_registry_update_items
-    from .credential_role_constructor_provider import _terminal_registry_values_escape
-    from .credential_role_constructor_provider import _terminal_registry_escape
-    from .credential_role_constructor_provider import _terminal_registry_escape_use
-    from .credential_role_constructor_provider import (
-        _terminal_registry_alias_assignment,
-    )
-    from .credential_role_constructor_provider import (
-        _terminal_registry_store_value_escape,
-    )
-    from .credential_role_constructor_provider import _terminal_registry_key_related
     from .finite_capture import _provider_alias_bindings
     from .finite_capture import _provider_paths
     from .import_context import import_source_bases
@@ -4756,7 +4820,6 @@ def _function_alias(expression, function, source_name, use_line):
         return expression.value.id == "self" and expression.attr == source_name
     if not isinstance(expression, ast.Name):
         return False
-    from .credential_role_constructor_provider import binding_occurrences
 
     bindings = binding_occurrences(function.body, expression.id)
     if len(bindings) != 1 or not isinstance(bindings[0], ast.Name):
@@ -5328,10 +5391,6 @@ def _db_python_model_field_rows(source_index, parsed, exports, path_lookup, cont
 def _db_python_flask_contract_classes(source_index):
     from . import intent_quality as iq
     from types import SimpleNamespace
-    from .credential_role_constructor_provider import (
-        resolve_class_chain_with_terminals,
-        _external_class_terminal,
-    )
     from .review_audits import (
         _module_security_aliases,
         _security_aliases,

@@ -3,12 +3,26 @@
 from __future__ import annotations
 
 import configparser
+from contextlib import contextmanager
+from contextvars import ContextVar
 from fnmatch import fnmatchcase
 
 try:
     import tomllib
 except ModuleNotFoundError:  # Python 3.10
     import tomli as tomllib
+
+_ADVISORY_COLLECTION = ContextVar("advisory_pytest_collection", default=False)
+
+
+@contextmanager
+def advisory_collection_context(enabled=True):
+    """Let repository scans retain static results when collection is unknown."""
+    token = _ADVISORY_COLLECTION.set(enabled is True)
+    try:
+        yield
+    finally:
+        _ADVISORY_COLLECTION.reset(token)
 
 
 def _pytest_collection_settings(value=None):
@@ -140,6 +154,7 @@ def _pytest_collection_config(root, source_files=None, *, allow_unknown=False):
         _TEST_FUNCTION_PATTERNS,
     )
 
+    allow_unknown = allow_unknown or _ADVISORY_COLLECTION.get()
     defaults = set(_TEST_FILE_PATTERNS)
     candidates = (
         ("pytest.toml", "toml-pytest"),
@@ -260,7 +275,9 @@ def _pytest_collection_source_identity(
             **identity,
             "state": "unsupported",
             "collection_state": "UNKNOWN",
-            "mode": "security_only",
+            "mode": "static_without_collection"
+            if _ADVISORY_COLLECTION.get()
+            else "security_only",
             "reason": "unmodeled_builtin_collection_options"
             if identity.get("state") == "unmodeled-builtin-collection"
             else "unsupported_collection_configuration"
@@ -384,10 +401,12 @@ def _pytest_config_data(data, relative, section, defaults):
 def _pytest_pattern_value(text, section):
     if section in {"pyproject", "toml-pytest"}:
         return _toml_pytest_pattern_value(text, section)
-    parser = configparser.ConfigParser()
+    parser = configparser.ConfigParser(interpolation=None)
+    parser.optionxform = str
     parser.read_string(text)
     if section not in parser:
         return _ABSENT_PYTEST_SECTION
+    parser.defaults().clear()
     options = dict(parser.items(section))
     if not _supported_pytest_function_patterns(options):
         return _INVALID_PYTEST_CONFIG

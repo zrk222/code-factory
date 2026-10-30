@@ -1461,6 +1461,10 @@ def test_evidence_policy_remediation_requires_native_supported_tier(
     assert status["candidate_freshness"] == "CURRENT_SOURCE_HASHES_VERIFIED"
     receipt = json.loads((tmp_path / ".factory/security-scan/latest.json").read_text())
     assert receipt["report"] == report
+    from factoryline.cli_audit import _print_selected_security_policy
+
+    _print_selected_security_policy(report)
+    assert "Tenant scope: NOT_DECLARED" in capsys.readouterr().out
     core = copy.deepcopy(report)
     core["_primitive_source_bytes"] = {"app.py": (tmp_path / "app.py").read_bytes()}
     assert audit._seal_security_scan(core)["agent_actions"] == actions
@@ -1468,7 +1472,11 @@ def test_evidence_policy_remediation_requires_native_supported_tier(
         for row in core["finding_tier_report"]["ledger"]:
             row["tier"] = "SUPPORTED_DEFECT"
         core["_primitive_source_bytes"] = {"app.py": (tmp_path / "app.py").read_bytes()}
-        assert audit._seal_security_scan(core)["agent_actions"] == actions
+        rejected = audit._seal_security_scan(core)
+        assert rejected["defect_policy_decision"]["state"] == "BLOCKED"
+        assert rejected["agent_actions"] == []
+        assert rejected["findings"] == report["findings"]
+        assert rejected["defect_policy_decision"]["clean"] is False
 
 
 def test_evidence_policy_remediation_retains_quality_hollow_handoff(tmp_path):
@@ -2012,3 +2020,1344 @@ def test_shared_configuration_capture_rejects_changed_bytes(tmp_path, monkeypatc
     with pytest.raises(audit.ReviewAuditError, match="Evidence changed"):
         audit._verify_security_bindings(tmp_path, [binding], captured_out=retained)
     assert retained == {}
+
+
+@pytest.mark.parametrize(
+    "policy",
+    ["trusted-core-v1", "source-role-v1", "source-role-v2", "source-role-v3"],
+)
+def test_common_admission_is_policy_invariant_and_keeps_raw_diagnostics(
+    tmp_path, capsys, policy
+):
+    from factoryline import review_audits as audit
+    from factoryline.cli_audit import _print_selected_security_policy
+
+    source = (
+        "import logging, os, pickle, sqlite3, subprocess\n"
+        "from flask import request\n"
+        "def request_log():\n"
+        "    logging.error(request.args['message'])\n"
+        "def request_eval():\n"
+        "    eval(request.get_data(as_text=True))\n"
+        "def unknown(value, command, query, payload):\n"
+        "    eval(value)\n"
+        "    os.system(command)\n"
+        "    subprocess.run(command, shell=True)\n"
+        "    connection = sqlite3.connect(':memory:')\n"
+        '    connection.execute("SELECT * FROM t WHERE name=\'" + query + "\'")\n'
+        "    pickle.loads(payload)\n"
+    )
+    (tmp_path / "app.py").write_text(source, encoding="utf-8")
+    report = audit.security_scan(
+        tmp_path,
+        cache_enabled=False,
+        defect_policy=policy,
+        security_only=True,
+    )
+
+    ledger = report["finding_tier_report"]["ledger"]
+    rows = {
+        (row["raw_finding"]["code"], row["raw_finding"]["line"]): row for row in ledger
+    }
+    expected_supported = {
+        ("SECURITY_DYNAMIC_EXECUTION", 6),
+    }
+    expected_unresolved = {
+        ("SECURITY_LOG_INJECTION", 4),
+        ("SECURITY_DYNAMIC_EXECUTION", 8),
+        ("SECURITY_OS_COMMAND", 9),
+        ("SECURITY_SHELL_COMMAND", 10),
+        ("SECURITY_SQL_INJECTION", 12),
+        ("SECURITY_UNSAFE_DESERIALIZATION", 13),
+    }
+    assert set(rows) == expected_supported | expected_unresolved
+    assert {key for key, row in rows.items() if row["tier"] == "SUPPORTED_DEFECT"} == (
+        expected_supported
+    )
+    assert {key for key, row in rows.items() if row["tier"] == "NEEDS_CONTEXT"} == (
+        expected_unresolved
+    )
+    assert all(rows[key].get("missing_premises") for key in expected_unresolved)
+    log_row = rows[("SECURITY_LOG_INJECTION", 4)]
+    assert log_row["tier"] == "NEEDS_CONTEXT"
+    assert set(log_row["missing_premises"]) == {
+        "untrusted_log_value",
+        "log_record_injection_effect",
+    }
+    assert log_row["raw_finding"]["facts"] == {
+        "call": "logging.error",
+        "cwe": "CWE-117",
+        "source": "input_or_request_parameter",
+    }
+    assert log_row["raw_finding"]["severity"] == "HIGH"
+    assert "security_precondition" not in log_row["raw_finding"]["facts"]
+
+    decision = report["defect_policy_decision"]
+    assert decision["state"] == "DEFECTS_PRESENT"
+    assert decision["exit_code"] == 1
+    assert decision["supported_defect_count"] == len(expected_supported)
+    assert decision["needs_context_count"] == len(expected_unresolved)
+    assert (
+        decision["clean"] is decision["passed"] is decision["release_approved"] is False
+    )
+
+    raw_surface = [
+        *report.get("findings", []),
+        *report.get("context_reviews", []),
+        *report.get("primitive_observations", []),
+    ]
+    assert len(raw_surface) == report["finding_tier_report"]["raw_diagnostics"]["count"]
+    assert sorted(
+        (
+            row.get("code"),
+            row.get("path"),
+            row.get("line"),
+            row.get("column", 0),
+            row.get("severity"),
+        )
+        for row in raw_surface
+    ) == sorted(
+        (
+            row["raw_finding"].get("code"),
+            row["raw_finding"].get("path"),
+            row["raw_finding"].get("line"),
+            row["raw_finding"].get("column", 0),
+            row["raw_finding"].get("severity"),
+        )
+        for row in ledger
+    )
+    actionable = {
+        (action["finding_context"]["code"], action["finding_context"]["line"])
+        for action in report["agent_actions"]
+        if action["finding_context"]["code"].startswith("SECURITY_")
+    }
+    assert actionable == expected_supported
+
+    _print_selected_security_policy(report)
+    human = capsys.readouterr().out
+    assert f"Raw diagnostics: {len(ledger)}" in human
+    assert "SUPPORTED_DEFECT" in human and "NEEDS_CONTEXT" in human
+    assert "ACTIVE [" not in human
+    assert "No clean security result" in human
+
+
+@pytest.mark.parametrize(
+    "policy",
+    ["trusted-core-v1", "source-role-v1", "source-role-v2", "source-role-v3"],
+)
+def test_common_admission_unknown_collection_blocks_remediation_but_keeps_raw(
+    tmp_path, policy
+):
+    from factoryline import review_audits as audit
+
+    (tmp_path / "app.py").write_text(
+        "from flask import request\neval(request.get_data(as_text=True))\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "conftest.py").write_text(
+        "def pytest_collect_file(file_path, parent):\n"
+        "    raise RuntimeError('collection must remain unmodeled')\n",
+        encoding="utf-8",
+    )
+    report = audit.security_scan(
+        tmp_path,
+        cache_enabled=False,
+        defect_policy=policy,
+        security_only=True,
+    )
+
+    decision = report["defect_policy_decision"]
+    assert (
+        report["oracle_context"]["pytest_collection"]["collection_state"] == "UNKNOWN"
+    )
+    assert decision["state"] == "BLOCKED" and decision["exit_code"] == 2
+    assert (
+        decision["clean"] is decision["passed"] is decision["release_approved"] is False
+    )
+    assert report["agent_actions"] == []
+    raw_rows = [row["raw_finding"] for row in report["finding_tier_report"]["ledger"]]
+    assert any(row["code"] == "SECURITY_DYNAMIC_EXECUTION" for row in raw_rows)
+    assert any(
+        row["code"] == "SECURITY_DYNAMIC_EXECUTION" for row in report["findings"]
+    )
+
+
+@pytest.mark.parametrize(
+    "policy",
+    ["trusted-core-v1", "source-role-v1", "source-role-v2", "source-role-v3"],
+)
+@pytest.mark.parametrize("tamper", ["valid", "missing", "stale"])
+def test_common_admission_binds_configuration_bytes_for_every_policy(
+    tmp_path, policy, tamper
+):
+    from factoryline import review_audits as audit
+
+    (tmp_path / "app.py").write_text(
+        "from flask import request\n"
+        "eval(request.get_data(as_text=True))\n"
+        "def unresolved(value):\n"
+        "    eval(value)\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "pytest.ini").write_text(
+        "[pytest]\npython_files = test_*.py\n",
+        encoding="utf-8",
+    )
+    report = audit.security_scan(
+        tmp_path,
+        cache_enabled=False,
+        defect_policy=policy,
+        security_only=True,
+    )
+    captured = dict(report._captured_sources)
+    assert "pytest.ini" in captured
+    assert any(
+        row.get("path") == "pytest.ini"
+        for row in report["oracle_context"]["configuration_sources"]
+    )
+    if tamper == "missing":
+        captured.pop("pytest.ini")
+    elif tamper == "stale":
+        captured["pytest.ini"] += b"\n# stale captured config\n"
+
+    core = copy.deepcopy(report)
+    core["_primitive_source_bytes"] = captured
+    sealed = audit._seal_security_scan(core)
+    decision = sealed["defect_policy_decision"]
+    if tamper == "valid":
+        assert decision["state"] == "DEFECTS_PRESENT"
+        assert decision["supported_defect_count"] == 1
+        assert decision["needs_context_count"] == 1
+    else:
+        assert decision["state"] == "BLOCKED" and decision["exit_code"] == 2
+        assert sealed["agent_actions"] == []
+    assert sealed["finding_tier_report"]["raw_diagnostics"]["count"] == 2
+    assert any(
+        row["raw_finding"]["code"] == "SECURITY_DYNAMIC_EXECUTION"
+        for row in sealed["finding_tier_report"]["ledger"]
+    )
+
+
+def test_common_admission_public_cli_missing_tenant_receipt_and_reseal_agree(
+    tmp_path, capsys
+):
+    from factoryline import review_audits as audit
+    from factoryline.cli import main
+
+    (tmp_path / "app.py").write_text(
+        "from flask import request\neval(request.get_data(as_text=True))\n",
+        encoding="utf-8",
+    )
+    assert (
+        main(
+            [
+                "audit",
+                "security",
+                "--root",
+                str(tmp_path),
+                "--security-only",
+                "--defect-policy",
+                "source-role-v3",
+                "--json",
+            ]
+        )
+        == 1
+    )
+    output = capsys.readouterr()
+    assert output.err == ""
+    report = json.loads(output.out)
+    receipt = json.loads(
+        (tmp_path / ".factory/security-scan/latest.json").read_text(encoding="utf-8")
+    )
+    assert receipt["report"] == report
+    assert report["tenant_read_contract"]["configuration"] == {
+        "path": ".factory/tenant-read-contract.json",
+        "state": "missing",
+        "policy_applies": False,
+    }
+    decision = report["defect_policy_decision"]
+    assert decision["state"] == "DEFECTS_PRESENT" and decision["exit_code"] == 1
+    assert decision["supported_defect_count"] == 1
+    assert any(
+        row["tier"] == "SUPPORTED_DEFECT"
+        and row["raw_finding"]["code"] == "SECURITY_DYNAMIC_EXECUTION"
+        for row in report["finding_tier_report"]["ledger"]
+    )
+
+    captured_scan = audit.security_scan(
+        tmp_path,
+        cache_enabled=True,
+        defect_policy="source-role-v3",
+        security_only=True,
+    )
+    core = copy.deepcopy(report)
+    core["_primitive_source_bytes"] = dict(captured_scan._captured_sources)
+    resealed = audit._seal_security_scan(core)
+    assert resealed["defect_policy_decision"] == decision
+    from factoryline.primitive_observation_binding import _tier_sha256
+
+    assert decision["evidence_sha256"] == _tier_sha256(
+        {
+            "sources": decision["source_sha256"],
+            "reviews": [
+                row.get("source_role_review")
+                for row in report["finding_tier_report"]["ledger"]
+            ],
+            "admission": decision["admission"],
+        }
+    )
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    [
+        "extra_configuration_bytes",
+        "duplicate_configuration_binding",
+        "malformed_database_graph",
+        "missing_tenant_with_calls",
+        "missing_tenant_policy_enabled",
+        "missing_tenant_configuration_null",
+    ],
+)
+def test_common_admission_rejects_unbound_extensions_and_missing_tenant_authority(
+    tmp_path, capsys, tamper
+):
+    from factoryline import primitive_observation_binding as primitive
+    from factoryline import review_audits as audit
+    from factoryline.cli import main
+
+    (tmp_path / "app.py").write_text(
+        "import sqlite3\n"
+        "from flask import request\n"
+        "eval(request.get_data(as_text=True))\n"
+        "sqlite3.connect(':memory:')\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "pytest.ini").write_text(
+        "[pytest]\npython_files = test_*.py\n", encoding="utf-8"
+    )
+    assert (
+        main(
+            [
+                "audit",
+                "security",
+                "--root",
+                str(tmp_path),
+                "--security-only",
+                "--defect-policy",
+                "source-role-v3",
+                "--json",
+            ]
+        )
+        == 1
+    )
+    output = capsys.readouterr()
+    assert output.err == ""
+    report = json.loads(output.out)
+    assert report["defect_policy_decision"]["state"] == "DEFECTS_PRESENT"
+    assert report["database_context"]["status"] == "INCOMPLETE"
+    assert report["tenant_read_contract"]["configuration"]["state"] == "missing"
+
+    captured_scan = audit.security_scan(
+        tmp_path,
+        cache_enabled=True,
+        defect_policy="source-role-v3",
+        security_only=True,
+    )
+    captured = dict(captured_scan._captured_sources)
+    core = copy.deepcopy(report)
+    core["_primitive_source_bytes"] = captured
+    if tamper == "extra_configuration_bytes":
+        captured["tox.ini"] = b"[testenv]\ncommands = pytest\n"
+    elif tamper == "duplicate_configuration_binding":
+        bindings = core["oracle_context"]["configuration_sources"]
+        bindings.append(copy.deepcopy(bindings[0]))
+    elif tamper == "malformed_database_graph":
+        database = core["database_context"]
+        database["gaps"].append(None)
+        database["graph_digest"] = primitive._tier_sha256(
+            {key: value for key, value in database.items() if key != "graph_digest"}
+        )
+    elif tamper == "missing_tenant_with_calls":
+        core["tenant_read_contract"]["calls"] = ["connection.execute"]
+    elif tamper == "missing_tenant_policy_enabled":
+        core["tenant_read_contract"]["policy_applies"] = True
+    elif tamper == "missing_tenant_configuration_null":
+        core["tenant_read_contract"]["configuration"] = None
+
+    sealed = audit._seal_security_scan(core)
+    assert sealed["defect_policy_decision"]["state"] == "BLOCKED"
+    assert sealed["defect_policy_decision"]["exit_code"] == 2
+    assert sealed["agent_actions"] == []
+    assert any(
+        row["raw_finding"]["code"] == "SECURITY_DYNAMIC_EXECUTION"
+        for row in sealed["finding_tier_report"]["ledger"]
+    )
+
+
+def test_finding_identity_is_stable_across_quality_prefix_and_order(tmp_path):
+    from factoryline import review_audits as audit
+    from factoryline.primitive_observation_binding import build_finding_tier_report
+
+    source = b"from flask import request\neval(request.get_data(as_text=True))\n"
+    (tmp_path / "app.py").write_bytes(source)
+    scanned = audit.security_scan(
+        tmp_path,
+        cache_enabled=False,
+        defect_policy="trusted-core-v1",
+        security_only=True,
+    )
+    raw_security = next(
+        row
+        for row in scanned["findings"]
+        if row["code"] == "SECURITY_DYNAMIC_EXECUTION"
+    )
+    source_bytes = dict(scanned._captured_sources)
+    source_bindings = [
+        {
+            "path": path,
+            "sha256": hashlib.sha256(content).hexdigest(),
+        }
+        for path, content in source_bytes.items()
+        if path.endswith(".py")
+    ]
+    quality = {
+        "code": "QUALITY_HOLLOW_TEST",
+        "path": "tests/test_quality.py",
+        "line": 1,
+        "severity": "MEDIUM",
+    }
+
+    def tier(raw_findings):
+        return build_finding_tier_report(
+            raw_findings,
+            scanned.get("primitive_observations", []),
+            source_bindings,
+            source_bytes,
+            coverage_state=True,
+            partition_state="VALIDATED",
+        )
+
+    security_only = tier([raw_security])
+    quality_prefixed = tier([quality, raw_security])
+    quality_suffixed = tier([raw_security, quality])
+
+    def security_row(report):
+        return next(
+            row
+            for row in report["ledger"]
+            if row["raw_finding"].get("code") == "SECURITY_DYNAMIC_EXECUTION"
+        )
+
+    baseline_row = security_row(security_only)
+    prefixed_row = security_row(quality_prefixed)
+    suffixed_row = security_row(quality_suffixed)
+    baseline_identity = baseline_row["source_identity"]["identity_sha256"]
+    assert prefixed_row["index"] == 1 and suffixed_row["index"] == 0
+    assert prefixed_row["source_identity"]["identity_sha256"] == baseline_identity
+    assert suffixed_row["source_identity"]["identity_sha256"] == baseline_identity
+    assert security_only["raw_diagnostics"]["count"] == 1
+    assert quality_prefixed["raw_diagnostics"]["count"] == 2
+    assert [row["raw_finding"] for row in quality_prefixed["ledger"]] == [
+        quality,
+        raw_security,
+    ]
+
+
+@pytest.mark.parametrize(
+    "policy",
+    ["trusted-core-v1", "source-role-v1", "source-role-v2", "source-role-v3"],
+)
+@pytest.mark.parametrize("security_only", [False, True])
+def test_common_admission_preserves_incomplete_oracle_scope(
+    tmp_path, policy, security_only
+):
+    from factoryline import review_audits as audit
+
+    (tmp_path / "test_registry_completion.py").write_text(
+        "from sys import modules as loaded\n"
+        "async def compute():\n"
+        "    return 3\n"
+        "def fail():\n"
+        "    raise RuntimeError()\n"
+        "loaded[__name__].compute = fail\n"
+        "def test_behavior():\n"
+        "    compute()\n",
+        encoding="utf-8",
+    )
+    report = audit.security_scan(
+        tmp_path,
+        cache_enabled=False,
+        defect_policy=policy,
+        security_only=security_only,
+    )
+    assert report["audit_coverage"]["complete"] is True
+    assert report["database_context"]["status"] == "NOT_APPLICABLE"
+    unknown = [
+        row
+        for row in report["finding_tier_report"]["ledger"]
+        if row["raw_finding"]["code"] == "QUALITY_UNKNOWN_TEST_ORACLE"
+    ]
+    decision = report["defect_policy_decision"]
+    assert decision["clean"] is decision.get("passed", False) is False
+    assert not any(
+        row["finding_context"]["code"].startswith("SECURITY_")
+        for row in report["agent_actions"]
+    )
+    if security_only:
+        assert unknown == []
+        assert decision["exit_code"] == 0
+    else:
+        assert len(unknown) == 1
+        assert unknown[0]["tier"] == "NEEDS_CONTEXT"
+        assert report["state"] == "INCOMPLETE"
+        assert decision["state"] == "BLOCKED"
+        assert decision["exit_code"] == 2
+
+
+def test_independent_native_replay_reuses_fresh_provider_mutation_cache(
+    monkeypatch,
+):
+    from factoryline import finite_capture, primitive_observation_binding, review_audits
+
+    captured = {
+        "control_a.py": (
+            b"import pickle\nimport mutator\n"
+            b"def decode(payload):\n    return pickle.loads(payload)\n"
+        ),
+        "control_b.py": (
+            b"import pickle\nimport mutator\n"
+            b"def decode(payload):\n    return pickle.loads(payload)\n"
+        ),
+        "mutator.py": b"import pickle\npickle.loads = replacement\n",
+    }
+    tenant = ((), {}, False)
+    mutator_hash = hashlib.sha256(captured["mutator.py"]).hexdigest()
+    parse_calls = []
+    original_parse = finite_capture.ast.parse
+
+    def counted_parse(source, filename="<unknown>", *args, **kwargs):
+        if (
+            filename == "<unknown>"
+            and isinstance(source, str)
+            and hashlib.sha256(source.encode("utf-8")).hexdigest() == mutator_hash
+        ):
+            parse_calls.append(mutator_hash)
+        return original_parse(source, filename, *args, **kwargs)
+
+    monkeypatch.setattr(finite_capture.ast, "parse", counted_parse)
+    original_scan_tree = review_audits._security_scan_tree
+
+    def uncached_scan_tree(
+        root,
+        path,
+        tree,
+        tenant_read_calls=(),
+        tenant_read_bindings=None,
+        oracle_context=None,
+        *args,
+        **kwargs,
+    ):
+        context = dict(oracle_context or {})
+        context.pop("_security_provider_mutation_cache", None)
+        return original_scan_tree(
+            root,
+            path,
+            tree,
+            tenant_read_calls,
+            tenant_read_bindings,
+            context,
+            *args,
+            **kwargs,
+        )
+
+    monkeypatch.setattr(review_audits, "_security_scan_tree", uncached_scan_tree)
+    uncached_rows = primitive_observation_binding._trusted_core_native_security_rows(
+        captured, tenant, review_audits
+    )
+    assert any(
+        row["code"] == "SECURITY_UNSAFE_DESERIALIZATION" for row in uncached_rows
+    )
+    parse_calls.clear()
+
+    replay_caches = []
+
+    def record_cache_scan_tree(
+        root,
+        path,
+        tree,
+        tenant_read_calls=(),
+        tenant_read_bindings=None,
+        oracle_context=None,
+        *args,
+        **kwargs,
+    ):
+        replay_caches.append(
+            (
+                path.as_posix(),
+                (oracle_context or {}).get("_security_provider_mutation_cache"),
+            )
+        )
+        return original_scan_tree(
+            root,
+            path,
+            tree,
+            tenant_read_calls,
+            tenant_read_bindings,
+            oracle_context,
+            *args,
+            **kwargs,
+        )
+
+    monkeypatch.setattr(review_audits, "_security_scan_tree", record_cache_scan_tree)
+    first_replay = primitive_observation_binding._trusted_core_native_security_rows(
+        captured, tenant, review_audits
+    )
+    first_parse_count = len(parse_calls)
+    second_replay = primitive_observation_binding._trusted_core_native_security_rows(
+        captured, tenant, review_audits
+    )
+
+    assert first_replay == uncached_rows
+    assert second_replay == uncached_rows
+    assert first_parse_count == 1
+    assert len(parse_calls) == 2
+    assert len(replay_caches) == 6
+    first_cache = replay_caches[0][1]
+    second_cache = replay_caches[3][1]
+    assert isinstance(first_cache, dict) and isinstance(second_cache, dict)
+    assert all(cache is first_cache for _path, cache in replay_caches[:3])
+    assert all(cache is second_cache for _path, cache in replay_caches[3:])
+    assert first_cache is not second_cache
+
+
+def test_foreign_provider_input_cache_invalidates_source_and_helper_epoch(
+    monkeypatch,
+):
+    from types import SimpleNamespace
+
+    from factoryline import finite_capture, review_audits
+
+    cache = {}
+    module = SimpleNamespace(
+        _security_oracle_context={"_security_provider_mutation_cache": cache}
+    )
+    first_source = b"import pickle\nvalue = pickle.loads\n"
+    changed_source = b"import json\nvalue = json.loads\n"
+    parse_calls = []
+    original_parse = finite_capture.ast.parse
+
+    def counted_parse(source, filename="<unknown>", *args, **kwargs):
+        if filename == "<unknown>":
+            parse_calls.append(hashlib.sha256(source.encode("utf-8")).hexdigest())
+        return original_parse(source, filename, *args, **kwargs)
+
+    monkeypatch.setattr(finite_capture.ast, "parse", counted_parse)
+    alias_reader = review_audits._security_aliases
+    first_hash = hashlib.sha256(first_source).hexdigest()
+    changed_hash = hashlib.sha256(changed_source).hexdigest()
+    first = finite_capture._foreign_provider_inputs(
+        module, first_source, first_hash, alias_reader
+    )
+    repeated = finite_capture._foreign_provider_inputs(
+        module, first_source, first_hash, alias_reader
+    )
+    assert repeated == first
+    assert len(parse_calls) == 1
+
+    changed = finite_capture._foreign_provider_inputs(
+        module, changed_source, changed_hash, alias_reader
+    )
+    assert changed != first
+    assert len(parse_calls) == 2
+
+    original_bindings = finite_capture._provider_alias_bindings
+
+    def changed_helper(nodes):
+        return original_bindings(nodes)
+
+    monkeypatch.setattr(finite_capture, "_provider_alias_bindings", changed_helper)
+    refreshed = finite_capture._foreign_provider_inputs(
+        module, changed_source, changed_hash, alias_reader
+    )
+    assert tuple(finite_capture.ast.dump(node) for node in refreshed[0]) == tuple(
+        finite_capture.ast.dump(node) for node in changed[0]
+    )
+    assert refreshed[1] == changed[1]
+    assert len(refreshed[2]) == len(changed[2])
+    assert {
+        name: tuple(finite_capture.ast.dump(node) for node in nodes)
+        for name, nodes in refreshed[3].items()
+    } == {
+        name: tuple(finite_capture.ast.dump(node) for node in nodes)
+        for name, nodes in changed[3].items()
+    }
+    assert parse_calls == [first_hash, changed_hash, changed_hash]
+    assert len(parse_calls) == 3
+
+
+def test_binding_occurrence_pass_cache_preserves_order_and_reuses_walkers(
+    monkeypatch,
+):
+    import ast
+
+    from factoryline import credential_role_constructor_provider as provider
+
+    tree = ast.parse(
+        """
+from package import *
+import requests as provider, httpx as provider
+from package.api import client as provider
+provider = object()
+class Outer:
+    provider = object()
+def nested(provider):
+    provider = object()
+items = [(walrus := value) for value in values if (walrus := value)]
+"""
+    )
+    names = ("provider", "unlisted_name", "Outer", "walrus")
+    expected = {name: provider.binding_occurrences(tree.body, name) for name in names}
+    assert len(expected["provider"]) == 4
+    assert expected["unlisted_name"] == [tree.body[0]]
+    assert expected["Outer"] == [tree.body[4], tree.body[0]]
+    assert len(expected["walrus"]) == 3
+    assert expected["walrus"][-1] is tree.body[0]
+
+    iter_calls = 0
+    walk_calls = 0
+    original_iter = provider.ast.iter_child_nodes
+    original_walk = provider.ast.walk
+
+    def counted_iter(node):
+        nonlocal iter_calls
+        iter_calls += 1
+        return original_iter(node)
+
+    def counted_walk(node):
+        nonlocal walk_calls
+        walk_calls += 1
+        return original_walk(node)
+
+    monkeypatch.setattr(provider.ast, "iter_child_nodes", counted_iter)
+    monkeypatch.setattr(provider.ast, "walk", counted_walk)
+    per_pass_facts = {}
+
+    first = provider.binding_occurrences(
+        tree.body, names[0], per_pass_facts=per_pass_facts
+    )
+    assert first == expected[names[0]]
+    calls_after_first = (iter_calls, walk_calls)
+    for name in names[1:]:
+        found = provider.binding_occurrences(
+            tree.body, name, per_pass_facts=per_pass_facts
+        )
+        assert found == expected[name]
+        assert (iter_calls, walk_calls) == calls_after_first
+
+    first.clear()
+    assert (
+        provider.binding_occurrences(tree.body, names[0], per_pass_facts=per_pass_facts)
+        == expected[names[0]]
+    )
+    assert (iter_calls, walk_calls) == calls_after_first
+
+
+def test_binding_occurrence_pass_cache_invalidates_helper_and_input_changes(
+    monkeypatch,
+):
+    import ast
+
+    from factoryline import credential_role_constructor_provider as provider
+
+    tree = ast.parse("from package import *\nvalue = 1\n")
+    per_pass_facts = {}
+    iter_calls = 0
+    original_iter = provider.ast.iter_child_nodes
+    original_binds = provider._binds
+
+    def counted_iter(node):
+        nonlocal iter_calls
+        iter_calls += 1
+        return original_iter(node)
+
+    monkeypatch.setattr(provider.ast, "iter_child_nodes", counted_iter)
+    initial = provider.binding_occurrences(
+        tree.body, "unlisted_name", per_pass_facts=per_pass_facts
+    )
+    assert initial == [tree.body[0]]
+    first_walk_count = iter_calls
+
+    def changed_binds(node, name):
+        return original_binds(node, name)
+
+    monkeypatch.setattr(provider, "_binds", changed_binds)
+    refreshed = provider.binding_occurrences(
+        tree.body, "unlisted_name", per_pass_facts=per_pass_facts
+    )
+    assert refreshed == initial
+    helper_epoch_walk_count = iter_calls
+    assert helper_epoch_walk_count > first_walk_count
+
+    added = ast.parse("unlisted_name = 2\n").body[0]
+    tree.body.append(added)
+    changed_list = provider.binding_occurrences(
+        tree.body, "unlisted_name", per_pass_facts=per_pass_facts
+    )
+    assert changed_list == [added.targets[0], tree.body[0]]
+    assert iter_calls > helper_epoch_walk_count
+
+    added.targets[0].id = "mutated_name"
+    fresh_pass = provider.binding_occurrences(
+        tree.body, "mutated_name", per_pass_facts={}
+    )
+    assert fresh_pass == [added.targets[0], tree.body[0]]
+
+
+def test_terminal_receiver_shares_module_name_facts_within_one_pass(monkeypatch):
+    import ast
+
+    from factoryline import credential_role_constructor_provider as provider
+    from factoryline import review_audits
+
+    tree = ast.parse(
+        """
+import requests as client
+import requests as other
+def use():
+    consume(client.get, other.get)
+def store_name():
+    stored_name = object()
+def declare_global():
+    global global_name
+def shadow_other(other):
+    pass
+"""
+    )
+    nodes = list(ast.walk(tree))
+    parents = {
+        id(child): node for node in nodes for child in ast.iter_child_nodes(node)
+    }
+    receivers = [
+        node
+        for node in nodes
+        if isinstance(node, ast.Name)
+        and node.id in {"client", "other"}
+        and isinstance(parents.get(id(node)), ast.Attribute)
+        and parents[id(node)].value is node
+    ]
+    assert len(receivers) == 2
+
+    module_walks = []
+    original_walk = provider.ast.walk
+
+    def counted_walk(node):
+        if node is tree:
+            module_walks.append(node)
+        return original_walk(node)
+
+    monkeypatch.setattr(provider.ast, "walk", counted_walk)
+    per_pass_facts = {}
+    results = {
+        node.id: provider._terminal_imported_module_receiver(
+            node, parents, review_audits, "requests.get", facts=per_pass_facts
+        )
+        for node in receivers
+    }
+    assert results == {"client": True, "other": False}
+    module_facts = per_pass_facts[("terminal-module-name-facts", id(tree), tree)]
+    assert "stored_name" in module_facts[1]
+    assert "global_name" in module_facts[2]
+    assert "other" in module_facts[3]
+    assert not provider._terminal_alias_unmodified(
+        tree, "stored_name", per_pass_facts=per_pass_facts
+    )
+    assert not provider._terminal_alias_unmodified(
+        tree, "global_name", per_pass_facts=per_pass_facts
+    )
+    assert provider._terminal_alias_unmodified(
+        tree, "other", per_pass_facts=per_pass_facts
+    )
+    assert module_walks == [tree]
+
+    original_fields = provider.ast.iter_fields
+
+    def wrapped_fields(node):
+        return original_fields(node)
+
+    monkeypatch.setattr(provider.ast, "iter_fields", wrapped_fields)
+    assert not provider._terminal_alias_unmodified(
+        tree, "stored_name", per_pass_facts=per_pass_facts
+    )
+    assert module_walks == [tree, tree]
+
+    monkeypatch.setattr(provider.ast, "iter_fields", original_fields)
+    original_children = provider.ast.iter_child_nodes
+
+    def wrapped_children(node):
+        return original_children(node)
+
+    monkeypatch.setattr(provider.ast, "iter_child_nodes", wrapped_children)
+    assert not provider._terminal_alias_unmodified(
+        tree, "stored_name", per_pass_facts=per_pass_facts
+    )
+    assert module_walks == [tree, tree, tree]
+
+
+def test_terminal_receiver_bypasses_bulk_facts_for_custom_predicate(monkeypatch):
+    import ast
+
+    from factoryline import credential_role_constructor_provider as provider
+    from factoryline import review_audits
+
+    tree = ast.parse(
+        """
+import requests as client
+def use():
+    consume(client.get, untrusted)
+"""
+    )
+    nodes = list(ast.walk(tree))
+    callback_nodes = []
+    supplied_pass_caches = []
+    original_bindings = provider.binding_occurrences
+
+    def observe_bindings(statements, name, *, per_pass_facts=None):
+        supplied_pass_caches.append(per_pass_facts)
+        if per_pass_facts is None:
+            return original_bindings(statements, name)
+        return original_bindings(statements, name, per_pass_facts=per_pass_facts)
+
+    def readonly_argument(node, aliases, parents):
+        callback_nodes.append(node)
+        return False
+
+    monkeypatch.setattr(provider, "binding_occurrences", observe_bindings)
+    assert provider._terminal_provider_mutated(
+        nodes,
+        review_audits,
+        "requests",
+        Path("module.py"),
+        None,
+        "",
+        readonly_argument,
+    )
+    assert callback_nodes
+    assert all(cache is None for cache in supplied_pass_caches)
+
+
+def _effect_tier_report(scanned, raw_findings, source_bytes, *, coverage, partition):
+    from factoryline.primitive_observation_binding import build_finding_tier_report
+
+    bindings = [
+        {"path": path, "sha256": hashlib.sha256(content).hexdigest()}
+        for path, content in source_bytes.items()
+        if path.endswith(".py")
+    ]
+    return build_finding_tier_report(
+        raw_findings,
+        scanned.get("primitive_observations", []),
+        bindings,
+        source_bytes,
+        coverage_state=coverage,
+        partition_state=partition,
+    )
+
+
+def _effect_tier_fixture(tmp_path, source):
+    from factoryline import review_audits as audit
+
+    if "import logging" in source:
+        source += (
+            "\nimport logging.config\n"
+            "logging.config.dictConfig({\n"
+            "    'version': 1, 'disable_existing_loggers': False,\n"
+            "    'formatters': {'plain': {'format': '%(message)s'}},\n"
+            "    'handlers': {'console': {'class': 'logging.StreamHandler', 'formatter': 'plain'}},\n"
+            "    'root': {'handlers': ['console'], 'level': 'DEBUG'}, 'loggers': {}\n"
+            "})\n"
+        )
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    (tmp_path / "app.py").write_text(source, encoding="utf-8")
+    scanned = audit.security_scan(
+        tmp_path,
+        cache_enabled=False,
+        defect_policy="source-role-v3",
+        security_only=True,
+    )
+    return scanned, dict(scanned._captured_sources)
+
+
+def test_shared_native_admission_transports_complete_proof_across_families(tmp_path):
+    source = (
+        "import requests\nfrom flask import request\n"
+        "def evaluate():\n    eval(request.args['code'])\n"
+        "def fetch():\n    requests.get(request.args['url'])\n"
+    )
+    scanned, captured = _effect_tier_fixture(tmp_path, source)
+    codes = {"SECURITY_DYNAMIC_EXECUTION", "SECURITY_SSRF"}
+    current = [
+        row
+        for row in scanned["finding_tier_report"]["ledger"]
+        if row["source_identity"]["code"] in codes
+    ]
+    assert {row["source_identity"]["code"] for row in current} == codes
+    for row in current:
+        assert row["tier"] == "SUPPORTED_DEFECT"
+        reference = row["source_bound_security_precondition"]
+        premise = reference["precondition"]
+        assert premise["schema"] == "factory.security.precondition.v1"
+        assert premise["input_value_flow"]["steps"]
+        action = next(
+            item
+            for item in scanned["agent_actions"]
+            if item["finding_context"] == row["raw_finding"]
+        )
+        evidence = action["security_precondition_evidence"]
+        assert evidence["precondition"] == premise
+        assert evidence["precondition_sha256"] == reference["precondition_sha256"]
+        assert (
+            evidence["finding_identity_sha256"]
+            == row["source_identity"]["identity_sha256"]
+        )
+        assert evidence["authority"] == "NONE"
+        assert action["automatic_execution"] is False
+    legacy = [copy.deepcopy(row["raw_finding"]) for row in current]
+    for finding in legacy:
+        finding["facts"].pop("security_precondition")
+    replay = _effect_tier_report(
+        scanned, legacy, captured, coverage=True, partition="VALIDATED"
+    )
+    assert replay["tier_counts"]["SUPPORTED_DEFECT"] == 2
+    assert [row["raw_finding"] for row in replay["ledger"]] == legacy
+    assert all(
+        row["source_bound_security_precondition"]["precondition"]["input_value_flow"][
+            "steps"
+        ]
+        for row in replay["ledger"]
+    )
+
+
+def test_failed_complete_source_model_does_not_fall_back_to_one_file_proof(tmp_path):
+    source = "from flask import request\ndef run():\n    eval(request.args['code'])\n"
+    scanned, captured = _effect_tier_fixture(tmp_path, source)
+    raw = [
+        copy.deepcopy(row["raw_finding"])
+        for row in scanned["finding_tier_report"]["ledger"]
+    ]
+    assert len(raw) == 1
+    raw[0]["facts"].pop("security_precondition")
+    captured["broken.py"] = b"def broken(:\n"
+    replay = _effect_tier_report(
+        scanned, raw, captured, coverage=True, partition="VALIDATED"
+    )
+    assert replay["ledger"][0]["tier"] == "NEEDS_CONTEXT"
+    assert replay["ledger"][0]["raw_finding"] == raw[0]
+    assert "source_bound_security_precondition" not in replay["ledger"][0]
+    assert replay["defect_gate"]["state"] == "BLOCKED"
+    assert replay["defect_gate"]["reason"] == "native_source_model_unavailable"
+    assert replay["validation"]["native_source_model"] == "UNAVAILABLE"
+
+
+def test_effect_witness_hydrates_legacy_rows_and_reaches_security_handoff(tmp_path):
+    from factoryline import primitive_observation_binding as binding
+
+    source = (
+        "import logging\n"
+        "import os\n"
+        "import requests\n"
+        "from flask import request\n"
+        "def save_upload():\n"
+        "    uploaded = request.files['file']\n"
+        "    uploaded.save(os.path.join('/uploads', uploaded.filename))\n"
+        "def fetch_remote():\n"
+        "    requests.get('https://example.test', verify=False)\n"
+        "def write_log():\n"
+        "    logging.error(request.args['message'])\n"
+    )
+    scanned, captured = _effect_tier_fixture(tmp_path, source)
+    codes = {
+        "SECURITY_PATH_TRAVERSAL",
+        "SECURITY_TLS_VERIFY_DISABLED",
+        "SECURITY_LOG_INJECTION",
+    }
+    current = [row for row in scanned["findings"] if row.get("code") in codes]
+    assert {row["code"] for row in current} == codes
+    assert len(current) == 3
+    assert all(
+        row["facts"]["security_precondition"].get("effect_witness") for row in current
+    )
+    for row in scanned["finding_tier_report"]["ledger"]:
+        witness_ref = row.get("source_bound_security_precondition")
+        if not witness_ref:
+            continue
+        packet = next(
+            action
+            for action in scanned["agent_actions"]
+            if action.get("finding_context") == row["raw_finding"]
+        )
+        packet_evidence = packet["security_precondition_evidence"]
+        assert packet["finding_context"] == row["raw_finding"]
+        assert packet_evidence["candidate_sha256"] == scanned["candidate_sha256"]
+        assert packet_evidence["source_path"] == witness_ref["source_path"]
+        assert packet_evidence["source_sha256"] == witness_ref["source_sha256"]
+        assert (
+            packet_evidence["finding_identity_sha256"]
+            == witness_ref["finding_identity_sha256"]
+        )
+        assert (
+            packet_evidence["precondition_sha256"] == witness_ref["precondition_sha256"]
+        )
+        assert packet_evidence["precondition"] == witness_ref["precondition"]
+        assert packet_evidence["trust"] == "UNTRUSTED_DATA"
+        assert packet_evidence["authority"] == "NONE"
+
+    legacy = copy.deepcopy(current)
+    for row in legacy:
+        row["facts"].pop("security_precondition", None)
+    report = _effect_tier_report(
+        scanned, legacy, captured, coverage=True, partition="VALIDATED"
+    )
+    assert report["raw_diagnostics"]["count"] == len(legacy)
+    assert report["defect_gate"]["supported_defect_count"] == len(legacy)
+    assert report["defect_gate"]["passed"] is False
+    rows = {row["raw_finding"]["code"]: row for row in report["ledger"]}
+    for original in legacy:
+        row = rows[original["code"]]
+        witness_ref = row["source_bound_security_precondition"]
+        assert row["tier"] == "SUPPORTED_DEFECT"
+        assert row["raw_finding"] == original
+        assert witness_ref["source_path"] == original["path"]
+        assert (
+            witness_ref["source_sha256"]
+            == hashlib.sha256(captured[original["path"]]).hexdigest()
+        )
+        assert witness_ref["precondition_sha256"] == binding._tier_sha256(
+            witness_ref["precondition"]
+        )
+        assert witness_ref["precondition"]["schema"] == (
+            "factory.security.precondition.v1"
+        )
+        expected_identity = binding._tier_sha256(
+            {
+                "path": original["path"],
+                "source_sha256": witness_ref["source_sha256"],
+                "code": original["code"],
+                "line": original["line"],
+                "column": original.get("column"),
+                "original_severity": original.get("severity"),
+                "raw_finding": original,
+            }
+        )
+        assert row["source_identity"]["identity_sha256"] == expected_identity
+
+    handed_off = binding._security_tier_rows(report)
+    assert len(handed_off) == len(legacy)
+    assert all(row.get("source_bound_security_precondition") for row in handed_off)
+
+    legacy_with_old_precondition = copy.deepcopy(current)
+    for row in legacy_with_old_precondition:
+        premise = row["facts"]["security_precondition"]
+        premise.pop("effect_witness", None)
+        if row["code"] == "SECURITY_LOG_INJECTION":
+            premise["source_role"] = "untrusted_input"
+            premise["consumer_role"] = "log_message"
+            premise.pop("input_value_flow", None)
+        elif row["code"] == "SECURITY_PATH_TRAVERSAL":
+            premise["source_role"] = "untrusted_request"
+            premise["consumer_role"] = "flask.FileStorage.save"
+            premise.pop("input_value_flow", None)
+    hydrated = _effect_tier_report(
+        scanned,
+        legacy_with_old_precondition,
+        captured,
+        coverage=True,
+        partition="VALIDATED",
+    )
+    assert all(row["tier"] == "SUPPORTED_DEFECT" for row in hydrated["ledger"])
+    assert all(
+        row.get("source_bound_security_precondition") for row in hydrated["ledger"]
+    )
+
+    from factoryline import audit_action_refs, review_audits as audit
+
+    hydrated_core = copy.deepcopy(dict(scanned))
+    hydrated_core["findings"] = legacy_with_old_precondition
+    hydrated_core["finding_tier_report"] = hydrated
+    hydrated_core["defect_policy_decision"] = {"state": "READY"}
+    sealed_hydrated = audit_action_refs._finish_security_scan_seal(
+        audit, hydrated_core, captured
+    )
+    for ledger_row in hydrated["ledger"]:
+        expected_witness = ledger_row["source_bound_security_precondition"]
+        action = next(
+            item
+            for item in sealed_hydrated["agent_actions"]
+            if item["finding_context"] == ledger_row["raw_finding"]
+        )
+        packet_evidence = action["security_precondition_evidence"]
+        assert action["finding_context"] == ledger_row["raw_finding"]
+        assert (
+            packet_evidence["candidate_sha256"] == sealed_hydrated["candidate_sha256"]
+        )
+        assert packet_evidence["source_path"] == expected_witness["source_path"]
+        assert packet_evidence["source_sha256"] == expected_witness["source_sha256"]
+        assert (
+            packet_evidence["finding_identity_sha256"]
+            == expected_witness["finding_identity_sha256"]
+        )
+        assert (
+            packet_evidence["precondition_sha256"]
+            == expected_witness["precondition_sha256"]
+        )
+        assert packet_evidence["precondition"] == expected_witness["precondition"]
+
+
+def test_effect_witness_rejects_forged_stale_and_unscoped_claims(tmp_path):
+    source = (
+        "import logging\n"
+        "from flask import request\n"
+        "def write_log():\n"
+        "    logging.error(request.args['message'])\n"
+    )
+    scanned, captured = _effect_tier_fixture(tmp_path, source)
+    raw = next(
+        row
+        for row in scanned["findings"]
+        if row.get("code") == "SECURITY_LOG_INJECTION"
+    )
+
+    forged = copy.deepcopy(raw)
+    forged["facts"]["security_precondition"]["effect_witness"]["effect_facts"][
+        "neutralization"
+    ] = "escaped"
+    forged_report = _effect_tier_report(
+        scanned, [forged], captured, coverage=True, partition="VALIDATED"
+    )
+    forged_row = forged_report["ledger"][0]
+    assert forged_row["tier"] == "NEEDS_CONTEXT"
+    assert "source_bound_security_precondition" not in forged_row
+    assert forged_row["raw_finding"] == forged
+
+    stale = copy.deepcopy(raw)
+    stale["facts"].pop("security_precondition", None)
+    changed = dict(captured)
+    changed["app.py"] = changed["app.py"].replace(
+        b"request.args['message']", b"'fixed message'"
+    )
+    stale_report = _effect_tier_report(
+        scanned, [stale], changed, coverage=True, partition="VALIDATED"
+    )
+    stale_row = stale_report["ledger"][0]
+    assert stale_row["tier"] == "NEEDS_CONTEXT"
+    assert "source_bound_security_precondition" not in stale_row
+
+    changed_fact = copy.deepcopy(raw)
+    changed_fact["facts"]["call"] = "logging.warning"
+    changed_fact_report = _effect_tier_report(
+        scanned, [changed_fact], captured, coverage=True, partition="VALIDATED"
+    )
+    assert changed_fact_report["ledger"][0]["tier"] == "NEEDS_CONTEXT"
+
+
+def test_effect_witness_keeps_partial_scope_blocked_and_unknown_page_name_unresolved(
+    tmp_path,
+):
+    source = (
+        "import logging\n"
+        "from flask import request\n"
+        "def write_log():\n"
+        "    logging.error(request.args['message'])\n"
+    )
+    (tmp_path / "unrelated.py").write_text("VALUE = 1\n", encoding="utf-8")
+    scanned, captured = _effect_tier_fixture(tmp_path, source)
+    raw = next(
+        row
+        for row in scanned["findings"]
+        if row.get("code") == "SECURITY_LOG_INJECTION"
+    )
+    legacy = copy.deepcopy(raw)
+    legacy["facts"].pop("security_precondition", None)
+    partial = dict(captured)
+    partial.pop("unrelated.py", None)
+    partial_report = _effect_tier_report(
+        scanned, [legacy], partial, coverage=False, partition="UNKNOWN"
+    )
+    assert partial_report["ledger"][0]["tier"] == "SUPPORTED_DEFECT"
+    assert partial_report["defect_gate"]["state"] == "BLOCKED"
+    assert partial_report["defect_gate"]["passed"] is False
+    assert partial_report["defect_gate"]["clean"] is False
+
+    page_source = (
+        "import logging\ndef write_page_log(page):\n    logging.error(page.name)\n"
+    )
+    page_scanned, page_captured = _effect_tier_fixture(
+        tmp_path / "page-name", page_source
+    )
+    assert not any(
+        row.get("code") == "SECURITY_LOG_INJECTION" for row in page_scanned["findings"]
+    )
+    page_legacy = {
+        "code": "SECURITY_LOG_INJECTION",
+        "path": "app.py",
+        "line": 3,
+        "column": 4,
+        "severity": "HIGH",
+        "facts": {"call": "logging.error", "source": "page.name"},
+    }
+    page_report = _effect_tier_report(
+        page_scanned,
+        [page_legacy],
+        page_captured,
+        coverage=True,
+        partition="VALIDATED",
+    )
+    assert page_report["ledger"][0]["tier"] == "NEEDS_CONTEXT"
+    assert "source_bound_security_precondition" not in page_report["ledger"][0]
+
+
+def test_effect_witness_invalidates_changed_registry_and_log_helper(
+    tmp_path, monkeypatch
+):
+    from types import MappingProxyType
+
+    from factoryline import semantic_credential_sensor as sensors
+
+    source = (
+        "import logging\n"
+        "from flask import request\n"
+        "def write_log():\n"
+        "    logging.error(request.args['message'])\n"
+    )
+    scanned, captured = _effect_tier_fixture(tmp_path, source)
+    raw = next(
+        row
+        for row in scanned["findings"]
+        if row.get("code") == "SECURITY_LOG_INJECTION"
+    )
+    legacy = copy.deepcopy(raw)
+    legacy["facts"].pop("security_precondition", None)
+
+    original_contracts = sensors.SECURITY_EFFECT_CONTRACTS
+    changed_contracts = dict(original_contracts)
+    changed_log_contract = dict(original_contracts["SECURITY_LOG_INJECTION"])
+    changed_log_contract["consumer_role"] = "changed_consumer"
+    changed_contracts["SECURITY_LOG_INJECTION"] = MappingProxyType(changed_log_contract)
+    monkeypatch.setattr(
+        sensors, "SECURITY_EFFECT_CONTRACTS", MappingProxyType(changed_contracts)
+    )
+    registry_report = _effect_tier_report(
+        scanned, [legacy], captured, coverage=True, partition="VALIDATED"
+    )
+    assert registry_report["ledger"][0]["tier"] == "NEEDS_CONTEXT"
+    assert "source_bound_security_precondition" not in registry_report["ledger"][0]
+
+    monkeypatch.setattr(sensors, "SECURITY_EFFECT_CONTRACTS", original_contracts)
+    monkeypatch.setattr(
+        sensors, "log_security_precondition", lambda *args, **kwargs: {}
+    )
+    helper_report = _effect_tier_report(
+        scanned, [legacy], captured, coverage=True, partition="VALIDATED"
+    )
+    assert helper_report["ledger"][0]["tier"] == "NEEDS_CONTEXT"
+    assert "source_bound_security_precondition" not in helper_report["ledger"][0]

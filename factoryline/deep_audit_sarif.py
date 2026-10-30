@@ -220,6 +220,11 @@ def _sarif_result_finding(result, rules, lane, sources):
     locations = [
         _location(item, sources) for item in _list(result.get("locations"), 1, 10)
     ]
+    tags = rules.get(result["ruleId"], {}).get("properties", {}).get("tags", [])
+    finding["locations"] = locations
+    finding["review_domain"] = (
+        "security" if isinstance(tags, list) and "security" in tags else "unclassified"
+    )
     finding["trace_sha256"] = digest({"locations": locations, "flows": flows})
     finding["trace_depth"] = max((len(flow) for flow in flows), default=0)
     native = (
@@ -229,6 +234,19 @@ def _sarif_result_finding(result, rules, lane, sources):
     )
     finding["native_fingerprint_sha256"] = digest(native) if native else None
     finding["native_identity_state"] = "MEASURED" if native else "NOT_MEASURED"
+    finding["legacy_finding_id"] = finding["finding_id"]
+    finding["finding_id"] = digest(
+        {
+            "schema": "factory.deep-execution-finding-identity.v2",
+            "engine": lane["engine"],
+            "rule": finding["rule_id"],
+            "native": native,
+            "locations": [
+                {key: value for key, value in item.items() if key != "source_sha256"}
+                for item in locations
+            ],
+        }
+    )
     return finding
 
 
@@ -3029,7 +3047,13 @@ def _native_sarif_paths(report: dict, sources: dict) -> dict:
                     artifact.update(uri=path)
                     artifact.pop("uriBaseId", None)
                     artifact.pop("index", None)
-                stack.extend(item.values())
+                # Archived analyzer-pack metadata is not repository source evidence.
+                stack.extend(
+                    value
+                    for key, value in item.items()
+                    if item is not run.get("properties")
+                    or key != "factory_native_pack_metadata"
+                )
     return report
 
 

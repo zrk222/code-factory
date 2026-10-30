@@ -999,8 +999,20 @@ def _safe(call: Callable[[], Any], *, error_action: str) -> tuple[Any, str | Non
     except Exception as exc:  # analyzers must not hide a failed lane
         return {
             "state": "INVALID",
-            "message": "Analyzer failed: " + type(exc).__name__,
+            "message": _analyzer_failure_message(exc),
         }, error_action
+
+
+def _analyzer_failure_message(error):
+    """Expose bounded analyzer input errors without serializing arbitrary failures."""
+    from .review_audits import ReviewAuditError
+
+    message = "Analyzer failed: " + type(error).__name__
+    if isinstance(error, ReviewAuditError):
+        detail = " ".join(str(error).split())[:500]
+        if detail:
+            message += ": " + detail
+    return message
 
 
 def _manifest_paths(root: Path) -> list[str]:
@@ -1138,7 +1150,7 @@ def _python_audit_lanes(
         except Exception as exc:
             security = {
                 "state": "INVALID",
-                "message": "Analyzer failed: " + type(exc).__name__,
+                "message": _analyzer_failure_message(exc),
             }
             security_state = "BLOCKED"
         lanes.append(
@@ -1667,7 +1679,7 @@ def _observed_native_lane(recorder, name, operation):
             name,
             state="BLOCKED",
             applicable=True,
-            basis="Analyzer failed: " + type(exc).__name__,
+            basis=_analyzer_failure_message(exc),
             next_action="Repair the failed local analyzer and rerun its affected checks.",
         )
         recorder.span(
@@ -1795,7 +1807,7 @@ def _scan_security_and_deep_audit(
                 "audit_coverage": {"measurement_state": "invalid"},
             },
             None,
-            "Analyzer failed: " + type(exc).__name__,
+            _analyzer_failure_message(exc),
         )
 
 
@@ -1831,7 +1843,7 @@ def _scan_static_security(
     except Exception as exc:
         return {
             "state": "INVALID",
-            "message": "Analyzer failed: " + type(exc).__name__,
+            "message": _analyzer_failure_message(exc),
             "findings": [],
             "audit_coverage": {"measurement_state": "invalid"},
         }
@@ -1843,6 +1855,11 @@ def _repo_scan_state(
     deep: bool,
     inventory: dict[str, Any],
 ) -> tuple[str, str]:
+    if any(
+        finding.get("severity") in {"CRITICAL", "HIGH"}
+        for finding in static_security.get("findings", [])
+    ):
+        return "BLOCKED", "BLOCKED"
     if deep_audit is not None:
         state = deep_audit["state"]
         return state, state
@@ -1908,7 +1925,12 @@ def run_repo_scan(
     oracle_options = _validated_oracle_options(
         oracle_options, int(inventory.get("file_types", {}).get("python", 0))
     )
-    with _measure_phase("source_audit"):
+    from .pytest_collection_audit import advisory_collection_context
+
+    with (
+        _measure_phase("source_audit"),
+        advisory_collection_context(not oracle_options),
+    ):
         static_security, deep_audit, security_error = _scan_security_and_deep_audit(
             workspace, inventory, deep, worker_config, oracle_options, max_files
         )

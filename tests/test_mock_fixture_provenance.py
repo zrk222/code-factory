@@ -269,12 +269,22 @@ def test_unknown_collection_rejects_trusted_core_despite_stable_capture():
     "policy", ["source-role-v1", "source-role-v2", "source-role-v3"]
 )
 @pytest.mark.parametrize("state", ["CLEAN", "FINDINGS", "REVIEW_REQUIRED"])
-def test_unknown_collection_source_role_policy_retains_incomplete(policy, state):
+def test_unknown_collection_source_role_policy_retains_incomplete(
+    tmp_path, policy, state
+):
     from factoryline import primitive_observation_binding as binding
+    from factoryline import review_audits as audit
 
-    core = _unknown_collection_core()
-    core.update(state=state, selected_defect_policy=policy)
-    captured = {"app.py": b"value = 1\n"}
+    raw = b"value = 1\n"
+    (tmp_path / "app.py").write_bytes(raw)
+    core = audit.security_scan(tmp_path, cache_enabled=False, defect_policy=policy)
+    captured = dict(core._captured_sources)
+    assert captured == {"app.py": raw}
+    core["oracle_context"]["pytest_collection"] = _unknown_collection_core()[
+        "oracle_context"
+    ]["pytest_collection"]
+    core["tenant_read_contract"]["configuration"] = {"state": "loaded"}
+    core["state"] = state
     assert binding._pickle_role_sources(core, captured) == captured
     binding.apply_pickle_source_role_policy(core, captured)
     decision = core["defect_policy_decision"]
@@ -6148,6 +6158,11 @@ def test_object_signing_constructor_guard_public_cli_receipt(tmp_path, capsys):
         "header_effect",
         "method_shadow",
         "assertion_shadow",
+        "static_binding",
+        "teardown_escape",
+        "closed_teardown",
+        "duplicate_teardown",
+        "duplicate_setup",
     ],
 )
 def test_source_bound_test_scope_native(tmp_path, variant):
@@ -6172,8 +6187,20 @@ def test_source_bound_test_scope_native(tmp_path, variant):
         "raw_export": "        send(SIGNING_SECRET)\n",
         "token_export": "        send(token)\n",
         "owner_export": "        send(self)\n",
+        "teardown_escape": "    def tearDown(self):\n        send(self.signers)\n",
+        "closed_teardown": "    def tearDown(self):\n        self.signers = ()\n",
+        "duplicate_teardown": "    def tearDown(self):\n        pass\n    def tearDown(self):\n        send(self.signers)\n",
+        "duplicate_setup": "    def setUp(self):\n        send(SIGNING_SECRET)\n",
     }.get(variant, "")
     _write(tmp_path, "test_signing.py", source)
+    if variant == "static_binding":
+        target = tmp_path / "signer.py"
+        target.write_text(
+            target.read_text().replace(
+                "    def sign(self, payload):",
+                "    @staticmethod\n    def sign(self, payload):",
+            )
+        )
     if variant == "runtime_import":
         _write(
             tmp_path,
@@ -6202,7 +6229,7 @@ def test_source_bound_test_scope_native(tmp_path, variant):
         for f in report.get("primitive_observations", [])
         if f["code"] == "SECURITY_HARDCODED_SECRET"
     ]
-    if variant == "closed":
+    if variant in {"closed", "closed_teardown"}:
         assert not active, report
         assert any(
             f["facts"].get("fixture_evidence", {}).get("profile")
@@ -6245,6 +6272,211 @@ def test_source_bound_test_scope_epoch_retains_one_generation_and_invalidates_re
     assert set(vars(epoch)) == {"current"}
     monkeypatch.setattr(scope, "SCOPE_API_CONTRACT_EPOCH", original)
     assert epoch.__code__ is not first and epoch.__code__ is not prior
+
+
+@pytest.mark.parametrize(
+    "case,expected_active",
+    [
+        ("top_level", False),
+        ("class_method", False),
+        ("unknown_sink", True),
+        ("helper_name", True),
+        ("disabled", True),
+    ],
+)
+def test_source_bound_pytest_local_scope_native(
+    tmp_path, capsys, case, expected_active
+):
+    import json
+
+    from factoryline.cli import main
+
+    _write(
+        tmp_path,
+        "pytest.ini",
+        "[pytest]\npython_files = test_*.py\npython_functions = test\npython_classes = Test\n",
+    )
+    indent = "        " if case == "class_method" else "    "
+    _write(
+        tmp_path,
+        "provider.py",
+        "class Holder:\n    def __init__(self, key):\n        self.key = key\n",
+    )
+    body = (
+        f"{indent}SIGNING_SECRET = 'fixture-owned-key-4791'\n"
+        f"{indent}holder = Holder(SIGNING_SECRET)\n"
+        f"{indent}assert holder.key == SIGNING_SECRET\n"
+    )
+    function = (
+        "class TestInputs:\n    def test_input(self):\n"
+        if case == "class_method"
+        else "def test_input():\n"
+        if case in {"top_level", "class_method", "unknown_sink", "disabled"}
+        else "def helper_name():\n"
+    )
+    test = "from provider import Holder\n\n" + function + body
+    if case == "unknown_sink":
+        test = test.replace(
+            f"{indent}assert holder.key == SIGNING_SECRET",
+            f"{indent}send(SIGNING_SECRET)",
+        )
+    if case == "disabled":
+        test += "test_input.__test__ = False\n"
+    _write(tmp_path, "tests/test_scope.py", test)
+    _write(
+        tmp_path,
+        "live.py",
+        "PASSWORD = 'real-operational-password'\ninstall_user(password=PASSWORD)\n",
+    )
+    code = main(
+        [
+            "audit",
+            "security",
+            "--root",
+            str(tmp_path),
+            "--security-only",
+            "--defect-policy",
+            "source-role-v3",
+            "--json",
+        ]
+    )
+    output = capsys.readouterr()
+    assert not output.err
+    report = json.loads(output.out)
+    active = [
+        row for row in report["findings"] if row["code"] == "SECURITY_HARDCODED_SECRET"
+    ]
+    primitives = [
+        row
+        for row in report.get("primitive_observations", [])
+        if row["code"] == "SECURITY_HARDCODED_SECRET"
+    ]
+    if expected_active:
+        assert code == 0
+        decision = report["defect_policy_decision"]
+        assert decision["state"] == "NO_SUPPORTED_DEFECTS_REVIEW_REQUIRED"
+        assert decision["passed"] is False
+        assert decision["clean"] is False
+        assert decision["needs_context_count"] == len(active)
+        assert decision["supported_defect_count"] == 0
+        assert any(row["path"] == "tests/test_scope.py" for row in active)
+        assert all(row["severity"] == "CRITICAL" for row in active)
+        assert not any(
+            row["facts"].get("fixture_evidence", {}).get("profile")
+            == "SOURCE_BOUND_TEST_SCOPE_ONLY"
+            for row in primitives
+        )
+    else:
+        assert code in {1, 2}
+        assert [row["path"] for row in active] == ["live.py"], report
+        assert any(
+            row["facts"].get("fixture_evidence", {}).get("profile")
+            == "SOURCE_BOUND_TEST_SCOPE_ONLY"
+            for row in primitives
+        ), report
+
+
+def test_source_scope_local_origin_survives_literal_resolution(tmp_path):
+    import ast
+    import hashlib
+
+    from factoryline.credential_role_method_use_getter_audit import _SourceTestScope
+    from factoryline.mock_fixture_provenance import application_test_index
+
+    path = tmp_path / "test_origin.py"
+    raw = b"def test_origin():\n    SECRET = 'local-key'\n    other = 'local-key'\n"
+    path.write_bytes(raw)
+    tree = ast.parse(raw)
+    digest = hashlib.sha256(raw).hexdigest()
+    tree._oracle_source_sha256 = digest
+    index = application_test_index(
+        tmp_path,
+        {path: tree},
+        {path: raw},
+        {path: digest},
+        {"pytest.ini": b"[pytest]\n"},
+    )
+    assignment, other = tree.body[0].body
+    proof = _SourceTestScope(index, path, assignment, "SECRET")
+    origin = proof.resolve_literal(path, assignment.value)
+    same_text = proof.resolve_literal(path, other.value)
+    assert origin.roots == frozenset({proof.origin})
+    assert origin._exact_scalar == ("local-key",)
+    assert not same_text.roots
+    assert proof.resolve_literal(path, ast.Constant(value="local-key")) is None
+
+
+@pytest.mark.parametrize(
+    "hook", ["setup_method", "teardown_method", "setup_class", "teardown_class"]
+)
+def test_pytest_scope_rejects_unexecuted_lifecycle_hooks(tmp_path, hook):
+    import ast
+    import hashlib
+
+    from factoryline.credential_role_method_use_getter_audit import _SourceTestScope
+    from factoryline.mock_fixture_provenance import application_test_index
+
+    path = tmp_path / "test_scope.py"
+    raw = (
+        "class TestScope:\n"
+        f"    def {hook}(self):\n        install_provider()\n"
+        "    def test_local(self):\n        SECRET = 'local-key'\n"
+    ).encode()
+    path.write_bytes(raw)
+    tree = ast.parse(raw)
+    digest = hashlib.sha256(raw).hexdigest()
+    tree._oracle_source_sha256 = digest
+    index = application_test_index(
+        tmp_path,
+        {path: tree},
+        {path: raw},
+        {path: digest},
+        {"pytest.ini": b"[pytest]\n"},
+    )
+    owner = tree.body[0]
+    function = owner.body[1]
+    proof = _SourceTestScope(index, path, function.body[0], "SECRET")
+    assert not proof.pytest_owner(path, owner, function, {"python_classes": ["Test"]})
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["none", "annotation_call", "generic_shadow", "decorator_shadow", "escape"],
+)
+def test_pytest_captured_typed_constructor_flow(tmp_path, mutation):
+    _write(tmp_path, "pytest.ini", "[pytest]\n")
+    provider = (
+        "class Holder:\n"
+        "    def __init__(self, key: str):\n        self.key = key\n"
+        "    @staticmethod\n"
+        "    def unused() -> tuple[str, ...]:\n        return ()\n"
+    )
+    if mutation == "annotation_call":
+        provider = provider.replace("tuple[str, ...]", "mutate()")
+    elif mutation == "generic_shadow":
+        provider = "tuple = custom_type\n" + provider
+    elif mutation == "decorator_shadow":
+        provider = "staticmethod = custom_decorator\n" + provider
+    _write(tmp_path, "provider.py", provider)
+    source = (
+        "from provider import Holder\n"
+        "def test_value():\n"
+        "    SECRET = 'test-owned-secret-4791'\n"
+        "    holder = Holder(SECRET)\n"
+        "    assert holder.key == SECRET\n"
+    )
+    if mutation == "escape":
+        source += "    send(holder.key)\n"
+    _write(tmp_path, "test_value.py", source)
+    report = security_scan(tmp_path, cache_enabled=False)
+    active = [f for f in report["findings"] if f["code"] == "SECURITY_HARDCODED_SECRET"]
+    observations = [
+        f
+        for f in report.get("primitive_observations", [])
+        if f["code"] == "SECURITY_HARDCODED_SECRET"
+    ]
+    assert bool(active) is (mutation != "none")
+    assert bool(observations) is (mutation == "none")
 
 
 def test_source_bound_test_scope_cli_receipt_and_recompute(tmp_path, capsys):

@@ -1,0 +1,35 @@
+{
+  "schema": "factory.native-replay-cache-validation.v1",
+  "source_sha256": "1f9245e1dfb5d7b33e229cdaaeb165a04ced1b6f9b1eeb9c7bdad505c66f01bc",
+  "test_sha256": "f423ad287a4c67c33df65f3535781272f430ab62e24893b454e5a147d21f6930",
+  "change": "Each independent native replay owns one fresh existing content/helper-bound provider cache, shared across its files.",
+  "targeted_tests": {
+    "passed": 2,
+    "failures": 0,
+    "junit_sha256": "113d6f66d904679a4a7d3855dcdec126a40c394fe6bbbceeb7f5877d935811d1",
+    "formatting_ast_equivalence": true
+  },
+  "failed_root_measurement": {
+    "repository": "zacharypodbela/django-rest-framework-mcp",
+    "python_files": 53,
+    "previous_attempt_seconds": 600.046,
+    "previous_attempt_state": "TIMEOUT_WITHOUT_COMPLETED_NATIVE_REPORT",
+    "native_seconds": 339.29699999999866,
+    "end_to_end_seconds": 428.9059999999954,
+    "pipeline_integrity": "PASS",
+    "result_sha256": "68567fb4613a69904284af4b70d316582dbcc14063de926375bb8e43dbc6063a",
+    "limit": "Previous attempt was censored; concurrent system load was not controlled. No exact causal speedup claim."
+  },
+  "review": {
+    "state": "PASS",
+    "sha256": "e4e5c5389a6683b29d222e2dbb396c3a9f3c381a8ef13c7a9df27ea0a1532bc0"
+  },
+  "architecture": {
+    "decision": "HEALTHY",
+    "core_modules": 133,
+    "new_production_helpers_modules_dependencies": 0
+  },
+  "accuracy_claim": false,
+  "cohort_restart": false,
+  "remaining": "Shared native analysis is still too slow; all185 previously verified roots remain preserved."
+}

@@ -750,10 +750,14 @@ def _security_scan_pytest_collection(
         return "PYTEST_COLLECTION_CHANGED_DURING_SCAN"
     try:
         from .review_audits import ReviewAuditError, _pytest_collection_config
+        from .pytest_collection_audit import advisory_collection_context
 
-        current_patterns, current_identity = _pytest_collection_config(
-            root, allow_unknown=identity.get("mode") == "security_only"
-        )
+        with advisory_collection_context(
+            identity.get("mode") == "static_without_collection"
+        ):
+            current_patterns, current_identity = _pytest_collection_config(
+                root, allow_unknown=identity.get("mode") == "security_only"
+            )
     except Exception as exc:
         from .review_audits import ReviewAuditError
 

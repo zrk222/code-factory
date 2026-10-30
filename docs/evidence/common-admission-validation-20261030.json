@@ -1,0 +1,73 @@
+{
+  "schema": "factory.common-admission.validation.v1",
+  "scope": "Local source-bound nonlegacy security admission and lossless repair handoffs; no release or accuracy claim",
+  "changes": [
+    "Shared independent native admission across explicit trusted-core and source-role policies",
+    "Exact captured Python and configuration binding",
+    "Prior incomplete state and unknown collection retained",
+    "Order-independent finding identity and source-bound packet eligibility",
+    "Verifier-owned native-row reuse and removal of repeated capture-map conversion"
+  ],
+  "default_policy": "legacy-v1 unchanged; explicit nonlegacy selection required",
+  "tests": {
+    "command": [
+      "C:\\Users\\rkatz\\AppData\\Local\\Programs\\Python\\Python311\\python.exe",
+      "-B",
+      "-m",
+      "pytest",
+      "tests/test_runtime_audit_observations.py",
+      "tests/test_runtime_audit_integrity.py",
+      "tests/test_cli_bootstrap.py",
+      "-k",
+      "common_admission or trusted_core_policy316 or source_role or finding_identity_is_stable_across_quality_prefix_and_order",
+      "-q",
+      "--tb=short",
+      "--show-capture=no",
+      "-p",
+      "no:cacheprovider",
+      "--basetemp=.factory/precision426-common-admission/maps-final-tmp",
+      "--junitxml=.factory/precision426-common-admission/maps-final.junit.xml"
+    ],
+    "profile": "Windows CPython3.11; PYTEST_DISABLE_PLUGIN_AUTOLOAD=1; PYTHONDONTWRITEBYTECODE=1",
+    "passed": 80,
+    "failed": 0,
+    "junit_sha256": "3ae4b05b1a97a4ff2770f247e7756eca136b8c856afd22a7d7b630c790b9a609",
+    "log_sha256": "610b3e2e606ae255a8a815aeb4b5e7552a9dacaaae32c10508104ed5d527a96a"
+  },
+  "candidate_files": {
+    "factoryline/primitive_observation_binding.py": "6ab5070b8a9c423041d9ab7f1c6120ba3e2777361c27742856d1cb2b162bc345",
+    "factoryline/audit_action_refs.py": "da3cc678f965ef3f98a30d7e3b0d84103c477eabacabf9fd0dca6d8cd69d985b",
+    "factoryline/cli_audit.py": "a482c73a568349cb9820781440130508f15d49c62ec973304c41fd962adaae8b",
+    "tests/test_runtime_audit_observations.py": "f1d1391db5b5e8e4853baf11139f37a47689e9a29f228ef4a8ca92fce38b8813",
+    "tests/test_cli_bootstrap.py": "c4af498642fcd613898fe1f6749b38ceb540f8d67dc8ca1902b0c9dd756a8bd8"
+  },
+  "architecture": {
+    "decision": "HEALTHY",
+    "python_files": 437,
+    "core_modules": 133,
+    "caps_raised": false
+  },
+  "review": {
+    "method": "Independent Luna xhigh using ECC security-review",
+    "blocking_findings": [],
+    "resolved": [
+      "ECC-01 prior-INCOMPLETE policy inconsistency"
+    ],
+    "human_review": false
+  },
+  "claims": {
+    "precision_percentage": null,
+    "fresh_held_out_evaluation": false,
+    "release_ready": false,
+    "goal_complete": false
+  },
+  "captured_source_revalidation": {
+    "repositories": 33,
+    "decisions_ledger_actions": "unchanged after final repairs",
+    "original_cli_e2e_pass": 32,
+    "original_cli_e2e_incomplete": 1,
+    "incomplete_coverage_remains_visible": true,
+    "current_reseal_sha256": "27015e5a71ae1a418f68a2beed9ca067d3e1a2d5f7aed3d6033773466a4fa2c1",
+    "source_scope": "Exposed captured repositories; not fresh held-out measurement"
+  }
+}

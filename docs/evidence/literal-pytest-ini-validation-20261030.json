@@ -1,0 +1,41 @@
+{
+  "schema": "factory.pytest-ini.validation.v1",
+  "scope": "Shared literal INI configuration parsing and bounded security scan continuation",
+  "changes": [
+    "Preserve percent format strings without interpolation.",
+    "Preserve option case so unknown uppercase options cannot override collection.",
+    "Ignore DEFAULT-section inheritance when extracting pytest options."
+  ],
+  "profiles": [
+    "Windows CPython3.11; plugin autoload disabled; public security-only CLI and independent receipt reseal"
+  ],
+  "tests": {
+    "passed": 52,
+    "failed": 0,
+    "log_sha256": "6f2291b3124d0b86eda49557961b2ed1d986bfba3d535d6107871aff6a2849b5",
+    "junit_sha256": "6bae98bc02b807b108267c3bddc7f2b251cce9c9bff101c5f18fd1b5f7dddb8d"
+  },
+  "source_hashes": {
+    "factoryline/pytest_collection_audit.py": "b0f9ce4ea37f3691bfffc8523b6d2c72ddeaac85ff54ede7a931ca88dac31861",
+    "tests/test_review_audits.py": "8e9fcfcba83bb882c2f89ac5e2466bd9d7461d075711ea9a87d7219ff4d0525b"
+  },
+  "architecture": {
+    "decision": "HEALTHY",
+    "python_files": 437,
+    "core_modules": 133,
+    "caps_raised": false
+  },
+  "public_cli_repair": {
+    "formerly_failed_root_audited_files": 13,
+    "discovered_files": 13,
+    "pipeline_integrity": "PASS",
+    "original_failure_preserved": true
+  },
+  "claims": {
+    "precision_percentage": null,
+    "release_ready": false,
+    "pristine_original_study": false,
+    "goal_complete": false
+  },
+  "study_boundary": "Any continued measurement must disclose the pre-label operational amendment; original failed attempt and unchanged cohort selection remain recorded."
+}

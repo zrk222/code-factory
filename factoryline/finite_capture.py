@@ -4734,11 +4734,17 @@ def _provider_paths(node, aliases, audit, bindings, seen=frozenset(), depth=0):
 def _provider_call_argument(node, parents):
     child = node
     parent = parents.get(id(child))
+    receiver_only = False
+    reflective = False
     while parent is not None and not isinstance(parent, ast.Call):
+        if isinstance(parent, ast.Attribute) and parent.value is child:
+            receiver_only = True
+            reflective = reflective or parent.attr.startswith("__")
         child = parent
         parent = parents.get(id(parent))
     return bool(
         isinstance(parent, ast.Call)
+        and (not receiver_only or reflective)
         and (
             any(argument is child for argument in parent.args)
             or any(

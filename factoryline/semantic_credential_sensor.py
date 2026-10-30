@@ -11,13 +11,18 @@ from pathlib import Path
 from typing import Any
 import re
 from urllib.parse import urlsplit
-
-_HTTP_CALLS = frozenset(
-    {"get", "post", "put", "patch", "delete", "head", "options", "request"}
+from .credential_endpoint_admission import (
+    HTTP_CLIENT_METHODS as _HTTP_CALLS,
+    SECURITY_EFFECT_CONTRACTS as SECURITY_EFFECT_CONTRACTS,
+    SECURITY_EFFECT_WITNESS_SCHEMA as SECURITY_EFFECT_WITNESS_SCHEMA,
 )
+
 _AUTH_CALLS = frozenset({"requests.auth.HTTPBasicAuth", "httpx.BasicAuth"})
 _AUTH_HEADER = re.compile(r"(?i)^\s*(?:bearer|basic)\s+(.+?)\s*$")
 _AUTH_TEMPLATE = re.compile(r"(?:^\$\{[^}]+\}$|^<[^>]+>$|^your[-_]$|\{[^{}]+\})", re.I)
+
+_SECURITY_EFFECT_WITNESS_SCHEMA_BASELINE = SECURITY_EFFECT_WITNESS_SCHEMA
+_SECURITY_EFFECT_CONTRACTS_BASELINE = SECURITY_EFFECT_CONTRACTS
 
 
 def _security_statement_operand_flow(statement, scope, flow):
@@ -476,9 +481,23 @@ def signing_configuration_inventory(source_bytes, bindings):
 
 
 def _signing_inventory_input_closed(source_bytes, bindings):
+    if not isinstance(source_bytes, dict) or not isinstance(bindings, dict):
+        return False
+    if any(
+        not isinstance(name, str)
+        or not isinstance(raw, bytes)
+        or Path(name).is_absolute()
+        or ".." in Path(name).parts
+        or Path(name).as_posix() != name
+        or len(raw) > 1_000_000
+        for name, raw in source_bytes.items()
+    ) or any(not isinstance(name, str) for name in bindings):
+        return False
     return not (
-        set(source_bytes) != set(bindings)
-        or len(bindings) > 2000
+        not set(bindings).issubset(source_bytes)
+        or {name for name in source_bytes if Path(name).suffix == ".py"}
+        != {name for name in bindings if Path(name).suffix == ".py"}
+        or len(source_bytes) > 2000
         or sum(len(raw) for raw in source_bytes.values() if isinstance(raw, bytes))
         > 32 * 1024 * 1024
     )
@@ -494,10 +513,11 @@ def _signing_inventory_snapshots(source_bytes, bindings, bind_security_call_scop
             or path.is_absolute()
             or ".." in path.parts
             or path.as_posix() != name
-            or path.suffix != ".py"
             or sha256(raw).hexdigest() != digest
         ):
             return None
+        if path.suffix != ".py":
+            continue
         try:
             tree = ast.parse(raw)
         except (SyntaxError, ValueError, UnicodeError, RecursionError):
@@ -543,6 +563,8 @@ def flask_credential_authority_evidence(finding, context):
     if inputs is None:
         return None
     index, path, declaration, session_secret, key = inputs
+    from .credential_endpoint_admission import _flask_credential_authority_for_key
+
     return _flask_credential_authority_for_key(
         finding, context, index, path, declaration, session_secret, key
     )
@@ -567,35 +589,6 @@ def _flask_credential_authority_inputs(finding, context):
     if session_secret is None or not _literal_credential(session_secret.value):
         return None
     return index, path, declaration, session_secret, key
-
-
-def _flask_credential_authority_for_key(
-    finding, context, index, path, declaration, session_secret, key
-):
-    tree = index.snapshots[path]
-    for app in _flask_configured_apps(path, tree, context, {key, "SECRET_KEY"}):
-        authority = _flask_session_authority_witness(path, tree, context, app, key)
-        if authority is None:
-            continue
-        password_key = authority["password_key"]
-        password_declaration = _flask_config_key_declaration(index, path, password_key)
-        if password_declaration is None or not _literal_credential(
-            password_declaration.value
-        ):
-            continue
-        if key not in {"SECRET_KEY", password_key}:
-            continue
-        return _flask_credential_authority_witness(
-            index,
-            path,
-            declaration,
-            session_secret,
-            password_declaration,
-            app,
-            authority,
-            key,
-        )
-    return None
 
 
 def _flask_credential_declaration(finding, tree, key):
@@ -664,31 +657,49 @@ def _flask_imported_key_written(target, context, key):
     )
 
 
-def _flask_configured_apps(target, tree, context, protected_keys):
+def _flask_configured_apps(target, context, protected_keys):
     if not _signing_framework_external(context, "flask"):
         return []
-    if not _flask_authority_provider_clear(target, tree, context):
-        return []
-    receivers = {}
     configured = []
-    aliases = context["aliases"][target]
-    for statement in tree.body:
-        _flask_bind_created_app(statement, receivers, aliases)
-        call = getattr(statement, "value", None)
-        if not isinstance(call, ast.Call):
+    for path, tree in context["index"].snapshots.items():
+        if not context["index"].validate(path) or not _flask_authority_provider_clear(
+            path, tree, context
+        ):
             continue
-        for receiver, creation in receivers.items():
-            if not _flask_config_load(call, receiver, target, context, target):
-                continue
-            if _flask_config_mutated(tree, receiver, protected_keys):
-                continue
-            if _flask_configuration_reloaded(
-                tree, receiver, target, context, protected_keys, target
-            ):
-                continue
-            configured.append(
-                {"receiver": receiver, "creation": creation, "load": call}
-            )
+        aliases = _flask_module_aliases(path, tree, context)
+        for scope in [
+            tree,
+            *[
+                node
+                for node in tree.body
+                if isinstance(node, ast.FunctionDef) and not node.decorator_list
+            ],
+        ]:
+            receivers = {}
+            for statement in scope.body:
+                _flask_bind_created_app(statement, receivers, aliases)
+                call = getattr(statement, "value", None)
+                if not isinstance(call, ast.Call):
+                    continue
+                for receiver, creation in receivers.items():
+                    if (
+                        not _flask_config_load(call, receiver, target, context, path)
+                        or _flask_config_mutated(scope, receiver, protected_keys)
+                        or _flask_configuration_reloaded(
+                            scope, receiver, target, context, protected_keys, path
+                        )
+                    ):
+                        continue
+                    configured.append(
+                        {
+                            "path": path,
+                            "tree": tree,
+                            "scope": scope,
+                            "receiver": receiver,
+                            "creation": creation,
+                            "load": call,
+                        }
+                    )
     return configured
 
 
@@ -700,8 +711,17 @@ def _flask_authority_provider_clear(path, tree, context):
     roots = {
         "flask.Flask",
         "flask.Config.from_object",
+        "flask_login.LoginManager",
+        "flask_login.login_user",
+        "flask_login.login_required",
     }
-    provider_objects = roots | {"flask.request", "flask.session"}
+    provider_objects = roots | {
+        "flask.request",
+        "flask.session",
+        "flask_login.LoginManager",
+        "flask_login.login_user",
+        "flask_login.login_required",
+    }
     names = {
         name
         for name, provider in aliases.items()
@@ -753,6 +773,12 @@ def _flask_star_imports_clear(tree, context):
         provider = _signing_resolve_module(
             context, ast.Constant(value=statement.module)
         )
+        if (
+            provider is None
+            and statement.module == "flask"
+            and _signing_framework_external(context, "flask")
+        ):
+            continue
         if provider is None:
             return False
         exports = _flask_static_module_exports(context, provider, set())
@@ -888,10 +914,95 @@ def _flask_module_exports_dynamic(tree):
     return False
 
 
-def _flask_config_module_matches(context, expression, target, consumer_path):
+def _flask_config_module_matches(context, expression, target, consumer_path, seen=()):
     if isinstance(expression, ast.Name) and expression.id == "__name__":
         return consumer_path == target
-    return _signing_resolve_module(context, expression) == target
+    resolved = _signing_resolve_module(context, expression)
+    if resolved is not None:
+        return resolved == target
+    if not isinstance(expression, ast.Name) or len(seen) >= 8:
+        return False
+    index = context["index"]
+    parents = index.parents.get(consumer_path)
+    from .credential_role_identity_effects import (
+        _enclosing_function,
+        resolve_source_identity_call,
+    )
+
+    function = _enclosing_function(expression, parents) if parents else None
+    marker = (consumer_path, id(function), expression.id)
+    if (
+        function is None
+        or expression.id
+        not in {
+            item.arg
+            for item in (
+                *function.args.posonlyargs,
+                *function.args.args,
+                *function.args.kwonlyargs,
+            )
+        }
+        or marker in seen
+        or _name_writes(function, expression.id)
+    ):
+        return False
+    found = False
+    for caller_path, caller_tree in index.snapshots.items():
+        if not index.validate(caller_path):
+            return False
+        for resolved_call in (
+            resolved
+            for call in ast.walk(caller_tree)
+            if isinstance(call, ast.Call)
+            for resolved in (resolve_source_identity_call(call, caller_path, index),)
+            if resolved is not None
+            and resolved.path == consumer_path
+            and resolved.function is function
+        ):
+            actual = resolved_call.arguments.get(expression.id)
+            if actual is None:
+                return False
+            actual_module = _signing_resolve_module(context, actual)
+            if actual_module is None and (
+                not isinstance(actual, ast.Name)
+                or not _flask_config_module_matches(
+                    context, actual, target, caller_path, (*seen, marker)
+                )
+            ):
+                return False
+            found = found or actual_module == target or actual_module is None
+    return found
+
+
+def _flask_module_aliases(path, tree, context):
+    aliases = dict(context["aliases"].get(path, {}))
+    if _signing_framework_external(context, "flask") and any(
+        isinstance(node, ast.ImportFrom)
+        and node.module == "flask"
+        and not node.level
+        and any(item.name == "*" for item in node.names)
+        for node in tree.body
+    ):
+        for name in (
+            "Flask",
+            "request",
+            "session",
+            "redirect",
+            "current_app",
+            "current_user",
+        ):
+            if name not in aliases and not _name_writes(tree, name):
+                aliases[name] = "flask." + name
+    return aliases
+
+
+def _name_writes(scope, name):
+    return any(
+        isinstance(node, ast.Name)
+        and node.id == name
+        and isinstance(node.ctx, (ast.Store, ast.Del))
+        for node in ast.walk(scope)
+    )
 
 
 def _flask_session_authority_witness(path, tree, context, app, credential_key):
@@ -958,39 +1069,6 @@ def _flask_guard_authority(
     if grant is None or credential_key not in {password_key, "SECRET_KEY"}:
         return None
     return {"password_key": password_key, "comparison": equality, "grant": grant}
-
-
-def _flask_credential_authority_witness(
-    index, path, declaration, session_secret, password_declaration, app, authority, key
-):
-    nodes = [declaration]
-    if session_secret is not declaration:
-        nodes.append(session_secret)
-    nodes.extend(
-        (
-            app["creation"],
-            app["load"],
-            password_declaration,
-            authority["comparison"],
-            authority["grant"],
-            authority["login_wrapper"],
-            authority["protected_route"],
-        )
-    )
-    transfers = [_signing_source_span(index, path, node) for node in nodes]
-    return {
-        "framework": "flask",
-        "credential_key": key,
-        "password_key": authority["password_key"],
-        "transfers": transfers,
-        "proof_scope": "source_bound_flask_session_authority",
-        "runtime_execution": "not_performed",
-        "deployment": "UNASSESSED",
-        "claim": (
-            "Captured source connects a literal configuration credential to a "
-            "same-app login comparison, session grant, and local guarded route."
-        ),
-    }
 
 
 def _flask_password_config_comparison(
@@ -2339,12 +2417,22 @@ def _flask_configuration_reloaded(
     from .review_audits import _name
 
     protected_keys = {"SECRET_KEY"} if protected_keys is None else protected_keys
-    for statement in scope.body:
-        call = getattr(statement, "value", None)
+    for call in ast.walk(scope):
         if not isinstance(call, ast.Call) or not isinstance(call.func, ast.Attribute):
             continue
         if _name(call.func.value) != receiver + ".config":
             continue
+        if call.func.attr not in {
+            "from_object",
+            "update",
+            "from_mapping",
+            "get",
+            "keys",
+            "values",
+            "items",
+            "copy",
+        }:
+            return True
         if call.func.attr == "from_object" and not _flask_config_load(
             call, receiver, target, context, consumer_path
         ):
@@ -2464,12 +2552,22 @@ def _flask_bind_created_app(statement, receivers, aliases):
     for target in statement.targets:
         if isinstance(target, ast.Name):
             receivers.pop(target.id, None)
+            call = statement.value
+            canonical = (
+                security_call_name(call, aliases) if isinstance(call, ast.Call) else ""
+            )
             if (
-                isinstance(statement.value, ast.Call)
-                and security_call_name(statement.value, aliases) == "flask.Flask"
-                and _flask_constructor_arguments(statement.value)
+                not canonical
+                and isinstance(call, ast.Call)
+                and isinstance(call.func, ast.Name)
             ):
-                receivers[target.id] = statement.value
+                canonical = aliases.get(call.func.id, "")
+            if (
+                isinstance(call, ast.Call)
+                and canonical == "flask.Flask"
+                and _flask_constructor_arguments(call)
+            ):
+                receivers[target.id] = call
 
 
 def _flask_constructor_arguments(call):
@@ -3000,9 +3098,11 @@ def _persisted_field_is_text(models, selected, field):
     }
 
 
-def supported_security_precondition(node, source_role, consumer_role):
+def supported_security_precondition(
+    node, source_role, consumer_role, effect_witness=None
+):
     """Describe a native producer's local premise, never runtime exploitability."""
-    return {
+    premise = {
         "schema": "factory.security.precondition.v1",
         "status": "SUPPORTED",
         "source_role": source_role,
@@ -3017,6 +3117,22 @@ def supported_security_precondition(node, source_role, consumer_role):
         "runtime_execution": "not_performed",
         "deployment": "UNASSESSED",
     }
+    if effect_witness is not None:
+        premise["effect_witness"] = {
+            "schema": _SECURITY_EFFECT_WITNESS_SCHEMA_BASELINE,
+            "source_role": source_role,
+            "consumer_role": consumer_role,
+            "effect_kind": effect_witness["effect_kind"],
+            "source_span": effect_witness["source_span"],
+            "sink_span": [
+                node.lineno,
+                node.col_offset,
+                node.end_lineno,
+                node.end_col_offset,
+            ],
+            "effect_facts": effect_witness["effect_facts"],
+        }
+    return premise
 
 
 def http_request_payload(node, aliases, scope, flow_statement, alias_reader):
@@ -3349,41 +3465,87 @@ def _django_http_body_payload(node, scope, resolved, attributes=frozenset({"body
 
 
 def _native_request_data_member(node, aliases):
-    """Framework data attributes are values; the request object remains a capability."""
+    """Separate intact request data projections from provider-object escapes."""
     from .review_integrity import _security_scope_request_aliases
     from .review_audits import _resolved_ast_name
 
-    if (
-        isinstance(node, ast.Subscript)
-        and isinstance(node.ctx, ast.Load)
-        and isinstance(node.slice, ast.Constant)
-        and type(node.slice.value) in {str, int}
-    ):
-        return _native_request_data_member(node.value, aliases)
-    if not (
-        isinstance(node, ast.Attribute)
-        and isinstance(node.ctx, ast.Load)
-        and node.attr
-        in {
-            "remote_addr",
-            "method",
-            "url",
-            "base_url",
-            "host",
-            "path",
-            "endpoint",
-            "files",
-            "headers",
-            "cookies",
-            "values",
-        }
-    ):
-        return False
-    scope = getattr(node, "_security_lexical_scope", None)
-    bindings = _security_scope_request_aliases(
-        scope, aliases, getattr(node, "_security_flow_statement", None)
-    )
-    return _resolved_ast_name(node.value, bindings) == "flask.request"
+    members = {
+        "args",
+        "form",
+        "files",
+        "headers",
+        "cookies",
+        "values",
+        "json",
+        "method",
+        "referrer",
+        "remote_addr",
+        "access_route",
+        "path",
+        "full_path",
+        "script_root",
+        "url",
+        "base_url",
+        "root_url",
+        "url_root",
+        "host_url",
+        "host",
+        "endpoint",
+    }
+    while isinstance(node, (ast.Attribute, ast.Subscript)):
+        if not isinstance(node.ctx, ast.Load) or getattr(node, "attr", "").startswith(
+            "_"
+        ):
+            return False
+        if isinstance(node, ast.Subscript):
+            if not isinstance(node.slice, ast.Constant) or type(
+                node.slice.value
+            ) not in {
+                str,
+                int,
+            }:
+                return False
+        else:
+            if node.attr in members:
+                bindings = _security_scope_request_aliases(
+                    getattr(node, "_security_lexical_scope", None),
+                    aliases,
+                    getattr(node, "_security_flow_statement", None),
+                )
+                if _resolved_ast_name(node.value, bindings) == "flask.request":
+                    if node.attr not in {
+                        "args",
+                        "form",
+                        "files",
+                        "headers",
+                        "cookies",
+                        "values",
+                        "json",
+                    }:
+                        return True
+                    scope = getattr(node, "_security_lexical_scope", None)
+                    if not isinstance(scope, ast.AST):
+                        return False
+                    nodes = list(ast.walk(scope))
+                    references = _request_mapping_aliases(node, nodes)
+                    return not any(
+                        _request_mapping_mutation(
+                            item,
+                            references,
+                            item.slice.value
+                            if isinstance(item, ast.Subscript)
+                            and isinstance(item.slice, ast.Constant)
+                            else None,
+                        )
+                        or (
+                            isinstance(item, (ast.Return, ast.Yield))
+                            and isinstance(item.value, ast.Subscript)
+                            and references(item.value.value)
+                        )
+                        for item in nodes
+                    )
+        node = node.value
+    return False
 
 
 def _native_input_provider_inventory(tree, aliases, nodes):
@@ -3499,8 +3661,6 @@ def log_security_provider_stable(tree, aliases, nodes):
 
 def log_percent_slots(message):
     """Read actual percent-format conversion slots, excluding escaped percent signs."""
-    import re
-
     return [
         code
         for code in re.findall(
@@ -3511,17 +3671,32 @@ def log_percent_slots(message):
     ]
 
 
-def log_security_precondition(module, call):
-    """Return a log-input premise only for a stable provider and a possible sink path."""
-    if getattr(
-        module, "_security_log_provider_stable", False
-    ) and security_precondition_path_possible(call):
-        return {
-            "security_precondition": supported_security_precondition(
-                call, "untrusted_input", "log_message"
-            )
-        }
-    return {}
+def log_security_precondition(module, call, effect_witness=None, input_value_flow=None):
+    """Return a premise only for current typed request-to-plain-log evidence."""
+    if not (
+        isinstance(effect_witness, dict)
+        and isinstance(input_value_flow, dict)
+        and getattr(module, "_security_log_provider_stable", False)
+        and security_precondition_path_possible(call)
+    ):
+        return {}
+    premise = supported_security_precondition(
+        call,
+        effect_witness.get("source_role"),
+        effect_witness.get("consumer_role"),
+        effect_witness,
+    )
+    from .credential_role_paths import valid_security_precondition
+
+    finding = {
+        "code": "SECURITY_LOG_INJECTION",
+        "line": call.lineno,
+        "column": call.col_offset,
+    }
+    if not valid_security_precondition(premise, finding, require_effect_witness=True):
+        return {}
+    premise["input_value_flow"] = input_value_flow
+    return {"security_precondition": premise}
 
 
 def security_precondition_call_shape(node, canonical):
@@ -3954,35 +4129,10 @@ def legacy_tls_verification_risk(call, node, aliases=None):
 
 
 def tls_finding(call, relative, node, aliases=None):
-    """Preserve request TLS findings and add conditional legacy client findings."""
-    from .review_audits import _security_finding
-    from .review_integrity import tls_verification_disabled
-    from .security_configuration import legacy_tls_verification_risk
+    """Classify a captured TLS call while retaining transport-effect evidence."""
+    from .credential_role_paths import tls_security_finding
 
-    if tls_verification_disabled(call, node):
-        return _security_finding(
-            "SECURITY_TLS_VERIFY_DISABLED",
-            relative,
-            node,
-            "TLS certificate verification is disabled for an outbound request.",
-            "HIGH",
-            call=call,
-        )
-    if not legacy_tls_verification_risk(call, node, aliases):
-        return None
-    return _security_finding(
-        "SECURITY_TLS_VERIFY_DISABLED",
-        relative,
-        node,
-        "Legacy client TLS configuration omits or disables certificate verification; runtime availability and hostname behavior are not established.",
-        "MEDIUM",
-        call=call,
-        configuration="legacy_CERT_NONE",
-        role="client",
-        runtime_availability="unknown",
-        hostname_verification="not_established",
-        trust_or_exploitability="unknown",
-    )
+    return tls_security_finding(call, relative, node, aliases)
 
 
 def security_evals() -> dict[str, Any]:
@@ -4139,44 +4289,10 @@ def literal_exec_rejected(node):
 def bind_request_sink_precondition(
     finding, call, aliases, requests, connections, cursors, helpers
 ):
-    """Reuse native source/sink predicates without promoting arbitrary parameters."""
-    from .review_integrity import _security_module_scope
-    from .finite_capture import security_input_value_flow
+    """Bind captured request input and its security-relevant sink precondition."""
+    from .credential_role_paths import bind_request_sink_precondition as bind
 
-    module = _security_module_scope(getattr(call, "_security_lexical_scope", None))
-    if (
-        module is None
-        or not getattr(module, "_security_precondition_providers_stable", False)
-        or not security_precondition_path_possible(call)
-    ):
-        return
-    selected = _security_request_sink_slot(
-        finding, call, aliases, requests, connections, cursors, helpers
-    )
-    if selected is None:
-        return
-    argument, provider_roots = selected
-    if _provider_identity_uncertain(module, aliases, roots=provider_roots):
-        return
-    if hasattr(requests, "supported_view"):
-        requests = requests.supported_view()
-    if requests is None:
-        finding["facts"]["unresolved_control_flow"] = "unproven_control_edge"
-        return
-    trace = security_input_value_flow(argument, requests, aliases)
-    if trace is None or trace["value_kind"] != "text":
-        return
-    premise = supported_security_precondition(
-        call, "untrusted_request", finding["facts"]["call"]
-    )
-    premise["input_slot_span"] = [
-        argument.lineno,
-        argument.col_offset,
-        argument.end_lineno,
-        argument.end_col_offset,
-    ]
-    premise["input_value_flow"] = trace
-    finding["facts"]["security_precondition"] = premise
+    return bind(finding, call, aliases, requests, connections, cursors, helpers)
 
 
 def _security_request_sink_slot(
@@ -5205,10 +5321,6 @@ def _security_flow_shaped(expression, environment, aliases):
 
 def _security_flow_request_leaf(expression, environment, aliases):
     from . import review_integrity as flow
-    from .semantic_credential_sensor import (
-        http_request_payload,
-        _request_payload_source_kind,
-    )
 
     if not http_request_payload(
         expression,
@@ -5802,8 +5914,6 @@ def security_input_value_flow(expression, requests, aliases):
 
 
 def _security_input_flow_evidence(value, *, value_type):
-    import json
-
     if value_type is _SecurityFlowValue:
         if not isinstance(value, value_type) or not value.tainted:
             return None

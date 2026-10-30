@@ -1115,6 +1115,154 @@ def test_daily_scan_accepts_479_python_files_on_first_run(tmp_path, deep):
     assert security["audit_coverage"]["limit"] == 2000
 
 
+@pytest.mark.parametrize("deep", [False, True])
+@pytest.mark.parametrize(
+    "config",
+    [
+        '[tool.pytest.ini_options]\naddopts = "--doctest-modules"\ntestpaths = ["tests"]\n',
+        '[tool.pytest]\nstrict = true\ntestpaths = ["tests"]\naddopts = ["-ra", "--import-mode=importlib"]\n',
+        '[tool.pytest.ini_options]\naddopts = "-p custom_plugin"\n',
+    ],
+)
+def test_normal_scan_collection_uncertainty_keeps_source_analysis(
+    tmp_path, capsys, deep, config
+):
+    from factoryline.review_audits import ReviewAuditError, security_scan
+
+    (tmp_path / "pyproject.toml").write_text(config, encoding="utf-8")
+    (tmp_path / "app.py").write_text(
+        "def apply(program):\n    exec(program)\n", encoding="utf-8"
+    )
+    (tmp_path / "test_case.py").write_text(
+        "def test_dead():\n    assert True\n", encoding="utf-8"
+    )
+    args = ["scan", "--root", str(tmp_path), "--json"]
+    if not deep:
+        args.append("--static-only")
+    assert main(args) == 2
+    report = json.loads(capsys.readouterr().out)
+    security = report["static_security"]
+    assert security["state"] == "INCOMPLETE"
+    assert security["audit_coverage"]["files_audited"] == 2
+    assert security["audit_coverage"]["complete"] is True
+    collection = security["oracle_context"]["static_pytest_collection"]
+    assert collection["collection_state"] == "UNKNOWN"
+    assert collection["mode"] == "static_without_collection"
+    assert any(
+        row["code"] == "SECURITY_DYNAMIC_EXECUTION" for row in security["findings"]
+    )
+    assert not any(row["code"].startswith("QUALITY_") for row in security["findings"])
+    with pytest.raises(ReviewAuditError, match="collection"):
+        security_scan(tmp_path, cache_enabled=True)
+
+
+@pytest.mark.parametrize("deep", [False, True])
+def test_normal_scan_collection_error_reports_cause(tmp_path, capsys, deep):
+    (tmp_path / "pyproject.toml").write_text("[unterminated", encoding="utf-8")
+    (tmp_path / "app.py").write_text("value = 1\n", encoding="utf-8")
+    args = ["scan", "--root", str(tmp_path)]
+    if not deep:
+        args.append("--static-only")
+    assert main(args) == 2
+    error = capsys.readouterr().err
+    assert "pyproject.toml" in error
+    assert "invalid configuration" in error
+
+
+def test_normal_scan_collection_gap_is_visible_in_human_output(tmp_path, capsys):
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.pytest]\naddopts = ["--import-mode=importlib"]\n'
+    )
+    (tmp_path / "app.py").write_text("value = 1\n")
+    main(["scan", "--static-only", "--root", str(tmp_path)])
+    output = capsys.readouterr().out
+    assert "Python audited 1/1" in output
+    assert "collection: UNKNOWN" in output
+    assert "pyproject.toml" in output
+
+
+def test_normal_scan_collection_receipt_rechecks_unknown_mode_and_source_drift(
+    tmp_path,
+):
+    from factoryline.mission_control_status import (
+        prepare_security_scan_receipt_report,
+        security_scan_pytest_collection_snapshot,
+        security_scan_status,
+        write_security_scan_receipt,
+    )
+    from factoryline.pytest_collection_audit import advisory_collection_context
+
+    config = tmp_path / "pyproject.toml"
+    config.write_text('[tool.pytest]\naddopts = ["--import-mode=importlib"]\n')
+    (tmp_path / "app.py").write_text("value = 1\n")
+    with advisory_collection_context():
+        before = security_scan_pytest_collection_snapshot(tmp_path)
+        report = run_repo_scan(tmp_path, deep=False)["static_security"]
+        prepared = prepare_security_scan_receipt_report(tmp_path, report, before)
+    write_security_scan_receipt(tmp_path, prepared)
+    status = security_scan_status(tmp_path)
+    assert status["source_freshness"] == "CURRENT_SOURCE_HASHES_VERIFIED"
+    assert status["candidate_freshness"] == "PYTEST_COLLECTION_UNKNOWN"
+    assert status["state"] != "CLEAN"
+    config.write_text('[tool.pytest]\naddopts = ["--doctest-modules"]\n')
+    assert (
+        security_scan_status(tmp_path)["source_freshness"]
+        != "CURRENT_SOURCE_HASHES_VERIFIED"
+    )
+
+
+@pytest.mark.parametrize("deep", [False, True])
+def test_normal_scan_collection_oracle_request_retains_strict_admission(tmp_path, deep):
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.pytest]\naddopts = ["--import-mode=importlib"]\n'
+    )
+    (tmp_path / "app.py").write_text("value = 1\n")
+    options = {
+        "oracle_evidence": "evidence.json",
+        "oracle_trust_root": "trust.json",
+        "oracle_trust_sha256": "a" * 64,
+        "oracle_environment_sha256": "b" * 64,
+    }
+    result = run_repo_scan(tmp_path, deep=deep, oracle_options=options)
+    assert result["state"] == "BLOCKED"
+    assert (
+        "Cannot determine pytest test collection from pyproject.toml"
+        in result["static_security"]["message"]
+    )
+
+
+def test_normal_scan_collection_custom_hook_keeps_security_visible(tmp_path):
+    (tmp_path / "conftest.py").write_text(
+        "def pytest_collection_modifyitems(items):\n    items.clear()\n"
+    )
+    (tmp_path / "app.py").write_text("def apply(program):\n    exec(program)\n")
+    report = run_repo_scan(tmp_path, deep=False)
+    security = report["static_security"]
+    identity = security["oracle_context"]["static_pytest_collection"]
+    assert security["files_scanned"] == 2
+    assert identity["collection_state"] == "UNKNOWN"
+    assert identity["collection_hook_sources"][0]["path"] == "conftest.py"
+    assert any(
+        row["code"] == "SECURITY_DYNAMIC_EXECUTION" for row in security["findings"]
+    )
+    assert report["state"] == "BLOCKED"
+
+
+def test_normal_scan_collection_domain_error_detail_is_bounded_and_other_errors_private():
+    from factoryline.adoption import _analyzer_failure_message
+    from factoryline.review_audits import ReviewAuditError
+
+    assert (
+        _analyzer_failure_message(RuntimeError("private payload"))
+        == "Analyzer failed: RuntimeError"
+    )
+    message = _analyzer_failure_message(
+        ReviewAuditError("invalid config\n" + "x" * 800)
+    )
+    assert "invalid config" in message and "\n" not in message
+    assert len(message) < 550
+
+
 @pytest.mark.parametrize(
     ("source", "code", "finding"),
     [

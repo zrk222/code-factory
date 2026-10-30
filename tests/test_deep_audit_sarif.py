@@ -14,6 +14,106 @@ from factoryline.runtime_audit_common import (
 ANALYZER = {"id": "scanner", "driver": "Example", "version": "1"}
 
 
+@pytest.mark.parametrize(
+    "tags,obligation,security",
+    [
+        (["security"], None, True),
+        ([], None, False),
+        ("security", None, False),
+        ([], "security-check", True),
+    ],
+)
+def test_security_handoff_retains_bound_primary_spans(tags, obligation, security):
+    from factoryline.deep_audit import _agent_actions
+    from factoryline.deep_audit_sarif import _sarif_result_finding
+
+    result = {
+        "ruleId": "py/example",
+        "locations": [
+            {
+                "physicalLocation": {
+                    "artifactLocation": {"uri": "app.py"},
+                    "region": {
+                        "startLine": 3,
+                        "endLine": 4,
+                        "startColumn": 5,
+                        "endColumn": 9,
+                    },
+                }
+            }
+        ],
+    }
+    finding = _sarif_result_finding(
+        result,
+        {"py/example": {"properties": {"tags": tags}}},
+        {"id": "native", "engine": "codeql"},
+        {"app.py": "a" * 64},
+    )
+    if obligation:
+        finding["obligation_id"] = obligation
+    action = _agent_actions("b" * 64, [finding])[0]
+    assert (action["agent_role"] == "specialty_ai_security_reviewer") is security
+    packet = action["repair_packet"]
+    assert packet["finding_context"]["locations"] == [
+        {
+            "path": "app.py",
+            "source_sha256": "a" * 64,
+            "start_line": 3,
+            "end_line": 4,
+            "start_column": 5,
+            "end_column": 9,
+        }
+    ]
+    assert packet["context_trust"] == "UNTRUSTED_DATA"
+    assert packet["automatic_execution"] is False
+    assert finding["state"] == "observed"
+    assert finding["confidence"] == "requires_specialty_review"
+
+
+@pytest.mark.parametrize("fingerprints", [False, "line", "column"])
+def test_security_handoff_distinguishes_same_line_source_spans(fingerprints):
+    from factoryline.deep_audit_sarif import _sarif_result_finding
+
+    findings = []
+    for column in (5, 17):
+        result = {
+            "ruleId": "py/path-injection",
+            "locations": [
+                {
+                    "physicalLocation": {
+                        "artifactLocation": {"uri": "app.py"},
+                        "region": {
+                            "startLine": 3,
+                            "startColumn": column,
+                            "endColumn": column + 4,
+                        },
+                    }
+                }
+            ],
+        }
+        if fingerprints:
+            result["partialFingerprints"] = {"primaryLocationLineHash": "same-line"}
+            if fingerprints == "column":
+                result["partialFingerprints"][
+                    "primaryLocationStartColumnFingerprint"
+                ] = str(column)
+        findings.append(
+            _sarif_result_finding(
+                result,
+                {},
+                {"id": "native", "engine": "codeql"},
+                {"app.py": "a" * 64},
+            )
+        )
+    assert findings[0]["finding_id"] != findings[1]["finding_id"]
+    assert findings[0]["legacy_finding_id"] == findings[1]["legacy_finding_id"]
+    updated_source = _sarif_result_finding(
+        result, {}, {"id": "native", "engine": "codeql"}, {"app.py": "b" * 64}
+    )
+    assert updated_source["source_sha256"] != findings[1]["source_sha256"]
+    assert updated_source["finding_id"] == findings[1]["finding_id"]
+
+
 OSV_CHALLENGE_ALIASES = [
     "CVE-2026-0001",
     "GHSA-abcd-1234-efgh",

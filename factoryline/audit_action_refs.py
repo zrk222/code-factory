@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import re
 import json
 from hashlib import sha256
 from typing import Any
@@ -47,12 +48,15 @@ _CODE_RULES = {
 }
 
 
-def audit_remediation_packet(candidate_sha256: str, finding: dict[str, Any]) -> dict:
-    """Create a deterministic host-agent handoff; finding text remains untrusted data."""
+def audit_remediation_packet(
+    candidate_sha256: str,
+    finding: dict[str, Any],
+    source_bound_security_precondition: dict[str, Any] | None = None,
+) -> dict:
+    """Create a deterministic host-agent handoff; evidence remains untrusted data."""
     if (
         not isinstance(candidate_sha256, str)
-        or len(candidate_sha256) != 64
-        or any(character not in "0123456789abcdef" for character in candidate_sha256)
+        or re.fullmatch(r"[0-9a-f]{64}", candidate_sha256) is None
         or not isinstance(finding, dict)
     ):
         raise ValueError("remediation requires a candidate digest and finding object")
@@ -60,14 +64,66 @@ def audit_remediation_packet(candidate_sha256: str, finding: dict[str, Any]) -> 
     if len(raw) > 1_048_576:
         raise ValueError("remediation finding exceeds byte budget")
     finding = json.loads(raw)
-    identity = sha256(
-        _canonical({"candidate": candidate_sha256, "finding": finding})
-    ).hexdigest()
-    return {
+    finding_sha256 = sha256(_canonical(finding)).hexdigest()
+    effect_evidence = None
+    match source_bound_security_precondition:
+        case dict(
+            {
+                "source_path": str() as source_path,
+                "source_sha256": str() as source_sha256,
+                "finding_identity_sha256": supplied_identity,
+                "precondition_sha256": supplied_precondition,
+                "precondition": dict(
+                    {"schema": "factory.security.precondition.v1"}
+                ) as witness,
+            }
+        ) if len(source_bound_security_precondition) == 5:
+            try:
+                identity_sha256 = sha256(
+                    _canonical(
+                        {
+                            "path": source_path,
+                            "source_sha256": source_sha256,
+                            "code": finding.get("code"),
+                            "line": finding.get("line"),
+                            "column": finding.get("column"),
+                            "original_severity": finding.get("severity"),
+                            "raw_finding": finding,
+                        }
+                    )
+                ).hexdigest()
+                witness_raw = _canonical(witness)
+                precondition_sha256 = sha256(witness_raw).hexdigest()
+                if len(witness_raw) <= 65_536 and (
+                    source_path,
+                    len(source_sha256),
+                    supplied_identity,
+                    supplied_precondition,
+                ) == (finding.get("path"), 64, identity_sha256, precondition_sha256):
+                    effect_evidence = {
+                        "schema": "factory.audit-security-precondition-evidence.v1",
+                        "candidate_sha256": candidate_sha256,
+                        "finding_sha256": finding_sha256,
+                        "source_path": source_path,
+                        "source_sha256": source_sha256,
+                        "finding_identity_sha256": identity_sha256,
+                        "precondition_sha256": precondition_sha256,
+                        "precondition": json.loads(witness_raw),
+                        "trust": "UNTRUSTED_DATA",
+                        "authority": "NONE",
+                    }
+            except (TypeError, ValueError):
+                pass
+    identity_payload = {"candidate": candidate_sha256, "finding": finding}
+    if effect_evidence is not None:
+        identity_payload["source_bound_security_precondition_sha256"] = effect_evidence[
+            "precondition_sha256"
+        ]
+    packet = {
         "schema": "factory.audit-remediation.v1",
-        "id": identity,
+        "id": sha256(_canonical(identity_payload)).hexdigest(),
         "candidate_sha256": candidate_sha256,
-        "finding_sha256": sha256(_canonical(finding)).hexdigest(),
+        "finding_sha256": finding_sha256,
         "finding_context": finding,
         "context_trust": "UNTRUSTED_DATA",
         "worker_role": "specialty_ai_remediation_agent",
@@ -91,6 +147,9 @@ def audit_remediation_packet(candidate_sha256: str, finding: dict[str, Any]) -> 
         "execution_authority": "host_agent_only",
         "automatic_execution": False,
     }
+    if effect_evidence is not None:
+        packet["security_precondition_evidence"] = effect_evidence
+    return packet
 
 
 def _security_scan_candidate_payload(
@@ -569,6 +628,8 @@ def _apply_security_scan_policy(
                 core,
                 captured,
                 source_model=producer_source_model,
+                prior_tiers=prior_tier_report,
+                prior_source_state=prior_state,
                 configuration_bytes={
                     row["path"]: captured[row["path"]]
                     for row in core.get("oracle_context", {}).get(
@@ -594,21 +655,64 @@ def _finish_security_scan_seal(audit, core, captured):
     ).hexdigest()
     core["candidate_sha256"] = candidate
     findings = core["findings"]
-    if core.get("selected_defect_policy") not in {None, "legacy-v1"}:
-        supported = {
-            _canonical(row["raw_finding"])
-            for row in core.get("finding_tier_report", {}).get("ledger", [])
-            if row.get("tier") == "SUPPORTED_DEFECT"
-        }
-        findings = [
-            item
-            for item in findings
-            if not item.get("code", "").startswith("SECURITY_")
-            or _canonical(item) in supported
-        ]
-    core["agent_actions"] = [
-        audit.audit_remediation_packet(candidate, item) for item in findings
+    effect_witnesses = {}
+    selected = core.get("selected_defect_policy") not in {None, "legacy-v1"}
+    blocked = core.get("defect_policy_decision", {}).get("state") == "BLOCKED"
+    supported_rows = {}
+    for row in core.get("finding_tier_report", {}).get("ledger", []):
+        raw_finding = row.get("raw_finding")
+        if row.get("tier") != "SUPPORTED_DEFECT" or not isinstance(raw_finding, dict):
+            continue
+        key = _canonical(raw_finding)
+        supported_rows[key] = row if key not in supported_rows else None
+    supported = {
+        key
+        for key, row in supported_rows.items()
+        if selected and not blocked and row is not None
+    }
+    source_hashes = {
+        item.get("path"): item.get("sha256")
+        for item in core.get("sources", [])
+        if isinstance(item, dict)
+    }
+    for key, row in supported_rows.items():
+        if not selected or blocked or row is None:
+            continue
+        witness_ref = row.get("source_bound_security_precondition")
+        identity = row.get("source_identity")
+        if not isinstance(witness_ref, dict) or not isinstance(identity, dict):
+            continue
+        source_path = witness_ref.get("source_path")
+        source_sha256 = witness_ref.get("source_sha256")
+        if (
+            identity.get("path") == source_path
+            and identity.get("source_sha256") == source_sha256
+            and identity.get("identity_sha256")
+            == witness_ref.get("finding_identity_sha256")
+            and source_hashes.get(source_path) == source_sha256
+            and isinstance(captured.get(source_path), bytes)
+            and sha256(captured[source_path]).hexdigest() == source_sha256
+        ):
+            effect_witnesses[key] = witness_ref
+    findings = [
+        item
+        for item in findings
+        if not selected
+        or not item.get("code", "").startswith("SECURITY_")
+        or _canonical(item) in supported
     ]
+    actions = []
+    for item in findings:
+        witness_ref = effect_witnesses.get(_canonical(item))
+        if witness_ref is None:
+            actions.append(audit.audit_remediation_packet(candidate, item))
+        else:
+            actions.append(
+                audit.audit_remediation_packet(
+                    candidate, item, source_bound_security_precondition=witness_ref
+                )
+            )
+    core["agent_actions"] = actions
     core.pop("audit_sha256", None)
     core["audit_sha256"] = sha256(
         json.dumps(

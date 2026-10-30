@@ -23,6 +23,80 @@ from factoryline.independent_execution import (
 )
 
 
+@pytest.mark.parametrize(
+    "expression, expected",
+    [
+        ("consume(django.utils.timezone.now)", {"django.utils.timezone.now"}),
+        ("consume(default=django.utils.timezone.now)", {"django.utils.timezone.now"}),
+        ("consume([django.utils.timezone.now])", {"django.utils.timezone.now"}),
+        ("consume(django.utils)", {"django.utils"}),
+        ("consume(django)", {"django"}),
+        (
+            "consume(django.utils.timezone.now.__globals__)",
+            {
+                "django",
+                "django.utils",
+                "django.utils.timezone",
+                "django.utils.timezone.now",
+                "django.utils.timezone.now.__globals__",
+            },
+        ),
+    ],
+)
+def test_provider_value_escape_does_not_escape_implicit_receivers(expression, expected):
+    tree = ast.parse("import django\n" + expression)
+    nodes = list(ast.walk(tree))
+    parents = {
+        id(child): parent for parent in nodes for child in ast.iter_child_nodes(parent)
+    }
+    facts = finite.finite_provider_mutation_index(
+        nodes, {"django": "django"}, review_audits, parents
+    )
+    assert {path for path, attribute in facts if attribute == "*"} == expected
+
+
+def test_provider_value_escape_preserves_actual_namespace_writes():
+    tree = ast.parse("import django\ndjango.utils.log.RequireDebugTrue = replacement\n")
+    nodes = list(ast.walk(tree))
+    parents = {
+        id(child): parent for parent in nodes for child in ast.iter_child_nodes(parent)
+    }
+    facts = finite.finite_provider_mutation_index(
+        nodes, {"django": "django"}, review_audits, parents
+    )
+    assert ("django.utils.log", "RequireDebugTrue") in facts
+
+
+@pytest.mark.parametrize(
+    "statement, uncertain",
+    [
+        ("consume(request.args.next)", False),
+        ("consume(request.args['next'])", False),
+        ("consume(request.args)", True),
+        ("consume(request)", True),
+        ("consume(request.args.__class__)", True),
+        ("request.args.next = replacement", True),
+        ("setattr(request, 'get_data', replacement)", True),
+    ],
+)
+def test_request_data_projections_preserve_actual_provider_risks(statement, uncertain):
+    from factoryline import semantic_credential_sensor as sensor
+
+    tree = ast.parse("from flask import request\n" + statement)
+    nodes = list(ast.walk(tree))
+    aliases = {"request": "flask.request"}
+    inventory = sensor._native_input_provider_inventory(tree, aliases, nodes)
+    parents = {
+        id(child): parent for parent in nodes for child in ast.iter_child_nodes(parent)
+    }
+    assert (
+        sensor._provider_identity_uncertain(
+            tree, aliases, roots=("flask.request",), nodes=inventory, parents=parents
+        )
+        is uncertain
+    )
+
+
 def test_assignment_expression_reuses_one_projection_in_real_assignment(monkeypatch):
     from factoryline.credential_role_identity_effects import _Value
 
@@ -1928,7 +2002,7 @@ def test_pickle_role_cli_receipt_and_text(tmp_path, capsys, policy):
     assert receipt["report"]["context_reviews"] == report["context_reviews"]
     assert main(argv) == 0
     output = capsys.readouterr().out
-    assert "NEEDS_CONTEXT reviews: 1" in output
+    assert "Finding tiers: supported=0, needs_context=1" in output
     assert "No clean security result" in output
     assert main([*argv, "--full-repository", "--json"]) == 2
     assert json.loads(capsys.readouterr().err)["code"] == "E_DEFECT_POLICY_SCOPE"

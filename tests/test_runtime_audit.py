@@ -109,6 +109,91 @@ def test_agent_repair_packet_is_stable_bound_and_untrusted():
         audit_remediation_packet("invalid", finding)
 
 
+def test_agent_repair_packet_carries_only_hash_bound_untrusted_effect_evidence():
+    from collections import UserDict
+    from copy import deepcopy
+
+    from factoryline import canonical_json_bytes
+    from factoryline.audit_action_refs import audit_remediation_packet
+
+    candidate_sha256 = "a" * 64
+    source_bytes = b"request.files['file'].save(path)\n"
+    source_sha256 = sha256(source_bytes).hexdigest()
+    finding = {
+        "code": "SECURITY_PATH_TRAVERSAL",
+        "path": "app.py",
+        "line": 1,
+        "column": 0,
+        "severity": "HIGH",
+        "facts": {"call": "flask.FileStorage.save"},
+    }
+    witness = {
+        "schema": "factory.security.precondition.v1",
+        "source_role": "untrusted_request_filename",
+        "consumer_role": "flask_file_storage_save",
+        "effect_kind": "path_escape",
+        "source_span": [1, 0, 1, 18],
+        "sink_span": [1, 0, 1, 36],
+        "effect_facts": {"provider": "werkzeug.FileStorage.save"},
+    }
+    witness_ref = {
+        "source_path": "app.py",
+        "source_sha256": source_sha256,
+        "finding_identity_sha256": sha256(
+            canonical_json_bytes(
+                {
+                    "path": "app.py",
+                    "source_sha256": source_sha256,
+                    "code": finding["code"],
+                    "line": finding["line"],
+                    "column": finding["column"],
+                    "original_severity": finding["severity"],
+                    "raw_finding": finding,
+                }
+            )
+        ).hexdigest(),
+        "precondition_sha256": sha256(canonical_json_bytes(witness)).hexdigest(),
+        "precondition": witness,
+    }
+    packet = audit_remediation_packet(
+        candidate_sha256, finding, source_bound_security_precondition=witness_ref
+    )
+    evidence = packet["security_precondition_evidence"]
+    assert evidence["candidate_sha256"] == candidate_sha256
+    assert evidence["source_sha256"] == source_sha256
+    assert evidence["finding_sha256"] == packet["finding_sha256"]
+    assert evidence["finding_identity_sha256"] == witness_ref["finding_identity_sha256"]
+    assert evidence["precondition_sha256"] == witness_ref["precondition_sha256"]
+    assert evidence["precondition"] == witness
+    assert evidence["trust"] == "UNTRUSTED_DATA"
+    assert evidence["authority"] == "NONE"
+    assert packet["finding_context"] == finding
+    assert packet["context_trust"] == "UNTRUSTED_DATA"
+    assert packet["id"] != audit_remediation_packet(candidate_sha256, finding)["id"]
+
+    stale_bindings = []
+    wrong_source = deepcopy(witness_ref)
+    wrong_source["source_path"] = "other.py"
+    stale_bindings.append(wrong_source)
+    wrong_identity = deepcopy(witness_ref)
+    wrong_identity["finding_identity_sha256"] = "b" * 64
+    stale_bindings.append(wrong_identity)
+    wrong_witness = deepcopy(witness_ref)
+    wrong_witness["precondition"]["effect_kind"] = "forged"
+    stale_bindings.append(wrong_witness)
+    stale_bindings.append(UserDict(witness_ref))
+    stale_bindings.append({**witness_ref, "unexpected": True})
+    stale_bindings.append({**witness_ref, "source_path": 1})
+    stale_bindings.append({**witness_ref, "source_sha256": 1})
+    stale_bindings.append({**witness_ref, "precondition": UserDict(witness)})
+    for stale in stale_bindings:
+        rejected = audit_remediation_packet(
+            candidate_sha256, finding, source_bound_security_precondition=stale
+        )
+        assert "security_precondition_evidence" not in rejected
+        assert rejected["finding_context"] == finding
+
+
 def _native_challenge_args(tmp_path, challenge_kind="positive"):
     import hashlib
     from factoryline.runtime_audit_common import execute_native_challenge
@@ -2074,3 +2159,231 @@ def test_trace_regression_real_artifacts_reject_post_binding_tamper(tmp_path):
     result = evaluate_trace_regression(tmp_path, binding)
     assert result["state"] == "INCOMPLETE"
     assert result["observations"] == []
+
+
+@pytest.mark.parametrize(
+    "tamper", ["none", "index", "source_hash", "identity", "raw_finding"]
+)
+def test_workspace_ledger_identity_is_stable_but_transport_stays_bound(tamper):
+    from copy import deepcopy
+    from factoryline import primitive_observation_binding as primitive
+    from factoryline.repository_checkpoint_audit import _trusted_core_ledger_matches
+
+    finding = {
+        "path": "app.py",
+        "code": "SECURITY_DYNAMIC_EXECUTION",
+        "line": 2,
+        "column": 4,
+        "severity": "HIGH",
+    }
+    source_hash = "a" * 64
+    payload = {
+        "path": "app.py",
+        "source_sha256": source_hash,
+        "code": finding["code"],
+        "line": 2,
+        "column": 4,
+        "original_severity": "HIGH",
+        "raw_finding": finding,
+    }
+    row = {
+        "index": 0,
+        "raw_finding": deepcopy(finding),
+        "source_identity": {
+            "path": "app.py",
+            "source_sha256": source_hash,
+            "identity_sha256": primitive._tier_sha256(payload),
+        },
+    }
+    if tamper == "index":
+        row["index"] = 1
+    elif tamper == "source_hash":
+        row["source_identity"]["source_sha256"] = "b" * 64
+    elif tamper == "identity":
+        row["source_identity"]["identity_sha256"] = "b" * 64
+    elif tamper == "raw_finding":
+        row["raw_finding"]["line"] = 3
+    matched = _trusted_core_ledger_matches(
+        [finding],
+        [row],
+        {"app.py"},
+        {"app.py": {"state": "ready", "sha256": source_hash}},
+        primitive,
+    )
+    assert matched is (tamper == "none")
+
+
+def test_security_effect_public_boundaries_decline_missing_or_malformed_proof():
+    import ast
+    from factoryline import credential_identity_audit as identities
+    from factoryline import credential_role_paths as effects
+    from factoryline import semantic_credential_sensor as sensors
+
+    name = ast.parse("untrusted", mode="eval").body
+    unsupported = ast.parse("lambda item: item", mode="eval").body
+    call = ast.parse("logging.warning(untrusted)", mode="eval").body
+    module = ast.parse("value = 1")
+    finding = {
+        "code": "SECURITY_PATH_TRAVERSAL",
+        "facts": {"call": "flask.FileStorage.save"},
+        "path": "app.py",
+        "line": 1,
+        "column": 0,
+    }
+    evidence = {}
+    assert (
+        effects.upload_name_origin(name, {}, set(), None, None, evidence, None) is False
+    )
+    assert (
+        effects.upload_join_effect(unsupported, {}, set(), None, None, evidence, None)
+        is None
+    )
+    assert (
+        effects.upload_concat_effect(unsupported, {}, set(), None, None, evidence, None)
+        is None
+    )
+    assert (
+        effects.upload_path_expression(unsupported, {}, set(), None, None, evidence)
+        is False
+    )
+    assert effects.source_domain_guarded(None, call, {"untrusted"}, {}) is False
+    assert (
+        effects.bind_upload_sink_precondition(finding, call, {}, set(), module) is None
+    )
+    assert evidence == {}
+    assert "security_precondition" not in finding["facts"]
+    assert (
+        effects.tls_security_finding("unrecognized.transport", "app.py", call) is None
+    )
+    assert (
+        effects.regenerate_security_source_model(
+            {"app.py": b"value = 1"}, {"app.py": "0" * 64}
+        )
+        is None
+    )
+    assert (
+        effects.matches_regenerated_security_precondition(finding, [], evidence)
+        is False
+    )
+    assert (
+        effects.security_effect_fact_matches("source_span", [True, 0, 1, 1], None)
+        is False
+    )
+    assert (
+        effects.valid_security_precondition({}, finding, require_effect_witness=True)
+        is False
+    )
+    assert (
+        effects.logging_consumer_configuration(None, Path("app.py"), call, {}) is None
+    )
+    assert (
+        effects.logging_security_effect_witness(
+            None, Path("app.py"), module, call, "logging.warning", None, {}
+        )
+        is None
+    )
+    assert effects.logging_input_value_trace(name, {}, "LOG_ARGUMENT") is None
+    assert effects.logging_merge_log_flow([{"value": False}, {"value": True}]) == {
+        "value": True
+    }
+    assert (
+        effects.logging_security_precondition(
+            module, call, name, "logging.warning", {}, tainted={}
+        )
+        == {}
+    )
+    assert (
+        identities.application_test_scope_role_evidence(
+            {}, Path("app.py"), module.body[0], "SECRET"
+        )
+        is None
+    )
+    assert sensors.log_scalar_metadata(name, None) is False
+
+
+def test_mutable_constructor_calls_require_explicit_readonly_contract():
+    import ast
+    from factoryline import review_audits
+    from factoryline.credential_role_constructor_provider import SourceSnapshotIndex
+    from factoryline.credential_role_method_use_getter_audit import (
+        CapturedOriginProjection,
+    )
+
+    index = SourceSnapshotIndex(Path("."), {}, {}, {})
+    projection = CapturedOriginProjection(index, lambda *args: (False, None))
+    nodes = list(ast.walk(ast.parse("service.send(payload)")))
+    aliases = {"service": "example.client"}
+    assert (
+        projection.mutable_calls_closed(
+            nodes, aliases, review_audits, {}, "example.client", None
+        )
+        is False
+    )
+    assert (
+        projection.mutable_calls_closed(
+            nodes, aliases, review_audits, {}, "example.client", lambda node: True
+        )
+        is True
+    )
+
+
+@pytest.mark.parametrize("coordinate", ["line", "column"])
+def test_security_precondition_rejects_boolean_finding_coordinates(coordinate):
+    from factoryline.credential_role_paths import valid_security_precondition
+
+    premise = {
+        "schema": "factory.security.precondition.v1",
+        "status": "SUPPORTED",
+        "proof_scope": "local_static_wiring",
+        "runtime_execution": "not_performed",
+        "deployment": "UNASSESSED",
+        "source_role": "untrusted_request",
+        "consumer_role": "eval",
+        "sink_span": [1, 0, 1, 10],
+    }
+    finding = {
+        "code": "SECURITY_DYNAMIC_EXECUTION",
+        "line": 1,
+        "column": 0,
+        "facts": {},
+    }
+    assert valid_security_precondition(premise, finding) is True
+    finding[coordinate] = bool(finding[coordinate])
+    assert valid_security_precondition(premise, finding) is False
+
+
+@pytest.mark.parametrize("flow_kind", ["dict", "mapping", "get_only"])
+def test_request_sink_requires_a_dict_trace_before_transport(monkeypatch, flow_kind):
+    import ast
+    from collections import UserDict
+    from factoryline import finite_capture, semantic_credential_sensor as sensors
+    from factoryline.credential_role_paths import bind_request_sink_precondition
+    from factoryline.review_integrity import bind_security_call_scopes
+
+    class GetOnly:
+        def get(self, key):
+            return "text" if key == "value_kind" else None
+
+    traces = {
+        "dict": {"value_kind": "text"},
+        "mapping": UserDict(value_kind="text"),
+        "get_only": GetOnly(),
+    }
+    tree = ast.parse("eval(payload)")
+    bind_security_call_scopes(tree)
+    tree._security_precondition_providers_stable = True
+    call = tree.body[0].value
+    monkeypatch.setattr(
+        sensors,
+        "_security_request_sink_slot",
+        lambda *args: (call.args[0], ("builtins",)),
+    )
+    monkeypatch.setattr(
+        finite_capture, "security_input_value_flow", lambda *args: traces[flow_kind]
+    )
+    finding = {"code": "SECURITY_DYNAMIC_EXECUTION", "facts": {"call": "eval"}}
+    bind_request_sink_precondition(finding, call, {}, set(), set(), set(), {})
+    premise = finding["facts"].get("security_precondition")
+    assert (premise is not None) is (flow_kind == "dict")
+    if premise is not None:
+        assert premise["input_value_flow"] is traces[flow_kind]

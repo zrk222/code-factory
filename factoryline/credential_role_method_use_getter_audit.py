@@ -2732,10 +2732,18 @@ class _CredentialRoleFlow:
     """Interpret captured transfers only; external behavior belongs to the contract."""
 
     def __init__(
-        self, index, resolver, contract, budget, resolve_name, resolve_attribute
+        self,
+        index,
+        resolver,
+        contract,
+        budget,
+        resolve_name,
+        resolve_attribute,
+        resolve_literal,
     ):
         self.index, self.resolver, self.contract = index, resolver, contract
         self.resolve_name, self.resolve_attribute = resolve_name, resolve_attribute
+        self.resolve_literal = resolve_literal
         self.budget, self.steps, self.counter = budget, 0, 0
         self.heap, self.unknowns, self.edges, self.active = {}, [], [], set()
         self.prefix_frames = []
@@ -2839,7 +2847,10 @@ class _CredentialRoleFlow:
     def leaf(self, path, node, env):
         """Resolve a constant or name from bindings and the caller's resolver."""
         if isinstance(node, ast.Constant):
-            return _constant_identity_value(node)
+            value = self.resolve_literal(path, node) if self.resolve_literal else None
+            return (
+                value if isinstance(value, _Value) else _constant_identity_value(node)
+            )
         if node.id in env:
             return env[node.id]
         value = self.resolve_name(path, node) if self.resolve_name else None
@@ -3146,23 +3157,26 @@ class _CredentialRoleFlow:
                 self.assign(
                     path, targets[0], self.expression(path, node.value, env), env
                 )
-        elif isinstance(node, ast.Expr):
-            self.expression(path, node.value, env)
+        elif isinstance(node, (ast.Expr, ast.Assert)):
+            self.expression(
+                path, node.test if isinstance(node, ast.Assert) else node.value, env
+            )
+            message = getattr(node, "msg", None)
+            if message is not None:
+                self.expression(path, message, env)
         elif isinstance(node, ast.Return):
             return "return", self.expression(
                 path, node.value, env
             ) if node.value else _constant_identity_value(ast.Constant(value=None))
-        elif isinstance(node, ast.Pass):
-            pass
         elif isinstance(node, ast.Raise):
             if node.exc is not None:
                 self.expression(path, node.exc, env)
-            if node.cause is not None:
-                cause = self.expression(path, node.cause, env)
-                if _has_unknown_content(cause):
-                    self.fail("unresolved raise cause", path, node.cause)
+            if node.cause is not None and _has_unknown_content(
+                self.expression(path, node.cause, env)
+            ):
+                self.fail("unresolved raise cause", path, node.cause)
             return "raise", _constant_identity_value(ast.Constant(value=None))
-        else:
+        elif not isinstance(node, ast.Pass):
             self.fail("unsupported statement", path, node)
         return False, _constant_identity_value(ast.Constant(value=None))
 
@@ -3357,6 +3371,7 @@ def captured_credential_role_closure(
     contract,
     resolve_name=None,
     resolve_attribute=None,
+    resolve_literal=None,
     max_states=2048,
 ):
     """Transfer captured values and exact allocations; caller proves dispatch and authority.
@@ -3365,7 +3380,13 @@ def captured_credential_role_closure(
     prove that modeled calls cannot access unpassed candidate state indirectly.
     """
     flow = _CredentialRoleFlow(
-        index, resolve_call, contract, max_states, resolve_name, resolve_attribute
+        index,
+        resolve_call,
+        contract,
+        max_states,
+        resolve_name,
+        resolve_attribute,
+        resolve_literal,
     )
     returns = []
     if not entries:
@@ -3390,6 +3411,487 @@ def captured_credential_role_closure(
     return CapturedCredentialRoleClosure(
         not flow.unknowns, tuple(flow.unknowns), tuple(returns), tuple(flow.edges)
     )
+
+
+class CapturedOriginProjection:
+    """Project checked source origins through exact bindings and finite returns.
+
+    ``project_leaf(node, environment, path, function, projection)`` owns provider
+    semantics and returns ``(known, _Value)``. A known value is a may-origin,
+    never an effect-purity or deployment assertion. Unknown calls/steps decline.
+    ``generation`` and ``context`` bind caller-owned allocation records without
+    exposing literal contents. Instances must not survive source mutation.
+    """
+
+    def __init__(self, index, project_leaf, max_states=512, max_depth=12):
+        from .credential_role_identity_effects import source_symbol_index
+
+        self.index, self.project_leaf = index, project_leaf
+        self.max_states, self.max_depth = max_states, max_depth
+        self.context, self._active, self._depth, self._states = (), set(), 0, 0
+        self._inputs = self._generation_inputs()
+        self.generation = hashlib.sha256(repr(self._inputs).encode()).hexdigest()
+        self.symbols = source_symbol_index(index) if self._inputs is not None else None
+
+    def _generation_inputs(self):
+        from .review_audits import _oracle_tree_fingerprint
+
+        index = self.index
+        if not index.bounded or not (
+            set(index.snapshots) == set(index.source_bytes) == set(index.inventory)
+        ):
+            return None
+        try:
+            return (
+                str(index.root),
+                tuple(
+                    (
+                        str(path),
+                        id(tree),
+                        id(index.source_bytes[path]),
+                        index.inventory[path],
+                        getattr(tree, "_oracle_source_sha256", None),
+                        _oracle_tree_fingerprint(tree),
+                    )
+                    for path, tree in index.snapshots.items()
+                ),
+            )
+        except (TypeError, ValueError, RecursionError):
+            return None
+
+    def _current(self, path, node):
+        if self.symbols is None or not self.index.validate(path):
+            return False
+        parents = {
+            id(child): owner
+            for owner in ast.walk(self.index.snapshots[path])
+            for child in ast.iter_child_nodes(owner)
+        }
+        return id(node) in parents and self.index.parents.get(path) == parents
+
+    def expression(self, path, node, function=None, environment=None):
+        """Return a checked value; each outer demand has one shared state budget."""
+        outer = self._depth == 0
+        if outer:
+            self._states = 0
+        limits = (self.max_states, self.max_depth)
+        if tuple(map(type, limits)) != (int, int) or min(limits) < 1:
+            return False, None
+        match (callable(self.project_leaf), self._inputs is not None):
+            case (True, True):
+                pass
+            case _:
+                return False, None
+        match outer:
+            case True if self._generation_inputs() != self._inputs:
+                return False, None
+        match (self._depth < self.max_depth, self._states < self.max_states, node):
+            case (True, True, ast.expr() as expression) if self._current(
+                path, expression
+            ):
+                pass
+            case _:
+                return False, None
+        from .credential_role_identity_effects import _enclosing_function
+
+        requested_function = function
+        lexical = _enclosing_function(node, self.index.parents[path])
+        match (requested_function, environment):
+            case (None, None | dict()):
+                function = lexical
+            case (requested, None | dict()) if lexical is requested:
+                function = lexical
+            case _:
+                return False, None
+        self._states += 1
+        self._depth += 1
+        previous = self.context
+        self.context = (*previous, (self.index.relative(path), coordinates(node)))
+        try:
+            known, value = self._expression(
+                path, node, function, dict(environment or {})
+            )
+            match (known, value):
+                case (True, _Value(unknown=False, content_unknown=False)):
+                    pass
+                case _:
+                    return False, None
+            match outer:
+                case True if self._generation_inputs() != self._inputs:
+                    return False, None
+            return True, replace(
+                value,
+                trace=(
+                    *value.trace,
+                    (
+                        "CAPTURED_ORIGIN",
+                        self.index.relative(path),
+                        self.index.inventory[path],
+                        coordinates(node),
+                    ),
+                ),
+            )
+        finally:
+            self.context = previous
+            self._depth -= 1
+
+    def _expression(self, path, node, function, environment):
+        if isinstance(node, ast.Name):
+            if node.id in environment:
+                return True, environment[node.id]
+            return self._name(path, node, function, environment)
+        known, value = self.project_leaf(node, environment, path, function, self)
+        if known is True:
+            return True, value
+        if isinstance(node, ast.Constant):
+            return True, _constant_identity_value(node)
+        if isinstance(node, ast.Dict) and not node.keys:
+            return True, _Value(inert_kind="dict")
+        if isinstance(node, ast.IfExp):
+            return self.conditional(path, node, function, environment)
+        if isinstance(node, ast.Call):
+            return self._call(path, node, function, environment)
+        if isinstance(node, ast.Attribute):
+            return self._symbol(path, node, function)
+        return False, None
+
+    def conditional(self, path, node, function, environment):
+        """Retain conditional origins without giving them exact-value authority."""
+        known, condition = self.expression(path, node.test, function, environment)
+        if not known:
+            return False, None
+        exact = _validated_exact_scalar(condition)
+        if exact:
+            return self.expression(
+                path,
+                (node.orelse, node.body)[bool(exact[0])],
+                function,
+                environment,
+            )
+        if (condition.scalar_kind, condition.inert_kind) != ("boolean", "scalar"):
+            return False, None
+        branches = tuple(
+            self.expression(path, branch, function, environment)
+            for branch in (node.body, node.orelse)
+        )
+        if any(not known or value.class_roots for known, value in branches):
+            return False, None
+        left, right = (value for _, value in branches)
+        has_empty_branch = any(
+            value.inert_kind == "dict" and not value.items and not value.roots
+            for value in (left, right)
+        )
+        match (left.roots != right.roots, has_empty_branch):
+            case (True, False):
+                return False, None
+        traces = tuple(dict.fromkeys((*left.trace, *right.trace)))
+        return True, _Value(
+            roots=left.roots | right.roots,
+            trace=(*traces, ("CONDITIONAL_ORIGIN",)),
+            scalar_kind=left.scalar_kind
+            if left.scalar_kind == right.scalar_kind
+            else None,
+        )
+
+    def _name(self, path, node, function, environment):
+        from .credential_role_identity_effects import _argument_names
+
+        if function is not None:
+            if node.id in _argument_names(function):
+                return False, None
+            bindings = binding_occurrences(function.body, node.id)
+            if bindings:
+                if len(bindings) != 1:
+                    return False, None
+                binding = bindings[0]
+                statement = (
+                    self.index.parents[path].get(id(binding))
+                    if isinstance(binding, ast.Name)
+                    else binding
+                )
+                if not self._dominates(path, statement, node, function):
+                    return False, None
+                if isinstance(statement, (ast.Assign, ast.AnnAssign)):
+                    return self.expression(path, statement.value, function, environment)
+                if not isinstance(binding, (ast.Import, ast.ImportFrom)):
+                    return False, None
+        return self._symbol(path, node, function)
+
+    def _dominates(self, path, statement, node, scope):
+        if statement not in scope.body:
+            return False
+        current = node
+        parents = self.index.parents[path]
+        while id(current) in parents and parents[id(current)] is not scope:
+            current = parents[id(current)]
+        return current in scope.body and scope.body.index(statement) < scope.body.index(
+            current
+        )
+
+    def _symbol(self, path, node, function):
+        from .mock_fixture_provenance import _app_source_symbol
+
+        chain = []
+        selected = _app_source_symbol(
+            self.symbols, path, node, function, provider_chain=chain
+        )
+        if selected is None:
+            return False, None
+        target_path, declaration = selected
+        if not self._current(target_path, declaration) or not isinstance(
+            declaration, (ast.Assign, ast.AnnAssign)
+        ):
+            return False, None
+        if (
+            self.index.parents[target_path][id(declaration)]
+            is not self.index.snapshots[target_path]
+        ):
+            return False, None
+        if (
+            target_path == path
+            and function is None
+            and not self._dominates(path, declaration, node, self.index.snapshots[path])
+        ):
+            return False, None
+        key = (target_path, id(declaration))
+        if key in self._active:
+            return False, None
+        self._active.add(key)
+        try:
+            known, value = self.expression(target_path, declaration.value)
+            if not known or not self._symbol_closed(chain, value):
+                return False, None
+            return True, value
+        finally:
+            self._active.remove(key)
+
+    def _export_bindings(self):
+        from .mock_fixture_provenance import _django_import_rows, _django_name
+
+        exports = []
+        for path, tree in self.index.snapshots.items():
+            module = _django_name(self.symbols, path)
+            package = (
+                module
+                if self.index.relative(path).endswith("/__init__.py")
+                else module.rpartition(".")[0]
+            )
+            for statement in tree.body:
+                rows = _django_import_rows(statement, package)
+                if rows is None and isinstance(statement, ast.ImportFrom):
+                    source = ast.ImportFrom(
+                        module=statement.module,
+                        names=[ast.alias(name="__wildcard__")],
+                        level=statement.level,
+                    )
+                    rows = _django_import_rows(source, package)
+                    if rows is None:
+                        return None
+                    rows = [
+                        ("*", target.rsplit(".", 1)[0] + ".*")
+                        for _, target in rows or ()
+                    ]
+                exports.extend((module + "." + name, target) for name, target in rows)
+        return exports
+
+    def _symbol_bindings(self, chain):
+        """Close captured incoming object and callable exports with one bounded graph."""
+        from .mock_fixture_provenance import _django_name
+
+        bindings = {
+            (
+                _django_name(self.symbols, path) + "." + name
+                if path is not None
+                else canonical,
+                path,
+                name,
+            )
+            for canonical, path, name in chain
+        }
+        exports = self._export_bindings()
+        if exports is None:
+            return None
+        for _ in range(self.max_depth):
+            if any(
+                target.endswith(".*") and canonical.startswith(target[:-1])
+                for _, target in exports
+                for canonical, _, _ in bindings
+            ):
+                return None
+            incoming = {
+                (export + canonical[len(target) :], None, None)
+                for export, target in exports
+                for canonical, _, _ in bindings
+                if canonical == target or canonical.startswith(target + ".")
+            }
+            if incoming <= bindings:
+                return bindings
+            bindings.update(incoming)
+            if len(bindings) > self.max_states:
+                break
+        return None
+
+    def _symbol_closed(
+        self,
+        chain,
+        value,
+        *,
+        readonly_argument=None,
+        readonly_call=None,
+        inventory_projector=None,
+    ):
+        from . import review_audits as audit
+        from . import credential_role_constructor_provider as provider
+        from .finite_capture import (
+            _provider_alias_bindings,
+            _provider_mutation_facts,
+            _shell_import_aliases,
+        )
+
+        from .mock_fixture_provenance import _django_name
+
+        immutable = value.scalar_kind in {"text", "bytes", "integer", "boolean", "none"}
+        covered = set()
+        bindings_to_close = self._symbol_bindings(chain)
+        if bindings_to_close is None or any(
+            not self.index.validate(path)
+            or not provider._terminal_source_context_valid(self.index, tree, covered)
+            for path, tree in self.index.snapshots.items()
+        ):
+            return False
+        for canonical, owner_path, name in bindings_to_close:
+            for path, tree in self.index.snapshots.items():
+                nodes = list(ast.walk(tree))
+                relative = self.index.relative(path)
+                module = _django_name(self.symbols, path)
+                aliases = _shell_import_aliases(
+                    nodes,
+                    audit,
+                    canonical,
+                    package=module
+                    if relative.endswith("/__init__.py")
+                    else module.rpartition(".")[0],
+                )
+                if aliases is None:
+                    return False
+                if path == owner_path:
+                    aliases = {**aliases, name: canonical}
+                if provider._terminal_registry_mutation(
+                    nodes, aliases, audit, canonical
+                ):
+                    return False
+                # Immutable values can be copied/returned without changing the
+                # module slot. Passing its namespace remains an opaque mutation.
+                selected_nodes = [
+                    item
+                    for item in nodes
+                    if not immutable
+                    or not isinstance(item, (ast.Return, ast.Yield, ast.YieldFrom))
+                ]
+                if inventory_projector is not None:
+                    selected_nodes = inventory_projector(
+                        tree, aliases, selected_nodes, canonical
+                    )
+                bindings = _provider_alias_bindings(selected_nodes)
+                if not immutable and not self.mutable_calls_closed(
+                    selected_nodes, aliases, audit, bindings, canonical, readonly_call
+                ):
+                    return False
+                mutations = set()
+                _provider_mutation_facts(
+                    selected_nodes,
+                    aliases,
+                    audit,
+                    self.index.parents[path],
+                    bindings,
+                    mutations,
+                    lambda _node: not immutable,
+                    lambda item, bound, _parents: not (
+                        immutable
+                        and (
+                            audit._resolved_ast_name(item, bound) == canonical
+                            or provider._terminal_imported_module_receiver(
+                                item, _parents, audit, canonical
+                            )
+                        )
+                        or readonly_argument is not None
+                        and readonly_argument(item)
+                    ),
+                )
+                if any(
+                    provider._terminal_mutation_overlaps(target, member, canonical)
+                    for target, member in mutations
+                ):
+                    return False
+        return True
+
+    def mutable_calls_closed(
+        self, nodes, aliases, audit, bindings, canonical, readonly_call
+    ):
+        """Keep calls through mutable or unresolved constructor aliases unclosed."""
+        from .finite_capture import _provider_paths
+
+        for node in nodes:
+            if not isinstance(node, ast.Call) or not isinstance(
+                node.func, ast.Attribute
+            ):
+                continue
+            receivers, _ = _provider_paths(node.func.value, aliases, audit, bindings)
+            if any(
+                receiver == canonical or receiver.startswith(canonical + ".")
+                for receiver in receivers
+            ) and (readonly_call is None or not readonly_call(node)):
+                return False
+        return True
+
+    def _call(self, path, call, function, environment):
+        from .credential_role_identity_effects import resolve_source_identity_call
+        from .finite_capture import (
+            evaluate_helper_flow,
+            _security_helper_definition_supported,
+        )
+
+        resolved = resolve_source_identity_call(call, path, self.index)
+        if resolved is None or not resolved.negative_binding_closed:
+            return False, None
+        helper, target_path = resolved.function, resolved.path
+        from .credential_role_identity_effects import _Value
+
+        if not self._symbol_closed([(helper.name, target_path, helper.name)], _Value()):
+            return False, None
+        key = (target_path, id(helper))
+        if key in self._active or not _security_helper_definition_supported(helper):
+            return False, None
+        initial = {}
+        for name, actual in resolved.arguments.items():
+            if id(actual) in self.index.parents[path]:
+                known, value = self.expression(path, actual, function, environment)
+            else:
+                known, value = self.expression(target_path, actual)
+            if not known:
+                return False, None
+            initial[name] = value
+        remaining = self.max_states - self._states
+        if remaining < 1:
+            return False, None
+        self._active.add(key)
+        try:
+            result = evaluate_helper_flow(
+                helper,
+                initial,
+                lambda expression, env: self.expression(
+                    target_path, expression, helper, env
+                ),
+                max_states=remaining,
+            )
+        finally:
+            self._active.remove(key)
+        self._states += result["states_used"]
+        if result["status"] != "COMPLETE" or len(result["return_values"]) != 1:
+            return False, None
+        if self._states > self.max_states:
+            return False, None
+        return True, result["return_values"][0]
 
 
 SCOPE_API_CONTRACT_EPOCH = "test-scope-pyjwt-2.10.1-v1"
@@ -3687,6 +4189,7 @@ class _SourceTestScope:
             + str(assignment.lineno)
         )
         self.objects, self.witnesses, self.owners = {}, {}, {}
+        self.pytest_owners = {}
         self.flow = None
         imports = audit._app_crypto_provider_imports(index)
         from . import review_audits
@@ -3748,6 +4251,11 @@ class _SourceTestScope:
         }
         if any(binding_occurrences(owner.body, name) for name in forbidden):
             return False
+        method_names = [
+            node.name for node in owner.body if isinstance(node, ast.FunctionDef)
+        ]
+        if len(method_names) != len(set(method_names)):
+            return False
         for node in owner.body:
             if isinstance(node, ast.FunctionDef):
                 if self.audit._legacy._definition_effects_unknown(node):
@@ -3792,11 +4300,188 @@ class _SourceTestScope:
     def origin_use(self, path, node):
         """Record an origin read only when it belongs to a validated test owner."""
         owner = self.owner_for(path, node)
-        if owner is None:
-            return None
-        self.owners[path, id(owner)] = (path, owner)
+        if owner is not None:
+            self.owners[path, id(owner)] = (path, owner)
+        else:
+            selected = self.pytest_root(path, node)
+            if selected is None:
+                return None
+            function, pytest_owner = selected
+            self.pytest_owners[path, id(function)] = (
+                path,
+                function,
+                pytest_owner,
+            )
         self.witness(path, node, "test_origin_read")
         return "TEST_ORIGIN_READ"
+
+    def _pytest_collection(self):
+        """Rebuild supported pytest selectors from captured configuration bytes only."""
+        from .pytest_collection_audit import (
+            _pytest_collection_hook_names,
+            _pytest_collection_settings,
+            _pytest_config_data,
+            _pytest_file_matches,
+            _pytest_plugin_declaration_active,
+        )
+        from .review_audits import MAX_BYTES, _TEST_FILE_PATTERNS
+
+        configurations = self.index.get("configuration_bytes")
+        if not isinstance(configurations, dict):
+            return None
+        selected = None
+        for name, section, raw in (
+            (name, section, configurations[name])
+            for name, section in (
+                ("pytest.toml", "toml-pytest"),
+                (".pytest.toml", "toml-pytest"),
+                ("pytest.ini", "pytest"),
+                (".pytest.ini", "pytest"),
+                ("pyproject.toml", "pyproject"),
+                ("tox.ini", "pytest"),
+                ("setup.cfg", "tool:pytest"),
+            )
+            if configurations.get(name) is not None
+        ):
+            if not isinstance(raw, bytes) or len(raw) > MAX_BYTES:
+                return None
+            _patterns, identity = _pytest_config_data(
+                raw, name, section, set(_TEST_FILE_PATTERNS)
+            )
+            state = identity.get("state")
+            if state == "absent-section":
+                continue
+            if state != "read":
+                return None
+            selected = identity
+            break
+        if selected is None:
+            # No captured config does not prove absence of a higher-priority config.
+            return None
+        settings = _pytest_collection_settings(selected)
+        for path, tree in self.index["modules"].items():
+            if not self.source.validate(path) or not isinstance(
+                relative := self.source.relative(path), str
+            ):
+                return None
+            is_test_module = _pytest_file_matches(relative, settings["python_files"])
+            if (
+                path.name == "conftest.py"
+                and _pytest_collection_hook_names(tree, True, False)
+            ) or (
+                is_test_module
+                and (
+                    _pytest_collection_hook_names(tree, False, True)
+                    or any(
+                        _pytest_plugin_declaration_active(node) for node in tree.body
+                    )
+                )
+            ):
+                return None
+        return settings
+
+    def pytest_root(self, path, node):
+        """Return one statically selected pytest function or class-method root."""
+        from .pytest_collection_audit import (
+            _pytest_file_matches,
+            _pytest_name_matches,
+            _pytest_test_disabled,
+        )
+        from .review_audits import _oracle_ancestor_map
+
+        settings = self._pytest_collection()
+        parents = self.source.parents[path]
+        tree = self.index["modules"][path]
+        function = self.audit._legacy._enclosing_function(node, parents)
+        if (
+            settings is None
+            or not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef))
+            or function.decorator_list
+            or not self.source.validate(path)
+            or not _pytest_file_matches(
+                self.source.relative(path), settings["python_files"]
+            )
+            or not _pytest_name_matches(function.name, settings["python_functions"])
+            or _pytest_test_disabled(function, _oracle_ancestor_map(tree.body), [tree])
+        ):
+            return None
+        suite = parents.get(id(function))
+        owner = suite if isinstance(suite, ast.ClassDef) else None
+        if owner is None:
+            if suite is not self.index["modules"][path]:
+                return None
+        elif not self.pytest_owner(path, owner, function, settings):
+            return None
+        return function, owner
+
+    def pytest_owner(self, path, owner, selected, settings):
+        """Close a collected plain pytest class without hooks or dynamic wrappers."""
+        from .pytest_collection_audit import _pytest_name_matches
+
+        if (
+            owner.decorator_list
+            or owner.bases
+            or owner.keywords
+            or not _pytest_name_matches(owner.name, settings["python_classes"])
+        ):
+            return False
+        forbidden = {
+            "__init__",
+            "__new__",
+            "__getattr__",
+            "__getattribute__",
+            "__setattr__",
+            "__delattr__",
+            "__call__",
+            "__test__",
+            "setup_method",
+            "teardown_method",
+            "setup_class",
+            "teardown_class",
+        }
+        for node in owner.body:
+            if isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant):
+                if type(node.value.value) is str:
+                    continue
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                return False
+            if node.name in forbidden or (node is selected and node.decorator_list):
+                return False
+            allowed = tuple(
+                decorator
+                for decorator in node.decorator_list
+                if self._pytest_parametrize_decorator(path, decorator)
+            )
+            if len(allowed) != len(
+                node.decorator_list
+            ) or self.audit._legacy._definition_effects_unknown(
+                node, allowed_decorators=allowed
+            ):
+                return False
+        return self.owner_namespace_closed(path, owner)
+
+    def _pytest_parametrize_decorator(self, path, decorator):
+        """Allow only the exact imported pytest literal-parameter decorator."""
+        if (
+            not isinstance(decorator, ast.Call)
+            or self.canonical(path, decorator.func) != "pytest.mark.parametrize"
+            or not decorator.args
+            or any(item.arg is None for item in decorator.keywords)
+            or len({item.arg for item in decorator.keywords}) != len(decorator.keywords)
+            or not self.audit._app_signing_terminal_stable(
+                self.index, "pytest.mark.parametrize"
+            )
+        ):
+            return False
+        try:
+            for value in [
+                *decorator.args,
+                *(item.value for item in decorator.keywords),
+            ]:
+                ast.literal_eval(value)
+        except (ValueError, TypeError, RecursionError):
+            return False
+        return True
 
     def resolve_name(self, path, node):
         """Resolve the candidate origin, inert declarations and supported namespaces."""
@@ -3818,6 +4503,22 @@ class _SourceTestScope:
             return _Value(inert_kind="scope_namespace", _exact_scalar=(canonical,))
         return None
 
+    def resolve_origin_literal(self, path, node):
+        """Attach the origin only to its exact currently validated local literal."""
+        if (
+            self.fact is None
+            or self.fact.source_role != "local_literal"
+            or path != self.path
+            or node is not self.assignment.value
+            or not self.source.validate(path)
+            or self.source.parents[path].get(id(node)) is not self.assignment
+        ):
+            return None
+        value = _constant_identity_value(node)
+        if value.inert_kind != "scalar" or value.scalar_kind != "text":
+            return None
+        return replace(value, roots=frozenset({self.origin}))
+
     def object_class(self, value):
         """Find the captured class registered for a single modeled object root."""
         if value is not None and len(value.class_roots) == 1:
@@ -3837,6 +4538,10 @@ class _SourceTestScope:
         if target is None:
             return None
         target_path, function = target
+        # Descriptor calls have different receiver binding. Until their exact
+        # invocation is modeled, do not treat them as ordinary instance methods.
+        if function.decorator_list:
+            return None
         bound = bind_source_call(call, function, call.func.value, apply_defaults=False)
         self.witness(target_path, function, "captured_test_scope_method")
         return ResolvedIdentityCall(function, target_path, bound)
@@ -3935,9 +4640,34 @@ class _SourceTestScope:
                 d
                 for d in node.decorator_list
                 if self.canonical(path, d) == "functools.cached_property"
+                or (
+                    isinstance(d, ast.Name)
+                    and d.id == "staticmethod"
+                    and self.audit._app_builtin_annotation_inert(self.index, path, d)
+                )
             )
-            if self.audit._legacy._definition_effects_unknown(
-                node, allowed_decorators=allowed
+            annotations = [
+                arg.annotation
+                for arg in ast.walk(node.args)
+                if isinstance(arg, ast.arg) and arg.annotation is not None
+            ]
+            if node.returns is not None:
+                annotations.append(node.returns)
+            # A bare name lookup in this ordinary class namespace cannot invoke
+            # a descriptor. Subscriptions and attributes need explicit models.
+            if (
+                len(allowed) != len(node.decorator_list)
+                or getattr(node, "type_params", ())
+                or any(not _immutable_default(v) for v in node.args.defaults)
+                or any(
+                    v is not None and not _immutable_default(v)
+                    for v in node.args.kw_defaults
+                )
+                or not all(
+                    isinstance(a, ast.Name)
+                    or self.audit._app_metadata_annotation_inert(self.index, path, a)
+                    for a in annotations
+                )
             ):
                 return False
         return True
@@ -3946,6 +4676,9 @@ class _SourceTestScope:
         """Resolve inert literal content only from a current captured source node."""
         if not self.source.validate(path) or id(node) not in self.source.parents[path]:
             return None
+        origin = self.resolve_origin_literal(path, node)
+        if origin is not None:
+            return origin
         value = self.audit._legacy.identity_value(node, {})
         return value if value.inert_kind and not _has_unknown_content(value) else None
 
@@ -3992,18 +4725,70 @@ class _SourceTestScope:
             not self.view
             or not self.view.complete
             or self.fact is None
-            or self.fact.source_role != "module_literal"
+            or self.fact.source_role not in {"module_literal", "local_literal"}
         ):
             return False
+        if self.fact.source_role == "local_literal":
+            parents = self.source.parents[self.path]
+            function = self.audit._legacy._enclosing_function(self.assignment, parents)
+            targets = (
+                self.assignment.targets
+                if isinstance(self.assignment, ast.Assign)
+                else [self.assignment.target]
+            )
+            if (
+                function is None
+                or parents.get(id(self.assignment)) is not function
+                or len(targets) != 1
+                or not isinstance(targets[0], ast.Name)
+                or targets[0].id != self.secret
+                or binding_occurrences(function.body, self.secret) != targets
+                or self.pytest_root(self.path, self.assignment) is None
+            ):
+                return False
+            owner = parents.get(id(function))
+            if not isinstance(owner, ast.ClassDef):
+                owner = None
+            return self.exercise_pytest_root(self.path, function, owner)
         if self.view._data_reflection_conflict(self.fact):
             return False
         uses = self.view._module_uses(self.fact, self.origin_use)
-        if not uses or not self.owners:
+        if not uses or not (self.owners or self.pytest_owners):
             return False
-        for path, owner in self.owners.values():
-            if not self.exercise_owner(path, owner):
+        return all(
+            self.exercise_owner(path, owner) for path, owner in self.owners.values()
+        ) and all(
+            self.exercise_pytest_root(path, function, owner)
+            for path, function, owner in self.pytest_owners.values()
+        )
+
+    def exercise_pytest_root(self, path, function, owner):
+        """Interpret one selected pytest invocation with the shared transfer closure."""
+        bindings = {}
+        if owner is not None:
+            if not function.args.args or function.args.args[0].arg != "self":
                 return False
-        return True
+            identity = (
+                "pytest-invocation:"
+                + self.source.relative(path)
+                + ":"
+                + str(function.lineno)
+            )
+            receiver = _Value(class_roots=frozenset({identity}))
+            self.objects[identity] = (path, owner)
+            bindings[function.args.args[0].arg] = receiver
+        result = captured_credential_role_closure(
+            self.source,
+            [(path, function, bindings)],
+            resolve_call=self.resolve_call,
+            contract=self.contract,
+            resolve_name=self.resolve_name,
+            resolve_attribute=self.resolve_attribute,
+            resolve_literal=self.resolve_literal,
+        )
+        if result.complete:
+            self.witness(path, function, "declared_pytest_invocation")
+        return result.complete
 
     def exercise_owner(self, path, owner):
         """Interpret setup and each declared test with a distinct modeled receiver."""
@@ -4012,6 +4797,14 @@ class _SourceTestScope:
                 n
                 for n in owner.body
                 if isinstance(n, ast.FunctionDef) and n.name == "setUp"
+            ),
+            None,
+        )
+        teardown = next(
+            (
+                n
+                for n in owner.body
+                if isinstance(n, ast.FunctionDef) and n.name == "tearDown"
             ),
             None,
         )
@@ -4028,7 +4821,11 @@ class _SourceTestScope:
             )
             receiver = _Value(class_roots=frozenset({identity}))
             self.objects[identity] = (path, owner)
-            functions = ([setup] if setup is not None else []) + [test]
+            functions = (
+                ([setup] if setup is not None else [])
+                + [test]
+                + ([teardown] if teardown is not None else [])
+            )
             entries = [
                 (path, f, {f.args.args[0].arg: receiver})
                 for f in functions
@@ -4043,6 +4840,7 @@ class _SourceTestScope:
                 contract=self.contract,
                 resolve_name=self.resolve_name,
                 resolve_attribute=self.resolve_attribute,
+                resolve_literal=self.resolve_literal,
             )
             if not result.complete:
                 return False

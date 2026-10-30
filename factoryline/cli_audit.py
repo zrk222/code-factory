@@ -747,22 +747,12 @@ def _print_selected_security_policy(result):
         "finding_tier_report",
         result.get("workspace_evidence", {}).get("finding_tiers", {}),
     )
-    if result.get("selected_defect_policy") in {
-        "source-role-v1",
-        "source-role-v2",
-        "source-role-v3",
-    }:
-        for raw in result.get("findings", []):
-            print(
-                f"ACTIVE [{raw['severity']}] {raw['code']}: {raw['path']}:{raw['line']} — {raw['message']}"
-            )
-        print(
-            f"NEEDS_CONTEXT reviews: {len(result.get('context_reviews', []))}; operation safety remains unassessed."
-        )
-        print(
-            "Original diagnostics and severities remain in the JSON report and receipt. No clean security result or release approval established."
-        )
-        return
+    print(f"Raw diagnostics: {len(tiers.get('ledger', []))}")
+    if (
+        result.get("tenant_read_contract", {}).get("configuration", {}).get("state")
+        == "missing"
+    ):
+        print("Tenant scope: NOT_DECLARED; tenant-read coverage is not asserted.")
     for row in tiers.get("ledger", []):
         if row.get("tier") != "SUPPORTED_DEFECT":
             continue
@@ -772,7 +762,7 @@ def _print_selected_security_policy(result):
         )
     _print_finding_tier_report(tiers)
     print(
-        "Original diagnostics and severities remain in the JSON report and receipt. Policy exit zero does not approve a release or establish a clean security result."
+        "Original diagnostics and severities remain in the JSON report and receipt. No clean security result established; policy exit zero does not approve a release and retains unresolved reviews."
     )
 
 

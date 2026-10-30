@@ -993,7 +993,61 @@ def test_codeql_profile_preserves_raw_hash_and_rejects_rule_extensions(
     report = tmp_path / "native.json"
     native = {
         "runs": [
-            {"tool": {"extensions": [{"name": "codeql/python-queries"}]}, "results": []}
+            {
+                "tool": {
+                    "extensions": [
+                        {
+                            "name": "codeql/python-queries",
+                            "taxa": [
+                                {
+                                    "id": "library-model/1",
+                                    "properties": {
+                                        "CodeQL/DataExtensionLocation": {
+                                            "artifactLocation": {
+                                                "uri": "library/Stdlib.model.yml"
+                                            },
+                                            "region": {"startLine": 161},
+                                        }
+                                    },
+                                }
+                            ],
+                        }
+                    ]
+                },
+                "results": [
+                    {
+                        "locations": [
+                            {
+                                "physicalLocation": {
+                                    "artifactLocation": {"uri": "/src/app.py"},
+                                    "region": {"startLine": 1},
+                                }
+                            }
+                        ],
+                        "codeFlows": [
+                            {
+                                "threadFlows": [
+                                    {
+                                        "locations": [
+                                            {
+                                                "taxa": [
+                                                    {
+                                                        "id": "library-model/1",
+                                                        "toolComponent": {
+                                                            "name": "codeql/python-queries",
+                                                            "index": 0,
+                                                        },
+                                                    }
+                                                ],
+                                            }
+                                        ]
+                                    }
+                                ]
+                            }
+                        ],
+                    }
+                ],
+            }
         ]
     }
     original = json.dumps(native).encode()
@@ -1015,6 +1069,27 @@ def test_codeql_profile_preserves_raw_hash_and_rejects_rule_extensions(
         == native["runs"][0]["tool"]["extensions"]
     )
     assert "extensions" not in derived["runs"][0]["tool"]
+    assert derived["runs"][0]["results"] == native["runs"][0]["results"]
+    from copy import deepcopy
+    from factoryline.deep_audit_io import _native_sarif_paths, RuntimeAuditError
+
+    normalized = _native_sarif_paths(deepcopy(derived), {"app.py": "0" * 64})
+    assert (
+        normalized["runs"][0]["properties"]["factory_native_pack_metadata"]
+        == native["runs"][0]["tool"]["extensions"]
+    )
+    assert (
+        normalized["runs"][0]["results"][0]["locations"][0]["physicalLocation"][
+            "artifactLocation"
+        ]["uri"]
+        == "app.py"
+    )
+    forged = deepcopy(derived)
+    forged["runs"][0]["results"][0]["locations"][0]["physicalLocation"][
+        "artifactLocation"
+    ]["uri"] = "/src/not-captured.py"
+    with pytest.raises(RuntimeAuditError):
+        _native_sarif_paths(forged, {"app.py": "0" * 64})
     native["runs"][0]["tool"]["extensions"][0]["rules"] = [{"id": "external-rule"}]
     report.write_text(json.dumps(native))
     rejected = subprocess.run(

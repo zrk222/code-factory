@@ -973,6 +973,29 @@ def _app_metadata_annotation_inert(index, path, node):
         arguments = (
             node.slice.elts if isinstance(node.slice, ast.Tuple) else [node.slice]
         )
+        if (
+            isinstance(node.value, ast.Name)
+            and node.value.id in {"tuple", "list", "dict", "set", "frozenset"}
+            and _app_builtin_annotation_inert(index, path, node.value)
+        ):
+            minimum, maximum = (
+                (2, 2)
+                if node.value.id == "dict"
+                else (1, 16)
+                if node.value.id == "tuple"
+                else (1, 1)
+            )
+            return minimum <= len(arguments) <= maximum and all(
+                _app_metadata_annotation_inert(index, path, argument)
+                or (
+                    node.value.id == "tuple"
+                    and position == 1
+                    and len(arguments) == 2
+                    and isinstance(argument, ast.Constant)
+                    and argument.value is Ellipsis
+                )
+                for position, argument in enumerate(arguments)
+            )
         arity = {
             "typing.Optional": (1, 1),
             "typing.Union": (1, 16),
