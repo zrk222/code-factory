@@ -447,6 +447,7 @@ def _trusted_core_native_security_rows(captured, tenant, audit):
     )
     if source_model is None:
         return None
+    provider_mutation_cache = {}
     for path in captured_paths:
         tree = source_model.snapshots[path]
         rows = audit._security_scan_tree(
@@ -457,6 +458,7 @@ def _trusted_core_native_security_rows(captured, tenant, audit):
             argument_bindings,
             {
                 "_security_source_context": source_context,
+                "_security_provider_mutation_cache": provider_mutation_cache,
                 "_security_source_model": source_model,
             },
             tenant_policy_applies=applies,
