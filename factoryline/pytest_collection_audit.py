@@ -401,10 +401,12 @@ def _pytest_config_data(data, relative, section, defaults):
 def _pytest_pattern_value(text, section):
     if section in {"pyproject", "toml-pytest"}:
         return _toml_pytest_pattern_value(text, section)
-    parser = configparser.ConfigParser()
+    parser = configparser.ConfigParser(interpolation=None)
+    parser.optionxform = str
     parser.read_string(text)
     if section not in parser:
         return _ABSENT_PYTEST_SECTION
+    parser.defaults().clear()
     options = dict(parser.items(section))
     if not _supported_pytest_function_patterns(options):
         return _INVALID_PYTEST_CONFIG
