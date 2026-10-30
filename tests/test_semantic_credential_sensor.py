@@ -679,6 +679,38 @@ def test_operative_signing_default_origin_family(flow):
     } >= {"config.py", "signing.py", "app.py"}
 
 
+def test_bearer_demand_probe_skips_unrelated_handlers_without_skipping_authority(
+    monkeypatch,
+):
+    from factoryline import credential_endpoint_admission as admission
+
+    files, name = _operative_signing_default_sources("settings-factory")
+    calls = []
+    original = admission._OperativeCredentialOrigin.boundary_closed
+
+    def observed(self):
+        calls.append(self.handler["function"].name)
+        return original(self)
+
+    monkeypatch.setattr(
+        admission._OperativeCredentialOrigin, "boundary_closed", observed
+    )
+    baseline = _captured_secret_tiers(files, "config.py", name)["ledger"][0]
+    files["app.py"] += "".join(
+        f"\n@app.get('/public{index}')\ndef public{index}():\n    return {{'ok': True}}\n"
+        for index in range(24)
+    )
+    calls.clear()
+    candidate = _captured_secret_tiers(files, "config.py", name)["ledger"][0]
+    assert baseline["tier"] == candidate["tier"] == "SUPPORTED_DEFECT"
+    assert calls and set(calls) == {"profile"}
+    monkeypatch.setattr(
+        admission._OperativeCredentialOrigin, "boundary_closed", lambda self: False
+    )
+    blocked = _captured_secret_tiers(files, "config.py", name)["ledger"][0]
+    assert blocked["tier"] == "NEEDS_CONTEXT"
+
+
 def test_serializer_transfer_without_operative_identity_authority_stays_unresolved():
     files, name = _operative_signing_default_sources("serializer-helper")
     row = _captured_secret_tiers(files, "config.py", name)["ledger"][0]
