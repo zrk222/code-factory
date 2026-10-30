@@ -667,78 +667,60 @@ def source_span(index, path, node, role):
 def upload_name_origin(
     node, aliases, requests, scope, flow_statement, effect_evidence, seen
 ):
+    """Trace a unique reaching upload assignment without inventing source authority."""
     from .review_integrity import security_call_name
 
     if ("upload-path", node.id) not in requests:
         return False
-    if isinstance(effect_evidence, dict) and isinstance(scope, ast.AST):
-        effect_evidence.setdefault("source_names", set()).add(node.id)
-        seen = set(seen or ())
-        if node.id in seen:
+    match (effect_evidence, scope):
+        case (dict(), ast.AST()):
+            pass
+        case _:
             return True
-        seen.add(node.id)
-        from .review_audits import _bound_names
-
-        before_line = effect_evidence.get(
-            "sink_line", getattr(flow_statement, "lineno", 10**12)
+    effect_evidence.setdefault("source_names", set()).add(node.id)
+    seen = set(seen or ())
+    if node.id in seen:
+        return True
+    seen.add(node.id)
+    before_line = effect_evidence.get(
+        "sink_line", getattr(flow_statement, "lineno", 10**12)
+    )
+    assignments = [
+        statement
+        for statement in ast.walk(scope)
+        if isinstance(statement, (ast.Assign, ast.AnnAssign))
+        if getattr(statement, "_security_lexical_scope", None) is scope
+        if _upload_definition_reaches(
+            statement, effect_evidence.get("sink_node"), scope, node.id, before_line
         )
-        sink_node = effect_evidence.get("sink_node")
-        assignments = [
-            statement
-            for statement in ast.walk(scope)
-            if isinstance(statement, (ast.Assign, ast.AnnAssign))
-            and getattr(statement, "_security_lexical_scope", None) is scope
-            and (
-                (
-                    sink_node is not None
-                    and (statement.lineno, statement.col_offset)
-                    < (sink_node.lineno, sink_node.col_offset)
-                )
-                or (sink_node is None and statement.lineno < before_line)
-            )
-            and node.id in _bound_names(statement)
-            and (
-                sink_node is None
-                or _upload_definition_reaches(statement, sink_node, scope)
-            )
-        ]
-        if len(assignments) == 1:
-            assignment = assignments[0]
-            value = getattr(assignment, "value", None)
-            source_alias = isinstance(value, ast.Name) or (
-                isinstance(value, ast.Attribute) and value.attr == "filename"
-            )
-            path_join = (
-                isinstance(value, ast.Call)
-                and security_call_name(value, aliases) == "os.path.join"
-            )
-            path_concat = (
-                isinstance(value, ast.BinOp)
-                and isinstance(value.op, ast.Add)
-                and (
-                    isinstance(value.left, ast.Constant)
-                    and isinstance(value.left.value, str)
-                    and value.left.value.endswith(("/", "\\"))
-                    or isinstance(value.left, ast.BinOp)
-                    and isinstance(value.left.op, ast.Add)
-                    and isinstance(value.left.right, ast.Constant)
-                    and isinstance(value.left.right.value, str)
-                    and value.left.right.value.endswith(("/", "\\"))
-                )
-                and isinstance(value.right, (ast.Name, ast.Attribute))
-            )
-            if isinstance(value, ast.AST) and (
-                source_alias or path_join or path_concat
-            ):
-                upload_path_expression(
-                    value,
-                    aliases,
-                    requests,
-                    scope,
-                    assignment,
-                    effect_evidence,
-                    seen,
-                )
+    ]
+    match assignments:
+        case [assignment]:
+            value = assignment.value
+        case _:
+            return True
+    match value:
+        case ast.Name() | ast.Attribute(attr="filename"):
+            pass
+        case ast.Call() if security_call_name(value, aliases) == "os.path.join":
+            pass
+        case ast.BinOp(
+            op=ast.Add(),
+            right=ast.Name() | ast.Attribute(),
+            left=ast.Constant(value=str() as separator),
+        ) if separator.endswith(("/", "\\")):
+            pass
+        case ast.BinOp(
+            op=ast.Add(),
+            right=ast.Name() | ast.Attribute(),
+            left=ast.BinOp(op=ast.Add(), right=ast.Constant(value=str() as separator)),
+        ) if separator.endswith(("/", "\\")):
+            pass
+        case _:
+            return True
+    upload_path_expression(
+        value, aliases, requests, scope, assignment, effect_evidence, seen
+    )
     return True
 
 
@@ -770,17 +752,26 @@ def _upload_control_path(scope, node):
     return choices
 
 
-def _upload_definition_reaches(definition, sink, scope):
+def _upload_definition_reaches(definition, sink, scope, name, before_line):
     """Require each conditional definition edge to reach the save unchanged."""
+    if sink is None:
+        if definition.lineno >= before_line:
+            return False
+    elif (definition.lineno, definition.col_offset) >= (sink.lineno, sink.col_offset):
+        return False
+    from .review_audits import _bound_names
+
+    if name not in _bound_names(definition):
+        return False
+    if sink is None:
+        return True
     defined = _upload_control_path(scope, definition)
     consumed = _upload_control_path(scope, sink)
-    return (
-        defined is not None
-        and consumed is not None
-        and all(
-            key in consumed and consumed[key][1] == truth
-            for key, (_branch, truth) in defined.items()
-        )
+    if defined is None or consumed is None:
+        return False
+    return all(
+        key in consumed and consumed[key][1] == truth
+        for key, (_branch, truth) in defined.items()
     )
 
 
@@ -896,133 +887,115 @@ def _upload_filename_mutated(scope, call, requests, source_names, source_span=No
 def upload_join_effect(
     node, aliases, requests, scope, flow_statement, effect_evidence, seen
 ):
+    """Record an escape for a canonical join with one raw filename component."""
     from .review_integrity import security_call_name
 
-    call_name = security_call_name(node, aliases)
-    if (
-        call_name == "os.path.join"
-        and isinstance(effect_evidence, dict)
-        and len(node.args) == 2
-        and not node.keywords
-        and isinstance(node.args[1], (ast.Name, ast.Attribute))
-    ):
-        candidate = (
-            {
-                key: effect_evidence[key]
-                for key in ("sink_line", "sink_node")
-                if key in effect_evidence
-            }
-            if isinstance(effect_evidence, dict)
-            else {}
-        )
-        if upload_path_expression(
-            node.args[1],
-            aliases,
-            requests,
-            scope,
-            flow_statement,
-            candidate,
-            seen,
-        ) and candidate.get("raw_filename"):
-            import os
+    match (node, effect_evidence):
+        case (
+            ast.Call(
+                args=[base, (ast.Name() | ast.Attribute()) as argument], keywords=[]
+            ),
+            dict(),
+        ):
+            pass
+        case _:
+            return
+    if security_call_name(node, aliases) != "os.path.join":
+        return
+    candidate = {
+        key: effect_evidence[key]
+        for key in ("sink_line", "sink_node")
+        if key in effect_evidence
+    }
+    if not upload_path_expression(
+        argument, aliases, requests, scope, flow_statement, candidate, seen
+    ) or not candidate.get("raw_filename"):
+        return
+    import os
 
-            base = os.path.normpath(os.path.join(os.sep, "__cf_intended_upload_base__"))
-            outside = os.path.normpath(
-                os.path.join(base, "..", "__cf_outside_upload__")
-            )
-            try:
-                escapes = os.path.commonpath((base, outside)) != base
-            except (OSError, ValueError):
-                escapes = False
-            if escapes:
-                effect_evidence.update(candidate)
-                effect_evidence.update(
-                    {
-                        "path_composition": "os.path.join",
-                        "intended_base_span": [
-                            node.args[0].lineno,
-                            node.args[0].col_offset,
-                            node.args[0].end_lineno,
-                            node.args[0].end_col_offset,
-                        ],
-                    }
-                )
+    root = os.path.normpath(os.path.join(os.sep, "__cf_intended_upload_base__"))
+    outside = os.path.normpath(os.path.join(root, "..", "__cf_outside_upload__"))
+    try:
+        escapes = os.path.commonpath((root, outside)) != root
+    except (OSError, ValueError):
+        escapes = False
+    if escapes:
+        effect_evidence.update(candidate)
+        effect_evidence.update(
+            {
+                "path_composition": "os.path.join",
+                "intended_base_span": [
+                    base.lineno,
+                    base.col_offset,
+                    base.end_lineno,
+                    base.end_col_offset,
+                ],
+            }
+        )
 
 
 def upload_concat_effect(
     node, aliases, requests, scope, flow_statement, effect_evidence, seen
 ):
+    """Record raw filename concatenation after validating its base and separator."""
+    match (node, effect_evidence):
+        case (
+            ast.BinOp(op=ast.Add(), left=prefix),
+            dict(),
+        ):
+            pass
+        case _:
+            return
+    match prefix:
+        case ast.Constant(value=str() as separator):
+            base = prefix
+        case ast.BinOp(
+            op=ast.Add(), left=base, right=ast.Constant(value=str() as separator)
+        ) if not isinstance(base, ast.BinOp):
+            pass
+        case _:
+            return
+    if not separator.endswith(("/", "\\")):
+        return
+    candidate = {
+        key: effect_evidence[key]
+        for key in ("sink_line", "sink_node")
+        if key in effect_evidence
+    }
     if (
-        isinstance(node, ast.BinOp)
-        and isinstance(node.op, ast.Add)
-        and isinstance(effect_evidence, dict)
-    ):
-        prefix, base = node.left, node.left
-        if (
-            isinstance(prefix, ast.BinOp)
-            and isinstance(prefix.op, ast.Add)
-            and isinstance(prefix.right, ast.Constant)
-            and isinstance(prefix.right.value, str)
-            and prefix.right.value.endswith(("/", "\\"))
-            and not isinstance(prefix.left, ast.BinOp)
-        ):
-            base = prefix.left
-        elif not (
-            isinstance(prefix, ast.Constant)
-            and isinstance(prefix.value, str)
-            and prefix.value.endswith(("/", "\\"))
-        ):
-            base = None
-        candidate = (
-            {
-                key: effect_evidence[key]
-                for key in ("sink_line", "sink_node")
-                if key in effect_evidence
-            }
-            if isinstance(effect_evidence, dict)
-            else {}
+        not upload_path_expression(
+            node.right, aliases, requests, scope, flow_statement, candidate, seen
         )
-        if (
-            base is not None
-            and upload_path_expression(
-                node.right,
-                aliases,
-                requests,
-                scope,
-                flow_statement,
-                candidate,
-                seen,
-            )
-            and "source_span" in candidate
-        ):
-            import os
+        or "source_span" not in candidate
+    ):
+        return
+    import os
 
-            root = os.path.normpath(os.path.join(os.sep, "__cf_intended_upload_base__"))
-            outside = os.path.normpath(
-                os.path.join(root, "..", "__cf_outside_upload__")
-            )
-            try:
-                escapes = os.path.commonpath((root, outside)) != root
-            except (OSError, ValueError):
-                escapes = False
-            if escapes:
-                effect_evidence.update(candidate)
-                effect_evidence.update(
-                    {
-                        "path_composition": "raw_string_concat",
-                        "intended_base_span": [
-                            node.left.lineno,
-                            node.left.col_offset,
-                            node.left.end_lineno,
-                            node.left.end_col_offset,
-                        ],
-                    }
-                )
+    root = os.path.normpath(os.path.join(os.sep, "__cf_intended_upload_base__"))
+    outside = os.path.normpath(os.path.join(root, "..", "__cf_outside_upload__"))
+    try:
+        escapes = os.path.commonpath((root, outside)) != root
+    except (OSError, ValueError):
+        escapes = False
+    if escapes:
+        effect_evidence.update(candidate)
+        effect_evidence.update(
+            {
+                "path_composition": "raw_string_concat",
+                "intended_base_span": [
+                    node.left.lineno,
+                    node.left.col_offset,
+                    node.left.end_lineno,
+                    node.left.end_col_offset,
+                ],
+            }
+        )
 
 
 def upload_path_expression(
     node, aliases, requests, scope, flow_statement, effect_evidence=None, seen=None
 ):
+    """Trace typed path expressions while preserving filename sanitization boundaries."""
     from .review_integrity import (
         security_call_name,
         _security_expr_tainted,
@@ -1030,61 +1003,67 @@ def upload_path_expression(
         _security_flask_upload_expression,
     )
 
-    if isinstance(node, ast.Name):
-        return upload_name_origin(
-            node, aliases, requests, scope, flow_statement, effect_evidence, seen
-        )
-    if isinstance(node, ast.Attribute) and node.attr == "filename":
-        upload = _security_flask_upload_expression(
-            node.value, aliases, scope, flow_statement
-        ) or (
-            isinstance(node.value, ast.Name)
-            and ("flask-upload", node.value.id) in requests
-        )
-        if upload and isinstance(effect_evidence, dict):
-            effect_evidence.setdefault(
-                "source_span",
-                [node.lineno, node.col_offset, node.end_lineno, node.end_col_offset],
+    match node:
+        case ast.Name():
+            return upload_name_origin(
+                node, aliases, requests, scope, flow_statement, effect_evidence, seen
             )
-            effect_evidence["raw_filename"] = True
-            if isinstance(node.value, ast.Name):
-                effect_evidence.setdefault("source_names", set()).add(node.value.id)
-        return upload
-    if isinstance(node, ast.JoinedStr):
-        arguments = [
-            value.value
-            for value in node.values
-            if isinstance(value, ast.FormattedValue)
-        ]
-    elif isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Add, ast.Div)):
-        arguments = [node.left, node.right]
-    elif isinstance(node, ast.Call):
-        if _security_is_proven_secure_filename(node, aliases):
-            return False
-        arguments = [*node.args, *(keyword.value for keyword in node.keywords)]
-        call_name = security_call_name(node, aliases)
-        upload_join_effect(
-            node, aliases, requests, scope, flow_statement, effect_evidence, seen
-        )
-        if call_name in {
-            "os.path.join",
-            "pathlib.Path",
-            "pathlib.PurePath",
-        } and any(
-            _security_expr_tainted(argument, requests, set(), aliases)
-            and not (
-                isinstance(argument, ast.Call)
-                and _security_is_proven_secure_filename(argument, aliases)
+        case ast.Attribute(attr="filename", value=receiver):
+            upload = _security_flask_upload_expression(
+                receiver, aliases, scope, flow_statement
             )
-            and not (
-                isinstance(argument, ast.Name)
-                and ("secure-upload-leaf", argument.id) in requests
-            )
-            for argument in arguments
+            match receiver:
+                case ast.Name(id=name):
+                    upload = upload or ("flask-upload", name) in requests
+            match (upload, effect_evidence):
+                case (True, dict()):
+                    effect_evidence.setdefault(
+                        "source_span",
+                        [
+                            node.lineno,
+                            node.col_offset,
+                            node.end_lineno,
+                            node.end_col_offset,
+                        ],
+                    )
+                    effect_evidence["raw_filename"] = True
+                    effect_evidence.setdefault("source_names", set()).update(
+                        item.id for item in (receiver,) if isinstance(item, ast.Name)
+                    )
+            return upload
+        case ast.JoinedStr(values=values):
+            arguments = [
+                value.value for value in values if isinstance(value, ast.FormattedValue)
+            ]
+        case ast.BinOp(op=ast.Add() | ast.Div(), left=left, right=right):
+            arguments = [left, right]
+        case ast.Call(args=args, keywords=keywords) if (
+            not _security_is_proven_secure_filename(node, aliases)
         ):
-            return True
-    else:
-        return False
+            arguments = [*args, *(item.value for item in keywords)]
+            upload_join_effect(
+                node, aliases, requests, scope, flow_statement, effect_evidence, seen
+            )
+            if security_call_name(node, aliases) in {
+                "os.path.join",
+                "pathlib.Path",
+                "pathlib.PurePath",
+            }:
+                unsanitized = (
+                    argument
+                    for argument in arguments
+                    if not isinstance(argument, ast.Call)
+                    or not _security_is_proven_secure_filename(argument, aliases)
+                )
+                if any(
+                    _security_expr_tainted(argument, requests, set(), aliases)
+                    for argument in unsanitized
+                    if ("secure-upload-leaf", getattr(argument, "id", None))
+                    not in requests
+                ):
+                    return True
+        case _:
+            return False
     upload_concat_effect(
         node, aliases, requests, scope, flow_statement, effect_evidence, seen
     )
@@ -1218,71 +1197,70 @@ def _upload_guard_dominates(scope, call, statement, source_names, aliases):
 
 
 def source_domain_guarded(scope, call, source_names, aliases):
-    """Recognize only a dominant safe-domain check or exact path containment branch."""
+    """Require a dominating safe-name domain or an exact commonpath containment test."""
     from .review_integrity import security_call_name
 
     if not isinstance(scope, ast.AST) or not source_names:
         return False
     components = {"/", "\\", "..", ":"}
-    blocked = set()
-    for statement in ast.walk(scope):
-        if (
-            not isinstance(statement, ast.If)
-            or getattr(statement, "_security_lexical_scope", scope) is not scope
-        ):
-            continue
+    safe, rejected, blocked = (
+        {"finite_safe", "regex_safe"},
+        {"finite_reject", "regex_reject"},
+        set(),
+    )
+    statements = (
+        item
+        for item in ast.walk(scope)
+        if isinstance(item, ast.If)
+        if getattr(item, "_security_lexical_scope", scope) is scope
+    )
+    for statement in statements:
         test = statement.test
-        checks = (
-            test.values
-            if isinstance(test, ast.BoolOp) and isinstance(test.op, ast.Or)
-            else [test]
-        )
-        kinds = [
+        match test:
+            case ast.BoolOp(op=ast.Or(), values=checks):
+                disjunction = True
+            case _:
+                checks, disjunction = [test], False
+        kinds = {
             _upload_filename_domain_kind(item, source_names, aliases) for item in checks
-        ]
+        }
         nested = any(call in ast.walk(child) for child in statement.body)
-        if (
-            nested
-            and any(kind in {"finite_safe", "regex_safe"} for kind in kinds)
-            and (
-                not isinstance(test, ast.BoolOp)
-                or not isinstance(test.op, ast.Or)
-                or all(kind in {"finite_safe", "regex_safe"} for kind in kinds)
-            )
-        ) or (
-            any(call in ast.walk(child) for child in statement.orelse)
-            and any(kind in {"finite_reject", "regex_reject"} for kind in kinds)
-        ):
-            return True
-        if any(
-            kind in {"finite_reject", "regex_reject", "empty_only"} for kind in kinds
-        ):
-            if _upload_guard_dominates(scope, call, statement, source_names, aliases):
+        match (nested, bool(kinds & safe), disjunction, kinds <= safe):
+            case (True, True, False, _) | (True, True, True, True):
                 return True
-        if set(kinds).issubset(components) and set(kinds):
-            if _upload_guard_dominates(scope, call, statement, source_names, aliases):
-                blocked.update(kinds)
-        compare = test if isinstance(test, ast.Compare) else None
-        if (
-            nested
-            and compare is not None
-            and len(compare.ops) == 1
-            and isinstance(compare.ops[0], ast.Eq)
-            and isinstance(compare.left, ast.Call)
-            and security_call_name(compare.left, aliases) == "os.path.commonpath"
-            and len(compare.left.args) == 1
-            and isinstance(compare.left.args[0], (ast.List, ast.Tuple))
-            and len(compare.left.args[0].elts) == 2
-            and ast.dump(compare.left.args[0].elts[0])
-            == ast.dump(compare.comparators[0])
-            and isinstance(compare.left.args[0].elts[1], ast.Name)
-            and compare.left.args[0].elts[1].id in source_names
+        if kinds & rejected and any(
+            call in ast.walk(child) for child in statement.orelse
         ):
             return True
+        if _upload_guard_dominates(scope, call, statement, source_names, aliases):
+            if kinds & (rejected | {"empty_only"}):
+                return True
+            blocked.update(kinds if kinds <= components else ())
+        match test:
+            case ast.Compare(
+                ops=[ast.Eq()],
+                comparators=[base],
+                left=ast.Call(
+                    args=[
+                        ast.List(elts=[intended, ast.Name(id=name)])
+                        | ast.Tuple(elts=[intended, ast.Name(id=name)])
+                    ]
+                ) as comparison,
+            ) if nested:
+                if (
+                    security_call_name(comparison, aliases),
+                    ast.dump(intended),
+                    name,
+                ) in {
+                    ("os.path.commonpath", ast.dump(base), source)
+                    for source in source_names
+                }:
+                    return True
     return components.issubset(blocked)
 
 
 def bind_upload_sink_precondition(finding, call, aliases, requests, module):
+    """Attach upload escape evidence only for an unguarded, source-bound save path."""
     from .review_integrity import _security_upload_path_expression
     from .finite_capture import security_input_value_flow
     from .semantic_credential_sensor import (
@@ -1295,8 +1273,7 @@ def bind_upload_sink_precondition(finding, call, aliases, requests, module):
         module, aliases, roots=("werkzeug", "os.path.join")
     ):
         return
-    if hasattr(requests, "supported_view"):
-        requests = requests.supported_view()
+    requests = getattr(requests, "supported_view", lambda: requests)()
     if requests is None:
         finding["facts"]["unresolved_control_flow"] = "unproven_control_edge"
         return
@@ -1308,7 +1285,7 @@ def bind_upload_sink_precondition(finding, call, aliases, requests, module):
     evidence = {"sink_line": call.lineno}
     evidence["sink_node"] = call
     scope = getattr(call, "_security_lexical_scope", None)
-    path_source = destination is not None and _security_upload_path_expression(
+    path_source = _security_upload_path_expression(
         destination,
         aliases,
         requests,
@@ -1317,12 +1294,15 @@ def bind_upload_sink_precondition(finding, call, aliases, requests, module):
         evidence,
     )
     source_names = evidence.get("source_names", set())
-    if path_source and isinstance(destination, ast.Name):
-        source_names.add(destination.id)
-    if path_source and _upload_filename_mutated(
+    source_names.update(
+        name
+        for name in (getattr(destination, "id", None),)
+        if path_source
+        if name is not None
+    )
+    path_source = path_source and not _upload_filename_mutated(
         scope, call, requests, source_names, evidence.get("source_span")
-    ):
-        path_source = False
+    )
     guarded = source_domain_guarded(scope, call, source_names, aliases)
     if (
         path_source
@@ -1392,13 +1372,12 @@ def bind_request_sink_precondition(
     argument, provider_roots = selected
     if _provider_identity_uncertain(module, aliases, roots=provider_roots):
         return
-    if hasattr(requests, "supported_view"):
-        requests = requests.supported_view()
+    requests = getattr(requests, "supported_view", lambda: requests)()
     if requests is None:
         finding["facts"]["unresolved_control_flow"] = "unproven_control_edge"
         return
     trace = security_input_value_flow(argument, requests, aliases)
-    if trace is None or trace["value_kind"] != "text":
+    if getattr(trace, "get", lambda key: None)("value_kind") != "text":
         return
     premise = supported_security_precondition(
         call, "untrusted_request", finding["facts"]["call"]
@@ -1448,47 +1427,52 @@ def tls_security_finding(call, relative, node, aliases=None):
                 item.value
                 for item in node.keywords
                 if item.arg == "verify"
-                and isinstance(item.value, ast.Constant)
-                and item.value.value is False
+                if isinstance(item.value, ast.Constant)
+                if item.value.value is False
             ),
             None,
         )
         module = _security_module_scope(getattr(node, "_security_lexical_scope", None))
+        transport = None
         url_value = None
-        if isinstance(url, ast.Constant):
-            url_value = url.value
-        if isinstance(url, ast.Name):
-            _bindings, constants = _security_flow_bindings(node, aliases)
-            url_value = constants.get(url.id)
-        try:
-            static_https = (
-                isinstance(url_value, str)
-                and urlsplit(url_value).scheme.casefold() == "https"
-            )
-        except (ValueError, UnicodeError):
-            static_https = False
-        https_prefix = (
-            isinstance(url, ast.BinOp)
-            and isinstance(url.op, ast.Add)
-            and isinstance(url.left, ast.Constant)
-            and isinstance(url.left.value, str)
-            and url.left.value.casefold().startswith("https://")
-        ) or (
-            isinstance(url, ast.JoinedStr)
-            and bool(url.values)
-            and isinstance(url.values[0], ast.Constant)
-            and isinstance(url.values[0].value, str)
-            and url.values[0].value.casefold().startswith("https://")
-        )
-        transport = "static_https" if static_https else None
-        if transport is None and https_prefix:
-            transport = "https_capable"
+        match url:
+            case ast.Constant(value=value):
+                url_value = value
+            case ast.Name(id=name):
+                _bindings, constants = _security_flow_bindings(node, aliases)
+                url_value = constants.get(name)
+        match url_value:
+            case str():
+                try:
+                    transport = (
+                        "static_https"
+                        if urlsplit(url_value).scheme.casefold() == "https"
+                        else None
+                    )
+                except (ValueError, UnicodeError):
+                    pass
+        match (transport, url):
+            case (
+                None,
+                ast.BinOp(op=ast.Add(), left=ast.Constant(value=str() as prefix)),
+            ) | (None, ast.JoinedStr(values=[ast.Constant(value=str() as prefix), *_])):
+                transport = (
+                    "https_capable"
+                    if prefix.casefold().startswith("https://")
+                    else None
+                )
+        match (
+            call in contract["effect_facts"]["provider_id"],
+            verify,
+            transport,
+            module,
+        ):
+            case (True, ast.Constant(), str(), ast.AST()):
+                pass
+            case _:
+                return finding
         if (
-            call in contract["effect_facts"]["provider_id"]
-            and verify is not None
-            and transport is not None
-            and module is not None
-            and getattr(module, "_security_precondition_providers_stable", False)
+            getattr(module, "_security_precondition_providers_stable", False)
             and security_precondition_path_possible(node)
             and not _provider_identity_uncertain(
                 module, aliases, roots=("requests", "httpx")
@@ -1557,8 +1541,7 @@ def regenerate_security_source_model(sources, bindings):
         or sum(map(len, captured.values())) > 32_000_000
     ):
         return None
-    from .credential_role_constructor_provider import security_snapshot_model
-    from .review_audits import _oracle_tree_fingerprint
+    from .credential_role_constructor_provider import SourceSnapshotIndex
 
     try:
         trees = {
@@ -1567,115 +1550,131 @@ def regenerate_security_source_model(sources, bindings):
         }
         for path, tree in trees.items():
             tree._oracle_source_sha256 = hashes[path.as_posix()]
-        return security_snapshot_model(
+        model = SourceSnapshotIndex(
             Path("."),
             trees,
             captured,
-            {path: _oracle_tree_fingerprint(tree) for path, tree in trees.items()},
+            {path: hashes[path.as_posix()] for path in trees},
         )
+        return model if model.bounded else None
     except (SyntaxError, ValueError, TypeError, RecursionError, MemoryError):
         return None
 
 
 def matches_regenerated_security_precondition(finding, native_rows, regenerated_proof):
+    """Copy only a source-verified proof whose complete stable claims still match."""
     from copy import deepcopy
+    from collections.abc import Mapping
 
-    facts = finding.get("facts", {})
-    facts = facts if isinstance(facts, dict) else {}
-    has_premise = isinstance(facts, dict) and "security_precondition" in facts
-    premise = facts.get("security_precondition") if isinstance(facts, dict) else None
+    match finding:
+        case {"code": code, "facts": dict() as facts}:
+            pass
+        case _:
+            return False
+    has_premise = "security_precondition" in facts
+    match has_premise, facts.get("security_precondition"):
+        case True, dict() as premise:
+            pass
+        case False, _:
+            premise = {}
+        case _:
+            return False
     from . import semantic_credential_sensor as sensors
 
-    effect_contract = sensors.SECURITY_EFFECT_CONTRACTS.get(finding.get("code"))
-    if (
-        finding.get("code") == "SECURITY_PATH_TRAVERSAL"
-        and facts.get("call") != "flask.FileStorage.save"
-    ):
-        effect_contract = None
-    if has_premise and not valid_security_precondition(premise, finding):
-        return False
-    for candidate in native_rows:
-        candidate = candidate if isinstance(candidate, dict) else {}
-        current_facts = candidate.get("facts", {})
-        if not isinstance(current_facts, dict):
-            continue
-        if any(
-            candidate.get(key) != finding.get(key)
-            for key in ("code", "path", "line", "column")
-        ):
-            continue
-        regenerated = current_facts.get("security_precondition")
-        if not valid_security_precondition(
-            regenerated, finding, require_effect_witness=effect_contract is not None
-        ):
-            continue
-        if any(
-            key not in current_facts or current_facts[key] != value
-            for key, value in facts.items()
-            if key != "security_precondition"
-        ):
-            continue
-        premise = premise if isinstance(premise, dict) else {}
-        legacy_role_signature = (
-            finding.get("code"),
-            facts.get("call")
-            if finding.get("code") == "SECURITY_PATH_TRAVERSAL"
-            else None,
-            "effect_witness" in premise,
-            premise.get("source_role"),
-            premise.get("consumer_role"),
-        )
-        legacy_role_refinement = legacy_role_signature in (
-            (
-                "SECURITY_LOG_INJECTION",
-                None,
-                False,
-                "untrusted_input",
-                "log_message",
-            ),
-            (
-                "SECURITY_PATH_TRAVERSAL",
-                "flask.FileStorage.save",
-                False,
-                "untrusted_request",
-                "flask.FileStorage.save",
-            ),
-        )
-        comparable_premise = (
-            {
+    path_call = {"SECURITY_PATH_TRAVERSAL": "flask.FileStorage.save"}.get(code)
+    effect_contract = sensors.SECURITY_EFFECT_CONTRACTS.get(code)
+    match code, facts.get("call"):
+        case "SECURITY_PATH_TRAVERSAL", call if call != path_call:
+            effect_contract = None
+    match has_premise:
+        case True if not valid_security_precondition(premise, finding):
+            return False
+        case _:
+            pass
+    upload_sink = (code, facts.get("call")) == (
+        "SECURITY_PATH_TRAVERSAL",
+        "flask.FileStorage.save",
+    )
+    legacy_signature = (
+        code,
+        {"SECURITY_PATH_TRAVERSAL": facts.get("call")}.get(code),
+        "effect_witness" in premise,
+        premise.get("source_role"),
+        premise.get("consumer_role"),
+    )
+    legacy_role_refinement = legacy_signature in {
+        (
+            "SECURITY_LOG_INJECTION",
+            None,
+            False,
+            "untrusted_input",
+            "log_message",
+        ),
+        (
+            "SECURITY_PATH_TRAVERSAL",
+            "flask.FileStorage.save",
+            False,
+            "untrusted_request",
+            "flask.FileStorage.save",
+        ),
+    }
+    match legacy_role_refinement, effect_contract:
+        case True, Mapping() as effect_contract:
+            comparable_premise = {
                 **premise,
                 "source_role": effect_contract["source_role"],
                 "consumer_role": effect_contract["consumer_role"],
             }
-            if legacy_role_refinement
-            else premise
-        )
-        new_precondition_fields = {"effect_witness", "input_value_flow"}
-        if (
-            finding.get("code") == "SECURITY_PATH_TRAVERSAL"
-            and facts.get("call") == "flask.FileStorage.save"
-        ):
+        case True, _:
+            return False
+        case _:
+            comparable_premise = premise
+    new_precondition_fields = {"effect_witness", "input_value_flow"}
+    match upload_sink:
+        case True:
             new_precondition_fields.add("input_slot_span")
-        regenerated_fields = {
-            key: value
-            for key, value in regenerated.items()
-            if key not in new_precondition_fields or key in comparable_premise
-        }
-        premise_matches = (
-            has_premise and regenerated_fields == comparable_premise
-        ) or (
-            not has_premise
-            and (
-                effect_contract is None
-                or isinstance(regenerated.get("effect_witness"), dict)
+    selected = next(
+        (
+            regenerated
+            for candidate in native_rows
+            if isinstance(candidate, dict)
+            for current_facts in (candidate.get("facts", {}),)
+            if isinstance(current_facts, dict)
+            if all(
+                candidate.get(key) == finding.get(key)
+                for key in ("code", "path", "line", "column")
             )
-        )
-        if not premise_matches:
-            continue
-        regenerated_proof.clear()
-        regenerated_proof.update(deepcopy(regenerated))
-        return True
-    return False
+            for regenerated in (current_facts.get("security_precondition"),)
+            if valid_security_precondition(
+                regenerated, finding, require_effect_witness=effect_contract is not None
+            )
+            if all(
+                key in current_facts and current_facts.get(key) == value
+                for key, value in facts.items()
+                if key != "security_precondition"
+            )
+            for regenerated_fields in (
+                {
+                    key: value
+                    for key, value in regenerated.items()
+                    if key not in new_precondition_fields or key in comparable_premise
+                },
+            )
+            for claim_matches in (
+                regenerated_fields == comparable_premise
+                if has_premise
+                else effect_contract is None
+                or isinstance(regenerated.get("effect_witness"), dict),
+            )
+            if claim_matches
+        ),
+        None,
+    )
+    if selected is None:
+        return False
+    regenerated_proof.clear()
+    regenerated_proof.update(deepcopy(selected))
+    return True
 
 
 def security_effect_fact_matches(key, value, expected):
@@ -1690,16 +1689,17 @@ def security_effect_fact_matches(key, value, expected):
     if not isinstance(value, str) or not value:
         return False
     if key.endswith("_sha256"):
-        return len(value) == 64 and all(
-            character in "0123456789abcdef" for character in value
-        )
+        import re
+
+        return re.fullmatch(r"[0-9a-f]{64}", value) is not None
     if key.endswith("_path"):
         path = PurePosixPath(value)
-        return not path.is_absolute() and ".." not in path.parts and "\\" not in value
+        return not (path.is_absolute() or ".." in path.parts or "\\" in value)
     return True
 
 
 def valid_security_precondition(premise, finding, *, require_effect_witness=False):
+    """Validate the stable schema, roles, spans, and effect facts of a precondition."""
     from collections.abc import Mapping
     from .primitive_observation_binding import valid_source_span
 
@@ -1707,88 +1707,97 @@ def valid_security_precondition(premise, finding, *, require_effect_witness=Fals
         return False
     from . import semantic_credential_sensor as sensors
 
-    sink_span = premise.get("sink_span")
-    sink_matches = isinstance(sink_span, list) and sink_span[:2] == [
-        finding.get("line"),
-        finding.get("column", 0),
-    ]
-    if not all(
+    match premise:
+        case {
+            "schema": "factory.security.precondition.v1",
+            "status": "SUPPORTED",
+            "proof_scope": "local_static_wiring",
+            "runtime_execution": "not_performed",
+            "deployment": "UNASSESSED",
+            "sink_span": list() as sink_span,
+            "source_role": source_role,
+            "consumer_role": consumer_role,
+        }:
+            pass
+        case _:
+            return False
+    if (
         (
-            sensors.SECURITY_EFFECT_WITNESS_SCHEMA
-            == sensors._SECURITY_EFFECT_WITNESS_SCHEMA_BASELINE,
-            sensors.SECURITY_EFFECT_CONTRACTS
-            is sensors._SECURITY_EFFECT_CONTRACTS_BASELINE,
-            premise.get("schema") == "factory.security.precondition.v1",
-            premise.get("status") == "SUPPORTED",
-            premise.get("proof_scope") == "local_static_wiring",
-            premise.get("runtime_execution") == "not_performed",
-            premise.get("deployment") == "UNASSESSED",
-            valid_source_span(sink_span),
-            sink_matches,
+            sensors.SECURITY_EFFECT_WITNESS_SCHEMA,
+            id(sensors.SECURITY_EFFECT_CONTRACTS),
         )
+        != (
+            sensors._SECURITY_EFFECT_WITNESS_SCHEMA_BASELINE,
+            id(sensors._SECURITY_EFFECT_CONTRACTS_BASELINE),
+        )
+        or not valid_source_span(sink_span)
+        or sink_span[:2] != [finding.get("line"), finding.get("column", 0)]
     ):
         return False
-    contract = sensors.SECURITY_EFFECT_CONTRACTS.get(finding.get("code"))
+    code = finding.get("code")
     finding_facts = finding.get("facts", {})
-    if finding.get("code") == "SECURITY_PATH_TRAVERSAL" and (
-        not isinstance(finding_facts, dict)
-        or finding_facts.get("call") != "flask.FileStorage.save"
-    ):
-        contract = None
+    finding_facts = finding_facts if isinstance(finding_facts, dict) else {}
+    contract = sensors.SECURITY_EFFECT_CONTRACTS.get(code)
+    match code, finding_facts.get("call"):
+        case "SECURITY_PATH_TRAVERSAL", call if call != "flask.FileStorage.save":
+            contract = None
     if "effect_witness" not in premise:
-        if contract is not None:
-            legacy_role_key = (
-                finding.get("code"),
-                premise.get("source_role"),
-                premise.get("consumer_role"),
-            )
-            if not require_effect_witness and legacy_role_key in {
-                ("SECURITY_LOG_INJECTION", "untrusted_input", "log_message"),
-                (
-                    "SECURITY_PATH_TRAVERSAL",
-                    "untrusted_request",
-                    "flask.FileStorage.save",
-                ),
-            }:
-                return True
-            return all(
-                (
-                    not require_effect_witness,
-                    premise.get("source_role") == contract.get("source_role"),
-                    premise.get("consumer_role") == contract.get("consumer_role"),
+        legacy_roles = {
+            "SECURITY_LOG_INJECTION": ("untrusted_input", "log_message"),
+            "SECURITY_PATH_TRAVERSAL": (
+                "untrusted_request",
+                "flask.FileStorage.save",
+            ),
+        }
+        role_pair = (source_role, consumer_role)
+        match contract:
+            case None:
+                return all(
+                    [
+                        source_role in {"untrusted_request", "untrusted_input"},
+                        isinstance(consumer_role, str),
+                        bool(consumer_role),
+                    ]
                 )
-            )
-        return all(
-            (
-                premise.get("source_role") in {"untrusted_request", "untrusted_input"},
-                isinstance(premise.get("consumer_role"), str),
-                bool(premise.get("consumer_role")),
-            )
-        )
-
+            case _:
+                expected_role = (
+                    contract.get("source_role"),
+                    contract.get("consumer_role"),
+                )
+                return all(
+                    [
+                        not require_effect_witness,
+                        role_pair in {legacy_roles.get(code), expected_role},
+                    ]
+                )
+    match contract:
+        case {
+            "source_role": contract_source,
+            "consumer_role": contract_consumer,
+            "effect_kind": contract_kind,
+            "effect_facts": Mapping() as contract_facts,
+        } if set(contract) == {
+            "source_role",
+            "consumer_role",
+            "effect_kind",
+            "effect_facts",
+        }:
+            pass
+        case _:
+            return False
     witness = premise.get("effect_witness")
-    if not isinstance(witness, dict) or not isinstance(contract, Mapping):
+    if not isinstance(witness, dict):
         return False
-    if set(contract) != {"source_role", "consumer_role", "effect_kind", "effect_facts"}:
-        return False
-    contract_facts = contract.get("effect_facts")
-    facts = witness.get("effect_facts")
-    if not isinstance(contract_facts, Mapping) or not isinstance(facts, dict):
-        return False
-    activation_keys = {"activation_path", "activation_sha256", "activation_span"}
-    absent_activation = activation_keys.issubset(facts) and all(
-        facts[key] is None for key in activation_keys
-    )
-    valid_values = [
-        security_effect_fact_matches(key, facts.get(key), expected)
-        for key, expected in contract_facts.items()
-        if not (absent_activation and key in activation_keys)
-    ]
-    checks = [
-        set(contract)
-        == {"source_role", "consumer_role", "effect_kind", "effect_facts"},
-        set(witness)
-        == {
+    match witness:
+        case {
+            "schema": schema,
+            "source_role": witness_source,
+            "consumer_role": witness_consumer,
+            "effect_kind": effect_kind,
+            "source_span": list() as source_span,
+            "sink_span": list() as witness_sink,
+            "effect_facts": dict() as facts,
+        } if set(witness) == {
             "schema",
             "source_role",
             "consumer_role",
@@ -1796,20 +1805,51 @@ def valid_security_precondition(premise, finding, *, require_effect_witness=Fals
             "source_span",
             "sink_span",
             "effect_facts",
-        },
-        witness.get("schema") == sensors.SECURITY_EFFECT_WITNESS_SCHEMA,
-        witness.get("source_role") == contract.get("source_role"),
-        witness.get("consumer_role") == contract.get("consumer_role"),
-        witness.get("effect_kind") == contract.get("effect_kind"),
-        premise.get("source_role") == contract.get("source_role"),
-        premise.get("consumer_role") == contract.get("consumer_role"),
-        witness.get("sink_span") == premise.get("sink_span"),
-        valid_source_span(witness.get("source_span")),
-        valid_source_span(witness.get("sink_span")),
-        set(facts) == set(contract_facts),
-        *valid_values,
-    ]
-    return all(checks)
+        }:
+            pass
+        case _:
+            return False
+    activation_keys = ("activation_path", "activation_sha256", "activation_span")
+    absent_activation = tuple(
+        facts.get(key, _LOG_INVALID) for key in activation_keys
+    ) == (
+        None,
+        None,
+        None,
+    )
+    checked_facts = {
+        key: expected
+        for key, expected in contract_facts.items()
+        if not absent_activation or key not in activation_keys
+    }
+    actual = {
+        "schema": schema,
+        "source_role": witness_source,
+        "consumer_role": witness_consumer,
+        "effect_kind": effect_kind,
+    }
+    expected = {
+        "schema": sensors.SECURITY_EFFECT_WITNESS_SCHEMA,
+        "source_role": contract_source,
+        "consumer_role": contract_consumer,
+        "effect_kind": contract_kind,
+    }
+    values_match = all(
+        security_effect_fact_matches(key, facts.get(key), value)
+        for key, value in checked_facts.items()
+    )
+    return all(
+        [
+            actual == expected,
+            source_role == contract_source,
+            consumer_role == contract_consumer,
+            witness_sink == sink_span,
+            valid_source_span(source_span),
+            valid_source_span(witness_sink),
+            set(facts) == set(contract_facts),
+            values_match,
+        ]
+    )
 
 
 _LOG_INVALID = object()
@@ -2521,20 +2561,26 @@ def logging_consumer_configuration(index, source_path, call, aliases):
     from .review_integrity import security_call_name
     from .review_audits import _security_aliases
 
-    if (
-        type(index) is not SourceSnapshotIndex
-        or not index.bounded
-        or source_path not in index.snapshots
-        or not isinstance(call, ast.Call)
-        or not all(index.validate(path) for path in index.snapshots)
-    ):
-        return None
+    match index:
+        case SourceSnapshotIndex() as index if (
+            type(index) is SourceSnapshotIndex
+            and index.bounded
+            and source_path in index.snapshots
+            and isinstance(call, ast.Call)
+            and all(index.validate(path) for path in index.snapshots)
+        ):
+            pass
+        case _:
+            return None
     configuration = _logging_configuration(
         index, source_path, security_call_name, _security_aliases
     )
     receiver = _logging_receiver(index, source_path, call, aliases, security_call_name)
-    if configuration is None or receiver is None:
-        return None
+    match configuration, receiver:
+        case (None, _) | (_, None):
+            return None
+        case _, _:
+            pass
     settings_path, config_ref, activation, sections, root, selected_config = (
         configuration
     )
@@ -2547,34 +2593,38 @@ def logging_consumer_configuration(index, source_path, call, aliases):
         key: _logging_literal(definition, "()")
         for key, node in sections["filters"].items()
         if (definition := _logging_dict_fields(node)) is not None
-        and set(definition) == {"()"}
-        and _logging_literal(definition, "()") in canonical_filters
+        if set(definition) == {"()"}
+        if _logging_literal(definition, "()") in canonical_filters
     }
-    filter_provider_ids = set()
-    for node in sections["handlers"].values():
-        definition = _logging_dict_fields(node)
-        names = _logging_literal(definition, "filters", []) if definition else []
-        if isinstance(names, (list, tuple)):
-            filter_provider_ids.update(
-                filter_keys[name]
-                for name in names
-                if isinstance(name, str) and name in filter_keys
-            )
-    activation_path = None
-    if activation is not None:
-        activation_path = next(
-            (
-                path
-                for path in index.snapshots
-                if index.relative(path) == activation["path"]
-            ),
-            None,
-        )
-        if activation_path is None:
+    filter_provider_ids = {
+        filter_keys[name]
+        for node in sections["handlers"].values()
+        for definition in (_logging_dict_fields(node),)
+        for names in (_logging_literal(definition or {}, "filters", []),)
+        if isinstance(names, (list, tuple))
+        for name in names
+        if isinstance(name, str)
+        if name in filter_keys
+    }
+    activation_path = next(
+        (
+            path
+            for path in index.snapshots
+            if activation is not None
+            if index.relative(path) == activation["path"]
+        ),
+        None,
+    )
+    match activation_path:
+        case None if activation is not None:
             return None
-    mutation_paths = {settings_path, source_path}
-    if activation_path is not None:
-        mutation_paths.add(activation_path)
+        case _:
+            pass
+    mutation_paths = {
+        path
+        for path in (settings_path, source_path, activation_path)
+        if path is not None
+    }
     if _logging_mutation_present(
         index,
         mutation_paths,
@@ -2594,8 +2644,18 @@ def logging_consumer_configuration(index, source_path, call, aliases):
         settings_path,
         set(filter_keys),
     )
-    if facts is None:
-        return None
+    match facts:
+        case None:
+            return None
+        case _:
+            pass
+    match activation:
+        case None:
+            activation_facts = {}
+        case dict() as activation_facts:
+            pass
+        case _:
+            activation_facts = {}
     facts.update(
         {
             "consumer_config_path": config_ref["path"],
@@ -2603,9 +2663,9 @@ def logging_consumer_configuration(index, source_path, call, aliases):
             "consumer_config_span": config_ref["span"],
             "consumer_logger_id": logger_id,
             "consumer_call_level": call_level,
-            "activation_path": activation["path"] if activation else None,
-            "activation_sha256": activation["sha256"] if activation else None,
-            "activation_span": activation["span"] if activation else None,
+            "activation_path": activation_facts.get("path"),
+            "activation_sha256": activation_facts.get("sha256"),
+            "activation_span": activation_facts.get("span"),
         }
     )
     return facts
@@ -2618,39 +2678,47 @@ def logging_security_effect_witness(
     from collections.abc import Mapping
     from . import semantic_credential_sensor as sensors
 
-    if (
-        not isinstance(input_flow, dict)
-        or input_flow.get("value_kind") != "text"
-        or not isinstance(module, ast.Module)
-        or not isinstance(getattr(index, "snapshots", None), dict)
-        or index.snapshots.get(source_path) is not module
-        or not isinstance(provider_id, str)
-        or provider_id.endswith(".log")
-    ):
+    match input_flow:
+        case dict() as input_flow if input_flow.get("value_kind") == "text":
+            pass
+        case _:
+            return None
+    if not isinstance(module, ast.Module):
         return None
+    match getattr(index, "snapshots", None):
+        case dict() as snapshots if snapshots.get(source_path) is module:
+            pass
+        case _:
+            return None
+    match provider_id:
+        case str() as provider_name if not provider_name.endswith(".log"):
+            pass
+        case _:
+            return None
+    from .primitive_observation_binding import valid_source_span
+
     source = next(
         (
             step
             for step in input_flow.get("steps", [])
             if isinstance(step, dict)
-            and step.get("operation") == "REQUEST_SOURCE"
-            and isinstance(step.get("span"), list)
-            and len(step["span"]) == 4
+            if step.get("operation") == "REQUEST_SOURCE"
+            for source_span in (step.get("span"),)
+            if valid_source_span(source_span)
         ),
         None,
     )
-    if source is None or any(
-        type(value) is not int or value < 0 for value in source["span"]
-    ):
+    if source is None:
         return None
+    source_span = source["span"]
     source_node = next(
         (
             node
             for node in ast.walk(module)
             if isinstance(node, ast.expr)
-            and getattr(node, "_security_log_newline_source", False)
-            and [node.lineno, node.col_offset, node.end_lineno, node.end_col_offset]
-            == source["span"]
+            if getattr(node, "_security_log_newline_source", False)
+            if [node.lineno, node.col_offset, node.end_lineno, node.end_col_offset]
+            == source_span
         ),
         None,
     )
@@ -2678,7 +2746,7 @@ def logging_security_effect_witness(
         "source_role": contract["source_role"],
         "consumer_role": contract["consumer_role"],
         "effect_kind": contract["effect_kind"],
-        "source_span": source["span"],
+        "source_span": source_span,
         "sink_span": [
             call.lineno,
             call.col_offset,
@@ -2693,24 +2761,44 @@ def logging_input_value_trace(node, tainted, operation):
     """Carry one marked request source through the LOG reader's local flow."""
     from .semantic_credential_sensor import _SecurityFlowValue, _security_flow_step
 
-    if not isinstance(node, ast.AST) or not isinstance(tainted, dict):
+    match node, tainted:
+        case ast.AST(), dict() as tainted:
+            pass
+        case _:
+            return None
+    if isinstance(node, ast.Name) and not getattr(
+        node, "_security_log_newline_source", False
+    ):
+        value = tainted.get(node.id)
+        if not isinstance(value, _SecurityFlowValue):
+            return None
+        if len(value.steps) >= 64:
+            return None
+        return _SecurityFlowValue(
+            value.tainted,
+            value.kind,
+            (*value.steps, _security_flow_step(node, operation)),
+        )
+    children = tuple(ast.walk(node))
+    source_values = [
+        _SecurityFlowValue(
+            True, "text", (_security_flow_step(child, "REQUEST_SOURCE"),)
+        )
+        for child in children
+        if getattr(child, "_security_log_newline_source", False)
+    ]
+    carried_values = [
+        tainted[child.id]
+        for child in children
+        if isinstance(child, ast.Name) and tainted.get(child.id)
+    ]
+    if any(not isinstance(value, _SecurityFlowValue) for value in carried_values):
         return None
-    values, unknown = [], False
-    for child in ast.walk(node):
-        if getattr(child, "_security_log_newline_source", False):
-            values.append(
-                _SecurityFlowValue(
-                    True, "text", (_security_flow_step(child, "REQUEST_SOURCE"),)
-                )
-            )
-        if isinstance(child, ast.Name) and child.id in tainted and tainted[child.id]:
-            value = tainted[child.id]
-            if isinstance(value, _SecurityFlowValue):
-                values.append(value)
-            else:
-                unknown = True
+    values = source_values + [
+        value for value in carried_values if isinstance(value, _SecurityFlowValue)
+    ]
     unique = set(values)
-    if unknown or len(unique) != 1:
+    if len(unique) != 1:
         return None
     value = next(iter(unique))
     if len(value.steps) >= 64:
