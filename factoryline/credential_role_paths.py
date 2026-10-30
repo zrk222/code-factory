@@ -1377,8 +1377,11 @@ def bind_request_sink_precondition(
         finding["facts"]["unresolved_control_flow"] = "unproven_control_edge"
         return
     trace = security_input_value_flow(argument, requests, aliases)
-    if getattr(trace, "get", lambda key: None)("value_kind") != "text":
-        return
+    match trace:
+        case dict({"value_kind": "text"}):
+            pass
+        case _:
+            return
     premise = supported_security_precondition(
         call, "untrusted_request", finding["facts"]["call"]
     )
@@ -1703,7 +1706,9 @@ def valid_security_precondition(premise, finding, *, require_effect_witness=Fals
     from collections.abc import Mapping
     from .primitive_observation_binding import valid_source_span
 
-    if not isinstance(premise, dict):
+    if not isinstance(premise, dict) or tuple(
+        map(type, (finding.get("line"), finding.get("column", 0)))
+    ) != (int, int):
         return False
     from . import semantic_credential_sensor as sensors
 

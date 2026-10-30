@@ -3493,7 +3493,9 @@ def _native_request_data_member(node, aliases):
         "endpoint",
     }
     while isinstance(node, (ast.Attribute, ast.Subscript)):
-        if not isinstance(node.ctx, ast.Load):
+        if not isinstance(node.ctx, ast.Load) or getattr(node, "attr", "").startswith(
+            "_"
+        ):
             return False
         if isinstance(node, ast.Subscript):
             if not isinstance(node.slice, ast.Constant) or type(
@@ -3504,8 +3506,6 @@ def _native_request_data_member(node, aliases):
             }:
                 return False
         else:
-            if node.attr.startswith("_"):
-                return False
             if node.attr in members:
                 bindings = _security_scope_request_aliases(
                     getattr(node, "_security_lexical_scope", None),
@@ -3513,6 +3513,16 @@ def _native_request_data_member(node, aliases):
                     getattr(node, "_security_flow_statement", None),
                 )
                 if _resolved_ast_name(node.value, bindings) == "flask.request":
+                    if node.attr not in {
+                        "args",
+                        "form",
+                        "files",
+                        "headers",
+                        "cookies",
+                        "values",
+                        "json",
+                    }:
+                        return True
                     scope = getattr(node, "_security_lexical_scope", None)
                     if not isinstance(scope, ast.AST):
                         return False
@@ -3529,8 +3539,8 @@ def _native_request_data_member(node, aliases):
                         )
                         or (
                             isinstance(item, (ast.Return, ast.Yield))
-                            and item.value is not None
-                            and any(references(value) for value in ast.walk(item.value))
+                            and isinstance(item.value, ast.Subscript)
+                            and references(item.value.value)
                         )
                         for item in nodes
                     )
