@@ -2677,3 +2677,254 @@ def test_foreign_provider_input_cache_invalidates_source_and_helper_epoch(
     }
     assert parse_calls == [first_hash, changed_hash, changed_hash]
     assert len(parse_calls) == 3
+
+
+def test_binding_occurrence_pass_cache_preserves_order_and_reuses_walkers(
+    monkeypatch,
+):
+    import ast
+
+    from factoryline import credential_role_constructor_provider as provider
+
+    tree = ast.parse(
+        """
+from package import *
+import requests as provider, httpx as provider
+from package.api import client as provider
+provider = object()
+class Outer:
+    provider = object()
+def nested(provider):
+    provider = object()
+items = [(walrus := value) for value in values if (walrus := value)]
+"""
+    )
+    names = ("provider", "unlisted_name", "Outer", "walrus")
+    expected = {name: provider.binding_occurrences(tree.body, name) for name in names}
+    assert len(expected["provider"]) == 4
+    assert expected["unlisted_name"] == [tree.body[0]]
+    assert expected["Outer"] == [tree.body[4], tree.body[0]]
+    assert len(expected["walrus"]) == 3
+    assert expected["walrus"][-1] is tree.body[0]
+
+    iter_calls = 0
+    walk_calls = 0
+    original_iter = provider.ast.iter_child_nodes
+    original_walk = provider.ast.walk
+
+    def counted_iter(node):
+        nonlocal iter_calls
+        iter_calls += 1
+        return original_iter(node)
+
+    def counted_walk(node):
+        nonlocal walk_calls
+        walk_calls += 1
+        return original_walk(node)
+
+    monkeypatch.setattr(provider.ast, "iter_child_nodes", counted_iter)
+    monkeypatch.setattr(provider.ast, "walk", counted_walk)
+    per_pass_facts = {}
+
+    first = provider.binding_occurrences(
+        tree.body, names[0], per_pass_facts=per_pass_facts
+    )
+    assert first == expected[names[0]]
+    calls_after_first = (iter_calls, walk_calls)
+    for name in names[1:]:
+        found = provider.binding_occurrences(
+            tree.body, name, per_pass_facts=per_pass_facts
+        )
+        assert found == expected[name]
+        assert (iter_calls, walk_calls) == calls_after_first
+
+    first.clear()
+    assert (
+        provider.binding_occurrences(tree.body, names[0], per_pass_facts=per_pass_facts)
+        == expected[names[0]]
+    )
+    assert (iter_calls, walk_calls) == calls_after_first
+
+
+def test_binding_occurrence_pass_cache_invalidates_helper_and_input_changes(
+    monkeypatch,
+):
+    import ast
+
+    from factoryline import credential_role_constructor_provider as provider
+
+    tree = ast.parse("from package import *\nvalue = 1\n")
+    per_pass_facts = {}
+    iter_calls = 0
+    original_iter = provider.ast.iter_child_nodes
+    original_binds = provider._binds
+
+    def counted_iter(node):
+        nonlocal iter_calls
+        iter_calls += 1
+        return original_iter(node)
+
+    monkeypatch.setattr(provider.ast, "iter_child_nodes", counted_iter)
+    initial = provider.binding_occurrences(
+        tree.body, "unlisted_name", per_pass_facts=per_pass_facts
+    )
+    assert initial == [tree.body[0]]
+    first_walk_count = iter_calls
+
+    def changed_binds(node, name):
+        return original_binds(node, name)
+
+    monkeypatch.setattr(provider, "_binds", changed_binds)
+    refreshed = provider.binding_occurrences(
+        tree.body, "unlisted_name", per_pass_facts=per_pass_facts
+    )
+    assert refreshed == initial
+    helper_epoch_walk_count = iter_calls
+    assert helper_epoch_walk_count > first_walk_count
+
+    added = ast.parse("unlisted_name = 2\n").body[0]
+    tree.body.append(added)
+    changed_list = provider.binding_occurrences(
+        tree.body, "unlisted_name", per_pass_facts=per_pass_facts
+    )
+    assert changed_list == [added.targets[0], tree.body[0]]
+    assert iter_calls > helper_epoch_walk_count
+
+    added.targets[0].id = "mutated_name"
+    fresh_pass = provider.binding_occurrences(
+        tree.body, "mutated_name", per_pass_facts={}
+    )
+    assert fresh_pass == [added.targets[0], tree.body[0]]
+
+
+def test_terminal_receiver_shares_module_name_facts_within_one_pass(monkeypatch):
+    import ast
+
+    from factoryline import credential_role_constructor_provider as provider
+    from factoryline import review_audits
+
+    tree = ast.parse(
+        """
+import requests as client
+import requests as other
+def use():
+    consume(client.get, other.get)
+def store_name():
+    stored_name = object()
+def declare_global():
+    global global_name
+def shadow_other(other):
+    pass
+"""
+    )
+    nodes = list(ast.walk(tree))
+    parents = {
+        id(child): node for node in nodes for child in ast.iter_child_nodes(node)
+    }
+    receivers = [
+        node
+        for node in nodes
+        if isinstance(node, ast.Name)
+        and node.id in {"client", "other"}
+        and isinstance(parents.get(id(node)), ast.Attribute)
+        and parents[id(node)].value is node
+    ]
+    assert len(receivers) == 2
+
+    module_walks = []
+    original_walk = provider.ast.walk
+
+    def counted_walk(node):
+        if node is tree:
+            module_walks.append(node)
+        return original_walk(node)
+
+    monkeypatch.setattr(provider.ast, "walk", counted_walk)
+    per_pass_facts = {}
+    results = {
+        node.id: provider._terminal_imported_module_receiver(
+            node, parents, review_audits, "requests.get", facts=per_pass_facts
+        )
+        for node in receivers
+    }
+    assert results == {"client": True, "other": False}
+    module_facts = per_pass_facts[("terminal-module-name-facts", id(tree), tree)]
+    assert "stored_name" in module_facts[1]
+    assert "global_name" in module_facts[2]
+    assert "other" in module_facts[3]
+    assert not provider._terminal_alias_unmodified(
+        tree, "stored_name", per_pass_facts=per_pass_facts
+    )
+    assert not provider._terminal_alias_unmodified(
+        tree, "global_name", per_pass_facts=per_pass_facts
+    )
+    assert provider._terminal_alias_unmodified(
+        tree, "other", per_pass_facts=per_pass_facts
+    )
+    assert module_walks == [tree]
+
+    original_fields = provider.ast.iter_fields
+
+    def wrapped_fields(node):
+        return original_fields(node)
+
+    monkeypatch.setattr(provider.ast, "iter_fields", wrapped_fields)
+    assert not provider._terminal_alias_unmodified(
+        tree, "stored_name", per_pass_facts=per_pass_facts
+    )
+    assert module_walks == [tree, tree]
+
+    monkeypatch.setattr(provider.ast, "iter_fields", original_fields)
+    original_children = provider.ast.iter_child_nodes
+
+    def wrapped_children(node):
+        return original_children(node)
+
+    monkeypatch.setattr(provider.ast, "iter_child_nodes", wrapped_children)
+    assert not provider._terminal_alias_unmodified(
+        tree, "stored_name", per_pass_facts=per_pass_facts
+    )
+    assert module_walks == [tree, tree, tree]
+
+
+def test_terminal_receiver_bypasses_bulk_facts_for_custom_predicate(monkeypatch):
+    import ast
+
+    from factoryline import credential_role_constructor_provider as provider
+    from factoryline import review_audits
+
+    tree = ast.parse(
+        """
+import requests as client
+def use():
+    consume(client.get, untrusted)
+"""
+    )
+    nodes = list(ast.walk(tree))
+    callback_nodes = []
+    supplied_pass_caches = []
+    original_bindings = provider.binding_occurrences
+
+    def observe_bindings(statements, name, *, per_pass_facts=None):
+        supplied_pass_caches.append(per_pass_facts)
+        if per_pass_facts is None:
+            return original_bindings(statements, name)
+        return original_bindings(statements, name, per_pass_facts=per_pass_facts)
+
+    def readonly_argument(node, aliases, parents):
+        callback_nodes.append(node)
+        return False
+
+    monkeypatch.setattr(provider, "binding_occurrences", observe_bindings)
+    provider._terminal_provider_mutated(
+        nodes,
+        review_audits,
+        "requests",
+        Path("module.py"),
+        None,
+        "",
+        readonly_argument,
+    )
+    assert callback_nodes
+    assert supplied_pass_caches
+    assert all(cache is None for cache in supplied_pass_caches)

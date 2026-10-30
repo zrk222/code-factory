@@ -1,0 +1,36 @@
+{
+  "schema": "factory.shared-scope-facts-validation.v1",
+  "source_sha256": "720a38eae65de931f70a97a50e59b8bd4ec70cff911dccaf178c641f035aceee",
+  "tests_sha256": "e121e1ba5a1b34dfcadb545d6d996ed38486366dd459acac32233323e13e5981",
+  "change": "Reuse ordered scope traversal events and module names only within existing terminal-provider receiver facts. Fresh default calls; arbitrary callback path bypasses sharing.",
+  "focused_tests": {
+    "passed": 4,
+    "failures": 0,
+    "junit_sha256": "9ac339622998c42d71cf88377ad1ee2e17dec8b9abfd631f42c012c40fa94f8d"
+  },
+  "lookup_measurement": {
+    "modules": 21,
+    "queries": 1501,
+    "baseline_seconds": 1.8486829999965266,
+    "candidate_seconds": 0.5582987000016146,
+    "ordered_results_equal": true,
+    "scope": "Binding operation only, single observations; not whole-scanner speed."
+  },
+  "affected_root": {
+    "repository": "coqui123/TradeGPT",
+    "previous_state": "TIMEOUT",
+    "previous_censored_seconds": 600.031,
+    "native_seconds": 442.79699999999866,
+    "end_to_end_seconds": 553.1719999999987,
+    "pipeline_integrity": "PASS",
+    "result_sha256": "8c77ac99b4a60bc022313069380c4697770d50f7bf9a00cd4e764dde7b5efa3d",
+    "baseline_note": "The inherited benchmark result baseline string names a different root timing and is not used; this comparison reads the preserved matching repository error row. No exact causal speedup is claimed."
+  },
+  "review": {
+    "state": "PASS",
+    "sha256": "921bdb9b493dcd25b1c296ad85dd5cbba4ecbc096f541dfc3e11371868373239"
+  },
+  "architecture": "HEALTHY; existing caps unchanged; no new production functions/classes/modules/dependencies",
+  "accuracy_claim": false,
+  "cohort_restart": false
+}
