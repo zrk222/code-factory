@@ -72,7 +72,7 @@ def test_provider_value_escape_preserves_actual_namespace_writes():
     [
         ("consume(request.args.next)", False),
         ("consume(request.args['next'])", False),
-        ("consume(request.args)", False),
+        ("consume(request.args)", True),
         ("consume(request)", True),
         ("consume(request.args.__class__)", True),
         ("request.args.next = replacement", True),

@@ -2211,3 +2211,179 @@ def test_workspace_ledger_identity_is_stable_but_transport_stays_bound(tamper):
         primitive,
     )
     assert matched is (tamper == "none")
+
+
+def test_security_effect_public_boundaries_decline_missing_or_malformed_proof():
+    import ast
+    from factoryline import credential_identity_audit as identities
+    from factoryline import credential_role_paths as effects
+    from factoryline import semantic_credential_sensor as sensors
+
+    name = ast.parse("untrusted", mode="eval").body
+    unsupported = ast.parse("lambda item: item", mode="eval").body
+    call = ast.parse("logging.warning(untrusted)", mode="eval").body
+    module = ast.parse("value = 1")
+    finding = {
+        "code": "SECURITY_PATH_TRAVERSAL",
+        "facts": {"call": "flask.FileStorage.save"},
+        "path": "app.py",
+        "line": 1,
+        "column": 0,
+    }
+    evidence = {}
+    assert (
+        effects.upload_name_origin(name, {}, set(), None, None, evidence, None) is False
+    )
+    assert (
+        effects.upload_join_effect(unsupported, {}, set(), None, None, evidence, None)
+        is None
+    )
+    assert (
+        effects.upload_concat_effect(unsupported, {}, set(), None, None, evidence, None)
+        is None
+    )
+    assert (
+        effects.upload_path_expression(unsupported, {}, set(), None, None, evidence)
+        is False
+    )
+    assert effects.source_domain_guarded(None, call, {"untrusted"}, {}) is False
+    assert (
+        effects.bind_upload_sink_precondition(finding, call, {}, set(), module) is None
+    )
+    assert evidence == {}
+    assert "security_precondition" not in finding["facts"]
+    assert (
+        effects.tls_security_finding("unrecognized.transport", "app.py", call) is None
+    )
+    assert (
+        effects.regenerate_security_source_model(
+            {"app.py": b"value = 1"}, {"app.py": "0" * 64}
+        )
+        is None
+    )
+    assert (
+        effects.matches_regenerated_security_precondition(finding, [], evidence)
+        is False
+    )
+    assert (
+        effects.security_effect_fact_matches("source_span", [True, 0, 1, 1], None)
+        is False
+    )
+    assert (
+        effects.valid_security_precondition({}, finding, require_effect_witness=True)
+        is False
+    )
+    assert (
+        effects.logging_consumer_configuration(None, Path("app.py"), call, {}) is None
+    )
+    assert (
+        effects.logging_security_effect_witness(
+            None, Path("app.py"), module, call, "logging.warning", None, {}
+        )
+        is None
+    )
+    assert effects.logging_input_value_trace(name, {}, "LOG_ARGUMENT") is None
+    assert effects.logging_merge_log_flow([{"value": False}, {"value": True}]) == {
+        "value": True
+    }
+    assert (
+        effects.logging_security_precondition(
+            module, call, name, "logging.warning", {}, tainted={}
+        )
+        == {}
+    )
+    assert (
+        identities.application_test_scope_role_evidence(
+            {}, Path("app.py"), module.body[0], "SECRET"
+        )
+        is None
+    )
+    assert sensors.log_scalar_metadata(name, None) is False
+
+
+def test_mutable_constructor_calls_require_explicit_readonly_contract():
+    import ast
+    from factoryline import review_audits
+    from factoryline.credential_role_constructor_provider import SourceSnapshotIndex
+    from factoryline.credential_role_method_use_getter_audit import (
+        CapturedOriginProjection,
+    )
+
+    index = SourceSnapshotIndex(Path("."), {}, {}, {})
+    projection = CapturedOriginProjection(index, lambda *args: (False, None))
+    nodes = list(ast.walk(ast.parse("service.send(payload)")))
+    aliases = {"service": "example.client"}
+    assert (
+        projection.mutable_calls_closed(
+            nodes, aliases, review_audits, {}, "example.client", None
+        )
+        is False
+    )
+    assert (
+        projection.mutable_calls_closed(
+            nodes, aliases, review_audits, {}, "example.client", lambda node: True
+        )
+        is True
+    )
+
+
+@pytest.mark.parametrize("coordinate", ["line", "column"])
+def test_security_precondition_rejects_boolean_finding_coordinates(coordinate):
+    from factoryline.credential_role_paths import valid_security_precondition
+
+    premise = {
+        "schema": "factory.security.precondition.v1",
+        "status": "SUPPORTED",
+        "proof_scope": "local_static_wiring",
+        "runtime_execution": "not_performed",
+        "deployment": "UNASSESSED",
+        "source_role": "untrusted_request",
+        "consumer_role": "eval",
+        "sink_span": [1, 0, 1, 10],
+    }
+    finding = {
+        "code": "SECURITY_DYNAMIC_EXECUTION",
+        "line": 1,
+        "column": 0,
+        "facts": {},
+    }
+    assert valid_security_precondition(premise, finding) is True
+    finding[coordinate] = bool(finding[coordinate])
+    assert valid_security_precondition(premise, finding) is False
+
+
+@pytest.mark.parametrize("flow_kind", ["dict", "mapping", "get_only"])
+def test_request_sink_requires_a_dict_trace_before_transport(monkeypatch, flow_kind):
+    import ast
+    from collections import UserDict
+    from factoryline import finite_capture, semantic_credential_sensor as sensors
+    from factoryline.credential_role_paths import bind_request_sink_precondition
+    from factoryline.review_integrity import bind_security_call_scopes
+
+    class GetOnly:
+        def get(self, key):
+            return "text" if key == "value_kind" else None
+
+    traces = {
+        "dict": {"value_kind": "text"},
+        "mapping": UserDict(value_kind="text"),
+        "get_only": GetOnly(),
+    }
+    tree = ast.parse("eval(payload)")
+    bind_security_call_scopes(tree)
+    tree._security_precondition_providers_stable = True
+    call = tree.body[0].value
+    monkeypatch.setattr(
+        sensors,
+        "_security_request_sink_slot",
+        lambda *args: (call.args[0], ("builtins",)),
+    )
+    monkeypatch.setattr(
+        finite_capture, "security_input_value_flow", lambda *args: traces[flow_kind]
+    )
+    finding = {"code": "SECURITY_DYNAMIC_EXECUTION", "facts": {"call": "eval"}}
+    bind_request_sink_precondition(finding, call, {}, set(), set(), set(), {})
+    premise = finding["facts"].get("security_precondition")
+    assert (premise is not None) is (flow_kind == "dict")
+    if premise is not None:
+        assert premise["input_value_flow"] is traces[flow_kind]

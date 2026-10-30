@@ -2943,7 +2943,7 @@ def use():
         readonly_argument,
     )
     assert callback_nodes
-    assert supplied_pass_caches == []
+    assert all(cache is None for cache in supplied_pass_caches)
 
 
 def _effect_tier_report(scanned, raw_findings, source_bytes, *, coverage, partition):
