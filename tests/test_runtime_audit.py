@@ -2159,3 +2159,55 @@ def test_trace_regression_real_artifacts_reject_post_binding_tamper(tmp_path):
     result = evaluate_trace_regression(tmp_path, binding)
     assert result["state"] == "INCOMPLETE"
     assert result["observations"] == []
+
+
+@pytest.mark.parametrize(
+    "tamper", ["none", "index", "source_hash", "identity", "raw_finding"]
+)
+def test_workspace_ledger_identity_is_stable_but_transport_stays_bound(tamper):
+    from copy import deepcopy
+    from factoryline import primitive_observation_binding as primitive
+    from factoryline.repository_checkpoint_audit import _trusted_core_ledger_matches
+
+    finding = {
+        "path": "app.py",
+        "code": "SECURITY_DYNAMIC_EXECUTION",
+        "line": 2,
+        "column": 4,
+        "severity": "HIGH",
+    }
+    source_hash = "a" * 64
+    payload = {
+        "path": "app.py",
+        "source_sha256": source_hash,
+        "code": finding["code"],
+        "line": 2,
+        "column": 4,
+        "original_severity": "HIGH",
+        "raw_finding": finding,
+    }
+    row = {
+        "index": 0,
+        "raw_finding": deepcopy(finding),
+        "source_identity": {
+            "path": "app.py",
+            "source_sha256": source_hash,
+            "identity_sha256": primitive._tier_sha256(payload),
+        },
+    }
+    if tamper == "index":
+        row["index"] = 1
+    elif tamper == "source_hash":
+        row["source_identity"]["source_sha256"] = "b" * 64
+    elif tamper == "identity":
+        row["source_identity"]["identity_sha256"] = "b" * 64
+    elif tamper == "raw_finding":
+        row["raw_finding"]["line"] = 3
+    matched = _trusted_core_ledger_matches(
+        [finding],
+        [row],
+        {"app.py"},
+        {"app.py": {"state": "ready", "sha256": source_hash}},
+        primitive,
+    )
+    assert matched is (tamper == "none")
