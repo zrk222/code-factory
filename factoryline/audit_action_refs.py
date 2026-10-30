@@ -569,6 +569,8 @@ def _apply_security_scan_policy(
                 core,
                 captured,
                 source_model=producer_source_model,
+                prior_tiers=prior_tier_report,
+                prior_source_state=prior_state,
                 configuration_bytes={
                     row["path"]: captured[row["path"]]
                     for row in core.get("oracle_context", {}).get(
@@ -599,6 +601,7 @@ def _finish_security_scan_seal(audit, core, captured):
             _canonical(row["raw_finding"])
             for row in core.get("finding_tier_report", {}).get("ledger", [])
             if row.get("tier") == "SUPPORTED_DEFECT"
+            and core.get("defect_policy_decision", {}).get("state") != "BLOCKED"
         }
         findings = [
             item

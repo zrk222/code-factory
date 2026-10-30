@@ -28,6 +28,13 @@ _FINDING_TIER_POLICY = {
     "configuration_load_policy": "static_consumer_observation_only; authority_not_established",
     "credential_witness_policy": "recognized_scope_and_current_source_bound_spans_required",
     "claims": "no_precision_or_held_out_measurement",
+    "admission_requirements": [
+        "complete captured Python inventory with current source hashes",
+        "independently regenerated native candidate and matching tier evidence",
+        "modeled input origin and dangerous consumer or operative credential authority",
+        "unmodeled origins, transfers, consumers and authority remain NEEDS_CONTEXT",
+        "all raw diagnostics and unresolved premises remain visible",
+    ],
 }
 
 _MISSING_PREMISES = {
@@ -181,11 +188,14 @@ def security_defect_policy_decision(
 ):
     """Regenerate trusted-core admission from the complete captured native scan."""
     policy_id = validate_security_defect_policy(core.get("selected_defect_policy"))
-    if policy_id != "trusted-core-v1":
+    if policy_id == "legacy-v1":
         return None
     decision = _trusted_core_policy_result()
     try:
-        if prior_source_state in {"INCOMPLETE", "NO_SOURCES"}:
+        if prior_source_state == "NO_SOURCES" or (
+            prior_source_state == "INCOMPLETE"
+            and core.get("database_context", {}).get("status") != "INCOMPLETE"
+        ):
             return decision
         regenerated, sources_sha256, source_findings = _trusted_core_regenerated_tiers(
             core, captured_sources
@@ -235,11 +245,11 @@ def _trusted_core_regenerated_tiers(core, captured_sources):
     sources = _trusted_core_complete_sources(core, captured_sources, audit)
     if sources is None:
         return None, None, None
-    captured, captured_paths, sources_sha256 = sources
+    captured, sources_sha256 = sources
     tenant = _trusted_core_tenant_arguments(core, audit)
     if tenant is None:
         return None, None, None
-    native_rows = _trusted_core_native_security_rows(captured_paths, tenant, audit)
+    native_rows = _trusted_core_native_security_rows(captured, tenant, audit)
     if native_rows is None or not _trusted_core_surface_matches(core, native_rows):
         return None, None, None
     regenerated = build_finding_tier_report(
@@ -249,6 +259,7 @@ def _trusted_core_regenerated_tiers(core, captured_sources):
         captured,
         coverage_state=True,
         partition_state="VALIDATED",
+        _verifier_native_rows=native_rows,
     )
     return regenerated, sources_sha256, native_rows
 
@@ -278,21 +289,26 @@ def _trusted_core_complete_sources(core, captured_sources, audit):
     ):
         return None
 
+    configurations = core.get("oracle_context", {}).get("configuration_sources", [])
+    if not isinstance(configurations, list):
+        return None
     bindings = {}
-    for row in sources:
-        validated = _trusted_core_source_binding(row)
+    for row, configuration in [
+        *((row, False) for row in sources),
+        *((row, True) for row in configurations),
+    ]:
+        validated = _trusted_core_source_binding(row, configuration=configuration)
         if validated is None or validated[0] in bindings:
             return None
         path, digest = validated
         bindings[path] = digest
-    if set(captured_sources) != set(bindings) or len(bindings) != len(sources):
+    if set(captured_sources) != set(bindings):
         return None
-    if len(bindings) > audit.MAX_SECURITY_SOURCE_FILES:
+    if len(sources) > audit.MAX_SECURITY_SOURCE_FILES:
         return None
 
     total_bytes = 0
     captured = {}
-    captured_paths = {}
     for path, digest in bindings.items():
         raw = captured_sources.get(path)
         if not isinstance(raw, bytes) or len(raw) > audit.MAX_BYTES:
@@ -301,11 +317,13 @@ def _trusted_core_complete_sources(core, captured_sources, audit):
         if total_bytes > 32 * 1024 * 1024 or hashlib.sha256(raw).hexdigest() != digest:
             return None
         captured[path] = raw
-        captured_paths[Path(path)] = raw
-    return captured, captured_paths, _tier_sha256(sources)
+    captured_python = {row["path"]: captured[row["path"]] for row in sources}
+    return captured_python, _tier_sha256(sources)
 
 
-def _trusted_core_source_binding(row):
+def _trusted_core_source_binding(row, *, configuration=False):
+    from .import_context import application_configuration_names
+
     if not isinstance(row, dict):
         return None
     path, digest = row.get("path"), row.get("sha256")
@@ -317,7 +335,11 @@ def _trusted_core_source_binding(row):
         or not relative.parts
         or ".." in relative.parts
         or relative.as_posix() != path
-        or relative.suffix != ".py"
+        or (
+            path not in application_configuration_names()
+            if configuration
+            else relative.suffix != ".py"
+        )
         or not isinstance(digest, str)
         or re.fullmatch(r"[0-9a-f]{64}", digest) is None
     ):
@@ -328,10 +350,26 @@ def _trusted_core_source_binding(row):
 def _trusted_core_database_context_valid(value):
     if value in (None, {}):
         return True
-    return isinstance(value, dict) and value.get("status") in {
-        "COMPLETE",
-        "NOT_APPLICABLE",
-    }
+    if not isinstance(value, dict):
+        return False
+    if value.get("status") in {"COMPLETE", "NOT_APPLICABLE"}:
+        return True
+    # Native source/sink reconstruction never consumes this ancillary graph.
+    # Keep its incompleteness visible; it cannot supply SQL or authority credit.
+    return (
+        value.get("status") == "INCOMPLETE"
+        and isinstance(value.get("gaps"), list)
+        and bool(value["gaps"])
+        and all(isinstance(gap, str) and gap for gap in value["gaps"])
+        and all(
+            isinstance(value.get(key), list)
+            for key in ("source_manifest", "tables", "queries", "operations")
+        )
+        and value.get("graph_digest")
+        == _tier_sha256(
+            {key: item for key, item in value.items() if key != "graph_digest"}
+        )
+    )
 
 
 def _unknown_collection(core):
@@ -354,25 +392,29 @@ def _trusted_core_tenant_arguments(core, audit):
     tenant = core.get("tenant_read_contract", {})
     if not isinstance(tenant, dict):
         return None
-    configuration = tenant.get("configuration")
-    if "pytest_collection" in oracle_context:
-        if (
-            not isinstance(configuration, dict)
-            or configuration.get("state") != "loaded"
-        ):
-            return None
-    elif configuration is not None and (
+    configuration = tenant.get(
+        "configuration", {} if "pytest_collection" in oracle_context else None
+    )
+    if configuration is None and "pytest_collection" in oracle_context:
+        return None
+    if configuration == {
+        "path": ".factory/tenant-read-contract.json",
+        "state": "missing",
+        "policy_applies": False,
+    } and (
+        tenant.get("policy_applies") is False
+        and tenant.get("calls") == []
+        and tenant.get("argument_bindings") == {}
+    ):
+        configuration = {"state": "loaded", "authority": "NONE_DECLARED"}
+    if configuration is not None and (
         not isinstance(configuration, dict) or configuration.get("state") != "loaded"
     ):
         return None
     calls = tenant.get("calls", [])
     argument_bindings = tenant.get("argument_bindings", {})
     applies = tenant.get("policy_applies", False)
-    if (
-        not isinstance(calls, list)
-        or not isinstance(argument_bindings, dict)
-        or type(applies) is not bool
-    ):
+    if (type(calls), type(argument_bindings), type(applies)) != (list, dict, bool):
         return None
     try:
         calls = audit._tenant_contract_calls(tuple(calls))
@@ -394,19 +436,29 @@ def _trusted_core_tenant_arguments(core, audit):
     return calls, argument_bindings, applies
 
 
-def _trusted_core_native_security_rows(captured_paths, tenant, audit):
+def _trusted_core_native_security_rows(captured, tenant, audit):
     calls, argument_bindings, applies = tenant
     native_rows = []
+    captured_paths = {Path(path): raw for path, raw in captured.items()}
     source_context = (Path("."), captured_paths)
-    for path, raw in captured_paths.items():
-        tree = ast.parse(raw)
+    source_model = _regenerate_source_model(
+        captured,
+        {path: hashlib.sha256(raw).hexdigest() for path, raw in captured.items()},
+    )
+    if source_model is None:
+        return None
+    for path in captured_paths:
+        tree = source_model.snapshots[path]
         rows = audit._security_scan_tree(
             Path("."),
             path,
             tree,
             calls,
             argument_bindings,
-            {"_security_source_context": source_context},
+            {
+                "_security_source_context": source_context,
+                "_security_source_model": source_model,
+            },
             tenant_policy_applies=applies,
             security_only=True,
         )
@@ -432,7 +484,7 @@ def _trusted_core_native_security_rows(captured_paths, tenant, audit):
 def _trusted_core_surface_matches(core, native_rows):
     surface = [
         row
-        for field in ("findings", "primitive_observations")
+        for field in ("findings", "context_reviews", "primitive_observations")
         for row in core.get(field, [])
         if isinstance(row, dict)
         and isinstance(row.get("code"), str)
@@ -502,6 +554,7 @@ def build_finding_tier_report(
     *,
     coverage_state,
     partition_state,
+    _verifier_native_rows=None,
 ):
     """Classify raw findings additively while retaining every original diagnostic."""
     raw_findings = list(raw_findings)
@@ -518,6 +571,12 @@ def build_finding_tier_report(
         and isinstance(row.get("sha256"), str)
     }
     regenerated = {}
+    if _verifier_native_rows is not None:
+        # Only the independent complete-source pass supplies this invocation-local
+        # cache. Serialized claims and producer-owned models never enter it.
+        regenerated = {path: [] for path in bindings}
+        for row in _verifier_native_rows:
+            regenerated.setdefault(row["path"], []).append(row)
     signing_cache = {}
     pickle_origin_cache = {}
     primitive_rows = [row for row in primitive_observations if isinstance(row, dict)]
@@ -1819,12 +1878,24 @@ def apply_conditional_provider_profile(report, profile, captured):
 
 
 def apply_pickle_source_role_policy(
-    core, captured, *, source_model=None, configuration_bytes=None
+    core,
+    captured,
+    *,
+    source_model=None,
+    configuration_bytes=None,
+    prior_tiers=None,
+    prior_source_state=None,
 ):
     """Rebuild context reviews from the native raw ledger on every seal."""
     policy_id = core.get("selected_defect_policy")
     if policy_id not in {"source-role-v1", "source-role-v2", "source-role-v3"}:
         return
+    admission = security_defect_policy_decision(
+        core,
+        captured,
+        prior_tiers=prior_tiers,
+        prior_source_state=prior_source_state,
+    )
     original = [*core.get("findings", []), *core.get("context_reviews", [])]
     core["context_reviews"] = []
     sources = _pickle_role_sources(core, captured)
@@ -1855,13 +1926,16 @@ def apply_pickle_source_role_policy(
         tier_report["ledger_sha256"] = _tier_sha256(tier_report["ledger"])
         tier_report["report_sha256"] = _tier_sha256(tier_report)
     core["defect_policy_decision"] = _pickle_source_role_decision(
-        roles, active, reviews, ledger, policy_id
+        roles, active, reviews, ledger, policy_id, admission=admission
     )
     if _unknown_collection(core):
         core["state"] = "INCOMPLETE"
         core["action_summary"] = (
             "Pytest collection is UNKNOWN; fixture and oracle authority remain unassessed."
         )
+    elif prior_source_state == "INCOMPLETE" and admission["state"] == "BLOCKED":
+        core["state"] = "INCOMPLETE"
+        core["action_summary"] = admission["action_summary"]
     elif roles is not None:
         core["state"] = "FINDINGS" if active else "REVIEW_REQUIRED"
         core["action_summary"] = (
@@ -5031,7 +5105,6 @@ def _finding_tier_ledger_row(
     )
     identity = _tier_sha256(
         {
-            "index": index,
             "path": path,
             "source_sha256": source_hash,
             "code": finding.get("code"),
@@ -5093,23 +5166,30 @@ def _finding_tier_ledger_row(
 
 
 def _pickle_source_role_decision(
-    roles, active, reviews, ledger, policy_id="source-role-v1"
+    roles, active, reviews, ledger, policy_id="source-role-v1", *, admission=None
 ):
     """Describe unresolved context review without claiming safe reconstruction."""
     policy = {
         "source-role-v2": _SOURCE_ROLE_POLICY_V2,
         "source-role-v3": _SOURCE_ROLE_POLICY_V3,
     }.get(policy_id, _PICKLE_SOURCE_ROLE_POLICY)
-    blocked = roles is None or roles.get("test_collection_known") is False
+    admission = (
+        admission if isinstance(admission, dict) else _trusted_core_policy_result()
+    )
+    blocked = (
+        roles is None
+        or roles.get("test_collection_known") is False
+        or admission["state"] == "BLOCKED"
+    )
     return {
         **policy,
         "policy_sha256": _tier_sha256(policy),
-        "state": "BLOCKED"
-        if blocked
-        else "ALERTS_AND_CONTEXT_REVIEW"
-        if active
-        else "CONTEXT_REVIEW_REQUIRED",
-        "exit_code": 2 if blocked else 1 if active else 0,
+        "state": "BLOCKED" if blocked else admission["state"],
+        "exit_code": 2 if blocked else admission["exit_code"],
+        "supported_defect_count": admission["supported_defect_count"],
+        "needs_context_count": admission["needs_context_count"],
+        "action_summary": admission["action_summary"],
+        "admission": admission,
         "active_alert_count": len(active),
         "context_review_count": len(reviews),
         "source_sha256": None if roles is None else roles["sources_sha256"],
@@ -5117,6 +5197,7 @@ def _pickle_source_role_decision(
             {
                 "sources": None if roles is None else roles["sources_sha256"],
                 "reviews": [row.get("source_role_review") for row in ledger],
+                "admission": admission,
             }
         ),
         "clean": False,
