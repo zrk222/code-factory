@@ -326,7 +326,6 @@ def _trusted_core_ledger_matches(
             or identity.get("identity_sha256")
             != primitive._tier_sha256(
                 {
-                    "index": index,
                     "path": identity.get("path"),
                     "source_sha256": identity.get("source_sha256"),
                     "code": raw.get("code"),

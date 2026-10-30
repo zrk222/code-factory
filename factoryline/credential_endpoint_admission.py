@@ -2282,11 +2282,13 @@ class _OperativeCredentialOrigin:
         )
 
     def canonical(self, path, node, function):
+        """Resolve a captured expression to its canonical imported provider identity."""
         from .mock_fixture_provenance import _app_expression_name
 
         return _app_expression_name(self.projection.symbols, path, node, function)
 
     def provider(self, path, canonical, *, immutable=False):
+        """Require an unmodified canonical provider at the captured expression site."""
         from . import review_audits as audit
         from .credential_role_constructor_provider import (
             _terminal_imported_module_receiver,
@@ -2323,6 +2325,7 @@ class _OperativeCredentialOrigin:
         )
 
     def provider_reflection_closed(self, nodes, aliases, canonical):
+        """Reject reflective writes and namespace escapes affecting the selected provider."""
         from . import review_audits as audit
         from .finite_capture import _provider_alias_bindings, _provider_paths
         from .semantic_credential_sensor import _provider_path_conflicts
@@ -2374,6 +2377,7 @@ class _OperativeCredentialOrigin:
         return True
 
     def leaf(self, node, environment, path, function, projection):
+        """Resolve the scalar origin and retained evidence for one captured expression."""
         if node is self.declaration.value and path == self.path:
             return True, self.key
         projector = {
@@ -2389,6 +2393,7 @@ class _OperativeCredentialOrigin:
         )
 
     def field(self, node, environment, path, function, projection):
+        """Read a captured credential field only when its receiver identity is closed."""
         if (
             isinstance(node, ast.Subscript)
             and isinstance(node.slice, ast.Constant)
@@ -2412,6 +2417,7 @@ class _OperativeCredentialOrigin:
         return False, None
 
     def comparison(self, node, environment, path, function, projection):
+        """Bind a credential comparison to its selected authority and input origin."""
         if isinstance(node, ast.Compare) and len(node.ops) == 1:
             operands = [
                 projection.expression(path, item, function, environment)
@@ -2431,6 +2437,7 @@ class _OperativeCredentialOrigin:
         return False, None
 
     def call(self, node, environment, path, function, projection):
+        """Interpret a supported captured provider call without executing target code."""
         canonical = self.canonical(path, node.func, function)
         if (
             canonical == "time.time"
@@ -2466,6 +2473,7 @@ class _OperativeCredentialOrigin:
         )
 
     def construct(self, node, environment, path, function, projection, canonical):
+        """Resolve supported credential construction and retain the complete origin chain."""
         from .mock_fixture_provenance import _app_source_symbol
 
         selected = _app_source_symbol(projection.symbols, path, node.func, function)
@@ -2495,6 +2503,7 @@ class _OperativeCredentialOrigin:
         return False, None
 
     def verify(self, node, environment, path, function, projection, canonical):
+        """Require a source-bound verifier and its exact credential input binding."""
         if canonical == "jwt.decode" and self.provider(path, canonical):
             if (
                 len(node.args) != 2
@@ -2532,6 +2541,7 @@ class _OperativeCredentialOrigin:
         return False, None
 
     def settings_fields_closed(self, path, owner, projection):
+        """Reject conflicting configuration writes before using captured credential settings."""
         from .credential_role_constructor_provider import binding_occurrences
 
         declaration = self.declaration
@@ -2560,6 +2570,7 @@ class _OperativeCredentialOrigin:
         )
 
     def allocate(self, node, path, projection, **capability):
+        """Allocate a bounded captured identity while retaining its source evidence."""
         allocation = _digest(
             [projection.generation, projection.context, path.as_posix(), _span(node)]
         )
@@ -2569,6 +2580,7 @@ class _OperativeCredentialOrigin:
         )
 
     def token_inputs(self, *, structural_only=False):
+        """Enumerate registered bearer inputs, optionally checking only necessary syntax."""
         from .mock_fixture_provenance import _app_source_symbol
 
         function, path = (self.handler["function"], self.handler["path"])
@@ -2632,6 +2644,7 @@ class _OperativeCredentialOrigin:
         return inputs
 
     def handler_authority(self):
+        """Prove credential authority only after input and complete provider closure."""
         function, path = self.handler["function"], self.handler["path"]
         if not self.token_inputs(structural_only=True) or not self.boundary_closed():
             return None
@@ -2693,6 +2706,7 @@ class _OperativeCredentialOrigin:
         return None
 
     def boundary_closed(self):
+        """Validate provider identity and callback closure for the selected handler."""
         from . import review_audits as audit
         from .credential_role_constructor_provider import (
             _captured_terminal_provider_mutation,
@@ -2824,6 +2838,7 @@ class _OperativeCredentialOrigin:
         return [node for node in nodes if id(node) not in ignored]
 
     def witness(self, statement, value):
+        """Build a source-bound credential witness from validated origins and consumers."""
         from .semantic_credential_sensor import _signing_source_span
 
         handler = self.handler
@@ -2941,11 +2956,13 @@ class _CredentialHandlerIndex:
         self._connect()
 
     def canonical(self, path, expression, function=None):
+        """Resolve a captured expression to its canonical imported provider identity."""
         from .mock_fixture_provenance import _app_expression_name
 
         return _app_expression_name(self.symbols, path, expression, function)
 
     def binding(self, path, expression, function=None):
+        """Resolve the captured declaration that dominates a selected credential use."""
         from .mock_fixture_provenance import _app_local_assignment, _app_source_symbol
         from .credential_role_constructor_provider import binding_dominates
 
