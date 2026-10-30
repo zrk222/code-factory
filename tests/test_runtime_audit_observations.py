@@ -2928,3 +2928,420 @@ def use():
     assert callback_nodes
     assert supplied_pass_caches
     assert all(cache is None for cache in supplied_pass_caches)
+
+
+def _effect_tier_report(scanned, raw_findings, source_bytes, *, coverage, partition):
+    from factoryline.primitive_observation_binding import build_finding_tier_report
+
+    bindings = [
+        {"path": path, "sha256": hashlib.sha256(content).hexdigest()}
+        for path, content in source_bytes.items()
+        if path.endswith(".py")
+    ]
+    return build_finding_tier_report(
+        raw_findings,
+        scanned.get("primitive_observations", []),
+        bindings,
+        source_bytes,
+        coverage_state=coverage,
+        partition_state=partition,
+    )
+
+
+def _effect_tier_fixture(tmp_path, source):
+    from factoryline import review_audits as audit
+
+    if "import logging" in source:
+        source += (
+            "\nimport logging.config\n"
+            "logging.config.dictConfig({\n"
+            "    'version': 1, 'disable_existing_loggers': False,\n"
+            "    'formatters': {'plain': {'format': '%(message)s'}},\n"
+            "    'handlers': {'console': {'class': 'logging.StreamHandler', 'formatter': 'plain'}},\n"
+            "    'root': {'handlers': ['console'], 'level': 'DEBUG'}, 'loggers': {}\n"
+            "})\n"
+        )
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    (tmp_path / "app.py").write_text(source, encoding="utf-8")
+    scanned = audit.security_scan(
+        tmp_path,
+        cache_enabled=False,
+        defect_policy="source-role-v3",
+        security_only=True,
+    )
+    return scanned, dict(scanned._captured_sources)
+
+
+def test_shared_native_admission_transports_complete_proof_across_families(tmp_path):
+    source = (
+        "import requests\nfrom flask import request\n"
+        "def evaluate():\n    eval(request.args['code'])\n"
+        "def fetch():\n    requests.get(request.args['url'])\n"
+    )
+    scanned, captured = _effect_tier_fixture(tmp_path, source)
+    codes = {"SECURITY_DYNAMIC_EXECUTION", "SECURITY_SSRF"}
+    current = [
+        row
+        for row in scanned["finding_tier_report"]["ledger"]
+        if row["source_identity"]["code"] in codes
+    ]
+    assert {row["source_identity"]["code"] for row in current} == codes
+    for row in current:
+        assert row["tier"] == "SUPPORTED_DEFECT"
+        reference = row["source_bound_security_precondition"]
+        premise = reference["precondition"]
+        assert premise["schema"] == "factory.security.precondition.v1"
+        assert premise["input_value_flow"]["steps"]
+        action = next(
+            item
+            for item in scanned["agent_actions"]
+            if item["finding_context"] == row["raw_finding"]
+        )
+        evidence = action["security_precondition_evidence"]
+        assert evidence["precondition"] == premise
+        assert evidence["precondition_sha256"] == reference["precondition_sha256"]
+        assert (
+            evidence["finding_identity_sha256"]
+            == row["source_identity"]["identity_sha256"]
+        )
+        assert evidence["authority"] == "NONE"
+        assert action["automatic_execution"] is False
+    legacy = [copy.deepcopy(row["raw_finding"]) for row in current]
+    for finding in legacy:
+        finding["facts"].pop("security_precondition")
+    replay = _effect_tier_report(
+        scanned, legacy, captured, coverage=True, partition="VALIDATED"
+    )
+    assert replay["tier_counts"]["SUPPORTED_DEFECT"] == 2
+    assert [row["raw_finding"] for row in replay["ledger"]] == legacy
+    assert all(
+        row["source_bound_security_precondition"]["precondition"]["input_value_flow"][
+            "steps"
+        ]
+        for row in replay["ledger"]
+    )
+
+
+def test_failed_complete_source_model_does_not_fall_back_to_one_file_proof(tmp_path):
+    source = "from flask import request\ndef run():\n    eval(request.args['code'])\n"
+    scanned, captured = _effect_tier_fixture(tmp_path, source)
+    raw = [
+        copy.deepcopy(row["raw_finding"])
+        for row in scanned["finding_tier_report"]["ledger"]
+    ]
+    assert len(raw) == 1
+    raw[0]["facts"].pop("security_precondition")
+    captured["broken.py"] = b"def broken(:\n"
+    replay = _effect_tier_report(
+        scanned, raw, captured, coverage=True, partition="VALIDATED"
+    )
+    assert replay["ledger"][0]["tier"] == "NEEDS_CONTEXT"
+    assert replay["ledger"][0]["raw_finding"] == raw[0]
+    assert "source_bound_security_precondition" not in replay["ledger"][0]
+    assert replay["defect_gate"]["state"] == "BLOCKED"
+    assert replay["defect_gate"]["reason"] == "native_source_model_unavailable"
+    assert replay["validation"]["native_source_model"] == "UNAVAILABLE"
+
+
+def test_effect_witness_hydrates_legacy_rows_and_reaches_security_handoff(tmp_path):
+    from factoryline import primitive_observation_binding as binding
+
+    source = (
+        "import logging\n"
+        "import os\n"
+        "import requests\n"
+        "from flask import request\n"
+        "def save_upload():\n"
+        "    uploaded = request.files['file']\n"
+        "    uploaded.save(os.path.join('/uploads', uploaded.filename))\n"
+        "def fetch_remote():\n"
+        "    requests.get('https://example.test', verify=False)\n"
+        "def write_log():\n"
+        "    logging.error(request.args['message'])\n"
+    )
+    scanned, captured = _effect_tier_fixture(tmp_path, source)
+    codes = {
+        "SECURITY_PATH_TRAVERSAL",
+        "SECURITY_TLS_VERIFY_DISABLED",
+        "SECURITY_LOG_INJECTION",
+    }
+    current = [row for row in scanned["findings"] if row.get("code") in codes]
+    assert {row["code"] for row in current} == codes
+    assert len(current) == 3
+    assert all(
+        row["facts"]["security_precondition"].get("effect_witness") for row in current
+    )
+    for row in scanned["finding_tier_report"]["ledger"]:
+        witness_ref = row.get("source_bound_security_precondition")
+        if not witness_ref:
+            continue
+        packet = next(
+            action
+            for action in scanned["agent_actions"]
+            if action.get("finding_context") == row["raw_finding"]
+        )
+        packet_evidence = packet["security_precondition_evidence"]
+        assert packet["finding_context"] == row["raw_finding"]
+        assert packet_evidence["candidate_sha256"] == scanned["candidate_sha256"]
+        assert packet_evidence["source_path"] == witness_ref["source_path"]
+        assert packet_evidence["source_sha256"] == witness_ref["source_sha256"]
+        assert (
+            packet_evidence["finding_identity_sha256"]
+            == witness_ref["finding_identity_sha256"]
+        )
+        assert (
+            packet_evidence["precondition_sha256"] == witness_ref["precondition_sha256"]
+        )
+        assert packet_evidence["precondition"] == witness_ref["precondition"]
+        assert packet_evidence["trust"] == "UNTRUSTED_DATA"
+        assert packet_evidence["authority"] == "NONE"
+
+    legacy = copy.deepcopy(current)
+    for row in legacy:
+        row["facts"].pop("security_precondition", None)
+    report = _effect_tier_report(
+        scanned, legacy, captured, coverage=True, partition="VALIDATED"
+    )
+    assert report["raw_diagnostics"]["count"] == len(legacy)
+    assert report["defect_gate"]["supported_defect_count"] == len(legacy)
+    assert report["defect_gate"]["passed"] is False
+    rows = {row["raw_finding"]["code"]: row for row in report["ledger"]}
+    for original in legacy:
+        row = rows[original["code"]]
+        witness_ref = row["source_bound_security_precondition"]
+        assert row["tier"] == "SUPPORTED_DEFECT"
+        assert row["raw_finding"] == original
+        assert witness_ref["source_path"] == original["path"]
+        assert (
+            witness_ref["source_sha256"]
+            == hashlib.sha256(captured[original["path"]]).hexdigest()
+        )
+        assert witness_ref["precondition_sha256"] == binding._tier_sha256(
+            witness_ref["precondition"]
+        )
+        assert witness_ref["precondition"]["schema"] == (
+            "factory.security.precondition.v1"
+        )
+        expected_identity = binding._tier_sha256(
+            {
+                "path": original["path"],
+                "source_sha256": witness_ref["source_sha256"],
+                "code": original["code"],
+                "line": original["line"],
+                "column": original.get("column"),
+                "original_severity": original.get("severity"),
+                "raw_finding": original,
+            }
+        )
+        assert row["source_identity"]["identity_sha256"] == expected_identity
+
+    handed_off = binding._security_tier_rows(report)
+    assert len(handed_off) == len(legacy)
+    assert all(row.get("source_bound_security_precondition") for row in handed_off)
+
+    legacy_with_old_precondition = copy.deepcopy(current)
+    for row in legacy_with_old_precondition:
+        premise = row["facts"]["security_precondition"]
+        premise.pop("effect_witness", None)
+        if row["code"] == "SECURITY_LOG_INJECTION":
+            premise["source_role"] = "untrusted_input"
+            premise["consumer_role"] = "log_message"
+            premise.pop("input_value_flow", None)
+        elif row["code"] == "SECURITY_PATH_TRAVERSAL":
+            premise["source_role"] = "untrusted_request"
+            premise["consumer_role"] = "flask.FileStorage.save"
+            premise.pop("input_value_flow", None)
+    hydrated = _effect_tier_report(
+        scanned,
+        legacy_with_old_precondition,
+        captured,
+        coverage=True,
+        partition="VALIDATED",
+    )
+    assert all(row["tier"] == "SUPPORTED_DEFECT" for row in hydrated["ledger"])
+    assert all(
+        row.get("source_bound_security_precondition") for row in hydrated["ledger"]
+    )
+
+    from factoryline import audit_action_refs, review_audits as audit
+
+    hydrated_core = copy.deepcopy(dict(scanned))
+    hydrated_core["findings"] = legacy_with_old_precondition
+    hydrated_core["finding_tier_report"] = hydrated
+    hydrated_core["defect_policy_decision"] = {"state": "READY"}
+    sealed_hydrated = audit_action_refs._finish_security_scan_seal(
+        audit, hydrated_core, captured
+    )
+    for ledger_row in hydrated["ledger"]:
+        expected_witness = ledger_row["source_bound_security_precondition"]
+        action = next(
+            item
+            for item in sealed_hydrated["agent_actions"]
+            if item["finding_context"] == ledger_row["raw_finding"]
+        )
+        packet_evidence = action["security_precondition_evidence"]
+        assert action["finding_context"] == ledger_row["raw_finding"]
+        assert (
+            packet_evidence["candidate_sha256"] == sealed_hydrated["candidate_sha256"]
+        )
+        assert packet_evidence["source_path"] == expected_witness["source_path"]
+        assert packet_evidence["source_sha256"] == expected_witness["source_sha256"]
+        assert (
+            packet_evidence["finding_identity_sha256"]
+            == expected_witness["finding_identity_sha256"]
+        )
+        assert (
+            packet_evidence["precondition_sha256"]
+            == expected_witness["precondition_sha256"]
+        )
+        assert packet_evidence["precondition"] == expected_witness["precondition"]
+
+
+def test_effect_witness_rejects_forged_stale_and_unscoped_claims(tmp_path):
+    source = (
+        "import logging\n"
+        "from flask import request\n"
+        "def write_log():\n"
+        "    logging.error(request.args['message'])\n"
+    )
+    scanned, captured = _effect_tier_fixture(tmp_path, source)
+    raw = next(
+        row
+        for row in scanned["findings"]
+        if row.get("code") == "SECURITY_LOG_INJECTION"
+    )
+
+    forged = copy.deepcopy(raw)
+    forged["facts"]["security_precondition"]["effect_witness"]["effect_facts"][
+        "neutralization"
+    ] = "escaped"
+    forged_report = _effect_tier_report(
+        scanned, [forged], captured, coverage=True, partition="VALIDATED"
+    )
+    forged_row = forged_report["ledger"][0]
+    assert forged_row["tier"] == "NEEDS_CONTEXT"
+    assert "source_bound_security_precondition" not in forged_row
+    assert forged_row["raw_finding"] == forged
+
+    stale = copy.deepcopy(raw)
+    stale["facts"].pop("security_precondition", None)
+    changed = dict(captured)
+    changed["app.py"] = changed["app.py"].replace(
+        b"request.args['message']", b"'fixed message'"
+    )
+    stale_report = _effect_tier_report(
+        scanned, [stale], changed, coverage=True, partition="VALIDATED"
+    )
+    stale_row = stale_report["ledger"][0]
+    assert stale_row["tier"] == "NEEDS_CONTEXT"
+    assert "source_bound_security_precondition" not in stale_row
+
+    changed_fact = copy.deepcopy(raw)
+    changed_fact["facts"]["call"] = "logging.warning"
+    changed_fact_report = _effect_tier_report(
+        scanned, [changed_fact], captured, coverage=True, partition="VALIDATED"
+    )
+    assert changed_fact_report["ledger"][0]["tier"] == "NEEDS_CONTEXT"
+
+
+def test_effect_witness_keeps_partial_scope_blocked_and_unknown_page_name_unresolved(
+    tmp_path,
+):
+    source = (
+        "import logging\n"
+        "from flask import request\n"
+        "def write_log():\n"
+        "    logging.error(request.args['message'])\n"
+    )
+    (tmp_path / "unrelated.py").write_text("VALUE = 1\n", encoding="utf-8")
+    scanned, captured = _effect_tier_fixture(tmp_path, source)
+    raw = next(
+        row
+        for row in scanned["findings"]
+        if row.get("code") == "SECURITY_LOG_INJECTION"
+    )
+    legacy = copy.deepcopy(raw)
+    legacy["facts"].pop("security_precondition", None)
+    partial = dict(captured)
+    partial.pop("unrelated.py", None)
+    partial_report = _effect_tier_report(
+        scanned, [legacy], partial, coverage=False, partition="UNKNOWN"
+    )
+    assert partial_report["ledger"][0]["tier"] == "SUPPORTED_DEFECT"
+    assert partial_report["defect_gate"]["state"] == "BLOCKED"
+    assert partial_report["defect_gate"]["passed"] is False
+    assert partial_report["defect_gate"]["clean"] is False
+
+    page_source = (
+        "import logging\ndef write_page_log(page):\n    logging.error(page.name)\n"
+    )
+    page_scanned, page_captured = _effect_tier_fixture(
+        tmp_path / "page-name", page_source
+    )
+    assert not any(
+        row.get("code") == "SECURITY_LOG_INJECTION" for row in page_scanned["findings"]
+    )
+    page_legacy = {
+        "code": "SECURITY_LOG_INJECTION",
+        "path": "app.py",
+        "line": 3,
+        "column": 4,
+        "severity": "HIGH",
+        "facts": {"call": "logging.error", "source": "page.name"},
+    }
+    page_report = _effect_tier_report(
+        page_scanned,
+        [page_legacy],
+        page_captured,
+        coverage=True,
+        partition="VALIDATED",
+    )
+    assert page_report["ledger"][0]["tier"] == "NEEDS_CONTEXT"
+    assert "source_bound_security_precondition" not in page_report["ledger"][0]
+
+
+def test_effect_witness_invalidates_changed_registry_and_log_helper(
+    tmp_path, monkeypatch
+):
+    from types import MappingProxyType
+
+    from factoryline import semantic_credential_sensor as sensors
+
+    source = (
+        "import logging\n"
+        "from flask import request\n"
+        "def write_log():\n"
+        "    logging.error(request.args['message'])\n"
+    )
+    scanned, captured = _effect_tier_fixture(tmp_path, source)
+    raw = next(
+        row
+        for row in scanned["findings"]
+        if row.get("code") == "SECURITY_LOG_INJECTION"
+    )
+    legacy = copy.deepcopy(raw)
+    legacy["facts"].pop("security_precondition", None)
+
+    original_contracts = sensors.SECURITY_EFFECT_CONTRACTS
+    changed_contracts = dict(original_contracts)
+    changed_log_contract = dict(original_contracts["SECURITY_LOG_INJECTION"])
+    changed_log_contract["consumer_role"] = "changed_consumer"
+    changed_contracts["SECURITY_LOG_INJECTION"] = MappingProxyType(changed_log_contract)
+    monkeypatch.setattr(
+        sensors, "SECURITY_EFFECT_CONTRACTS", MappingProxyType(changed_contracts)
+    )
+    registry_report = _effect_tier_report(
+        scanned, [legacy], captured, coverage=True, partition="VALIDATED"
+    )
+    assert registry_report["ledger"][0]["tier"] == "NEEDS_CONTEXT"
+    assert "source_bound_security_precondition" not in registry_report["ledger"][0]
+
+    monkeypatch.setattr(sensors, "SECURITY_EFFECT_CONTRACTS", original_contracts)
+    monkeypatch.setattr(
+        sensors, "log_security_precondition", lambda *args, **kwargs: {}
+    )
+    helper_report = _effect_tier_report(
+        scanned, [legacy], captured, coverage=True, partition="VALIDATED"
+    )
+    assert helper_report["ledger"][0]["tier"] == "NEEDS_CONTEXT"
+    assert "source_bound_security_precondition" not in helper_report["ledger"][0]

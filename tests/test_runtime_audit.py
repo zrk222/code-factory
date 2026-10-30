@@ -109,6 +109,85 @@ def test_agent_repair_packet_is_stable_bound_and_untrusted():
         audit_remediation_packet("invalid", finding)
 
 
+def test_agent_repair_packet_carries_only_hash_bound_untrusted_effect_evidence():
+    from copy import deepcopy
+
+    from factoryline import canonical_json_bytes
+    from factoryline.audit_action_refs import audit_remediation_packet
+
+    candidate_sha256 = "a" * 64
+    source_bytes = b"request.files['file'].save(path)\n"
+    source_sha256 = sha256(source_bytes).hexdigest()
+    finding = {
+        "code": "SECURITY_PATH_TRAVERSAL",
+        "path": "app.py",
+        "line": 1,
+        "column": 0,
+        "severity": "HIGH",
+        "facts": {"call": "flask.FileStorage.save"},
+    }
+    witness = {
+        "schema": "factory.security.precondition.v1",
+        "source_role": "untrusted_request_filename",
+        "consumer_role": "flask_file_storage_save",
+        "effect_kind": "path_escape",
+        "source_span": [1, 0, 1, 18],
+        "sink_span": [1, 0, 1, 36],
+        "effect_facts": {"provider": "werkzeug.FileStorage.save"},
+    }
+    witness_ref = {
+        "source_path": "app.py",
+        "source_sha256": source_sha256,
+        "finding_identity_sha256": sha256(
+            canonical_json_bytes(
+                {
+                    "path": "app.py",
+                    "source_sha256": source_sha256,
+                    "code": finding["code"],
+                    "line": finding["line"],
+                    "column": finding["column"],
+                    "original_severity": finding["severity"],
+                    "raw_finding": finding,
+                }
+            )
+        ).hexdigest(),
+        "precondition_sha256": sha256(canonical_json_bytes(witness)).hexdigest(),
+        "precondition": witness,
+    }
+    packet = audit_remediation_packet(
+        candidate_sha256, finding, source_bound_security_precondition=witness_ref
+    )
+    evidence = packet["security_precondition_evidence"]
+    assert evidence["candidate_sha256"] == candidate_sha256
+    assert evidence["source_sha256"] == source_sha256
+    assert evidence["finding_sha256"] == packet["finding_sha256"]
+    assert evidence["finding_identity_sha256"] == witness_ref["finding_identity_sha256"]
+    assert evidence["precondition_sha256"] == witness_ref["precondition_sha256"]
+    assert evidence["precondition"] == witness
+    assert evidence["trust"] == "UNTRUSTED_DATA"
+    assert evidence["authority"] == "NONE"
+    assert packet["finding_context"] == finding
+    assert packet["context_trust"] == "UNTRUSTED_DATA"
+    assert packet["id"] != audit_remediation_packet(candidate_sha256, finding)["id"]
+
+    stale_bindings = []
+    wrong_source = deepcopy(witness_ref)
+    wrong_source["source_path"] = "other.py"
+    stale_bindings.append(wrong_source)
+    wrong_identity = deepcopy(witness_ref)
+    wrong_identity["finding_identity_sha256"] = "b" * 64
+    stale_bindings.append(wrong_identity)
+    wrong_witness = deepcopy(witness_ref)
+    wrong_witness["precondition"]["effect_kind"] = "forged"
+    stale_bindings.append(wrong_witness)
+    for stale in stale_bindings:
+        rejected = audit_remediation_packet(
+            candidate_sha256, finding, source_bound_security_precondition=stale
+        )
+        assert "security_precondition_evidence" not in rejected
+        assert rejected["finding_context"] == finding
+
+
 def _native_challenge_args(tmp_path, challenge_kind="positive"):
     import hashlib
     from factoryline.runtime_audit_common import execute_native_challenge

@@ -1,4 +1,5 @@
 import ast
+import hashlib
 import pytest
 from factoryline.review_audits import _security_aliases
 from factoryline.semantic_credential_sensor import (
@@ -22,6 +23,52 @@ def _premise_scan(source):
     return audit._security_scan_tree(
         Path("."), Path("application.py"), ast.parse(source)
     )
+
+
+def _captured_log_scan(tmp_path, app_source, settings_source=None, *, startup=True):
+    from pathlib import Path
+    from factoryline.credential_role_constructor_provider import SourceSnapshotIndex
+
+    files = {"app.py": app_source}
+    if settings_source is not None:
+        files["project/__init__.py"] = ""
+        files["project/settings.py"] = settings_source
+    if startup:
+        files["manage.py"] = (
+            "import os, sys\n"
+            "from django.core.management import execute_from_command_line\n"
+            "os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'project.settings')\n"
+            "if __name__ == '__main__':\n"
+            "    execute_from_command_line(sys.argv)\n"
+        )
+    snapshots, source_bytes, inventory = {}, {}, {}
+    for relative, source in files.items():
+        path = Path(tmp_path, relative)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        raw = source.encode("utf-8")
+        path.write_bytes(raw)
+        tree = ast.parse(raw, filename=str(path))
+        digest = hashlib.sha256(raw).hexdigest()
+        tree._oracle_source_sha256 = digest
+        snapshots[path] = tree
+        source_bytes[path] = raw
+        inventory[path] = digest
+    index = SourceSnapshotIndex(Path(tmp_path), snapshots, source_bytes, inventory)
+    app_path = Path(tmp_path, "app.py")
+    app_tree = snapshots[app_path]
+    app_tree._security_source_model = index
+    with audit._security_only_scan_context(True):
+        return audit._security_scan_tree(Path(tmp_path), app_path, app_tree)
+
+
+_PLAIN_DJANGO_LOGGING = (
+    "LOGGING = {\n"
+    " 'version': 1, 'disable_existing_loggers': False,\n"
+    " 'formatters': {'plain': {'format': '%(levelname)s %(message)s'}},\n"
+    " 'handlers': {'console': {'class': 'logging.StreamHandler', 'formatter': 'plain', 'level': 'WARNING'}},\n"
+    " 'root': {'handlers': ['console'], 'level': 'WARNING'},\n"
+    "}\n"
+)
 
 
 @pytest.mark.parametrize("member", ["args", "form"])
@@ -2336,9 +2383,7 @@ def test_log275_supported_premise_excludes_dead_paths(body):
     )
     logs = [item for item in findings if item["code"] == "SECURITY_LOG_INJECTION"]
     assert len(logs) == 1
-    assert bool(logs[0]["facts"].get("security_precondition")) == (
-        body == "logging.warning(value)"
-    )
+    assert "security_precondition" not in logs[0]["facts"]
 
 
 def test_log275_replaced_provider_preserves_raw_without_support():
@@ -2389,16 +2434,13 @@ def test_log_percent_slots_exclude_escaped_percent_and_preserve_real_slots():
     ) == ["s", "s", "f"]
 
 
-def test_log_security_precondition_requires_stability_and_a_possible_sink_path():
-    """log_scalar_metadata supports only stable log metadata with a reachable consumer sink."""
+def test_log_security_precondition_requires_typed_effect_and_possible_sink_path():
+    """Unknown log input domains do not receive a generic supported-effect premise."""
     from types import SimpleNamespace
 
     stable = SimpleNamespace(_security_log_provider_stable=True)
     call = ast.parse("logging.warning(user_input)").body[0].value
-    fact = sensors.log_security_precondition(stable, call)["security_precondition"]
-    assert fact["status"] == "SUPPORTED"
-    assert fact["source_role"] == "untrusted_input"
-    assert fact["consumer_role"] == "log_message"
+    assert sensors.log_security_precondition(stable, call) == {}
 
     unstable = SimpleNamespace(_security_log_provider_stable=False)
     assert sensors.log_security_precondition(unstable, call) == {}
@@ -3450,3 +3492,652 @@ def test_literal_guard_unknown_syntax_never_removes_a_branch(guard):
 
     branch = ast.parse(f"if {guard}:\n    dangerous()\nelse:\n    other()\n").body[0]
     assert security_literal_branch_blocks(branch) == (branch.body, branch.orelse)
+
+
+def test_flask_file_storage_effect_requires_normalized_escape_and_raw_filename():
+    findings = _premise_scan(
+        "from flask import request\nfrom werkzeug.utils import safe_join\nimport os\n"
+        "def upload():\n"
+        "    item = request.files['file']\n"
+        "    ignored = safe_join('/srv/uploads', 'fixed.csv')\n"
+        "    destination = os.path.join('/srv/uploads', item.filename)\n"
+        "    item.save(destination)\n"
+    )
+    path = next(
+        row
+        for row in findings
+        if row["code"] == "SECURITY_PATH_TRAVERSAL"
+        and row["facts"].get("call") == "flask.FileStorage.save"
+    )
+    witness = path["facts"]["security_precondition"]["effect_witness"]
+    assert witness["schema"] == sensors.SECURITY_EFFECT_WITNESS_SCHEMA
+    assert witness["source_role"] == "untrusted_request_filename"
+    assert witness["consumer_role"] == "flask_file_storage_save"
+    assert witness["effect_kind"] == "path_escape"
+    assert witness["effect_facts"] == {
+        "provider_id": "werkzeug.FileStorage.save",
+        "path_composition": "os.path.join",
+        "destination_relation": "escape_capable",
+        "normalized_counterexample_relation": "outside_intended_base",
+        "normalization_profile": "python_os_path",
+        "intended_base_span": witness["effect_facts"]["intended_base_span"],
+    }
+    assert len(witness["effect_facts"]["intended_base_span"]) == 4
+
+
+def test_flask_file_storage_raw_separator_concat_has_escape_witness():
+    findings = _premise_scan(
+        "from flask import request\ndef upload():\n"
+        "    item = request.files['file']\n"
+        "    destination = '/srv/uploads/' + item.filename\n"
+        "    item.save(destination)\n"
+    )
+    path = next(
+        row
+        for row in findings
+        if row["code"] == "SECURITY_PATH_TRAVERSAL"
+        and row["facts"].get("call") == "flask.FileStorage.save"
+    )
+    witness = path["facts"]["security_precondition"]["effect_witness"]
+    assert witness["effect_facts"]["path_composition"] == "raw_string_concat"
+
+
+@pytest.mark.parametrize(
+    "guard",
+    [
+        "if name:\n    pass\n",
+        "if name:\n    print('observed')\n",
+        "if os.path.splitext(name)[1] not in {'.csv', '.png'}:\n    abort(400)\n",
+    ],
+)
+def test_flask_file_storage_unrelated_or_suffix_guards_keep_real_escape_witness(guard):
+    source = (
+        "from flask import request, abort\nimport os\n"
+        "def upload():\n"
+        "    item = request.files['file']\n"
+        "    name = item.filename\n"
+        + "    "
+        + guard.replace("\n", "\n    ").rstrip()
+        + "\n"
+        + "    destination = os.path.join('/srv/uploads', name)\n"
+        + "    item.save(destination)\n"
+    )
+    findings = _premise_scan(source)
+    path = next(
+        row
+        for row in findings
+        if row["code"] == "SECURITY_PATH_TRAVERSAL"
+        and row["facts"].get("call") == "flask.FileStorage.save"
+    )
+    assert "effect_witness" in path["facts"]["security_precondition"]
+
+
+def test_flask_file_storage_raw_concat_span_covers_full_intended_prefix():
+    source = (
+        "from flask import request\ndef upload(base):\n"
+        "    item = request.files['file']\n"
+        "    destination = base + '/uploads/ocr/' + item.filename\n"
+        "    item.save(destination)\n"
+    )
+    findings = _premise_scan(source)
+    path = next(
+        row
+        for row in findings
+        if row["code"] == "SECURITY_PATH_TRAVERSAL"
+        and row["facts"].get("call") == "flask.FileStorage.save"
+    )
+    span = path["facts"]["security_precondition"]["effect_witness"]["effect_facts"][
+        "intended_base_span"
+    ]
+    line = source.splitlines()[span[0] - 1]
+    assert line[span[1] : span[3]] == "base + '/uploads/ocr/'"
+
+
+def test_flask_file_storage_nested_sink_uses_actual_save_program_point():
+    findings = _premise_scan(
+        "from flask import request\nimport os\ndef upload():\n"
+        "    if request.method == 'POST':\n"
+        "        item = request.files['file']\n"
+        "        filename = item.filename\n"
+        "        destination = os.path.join('/srv/uploads', filename)\n"
+        "        item.save(destination)\n"
+    )
+    path = next(
+        row
+        for row in findings
+        if row["code"] == "SECURITY_PATH_TRAVERSAL"
+        and row["facts"].get("call") == "flask.FileStorage.save"
+    )
+    assert "effect_witness" in path["facts"]["security_precondition"]
+
+
+def test_flask_file_storage_random_prefix_keeps_raw_without_escape_witness():
+    findings = _premise_scan(
+        "from flask import request\nimport os, random\n"
+        "def upload():\n"
+        "    item = request.files['file']\n"
+        "    destination = os.path.join('/srv/uploads', str(random.randrange(1000)) + item.filename)\n"
+        "    item.save(destination)\n"
+    )
+    path = next(
+        row
+        for row in findings
+        if row["code"] == "SECURITY_PATH_TRAVERSAL"
+        and row["facts"].get("call") == "flask.FileStorage.save"
+    )
+    assert "effect_witness" not in path["facts"].get("security_precondition", {})
+
+
+@pytest.mark.parametrize(
+    "body, has_raw_finding",
+    [
+        (
+            "filename = secure_filename(item.filename)\n"
+            "    destination = os.path.join('/srv/uploads', filename)\n",
+            False,
+        ),
+        (
+            "destination = os.path.join('/srv/uploads', item.filename)\n"
+            "    if os.path.commonpath(['/srv/uploads', destination]) == '/srv/uploads':\n"
+            "        item.save(destination)\n",
+            True,
+        ),
+        (
+            "name = item.filename\n"
+            "    if name not in {'ok.csv', 'image.png'}:\n"
+            "        abort(400)\n"
+            "    destination = os.path.join('/srv/uploads', name)\n"
+            "    item.save(destination)\n",
+            True,
+        ),
+        (
+            "name = item.filename\n"
+            "    if re.fullmatch(r'[a-z0-9_-]+\\.csv', name) is None:\n"
+            "        abort(400)\n"
+            "    destination = os.path.join('/srv/uploads', name)\n"
+            "    item.save(destination)\n",
+            True,
+        ),
+    ],
+)
+def test_flask_file_storage_safe_filename_or_containment_has_no_effect_witness(
+    body, has_raw_finding
+):
+    findings = _premise_scan(
+        "from flask import request\nfrom werkzeug.utils import secure_filename\n"
+        "import os\ndef upload():\n"
+        "    item = request.files['file']\n    "
+        + body
+        + ("    item.save(destination)\n" if "commonpath" not in body else "")
+    )
+    path_rows = [
+        row
+        for row in findings
+        if row["code"] == "SECURITY_PATH_TRAVERSAL"
+        and row["facts"].get("call") == "flask.FileStorage.save"
+    ]
+    assert bool(path_rows) is has_raw_finding
+    if has_raw_finding:
+        assert "effect_witness" not in path_rows[0]["facts"].get(
+            "security_precondition", {}
+        )
+
+
+def test_flask_file_storage_full_path_component_guard_has_no_effect_witness():
+    findings = _premise_scan(
+        "from flask import request, abort\nimport os\ndef upload():\n"
+        "    item = request.files['file']\n"
+        "    name = item.filename\n"
+        "    if '/' in name or '\\\\' in name or '..' in name or ':' in name:\n"
+        "        abort(400)\n"
+        "    destination = os.path.join('/srv/uploads', name)\n"
+        "    item.save(destination)\n"
+    )
+    path = next(
+        row
+        for row in findings
+        if row["code"] == "SECURITY_PATH_TRAVERSAL"
+        and row["facts"].get("call") == "flask.FileStorage.save"
+    )
+    assert "effect_witness" not in path["facts"].get("security_precondition", {})
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "item.filename = 'safe.csv'",
+        "other = item\nother.filename = 'safe.csv'",
+        "other = item\nsetattr(other, 'filename', 'safe.csv')",
+        "item.filename = secure_filename(item.filename)",
+        "setattr(item, 'filename', 'safe.csv')",
+        "item.__dict__['filename'] = 'safe.csv'",
+    ],
+)
+def test_flask_file_storage_filename_mutation_does_not_keep_raw_effect_witness(
+    mutation,
+):
+    source = (
+        "from flask import request\nfrom werkzeug.utils import secure_filename\n"
+        "import os\ndef upload():\n"
+        "    item = request.files['file']\n    "
+        + mutation.replace("\n", "\n    ")
+        + "\n    destination = os.path.join('/srv/uploads', item.filename)\n"
+        "    item.save(destination)\n"
+    )
+    path = next(
+        row
+        for row in _premise_scan(source)
+        if row["code"] == "SECURITY_PATH_TRAVERSAL"
+        and row["facts"].get("call") == "flask.FileStorage.save"
+    )
+    assert "effect_witness" not in path["facts"].get("security_precondition", {})
+
+
+def test_flask_file_storage_incompatible_conditional_destination_has_no_witness():
+    findings = _premise_scan(
+        "from flask import request\nimport os\ndef upload(flag):\n"
+        "    item = request.files['file']\n"
+        "    if flag:\n"
+        "        destination = os.path.join('/srv/uploads', item.filename)\n"
+        "    if not flag:\n"
+        "        item.save(destination)\n"
+    )
+    path = next(
+        row
+        for row in findings
+        if row["code"] == "SECURITY_PATH_TRAVERSAL"
+        and row["facts"].get("call") == "flask.FileStorage.save"
+    )
+    assert "effect_witness" not in path["facts"].get("security_precondition", {})
+
+
+@pytest.mark.parametrize("before_read", [True, False])
+def test_flask_file_storage_same_line_field_write_respects_filename_read(before_read):
+    statements = (
+        "item.filename = 'safe.csv'; destination = os.path.join('/srv/uploads', item.filename); item.save(destination)"
+        if before_read
+        else "destination = os.path.join('/srv/uploads', item.filename); item.filename = 'safe.csv'; item.save(destination)"
+    )
+    path = next(
+        row
+        for row in _premise_scan(
+            "from flask import request\nimport os\ndef upload():\n"
+            "    item = request.files['file']\n"
+            "    " + statements + "\n"
+        )
+        if row["code"] == "SECURITY_PATH_TRAVERSAL"
+        and row["facts"].get("call") == "flask.FileStorage.save"
+    )
+    assert (
+        "effect_witness" in path["facts"].get("security_precondition", {})
+    ) is not before_read
+
+
+def test_flask_file_storage_unsafe_or_filename_guard_keeps_escape_witness():
+    path = next(
+        row
+        for row in _premise_scan(
+            "from flask import request\nimport os\ndef upload(flag):\n"
+            "    item = request.files['file']\n"
+            "    name = item.filename\n"
+            "    if name in {'safe.csv'} or flag:\n"
+            "        destination = os.path.join('/srv/uploads', name)\n"
+            "        item.save(destination)\n"
+        )
+        if row["code"] == "SECURITY_PATH_TRAVERSAL"
+        and row["facts"].get("call") == "flask.FileStorage.save"
+    )
+    assert "effect_witness" in path["facts"]["security_precondition"]
+
+
+@pytest.mark.parametrize(
+    "url, expected_transport",
+    [
+        ("'https://example.test/data'", "static_https"),
+        ("url", None),
+        ("'https://' + host", "https_capable"),
+        ("f'https://{host}/data'", "https_capable"),
+        ("'http://example.test/data'", None),
+        ("'http://' + host", None),
+    ],
+)
+def test_tls_peer_authentication_effect_requires_https_capability(
+    url, expected_transport
+):
+    findings = _premise_scan(
+        f"import requests\ndef fetch(url, host):\n    requests.get({url}, verify=False)\n"
+    )
+    finding = next(
+        row for row in findings if row["code"] == "SECURITY_TLS_VERIFY_DISABLED"
+    )
+    witness = finding["facts"].get("security_precondition", {}).get("effect_witness")
+    if expected_transport is None:
+        assert witness is None
+    else:
+        assert witness["effect_kind"] == "tls_peer_authentication_bypass"
+        assert witness["source_role"] == "tls_verification_configuration"
+        assert witness["consumer_role"] == "known_tls_client_request"
+        assert witness["effect_facts"]["verification_setting"] == "literal_false"
+        assert witness["effect_facts"]["transport_relation"] == expected_transport
+        assert len(witness["effect_facts"]["https_operation_span"]) == 4
+
+
+def test_log_effect_requires_request_crlf_capability_not_line_input(tmp_path):
+    request_rows = _captured_log_scan(
+        tmp_path / "request",
+        "import logging\nfrom flask import request\ndef record():\n"
+        "    value = request.args.get('name', '')\n"
+        "    logging.warning('page=%s', value)\n",
+        _PLAIN_DJANGO_LOGGING,
+    )
+    request_log = next(
+        row for row in request_rows if row["code"] == "SECURITY_LOG_INJECTION"
+    )
+    request_witness = request_log["facts"]["security_precondition"]["effect_witness"]
+    assert request_witness["source_role"] == "newline_capable_untrusted_text"
+    assert request_witness["consumer_role"] == "line_delimited_log"
+    assert request_witness["effect_kind"] == "log_record_boundary_injection"
+    facts = request_witness["effect_facts"]
+    assert facts["provider_id"] == "logging.warning"
+    assert facts["newline_capability"] == "CR_LF"
+    assert facts["neutralization"] == "none"
+    assert facts["consumer_format"] == "%(message)s"
+    assert facts["consumer_config_path"] == "project/settings.py"
+    assert len(facts["consumer_config_sha256"]) == 64
+    assert facts["consumer_handler_id"] == "logging.StreamHandler"
+    assert facts["consumer_logger_id"] == "root"
+    assert facts["consumer_call_level"] == "warning"
+    assert facts["consumer_effective_level"] == "WARNING"
+    assert facts["activation_path"] == "manage.py"
+
+    input_rows = _captured_log_scan(
+        tmp_path / "input",
+        "import logging\ndef record():\n"
+        "    value = input()\n"
+        "    logging.warning(value)\n",
+        _PLAIN_DJANGO_LOGGING,
+    )
+    input_log = next(
+        row for row in input_rows if row["code"] == "SECURITY_LOG_INJECTION"
+    )
+    assert "security_precondition" not in input_log["facts"]
+
+
+@pytest.mark.parametrize(
+    "sink_value",
+    ["value", "message"],
+)
+def test_log_effect_preserves_single_request_trace_through_aliases(
+    tmp_path, sink_value
+):
+    suffix = "    message = 'page=' + str(value)\n" if sink_value == "message" else ""
+    rows = _captured_log_scan(
+        tmp_path,
+        "import logging\nfrom flask import request\n"
+        "def record():\n    value = request.args.get('name', '')\n"
+        + suffix
+        + f"    logging.warning({sink_value})\n",
+        _PLAIN_DJANGO_LOGGING,
+    )
+    finding = next(row for row in rows if row["code"] == "SECURITY_LOG_INJECTION")
+    flow = finding["facts"]["security_precondition"]["input_value_flow"]
+    operations = [step["operation"] for step in flow["steps"]]
+    assert operations[0] == "REQUEST_SOURCE"
+    assert "LOCAL_ASSIGN" in operations
+    assert operations[-1] == "LOG_ARGUMENT"
+
+
+def test_log_effect_does_not_join_ambiguous_or_input_sources(tmp_path):
+    rows = _captured_log_scan(
+        tmp_path,
+        "import logging\nfrom flask import request\n"
+        "def record(flag):\n"
+        "    if flag:\n        value = request.args.get('name', '')\n"
+        "    else:\n        value = request.form.get('name', '')\n"
+        "    logging.warning(value)\n",
+        _PLAIN_DJANGO_LOGGING,
+    )
+    finding = next(row for row in rows if row["code"] == "SECURITY_LOG_INJECTION")
+    assert "security_precondition" not in finding["facts"]
+
+
+def test_log_effect_keeps_newline_sanitizers_out_of_typed_evidence(tmp_path):
+    rows = _captured_log_scan(
+        tmp_path,
+        "import logging\nfrom flask import request\n"
+        "def record():\n"
+        "    value = request.args.get('name', '').replace('\\r', '').replace('\\n', '')\n"
+        "    logging.warning(value)\n",
+        _PLAIN_DJANGO_LOGGING,
+    )
+    assert not any(
+        row.get("facts", {}).get("security_precondition")
+        for row in rows
+        if row["code"] == "SECURITY_LOG_INJECTION"
+    )
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "logger.level = 100\n",
+        "other = logger\nother.level = 100\n",
+        "logger.manager.disable = 100\n",
+    ],
+)
+def test_log_effect_rejects_direct_selected_logger_state_mutation(tmp_path, mutation):
+    source = (
+        "import logging\nfrom flask import request\n"
+        "logger = logging.getLogger('billing')\n"
+        + mutation
+        + "def record():\n    logger.warning(request.args.get('x'))\n"
+    )
+    settings = _PLAIN_DJANGO_LOGGING.replace(
+        " 'root': {'handlers': ['console'], 'level': 'WARNING'},\n",
+        " 'loggers': {'billing': {'handlers': ['console'], 'level': 'WARNING', 'propagate': False}},\n",
+    )
+    rows = _captured_log_scan(tmp_path, source, settings)
+    finding = next(row for row in rows if row["code"] == "SECURITY_LOG_INJECTION")
+    assert "security_precondition" not in finding["facts"]
+
+
+@pytest.mark.parametrize(
+    "settings, startup, app_source, expect_witness",
+    [
+        (
+            _PLAIN_DJANGO_LOGGING.replace(
+                "LOGGING =", "LOGGING_CONFIG = None\nLOGGING ="
+            ),
+            True,
+            "import logging\nfrom flask import request\ndef run():\n    logging.warning(request.args.get('x'))\n",
+            False,
+        ),
+        (
+            _PLAIN_DJANGO_LOGGING,
+            False,
+            "import logging\nfrom flask import request\ndef run():\n    logging.warning(request.args.get('x'))\n",
+            False,
+        ),
+        (
+            _PLAIN_DJANGO_LOGGING,
+            True,
+            "import logging\nfrom flask import request\nlogger = logging.getLogger('billing')\ndef run():\n    logger.warning(request.args.get('x'))\n",
+            True,
+        ),
+        (
+            _PLAIN_DJANGO_LOGGING.replace(
+                " 'root': {'handlers': ['console'], 'level': 'WARNING'},\n",
+                " 'loggers': {'billing': {'handlers': ['console'], 'level': 'WARNING', 'propagate': False}},\n",
+            ),
+            True,
+            "import logging\nfrom flask import request\nlogger = logging.getLogger('billing')\ndef run():\n    logger.warning(request.args.get('x'))\n",
+            True,
+        ),
+        (
+            _PLAIN_DJANGO_LOGGING.replace("%(levelname)s %(message)s", "%%(message)s"),
+            True,
+            "import logging\nfrom flask import request\ndef run():\n    logging.warning(request.args.get('x'))\n",
+            False,
+        ),
+        (
+            _PLAIN_DJANGO_LOGGING.replace(
+                "'formatter': 'plain', 'level': 'WARNING'",
+                "'formatter': 'plain', 'level': 'WARNING', 'filters': ['redact']",
+            ),
+            True,
+            "import logging\nfrom flask import request\ndef run():\n    logging.warning(request.args.get('x'))\n",
+            False,
+        ),
+        (
+            _PLAIN_DJANGO_LOGGING.replace(
+                "'%(levelname)s %(message)s'", "'%(message)r'"
+            ),
+            True,
+            "import logging\nfrom flask import request\ndef run():\n    logging.warning(request.args.get('x'))\n",
+            False,
+        ),
+        (
+            _PLAIN_DJANGO_LOGGING,
+            True,
+            "import logging\nfrom flask import request\nif False:\n    logging.warning(request.args.get('x'))\n",
+            False,
+        ),
+        (
+            _PLAIN_DJANGO_LOGGING,
+            True,
+            "import logging\nfrom flask import request\nlogging.disable(logging.CRITICAL)\ndef run():\n    logging.warning(request.args.get('x'))\n",
+            False,
+        ),
+        (
+            _PLAIN_DJANGO_LOGGING,
+            True,
+            "import logging\nfrom flask import request\nlogger = logging.getLogger('billing')\nlogger.disabled = True\ndef run():\n    logger.warning(request.args.get('x'))\n",
+            False,
+        ),
+        (
+            _PLAIN_DJANGO_LOGGING,
+            True,
+            "import logging\nfrom flask import request\ndef run():\n    logging.Logger.warning(logging.getLogger(), request.args.get('x'))\n",
+            False,
+        ),
+    ],
+)
+def test_log_effect_requires_selected_unfiltered_standard_route(
+    tmp_path, settings, startup, app_source, expect_witness
+):
+    rows = _captured_log_scan(
+        tmp_path,
+        app_source,
+        settings,
+        startup=startup,
+    )
+    finding = next(row for row in rows if row["code"] == "SECURITY_LOG_INJECTION")
+    witness = finding["facts"].get("security_precondition", {}).get("effect_witness")
+    assert bool(witness) is expect_witness
+    if expect_witness and "logger = logging.getLogger('billing')" in app_source:
+        assert witness["effect_facts"]["consumer_logger_id"] == "billing"
+
+
+@pytest.mark.parametrize(
+    "filter_class",
+    [
+        "django.utils.log.RequireDebugTrue",
+        "django.utils.log.RequireDebugFalse",
+    ],
+)
+def test_log_effect_allows_standard_django_gate_before_plain_sibling(
+    tmp_path, filter_class
+):
+    settings = _PLAIN_DJANGO_LOGGING.replace(
+        " 'handlers': {'console': {'class': 'logging.StreamHandler', 'formatter': 'plain', 'level': 'WARNING'}},\n",
+        " 'filters': {'gate': {'()': '" + filter_class + "'}},\n"
+        " 'handlers': {"
+        "'console': {'class': 'logging.StreamHandler', 'formatter': 'plain', 'level': 'WARNING', 'filters': ['gate']}, "
+        "'file': {'class': 'logging.FileHandler', 'formatter': 'plain', 'level': 'WARNING'}},\n",
+    ).replace("'handlers': ['console']", "'handlers': ['console', 'file']")
+    rows = _captured_log_scan(
+        tmp_path,
+        "import logging\nfrom flask import request\n"
+        "def record():\n    logging.warning(request.args.get('x'))\n",
+        settings,
+    )
+    finding = next(row for row in rows if row["code"] == "SECURITY_LOG_INJECTION")
+    witness = finding["facts"]["security_precondition"]["effect_witness"]
+    assert witness["effect_facts"]["consumer_handler_key"] == "file"
+
+
+def test_log_effect_keeps_unknown_mutating_filter_before_plain_sibling_unresolved(
+    tmp_path,
+):
+    settings = _PLAIN_DJANGO_LOGGING.replace(
+        " 'handlers': {'console': {'class': 'logging.StreamHandler', 'formatter': 'plain', 'level': 'WARNING'}},\n",
+        " 'filters': {'mask': {'()': 'custom.MutatingFilter'}},\n"
+        " 'handlers': {"
+        "'console': {'class': 'logging.StreamHandler', 'formatter': 'plain', 'level': 'WARNING', 'filters': ['mask']}, "
+        "'file': {'class': 'logging.FileHandler', 'formatter': 'plain', 'level': 'WARNING'}},\n",
+    ).replace("'handlers': ['console']", "'handlers': ['console', 'file']")
+    rows = _captured_log_scan(
+        tmp_path,
+        "import logging\nfrom flask import request\n"
+        "def record():\n    logging.warning(request.args.get('x'))\n",
+        settings,
+    )
+    finding = next(row for row in rows if row["code"] == "SECURITY_LOG_INJECTION")
+    assert "security_precondition" not in finding["facts"]
+
+
+def test_log_effect_accepted_before_later_unknown_handler(tmp_path):
+    settings = _PLAIN_DJANGO_LOGGING.replace(
+        " 'handlers': {'console': {'class': 'logging.StreamHandler', 'formatter': 'plain', 'level': 'WARNING'}},\n",
+        " 'handlers': {"
+        "'file': {'class': 'logging.FileHandler', 'formatter': 'plain', 'level': 'WARNING'}, "
+        "'custom': {'class': 'custom.MutatingHandler', 'formatter': 'plain', 'level': 'WARNING'}},\n",
+    ).replace("'handlers': ['console']", "'handlers': ['file', 'custom']")
+    rows = _captured_log_scan(
+        tmp_path,
+        "import logging\nfrom flask import request\n"
+        "def record():\n    logging.warning(request.args.get('x'))\n",
+        settings,
+    )
+    finding = next(row for row in rows if row["code"] == "SECURITY_LOG_INJECTION")
+    witness = finding["facts"]["security_precondition"]["effect_witness"]
+    assert witness["effect_facts"]["consumer_handler_key"] == "file"
+
+
+def test_log_effect_rejects_mutated_standard_django_filter_identity(tmp_path):
+    settings = _PLAIN_DJANGO_LOGGING.replace(
+        " 'handlers': {'console': {'class': 'logging.StreamHandler', 'formatter': 'plain', 'level': 'WARNING'}},\n",
+        " 'filters': {'gate': {'()': 'django.utils.log.RequireDebugTrue'}},\n"
+        " 'handlers': {"
+        "'console': {'class': 'logging.StreamHandler', 'formatter': 'plain', 'level': 'WARNING', 'filters': ['gate']}, "
+        "'file': {'class': 'logging.FileHandler', 'formatter': 'plain', 'level': 'WARNING'}},\n",
+    ).replace("'handlers': ['console']", "'handlers': ['console', 'file']")
+    rows = _captured_log_scan(
+        tmp_path,
+        "import logging\nimport django.utils.log as django_log\n"
+        "from flask import request\n"
+        "django_log.RequireDebugTrue = replacement\n"
+        "def record():\n    logging.warning(request.args.get('x'))\n",
+        settings,
+    )
+    finding = next(row for row in rows if row["code"] == "SECURITY_LOG_INJECTION")
+    assert "security_precondition" not in finding["facts"]
+
+
+def test_log_effect_direct_dictconfig_has_source_bound_config_without_startup(tmp_path):
+    config = _PLAIN_DJANGO_LOGGING.removeprefix("LOGGING =")
+    source = (
+        "import logging.config\n"
+        "from flask import request\n"
+        "logging.config.dictConfig(" + config.rstrip() + ")\n"
+        "def record():\n"
+        "    logging.warning(request.args.get('name'))\n"
+    )
+    rows = _captured_log_scan(tmp_path, source, startup=False)
+    finding = next(row for row in rows if row["code"] == "SECURITY_LOG_INJECTION")
+    witness = finding["facts"]["security_precondition"]["effect_witness"]
+    facts = witness["effect_facts"]
+    assert facts["consumer_config_path"] == "app.py"
+    assert facts["activation_path"] is None
+    assert facts["activation_sha256"] is None
+    assert facts["activation_span"] is None
