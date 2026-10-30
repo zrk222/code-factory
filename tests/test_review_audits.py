@@ -700,9 +700,10 @@ def test_security_scan_flask_upload_filename_save_paths(tmp_path, source, expect
             source_line, source_column, _end_line, source_end_column = witness[
                 "source_span"
             ]
-            assert ".filename" in source_lines[source_line - 1][
-                source_column:source_end_column
-            ]
+            assert (
+                ".filename"
+                in source_lines[source_line - 1][source_column:source_end_column]
+            )
             effect_facts = witness["effect_facts"]
             assert set(effect_facts) == {
                 "provider_id",
@@ -770,9 +771,9 @@ def test_security_scan_flask_upload_filename_save_paths(tmp_path, source, expect
             base_line, base_column, _base_end_line, base_end_column = effect_facts[
                 "intended_base_span"
             ]
-            assert "/uploads" in source_lines[base_line - 1][
-                base_column:base_end_column
-            ]
+            assert (
+                "/uploads" in source_lines[base_line - 1][base_column:base_end_column]
+            )
             if "input_value_flow" in premise:
                 trace = premise["input_value_flow"]
                 assert set(trace) == {
@@ -788,12 +789,17 @@ def test_security_scan_flask_upload_filename_save_paths(tmp_path, source, expect
                 assert trace["scope"] == "dangerous_argument_only"
                 assert trace["runtime_execution"] == "not_performed"
                 assert trace["steps"]
-                trace_payload = {key: value for key, value in trace.items() if key != "trace_sha256"}
-                assert trace["trace_sha256"] == hashlib.sha256(
-                    json.dumps(
-                        trace_payload, sort_keys=True, separators=(",", ":")
-                    ).encode()
-                ).hexdigest()
+                trace_payload = {
+                    key: value for key, value in trace.items() if key != "trace_sha256"
+                }
+                assert (
+                    trace["trace_sha256"]
+                    == hashlib.sha256(
+                        json.dumps(
+                            trace_payload, sort_keys=True, separators=(",", ":")
+                        ).encode()
+                    ).hexdigest()
+                )
 
 
 def test_security_scan_synthetic_django_password_comparison(tmp_path):

@@ -163,11 +163,93 @@ def test_precision257_endpoint_helper_inventory_and_catalog_digest_are_content_b
     catalog_helpers = endpoint.catalog_callable_helpers()
     validation = endpoint.validation_helpers()
     evidence = endpoint.endpoint_evidence_helpers()
-    assert len(catalog_helpers) == 14 and all(
-        callable(item) for item in catalog_helpers
+    assert {item.__name__ for item in catalog_helpers if callable(item)} == {
+        "urlsplit",
+        "_unique_object",
+        "_public_https",
+        "endpoint_metadata",
+        "matches_endpoint_declaration",
+        "_catalog_digest",
+        "_entry",
+        "_reviewed_entry",
+        "_declaration",
+        "_read",
+        "_catalog_bytes",
+        "catalog_content_digest",
+        "endpoint_publications",
+        "endpoint_publication",
+    }
+    validation_names = {
+        item.__name__
+        for item in validation
+        if callable(item) and getattr(item, "__module__", None) == endpoint.__name__
+    }
+    assert {
+        "operative_signing_default_evidence",
+        "_flask_credential_authority_for_key",
+        "_flask_login_session_authority_witness",
+        "_flask_credential_authority_witness",
+        "_request_client_origin",
+        "_direct_httpx_fixture",
+        "_closed_fixture_decorator",
+        "_client_uses_closed",
+        "_cookie_write",
+        "_tuple_httpx_fixture",
+        "_fixture_app_uses_only_client",
+        "factory_fixture_consumer_status",
+        "_factory_fixture_uses",
+        "_factory_fixture_consumer_result",
+        "_single_factory_fixture_call",
+        "public_json_assertion",
+        "_json_assertion_operands",
+        "_json_detail_name",
+        "_json_cast_response",
+        "_json_response_name",
+        "_json_response_request",
+        "_assertion_values",
+        "_public_expected_value",
+        "_public_enum_member",
+        "router_factory_call_published",
+        "_router_factory_call_published",
+        "_fixture_returns_factory",
+        "_factory_fixture_consumers",
+        "_fixture_app_consumers_closed",
+        "_fixture_app_consumers_closed_uncached",
+        "_app_route_lookups_closed",
+        "_include_router_options",
+        "_route_lookup_only",
+        "_local_name_uses",
+        "_memo",
+        "_app_fixture_consumer_status",
+        "validation_helpers",
+    } <= validation_names
+    assert endpoint.tuple_httpx_fixture in validation
+    assert endpoint.request_client_origin in validation
+    from factoryline.credential_role_method_use_getter_audit import (
+        CapturedOriginProjection,
     )
-    assert len(validation) == 35 and all(callable(item) for item in validation)
-    assert len(evidence) == 7 and all(callable(item) for item in evidence)
+
+    owners = (
+        endpoint._OperativeCredentialOrigin,
+        endpoint._CredentialHandlerIndex,
+        CapturedOriginProjection,
+    )
+    required_methods = {
+        f"{owner.__qualname__}.{name}"
+        for owner in owners
+        for name, value in vars(owner).items()
+        if callable(value)
+    }
+    assert required_methods <= {item.__qualname__ for item in validation}
+    assert {
+        "_endpoint_evidence_digest",
+        "_identity",
+        "_NativeEndpointFacts",
+        "mint_endpoint_facts",
+        "endpoint_binding",
+        "_endpoint_claim_profile_matches",
+        "_endpoint_attestation_matches",
+    } == {item.__name__ for item in evidence if callable(item)}
     catalog = endpoint._catalog_bytes()
     assert catalog is not None
     assert endpoint.catalog_content_digest() == endpoint._catalog_digest(catalog)

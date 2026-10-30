@@ -269,12 +269,22 @@ def test_unknown_collection_rejects_trusted_core_despite_stable_capture():
     "policy", ["source-role-v1", "source-role-v2", "source-role-v3"]
 )
 @pytest.mark.parametrize("state", ["CLEAN", "FINDINGS", "REVIEW_REQUIRED"])
-def test_unknown_collection_source_role_policy_retains_incomplete(policy, state):
+def test_unknown_collection_source_role_policy_retains_incomplete(
+    tmp_path, policy, state
+):
     from factoryline import primitive_observation_binding as binding
+    from factoryline import review_audits as audit
 
-    core = _unknown_collection_core()
-    core.update(state=state, selected_defect_policy=policy)
-    captured = {"app.py": b"value = 1\n"}
+    raw = b"value = 1\n"
+    (tmp_path / "app.py").write_bytes(raw)
+    core = audit.security_scan(tmp_path, cache_enabled=False, defect_policy=policy)
+    captured = dict(core._captured_sources)
+    assert captured == {"app.py": raw}
+    core["oracle_context"]["pytest_collection"] = _unknown_collection_core()[
+        "oracle_context"
+    ]["pytest_collection"]
+    core["tenant_read_contract"]["configuration"] = {"state": "loaded"}
+    core["state"] = state
     assert binding._pickle_role_sources(core, captured) == captured
     binding.apply_pickle_source_role_policy(core, captured)
     decision = core["defect_policy_decision"]
