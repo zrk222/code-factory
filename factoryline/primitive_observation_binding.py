@@ -741,14 +741,25 @@ def _finding_flask_session_authority_evidence(
 
     if "inventory" not in cache:
         cache["inventory"] = signing_configuration_inventory(captured, bindings)
-    return flask_credential_authority_evidence(finding, cache["inventory"])
+    from .credential_endpoint_admission import operative_signing_default_evidence
+
+    return flask_credential_authority_evidence(
+        finding, cache["inventory"]
+    ) or operative_signing_default_evidence(finding, cache["inventory"])
 
 
 def _decide_finding_tier(
-    finding, bound, native_rows, primitives, credential_evidence=None, *, source_bindings=None
+    finding,
+    bound,
+    native_rows,
+    primitives,
+    credential_evidence=None,
+    *,
+    source_bindings=None,
 ):
     if (
-        bound and isinstance(credential_evidence, dict)
+        bound
+        and isinstance(credential_evidence, dict)
         and isinstance(credential_evidence.get("transfers"), list)
         and credential_evidence["transfers"]
         and isinstance(source_bindings, dict)
@@ -764,25 +775,47 @@ def _decide_finding_tier(
         == [finding.get("line"), finding.get("column", 0)]
     ):
         if (
+            credential_evidence.get("schema")
+            == "factory.security.signing-default-authority.v1"
+            and credential_evidence.get("proof_scope")
+            == "source_bound_operative_signing_default"
+            and credential_evidence.get("framework") == "pyjwt"
+            and credential_evidence.get("source_role")
+            == "conditional_published_default"
+            and credential_evidence.get("consumer_role") == "verified_bearer_rejection"
+            and credential_evidence.get("credential_key")
+            == finding.get("facts", {}).get("name")
+        ):
+            return "SUPPORTED_DEFECT", "source_bound_operative_signing_default", None
+        if (
             credential_evidence.get("proof_scope")
             == "source_bound_flask_session_authority"
             and credential_evidence.get("framework") == "flask"
             and isinstance(credential_evidence.get("credential_key"), str)
             and credential_evidence["credential_key"].isidentifier()
             and isinstance(finding.get("facts"), dict)
-            and credential_evidence.get("credential_key") == finding.get("facts", {}).get("name")
-            and (isinstance(credential_evidence.get("password_key"), str)
-                 and credential_evidence["password_key"].isidentifier()
-                 or credential_evidence.get("consumer_role") == "flask_login_session")
+            and credential_evidence.get("credential_key")
+            == finding.get("facts", {}).get("name")
+            and (
+                isinstance(credential_evidence.get("password_key"), str)
+                and credential_evidence["password_key"].isidentifier()
+                or credential_evidence.get("consumer_role") == "flask_login_session"
+            )
         ):
             return "SUPPORTED_DEFECT", "source_bound_flask_session_authority", None
         if (
-            credential_evidence.get("proof_scope") == "captured_same_module_static_wiring"
-            and credential_evidence.get("schema") == "factory.security.private-key-auth-flow.v1"
+            credential_evidence.get("proof_scope")
+            == "captured_same_module_static_wiring"
+            and credential_evidence.get("schema")
+            == "factory.security.private-key-auth-flow.v1"
             and credential_evidence.get("source_role") == "embedded_private_key"
             and credential_evidence.get("consumer_role") == "django_password_verifier"
         ):
-            return "SUPPORTED_DEFECT", "source_bound_private_key_http_authentication_flow", None
+            return (
+                "SUPPORTED_DEFECT",
+                "source_bound_private_key_http_authentication_flow",
+                None,
+            )
     if bound and _matches_regenerated_precondition_finding(finding, native_rows):
         return "SUPPORTED_DEFECT", "source_bound_native_security_precondition", None
     if bound and _matches_proven_primitive(finding, primitives):

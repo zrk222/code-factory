@@ -505,8 +505,13 @@ def _source_identity_provider_bindings(
     expression_name,
     django_name,
 ):
+    canonical = expression_name(wrapper, path, func, scope)
+    if canonical is None and chain and isinstance(func, ast.Name):
+        # The symbol resolver also admits exact local declarations, which have
+        # no import alias. Its first verified edge names that local binding.
+        canonical = chain[0][0]
     return {
-        (expression_name(wrapper, path, func, scope), callee_path, function.name),
+        (canonical, callee_path, function.name),
         *chain,
         *(
             (django_name(wrapper, owner_path) + "." + name, owner_path, name)

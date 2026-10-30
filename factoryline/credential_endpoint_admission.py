@@ -321,47 +321,63 @@ def catalog_callable_helpers():
 
 def validation_helpers():
     """Return the original HTTPX, JSON assertion, and router validation callables."""
-    return _callable_values(
-        (
-            '_flask_credential_authority_for_key',
-            '_flask_login_session_authority_witness',
-            '_flask_credential_authority_witness',
-            "_request_client_origin",
-            "_direct_httpx_fixture",
-            "_closed_fixture_decorator",
-            "_client_uses_closed",
-            "_cookie_write",
-            "_tuple_httpx_fixture",
-            "_fixture_app_uses_only_client",
-            "tuple_httpx_fixture",
-            "request_client_origin",
-            "factory_fixture_consumer_status",
-            "_factory_fixture_uses",
-            "_factory_fixture_consumer_result",
-            "_single_factory_fixture_call",
-            "public_json_assertion",
-            "_json_assertion_operands",
-            "_json_detail_name",
-            "_json_cast_response",
-            "_json_response_name",
-            "_json_response_request",
-            "_assertion_values",
-            "_public_expected_value",
-            "_public_enum_member",
-            "router_factory_call_published",
-            "_router_factory_call_published",
-            "_fixture_returns_factory",
-            "_factory_fixture_consumers",
-            "_fixture_app_consumers_closed",
-            "_fixture_app_consumers_closed_uncached",
-            "_app_route_lookups_closed",
-            "_include_router_options",
-            "_route_lookup_only",
-            "_local_name_uses",
-            "_memo",
-            "_app_fixture_consumer_status",
+    from .credential_role_method_use_getter_audit import CapturedOriginProjection
+
+    return (
+        tuple(
+            value
+            for owner in (
+                _OperativeCredentialOrigin,
+                _CredentialHandlerIndex,
+                CapturedOriginProjection,
+            )
+            for value in vars(owner).values()
+            if callable(value)
         )
-    ) + (validation_helpers,)
+        + _callable_values(
+            (
+                "operative_signing_default_evidence",
+                "_flask_credential_authority_for_key",
+                "_flask_login_session_authority_witness",
+                "_flask_credential_authority_witness",
+                "_request_client_origin",
+                "_direct_httpx_fixture",
+                "_closed_fixture_decorator",
+                "_client_uses_closed",
+                "_cookie_write",
+                "_tuple_httpx_fixture",
+                "_fixture_app_uses_only_client",
+                "tuple_httpx_fixture",
+                "request_client_origin",
+                "factory_fixture_consumer_status",
+                "_factory_fixture_uses",
+                "_factory_fixture_consumer_result",
+                "_single_factory_fixture_call",
+                "public_json_assertion",
+                "_json_assertion_operands",
+                "_json_detail_name",
+                "_json_cast_response",
+                "_json_response_name",
+                "_json_response_request",
+                "_assertion_values",
+                "_public_expected_value",
+                "_public_enum_member",
+                "router_factory_call_published",
+                "_router_factory_call_published",
+                "_fixture_returns_factory",
+                "_factory_fixture_consumers",
+                "_fixture_app_consumers_closed",
+                "_fixture_app_consumers_closed_uncached",
+                "_app_route_lookups_closed",
+                "_include_router_options",
+                "_route_lookup_only",
+                "_local_name_uses",
+                "_memo",
+                "_app_fixture_consumer_status",
+            )
+        )
+        + (validation_helpers,)
+    )
 
 
 # Consolidated from factoryline/credential_endpoint_evidence.py.
@@ -2092,19 +2108,882 @@ def _reviewed_publication_matches(review, origin, payload):
 
 # Source-bound session authority admission; candidate capture remains in the sensor.
 
+
+def operative_signing_default_evidence(finding, context):
+    """Join captured defaults to registered credential-verification boundaries."""
+    if context is None:
+        return None
+    index, path = context["index"], Path(finding.get("path", ""))
+    if not index.validate(path):
+        return None
+    declarations = [
+        node
+        for node in ast.walk(index.snapshots[path])
+        if isinstance(node, (ast.Assign, ast.AnnAssign))
+        and isinstance(node.value, ast.Constant)
+        and isinstance(node.value.value, str)
+        and (node.lineno, node.col_offset)
+        == (finding.get("line"), finding.get("column", 0))
+    ]
+    if len(declarations) != 1:
+        return None
+    for handler in _CredentialHandlerIndex(context).boundaries():
+        if handler["application"]["framework"] != "fastapi":
+            continue
+        origin = _OperativeCredentialOrigin(context, finding, handler, declarations[0])
+        witness = origin.handler_authority()
+        if witness is not None:
+            return witness
+    return None
+
+
+class _OperativeCredentialOrigin:
+    """Conditional default origins and allocation-owned verification capabilities."""
+
+    def __init__(self, context, finding, handler, declaration):
+        from .credential_role_method_use_getter_audit import CapturedOriginProjection
+        from .credential_role_identity_effects import _Value
+
+        self.context, self.index, self.finding = context, context["index"], finding
+        self.handler, self.declaration = handler, declaration
+        self.path = Path(finding["path"])
+        self.root = "default:" + _digest(
+            [finding["path"], self.index.inventory[self.path], _span(declaration)]
+        )
+        self.value_type, self.allocations = _Value, {}
+        self.projection = CapturedOriginProjection(self.index, self.leaf)
+        self.key = _Value(
+            roots=frozenset({self.root}),
+            scalar_kind="text",
+            trace=(
+                (
+                    "DEFAULT_MAY_REACH",
+                    self.path.as_posix(),
+                    self.index.inventory[self.path],
+                    tuple(_span(declaration)),
+                ),
+            ),
+        )
+
+    def canonical(self, path, node, function):
+        from .mock_fixture_provenance import _app_expression_name
+
+        return _app_expression_name(self.projection.symbols, path, node, function)
+
+    def provider(self, path, canonical, *, immutable=False):
+        from . import review_audits as audit
+        from .credential_role_constructor_provider import (
+            _terminal_imported_module_receiver,
+        )
+        from .semantic_credential_sensor import (
+            _provider_identity_uncertain,
+            _signing_framework_external,
+        )
+
+        if not _signing_framework_external(self.context, canonical.split(".")[0]):
+            return False
+        for owner, tree in self.index.snapshots.items():
+            nodes = list(ast.walk(tree))
+            if not self.provider_reflection_closed(
+                nodes, self.context["aliases"][owner], canonical
+            ):
+                return False
+            if _provider_identity_uncertain(
+                tree,
+                self.context["aliases"][owner],
+                nodes=nodes,
+                roots=(canonical,),
+                selected_paths=True,
+                argument_predicate=lambda item, aliases, parents: not (
+                    _terminal_imported_module_receiver(item, parents, audit, canonical)
+                    or immutable
+                    and audit._resolved_ast_name(item, aliases) == canonical
+                ),
+            ):
+                return False
+        return self.projection._symbol_closed(
+            [(canonical, None, None)],
+            self.value_type(scalar_kind="integer") if immutable else self.value_type(),
+        )
+
+    def provider_reflection_closed(self, nodes, aliases, canonical):
+        from . import review_audits as audit
+        from .finite_capture import _provider_alias_bindings, _provider_paths
+        from .semantic_credential_sensor import _provider_path_conflicts
+
+        bindings = _provider_alias_bindings(nodes)
+        for node in nodes:
+            head = None
+            if isinstance(node, ast.Call):
+                name = audit._resolved_ast_name(node.func, aliases)
+                if name in {
+                    "exec",
+                    "eval",
+                    "__import__",
+                    "builtins.exec",
+                    "builtins.eval",
+                    "builtins.__import__",
+                    "importlib.import_module",
+                }:
+                    return False
+                if (
+                    name in {"vars", "getattr", "builtins.vars", "builtins.getattr"}
+                    and node.args
+                ):
+                    head = node.args[0]
+                if name in {
+                    "globals",
+                    "locals",
+                    "builtins.globals",
+                    "builtins.locals",
+                } and any(
+                    isinstance(value, str)
+                    and _provider_path_conflicts(value, "*", canonical)
+                    for value in aliases.values()
+                ):
+                    return False
+            elif isinstance(node, ast.Attribute) and node.attr in {
+                "__dict__",
+                "__globals__",
+                "__func__",
+                "__code__",
+            }:
+                head = node.value
+            if head is not None:
+                paths, _ = _provider_paths(head, aliases, audit, bindings)
+                if any(
+                    _provider_path_conflicts(value, "*", canonical) for value in paths
+                ):
+                    return False
+        return True
+
+    def leaf(self, node, environment, path, function, projection):
+        if node is self.declaration.value and path == self.path:
+            return True, self.key
+        projector = {
+            ast.Subscript: self.field,
+            ast.Attribute: self.field,
+            ast.Compare: self.comparison,
+            ast.Call: self.call,
+        }.get(type(node))
+        return (
+            projector(node, environment, path, function, projection)
+            if projector
+            else (False, None)
+        )
+
+    def field(self, node, environment, path, function, projection):
+        if (
+            isinstance(node, ast.Subscript)
+            and isinstance(node.slice, ast.Constant)
+            and isinstance(node.slice.value, str)
+        ):
+            known, value = projection.expression(
+                path, node.value, function, environment
+            )
+            if known and value.roots == frozenset({"verified:" + self.root}):
+                return True, self.value_type(
+                    roots=value.roots, scalar_kind="json", trace=value.trace
+                )
+        if isinstance(node, ast.Attribute):
+            known, owner = projection.expression(
+                path, node.value, function, environment
+            )
+            if known and owner.container_id in self.allocations:
+                fields = self.allocations[owner.container_id].get("fields", {})
+                if node.attr in fields:
+                    return True, fields[node.attr]
+        return False, None
+
+    def comparison(self, node, environment, path, function, projection):
+        if isinstance(node, ast.Compare) and len(node.ops) == 1:
+            operands = [
+                projection.expression(path, item, function, environment)
+                for item in (node.left, *node.comparators)
+            ]
+            if all(
+                known
+                and value.scalar_kind in {"json", "integer", "float", "boolean", "text"}
+                and not value.class_roots
+                for known, value in operands
+            ):
+                return True, self.value_type(
+                    inert_kind="scalar",
+                    scalar_kind="boolean",
+                    trace=tuple(step for _, value in operands for step in value.trace),
+                )
+        return False, None
+
+    def call(self, node, environment, path, function, projection):
+        canonical = self.canonical(path, node.func, function)
+        if (
+            canonical == "time.time"
+            and not node.args
+            and not node.keywords
+            and self.provider(path, canonical)
+        ):
+            return True, self.value_type(inert_kind="scalar", scalar_kind="float")
+        if (
+            isinstance(node.func, ast.Attribute)
+            and node.func.attr == "encode"
+            and not node.args
+            and not node.keywords
+        ):
+            known, value = projection.expression(
+                path, node.func.value, function, environment
+            )
+            if (
+                known
+                and value.scalar_kind == "text"
+                and value.roots == frozenset({"request-token"})
+            ):
+                return True, self.value_type(
+                    roots=value.roots, scalar_kind="bytes", trace=value.trace
+                )
+        known, value = self.construct(
+            node, environment, path, function, projection, canonical
+        )
+        return (
+            (known, value)
+            if known
+            else self.verify(node, environment, path, function, projection, canonical)
+        )
+
+    def construct(self, node, environment, path, function, projection, canonical):
+        from .mock_fixture_provenance import _app_source_symbol
+
+        selected = _app_source_symbol(projection.symbols, path, node.func, function)
+        if selected and isinstance(selected[1], ast.ClassDef):
+            owner_path, owner = selected
+            base = (
+                self.canonical(owner_path, owner.bases[0], None)
+                if len(owner.bases) == 1
+                else None
+            )
+            if (
+                base == "pydantic_settings.BaseSettings"
+                and self.provider(owner_path, base)
+                and not owner.decorator_list
+                and not owner.keywords
+                and not node.args
+                and not node.keywords
+                and self.index.parents[self.path].get(id(self.declaration)) is owner
+                and self.settings_fields_closed(owner_path, owner, projection)
+            ):
+                return self.allocate(
+                    node,
+                    path,
+                    projection,
+                    fields={self.finding["facts"]["name"]: self.key},
+                )
+        return False, None
+
+    def verify(self, node, environment, path, function, projection, canonical):
+        if canonical == "jwt.decode" and self.provider(path, canonical):
+            if (
+                len(node.args) != 2
+                or len(node.keywords) != 1
+                or {kw.arg for kw in node.keywords} != {"algorithms"}
+            ):
+                return False, None
+            algorithms = node.keywords[0].value
+            if not (
+                isinstance(algorithms, (ast.List, ast.Tuple))
+                and algorithms.elts
+                and all(
+                    isinstance(a, ast.Constant)
+                    and a.value in {"HS256", "HS384", "HS512"}
+                    for a in algorithms.elts
+                )
+            ):
+                return False, None
+            known, key = projection.expression(
+                path, node.args[1], function, environment
+            )
+            token_known, token = projection.expression(
+                path, node.args[0], function, environment
+            )
+            if (
+                known
+                and token_known
+                and key.roots == self.key.roots
+                and token.roots == frozenset({"request-token"})
+            ):
+                return True, self.value_type(
+                    roots=frozenset({"verified:" + self.root}),
+                    trace=key.trace + token.trace,
+                )
+        return False, None
+
+    def settings_fields_closed(self, path, owner, projection):
+        from .credential_role_constructor_provider import binding_occurrences
+
+        declaration = self.declaration
+        if not (
+            isinstance(declaration, ast.AnnAssign)
+            and isinstance(declaration.annotation, ast.Name)
+            and declaration.annotation.id == "str"
+            and not binding_occurrences(self.index.snapshots[path].body, "str")
+            and len(binding_occurrences(owner.body, self.finding["facts"]["name"])) == 1
+        ):
+            return False
+        for node in ast.walk(owner):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+                return False
+            if isinstance(node, (ast.Assign, ast.AnnAssign)):
+                targets = (
+                    node.targets if isinstance(node, ast.Assign) else [node.target]
+                )
+                if any(
+                    isinstance(target, ast.Name) and target.id == "model_config"
+                    for target in targets
+                ):
+                    return False
+        return projection._symbol_closed(
+            [(owner.name, path, owner.name)], self.value_type()
+        )
+
+    def allocate(self, node, path, projection, **capability):
+        allocation = _digest(
+            [projection.generation, projection.context, path.as_posix(), _span(node)]
+        )
+        self.allocations[allocation] = capability
+        return True, self.value_type(
+            roots=self.key.roots, container_id=allocation, trace=self.key.trace
+        )
+
+    def token_inputs(self):
+        from .mock_fixture_provenance import _app_source_symbol
+
+        function, path = self.handler["function"], self.handler["path"]
+        args = [*function.args.posonlyargs, *function.args.args]
+        count = len(function.args.defaults)
+        defaults = zip(args[-count:], function.args.defaults) if count else ()
+        inputs = {}
+        for arg, value in defaults:
+            if not (
+                isinstance(value, ast.Call)
+                and len(value.args) == 1
+                and not value.keywords
+                and self.canonical(path, value.func, function) == "fastapi.Depends"
+                and self.provider(path, "fastapi.Depends")
+            ):
+                continue
+            selected = _app_source_symbol(self.projection.symbols, path, value.args[0])
+            if selected and isinstance(selected[1], ast.Assign):
+                factory = selected[1].value
+                if (
+                    len(selected[1].targets) == 1
+                    and isinstance(selected[1].targets[0], ast.Name)
+                    and isinstance(factory, ast.Call)
+                    and not factory.args
+                    and len(factory.keywords) == 1
+                    and all(
+                        k.arg == "tokenUrl"
+                        and isinstance(k.value, ast.Constant)
+                        and isinstance(k.value.value, str)
+                        for k in factory.keywords
+                    )
+                    and self.canonical(selected[0], factory.func, None)
+                    == "fastapi.security.OAuth2PasswordBearer"
+                    and self.provider(
+                        selected[0], "fastapi.security.OAuth2PasswordBearer"
+                    )
+                    and self.projection._symbol_closed(
+                        [
+                            (
+                                selected[1].targets[0].id,
+                                selected[0],
+                                selected[1].targets[0].id,
+                            )
+                        ],
+                        self.value_type(),
+                        readonly_argument=lambda item: id(item)
+                        in self.dependency_arguments,
+                    )
+                ):
+                    inputs[arg.arg] = self.value_type(
+                        roots=frozenset({"request-token"}), scalar_kind="text"
+                    )
+        return inputs
+
+    def handler_authority(self):
+        function, path = self.handler["function"], self.handler["path"]
+        if not self.boundary_closed():
+            return None
+        environment = self.token_inputs()
+        if not environment:
+            return None
+        for statement in function.body:
+            if (
+                isinstance(statement, ast.Assign)
+                and len(statement.targets) == 1
+                and isinstance(statement.targets[0], ast.Name)
+            ):
+                known, value = self.projection.expression(
+                    path, statement.value, function, environment
+                )
+                if not known:
+                    return None
+                environment[statement.targets[0].id] = value
+                continue
+            if not (
+                isinstance(statement, ast.If)
+                and not statement.orelse
+                and len(statement.body) == 1
+                and isinstance(statement.body[0], ast.Raise)
+                and isinstance(statement.test, ast.UnaryOp)
+                and isinstance(statement.test.op, ast.Not)
+                and isinstance(statement.test.operand, ast.Name)
+            ):
+                return None
+            value = environment.get(statement.test.operand.id)
+            if value is None or value.roots != frozenset({"verified:" + self.root}):
+                return None
+            exception = statement.body[0].exc
+            if not (
+                isinstance(exception, ast.Call)
+                and not exception.args
+                and self.canonical(path, exception.func, function)
+                in {"fastapi.HTTPException", "fastapi.exceptions.HTTPException"}
+                and self.provider(path, self.canonical(path, exception.func, function))
+            ):
+                return None
+            status = next(
+                (kw.value for kw in exception.keywords if kw.arg == "status_code"), None
+            )
+            if not (
+                isinstance(status, ast.Constant)
+                and status.value in {401, 403}
+                or self.canonical(path, status, function)
+                in {
+                    "fastapi.status.HTTP_401_UNAUTHORIZED",
+                    "fastapi.status.HTTP_403_FORBIDDEN",
+                }
+                and self.provider(
+                    path, self.canonical(path, status, function), immutable=True
+                )
+            ):
+                return None
+            return self.witness(statement, value)
+        return None
+
+    def boundary_closed(self):
+        from . import review_audits as audit
+        from .credential_role_constructor_provider import (
+            _captured_terminal_provider_mutation,
+        )
+        from .mock_fixture_provenance import _django_name
+        from .credential_role_identity_effects import _enclosing_function
+
+        handler, index = self.handler, self.index
+        if not self.provider(handler["path"], "fastapi.Depends"):
+            return False
+        readonly = {
+            id(call.args[0]) for _, _, _, call in handler["graph"].edges if call.args
+        }
+        registrations = {id(call) for _, _, _, call in handler["graph"].edges}
+        registrations.update(
+            id(route["decorator"]) for route in handler["graph"].handlers
+        )
+        self.dependency_arguments = set()
+        for path, tree in index.snapshots.items():
+            for node in ast.walk(tree):
+                if (
+                    isinstance(node, ast.Call)
+                    and len(node.args) == 1
+                    and not node.keywords
+                    and self.canonical(
+                        path, node.func, _enclosing_function(node, index.parents[path])
+                    )
+                    == "fastapi.Depends"
+                ):
+                    readonly.add(id(node.args[0]))
+                    self.dependency_arguments.add(id(node.args[0]))
+                if (
+                    isinstance(node, ast.Call)
+                    and len(node.args) == 1
+                    and not node.keywords
+                    and self.canonical(
+                        path, node.func, _enclosing_function(node, index.parents[path])
+                    )
+                    in {
+                        "fastapi.testclient.TestClient",
+                        "starlette.testclient.TestClient",
+                    }
+                    and self.provider(
+                        path,
+                        self.canonical(
+                            path,
+                            node.func,
+                            _enclosing_function(node, index.parents[path]),
+                        ),
+                    )
+                ):
+                    readonly.add(id(node.args[0]))
+        bindings = [(handler["path"], handler["function"].name)]
+        bindings.extend(
+            (owner, name) for _, owner, name in handler.get("dependency_providers", ())
+        )
+        for allocation in (handler["application"], handler["receiver"]):
+            provider = (
+                "fastapi.FastAPI"
+                if allocation["kind"] == "application"
+                else "fastapi.APIRouter"
+            )
+            if not self.provider(allocation["path"], provider):
+                return False
+            if not self.projection._symbol_closed(
+                [(allocation["name"], allocation["path"], allocation["name"])],
+                self.value_type(),
+                readonly_argument=lambda node: id(node) in readonly,
+                readonly_call=lambda node: id(node) in registrations,
+                inventory_projector=lambda tree,
+                aliases,
+                nodes,
+                canonical: self.boundary_inventory(tree, aliases, nodes, canonical),
+            ):
+                return False
+        return not any(
+            _captured_terminal_provider_mutation(
+                index,
+                audit,
+                _django_name(self.projection.symbols, owner) + "." + name,
+                local_binding=(owner, name),
+                readonly_argument=lambda node, _aliases, _parents: id(node) in readonly,
+            )
+            for owner, name in set(bindings)
+        )
+
+    def boundary_inventory(self, tree, aliases, nodes, canonical):
+        """Keep unrelated exact dependency slots distinct from credential overrides."""
+        from .mock_fixture_provenance import _app_source_symbol
+        from .credential_role_identity_effects import _enclosing_function
+        from .review_audits import _resolved_ast_name
+
+        owner = next(
+            (
+                path
+                for path, captured in self.index.snapshots.items()
+                if captured is tree
+            ),
+            None,
+        )
+        if owner is None:
+            return nodes
+        protected = {(self.handler["path"], self.handler["function"].name)}
+        protected.update(
+            (path, name)
+            for _, path, name in self.handler.get("dependency_providers", ())
+        )
+        ignored = set()
+        for node in nodes:
+            if not (
+                isinstance(node, ast.Subscript)
+                and isinstance(node.ctx, ast.Store)
+                and _resolved_ast_name(node.value, aliases)
+                == canonical + ".dependency_overrides"
+            ):
+                continue
+            selected = _app_source_symbol(
+                self.projection.symbols,
+                owner,
+                node.slice,
+                _enclosing_function(node, self.index.parents[owner]),
+            )
+            if (
+                selected
+                and isinstance(selected[1], (ast.FunctionDef, ast.AsyncFunctionDef))
+                and (selected[0], selected[1].name) not in protected
+            ):
+                ignored.update(id(child) for child in ast.walk(node))
+        return [node for node in nodes if id(node) not in ignored]
+
+    def witness(self, statement, value):
+        from .semantic_credential_sensor import _signing_source_span
+
+        handler = self.handler
+        app, route_path = (
+            handler["application"],
+            handler.get("route_path", handler["path"]),
+        )
+        spans = [_signing_source_span(self.index, self.path, self.declaration)]
+        spans.extend(
+            {"path": step[1], "sha256": step[2], "span": list(step[3])}
+            for step in value.trace
+            if len(step) == 4 and step[0] == "CAPTURED_ORIGIN"
+        )
+        spans.extend(
+            _signing_source_span(self.index, owner, node)
+            for owner, node in [
+                (app["path"], app["creation"]),
+                *handler["registrations"],
+                (route_path, handler["decorator"]),
+                *handler.get("dependencies", ()),
+                (handler["path"], statement),
+            ]
+        )
+        return {
+            "schema": "factory.security.signing-default-authority.v1",
+            "framework": "pyjwt",
+            "source_role": "conditional_published_default",
+            "credential_key": self.finding["facts"]["name"],
+            "proof_scope": "source_bound_operative_signing_default",
+            "consumer_role": "verified_bearer_rejection",
+            "transfers": spans,
+            "configuration_overrides": "POSSIBLE; DEFAULT_MAY_REACH",
+            "deployment": "UNASSESSED",
+            "runtime_execution": "not_performed",
+        }
+
+
+class _CredentialHandlerIndex:
+    """Bind route and router declarations to captured application allocations."""
+
+    _providers = {
+        "flask.Flask": ("flask", "application"),
+        "flask.Blueprint": ("flask", "router"),
+        "fastapi.FastAPI": ("fastapi", "application"),
+        "fastapi.APIRouter": ("fastapi", "router"),
+    }
+    _routes = frozenset(
+        {"route", "get", "post", "put", "patch", "delete", "options", "head"}
+    )
+
+    def __init__(self, context):
+        from .credential_role_identity_effects import source_symbol_index
+        from .semantic_credential_sensor import (
+            _provider_identity_uncertain,
+            _signing_framework_external,
+        )
+
+        self.context, self.index = context, context["index"]
+        self.symbols = source_symbol_index(self.index)
+        self.allocations, self.edges, self.handlers = {}, [], []
+        if self.symbols is None:
+            return
+        for path, tree in self.index.snapshots.items():
+            if not self.index.validate(path):
+                self.allocations.clear()
+                return
+            scopes = [
+                tree,
+                *(
+                    n
+                    for n in tree.body
+                    if isinstance(n, ast.FunctionDef) and not n.decorator_list
+                ),
+            ]
+            for scope in scopes:
+                for statement in scope.body:
+                    if not (
+                        isinstance(statement, ast.Assign)
+                        and len(statement.targets) == 1
+                        and isinstance(statement.targets[0], ast.Name)
+                        and isinstance(statement.value, ast.Call)
+                    ):
+                        continue
+                    provider = self.canonical(
+                        path, statement.value.func, None if scope is tree else scope
+                    )
+                    role = self._providers.get(provider)
+                    if (
+                        role is None
+                        or not _signing_framework_external(context, role[0])
+                        or _provider_identity_uncertain(
+                            tree,
+                            context["aliases"][path],
+                            roots=(provider,),
+                            selected_paths=True,
+                        )
+                    ):
+                        continue
+                    name = statement.targets[0].id
+                    from .credential_role_constructor_provider import (
+                        binding_occurrences,
+                    )
+
+                    if len(binding_occurrences(scope.body, name)) != 1:
+                        continue
+                    self.allocations[(path, id(statement))] = {
+                        "path": path,
+                        "scope": scope,
+                        "statement": statement,
+                        "creation": statement.value,
+                        "name": name,
+                        "framework": role[0],
+                        "kind": role[1],
+                    }
+        self._connect()
+
+    def canonical(self, path, expression, function=None):
+        from .mock_fixture_provenance import _app_expression_name
+
+        return _app_expression_name(self.symbols, path, expression, function)
+
+    def binding(self, path, expression, function=None):
+        from .mock_fixture_provenance import _app_local_assignment, _app_source_symbol
+        from .credential_role_constructor_provider import binding_dominates
+
+        if function is not None and isinstance(expression, ast.Name):
+            local = _app_local_assignment(function, expression.id)
+            if local is not None:
+                if not binding_dominates(
+                    local, expression, self.index.parents[path], function
+                ):
+                    return None
+                return self.allocations.get((path, id(local)))
+        selected = _app_source_symbol(self.symbols, path, expression, function)
+        return (
+            self.allocations.get((selected[0], id(selected[1]))) if selected else None
+        )
+
+    def boundaries(self):
+        """Follow exact dependency registrations, sharing one bounded route graph."""
+        from .mock_fixture_provenance import _app_source_symbol
+
+        pending, seen = list(self.handlers), set()
+        while pending and len(seen) < 512:
+            handler = pending.pop()
+            path, function = handler["path"], handler["function"]
+            marker = (path, id(function), id(handler["decorator"]))
+            if marker in seen:
+                continue
+            seen.add(marker)
+            yield handler
+            for value in (*function.args.defaults, *function.args.kw_defaults):
+                if not (
+                    isinstance(value, ast.Call)
+                    and len(value.args) == 1
+                    and not value.keywords
+                    and self.canonical(path, value.func, function) == "fastapi.Depends"
+                ):
+                    continue
+                chain = []
+                selected = _app_source_symbol(
+                    self.symbols, path, value.args[0], function, provider_chain=chain
+                )
+                if (
+                    selected
+                    and isinstance(selected[1], (ast.FunctionDef, ast.AsyncFunctionDef))
+                    and not selected[1].decorator_list
+                ):
+                    pending.append(
+                        {
+                            **handler,
+                            "path": selected[0],
+                            "function": selected[1],
+                            "route_path": handler.get("route_path", path),
+                            "dependency_providers": (
+                                *handler.get("dependency_providers", ()),
+                                *chain,
+                            ),
+                            "dependencies": (
+                                *handler.get("dependencies", ()),
+                                (path, value),
+                            ),
+                        }
+                    )
+
+    def _connect(self):
+        from .credential_role_identity_effects import _enclosing_function
+        from .semantic_credential_sensor import _flask_path_conditions_clear
+
+        for path, tree in self.index.snapshots.items():
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call) or not isinstance(
+                    node.func, ast.Attribute
+                ):
+                    continue
+                function = _enclosing_function(node, self.index.parents[path])
+                receiver = self.binding(path, node.func.value, function)
+                if receiver is None:
+                    continue
+                expected = (
+                    "register_blueprint"
+                    if receiver["framework"] == "flask"
+                    else "include_router"
+                )
+                if (
+                    node.func.attr == expected
+                    and node.args
+                    and not any(isinstance(a, ast.Starred) for a in node.args)
+                ):
+                    child = self.binding(path, node.args[0], function)
+                    if (
+                        child
+                        and child["kind"] == "router"
+                        and child["framework"] == receiver["framework"]
+                        and _flask_path_conditions_clear(function or tree, node)
+                    ):
+                        self.edges.append((receiver, child, path, node))
+        self._connect_routes()
+
+    def _connect_routes(self):
+        from .semantic_credential_sensor import _flask_path_conditions_clear
+
+        for path, tree in self.index.snapshots.items():
+            for function in ast.walk(tree):
+                if (
+                    not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef))
+                    or len(function.decorator_list) != 1
+                ):
+                    continue
+                decorator = function.decorator_list[0]
+                if not (
+                    isinstance(decorator, ast.Call)
+                    and isinstance(decorator.func, ast.Attribute)
+                    and decorator.func.attr in self._routes
+                ):
+                    continue
+                receiver = self.binding(path, decorator.func.value)
+                if (
+                    receiver is None
+                    or receiver["framework"] == "fastapi"
+                    and decorator.func.attr == "route"
+                    or not _flask_path_conditions_clear(tree, function)
+                ):
+                    # FastAPI.route registers a Starlette Route, which does not
+                    # execute Depends; Flask.route remains an HTTP boundary.
+                    continue
+                for root, registrations in self._roots(receiver):
+                    self.handlers.append(
+                        {
+                            "path": path,
+                            "function": function,
+                            "decorator": decorator,
+                            "receiver": receiver,
+                            "application": root,
+                            "registrations": registrations,
+                            "graph": self,
+                        }
+                    )
+
+    def _roots(self, receiver, seen=()):
+        marker = (receiver["path"], id(receiver["statement"]))
+        if marker in seen or len(seen) >= 12:
+            return
+        if receiver["kind"] == "application":
+            yield receiver, []
+        for parent, child, path, call in self.edges:
+            if child is receiver:
+                for root, registrations in self._roots(parent, (*seen, marker)):
+                    yield root, [*registrations, (path, call)]
+
+
 def _flask_credential_authority_for_key(
     finding, context, index, path, declaration, session_secret, key
 ):
     from .semantic_credential_sensor import (
-        _flask_configured_apps, _flask_session_authority_witness,
-        _flask_config_key_declaration, _literal_credential,
+        _flask_configured_apps,
+        _flask_session_authority_witness,
+        _flask_config_key_declaration,
+        _literal_credential,
     )
 
     for app in _flask_configured_apps(path, context, {key, "SECRET_KEY"}):
         app_path, tree = app["path"], app["tree"]
-        authority = _flask_session_authority_witness(
-            app_path, tree, context, app, key
-        )
+        authority = _flask_session_authority_witness(app_path, tree, context, app, key)
         if app_path != path:
             authority = None
         if key == "SECRET_KEY":
@@ -2113,14 +2992,19 @@ def _flask_credential_authority_for_key(
             )
             if login_authority is not None:
                 return _flask_credential_authority_witness(
-                    index, path, declaration, session_secret, None, app, login_authority, key
+                    index,
+                    path,
+                    declaration,
+                    session_secret,
+                    None,
+                    app,
+                    login_authority,
+                    key,
                 )
         if authority is None:
             continue
         password_key = authority["password_key"]
-        password_declaration = _flask_config_key_declaration(
-            index, path, password_key
-        )
+        password_declaration = _flask_config_key_declaration(index, path, password_key)
         if password_declaration is None or not _literal_credential(
             password_declaration.value
         ):
@@ -2140,12 +3024,13 @@ def _flask_credential_authority_for_key(
     return None
 
 
-
 def _flask_login_session_authority_witness(path, tree, context, app):
     """Bind a configured Flask app to Flask-Login session creation and protection."""
     from .semantic_credential_sensor import (
-        _signing_framework_external, _flask_module_aliases,
-        _provider_identity_uncertain, _flask_path_conditions_clear,
+        _signing_framework_external,
+        _flask_module_aliases,
+        _provider_identity_uncertain,
+        _flask_path_conditions_clear,
         _flask_route_bound_to_app,
     )
 
@@ -2160,7 +3045,9 @@ def _flask_login_session_authority_witness(path, tree, context, app):
     executable = [
         node
         for statement in statements
-        if not isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+        if not isinstance(
+            statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+        )
         for node in ast.walk(statement)
     ]
     managers = [
@@ -2237,7 +3124,14 @@ def _flask_login_session_authority_witness(path, tree, context, app):
                 for decorator in function.decorator_list[:guard_position]
             ):
                 continue
-            protected.append((function, function.decorator_list[decorators.index("flask_login.login_required")]))
+            protected.append(
+                (
+                    function,
+                    function.decorator_list[
+                        decorators.index("flask_login.login_required")
+                    ],
+                )
+            )
     if len(login_users) != 1 or not protected:
         return None
     login_function, login_call = login_users[0]
@@ -2258,7 +3152,6 @@ def _flask_login_session_authority_witness(path, tree, context, app):
     }
 
 
-
 def _flask_credential_authority_witness(
     index, path, declaration, session_secret, password_declaration, app, authority, key
 ):
@@ -2271,16 +3164,28 @@ def _flask_credential_authority_witness(
         nodes.extend(authority["nodes"])
         role = {"consumer_role": authority["consumer_kind"]}
     else:
-        nodes.extend((path, node) for node in (
-            app["creation"], app["load"], password_declaration,
-            authority["comparison"], authority["grant"],
-            authority["login_wrapper"], authority["protected_route"],
-        ))
+        nodes.extend(
+            (path, node)
+            for node in (
+                app["creation"],
+                app["load"],
+                password_declaration,
+                authority["comparison"],
+                authority["grant"],
+                authority["login_wrapper"],
+                authority["protected_route"],
+            )
+        )
         role = {"password_key": authority["password_key"]}
     return {
-        "framework": "flask", "credential_key": key, **role,
-        "transfers": [_signing_source_span(index, owner, node) for owner, node in nodes],
+        "framework": "flask",
+        "credential_key": key,
+        **role,
+        "transfers": [
+            _signing_source_span(index, owner, node) for owner, node in nodes
+        ],
         "proof_scope": "source_bound_flask_session_authority",
-        "runtime_execution": "not_performed", "deployment": "UNASSESSED",
+        "runtime_execution": "not_performed",
+        "deployment": "UNASSESSED",
         "claim": "Captured source binds a literal configuration default to same-app session authority.",
     }

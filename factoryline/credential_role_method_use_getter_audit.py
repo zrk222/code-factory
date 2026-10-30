@@ -2849,9 +2849,7 @@ class _CredentialRoleFlow:
         if isinstance(node, ast.Constant):
             value = self.resolve_literal(path, node) if self.resolve_literal else None
             return (
-                value
-                if isinstance(value, _Value)
-                else _constant_identity_value(node)
+                value if isinstance(value, _Value) else _constant_identity_value(node)
             )
         if node.id in env:
             return env[node.id]
@@ -3416,6 +3414,469 @@ def captured_credential_role_closure(
     )
 
 
+class CapturedOriginProjection:
+    """Project checked source origins through exact bindings and finite returns.
+
+    ``project_leaf(node, environment, path, function, projection)`` owns provider
+    semantics and returns ``(known, _Value)``. A known value is a may-origin,
+    never an effect-purity or deployment assertion. Unknown calls/steps decline.
+    ``generation`` and ``context`` bind caller-owned allocation records without
+    exposing literal contents. Instances must not survive source mutation.
+    """
+
+    def __init__(self, index, project_leaf, max_states=512, max_depth=12):
+        from .credential_role_identity_effects import source_symbol_index
+
+        self.index, self.project_leaf = index, project_leaf
+        self.max_states, self.max_depth = max_states, max_depth
+        self.context, self._active, self._depth, self._states = (), set(), 0, 0
+        self._inputs = self._generation_inputs()
+        self.generation = hashlib.sha256(repr(self._inputs).encode()).hexdigest()
+        self.symbols = source_symbol_index(index) if self._inputs is not None else None
+
+    def _generation_inputs(self):
+        from .review_audits import _oracle_tree_fingerprint
+
+        index = self.index
+        if not index.bounded or not (
+            set(index.snapshots) == set(index.source_bytes) == set(index.inventory)
+        ):
+            return None
+        try:
+            return (
+                str(index.root),
+                tuple(
+                    (
+                        str(path),
+                        id(tree),
+                        id(index.source_bytes[path]),
+                        index.inventory[path],
+                        getattr(tree, "_oracle_source_sha256", None),
+                        _oracle_tree_fingerprint(tree),
+                    )
+                    for path, tree in index.snapshots.items()
+                ),
+            )
+        except (TypeError, ValueError, RecursionError):
+            return None
+
+    def _current(self, path, node):
+        if self.symbols is None or not self.index.validate(path):
+            return False
+        parents = {
+            id(child): owner
+            for owner in ast.walk(self.index.snapshots[path])
+            for child in ast.iter_child_nodes(owner)
+        }
+        return id(node) in parents and self.index.parents.get(path) == parents
+
+    def expression(self, path, node, function=None, environment=None):
+        """Return a checked value; each outer demand has one shared state budget."""
+        outer = self._depth == 0
+        if outer:
+            self._states = 0
+        if (
+            type(self.max_states) is not int
+            or self.max_states < 1
+            or type(self.max_depth) is not int
+            or self.max_depth < 1
+            or not callable(self.project_leaf)
+            or self._inputs is None
+            or outer
+            and self._generation_inputs() != self._inputs
+            or self._depth >= self.max_depth
+            or self._states >= self.max_states
+            or not isinstance(node, ast.expr)
+            or not self._current(path, node)
+        ):
+            return False, None
+        from .credential_role_identity_effects import _enclosing_function
+
+        lexical = _enclosing_function(node, self.index.parents[path])
+        if function is not None and lexical is not function:
+            return False, None
+        function = lexical
+        if environment is not None and not isinstance(environment, dict):
+            return False, None
+        self._states += 1
+        self._depth += 1
+        previous = self.context
+        self.context = (*previous, (self.index.relative(path), coordinates(node)))
+        try:
+            known, value = self._expression(
+                path, node, function, dict(environment or {})
+            )
+            if not (known is True and isinstance(value, _Value)):
+                return False, None
+            if value.unknown or value.content_unknown:
+                return False, None
+            if outer and self._generation_inputs() != self._inputs:
+                return False, None
+            return True, replace(
+                value,
+                trace=(
+                    *value.trace,
+                    (
+                        "CAPTURED_ORIGIN",
+                        self.index.relative(path),
+                        self.index.inventory[path],
+                        coordinates(node),
+                    ),
+                ),
+            )
+        finally:
+            self.context = previous
+            self._depth -= 1
+
+    def _expression(self, path, node, function, environment):
+        if isinstance(node, ast.Name):
+            if node.id in environment:
+                return True, environment[node.id]
+            return self._name(path, node, function, environment)
+        known, value = self.project_leaf(node, environment, path, function, self)
+        if known is True:
+            return True, value
+        if isinstance(node, ast.Constant):
+            return True, _constant_identity_value(node)
+        if isinstance(node, ast.Dict) and not node.keys:
+            return True, _Value(inert_kind="dict")
+        if isinstance(node, ast.IfExp):
+            return self.conditional(path, node, function, environment)
+        if isinstance(node, ast.Call):
+            return self._call(path, node, function, environment)
+        if isinstance(node, ast.Attribute):
+            return self._symbol(path, node, function)
+        return False, None
+
+    def conditional(self, path, node, function, environment):
+        """Retain conditional origins without giving them exact-value authority."""
+        known, condition = self.expression(path, node.test, function, environment)
+        if not known:
+            return False, None
+        exact = _validated_exact_scalar(condition)
+        if exact:
+            return self.expression(
+                path, node.body if exact[0] else node.orelse, function, environment
+            )
+        if condition.scalar_kind != "boolean" or condition.inert_kind != "scalar":
+            return False, None
+        left_known, left = self.expression(path, node.body, function, environment)
+        right_known, right = self.expression(path, node.orelse, function, environment)
+        if not left_known or not right_known or left.class_roots or right.class_roots:
+            return False, None
+        empty_left = left.inert_kind == "dict" and not left.items and not left.roots
+        empty_right = right.inert_kind == "dict" and not right.items and not right.roots
+        if left.roots != right.roots and not (empty_left or empty_right):
+            return False, None
+        traces = tuple(dict.fromkeys((*left.trace, *right.trace)))
+        return True, _Value(
+            roots=left.roots | right.roots,
+            trace=(*traces, ("CONDITIONAL_ORIGIN",)),
+            scalar_kind=left.scalar_kind
+            if left.scalar_kind == right.scalar_kind
+            else None,
+        )
+
+    def _name(self, path, node, function, environment):
+        from .credential_role_identity_effects import _argument_names
+
+        if function is not None:
+            if node.id in _argument_names(function):
+                return False, None
+            bindings = binding_occurrences(function.body, node.id)
+            if bindings:
+                if len(bindings) != 1:
+                    return False, None
+                binding = bindings[0]
+                statement = (
+                    self.index.parents[path].get(id(binding))
+                    if isinstance(binding, ast.Name)
+                    else binding
+                )
+                if not self._dominates(path, statement, node, function):
+                    return False, None
+                if isinstance(statement, (ast.Assign, ast.AnnAssign)):
+                    return self.expression(path, statement.value, function, environment)
+                if not isinstance(binding, (ast.Import, ast.ImportFrom)):
+                    return False, None
+        return self._symbol(path, node, function)
+
+    def _dominates(self, path, statement, node, scope):
+        if statement not in scope.body:
+            return False
+        current = node
+        parents = self.index.parents[path]
+        while id(current) in parents and parents[id(current)] is not scope:
+            current = parents[id(current)]
+        return current in scope.body and scope.body.index(statement) < scope.body.index(
+            current
+        )
+
+    def _symbol(self, path, node, function):
+        from .mock_fixture_provenance import _app_source_symbol
+
+        chain = []
+        selected = _app_source_symbol(
+            self.symbols, path, node, function, provider_chain=chain
+        )
+        if selected is None:
+            return False, None
+        target_path, declaration = selected
+        if not self._current(target_path, declaration) or not isinstance(
+            declaration, (ast.Assign, ast.AnnAssign)
+        ):
+            return False, None
+        if (
+            self.index.parents[target_path][id(declaration)]
+            is not self.index.snapshots[target_path]
+        ):
+            return False, None
+        if (
+            target_path == path
+            and function is None
+            and not self._dominates(path, declaration, node, self.index.snapshots[path])
+        ):
+            return False, None
+        key = (target_path, id(declaration))
+        if key in self._active:
+            return False, None
+        self._active.add(key)
+        try:
+            known, value = self.expression(target_path, declaration.value)
+            if not known or not self._symbol_closed(chain, value):
+                return False, None
+            return True, value
+        finally:
+            self._active.remove(key)
+
+    def _export_bindings(self):
+        from .mock_fixture_provenance import _django_import_rows, _django_name
+
+        exports = []
+        for path, tree in self.index.snapshots.items():
+            module = _django_name(self.symbols, path)
+            package = (
+                module
+                if self.index.relative(path).endswith("/__init__.py")
+                else module.rpartition(".")[0]
+            )
+            for statement in tree.body:
+                rows = _django_import_rows(statement, package)
+                if rows is None and isinstance(statement, ast.ImportFrom):
+                    source = ast.ImportFrom(
+                        module=statement.module,
+                        names=[ast.alias(name="__wildcard__")],
+                        level=statement.level,
+                    )
+                    rows = _django_import_rows(source, package)
+                    if rows is None:
+                        return None
+                    rows = [
+                        ("*", target.rsplit(".", 1)[0] + ".*")
+                        for _, target in rows or ()
+                    ]
+                exports.extend((module + "." + name, target) for name, target in rows)
+        return exports
+
+    def _symbol_bindings(self, chain):
+        """Close captured incoming object and callable exports with one bounded graph."""
+        from .mock_fixture_provenance import _django_name
+
+        bindings = {
+            (
+                _django_name(self.symbols, path) + "." + name
+                if path is not None
+                else canonical,
+                path,
+                name,
+            )
+            for canonical, path, name in chain
+        }
+        exports = self._export_bindings()
+        if exports is None:
+            return None
+        for _ in range(self.max_depth):
+            if any(
+                target.endswith(".*") and canonical.startswith(target[:-1])
+                for _, target in exports
+                for canonical, _, _ in bindings
+            ):
+                return None
+            incoming = {
+                (export + canonical[len(target) :], None, None)
+                for export, target in exports
+                for canonical, _, _ in bindings
+                if canonical == target or canonical.startswith(target + ".")
+            }
+            if incoming <= bindings:
+                return bindings
+            bindings.update(incoming)
+            if len(bindings) > self.max_states:
+                break
+        return None
+
+    def _symbol_closed(
+        self,
+        chain,
+        value,
+        *,
+        readonly_argument=None,
+        readonly_call=None,
+        inventory_projector=None,
+    ):
+        from . import review_audits as audit
+        from . import credential_role_constructor_provider as provider
+        from .finite_capture import (
+            _provider_alias_bindings,
+            _provider_mutation_facts,
+            _shell_import_aliases,
+        )
+
+        from .mock_fixture_provenance import _django_name
+
+        immutable = value.scalar_kind in {"text", "bytes", "integer", "boolean", "none"}
+        covered = set()
+        bindings_to_close = self._symbol_bindings(chain)
+        if bindings_to_close is None or any(
+            not self.index.validate(path)
+            or not provider._terminal_source_context_valid(self.index, tree, covered)
+            for path, tree in self.index.snapshots.items()
+        ):
+            return False
+        for canonical, owner_path, name in bindings_to_close:
+            for path, tree in self.index.snapshots.items():
+                nodes = list(ast.walk(tree))
+                relative = self.index.relative(path)
+                module = _django_name(self.symbols, path)
+                aliases = _shell_import_aliases(
+                    nodes,
+                    audit,
+                    canonical,
+                    package=module
+                    if relative.endswith("/__init__.py")
+                    else module.rpartition(".")[0],
+                )
+                if aliases is None:
+                    return False
+                if path == owner_path:
+                    aliases = {**aliases, name: canonical}
+                if provider._terminal_registry_mutation(
+                    nodes, aliases, audit, canonical
+                ):
+                    return False
+                # Immutable values can be copied/returned without changing the
+                # module slot. Passing its namespace remains an opaque mutation.
+                selected_nodes = [
+                    item
+                    for item in nodes
+                    if not immutable
+                    or not isinstance(item, (ast.Return, ast.Yield, ast.YieldFrom))
+                ]
+                if inventory_projector is not None:
+                    selected_nodes = inventory_projector(
+                        tree, aliases, selected_nodes, canonical
+                    )
+                bindings = _provider_alias_bindings(selected_nodes)
+                if not immutable and not self.mutable_calls_closed(
+                    selected_nodes, aliases, audit, bindings, canonical, readonly_call
+                ):
+                    return False
+                mutations = set()
+                _provider_mutation_facts(
+                    selected_nodes,
+                    aliases,
+                    audit,
+                    self.index.parents[path],
+                    bindings,
+                    mutations,
+                    lambda _node: not immutable,
+                    lambda item, bound, _parents: not (
+                        immutable
+                        and (
+                            audit._resolved_ast_name(item, bound) == canonical
+                            or provider._terminal_imported_module_receiver(
+                                item, _parents, audit, canonical
+                            )
+                        )
+                        or readonly_argument is not None
+                        and readonly_argument(item)
+                    ),
+                )
+                if any(
+                    provider._terminal_mutation_overlaps(target, member, canonical)
+                    for target, member in mutations
+                ):
+                    return False
+        return True
+
+    def mutable_calls_closed(
+        self, nodes, aliases, audit, bindings, canonical, readonly_call
+    ):
+        from .finite_capture import _provider_paths
+
+        for node in nodes:
+            if not isinstance(node, ast.Call) or not isinstance(
+                node.func, ast.Attribute
+            ):
+                continue
+            receivers, _ = _provider_paths(node.func.value, aliases, audit, bindings)
+            if any(
+                receiver == canonical or receiver.startswith(canonical + ".")
+                for receiver in receivers
+            ) and (readonly_call is None or not readonly_call(node)):
+                return False
+        return True
+
+    def _call(self, path, call, function, environment):
+        from .credential_role_identity_effects import resolve_source_identity_call
+        from .finite_capture import (
+            evaluate_helper_flow,
+            _security_helper_definition_supported,
+        )
+
+        resolved = resolve_source_identity_call(call, path, self.index)
+        if resolved is None or not resolved.negative_binding_closed:
+            return False, None
+        helper, target_path = resolved.function, resolved.path
+        from .credential_role_identity_effects import _Value
+
+        if not self._symbol_closed([(helper.name, target_path, helper.name)], _Value()):
+            return False, None
+        key = (target_path, id(helper))
+        if key in self._active or not _security_helper_definition_supported(helper):
+            return False, None
+        initial = {}
+        for name, actual in resolved.arguments.items():
+            if id(actual) in self.index.parents[path]:
+                known, value = self.expression(path, actual, function, environment)
+            else:
+                known, value = self.expression(target_path, actual)
+            if not known:
+                return False, None
+            initial[name] = value
+        remaining = self.max_states - self._states
+        if remaining < 1:
+            return False, None
+        self._active.add(key)
+        try:
+            result = evaluate_helper_flow(
+                helper,
+                initial,
+                lambda expression, env: self.expression(
+                    target_path, expression, helper, env
+                ),
+                max_states=remaining,
+            )
+        finally:
+            self._active.remove(key)
+        self._states += result["states_used"]
+        if result["status"] != "COMPLETE" or len(result["return_values"]) != 1:
+            return False, None
+        if self._states > self.max_states:
+            return False, None
+        return True, result["return_values"][0]
+
+
 SCOPE_API_CONTRACT_EPOCH = "test-scope-pyjwt-2.10.1-v1"
 
 
@@ -3773,7 +4234,9 @@ class _SourceTestScope:
         }
         if any(binding_occurrences(owner.body, name) for name in forbidden):
             return False
-        method_names = [node.name for node in owner.body if isinstance(node, ast.FunctionDef)]
+        method_names = [
+            node.name for node in owner.body if isinstance(node, ast.FunctionDef)
+        ]
         if len(method_names) != len(set(method_names)):
             return False
         for node in owner.body:
@@ -3892,18 +4355,14 @@ class _SourceTestScope:
             relative = self.source.relative(path)
             if not isinstance(relative, str):
                 return None
-            is_test_module = _pytest_file_matches(
-                relative, settings["python_files"]
-            )
+            is_test_module = _pytest_file_matches(relative, settings["python_files"])
             if path.name == "conftest.py" and _pytest_collection_hook_names(
                 tree, True, False
             ):
                 return None
             if is_test_module and (
                 _pytest_collection_hook_names(tree, False, True)
-                or any(
-                    _pytest_plugin_declaration_active(node) for node in tree.body
-                )
+                or any(_pytest_plugin_declaration_active(node) for node in tree.body)
             ):
                 return None
         return settings
@@ -3929,12 +4388,8 @@ class _SourceTestScope:
             or not _pytest_file_matches(
                 self.source.relative(path), settings["python_files"]
             )
-            or not _pytest_name_matches(
-                function.name, settings["python_functions"]
-            )
-            or _pytest_test_disabled(
-                function, _oracle_ancestor_map(tree.body), [tree]
-            )
+            or not _pytest_name_matches(function.name, settings["python_functions"])
+            or _pytest_test_disabled(function, _oracle_ancestor_map(tree.body), [tree])
         ):
             return None
         suite = parents.get(id(function))
@@ -3984,7 +4439,9 @@ class _SourceTestScope:
                 for decorator in node.decorator_list
                 if self._pytest_parametrize_decorator(path, decorator)
             )
-            if len(allowed) != len(node.decorator_list) or self.audit._legacy._definition_effects_unknown(
+            if len(allowed) != len(
+                node.decorator_list
+            ) or self.audit._legacy._definition_effects_unknown(
                 node, allowed_decorators=allowed
             ):
                 return False
@@ -3997,8 +4454,7 @@ class _SourceTestScope:
             or self.canonical(path, decorator.func) != "pytest.mark.parametrize"
             or not decorator.args
             or any(item.arg is None for item in decorator.keywords)
-            or len({item.arg for item in decorator.keywords})
-            != len(decorator.keywords)
+            or len({item.arg for item in decorator.keywords}) != len(decorator.keywords)
             or not self.audit._app_signing_terminal_stable(
                 self.index, "pytest.mark.parametrize"
             )
@@ -4178,7 +4634,8 @@ class _SourceTestScope:
                 )
             )
             annotations = [
-                arg.annotation for arg in ast.walk(node.args)
+                arg.annotation
+                for arg in ast.walk(node.args)
                 if isinstance(arg, ast.arg) and arg.annotation is not None
             ]
             if node.returns is not None:
@@ -4189,7 +4646,10 @@ class _SourceTestScope:
                 len(allowed) != len(node.decorator_list)
                 or getattr(node, "type_params", ())
                 or any(not _immutable_default(v) for v in node.args.defaults)
-                or any(v is not None and not _immutable_default(v) for v in node.args.kw_defaults)
+                or any(
+                    v is not None and not _immutable_default(v)
+                    for v in node.args.kw_defaults
+                )
                 or not all(
                     isinstance(a, ast.Name)
                     or self.audit._app_metadata_annotation_inert(self.index, path, a)
@@ -4257,9 +4717,7 @@ class _SourceTestScope:
             return False
         if self.fact.source_role == "local_literal":
             parents = self.source.parents[self.path]
-            function = self.audit._legacy._enclosing_function(
-                self.assignment, parents
-            )
+            function = self.audit._legacy._enclosing_function(self.assignment, parents)
             targets = (
                 self.assignment.targets
                 if isinstance(self.assignment, ast.Assign)
@@ -4331,7 +4789,11 @@ class _SourceTestScope:
             None,
         )
         teardown = next(
-            (n for n in owner.body if isinstance(n, ast.FunctionDef) and n.name == "tearDown"),
+            (
+                n
+                for n in owner.body
+                if isinstance(n, ast.FunctionDef) and n.name == "tearDown"
+            ),
             None,
         )
         tests = [
