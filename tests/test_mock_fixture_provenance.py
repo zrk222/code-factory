@@ -6185,9 +6185,12 @@ def test_source_bound_test_scope_native(tmp_path, variant):
     _write(tmp_path, "test_signing.py", source)
     if variant == "static_binding":
         target = tmp_path / "signer.py"
-        target.write_text(target.read_text().replace(
-            "    def sign(self, payload):", "    @staticmethod\n    def sign(self, payload):"
-        ))
+        target.write_text(
+            target.read_text().replace(
+                "    def sign(self, payload):",
+                "    @staticmethod\n    def sign(self, payload):",
+            )
+        )
     if variant == "runtime_import":
         _write(
             tmp_path,
@@ -6271,7 +6274,9 @@ def test_source_bound_test_scope_epoch_retains_one_generation_and_invalidates_re
         ("disabled", True),
     ],
 )
-def test_source_bound_pytest_local_scope_native(tmp_path, capsys, case, expected_active):
+def test_source_bound_pytest_local_scope_native(
+    tmp_path, capsys, case, expected_active
+):
     import json
 
     from factoryline.cli import main
@@ -6283,7 +6288,8 @@ def test_source_bound_pytest_local_scope_native(tmp_path, capsys, case, expected
     )
     indent = "        " if case == "class_method" else "    "
     _write(
-        tmp_path, "provider.py",
+        tmp_path,
+        "provider.py",
         "class Holder:\n    def __init__(self, key):\n        self.key = key\n",
     )
     body = (
@@ -6292,8 +6298,7 @@ def test_source_bound_pytest_local_scope_native(tmp_path, capsys, case, expected
         f"{indent}assert holder.key == SIGNING_SECRET\n"
     )
     function = (
-        "class TestInputs:\n"
-        "    def test_input(self):\n"
+        "class TestInputs:\n    def test_input(self):\n"
         if case == "class_method"
         else "def test_input():\n"
         if case in {"top_level", "class_method", "unknown_sink", "disabled"}
@@ -6329,9 +6334,7 @@ def test_source_bound_pytest_local_scope_native(tmp_path, capsys, case, expected
     assert not output.err
     report = json.loads(output.out)
     active = [
-        row
-        for row in report["findings"]
-        if row["code"] == "SECURITY_HARDCODED_SECRET"
+        row for row in report["findings"] if row["code"] == "SECURITY_HARDCODED_SECRET"
     ]
     primitives = [
         row
@@ -6339,7 +6342,13 @@ def test_source_bound_pytest_local_scope_native(tmp_path, capsys, case, expected
         if row["code"] == "SECURITY_HARDCODED_SECRET"
     ]
     if expected_active:
-        assert code in {1, 2}
+        assert code == 0
+        decision = report["defect_policy_decision"]
+        assert decision["state"] == "NO_SUPPORTED_DEFECTS_REVIEW_REQUIRED"
+        assert decision["passed"] is False
+        assert decision["clean"] is False
+        assert decision["needs_context_count"] == len(active)
+        assert decision["supported_defect_count"] == 0
         assert any(row["path"] == "tests/test_scope.py" for row in active)
         assert all(row["severity"] == "CRITICAL" for row in active)
         assert not any(
@@ -6371,7 +6380,10 @@ def test_source_scope_local_origin_survives_literal_resolution(tmp_path):
     digest = hashlib.sha256(raw).hexdigest()
     tree._oracle_source_sha256 = digest
     index = application_test_index(
-        tmp_path, {path: tree}, {path: raw}, {path: digest},
+        tmp_path,
+        {path: tree},
+        {path: raw},
+        {path: digest},
         {"pytest.ini": b"[pytest]\n"},
     )
     assignment, other = tree.body[0].body
@@ -6384,7 +6396,9 @@ def test_source_scope_local_origin_survives_literal_resolution(tmp_path):
     assert proof.resolve_literal(path, ast.Constant(value="local-key")) is None
 
 
-@pytest.mark.parametrize("hook", ["setup_method", "teardown_method", "setup_class", "teardown_class"])
+@pytest.mark.parametrize(
+    "hook", ["setup_method", "teardown_method", "setup_class", "teardown_class"]
+)
 def test_pytest_scope_rejects_unexecuted_lifecycle_hooks(tmp_path, hook):
     import ast
     import hashlib
@@ -6403,7 +6417,10 @@ def test_pytest_scope_rejects_unexecuted_lifecycle_hooks(tmp_path, hook):
     digest = hashlib.sha256(raw).hexdigest()
     tree._oracle_source_sha256 = digest
     index = application_test_index(
-        tmp_path, {path: tree}, {path: raw}, {path: digest},
+        tmp_path,
+        {path: tree},
+        {path: raw},
+        {path: digest},
         {"pytest.ini": b"[pytest]\n"},
     )
     owner = tree.body[0]
@@ -6412,7 +6429,10 @@ def test_pytest_scope_rejects_unexecuted_lifecycle_hooks(tmp_path, hook):
     assert not proof.pytest_owner(path, owner, function, {"python_classes": ["Test"]})
 
 
-@pytest.mark.parametrize("mutation", ["none", "annotation_call", "generic_shadow", "decorator_shadow", "escape"])
+@pytest.mark.parametrize(
+    "mutation",
+    ["none", "annotation_call", "generic_shadow", "decorator_shadow", "escape"],
+)
 def test_pytest_captured_typed_constructor_flow(tmp_path, mutation):
     _write(tmp_path, "pytest.ini", "[pytest]\n")
     provider = (
@@ -6440,7 +6460,11 @@ def test_pytest_captured_typed_constructor_flow(tmp_path, mutation):
     _write(tmp_path, "test_value.py", source)
     report = security_scan(tmp_path, cache_enabled=False)
     active = [f for f in report["findings"] if f["code"] == "SECURITY_HARDCODED_SECRET"]
-    observations = [f for f in report.get("primitive_observations", []) if f["code"] == "SECURITY_HARDCODED_SECRET"]
+    observations = [
+        f
+        for f in report.get("primitive_observations", [])
+        if f["code"] == "SECURITY_HARDCODED_SECRET"
+    ]
     assert bool(active) is (mutation != "none")
     assert bool(observations) is (mutation == "none")
 
