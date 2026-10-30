@@ -2241,11 +2241,15 @@ def _logging_logger_route(sections, root, logger_id):
     root_route = _logging_root_route(root) if root is not None else None
     if root is not None and root_route is None:
         return None
+    if reached_root and root_route is None:
+        return (
+            (effective, handler_keys)
+            if effective is not None and handler_keys
+            else None
+        )
     if effective is None:
         effective = root_route[0] if root_route is not None else "WARNING"
     if reached_root:
-        if root_route is None:
-            return None
         _root_level, handlers = root_route
         handler_keys.extend(handlers)
     return effective, handler_keys
