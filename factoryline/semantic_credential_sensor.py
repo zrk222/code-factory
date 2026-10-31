@@ -498,30 +498,23 @@ def _signing_inventory_input_closed(source_bytes, bindings):
         or Path(name).as_posix() != name
         or len(raw) > 1_000_000
         for name, raw in source_bytes.items()
-    ) or any(not isinstance(name, str) for name in bindings):
+    ):
         return False
     return not (
         not set(bindings).issubset(source_bytes)
         or {name for name in source_bytes if Path(name).suffix == ".py"}
         != {name for name in bindings if Path(name).suffix == ".py"}
         or len(source_bytes) > 2000
-        or sum(len(raw) for raw in source_bytes.values() if isinstance(raw, bytes))
-        > 32 * 1024 * 1024
+        or sum(len(raw) for raw in source_bytes.values()) > 32 * 1024 * 1024
     )
 
 
 def _signing_inventory_snapshots(source_bytes, bindings, bind_security_call_scopes):
+    # The sole caller has already validated the complete input shape and bounds.
     snapshots, captured, inventory = {}, {}, {}
     for name, digest in bindings.items():
         raw, path = source_bytes.get(name), Path(name)
-        if (
-            not isinstance(raw, bytes)
-            or len(raw) > 1_000_000
-            or path.is_absolute()
-            or ".." in path.parts
-            or path.as_posix() != name
-            or sha256(raw).hexdigest() != digest
-        ):
+        if sha256(raw).hexdigest() != digest:
             return None
         if path.suffix != ".py":
             continue
@@ -544,10 +537,8 @@ def signing_configuration_evidence(finding, context):
     tree = index.snapshots.get(path)
     if tree is None or not index.validate(path):
         return None
-    declaration = _signing_literal_declaration(finding, tree)
-    if declaration is None:
-        return None
-    if _signing_imported_key_written(path, context):
+    declaration = _flask_credential_declaration(finding, tree, "SECRET_KEY")
+    if declaration is None or _flask_imported_key_written(path, context, "SECRET_KEY"):
         return None
     witness = _signing_configuration_consumer_witness(index, path, context)
     if witness is None:
@@ -1426,19 +1417,22 @@ def _flask_path_conditions_clear(scope, node):
 
 
 def _signing_configuration_consumer_witness(index, path, context):
-    for consumer_path, consumer_tree in index.snapshots.items():
-        if _signing_rejection_or_reflection(consumer_tree):
-            continue
-        witness = _django_signing_consumer(path, consumer_path, consumer_tree, context)
-        if witness is None:
-            witness = _flask_signing_consumer(
-                path, consumer_path, consumer_tree, context
+    return next(
+        (
+            witness
+            for consumer_path, tree in index.snapshots.items()
+            if not _signing_rejection_or_reflection(tree)
+            for witness in (
+                _django_signing_consumer(path, consumer_path, tree, context)
+                or _flask_signing_consumer(path, consumer_path, tree, context),
             )
-        if witness is not None and _signing_bound_providers_clear(
-            context, path, consumer_path, witness["framework"]
-        ):
-            return witness
-    return None
+            if witness is not None
+            and _signing_bound_providers_clear(
+                context, path, consumer_path, witness["framework"]
+            )
+        ),
+        None,
+    )
 
 
 def private_key_authentication_evidence(finding, context):
@@ -2141,69 +2135,12 @@ def _signing_configuration_witness(index, path, declaration, witness):
     }
 
 
-def _signing_literal_declaration(finding, tree):
-    declarations = [
-        node
-        for node in tree.body
-        if isinstance(node, (ast.Assign, ast.AnnAssign))
-        and isinstance(node.value, ast.Constant)
-        and isinstance(node.value.value, str)
-        and any(
-            isinstance(target, ast.Name) and target.id == "SECRET_KEY"
-            for target in (
-                node.targets if isinstance(node, ast.Assign) else [node.target]
-            )
-        )
-    ]
-    writes = [
-        node
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Name)
-        and node.id == "SECRET_KEY"
-        and isinstance(node.ctx, (ast.Store, ast.Del))
-    ]
-    if len(declarations) != 1 or len(writes) != 1:
-        return None
-    declaration = declarations[0]
-    if (declaration.lineno, declaration.col_offset) != (
-        finding.get("line"),
-        finding.get("column", 0),
-    ):
-        return None
-    if _signing_rejection_or_reflection(tree):
-        return None
-    return declaration
-
-
 def _signing_source_span(index, path, node):
     return {
         "path": index.relative(path),
         "sha256": index.inventory[path],
         "span": [node.lineno, node.col_offset, node.end_lineno, node.end_col_offset],
     }
-
-
-def _signing_imported_key_written(target, context):
-    from .review_audits import _resolved_ast_name
-
-    names = {
-        name[:-3].replace("/", ".")
-        for name, path in context["paths"].items()
-        if path == target and name.endswith(".py")
-    }
-    suffix = target.with_suffix("").as_posix().split("/")
-    names.update(".".join(suffix[-length:]) for length in range(1, len(suffix) + 1))
-    for path, tree in context["index"].snapshots.items():
-        aliases = context["aliases"][path]
-        for node in ast.walk(tree):
-            if (
-                isinstance(node, ast.Attribute)
-                and node.attr == "SECRET_KEY"
-                and isinstance(node.ctx, (ast.Store, ast.Del))
-                and _resolved_ast_name(node.value, aliases) in names
-            ):
-                return True
-    return False
 
 
 def _signing_provider_clear(tree, aliases, framework, *, roots=None):
@@ -2220,13 +2157,45 @@ def _signing_provider_clear(tree, aliases, framework, *, roots=None):
         (
             "django.core.wsgi.get_wsgi_application",
             "django.core.asgi.get_asgi_application",
+            "django.core.management.execute_from_command_line",
             "os.environ",
         )
         if framework == "django"
         else ("flask.Flask",)
     )
+    parents = {
+        id(child): node for node in nodes for child in ast.iter_child_nodes(node)
+    }
+    reads = set()
+    if framework == "django" and _security_builtin_identity_closed(
+        tree, aliases, {"getattr", "hasattr"}
+    ):
+        reads = {
+            id(call.args[0])
+            for call in nodes
+            if isinstance(call, ast.Call)
+            and (name := _resolved_ast_name(call.func, aliases))
+            in {"getattr", "hasattr", "builtins.getattr", "builtins.hasattr"}
+            and not call.keywords
+            and len(call.args) in range(2, 4 if name.endswith("getattr") else 3)
+            and _resolved_ast_name(call.args[0], aliases) == "django.conf.settings"
+            and isinstance(call.args[1], ast.Constant)
+            and isinstance(call.args[1].value, str)
+            and not call.args[1].value.startswith("_")
+            and not any(
+                _provider_path_conflicts(
+                    "django.conf.settings." + call.args[1].value, "*", root
+                )
+                for root in roots
+            )
+        }
     return not _provider_identity_uncertain(
-        tree, aliases, roots=roots, nodes=nodes, selected_paths=True
+        tree,
+        aliases,
+        roots=roots,
+        nodes=[node for node in nodes if id(node) not in reads],
+        parents=parents,
+        selected_paths=True,
     )
 
 
@@ -2253,7 +2222,12 @@ def _signing_bound_providers_clear(context, declaration_path, consumer_path, fra
             roots=(
                 *(
                     f"django.conf.settings.{name}"
-                    for name in ("MIDDLEWARE", "INSTALLED_APPS", "SECRET_KEY")
+                    for name in (
+                        "MIDDLEWARE",
+                        "MIDDLEWARE_CLASSES",
+                        "INSTALLED_APPS",
+                        "SECRET_KEY",
+                    )
                 ),
                 "django.contrib.sessions.middleware.SessionMiddleware",
                 "django.contrib.auth.middleware.AuthenticationMiddleware",
@@ -2311,12 +2285,17 @@ def _signing_resolve_module(context, literal):
 
 
 def _django_signing_consumer(target, path, tree, context):
-    from .review_integrity import security_call_name
+    from . import review_audits as audit
+    from .intent_quality import _canary_main_guard_test
+    from .review_integrity import _security_apply_import_bindings
     from .review_audits import _resolved_ast_name
 
-    if not _signing_framework_external(context, "django"):
+    if not _signing_framework_external(
+        context, "django"
+    ) or not _security_builtin_identity_closed(
+        tree, aliases := context["aliases"][path], {"__name__"}
+    ):
         return None
-    aliases = context["aliases"][path]
     if any(
         isinstance(node, ast.Subscript)
         and isinstance(node.ctx, (ast.Store, ast.Del))
@@ -2329,7 +2308,16 @@ def _django_signing_consumer(target, path, tree, context):
     ):
         return None
     selected = None
-    for statement in tree.body:
+    statements = [
+        child
+        for statement in tree.body
+        for child in (
+            statement.body
+            if isinstance(statement, ast.If) and _canary_main_guard_test(statement.test)
+            else [statement]
+        )
+    ]
+    for statement in statements:
         if not isinstance(statement, (ast.Expr, ast.Assign)):
             continue
         call = statement.value
@@ -2337,7 +2325,9 @@ def _django_signing_consumer(target, path, tree, context):
             call
         ):
             continue
-        name = security_call_name(call, aliases)
+        name = _resolved_ast_name(
+            call.func, _security_apply_import_bindings(statements, {}, statement, audit)
+        )
         if (
             name == "os.environ.setdefault"
             and len(call.args) == 2
@@ -2355,8 +2345,17 @@ def _django_signing_consumer(target, path, tree, context):
         elif name in {
             "django.core.wsgi.get_wsgi_application",
             "django.core.asgi.get_asgi_application",
+            "django.core.management.execute_from_command_line",
         }:
-            if selected is not None and not call.args and not call.keywords:
+            arguments = (
+                not call.args
+                if name != "django.core.management.execute_from_command_line"
+                else (
+                    len(call.args) == 1
+                    and _resolved_ast_name(call.args[0], aliases) == "sys.argv"
+                )
+            )
+            if selected is not None and arguments and not call.keywords:
                 return {
                     "framework": "django",
                     "transfers": [

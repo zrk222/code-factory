@@ -773,14 +773,11 @@ def _finding_signing_evidence(
         and _matches_regenerated_finding(finding, native_rows)
     ):
         return None
-    from .semantic_credential_sensor import (
-        signing_configuration_inventory,
-        signing_configuration_evidence,
-    )
+    from . import semantic_credential_sensor as sensor
 
     if "inventory" not in cache:
-        cache["inventory"] = signing_configuration_inventory(captured, bindings)
-    return signing_configuration_evidence(finding, cache["inventory"])
+        cache["inventory"] = sensor.signing_configuration_inventory(captured, bindings)
+    return sensor.signing_configuration_evidence(finding, cache["inventory"])
 
 
 def _finding_private_key_authentication_evidence(
@@ -795,14 +792,11 @@ def _finding_private_key_authentication_evidence(
         and _matches_regenerated_finding(finding, native_rows)
     ):
         return None
-    from .semantic_credential_sensor import (
-        private_key_authentication_evidence,
-        signing_configuration_inventory,
-    )
+    from . import semantic_credential_sensor as sensor
 
     if "inventory" not in cache:
-        cache["inventory"] = signing_configuration_inventory(captured, bindings)
-    return private_key_authentication_evidence(finding, cache["inventory"])
+        cache["inventory"] = sensor.signing_configuration_inventory(captured, bindings)
+    return sensor.private_key_authentication_evidence(finding, cache["inventory"])
 
 
 def _finding_flask_session_authority_evidence(
@@ -818,16 +812,12 @@ def _finding_flask_session_authority_evidence(
         and _matches_regenerated_finding(finding, native_rows)
     ):
         return None
-    from .semantic_credential_sensor import (
-        flask_credential_authority_evidence,
-        signing_configuration_inventory,
-    )
-
-    if "inventory" not in cache:
-        cache["inventory"] = signing_configuration_inventory(captured, bindings)
+    from . import semantic_credential_sensor as sensor
     from .credential_endpoint_admission import operative_signing_default_evidence
 
-    return flask_credential_authority_evidence(
+    if "inventory" not in cache:
+        cache["inventory"] = sensor.signing_configuration_inventory(captured, bindings)
+    return sensor.flask_credential_authority_evidence(
         finding, cache["inventory"]
     ) or operative_signing_default_evidence(finding, cache["inventory"])
 
@@ -841,49 +831,58 @@ def _decide_finding_tier(
     *,
     source_bindings=None,
 ):
+    evidence = credential_evidence
     if (
         bound
-        and isinstance(credential_evidence, dict)
-        and isinstance(credential_evidence.get("transfers"), list)
-        and credential_evidence["transfers"]
+        and isinstance(evidence, dict)
+        and isinstance(evidence.get("transfers"), list)
+        and evidence["transfers"]
         and isinstance(source_bindings, dict)
         and all(
             isinstance(row, dict)
             and _trusted_core_source_binding(row) is not None
             and row["sha256"] == source_bindings.get(row["path"])
             and valid_source_span(row.get("span"))
-            for row in credential_evidence["transfers"]
+            for row in evidence["transfers"]
         )
-        and credential_evidence["transfers"][0]["path"] == finding.get("path")
-        and credential_evidence["transfers"][0]["span"][:2]
+        and evidence["transfers"][0]["path"] == finding.get("path")
+        and evidence["transfers"][0]["span"][:2]
         == [finding.get("line"), finding.get("column", 0)]
     ):
+        facts = finding.get("facts", {})
+        key_matches = evidence.get("credential_key") == facts.get("name")
+        contract = evidence.get("framework"), evidence.get("consumer_role")
+        signing = contract == ("pyjwt", "verified_bearer_rejection")
+        authority = "signing" if signing else "credential"
+        role = (
+            "conditional_published" if signing else "published_literal"
+        ) + "_default"
+        schema = f"factory.security.{authority}-default-authority.v1"
+        scope = f"source_bound_operative_{authority}_default"
         if (
-            credential_evidence.get("schema")
-            == "factory.security.signing-default-authority.v1"
-            and credential_evidence.get("proof_scope")
-            == "source_bound_operative_signing_default"
-            and credential_evidence.get("framework") == "pyjwt"
-            and credential_evidence.get("source_role")
-            == "conditional_published_default"
-            and credential_evidence.get("consumer_role") == "verified_bearer_rejection"
-            and credential_evidence.get("credential_key")
-            == finding.get("facts", {}).get("name")
+            contract
+            in {
+                ("pyjwt", "verified_bearer_rejection"),
+                ("fastapi", "direct_token_rejection"),
+                ("sqlalchemy", "database_authentication"),
+            }
+            and evidence.get("schema") == schema
+            and evidence.get("proof_scope") == scope
+            and evidence.get("source_role") == role
+            and key_matches
         ):
-            return "SUPPORTED_DEFECT", "source_bound_operative_signing_default", None
+            return "SUPPORTED_DEFECT", scope, None
         if (
-            credential_evidence.get("proof_scope")
-            == "source_bound_flask_session_authority"
-            and credential_evidence.get("framework") == "flask"
-            and isinstance(credential_evidence.get("credential_key"), str)
-            and credential_evidence["credential_key"].isidentifier()
+            evidence.get("proof_scope") == "source_bound_flask_session_authority"
+            and evidence.get("framework") == "flask"
+            and isinstance(evidence.get("credential_key"), str)
+            and evidence["credential_key"].isidentifier()
             and isinstance(finding.get("facts"), dict)
-            and credential_evidence.get("credential_key")
-            == finding.get("facts", {}).get("name")
+            and key_matches
             and (
-                isinstance(credential_evidence.get("password_key"), str)
-                and credential_evidence["password_key"].isidentifier()
-                or credential_evidence.get("consumer_role") == "flask_login_session"
+                isinstance(evidence.get("password_key"), str)
+                and evidence["password_key"].isidentifier()
+                or evidence.get("consumer_role") == "flask_login_session"
             )
         ):
             return "SUPPORTED_DEFECT", "source_bound_flask_session_authority", None
@@ -901,22 +900,23 @@ def _decide_finding_tier(
                 "configured_authentication_session_signing",
             ): "source_bound_framework_session_default",
         }
-        signature = tuple(
-            credential_evidence.get(key)
-            for key in ("proof_scope", "schema", "source_role", "consumer_role")
-        )
+        fields = "proof_scope", "schema", "source_role", "consumer_role"
+        signature = tuple(map(evidence.get, fields))
         if signature in recognized:
             return "SUPPORTED_DEFECT", recognized[signature], None
     regenerated_precondition = {}
     if bound and _matches_regenerated_precondition_finding(
         finding, native_rows, regenerated_precondition
     ):
-        details = {
-            "source_bound_security_precondition": copy.deepcopy(
-                regenerated_precondition
-            )
-        }
-        return "SUPPORTED_DEFECT", "source_bound_native_security_precondition", details
+        return (
+            "SUPPORTED_DEFECT",
+            "source_bound_native_security_precondition",
+            {
+                "source_bound_security_precondition": copy.deepcopy(
+                    regenerated_precondition
+                )
+            },
+        )
     if bound and _matches_proven_primitive(finding, primitives):
         return (
             "PROVEN_PRIMITIVE",
