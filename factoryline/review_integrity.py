@@ -4013,9 +4013,10 @@ def _security_statement_call_findings(
         bind_native_input_precondition(
             call, canonical, primitive, scope, requests, aliases
         )
-        if primitive is not None and getattr(
-            call, "_security_supported_precondition", None
-        ) is None:
+        if (
+            primitive is not None
+            and getattr(call, "_security_supported_precondition", None) is None
+        ):
             _security_bind_local_native_input_precondition(
                 call, canonical, primitive, scope, requests, aliases
             )
@@ -4027,9 +4028,7 @@ def _security_statement_call_findings(
                     bind_staged_command_activation_precondition,
                 )
 
-                bind_staged_command_activation_precondition(
-                    primitive, call, aliases
-                )
+                bind_staged_command_activation_precondition(primitive, call, aliases)
         finding = _security_source_sink_call(
             relative, call, aliases, requests, parameters, connections, cursors, helpers
         )
@@ -4645,13 +4644,9 @@ def _security_request_binary_decode_kind(value, requests, aliases, scope, statem
     ):
         return None
     source = value.args[0]
-    if (
-        request_payload_value_kind(
-            source, requests, aliases, _security_scope_request_aliases, scope, statement
-        )
-        == "text"
-        and _security_expr_tainted(source, requests, set(), aliases)
-    ):
+    if request_payload_value_kind(
+        source, requests, aliases, _security_scope_request_aliases, scope, statement
+    ) == "text" and _security_expr_tainted(source, requests, set(), aliases):
         return "bytes"
     return None
 
@@ -4702,9 +4697,7 @@ def _security_bind_local_native_input_precondition(
         if canonical.startswith("yaml.")
         else ("builtins",)
     )
-    if _security_local_provider_identity_uncertain(
-        module, aliases, provider_roots
-    ):
+    if _security_local_provider_identity_uncertain(module, aliases, provider_roots):
         return
     supported = getattr(requests, "supported_view", lambda: requests)()
     if supported is None or not _native_input_request_is_supported(
@@ -4720,7 +4713,11 @@ def _security_bind_local_native_input_precondition(
 def _security_local_request_provider_identity_uncertain(module, aliases):
     """Keep request-provider mutations in every captured module as source blockers."""
     from .review_audits import _security_aliases
-    from .semantic_credential_sensor import _provider_identity_uncertain
+    from .semantic_credential_sensor import (
+        _native_input_inventory_epoch,
+        _native_input_provider_inventory,
+        _provider_identity_uncertain,
+    )
 
     source_model = getattr(module, "_security_source_model", None)
     trees = (
@@ -4729,14 +4726,23 @@ def _security_local_request_provider_identity_uncertain(module, aliases):
         else (module,)
     )
     for tree in trees:
-        source_aliases = (
-            aliases if tree is module else _security_aliases(list(ast.walk(tree)))
-        )
+        nodes = list(ast.walk(tree))
+        source_aliases = aliases if tree is module else _security_aliases(nodes)
+        inventory = _native_input_provider_inventory(tree, source_aliases, nodes)
+        parents = {
+            id(child): parent
+            for parent in nodes
+            for child in ast.iter_child_nodes(parent)
+        }
         if _provider_identity_uncertain(
             tree,
             source_aliases,
             roots=("flask.request",),
             selected_paths=True,
+            nodes=inventory,
+            parents=parents,
+            inventory_projector=_native_input_provider_inventory,
+            inventory_dependencies=_native_input_inventory_epoch(),
         ):
             return True
     return False
@@ -4744,13 +4750,18 @@ def _security_local_request_provider_identity_uncertain(module, aliases):
 
 def _security_shell_call_shape_for_flow(call, canonical):
     """Allow inert process options around an explicitly enabled shell sink."""
-    if canonical not in {
-        "subprocess.run",
-        "subprocess.call",
-        "subprocess.check_call",
-        "subprocess.check_output",
-        "subprocess.Popen",
-    } or len(call.args) != 1 or isinstance(call.args[0], ast.Starred):
+    if (
+        canonical
+        not in {
+            "subprocess.run",
+            "subprocess.call",
+            "subprocess.check_call",
+            "subprocess.check_output",
+            "subprocess.Popen",
+        }
+        or len(call.args) != 1
+        or isinstance(call.args[0], ast.Starred)
+    ):
         return False
     keywords = {item.arg: item.value for item in call.keywords}
     if (
@@ -4809,7 +4820,9 @@ def _security_local_provider_identity_uncertain(module, aliases, roots):
             ):
                 continue
             keyword = parents.get(id(node))
-            call = parents.get(id(keyword)) if isinstance(keyword, ast.keyword) else None
+            call = (
+                parents.get(id(keyword)) if isinstance(keyword, ast.keyword) else None
+            )
             if (
                 isinstance(keyword, ast.keyword)
                 and keyword.value is node

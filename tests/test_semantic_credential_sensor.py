@@ -692,9 +692,9 @@ def test_framework_session_authority_public_cli_receipt_and_independent_reseal(
         rebuilt["_primitive_source_bytes"] = {
             name: (tmp_path / name).read_bytes() for name in files
         }
-        rebuilt["_primitive_source_bytes"][
-            "service/settings.py"
-        ] = b'SECRET_KEY = "published-session-signing-material"\n'
+        rebuilt["_primitive_source_bytes"]["service/settings.py"] = (
+            b'SECRET_KEY = "published-session-signing-material"\n'
+        )
         rejected = audit._seal_security_scan(rebuilt)
         assert rejected["finding_tier_report"] != report["finding_tier_report"]
         assert rejected["finding_tier_report"]["tier_counts"]["SUPPORTED_DEFECT"] == 0
@@ -1513,9 +1513,9 @@ def test_imported_flask_login_routes_bind_only_the_closed_configured_allocation(
             "from app import app", "from other import app"
         )
     elif mutation == "manager-write":
-        files[
-            "views.py"
-        ] += "\nfrom app import login_manager\nlogin_manager.init_app = replacement\n"
+        files["views.py"] += (
+            "\nfrom app import login_manager\nlogin_manager.init_app = replacement\n"
+        )
     elif mutation == "provider-write":
         files["views.py"] = files["views.py"].replace(
             "@app.route", "login_user = replacement\n@app.route", 1
@@ -2074,9 +2074,9 @@ def test_signing277_incomplete_or_conflicting_evidence_abstains(change):
     )
     files = _configuration_files277(runner)
     if change == "guard":
-        files[
-            "service/settings.py"
-        ] += 'if SECRET_KEY == "published-weak-value":\n    raise RuntimeError("configure key")\n'
+        files["service/settings.py"] += (
+            'if SECRET_KEY == "published-weak-value":\n    raise RuntimeError("configure key")\n'
+        )
     elif change == "literal_overwrite":
         files["service/settings.py"] += "SECRET_KEY = secure_key\n"
     elif change == "framework_shadow":
@@ -3798,21 +3798,86 @@ def test_shell_command_flow_accepts_read_only_subprocess_stream_constants():
         "stderr=subprocess.STDOUT, timeout=10)\n"
     )
     finding = next(
-        row
-        for row in _premise_scan(source)
-        if row["code"] == "SECURITY_SHELL_COMMAND"
+        row for row in _premise_scan(source) if row["code"] == "SECURITY_SHELL_COMMAND"
     )
-    assert finding["facts"]["security_precondition"]["source_role"] == "untrusted_request"
+    assert (
+        finding["facts"]["security_precondition"]["source_role"] == "untrusted_request"
+    )
     mutated = source.replace(
         "    rendered = f'echo {command}'\n",
         "    rendered = f'echo {command}'\n    subprocess.STDOUT = replacement\n",
     )
     mutated_rows = [
-        row
-        for row in _premise_scan(mutated)
-        if row["code"] == "SECURITY_SHELL_COMMAND"
+        row for row in _premise_scan(mutated) if row["code"] == "SECURITY_SHELL_COMMAND"
     ]
     assert not any(row["facts"].get("security_precondition") for row in mutated_rows)
+
+
+@pytest.mark.parametrize(
+    "setup,sink,code",
+    [
+        (
+            "import base64, pickle\n",
+            "decoded = base64.b64decode(value)\n    pickle.loads(decoded)",
+            "SECURITY_UNSAFE_DESERIALIZATION",
+        ),
+        (
+            "import subprocess\n",
+            "subprocess.check_output(value, shell=True, stderr=subprocess.STDOUT)",
+            "SECURITY_SHELL_COMMAND",
+        ),
+    ],
+)
+def test_local_sink_provider_projection_preserves_typed_request_values(
+    setup, sink, code
+):
+    source = (
+        setup + "import yaml\nfrom flask import request\n"
+        # An unrelated provider prevents the module-wide shortcut. The local
+        # proof must retain typed request values without discarding mutations.
+        "yaml.SafeLoader = replacement\n"
+        "def unrelated():\n"
+        "    avatar = request.files['avatar']\n"
+        "    payload = request.data\n"
+        "def view():\n"
+        "    value = request.form.get('value', '')\n"
+        f"    {sink}\n"
+    )
+    selected = [row for row in _premise_scan(source) if row["code"] == code]
+    assert selected
+    assert all(
+        row["facts"]["security_precondition"]["source_role"] == "untrusted_request"
+        for row in selected
+    )
+    for mutation in (
+        "request = replacement",
+        "request.form = replacement",
+        "mutate(request)",
+        "mutate(request.form)",
+    ):
+        changed = source.replace("    value =", "    " + mutation + "\n    value =")
+        assert not any(
+            row["facts"].get("security_precondition")
+            for row in _premise_scan(changed)
+            if row["code"] == code
+        ), mutation
+
+
+def test_local_request_provider_projection_epoch_invalidates_same_ast(monkeypatch):
+    from factoryline import review_integrity as flow
+
+    tree = ast.parse(
+        "from flask import request\ndef unrelated():\n"
+        "    avatar = request.files['avatar']\n"
+        "    payload = request.data\n"
+    )
+    flow.bind_security_call_scopes(tree)
+    aliases = audit._security_aliases(list(ast.walk(tree)))
+    assert not flow._security_local_request_provider_identity_uncertain(tree, aliases)
+    monkeypatch.setattr(
+        sensors, "_native_input_provider_inventory", lambda tree, aliases, nodes: nodes
+    )
+    assert flow._security_local_request_provider_identity_uncertain(tree, aliases)
 
 
 def test_sql_flow_evidence_reuses_native_query_to_execute_predicate():
@@ -3824,18 +3889,17 @@ def test_sql_flow_evidence_reuses_native_query_to_execute_predicate():
         "    cursor.execute('SELECT * FROM records WHERE id=' + key)\n"
     )
     finding = next(
-        row
-        for row in _premise_scan(source)
-        if row["code"] == "SECURITY_SQL_INJECTION"
+        row for row in _premise_scan(source) if row["code"] == "SECURITY_SQL_INJECTION"
     )
-    assert finding["facts"]["security_precondition"]["source_role"] == "untrusted_request"
+    assert (
+        finding["facts"]["security_precondition"]["source_role"] == "untrusted_request"
+    )
     sanitized = source.replace(
         "cursor.execute('SELECT * FROM records WHERE id=' + key)",
         "cursor.execute('SELECT * FROM records WHERE id=?', (key,))",
     )
     assert not any(
-        row["code"] == "SECURITY_SQL_INJECTION"
-        for row in _premise_scan(sanitized)
+        row["code"] == "SECURITY_SQL_INJECTION" for row in _premise_scan(sanitized)
     )
 
 
@@ -3851,7 +3915,7 @@ def test_database_backed_crontab_staging_requires_admin_field_write_and_activati
         "class BookSet(Model):\n"
         "    name = CharField(max_length=50)\n"
         "    def save(self):\n"
-        "        content = '\\n'.join(['%s %s * * * run \\\'%s\\\'' % "
+        "        content = '\\n'.join(['%s %s * * * run \\'%s\\'' % "
         "(item.time.minute, item.time.hour, item.name) "
         "for item in BookSet.objects.all()])\n"
         "        codecs.open(settings.PROJECT_ROOT + 'crontab', 'w', 'utf-8').write(content + '\\n')\n"
@@ -3884,9 +3948,7 @@ def test_database_backed_crontab_staging_requires_admin_field_write_and_activati
             rows = audit._security_scan_tree(
                 Path(tmp_path), model_path, snapshots[model_path]
             )
-        return next(
-            row for row in rows if row["code"] == "SECURITY_OS_COMMAND"
-        )
+        return next(row for row in rows if row["code"] == "SECURITY_OS_COMMAND")
 
     finding = staged_finding()
     staged = finding["facts"]["security_precondition"]["staged_write_activation"]
@@ -3895,20 +3957,25 @@ def test_database_backed_crontab_staging_requires_admin_field_write_and_activati
     assert staged["admin_path"] == "admin.py"
     from factoryline.credential_role_paths import valid_security_precondition
 
-    assert valid_security_precondition(finding["facts"]["security_precondition"], finding)
+    assert valid_security_precondition(
+        finding["facts"]["security_precondition"], finding
+    )
     renamed_field_source = model_source.replace(
         "name = CharField", "command_text = CharField"
     ).replace("item.name", "item.command_text")
     renamed = staged_finding(source_text=renamed_field_source)
-    assert renamed["facts"]["security_precondition"]["staged_write_activation"][
-        "field_name"
-    ] == "command_text"
+    assert (
+        renamed["facts"]["security_precondition"]["staged_write_activation"][
+            "field_name"
+        ]
+        == "command_text"
+    )
     renamed_root_only = staged_finding(
         source_text=model_source.replace("PROJECT_ROOT", "WORK_DIR")
     )
-    assert "staged_write_activation" in renamed_root_only["facts"][
-        "security_precondition"
-    ]
+    assert (
+        "staged_write_activation" in renamed_root_only["facts"]["security_precondition"]
+    )
     renamed_root_source = model_source.replace("PROJECT_ROOT", "WORK_DIR").replace(
         "        system(", "        settings.WORK_DIR = '/other/'\n        system("
     )
@@ -3925,9 +3992,9 @@ def test_database_backed_crontab_staging_requires_admin_field_write_and_activati
         "run '{item.name}'\" for item in BookSet.objects.all()])"
     )
     fstring_finding = staged_finding(source_text="\n".join(fstring_lines) + "\n")
-    assert "staged_write_activation" in fstring_finding["facts"][
-        "security_precondition"
-    ]
+    assert (
+        "staged_write_activation" in fstring_finding["facts"]["security_precondition"]
+    )
     no_admin = staged_finding(admin_text="from django.contrib import admin\n")
     assert "staged_write_activation" not in no_admin["facts"].get(
         "security_precondition", {}
@@ -3937,8 +4004,7 @@ def test_database_backed_crontab_staging_requires_admin_field_write_and_activati
     negative_sources = (
         model_source.replace(
             "        codecs.open(",
-            "        content = '0 0 * * * safe-fixed-command'\n"
-            "        codecs.open(",
+            "        content = '0 0 * * * safe-fixed-command'\n        codecs.open(",
         ),
         model_source.replace(
             "import codecs\n", "import codecs\ncodecs.open = replacement\n"
@@ -3954,11 +4020,10 @@ def test_database_backed_crontab_staging_requires_admin_field_write_and_activati
             "        system(", "        mutate(settings)\n        system("
         ),
         model_source.replace(
-            ".write(content + '\\n')", ".write('safe-fixed-line' if content else 'safe-fixed-line')"
+            ".write(content + '\\n')",
+            ".write('safe-fixed-line' if content else 'safe-fixed-line')",
         ),
-        model_source.replace(
-            ".write(content + '\\n')", ".write(sanitize(content))"
-        ),
+        model_source.replace(".write(content + '\\n')", ".write(sanitize(content))"),
         model_source.replace(
             "        system(",
             "        codecs.open(settings.PROJECT_ROOT + 'crontab', 'w').write('fixed')\n        system(",
@@ -3969,9 +4034,7 @@ def test_database_backed_crontab_staging_requires_admin_field_write_and_activati
         model_source.replace(
             "class BookSet(Model):", "@replace_model\nclass BookSet(Model):"
         ),
-        model_source.replace(
-            "class BookSet(Model):", "class BookSet(Model, Other):"
-        ),
+        model_source.replace("class BookSet(Model):", "class BookSet(Model, Other):"),
     )
     for control_index, unsafe_source in enumerate(negative_sources):
         finding = staged_finding(source_text=unsafe_source)
@@ -5027,9 +5090,9 @@ def test_nested_application_root_preserves_registered_dependency_ownership(mutat
             "service/config/database.py"
         ].replace("    register_tortoise", "    mutate(app)\n    register_tortoise")
     elif mutation == "dependency-override":
-        files[
-            "service/app.py"
-        ] += "from auth.identity import principal\napp.dependency_overrides[principal] = replacement\n"
+        files["service/app.py"] += (
+            "from auth.identity import principal\napp.dependency_overrides[principal] = replacement\n"
+        )
     elif mutation == "namespace-key-mutation":
         files["service/client.py"] = (
             "import auth.identity as selected\nselected.JWT_SECRET = runtime_secret\n"
