@@ -25,12 +25,13 @@ than the caller's bounded maximum age.
 - `revocation_present`: a signed revocation snapshot was supplied to the verifier.
 - `revocation_shape_valid`: the signed snapshot has a timezone-aware `generated_at`, bounded entries, and each entry identifies a `keyid` or `identity`; any supplied `revoked_at` is timezone-aware and valid.
 - `revocation_current`: strict mode observes `0 <= now - generated_at <= max_age_seconds` with a timezone-aware caller time.
-- `signer_not_revoked`: the signer was not revoked at or before the receipt timestamp.
+- `signer_not_revoked`: no entry matches the signer's key id or identity without a `revoked_at`, and no matching dated entry revokes the signer at or before the receipt timestamp. An omitted `revoked_at` means unconditional revocation; the optional field remains accepted.
 
 ### Requirements (EARS)
 
 - When `REQ_STRICT_REVOCATION` verifies a Receipt v2 envelope, it shall require a signed `factory.revocations.v1` snapshot, validate its generation timestamp and entry shape, reject future or older-than-`max_age_seconds` snapshots with `E_REVOCATION_FRESHNESS`, reject missing input with `E_REVOCATION_REQUIRED`, reject malformed entries with `E_INVALID_REVOCATIONS`, return `revocation_status: FRESH_CHECKED`, `revocation_freshness: CURRENT`, and the bounded age when current, preserve `E_SIGNER_REVOKED` for a revoked signer, keep authority `none`, and perform no network or provider action. [R1]
 - When `REQ_OPTIONAL_REVOCATION` verifies a supplied signed snapshot without strict mode, it shall preserve the historical signer check, return `revocation_status: CHECKED` with `revocation_freshness: NOT_ASSERTED`, and never represent the result as current hosted authorization. [R2]
+- When a supplied signed snapshot contains an entry matching the signer's key id or identity without `revoked_at`, verification shall reject it with `E_SIGNER_REVOKED` in both optional and strict modes. Unrelated entries shall not revoke the signer; matching dated entries shall retain receipt-timestamp comparison. [R3]
 
 ### Acceptance criteria
 
@@ -59,6 +60,16 @@ Scenario: Malformed signed entries are rejected
   Given a signed revocation snapshot contains an entry without a key identity or with an invalid revoked_at
   When verification runs
   Then the result is E_INVALID_REVOCATIONS
+
+Scenario: Undated matching entries revoke unconditionally
+  Given a signed revocation snapshot identifies the signer's key id or identity without revoked_at
+  When optional or strict verification runs
+  Then the result is E_SIGNER_REVOKED
+
+Scenario: Revocation scope and dated history are preserved
+  Given undated entries identify unrelated keys and identities or a matching dated entry starts after the receipt timestamp
+  When verification runs against an otherwise acceptable snapshot
+  Then the signer is not revoked by those entries
 ```
 
 ## SHOULD - Technical and structural

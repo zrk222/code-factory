@@ -19,6 +19,7 @@ import re
 from typing import Any
 
 from .agent_license import AgentLicenseError, normalize_agent_identity
+from .enterprise_receipts import _json_loads as _strict_json_loads
 from .oracle_firewall import (
     OracleFirewallError,
     admission_oracle_decision,
@@ -78,7 +79,7 @@ def _canonical(value: object) -> bytes:
             separators=(",", ":"),
             allow_nan=False,
         ).encode("utf-8")
-    except (TypeError, ValueError) as exc:
+    except (TypeError, ValueError, RecursionError) as exc:
         raise AtomicProofAdapterError(
             "E_ATOMIC_ENVELOPE_SCHEMA", "input must be canonical JSON"
         ) from exc
@@ -637,10 +638,10 @@ def _read_receipt(root: Path, path: Path) -> tuple[dict[str, Any], Path]:
             raise AtomicProofAdapterError(
                 "E_ATOMIC_EVIDENCE_UNVERIFIED", "receipt exceeds 1 MiB"
             )
-        value = json.loads(encoded.decode("utf-8-sig"))
+        value = _strict_json_loads(encoded.decode("utf-8-sig"))
     except AtomicProofAdapterError:
         raise
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError, RecursionError) as exc:
+    except (OSError, ValueError, RecursionError) as exc:
         raise AtomicProofAdapterError(
             "E_ATOMIC_EVIDENCE_UNVERIFIED", "receipt must be valid UTF-8 JSON"
         ) from exc
@@ -863,9 +864,9 @@ def _load_atomic_envelope(
             "E_ATOMIC_PRIVATE_FIELD", "envelope exceeds 1 MiB"
         )
     try:
-        envelope = json.loads(source.read_text(encoding="utf-8-sig"))
+        envelope = _strict_json_loads(source.read_text(encoding="utf-8-sig"))
         _canonical(envelope)
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+    except (OSError, ValueError, RecursionError) as exc:
         raise AtomicProofAdapterError(
             "E_ATOMIC_ENVELOPE_SCHEMA", "envelope must be valid canonical UTF-8 JSON"
         ) from exc

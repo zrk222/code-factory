@@ -505,6 +505,63 @@ def test_import_keeps_tampered_history_visible_and_blocks_successor_receipt(
     ]
 
 
+@pytest.mark.parametrize("nested", [False, True])
+def test_duplicate_json_members_cannot_validate_or_extend_atomic_history(
+    tmp_path: Path, nested: bool
+) -> None:
+    first, _ = _envelope(tmp_path, run_id="atomic-run-1")
+    prior = _import(tmp_path, first)
+    prior_path = tmp_path / str(prior["path"])
+    original = prior_path.read_text(encoding="utf-8")
+    field = "artifact_sha256" if nested else "schema"
+    value = prior["handoffs"][0][field] if nested else "factory.atomic-proof-adapter.v1"
+    selected = json.dumps(field) + ": " + json.dumps(value)
+    ambiguous = original.replace(
+        selected, json.dumps(field) + ': "wrong", ' + selected, 1
+    )
+    assert ambiguous != original
+    prior_path.write_text(ambiguous, encoding="utf-8")
+    assert verify_atomic_receipt(tmp_path, Path(str(prior["path"]))) == {
+        "ok": False,
+        "marker": "ATOMIC_RECEIPT_INVALID",
+        "reason": "E_ATOMIC_EVIDENCE_UNVERIFIED",
+        "authority": {key: False for key in prior["authority"]},
+    }
+    successor, _ = _envelope(tmp_path, run_id="atomic-run-2")
+    with pytest.raises(AtomicProofAdapterError) as raised:
+        _import(tmp_path, successor, filename="successor.json")
+    assert raised.value.code == "E_ATOMIC_EVIDENCE_UNVERIFIED"
+    assert prior_path.read_text(encoding="utf-8") == ambiguous
+    assert list(prior_path.parent.glob("*.json")) == [prior_path]
+
+
+@pytest.mark.parametrize("bad_input", ["duplicate", "nested-duplicate", "deep"])
+def test_import_rejects_ambiguous_or_deep_atomic_json_with_controlled_error(
+    tmp_path: Path, bad_input: str
+) -> None:
+    envelope, _ = _envelope(tmp_path)
+    original = json.dumps(envelope)
+    field = "artifact_sha256" if bad_input == "nested-duplicate" else "schema"
+    value = (
+        envelope["handoffs"][0][field]
+        if bad_input == "nested-duplicate"
+        else envelope["schema"]
+    )
+    selected = json.dumps(field) + ": " + json.dumps(value)
+    raw = (
+        "[" * 2000 + "0" + "]" * 2000
+        if bad_input == "deep"
+        else original.replace(selected, json.dumps(field) + ': "wrong", ' + selected, 1)
+    )
+    source = tmp_path / "ambiguous-envelope.json"
+    source.write_text(raw, encoding="utf-8")
+    with pytest.raises(AtomicProofAdapterError) as raised:
+        import_atomic_run(tmp_path, source.relative_to(tmp_path))
+    assert raised.value.code == "E_ATOMIC_ENVELOPE_SCHEMA"
+    assert source.read_text(encoding="utf-8") == raw
+    assert not (tmp_path / ".factory" / "atomic").exists()
+
+
 def test_adapter_has_no_runtime_or_network_dependency(tmp_path: Path) -> None:
     source = (
         Path(__file__).parents[1] / "factoryline" / "atomic_proof_adapter.py"

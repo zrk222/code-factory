@@ -390,6 +390,51 @@ def test_malformed_revocation_entries_fail_closed(tmp_path):
         )
 
 
+@pytest.mark.parametrize("strict", [False, True])
+@pytest.mark.parametrize(
+    "entry,revoked",
+    [
+        ({"keyid": "ci-main"}, True),
+        ({"identity": IDENTITY}, True),
+        ({"keyid": "other", "identity": IDENTITY}, True),
+        ({"keyid": "ci-main", "identity": "other"}, True),
+        ({"keyid": "other"}, False),
+        ({"identity": "other"}, False),
+        ({"keyid": "ci-main", "revoked_at": "2026-07-11T00:00:00Z"}, True),
+        ({"keyid": "ci-main", "revoked_at": "2026-07-13T00:00:00Z"}, False),
+    ],
+)
+def test_undated_revocations_are_unconditional_and_keep_scope_and_history(
+    tmp_path, strict, entry, revoked
+):
+    keys = _keys(tmp_path)
+    path, _ = _seal(tmp_path, keys=keys)
+    now = datetime(2026, 7, 12, tzinfo=timezone.utc)
+    revocations = _revocations_at(tmp_path, keys, now, [entry])
+    before = revocations.read_bytes()
+    if revoked:
+        with pytest.raises(EnterpriseReceiptError, match="E_SIGNER_REVOKED"):
+            verify_receipt_v2(
+                path,
+                Path(keys["trust_root"]),
+                revocations_path=revocations,
+                require_revocations=strict,
+                now=now,
+            )
+    else:
+        result = verify_receipt_v2(
+            path,
+            Path(keys["trust_root"]),
+            revocations_path=revocations,
+            require_revocations=strict,
+            now=now,
+        )
+        assert result["verdict"] == "VERIFIED"
+        assert result["revocation_status"] == ("FRESH_CHECKED" if strict else "CHECKED")
+        assert result["authority"] == "none"
+    assert revocations.read_bytes() == before
+
+
 @pytest.mark.parametrize(
     "payload, expected",
     [

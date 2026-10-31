@@ -525,6 +525,8 @@ def _revoked(
             entry.get("keyid") != keyid and entry.get("identity") != identity
         ):
             continue
+        if "revoked_at" not in entry:
+            return True
         revoked_at = entry.get("revoked_at")
         if isinstance(revoked_at, str) and _timestamp(revoked_at) <= receipt_ts:
             return True
