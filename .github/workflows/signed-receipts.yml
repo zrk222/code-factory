@@ -218,7 +218,7 @@ jobs:
         run: |
           set -euo pipefail
           python - <<'PY'
-          import hashlib, json, os, re, subprocess
+          import hashlib, json, os, re, subprocess, time
           from datetime import datetime, timezone
           from pathlib import Path
           checks = {
@@ -232,11 +232,30 @@ jobs:
           identity = {'commit': os.environ['CANDIDATE_SHA'], 'workflow_commit': os.environ['WORKFLOW_SHA'], 'repository': os.environ['GITHUB_REPOSITORY'],
                       'run_id': os.environ['GITHUB_RUN_ID'], 'run_attempt': os.environ['GITHUB_RUN_ATTEMPT'],
                       'ref': 'refs/heads/main', 'runner_os': 'Linux'}
-          endpoint = f"repos/{identity['repository']}/actions/runs/{identity['run_id']}/attempts/{identity['run_attempt']}/jobs?per_page=100"
-          jobs = json.loads(subprocess.check_output(['gh', 'api', endpoint], text=True))['jobs']
-          results, hashes = [], {}
+          results, hashes, producers = [], {}, {}
           for name, argv in checks.items():
-              job = next(j for j in jobs if j['name'] == f'isolated-check ({name})')
+              folder = Path('ci-checks') / f'ci-check-{name}'
+              path = folder / f'ci-{name}.json'
+              assert path.stat().st_size <= 2_000_000, 'receipt exceeds size limit'
+              receipt = json.loads(path.read_text(encoding='utf-8'))
+              producer_attempt = receipt['identity']['run_attempt']
+              assert isinstance(producer_attempt, str) and re.fullmatch(r'[1-9][0-9]*', producer_attempt), 'invalid producer attempt'
+              assert 1 <= int(producer_attempt) <= int(identity['run_attempt']), 'producer attempt outside this run'
+              expected_identity = {**identity, 'run_attempt': producer_attempt}
+              assert receipt['schema'] == 'factory.receipt.ci.check.v1'
+              assert receipt['identity'] == expected_identity and receipt['ok'] is True, 'producer identity mismatch'
+              endpoint = f"repos/{identity['repository']}/actions/runs/{identity['run_id']}/attempts/{producer_attempt}/jobs?per_page=100"
+              required_steps = {'Run fixed audit command', 'Verify pristine candidate before installation', 'Verify pristine candidate before fixed audit', 'Record fixed-command evidence without importing candidate code'}
+              for poll in range(20):
+                  jobs = json.loads(subprocess.check_output(['gh', 'api', endpoint], text=True, encoding='utf-8'))['jobs']
+                  job = next((j for j in jobs if j['name'] == f'isolated-check ({name})'), None)
+                  if job is not None and required_steps.issubset(s['name'] for s in job['steps']):
+                      break
+                  if poll < 19:
+                      time.sleep(3)
+              assert job is not None and required_steps.issubset(s['name'] for s in job['steps']), f'{name}: provider metadata incomplete'
+              assert str(job['run_id']) == identity['run_id'] and str(job['run_attempt']) == producer_attempt, 'provider run identity mismatch'
+              assert job['head_sha'] == identity['workflow_commit'], 'provider workflow identity mismatch'
               assert job['conclusion'] == 'success', f'{name}: runner did not succeed'
               step = next(s for s in job['steps'] if s['name'] == 'Run fixed audit command')
               assert step['conclusion'] == 'success', f'{name}: check step did not succeed'
@@ -246,20 +265,15 @@ jobs:
               assert audit_source_step['conclusion'] == 'success', f'{name}: source changed during installation'
               record_step = next(s for s in job['steps'] if s['name'] == 'Record fixed-command evidence without importing candidate code')
               assert record_step['conclusion'] == 'success', f'{name}: source check did not succeed'
-              folder = Path('ci-checks') / f'ci-check-{name}'
-              path = folder / f'ci-{name}.json'
-              assert path.stat().st_size <= 2_000_000, 'receipt exceeds size limit'
-              provider_log = subprocess.check_output(['gh', 'api', '--allow-escape-sequences', f"repos/{identity['repository']}/actions/jobs/{job['id']}/logs"], text=True)
+              provider_log = subprocess.check_output(['gh', 'api', f"repos/{identity['repository']}/actions/jobs/{job['id']}/logs"], text=True, encoding='utf-8')
               recorded_hashes = re.findall(r'CF_CI_RECEIPT_SHA256:([a-f0-9]{64})(?:\s|$)', provider_log)
               actual_hash = hashlib.sha256(path.read_bytes()).hexdigest()
               assert recorded_hashes == [actual_hash], 'uploaded receipt differs from trusted recorder log'
-              receipt = json.loads(path.read_text())
-              assert receipt['schema'] == 'factory.receipt.ci.check.v1'
-              assert receipt['identity'] == identity and receipt['ok'] is True
               command, = receipt['commands']
               assert command['name'] == name and command['argv'] == argv and command['exit_code'] == 0
               assert command['log_sha256'] == hashlib.sha256((folder / f'ci-{name}.log').read_bytes()).hexdigest()
               hashes[name] = hashlib.sha256(path.read_bytes()).hexdigest()
+              producers[name] = {'run_id': str(job['run_id']), 'run_attempt': producer_attempt, 'job_id': job['id'], 'workflow_commit': job['head_sha']}
               results.append(receipt)
           junit = results[0]['junit_sha256']
           assert re.fullmatch(r'[a-f0-9]{64}', junit)
@@ -269,6 +283,7 @@ jobs:
                      'environment': {name: r['environment'] for name, r in zip(checks, results)},
                      'dependencies': {name: r['dependencies'] for name, r in zip(checks, results)},
                      'junit_sha256': junit, 'check_receipt_sha256': hashes,
+                     'check_producers': producers,
                      'authority': 'none', 'signature_status': 'requires_verified_ci_attestation'}
           Path('ci-receipt.json').write_text(json.dumps(payload, indent=2, sort_keys=True) + '\n')
           PY
