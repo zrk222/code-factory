@@ -454,6 +454,198 @@ def test_historical_fetch_verifies_workflow_digest_and_exact_candidate(
     assert "--deny-self-hosted-runners" in verify
 
 
+def _signed_workflow_validator_case(tmp_path, monkeypatch, mutation):
+    import hashlib
+    import subprocess
+    import textwrap
+    import time
+
+    workflow = Path(".github/workflows/signed-receipts.yml").read_text(encoding="utf-8")
+    block = workflow.split(
+        "      - name: Validate isolated runner results without executing repository code\n",
+        1,
+    )[1]
+    program = textwrap.dedent(
+        block.split("          python - <<'PY'\n", 1)[1].split("\n          PY", 1)[0]
+    )
+    identity = {
+        "commit": "c" * 40,
+        "workflow_commit": "a" * 40,
+        "repository": "owner/repo",
+        "run_id": "41",
+        "run_attempt": "3",
+        "ref": "refs/heads/main",
+        "runner_os": "Linux",
+    }
+    commands = {
+        "tests": ["python", "-m", "pytest", "-n", "2", "-q", "--junitxml=ci-tests.xml"],
+        "architecture": [
+            "python",
+            "-m",
+            "factoryline.cli",
+            "architecture",
+            "health",
+            "--root",
+            ".",
+            "--json",
+        ],
+        "quality": ["forge", "qa", "--repo-wide", "--root", ".", "--strict"],
+        "scanner_controls": [
+            "python",
+            "-m",
+            "factoryline.cli",
+            "audit",
+            "evals",
+            "--json",
+        ],
+    }
+    steps = [
+        "Run fixed audit command",
+        "Verify pristine candidate before installation",
+        "Verify pristine candidate before fixed audit",
+        "Record fixed-command evidence without importing candidate code",
+    ]
+    logs, jobs = {}, []
+    for number, (name, argv) in enumerate(commands.items()):
+        folder = tmp_path / "ci-checks" / f"ci-check-{name}"
+        folder.mkdir(parents=True)
+        log, junit = b"completed successfully\n", b"<testsuite tests='1' failures='0'/>"
+        (folder / f"ci-{name}.log").write_bytes(log)
+        (folder / "ci-tests.xml").write_bytes(junit)
+        producer = ("1", "2", "1", "3")[number]
+        receipt = {
+            "schema": "factory.receipt.ci.check.v1",
+            "ok": True,
+            "identity": {**identity, "run_attempt": producer},
+            "commands": [
+                {
+                    "name": name,
+                    "argv": argv,
+                    "exit_code": 0,
+                    "log_sha256": hashlib.sha256(log).hexdigest(),
+                }
+            ],
+            "junit_sha256": hashlib.sha256(junit).hexdigest(),
+            "environment": {},
+            "dependencies": [],
+        }
+        receipt["identity"].update(
+            {
+                "future-attempt": {"run_attempt": "4"},
+                "boolean-attempt": {"run_attempt": True},
+                "wrong-run": {"run_id": "42"},
+                "wrong-candidate": {"commit": "b" * 40},
+                "wrong-workflow": {"workflow_commit": "b" * 40},
+            }.get(mutation, {})
+        )
+        if mutation == "wrong-command":
+            receipt["commands"][0]["argv"] = ["true"]
+        raw = json.dumps(receipt).encode()
+        logs[100 + number] = (
+            "CF_CI_RECEIPT_SHA256:" + hashlib.sha256(raw).hexdigest() + "\n"
+        )
+        (folder / f"ci-{name}.json").write_bytes(
+            raw + (b" " if mutation == "tampered-artifact" else b"")
+        )
+        job = {
+            "id": 100 + number,
+            "name": f"isolated-check ({name})",
+            "run_id": 41,
+            "head_sha": "a" * 40,
+            "conclusion": "success",
+            "steps": [{"name": s, "conclusion": "success"} for s in steps],
+        }
+        job.update(
+            {
+                "failed-producer": {"conclusion": "failure"},
+                "wrong-provider-run": {"run_id": 42},
+                "wrong-provider-head": {"head_sha": "b" * 40},
+            }.get(mutation, {})
+        )
+        jobs.append(job)
+    calls, sleeps = [], []
+
+    def provider(command, **kwargs):
+        endpoint = command[-1]
+        calls.append(endpoint)
+        if endpoint.endswith("/logs"):
+            return logs[int(endpoint.split("/")[-2])]
+        attempt = int(endpoint.split("/attempts/")[1].split("/")[0])
+        incomplete = (
+            mutation == "metadata-incomplete"
+            or mutation == "metadata-delay"
+            and len(calls) == 1
+        )
+        return json.dumps(
+            {
+                "jobs": [
+                    {
+                        **job,
+                        "run_attempt": attempt + (mutation == "wrong-provider-attempt"),
+                        "steps": [] if incomplete else job["steps"],
+                    }
+                    for job in jobs
+                ]
+            }
+        )
+
+    for key, value in {
+        "CANDIDATE_SHA": identity["commit"],
+        "WORKFLOW_SHA": identity["workflow_commit"],
+        "GITHUB_SHA": identity["workflow_commit"],
+        "GITHUB_REPOSITORY": identity["repository"],
+        "GITHUB_RUN_ID": "41",
+        "GITHUB_RUN_ATTEMPT": "3",
+    }.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(subprocess, "check_output", provider)
+    monkeypatch.setattr(time, "sleep", sleeps.append)
+    return program, identity, sleeps
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        None,
+        "metadata-delay",
+        "future-attempt",
+        "boolean-attempt",
+        "wrong-run",
+        "wrong-candidate",
+        "wrong-workflow",
+        "failed-producer",
+        "wrong-provider-run",
+        "wrong-provider-attempt",
+        "wrong-provider-head",
+        "tampered-artifact",
+        "wrong-command",
+        "metadata-incomplete",
+    ],
+)
+def test_signed_workflow_validator_binds_retained_receipts_to_producer_attempts(
+    tmp_path, monkeypatch, mutation
+):
+    """Execute the actual trusted validator against producer and tamper controls."""
+    program, identity, sleeps = _signed_workflow_validator_case(
+        tmp_path, monkeypatch, mutation
+    )
+    if mutation not in (None, "metadata-delay"):
+        with pytest.raises(AssertionError):
+            exec(compile(program, "signed-receipts-workflow", "exec"), {})
+        assert not (tmp_path / "ci-receipt.json").exists()
+        assert len(sleeps) <= 19
+        return
+    exec(compile(program, "signed-receipts-workflow", "exec"), {})
+    result = json.loads((tmp_path / "ci-receipt.json").read_text())
+    assert result["identity"] == identity
+    assert {
+        name: p["run_attempt"] for name, p in result["check_producers"].items()
+    } == {"tests": "1", "architecture": "2", "quality": "1", "scanner_controls": "3"}
+    assert len(result["commands"]) == 4
+    assert len(sleeps) == (1 if mutation == "metadata-delay" else 0)
+
+
 def test_historical_workflow_checks_source_before_installation_and_after_commands():
     workflow = Path(".github/workflows/signed-receipts.yml").read_text()
     assert 'git merge-base --is-ancestor "$candidate" "$GITHUB_SHA"' in workflow
