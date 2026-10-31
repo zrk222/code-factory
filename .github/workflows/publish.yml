@@ -18,6 +18,12 @@ on:
         default: false
         type: boolean
 
+      core_0495_cadence_exception:
+        description: Explicit owner-approved one-time cadence and monthly-cap exception for v0.49.5 only
+        required: false
+        default: false
+        type: boolean
+
 permissions:
   contents: read
   actions: read
@@ -82,6 +88,7 @@ jobs:
           RELEASE_TAG: ${{ inputs.release_tag }}
           CORE_0481_EXCEPTION: ${{ inputs.core_0481_cadence_exception }}
           CORE_0482_EXCEPTION: ${{ inputs.core_0482_cadence_exception }}
+          CORE_0495_EXCEPTION: ${{ inputs.core_0495_cadence_exception }}
         run: |
           set -euo pipefail
           gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/releases?per_page=100" > "$RUNNER_TEMP/release-history.json"
@@ -99,13 +106,16 @@ jobs:
           recent = [stamp for stamp in active if stamp > now - timedelta(days=30)]
           exception = os.environ.get("CORE_0481_EXCEPTION") == "true"
           current_exception = os.environ.get("CORE_0482_EXCEPTION") == "true"
+          latest_exception = os.environ.get("CORE_0495_EXCEPTION") == "true"
           if exception and (os.environ.get("RELEASE_TAG") != "v0.48.1" or os.environ.get("GITHUB_ACTOR") != "zrk222"):
               raise SystemExit("One-time core exception requires owner dispatch of v0.48.1")
           if current_exception and (os.environ.get("RELEASE_TAG") != "v0.48.2" or os.environ.get("GITHUB_ACTOR") != "zrk222"):
               raise SystemExit("One-time core exception requires owner dispatch of v0.48.2")
-          if len(recent) >= policy["max_releases_30d"] and not current_exception:
+          if latest_exception and (os.environ.get("RELEASE_TAG") != "v0.49.5" or os.environ.get("GITHUB_ACTOR") != "zrk222"):
+              raise SystemExit("One-time core exception requires owner dispatch of v0.49.5")
+          if len(recent) >= policy["max_releases_30d"] and not (current_exception or latest_exception):
               raise SystemExit("Actual published release count exceeds admission policy")
-          if active and now < active[-1] + timedelta(days=policy["minimum_days_between_releases"]) and not (exception or current_exception):
+          if active and now < active[-1] + timedelta(days=policy["minimum_days_between_releases"]) and not (exception or current_exception or latest_exception):
               raise SystemExit("Actual published release is still within the cooldown")
           print("Published-release cadence admitted; tag timestamps do not authorize publication")
           PY
@@ -268,7 +278,7 @@ jobs:
         run: |
           set -euo pipefail
           source_args=()
-          if [[ "$RELEASE_TAG" == "v0.48.2" ]]; then source_args=(--source CHANGELOG.md); fi
+          if [[ "$RELEASE_TAG" == "v0.48.2" || "$RELEASE_TAG" == "v0.49.5" ]]; then source_args=(--source CHANGELOG.md); fi
           python scripts/prepare_release_contract.py \
             --root . \
             --feature "release-${RELEASE_TAG}" \
@@ -282,6 +292,7 @@ jobs:
           RELEASE_TAG: ${{ inputs.release_tag }}
           CORE_0481_EXCEPTION: ${{ inputs.core_0481_cadence_exception }}
           CORE_0482_EXCEPTION: ${{ inputs.core_0482_cadence_exception }}
+          CORE_0495_EXCEPTION: ${{ inputs.core_0495_cadence_exception }}
         run: |
           set -euo pipefail
           test -n "$RELEASE_CONTRACT_PATH" || {
@@ -293,13 +304,14 @@ jobs:
             exit 1
           }
           exception_args=()
-          if [[ "$CORE_0481_EXCEPTION" == "true" || "$CORE_0482_EXCEPTION" == "true" ]]; then
+          if [[ "$CORE_0481_EXCEPTION" == "true" || "$CORE_0482_EXCEPTION" == "true" || "$CORE_0495_EXCEPTION" == "true" ]]; then
             python - <<'PY'
           import json, os, subprocess
           from datetime import datetime, timedelta, timezone
           from pathlib import Path
           current = os.environ["CORE_0482_EXCEPTION"] == "true"
-          version = "0.48.2" if current else "0.48.1"
+          latest = os.environ["CORE_0495_EXCEPTION"] == "true"
+          version = "0.49.5" if latest else "0.48.2" if current else "0.48.1"
           tag = f"v{version}"
           assert os.environ["RELEASE_TAG"] == tag and os.environ["GITHUB_ACTOR"] == "zrk222"
           contract = json.loads(Path(os.environ["RELEASE_CONTRACT_PATH"]).read_text())
@@ -312,13 +324,15 @@ jobs:
               "issued_at": now.isoformat(), "expires_at": (now + timedelta(hours=1)).isoformat(),
               "reason": f"Owner explicitly approved one-time core {version} cadence exception; normal gates retained."
           }
-          if current:
+          if current or latest:
               value["monthly_cap_exception"] = True
               value["one_time_version_opt_in"] = version
-          name = "core-0482" if current else "core-0481"
+          name = "core-" + version.replace(".", "")
           Path(f".factory/{name}-cadence-exception.json").write_text(json.dumps(value))
           PY
-            if [[ "$CORE_0482_EXCEPTION" == "true" ]]; then
+            if [[ "$CORE_0495_EXCEPTION" == "true" ]]; then
+              exception_args=(--cadence-exception .factory/core-0495-cadence-exception.json)
+            elif [[ "$CORE_0482_EXCEPTION" == "true" ]]; then
               exception_args=(--cadence-exception .factory/core-0482-cadence-exception.json)
             else
               exception_args=(--cadence-exception .factory/core-0481-cadence-exception.json)
