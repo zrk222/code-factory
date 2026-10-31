@@ -210,7 +210,24 @@ _PROVIDER_RE = re.compile(
     re.I,
 )
 _TERMINAL_RE = re.compile(
-    r"\b(?:success(?:ful|fully)?|complete(?:d)?|shipped|publish(?:ed)?|upload(?:ed)?|approv(?:ed|al)|verif(?:ied|y)|ready|passed|green|live)\b",
+    r"\b(?:success(?:ful|fully)?|complete(?:d)?|shipped|publish(?:ed)?|upload(?:ed)?|"
+    r"approv(?:ed|al(?!\s+(?:(?:was|is|has been)\s+)?not\b))|verified|ready|passed|green|live)\b",
+    re.I,
+)
+_DIRECT_NEGATION_RE = re.compile(
+    r"\b(?:no|not(?!\s+only\b)|never|without|neither|none|nothing|cannot|can't|"
+    r"don't|doesn't|didn't|haven't|hasn't|isn't|aren't|wasn't|weren't|"
+    r"(?:do|does|did|have|has|is|are|was|were)\s+not)\b(?:\s+[\w'-]+){0,2}\s*$",
+    re.I,
+)
+_CLAUSE_BOUNDARY_RE = re.compile(r"[,;:.!?]|\b(?:but|however|yet)\b", re.I)
+_NON_AUTHORITY_RE = re.compile(
+    r"\b(?:neither|no|not|never|without|none|nothing|cannot|can't|"
+    r"(?:do|does|did|have|has|is|are|was|were)\s+not)\b[^.!?;]{0,256}"
+    r"\b(?:establish(?:es|ed)?|demonstrat(?:e|es|ed)|prov(?:e|es|ed)|"
+    r"show(?:s|ed)?|indicat(?:e|es|ed)|grant(?:s|ed)?|authoriz(?:e|es|ed)|"
+    r"provid(?:e|es|ed)|constitut(?:e|es|ed)|confirm(?:s|ed)?|mean|means)\b"
+    r"[^.!?;]{0,80}$",
     re.I,
 )
 _PROBLEM_RE = re.compile(
@@ -1235,8 +1252,24 @@ def _text_workspace_findings(
 def _audit_text_line(
     workspace: Path, path: str, line: str, location: str
 ) -> list[dict[str, str]]:
-    terminal = bool(_TERMINAL_RE.search(line))
-    problem = bool(_PROBLEM_RE.search(line))
+    terminal = False
+    for match in _TERMINAL_RE.finditer(line):
+        context = _CLAUSE_BOUNDARY_RE.split(
+            line[max(0, match.start() - 256) : match.start()]
+        )[-1]
+        if not _DIRECT_NEGATION_RE.search(context) and not _NON_AUTHORITY_RE.search(
+            context
+        ):
+            terminal = True
+            break
+    problem = False
+    for match in _PROBLEM_RE.finditer(line):
+        context = _CLAUSE_BOUNDARY_RE.split(
+            line[max(0, match.start() - 256) : match.start()]
+        )[-1]
+        if not _DIRECT_NEGATION_RE.search(context):
+            problem = True
+            break
     gate_success = _gate_success_line(line)
     findings = _text_terminal_findings(line, path, location, terminal, problem)
     findings.extend(_text_active_findings(line, path, location))
