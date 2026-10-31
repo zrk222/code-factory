@@ -1,9 +1,9 @@
 # FactoryLine for VS Code
 
-## VS Code 1.3.0
+## VS Code 1.3.2
 
 This documentation-only update does not change extension runtime behavior. It
-can be used with Code Factory core 0.49.0; publishing the optional core package
+can be used with Code Factory core 0.49.5; publishing the optional core package
 is a separate release step. Marketplace status must be confirmed from provider
 read-back.
 
@@ -239,7 +239,7 @@ Build a local VSIX from this directory, then install it in VS Code:
 ```powershell
 npm ci
 npm run package
-code --install-extension factoryline-vscode-1.3.0.vsix
+code --install-extension factoryline-vscode-1.3.2.vsix
 ```
 
 Set `factoryline.command` if the `factory` executable is not on VS Code's PATH.
@@ -305,7 +305,7 @@ explicitly registered by the caller. Their observations are experimental, not
 model certification or accuracy evidence. The source taxonomy and manifest define the same routes for
 Junie while keeping execution and identity limits visible.
 
-## Native scanner expansion — Code Factory core 0.49.0 candidate
+## Native scanner workflow — Code Factory core 0.49.5
 
 **Fixed:** native scanner controls require vulnerable and safe results bound to
 image, profile and source hashes. Missing evidence remains incomplete.

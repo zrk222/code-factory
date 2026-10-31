@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.3.2 - 2026-10-31
+
+- Align release metadata with Code Factory core 0.49.5 while preserving local
+  evidence, source navigation and human-owned execution and release decisions.
+- Track provider availability separately from package version metadata.
+
 ## 1.1.3 - 2026-10-09
 
 - Fix Marketplace guidance to pair the VS Code adapter with the published

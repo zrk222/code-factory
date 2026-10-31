@@ -45,7 +45,17 @@ from factoryline.protocol import (
 def test_runtime_version_matches_the_release():
     import factoryline
 
-    assert factoryline.__version__ == "0.49.0"
+    try:
+        import tomllib
+    except ModuleNotFoundError:  # Python 3.10
+        import tomli as tomllib
+
+    project = tomllib.loads(
+        (Path(__file__).resolve().parents[1] / "pyproject.toml").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert factoryline.__version__ == project["project"]["version"]
 
 
 def test_cli_mvp_builds_one_contained_web_starter_with_a_proof_path(tmp_path, capsys):

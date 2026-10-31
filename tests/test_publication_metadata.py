@@ -12,6 +12,7 @@ except ModuleNotFoundError:  # pragma: no cover - exercised by the Python 3.10 C
     import tomli as tomllib
 from pathlib import Path
 
+from factoryline import __version__
 from factoryline.release_integrity import _python_package_data_check
 
 
@@ -618,32 +619,39 @@ def test_hosted_release_and_editor_versions_are_declared():
         encoding="utf-8"
     )
 
-    assert project["version"] == "0.49.0"
+    assert project["version"] == __version__
     assert "hosted" in project["optional-dependencies"]
-    assert vscode["version"] == "1.3.0"
+    assert re.fullmatch(r"\d+\.\d+\.\d+", vscode["version"])
     assert vscode_lock["version"] == vscode["version"]
     assert vscode_lock["packages"][""]["version"] == vscode["version"]
     assert (
         "Version 1.1.3 pairs with the published Code Factory CLI 0.48.0"
         in vscode_readme
     )
-    assert "VS Code 1.3.0" in vscode_readme
-    assert "factoryline-vscode-1.3.0.vsix" in vscode_readme
+    assert f"VS Code {vscode['version']}" in vscode_readme
+    assert f"Code Factory core {__version__}" in vscode_readme
+    assert f"factoryline-vscode-{vscode['version']}.vsix" in vscode_readme
+    assert (
+        _match(ROOT / "editors" / "vscode" / "CHANGELOG.md", r"^## ([^ ]+) - ")
+        == vscode["version"]
+    )
     assert (
         "This documentation-only update does not change extension runtime behavior."
         in vscode_readme
     )
     assert "0.48.0 candidate" not in vscode_readme
-    assert "factoryline-vscode-1.3.0.vsix" in release_channels
-    assert 'version = "1.3.1"' in gradle
+    assert f"factoryline-vscode-{vscode['version']}.vsix" in release_channels
+    intellij_version = _match(
+        ROOT / "editors" / "intellij" / "build.gradle.kts", r'^version = "([^"]+)"$'
+    )
+    assert re.fullmatch(r"\d+\.\d+\.\d+", intellij_version)
+    assert f'version = "{intellij_version}"' in gradle
+    assert f"factoryline-intellij-{intellij_version}.zip" in release_channels
     assert "postgres:17" in hosted_workflow
     assert "FACTORY_TEST_POSTGRES_DSN" in hosted_workflow
+    assert f"`factoryline-code-factory=={__version__}`" in release_channels
     assert (
-        "Candidate: `factoryline-code-factory==0.49.0` (prepared, not published)"
-        in release_channels
-    )
-    assert (
-        "The 0.49.0 source candidate is separate from the previously published 0.48.2."
+        f"Core {__version__} and editor {vscode['version']} artifacts must bind to one final source commit."
         in release_channels
     )
 

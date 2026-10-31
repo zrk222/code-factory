@@ -4453,14 +4453,17 @@ def test_captured_credential_consumer_effect_recovery(flow, mutation):
             )
         }
         path, name = "app.py", "API_SECRET"
-        if mutation == "unused":
-            files[path] = files[path].replace("if token == API_SECRET:", "if True:")
-        elif mutation == "wrong-origin":
-            files[path] = files[path].replace(
-                "if token == API_SECRET:", "if token == runtime_secret:"
-            )
-        elif mutation == "provider-replaced":
-            files[path] += "Query = replacement\n"
+        mutations = {
+            "unused": {
+                path: files[path].replace("if token == API_SECRET:", "if True:")
+            },
+            "wrong-origin": {
+                path: files[path].replace(
+                    "if token == API_SECRET:", "if token == runtime_secret:"
+                )
+            },
+            "provider-replaced": {path: files[path] + "Query = replacement\n"},
+        }
     elif flow == "registered-jwt-try":
         files = {
             "service/__init__.py": "",
@@ -4485,16 +4488,19 @@ def test_captured_credential_consumer_effect_recovery(flow, mutation):
             ),
         }
         path, name = "service/authentication.py", "JWT_SECRET"
-        if mutation == "unused":
-            files["service/app.py"] = files["service/app.py"].replace(
-                "app.include_router(router)\n", ""
-            )
-        elif mutation == "wrong-origin":
-            files[path] = files[path].replace(
-                "jwt.decode(token, JWT_SECRET,", "jwt.decode(token, runtime_secret,"
-            )
-        elif mutation == "provider-replaced":
-            files[path] += "jwt.decode = replacement\n"
+        mutations = {
+            "unused": {
+                "service/app.py": files["service/app.py"].replace(
+                    "app.include_router(router)\n", ""
+                )
+            },
+            "wrong-origin": {
+                path: files[path].replace(
+                    "jwt.decode(token, JWT_SECRET,", "jwt.decode(token, runtime_secret,"
+                )
+            },
+            "provider-replaced": {path: files[path] + "jwt.decode = replacement\n"},
+        }
     else:
         files = {
             "database.py": (
@@ -4511,16 +4517,20 @@ def test_captured_credential_consumer_effect_recovery(flow, mutation):
             ),
         }
         path, name = "database.py", "PASSWORD"
-        if mutation == "unused":
-            files["app.py"] = files["app.py"].replace(
-                "Base.metadata.create_all(bind=engine)\n", ""
-            )
-        elif mutation == "wrong-origin":
-            files[path] = files[path].replace(
-                "{USER}:{PASSWORD}", "{USER}:{runtime_password}"
-            )
-        elif mutation == "provider-replaced":
-            files[path] += "create_engine = replacement\n"
+        mutations = {
+            "unused": {
+                "app.py": files["app.py"].replace(
+                    "Base.metadata.create_all(bind=engine)\n", ""
+                )
+            },
+            "wrong-origin": {
+                path: files[path].replace(
+                    "{USER}:{PASSWORD}", "{USER}:{runtime_password}"
+                )
+            },
+            "provider-replaced": {path: files[path] + "create_engine = replacement\n"},
+        }
+    files.update(mutations.get(mutation, {}))
     row = _captured_secret_tiers(files, path, name)["ledger"][0]
     assert row["tier"] == ("SUPPORTED_DEFECT" if mutation is None else "NEEDS_CONTEXT")
     if mutation is None:
