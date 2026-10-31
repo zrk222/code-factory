@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.49.5 — 2026-10-31
+
+- Guard namespace resolution against non-import bindings and trace credential
+  defaults to their framework consumers. Retain original raw diagnostics,
+  source hashes and unresolved context.
+- Align core 0.49.5 and VS Code/JetBrains 1.3.2 release metadata. Provider
+  availability is tracked separately in [Release Channels](docs/RELEASE_CHANNELS.md).
+- The exposed Study432 baseline retained 12/18 known TPs (66.67%). This is
+  baseline known-TP retention on an exposed panel, not held-out precision or a
+  final result for this repair. No new fresh-score result is claimed.
+
 ## 0.49.0 — Published 2026-10-25
 
 - Publish `factoryline-code-factory` 0.49.0 to PyPI and GitHub from tag

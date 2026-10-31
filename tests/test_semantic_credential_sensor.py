@@ -500,14 +500,20 @@ _DJANGO_SESSION_START = (
 
 
 @pytest.mark.parametrize("sequence", ["list", "tuple"])
+@pytest.mark.parametrize(
+    "material", ["published-session-signing-material", "YOUR SECRET KEY"]
+)
 def test_operative_signing_default_evidence_requires_framework_session_authority(
     sequence,
+    material,
 ):
     """The native tier joins the declaration, configured consumers and startup."""
     from hashlib import sha256
 
     files = _configuration_files277(_DJANGO_SESSION_START)
-    settings = _DJANGO_SESSION_SETTINGS
+    settings = _DJANGO_SESSION_SETTINGS.replace(
+        "published-session-signing-material", material
+    )
     if sequence == "tuple":
         settings = settings.replace("[", "(").replace("]", ")")
     files["service/settings.py"] = settings
@@ -543,13 +549,6 @@ def test_operative_signing_default_evidence_requires_framework_session_authority
             ),
             {},
             id="no-session-consumer",
-        ),
-        pytest.param(
-            _DJANGO_SESSION_SETTINGS.replace(
-                "published-session-signing-material", "YOUR SECRET KEY"
-            ),
-            {},
-            id="placeholder",
         ),
         pytest.param(
             _DJANGO_SESSION_SETTINGS + "MIDDLEWARE.clear()\n",
@@ -4430,3 +4429,271 @@ def test_log_effect_direct_dictconfig_has_source_bound_config_without_startup(tm
     assert facts["activation_path"] is None
     assert facts["activation_sha256"] is None
     assert facts["activation_span"] is None
+
+
+@pytest.mark.parametrize(
+    "flow", ["query-equality", "registered-jwt-try", "database-initialization"]
+)
+@pytest.mark.parametrize(
+    "mutation", [None, "unused", "wrong-origin", "provider-replaced"]
+)
+def test_captured_credential_consumer_effect_recovery(flow, mutation):
+    """Credential authority requires a real consumer and rejection/connection effect."""
+    if flow == "query-equality":
+        files = {
+            "app.py": (
+                "from fastapi import FastAPI, Query\n"
+                "from fastapi.responses import JSONResponse\n"
+                "API_SECRET = 'published-access-token-9345'\napp = FastAPI()\n"
+                "@app.get('/private')\n"
+                "def private(token: str = Query(...)):\n"
+                '    "A protected response."\n'
+                "    if token == API_SECRET:\n        return {'data': 'private'}\n"
+                "    return JSONResponse(status_code=403, content={'error': 'denied'})\n"
+            )
+        }
+        path, name = "app.py", "API_SECRET"
+        mutations = {
+            "unused": {
+                path: files[path].replace("if token == API_SECRET:", "if True:")
+            },
+            "wrong-origin": {
+                path: files[path].replace(
+                    "if token == API_SECRET:", "if token == runtime_secret:"
+                )
+            },
+            "provider-replaced": {path: files[path] + "Query = replacement\n"},
+        }
+    elif flow == "registered-jwt-try":
+        files = {
+            "service/__init__.py": "",
+            "service/authentication.py": (
+                "import jwt\nfrom fastapi import Depends, HTTPException\n"
+                "from fastapi.security import OAuth2PasswordBearer\n"
+                "JWT_SECRET = 'published-signing-key-9345'\n"
+                "bearer = OAuth2PasswordBearer(tokenUrl='token')\n"
+                "def principal(token: str = Depends(bearer)):\n"
+                "    try:\n        claims = jwt.decode(token, JWT_SECRET, algorithms=['HS256'])\n"
+                "    except Exception:\n        raise HTTPException(status_code=401)\n"
+                "    return claims['sub']\n"
+            ),
+            "service/routes.py": (
+                "from fastapi import APIRouter, Depends\nfrom authentication import principal\n"
+                "router = APIRouter()\n@router.get('/private')\n"
+                "def private(identity = Depends(principal)):\n    return {'private': identity}\n"
+            ),
+            "service/app.py": (
+                "from fastapi import FastAPI\nfrom routes import router\n"
+                "app = FastAPI()\napp.include_router(router)\n"
+            ),
+        }
+        path, name = "service/authentication.py", "JWT_SECRET"
+        mutations = {
+            "unused": {
+                "service/app.py": files["service/app.py"].replace(
+                    "app.include_router(router)\n", ""
+                )
+            },
+            "wrong-origin": {
+                path: files[path].replace(
+                    "jwt.decode(token, JWT_SECRET,", "jwt.decode(token, runtime_secret,"
+                )
+            },
+            "provider-replaced": {path: files[path] + "jwt.decode = replacement\n"},
+        }
+    else:
+        files = {
+            "database.py": (
+                "from sqlalchemy import create_engine\n"
+                "from sqlalchemy.ext.declarative import declarative_base\n"
+                "USER = 'app_user'\nPASSWORD = 'published-db-password-9345'\nHOST = 'localhost'\nNAME = 'records'\n"
+                "URL = f'postgresql://{USER}:{PASSWORD}@{HOST}/{NAME}'\n"
+                "engine = create_engine(URL)\nBase = declarative_base()\n"
+            ),
+            "app.py": (
+                "from fastapi import FastAPI\nfrom database import Base, engine\n"
+                "app = FastAPI()\nBase.metadata.create_all(bind=engine)\n"
+                "@app.get('/')\ndef index():\n    return {'ready': True}\n"
+            ),
+        }
+        path, name = "database.py", "PASSWORD"
+        mutations = {
+            "unused": {
+                "app.py": files["app.py"].replace(
+                    "Base.metadata.create_all(bind=engine)\n", ""
+                )
+            },
+            "wrong-origin": {
+                path: files[path].replace(
+                    "{USER}:{PASSWORD}", "{USER}:{runtime_password}"
+                )
+            },
+            "provider-replaced": {path: files[path] + "create_engine = replacement\n"},
+        }
+    files.update(mutations.get(mutation, {}))
+    row = _captured_secret_tiers(files, path, name)["ledger"][0]
+    assert row["tier"] == ("SUPPORTED_DEFECT" if mutation is None else "NEEDS_CONTEXT")
+    if mutation is None:
+        assert row["credential_authority_observation"]["transfers"]
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "denial-status",
+        "untyped-token",
+        "custom-token-type",
+        "duplicate-status",
+        "comparison-polarity",
+        "unregistered",
+        "always-allowed",
+        "raised-response",
+        "returned-exception",
+    ],
+)
+def test_direct_token_authority_requires_typed_input_and_closed_denial(mutation):
+    source = (
+        "from fastapi import FastAPI, Query\nfrom fastapi.responses import JSONResponse\n"
+        "API_SECRET = 'published-access-material-9345'\napp = FastAPI()\n"
+        "@app.get('/private')\ndef private(token: str = Query(...)):\n"
+        "    if token == API_SECRET:\n        return {'private': True}\n"
+        "    return JSONResponse(status_code=403, content={'error': 'denied'})\n"
+    )
+    if mutation == "denial-status":
+        source = source.replace("status_code=403", "status_code=200")
+    elif mutation == "untyped-token":
+        source = source.replace("token: str", "token")
+    elif mutation == "custom-token-type":
+        source = source.replace("app = FastAPI()", "str = replacement\napp = FastAPI()")
+    elif mutation == "duplicate-status":
+        source = source.replace("status_code=403", "status_code=403, status_code=200")
+    elif mutation == "comparison-polarity":
+        source = source.replace("token == API_SECRET", "token != API_SECRET")
+    elif mutation == "unregistered":
+        source = source.replace("@app.get('/private')\n", "")
+    elif mutation == "raised-response":
+        source = source.replace("return JSONResponse(", "raise JSONResponse(")
+    elif mutation == "returned-exception":
+        source = (
+            source.replace(
+                "from fastapi import FastAPI, Query",
+                "from fastapi import FastAPI, Query, HTTPException",
+            )
+            .replace("return JSONResponse(", "return HTTPException(")
+            .replace("content=", "detail=")
+        )
+    else:
+        source = source.replace("if token == API_SECRET:", "if True:")
+    assert (
+        _captured_secret_tiers({"app.py": source}, "app.py", "API_SECRET")["ledger"][0][
+            "tier"
+        ]
+        == "NEEDS_CONTEXT"
+    )
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "postgresql://{USER}:{PASSWORD}@[invalid/db",
+        "postgresql://{USER}:{PASSWORD}@localhost:banana/db",
+        "postgresql://{USER}:{PASSWORD}@localhost:70000/db",
+        "postgresql+missingdriver://{USER}:{PASSWORD}@localhost/db",
+        "mysql+missingdriver://{USER}:{PASSWORD}@localhost/db",
+        "postgresql+://{USER}:{PASSWORD}@localhost/db",
+        "postgresql://{PASSWORD}:credential-origin@localhost/db",
+        "postgresql://{USER}:credential-origin@localhost/{PASSWORD}",
+        "postgresql://{USER}:credential-origin@localhost/db?password={PASSWORD}",
+        "postgresql://{USER}:{PASSWORD}{PASSWORD}@localhost/db",
+        "https://{USER}:{PASSWORD}@localhost/db",
+        "postgresql://{USER}:{PASSWORD}@{unknown_host}/db",
+        "postgresql://{USER}:{PASSWORD}@{True}/db",
+    ],
+)
+def test_database_credential_url_rejects_malformed_or_wrong_authority_slot(url):
+    files = {
+        "database.py": (
+            "from sqlalchemy import create_engine\nfrom sqlalchemy.orm import declarative_base\n"
+            "USER = 'user'\nPASSWORD = 'published-password-9345'\n"
+            + "URL = f"
+            + repr(url)
+            + "\n"
+            + "engine = create_engine(URL)\nBase = declarative_base()\n"
+        ),
+        "app.py": (
+            "from fastapi import FastAPI\nfrom database import Base, engine\n"
+            "app = FastAPI()\nBase.metadata.create_all(bind=engine)\n"
+            "@app.get('/')\ndef index():\n    return 'ready'\n"
+        ),
+    }
+    assert (
+        _captured_secret_tiers(files, "database.py", "PASSWORD")["ledger"][0]["tier"]
+        == "NEEDS_CONTEXT"
+    )
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        None,
+        "ambiguous-module",
+        "provider-shadow",
+        "provider-mutation",
+        "initializer-escape",
+        "dependency-override",
+        "namespace-key-mutation",
+    ],
+)
+def test_nested_application_root_preserves_registered_dependency_ownership(mutation):
+    files = {
+        "service/__init__.py": "",
+        "service/auth/__init__.py": "",
+        "service/routes/__init__.py": "",
+        "service/config/__init__.py": "",
+        "service/auth/identity.py": (
+            "import jwt\nfrom fastapi import Depends, HTTPException\nfrom fastapi.security import OAuth2PasswordBearer\n"
+            "JWT_SECRET = 'published-jwt-key-9345'\nbearer = OAuth2PasswordBearer(tokenUrl='token')\n"
+            "def principal(token: str = Depends(bearer)):\n"
+            "    try:\n        claims = jwt.decode(token, JWT_SECRET, algorithms=['HS256'])\n"
+            "    except Exception:\n        raise HTTPException(status_code=401)\n"
+            "    return claims['sub']\n"
+        ),
+        "service/routes/auth.py": "router_name = 'unrelated local module'\n",
+        "service/routes/private.py": (
+            "from fastapi import APIRouter, Depends\nfrom auth.identity import principal\n"
+            "router = APIRouter()\n@router.get('/private')\n"
+            "def private(identity = Depends(principal)):\n    return {'private': identity}\n"
+        ),
+        "service/config/database.py": (
+            "from tortoise.contrib.fastapi import register_tortoise\n"
+            "def initialize(app):\n"
+            "    register_tortoise(app, db_url='sqlite://db.sqlite3', modules={'models': ['models']}, generate_schemas=True)\n"
+        ),
+        "service/app.py": (
+            "from fastapi import FastAPI\nfrom routes import private\nfrom config.database import initialize\n"
+            "app = FastAPI()\napp.include_router(private.router)\ninitialize(app)\n"
+        ),
+    }
+    if mutation == "ambiguous-module":
+        files["auth/__init__.py"] = ""
+        files["auth/identity.py"] = files["service/auth/identity.py"]
+    elif mutation == "provider-shadow":
+        files["service/jwt.py"] = "def decode(*args, **kwargs): return {}\n"
+    elif mutation == "provider-mutation":
+        files["service/config/database.py"] += "register_tortoise = replacement\n"
+    elif mutation == "initializer-escape":
+        files["service/config/database.py"] = files[
+            "service/config/database.py"
+        ].replace("    register_tortoise", "    mutate(app)\n    register_tortoise")
+    elif mutation == "dependency-override":
+        files["service/app.py"] += (
+            "from auth.identity import principal\napp.dependency_overrides[principal] = replacement\n"
+        )
+    elif mutation == "namespace-key-mutation":
+        files["service/client.py"] = (
+            "import auth.identity as selected\nselected.JWT_SECRET = runtime_secret\n"
+        )
+    row = _captured_secret_tiers(files, "service/auth/identity.py", "JWT_SECRET")[
+        "ledger"
+    ][0]
+    assert row["tier"] == ("SUPPORTED_DEFECT" if mutation is None else "NEEDS_CONTEXT")

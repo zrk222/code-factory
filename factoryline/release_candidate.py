@@ -439,6 +439,10 @@ def _require_cadence_exceptions_enabled(
     opted_in = value.get("one_time_version_opt_in")
     approved = {
         ("core", "0.48.2", "v0.48.2", "pypi"),
+        ("core", "0.49.5", "v0.49.5", "pypi"),
+        ("vscode", "1.3.2", "vscode-v1.3.2", "openvsx"),
+        ("vscode", "1.3.2", "vscode-v1.3.2", "vscode-marketplace"),
+        ("jetbrains", "1.3.2", "jetbrains-v1.3.2", "jetbrains-marketplace"),
         ("vscode", "1.2.0", "vscode-v1.2.0", "openvsx"),
         ("vscode", "1.2.0", "vscode-v1.2.0", "vscode-marketplace"),
         ("vscode", "1.2.1", "vscode-v1.2.1", "openvsx"),
@@ -495,6 +499,10 @@ def _cadence_exception_payload(
     allowed = {
         ("core", "0.48.1", "v0.48.1", "pypi"),
         ("core", "0.48.2", "v0.48.2", "pypi"),
+        ("core", "0.49.5", "v0.49.5", "pypi"),
+        ("vscode", "1.3.2", "vscode-v1.3.2", "openvsx"),
+        ("vscode", "1.3.2", "vscode-v1.3.2", "vscode-marketplace"),
+        ("jetbrains", "1.3.2", "jetbrains-v1.3.2", "jetbrains-marketplace"),
         ("vscode", "1.1.4", "vscode-v1.1.4", "openvsx"),
         ("vscode", "1.1.4", "vscode-v1.1.4", "vscode-marketplace"),
         ("vscode", "1.1.4", "vscode-v1.1.4+build.1", "openvsx"),
@@ -531,6 +539,10 @@ def _cadence_exception_payload(
         and candidate_tag == "vscode-v1.1.4+build.1"
     ) or (channel, identity["version"], candidate_tag, value.get("environment")) in {
         ("core", "0.48.2", "v0.48.2", "pypi"),
+        ("core", "0.49.5", "v0.49.5", "pypi"),
+        ("vscode", "1.3.2", "vscode-v1.3.2", "openvsx"),
+        ("vscode", "1.3.2", "vscode-v1.3.2", "vscode-marketplace"),
+        ("jetbrains", "1.3.2", "jetbrains-v1.3.2", "jetbrains-marketplace"),
         ("vscode", "1.2.0", "vscode-v1.2.0", "openvsx"),
         ("vscode", "1.2.0", "vscode-v1.2.0", "vscode-marketplace"),
         ("vscode", "1.2.1", "vscode-v1.2.1", "openvsx"),
@@ -649,6 +661,9 @@ def _cadence_admission(
             )
             in {
                 ("core", "0.48.2", "v0.48.2"),
+                ("core", "0.49.5", "v0.49.5"),
+                ("vscode", "1.3.2", "vscode-v1.3.2"),
+                ("jetbrains", "1.3.2", "jetbrains-v1.3.2"),
                 ("vscode", "1.2.0", "vscode-v1.2.0"),
                 ("vscode", "1.2.1", "vscode-v1.2.1"),
                 ("jetbrains", "1.2.0", "jetbrains-v1.2.0"),

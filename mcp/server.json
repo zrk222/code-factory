@@ -7,7 +7,7 @@
     "source": "github",
     "id": "1293217553"
   },
-  "version": "0.49.0",
+  "version": "0.49.5",
   "_meta": {
     "io.modelcontextprotocol.registry/publisher-provided": {
       "discoveryTools": [
@@ -25,13 +25,13 @@
       "registryType": "pypi",
       "registryBaseUrl": "https://pypi.org",
       "identifier": "factoryline-code-factory",
-      "version": "0.49.0",
+      "version": "0.49.5",
       "runtimeHint": "uvx",
       "runtimeArguments": [
         {
           "type": "named",
           "name": "--from",
-          "value": "factoryline-code-factory==0.49.0"
+          "value": "factoryline-code-factory==0.49.5"
         }
       ],
       "transport": {

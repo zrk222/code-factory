@@ -254,6 +254,14 @@ def import_source_bases(root, path, node, *, captured_inventory=None):
     package_root = _captured_regular_package_root(root, path, captured_inventory)
     if package_root is not None:
         bases.append(package_root)
+        # A captured application may be launched from an inner regular package
+        # directory. Keep every lexical package root as a candidate; the existing
+        # unique-source resolver still rejects competing modules or shadows.
+        paths = _captured_path_set(root, captured_inventory)
+        directory = path.parent
+        while directory != root and directory / "__init__.py" in paths:
+            bases.append(directory)
+            directory = directory.parent
     return list(
         dict.fromkeys(base for base in bases if _captured_import_base(root, base))
     )

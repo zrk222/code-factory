@@ -510,6 +510,10 @@ def test_disabled_release_policy_rejects_otherwise_valid_exception(
     ("channel", "version", "tag", "environment"),
     [
         ("core", "0.48.2", "v0.48.2", "pypi"),
+        ("core", "0.49.5", "v0.49.5", "pypi"),
+        ("vscode", "1.3.2", "vscode-v1.3.2", "openvsx"),
+        ("vscode", "1.3.2", "vscode-v1.3.2", "vscode-marketplace"),
+        ("jetbrains", "1.3.2", "jetbrains-v1.3.2", "jetbrains-marketplace"),
         ("vscode", "1.2.0", "vscode-v1.2.0", "openvsx"),
         ("vscode", "1.2.0", "vscode-v1.2.0", "vscode-marketplace"),
         ("vscode", "1.2.1", "vscode-v1.2.1", "openvsx"),
@@ -571,6 +575,29 @@ def test_exact_current_version_opt_in_allows_disabled_policy_monthly_cap(
     )
     assert admitted is True
     assert blocker is None
+
+    for field, altered in [
+        ("source_commit", "b" * 40),
+        ("candidate_tag", tag + "+other"),
+        ("version", "9.9.9"),
+        ("channel", "other"),
+        ("environment", "other"),
+        ("requesting_actor", "other-user"),
+        ("environment_authorized", False),
+        ("publish_enabled", False),
+        ("workflow_run_attempt", "3"),
+        ("workflow_run_id", "99999"),
+        ("expires_at", (issued - timedelta(minutes=1)).isoformat()),
+        ("expires_at", (issued + timedelta(hours=2)).isoformat()),
+        ("one_time_version_opt_in", "9.9.9"),
+    ]:
+        changed = {**value, field: altered}
+        path.write_text(json.dumps(changed), encoding="utf-8")
+        with pytest.raises(ValueError):
+            candidate._cadence_exception_payload(
+                tmp_path, path, source, channel, tag, {"approved_by": "zrk222"}
+            )
+    path.write_text(json.dumps(value), encoding="utf-8")
 
     monkeypatch.setenv("GITHUB_ACTOR", "other-user")
     with pytest.raises(ValueError, match="requires owner dispatch"):

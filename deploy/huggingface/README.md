@@ -25,7 +25,19 @@ short_description: Audit code, review evidence, and resolve defects.
 
 # Code Factory
 
-## Current source preview — core 0.49.0, VS Code 1.3.0, JetBrains 1.3.0
+## 0.49.5 release workflow overview — VS Code 1.3.2, JetBrains 1.3.2
+
+Review a credential finding from its declaration through its framework consumer.
+Namespace resolution rejects non-import bindings; original raw diagnostics,
+source hashes and unknown context remain visible. Find the version-specific
+[PyPI package](https://pypi.org/project/factoryline-code-factory/0.49.5/) and
+[GitHub release](https://github.com/zrk222/code-factory/releases/tag/v0.49.5).
+Provider availability is tracked separately in
+[Release Channels](https://github.com/zrk222/code-factory/blob/main/docs/RELEASE_CHANNELS.md).
+
+The exposed Study432 baseline retained **12/18 known TPs (66.67%)**. This is
+baseline known-TP retention on an exposed panel, not held-out precision or a
+final result for the repair. No new fresh-score result is claimed.
 
 An agent has finished a change, and you want to understand what comes next.
 Explore the local workflow here: find the source behind a finding, inspect the

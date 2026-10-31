@@ -4,6 +4,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from factoryline import __version__
 from scripts.huggingface_space_metadata import inspect
 
 
@@ -24,9 +25,11 @@ def test_preview_separates_candidate_regressions_from_accuracy_and_review() -> N
     assert "CI verification is still required" in page
     assert "published Code Factory 0.48.1 remains unchanged" not in readme
     assert "published Code Factory 0.48.2 remains unchanged" not in page
-    assert "Code Factory 0.49.0 is published" in page
-    assert "https://pypi.org/project/factoryline-code-factory/0.49.0/" in page
-    assert "https://github.com/zrk222/code-factory/releases/tag/v0.49.0" in page
+    assert f"Code Factory {__version__}:" in page
+    assert f"Code Factory {__version__} is published" not in page
+    assert "Provider availability is tracked separately" in page
+    assert f"https://pypi.org/project/factoryline-code-factory/{__version__}/" in page
+    assert f"https://github.com/zrk222/code-factory/releases/tag/v{__version__}" in page
     assert "Code Factory 0.48.1 candidate" not in page
     assert "6 true positives" not in page + readme
     assert "2 true negatives" not in page + readme
@@ -49,8 +52,11 @@ def test_huggingface_space_has_static_metadata_and_canonical_release_links() -> 
     )
     assert len(short_description) <= 60
     assert "factoryline-code-factory" in page
-    assert "Static workflow preview" in page
-    assert 'href="https://github.com/zrk222/code-factory/releases/tag/v0.49.0"' in page
+    assert "Static workflow overview" in page
+    assert (
+        f'href="https://github.com/zrk222/code-factory/releases/tag/v{__version__}"'
+        in page
+    )
     assert "Specialty AI audit evidence is available" in page
     assert (
         "https://github.com/zrk222/code-factory/pull/131#issuecomment-5980528354"

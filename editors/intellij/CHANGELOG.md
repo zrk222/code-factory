@@ -1,5 +1,11 @@
 # FactoryLine for IntelliJ Changelog
 
+## 1.3.2 - 2026-10-31
+
+- Align release metadata with Code Factory core 0.49.5 while preserving local
+  evidence, source navigation and human-owned execution and release decisions.
+- Track provider availability separately from package version metadata.
+
 ## 1.3.1 - 2026-10-25 (patch candidate; verification pending)
 
 - Keep Proof Review and Verified Repair Sandbox source navigation working on

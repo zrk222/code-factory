@@ -3696,6 +3696,7 @@ class CapturedOriginProjection:
 
     def _symbol_bindings(self, chain):
         """Close captured incoming object and callable exports with one bounded graph."""
+        from pathlib import Path
         from .mock_fixture_provenance import _django_name
 
         bindings = {
@@ -3708,6 +3709,19 @@ class CapturedOriginProjection:
             )
             for canonical, path, name in chain
         }
+        execution_root = self.symbols.get("execution_root")
+        if isinstance(execution_root, Path):
+            bindings.update(
+                (
+                    ".".join(path.relative_to(execution_root).with_suffix("").parts)
+                    + "."
+                    + name,
+                    path,
+                    name,
+                )
+                for _, path, name in tuple(bindings)
+                if path is not None and path.is_relative_to(execution_root)
+            )
         exports = self._export_bindings()
         if exports is None:
             return None

@@ -2234,6 +2234,7 @@ def operative_signing_default_evidence(finding, context):
         _signing_resolve_module,
     )
     from .mock_fixture_provenance import _django_assignment
+    from .credential_role_constructor_provider import binding_occurrences
     from .review_audits import _resolved_ast_name
 
     index, path = context["index"], Path(finding.get("path", ""))
@@ -2271,16 +2272,18 @@ def operative_signing_default_evidence(finding, context):
                     name.endswith(("pyproject.toml", "setup.cfg")) for name in names
                 ):
                     return None
-            material = declaration.value.value.strip()
-            if re.fullmatch(
-                r"(?i)(?:your|replace|change|example|placeholder)(?:[ _-]+[a-z]+)*",
-                material,
-            ):
-                return None
             settings = index.snapshots[path]
+            read_names = {
+                node.id
+                for node in ast.walk(settings)
+                if isinstance(node, ast.Name)
+                if isinstance(node.ctx, ast.Load)
+            }
             required = {
                 "INSTALLED_APPS": {"django.contrib.auth", "django.contrib.sessions"},
-                "MIDDLEWARE": {
+                "MIDDLEWARE"
+                if binding_occurrences(settings.body, "MIDDLEWARE")
+                else "MIDDLEWARE_CLASSES": {
                     "django.contrib.sessions.middleware.SessionMiddleware",
                     "django.contrib.auth.middleware.AuthenticationMiddleware",
                 },
@@ -2294,13 +2297,11 @@ def operative_signing_default_evidence(finding, context):
                         pass
                     case _:
                         return None
-                if not authorities.issubset(
-                    {item.value for item in values if isinstance(item.value, str)}
-                ) or any(
-                    isinstance(node, ast.Name)
-                    and node.id == name
-                    and isinstance(node.ctx, ast.Load)
-                    for node in ast.walk(settings)
+                if (
+                    not authorities.issubset(
+                        {item.value for item in values if isinstance(item.value, str)}
+                    )
+                    or name in read_names
                 ):
                     return None
                 consumers.append(
@@ -2326,6 +2327,7 @@ def operative_signing_default_evidence(finding, context):
                     ast.Constant(value=module),
                 )
                 == path
+                or module == "django.conf.settings"
             )
             return (
                 None
@@ -2377,6 +2379,14 @@ class _OperativeCredentialOrigin:
         )
         self.value_type, self.allocations = _Value, {}
         self.projection = CapturedOriginProjection(self.index, self.leaf)
+        self.execution_root = handler["application"]["path"].parent
+        if self.projection.symbols is not None:
+            self.projection.symbols = {
+                **self.projection.symbols,
+                "execution_root": self.execution_root,
+            }
+        self.consumer = None
+        self.consumer_transfers = []
         self.key = _Value(
             roots=frozenset({self.root}),
             scalar_kind="text",
@@ -2390,7 +2400,7 @@ class _OperativeCredentialOrigin:
             ),
         )
 
-    def canonical(self, path, node, function):
+    def canonical(self, path, node, function=None):
         """Resolve a captured expression to its canonical imported provider identity."""
         from .mock_fixture_provenance import _app_expression_name
 
@@ -2408,6 +2418,13 @@ class _OperativeCredentialOrigin:
         )
 
         if not _signing_framework_external(self.context, canonical.split(".")[0]):
+            return False
+        provider_root = canonical.split(".")[0]
+        if any(
+            path == self.execution_root / (provider_root + ".py")
+            or path.is_relative_to(self.execution_root / provider_root)
+            for path in self.index.snapshots
+        ):
             return False
         for owner, tree in self.index.snapshots.items():
             nodes = list(ast.walk(tree))
@@ -2489,6 +2506,66 @@ class _OperativeCredentialOrigin:
         """Resolve the scalar origin and retained evidence for one captured expression."""
         if node is self.declaration.value and path == self.path:
             return True, self.key
+        if isinstance(node, ast.JoinedStr):
+            from urllib.parse import urlsplit
+            from .credential_role_identity_effects import _validated_exact_scalar
+
+            if any(
+                isinstance(part, ast.FormattedValue)
+                and (part.conversion != -1 or part.format_spec is not None)
+                for part in node.values
+            ):
+                return False, None
+            operands = [
+                projection.expression(
+                    path,
+                    part.value if isinstance(part, ast.FormattedValue) else part,
+                    function,
+                    environment,
+                )
+                for part in node.values
+            ]
+            if not all(known and not value.class_roots for known, value in operands):
+                return False, None
+            scalars = [(value, _validated_exact_scalar(value)) for _, value in operands]
+            if not all(
+                value.roots == self.key.roots
+                and value.scalar_kind == "text"
+                or not value.roots
+                and bool(exact)
+                and type(exact[0]) in {str, int}
+                and "credential-origin" not in str(exact[0])
+                for value, exact in scalars
+            ):
+                return False, None
+            pieces = [
+                "credential-origin" if value.roots else str(exact[0])
+                for value, exact in scalars
+            ]
+            try:
+                parsed = urlsplit("".join(pieces))
+                password, hostname, _port = (
+                    parsed.password,
+                    parsed.hostname,
+                    parsed.port,
+                )
+            except ValueError:
+                return False, None
+            if (
+                parsed.scheme not in {"postgresql", "postgres", "mysql"}
+                or password != "credential-origin"
+                or not parsed.username
+                or not hostname
+                or not parsed.path.strip("/")
+                or sum(piece == "credential-origin" for piece in pieces) != 1
+            ):
+                return False, None
+            return True, self.value_type(
+                roots=self.key.roots,
+                scalar_kind="text",
+                inert_kind="database_credential_url",
+                trace=tuple(step for _, value in operands for step in value.trace),
+            )
         projector = {
             ast.Subscript: self.field,
             ast.Attribute: self.field,
@@ -2538,6 +2615,17 @@ class _OperativeCredentialOrigin:
                 and not value.class_roots
                 for known, value in operands
             ):
+                if isinstance(node.ops[0], ast.Eq) and {
+                    value.roots for _, value in operands
+                } == {self.key.roots, frozenset({"request-token"})}:
+                    return True, self.value_type(
+                        roots=frozenset({"verified:" + self.root}),
+                        inert_kind="credential_equality",
+                        scalar_kind="boolean",
+                        trace=tuple(
+                            step for _, value in operands for step in value.trace
+                        ),
+                    )
                 return True, self.value_type(
                     inert_kind="scalar",
                     scalar_kind="boolean",
@@ -2548,6 +2636,47 @@ class _OperativeCredentialOrigin:
     def call(self, node, environment, path, function, projection):
         """Interpret a supported captured provider call without executing target code."""
         canonical = self.canonical(path, node.func, function)
+        if (
+            canonical
+            in {
+                "fastapi.HTTPException",
+                "fastapi.exceptions.HTTPException",
+                "fastapi.responses.JSONResponse",
+                "starlette.responses.JSONResponse",
+            }
+            and not node.args
+            and self.provider(path, canonical)
+        ):
+            status = next(
+                (kw.value for kw in node.keywords if kw.arg == "status_code"), None
+            )
+            denied = (
+                isinstance(status, ast.Constant)
+                and status.value in {401, 403}
+                or self.canonical(path, status, function)
+                in {
+                    "fastapi.status.HTTP_401_UNAUTHORIZED",
+                    "fastapi.status.HTTP_403_FORBIDDEN",
+                }
+                and self.provider(
+                    path, self.canonical(path, status, function), immutable=True
+                )
+            )
+            if (
+                denied
+                and len({kw.arg for kw in node.keywords}) == len(node.keywords)
+                and all(
+                    kw.arg in {"status_code", "detail", "content"}
+                    for kw in node.keywords
+                )
+            ):
+                try:
+                    for kw in node.keywords:
+                        if kw.arg != "status_code":
+                            ast.literal_eval(kw.value)
+                except (ValueError, TypeError, SyntaxError):
+                    return False, None
+                return True, self.value_type(inert_kind="authentication_denial")
         if (
             canonical == "time.time"
             and not node.args
@@ -2581,10 +2710,56 @@ class _OperativeCredentialOrigin:
             else self.verify(node, environment, path, function, projection, canonical)
         )
 
-    def construct(self, node, environment, path, function, projection, canonical):
+    def construct(
+        self, node, environment, path, function, projection, canonical, *, following=()
+    ):
         """Resolve supported credential construction and retain the complete origin chain."""
         from .mock_fixture_provenance import _app_source_symbol
 
+        if isinstance(node, ast.Try):
+            if not (
+                not node.orelse
+                and not node.finalbody
+                and node.body
+                and node.handlers
+                and isinstance(node.body[0], ast.Assign)
+                and len(node.body[0].targets) == 1
+                and isinstance(node.body[0].targets[0], ast.Name)
+                and not any(
+                    isinstance(item, (ast.Raise, ast.Return)) for item in node.body[1:]
+                )
+                and any(isinstance(item, ast.Return) for item in following)
+                and all(
+                    len(handler.body) == 1 and isinstance(handler.body[0], ast.Raise)
+                    for handler in node.handlers
+                )
+            ):
+                return False, None
+            known, value = projection.expression(
+                path, node.body[0].value, function, environment
+            )
+            if not known or value.roots != frozenset({"verified:" + self.root}):
+                return False, None
+            denials = [
+                projection.expression(path, handler.body[0].exc, function, environment)
+                for handler in node.handlers
+            ]
+            if not (
+                all(
+                    known and denial.inert_kind == "authentication_denial"
+                    for known, denial in denials
+                )
+                and all(
+                    isinstance(handler.body[0].exc, ast.Call)
+                    and self.canonical(path, handler.body[0].exc.func, function)
+                    in {"fastapi.HTTPException", "fastapi.exceptions.HTTPException"}
+                    for handler in node.handlers
+                )
+            ):
+                return False, None
+            return True, value
+        if not isinstance(node, ast.Call):
+            return False, None
         selected = _app_source_symbol(projection.symbols, path, node.func, function)
         if selected and isinstance(selected[1], ast.ClassDef):
             owner_path, owner = selected
@@ -2611,8 +2786,51 @@ class _OperativeCredentialOrigin:
                 )
         return False, None
 
-    def verify(self, node, environment, path, function, projection, canonical):
+    def verify(
+        self, node, environment, path, function, projection, canonical, *, following=()
+    ):
         """Require a source-bound verifier and its exact credential input binding."""
+        if isinstance(node, ast.If):
+            if not (
+                not node.orelse
+                and len(node.body) == 1
+                and isinstance(node.body[0], ast.Return)
+                and len(following) == 1
+                and isinstance(following[0], (ast.Return, ast.Raise))
+            ):
+                return False, None
+            try:
+                ast.literal_eval(node.body[0].value)
+            except (ValueError, TypeError, SyntaxError):
+                return False, None
+            known, value = projection.expression(path, node.test, function, environment)
+            rejected = (
+                following[0].value
+                if isinstance(following[0], ast.Return)
+                else following[0].exc
+            )
+            denial_known, denial = projection.expression(
+                path, rejected, function, environment
+            )
+            expected = (
+                {"fastapi.HTTPException", "fastapi.exceptions.HTTPException"}
+                if isinstance(following[0], ast.Raise)
+                else {
+                    "fastapi.responses.JSONResponse",
+                    "starlette.responses.JSONResponse",
+                }
+            )
+            if not (
+                known
+                and value.inert_kind == "credential_equality"
+                and denial_known
+                and denial.inert_kind == "authentication_denial"
+                and isinstance(rejected, ast.Call)
+                and self.canonical(path, rejected.func, function) in expected
+            ):
+                return False, None
+            self.consumer = ("fastapi", "direct_token_rejection")
+            return True, value
         if canonical == "jwt.decode" and self.provider(path, canonical):
             if (
                 len(node.args) != 2
@@ -2680,6 +2898,105 @@ class _OperativeCredentialOrigin:
 
     def allocate(self, node, path, projection, **capability):
         """Allocate a bounded captured identity while retaining its source evidence."""
+        if capability.pop("database_effect", False):
+            from .mock_fixture_provenance import _app_source_symbol
+            from .semantic_credential_sensor import _signing_source_span
+
+            if not (
+                self.provider(path, "fastapi.FastAPI")
+                and isinstance(node, ast.Call)
+                and not node.args
+                and len(node.keywords) == 1
+                and node.keywords[0].arg == "bind"
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "create_all"
+                and isinstance(node.func.value, ast.Attribute)
+                and node.func.value.attr == "metadata"
+            ):
+                return False, None
+            base_chain, engine_chain = [], []
+            base = _app_source_symbol(
+                projection.symbols,
+                path,
+                node.func.value.value,
+                provider_chain=base_chain,
+            )
+            engine = _app_source_symbol(
+                projection.symbols,
+                path,
+                node.keywords[0].value,
+                provider_chain=engine_chain,
+            )
+            if not base or not engine:
+                return False, None
+            base_path, base_declaration = base
+            engine_path, engine_declaration = engine
+            if not all(
+                isinstance(item, ast.Assign)
+                and len(item.targets) == 1
+                and isinstance(item.targets[0], ast.Name)
+                and isinstance(item.value, ast.Call)
+                for item in (base_declaration, engine_declaration)
+            ):
+                return False, None
+            constructor, connection = base_declaration.value, engine_declaration.value
+            base_provider = self.canonical(base_path, constructor.func)
+            if not (
+                base_provider
+                in {
+                    "sqlalchemy.ext.declarative.declarative_base",
+                    "sqlalchemy.orm.declarative_base",
+                }
+                and not constructor.args
+                and not constructor.keywords
+                and self.provider(base_path, base_provider)
+                and self.canonical(engine_path, connection.func)
+                == "sqlalchemy.create_engine"
+                and self.provider(engine_path, "sqlalchemy.create_engine")
+                and len(connection.args) == 1
+                and not connection.keywords
+            ):
+                return False, None
+            known, value = projection.expression(engine_path, connection.args[0])
+            if not known or value.inert_kind != "database_credential_url":
+                return False, None
+            readonly_arguments = {id(node.keywords[0].value)} | {
+                id(kw.value)
+                for owner_path, tree in self.index.snapshots.items()
+                for use in ast.walk(tree)
+                if isinstance(use, ast.Call)
+                and self.canonical(owner_path, use.func)
+                == "sqlalchemy.orm.sessionmaker"
+                and not use.args
+                and all(
+                    kw.arg in {"bind", "autocommit", "autoflush", "expire_on_commit"}
+                    for kw in use.keywords
+                )
+                and self.provider(owner_path, "sqlalchemy.orm.sessionmaker")
+                for kw in use.keywords
+                if kw.arg == "bind"
+                and _app_source_symbol(projection.symbols, owner_path, kw.value)
+                == engine
+            }
+            if not (
+                projection._symbol_closed(
+                    engine_chain,
+                    self.value_type(),
+                    readonly_argument=lambda item: id(item) in readonly_arguments,
+                )
+                and projection._symbol_closed(
+                    base_chain,
+                    self.value_type(),
+                    readonly_call=lambda item: item is node,
+                )
+            ):
+                return False, None
+            self.consumer = ("sqlalchemy", "database_authentication")
+            self.consumer_transfers = [
+                _signing_source_span(self.index, base_path, base_declaration),
+                _signing_source_span(self.index, engine_path, engine_declaration),
+            ]
+            return True, value
         allocation = _digest(
             [projection.generation, projection.context, path.as_posix(), _span(node)]
         )
@@ -2698,6 +3015,28 @@ class _OperativeCredentialOrigin:
         defaults = zip(args[-count:], function.args.defaults) if count else ()
         inputs = {}
         for arg, value in defaults:
+            if (
+                isinstance(value, ast.Call)
+                and len(value.args) == 1
+                and isinstance(value.args[0], ast.Constant)
+                and value.args[0].value is Ellipsis
+                and not value.keywords
+                and self.canonical(path, value.func, function) == "fastapi.Query"
+            ):
+                from .credential_role_constructor_provider import binding_occurrences
+
+                if not (
+                    isinstance(arg.annotation, ast.Name)
+                    and arg.annotation.id == "str"
+                    and not binding_occurrences(self.index.snapshots[path].body, "str")
+                    and self.provider(path, "builtins.str", immutable=True)
+                ):
+                    continue
+                if structural_only or self.provider(path, "fastapi.Query"):
+                    inputs[arg.arg] = self.value_type(
+                        roots=frozenset({"request-token"}), scalar_kind="text"
+                    )
+                continue
             if not (
                 isinstance(value, ast.Call)
                 and len(value.args) == 1
@@ -2750,17 +3089,46 @@ class _OperativeCredentialOrigin:
                         inputs[arg.arg] = self.value_type(
                             roots=frozenset({"request-token"}), scalar_kind="text"
                         )
-        return inputs
+        return bool(inputs) if structural_only else inputs
 
     def handler_authority(self):
         """Prove credential authority only after input and complete provider closure."""
         function, path = self.handler["function"], self.handler["path"]
-        if not self.token_inputs(structural_only=True) or not self.boundary_closed():
+        self.consumer, self.consumer_transfers = None, []
+        if not self.token_inputs(structural_only=True):
+            application_path = self.handler["application"]["path"]
+            effect = next(
+                (
+                    (statement.value, result[1])
+                    for statement in self.index.snapshots[application_path].body
+                    if isinstance(statement, ast.Expr)
+                    and (
+                        result := self.allocate(
+                            statement.value,
+                            application_path,
+                            self.projection,
+                            database_effect=True,
+                        )
+                    )[0]
+                ),
+                None,
+            )
+            return self.witness(*effect) if effect else None
+        if not self.boundary_closed():
             return None
         environment = self.token_inputs()
         if not environment:
             return None
-        for statement in function.body:
+        statements = [
+            item
+            for item in function.body
+            if not (
+                isinstance(item, ast.Expr)
+                and isinstance(item.value, ast.Constant)
+                and isinstance(item.value.value, str)
+            )
+        ]
+        for offset, statement in enumerate(statements):
             if (
                 isinstance(statement, ast.Assign)
                 and len(statement.targets) == 1
@@ -2773,6 +3141,20 @@ class _OperativeCredentialOrigin:
                     return None
                 environment[statement.targets[0].id] = value
                 continue
+            interpreter = (
+                self.construct if isinstance(statement, ast.Try) else self.verify
+            )
+            known, value = interpreter(
+                statement,
+                environment,
+                path,
+                function,
+                self.projection,
+                None,
+                following=statements[offset + 1 :],
+            )
+            if known:
+                return self.witness(statement, value)
             if not (
                 isinstance(statement, ast.If)
                 and not statement.orelse
@@ -2784,31 +3166,17 @@ class _OperativeCredentialOrigin:
             ):
                 return None
             value = environment.get(statement.test.operand.id)
-            if value is None or value.roots != frozenset({"verified:" + self.root}):
-                return None
-            exception = statement.body[0].exc
-            if not (
-                isinstance(exception, ast.Call)
-                and not exception.args
-                and self.canonical(path, exception.func, function)
-                in {"fastapi.HTTPException", "fastapi.exceptions.HTTPException"}
-                and self.provider(path, self.canonical(path, exception.func, function))
-            ):
-                return None
-            status = next(
-                (kw.value for kw in exception.keywords if kw.arg == "status_code"), None
+            known, denial = self.projection.expression(
+                path, statement.body[0].exc, function, environment
             )
             if not (
-                isinstance(status, ast.Constant)
-                and status.value in {401, 403}
-                or self.canonical(path, status, function)
-                in {
-                    "fastapi.status.HTTP_401_UNAUTHORIZED",
-                    "fastapi.status.HTTP_403_FORBIDDEN",
-                }
-                and self.provider(
-                    path, self.canonical(path, status, function), immutable=True
-                )
+                value is not None
+                and value.roots == frozenset({"verified:" + self.root})
+                and known
+                and denial.inert_kind == "authentication_denial"
+                and isinstance(statement.body[0].exc, ast.Call)
+                and self.canonical(path, statement.body[0].exc.func, function)
+                in {"fastapi.HTTPException", "fastapi.exceptions.HTTPException"}
             ):
                 return None
             return self.witness(statement, value)
@@ -2821,6 +3189,7 @@ class _OperativeCredentialOrigin:
             _captured_terminal_provider_mutation,
         )
         from .mock_fixture_provenance import _django_name
+        from .mock_fixture_provenance import _app_source_symbol
         from .credential_role_identity_effects import _enclosing_function
 
         handler, index = self.handler, self.index
@@ -2829,58 +3198,109 @@ class _OperativeCredentialOrigin:
         readonly = {
             id(call.args[0]) for _, _, _, call in handler["graph"].edges if call.args
         }
+        argument_calls = [
+            (
+                path,
+                node,
+                self.canonical(
+                    path, node.func, _enclosing_function(node, index.parents[path])
+                ),
+            )
+            for path, tree in index.snapshots.items()
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call) and len(node.args) == 1 and not node.keywords
+        ]
+        # A captured application initializer may pass the app only to the
+        # canonical Tortoise FastAPI registration API. Prove the complete helper
+        # before treating its argument as a registration rather than an escape.
+        for owner, call, _ in argument_calls:
+            parent = index.parents[owner].get(id(call))
+            if (
+                not isinstance(parent, ast.Expr)
+                or index.parents[owner].get(id(parent)) is not index.snapshots[owner]
+            ):
+                continue
+            selected = _app_source_symbol(self.projection.symbols, owner, call.func)
+            if not (
+                selected
+                and isinstance(selected[1], ast.FunctionDef)
+                and not selected[1].decorator_list
+                and len(selected[1].args.args) == 1
+                and not selected[1].args.defaults
+                and not selected[1].args.kwonlyargs
+                and not selected[1].args.vararg
+                and not selected[1].args.kwarg
+                and len(selected[1].body) == 1
+                and isinstance(selected[1].body[0], ast.Expr)
+            ):
+                continue
+            helper_path, helper = selected
+            registration = helper.body[0].value
+            if not (
+                isinstance(registration, ast.Call)
+                and self.canonical(helper_path, registration.func, helper)
+                == "tortoise.contrib.fastapi.register_tortoise"
+                and self.provider(
+                    helper_path, "tortoise.contrib.fastapi.register_tortoise"
+                )
+                and len(registration.args) == 1
+                and isinstance(registration.args[0], ast.Name)
+                and registration.args[0].id == helper.args.args[0].arg
+                and all(
+                    kw.arg
+                    in {
+                        "db_url",
+                        "modules",
+                        "generate_schemas",
+                        "add_exception_handlers",
+                    }
+                    for kw in registration.keywords
+                )
+            ):
+                continue
+            try:
+                for kw in registration.keywords:
+                    ast.literal_eval(kw.value)
+            except (ValueError, TypeError, SyntaxError):
+                continue
+            if self.projection._symbol_closed(
+                [(helper.name, helper_path, helper.name)],
+                self.value_type(),
+                readonly_call=lambda node: node is call,
+            ):
+                readonly.add(id(call.args[0]))
         registrations = {id(call) for _, _, _, call in handler["graph"].edges}
         registrations.update(
             id(route["decorator"]) for route in handler["graph"].handlers
         )
-        self.dependency_arguments = set()
-        for path, tree in index.snapshots.items():
-            for node in ast.walk(tree):
-                if (
-                    isinstance(node, ast.Call)
-                    and len(node.args) == 1
-                    and not node.keywords
-                    and self.canonical(
-                        path, node.func, _enclosing_function(node, index.parents[path])
-                    )
-                    == "fastapi.Depends"
-                ):
-                    readonly.add(id(node.args[0]))
-                    self.dependency_arguments.add(id(node.args[0]))
-                if (
-                    isinstance(node, ast.Call)
-                    and len(node.args) == 1
-                    and not node.keywords
-                    and self.canonical(
-                        path, node.func, _enclosing_function(node, index.parents[path])
-                    )
-                    in {
-                        "fastapi.testclient.TestClient",
-                        "starlette.testclient.TestClient",
-                    }
-                    and self.provider(
-                        path,
-                        self.canonical(
-                            path,
-                            node.func,
-                            _enclosing_function(node, index.parents[path]),
-                        ),
-                    )
-                ):
-                    readonly.add(id(node.args[0]))
+        self.dependency_arguments = {
+            id(node.args[0])
+            for _, node, canonical in argument_calls
+            if canonical == "fastapi.Depends"
+        }
+        readonly.update(self.dependency_arguments)
+        readonly.update(
+            id(node.args[0])
+            for path, node, canonical in argument_calls
+            if canonical
+            in {
+                "fastapi.testclient.TestClient",
+                "starlette.testclient.TestClient",
+            }
+            and self.provider(path, canonical)
+        )
         bindings = [(handler["path"], handler["function"].name)]
         bindings.extend(
             (owner, name) for _, owner, name in handler.get("dependency_providers", ())
         )
-        for allocation in (handler["application"], handler["receiver"]):
-            provider = (
+        if not all(
+            self.provider(
+                allocation["path"],
                 "fastapi.FastAPI"
                 if allocation["kind"] == "application"
-                else "fastapi.APIRouter"
+                else "fastapi.APIRouter",
             )
-            if not self.provider(allocation["path"], provider):
-                return False
-            if not self.projection._symbol_closed(
+            and self.projection._symbol_closed(
                 [(allocation["name"], allocation["path"], allocation["name"])],
                 self.value_type(),
                 readonly_argument=lambda node: id(node) in readonly,
@@ -2889,8 +3309,10 @@ class _OperativeCredentialOrigin:
                 aliases,
                 nodes,
                 canonical: self.boundary_inventory(tree, aliases, nodes, canonical),
-            ):
-                return False
+            )
+            for allocation in (handler["application"], handler["receiver"])
+        ):
+            return False
         return not any(
             _captured_terminal_provider_mutation(
                 index,
@@ -2956,6 +3378,7 @@ class _OperativeCredentialOrigin:
             handler.get("route_path", handler["path"]),
         )
         spans = [_signing_source_span(self.index, self.path, self.declaration)]
+        spans.extend(self.consumer_transfers)
         spans.extend(
             {"path": step[1], "sha256": step[2], "span": list(step[3])}
             for step in value.trace
@@ -2971,13 +3394,23 @@ class _OperativeCredentialOrigin:
                 (handler["path"], statement),
             ]
         )
+        framework, consumer_role = self.consumer or (
+            "pyjwt",
+            "verified_bearer_rejection",
+        )
         return {
-            "schema": "factory.security.signing-default-authority.v1",
-            "framework": "pyjwt",
-            "source_role": "conditional_published_default",
+            "schema": "factory.security.credential-default-authority.v1"
+            if self.consumer
+            else "factory.security.signing-default-authority.v1",
+            "framework": framework,
+            "source_role": "published_literal_default"
+            if self.consumer
+            else "conditional_published_default",
             "credential_key": self.finding["facts"]["name"],
-            "proof_scope": "source_bound_operative_signing_default",
-            "consumer_role": "verified_bearer_rejection",
+            "proof_scope": "source_bound_operative_credential_default"
+            if self.consumer
+            else "source_bound_operative_signing_default",
+            "consumer_role": consumer_role,
             "transfers": spans,
             "configuration_overrides": "POSSIBLE; DEFAULT_MAY_REACH",
             "deployment": "UNASSESSED",
@@ -3084,6 +3517,81 @@ class _CredentialHandlerIndex:
                     return None
                 return self.allocations.get((path, id(local)))
         selected = _app_source_symbol(self.symbols, path, expression, function)
+        if (
+            selected is None
+            and isinstance(expression, ast.Attribute)
+            and isinstance(expression.value, ast.Name)
+        ):
+            from .credential_role_constructor_provider import binding_occurrences
+            from .import_context import (
+                captured_import_inventory,
+                resolve_import_source,
+                import_source_choices,
+            )
+
+            imports = binding_occurrences(
+                self.index.snapshots[path].body, expression.value.id
+            )
+            if (
+                len(imports) == 1
+                and isinstance(imports[0], ast.ImportFrom)
+                and not imports[0].level
+            ):
+                imported = next(
+                    (
+                        item.name
+                        for item in imports[0].names
+                        if (item.asname or item.name) == expression.value.id
+                    ),
+                    None,
+                )
+                target = resolve_import_source(
+                    self.index.root,
+                    path,
+                    imports[0],
+                    imports[0].module,
+                    captured_import_inventory(self.index),
+                    imported=imported,
+                    captured=True,
+                )
+                if target is None:
+                    choices = import_source_choices(
+                        self.index.root,
+                        path,
+                        imports[0],
+                        imports[0].module,
+                        imported,
+                        captured_inventory=captured_import_inventory(self.index),
+                    )
+                    children = {
+                        candidate
+                        for candidate, kind in choices
+                        if kind == "child" and candidate in self.index.snapshots
+                    }
+                    packages = {
+                        candidate
+                        for candidate, kind in choices
+                        if kind == "package" and candidate in self.index.snapshots
+                    }
+                    if len(children) == len(packages) == 1 and all(
+                        isinstance(item, ast.Pass)
+                        or isinstance(item, ast.Expr)
+                        and isinstance(item.value, ast.Constant)
+                        and isinstance(item.value.value, str)
+                        for item in self.index.snapshots[next(iter(packages))].body
+                    ):
+                        target = next(iter(children))
+                tree = self.index.snapshots.get(target)
+                rows = (
+                    binding_occurrences(tree.body, expression.attr)
+                    if tree is not None
+                    else []
+                )
+                if len(rows) == 1:
+                    declaration = rows[0]
+                    if isinstance(declaration, ast.Name):
+                        declaration = self.index.parents[target].get(id(declaration))
+                    selected = target, declaration
         return (
             self.allocations.get((selected[0], id(selected[1]))) if selected else None
         )
@@ -3113,6 +3621,83 @@ class _CredentialHandlerIndex:
                 selected = _app_source_symbol(
                     self.symbols, path, value.args[0], function, provider_chain=chain
                 )
+                if selected is None and isinstance(value.args[0], ast.Name):
+                    from .credential_role_constructor_provider import (
+                        binding_occurrences,
+                    )
+                    from .import_context import (
+                        captured_import_inventory,
+                        import_source_choices,
+                    )
+
+                    bindings = binding_occurrences(
+                        self.index.snapshots[path].body, value.args[0].id
+                    )
+                    if (
+                        len(bindings) == 1
+                        and isinstance(bindings[0], ast.ImportFrom)
+                        and not bindings[0].level
+                    ):
+                        imported = next(
+                            (
+                                item.name
+                                for item in bindings[0].names
+                                if (item.asname or item.name) == value.args[0].id
+                            ),
+                            None,
+                        )
+                        module = bindings[0].module or ""
+                        root = handler["application"]["path"].parent
+                        parts = module.split(".")
+                        if imported and all(part.isidentifier() for part in parts):
+                            choices = {
+                                candidate
+                                for candidate in (
+                                    root.joinpath(*parts).with_suffix(".py"),
+                                    root.joinpath(*parts) / "__init__.py",
+                                )
+                                if candidate in self.index.snapshots
+                            }
+                            alternatives = {
+                                candidate
+                                for candidate, _ in import_source_choices(
+                                    self.index.root,
+                                    path,
+                                    bindings[0],
+                                    module,
+                                    None,
+                                    captured_inventory=captured_import_inventory(
+                                        self.index
+                                    ),
+                                )
+                                if candidate in self.index.snapshots
+                            }
+                            if (
+                                len(choices) == 1
+                                and alternatives == choices
+                                and all(
+                                    root.joinpath(*parts[:end]) / "__init__.py"
+                                    in self.index.snapshots
+                                    and root.joinpath(*parts[:end]).with_suffix(".py")
+                                    not in self.index.snapshots
+                                    for end in range(1, len(parts))
+                                )
+                                and len(
+                                    rows := binding_occurrences(
+                                        self.index.snapshots[next(iter(choices))].body,
+                                        imported,
+                                    )
+                                )
+                                == 1
+                                and isinstance(
+                                    rows[0], (ast.FunctionDef, ast.AsyncFunctionDef)
+                                )
+                            ):
+                                target = next(iter(choices))
+                                selected = target, rows[0]
+                                chain.append(
+                                    (module + "." + imported, target, imported)
+                                )
                 if (
                     selected
                     and isinstance(selected[1], (ast.FunctionDef, ast.AsyncFunctionDef))

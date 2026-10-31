@@ -23,12 +23,12 @@ not turn a source merge into release approval.
 | Channel | Artifact or surface | Release path | Success evidence |
 | --- | --- | --- | --- |
 | GitHub | Source tag, wheel, sdist, VSIX, JetBrains ZIP, media | Dispatch `publish.yml` with an existing draft tag; its protected publisher attaches the verified bundle and publishes the release after PyPI | Public release URL and green workflow |
-| PyPI | Candidate: `factoryline-code-factory==0.49.0` (prepared, not published) | Trusted Publishing from `publish.yml` | PyPI project version and attestation |
+| PyPI | `factoryline-code-factory==0.49.5` ([version page](https://pypi.org/project/factoryline-code-factory/0.49.5/)) | Trusted Publishing from `publish.yml` | PyPI project version and attestation |
 | Official MCP Registry | `io.github.zrk222/code-factory` local stdio descriptor | Post-PyPI GitHub OIDC job in `publish.yml` | Public registry entry and green registry job |
 | Hugging Face | Static Code Factory Space | Manually dispatch the `huggingface` environment workflow | Green Space workflow and public Space |
 | Zenodo | Versioned source archive under concept DOI | GitHub release integration | Public version record; concept DOI remains stable |
-| VS Code / Open VSX | Candidate: `factoryline-vscode-1.3.0.vsix` (prepared, not published); 1.2.0 public on VS Marketplace | Upload VS Code through the Microsoft Marketplace website; use the protected publisher workflow for Open VSX | Installable VSIX and public marketplace version |
-| JetBrains | Candidate: `factoryline-intellij-1.3.0.zip` (prepared, not published) | Use the separate protected JetBrains publisher workflow after its live binary-slot and metadata gates permit the update | Compatible ZIP plus an accepted Marketplace upload receipt; public availability still requires moderation |
+| VS Code / Open VSX | `factoryline-vscode-1.3.2.vsix`; provider availability requires channel read-back | Upload VS Code through the Microsoft Marketplace website; use the protected publisher workflow for Open VSX | Installable VSIX and public marketplace version |
+| JetBrains | `factoryline-intellij-1.3.2.zip`; provider availability requires channel read-back | Use the separate protected JetBrains publisher workflow after its live binary-slot and metadata gates permit the update | Compatible ZIP plus an accepted Marketplace upload receipt; public availability still requires moderation |
 | OpenCode | Native `code-factory-opencode` plugin 0.1.0 | Build a self-contained module and install under `.opencode/plugins/`; publish a registry package only after registry authentication and independent receipt | Project plugin loads and CF/ForgeLine lanes run or report exact limits |
 | Product Hunt | Product page, gallery, and YouTube link | Signed-in maker editor | Public page visibly reflects the new copy/media |
 
@@ -82,7 +82,11 @@ artifact, or workflow dispatch as a completed publication. Each channel is
 reported as published, pending review, blocked, or not configured. Direct
 marketplace uploads require their own provider acceptance and approval evidence.
 
-The 0.49.0 source candidate is separate from the previously published 0.48.2.
+Core 0.49.5 and editor 1.3.2 artifacts must bind to one final source commit.
+Version metadata does not establish provider availability. The latest owner
+provider read-back recorded here, 2026-10-31, verified core 0.49.0, VS Code 1.3.0
+and JetBrains 1.3.1; update each channel only from its own publication receipt.
+Do not describe metadata preparation, an upload or a review queue as publication.
 Release preflight must pass strict architecture health, prospective cadence,
 source review, and protected provider gates before publication. Do not weaken
 or skip release preflight to force a provider upload.
