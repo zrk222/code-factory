@@ -109,6 +109,104 @@ def test_canonical_json_and_dsse_envelope_are_stable(tmp_path):
     assert canonical_json({"b": 2, "a": 1}) == b'{"a":1,"b":2}'
 
 
+def test_base64_decoder_accepts_standard_and_urlsafe_forms():
+    assert enterprise._b64d("//8=", "payload") == b"\xff\xff"
+    assert enterprise._b64d("__8", "payload") == b"\xff\xff"
+
+
+def test_standard_padded_base64_envelope_verifies(tmp_path):
+    path, keys = _seal(tmp_path)
+    envelope = json.loads(path.read_text(encoding="utf-8"))
+
+    payload = base64.urlsafe_b64decode(
+        envelope["payload"] + "=" * (-len(envelope["payload"]) % 4)
+    )
+    signature_value = envelope["signatures"][0]["sig"]
+    signature = base64.urlsafe_b64decode(
+        signature_value + "=" * (-len(signature_value) % 4)
+    )
+    envelope["payload"] = base64.b64encode(payload).decode("ascii")
+    envelope["signatures"][0]["sig"] = base64.b64encode(signature).decode("ascii")
+    assert envelope["signatures"][0]["sig"].endswith("==")
+    path.write_bytes(canonical_json(envelope) + b"\n")
+
+    result = verify_receipt_v2(path, trust_root_path=Path(keys["trust_root"]))
+    assert result["verdict"] == "VERIFIED"
+
+
+def test_base64_decoder_rejects_noncanonical_pad_bits():
+    with pytest.raises(EnterpriseReceiptError, match="E_INVALID_ENVELOPE"):
+        enterprise._b64d("Zh", "payload")
+
+
+@pytest.mark.parametrize("field", ["payload", "signature"])
+def test_verification_rejects_ignored_base64_punctuation(tmp_path, field):
+    path, keys = _seal(tmp_path)
+    envelope = json.loads(path.read_text(encoding="utf-8"))
+    if field == "payload":
+        envelope["payload"] += "!!!!"
+    else:
+        envelope["signatures"][0]["sig"] += "!!!!"
+    path.write_bytes(canonical_json(envelope) + b"\n")
+
+    with pytest.raises(EnterpriseReceiptError, match="E_INVALID_ENVELOPE"):
+        verify_receipt_v2(path, trust_root_path=Path(keys["trust_root"]))
+
+
+def test_verification_rejects_duplicate_envelope_members(tmp_path):
+    path, keys = _seal(tmp_path)
+    encoded = canonical_json(json.loads(path.read_text(encoding="utf-8")))
+    encoded = encoded.replace(
+        b'"schema":"factory.dsse.envelope.v1"',
+        b'"schema":"unsupported","schema":"factory.dsse.envelope.v1"',
+        1,
+    )
+    path.write_bytes(encoded + b"\n")
+
+    with pytest.raises(EnterpriseReceiptError, match="E_INVALID_JSON"):
+        verify_receipt_v2(path, trust_root_path=Path(keys["trust_root"]))
+
+
+def test_envelope_json_recursion_error_is_controlled(tmp_path):
+    path = tmp_path / "deeply-nested.json"
+    path.write_bytes(b"[" * 2000 + b"0" + b"]" * 2000)
+
+    with pytest.raises(EnterpriseReceiptError, match="E_INVALID_JSON"):
+        enterprise._read_json(path)
+
+
+def test_signed_payload_json_recursion_error_is_controlled():
+    payload = b"[" * 2000 + b"0" + b"]" * 2000
+
+    with pytest.raises(EnterpriseReceiptError, match="E_INVALID_PAYLOAD"):
+        enterprise._decode_envelope_payload(payload)
+
+
+def test_verification_rejects_duplicate_members_in_signed_payload(tmp_path):
+    path, keys = _seal(tmp_path)
+    envelope = json.loads(path.read_text(encoding="utf-8"))
+    payload_bytes = canonical_json(_receipt()).replace(
+        b'"schema":"factory.receipt.v2"',
+        b'"schema":"factory.receipt.v1","schema":"factory.receipt.v2"',
+        1,
+    )
+    private_key = enterprise._load_private_key(Path(keys["private_key"]))
+    signature = private_key.sign(
+        enterprise.dsse_pae(envelope["payloadType"], payload_bytes)
+    )
+    envelope["payload"] = (
+        base64.urlsafe_b64encode(payload_bytes).rstrip(b"=").decode("ascii")
+    )
+    envelope["payload_sha256"] = hashlib.sha256(payload_bytes).hexdigest()
+    envelope["signatures"][0]["sig"] = (
+        base64.urlsafe_b64encode(signature).rstrip(b"=").decode("ascii")
+    )
+    path.write_bytes(canonical_json(envelope) + b"\n")
+
+    with pytest.raises(EnterpriseReceiptError, match="E_INVALID_PAYLOAD"):
+        verify_receipt_v2(path, trust_root_path=Path(keys["trust_root"]))
+
+
 def test_valid_receipt_verifies_offline(tmp_path):
     path, keys = _seal(tmp_path)
     result = verify_receipt_v2(path, trust_root_path=Path(keys["trust_root"]))

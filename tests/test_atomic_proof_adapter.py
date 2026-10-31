@@ -9,6 +9,7 @@ import pytest
 
 from factoryline.atomic_proof_adapter import (
     BOUND_MARKER,
+    MAX_BYTES,
     MCP_MARKER,
     AtomicProofAdapterError,
     atomic_envelope_template,
@@ -305,6 +306,9 @@ def test_import_binds_typed_dag_handoffs_checkpoints_and_read_only_projection(
     checked = verify_atomic_receipt(tmp_path, Path(receipt["path"]))
     projection = atomic_proof_projection(tmp_path)
     assert checked["ok"] is True
+    assert checked["receipt"]["stages"] == receipt["stages"]
+    assert checked["receipt"]["handoffs"] == receipt["handoffs"]
+    assert checked["receipt"]["resume"] == receipt["resume"]
     assert projection["marker"] == MCP_MARKER
     assert projection["bound_count"] == 1
     assert projection["latest"]["handoff_count"] == 2
@@ -439,6 +443,66 @@ def test_import_fails_closed_when_atomic_history_exceeds_its_comparison_bound(
     with pytest.raises(AtomicProofAdapterError) as raised:
         _import(tmp_path, envelope)
     assert raised.value.code == "E_ATOMIC_HISTORY_TRUNCATED"
+
+
+def test_import_rejects_oversized_atomic_history_before_json_parse_or_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from factoryline import atomic_proof_adapter
+
+    envelope, _ = _envelope(tmp_path)
+    source = _write(tmp_path / "oversized-history-envelope.json", envelope)
+    history = tmp_path / ".factory" / "atomic" / "oversized.json"
+    history.parent.mkdir(parents=True, exist_ok=True)
+    original = b'{"padding":"' + b"a" * MAX_BYTES + b'"}'
+    history.write_bytes(original)
+
+    original_loads = atomic_proof_adapter.json.loads
+
+    def reject_oversized_json(value: str | bytes, *args: object, **kwargs: object):
+        byte_count = (
+            len(value.encode("utf-8")) if isinstance(value, str) else len(value)
+        )
+        assert byte_count <= MAX_BYTES, "oversized history reached JSON parsing"
+        return original_loads(value, *args, **kwargs)
+
+    monkeypatch.setattr(atomic_proof_adapter.json, "loads", reject_oversized_json)
+    with pytest.raises(AtomicProofAdapterError) as raised:
+        import_atomic_run(tmp_path, source.relative_to(tmp_path))
+
+    assert raised.value.code == "E_ATOMIC_EVIDENCE_UNVERIFIED"
+    assert "exceeds 1 MiB" in str(raised.value)
+    assert history.read_bytes() == original
+    assert list(history.parent.glob("*.json")) == [history]
+
+
+def test_import_keeps_tampered_history_visible_and_blocks_successor_receipt(
+    tmp_path: Path,
+) -> None:
+    first, _ = _envelope(tmp_path, run_id="atomic-run-1")
+    prior = _import(tmp_path, first, filename="first.json")
+    prior_path = tmp_path / str(prior["path"])
+    original = json.loads(prior_path.read_text(encoding="utf-8"))
+    assert len(original["stages"]) == 3
+    assert len(original["handoffs"]) == 2
+    assert all(stage["checkpoint"]["sha256"] for stage in original["stages"])
+
+    original["handoffs"][0]["artifact_sha256"] = _digest("tampered-history")
+    tampered_bytes = json.dumps(original, ensure_ascii=False, indent=2).encode("utf-8")
+    prior_path.write_bytes(tampered_bytes)
+    checked = verify_atomic_receipt(tmp_path, Path(str(prior["path"])))
+    assert checked["ok"] is False
+    assert checked["reason"] == "E_ATOMIC_EVIDENCE_UNVERIFIED"
+
+    successor, _ = _envelope(tmp_path, run_id="atomic-run-2")
+    with pytest.raises(AtomicProofAdapterError) as raised:
+        _import(tmp_path, successor, filename="successor.json")
+
+    assert raised.value.code == "E_ATOMIC_EVIDENCE_UNVERIFIED"
+    assert prior_path.read_bytes() == tampered_bytes
+    assert sorted(path.name for path in prior_path.parent.glob("*.json")) == [
+        prior_path.name
+    ]
 
 
 def test_adapter_has_no_runtime_or_network_dependency(tmp_path: Path) -> None:

@@ -630,13 +630,17 @@ def _receipt_valid(value: object) -> bool:
 
 def _read_receipt(root: Path, path: Path) -> tuple[dict[str, Any], Path]:
     target = _inside(root, path.as_posix(), "receipt", exists=True)
-    if target.stat().st_size > MAX_BYTES:
-        raise AtomicProofAdapterError(
-            "E_ATOMIC_EVIDENCE_UNVERIFIED", "receipt exceeds 1 MiB"
-        )
     try:
-        value = json.loads(target.read_text(encoding="utf-8-sig"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        with target.open("rb") as handle:
+            encoded = handle.read(MAX_BYTES + 1)
+        if len(encoded) > MAX_BYTES:
+            raise AtomicProofAdapterError(
+                "E_ATOMIC_EVIDENCE_UNVERIFIED", "receipt exceeds 1 MiB"
+            )
+        value = json.loads(encoded.decode("utf-8-sig"))
+    except AtomicProofAdapterError:
+        raise
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, RecursionError) as exc:
         raise AtomicProofAdapterError(
             "E_ATOMIC_EVIDENCE_UNVERIFIED", "receipt must be valid UTF-8 JSON"
         ) from exc
@@ -767,17 +771,23 @@ def _resume(
     }
 
 
-def _historical_receipt(path: Path) -> object | None:
-    try:
-        return json.loads(path.read_text(encoding="utf-8-sig"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-        return None
+def _historical_receipt(root: Path, path: Path) -> dict[str, Any]:
+    """Read one bounded, self-hash-verified receipt without rewriting its evidence."""
+    value, _ = _read_receipt(root, path.relative_to(root))
+    return value
 
 
 def _compare_historical_handoffs(
-    value: object, workflow_id: str, expected: dict[str, dict[str, Any]]
+    value: dict[str, Any], workflow_id: str, expected: dict[str, dict[str, Any]]
 ) -> None:
-    if not _receipt_valid(value) or value.get("workflow", {}).get("id") != workflow_id:
+    workflow = value.get("workflow")
+    handoffs = value.get("handoffs")
+    if not isinstance(workflow, dict) or not isinstance(handoffs, list):
+        raise AtomicProofAdapterError(
+            "E_ATOMIC_EVIDENCE_UNVERIFIED",
+            "historical receipt workflow and handoffs must be present",
+        )
+    if workflow.get("id") != workflow_id:
         return
     fields = (
         "from_stage",
@@ -789,8 +799,15 @@ def _compare_historical_handoffs(
         "artifact_sha256",
         "tool_manifest_sha256",
     )
-    for historical in value.get("handoffs", []):
-        if not isinstance(historical, dict) or historical.get("id") not in expected:
+    for historical in handoffs:
+        if not isinstance(historical, dict) or not isinstance(
+            historical.get("id"), str
+        ):
+            raise AtomicProofAdapterError(
+                "E_ATOMIC_EVIDENCE_UNVERIFIED",
+                "historical handoff entries must have safe identifiers",
+            )
+        if historical["id"] not in expected:
             continue
         current = expected[historical["id"]]
         if any(historical.get(field) != current.get(field) for field in fields):
@@ -814,9 +831,8 @@ def _handoff_history(
             "Atomic receipt history exceeds the bounded comparison limit; archive prior receipts before importing",
         )
     for path in candidates:
-        value = _historical_receipt(path)
-        if value is not None:
-            _compare_historical_handoffs(value, workflow_id, expected)
+        value = _historical_receipt(root, path)
+        _compare_historical_handoffs(value, workflow_id, expected)
 
 
 def _atomic_json(path: Path, payload: dict[str, Any]) -> None:
