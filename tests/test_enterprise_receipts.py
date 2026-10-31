@@ -562,3 +562,206 @@ def test_verify_signed_document_binds_payload_and_rejects_tampering(tmp_path):
             schema=RECEIPT_V2_SCHEMA,
             trust_root_path=Path(keys["trust_root"]),
         )
+
+
+def test_cli_verify_summary_is_compact_and_default_remains_full(tmp_path):
+    import subprocess
+    import sys
+
+    path, keys = _seal(tmp_path)
+    command = [
+        sys.executable,
+        "-m",
+        "factoryline.cli",
+        "enterprise",
+        "verify",
+        str(path),
+        "--trust-root",
+        keys["trust_root"],
+    ]
+    full = subprocess.run(command, capture_output=True, text=True, check=False)
+    summary = subprocess.run(
+        [*command, "--summary"], capture_output=True, text=True, check=False
+    )
+    assert full.returncode == summary.returncode == 0
+    original = json.loads(full.stdout)
+    compact = json.loads(summary.stdout)
+    assert original == verify_receipt_v2(path, Path(keys["trust_root"]))
+    assert compact == {
+        "schema": original["schema"],
+        "verdict": "VERIFIED",
+        "verification": original["verification"],
+        "path": str(path.resolve()),
+    }
+    assert len(summary.stdout.splitlines()) == 1
+    assert len(summary.stdout) < len(full.stdout)
+    assert "tenant_id" not in summary.stdout
+    assert "receipt_sha256" not in summary.stdout
+    assert not summary.stderr
+
+
+@pytest.mark.parametrize("summary", [False, True])
+@pytest.mark.parametrize(
+    "failure,code",
+    [
+        ("signature", "E_SIGNATURE_INVALID"),
+        ("trust", "E_UNKNOWN_KEY"),
+        ("policy", "E_POLICY_REQUIRED"),
+        ("required-revocations", "E_REVOCATION_REQUIRED"),
+        ("revoked", "E_SIGNER_REVOKED"),
+        ("expired-revocations", "E_REVOCATION_FRESHNESS"),
+    ],
+)
+def test_cli_summary_preserves_verification_failures(
+    tmp_path, capsys, summary, failure, code
+):
+    from factoryline.cli import main
+
+    payload = _receipt(policy_sha256="0" * 64) if failure == "policy" else _receipt()
+    path, keys = _seal(tmp_path, payload)
+    command = ["enterprise", "verify", str(path), "--trust-root", keys["trust_root"]]
+    if failure == "signature":
+        envelope = json.loads(path.read_text())
+        mutated = {**payload, "ok": False}
+        raw = canonical_json(mutated)
+        envelope["payload"] = base64.urlsafe_b64encode(raw).decode().rstrip("=")
+        envelope["payload_sha256"] = hashlib.sha256(raw).hexdigest()
+        path.write_text(json.dumps(envelope), encoding="utf-8")
+    elif failure == "trust":
+        root = json.loads(Path(keys["trust_root"]).read_text())
+        root["keys"][0]["keyid"] = "untrusted"
+        Path(keys["trust_root"]).write_text(json.dumps(root), encoding="utf-8")
+    elif failure == "required-revocations":
+        command.append("--require-revocations")
+    elif failure in {"revoked", "expired-revocations"}:
+        now = datetime.now(timezone.utc)
+        entries = (
+            []
+            if failure == "expired-revocations"
+            else [{"keyid": keys["keyid"], "revoked_at": payload["ts"]}]
+        )
+        generated = now - timedelta(days=2) if not entries else now
+        revocations = _revocations_at(tmp_path, keys, generated, entries)
+        command.extend(["--revocations", str(revocations), "--require-revocations"])
+    if summary:
+        command.append("--summary")
+    before = path.read_bytes()
+    assert main(command) == 1
+    captured = capsys.readouterr()
+    result = json.loads(captured.out)
+    assert result["verdict"] == "ERROR"
+    assert result["error"]["code"] == code
+    assert result["error"]["message"]
+    assert path.read_bytes() == before
+    assert not captured.err
+    if summary:
+        assert result["path"] == str(path.resolve())
+        assert len(captured.out.splitlines()) == 1
+    else:
+        assert set(result) == {"schema", "verdict", "error"}
+
+
+def test_cli_summary_does_not_upgrade_legacy_evidence(tmp_path, capsys):
+    from factoryline.cli import main
+
+    path = tmp_path / "legacy.json"
+    path.write_text('{"schema":"factory.receipt.v1"}', encoding="utf-8")
+    assert (
+        main(
+            [
+                "enterprise",
+                "verify",
+                str(path),
+                "--trust-root",
+                "unused.json",
+                "--summary",
+            ]
+        )
+        == 0
+    )
+    result = json.loads(capsys.readouterr().out)
+    assert result == {
+        "schema": "factory.enterprise.result.v1",
+        "verdict": "LEGACY_UNVERIFIED",
+        "path": str(path.resolve()),
+    }
+
+
+@pytest.mark.parametrize("command", ["receipt-seal", "policy-sign", "revocations-sign"])
+@pytest.mark.parametrize(
+    "bad_input", ["malformed", "duplicate", "nested-duplicate", "deep"]
+)
+def test_cli_rejects_ambiguous_or_unparseable_signing_input(
+    tmp_path, capsys, command, bad_input
+):
+    from factoryline.cli import main
+
+    raw = {
+        "malformed": "{",
+        "duplicate": '{"ok":false,' + json.dumps(_receipt())[1:],
+        "nested-duplicate": json.dumps(_receipt()).replace(
+            '"paths": ["src/checkout.py"]', '"scope":"a","scope":"b"'
+        ),
+        "deep": "[" * 2000 + "0" + "]" * 2000,
+    }[bad_input]
+    source = tmp_path / "input.json"
+    source.write_text(raw, encoding="utf-8")
+    out = tmp_path / "must-not-be-written.dsse.json"
+    assert (
+        main(
+            [
+                "enterprise",
+                command,
+                str(source),
+                "--private-key",
+                "unused.pem",
+                "--keyid",
+                "test",
+                "--identity",
+                IDENTITY,
+                "--issuer",
+                ISSUER,
+                "--out",
+                str(out),
+            ]
+        )
+        == 1
+    )
+    captured = capsys.readouterr()
+    result = json.loads(captured.out)
+    assert result["error"]["code"] == "E_INVALID_JSON"
+    assert result["error"]["message"]
+    assert result["verdict"] == "ERROR"
+    assert not out.exists()
+    assert not captured.err
+
+
+def test_cli_revocations_sign_keeps_json_array_input(tmp_path, capsys):
+    from factoryline.cli import main
+
+    keys = _keys(tmp_path)
+    source = tmp_path / "entries.json"
+    source.write_text("[]", encoding="utf-8")
+    out = tmp_path / "revocations.dsse.json"
+    assert (
+        main(
+            [
+                "enterprise",
+                "revocations-sign",
+                str(source),
+                "--private-key",
+                keys["private_key"],
+                "--keyid",
+                keys["keyid"],
+                "--identity",
+                keys["identity"],
+                "--issuer",
+                keys["issuer"],
+                "--out",
+                str(out),
+            ]
+        )
+        == 0
+    )
+    assert json.loads(capsys.readouterr().out)["verdict"] == "SIGNED"
+    assert json.loads(out.read_text())["payloadType"] == REVOCATIONS_PAYLOAD_TYPE
