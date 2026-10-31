@@ -2273,6 +2273,12 @@ def operative_signing_default_evidence(finding, context):
                 ):
                     return None
             settings = index.snapshots[path]
+            read_names = {
+                node.id
+                for node in ast.walk(settings)
+                if isinstance(node, ast.Name)
+                if isinstance(node.ctx, ast.Load)
+            }
             required = {
                 "INSTALLED_APPS": {"django.contrib.auth", "django.contrib.sessions"},
                 "MIDDLEWARE"
@@ -2291,13 +2297,11 @@ def operative_signing_default_evidence(finding, context):
                         pass
                     case _:
                         return None
-                if not authorities.issubset(
-                    {item.value for item in values if isinstance(item.value, str)}
-                ) or any(
-                    isinstance(node, ast.Name)
-                    and node.id == name
-                    and isinstance(node.ctx, ast.Load)
-                    for node in ast.walk(settings)
+                if (
+                    not authorities.issubset(
+                        {item.value for item in values if isinstance(item.value, str)}
+                    )
+                    or name in read_names
                 ):
                     return None
                 consumers.append(
