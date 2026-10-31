@@ -755,66 +755,43 @@ def _pickle_byte_origins_for_source(path, captured):
         return {}
 
 
-def _finding_signing_evidence(
+def _finding_credential_evidence(
     finding, native_rows, bound, captured, bindings, coverage, partition, cache
 ):
+    facts = finding.get("facts")
+    named = isinstance(facts, dict) and isinstance(facts.get("name"), str)
+    critical = finding.get("severity") == "CRITICAL"
     if not (
         bound
         and finding.get("code") == "SECURITY_HARDCODED_SECRET"
-        and isinstance(finding.get("facts"), dict)
-        and finding["facts"].get("name") == "SECRET_KEY"
+        and (named or critical)
         and (coverage is True or coverage == "COMPLETE")
         and partition == "VALIDATED"
         and _matches_regenerated_finding(finding, native_rows)
     ):
-        return None
+        return None, None
     from . import semantic_credential_sensor as sensor
 
     if "inventory" not in cache:
         cache["inventory"] = sensor.signing_configuration_inventory(captured, bindings)
-    return sensor.signing_configuration_evidence(finding, cache["inventory"])
+    inventory = cache["inventory"]
+    signing = (
+        sensor.signing_configuration_evidence(finding, inventory)
+        if named and facts["name"] == "SECRET_KEY"
+        else None
+    )
+    credential = (
+        sensor.private_key_authentication_evidence(finding, inventory)
+        if critical
+        else None
+    )
+    if credential is None and named:
+        from .credential_endpoint_admission import operative_signing_default_evidence
 
-
-def _finding_private_key_authentication_evidence(
-    finding, native_rows, bound, captured, bindings, coverage, partition, cache
-):
-    if not (
-        bound
-        and finding.get("code") == "SECURITY_HARDCODED_SECRET"
-        and finding.get("severity") == "CRITICAL"
-        and (coverage is True or coverage == "COMPLETE")
-        and partition == "VALIDATED"
-        and _matches_regenerated_finding(finding, native_rows)
-    ):
-        return None
-    from . import semantic_credential_sensor as sensor
-
-    if "inventory" not in cache:
-        cache["inventory"] = sensor.signing_configuration_inventory(captured, bindings)
-    return sensor.private_key_authentication_evidence(finding, cache["inventory"])
-
-
-def _finding_flask_session_authority_evidence(
-    finding, native_rows, bound, captured, bindings, coverage, partition, cache
-):
-    if not (
-        bound
-        and finding.get("code") == "SECURITY_HARDCODED_SECRET"
-        and isinstance(finding.get("facts"), dict)
-        and isinstance(finding["facts"].get("name"), str)
-        and (coverage is True or coverage == "COMPLETE")
-        and partition == "VALIDATED"
-        and _matches_regenerated_finding(finding, native_rows)
-    ):
-        return None
-    from . import semantic_credential_sensor as sensor
-    from .credential_endpoint_admission import operative_signing_default_evidence
-
-    if "inventory" not in cache:
-        cache["inventory"] = sensor.signing_configuration_inventory(captured, bindings)
-    return sensor.flask_credential_authority_evidence(
-        finding, cache["inventory"]
-    ) or operative_signing_default_evidence(finding, cache["inventory"])
+        credential = sensor.flask_credential_authority_evidence(
+            finding, inventory
+        ) or operative_signing_default_evidence(finding, inventory)
+    return signing, credential
 
 
 def _decide_finding_tier(
@@ -4858,7 +4835,7 @@ def primitive_binding_helpers():
         _raw_diagnostic_summary,
         _finding_source_binding,
         _finding_tier_ledger_row,
-        _finding_flask_session_authority_evidence,
+        _finding_credential_evidence,
         _decide_finding_tier,
         _pickle_role_partition,
         _pickle_source_role_decision,
@@ -5057,7 +5034,7 @@ def _finding_tier_ledger_row(
     native_rows = _finding_native_rows(
         finding, captured, bound_source, regenerated, source_bytes, bindings
     )
-    signing_evidence = _finding_signing_evidence(
+    signing_evidence, credential_evidence = _finding_credential_evidence(
         finding,
         native_rows,
         bound_source,
@@ -5067,27 +5044,6 @@ def _finding_tier_ledger_row(
         partition_state,
         signing_cache,
     )
-    credential_evidence = _finding_private_key_authentication_evidence(
-        finding,
-        native_rows,
-        bound_source,
-        source_bytes,
-        bindings,
-        coverage_state,
-        partition_state,
-        signing_cache,
-    )
-    if credential_evidence is None:
-        credential_evidence = _finding_flask_session_authority_evidence(
-            finding,
-            native_rows,
-            bound_source,
-            source_bytes,
-            bindings,
-            coverage_state,
-            partition_state,
-            signing_cache,
-        )
     tier, evidence, evidence_details = _decide_finding_tier(
         finding,
         bound_source,

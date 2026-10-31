@@ -2237,12 +2237,12 @@ def test_tier314_flask_authority_implementation_invalidates_native_epoch(
     from factoryline import primitive_observation_binding as tiers
 
     before = audit._oracle_context_cache_key(tmp_path, [], {})
-    original = tiers._finding_flask_session_authority_evidence
+    original = tiers._finding_credential_evidence
 
     def replacement(*args, **kwargs):
         return original(*args, **kwargs)
 
-    monkeypatch.setattr(tiers, "_finding_flask_session_authority_evidence", replacement)
+    monkeypatch.setattr(tiers, "_finding_credential_evidence", replacement)
     assert audit._oracle_context_cache_key(tmp_path, [], {}) != before
 
 
