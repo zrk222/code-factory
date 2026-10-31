@@ -2227,30 +2227,139 @@ def _reviewed_publication_matches(review, origin, payload):
 
 def operative_signing_default_evidence(finding, context):
     """Join captured defaults to registered credential-verification boundaries."""
-    if context is None:
+    if context is None or not context["index"].validate(Path(finding.get("path", ""))):
         return None
+    from .semantic_credential_sensor import (
+        signing_configuration_evidence,
+        _signing_resolve_module,
+    )
+    from .mock_fixture_provenance import _django_assignment
+    from .review_audits import _resolved_ast_name
+
     index, path = context["index"], Path(finding.get("path", ""))
-    if not index.validate(path):
-        return None
     declarations = [
         node
         for node in ast.walk(index.snapshots[path])
         if isinstance(node, (ast.Assign, ast.AnnAssign))
-        and isinstance(node.value, ast.Constant)
-        and isinstance(node.value.value, str)
-        and (node.lineno, node.col_offset)
+        if isinstance(node.value, ast.Constant)
+        if isinstance(node.value.value, str)
+        if (node.lineno, node.col_offset)
         == (finding.get("line"), finding.get("column", 0))
     ]
-    if len(declarations) != 1:
-        return None
-    for handler in _CredentialHandlerIndex(context).boundaries():
-        if handler["application"]["framework"] != "fastapi":
-            continue
-        origin = _OperativeCredentialOrigin(context, finding, handler, declarations[0])
-        witness = origin.handler_authority()
-        if witness is not None:
-            return witness
-    return None
+    match declarations:
+        case [declaration]:
+            pass
+        case _:
+            return None
+    observation = signing_configuration_evidence(finding, context)
+    match observation:
+        case {"consumer_role": "django.SECRET_KEY"}:
+            # A captured distribution can select another runtime or use a demo app;
+            # its deployment selection remains unresolved rather than being called safe.
+            distributions = [
+                call
+                for source_path, tree in index.snapshots.items()
+                for call in ast.walk(tree)
+                if isinstance(call, ast.Call)
+                if _resolved_ast_name(call.func, context["aliases"][source_path])
+                in {"setuptools.setup", "distutils.core.setup"}
+            ]
+            match (bool(distributions), tuple(context.get("captured", {}))):
+                case (True, _):
+                    return None
+                case (_, names) if any(
+                    name.endswith(("pyproject.toml", "setup.cfg")) for name in names
+                ):
+                    return None
+            material = declaration.value.value.strip()
+            if re.fullmatch(
+                r"(?i)(?:your|replace|change|example|placeholder)(?:[ _-]+[a-z]+)*",
+                material,
+            ):
+                return None
+            settings = index.snapshots[path]
+            required = {
+                "INSTALLED_APPS": {"django.contrib.auth", "django.contrib.sessions"},
+                "MIDDLEWARE": {
+                    "django.contrib.sessions.middleware.SessionMiddleware",
+                    "django.contrib.auth.middleware.AuthenticationMiddleware",
+                },
+            }
+            consumers = []
+            for name, authorities in required.items():
+                match _django_assignment(settings, name):
+                    case [
+                        (statement, ast.List(elts=values) | ast.Tuple(elts=values))
+                    ] if all(isinstance(item, ast.Constant) for item in values):
+                        pass
+                    case _:
+                        return None
+                if not authorities.issubset(
+                    {item.value for item in values if isinstance(item.value, str)}
+                ) or any(
+                    isinstance(node, ast.Name)
+                    and node.id == name
+                    and isinstance(node.ctx, ast.Load)
+                    for node in ast.walk(settings)
+                ):
+                    return None
+                consumers.append(
+                    {
+                        "path": path.as_posix(),
+                        "sha256": index.inventory[path],
+                        "span": _span(statement),
+                    }
+                )
+            foreign_access = (
+                node
+                for source_path, tree in index.snapshots.items()
+                for node in ast.walk(tree)
+                if isinstance(node, (ast.Name, ast.Attribute))
+                for module, _, member in (
+                    _resolved_ast_name(
+                        node, context["aliases"][source_path]
+                    ).rpartition("."),
+                )
+                if member in required
+                if _signing_resolve_module(
+                    context,
+                    ast.Constant(value=module),
+                )
+                == path
+            )
+            return (
+                None
+                if next(foreign_access, None) is not None
+                else {
+                    "schema": "factory.security.framework-session-authority.v1",
+                    "proof_scope": "source_bound_standalone_framework_session_default",
+                    "framework": "django",
+                    "credential_key": "SECRET_KEY",
+                    "source_role": "published_literal_default",
+                    "consumer_role": "configured_authentication_session_signing",
+                    "transfers": [
+                        observation["declaration"],
+                        *consumers,
+                        *observation["transfers"],
+                    ],
+                    "runtime_execution": "not_performed",
+                    "deployment": "UNASSESSED",
+                    "distribution_runtime_selection": "no_captured_distribution_declaration",
+                }
+            )
+    return next(
+        (
+            witness
+            for handler in _CredentialHandlerIndex(context).boundaries()
+            if handler["application"]["framework"] == "fastapi"
+            for origin in (
+                _OperativeCredentialOrigin(context, finding, handler, declaration),
+            )
+            for witness in (origin.handler_authority(),)
+            if witness is not None
+        ),
+        None,
+    )
 
 
 class _OperativeCredentialOrigin:

@@ -400,8 +400,15 @@ def test_vscode_supply_chain_is_patched_and_audited_before_tests():
     assert "--omit" not in auditor
     assert package["overrides"] == {
         "brace-expansion": "5.0.12",
+        "minimatch": "11.0.1",
         "@azure/msal-node": "7.1.1",
     }
+    assert lock["packages"]["node_modules/minimatch"]["version"] == "11.0.1"
+    assert all(
+        package["version"] == "11.0.1"
+        for path, package in lock["packages"].items()
+        if path.endswith("node_modules/minimatch")
+    )
     assert lock["packages"]["node_modules/@azure/msal-node"]["version"] == "7.1.1"
     assert lock["packages"]["node_modules/brace-expansion"]["version"] == "5.0.12"
     assert lock["packages"]["node_modules/@vscode/vsce"]["version"] == "4.0.0"

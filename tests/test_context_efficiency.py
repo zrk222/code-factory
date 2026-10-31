@@ -497,12 +497,22 @@ def test_cache_hit_counter_is_separate_and_bounded(tmp_path):
     cache_key = packet["cache"]["key"]
     _record_cache_hit(tmp_path, cache_key)
     _record_cache_hit(tmp_path, cache_key)
-    assert _cache_hit_count(tmp_path, cache_key) == 2
     assert context_efficiency_status(tmp_path)["cache_hits"] == 2
-    for index in range(MAX_USAGE_ROWS + 1):
-        _record_cache_hit(tmp_path, f"{index:064x}")
     import sqlite3
 
+    with sqlite3.connect(tmp_path / ".factory/context-efficiency/usage.sqlite3") as db:
+        db.executemany(
+            "INSERT INTO cache_usage(cache_key, hits) VALUES (?, 1)",
+            ((f"capacity-seed-{index}",) for index in range(MAX_USAGE_ROWS - 2)),
+        )
+        assert (
+            db.execute("SELECT COUNT(*) FROM cache_usage").fetchone()[0]
+            == MAX_USAGE_ROWS - 1
+        )
+    assert _record_cache_hit(tmp_path, "capacity-last") is True
+    assert _record_cache_hit(tmp_path, "capacity-overflow") is False
+    assert _record_cache_hit(tmp_path, cache_key) is True
+    assert _cache_hit_count(tmp_path, cache_key) == 3
     with sqlite3.connect(tmp_path / ".factory/context-efficiency/usage.sqlite3") as db:
         count = db.execute("SELECT COUNT(*) FROM cache_usage").fetchone()[0]
     assert count == MAX_USAGE_ROWS

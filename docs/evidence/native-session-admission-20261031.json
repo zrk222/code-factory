@@ -1,0 +1,541 @@
+{
+  "schema": "factory.precision.exposed-admission-result.v1",
+  "study": "Study430",
+  "scope": "EXPOSED_DEVELOPMENT_REPLAY_NOT_FRESH_HELD_OUT",
+  "baseline_origin": "Retained original Study430 report tiers; not a freshly rerun baseline commit.",
+  "candidate_source_commit": "25071a4a",
+  "candidate_test_commit": "1133d8eb",
+  "measurement_script_sha256": "49f4629ecaed8816e9ba0f2b62f9d8422c267e71f7927c2d6dbb9cc258bbd8ba",
+  "measurement_sha256": "e8bb1be52a108a4d8a2af0f7cdf9ea3e7fa61275a1c63545835d7420d47a45a1",
+  "label_source_sha256": "f56893a00597adac0432e843c7bd0d4bd79fc70f925dc6e507d319cba25ea564",
+  "candidate_manifest_sha256": "f7756e648d34b7943a25b5fc2a90fc92c5a5fe131555d8e0ffea6d2e3e2fb8dd",
+  "changed_detection_sources": [
+    {
+      "path": "factoryline/credential_endpoint_admission.py",
+      "sha256": "fd662d6958d25cbd72f81973a4770c3067994a499e17d747a6deeecf667f9b7f"
+    },
+    {
+      "path": "factoryline/primitive_observation_binding.py",
+      "sha256": "dc09196d0d57cd14321ea64ca461564054db5eaa3222586cfdeaacff8be719e9"
+    },
+    {
+      "path": "factoryline/semantic_credential_sensor.py",
+      "sha256": "26911c71b6d89f55b836a77ede55e9c7b1aaeae3008970fb4c71576f5a3e6321"
+    }
+  ],
+  "labelled_panel": {
+    "alerts": 90,
+    "repositories": 67,
+    "TP": 15,
+    "FP": 53,
+    "UNCLEAR": 22,
+    "decided": 68,
+    "labels_changed": false,
+    "raw_actionable_precision_changed": false
+  },
+  "admission": {
+    "before": {
+      "TP": 0,
+      "FP": 0,
+      "UNCLEAR": 0
+    },
+    "after": {
+      "TP": 5,
+      "FP": 0,
+      "UNCLEAR": 1
+    },
+    "known_TP_retention": {
+      "retained": 5,
+      "total": 15
+    },
+    "raw_diagnostics_retained": true
+  },
+  "elapsed_seconds": 82.28242760000285,
+  "admitted_cases": [
+    {
+      "id": "N430-005",
+      "identity": {
+        "repository": "TheAbhijeet/Django_blog",
+        "revision": "42d2566313121814240b36301d888a9a0239bcbb",
+        "code": "SECURITY_HARDCODED_SECRET",
+        "path": "mysite/settings.py",
+        "line": 24,
+        "column": 0,
+        "source_sha256": "d80403a7b15fb7dbc620d87d44d38688694d120e072ccb640c26530136c10b39"
+      },
+      "actionable_label": "TP",
+      "baseline_tier": "NEEDS_CONTEXT",
+      "candidate_tier": "SUPPORTED_DEFECT",
+      "admission_reason": "source_bound_framework_session_default",
+      "source_bound_proof": {
+        "schema": "factory.security.framework-session-authority.v1",
+        "proof_scope": "source_bound_standalone_framework_session_default",
+        "framework": "django",
+        "credential_key": "SECRET_KEY",
+        "source_role": "published_literal_default",
+        "consumer_role": "configured_authentication_session_signing",
+        "transfers": [
+          {
+            "path": "mysite/settings.py",
+            "sha256": "d80403a7b15fb7dbc620d87d44d38688694d120e072ccb640c26530136c10b39",
+            "span": [
+              24,
+              0,
+              24,
+              65
+            ]
+          },
+          {
+            "path": "mysite/settings.py",
+            "sha256": "d80403a7b15fb7dbc620d87d44d38688694d120e072ccb640c26530136c10b39",
+            "span": [
+              34,
+              0,
+              46,
+              1
+            ]
+          },
+          {
+            "path": "mysite/settings.py",
+            "sha256": "d80403a7b15fb7dbc620d87d44d38688694d120e072ccb640c26530136c10b39",
+            "span": [
+              51,
+              0,
+              60,
+              1
+            ]
+          },
+          {
+            "path": "mysite/wsgi.py",
+            "sha256": "f6016c7c92dc88712abb76ab782b58da4d1a7eef68fce47c07f5bfbbd3d0d214",
+            "span": [
+              14,
+              0,
+              14,
+              66
+            ]
+          },
+          {
+            "path": "mysite/wsgi.py",
+            "sha256": "f6016c7c92dc88712abb76ab782b58da4d1a7eef68fce47c07f5bfbbd3d0d214",
+            "span": [
+              16,
+              14,
+              16,
+              36
+            ]
+          }
+        ],
+        "runtime_execution": "not_performed",
+        "deployment": "UNASSESSED",
+        "distribution_runtime_selection": "no_captured_distribution_declaration"
+      }
+    },
+    {
+      "id": "N430-020",
+      "identity": {
+        "repository": "GottfriedCP/Blockchain-based-E-Voting-Simulation",
+        "revision": "148935558f5888779d3d4846779f3547c781fae0",
+        "code": "SECURITY_HARDCODED_SECRET",
+        "path": "bbevoting_project/settings.py",
+        "line": 23,
+        "column": 0,
+        "source_sha256": "ddc79e366a77448ffec0cbc481614a6f8f7e687b7264b98b0ba005a9bf2c016d"
+      },
+      "actionable_label": "UNCLEAR",
+      "baseline_tier": "NEEDS_CONTEXT",
+      "candidate_tier": "SUPPORTED_DEFECT",
+      "admission_reason": "source_bound_framework_session_default",
+      "source_bound_proof": {
+        "schema": "factory.security.framework-session-authority.v1",
+        "proof_scope": "source_bound_standalone_framework_session_default",
+        "framework": "django",
+        "credential_key": "SECRET_KEY",
+        "source_role": "published_literal_default",
+        "consumer_role": "configured_authentication_session_signing",
+        "transfers": [
+          {
+            "path": "bbevoting_project/settings.py",
+            "sha256": "ddc79e366a77448ffec0cbc481614a6f8f7e687b7264b98b0ba005a9bf2c016d",
+            "span": [
+              23,
+              0,
+              23,
+              65
+            ]
+          },
+          {
+            "path": "bbevoting_project/settings.py",
+            "sha256": "ddc79e366a77448ffec0cbc481614a6f8f7e687b7264b98b0ba005a9bf2c016d",
+            "span": [
+              33,
+              0,
+              43,
+              1
+            ]
+          },
+          {
+            "path": "bbevoting_project/settings.py",
+            "sha256": "ddc79e366a77448ffec0cbc481614a6f8f7e687b7264b98b0ba005a9bf2c016d",
+            "span": [
+              45,
+              0,
+              53,
+              1
+            ]
+          },
+          {
+            "path": "bbevoting_project/wsgi.py",
+            "sha256": "291fce08fb09a692c5c3eedc05c35463dd15450913fbd1397acad7f425ba04a7",
+            "span": [
+              14,
+              0,
+              14,
+              77
+            ]
+          },
+          {
+            "path": "bbevoting_project/wsgi.py",
+            "sha256": "291fce08fb09a692c5c3eedc05c35463dd15450913fbd1397acad7f425ba04a7",
+            "span": [
+              16,
+              14,
+              16,
+              36
+            ]
+          }
+        ],
+        "runtime_execution": "not_performed",
+        "deployment": "UNASSESSED",
+        "distribution_runtime_selection": "no_captured_distribution_declaration"
+      }
+    },
+    {
+      "id": "N430-027",
+      "identity": {
+        "repository": "CAVIND46016/Simple-Calculator-Web-app",
+        "revision": "1646d1eeb0ff58a51b6fb232a602080e5abaee03",
+        "code": "SECURITY_HARDCODED_SECRET",
+        "path": "Django Calculator App/Calculator/settings.py",
+        "line": 24,
+        "column": 0,
+        "source_sha256": "f6d4e92776c1f8333d7b0ac6fa5dd61152f8f3f4786266253de07e8631a98c82"
+      },
+      "actionable_label": "TP",
+      "baseline_tier": "NEEDS_CONTEXT",
+      "candidate_tier": "SUPPORTED_DEFECT",
+      "admission_reason": "source_bound_framework_session_default",
+      "source_bound_proof": {
+        "schema": "factory.security.framework-session-authority.v1",
+        "proof_scope": "source_bound_standalone_framework_session_default",
+        "framework": "django",
+        "credential_key": "SECRET_KEY",
+        "source_role": "published_literal_default",
+        "consumer_role": "configured_authentication_session_signing",
+        "transfers": [
+          {
+            "path": "Django Calculator App/Calculator/settings.py",
+            "sha256": "f6d4e92776c1f8333d7b0ac6fa5dd61152f8f3f4786266253de07e8631a98c82",
+            "span": [
+              24,
+              0,
+              24,
+              65
+            ]
+          },
+          {
+            "path": "Django Calculator App/Calculator/settings.py",
+            "sha256": "f6d4e92776c1f8333d7b0ac6fa5dd61152f8f3f4786266253de07e8631a98c82",
+            "span": [
+              34,
+              0,
+              42,
+              1
+            ]
+          },
+          {
+            "path": "Django Calculator App/Calculator/settings.py",
+            "sha256": "f6d4e92776c1f8333d7b0ac6fa5dd61152f8f3f4786266253de07e8631a98c82",
+            "span": [
+              44,
+              0,
+              52,
+              1
+            ]
+          },
+          {
+            "path": "Django Calculator App/Calculator/wsgi.py",
+            "sha256": "63c54909e681ab90bcf1317707e1538610af8a231faedd65847fe6f82164c99f",
+            "span": [
+              14,
+              0,
+              14,
+              70
+            ]
+          },
+          {
+            "path": "Django Calculator App/Calculator/wsgi.py",
+            "sha256": "63c54909e681ab90bcf1317707e1538610af8a231faedd65847fe6f82164c99f",
+            "span": [
+              16,
+              14,
+              16,
+              36
+            ]
+          }
+        ],
+        "runtime_execution": "not_performed",
+        "deployment": "UNASSESSED",
+        "distribution_runtime_selection": "no_captured_distribution_declaration"
+      }
+    },
+    {
+      "id": "N430-058",
+      "identity": {
+        "repository": "ZeroCoolHacker/easy-school",
+        "revision": "69ad989f7930d77d54145aae422cc2a7cb4c4dd2",
+        "code": "SECURITY_HARDCODED_SECRET",
+        "path": "easyschool/settings.py",
+        "line": 22,
+        "column": 0,
+        "source_sha256": "e3c3047a1cb889ae7373254c83684a6f7d5cf95171477bb70486990cbbbda028"
+      },
+      "actionable_label": "TP",
+      "baseline_tier": "NEEDS_CONTEXT",
+      "candidate_tier": "SUPPORTED_DEFECT",
+      "admission_reason": "source_bound_framework_session_default",
+      "source_bound_proof": {
+        "schema": "factory.security.framework-session-authority.v1",
+        "proof_scope": "source_bound_standalone_framework_session_default",
+        "framework": "django",
+        "credential_key": "SECRET_KEY",
+        "source_role": "published_literal_default",
+        "consumer_role": "configured_authentication_session_signing",
+        "transfers": [
+          {
+            "path": "easyschool/settings.py",
+            "sha256": "e3c3047a1cb889ae7373254c83684a6f7d5cf95171477bb70486990cbbbda028",
+            "span": [
+              22,
+              0,
+              22,
+              65
+            ]
+          },
+          {
+            "path": "easyschool/settings.py",
+            "sha256": "e3c3047a1cb889ae7373254c83684a6f7d5cf95171477bb70486990cbbbda028",
+            "span": [
+              31,
+              0,
+              48,
+              1
+            ]
+          },
+          {
+            "path": "easyschool/settings.py",
+            "sha256": "e3c3047a1cb889ae7373254c83684a6f7d5cf95171477bb70486990cbbbda028",
+            "span": [
+              50,
+              0,
+              59,
+              1
+            ]
+          },
+          {
+            "path": "easyschool/wsgi.py",
+            "sha256": "ff4f238e5092ba60da2d22e433f60207839e7ec4506dbc8d6f770751a768cd1b",
+            "span": [
+              14,
+              0,
+              14,
+              70
+            ]
+          },
+          {
+            "path": "easyschool/wsgi.py",
+            "sha256": "ff4f238e5092ba60da2d22e433f60207839e7ec4506dbc8d6f770751a768cd1b",
+            "span": [
+              16,
+              14,
+              16,
+              36
+            ]
+          }
+        ],
+        "runtime_execution": "not_performed",
+        "deployment": "UNASSESSED",
+        "distribution_runtime_selection": "no_captured_distribution_declaration"
+      }
+    },
+    {
+      "id": "N430-068",
+      "identity": {
+        "repository": "akhil-s-kumar/django-blog-app",
+        "revision": "f3a33fdace95471db1526de7fd28fc43fd459d86",
+        "code": "SECURITY_HARDCODED_SECRET",
+        "path": "blog/settings.py",
+        "line": 23,
+        "column": 0,
+        "source_sha256": "c4df76ddcc306c67e1c1d24abd945b1d8f7cfff43b7d5a46b5ed948adf157a91"
+      },
+      "actionable_label": "TP",
+      "baseline_tier": "NEEDS_CONTEXT",
+      "candidate_tier": "SUPPORTED_DEFECT",
+      "admission_reason": "source_bound_framework_session_default",
+      "source_bound_proof": {
+        "schema": "factory.security.framework-session-authority.v1",
+        "proof_scope": "source_bound_standalone_framework_session_default",
+        "framework": "django",
+        "credential_key": "SECRET_KEY",
+        "source_role": "published_literal_default",
+        "consumer_role": "configured_authentication_session_signing",
+        "transfers": [
+          {
+            "path": "blog/settings.py",
+            "sha256": "c4df76ddcc306c67e1c1d24abd945b1d8f7cfff43b7d5a46b5ed948adf157a91",
+            "span": [
+              23,
+              0,
+              23,
+              65
+            ]
+          },
+          {
+            "path": "blog/settings.py",
+            "sha256": "c4df76ddcc306c67e1c1d24abd945b1d8f7cfff43b7d5a46b5ed948adf157a91",
+            "span": [
+              33,
+              0,
+              44,
+              1
+            ]
+          },
+          {
+            "path": "blog/settings.py",
+            "sha256": "c4df76ddcc306c67e1c1d24abd945b1d8f7cfff43b7d5a46b5ed948adf157a91",
+            "span": [
+              50,
+              0,
+              58,
+              1
+            ]
+          },
+          {
+            "path": "blog/asgi.py",
+            "sha256": "a8e160eeaf9e36a3d254636cdba72a430af0c2d1a03a3cabe3af46528cfd23f1",
+            "span": [
+              14,
+              0,
+              14,
+              64
+            ]
+          },
+          {
+            "path": "blog/asgi.py",
+            "sha256": "a8e160eeaf9e36a3d254636cdba72a430af0c2d1a03a3cabe3af46528cfd23f1",
+            "span": [
+              16,
+              14,
+              16,
+              36
+            ]
+          }
+        ],
+        "runtime_execution": "not_performed",
+        "deployment": "UNASSESSED",
+        "distribution_runtime_selection": "no_captured_distribution_declaration"
+      }
+    },
+    {
+      "id": "N430-072",
+      "identity": {
+        "repository": "Kouidersif/openai-API",
+        "revision": "537b24e4012708e777dc7557f604c81f0f60b83d",
+        "code": "SECURITY_HARDCODED_SECRET",
+        "path": "coreOpenai/settings.py",
+        "line": 24,
+        "column": 0,
+        "source_sha256": "a2912e3fa6e54c9f1e6c49dccdb2130bdf190b6b8af06d06183b2cd785759ee8"
+      },
+      "actionable_label": "TP",
+      "baseline_tier": "NEEDS_CONTEXT",
+      "candidate_tier": "SUPPORTED_DEFECT",
+      "admission_reason": "source_bound_framework_session_default",
+      "source_bound_proof": {
+        "schema": "factory.security.framework-session-authority.v1",
+        "proof_scope": "source_bound_standalone_framework_session_default",
+        "framework": "django",
+        "credential_key": "SECRET_KEY",
+        "source_role": "published_literal_default",
+        "consumer_role": "configured_authentication_session_signing",
+        "transfers": [
+          {
+            "path": "coreOpenai/settings.py",
+            "sha256": "a2912e3fa6e54c9f1e6c49dccdb2130bdf190b6b8af06d06183b2cd785759ee8",
+            "span": [
+              24,
+              0,
+              24,
+              81
+            ]
+          },
+          {
+            "path": "coreOpenai/settings.py",
+            "sha256": "a2912e3fa6e54c9f1e6c49dccdb2130bdf190b6b8af06d06183b2cd785759ee8",
+            "span": [
+              34,
+              0,
+              42,
+              1
+            ]
+          },
+          {
+            "path": "coreOpenai/settings.py",
+            "sha256": "a2912e3fa6e54c9f1e6c49dccdb2130bdf190b6b8af06d06183b2cd785759ee8",
+            "span": [
+              44,
+              0,
+              52,
+              1
+            ]
+          },
+          {
+            "path": "coreOpenai/asgi.py",
+            "sha256": "247957d0ce9715fbb63998132aa3d831e8f3d6aaf8309482d06147a6fb6fb34a",
+            "span": [
+              14,
+              0,
+              14,
+              70
+            ]
+          },
+          {
+            "path": "coreOpenai/asgi.py",
+            "sha256": "247957d0ce9715fbb63998132aa3d831e8f3d6aaf8309482d06147a6fb6fb34a",
+            "span": [
+              16,
+              14,
+              16,
+              36
+            ]
+          }
+        ],
+        "runtime_execution": "not_performed",
+        "deployment": "UNASSESSED",
+        "distribution_runtime_selection": "no_captured_distribution_declaration"
+      }
+    }
+  ],
+  "limits": [
+    "The labels were exposed before this repair. This is a policy/admission gain, not an increase in raw true-positive labels or a new held-out precision result.",
+    "Ten known true positives remain outside the supported tier. One admitted alert remains UNCLEAR.",
+    "Baseline tiers came from retained reports; baseline source was not rerun in this replay.",
+    "The local full captured-source tier reconstruction did not execute target repository code. Representative CLI, receipt and independent-reseal paths were tested separately.",
+    "No >=30-decided fresh security-gate acceptance, >=80% target, release or publication readiness is established."
+  ],
+  "fresh_held_out": false,
+  "acceptance_target_met": false,
+  "release_authorized": false,
+  "labeling": "Two AI reviewers; disagreements remain UNCLEAR. No independent human adjudication is claimed."
+}

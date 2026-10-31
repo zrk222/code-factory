@@ -18,6 +18,7 @@ _FINDING_TIER_POLICY = {
     "supported_evidence": [
         "source_bound_native_security_precondition",
         "source_bound_flask_session_authority",
+        "source_bound_framework_session_default",
         "source_bound_private_key_http_authentication_flow",
     ],
     "primitive_evidence": "current_native_source_bound_primitive_partition",
@@ -25,7 +26,7 @@ _FINDING_TIER_POLICY = {
     "pickle_byte_origin": "source_edge_observation_only; reconstruction_effects_remain_unassessed",
     "known_format_patterns": "factory.context_efficiency._SECRET_BYTES",
     "known_format_policy": "material_observation_only; authority_and_validity_not_established",
-    "configuration_load_policy": "static_consumer_observation_only; authority_not_established",
+    "configuration_load_policy": "observation_only_unless_source_bound_framework_session_default_is_regenerated",
     "credential_witness_policy": "recognized_scope_and_current_source_bound_spans_required",
     "claims": "no_precision_or_held_out_measurement",
     "admission_requirements": [
@@ -886,19 +887,26 @@ def _decide_finding_tier(
             )
         ):
             return "SUPPORTED_DEFECT", "source_bound_flask_session_authority", None
-        if (
-            credential_evidence.get("proof_scope")
-            == "captured_same_module_static_wiring"
-            and credential_evidence.get("schema")
-            == "factory.security.private-key-auth-flow.v1"
-            and credential_evidence.get("source_role") == "embedded_private_key"
-            and credential_evidence.get("consumer_role") == "django_password_verifier"
-        ):
-            return (
-                "SUPPORTED_DEFECT",
-                "source_bound_private_key_http_authentication_flow",
-                None,
-            )
+        recognized = {
+            (
+                "captured_same_module_static_wiring",
+                "factory.security.private-key-auth-flow.v1",
+                "embedded_private_key",
+                "django_password_verifier",
+            ): "source_bound_private_key_http_authentication_flow",
+            (
+                "source_bound_standalone_framework_session_default",
+                "factory.security.framework-session-authority.v1",
+                "published_literal_default",
+                "configured_authentication_session_signing",
+            ): "source_bound_framework_session_default",
+        }
+        signature = tuple(
+            credential_evidence.get(key)
+            for key in ("proof_scope", "schema", "source_role", "consumer_role")
+        )
+        if signature in recognized:
+            return "SUPPORTED_DEFECT", recognized[signature], None
     regenerated_precondition = {}
     if bound and _matches_regenerated_precondition_finding(
         finding, native_rows, regenerated_precondition

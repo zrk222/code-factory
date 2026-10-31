@@ -476,8 +476,15 @@ def signing_configuration_inventory(source_bytes, bindings):
     paths = index.module_paths()
     if paths is None:
         return None
-    aliases = _signing_inventory_aliases(snapshots, _security_aliases)
-    return {"index": index, "paths": paths, "aliases": aliases}
+    return {
+        "index": index,
+        "paths": paths,
+        "aliases": {
+            path: _security_aliases(list(ast.walk(tree)))
+            for path, tree in snapshots.items()
+        },
+        "captured": source_bytes,
+    }
 
 
 def _signing_inventory_input_closed(source_bytes, bindings):
@@ -524,17 +531,8 @@ def _signing_inventory_snapshots(source_bytes, bindings, bind_security_call_scop
             return None
         tree._oracle_source_sha256 = digest
         bind_security_call_scopes(tree)
-        for node in ast.walk(tree):
-            for child in ast.iter_child_nodes(node):
-                child._security_parent = node
         snapshots[path], captured[path], inventory[path] = tree, raw, digest
     return snapshots, captured, inventory
-
-
-def _signing_inventory_aliases(snapshots, security_aliases):
-    return {
-        path: security_aliases(list(ast.walk(tree))) for path, tree in snapshots.items()
-    }
 
 
 def signing_configuration_evidence(finding, context):
@@ -2208,7 +2206,7 @@ def _signing_imported_key_written(target, context):
     return False
 
 
-def _signing_provider_clear(tree, aliases, framework):
+def _signing_provider_clear(tree, aliases, framework, *, roots=None):
     from .review_audits import _resolved_ast_name
 
     nodes = list(ast.walk(tree))
@@ -2218,7 +2216,7 @@ def _signing_provider_clear(tree, aliases, framework):
         for node in nodes
     ):
         return False
-    roots = (
+    roots = roots or (
         (
             "django.core.wsgi.get_wsgi_application",
             "django.core.asgi.get_asgi_application",
@@ -2234,14 +2232,12 @@ def _signing_provider_clear(tree, aliases, framework):
 
 def _signing_bound_providers_clear(context, declaration_path, consumer_path, framework):
     index = context["index"]
-    paths = {declaration_path, consumer_path}
-    for selected in (declaration_path, consumer_path):
-        parent = selected.parent
-        while parent != Path("."):
-            initializer = parent / "__init__.py"
-            if initializer in index.snapshots:
-                paths.add(initializer)
-            parent = parent.parent
+    paths = {declaration_path, consumer_path} | {
+        parent / "__init__.py"
+        for selected in (declaration_path, consumer_path)
+        for parent in selected.parents
+        if parent / "__init__.py" in index.snapshots
+    }
     return all(
         index.validate(path)
         and not _signing_rejection_or_reflection(index.snapshots[path])
@@ -2249,6 +2245,21 @@ def _signing_bound_providers_clear(context, declaration_path, consumer_path, fra
             index.snapshots[path], context["aliases"][path], framework
         )
         for path in paths
+    ) and all(
+        _signing_provider_clear(
+            tree,
+            context["aliases"][path],
+            framework,
+            roots=(
+                *(
+                    f"django.conf.settings.{name}"
+                    for name in ("MIDDLEWARE", "INSTALLED_APPS", "SECRET_KEY")
+                ),
+                "django.contrib.sessions.middleware.SessionMiddleware",
+                "django.contrib.auth.middleware.AuthenticationMiddleware",
+            ),
+        )
+        for path, tree in index.snapshots.items()
     )
 
 
@@ -2291,27 +2302,31 @@ def _signing_resolve_module(context, literal):
         path
         for path in index.snapshots
         if path.as_posix().endswith("/" + suffix)
-        and _signing_regular_package(index, path, len(parts) - 1)
+        and all(
+            index.validate(path.parents[depth] / "__init__.py")
+            for depth in range(len(parts) - 1)
+        )
     }
     return next(iter(choices)) if len(choices) == 1 else None
 
 
-def _signing_regular_package(index, path, package_depth):
-    parent = path.parent
-    for _step in range(package_depth):
-        if not index.validate(parent / "__init__.py"):
-            return False
-        parent = parent.parent
-    return True
-
-
 def _django_signing_consumer(target, path, tree, context):
     from .review_integrity import security_call_name
+    from .review_audits import _resolved_ast_name
 
     if not _signing_framework_external(context, "django"):
         return None
     aliases = context["aliases"][path]
-    if _signing_environment_written(tree, aliases):
+    if any(
+        isinstance(node, ast.Subscript)
+        and isinstance(node.ctx, (ast.Store, ast.Del))
+        and _resolved_ast_name(node.value, aliases) == "os.environ"
+        and (
+            not isinstance(node.slice, ast.Constant)
+            or node.slice.value == "DJANGO_SETTINGS_MODULE"
+        )
+        for node in ast.walk(tree)
+    ):
         return None
     selected = None
     for statement in tree.body:
@@ -2356,21 +2371,6 @@ def _signing_framework_external(context, framework):
     return not any(
         name == framework + ".py" or name.startswith(framework + "/")
         for name in context["paths"]
-    )
-
-
-def _signing_environment_written(tree, aliases):
-    from .review_audits import _resolved_ast_name
-
-    return any(
-        isinstance(node, ast.Subscript)
-        and isinstance(node.ctx, (ast.Store, ast.Del))
-        and _resolved_ast_name(node.value, aliases) == "os.environ"
-        and (
-            not isinstance(node.slice, ast.Constant)
-            or node.slice.value == "DJANGO_SETTINGS_MODULE"
-        )
-        for node in ast.walk(tree)
     )
 
 
