@@ -233,6 +233,9 @@ jobs:
                       'run_id': os.environ['GITHUB_RUN_ID'], 'run_attempt': os.environ['GITHUB_RUN_ATTEMPT'],
                       'ref': 'refs/heads/main', 'runner_os': 'Linux'}
           results, hashes, producers = [], {}, {}
+          log_command = ['gh', 'api']
+          if '--allow-escape-sequences' in subprocess.check_output(['gh', 'api', '--help'], text=True, encoding='utf-8'):
+              log_command.append('--allow-escape-sequences')
           for name, argv in checks.items():
               folder = Path('ci-checks') / f'ci-check-{name}'
               path = folder / f'ci-{name}.json'
@@ -265,7 +268,7 @@ jobs:
               assert audit_source_step['conclusion'] == 'success', f'{name}: source changed during installation'
               record_step = next(s for s in job['steps'] if s['name'] == 'Record fixed-command evidence without importing candidate code')
               assert record_step['conclusion'] == 'success', f'{name}: source check did not succeed'
-              provider_log = subprocess.check_output(['gh', 'api', f"repos/{identity['repository']}/actions/jobs/{job['id']}/logs"], text=True, encoding='utf-8')
+              provider_log = subprocess.check_output([*log_command, f"repos/{identity['repository']}/actions/jobs/{job['id']}/logs"], text=True, encoding='utf-8')
               recorded_hashes = re.findall(r'CF_CI_RECEIPT_SHA256:([a-f0-9]{64})(?:\s|$)', provider_log)
               actual_hash = hashlib.sha256(path.read_bytes()).hexdigest()
               assert recorded_hashes == [actual_hash], 'uploaded receipt differs from trusted recorder log'

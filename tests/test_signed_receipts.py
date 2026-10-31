@@ -566,9 +566,12 @@ def _signed_workflow_validator_case(tmp_path, monkeypatch, mutation):
     calls, sleeps = [], []
 
     def provider(command, **kwargs):
+        if command == ["gh", "api", "--help"]:
+            return "" if mutation == "legacy-cli" else "--allow-escape-sequences"
         endpoint = command[-1]
         calls.append(endpoint)
         if endpoint.endswith("/logs"):
+            assert ("--allow-escape-sequences" in command) == (mutation != "legacy-cli")
             return logs[int(endpoint.split("/")[-2])]
         attempt = int(endpoint.split("/attempts/")[1].split("/")[0])
         incomplete = (
@@ -609,6 +612,7 @@ def _signed_workflow_validator_case(tmp_path, monkeypatch, mutation):
     [
         None,
         "metadata-delay",
+        "legacy-cli",
         "future-attempt",
         "boolean-attempt",
         "wrong-run",
@@ -630,7 +634,7 @@ def test_signed_workflow_validator_binds_retained_receipts_to_producer_attempts(
     program, identity, sleeps = _signed_workflow_validator_case(
         tmp_path, monkeypatch, mutation
     )
-    if mutation not in (None, "metadata-delay"):
+    if mutation not in (None, "metadata-delay", "legacy-cli"):
         with pytest.raises(AssertionError):
             exec(compile(program, "signed-receipts-workflow", "exec"), {})
         assert not (tmp_path / "ci-receipt.json").exists()
