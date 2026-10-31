@@ -486,6 +486,231 @@ def _configuration_files277(runner):
     }
 
 
+_DJANGO_SESSION_SETTINGS = (
+    'SECRET_KEY = "published-session-signing-material"\n'
+    'INSTALLED_APPS = ["django.contrib.auth", "django.contrib.sessions"]\n'
+    'MIDDLEWARE = ["django.contrib.sessions.middleware.SessionMiddleware", '
+    '"django.contrib.auth.middleware.AuthenticationMiddleware"]\n'
+)
+_DJANGO_SESSION_START = (
+    "import os\nfrom django.core.wsgi import get_wsgi_application\n"
+    'os.environ.setdefault("DJANGO_SETTINGS_MODULE", "service.settings")\n'
+    "application = get_wsgi_application()\n"
+)
+
+
+@pytest.mark.parametrize("sequence", ["list", "tuple"])
+def test_operative_signing_default_evidence_requires_framework_session_authority(
+    sequence,
+):
+    """The native tier joins the declaration, configured consumers and startup."""
+    from hashlib import sha256
+
+    files = _configuration_files277(_DJANGO_SESSION_START)
+    settings = _DJANGO_SESSION_SETTINGS
+    if sequence == "tuple":
+        settings = settings.replace("[", "(").replace("]", ")")
+    files["service/settings.py"] = settings
+    row = _configuration_tiers277(files)["ledger"][0]
+    assert row["tier"] == "SUPPORTED_DEFECT"
+    assert row["evidence"] == "source_bound_framework_session_default"
+    proof = row["credential_authority_observation"]
+    assert proof["framework"] == "django"
+    assert proof["consumer_role"] == "configured_authentication_session_signing"
+    assert proof["deployment"] == "UNASSESSED"
+    assert proof["runtime_execution"] == "not_performed"
+    assert len(proof["transfers"]) == 5
+    assert {p["path"] for p in proof["transfers"]} == {
+        "service/settings.py",
+        "service/start.py",
+    }
+    for span in proof["transfers"]:
+        assert span["sha256"] == sha256(files[span["path"]].encode()).hexdigest()
+    assert row["raw_finding"]["severity"] == "CRITICAL"
+
+
+@pytest.mark.parametrize(
+    ("replacement", "extra"),
+    [
+        pytest.param(
+            _DJANGO_SESSION_SETTINGS.replace("django.contrib.auth", "other.auth"),
+            {},
+            id="no-auth-consumer",
+        ),
+        pytest.param(
+            _DJANGO_SESSION_SETTINGS.replace(
+                "django.contrib.sessions", "other.sessions"
+            ),
+            {},
+            id="no-session-consumer",
+        ),
+        pytest.param(
+            _DJANGO_SESSION_SETTINGS.replace(
+                "published-session-signing-material", "YOUR SECRET KEY"
+            ),
+            {},
+            id="placeholder",
+        ),
+        pytest.param(
+            _DJANGO_SESSION_SETTINGS + "MIDDLEWARE.clear()\n",
+            {},
+            id="container-mutation",
+        ),
+        pytest.param(
+            _DJANGO_SESSION_SETTINGS + "alias = MIDDLEWARE\nalias.clear()\n",
+            {},
+            id="aliased-container-mutation",
+        ),
+        pytest.param(
+            _DJANGO_SESSION_SETTINGS + "MIDDLEWARE = []\n", {}, id="replaced-consumers"
+        ),
+        pytest.param(
+            _DJANGO_SESSION_SETTINGS,
+            {"consumer.py": "import service.settings as cfg\ncfg.MIDDLEWARE.clear()\n"},
+            id="foreign-container-mutation",
+        ),
+        pytest.param(
+            _DJANGO_SESSION_SETTINGS,
+            {
+                "consumer.py": "from service.settings import MIDDLEWARE as layers\nlayers.clear()\n"
+            },
+            id="imported-container-mutation",
+        ),
+        pytest.param(
+            _DJANGO_SESSION_SETTINGS,
+            {
+                "consumer.py": "from .service.settings import MIDDLEWARE as layers\nlayers.clear()\n"
+            },
+            id="relative-imported-container-mutation",
+        ),
+        pytest.param(
+            _DJANGO_SESSION_SETTINGS,
+            {
+                "consumer.py": "from django.conf import settings\nsettings.MIDDLEWARE = []\n"
+            },
+            id="lazy-settings-replacement",
+        ),
+        pytest.param(
+            _DJANGO_SESSION_SETTINGS,
+            {"setup.py": "from setuptools import setup\nsetup(packages=['library'])\n"},
+            id="distribution-runtime-unresolved",
+        ),
+        pytest.param(
+            _DJANGO_SESSION_SETTINGS,
+            {"pyproject.toml": "[project]\nname='library'\n"},
+            id="metadata-runtime-unresolved",
+        ),
+        pytest.param(
+            _DJANGO_SESSION_SETTINGS,
+            {"django/__init__.py": ""},
+            id="local-framework-shadow",
+        ),
+        pytest.param(
+            _DJANGO_SESSION_SETTINGS,
+            {
+                "consumer.py": "import django.contrib.sessions.middleware as backend\nbackend.SessionMiddleware = fake\n"
+            },
+            id="foreign-session-provider-replacement",
+        ),
+    ],
+)
+def test_framework_session_authority_abstains_on_incomplete_or_mutated_roles(
+    replacement, extra
+):
+    files = _configuration_files277(_DJANGO_SESSION_START)
+    files["service/settings.py"] = replacement
+    files.update(extra)
+    row = _configuration_tiers277(files)["ledger"][0]
+    assert row["tier"] == "NEEDS_CONTEXT"
+    assert row["raw_finding"]["severity"] == "CRITICAL"
+    assert "credential_authority_observation" not in row
+
+
+def test_framework_session_authority_rejects_stale_inventory_and_wrong_startup():
+    files = _configuration_files277(_DJANGO_SESSION_START)
+    files["service/settings.py"] = _DJANGO_SESSION_SETTINGS
+    assert (
+        _configuration_tiers277(files, omit=("service/start.py",))["tier_counts"][
+            "SUPPORTED_DEFECT"
+        ]
+        == 0
+    )
+    files["service/start.py"] = _DJANGO_SESSION_START.replace(
+        "service.settings", "other.settings"
+    )
+    assert _configuration_tiers277(files)["tier_counts"]["SUPPORTED_DEFECT"] == 0
+
+
+@pytest.mark.parametrize("mutated", [False, True])
+def test_framework_session_authority_public_cli_receipt_and_independent_reseal(
+    tmp_path, capsys, mutated
+):
+    import copy
+    import json
+    from factoryline.cli import main
+    from factoryline import mission_control_status as receipts
+
+    files = _configuration_files277(_DJANGO_SESSION_START)
+    files["service/settings.py"] = _DJANGO_SESSION_SETTINGS
+    if mutated:
+        files["consumer.py"] = (
+            "from service.settings import MIDDLEWARE as layers\nlayers.clear()\n"
+        )
+    for name, source in files.items():
+        target = tmp_path / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(source, encoding="utf-8")
+    (tmp_path / ".factory").mkdir()
+    (tmp_path / ".factory/tenant-read-contract.json").write_text(
+        json.dumps({"schema": "factory.tenant-read-contract.v1", "reads": []}),
+        encoding="utf-8",
+    )
+    code = main(
+        [
+            "audit",
+            "security",
+            "--root",
+            str(tmp_path),
+            "--security-only",
+            "--defect-policy",
+            "trusted-core-v1",
+            "--json",
+        ]
+    )
+    output = capsys.readouterr()
+    assert output.err == ""
+    report = json.loads(output.out)
+    assert code == (0 if mutated else 1)
+    assert report["audit_coverage"]["complete"] is True
+    (row,) = report["finding_tier_report"]["ledger"]
+    assert row["tier"] == ("NEEDS_CONTEXT" if mutated else "SUPPORTED_DEFECT")
+    assert row["raw_finding"] == report["findings"][0]
+    envelope, truncated = receipts._security_scan_read_receipt(tmp_path)
+    assert envelope is not None and not truncated
+    persisted, _, error = receipts._security_scan_receipt_report(envelope)
+    assert error is None and persisted == report
+    rebuilt = copy.deepcopy(report)
+    rebuilt["_primitive_source_bytes"] = {
+        name: (tmp_path / name).read_bytes() for name in files
+    }
+    resealed = audit._seal_security_scan(rebuilt)
+    assert resealed["finding_tier_report"] == report["finding_tier_report"]
+    assert resealed["defect_policy_decision"] == report["defect_policy_decision"]
+    if not mutated:
+        assert row["credential_authority_observation"]["transfers"]
+        # A serialized authority assertion cannot survive missing consumer bytes.
+        rebuilt = copy.deepcopy(report)
+        rebuilt["_primitive_source_bytes"] = {
+            name: (tmp_path / name).read_bytes() for name in files
+        }
+        rebuilt["_primitive_source_bytes"]["service/settings.py"] = (
+            b'SECRET_KEY = "published-session-signing-material"\n'
+        )
+        rejected = audit._seal_security_scan(rebuilt)
+        assert rejected["finding_tier_report"] != report["finding_tier_report"]
+        assert rejected["finding_tier_report"]["tier_counts"]["SUPPORTED_DEFECT"] == 0
+
+
 _FLASK_AUTHORITY_SOURCE314 = """
 from flask import Flask, redirect, request, session
 
