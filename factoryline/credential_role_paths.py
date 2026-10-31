@@ -1454,7 +1454,6 @@ def bind_request_sink_precondition(
     module = _security_module_scope(getattr(call, "_security_lexical_scope", None))
     if (
         module is None
-        or not getattr(module, "_security_precondition_providers_stable", False)
         or not security_precondition_path_possible(call)
     ):
         return
@@ -1463,12 +1462,43 @@ def bind_request_sink_precondition(
         and finding.get("facts", {}).get("call") == "flask.FileStorage.save"
     ):
         return bind_upload_sink_precondition(finding, call, aliases, requests, module)
-    selected = _security_request_sink_slot(
-        finding, call, aliases, requests, connections, cursors, helpers
-    )
-    if selected is None:
-        return
-    argument, provider_roots = selected
+    if finding.get("code") == "SECURITY_SQL_INJECTION":
+        # Reuse the exact source-to-sink predicate that emitted the raw SQL
+        # finding. The older admission projection separately required a closed
+        # local cursor constructor and lost valid framework/helper-backed
+        # connections even when that predicate had already proven the sink.
+        from .review_integrity import (
+            _security_unsafe_sql,
+            security_call_name,
+        )
+        from .intent_quality import sql_statement_argument
+
+        canonical = security_call_name(call, aliases)
+        driver = _security_unsafe_sql(
+            call,
+            canonical,
+            set(),
+            requests,
+            aliases,
+            connections,
+            cursors,
+            helpers,
+        )
+        if not driver:
+            return
+        argument = sql_statement_argument(
+            call, driver, aliases, security_call_name
+        )
+        if argument is None:
+            return
+        provider_roots = (driver,)
+    else:
+        selected = _security_request_sink_slot(
+            finding, call, aliases, requests, connections, cursors, helpers
+        )
+        if selected is None:
+            return
+        argument, provider_roots = selected
     if _provider_identity_uncertain(module, aliases, roots=provider_roots):
         return
     requests = getattr(requests, "supported_view", lambda: requests)()
@@ -1518,6 +1548,631 @@ def bind_request_sink_precondition(
     ]
     premise["input_value_flow"] = trace
     finding["facts"]["security_precondition"] = premise
+
+
+def bind_staged_command_activation_precondition(finding, call, aliases):
+    """Bind an ORM-backed crontab write to the exact later crontab activation call."""
+    import ast
+    from .review_integrity import _bound_names
+
+    if finding.get("code") != "SECURITY_OS_COMMAND":
+        return
+    from .finite_capture import _security_helper_source_context
+    from .review_integrity import security_call_name
+    from .semantic_credential_sensor import (
+        security_precondition_path_possible,
+        supported_security_precondition,
+    )
+
+    module, index, source_path = _security_helper_source_context(call, None)
+    scope = getattr(call, "_security_lexical_scope", None)
+    if (
+        module is None
+        or index is None
+        or source_path is None
+        or not isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef))
+        or security_call_name(call, aliases) != "os.system"
+        or len(call.args) != 1
+        or call.keywords
+        or not security_precondition_path_possible(call)
+        or not index.validate(source_path)
+    ):
+        return
+    if _staged_provider_identity_uncertain(
+        index,
+        (
+            "os.system",
+            "system",
+            "codecs.open",
+            "admin.site.register",
+            "django.contrib.admin.site.register",
+        ),
+    ):
+        return
+    activation = _staged_command_file_path(call.args[0])
+    if activation is None:
+        return
+    activation_root, basename = activation
+    if _staged_configuration_root_is_mutated(index, module, activation_root):
+        return
+    body = scope.body
+    sink_statement = getattr(call, "_security_flow_statement", None)
+    if sink_statement not in body:
+        return
+    sink_index = body.index(sink_statement)
+    source_index = index
+    model_tree = source_index.snapshots[source_path]
+    parent_map = {
+        id(child): parent
+        for parent in ast.walk(model_tree)
+        for child in ast.iter_child_nodes(parent)
+    }
+    for write_call in ast.walk(scope):
+        if not (
+            isinstance(write_call, ast.Call)
+            and isinstance(write_call.func, ast.Attribute)
+            and write_call.func.attr == "write"
+            and len(write_call.args) == 1
+            and not write_call.keywords
+        ):
+            continue
+        open_call = write_call.func.value
+        if not (
+            isinstance(open_call, ast.Call)
+            and security_call_name(open_call, aliases) == "codecs.open"
+            and len(open_call.args) >= 2
+            and isinstance(open_call.args[1], ast.Constant)
+            and open_call.args[1].value == "w"
+        ):
+            continue
+        staged_root = _crontab_write_root(open_call.args[0], basename)
+        if staged_root is None or ast.dump(staged_root) != ast.dump(activation_root):
+            continue
+        write_statement = getattr(write_call, "_security_flow_statement", None)
+        if write_statement not in body or body.index(write_statement) >= sink_index:
+            continue
+        content_name = _staged_written_name(write_call.args[0])
+        if content_name is None or _staged_file_written_again(
+            scope,
+            write_call,
+            aliases,
+            activation_root,
+            basename,
+            body,
+            sink_index,
+        ):
+            continue
+        for content_statement in body[: body.index(write_statement)]:
+            if not isinstance(content_statement, (ast.Assign, ast.AnnAssign)):
+                continue
+            value = getattr(content_statement, "value", None)
+            targets = (
+                content_statement.targets
+                if isinstance(content_statement, ast.Assign)
+                else [content_statement.target]
+            )
+            names = {item.id for item in targets if isinstance(item, ast.Name)}
+            if content_name not in names or not isinstance(value, ast.AST):
+                continue
+            later_writes = any(
+                isinstance(item, (ast.Assign, ast.AnnAssign, ast.AugAssign, ast.Delete))
+                and bool(_bound_names(item).intersection(names))
+                for later_statement in body[
+                    body.index(content_statement) + 1 : body.index(write_statement)
+                ]
+                for item in ast.walk(later_statement)
+            )
+            if later_writes:
+                continue
+            source = _staged_model_activation_source(
+                value,
+                source_path,
+                model_tree,
+                parent_map,
+                source_index,
+            )
+            if source is None:
+                continue
+            premise = supported_security_precondition(
+                call, "untrusted_input", "staged_command_file_activation"
+            )
+            premise["staged_write_activation"] = {
+                "schema": "factory.security.staged-command-activation.v1",
+                "source_path": source["source_path"],
+                "source_sha256": source["source_sha256"],
+                "field_span": source["field_span"],
+                "field_name": source["field_name"],
+                "query_span": source["query_span"],
+                "content_span": [
+                    content_statement.lineno,
+                    content_statement.col_offset,
+                    content_statement.end_lineno,
+                    content_statement.end_col_offset,
+                ],
+                "write_span": [
+                    write_call.lineno,
+                    write_call.col_offset,
+                    write_call.end_lineno,
+                    write_call.end_col_offset,
+                ],
+                "file_path_span": [
+                    open_call.args[0].lineno,
+                    open_call.args[0].col_offset,
+                    open_call.args[0].end_lineno,
+                    open_call.args[0].end_col_offset,
+                ],
+                "activation_span": [
+                    call.lineno,
+                    call.col_offset,
+                    call.end_lineno,
+                    call.end_col_offset,
+                ],
+                "admin_path": source["admin_path"],
+                "admin_sha256": source["admin_sha256"],
+                "admin_registration_span": source["admin_registration_span"],
+                "activated_file": basename,
+            }
+            call._security_supported_precondition = premise
+            finding["facts"]["security_precondition"] = premise
+            return
+
+
+def _staged_provider_identity_uncertain(source_index, roots):
+    from .review_audits import _security_aliases
+    from .semantic_credential_sensor import _provider_identity_uncertain
+
+    for tree in source_index.snapshots.values():
+        aliases = _security_aliases(list(ast.walk(tree)))
+        if _provider_identity_uncertain(
+            tree, aliases, roots=roots, selected_paths=True
+        ):
+            return True
+    return False
+
+
+def _staged_written_name(expression):
+    import ast
+
+    if isinstance(expression, ast.Name):
+        return expression.id
+    if not isinstance(expression, ast.BinOp) or not isinstance(expression.op, ast.Add):
+        return None
+    if isinstance(expression.left, ast.Name) and isinstance(
+        expression.right, ast.Constant
+    ) and isinstance(expression.right.value, str):
+        return expression.left.id
+    if isinstance(expression.right, ast.Name) and isinstance(
+        expression.left, ast.Constant
+    ) and isinstance(expression.left.value, str):
+        return expression.right.id
+    return None
+
+
+def _staged_file_written_again(
+    scope, selected, aliases, root, basename, body, sink_index
+):
+    import ast
+    from .review_integrity import security_call_name
+
+    selected_statement = getattr(selected, "_security_flow_statement", None)
+    for candidate in ast.walk(scope):
+        if not (
+            isinstance(candidate, ast.Call)
+            and isinstance(candidate.func, ast.Attribute)
+            and candidate.func.attr == "write"
+            and isinstance(candidate.func.value, ast.Call)
+            and security_call_name(candidate.func.value, aliases) == "codecs.open"
+            and candidate.func.value.args
+        ):
+            continue
+        statement = getattr(candidate, "_security_flow_statement", None)
+        if statement not in body or body.index(statement) >= sink_index:
+            continue
+        candidate_root = _crontab_write_root(
+            candidate.func.value.args[0], basename
+        )
+        if candidate_root is None or ast.dump(candidate_root) != ast.dump(root):
+            continue
+        if statement is not selected_statement:
+            return True
+    return False
+
+
+def _staged_configuration_root_is_mutated(source_index, module, expression):
+    from .review_audits import _security_aliases
+    from .review_integrity import _resolve
+    from .credential_role_constructor_provider import binding_occurrences
+
+    aliases = _security_aliases(list(ast.walk(module)))
+    if not isinstance(expression, ast.Attribute):
+        return False
+    selected = _resolve(expression, aliases)
+    owner = _resolve(expression.value, aliases)
+    if not (
+        isinstance(selected, str)
+        and isinstance(owner, str)
+        and owner.startswith("django.conf.settings")
+    ):
+        return False
+    for tree in source_index.snapshots.values():
+        aliases = _security_aliases(list(ast.walk(tree)))
+        settings_names = {
+            name
+            for name, target in aliases.items()
+            if target == "django.conf.settings"
+        }
+        if any(
+            not _staged_settings_binding_is_unique(tree, name)
+            for name in settings_names
+        ):
+            return True
+        if any(
+            isinstance(node, ast.Attribute)
+            and isinstance(node.ctx, (ast.Store, ast.Del))
+            and _resolve(node, aliases) == selected
+            for node in ast.walk(tree)
+        ):
+            return True
+        if any(
+            isinstance(node, ast.Call)
+            and any(
+                isinstance(argument, ast.Name)
+                and _resolve(argument, aliases) == owner
+                for argument in [*node.args, *(keyword.value for keyword in node.keywords)]
+            )
+            for node in ast.walk(tree)
+        ):
+            return True
+    return False
+
+
+def _staged_settings_binding_is_unique(tree, local_name):
+    import ast
+    from .credential_role_constructor_provider import binding_occurrences
+
+    occurrences = binding_occurrences(tree.body, local_name)
+    expected = []
+    for occurrence in occurrences:
+        if not isinstance(occurrence, ast.ImportFrom):
+            return False
+        if occurrence.module == "django.db.models" and any(
+            item.name == "*" for item in occurrence.names
+        ):
+            continue
+        if occurrence.module != "django.conf" or not any(
+            item.name == "settings" and (item.asname or item.name) == local_name
+            for item in occurrence.names
+        ):
+            return False
+        expected.append(occurrence)
+    return len(expected) == 1
+
+
+def _security_aliases_for_staged_source(tree):
+    from .review_audits import _security_aliases
+    from .review_integrity import bind_security_call_scopes
+
+    if not hasattr(tree, "_security_scope_kind"):
+        bind_security_call_scopes(tree)
+    return _security_aliases(list(ast.walk(tree)))
+
+
+def _staged_command_file_path(expression):
+    import ast
+
+    if not (
+        isinstance(expression, ast.BinOp)
+        and isinstance(expression.op, ast.Mod)
+        and isinstance(expression.left, ast.Constant)
+        and isinstance(expression.left.value, str)
+        and expression.left.value.startswith("crontab ")
+        and expression.left.value.count("%s") == 1
+    ):
+        return None
+    command, activated_file = expression.left.value.split("%s", 1)
+    if not command.strip() or not activated_file or any(
+        marker in activated_file for marker in ("%", " ", "\\", "/")
+    ):
+        return None
+    return expression.right, activated_file
+
+
+def _crontab_write_root(expression, basename):
+    import ast
+
+    return (
+        expression.left
+        if isinstance(expression, ast.BinOp)
+        and isinstance(expression.op, ast.Add)
+        and isinstance(expression.right, ast.Constant)
+        and expression.right.value == basename
+        else None
+    )
+
+
+def _staged_model_activation_source(
+    value, source_path, model_tree, parents, source_index
+):
+    import ast
+    from .credential_role_constructor_provider import binding_occurrences
+
+    model_path = source_index.relative(source_path)
+    if not isinstance(model_path, str) or not source_index.validate(
+        source_index.root / model_path
+    ):
+        return None
+    for comprehension in ast.walk(value):
+        if not isinstance(comprehension, (ast.ListComp, ast.GeneratorExp)):
+            continue
+        for generator in comprehension.generators:
+            if not (
+                isinstance(generator.target, ast.Name)
+                and isinstance(generator.iter, ast.Call)
+                and isinstance(generator.iter.func, ast.Attribute)
+                and generator.iter.func.attr == "all"
+                and not generator.iter.args
+                and not generator.iter.keywords
+                and isinstance(generator.iter.func.value, ast.Attribute)
+                and generator.iter.func.value.attr == "objects"
+                and isinstance(generator.iter.func.value.value, ast.Name)
+            ):
+                continue
+            model_name = generator.iter.func.value.value.id
+            direct_field_reads = [
+                node
+                for node in ast.walk(comprehension.elt)
+                if isinstance(node, ast.Attribute)
+                and isinstance(node.value, ast.Name)
+                and node.value.id == generator.target.id
+            ]
+            direct_field_names = {node.attr for node in direct_field_reads}
+            if not direct_field_names:
+                continue
+            model_class = next(
+                (
+                    node
+                    for node in model_tree.body
+                    if isinstance(node, ast.ClassDef) and node.name == model_name
+                ),
+                None,
+            )
+            if (
+                model_class is None
+                or model_class.decorator_list
+                or model_class.keywords
+                or len(model_class.bases) != 1
+                or not _staged_class_binding_is_final(
+                    model_tree, model_name, model_class
+                )
+            ):
+                continue
+            model_base = model_class.bases[0]
+            if not isinstance(model_base, ast.Name) or _staged_external_symbol(
+                model_tree, model_base.id, "django.db.models"
+            ) != "Model":
+                continue
+            field_candidates = []
+            for field_name in direct_field_names:
+                field_bindings = binding_occurrences(model_class.body, field_name)
+                for bound in field_bindings:
+                    field = parents.get(id(bound))
+                    if _staged_provider_identity_uncertain(
+                        source_index,
+                        (f"{model_name}.{field_name}",),
+                    ):
+                        continue
+                    if not (
+                        isinstance(field, (ast.Assign, ast.AnnAssign))
+                        and isinstance(field.value, ast.Call)
+                        and isinstance(field.value.func, ast.Name)
+                        and _staged_external_symbol(
+                            model_tree, field.value.func.id, "django.db.models"
+                        )
+                        in {"CharField", "TextField"}
+                        and not any(
+                            keyword.arg == "editable"
+                            and isinstance(keyword.value, ast.Constant)
+                            and keyword.value.value is False
+                            for keyword in field.value.keywords
+                        )
+                        and len(field_bindings) == 1
+                    ):
+                        continue
+                    if _staged_string_contains_raw_field(
+                        comprehension.elt, generator.target.id, field_name
+                    ):
+                        field_candidates.append((field_name, field))
+            if not field_candidates:
+                continue
+            field_name, field = field_candidates[0]
+            if _staged_model_identity_mutated(
+                source_index, model_name, field_name
+            ):
+                continue
+            admin = _staged_admin_registration(
+                source_index, model_path, model_name
+            )
+            if admin is None:
+                continue
+            return {
+                "source_path": model_path,
+                "source_sha256": source_index.inventory[source_index.root / model_path],
+                "field_name": field_name,
+                "field_span": [field.lineno, field.col_offset, field.end_lineno, field.end_col_offset],
+                "query_span": [generator.iter.lineno, generator.iter.col_offset, generator.iter.end_lineno, generator.iter.end_col_offset],
+                "admin_path": admin[0],
+                "admin_sha256": admin[1],
+                "admin_registration_span": admin[2],
+            }
+    return None
+
+
+def _staged_external_symbol(tree, local_name, module_name):
+    import ast
+    from .credential_role_constructor_provider import binding_occurrences
+
+    occurrences = binding_occurrences(tree.body, local_name)
+    if len(occurrences) != 1 or not isinstance(occurrences[0], ast.ImportFrom):
+        return None
+    statement = occurrences[0]
+    allowed = {
+        "django.db.models": {"Model", "CharField", "TextField"},
+    }.get(module_name, set())
+    if statement.module != module_name:
+        return None
+    return next(
+        (
+            local_name if item.name == "*" else item.name
+            for item in statement.names
+            if item.name == "*" and local_name in allowed
+            or item.name in allowed and (item.asname or item.name) == local_name
+        ),
+        None,
+    )
+
+
+def _staged_class_binding_is_final(tree, class_name, model_class):
+    import ast
+    from .credential_role_constructor_provider import binding_occurrences
+
+    occurrences = binding_occurrences(tree.body, class_name)
+    if model_class not in occurrences:
+        return False
+    return all(
+        event is model_class
+        or isinstance(event, (ast.Import, ast.ImportFrom))
+        and event.lineno < model_class.lineno
+        for event in occurrences
+    )
+
+
+def _staged_string_contains_raw_field(expression, row_name, field_name):
+    import ast
+
+    def direct(node):
+        return (
+            isinstance(node, ast.Attribute)
+            and node.attr == field_name
+            and isinstance(node.value, ast.Name)
+            and node.value.id == row_name
+        )
+
+    if isinstance(expression, ast.JoinedStr):
+        return any(
+            isinstance(part, ast.FormattedValue)
+            and part.conversion == -1
+            and part.format_spec is None
+            and direct(part.value)
+            for part in expression.values
+        )
+    if isinstance(expression, ast.BinOp) and isinstance(expression.op, ast.Mod):
+        return (
+            isinstance(expression.left, ast.Constant)
+            and isinstance(expression.left.value, str)
+            and isinstance(expression.right, ast.Tuple)
+            and any(direct(value) for value in expression.right.elts)
+        )
+    if (
+        isinstance(expression, ast.Call)
+        and isinstance(expression.func, ast.Attribute)
+        and expression.func.attr == "format"
+        and isinstance(expression.func.value, ast.Constant)
+        and isinstance(expression.func.value.value, str)
+        and not expression.keywords
+    ):
+        return any(direct(argument) for argument in expression.args)
+    if isinstance(expression, ast.BinOp) and isinstance(expression.op, ast.Add):
+        left_string = isinstance(expression.left, ast.Constant) and isinstance(
+            expression.left.value, str
+        )
+        right_string = isinstance(expression.right, ast.Constant) and isinstance(
+            expression.right.value, str
+        )
+        return (
+            direct(expression.left)
+            and right_string
+            or left_string
+            and direct(expression.right)
+        )
+    return False
+
+
+def _staged_model_identity_mutated(source_index, model_name, field_name):
+    import ast
+
+    for tree in source_index.snapshots.values():
+        if any(
+            isinstance(node, ast.Attribute)
+            and isinstance(node.ctx, (ast.Store, ast.Del))
+            and isinstance(node.value, ast.Name)
+            and node.value.id == model_name
+            and node.attr in {"objects", field_name}
+            for node in ast.walk(tree)
+        ):
+            return True
+    return False
+
+
+def _staged_admin_registration(source_index, model_path, model_name):
+    import ast
+    from .review_integrity import security_call_name
+
+    for path, tree in source_index.snapshots.items():
+        if not source_index.validate(path):
+            continue
+        aliases = _security_aliases_for_staged_source(tree)
+        for statement in tree.body:
+            for call in ast.walk(statement):
+                if not (
+                    isinstance(call, ast.Call)
+                    and security_call_name(call, aliases)
+                    in {"django.contrib.admin.site.register", "admin.site.register"}
+                    and call.args
+                    and isinstance(call.args[0], ast.Name)
+                ):
+                    continue
+                if _staged_import_binds_exact_model(
+                    tree,
+                    path,
+                    source_index,
+                    model_path,
+                    model_name,
+                    call.args[0].id,
+                ):
+                    return (
+                        source_index.relative(path),
+                        source_index.inventory[path],
+                        [call.lineno, call.col_offset, call.end_lineno, call.end_col_offset],
+                    )
+    return None
+
+
+def _staged_import_binds_exact_model(
+    tree, admin_path, source_index, model_path, model_name, local_name
+):
+    from pathlib import PurePosixPath
+    from .credential_role_constructor_provider import binding_occurrences
+
+    admin_module = PurePosixPath(source_index.relative(admin_path)).with_suffix("")
+    target_module = PurePosixPath(model_path).with_suffix("").as_posix().replace("/", ".")
+    occurrences = binding_occurrences(tree.body, local_name)
+    if len(occurrences) != 1 or not isinstance(occurrences[0], ast.ImportFrom):
+        return False
+    statement = occurrences[0]
+    parent_parts = admin_module.parent.parts
+    if statement.level:
+        prefix = parent_parts[: max(0, len(parent_parts) - statement.level + 1)]
+        imported_module = ".".join(
+            part
+            for part in (*prefix, *((statement.module or "").split(".")))
+            if part
+        )
+    else:
+        imported_module = statement.module or ""
+    return imported_module == target_module and any(
+        item.name == model_name and (item.asname or item.name) == local_name
+        for item in statement.names
+    )
 
 
 def _conditional_https_url_binding(sink, url):
@@ -1842,7 +2497,11 @@ def matches_regenerated_security_precondition(finding, native_rows, regenerated_
             return False
         case _:
             comparable_premise = premise
-    new_precondition_fields = {"effect_witness", "input_value_flow"}
+    new_precondition_fields = {
+        "effect_witness",
+        "input_value_flow",
+        "staged_write_activation",
+    }
     match upload_sink:
         case True:
             new_precondition_fields.add("input_slot_span")
@@ -1968,6 +2627,71 @@ def valid_security_precondition(premise, finding, *, require_effect_witness=Fals
         case "SECURITY_PATH_TRAVERSAL", call if call != "flask.FileStorage.save":
             contract = None
     if "effect_witness" not in premise:
+        if "staged_write_activation" in premise:
+            staged = premise["staged_write_activation"]
+            import re
+
+            staged_fields = {
+                "schema",
+                "source_path",
+                "source_sha256",
+                "field_span",
+                "field_name",
+                "query_span",
+                "content_span",
+                "write_span",
+                "file_path_span",
+                "activation_span",
+                "admin_path",
+                "admin_sha256",
+                "admin_registration_span",
+                "activated_file",
+            }
+            if (
+                code != "SECURITY_OS_COMMAND"
+                or source_role != "untrusted_input"
+                or consumer_role != "staged_command_file_activation"
+                or not isinstance(staged, dict)
+                or set(staged) != staged_fields
+                or staged.get("schema")
+                != "factory.security.staged-command-activation.v1"
+                or not isinstance(staged.get("field_name"), str)
+                or not staged["field_name"].isidentifier()
+                or not isinstance(staged.get("activated_file"), str)
+                or not staged["activated_file"]
+                or any(
+                    marker in staged["activated_file"]
+                    for marker in ("/", "\\", "%", " ")
+                )
+                or any(
+                    not valid_source_span(staged.get(key))
+                    for key in (
+                        "field_span",
+                        "query_span",
+                        "content_span",
+                        "write_span",
+                        "file_path_span",
+                        "activation_span",
+                        "admin_registration_span",
+                    )
+                )
+                or staged["activation_span"] != sink_span
+                or any(
+                    not isinstance(staged.get(key), str)
+                    or not re.fullmatch(r"[0-9a-f]{64}", staged[key])
+                    for key in ("source_sha256", "admin_sha256")
+                )
+                or any(
+                    not isinstance(staged.get(key), str)
+                    or not staged[key]
+                    or "://" in staged[key]
+                    or "\\" in staged[key]
+                    or staged[key].startswith("/")
+                    or ".." in staged[key].split("/")
+                    for key in ("source_path", "admin_path")
+                )
+            ):
+                return False
         legacy_roles = {
             "SECURITY_LOG_INJECTION": ("untrusted_input", "log_message"),
             "SECURITY_PATH_TRAVERSAL": (

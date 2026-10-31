@@ -2248,18 +2248,7 @@ def operative_signing_default_evidence(finding, context):
     """Join captured defaults to registered credential-verification boundaries."""
     if context is None or not context["index"].validate(Path(finding.get("path", ""))):
         return None
-    from .semantic_credential_sensor import (
-        signing_configuration_evidence,
-        _signing_resolve_module,
-    )
-    from .mock_fixture_provenance import _django_assignment
-    from .credential_role_constructor_provider import binding_occurrences
-    from .review_audits import _resolved_ast_name
-    from .semantic_credential_sensor import (
-        _signing_provider_clear,
-        _provider_path_conflicts,
-    )
-    from .finite_capture import _provider_paths, _provider_alias_bindings
+    from .semantic_credential_sensor import signing_configuration_evidence
 
     index, path = context["index"], Path(finding.get("path", ""))
     declarations = [
@@ -2276,130 +2265,14 @@ def operative_signing_default_evidence(finding, context):
             pass
         case _:
             return None
+    if _signing_unrendered_scaffold(declaration, index.snapshots[path]):
+        return None
     observation = signing_configuration_evidence(finding, context)
-    match observation:
-        case {"consumer_role": "django.SECRET_KEY"}:
-            # The witnessed loader selects this captured default. Packaging does
-            # not negate that source-bound consumer or establish live deployment.
-            settings = index.snapshots[path]
-            required = {
-                "INSTALLED_APPS": {"django.contrib.auth", "django.contrib.sessions"},
-                (
-                    "MIDDLEWARE"
-                    if binding_occurrences(settings.body, "MIDDLEWARE")
-                    else "MIDDLEWARE_CLASSES"
-                ): {
-                    "django.contrib.sessions.middleware.SessionMiddleware",
-                    "django.contrib.auth.middleware.AuthenticationMiddleware",
-                },
-            }
-            consumers = []
-            for name, authorities in required.items():
-                match _django_assignment(settings, name):
-                    case [
-                        (statement, ast.List(elts=values) | ast.Tuple(elts=values))
-                    ] if all(isinstance(item, ast.Constant) for item in values):
-                        pass
-                    case _:
-                        return None
-                if not authorities.issubset(
-                    {item.value for item in values if isinstance(item.value, str)}
-                ):
-                    return None
-                consumers.append(
-                    {
-                        "path": path.as_posix(),
-                        "sha256": index.inventory[path],
-                        "span": _span(statement),
-                    }
-                )
-            roots = tuple("django.conf.settings." + name for name in required)
-            from . import review_audits as audit
-
-            selected_modules = {
-                node.args[1].value
-                for transfer in observation["transfers"]
-                for node in ast.walk(index.snapshots[Path(transfer["path"])])
-                if isinstance(node, ast.Call)
-                and len(node.args) == 2
-                and _span(node) == transfer["span"]
-                and isinstance(node.args[0], ast.Constant)
-                and node.args[0].value == "DJANGO_SETTINGS_MODULE"
-                and isinstance(node.args[1], ast.Constant)
-                and isinstance(node.args[1].value, str)
-            }
-            for source_path, tree in index.snapshots.items():
-                aliases = dict(context["aliases"][source_path])
-                for alias, canonical in tuple(aliases.items()):
-                    module, _, member = canonical.rpartition(".")
-                    if (
-                        canonical == "django.conf.settings"
-                        or canonical in selected_modules
-                        or _signing_resolve_module(
-                            context, ast.Constant(value=canonical)
-                        )
-                        == path
-                    ):
-                        aliases[alias] = "django.conf.settings"
-                    elif member in required and (
-                        module == "django.conf.settings"
-                        or module.lstrip(".") in selected_modules
-                        or _signing_resolve_module(
-                            context, ast.Constant(value=module.lstrip("."))
-                        )
-                        == path
-                    ):
-                        aliases[alias] = "django.conf.settings." + member
-                if source_path == path:
-                    aliases.update(
-                        {name: "django.conf.settings." + name for name in required}
-                    )
-                nodes = list(ast.walk(tree))
-                bindings = _provider_alias_bindings(nodes)
-                if _signing_provider_clear(
-                    tree, aliases, "django", roots=roots
-                ) is False or any(
-                    isinstance(node, ast.Call)
-                    and any(
-                        _provider_path_conflicts(provider, "*", root)
-                        for provider in _provider_paths(
-                            node.func, aliases, audit, bindings
-                        )[0]
-                        for root in roots
-                    )
-                    for node in nodes
-                ):
-                    return None
-            return {
-                "schema": "factory.security.framework-session-authority.v1",
-                "proof_scope": "source_bound_standalone_framework_session_default",
-                "framework": "django",
-                "credential_key": "SECRET_KEY",
-                "source_role": "published_literal_default",
-                "consumer_role": "configured_authentication_session_signing",
-                "transfers": [
-                    observation["declaration"],
-                    *consumers,
-                    *observation["transfers"],
-                ],
-                "runtime_execution": "not_performed",
-                "deployment": "UNASSESSED",
-                "distribution_runtime_selection": (
-                    "captured_settings_loader"
-                    if any(
-                        name.endswith(("pyproject.toml", "setup.cfg"))
-                        for name in context.get("captured", {})
-                    )
-                    or any(
-                        isinstance(node, ast.Call)
-                        and _resolved_ast_name(node.func, context["aliases"][owner])
-                        in {"setuptools.setup", "distutils.core.setup"}
-                        for owner, source in index.snapshots.items()
-                        for node in ast.walk(source)
-                    )
-                    else "no_captured_distribution_declaration"
-                ),
-            }
+    if (
+        observation is not None
+        and observation.get("consumer_role") == "django.SECRET_KEY"
+    ):
+        return _django_default_authority(finding, context, declaration, observation)
     return next(
         (
             witness
@@ -2412,6 +2285,158 @@ def operative_signing_default_evidence(finding, context):
             if witness is not None
         ),
         None,
+    )
+
+
+def _django_default_authority(finding, context, declaration, observation):
+    from .mock_fixture_provenance import _django_assignment
+    from .credential_role_constructor_provider import binding_occurrences
+    from .review_audits import _resolved_ast_name
+
+    index, path = context["index"], Path(finding["path"])
+    settings = index.snapshots[path]
+    required = {
+        "INSTALLED_APPS": {"django.contrib.auth", "django.contrib.sessions"},
+        (
+            "MIDDLEWARE"
+            if binding_occurrences(settings.body, "MIDDLEWARE")
+            else "MIDDLEWARE_CLASSES"
+        ): {
+            "django.contrib.sessions.middleware.SessionMiddleware",
+            "django.contrib.auth.middleware.AuthenticationMiddleware",
+        },
+    }
+    consumers = []
+    for name, authorities in required.items():
+        match _django_assignment(settings, name):
+            case [(statement, ast.List(elts=values) | ast.Tuple(elts=values))] if all(
+                isinstance(item, ast.Constant) for item in values
+            ):
+                pass
+            case _:
+                return None
+        if not authorities.issubset(
+            {item.value for item in values if isinstance(item.value, str)}
+        ):
+            return None
+        consumers.append(
+            {
+                "path": path.as_posix(),
+                "sha256": index.inventory[path],
+                "span": _span(statement),
+            }
+        )
+    selected_modules = {
+        node.args[1].value
+        for transfer in observation["transfers"]
+        for node in ast.walk(index.snapshots[Path(transfer["path"])])
+        if isinstance(node, ast.Call)
+        and len(node.args) == 2
+        and _span(node) == transfer["span"]
+        and isinstance(node.args[0], ast.Constant)
+        and node.args[0].value == "DJANGO_SETTINGS_MODULE"
+        and isinstance(node.args[1], ast.Constant)
+        and isinstance(node.args[1].value, str)
+    }
+    if not _django_selected_consumers_closed(context, path, required, selected_modules):
+        return None
+    return {
+        "schema": "factory.security.framework-session-authority.v1",
+        "proof_scope": "source_bound_standalone_framework_session_default",
+        "framework": "django",
+        "credential_key": "SECRET_KEY",
+        "source_role": "published_literal_default",
+        "consumer_role": "configured_authentication_session_signing",
+        "transfers": [
+            observation["declaration"],
+            *consumers,
+            *observation["transfers"],
+        ],
+        "runtime_execution": "not_performed",
+        "deployment": "UNASSESSED",
+        "distribution_runtime_selection": (
+            "captured_settings_loader"
+            if any(
+                name.endswith(("pyproject.toml", "setup.cfg"))
+                for name in context.get("captured", {})
+            )
+            or any(
+                isinstance(node, ast.Call)
+                and _resolved_ast_name(node.func, context["aliases"][owner])
+                in {"setuptools.setup", "distutils.core.setup"}
+                for owner, source in index.snapshots.items()
+                for node in ast.walk(source)
+            )
+            else "no_captured_distribution_declaration"
+        ),
+    }
+
+
+def _django_selected_consumers_closed(context, path, required, selected_modules):
+    from .semantic_credential_sensor import (
+        _signing_provider_clear,
+        _signing_resolve_module,
+        _provider_path_conflicts,
+    )
+    from .finite_capture import _provider_paths, _provider_alias_bindings
+    from . import review_audits as audit
+
+    index = context["index"]
+    roots = tuple("django.conf.settings." + name for name in required)
+    for source_path, tree in index.snapshots.items():
+        aliases = dict(context["aliases"][source_path])
+        for alias, canonical in tuple(aliases.items()):
+            module, _, member = canonical.rpartition(".")
+            if (
+                canonical == "django.conf.settings"
+                or canonical in selected_modules
+                or _signing_resolve_module(context, ast.Constant(value=canonical))
+                == path
+            ):
+                aliases[alias] = "django.conf.settings"
+            elif member in required and (
+                module == "django.conf.settings"
+                or module.lstrip(".") in selected_modules
+                or _signing_resolve_module(
+                    context, ast.Constant(value=module.lstrip("."))
+                )
+                == path
+            ):
+                aliases[alias] = "django.conf.settings." + member
+        if source_path == path:
+            aliases.update({name: "django.conf.settings." + name for name in required})
+        nodes = list(ast.walk(tree))
+        bindings = _provider_alias_bindings(nodes)
+        if _signing_provider_clear(
+            tree, aliases, "django", roots=roots
+        ) is False or any(
+            isinstance(node, ast.Call)
+            and any(
+                _provider_path_conflicts(provider, "*", root)
+                for provider in _provider_paths(node.func, aliases, audit, bindings)[0]
+                for root in roots
+            )
+            for node in nodes
+        ):
+            return False
+    return True
+
+
+def _signing_unrendered_scaffold(declaration, tree):
+    from .semantic_credential_sensor import _AUTH_TEMPLATE
+
+    if not _AUTH_TEMPLATE.search(declaration.value.value):
+        return False
+    return any(
+        isinstance(node, ast.Assign)
+        and any(
+            isinstance(t, ast.Name) and t.id in {"ROOT_URLCONF", "WSGI_APPLICATION"}
+            for t in node.targets
+        )
+        and isinstance(node.value, ast.Constant)
+        and isinstance(node.value.value, str)
+        and _AUTH_TEMPLATE.search(node.value.value)
+        for node in tree.body
     )
 
 
@@ -2557,6 +2582,10 @@ class _OperativeCredentialOrigin:
         """Resolve the scalar origin and retained evidence for one captured expression."""
         if node is self.declaration.value and path == self.path:
             return True, self.key
+        if isinstance(node, (ast.Name, ast.Attribute)) and self.literal_reference(
+            path, node, function, projection
+        ):
+            return True, self.key
         if isinstance(node, ast.JoinedStr):
             from urllib.parse import urlsplit
             from .credential_role_identity_effects import _validated_exact_scalar
@@ -2629,8 +2658,38 @@ class _OperativeCredentialOrigin:
             else (False, None)
         )
 
+    def literal_reference(self, path, node, function, projection):
+        """Bind an imported literal to its unchanged captured source declaration."""
+        from .semantic_credential_sensor import (
+            _signing_source_symbol,
+            _flask_imported_key_written,
+        )
+        from .mock_fixture_provenance import _django_name
+
+        selected = _signing_source_symbol(self.context, path, node, function)
+        if selected != (self.path, self.declaration):
+            return False
+        name = self.finding["facts"]["name"]
+        return not _flask_imported_key_written(
+            self.path, self.context, name
+        ) and projection._symbol_closed(
+            [
+                (
+                    _django_name(projection.symbols, self.path) + "." + name,
+                    self.path,
+                    name,
+                )
+            ],
+            self.key,
+        )
+
     def field(self, node, environment, path, function, projection):
         """Read a captured credential field only when its receiver identity is closed."""
+        known, request_value = self.request_field(
+            node, environment, path, function, projection
+        )
+        if known:
+            return known, request_value
         if (
             isinstance(node, ast.Subscript)
             and isinstance(node.slice, ast.Constant)
@@ -2651,6 +2710,33 @@ class _OperativeCredentialOrigin:
                 fields = self.allocations[owner.container_id].get("fields", {})
                 if node.attr in fields:
                     return True, fields[node.attr]
+        return False, None
+
+    def request_field(self, node, environment, path, function, projection):
+        """Retain HTTP header and split-token provenance without treating it as sanitized."""
+        if not isinstance(node, (ast.Attribute, ast.Subscript)):
+            return False, None
+        known, owner = projection.expression(path, node.value, function, environment)
+        if not known:
+            return False, None
+        if (
+            isinstance(node, ast.Attribute)
+            and node.attr == "headers"
+            and owner.inert_kind == "http_request"
+        ):
+            return True, self.value_type(inert_kind="http_headers")
+        if (
+            isinstance(node, ast.Subscript)
+            and owner.inert_kind == "request_token_parts"
+        ):
+            try:
+                index = ast.literal_eval(node.slice)
+            except (ValueError, TypeError):
+                return False, None
+            if type(index) is int:
+                return True, self.value_type(
+                    roots=owner.roots, scalar_kind="text", trace=owner.trace
+                )
         return False, None
 
     def comparison(self, node, environment, path, function, projection):
@@ -2686,6 +2772,11 @@ class _OperativeCredentialOrigin:
 
     def call(self, node, environment, path, function, projection):
         """Interpret a supported captured provider call without executing target code."""
+        known, request_value = self.request_call(
+            node, environment, path, function, projection
+        )
+        if known:
+            return known, request_value
         canonical = self.canonical(path, node.func, function)
         if (
             canonical
@@ -2760,6 +2851,41 @@ class _OperativeCredentialOrigin:
             if known
             else self.verify(node, environment, path, function, projection, canonical)
         )
+
+    def request_call(self, node, environment, path, function, projection):
+        """Model only fixed authorization-header reads and inert string splitting."""
+        if (
+            not isinstance(node.func, ast.Attribute)
+            or node.keywords
+            or len(node.args) != 1
+        ):
+            return False, None
+        known, owner = projection.expression(
+            path, node.func.value, function, environment
+        )
+        if (
+            not known
+            or not isinstance(node.args[0], ast.Constant)
+            or not isinstance(node.args[0].value, str)
+        ):
+            return False, None
+        if (
+            node.func.attr == "get"
+            and owner.inert_kind == "http_headers"
+            and node.args[0].value.lower() == "authorization"
+        ):
+            return True, self.value_type(
+                roots=frozenset({"request-token"}), scalar_kind="text"
+            )
+        if (
+            node.func.attr == "split"
+            and owner.roots == frozenset({"request-token"})
+            and node.args[0].value == " "
+        ):
+            return True, self.value_type(
+                roots=owner.roots, inert_kind="request_token_parts", trace=owner.trace
+            )
+        return False, None
 
     def construct(
         self, node, environment, path, function, projection, canonical, *, following=()
@@ -2889,15 +3015,8 @@ class _OperativeCredentialOrigin:
                 or {kw.arg for kw in node.keywords} != {"algorithms"}
             ):
                 return False, None
-            algorithms = node.keywords[0].value
-            if not (
-                isinstance(algorithms, (ast.List, ast.Tuple))
-                and algorithms.elts
-                and all(
-                    isinstance(a, ast.Constant)
-                    and a.value in {"HS256", "HS384", "HS512"}
-                    for a in algorithms.elts
-                )
+            if not self.jwt_algorithms(
+                node.keywords[0].value, environment, path, function, projection
             ):
                 return False, None
             known, key = projection.expression(
@@ -2917,6 +3036,18 @@ class _OperativeCredentialOrigin:
                     trace=key.trace + token.trace,
                 )
         return False, None
+
+    def jwt_algorithms(self, node, environment, path, function, projection):
+        from .credential_role_identity_effects import _validated_exact_scalar
+
+        if not isinstance(node, (ast.List, ast.Tuple)) or not node.elts:
+            return False
+        for item in node.elts:
+            known, value = projection.expression(path, item, function, environment)
+            exact = _validated_exact_scalar(value) if known else ()
+            if not exact or exact[0] not in {"HS256", "HS384", "HS512"}:
+                return False
+        return True
 
     def settings_fields_closed(self, path, owner, projection):
         """Reject conflicting configuration writes before using captured credential settings."""
@@ -3064,7 +3195,7 @@ class _OperativeCredentialOrigin:
         args = [*function.args.posonlyargs, *function.args.args]
         count = len(function.args.defaults)
         defaults = zip(args[-count:], function.args.defaults) if count else ()
-        inputs = {}
+        inputs = self.request_inputs(path, function, args)
         for arg, value in defaults:
             if (
                 isinstance(value, ast.Call)
@@ -3206,32 +3337,49 @@ class _OperativeCredentialOrigin:
             )
             if known:
                 return self.witness(statement, value)
-            if not (
-                isinstance(statement, ast.If)
-                and not statement.orelse
-                and len(statement.body) == 1
-                and isinstance(statement.body[0], ast.Raise)
-                and isinstance(statement.test, ast.UnaryOp)
-                and isinstance(statement.test.op, ast.Not)
-                and isinstance(statement.test.operand, ast.Name)
-            ):
+            rejected = self.rejection_value(statement, environment, path, function)
+            if rejected is None:
                 return None
-            value = environment.get(statement.test.operand.id)
-            known, denial = self.projection.expression(
-                path, statement.body[0].exc, function, environment
-            )
-            if not (
-                value is not None
-                and value.roots == frozenset({"verified:" + self.root})
-                and known
-                and denial.inert_kind == "authentication_denial"
-                and isinstance(statement.body[0].exc, ast.Call)
-                and self.canonical(path, statement.body[0].exc.func, function)
-                in {"fastapi.HTTPException", "fastapi.exceptions.HTTPException"}
-            ):
-                return None
-            return self.witness(statement, value)
+            if rejected.roots == frozenset({"request-token"}):
+                continue
+            return self.witness(statement, rejected)
         return None
+
+    def request_inputs(self, path, function, arguments):
+        return {
+            arg.arg: self.value_type(inert_kind="http_request")
+            for arg in arguments
+            if self.canonical(path, arg.annotation, function) == "fastapi.Request"
+            and self.provider(path, "fastapi.Request")
+        }
+
+    def rejection_value(self, statement, environment, path, function):
+        if not (
+            isinstance(statement, ast.If)
+            and not statement.orelse
+            and len(statement.body) == 1
+            and isinstance(statement.body[0], ast.Raise)
+            and isinstance(statement.test, ast.UnaryOp)
+            and isinstance(statement.test.op, ast.Not)
+            and isinstance(statement.test.operand, ast.Name)
+        ):
+            return None
+        value = environment.get(statement.test.operand.id)
+        known, denial = self.projection.expression(
+            path, statement.body[0].exc, function, environment
+        )
+        if not (
+            value is not None
+            and value.roots
+            in {frozenset({"request-token"}), frozenset({"verified:" + self.root})}
+            and known
+            and denial.inert_kind == "authentication_denial"
+            and isinstance(statement.body[0].exc, ast.Call)
+            and self.canonical(path, statement.body[0].exc.func, function)
+            in {"fastapi.HTTPException", "fastapi.exceptions.HTTPException"}
+        ):
+            return None
+        return value
 
     def boundary_closed(self):
         """Validate provider identity and callback closure for the selected handler."""
@@ -3358,9 +3506,10 @@ class _OperativeCredentialOrigin:
                 self.value_type(),
                 readonly_argument=lambda node: id(node) in readonly,
                 readonly_call=lambda node: id(node) in registrations,
-                inventory_projector=lambda tree, aliases, nodes, canonical: self.boundary_inventory(
-                    tree, aliases, nodes, canonical
-                ),
+                inventory_projector=lambda tree,
+                aliases,
+                nodes,
+                canonical: self.boundary_inventory(tree, aliases, nodes, canonical),
             )
             for allocation in (handler["application"], handler["receiver"])
         ):
@@ -3490,14 +3639,14 @@ class _CredentialHandlerIndex:
     )
 
     def __init__(self, context):
-        from .credential_role_identity_effects import source_symbol_index
         from .semantic_credential_sensor import (
             _provider_identity_uncertain,
             _signing_framework_external,
+            _signing_source_symbols,
         )
 
         self.context, self.index = context, context["index"]
-        self.symbols = source_symbol_index(self.index)
+        self.symbols = _signing_source_symbols(context)
         self.allocations, self.edges, self.handlers = {}, [], []
         if self.symbols is None:
             return
@@ -3538,11 +3687,12 @@ class _CredentialHandlerIndex:
                     ):
                         continue
                     name = statement.targets[0].id
-                    from .credential_role_constructor_provider import (
-                        binding_occurrences,
-                    )
+                    from .semantic_credential_sensor import _signing_binding_occurrences
 
-                    if len(binding_occurrences(scope.body, name)) != 1:
+                    if (
+                        len(_signing_binding_occurrences(context, path, scope, name))
+                        != 1
+                    ):
                         continue
                     self.allocations[(path, id(statement))] = {
                         "path": path,
@@ -3559,11 +3709,15 @@ class _CredentialHandlerIndex:
         """Resolve a captured expression to its canonical imported provider identity."""
         from .mock_fixture_provenance import _app_expression_name
 
-        return _app_expression_name(self.symbols, path, expression, function)
+        from .mock_fixture_provenance import _django_expr
+
+        return _app_expression_name(
+            self.symbols, path, expression, function
+        ) or _django_expr(self.symbols, path, expression, function)
 
     def binding(self, path, expression, function=None):
         """Resolve the captured declaration that dominates a selected credential use."""
-        from .mock_fixture_provenance import _app_local_assignment, _app_source_symbol
+        from .mock_fixture_provenance import _app_local_assignment
         from .credential_role_constructor_provider import binding_dominates
 
         if function is not None and isinstance(expression, ast.Name):
@@ -3574,7 +3728,9 @@ class _CredentialHandlerIndex:
                 ):
                     return None
                 return self.allocations.get((path, id(local)))
-        selected = _app_source_symbol(self.symbols, path, expression, function)
+        from .semantic_credential_sensor import _signing_source_symbol
+
+        selected = _signing_source_symbol(self.context, path, expression, function)
         if (
             selected is None
             and isinstance(expression, ast.Attribute)
@@ -3656,7 +3812,7 @@ class _CredentialHandlerIndex:
 
     def boundaries(self):
         """Follow exact dependency registrations, sharing one bounded route graph."""
-        from .mock_fixture_provenance import _app_source_symbol
+        from .semantic_credential_sensor import _signing_source_symbol
 
         pending, seen = list(self.handlers), set()
         while pending and len(seen) < 512:
@@ -3676,8 +3832,8 @@ class _CredentialHandlerIndex:
                 ):
                     continue
                 chain = []
-                selected = _app_source_symbol(
-                    self.symbols, path, value.args[0], function, provider_chain=chain
+                selected = _signing_source_symbol(
+                    self.context, path, value.args[0], function, provider_chain=chain
                 )
                 if selected is None and isinstance(value.args[0], ast.Name):
                     from .credential_role_constructor_provider import (
@@ -4049,7 +4205,9 @@ def _flask_credential_authority_for_key(
         _literal_credential,
     )
 
-    for app in _flask_configured_apps(path, context, {key, "SECRET_KEY"}):
+    for app in _flask_configured_apps(
+        path, context, {key, "SECRET_KEY"}, declaration=session_secret
+    ):
         app_path, tree = app["path"], app["tree"]
         authority = _flask_session_authority_witness(app_path, tree, context, app, key)
         if key == "SECRET_KEY":

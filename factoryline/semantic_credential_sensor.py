@@ -578,14 +578,22 @@ def _flask_credential_authority_inputs(finding, context):
     declaration = _flask_credential_declaration(finding, tree, key)
     if declaration is None or _flask_imported_key_written(path, context, key):
         return None
-    session_secret = _flask_config_key_declaration(index, path, "SECRET_KEY")
-    if session_secret is None or not _literal_credential(session_secret.value):
+    session_secret = (
+        declaration
+        if key == "SECRET_KEY"
+        else _flask_config_key_declaration(index, path, "SECRET_KEY")
+    )
+    if session_secret is None or not _literal_credential(
+        session_secret.value, auth_slot=True
+    ):
         return None
     return index, path, declaration, session_secret, key
 
 
 def _flask_credential_declaration(finding, tree, key):
-    declaration = _flask_config_key_declaration_in_tree(tree, key)
+    declaration = _flask_config_key_declaration_in_tree(
+        tree, key, location=(finding.get("line"), finding.get("column", 0))
+    )
     if declaration is None or _signing_rejection_or_reflection(tree):
         return None
     return (
@@ -606,7 +614,21 @@ def _flask_config_key_declaration(index, path, key):
     return _flask_config_key_declaration_in_tree(tree, key)
 
 
-def _flask_config_key_declaration_in_tree(tree, key):
+def _flask_config_key_declaration_in_tree(tree, key, *, location=None):
+    scopes = [tree, *(node for node in tree.body if isinstance(node, ast.ClassDef))]
+    declarations = [
+        declaration
+        for scope in scopes
+        for declaration in [_flask_scope_key_declaration(scope, key)]
+        if declaration is not None
+        and (
+            location is None or (declaration.lineno, declaration.col_offset) == location
+        )
+    ]
+    return declarations[0] if len(declarations) == 1 else None
+
+
+def _flask_scope_key_declaration(tree, key):
     declarations = [
         node
         for node in tree.body
@@ -650,7 +672,7 @@ def _flask_imported_key_written(target, context, key):
     )
 
 
-def _flask_configured_apps(target, context, protected_keys):
+def _flask_configured_apps(target, context, protected_keys, *, declaration=None):
     if not _signing_framework_external(context, "flask"):
         return []
     configured = []
@@ -680,6 +702,10 @@ def _flask_configured_apps(target, context, protected_keys):
                         or _flask_config_mutated(scope, receiver, protected_keys)
                         or _flask_configuration_reloaded(
                             scope, receiver, target, context, protected_keys, path
+                        )
+                        or declaration is not None
+                        and not _flask_selected_declaration(
+                            context, call.args[0], path, declaration
                         )
                     ):
                         continue
@@ -909,6 +935,17 @@ def _flask_module_exports_dynamic(tree):
 
 
 def _flask_config_module_matches(context, expression, target, consumer_path, seen=()):
+    selected = _flask_selected_config(context, expression, consumer_path)
+    if selected is not None:
+        return selected[0] == target
+    return _flask_forwarded_config_matches(
+        context, expression, target, consumer_path, seen
+    )
+
+
+def _flask_forwarded_config_matches(
+    context, expression, target, consumer_path, seen=()
+):
     if isinstance(expression, ast.Name) and expression.id == "__name__":
         return consumer_path == target
     resolved = _signing_resolve_module(context, expression)
@@ -966,6 +1003,381 @@ def _flask_config_module_matches(context, expression, target, consumer_path, see
                 return False
             found = found or actual_module == target or actual_module is None
     return found
+
+
+def _signing_source_symbols(context):
+    """Reuse finite exports for captured wildcard imports without guessing providers."""
+    from .credential_role_identity_effects import source_symbol_index
+    from .mock_fixture_provenance import _django_imports
+    from .credential_role_constructor_provider import (
+        _helper_identity,
+        _same_helper_epoch,
+    )
+
+    index = context["index"]
+    generation = _signing_import_generation(context)
+    helpers = tuple(_helper_identity(value) for value in _signing_import_helpers(index))
+    cached = getattr(index, "_signing_import_cache", None)
+    if (
+        cached is not None
+        and cached["generation"] == generation
+        and _same_helper_epoch(cached["helpers"], helpers)
+    ):
+        return cached["symbols"]
+    if cached is not None:
+        # The source-symbol wrapper also caches ordinary imports/module paths.
+        # Rebuild both positive and refused derivations on any epoch change.
+        index.__dict__.pop("_identity_symbol_index", None)
+    symbols = (
+        source_symbol_index(index)
+        if all(index.validate(p) for p in index.snapshots)
+        else None
+    )
+    if symbols is not None:
+        for path in index.snapshots:
+            if _django_imports(symbols, path) is None:
+                symbols["imports"][path] = _signing_module_imports(context, path)
+    index._signing_import_cache = {
+        "generation": generation,
+        "helpers": helpers,
+        "symbols": symbols,
+        "snapshot_refs": tuple(index.snapshots.values()),
+        "source_refs": tuple(index.source_bytes.values()),
+    }
+    return symbols
+
+
+def _signing_import_generation(context):
+    index = context["index"]
+    return (
+        index.root,
+        tuple(
+            sorted(
+                (
+                    str(p),
+                    id(t),
+                    id(index.source_bytes.get(p)),
+                    index.inventory.get(p),
+                    getattr(t, "_oracle_source_sha256", None),
+                )
+                for p, t in index.snapshots.items()
+            )
+        ),
+        tuple(sorted((name, str(path)) for name, path in context["paths"].items())),
+        tuple(sorted((str(path), digest) for path, digest in index.inventory.items())),
+        tuple(sorted(str(path) for path in index.source_bytes)),
+    )
+
+
+def _signing_import_helpers(index):
+    from .credential_role_identity_effects import source_symbol_index
+    from .credential_role_constructor_provider import binding_occurrences
+    from .mock_fixture_provenance import (
+        _django_imports,
+        _django_import_rows,
+        _django_import_targets,
+        _django_name,
+    )
+    from .review_audits import _bound_names, _name
+
+    return (
+        source_symbol_index,
+        index.validate,
+        index.module_paths,
+        index.relative,
+        _django_imports,
+        _django_import_rows,
+        _django_import_targets,
+        _django_name,
+        binding_occurrences,
+        _bound_names,
+        _name,
+        _signing_import_generation,
+        _signing_import_helpers,
+        _signing_module_imports,
+        _signing_resolve_module,
+        _flask_static_module_exports,
+        _flask_static_module_bindings,
+        _flask_assigns_module_name,
+        _flask_expand_star_exports,
+        _flask_explicit_module_exports,
+        _flask_module_exports_dynamic,
+    )
+
+
+def _signing_module_imports(context, path):
+    from .mock_fixture_provenance import _django_import_rows, _django_name
+    from .credential_role_constructor_provider import binding_occurrences
+
+    tree = context["index"].snapshots[path]
+    if not context["index"].validate(path):
+        return None
+    if not any(
+        isinstance(node, ast.ImportFrom) and any(a.name == "*" for a in node.names)
+        for node in tree.body
+    ):
+        return None
+    imports = {}
+    package = _django_name({"source": context["index"]}, path).rpartition(".")[0]
+    for statement in tree.body:
+        rows = _django_import_rows(statement, package)
+        if rows is None:
+            module = _signing_resolve_module(
+                context, ast.Constant(value=statement.module), path
+            )
+            exports = (
+                _flask_static_module_exports(context, module, set())
+                if module is not None
+                else None
+            )
+            if exports is None:
+                return None
+            rows = [(name, statement.module + "." + name) for name in exports]
+        imports.update(rows)
+    stars = {
+        id(node)
+        for node in tree.body
+        if isinstance(node, ast.ImportFrom) and any(a.name == "*" for a in node.names)
+    }
+    if any(
+        len(
+            rows := [
+                row
+                for row in binding_occurrences(tree.body, name)
+                if id(row) not in stars
+            ]
+        )
+        > 1
+        or rows
+        and not isinstance(rows[0], (ast.Import, ast.ImportFrom))
+        for name in imports
+    ):
+        return None
+    return imports
+
+
+def _signing_binding_occurrences(context, path, scope, name):
+    from .credential_role_constructor_provider import binding_occurrences
+
+    rows = binding_occurrences(scope.body, name)
+    symbols = _signing_source_symbols(context)
+    if symbols is None or symbols["imports"].get(path) is None:
+        return rows
+    return [
+        row
+        for row in rows
+        if not (
+            isinstance(row, ast.ImportFrom) and any(a.name == "*" for a in row.names)
+        )
+    ]
+
+
+def _signing_source_symbol(
+    context, path, expression, function=None, *, provider_chain=None
+):
+    from .mock_fixture_provenance import _app_source_symbol, _django_expr, _django_name
+
+    symbols = _signing_source_symbols(context)
+    if symbols is None:
+        return None
+    selected = _app_source_symbol(
+        symbols, path, expression, function, provider_chain=provider_chain
+    )
+    if selected is not None:
+        return selected
+    canonical = _django_expr(symbols, path, expression, function)
+    if canonical is None and isinstance(expression, ast.Name) and function is None:
+        canonical = _django_name(symbols, path) + "." + expression.id
+    seen = set()
+    while canonical and canonical not in seen and len(seen) < 12:
+        seen.add(canonical)
+        module, _, member = canonical.rpartition(".")
+        owner = _signing_resolve_module(context, ast.Constant(value=module), path)
+        if owner is None:
+            return None
+        if provider_chain is not None:
+            provider_chain.append((canonical, owner, member))
+        rows = _signing_binding_occurrences(
+            context, owner, context["index"].snapshots[owner], member
+        )
+        if len(rows) != 1:
+            return None
+        node = rows[0]
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            canonical = _django_expr(symbols, owner, ast.Name(id=member))
+            continue
+        if isinstance(node, ast.Name):
+            node = context["index"].parents[owner].get(id(node))
+        return owner, node
+    return None
+
+
+def _flask_selected_config(context, expression, path, seen=()):
+    """Resolve a finite module/class selection, including an environment default."""
+    if expression is None or len(seen) >= 8 or id(expression) in seen:
+        return None
+    seen = (*seen, id(expression))
+    default = _flask_config_default(context, expression, path)
+    if default is not None:
+        return _flask_selected_config(context, default, path, seen)
+    if isinstance(expression, ast.Constant) and isinstance(expression.value, str):
+        module = _signing_resolve_module(context, expression, path)
+        if module is not None:
+            return module, context["index"].snapshots[module]
+        module_name, _, member = expression.value.rpartition(".")
+        module = _signing_resolve_module(context, ast.Constant(value=module_name), path)
+        if module is None:
+            return None
+        expression, path = ast.Name(id=member), module
+
+    symbols = _signing_source_symbols(context)
+    selected = _signing_source_symbol(context, path, expression) if symbols else None
+    if selected is None:
+        return None
+    owner, node = selected
+    if isinstance(node, ast.Assign):
+        return _flask_selected_config(context, node.value, owner, seen)
+    return (owner, node) if isinstance(node, ast.ClassDef) else None
+
+
+def _flask_config_default(context, expression, path):
+    from .review_audits import _resolved_ast_name
+    from .credential_role_identity_effects import _enclosing_function
+    from .mock_fixture_provenance import _app_local_assignment
+
+    if isinstance(expression, ast.Name):
+        scope = _enclosing_function(expression, context["index"].parents[path])
+        binding = _app_local_assignment(scope, expression.id) if scope else None
+        return binding.value if isinstance(binding, ast.Assign) else None
+    if not isinstance(expression, ast.Call):
+        return None
+    if (
+        _resolved_ast_name(expression.func, context["aliases"][path])
+        not in {"os.getenv", "os.environ.get"}
+        or len(expression.args) != 2
+        or expression.keywords
+        or not isinstance(expression.args[0], ast.Constant)
+        or not isinstance(expression.args[0].value, str)
+        or _provider_identity_uncertain(
+            context["index"].snapshots[path], context["aliases"][path], roots=("os",)
+        )
+    ):
+        return None
+    return expression.args[1]
+
+
+def _flask_effective_config_key(context, path, scope, key, seen=()):
+    from .credential_role_constructor_provider import binding_occurrences
+
+    if id(scope) in seen or len(seen) >= 8:
+        return None
+    if isinstance(scope, ast.ClassDef) and not _flask_config_class_closed(
+        context, path, scope, key
+    ):
+        return None
+    declaration = _flask_scope_key_declaration(scope, key)
+    if declaration is not None:
+        return declaration
+    if binding_occurrences(scope.body, key):
+        return None
+    if (
+        not isinstance(scope, ast.ClassDef)
+        or scope.decorator_list
+        or len(scope.bases) != 1
+    ):
+        return None
+    selected = _flask_selected_config(context, scope.bases[0], path)
+    if selected is None:
+        return None
+    return _flask_effective_config_key(context, *selected, key, (*seen, id(scope)))
+
+
+def _flask_config_class_closed(context, path, scope, key, seen=()):
+    from .mock_fixture_provenance import _django_name
+    from .credential_endpoint_admission import _CredentialHandlerIndex
+
+    if (
+        id(scope) in seen
+        or len(seen) >= 8
+        or scope.decorator_list
+        or scope.keywords
+        or len(scope.bases) > 1
+    ):
+        return False
+    if (
+        scope.bases
+        and isinstance(scope.bases[0], ast.Name)
+        and scope.bases[0].id == "object"
+        and not _security_builtin_identity_closed(
+            context["index"].snapshots[path], context["aliases"][path], {"object"}
+        )
+    ):
+        return False
+    if scope.bases and not (
+        isinstance(scope.bases[0], ast.Name) and scope.bases[0].id == "object"
+    ):
+        selected = _flask_selected_config(context, scope.bases[0], path)
+        if selected is None or not _flask_config_class_closed(
+            context, *selected, key, (*seen, id(scope))
+        ):
+            return False
+    symbols = _signing_source_symbols(context)
+    canonical = _django_name(symbols, path) + "." + scope.name
+    graph = _CredentialHandlerIndex(context)
+    for owner, tree in context["index"].snapshots.items():
+        aliases = dict(context["aliases"][owner])
+        if owner == path:
+            aliases[scope.name] = canonical
+        if _provider_identity_uncertain(
+            tree,
+            aliases,
+            roots=(canonical + "." + key,),
+            selected_paths=True,
+            argument_predicate=lambda node,
+            _aliases,
+            parents: not _flask_config_reader_argument(node, parents, graph, owner),
+        ):
+            return False
+    return True
+
+
+def _flask_config_reader_argument(node, parents, graph, path):
+    call = parents.get(id(node))
+    if (
+        not isinstance(call, ast.Call)
+        or len(call.args) != 1
+        or call.args[0] is not node
+        or call.keywords
+    ):
+        return False
+    function = call.func
+    if not (
+        isinstance(function, ast.Attribute)
+        and function.attr == "from_object"
+        and isinstance(function.value, ast.Attribute)
+        and function.value.attr == "config"
+    ):
+        return False
+    receiver = graph.binding(path, function.value.value)
+    return (
+        receiver is not None
+        and receiver["framework"] == "flask"
+        and receiver["kind"] == "application"
+    )
+
+
+def _flask_selected_declaration(context, expression, path, declaration):
+    selected = _flask_selected_config(context, expression, path)
+    if selected is None:
+        # The existing call-argument resolver already proved module forwarding.
+        # Class fields still require an exact effective-class selection.
+        return any(
+            declaration in tree.body for tree in context["index"].snapshots.values()
+        )
+    return (
+        selected is not None
+        and _flask_effective_config_key(context, *selected, "SECRET_KEY") is declaration
+    )
 
 
 def _flask_module_aliases(path, tree, context):
@@ -2118,6 +2530,15 @@ def _signing_provider_clear(tree, aliases, framework, *, roots=None):
             )
         }
     if framework == "django":
+        # Reading a selected literal string cannot mutate its owning settings
+        # namespace; keep stores, namespace escapes and container reads indexed.
+        reads.update(
+            id(node)
+            for node in nodes
+            if isinstance(node, ast.Attribute)
+            and isinstance(node.ctx, ast.Load)
+            and _resolved_ast_name(node, aliases) == "django.conf.settings.SECRET_KEY"
+        )
         # Mapping keys outside the selected loader key cannot replace that key.
         # Keep namespace aliases, unknown keys and reflective writes in the index.
         reads.update(
@@ -5076,7 +5497,9 @@ def _captured_sink_value(
         targets = (
             candidate.targets
             if isinstance(candidate, ast.Assign)
-            else [candidate.target] if isinstance(candidate, ast.AnnAssign) else []
+            else [candidate.target]
+            if isinstance(candidate, ast.AnnAssign)
+            else []
         )
         if (
             candidate in body

@@ -4013,6 +4013,23 @@ def _security_statement_call_findings(
         bind_native_input_precondition(
             call, canonical, primitive, scope, requests, aliases
         )
+        if primitive is not None and getattr(
+            call, "_security_supported_precondition", None
+        ) is None:
+            _security_bind_local_native_input_precondition(
+                call, canonical, primitive, scope, requests, aliases
+            )
+            if (
+                primitive.get("code") == "SECURITY_OS_COMMAND"
+                and getattr(call, "_security_supported_precondition", None) is None
+            ):
+                from .credential_role_paths import (
+                    bind_staged_command_activation_precondition,
+                )
+
+                bind_staged_command_activation_precondition(
+                    primitive, call, aliases
+                )
         finding = _security_source_sink_call(
             relative, call, aliases, requests, parameters, connections, cursors, helpers
         )
@@ -4546,6 +4563,11 @@ def _security_flow_source_assignment(
         value_kind = request_payload_value_kind(
             value, requests, aliases, _security_scope_request_aliases, scope, statement
         )
+    binary_decode = _security_request_binary_decode_kind(
+        value, requests, aliases, scope, statement
+    )
+    if value_kind is None:
+        value_kind = binary_decode
     request_collection = intent_quality._credential_request_collection(
         value, password_fields, _security_request_args, aliases, scope, statement
     )
@@ -4559,6 +4581,8 @@ def _security_flow_source_assignment(
         isinstance(value, ast.AST)
         and _security_expr_tainted(value, requests, parameters, aliases, structural),
     )
+    if binary_decode == "bytes":
+        flags = (True, flags[1], True)
     upload_object = isinstance(value, ast.AST) and (
         _security_flask_upload_expression(value, aliases, scope, statement)
         or (isinstance(value, ast.Name) and ("flask-upload", value.id) in requests)
@@ -4597,6 +4621,209 @@ def _security_flow_source_assignment(
     )
     if isinstance(requests, _SecurityFlowState) and structural is not None:
         _security_store_structural_targets(statement, requests.values, structural)
+
+
+def _security_request_binary_decode_kind(value, requests, aliases, scope, statement):
+    """Carry request text through an exact, source-stable base64-to-bytes transform."""
+    if not isinstance(value, ast.Call) or len(value.args) != 1 or value.keywords:
+        return None
+    if any(isinstance(argument, ast.Starred) for argument in value.args):
+        return None
+    if security_call_name(value, aliases) not in {
+        "base64.b64decode",
+        "base64.urlsafe_b64decode",
+    }:
+        return None
+    from .semantic_credential_sensor import (
+        _provider_identity_uncertain,
+        request_payload_value_kind,
+    )
+
+    module = _security_module_scope(scope)
+    if module is None or _provider_identity_uncertain(
+        module, aliases, roots=(security_call_name(value, aliases),)
+    ):
+        return None
+    source = value.args[0]
+    if (
+        request_payload_value_kind(
+            source, requests, aliases, _security_scope_request_aliases, scope, statement
+        )
+        == "text"
+        and _security_expr_tainted(source, requests, set(), aliases)
+    ):
+        return "bytes"
+    return None
+
+
+def _security_bind_local_native_input_precondition(
+    call, canonical, primitive, scope, requests, aliases
+):
+    """Bind one sink against its own provider identities when unrelated module code is ambiguous."""
+    from .semantic_credential_sensor import (
+        _native_input_request_is_supported,
+        security_precondition_call_shape,
+        security_precondition_path_possible,
+        supported_security_precondition,
+    )
+    from .finite_capture import security_input_value_flow
+
+    eligible = {
+        "SECURITY_DYNAMIC_EXECUTION",
+        "SECURITY_OS_COMMAND",
+        "SECURITY_SHELL_COMMAND",
+        "SECURITY_UNSAFE_DESERIALIZATION",
+        "SECURITY_UNSAFE_YAML",
+    }
+    if primitive.get("code") not in eligible or not call.args:
+        return
+    module = _security_module_scope(scope)
+    if module is None or not (
+        security_precondition_call_shape(call, canonical)
+        or _security_shell_call_shape_for_flow(call, canonical)
+    ):
+        return
+    if not security_precondition_path_possible(call):
+        return
+    if _security_local_request_provider_identity_uncertain(module, aliases):
+        return
+    provider_roots = (
+        ("subprocess",)
+        if canonical.startswith("subprocess.")
+        else ("os.system",)
+        if canonical == "os.system"
+        else ("_pickle",)
+        if canonical.startswith("_pickle.")
+        else ("pickle",)
+        if canonical.startswith("pickle.")
+        else ("dill",)
+        if canonical.startswith("dill.")
+        else ("yaml",)
+        if canonical.startswith("yaml.")
+        else ("builtins",)
+    )
+    if _security_local_provider_identity_uncertain(
+        module, aliases, provider_roots
+    ):
+        return
+    supported = getattr(requests, "supported_view", lambda: requests)()
+    if supported is None or not _native_input_request_is_supported(
+        call, canonical, supported, aliases, scope, sys.modules[__name__]
+    ):
+        return
+    premise = supported_security_precondition(call, "untrusted_request", canonical)
+    if trace := security_input_value_flow(call.args[0], supported, aliases):
+        premise["input_value_flow"] = trace
+    call._security_supported_precondition = premise
+
+
+def _security_local_request_provider_identity_uncertain(module, aliases):
+    """Keep request-provider mutations in every captured module as source blockers."""
+    from .review_audits import _security_aliases
+    from .semantic_credential_sensor import _provider_identity_uncertain
+
+    source_model = getattr(module, "_security_source_model", None)
+    trees = (
+        tuple(source_model.snapshots.values())
+        if source_model is not None
+        else (module,)
+    )
+    for tree in trees:
+        source_aliases = (
+            aliases if tree is module else _security_aliases(list(ast.walk(tree)))
+        )
+        if _provider_identity_uncertain(
+            tree,
+            source_aliases,
+            roots=("flask.request",),
+            selected_paths=True,
+        ):
+            return True
+    return False
+
+
+def _security_shell_call_shape_for_flow(call, canonical):
+    """Allow inert process options around an explicitly enabled shell sink."""
+    if canonical not in {
+        "subprocess.run",
+        "subprocess.call",
+        "subprocess.check_call",
+        "subprocess.check_output",
+        "subprocess.Popen",
+    } or len(call.args) != 1 or isinstance(call.args[0], ast.Starred):
+        return False
+    keywords = {item.arg: item.value for item in call.keywords}
+    if (
+        None in keywords
+        or len(keywords) != len(call.keywords)
+        or "shell" not in keywords
+        or not isinstance(keywords["shell"], ast.Constant)
+        or keywords["shell"].value is not True
+    ):
+        return False
+    inert_options = {
+        "shell",
+        "stdin",
+        "stdout",
+        "stderr",
+        "timeout",
+        "check",
+        "cwd",
+        "env",
+        "text",
+        "encoding",
+        "errors",
+        "universal_newlines",
+        "bufsize",
+        "close_fds",
+        "start_new_session",
+        "creationflags",
+    }
+    return set(keywords).issubset(inert_options)
+
+
+def _security_local_provider_identity_uncertain(module, aliases, roots):
+    """Ignore only read-only subprocess stream constants in otherwise exact provider checks."""
+    from types import SimpleNamespace
+    from .finite_capture import finite_provider_mutation_index
+    from .review_audits import _resolved_ast_name
+
+    nodes = list(ast.walk(module))
+    parents = {
+        id(child): parent for parent in nodes for child in ast.iter_child_nodes(parent)
+    }
+    mutations = finite_provider_mutation_index(
+        nodes,
+        aliases,
+        SimpleNamespace(_resolved_ast_name=_resolved_ast_name),
+        parents,
+    )
+    if "subprocess" in roots:
+        inert = set()
+        for node in nodes:
+            if not (
+                isinstance(node, ast.Attribute)
+                and node.attr in {"STDOUT", "PIPE", "DEVNULL"}
+                and isinstance(node.ctx, ast.Load)
+                and _resolve(node, aliases) == f"subprocess.{node.attr}"
+            ):
+                continue
+            keyword = parents.get(id(node))
+            call = parents.get(id(keyword)) if isinstance(keyword, ast.keyword) else None
+            if (
+                isinstance(keyword, ast.keyword)
+                and keyword.value is node
+                and keyword.arg in {"stdin", "stdout", "stderr"}
+                and isinstance(call, ast.Call)
+                and security_call_name(call, aliases).startswith("subprocess.")
+            ):
+                inert.add((f"subprocess.{node.attr}", "*"))
+        mutations = [item for item in mutations if item not in inert]
+    return any(
+        path == root or path.startswith(root + ".")
+        for path, _attribute in mutations
+        for root in roots
+    )
 
 
 def _security_call_unshadowed(node, name):

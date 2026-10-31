@@ -1392,6 +1392,61 @@ def test_captured_package_root378_module_resolution_uses_same_captured_package_r
     assert target == util_init
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "import dep\n",
+        "def consumer():\n    import dep as nested\n",
+        "import dep as first, dep as second\nfrom dep import value\n",
+    ],
+)
+def test_validated_import_lookup_reuses_parent_index(tmp_path, monkeypatch, text):
+    import hashlib
+    from factoryline.credential_role_constructor_provider import SourceSnapshotIndex
+
+    caller, dependency = tmp_path / "app.py", tmp_path / "dep.py"
+    raw = {caller: text.encode(), dependency: b"value = 1\n"}
+    trees = {path: ast.parse(data) for path, data in raw.items()}
+    inventory = {path: hashlib.sha256(data).hexdigest() for path, data in raw.items()}
+    for path, tree in trees.items():
+        tree._oracle_source_sha256 = inventory[path]
+    source = SourceSnapshotIndex(tmp_path, trees, raw, inventory)
+    assert all(source.validate(path) for path in trees)
+
+    def unexpected_walk(tree):
+        pytest.fail("validated import lookup walked a complete module again")
+
+    monkeypatch.setattr(ast, "walk", unexpected_walk)
+    for _ in range(3):
+        assert capture.captured_import_module(source, caller, "dep") == (
+            True,
+            dependency,
+        )
+        assert capture.captured_import_module(source, caller, "absent") == (False, None)
+
+
+def test_validated_import_lookup_tracks_source_replacement(tmp_path):
+    import hashlib
+    from factoryline.credential_role_constructor_provider import SourceSnapshotIndex
+
+    caller, dependency = tmp_path / "app.py", tmp_path / "dep.py"
+    raw = {caller: b"import dep\n", dependency: b"value = 1\n"}
+    trees = {path: ast.parse(data) for path, data in raw.items()}
+    inventory = {path: hashlib.sha256(data).hexdigest() for path, data in raw.items()}
+    for path, tree in trees.items():
+        tree._oracle_source_sha256 = inventory[path]
+    source = SourceSnapshotIndex(tmp_path, trees, raw, inventory)
+    assert capture.captured_import_module(source, caller, "dep") == (True, dependency)
+    raw[caller] = b"import different\n"
+    assert capture.captured_import_module(source, caller, "dep") == (False, None)
+    replacement = ast.parse(raw[caller])
+    inventory[caller] = hashlib.sha256(raw[caller]).hexdigest()
+    replacement._oracle_source_sha256 = inventory[caller]
+    trees[caller] = replacement
+    assert capture.captured_import_module(source, caller, "dep") == (False, None)
+    assert capture.captured_import_module(source, caller, "different") == (True, None)
+
+
 def test_live_import_path_requires_real_contained_file(tmp_path):
     source = tmp_path / "owned.py"
     source.write_text("value = 1\n", encoding="utf-8")

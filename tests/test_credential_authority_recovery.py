@@ -310,3 +310,198 @@ def test_recovered_local_default_native_cli_receipt_and_independent_regeneration
         ]
         == 0
     )
+
+
+def test_literal_key_hash_read_preserves_selected_signing_authority():
+    row = _recovery_row(
+        _recovery_sources(
+            extra={
+                "consumer.py": "import hashlib\nfrom django.conf import settings\n"
+                "def derive(value):\n    return hashlib.sha1(value + settings.SECRET_KEY).hexdigest()\n"
+            }
+        )
+    )
+    assert row["tier"] == "SUPPORTED_DEFECT"
+
+
+def test_unrendered_key_and_runtime_module_scaffold_is_not_authority():
+    settings = SETTINGS.replace('"published-signing-material"', '"{{ fresh_key }}"')
+    settings += 'ROOT_URLCONF = "{{ app_name }}.urls"\n'
+    assert _recovery_row(_recovery_sources(settings))["tier"] == "NEEDS_CONTEXT"
+    # A literal spelling alone cannot negate a real selected signing consumer.
+    assert (
+        _recovery_row(
+            _recovery_sources(
+                settings.replace(
+                    'ROOT_URLCONF = "{{ app_name }}.urls"',
+                    'ROOT_URLCONF = "service.urls"',
+                )
+            )
+        )["tier"]
+        == "SUPPORTED_DEFECT"
+    )
+
+
+def test_package_exclusion_and_unrelated_test_do_not_isolate_active_runtime():
+    files = _recovery_sources(
+        extra={
+            "setup.py": "from setuptools import setup, find_packages\n"
+            "setup(packages=find_packages(exclude=['service']))\n",
+            "service/test_example.py": "from django.test import TestCase\n"
+            "from django.contrib.auth.models import User\nfrom django.conf import settings\n"
+            "class Example(TestCase):\n    def setUp(self):\n"
+            "        User.objects.create_user(settings.EXAMPLE_NAME, settings.EXAMPLE_EMAIL, settings.EXAMPLE_PASSWORD)\n",
+        }
+    )
+    assert _recovery_row(files)["tier"] == "SUPPORTED_DEFECT"
+
+
+@pytest.mark.parametrize(
+    "extra_target",
+    ["live", "unknown_target", "include(dynamic_urls)", "'missing.views.login'"],
+)
+def test_fixture_route_cannot_hide_an_additional_selected_runtime_target(extra_target):
+    files = _recovery_sources(
+        SETTINGS + 'ROOT_URLCONF = "service.urls"\n',
+        extra={
+            "setup.py": "from setuptools import setup, find_packages\n"
+            "setup(packages=find_packages(exclude=['service']))\n",
+            "service/test_example.py": "from django.test import TestCase\n"
+            "from django.contrib.auth.models import User\nfrom django.conf import settings\n"
+            "class Example(TestCase):\n    def setUp(self):\n"
+            "        User.objects.create_user(settings.TEST_USERNAME, settings.TEST_EMAIL, settings.TEST_PASSWORD)\n",
+            "service/urls.py": "from django.conf.urls import url, include\n"
+            "from service.views import live\n"
+            "urlpatterns = [url('/fixture', 'service.views.fixture'), "
+            f"url('/login', {extra_target})]\n",
+            "service/views.py": "from django.conf import settings\n"
+            "from django.contrib.auth import authenticate, login\n"
+            "def fixture(request):\n"
+            "    return authenticate(username=settings.TEST_USERNAME, password=settings.TEST_PASSWORD)\n"
+            "def live(request):\n"
+            "    user = authenticate(username=request.POST['username'], password=request.POST['password'])\n"
+            "    login(request, user)\n",
+        },
+    )
+    assert _recovery_row(files)["tier"] == "SUPPORTED_DEFECT"
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "@replacement\nclass Config:",
+        "class Config(metaclass=Replacement):",
+        "class Config(DynamicBase):",
+        "Config.SECRET_KEY = secure_runtime_key",
+        "del Config.SECRET_KEY",
+    ],
+)
+def test_selected_config_class_requires_closed_provider_and_field(mutation):
+    from test_semantic_credential_sensor import (
+        _flask_login_config_sources,
+        _captured_secret_tiers,
+    )
+
+    files = _flask_login_config_sources(target="config.Config")
+    original = 'class Config:\n    SECRET_KEY = "source-bound-login-signing-key"\n'
+    files["config.py"] = original
+    assert (
+        _captured_secret_tiers(files, "config.py")["ledger"][0]["tier"]
+        == "SUPPORTED_DEFECT"
+    )
+    files["config.py"] = (
+        original.replace("class Config:", mutation)
+        if "class Config" in mutation
+        else original + mutation + "\n"
+    )
+    assert (
+        _captured_secret_tiers(files, "config.py")["ledger"][0]["tier"]
+        == "NEEDS_CONTEXT"
+    )
+
+
+@pytest.mark.parametrize(
+    "provider", ['PUBLIC = "value"\n', "__all__ = dynamic_names\n"]
+)
+def test_finite_import_cache_memoizes_success_and_refusal(monkeypatch, provider):
+    from factoryline import semantic_credential_sensor as sensor
+
+    sources = {
+        "reader.py": b"from provider import *\n",
+        "provider.py": provider.encode(),
+    }
+    context = sensor.signing_configuration_inventory(
+        sources, {name: sha256(raw).hexdigest() for name, raw in sources.items()}
+    )
+    original = sensor._signing_module_imports
+    calls = []
+
+    def derive(context, path):
+        calls.append(path)
+        return original(context, path)
+
+    monkeypatch.setattr(sensor, "_signing_module_imports", derive)
+    first = sensor._signing_source_symbols(context)
+    count = len(calls)
+    assert count == 1
+    assert (first["imports"][Path("reader.py")] is None) == (
+        "dynamic_names" in provider
+    )
+    for _ in range(4):
+        assert sensor._signing_source_symbols(context) is first
+    assert len(calls) == count
+
+
+def test_finite_import_cache_invalidates_snapshot_inventory_and_helper_epoch(
+    monkeypatch,
+):
+    from factoryline import semantic_credential_sensor as sensor
+
+    sources = {
+        "reader.py": b"from provider import *\n",
+        "provider.py": b'PUBLIC = "value"\n',
+    }
+    context = sensor.signing_configuration_inventory(
+        sources, {name: sha256(raw).hexdigest() for name, raw in sources.items()}
+    )
+    index = context["index"]
+    first = sensor._signing_source_symbols(context)
+    assert first["imports"][Path("reader.py")] is not None
+    original_code = sensor._flask_module_exports_dynamic.__code__
+
+    def opaque(_tree):
+        return True
+
+    with monkeypatch.context() as patch:
+        patch.setattr(sensor._flask_module_exports_dynamic, "__code__", opaque.__code__)
+        refused = sensor._signing_source_symbols(context)
+        assert refused is not first
+        assert refused["imports"][Path("reader.py")] is None
+        assert sensor._signing_source_symbols(context) is refused
+    assert sensor._flask_module_exports_dynamic.__code__ is original_code
+    rebuilt = sensor._signing_source_symbols(context)
+    assert rebuilt["imports"][Path("reader.py")] is not None
+    path = Path("provider.py")
+    tree = ast.parse(sources["provider.py"])
+    tree._oracle_source_sha256 = index.inventory[path]
+    index.snapshots[path] = tree
+    assert sensor._signing_source_symbols(context) is not rebuilt
+    digest = index.inventory[path]
+    index.inventory[path] = "0" * 64
+    assert sensor._signing_source_symbols(context) is None
+    assert sensor._signing_source_symbols(context) is None
+    index.inventory[path] = digest
+    assert (
+        sensor._signing_source_symbols(context)["imports"][Path("reader.py")]
+        is not None
+    )
+    raw = b"__all__ = dynamic_names\n"
+    tree = ast.parse(raw)
+    tree._oracle_source_sha256 = sha256(raw).hexdigest()
+    index.snapshots[path], index.source_bytes[path], index.inventory[path] = (
+        tree,
+        raw,
+        tree._oracle_source_sha256,
+    )
+    final = sensor._signing_source_symbols(context)
+    assert final["imports"][Path("reader.py")] is None

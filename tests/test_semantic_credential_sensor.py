@@ -3770,6 +3770,231 @@ def test_control_binding_keeps_generic_sql_parameter_candidates(binding):
     assert any(row["code"] == "SECURITY_SQL_INJECTION" for row in findings)
 
 
+def test_encoded_request_text_reaches_pickle_bytes_sink_with_transform_evidence():
+    finding = next(
+        row
+        for row in _premise_scan(
+            "import base64, pickle\nfrom flask import request\n"
+            "def view():\n"
+            "    encoded = request.args.get('data', '')\n"
+            "    decoded = base64.b64decode(encoded)\n"
+            "    pickle.loads(decoded)\n"
+        )
+        if row["code"] == "SECURITY_UNSAFE_DESERIALIZATION"
+    )
+    premise = finding["facts"]["security_precondition"]
+    assert premise["source_role"] == "untrusted_request"
+    assert premise["input_value_flow"]["value_kind"] == "bytes"
+    assert premise["input_value_flow"]["trace_sha256"]
+
+
+def test_shell_command_flow_accepts_read_only_subprocess_stream_constants():
+    source = (
+        "import subprocess\nfrom flask import request\n"
+        "def view():\n"
+        "    command = request.args.get('cmd', '')\n"
+        "    rendered = f'echo {command}'\n"
+        "    subprocess.check_output(rendered, shell=True, "
+        "stderr=subprocess.STDOUT, timeout=10)\n"
+    )
+    finding = next(
+        row
+        for row in _premise_scan(source)
+        if row["code"] == "SECURITY_SHELL_COMMAND"
+    )
+    assert finding["facts"]["security_precondition"]["source_role"] == "untrusted_request"
+    mutated = source.replace(
+        "    rendered = f'echo {command}'\n",
+        "    rendered = f'echo {command}'\n    subprocess.STDOUT = replacement\n",
+    )
+    mutated_rows = [
+        row
+        for row in _premise_scan(mutated)
+        if row["code"] == "SECURITY_SHELL_COMMAND"
+    ]
+    assert not any(row["facts"].get("security_precondition") for row in mutated_rows)
+
+
+def test_sql_flow_evidence_reuses_native_query_to_execute_predicate():
+    source = (
+        "import sqlite3\nfrom flask import request\n"
+        "def view():\n"
+        "    cursor = sqlite3.connect(':memory:').cursor()\n"
+        "    key = request.args.get('key', '')\n"
+        "    cursor.execute('SELECT * FROM records WHERE id=' + key)\n"
+    )
+    finding = next(
+        row
+        for row in _premise_scan(source)
+        if row["code"] == "SECURITY_SQL_INJECTION"
+    )
+    assert finding["facts"]["security_precondition"]["source_role"] == "untrusted_request"
+    sanitized = source.replace(
+        "cursor.execute('SELECT * FROM records WHERE id=' + key)",
+        "cursor.execute('SELECT * FROM records WHERE id=?', (key,))",
+    )
+    assert not any(
+        row["code"] == "SECURITY_SQL_INJECTION"
+        for row in _premise_scan(sanitized)
+    )
+
+
+def test_database_backed_crontab_staging_requires_admin_field_write_and_activation(
+    tmp_path,
+):
+    from pathlib import Path
+    from factoryline.credential_role_constructor_provider import SourceSnapshotIndex
+
+    model_source = (
+        "from django.db.models import *\nfrom django.conf import settings\n"
+        "from os import system\nimport codecs\n"
+        "class BookSet(Model):\n"
+        "    name = CharField(max_length=50)\n"
+        "    def save(self):\n"
+        "        content = '\\n'.join(['%s %s * * * run \\\'%s\\\'' % "
+        "(item.time.minute, item.time.hour, item.name) "
+        "for item in BookSet.objects.all()])\n"
+        "        codecs.open(settings.PROJECT_ROOT + 'crontab', 'w', 'utf-8').write(content + '\\n')\n"
+        "        system('crontab %scrontab' % settings.PROJECT_ROOT)\n"
+    )
+    admin_source = (
+        "from django.contrib import admin\nfrom models import BookSet\n"
+        "admin.site.register(BookSet)\n"
+    )
+
+    def staged_finding(
+        admin_text=admin_source, write_path="crontab", source_text=model_source
+    ):
+        model_text = source_text.replace("+ 'crontab'", f"+ '{write_path}'")
+        files = {"models.py": model_text, "admin.py": admin_text}
+        snapshots, source_bytes, inventory = {}, {}, {}
+        for relative, text in files.items():
+            path = Path(tmp_path, relative)
+            raw = text.encode("utf-8")
+            tree = ast.parse(raw, filename=str(path))
+            digest = hashlib.sha256(raw).hexdigest()
+            tree._oracle_source_sha256 = digest
+            snapshots[path] = tree
+            source_bytes[path] = raw
+            inventory[path] = digest
+        index = SourceSnapshotIndex(Path(tmp_path), snapshots, source_bytes, inventory)
+        model_path = Path(tmp_path, "models.py")
+        snapshots[model_path]._security_source_model = index
+        with audit._security_only_scan_context(True):
+            rows = audit._security_scan_tree(
+                Path(tmp_path), model_path, snapshots[model_path]
+            )
+        return next(
+            row for row in rows if row["code"] == "SECURITY_OS_COMMAND"
+        )
+
+    finding = staged_finding()
+    staged = finding["facts"]["security_precondition"]["staged_write_activation"]
+    assert staged["schema"] == "factory.security.staged-command-activation.v1"
+    assert staged["source_sha256"] == hashlib.sha256(model_source.encode()).hexdigest()
+    assert staged["admin_path"] == "admin.py"
+    from factoryline.credential_role_paths import valid_security_precondition
+
+    assert valid_security_precondition(finding["facts"]["security_precondition"], finding)
+    renamed_field_source = model_source.replace(
+        "name = CharField", "command_text = CharField"
+    ).replace("item.name", "item.command_text")
+    renamed = staged_finding(source_text=renamed_field_source)
+    assert renamed["facts"]["security_precondition"]["staged_write_activation"][
+        "field_name"
+    ] == "command_text"
+    renamed_root_only = staged_finding(
+        source_text=model_source.replace("PROJECT_ROOT", "WORK_DIR")
+    )
+    assert "staged_write_activation" in renamed_root_only["facts"][
+        "security_precondition"
+    ]
+    renamed_root_source = model_source.replace("PROJECT_ROOT", "WORK_DIR").replace(
+        "        system(", "        settings.WORK_DIR = '/other/'\n        system("
+    )
+    renamed_root = staged_finding(source_text=renamed_root_source)
+    assert "staged_write_activation" not in renamed_root["facts"].get(
+        "security_precondition", {}
+    )
+    fstring_lines = model_source.splitlines()
+    content_line = next(
+        index for index, line in enumerate(fstring_lines) if "content = " in line
+    )
+    fstring_lines[content_line] = (
+        "        content = '\\n'.join([f\"{item.time.minute} {item.time.hour} * * * "
+        "run '{item.name}'\" for item in BookSet.objects.all()])"
+    )
+    fstring_finding = staged_finding(source_text="\n".join(fstring_lines) + "\n")
+    assert "staged_write_activation" in fstring_finding["facts"][
+        "security_precondition"
+    ]
+    no_admin = staged_finding(admin_text="from django.contrib import admin\n")
+    assert "staged_write_activation" not in no_admin["facts"].get(
+        "security_precondition", {}
+    )
+    wrong_path = staged_finding(write_path="other")
+    assert "security_precondition" not in wrong_path["facts"]
+    negative_sources = (
+        model_source.replace(
+            "        codecs.open(",
+            "        content = '0 0 * * * safe-fixed-command'\n"
+            "        codecs.open(",
+        ),
+        model_source.replace(
+            "import codecs\n", "import codecs\ncodecs.open = replacement\n"
+        ),
+        model_source.replace(
+            "        system(",
+            "        settings.PROJECT_ROOT = '/different/'\n        system(",
+        ),
+        model_source.replace(
+            "class BookSet(Model):", "CharField = replacement\nclass BookSet(Model):"
+        ),
+        model_source.replace(
+            "        system(", "        mutate(settings)\n        system("
+        ),
+        model_source.replace(
+            ".write(content + '\\n')", ".write('safe-fixed-line' if content else 'safe-fixed-line')"
+        ),
+        model_source.replace(
+            ".write(content + '\\n')", ".write(sanitize(content))"
+        ),
+        model_source.replace(
+            "        system(",
+            "        codecs.open(settings.PROJECT_ROOT + 'crontab', 'w').write('fixed')\n        system(",
+        ),
+        model_source.replace(
+            "        codecs.open(", "        del content\n        codecs.open("
+        ),
+        model_source.replace(
+            "class BookSet(Model):", "@replace_model\nclass BookSet(Model):"
+        ),
+        model_source.replace(
+            "class BookSet(Model):", "class BookSet(Model, Other):"
+        ),
+    )
+    for control_index, unsafe_source in enumerate(negative_sources):
+        finding = staged_finding(source_text=unsafe_source)
+        assert "staged_write_activation" not in finding["facts"].get(
+            "security_precondition", {}
+        ), f"staged proof survived negative control {control_index}"
+    unsafe_admin = admin_source.replace(
+        "admin.site.register(BookSet)",
+        "admin.site.register = replacement\nadmin.site.register(BookSet)",
+    )
+    finding = staged_finding(admin_text=unsafe_admin)
+    assert "staged_write_activation" not in finding["facts"].get(
+        "security_precondition", {}
+    )
+    unrelated_admin = admin_source.replace(
+        "from models import BookSet", "from unrelated.models import BookSet"
+    )
+    finding = staged_finding(admin_text=unrelated_admin)
+    assert "staged_write_activation" not in finding["facts"].get(
+        "security_precondition", {}
+    )
+
+
 @pytest.mark.parametrize(
     "source, expected",
     [
