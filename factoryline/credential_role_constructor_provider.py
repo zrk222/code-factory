@@ -2752,7 +2752,10 @@ def _terminal_attribute_parts(node):
 
 
 def _terminal_namespace_import_prefix(bindings, name, canonical):
-    if not bindings:
+    if not bindings or any(
+        not isinstance(statement, (ast.Import, ast.ImportFrom))
+        for statement in bindings
+    ):
         return None
     ordinary = [
         item

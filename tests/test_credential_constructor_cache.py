@@ -31,6 +31,33 @@ SOURCE = "class Client: pass\nclass Adapter:\n    client_class = Client\n"
 
 
 @pytest.mark.parametrize(
+    "source",
+    [
+        "client = object()",
+        "del client",
+        "def client(): pass",
+        "class client: pass",
+        "client: object",
+        "for client in items: pass",
+    ],
+)
+def test_terminal_namespace_rejects_non_import_binding_shapes(source):
+    statement = ast.parse(source).body[0]
+    bindings = [
+        node
+        for node in ast.walk(statement)
+        if isinstance(node, ast.Name) and node.id == "client"
+    ] or [statement]
+    for binding in bindings:
+        assert (
+            provider._terminal_namespace_import_prefix(
+                [binding], "client", "library.client.Base"
+            )
+            is None
+        )
+
+
+@pytest.mark.parametrize(
     "helper_name", ["_walk", "_index_source_nodes", "_references", "_provider_uses"]
 )
 @pytest.mark.parametrize("mutation", ["binding", "code"])
