@@ -907,6 +907,10 @@ def _flask_explicit_module_exports(tree, names, declarations):
 
 
 def _flask_module_exports_dynamic(tree):
+    from .credential_role_constructor_provider import binding_occurrences
+
+    if any(binding_occurrences(tree.body, name) for name in ("__getattr__", "__dir__")):
+        return True
     dynamic = {"eval", "exec", "globals", "locals", "vars", "setattr", "__import__"}
     for statement in tree.body:
         if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -928,6 +932,7 @@ def _flask_module_exports_dynamic(tree):
                 and node.func.attr == "import_module"
             )
             for root in nodes
+            if isinstance(root, ast.AST)
             for node in ast.walk(root)
         ):
             return True
@@ -1773,6 +1778,184 @@ def _signing_configuration_consumer_witness(index, path, context):
         ),
         None,
     )
+
+
+def _signing_optional_configuration_defaults(context, path, observation):
+    """Project the feasible absent-file profile without rewriting captured ASTs."""
+    tree = context["index"].snapshots[path]
+    if not _signing_loader_prefixes_closed(context, observation):
+        return tree, []
+    body, guards = [], []
+    for statement in tree.body:
+        absent = _signing_optional_configuration_absent(context, path, statement, body)
+        if absent is None:
+            body.append(statement)
+        else:
+            body.extend(statement.orelse)
+            guards.extend(absent)
+    return ast.Module(body=body, type_ignores=[]), guards
+
+
+def _signing_optional_configuration_absent(context, path, statement, prefix):
+    from . import review_audits as audit
+    from .review_integrity import _security_apply_import_bindings
+
+    if not isinstance(statement, ast.If) or not isinstance(statement.test, ast.Call):
+        return None
+    call = statement.test
+    aliases = _security_apply_import_bindings(prefix, {}, None, audit)
+    if (
+        audit._name(call.func).split(".")[0] not in aliases
+        or audit._resolved_ast_name(call.func, aliases) != "os.path.isfile"
+        or len(call.args) != 1
+        or call.keywords
+        or _signing_resolve_module(context, ast.Constant(value="os"), path) is not None
+    ):
+        return None
+    before = ast.Module(body=prefix, type_ignores=[])
+    if (
+        not _signing_prefix_effects_closed(context, path, before, aliases)
+        or not _security_builtin_identity_closed(before, aliases, {"__file__"})
+        or not all(
+            _signing_provider_clear(
+                before if owner == path else tree,
+                aliases if owner == path else context["aliases"][owner],
+                "django",
+                roots=("os.path",),
+            )
+            for owner, tree in context["index"].snapshots.items()
+        )
+    ):
+        return None
+    dependencies = []
+    selected = _signing_static_path(call.args[0], before, aliases, path, dependencies)
+    from pathlib import PurePosixPath
+    import posixpath
+
+    if selected is not None and any(separator in selected for separator in ("\\", ":")):
+        return None
+    selected = (
+        PurePosixPath(posixpath.normpath(selected)) if selected is not None else None
+    )
+    root = PurePosixPath("/__capture__")
+    if selected is None or not selected.is_relative_to(root):
+        return None
+    relative = selected.relative_to(root).as_posix()
+    if relative in context["captured"]:
+        return None
+    return [*dependencies, statement.test]
+
+
+def _signing_loader_prefixes_closed(context, observation):
+    index, selected = context["index"], {}
+    for transfer in observation["transfers"]:
+        path = Path(transfer["path"])
+        if path not in index.snapshots or transfer["sha256"] != index.inventory[path]:
+            return False
+        calls = [
+            node
+            for node in ast.walk(index.snapshots[path])
+            if isinstance(node, ast.Call)
+            and [node.lineno, node.col_offset, node.end_lineno, node.end_col_offset]
+            == transfer["span"]
+        ]
+        if len(calls) != 1:
+            return False
+        selected.setdefault(path, []).extend(calls)
+    return bool(selected) and all(
+        _signing_prefix_effects_closed(
+            context, path, index.snapshots[path], context["aliases"][path], calls
+        )
+        for path, calls in selected.items()
+    )
+
+
+def _signing_prefix_effects_closed(context, path, tree, aliases, selectors=()):
+    """Do not infer file absence across writes or opaque initialization effects."""
+    cutoff = max((node.end_lineno for node in selectors), default=float("inf"))
+    for node in ast.walk(tree):
+        if getattr(node, "end_lineno", 0) > cutoff:
+            continue
+        if isinstance(
+            node, (ast.Import, ast.ImportFrom)
+        ) and not _signing_path_import_closed(context, path, node):
+            return False
+        if isinstance(node, ast.Call) and node not in selectors:
+            if _signing_static_path_call(node, tree, aliases, path, [], ()) is None:
+                return False
+    return True
+
+
+def _signing_path_import_closed(context, path, node):
+    if isinstance(node, ast.ImportFrom) and node.level:
+        return False
+    modules = (
+        [item.name for item in node.names]
+        if isinstance(node, ast.Import)
+        else [node.module or ""]
+    )
+    return all(
+        module.split(".")[0] in {"os", "sys", "django"}
+        and _signing_resolve_module(
+            context, ast.Constant(value=module.split(".")[0]), path
+        )
+        is None
+        for module in modules
+    )
+
+
+def _signing_static_path(node, tree, aliases, path, dependencies, seen=()):
+    from .mock_fixture_provenance import _django_assignment
+
+    if id(node) in seen or len(seen) >= 8:
+        return None
+    seen = (*seen, id(node))
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    if isinstance(node, ast.Name):
+        if node.id == "__file__":
+            return "/__capture__/" + path.as_posix()
+        rows = _django_assignment(tree, node.id)
+        if len(rows) == 1 and rows[0][0].end_lineno < node.lineno:
+            dependencies.append(rows[0][0])
+            return _signing_static_path(
+                rows[0][1], tree, aliases, path, dependencies, seen
+            )
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        left = _signing_static_path(node.left, tree, aliases, path, dependencies, seen)
+        right = _signing_static_path(
+            node.right, tree, aliases, path, dependencies, seen
+        )
+        return left + right if left is not None and right is not None else None
+    return _signing_static_path_call(node, tree, aliases, path, dependencies, seen)
+
+
+def _signing_static_path_call(node, tree, aliases, path, dependencies, seen):
+    from .review_audits import _resolved_ast_name, _name
+    import posixpath
+
+    if (
+        not isinstance(node, ast.Call)
+        or node.keywords
+        or _name(node.func).split(".")[0] not in aliases
+    ):
+        return None
+    name = _resolved_ast_name(node.func, aliases)
+    if name not in {"os.path.dirname", "os.path.abspath", "os.path.join"}:
+        return None
+    values = [
+        _signing_static_path(arg, tree, aliases, path, dependencies, seen)
+        for arg in node.args
+    ]
+    if not values or any(value is None for value in values):
+        return None
+    if name == "os.path.join":
+        return posixpath.join(*values)
+    if len(values) != 1:
+        return None
+    if name == "os.path.dirname":
+        return posixpath.dirname(values[0])
+    return posixpath.normpath(values[0]) if values[0].startswith("/") else None
 
 
 def private_key_authentication_evidence(finding, context):
@@ -2704,9 +2887,7 @@ def _django_signing_consumer(target, path, tree, context):
 
     if not _security_builtin_identity_closed(
         tree, aliases := context["aliases"][path], {"__name__"}
-    ):
-        return None
-    if any(
+    ) or any(
         isinstance(node, ast.Subscript)
         and isinstance(node.ctx, (ast.Store, ast.Del))
         and _resolved_ast_name(node.value, aliases) == "os.environ"
@@ -2728,11 +2909,10 @@ def _django_signing_consumer(target, path, tree, context):
         )
     ]
     for statement in statements:
-        if not isinstance(statement, (ast.Expr, ast.Assign)):
-            continue
-        call = statement.value
-        if not isinstance(call, ast.Call) or not security_precondition_path_possible(
-            call
+        if not (
+            isinstance(statement, (ast.Expr, ast.Assign))
+            and isinstance(call := statement.value, ast.Call)
+            and security_precondition_path_possible(call)
         ):
             continue
         name = _resolved_ast_name(

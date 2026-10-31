@@ -2292,9 +2292,12 @@ def _django_default_authority(finding, context, declaration, observation):
     from .mock_fixture_provenance import _django_assignment
     from .credential_role_constructor_provider import binding_occurrences
     from .review_audits import _resolved_ast_name
+    from .semantic_credential_sensor import _signing_optional_configuration_defaults
 
     index, path = context["index"], Path(finding["path"])
-    settings = index.snapshots[path]
+    settings, default_guards = _signing_optional_configuration_defaults(
+        context, path, observation
+    )
     required = {
         "INSTALLED_APPS": {"django.contrib.auth", "django.contrib.sessions"},
         (
@@ -2350,6 +2353,14 @@ def _django_default_authority(finding, context, declaration, observation):
         "transfers": [
             observation["declaration"],
             *consumers,
+            *(
+                {
+                    "path": path.as_posix(),
+                    "sha256": index.inventory[path],
+                    "span": _span(node),
+                }
+                for node in default_guards
+            ),
             *observation["transfers"],
         ],
         "runtime_execution": "not_performed",
@@ -2480,7 +2491,12 @@ class _OperativeCredentialOrigin:
         """Resolve a captured expression to its canonical imported provider identity."""
         from .mock_fixture_provenance import _app_expression_name
 
-        return _app_expression_name(self.projection.symbols, path, node, function)
+        selected = _app_expression_name(self.projection.symbols, path, node, function)
+        return (
+            selected
+            if selected is not None
+            else self.handler["graph"].canonical(path, node, function)
+        )
 
     def provider(self, path, canonical, *, immutable=False):
         """Require an unmodified canonical provider at the captured expression site."""
@@ -4075,37 +4091,42 @@ def _flask_session_authority_witness(path, tree, context, app, credential_key):
                 owner
             ]
     for (owner, receiver), source in candidates.items():
-        if owner != path and not application_closed:
-            continue
-        if not context["index"].validate(owner) or not _flask_authority_provider_clear(
-            owner, source, context
-        ):
-            continue
-        if owner != path and (
-            _flask_config_mutated(source, receiver, {credential_key, "SECRET_KEY"})
-            or _flask_configuration_reloaded(
-                source,
-                receiver,
-                app["configuration_path"],
-                context,
-                {credential_key, "SECRET_KEY"},
-                owner,
+        if (
+            owner != path
+            and not application_closed
+            or not context["index"].validate(owner)
+            or not _flask_authority_provider_clear(owner, source, context)
+            or owner != path
+            and (
+                _flask_config_mutated(source, receiver, {credential_key, "SECRET_KEY"})
+                or _flask_configuration_reloaded(
+                    source,
+                    receiver,
+                    app["configuration_path"],
+                    context,
+                    {credential_key, "SECRET_KEY"},
+                    owner,
+                )
             )
         ):
             continue
         aliases = context["aliases"][owner]
         login_wrapper = _flask_login_wrapper(source, aliases)
         protected = _flask_protected_route(source, receiver, aliases)
-        if login_wrapper is None or protected is None:
-            continue
-        if owner != path and len(protected.decorator_list) != 2:
+        if (
+            login_wrapper is None
+            or protected is None
+            or owner != path
+            and len(protected.decorator_list) != 2
+        ):
             continue
         for route in source.body:
-            if not isinstance(route, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                continue
-            if not _flask_route_bound_to_app(route, receiver):
-                continue
-            if owner != path and len(route.decorator_list) != 1:
+            if (
+                not isinstance(route, (ast.FunctionDef, ast.AsyncFunctionDef))
+                or not _flask_route_bound_to_app(route, receiver)
+                or owner != path
+                and len(route.decorator_list) != 1
+            ):
                 continue
             witness = _flask_route_authority(
                 route,
@@ -4288,20 +4309,7 @@ def _flask_login_session_authority_witness(path, tree, context, app):
         and not node.value.args
         and not node.value.keywords
     ]
-    if len(managers) != 1:
-        return None
-    manager = managers[0].targets[0].id
-    if sum(
-        isinstance(node, ast.Name)
-        and node.id == manager
-        and isinstance(node.ctx, (ast.Store, ast.Del))
-        for node in ast.walk(scope)
-    ) != 1 or _provider_identity_uncertain(
-        scope,
-        {**aliases, manager: "flask_login.LoginManagerInstance"},
-        roots=("flask_login.LoginManagerInstance",),
-    ):
-        return None
+    manager = managers[0].targets[0].id if len(managers) == 1 else None
     initialized = [
         node
         for node in executable
@@ -4315,7 +4323,22 @@ def _flask_login_session_authority_witness(path, tree, context, app):
         and isinstance(node.args[0], ast.Name)
         and node.args[0].id == app["receiver"]
     ]
-    if len(initialized) != 1:
+    if (
+        manager is None
+        or sum(
+            isinstance(node, ast.Name)
+            and node.id == manager
+            and isinstance(node.ctx, (ast.Store, ast.Del))
+            for node in ast.walk(scope)
+        )
+        != 1
+        or _provider_identity_uncertain(
+            scope,
+            {**aliases, manager: "flask_login.LoginManagerInstance"},
+            roots=("flask_login.LoginManagerInstance",),
+        )
+        or len(initialized) != 1
+    ):
         return None
     login_users = []
     protected = []
@@ -4348,35 +4371,32 @@ def _flask_login_session_authority_witness(path, tree, context, app):
             parents.get(id(node)) is initialized[0] and node is initialized[0].args[0]
         ),
     )
-    if manager_closed:
-        for handler in graph.handlers:
-            owner, allocation = handler["path"], handler["application"]
-            decorator = handler["decorator"]
-            if (
-                owner == path
-                or allocation["path"] != path
-                or allocation["creation"] is not app["creation"]
-            ):
-                continue
-            if handler["receiver"] is not allocation or not isinstance(
-                decorator.func.value, ast.Name
-            ):
-                continue
-            source = context["index"].snapshots[owner]
-            receiver = decorator.func.value.id
-            if (
-                _flask_authority_provider_clear(owner, source, context)
-                and not _flask_config_mutated(source, receiver, {"SECRET_KEY"})
-                and not _flask_configuration_reloaded(
-                    source,
-                    receiver,
-                    app["configuration_path"],
-                    context,
-                    {"SECRET_KEY"},
-                    owner,
-                )
-            ):
-                candidates.append((owner, source, handler["function"], receiver))
+    for handler in graph.handlers if manager_closed else ():
+        owner, allocation = handler["path"], handler["application"]
+        decorator = handler["decorator"]
+        if (
+            owner == path
+            or allocation["path"] != path
+            or allocation["creation"] is not app["creation"]
+            or handler["receiver"] is not allocation
+            or not isinstance(decorator.func.value, ast.Name)
+        ):
+            continue
+        source = context["index"].snapshots[owner]
+        receiver = decorator.func.value.id
+        if (
+            _flask_authority_provider_clear(owner, source, context)
+            and not _flask_config_mutated(source, receiver, {"SECRET_KEY"})
+            and not _flask_configuration_reloaded(
+                source,
+                receiver,
+                app["configuration_path"],
+                context,
+                {"SECRET_KEY"},
+                owner,
+            )
+        ):
+            candidates.append((owner, source, handler["function"], receiver))
     for owner, source, function, receiver in candidates:
         aliases = _flask_module_aliases(owner, source, context)
         if any(
@@ -4389,16 +4409,15 @@ def _flask_login_session_authority_witness(path, tree, context, app):
             )
             and _resolved_ast_name(decorator, aliases) != "flask_login.login_required"
             for decorator in function.decorator_list
-        ):
+        ) or not _flask_route_bound_to_app(function, receiver):
             continue
-        if _flask_route_bound_to_app(function, receiver):
-            login_users.extend(
-                (owner, function, node)
-                for node in ast.walk(function)
-                if isinstance(node, ast.Call)
-                and security_call_name(node, aliases) == "flask_login.login_user"
-                and _flask_path_conditions_clear(function, node)
-            )
+        login_users.extend(
+            (owner, function, node)
+            for node in ast.walk(function)
+            if isinstance(node, ast.Call)
+            and security_call_name(node, aliases) == "flask_login.login_user"
+            and _flask_path_conditions_clear(function, node)
+        )
         decorators = [
             _resolved_ast_name(
                 decorator.func if isinstance(decorator, ast.Call) else decorator,
@@ -4406,29 +4425,24 @@ def _flask_login_session_authority_witness(path, tree, context, app):
             )
             for decorator in function.decorator_list
         ]
-        if (
-            _flask_route_bound_to_app(function, receiver)
-            and "flask_login.login_required" in decorators
+        if "flask_login.login_required" not in decorators or not any(
+            isinstance(decorator, ast.Call)
+            and isinstance(decorator.func, ast.Attribute)
+            and decorator.func.attr == "route"
+            and isinstance(decorator.func.value, ast.Name)
+            and decorator.func.value.id == receiver
+            for decorator in function.decorator_list[
+                : decorators.index("flask_login.login_required")
+            ]
         ):
-            guard_position = decorators.index("flask_login.login_required")
-            if not any(
-                isinstance(decorator, ast.Call)
-                and isinstance(decorator.func, ast.Attribute)
-                and decorator.func.attr == "route"
-                and isinstance(decorator.func.value, ast.Name)
-                and decorator.func.value.id == receiver
-                for decorator in function.decorator_list[:guard_position]
-            ):
-                continue
-            protected.append(
-                (
-                    owner,
-                    function,
-                    function.decorator_list[
-                        decorators.index("flask_login.login_required")
-                    ],
-                )
+            continue
+        protected.append(
+            (
+                owner,
+                function,
+                function.decorator_list[decorators.index("flask_login.login_required")],
             )
+        )
     if len(login_users) != 1 or not protected:
         return None
     login_path, login_function, login_call = login_users[0]

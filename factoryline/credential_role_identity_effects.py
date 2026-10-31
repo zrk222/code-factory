@@ -577,6 +577,7 @@ def _dispatch_identity_value(node, aliases, strict_calls, material_values):
         ((ast.List, ast.Tuple, ast.Dict), _container_value),
         (ast.Subscript, _subscript_value),
         (ast.Call, _identity_call_value),
+        (ast.JoinedStr, _joined_string_identity_value),
     )
     handler = next((item for kind, item in handlers if isinstance(node, kind)), None)
     if handler is None:
@@ -768,6 +769,42 @@ def _structural_scalar_format(node, aliases):
         identity_value(arg, aliases, strict_calls=True, material_values=True)
         for arg in node.args
     ]
+    if _structural_interpolated_scalars(node, values) is None:
+        return None
+    used = [
+        values[int(field) if field else position]
+        for position, field in enumerate(selected)
+    ]
+    return _structural_interpolated_scalars(node, used)
+
+
+def _joined_string_identity_value(
+    node, aliases, *, strict_calls=False, material_values=False
+):
+    """Keep primitive scalar origins through f-strings without invoking format hooks."""
+    values = []
+    if len(node.values) <= 32:
+        for part in node.values:
+            if isinstance(part, ast.FormattedValue):
+                if part.conversion != -1 or part.format_spec is not None:
+                    break
+                part = part.value
+            elif not isinstance(part, ast.Constant) or type(part.value) is not str:
+                break
+            values.append(
+                identity_value(part, aliases, strict_calls=True, material_values=True)
+            )
+        else:
+            value = _structural_interpolated_scalars(node, values)
+            if value is not None:
+                return value
+    return _unknown_expression(
+        node, aliases, strict_calls=strict_calls, material_values=material_values
+    )
+
+
+def _structural_interpolated_scalars(node, values):
+    """Share bounded builtin interpolation for known scalar types, not exact values."""
     if any(
         value.unknown
         or value.content_unknown
@@ -782,6 +819,7 @@ def _structural_scalar_format(node, aliases):
         return None
     return _Value(
         roots=frozenset().union(*(value.roots for value in values)),
+        inert_kind="scalar",
         scalar_kind="text",
         trace=(*trace, _value_trace(node, "TEXT_INTERPOLATION")),
     )

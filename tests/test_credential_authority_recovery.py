@@ -324,6 +324,449 @@ def test_literal_key_hash_read_preserves_selected_signing_authority():
     assert row["tier"] == "SUPPORTED_DEFECT"
 
 
+@pytest.mark.parametrize(
+    "source",
+    [
+        'f"prefix:{value}"',
+        'f"{value}:{17}:{True}"',
+        '"{}".format(value)',
+        'f"{value}" + ":suffix"',
+    ],
+)
+def test_primitive_interpolation_preserves_origin_without_an_exact_value(source):
+    from factoryline.credential_role_identity_effects import _Value
+    from factoryline.finite_capture import security_structural_value
+
+    incoming = _Value(
+        roots=frozenset({"source:" + "a" * 64}),
+        inert_kind="scalar",
+        scalar_kind="text",
+        trace=(("REQUEST_SOURCE", (1, 0, 1, 5), "a" * 64),),
+    )
+    assert incoming._exact_scalar == ()
+    value = security_structural_value(
+        ast.parse(source, mode="eval").body, {"value": incoming}
+    )
+    assert value.roots == incoming.roots and value.scalar_kind == "text"
+    assert not value.unknown and not value.content_unknown
+    assert any(step[0] == "TEXT_INTERPOLATION" for step in value.trace)
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        'f"{value!r}"',
+        'f"{value!s}"',
+        'f"{value:>10}"',
+        'f"{value:{spec}}"',
+        'f"{opaque}"',
+        'f"{value.strip()}"',
+        "f\"{value if flag else 'fixed'}\"",
+    ],
+)
+def test_interpolation_keeps_unclosed_formatting_and_origins_unproved(source):
+    from factoryline.credential_role_identity_effects import _Value
+    from factoryline.finite_capture import security_structural_value
+    from factoryline.semantic_credential_sensor import _security_input_flow_evidence
+
+    incoming = _Value(
+        roots=frozenset({"source:known"}), inert_kind="scalar", scalar_kind="text"
+    )
+    env = {
+        "value": incoming,
+        "opaque": _Value(
+            roots=incoming.roots, class_roots=frozenset({"custom"}), unknown=True
+        ),
+    }
+    value = security_structural_value(ast.parse(source, mode="eval").body, env)
+    assert _security_input_flow_evidence(value, value_type=_Value) is None
+
+
+def test_legacy_taint_bit_cannot_become_interpolated_source_proof():
+    from factoryline.credential_role_identity_effects import _Value
+    from factoryline.finite_capture import security_structural_value
+    from factoryline.semantic_credential_sensor import _security_input_flow_evidence
+
+    value = security_structural_value(
+        ast.parse('f"{value}"', mode="eval").body, {"value": True}
+    )
+    assert _security_input_flow_evidence(value, value_type=_Value) is None
+
+
+@pytest.mark.parametrize(
+    "source", ['"fixed".format(value)', '"{0}".format("fixed", value)']
+)
+def test_unused_format_argument_is_not_an_output_origin(source):
+    from factoryline.credential_role_identity_effects import _Value
+    from factoryline.finite_capture import security_structural_value
+
+    incoming = _Value(
+        roots=frozenset({"source:known"}), inert_kind="scalar", scalar_kind="text"
+    )
+    result = security_structural_value(
+        ast.parse(source, mode="eval").body, {"value": incoming}
+    )
+    assert not result.unknown and not result.roots
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "none",
+        "bound_parameter",
+        "fixed_overwrite",
+        "opaque_result",
+        "custom_format",
+        "provider_replaced",
+        "dead_sink",
+    ],
+)
+def test_source_model_interpolation_reaches_only_proved_unsafe_sink(tmp_path, mutation):
+    from test_semantic_credential_sensor import _captured_log_scan
+
+    source = (
+        "import sqlite3\nfrom flask import request\n"
+        "def view():\n"
+        "    conn = sqlite3.connect(':memory:')\n"
+        "    cursor = conn.cursor()\n"
+        "    value = request.args.get('key', '')\n"
+        "    query = f\"SELECT * FROM records WHERE key = '{value}'\"\n"
+        "    cursor.execute(query)\n"
+    )
+    transforms = {
+        "bound_parameter": (
+            "cursor.execute(query)",
+            "cursor.execute('SELECT * FROM records WHERE key=?', (query,))",
+        ),
+        "fixed_overwrite": ("    query =", "    value = 'fixed'\n    query ="),
+        "opaque_result": ("    query =", "    value = unknown(value)\n    query ="),
+        "custom_format": ("'{value}'", "'{value:{spec}}'"),
+        "provider_replaced": (
+            "def view():",
+            "sqlite3.connect = replacement\ndef view():",
+        ),
+        "dead_sink": (
+            "    cursor.execute(query)",
+            "    if False:\n        cursor.execute(query)",
+        ),
+    }
+    if mutation != "none":
+        source = source.replace(*transforms[mutation])
+    selected = [
+        row
+        for row in _captured_log_scan(tmp_path, source, startup=False)
+        if row["code"] == "SECURITY_SQL_INJECTION"
+        and row.get("facts", {}).get("security_precondition", {}).get("status")
+        == "SUPPORTED"
+    ]
+    assert bool(selected) is (mutation == "none")
+    if selected:
+        assert "TEXT_INTERPOLATION" in str(selected[0]["facts"])
+
+
+def _closed_star_projection(files):
+    from factoryline.credential_role_constructor_provider import SourceSnapshotIndex
+    from factoryline.credential_role_method_use_getter_audit import (
+        CapturedOriginProjection,
+    )
+    from factoryline.review_integrity import bind_security_call_scopes
+
+    raw = {Path(name): text.encode() for name, text in files.items()}
+    trees = {path: ast.parse(data) for path, data in raw.items()}
+    inventory = {path: sha256(data).hexdigest() for path, data in raw.items()}
+    for path, tree in trees.items():
+        tree._oracle_source_sha256 = inventory[path]
+        bind_security_call_scopes(tree)
+    index = SourceSnapshotIndex(Path("."), trees, raw, inventory)
+    return CapturedOriginProjection(index, lambda *args: (False, None))
+
+
+@pytest.mark.parametrize(
+    "module,alias", [("exports", "Service"), ("renamed_exports", "RenamedService")]
+)
+def test_common_provider_closure_preserves_closed_renamed_star_exports(module, alias):
+    from factoryline.credential_role_identity_effects import _Value
+
+    projection = _closed_star_projection(
+        {
+            module
+            + ".py": f"from external import Widget as {alias}\n__all__ = ['{alias}']\n",
+            "consumer.py": f"from {module} import *\n",
+        }
+    )
+    assert projection._symbol_closed([("external.Widget", None, None)], _Value())
+
+
+def test_closed_star_exports_allow_uninitialized_keyword_only_defaults():
+    from factoryline.credential_role_identity_effects import _Value
+
+    projection = _closed_star_projection(
+        {
+            "exports.py": "from external import Widget as Service\ndef marker(*, option):\n    return None\n__all__ = ['Service']\n",
+            "consumer.py": "from exports import *\n",
+        }
+    )
+    assert projection._symbol_closed([("external.Widget", None, None)], _Value())
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "dynamic_exports",
+        "dynamic_getattr",
+        "missing_export",
+        "shadow",
+        "field_write",
+        "escape",
+        "ambiguous_import",
+        "conditional_star",
+        "export_mutation",
+    ],
+)
+def test_common_provider_star_closure_retains_source_and_effect_barriers(mutation):
+    from factoryline.credential_role_identity_effects import _Value
+
+    files = {
+        "exports.py": "from external import Widget as Service\n__all__ = ['Service']\n",
+        "consumer.py": "from exports import *\n",
+    }
+    changes = {
+        "dynamic_exports": (
+            "exports.py",
+            "__all__ = ['Service']",
+            "__all__ = dynamic_names",
+        ),
+        "dynamic_getattr": (
+            "exports.py",
+            "__all__ = ['Service']",
+            "def __getattr__(name):\n    return unknown()",
+        ),
+        "missing_export": ("exports.py", "['Service']", "['Missing']"),
+        "shadow": (
+            "consumer.py",
+            "from exports import *",
+            "from exports import *\nService = replacement",
+        ),
+        "field_write": (
+            "consumer.py",
+            "from exports import *",
+            "from exports import *\nService.run = replacement",
+        ),
+        "escape": (
+            "consumer.py",
+            "from exports import *",
+            "from exports import *\nmutate(Service)",
+        ),
+        "ambiguous_import": (
+            "consumer.py",
+            "from exports import *",
+            "from alternate import Widget as Service\nfrom exports import *",
+        ),
+        "conditional_star": (
+            "consumer.py",
+            "from exports import *",
+            "if condition:\n    from exports import *",
+        ),
+        "export_mutation": (
+            "exports.py",
+            "__all__ = ['Service']",
+            "__all__ = ['Service']\n__all__.append(dynamic_name)",
+        ),
+    }
+    path, old, new = changes[mutation]
+    files[path] = files[path].replace(old, new)
+    projection = _closed_star_projection(files)
+    assert not projection._symbol_closed([("external.Widget", None, None)], _Value())
+
+
+def test_common_star_inventory_invalidates_helper_source_and_inventory_changes(
+    monkeypatch,
+):
+    from factoryline import semantic_credential_sensor as sensor
+    from factoryline.credential_role_identity_effects import _Value
+
+    projection = _closed_star_projection(
+        {
+            "exports.py": "from external import Widget as Service\n__all__ = ['Service']\n",
+            "consumer.py": "from exports import *\n",
+        }
+    )
+
+    def closed():
+        return projection._symbol_closed([("external.Widget", None, None)], _Value())
+
+    assert closed()
+    with monkeypatch.context() as patch:
+        patch.setattr(sensor, "_flask_static_module_exports", lambda *args: None)
+        assert not closed()
+    assert closed()
+    index = projection.index
+    digest = index.inventory[Path("exports.py")]
+    index.inventory[Path("exports.py")] = "0" * 64
+    assert not closed()
+    index.inventory[Path("exports.py")] = digest
+    assert closed()
+    index.snapshots[Path("consumer.py")].body.extend(
+        ast.parse("Service.run = replacement").body
+    )
+    assert not closed()
+
+
+@pytest.mark.parametrize(
+    "provider",
+    [
+        "from external import Widget\nService = Widget\n__all__ = ['Service']\n",
+        "from external import Widget\ndef create():\n    return Widget\nService = create()\n__all__ = ['Service']\n",
+        "from external import Widget as Service\n__all__ = ['Service']\nimport sys\nsys.modules[__name__].__class__ = Replacement\n",
+    ],
+)
+def test_star_provider_aliases_and_namespace_replacement_do_not_hide_writes(provider):
+    from factoryline.credential_role_identity_effects import _Value
+
+    projection = _closed_star_projection(
+        {
+            "exports.py": provider,
+            "consumer.py": "from exports import *\nService.run = replacement\n",
+        }
+    )
+    assert not projection._symbol_closed([("external.Widget", None, None)], _Value())
+
+
+def _optional_configuration_sources():
+    settings = SETTINGS.replace("MIDDLEWARE =", "MIDDLEWARE_CLASSES =")
+    settings += (
+        "import os\n"
+        "BASE = os.path.dirname(os.path.abspath(__file__))\n"
+        "optional = BASE + '/private_settings.py'\n"
+        "if os.path.isfile(optional):\n"
+        "    from .private_settings import *\n"
+    )
+    return _recovery_sources(settings)
+
+
+def test_absent_optional_configuration_preserves_feasible_default_authority():
+    files = _optional_configuration_sources()
+    row = _recovery_row(files)
+    assert row["tier"] == "SUPPORTED_DEFECT"
+    evidence = row["credential_authority_observation"]
+    assert any(
+        transfer["path"] == "service/settings.py"
+        and transfer["span"][0]
+        == next(
+            line
+            for line, text in enumerate(files["service/settings.py"].splitlines(), 1)
+            if text.startswith("if os.path.isfile")
+        )
+        for transfer in evidence["transfers"]
+    )
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "captured_file",
+        "current_file",
+        "unknown_path",
+        "replaced_predicate",
+        "shadowed_os",
+        "opaque_namespace",
+        "foreign_predicate_mutation",
+        "missing_import",
+        "forward_path_binding",
+        "windows_separator",
+        "windows_drive",
+    ],
+)
+def test_optional_configuration_requires_closed_absence_profile(mutation):
+    files = _optional_configuration_sources()
+    if mutation == "captured_file":
+        files["service/private_settings.py"] = (
+            "INSTALLED_APPS = []\nMIDDLEWARE_CLASSES = []\n"
+        )
+    elif mutation == "current_file":
+        files["service/settings.py"] = files["service/settings.py"].replace(
+            "os.path.isfile(optional)", "os.path.isfile(__file__)"
+        )
+    elif mutation == "unknown_path":
+        files["service/settings.py"] = files["service/settings.py"].replace(
+            "os.path.isfile(optional)", "os.path.isfile(dynamic_path())"
+        )
+    elif mutation == "replaced_predicate":
+        files["service/settings.py"] = files["service/settings.py"].replace(
+            "if os.path.isfile",
+            "os.path.isfile = lambda value: True\nif os.path.isfile",
+        )
+    elif mutation == "shadowed_os":
+        files["os.py"] = "path = unknown_path_provider\n"
+    elif mutation == "foreign_predicate_mutation":
+        files["other.py"] = "import os\nos.path.isfile = replacement\n"
+    elif mutation == "missing_import":
+        files["service/settings.py"] = files["service/settings.py"].replace(
+            "import os\n", ""
+        )
+    elif mutation == "forward_path_binding":
+        files["service/settings.py"] = files["service/settings.py"].replace(
+            "BASE = os.path.dirname(os.path.abspath(__file__))\noptional = BASE + '/private_settings.py'",
+            "optional = BASE + '/private_settings.py'\nBASE = os.path.dirname(os.path.abspath(__file__))",
+        )
+    elif mutation in {"windows_separator", "windows_drive"}:
+        files["service/private_settings.py"] = (
+            "INSTALLED_APPS = []\nMIDDLEWARE_CLASSES = []\n"
+        )
+        suffix = (
+            "r'\\private_settings.py'"
+            if mutation == "windows_separator"
+            else "'C:/private_settings.py'"
+        )
+        files["service/settings.py"] = files["service/settings.py"].replace(
+            "BASE + '/private_settings.py'", "os.path.join(BASE, " + suffix + ")"
+        )
+    else:
+        files["service/settings.py"] += "configure(locals())\n"
+    assert _recovery_row(files)["tier"] == "NEEDS_CONTEXT"
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "prior_file_creation",
+        "prior_opaque_helper",
+        "prior_local_import",
+        "loader_file_creation",
+        "loader_local_import",
+    ],
+)
+def test_optional_configuration_requires_closed_initialization_effects(mutation):
+    files = _optional_configuration_sources()
+    if mutation in {
+        "prior_file_creation",
+        "prior_opaque_helper",
+        "prior_local_import",
+    }:
+        effect = {
+            "prior_file_creation": "open(optional, 'w').write('INSTALLED_APPS = []\\nMIDDLEWARE_CLASSES = []\\n')",
+            "prior_opaque_helper": "prepare(optional)",
+            "prior_local_import": "import service.side_effects",
+        }[mutation]
+        files["service/settings.py"] = files["service/settings.py"].replace(
+            "if os.path.isfile", effect + "\nif os.path.isfile"
+        )
+        files["service/side_effects.py"] = (
+            "open('service/private_settings.py', 'w').write('INSTALLED_APPS = []\\n')\n"
+        )
+    elif mutation == "loader_file_creation":
+        files["start.py"] = (
+            "open('service/private_settings.py', 'w').write('INSTALLED_APPS = []\\n')\n"
+            + START
+        )
+    elif mutation == "loader_local_import":
+        files["start.py"] = "import service.side_effects\n" + START
+        files["service/side_effects.py"] = (
+            "open('service/private_settings.py', 'w').write('INSTALLED_APPS = []\\n')\n"
+        )
+    assert _recovery_row(files)["tier"] == "NEEDS_CONTEXT"
+
+
 def test_unrendered_key_and_runtime_module_scaffold_is_not_authority():
     settings = SETTINGS.replace('"published-signing-material"', '"{{ fresh_key }}"')
     settings += 'ROOT_URLCONF = "{{ app_name }}.urls"\n'

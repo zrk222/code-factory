@@ -3665,7 +3665,127 @@ class CapturedOriginProjection:
         finally:
             self._active.remove(key)
 
-    def _export_bindings(self):
+    def _finite_import_inventory(self):
+        """Regenerate finite import names from this exact captured source generation."""
+        from . import review_audits as audit
+        from .semantic_credential_sensor import _signing_source_symbols
+
+        if self._inputs is None or self._generation_inputs() != self._inputs:
+            return None
+        paths = self.index.module_paths()
+        if paths is None:
+            return None
+        context = {
+            "index": self.index,
+            "paths": paths,
+            "aliases": {
+                path: audit._security_aliases(list(ast.walk(tree)))
+                for path, tree in self.index.snapshots.items()
+            },
+            "captured": {
+                self.index.relative(path): raw
+                for path, raw in self.index.source_bytes.items()
+            },
+        }
+        symbols = _signing_source_symbols(context)
+        return (context, symbols) if symbols is not None else None
+
+    def _finite_import_target(self, inventory, path, name):
+        from .semantic_credential_sensor import (
+            _signing_resolve_module,
+            _signing_binding_occurrences,
+        )
+        from .mock_fixture_provenance import _django_name
+
+        context, symbols = inventory
+        seen = set()
+        for _ in range(self.max_depth):
+            if (path, name) in seen or symbols["imports"].get(path) is None:
+                return None
+            seen.add((path, name))
+            target = symbols["imports"][path].get(name)
+            if target is None:
+                rows = _signing_binding_occurrences(
+                    context, path, self.index.snapshots[path], name
+                )
+                return (
+                    _django_name(symbols, path) + "." + name if len(rows) == 1 else None
+                )
+            module, _, member = target.rpartition(".")
+            owner = _signing_resolve_module(context, ast.Constant(value=module), path)
+            if owner is None:
+                return target
+            path, name = owner, member
+        return None
+
+    def _finite_star_rows(self, path, statement, inventory):
+        from .mock_fixture_provenance import _django_import_rows, _django_name
+        from .semantic_credential_sensor import (
+            _signing_resolve_module,
+            _flask_static_module_exports,
+        )
+
+        if inventory is None or statement not in self.index.snapshots[path].body:
+            return None
+        context, symbols = inventory
+        if symbols["imports"].get(path) is None:
+            return None
+        module = _django_name(symbols, path)
+        package = (
+            module
+            if self.index.relative(path).endswith("/__init__.py")
+            else module.rpartition(".")[0]
+        )
+        selected = _django_import_rows(
+            ast.ImportFrom(
+                module=statement.module,
+                names=[ast.alias(name="__wildcard__")],
+                level=statement.level,
+            ),
+            package,
+        )
+        if not selected or len(selected) != 1:
+            return None
+        target = selected[0][1].rsplit(".", 1)[0]
+        owner = _signing_resolve_module(context, ast.Constant(value=target), path)
+        names = (
+            _flask_static_module_exports(context, owner, set())
+            if owner is not None
+            else None
+        )
+        if names is None:
+            return None
+        rows = [
+            (name, self._finite_import_target(inventory, owner, name))
+            for name in sorted(names)
+        ]
+        return rows if all(target is not None for _, target in rows) else None
+
+    def _finite_alias_nodes(self, path, nodes, inventory):
+        """Expand only proved imports for alias indexing; retain original effect nodes."""
+        expanded = []
+        for node in nodes:
+            if not isinstance(node, ast.ImportFrom) or not any(
+                item.name == "*" for item in node.names
+            ):
+                expanded.append(node)
+                continue
+            rows = self._finite_star_rows(path, node, inventory)
+            if rows is None:
+                return None
+            expanded.extend(
+                ast.ImportFrom(
+                    module=target.rpartition(".")[0],
+                    names=[ast.alias(name=target.rpartition(".")[2], asname=name)],
+                    level=0,
+                )
+                if "." in target
+                else ast.Import(names=[ast.alias(name=target, asname=name)])
+                for name, target in rows
+            )
+        return expanded
+
+    def _export_bindings(self, inventory=None):
         from .mock_fixture_provenance import _django_import_rows, _django_name
 
         exports = []
@@ -3679,22 +3799,13 @@ class CapturedOriginProjection:
             for statement in tree.body:
                 rows = _django_import_rows(statement, package)
                 if rows is None and isinstance(statement, ast.ImportFrom):
-                    source = ast.ImportFrom(
-                        module=statement.module,
-                        names=[ast.alias(name="__wildcard__")],
-                        level=statement.level,
-                    )
-                    rows = _django_import_rows(source, package)
+                    rows = self._finite_star_rows(path, statement, inventory)
                     if rows is None:
                         return None
-                    rows = [
-                        ("*", target.rsplit(".", 1)[0] + ".*")
-                        for _, target in rows or ()
-                    ]
                 exports.extend((module + "." + name, target) for name, target in rows)
         return exports
 
-    def _symbol_bindings(self, chain):
+    def _symbol_bindings(self, chain, inventory=None):
         """Close captured incoming object and callable exports with one bounded graph."""
         from pathlib import Path
         from .mock_fixture_provenance import _django_name
@@ -3722,7 +3833,7 @@ class CapturedOriginProjection:
                 for _, path, name in tuple(bindings)
                 if path is not None and path.is_relative_to(execution_root)
             )
-        exports = self._export_bindings()
+        exports = self._export_bindings(inventory)
         if exports is None:
             return None
         for _ in range(self.max_depth):
@@ -3754,6 +3865,50 @@ class CapturedOriginProjection:
         readonly_call=None,
         inventory_projector=None,
     ):
+        from . import credential_role_constructor_provider as provider
+
+        immutable = value.scalar_kind in {"text", "bytes", "integer", "boolean", "none"}
+        covered = set()
+        inventory = self._finite_import_inventory()
+        if inventory is None:
+            return False
+        bindings_to_close = self._symbol_bindings(chain, inventory)
+        if bindings_to_close is None or any(
+            not self.index.validate(path)
+            or not provider._terminal_source_context_valid(self.index, tree, covered)
+            for path, tree in self.index.snapshots.items()
+        ):
+            return False
+        return all(
+            self._symbol_site_closed(
+                canonical,
+                owner_path,
+                name,
+                path,
+                tree,
+                immutable,
+                inventory,
+                readonly_argument,
+                readonly_call,
+                inventory_projector,
+            )
+            for canonical, owner_path, name in bindings_to_close
+            for path, tree in self.index.snapshots.items()
+        )
+
+    def _symbol_site_closed(
+        self,
+        canonical,
+        owner_path,
+        name,
+        path,
+        tree,
+        immutable,
+        inventory,
+        readonly_argument,
+        readonly_call,
+        inventory_projector,
+    ):
         from . import review_audits as audit
         from . import credential_role_constructor_provider as provider
         from .finite_capture import (
@@ -3761,82 +3916,71 @@ class CapturedOriginProjection:
             _provider_mutation_facts,
             _shell_import_aliases,
         )
-
         from .mock_fixture_provenance import _django_name
 
-        immutable = value.scalar_kind in {"text", "bytes", "integer", "boolean", "none"}
-        covered = set()
-        bindings_to_close = self._symbol_bindings(chain)
-        if bindings_to_close is None or any(
-            not self.index.validate(path)
-            or not provider._terminal_source_context_valid(self.index, tree, covered)
-            for path, tree in self.index.snapshots.items()
+        nodes = list(ast.walk(tree))
+        relative = self.index.relative(path)
+        module = _django_name(self.symbols, path)
+        alias_nodes = self._finite_alias_nodes(path, nodes, inventory)
+        if alias_nodes is None:
+            return False
+        aliases = _shell_import_aliases(
+            alias_nodes,
+            audit,
+            canonical,
+            package=module
+            if relative.endswith("/__init__.py")
+            else module.rpartition(".")[0],
+        )
+        if aliases is None:
+            return False
+        if path == owner_path:
+            aliases = {**aliases, name: canonical}
+        if provider._terminal_registry_mutation(nodes, aliases, audit, canonical):
+            return False
+        # Immutable values can be copied/returned without changing the
+        # module slot. Passing its namespace remains an opaque mutation.
+        selected_nodes = [
+            item
+            for item in nodes
+            if not immutable
+            or not isinstance(item, (ast.Return, ast.Yield, ast.YieldFrom))
+        ]
+        if inventory_projector is not None:
+            selected_nodes = inventory_projector(
+                tree, aliases, selected_nodes, canonical
+            )
+        bindings = _provider_alias_bindings(selected_nodes)
+        if not immutable and not self.mutable_calls_closed(
+            selected_nodes, aliases, audit, bindings, canonical, readonly_call
         ):
             return False
-        for canonical, owner_path, name in bindings_to_close:
-            for path, tree in self.index.snapshots.items():
-                nodes = list(ast.walk(tree))
-                relative = self.index.relative(path)
-                module = _django_name(self.symbols, path)
-                aliases = _shell_import_aliases(
-                    nodes,
-                    audit,
-                    canonical,
-                    package=module
-                    if relative.endswith("/__init__.py")
-                    else module.rpartition(".")[0],
-                )
-                if aliases is None:
-                    return False
-                if path == owner_path:
-                    aliases = {**aliases, name: canonical}
-                if provider._terminal_registry_mutation(
-                    nodes, aliases, audit, canonical
-                ):
-                    return False
-                # Immutable values can be copied/returned without changing the
-                # module slot. Passing its namespace remains an opaque mutation.
-                selected_nodes = [
-                    item
-                    for item in nodes
-                    if not immutable
-                    or not isinstance(item, (ast.Return, ast.Yield, ast.YieldFrom))
-                ]
-                if inventory_projector is not None:
-                    selected_nodes = inventory_projector(
-                        tree, aliases, selected_nodes, canonical
+        mutations = set()
+        _provider_mutation_facts(
+            selected_nodes,
+            aliases,
+            audit,
+            self.index.parents[path],
+            bindings,
+            mutations,
+            lambda _node: not immutable,
+            lambda item, bound, _parents: not (
+                immutable
+                and (
+                    audit._resolved_ast_name(item, bound) == canonical
+                    or provider._terminal_imported_module_receiver(
+                        item, _parents, audit, canonical
                     )
-                bindings = _provider_alias_bindings(selected_nodes)
-                if not immutable and not self.mutable_calls_closed(
-                    selected_nodes, aliases, audit, bindings, canonical, readonly_call
-                ):
-                    return False
-                mutations = set()
-                _provider_mutation_facts(
-                    selected_nodes,
-                    aliases,
-                    audit,
-                    self.index.parents[path],
-                    bindings,
-                    mutations,
-                    lambda _node: not immutable,
-                    lambda item, bound, _parents: not (
-                        immutable
-                        and (
-                            audit._resolved_ast_name(item, bound) == canonical
-                            or provider._terminal_imported_module_receiver(
-                                item, _parents, audit, canonical
-                            )
-                        )
-                        or readonly_argument is not None
-                        and readonly_argument(item)
-                    ),
                 )
-                if any(
-                    provider._terminal_mutation_overlaps(target, member, canonical)
-                    for target, member in mutations
-                ):
-                    return False
+                or readonly_argument is not None
+                and readonly_argument(item)
+            ),
+        )
+        if any(
+            provider._terminal_mutation_overlaps(target, member, canonical)
+            for target, member in mutations
+        ):
+            return False
         return True
 
     def mutable_calls_closed(
