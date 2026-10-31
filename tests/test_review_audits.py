@@ -1880,7 +1880,8 @@ def test_registered_callback_oracle_checks_initializer_and_live_assertion():
     import ast
     from factoryline.review_integrity import registered_callback_oracle
 
-    function = ast.parse(textwrap.dedent("""
+    function = ast.parse(
+        textwrap.dedent("""
         def test_dispatch():
             checks = []
             def install(fn):
@@ -1891,7 +1892,8 @@ def test_registered_callback_oracle_checks_initializer_and_live_assertion():
                 assert value == 42
             for callback in checks:
                 callback(42)
-    """)).body[0]
+    """)
+    ).body[0]
 
     def strong(fn, aliases):
         return any(isinstance(node, ast.Assert) for node in ast.walk(fn))
@@ -14541,10 +14543,18 @@ def test_jwt_fixture_family_adversarial_roles_remain_critical(tmp_path, case):
         after = "result = token\nreturn result"
     elif case == "global_token_export":
         after = "global published\npublished = token"
-    source = "import pytest\nimport requests\nfrom jwt.api_jwt import PyJWT\n" "@pytest.fixture\ndef jwt() -> PyJWT:\n    return PyJWT()\n" + module_extra + "class TestJWT:\n" + class_override + "    def test_roundtrip(self, jwt: PyJWT):\n" + textwrap.indent(
-        before + "\n" if before else "", "        "
-    ) + '        secret = "fixed-local-test-key"\n' + "        token = jwt.encode({'sub':'account'}, secret)\n" + "        assert jwt.decode(token, secret) == {'sub':'account'}\n" + textwrap.indent(
-        after + "\n" if after else "", "        "
+    source = (
+        "import pytest\nimport requests\nfrom jwt.api_jwt import PyJWT\n"
+        "@pytest.fixture\ndef jwt() -> PyJWT:\n    return PyJWT()\n"
+        + module_extra
+        + "class TestJWT:\n"
+        + class_override
+        + "    def test_roundtrip(self, jwt: PyJWT):\n"
+        + textwrap.indent(before + "\n" if before else "", "        ")
+        + '        secret = "fixed-local-test-key"\n'
+        + "        token = jwt.encode({'sub':'account'}, secret)\n"
+        + "        assert jwt.decode(token, secret) == {'sub':'account'}\n"
+        + textwrap.indent(after + "\n" if after else "", "        ")
     )
     (tmp_path / "test_protocol.py").write_text(source, encoding="utf-8")
     provider_path = tmp_path / "jwt" / "api_jwt.py"
@@ -15312,7 +15322,8 @@ def test_shared_native_summary_selected_return_reaches_shell_and_pickle(
 ):
     from factoryline import review_audits as audit
 
-    source = """import os
+    source = (
+        """import os
 import pickle
 from flask import request
 
@@ -15325,7 +15336,9 @@ def route():
     selected = values[%r]
     pickle.loads(selected)
     os.system(selected.decode())
-""" % selected
+"""
+        % selected
+    )
     (tmp_path / "app.py").write_text(source, encoding="utf-8")
     report = audit.security_scan(tmp_path, cache_enabled=False)
     rows = report.get("finding_tier_report", {}).get("ledger", [])
@@ -15593,3 +15606,163 @@ def test_security_only_unknown_collection_rejects_runtime_oracle_credit(
             audit.security_scan(
                 tmp_path, security_only=not inherited, oracle_evidence="evidence.json"
             )
+
+
+@pytest.mark.parametrize("policy", ["legacy-v1", "trusted-core-v1", "source-role-v3"])
+@pytest.mark.parametrize("loaded", [False, True])
+def test_security_cli_assembles_policy_and_metadata_before_sealing(
+    tmp_path, capsys, policy, loaded
+):
+    import sys
+    from factoryline.mission_control_status import _security_scan_report_error
+
+    (tmp_path / "app.py").write_text("value = 1\n")
+    if loaded:
+        directory = tmp_path / ".factory"
+        directory.mkdir()
+        (directory / "tenant-read-contract.json").write_text(
+            json.dumps({"schema": "factory.tenant-read-contract.v1", "reads": []})
+        )
+    seals = []
+
+    def observe(frame, event, arg):
+        if event == "call" and frame.f_code.co_name == "seal_security_scan":
+            if Path(frame.f_code.co_filename).name == "audit_action_refs.py":
+                seals.append(1)
+
+    prior = sys.getprofile()
+    sys.setprofile(observe)
+    try:
+        code = main(
+            [
+                "audit",
+                "security",
+                "--root",
+                str(tmp_path),
+                "--security-only",
+                "--defect-policy",
+                policy,
+                "--json",
+            ]
+        )
+    finally:
+        sys.setprofile(prior)
+    report = json.loads(capsys.readouterr().out)
+    assert len(seals) == 2
+    expected_state = (
+        "REVIEW_REQUIRED"
+        if policy == "source-role-v3"
+        else "CLEAN"
+        if loaded
+        else "INCOMPLETE"
+    )
+    assert report["state"] == expected_state
+    assert report["tenant_read_contract"]["configuration"]["state"] == (
+        "loaded" if loaded else "missing"
+    )
+    assert _security_scan_report_error(report) is None
+    saved = json.loads((tmp_path / ".factory/security-scan/latest.json").read_text())
+    assert saved["report"] == report
+    if policy == "source-role-v3":
+        assert code == 0
+        assert (
+            report["defect_policy_decision"]["state"]
+            == "NO_SUPPORTED_DEFECTS_REVIEW_REQUIRED"
+        )
+    elif loaded:
+        assert code == 0
+    elif policy == "legacy-v1":
+        assert code == 1
+    else:
+        assert code == 2
+        assert report["defect_policy_decision"]["state"] == "BLOCKED"
+        assert report["agent_actions"] == []
+
+
+@pytest.mark.parametrize("policy", ["legacy-v1", "trusted-core-v1", "source-role-v3"])
+def test_security_configuration_is_copied_and_missing_warning_is_idempotent(
+    tmp_path, policy
+):
+    from factoryline import review_audits as audit
+
+    (tmp_path / "app.py").write_text("value = 1\n")
+    configuration = {"state": "missing"}
+    report = audit.security_scan(
+        tmp_path,
+        security_only=True,
+        defect_policy=policy,
+        tenant_read_configuration=configuration,
+    )
+    configuration["state"] = "loaded"
+    assert report["tenant_read_contract"]["configuration"]["state"] == "missing"
+    again = audit._seal_security_scan(report)
+    assert again["state"] == (
+        "REVIEW_REQUIRED" if policy == "source-role-v3" else "INCOMPLETE"
+    )
+    assert again["action_summary"].count("Tenant isolation remains unassessed") == (
+        0 if policy == "source-role-v3" else 1
+    )
+    if policy == "trusted-core-v1":
+        assert again["defect_policy_decision"]["state"] == "BLOCKED"
+        assert again["agent_actions"] == []
+
+
+@pytest.mark.parametrize(
+    "policy", ["source-role-v1", "source-role-v2", "source-role-v3"]
+)
+@pytest.mark.parametrize("limited", [False, True])
+def test_security_missing_configuration_preserves_unassessed_source_role_messages(
+    tmp_path, policy, limited
+):
+    from factoryline import review_audits as audit
+
+    if limited:
+        (tmp_path / "first.py").write_text("value = 1\n")
+        (tmp_path / "second.py").write_text("value = 2\n")
+    report = audit.security_scan(
+        tmp_path,
+        max_files=1,
+        security_only=True,
+        defect_policy=policy,
+        tenant_read_configuration={"state": "missing"},
+    )
+    assert report["state"] == ("BLOCKED" if limited else "NO_SOURCES")
+    assert report["files_scanned"] == 0
+    assert not any(report["authority"].values())
+    again = audit._seal_security_scan(report)
+    assert again["state"] == report["state"]
+    assert again["action_summary"].count("Tenant isolation remains unassessed") == 1
+    assert again["defect_policy_decision"]["state"] == "BLOCKED"
+    assert again["agent_actions"] == []
+
+
+@pytest.mark.parametrize(
+    "case", ["list", "state", "state_list", "set", "nan", "cycle", "unicode"]
+)
+def test_security_configuration_rejects_invalid_metadata_before_scanning(
+    tmp_path, monkeypatch, case
+):
+    from factoryline import review_audits as audit
+
+    configuration = {"state": "missing"}
+    if case == "list":
+        configuration = []
+    elif case == "state":
+        configuration["state"] = "unknown"
+    elif case == "state_list":
+        configuration["state"] = []
+    elif case == "set":
+        configuration["detail"] = {1}
+    elif case == "nan":
+        configuration["detail"] = float("nan")
+    elif case == "cycle":
+        configuration["detail"] = configuration
+    else:
+        configuration["detail"] = "\ud800"
+
+    def refuse_scan(*args, **kwargs):
+        pytest.fail("Invalid metadata reached source scanning")
+
+    monkeypatch.setattr(audit, "_security_source_files", refuse_scan)
+    with pytest.raises(audit.ReviewAuditError, match="Tenant configuration metadata"):
+        audit.security_scan(tmp_path, tenant_read_configuration=configuration)

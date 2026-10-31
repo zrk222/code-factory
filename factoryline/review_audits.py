@@ -5794,6 +5794,9 @@ def _security_scan_report(
     security_only: bool = False,
     source_limit: int | None = None,
     collection_identity: dict | None = None,
+    defect_policy: str = "legacy-v1",
+    tenant_read_configuration: dict | None = None,
+    producer_source_model=None,
 ) -> dict[str, Any]:
     from .audit_action_refs import security_scan_report
 
@@ -5817,6 +5820,9 @@ def _security_scan_report(
             source_limit=source_limit,
             collection_identity=collection_identity,
             security_only=_SECURITY_ONLY_SCAN.get() is True,
+            defect_policy=defect_policy,
+            tenant_read_configuration=tenant_read_configuration,
+            producer_source_model=producer_source_model,
         )
 
 
@@ -5877,6 +5883,7 @@ def security_scan(
     defect_policy: str = "legacy-v1",
     max_files: int | None = None,
     security_only: bool = False,
+    tenant_read_configuration: dict | None = None,
 ) -> dict[str, Any]:
     """Scan captured Python sources with bounded security and oracle evidence."""
     from .audit_action_refs import security_scan as scan
@@ -5898,6 +5905,7 @@ def security_scan(
         defect_policy=defect_policy,
         max_files=max_files,
         security_only=security_only,
+        tenant_read_configuration=tenant_read_configuration,
     )
 
 
@@ -5911,6 +5919,7 @@ def _security_source_limit_report(
     profile,
     policy,
     source_limit=None,
+    tenant_read_configuration=None,
 ):
     blocked = _blocked_security_scan_report(
         workspace, files, calls, bindings, applies, source_limit
@@ -5929,6 +5938,12 @@ def _security_source_limit_report(
         blocked["provider_analysis_profile"] = profile
     if policy != "legacy-v1":
         blocked["selected_defect_policy"] = policy
+    if tenant_read_configuration is not None:
+        from copy import deepcopy
+
+        blocked["tenant_read_contract"]["configuration"] = deepcopy(
+            tenant_read_configuration
+        )
     return _seal_security_scan(blocked)
 
 

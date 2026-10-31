@@ -5,9 +5,12 @@ from __future__ import annotations
 import math
 import re
 import json
+from copy import deepcopy
 from hashlib import sha256
 from typing import Any
 from pathlib import Path
+
+from .runtime_audit_common import canonical_bytes
 
 from .audit_taxonomy import (
     _ACTION_REFERENCE_FIELDS,
@@ -741,7 +744,36 @@ def seal_security_scan(
     _apply_security_scan_policy(
         audit, core, captured, prior_tier_report, prior_state, producer_source_model
     )
+    _apply_security_scan_configuration(audit, core, captured)
     return _finish_security_scan_seal(audit, core, captured)
+
+
+def _apply_security_scan_configuration(audit, core, captured):
+    """Finalize descriptive tenant metadata after partition and policy decisions."""
+    configuration = core.get("tenant_read_contract", {}).get("configuration")
+    if not isinstance(configuration, dict) or configuration.get("state") != "missing":
+        return
+    if core.get("state") == "CLEAN":
+        core["state"] = "INCOMPLETE"
+        _apply_security_scan_policy(
+            audit, core, captured, core.get("finding_tier_report"), "INCOMPLETE"
+        )
+    if core.get("selected_defect_policy") in {
+        "source-role-v1",
+        "source-role-v2",
+        "source-role-v3",
+    } and (
+        core.get("defect_policy_decision", {}).get("source_sha256") is not None
+        or core.get("state") == "INCOMPLETE"
+    ):
+        return
+    message = (
+        " Tenant isolation remains unassessed for custom reads; add "
+        "`.factory/tenant-read-contract.json` with every tenant-scoped "
+        "read and its binding, or explicitly declare an empty read set."
+    )
+    if message.strip() not in core.get("action_summary", ""):
+        core["action_summary"] = core.get("action_summary", "") + message
 
 
 def security_scan_report(
@@ -762,6 +794,9 @@ def security_scan_report(
     source_limit: int | None = None,
     collection_identity: dict | None = None,
     security_only: bool = False,
+    defect_policy: str = "legacy-v1",
+    tenant_read_configuration: dict | None = None,
+    producer_source_model=None,
 ) -> dict[str, Any]:
     """Assemble and seal the bounded Python security scan report with coverage, source bindings, findings, and its non-runtime, non-approval limits."""
     audit_coverage = audit._security_scan_coverage(
@@ -805,9 +840,13 @@ def security_scan_report(
     }
     if security_only is True:
         core["oracle_context"]["test_oracle_assessment"] = "NOT_ASSESSED_SECURITY_ONLY"
+    if defect_policy != "legacy-v1":
+        core["selected_defect_policy"] = defect_policy
+    if tenant_read_configuration is not None:
+        core["tenant_read_contract"]["configuration"] = deepcopy(
+            tenant_read_configuration
+        )
     if collection_identity is not None:
-        from copy import deepcopy
-
         core["oracle_context"]["static_pytest_collection"] = deepcopy(
             collection_identity
         )
@@ -830,10 +869,17 @@ def security_scan_report(
         ).encode("utf-8")
     ).hexdigest()
     core["action_summary"] = audit._security_scan_action_summary(state)
-    return audit._seal_security_scan(core)
+    return audit._seal_security_scan(
+        core,
+        **(
+            {"producer_source_model": producer_source_model}
+            if producer_source_model is not None
+            else {}
+        ),
+    )
 
 
-def _security_scan_context(audit, security_only, evidence):
+def _security_scan_context(audit, security_only, evidence, configuration=None):
     """Keep effective security-only mode and its oracle boundary together."""
     if type(security_only) is not bool:
         raise audit.ReviewAuditError("security_only must be a boolean.")
@@ -842,6 +888,18 @@ def _security_scan_context(audit, security_only, evidence):
         raise audit.ReviewAuditError(
             "security_only cannot credit runtime test-oracle evidence."
         )
+    if configuration is not None:
+        if not isinstance(configuration, dict) or configuration.get("state") not in (
+            "missing",
+            "loaded",
+        ):
+            raise audit.ReviewAuditError("Tenant configuration metadata is malformed.")
+        try:
+            canonical_bytes(configuration)
+        except (TypeError, ValueError, OverflowError, RecursionError, UnicodeError):
+            raise audit.ReviewAuditError(
+                "Tenant configuration metadata must contain valid JSON values."
+            ) from None
     return audit._security_only_scan_context(enabled)
 
 
@@ -863,6 +921,7 @@ def security_scan(
     defect_policy: str = "legacy-v1",
     max_files: int | None = None,
     security_only: bool = False,
+    tenant_read_configuration: dict | None = None,
 ) -> dict[str, Any]:
     """Run a bounded AST scan with content-bound process-local context reuse."""
     evidence = (
@@ -871,7 +930,10 @@ def security_scan(
         oracle_trust_sha256,
         oracle_environment_sha256,
     )
-    with _security_scan_context(audit, security_only, evidence):
+    runtime_requested = any(value is not None for value in evidence)
+    with _security_scan_context(
+        audit, security_only, evidence, tenant_read_configuration
+    ):
         from .finite_capture import provider_analysis_profile
         from .primitive_observation_binding import validate_security_defect_policy
 
@@ -907,6 +969,7 @@ def security_scan(
                 profile,
                 selected_policy,
                 source_limit,
+                tenant_read_configuration,
             )
         database_context = {}
         primitive_source_bytes = {}
@@ -944,25 +1007,63 @@ def security_scan(
             source_limit=source_limit,
             collection_identity=collection_identity,
             security_only=audit._SECURITY_ONLY_SCAN.get() is True,
+            defect_policy=selected_policy
+            if not profile["conditional"]
+            else "legacy-v1",
+            tenant_read_configuration=(
+                None
+                if profile["conditional"] or runtime_requested
+                else tenant_read_configuration
+            ),
+            producer_source_model=producer_source_model.get("source"),
         )
-        if profile["conditional"]:
-            from .primitive_observation_binding import (
-                apply_conditional_provider_profile,
-            )
+        return _finish_native_security_scan(
+            audit,
+            workspace,
+            result,
+            evidence,
+            profile,
+            selected_policy,
+            primitive_source_bytes,
+            producer_source_model.get("source"),
+            tenant_read_configuration,
+        )
 
-            result = apply_conditional_provider_profile(
-                result, profile, primitive_source_bytes
-            )
+
+def _finish_native_security_scan(
+    audit,
+    workspace,
+    result,
+    evidence,
+    profile,
+    selected_policy,
+    primitive_source_bytes,
+    producer_source_model,
+    tenant_read_configuration,
+):
+    """Retain resealing only after conditional or runtime inputs actually change."""
+    runtime_requested = any(value is not None for value in evidence)
+    if profile["conditional"]:
+        from .primitive_observation_binding import apply_conditional_provider_profile
+
+        result = apply_conditional_provider_profile(
+            result, profile, primitive_source_bytes
+        )
         if selected_policy != "legacy-v1":
             result["selected_defect_policy"] = selected_policy
             result = audit._seal_security_scan(
-                result, producer_source_model=producer_source_model.get("source")
+                result, producer_source_model=producer_source_model
             )
-        return (
-            audit._reconcile_runtime_oracles(workspace, result, evidence)
-            if any((value is not None for value in evidence))
-            else result
+    if runtime_requested:
+        result = audit._reconcile_runtime_oracles(workspace, result, evidence)
+    if tenant_read_configuration is not None and (
+        profile["conditional"] or runtime_requested
+    ):
+        result["tenant_read_contract"]["configuration"] = deepcopy(
+            tenant_read_configuration
         )
+        result = audit._seal_security_scan(result)
+    return result
 
 
 def _validate_source_file_limit(value: int | None) -> int:
