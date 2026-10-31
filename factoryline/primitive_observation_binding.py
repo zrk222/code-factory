@@ -185,7 +185,11 @@ def _trusted_core_policy_result(evidence_payload=None, counts=None):
 
 
 def security_defect_policy_decision(
-    core, captured_sources, prior_tiers=None, prior_source_state=None
+    core,
+    captured_sources,
+    prior_tiers=None,
+    prior_source_state=None,
+    _verifier_native_rows=None,
 ):
     """Regenerate trusted-core admission from the complete captured native scan."""
     policy_id = validate_security_defect_policy(core.get("selected_defect_policy"))
@@ -199,7 +203,7 @@ def security_defect_policy_decision(
         ):
             return decision
         regenerated, sources_sha256, source_findings = _trusted_core_regenerated_tiers(
-            core, captured_sources
+            core, captured_sources, _verifier_native_rows
         )
         if regenerated is None:
             return decision
@@ -226,7 +230,6 @@ def security_defect_policy_decision(
         return _trusted_core_policy_result(evidence_payload, (supported, unresolved))
     except Exception:
         return decision
-    return decision
 
 
 def _security_tier_reports_match(actual, expected_rows, prior_tiers):
@@ -240,7 +243,7 @@ def _security_tier_reports_match(actual, expected_rows, prior_tiers):
     return True
 
 
-def _trusted_core_regenerated_tiers(core, captured_sources):
+def _trusted_core_regenerated_tiers(core, captured_sources, _verifier_native_rows=None):
     from . import review_audits as audit
 
     sources = _trusted_core_complete_sources(core, captured_sources, audit)
@@ -250,7 +253,9 @@ def _trusted_core_regenerated_tiers(core, captured_sources):
     tenant = _trusted_core_tenant_arguments(core, audit)
     if tenant is None:
         return None, None, None
-    native_rows = _trusted_core_native_security_rows(captured, tenant, audit)
+    native_rows = _verifier_native_rows
+    if native_rows is None or tenant != ((), {}, False):
+        native_rows = _trusted_core_native_security_rows(captured, tenant, audit)
     if native_rows is None or not _trusted_core_surface_matches(core, native_rows):
         return None, None, None
     regenerated = build_finding_tier_report(
@@ -493,25 +498,15 @@ def _trusted_core_surface_matches(core, native_rows):
         and isinstance(row.get("code"), str)
         and row["code"].startswith("SECURITY_")
     ]
-    surface_ids = sorted(
-        (
-            row.get("path"),
-            row.get("line"),
-            row.get("column", 0),
-            row.get("code"),
-            row.get("severity"),
+    surface_ids, native_ids = (
+        sorted(
+            tuple(
+                row.get(key, 0) if key == "column" else row.get(key)
+                for key in ("path", "line", "column", "code", "severity")
+            )
+            for row in rows
         )
-        for row in surface
-    )
-    native_ids = sorted(
-        (
-            row.get("path"),
-            row.get("line"),
-            row.get("column", 0),
-            row.get("code"),
-            row.get("severity"),
-        )
-        for row in native_rows
+        for rows in (surface, native_rows)
     )
     return surface_ids == native_ids
 
@@ -1863,9 +1858,9 @@ def apply_pickle_source_role_policy(
     captured,
     *,
     source_model=None,
-    configuration_bytes=None,
     prior_tiers=None,
     prior_source_state=None,
+    _verifier_native_rows=None,
 ):
     """Rebuild context reviews from the native raw ledger on every seal."""
     policy_id = core.get("selected_defect_policy")
@@ -1876,6 +1871,7 @@ def apply_pickle_source_role_policy(
         captured,
         prior_tiers=prior_tiers,
         prior_source_state=prior_source_state,
+        _verifier_native_rows=_verifier_native_rows,
     )
     original = [*core.get("findings", []), *core.get("context_reviews", [])]
     core["context_reviews"] = []
@@ -2083,10 +2079,10 @@ def _pickle_source_role_witness(finding, inventory):
                     )
                 )
                 if finding.get("code") == "SECURITY_DYNAMIC_EXECUTION"
-                and _pickle_role_native_match(finding, inventory)
                 and not _valid_security_precondition(
                     finding.get("facts", {}).get("security_precondition"), finding
                 )
+                and _pickle_role_native_match(finding, inventory)
                 else None
             )
             if inventory.get("policy_id") in {"source-role-v2", "source-role-v3"}
@@ -3342,16 +3338,18 @@ def _conditional_binding_contract(profile, finding):
     return view["contract"]
 
 
-def partition_proven_primitive_observations(core, audit):
+def partition_proven_primitive_observations(core, audit, _verifier_native_rows=None):
     """Keep proved fixed programs visible without describing them as defects."""
     token = _ROLE_REBUILD_CONTEXT.set({})
     try:
-        return _partition_proven_primitive_observations(core, audit)
+        return _partition_proven_primitive_observations(
+            core, audit, _verifier_native_rows
+        )
     finally:
         _ROLE_REBUILD_CONTEXT.reset(token)
 
 
-def _partition_proven_primitive_observations(core, audit):
+def _partition_proven_primitive_observations(core, audit, _verifier_native_rows=None):
     """Use one independent source rebuild per byte inventory within this seal."""
     from .audit_action_refs import _security_scan_action_summary, _security_scan_state
 
@@ -3436,6 +3434,7 @@ def _partition_proven_primitive_observations(core, audit):
         partition_state="VALIDATED"
         if coverage.get("complete") is True
         else "INCOMPLETE",
+        _verifier_native_rows=_verifier_native_rows,
     )
     if _unknown_collection(core):
         core["state"] = "INCOMPLETE"

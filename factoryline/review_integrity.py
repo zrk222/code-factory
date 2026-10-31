@@ -5155,13 +5155,12 @@ def _fixed_program_builtin_identity(node, module, call_name):
     )
 
 
-def partition_proven_primitive_observations(core):
-    """Keep proved fixed programs visible without describing them as defects."""
+def partition_proven_primitive_observations(core, _verifier_native_rows=None):
     from .primitive_observation_binding import (
         partition_proven_primitive_observations as partition,
     )
 
-    return partition(core, sys.modules[__name__])
+    return partition(core, sys.modules[__name__], _verifier_native_rows)
 
 
 def _fixed_primitive_binding(finding, sources, bindings, source_bytes=None):

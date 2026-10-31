@@ -6451,6 +6451,223 @@ def _trusted_core_policy316_seal(tmp_path, source):
     )
 
 
+@pytest.mark.parametrize("policy", ["trusted-core-v1", "source-role-v3"])
+def test_complete_native_rows_are_shared_only_within_each_fresh_seal(
+    tmp_path, monkeypatch, policy
+):
+    (tmp_path / "app.py").write_text(
+        "from flask import request\ndef endpoint():\n    return eval(request.args['q'])\n"
+    )
+    base = review_audits.security_scan(
+        tmp_path, defect_policy=policy, security_only=True
+    )
+    counts = {"partial": 0, "complete": 0}
+    partial, complete = (
+        primitive._regenerate_native_findings,
+        primitive._trusted_core_native_security_rows,
+    )
+
+    def count_partial(*args, **kwargs):
+        counts["partial"] += 1
+        return partial(*args, **kwargs)
+
+    def count_complete(*args, **kwargs):
+        counts["complete"] += 1
+        return complete(*args, **kwargs)
+
+    monkeypatch.setattr(primitive, "_regenerate_native_findings", count_partial)
+    monkeypatch.setattr(primitive, "_trusted_core_native_security_rows", count_complete)
+    for _ in range(2):
+        core = copy.deepcopy(dict(base))
+        core["_primitive_source_bytes"] = dict(base._captured_sources)
+        checked = review_audits._seal_security_scan(core)
+        assert dict(checked) == dict(base)
+    assert counts == {"partial": 0, "complete": 2}
+    # Refuse the initial eligibility check only, reproducing the original two
+    # independent paths without changing either source bytes or native scanner.
+    original = primitive._trusted_core_complete_sources
+    checks = []
+
+    def refuse_first(*args):
+        checks.append(1)
+        return None if len(checks) == 1 else original(*args)
+
+    monkeypatch.setattr(primitive, "_trusted_core_complete_sources", refuse_first)
+    counts.update(partial=0, complete=0)
+    core = copy.deepcopy(dict(base))
+    core["_primitive_source_bytes"] = dict(base._captured_sources)
+    assert dict(review_audits._seal_security_scan(core)) == dict(base)
+    assert counts == {"partial": 1, "complete": 1}
+
+
+@pytest.mark.parametrize("fault", ["none", "missing", "duplicate", "extra", "column"])
+def test_faulty_complete_native_surface_keeps_original_blocked_outcome(
+    tmp_path, monkeypatch, fault
+):
+    base = _trusted_core_policy316_seal(
+        tmp_path, b"from flask import request\neval(request.args['q'])\n"
+    )
+    original = primitive._trusted_core_native_security_rows
+    partition = review_integrity.partition_proven_primitive_observations
+    supplied = []
+
+    def faulty(*args):
+        rows = original(*args)
+        if fault == "none":
+            return None
+        if fault == "missing":
+            return []
+        if fault == "duplicate":
+            return rows + copy.deepcopy(rows)
+        changed = copy.deepcopy(rows)
+        changed[0]["column" if fault == "column" else "path"] = (
+            99 if fault == "column" else "other.py"
+        )
+        return changed if fault == "column" else rows + changed
+
+    def observe(core, rows=None):
+        supplied.append(rows)
+        return partition(core, rows)
+
+    monkeypatch.setattr(primitive, "_trusted_core_native_security_rows", faulty)
+    monkeypatch.setattr(
+        review_integrity, "partition_proven_primitive_observations", observe
+    )
+    core = copy.deepcopy(dict(base))
+    core["_primitive_source_bytes"] = dict(base._captured_sources)
+    checked = review_audits._seal_security_scan(core)
+    assert supplied == [None]
+    assert checked["defect_policy_decision"]["state"] == "BLOCKED"
+    assert checked["finding_tier_report"] == base["finding_tier_report"]
+
+
+@pytest.mark.parametrize(
+    "change",
+    ["source", "cycle", "tenant", "profile", "scanner", "provider", "coverage"],
+)
+def test_changed_partition_inputs_or_epoch_refuse_shared_policy_rows(
+    tmp_path, monkeypatch, change
+):
+    from factoryline import semantic_credential_sensor as sensor
+
+    base = _trusted_core_policy316_seal(
+        tmp_path, b"from flask import request\neval(request.args['q'])\n"
+    )
+    partition = review_integrity.partition_proven_primitive_observations
+    policy = primitive._trusted_core_regenerated_tiers
+    observed = []
+
+    def changed(core, rows=None):
+        assert rows is not None
+        result = partition(core, rows)
+        if change in {"source", "cycle"}:
+            raw = core["_primitive_source_bytes"]["app.py"]
+            raw = raw + b"import app\n" if change == "cycle" else b"eval('42')\n"
+            core["_primitive_source_bytes"]["app.py"] = raw
+            if change == "cycle":
+                core["sources"][0]["sha256"] = hashlib.sha256(raw).hexdigest()
+                core["sources"][0]["bytes"] = len(raw)
+        elif change == "tenant":
+            core["tenant_read_contract"]["policy_applies"] = True
+        elif change == "profile":
+            core["provider_analysis_profile"] = {"conditional": True}
+        elif change == "coverage":
+            core["audit_coverage"]["complete"] = False
+        elif change == "scanner":
+            monkeypatch.setattr(
+                review_audits, "_security_scan_tree", lambda *a, **kw: []
+            )
+        else:
+            previous = sensor._native_input_provider_inventory
+            monkeypatch.setattr(
+                sensor, "_native_input_provider_inventory", lambda *a: previous(*a)
+            )
+        return result
+
+    def observe(core, captured, rows=None):
+        observed.append(rows)
+        return policy(core, captured, rows)
+
+    monkeypatch.setattr(
+        review_integrity, "partition_proven_primitive_observations", changed
+    )
+    monkeypatch.setattr(primitive, "_trusted_core_regenerated_tiers", observe)
+    core = copy.deepcopy(dict(base))
+    core["_primitive_source_bytes"] = dict(base._captured_sources)
+    checked = review_audits._seal_security_scan(core)
+    assert observed == [None]
+    if change not in {"tenant", "provider"}:
+        assert checked["defect_policy_decision"]["state"] == "BLOCKED"
+
+
+@pytest.mark.parametrize(
+    "change", ["applies", "calls", "conditional", "incomplete", "unknown", "missing"]
+)
+def test_nondefault_or_incomplete_profiles_retain_the_original_partition_path(
+    tmp_path, monkeypatch, change
+):
+    base = _trusted_core_policy316_seal(
+        tmp_path, b"from flask import request\neval(request.args['q'])\n"
+    )
+    core = copy.deepcopy(dict(base))
+    core["_primitive_source_bytes"] = dict(base._captured_sources)
+    if change == "applies":
+        core["tenant_read_contract"]["policy_applies"] = True
+    elif change == "calls":
+        core["tenant_read_contract"]["calls"] = ["store.fetch"]
+    elif change == "conditional":
+        core["provider_analysis_profile"] = {"conditional": True}
+    elif change == "incomplete":
+        core["audit_coverage"]["complete"] = False
+    elif change == "unknown":
+        core["oracle_context"]["pytest_collection"] = {"collection_state": "UNKNOWN"}
+    else:
+        core["_primitive_source_bytes"].clear()
+    partition = review_integrity.partition_proven_primitive_observations
+    supplied = []
+
+    def observe(core, rows=None):
+        supplied.append(rows)
+        return partition(core, rows)
+
+    monkeypatch.setattr(
+        review_integrity, "partition_proven_primitive_observations", observe
+    )
+    checked = review_audits._seal_security_scan(core)
+    assert supplied == [None]
+    if change not in {"applies", "calls"}:
+        assert checked["defect_policy_decision"]["state"] == "BLOCKED"
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["same", "default_column", "duplicate", "missing", "extra", "column", "severity"],
+)
+def test_native_surface_identity_projection_preserves_exact_multiset(mutation):
+    row = {
+        "code": "SECURITY_DYNAMIC_EXECUTION",
+        "path": "app.py",
+        "line": 3,
+        "column": 0,
+        "severity": "HIGH",
+    }
+    native = [copy.deepcopy(row)]
+    core = {"findings": [copy.deepcopy(row)]}
+    if mutation == "default_column":
+        del core["findings"][0]["column"]
+    elif mutation == "duplicate":
+        core["findings"].append(copy.deepcopy(row))
+    elif mutation == "missing":
+        core["findings"].clear()
+    elif mutation == "extra":
+        core["primitive_observations"] = [copy.deepcopy(row)]
+    elif mutation in {"column", "severity"}:
+        core["findings"][0][mutation] = 1 if mutation == "column" else "LOW"
+    assert primitive._trusted_core_surface_matches(core, native) is (
+        mutation in {"same", "default_column"}
+    )
+
+
 def test_trusted_core_policy316_supported_defect_is_recomputed_and_bound(tmp_path):
     report = _trusted_core_policy316_seal(
         tmp_path,

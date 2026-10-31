@@ -609,7 +609,13 @@ def _preserve_security_scan_incomplete_state(audit, core, prior_state, prior_sum
 
 
 def _apply_security_scan_policy(
-    audit, core, captured, prior_tier_report, prior_state, producer_source_model=None
+    audit,
+    core,
+    captured,
+    prior_tier_report,
+    prior_state,
+    producer_source_model=None,
+    _verifier_native_rows=None,
 ):
     """Recompute only the explicitly selected defect policy after integrity runs."""
     if "selected_defect_policy" in core:
@@ -625,6 +631,7 @@ def _apply_security_scan_policy(
                 captured,
                 prior_tiers=prior_tier_report,
                 prior_source_state=prior_state,
+                _verifier_native_rows=_verifier_native_rows,
             )
         elif policy in {"source-role-v1", "source-role-v2", "source-role-v3"}:
             primitive.apply_pickle_source_role_policy(
@@ -633,15 +640,7 @@ def _apply_security_scan_policy(
                 source_model=producer_source_model,
                 prior_tiers=prior_tier_report,
                 prior_source_state=prior_state,
-                configuration_bytes={
-                    row["path"]: captured[row["path"]]
-                    for row in core.get("oracle_context", {}).get(
-                        "configuration_sources", []
-                    )
-                    if isinstance(captured, dict)
-                    and isinstance(captured.get(row.get("path")), bytes)
-                    and sha256(captured[row["path"]]).hexdigest() == row.get("sha256")
-                },
+                _verifier_native_rows=_verifier_native_rows,
             )
     else:
         core.pop("defect_policy_decision", None)
@@ -736,13 +735,100 @@ def seal_security_scan(
     prior_state, prior_summary = core.get("state"), core.get("action_summary")
     prior_tier_report = core.get("finding_tier_report")
     captured = _prepare_security_scan_sources(core, prior_tier_report)
+    from . import primitive_observation_binding as primitive
+
+    native_rows = None
+    if core.get("selected_defect_policy") in {
+        "trusted-core-v1",
+        "source-role-v1",
+        "source-role-v2",
+        "source-role-v3",
+    } and prior_state in {"CLEAN", "FINDINGS", "REVIEW_REQUIRED", "BLOCKED"}:
+        try:
+            sources = primitive._trusted_core_complete_sources(core, captured, audit)
+            tenant = primitive._trusted_core_tenant_arguments(core, audit)
+            if sources is not None and tenant == ((), {}, False):
+                fields = (
+                    "tenant_read_contract",
+                    "oracle_context",
+                    "database_context",
+                    "provider_analysis_profile",
+                    "selected_defect_policy",
+                    "audit_coverage",
+                )
+                functions = (
+                    "_regenerate_native_findings",
+                    "_trusted_core_native_security_rows",
+                    "build_finding_tier_report",
+                    "_trusted_core_regenerated_tiers",
+                    "_trusted_core_complete_sources",
+                    "_trusted_core_tenant_arguments",
+                    "_trusted_core_surface_matches",
+                    "security_defect_policy_decision",
+                )
+                verified = (
+                    sources,
+                    tenant,
+                    audit._oracle_context_cache_key(
+                        Path("."),
+                        core["sources"],
+                        {k: core.get(k) for k in fields},
+                        captured=True,
+                    ),
+                    tuple(
+                        (fn, getattr(fn, "__code__", None))
+                        for fn in (
+                            audit._security_scan_tree,
+                            *(getattr(primitive, k) for k in functions),
+                        )
+                    ),
+                )
+                native_rows = primitive._trusted_core_native_security_rows(
+                    sources[0], tenant, audit
+                )
+                if (
+                    native_rows is not None
+                    and not primitive._trusted_core_surface_matches(core, native_rows)
+                ):
+                    native_rows = None
+        except Exception:
+            native_rows = None
     try:
-        audit.integrity.partition_proven_primitive_observations(core)
+        audit.integrity.partition_proven_primitive_observations(core, native_rows)
     finally:
         core.pop("_primitive_source_bytes", None)
+    if native_rows is not None:
+        try:
+            current = (
+                primitive._trusted_core_complete_sources(core, captured, audit),
+                primitive._trusted_core_tenant_arguments(core, audit),
+                audit._oracle_context_cache_key(
+                    Path("."),
+                    core["sources"],
+                    {k: core.get(k) for k in fields},
+                    captured=True,
+                ),
+                tuple(
+                    (fn, getattr(fn, "__code__", None))
+                    for fn in (
+                        audit._security_scan_tree,
+                        *(getattr(primitive, k) for k in functions),
+                    )
+                ),
+            )
+            if current != verified:
+                native_rows = None
+        except Exception:
+            native_rows = None
     _preserve_security_scan_incomplete_state(audit, core, prior_state, prior_summary)
     _apply_security_scan_policy(
-        audit, core, captured, prior_tier_report, prior_state, producer_source_model
+        audit,
+        core,
+        captured,
+        prior_tier_report,
+        prior_state,
+        producer_source_model,
+        native_rows,
     )
     _apply_security_scan_configuration(audit, core, captured)
     return _finish_security_scan_seal(audit, core, captured)
