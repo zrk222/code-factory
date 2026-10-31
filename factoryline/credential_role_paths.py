@@ -217,9 +217,13 @@ def method_rows(chain, index, imports):
             found = [
                 (
                     decorator,
-                    forwarding_definition(path, decorator, index, imports)
-                    if _consumer_binding_stable(path, decorator, owner, index, imports)
-                    else None,
+                    (
+                        forwarding_definition(path, decorator, index, imports)
+                        if _consumer_binding_stable(
+                            path, decorator, owner, index, imports
+                        )
+                        else None
+                    ),
                 )
                 for decorator in node.decorator_list
             ]
@@ -1037,9 +1041,9 @@ def upload_path_expression(
             ]
         case ast.BinOp(op=ast.Add() | ast.Div(), left=left, right=right):
             arguments = [left, right]
-        case ast.Call(args=args, keywords=keywords) if (
-            not _security_is_proven_secure_filename(node, aliases)
-        ):
+        case ast.Call(
+            args=args, keywords=keywords
+        ) if not _security_is_proven_secure_filename(node, aliases):
             arguments = [*args, *(item.value for item in keywords)]
             upload_join_effect(
                 node, aliases, requests, scope, flow_statement, effect_evidence, seen
@@ -1260,8 +1264,11 @@ def source_domain_guarded(scope, call, source_names, aliases):
 
 
 def bind_upload_sink_precondition(finding, call, aliases, requests, module):
-    """Attach upload escape evidence only for an unguarded, source-bound save path."""
-    from .review_integrity import _security_upload_path_expression
+    """Attach upload-target evidence only for an unguarded, source-bound save path."""
+    from .review_integrity import (
+        _security_flask_upload_expression,
+        _security_upload_path_expression,
+    )
     from .finite_capture import security_input_value_flow
     from .semantic_credential_sensor import (
         _SECURITY_EFFECT_CONTRACTS_BASELINE,
@@ -1304,24 +1311,61 @@ def bind_upload_sink_precondition(finding, call, aliases, requests, module):
         scope, call, requests, source_names, evidence.get("source_span")
     )
     guarded = source_domain_guarded(scope, call, source_names, aliases)
-    if (
+
+    direct_target = (
+        path_source
+        and not guarded
+        and "path_composition" not in evidence
+        and isinstance(destination, ast.Attribute)
+        and destination.attr == "filename"
+        and _security_flask_upload_expression(
+            destination.value,
+            aliases,
+            scope,
+            getattr(call, "_security_flow_statement", None),
+        )
+        and "source_span" in evidence
+    )
+    composed_target = (
         path_source
         and not guarded
         and {"source_span", "path_composition", "intended_base_span"}.issubset(evidence)
-    ):
+    )
+    if direct_target or composed_target:
         contract = _SECURITY_EFFECT_CONTRACTS_BASELINE["SECURITY_PATH_TRAVERSAL"]
-        witness = {
-            "effect_kind": contract["effect_kind"],
-            "source_span": evidence["source_span"],
-            "effect_facts": {
-                "provider_id": "werkzeug.FileStorage.save",
-                "path_composition": evidence["path_composition"],
-                "destination_relation": "escape_capable",
-                "normalized_counterexample_relation": "outside_intended_base",
-                "normalization_profile": "python_os_path",
-                "intended_base_span": evidence["intended_base_span"],
-            },
-        }
+        if direct_target:
+            from collections.abc import Mapping
+
+            variant = contract.get("effect_variants", {}).get("direct_filename")
+            if not isinstance(variant, Mapping):
+                return
+            effect_kind = variant.get("effect_kind")
+            effect_facts = variant.get("effect_facts")
+            if (
+                not isinstance(effect_kind, str)
+                or not isinstance(effect_facts, Mapping)
+                or effect_facts.get("path_composition") != "direct_filename"
+                or effect_facts.get("intended_base_span") is not None
+            ):
+                return
+            witness = {
+                "effect_kind": effect_kind,
+                "source_span": evidence["source_span"],
+                "effect_facts": dict(effect_facts),
+            }
+        else:
+            witness = {
+                "effect_kind": contract["effect_kind"],
+                "source_span": evidence["source_span"],
+                "effect_facts": {
+                    "provider_id": "werkzeug.FileStorage.save",
+                    "path_composition": evidence["path_composition"],
+                    "destination_relation": "escape_capable",
+                    "normalized_counterexample_relation": "outside_intended_base",
+                    "normalization_profile": "python_os_path",
+                    "intended_base_span": evidence["intended_base_span"],
+                },
+            }
         premise = supported_security_precondition(
             call, contract["source_role"], contract["consumer_role"], witness
         )
@@ -1335,6 +1379,61 @@ def bind_upload_sink_precondition(finding, call, aliases, requests, module):
             premise["input_value_flow"] = trace
         finding["facts"]["security_precondition"] = premise
     return
+
+
+def request_url_destination_control(argument, tainted, aliases, is_tainted):
+    """Classify clear request URL authority control without narrowing raw findings."""
+    from urllib.parse import urlsplit
+
+    if isinstance(argument, ast.Name):
+        # Coarse taint cannot distinguish an assigned URL suffix from authority.
+        return "unknown"
+    match argument:
+        case ast.BinOp(
+            op=ast.Add(),
+            left=ast.Constant(value=str() as value),
+            right=right,
+        ) if is_tainted(right, tainted, set(), aliases):
+            prefix = value
+        case ast.JoinedStr(
+            values=[
+                ast.Constant(value=str() as value),
+                ast.FormattedValue(value=formatted),
+                *_rest,
+            ]
+        ) if is_tainted(formatted, tainted, set(), aliases):
+            prefix = value
+        case ast.Attribute() | ast.Subscript() if is_tainted(
+            argument, tainted, set(), aliases
+        ):
+            return "authority_controlled"
+        case _:
+            return "unknown"
+    scheme_end = prefix.find("://")
+    if scheme_end < 0:
+        return "authority_controlled"
+    scheme = prefix[:scheme_end].casefold()
+    if scheme not in {"http", "https"}:
+        return "unknown"
+    boundary = min(
+        (
+            position
+            for char in "/?#"
+            if (position := prefix.find(char, scheme_end + 3)) >= 0
+        ),
+        default=-1,
+    )
+    if boundary < 0:
+        return "authority_controlled"
+    try:
+        parsed = urlsplit(prefix[: boundary + 1])
+    except (ValueError, UnicodeError):
+        return "unknown"
+    return (
+        "suffix_only"
+        if parsed.scheme.casefold() == scheme and parsed.netloc and parsed.hostname
+        else "unknown"
+    )
 
 
 def bind_request_sink_precondition(
@@ -1382,6 +1481,32 @@ def bind_request_sink_precondition(
             pass
         case _:
             return
+    if finding.get("code") == "SECURITY_SSRF":
+        from .review_integrity import _security_expr_tainted
+
+        if (
+            request_url_destination_control(
+                argument, requests, aliases, _security_expr_tainted
+            )
+            != "authority_controlled"
+        ):
+            steps = trace.get("steps")
+            source_alias_trace = (
+                isinstance(argument, ast.Name)
+                and isinstance(steps, list)
+                and sum(
+                    isinstance(step, dict) and step.get("operation") == "REQUEST_SOURCE"
+                    for step in steps
+                )
+                == 1
+                and all(
+                    isinstance(step, dict)
+                    and step.get("operation") in {"REQUEST_SOURCE", "ALIAS_USE"}
+                    for step in steps
+                )
+            )
+            if not source_alias_trace:
+                return
     premise = supported_security_precondition(
         call, "untrusted_request", finding["facts"]["call"]
     )
@@ -1393,6 +1518,87 @@ def bind_request_sink_precondition(
     ]
     premise["input_value_flow"] = trace
     finding["facts"]["security_precondition"] = premise
+
+
+def _conditional_https_url_binding(sink, url):
+    """Return True/False for conditional URL bindings, or None when none exist."""
+    from .semantic_credential_sensor import security_precondition_path_possible
+
+    if not isinstance(url, ast.Name):
+        return None
+    scope = getattr(sink, "_security_lexical_scope", None)
+    sink_statement = getattr(sink, "_security_flow_statement", sink)
+    parent = getattr(sink_statement, "_security_parent", None)
+    if not isinstance(parent, ast.AST):
+        return None
+    sequence = next(
+        (
+            value
+            for _field, value in ast.iter_fields(parent)
+            if isinstance(value, list) and any(item is sink_statement for item in value)
+        ),
+        None,
+    )
+    if sequence is None:
+        return None
+    sink_index = sequence.index(sink_statement)
+    candidates = [
+        statement
+        for statement in sequence[:sink_index]
+        if isinstance(statement, ast.If)
+        and any(
+            isinstance(item, ast.Assign)
+            and any(
+                isinstance(target, ast.Name) and target.id == url.id
+                for target in item.targets
+            )
+            for branch in (statement.body, statement.orelse)
+            for item in branch
+        )
+    ]
+    if not candidates:
+        return None
+    if len(candidates) != 1:
+        return False
+    statement = candidates[0]
+    assignments = [
+        (
+            branch[0]
+            if len(branch) == 1
+            and isinstance(branch[0], ast.Assign)
+            and len(branch[0].targets) == 1
+            and isinstance(branch[0].targets[0], ast.Name)
+            and branch[0].targets[0].id == url.id
+            and getattr(branch[0], "_security_lexical_scope", None) is scope
+            else None
+        )
+        for branch in (statement.body, statement.orelse)
+    ]
+    if not all(assignments):
+        return False
+    values = [assignment.value for assignment in assignments]
+    if not any(
+        isinstance(value, ast.BinOp)
+        and isinstance(value.left, ast.Constant)
+        and isinstance(value.left.value, str)
+        and value.left.value.casefold().startswith("https://")
+        for value in values
+    ):
+        return False
+    if not all(
+        security_precondition_path_possible(assignment) for assignment in assignments
+    ):
+        return False
+    changed_after_join = any(
+        isinstance(child, ast.Name)
+        and child.id == url.id
+        and isinstance(child.ctx, (ast.Store, ast.Del))
+        and (child.lineno, child.col_offset)
+        > (statement.end_lineno, statement.end_col_offset)
+        and (child.lineno, child.col_offset) < (sink.lineno, sink.col_offset)
+        for child in ast.walk(scope)
+    )
+    return False if changed_after_join else "https_capable"
 
 
 def tls_security_finding(call, relative, node, aliases=None):
@@ -1425,6 +1631,7 @@ def tls_security_finding(call, relative, node, aliases=None):
         aliases = aliases or {}
         contract = _SECURITY_EFFECT_CONTRACTS_BASELINE["SECURITY_TLS_VERIFY_DISABLED"]
         url = _http_url_argument(node, call)
+        conditional_https = _conditional_https_url_binding(node, url)
         verify = next(
             (
                 item.value
@@ -1464,6 +1671,9 @@ def tls_security_finding(call, relative, node, aliases=None):
                     if prefix.casefold().startswith("https://")
                     else None
                 )
+        transport = {None: transport, False: None}.get(
+            conditional_https, conditional_https
+        )
         match (
             call in contract["effect_facts"]["provider_id"],
             verify,
@@ -1664,10 +1874,12 @@ def matches_regenerated_security_precondition(finding, native_rows, regenerated_
                 },
             )
             for claim_matches in (
-                regenerated_fields == comparable_premise
-                if has_premise
-                else effect_contract is None
-                or isinstance(regenerated.get("effect_witness"), dict),
+                (
+                    regenerated_fields == comparable_premise
+                    if has_premise
+                    else effect_contract is None
+                    or isinstance(regenerated.get("effect_witness"), dict)
+                ),
             )
             if claim_matches
         ),
@@ -1680,11 +1892,20 @@ def matches_regenerated_security_precondition(finding, native_rows, regenerated_
     return True
 
 
-def security_effect_fact_matches(key, value, expected):
+def security_effect_fact_matches(
+    key, value, expected, *, allow_missing_activation=False
+):
     """Check shared evidence value shapes; this grants no source authority."""
     from pathlib import PurePosixPath
     from .primitive_observation_binding import valid_source_span
 
+    if (
+        allow_missing_activation
+        and key in {"activation_path", "activation_sha256", "activation_span"}
+        and value is None
+        and expected is None
+    ):
+        return True
     if expected is not None:
         return value in expected if isinstance(expected, tuple) else value == expected
     if key.endswith("_span"):
@@ -1775,19 +1996,23 @@ def valid_security_precondition(premise, finding, *, require_effect_witness=Fals
                         role_pair in {legacy_roles.get(code), expected_role},
                     ]
                 )
+    contract_fields = {
+        "source_role",
+        "consumer_role",
+        "effect_kind",
+        "effect_facts",
+    }
     match contract:
         case {
             "source_role": contract_source,
             "consumer_role": contract_consumer,
             "effect_kind": contract_kind,
             "effect_facts": Mapping() as contract_facts,
-        } if set(contract) == {
-            "source_role",
-            "consumer_role",
-            "effect_kind",
-            "effect_facts",
+        } if frozenset(contract) in {
+            frozenset(contract_fields),
+            frozenset(contract_fields | {"effect_variants"}),
         }:
-            pass
+            effect_variants = contract.get("effect_variants", {})
         case _:
             return False
     witness = premise.get("effect_witness")
@@ -1822,11 +2047,17 @@ def valid_security_precondition(premise, finding, *, require_effect_witness=Fals
         None,
         None,
     )
-    checked_facts = {
-        key: expected
-        for key, expected in contract_facts.items()
-        if not absent_activation or key not in activation_keys
-    }
+
+    direct_contract = effect_variants.get("direct_filename", {})
+    direct_variant = (effect_kind, facts) == (
+        direct_contract.get("effect_kind"),
+        direct_contract.get("effect_facts"),
+    )
+    selected_kind, selected_facts = (
+        (direct_contract["effect_kind"], direct_contract["effect_facts"])
+        if direct_variant
+        else (contract_kind, contract_facts)
+    )
     actual = {
         "schema": schema,
         "source_role": witness_source,
@@ -1837,11 +2068,20 @@ def valid_security_precondition(premise, finding, *, require_effect_witness=Fals
         "schema": sensors.SECURITY_EFFECT_WITNESS_SCHEMA,
         "source_role": contract_source,
         "consumer_role": contract_consumer,
-        "effect_kind": contract_kind,
+        "effect_kind": selected_kind,
     }
-    values_match = all(
-        security_effect_fact_matches(key, facts.get(key), value)
-        for key, value in checked_facts.items()
+    values_match = (
+        facts == selected_facts
+        if direct_variant
+        else all(
+            security_effect_fact_matches(
+                key,
+                facts.get(key),
+                value,
+                allow_missing_activation=absent_activation,
+            )
+            for key, value in selected_facts.items()
+        )
     )
     return all(
         [
@@ -1851,7 +2091,7 @@ def valid_security_precondition(premise, finding, *, require_effect_witness=Fals
             witness_sink == sink_span,
             valid_source_span(source_span),
             valid_source_span(witness_sink),
-            set(facts) == set(contract_facts),
+            set(facts) == set(selected_facts),
             values_match,
         ]
     )

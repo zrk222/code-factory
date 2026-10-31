@@ -591,16 +591,6 @@ def test_operative_signing_default_evidence_requires_framework_session_authority
         ),
         pytest.param(
             _DJANGO_SESSION_SETTINGS,
-            {"setup.py": "from setuptools import setup\nsetup(packages=['library'])\n"},
-            id="distribution-runtime-unresolved",
-        ),
-        pytest.param(
-            _DJANGO_SESSION_SETTINGS,
-            {"pyproject.toml": "[project]\nname='library'\n"},
-            id="metadata-runtime-unresolved",
-        ),
-        pytest.param(
-            _DJANGO_SESSION_SETTINGS,
             {"django/__init__.py": ""},
             id="local-framework-shadow",
         ),
@@ -702,9 +692,9 @@ def test_framework_session_authority_public_cli_receipt_and_independent_reseal(
         rebuilt["_primitive_source_bytes"] = {
             name: (tmp_path / name).read_bytes() for name in files
         }
-        rebuilt["_primitive_source_bytes"]["service/settings.py"] = (
-            b'SECRET_KEY = "published-session-signing-material"\n'
-        )
+        rebuilt["_primitive_source_bytes"][
+            "service/settings.py"
+        ] = b'SECRET_KEY = "published-session-signing-material"\n'
         rejected = audit._seal_security_scan(rebuilt)
         assert rejected["finding_tier_report"] != report["finding_tier_report"]
         assert rejected["finding_tier_report"]["tier_counts"]["SUPPORTED_DEFECT"] == 0
@@ -1492,6 +1482,132 @@ def test_tier314_flask_login_session_accepts_cross_module_signing_default():
 
 
 @pytest.mark.parametrize(
+    "mutation",
+    [
+        None,
+        "other-app",
+        "manager-write",
+        "provider-write",
+        "registry-write",
+        "app-escape",
+        "reload",
+    ],
+)
+def test_imported_flask_login_routes_bind_only_the_closed_configured_allocation(
+    mutation,
+):
+    files = _flask_login_config_sources()
+    prefix, routes = files["app.py"].split("@app.route", 1)
+    files["app.py"] = (
+        prefix.replace("from flask import *", "from flask import Flask")
+        + "import views\n"
+    )
+    files["views.py"] = (
+        "from app import app\nfrom flask_login import login_user, login_required\n"
+        + "@app.route"
+        + routes
+    )
+    if mutation == "other-app":
+        files["other.py"] = "from flask import Flask\napp = Flask(__name__)\n"
+        files["views.py"] = files["views.py"].replace(
+            "from app import app", "from other import app"
+        )
+    elif mutation == "manager-write":
+        files[
+            "views.py"
+        ] += "\nfrom app import login_manager\nlogin_manager.init_app = replacement\n"
+    elif mutation == "provider-write":
+        files["views.py"] = files["views.py"].replace(
+            "@app.route", "login_user = replacement\n@app.route", 1
+        )
+    elif mutation == "registry-write":
+        files["views.py"] += "\napp.view_functions['profile'] = replacement\n"
+    elif mutation == "app-escape":
+        files["views.py"] += "\nescape(app)\n"
+    elif mutation == "reload":
+        files["views.py"] += "\napp.config.from_envvar('APP_CONFIG')\n"
+    row = _captured_secret_tiers(files, "config.py")["ledger"][0]
+    assert row["tier"] == ("SUPPORTED_DEFECT" if mutation is None else "NEEDS_CONTEXT")
+    if mutation is None:
+        assert {
+            step["path"]
+            for step in row["credential_authority_observation"]["transfers"]
+        } == {"config.py", "app.py", "views.py"}
+        assert row["credential_authority_observation"]["deployment"] == "UNASSESSED"
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        None,
+        "other-app",
+        "config-write",
+        "registry-write",
+        "app-escape",
+        "opaque-login-wrapper",
+        "opaque-protected-wrapper",
+    ],
+)
+def test_imported_password_session_routes_use_the_selected_configuration(mutation):
+    prefix, routes = _FLASK_AUTHORITY_SOURCE314.split("def login_required", 1)
+    files = {
+        "app.py": prefix + "import views\n",
+        "views.py": "from app import app\nfrom flask import request, session, redirect\n"
+        + "def login_required"
+        + routes,
+    }
+    if mutation == "other-app":
+        files["other.py"] = "from flask import Flask\napp = Flask(__name__)\n"
+        files["views.py"] = files["views.py"].replace(
+            "from app import app", "from other import app"
+        )
+    elif mutation == "config-write":
+        files["views.py"] += "\napp.config['SECRET_KEY'] = replacement\n"
+    elif mutation == "registry-write":
+        files["views.py"] += "\napp.view_functions['create'] = replacement\n"
+    elif mutation == "app-escape":
+        files["views.py"] += "\nescape(app)\n"
+    elif mutation == "opaque-login-wrapper":
+        files["views.py"] = files["views.py"].replace(
+            '@app.route("/login"', '@opaque\n@app.route("/login"', 1
+        )
+    elif mutation == "opaque-protected-wrapper":
+        files["views.py"] = files["views.py"].replace(
+            '@app.route("/create")', '@opaque\n@app.route("/create")', 1
+        )
+    for key in ("SECRET_KEY", "ADMIN_PASSWORD"):
+        row = _captured_secret_tiers(files, "app.py", key)["ledger"][0]
+        assert row["tier"] == (
+            "SUPPORTED_DEFECT" if mutation is None else "NEEDS_CONTEXT"
+        )
+        if mutation is None:
+            assert {
+                step["path"]
+                for step in row["credential_authority_observation"]["transfers"]
+            } == {"app.py", "views.py"}
+
+
+@pytest.mark.parametrize("container", ["workspace", "django"])
+@pytest.mark.parametrize("obstruction", [None, "shadow", "mutation", "escape"])
+def test_nested_selected_startup_resolves_namespace_packages_at_its_import_root(
+    container, obstruction
+):
+    base = container + "/runtime"
+    files = {
+        base + "/service/settings.py": _DJANGO_SESSION_SETTINGS,
+        base + "/service/start.py": _DJANGO_SESSION_START,
+    }
+    if obstruction == "shadow":
+        files[base + "/django/__init__.py"] = ""
+    elif obstruction in {"mutation", "escape"}:
+        files["observer.py"] = "import service.settings as cfg\n" + (
+            "cfg.MIDDLEWARE.clear()\n" if obstruction == "mutation" else "mutate(cfg)\n"
+        )
+    row = _captured_secret_tiers(files, base + "/service/settings.py")["ledger"][0]
+    assert row["tier"] == ("NEEDS_CONTEXT" if obstruction else "SUPPORTED_DEFECT")
+
+
+@pytest.mark.parametrize(
     "files",
     [
         pytest.param(
@@ -1958,9 +2074,9 @@ def test_signing277_incomplete_or_conflicting_evidence_abstains(change):
     )
     files = _configuration_files277(runner)
     if change == "guard":
-        files["service/settings.py"] += (
-            'if SECRET_KEY == "published-weak-value":\n    raise RuntimeError("configure key")\n'
-        )
+        files[
+            "service/settings.py"
+        ] += 'if SECRET_KEY == "published-weak-value":\n    raise RuntimeError("configure key")\n'
     elif change == "literal_overwrite":
         files["service/settings.py"] += "SECRET_KEY = secure_key\n"
     elif change == "framework_shadow":
@@ -4686,9 +4802,9 @@ def test_nested_application_root_preserves_registered_dependency_ownership(mutat
             "service/config/database.py"
         ].replace("    register_tortoise", "    mutate(app)\n    register_tortoise")
     elif mutation == "dependency-override":
-        files["service/app.py"] += (
-            "from auth.identity import principal\napp.dependency_overrides[principal] = replacement\n"
-        )
+        files[
+            "service/app.py"
+        ] += "from auth.identity import principal\napp.dependency_overrides[principal] = replacement\n"
     elif mutation == "namespace-key-mutation":
         files["service/client.py"] = (
             "import auth.identity as selected\nselected.JWT_SECRET = runtime_secret\n"

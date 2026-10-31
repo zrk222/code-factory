@@ -13,6 +13,10 @@ import re
 from urllib.parse import urlsplit
 from .credential_endpoint_admission import (
     HTTP_CLIENT_METHODS as _HTTP_CALLS,
+    _flask_session_authority_witness as _flask_session_authority_witness,
+    _flask_route_bound_to_app as _flask_route_bound_to_app,
+    _flask_route_authority as _flask_route_authority,
+    _flask_guard_authority as _flask_guard_authority,
     SECURITY_EFFECT_CONTRACTS as SECURITY_EFFECT_CONTRACTS,
     SECURITY_EFFECT_WITNESS_SCHEMA as SECURITY_EFFECT_WITNESS_SCHEMA,
 )
@@ -687,6 +691,7 @@ def _flask_configured_apps(target, context, protected_keys):
                             "receiver": receiver,
                             "creation": creation,
                             "load": call,
+                            "configuration_path": target,
                         }
                     )
     return configured
@@ -992,72 +997,6 @@ def _name_writes(scope, name):
         and isinstance(node.ctx, (ast.Store, ast.Del))
         for node in ast.walk(scope)
     )
-
-
-def _flask_session_authority_witness(path, tree, context, app, credential_key):
-    from .review_integrity import _security_scope_request_aliases
-
-    aliases = context["aliases"][path]
-    receiver = app["receiver"]
-    login_wrapper = _flask_login_wrapper(tree, aliases)
-    protected = _flask_protected_route(tree, receiver, aliases)
-    if login_wrapper is None or protected is None:
-        return None
-    for route in tree.body:
-        if not isinstance(route, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue
-        if not _flask_route_bound_to_app(route, receiver):
-            continue
-        witness = _flask_route_authority(
-            route,
-            tree,
-            receiver,
-            credential_key,
-            aliases,
-            _security_scope_request_aliases,
-        )
-        if witness is not None:
-            return {
-                **witness,
-                "login_wrapper": login_wrapper["guard"],
-                "protected_route": protected,
-            }
-    return None
-
-
-def _flask_route_authority(
-    route, tree, receiver, credential_key, aliases, alias_reader
-):
-    if not isinstance(route, (ast.FunctionDef, ast.AsyncFunctionDef)):
-        return None
-    for guard in ast.walk(route):
-        if not isinstance(guard, ast.If) or not _flask_path_conditions_clear(
-            tree, guard
-        ):
-            continue
-        witness = _flask_guard_authority(
-            guard, route, tree, receiver, credential_key, aliases, alias_reader
-        )
-        if witness is not None:
-            return witness
-    return None
-
-
-def _flask_guard_authority(
-    guard, route, tree, receiver, credential_key, aliases, alias_reader
-):
-    comparison = _flask_password_config_comparison(
-        guard.test, receiver, aliases, route, guard, alias_reader
-    )
-    if comparison is None:
-        return None
-    password_key, equality = comparison
-    if _flask_config_key_declaration_in_tree(tree, password_key) is None:
-        return None
-    grant = _flask_session_grant(guard.body, aliases, route, alias_reader)
-    if grant is None or credential_key not in {password_key, "SECRET_KEY"}:
-        return None
-    return {"password_key": password_key, "comparison": equality, "grant": grant}
 
 
 def _flask_password_config_comparison(
@@ -1375,17 +1314,6 @@ def _flask_protected_route(tree, receiver, aliases):
         ):
             return function
     return None
-
-
-def _flask_route_bound_to_app(function, receiver):
-    return any(
-        isinstance(value, ast.Attribute)
-        and value.attr == "route"
-        and isinstance(value.value, ast.Name)
-        and value.value.id == receiver
-        for decorator in function.decorator_list
-        for value in [decorator.func if isinstance(decorator, ast.Call) else decorator]
-    )
 
 
 def _flask_resolves_to(node, expected, aliases, scope, statement, alias_reader):
@@ -2189,6 +2117,43 @@ def _signing_provider_clear(tree, aliases, framework, *, roots=None):
                 for root in roots
             )
         }
+    if framework == "django":
+        # Mapping keys outside the selected loader key cannot replace that key.
+        # Keep namespace aliases, unknown keys and reflective writes in the index.
+        reads.update(
+            id(node)
+            for node in nodes
+            if isinstance(node, ast.Subscript)
+            and isinstance(node.ctx, (ast.Store, ast.Del))
+            and _resolved_ast_name(node.value, aliases) == "os.environ"
+            and isinstance(node.slice, ast.Constant)
+            and isinstance(node.slice.value, str)
+            and node.slice.value != "DJANGO_SETTINGS_MODULE"
+        )
+        if any(
+            isinstance(node, ast.Call)
+            and (name := _resolved_ast_name(node.func, aliases)).startswith(
+                "os.environ."
+            )
+            and name not in {"os.environ.get", "os.environ.setdefault"}
+            for node in nodes
+        ):
+            return False
+        if _security_builtin_identity_closed(tree, aliases, {"len"}):
+            reads.update(
+                id(call.args[0])
+                for call in nodes
+                if isinstance(call, ast.Call)
+                and _resolved_ast_name(call.func, aliases) in {"len", "builtins.len"}
+                and len(call.args) == 1
+                and not call.keywords
+                and _resolved_ast_name(call.args[0], aliases)
+                in {
+                    "django.conf.settings.INSTALLED_APPS",
+                    "django.conf.settings.MIDDLEWARE",
+                    "django.conf.settings.MIDDLEWARE_CLASSES",
+                }
+            )
     return not _provider_identity_uncertain(
         tree,
         aliases,
@@ -2256,13 +2221,39 @@ def _signing_rejection_or_reflection(tree):
     )
 
 
-def _signing_resolve_module(context, literal):
+def _signing_resolve_module(context, literal, origin=None):
     if not isinstance(literal, ast.Constant) or not isinstance(literal.value, str):
         return None
     parts = literal.value.split(".")
     if not parts or not all(part.isidentifier() for part in parts):
         return None
     paths = context["paths"]
+    if origin is not None:
+        # An entry point's captured ancestor roots also support namespace packages.
+        # A missing initializer is not evidence for an unrelated repository root.
+        index = context["index"]
+        for root in Path(origin).parents:
+            candidates = {
+                candidate
+                for candidate in (
+                    root.joinpath(*parts).with_suffix(".py"),
+                    root.joinpath(*parts) / "__init__.py",
+                )
+                if candidate in index.snapshots
+            }
+            if candidates:
+                if len(candidates) != 1 or any(
+                    root.joinpath(*parts[:end]).with_suffix(".py") in index.snapshots
+                    or (
+                        (initializer := root.joinpath(*parts[:end]) / "__init__.py")
+                        in index.snapshots
+                        and not index.validate(initializer)
+                    )
+                    for end in range(1, len(parts))
+                ):
+                    return None
+                selected = next(iter(candidates))
+                return selected if index.validate(selected) else None
     choices = {
         paths[name]
         for name in ("/".join(parts) + ".py", "/".join(parts) + "/__init__.py")
@@ -2290,9 +2281,7 @@ def _django_signing_consumer(target, path, tree, context):
     from .review_integrity import _security_apply_import_bindings
     from .review_audits import _resolved_ast_name
 
-    if not _signing_framework_external(
-        context, "django"
-    ) or not _security_builtin_identity_closed(
+    if not _security_builtin_identity_closed(
         tree, aliases := context["aliases"][path], {"__name__"}
     ):
         return None
@@ -2337,11 +2326,13 @@ def _django_signing_consumer(target, path, tree, context):
                 isinstance(call.args[0], ast.Constant)
                 and call.args[0].value == "DJANGO_SETTINGS_MODULE"
             ):
-                selected = (
-                    call
-                    if _signing_resolve_module(context, call.args[1]) == target
-                    else None
-                )
+                resolved = _signing_resolve_module(context, call.args[1], path)
+                selected = None
+                if resolved == target:
+                    parts = call.args[1].value.split(".")
+                    execution_root = resolved.parents[len(parts) - 1]
+                    if _signing_framework_external(context, "django", execution_root):
+                        selected = call
         elif name in {
             "django.core.wsgi.get_wsgi_application",
             "django.core.asgi.get_asgi_application",
@@ -2366,9 +2357,11 @@ def _django_signing_consumer(target, path, tree, context):
     return None
 
 
-def _signing_framework_external(context, framework):
+def _signing_framework_external(context, framework, execution_root=None):
+    root = Path(".") if execution_root is None else Path(execution_root)
     return not any(
-        name == framework + ".py" or name.startswith(framework + "/")
+        Path(name) == root / (framework + ".py")
+        or Path(name).is_relative_to(root / framework)
         for name in context["paths"]
     )
 
@@ -2491,11 +2484,15 @@ def _signing_helper_receiver(helper, call, receiver):
     parameters = [
         inspect.Parameter(
             arg.arg,
-            inspect.Parameter.POSITIONAL_ONLY
-            if arg in args.posonlyargs
-            else inspect.Parameter.KEYWORD_ONLY
-            if arg in args.kwonlyargs
-            else inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            (
+                inspect.Parameter.POSITIONAL_ONLY
+                if arg in args.posonlyargs
+                else (
+                    inspect.Parameter.KEYWORD_ONLY
+                    if arg in args.kwonlyargs
+                    else inspect.Parameter.POSITIONAL_OR_KEYWORD
+                )
+            ),
             default=defaults.get(arg.arg, inspect.Parameter.empty),
         )
         for arg in [*positional, *args.kwonlyargs]
@@ -3531,10 +3528,12 @@ def _native_request_data_member(node, aliases):
                         _request_mapping_mutation(
                             item,
                             references,
-                            item.slice.value
-                            if isinstance(item, ast.Subscript)
-                            and isinstance(item.slice, ast.Constant)
-                            else None,
+                            (
+                                item.slice.value
+                                if isinstance(item, ast.Subscript)
+                                and isinstance(item.slice, ast.Constant)
+                                else None
+                            ),
                         )
                         or (
                             isinstance(item, (ast.Return, ast.Yield))
@@ -4927,9 +4926,9 @@ def _captured_sink_imports(tree, scope, nodes, parents, fact, budget, base):
             rows.append(
                 {
                     "name": name,
-                    "module": item.module
-                    if isinstance(item, ast.ImportFrom)
-                    else alias.name,
+                    "module": (
+                        item.module if isinstance(item, ast.ImportFrom) else alias.name
+                    ),
                     "kind": type(item).__name__,
                     "status": status,
                     "reason": None if stable else "binding_replaced_or_ambiguous",
@@ -5077,9 +5076,7 @@ def _captured_sink_value(
         targets = (
             candidate.targets
             if isinstance(candidate, ast.Assign)
-            else [candidate.target]
-            if isinstance(candidate, ast.AnnAssign)
-            else []
+            else [candidate.target] if isinstance(candidate, ast.AnnAssign) else []
         )
         if (
             candidate in body
@@ -5162,9 +5159,11 @@ def _captured_sink_value(
         value = {
             "name": name,
             "status": "UNKNOWN",
-            "reason": "binding_replaced_or_not_straight_line"
-            if bindings
-            else "no_source_definition_or_parameter",
+            "reason": (
+                "binding_replaced_or_not_straight_line"
+                if bindings
+                else "no_source_definition_or_parameter"
+            ),
             "origin": "UNRESOLVED",
             "definitions": [],
             "replacements": rows,

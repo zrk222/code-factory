@@ -145,6 +145,81 @@ def test_security_source_sink_findings_direct_api(request_derived):
 
 
 @pytest.mark.parametrize(
+    "source,admitted",
+    [
+        (
+            "from flask import request\nimport requests\n"
+            "def fetch():\n"
+            "    requests.get('https://' + request.args['host'])\n",
+            True,
+        ),
+        (
+            "from flask import request\nimport requests\n"
+            "def fetch():\n"
+            "    requests.get('https://api.github.com/users/' + request.args['username'])\n",
+            False,
+        ),
+        (
+            "from flask import request\nimport requests\n"
+            "def fetch():\n"
+            "    url_string = request.args.get('url')\n"
+            "    requests.get(url_string)\n",
+            True,
+        ),
+        (
+            "from flask import request\nimport requests\n"
+            "def fetch():\n"
+            "    url_string = 'https://api.github.com/users/' + request.args.get('username')\n"
+            "    requests.get(url_string)\n",
+            False,
+        ),
+        (
+            "from flask import request\nimport requests\n"
+            "def fetch():\n"
+            "    url_string = request.args.get('url')\n"
+            "    url_string = url_string + '/suffix'\n"
+            "    requests.get(url_string)\n",
+            False,
+        ),
+        (
+            "from flask import request\nimport requests\n"
+            "def fetch(flag):\n"
+            "    url_string = request.args.get('url')\n"
+            "    if flag:\n"
+            "        url_string = 'https://api.github.com/safe'\n"
+            "    requests.get(url_string)\n",
+            False,
+        ),
+        (
+            "from flask import request\nimport requests\n"
+            "requests.get = lambda url: None\n"
+            "def fetch():\n"
+            "    requests.get('https://' + request.args['host'])\n",
+            False,
+        ),
+    ],
+    ids=[
+        "attacker-controls-authority",
+        "fixed-authority-suffix-default-redirects",
+        "full-url-request-source-alias",
+        "fixed-authority-suffix-alias",
+        "transformed-url-alias",
+        "branch-rebound-url-alias",
+        "provider-mutation",
+    ],
+)
+def test_security_scan_ssrf_admission_requires_url_authority_control(
+    tmp_path, source, admitted
+):
+    (tmp_path / "app.py").write_text(source, encoding="utf-8")
+    result = security_scan(tmp_path, cache_enabled=False)
+    finding = next(row for row in result["findings"] if row["code"] == "SECURITY_SSRF")
+    assert ("security_precondition" in finding["facts"]) is admitted
+    if not admitted:
+        assert finding["facts"] == {"call": "requests.get"}
+
+
+@pytest.mark.parametrize(
     "source,expected",
     [
         (
@@ -430,6 +505,21 @@ def test_security_scan_request_password_literal_comparison(tmp_path, source, exp
             "from flask import request\n"
             "def save_upload():\n"
             "    uploaded = request.files['file']\n"
+            "    uploaded.save(uploaded.filename)\n",
+            True,
+        ),
+        (
+            "from flask import request\n"
+            "def save_upload():\n"
+            "    uploaded = request.files['file']\n"
+            "    filename = uploaded.filename\n"
+            "    uploaded.save(filename)\n",
+            True,
+        ),
+        (
+            "from flask import request\n"
+            "def save_upload():\n"
+            "    uploaded = request.files['file']\n"
             "    uploaded.save('/uploads/' + uploaded.filename)\n",
             True,
         ),
@@ -614,6 +704,8 @@ def test_security_scan_request_password_literal_comparison(tmp_path, source, exp
         ),
     ],
     ids=[
+        "direct-filename-target",
+        "direct-filename-alias-target",
         "direct-request-files-subscript",
         "get-bound-alias-join-path",
         "module-qualified-flask-request-files",
@@ -692,7 +784,6 @@ def test_security_scan_flask_upload_filename_save_paths(tmp_path, source, expect
             assert witness["schema"] == "factory.security.effect-witness.v1"
             assert witness["source_role"] == premise["source_role"]
             assert witness["consumer_role"] == premise["consumer_role"]
-            assert witness["effect_kind"] == "path_escape"
             assert witness["sink_span"] == premise["sink_span"]
             assert len(witness["source_span"]) == 4
             assert all(type(value) is int for value in witness["source_span"])
@@ -714,19 +805,28 @@ def test_security_scan_flask_upload_filename_save_paths(tmp_path, source, expect
                 "intended_base_span",
             }
             assert effect_facts["provider_id"] == "werkzeug.FileStorage.save"
-            assert effect_facts["path_composition"] in {
-                "raw_string_concat",
-                "os.path.join",
-            }
-            assert effect_facts["destination_relation"] == "escape_capable"
-            assert effect_facts["normalized_counterexample_relation"] == (
-                "outside_intended_base"
-            )
             assert effect_facts["normalization_profile"] == "python_os_path"
-            assert len(effect_facts["intended_base_span"]) == 4
-            assert all(
-                type(value) is int for value in effect_facts["intended_base_span"]
-            )
+            if witness["effect_kind"] == "unbounded_upload_target":
+                assert effect_facts["path_composition"] == "direct_filename"
+                assert effect_facts["destination_relation"] == "attacker_selected_path"
+                assert effect_facts["normalized_counterexample_relation"] == (
+                    "absolute_or_parent_relative_path"
+                )
+                assert effect_facts["intended_base_span"] is None
+            else:
+                assert witness["effect_kind"] == "path_escape"
+                assert effect_facts["path_composition"] in {
+                    "raw_string_concat",
+                    "os.path.join",
+                }
+                assert effect_facts["destination_relation"] == "escape_capable"
+                assert effect_facts["normalized_counterexample_relation"] == (
+                    "outside_intended_base"
+                )
+                assert len(effect_facts["intended_base_span"]) == 4
+                assert all(
+                    type(value) is int for value in effect_facts["intended_base_span"]
+                )
             assert len(premise["input_slot_span"]) == 4
             assert all(type(value) is int for value in premise["input_slot_span"])
             import ast
@@ -752,28 +852,51 @@ def test_security_scan_flask_upload_filename_save_paths(tmp_path, source, expect
                 save_call.end_lineno,
                 save_call.end_col_offset,
             ]
-            base_expression = (
-                destination.left
-                if effect_facts["path_composition"] == "raw_string_concat"
-                else next(
-                    node
-                    for node in ast.walk(tree)
-                    if isinstance(node, ast.Call)
-                    and ast.unparse(node.func) == "os.path.join"
-                ).args[0]
+            if witness["effect_kind"] == "path_escape":
+                base_expression = (
+                    destination.left
+                    if effect_facts["path_composition"] == "raw_string_concat"
+                    else next(
+                        node
+                        for node in ast.walk(tree)
+                        if isinstance(node, ast.Call)
+                        and ast.unparse(node.func) == "os.path.join"
+                    ).args[0]
+                )
+                assert effect_facts["intended_base_span"] == [
+                    base_expression.lineno,
+                    base_expression.col_offset,
+                    base_expression.end_lineno,
+                    base_expression.end_col_offset,
+                ]
+                base_line, base_column, _base_end_line, base_end_column = effect_facts[
+                    "intended_base_span"
+                ]
+                assert (
+                    "/uploads"
+                    in source_lines[base_line - 1][base_column:base_end_column]
+                )
+            from factoryline.credential_role_paths import valid_security_precondition
+
+            assert valid_security_precondition(
+                premise, finding, require_effect_witness=True
             )
-            assert effect_facts["intended_base_span"] == [
-                base_expression.lineno,
-                base_expression.col_offset,
-                base_expression.end_lineno,
-                base_expression.end_col_offset,
-            ]
-            base_line, base_column, _base_end_line, base_end_column = effect_facts[
-                "intended_base_span"
-            ]
-            assert (
-                "/uploads" in source_lines[base_line - 1][base_column:base_end_column]
-            )
+            if witness["effect_kind"] == "unbounded_upload_target":
+                from copy import deepcopy
+
+                for field, value in (
+                    ("effect_kind", "path_escape"),
+                    ("intended_base_span", [1, 0, 1, 1]),
+                    ("path_composition", "os.path.join"),
+                ):
+                    mutated = deepcopy(premise)
+                    if field == "effect_kind":
+                        mutated["effect_witness"][field] = value
+                    else:
+                        mutated["effect_witness"]["effect_facts"][field] = value
+                    assert not valid_security_precondition(
+                        mutated, finding, require_effect_witness=True
+                    )
             if "input_value_flow" in premise:
                 trace = premise["input_value_flow"]
                 assert set(trace) == {
@@ -1086,6 +1209,78 @@ def test_tls_default_expression_uses_enclosing_import_not_parameter(tmp_path):
     )
     result = security_scan(tmp_path, cache_enabled=False)
     assert result["finding_counts"]["SECURITY_TLS_VERIFY_DISABLED"] == 1
+
+
+@pytest.mark.parametrize(
+    "source,admitted",
+    [
+        (
+            "import requests\n"
+            "def check(host, use_https):\n"
+            "    if use_https:\n"
+            "        url = 'https://' + host\n"
+            "    else:\n"
+            "        url = 'http://' + host\n"
+            "    requests.get(url, verify=False)\n",
+            True,
+        ),
+        (
+            "import requests\n"
+            "def check(host, use_https):\n"
+            "    if use_https:\n"
+            "        url = 'http://' + host\n"
+            "    else:\n"
+            "        url = 'http://' + host\n"
+            "    requests.get(url, verify=False)\n",
+            False,
+        ),
+        (
+            "import requests\n"
+            "def check(host, use_https):\n"
+            "    if use_https:\n"
+            "        url = 'https://' + host\n"
+            "    else:\n"
+            "        url = 'http://' + host\n"
+            "    url = 'http://' + host\n"
+            "    requests.get(url, verify=False)\n",
+            False,
+        ),
+        (
+            "import requests\n"
+            "requests.get = lambda *args, **kwargs: None\n"
+            "def check(host, use_https):\n"
+            "    if use_https:\n"
+            "        url = 'https://' + host\n"
+            "    else:\n"
+            "        url = 'http://' + host\n"
+            "    requests.get(url, verify=False)\n",
+            False,
+        ),
+    ],
+    ids=[
+        "feasible-https-branch",
+        "http-only-branches",
+        "url-rebound-after-branch",
+        "provider-mutation",
+    ],
+)
+def test_tls_transport_witness_tracks_feasible_https_assignment_branches(
+    tmp_path, source, admitted
+):
+    (tmp_path / "app.py").write_text(source, encoding="utf-8")
+    result = security_scan(tmp_path, cache_enabled=False)
+    finding = next(
+        row
+        for row in result["findings"]
+        if row["code"] == "SECURITY_TLS_VERIFY_DISABLED"
+    )
+    premise = finding["facts"].get("security_precondition")
+    assert (premise is not None) is admitted
+    if premise is not None:
+        assert (
+            premise["effect_witness"]["effect_facts"]["transport_relation"]
+            == "https_capable"
+        )
 
 
 @pytest.mark.parametrize(
@@ -1685,8 +1880,7 @@ def test_registered_callback_oracle_checks_initializer_and_live_assertion():
     import ast
     from factoryline.review_integrity import registered_callback_oracle
 
-    function = ast.parse(
-        textwrap.dedent("""
+    function = ast.parse(textwrap.dedent("""
         def test_dispatch():
             checks = []
             def install(fn):
@@ -1697,8 +1891,7 @@ def test_registered_callback_oracle_checks_initializer_and_live_assertion():
                 assert value == 42
             for callback in checks:
                 callback(42)
-    """)
-    ).body[0]
+    """)).body[0]
 
     def strong(fn, aliases):
         return any(isinstance(node, ast.Assert) for node in ast.walk(fn))
@@ -12365,16 +12558,14 @@ def test_discarded_assertion_error_is_reported_as_local_weakness(tmp_path):
     # This is the extracted test function from pallets/flask tests/test_helpers.py.
     # Its full-file source hash and upstream line are retained in the ignored
     # adjudication artifact, while this local fixture stays available in CI.
-    source = textwrap.dedent(
-        """\
+    source = textwrap.dedent("""\
         def test_name_with_import_error(self, modules_tmp_path):
             (modules_tmp_path / "importerror.py").write_text("raise NotImplementedError()")
             try:
                 flask.Flask("importerror")
             except NotImplementedError:
                 AssertionError("Flask(import_name) is importing import_name.")
-        """
-    ).replace("\n", "\r\n")
+        """).replace("\n", "\r\n")
     (tmp_path / "test_helpers.py").write_text(source, encoding="utf-8", newline="")
 
     report = security_scan(tmp_path, cache_enabled=False)
@@ -14350,18 +14541,10 @@ def test_jwt_fixture_family_adversarial_roles_remain_critical(tmp_path, case):
         after = "result = token\nreturn result"
     elif case == "global_token_export":
         after = "global published\npublished = token"
-    source = (
-        "import pytest\nimport requests\nfrom jwt.api_jwt import PyJWT\n"
-        "@pytest.fixture\ndef jwt() -> PyJWT:\n    return PyJWT()\n"
-        + module_extra
-        + "class TestJWT:\n"
-        + class_override
-        + "    def test_roundtrip(self, jwt: PyJWT):\n"
-        + textwrap.indent(before + "\n" if before else "", "        ")
-        + '        secret = "fixed-local-test-key"\n'
-        + "        token = jwt.encode({'sub':'account'}, secret)\n"
-        + "        assert jwt.decode(token, secret) == {'sub':'account'}\n"
-        + textwrap.indent(after + "\n" if after else "", "        ")
+    source = "import pytest\nimport requests\nfrom jwt.api_jwt import PyJWT\n" "@pytest.fixture\ndef jwt() -> PyJWT:\n    return PyJWT()\n" + module_extra + "class TestJWT:\n" + class_override + "    def test_roundtrip(self, jwt: PyJWT):\n" + textwrap.indent(
+        before + "\n" if before else "", "        "
+    ) + '        secret = "fixed-local-test-key"\n' + "        token = jwt.encode({'sub':'account'}, secret)\n" + "        assert jwt.decode(token, secret) == {'sub':'account'}\n" + textwrap.indent(
+        after + "\n" if after else "", "        "
     )
     (tmp_path / "test_protocol.py").write_text(source, encoding="utf-8")
     provider_path = tmp_path / "jwt" / "api_jwt.py"
@@ -15129,8 +15312,7 @@ def test_shared_native_summary_selected_return_reaches_shell_and_pickle(
 ):
     from factoryline import review_audits as audit
 
-    source = (
-        """import os
+    source = """import os
 import pickle
 from flask import request
 
@@ -15143,9 +15325,7 @@ def route():
     selected = values[%r]
     pickle.loads(selected)
     os.system(selected.decode())
-"""
-        % selected
-    )
+""" % selected
     (tmp_path / "app.py").write_text(source, encoding="utf-8")
     report = audit.security_scan(tmp_path, cache_enabled=False)
     rows = report.get("finding_tier_report", {}).get("ledger", [])

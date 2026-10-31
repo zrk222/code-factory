@@ -34,6 +34,25 @@ SECURITY_EFFECT_CONTRACTS = MappingProxyType(
                         "intended_base_span": None,
                     }
                 ),
+                "effect_variants": MappingProxyType(
+                    {
+                        "direct_filename": MappingProxyType(
+                            {
+                                "effect_kind": "unbounded_upload_target",
+                                "effect_facts": MappingProxyType(
+                                    {
+                                        "provider_id": "werkzeug.FileStorage.save",
+                                        "path_composition": "direct_filename",
+                                        "destination_relation": "attacker_selected_path",
+                                        "normalized_counterexample_relation": "absolute_or_parent_relative_path",
+                                        "normalization_profile": "python_os_path",
+                                        "intended_base_span": None,
+                                    }
+                                ),
+                            }
+                        )
+                    }
+                ),
             }
         ),
         "SECURITY_TLS_VERIFY_DISABLED": MappingProxyType(
@@ -2236,6 +2255,11 @@ def operative_signing_default_evidence(finding, context):
     from .mock_fixture_provenance import _django_assignment
     from .credential_role_constructor_provider import binding_occurrences
     from .review_audits import _resolved_ast_name
+    from .semantic_credential_sensor import (
+        _signing_provider_clear,
+        _provider_path_conflicts,
+    )
+    from .finite_capture import _provider_paths, _provider_alias_bindings
 
     index, path = context["index"], Path(finding.get("path", ""))
     declarations = [
@@ -2255,35 +2279,16 @@ def operative_signing_default_evidence(finding, context):
     observation = signing_configuration_evidence(finding, context)
     match observation:
         case {"consumer_role": "django.SECRET_KEY"}:
-            # A captured distribution can select another runtime or use a demo app;
-            # its deployment selection remains unresolved rather than being called safe.
-            distributions = [
-                call
-                for source_path, tree in index.snapshots.items()
-                for call in ast.walk(tree)
-                if isinstance(call, ast.Call)
-                if _resolved_ast_name(call.func, context["aliases"][source_path])
-                in {"setuptools.setup", "distutils.core.setup"}
-            ]
-            match (bool(distributions), tuple(context.get("captured", {}))):
-                case (True, _):
-                    return None
-                case (_, names) if any(
-                    name.endswith(("pyproject.toml", "setup.cfg")) for name in names
-                ):
-                    return None
+            # The witnessed loader selects this captured default. Packaging does
+            # not negate that source-bound consumer or establish live deployment.
             settings = index.snapshots[path]
-            read_names = {
-                node.id
-                for node in ast.walk(settings)
-                if isinstance(node, ast.Name)
-                if isinstance(node.ctx, ast.Load)
-            }
             required = {
                 "INSTALLED_APPS": {"django.contrib.auth", "django.contrib.sessions"},
-                "MIDDLEWARE"
-                if binding_occurrences(settings.body, "MIDDLEWARE")
-                else "MIDDLEWARE_CLASSES": {
+                (
+                    "MIDDLEWARE"
+                    if binding_occurrences(settings.body, "MIDDLEWARE")
+                    else "MIDDLEWARE_CLASSES"
+                ): {
                     "django.contrib.sessions.middleware.SessionMiddleware",
                     "django.contrib.auth.middleware.AuthenticationMiddleware",
                 },
@@ -2297,11 +2302,8 @@ def operative_signing_default_evidence(finding, context):
                         pass
                     case _:
                         return None
-                if (
-                    not authorities.issubset(
-                        {item.value for item in values if isinstance(item.value, str)}
-                    )
-                    or name in read_names
+                if not authorities.issubset(
+                    {item.value for item in values if isinstance(item.value, str)}
                 ):
                     return None
                 consumers.append(
@@ -2311,44 +2313,93 @@ def operative_signing_default_evidence(finding, context):
                         "span": _span(statement),
                     }
                 )
-            foreign_access = (
-                node
-                for source_path, tree in index.snapshots.items()
-                for node in ast.walk(tree)
-                if isinstance(node, (ast.Name, ast.Attribute))
-                for module, _, member in (
-                    _resolved_ast_name(
-                        node, context["aliases"][source_path]
-                    ).rpartition("."),
-                )
-                if member in required
-                if _signing_resolve_module(
-                    context,
-                    ast.Constant(value=module),
-                )
-                == path
-                or module == "django.conf.settings"
-            )
-            return (
-                None
-                if next(foreign_access, None) is not None
-                else {
-                    "schema": "factory.security.framework-session-authority.v1",
-                    "proof_scope": "source_bound_standalone_framework_session_default",
-                    "framework": "django",
-                    "credential_key": "SECRET_KEY",
-                    "source_role": "published_literal_default",
-                    "consumer_role": "configured_authentication_session_signing",
-                    "transfers": [
-                        observation["declaration"],
-                        *consumers,
-                        *observation["transfers"],
-                    ],
-                    "runtime_execution": "not_performed",
-                    "deployment": "UNASSESSED",
-                    "distribution_runtime_selection": "no_captured_distribution_declaration",
-                }
-            )
+            roots = tuple("django.conf.settings." + name for name in required)
+            from . import review_audits as audit
+
+            selected_modules = {
+                node.args[1].value
+                for transfer in observation["transfers"]
+                for node in ast.walk(index.snapshots[Path(transfer["path"])])
+                if isinstance(node, ast.Call)
+                and len(node.args) == 2
+                and _span(node) == transfer["span"]
+                and isinstance(node.args[0], ast.Constant)
+                and node.args[0].value == "DJANGO_SETTINGS_MODULE"
+                and isinstance(node.args[1], ast.Constant)
+                and isinstance(node.args[1].value, str)
+            }
+            for source_path, tree in index.snapshots.items():
+                aliases = dict(context["aliases"][source_path])
+                for alias, canonical in tuple(aliases.items()):
+                    module, _, member = canonical.rpartition(".")
+                    if (
+                        canonical == "django.conf.settings"
+                        or canonical in selected_modules
+                        or _signing_resolve_module(
+                            context, ast.Constant(value=canonical)
+                        )
+                        == path
+                    ):
+                        aliases[alias] = "django.conf.settings"
+                    elif member in required and (
+                        module == "django.conf.settings"
+                        or module.lstrip(".") in selected_modules
+                        or _signing_resolve_module(
+                            context, ast.Constant(value=module.lstrip("."))
+                        )
+                        == path
+                    ):
+                        aliases[alias] = "django.conf.settings." + member
+                if source_path == path:
+                    aliases.update(
+                        {name: "django.conf.settings." + name for name in required}
+                    )
+                nodes = list(ast.walk(tree))
+                bindings = _provider_alias_bindings(nodes)
+                if _signing_provider_clear(
+                    tree, aliases, "django", roots=roots
+                ) is False or any(
+                    isinstance(node, ast.Call)
+                    and any(
+                        _provider_path_conflicts(provider, "*", root)
+                        for provider in _provider_paths(
+                            node.func, aliases, audit, bindings
+                        )[0]
+                        for root in roots
+                    )
+                    for node in nodes
+                ):
+                    return None
+            return {
+                "schema": "factory.security.framework-session-authority.v1",
+                "proof_scope": "source_bound_standalone_framework_session_default",
+                "framework": "django",
+                "credential_key": "SECRET_KEY",
+                "source_role": "published_literal_default",
+                "consumer_role": "configured_authentication_session_signing",
+                "transfers": [
+                    observation["declaration"],
+                    *consumers,
+                    *observation["transfers"],
+                ],
+                "runtime_execution": "not_performed",
+                "deployment": "UNASSESSED",
+                "distribution_runtime_selection": (
+                    "captured_settings_loader"
+                    if any(
+                        name.endswith(("pyproject.toml", "setup.cfg"))
+                        for name in context.get("captured", {})
+                    )
+                    or any(
+                        isinstance(node, ast.Call)
+                        and _resolved_ast_name(node.func, context["aliases"][owner])
+                        in {"setuptools.setup", "distutils.core.setup"}
+                        for owner, source in index.snapshots.items()
+                        for node in ast.walk(source)
+                    )
+                    else "no_captured_distribution_declaration"
+                ),
+            }
     return next(
         (
             witness
@@ -3296,19 +3347,20 @@ class _OperativeCredentialOrigin:
         if not all(
             self.provider(
                 allocation["path"],
-                "fastapi.FastAPI"
-                if allocation["kind"] == "application"
-                else "fastapi.APIRouter",
+                (
+                    "fastapi.FastAPI"
+                    if allocation["kind"] == "application"
+                    else "fastapi.APIRouter"
+                ),
             )
             and self.projection._symbol_closed(
                 [(allocation["name"], allocation["path"], allocation["name"])],
                 self.value_type(),
                 readonly_argument=lambda node: id(node) in readonly,
                 readonly_call=lambda node: id(node) in registrations,
-                inventory_projector=lambda tree,
-                aliases,
-                nodes,
-                canonical: self.boundary_inventory(tree, aliases, nodes, canonical),
+                inventory_projector=lambda tree, aliases, nodes, canonical: self.boundary_inventory(
+                    tree, aliases, nodes, canonical
+                ),
             )
             for allocation in (handler["application"], handler["receiver"])
         ):
@@ -3399,17 +3451,23 @@ class _OperativeCredentialOrigin:
             "verified_bearer_rejection",
         )
         return {
-            "schema": "factory.security.credential-default-authority.v1"
-            if self.consumer
-            else "factory.security.signing-default-authority.v1",
+            "schema": (
+                "factory.security.credential-default-authority.v1"
+                if self.consumer
+                else "factory.security.signing-default-authority.v1"
+            ),
             "framework": framework,
-            "source_role": "published_literal_default"
-            if self.consumer
-            else "conditional_published_default",
+            "source_role": (
+                "published_literal_default"
+                if self.consumer
+                else "conditional_published_default"
+            ),
             "credential_key": self.finding["facts"]["name"],
-            "proof_scope": "source_bound_operative_credential_default"
-            if self.consumer
-            else "source_bound_operative_signing_default",
+            "proof_scope": (
+                "source_bound_operative_credential_default"
+                if self.consumer
+                else "source_bound_operative_signing_default"
+            ),
             "consumer_role": consumer_role,
             "transfers": spans,
             "configuration_overrides": "POSSIBLE; DEFAULT_MAY_REACH",
@@ -3759,23 +3817,26 @@ class _CredentialHandlerIndex:
 
         for path, tree in self.index.snapshots.items():
             for function in ast.walk(tree):
-                if (
-                    not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef))
-                    or len(function.decorator_list) != 1
-                ):
+                if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
                     continue
-                decorator = function.decorator_list[0]
-                if not (
-                    isinstance(decorator, ast.Call)
+                routes = [
+                    decorator
+                    for decorator in function.decorator_list
+                    if isinstance(decorator, ast.Call)
                     and isinstance(decorator.func, ast.Attribute)
                     and decorator.func.attr in self._routes
-                ):
+                ]
+                if len(routes) != 1:
                     continue
+                decorator = routes[0]
                 receiver = self.binding(path, decorator.func.value)
                 if (
                     receiver is None
                     or receiver["framework"] == "fastapi"
-                    and decorator.func.attr == "route"
+                    and (
+                        decorator.func.attr == "route"
+                        or len(function.decorator_list) != 1
+                    )
                     or not _flask_path_conditions_clear(tree, function)
                 ):
                     # FastAPI.route registers a Starlette Route, which does not
@@ -3806,6 +3867,178 @@ class _CredentialHandlerIndex:
                     yield root, [*registrations, (path, call)]
 
 
+def _flask_route_bound_to_app(function, receiver):
+    return any(
+        isinstance(value, ast.Attribute)
+        and value.attr == "route"
+        and isinstance(value.value, ast.Name)
+        and value.value.id == receiver
+        for decorator in function.decorator_list
+        for value in [decorator.func if isinstance(decorator, ast.Call) else decorator]
+    )
+
+
+def _flask_session_authority_witness(path, tree, context, app, credential_key):
+    from .semantic_credential_sensor import (
+        _flask_authority_provider_clear,
+        _flask_config_mutated,
+        _flask_configuration_reloaded,
+        _flask_login_wrapper,
+        _flask_protected_route,
+        _flask_route_bound_to_app,
+    )
+    from .review_integrity import _security_scope_request_aliases
+    from .credential_role_constructor_provider import (
+        _captured_terminal_provider_mutation,
+    )
+    from .runtime_audit_integrity import _conditional_module_name
+    from . import review_audits as audit
+
+    graph = _CredentialHandlerIndex(context)
+    configuration = context["index"].snapshots[app.get("configuration_path", path)]
+    application_closed = not _captured_terminal_provider_mutation(
+        context["index"],
+        audit,
+        _conditional_module_name(context["index"].relative(path))
+        + "."
+        + app["receiver"],
+        local_binding=(path, app["receiver"]),
+    )
+    candidates = {(path, app["receiver"]): tree}
+    for handler in graph.handlers:
+        allocation = handler["application"]
+        decorator = handler["decorator"]
+        if (
+            allocation["path"] == path
+            and allocation["creation"] is app["creation"]
+            and handler["receiver"] is allocation
+            and isinstance(decorator.func.value, ast.Name)
+        ):
+            owner = handler["path"]
+            candidates[(owner, decorator.func.value.id)] = context["index"].snapshots[
+                owner
+            ]
+    for (owner, receiver), source in candidates.items():
+        if owner != path and not application_closed:
+            continue
+        if not context["index"].validate(owner) or not _flask_authority_provider_clear(
+            owner, source, context
+        ):
+            continue
+        if owner != path and (
+            _flask_config_mutated(source, receiver, {credential_key, "SECRET_KEY"})
+            or _flask_configuration_reloaded(
+                source,
+                receiver,
+                app["configuration_path"],
+                context,
+                {credential_key, "SECRET_KEY"},
+                owner,
+            )
+        ):
+            continue
+        aliases = context["aliases"][owner]
+        login_wrapper = _flask_login_wrapper(source, aliases)
+        protected = _flask_protected_route(source, receiver, aliases)
+        if login_wrapper is None or protected is None:
+            continue
+        if owner != path and len(protected.decorator_list) != 2:
+            continue
+        for route in source.body:
+            if not isinstance(route, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            if not _flask_route_bound_to_app(route, receiver):
+                continue
+            if owner != path and len(route.decorator_list) != 1:
+                continue
+            witness = _flask_route_authority(
+                route,
+                source,
+                receiver,
+                credential_key,
+                aliases,
+                _security_scope_request_aliases,
+                configuration,
+            )
+            if witness is not None:
+                return {
+                    **witness,
+                    "nodes": [
+                        (path, app["creation"]),
+                        (path, app["load"]),
+                        (owner, witness["comparison"]),
+                        (owner, witness["grant"]),
+                        (owner, login_wrapper["guard"]),
+                        (owner, protected),
+                    ],
+                    "login_wrapper": login_wrapper["guard"],
+                    "protected_route": protected,
+                }
+    return None
+
+
+def _flask_route_authority(
+    route, tree, receiver, credential_key, aliases, alias_reader, configuration=None
+):
+    from .semantic_credential_sensor import _flask_path_conditions_clear
+
+    if not isinstance(route, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return None
+    for guard in ast.walk(route):
+        if not isinstance(guard, ast.If) or not _flask_path_conditions_clear(
+            tree, guard
+        ):
+            continue
+        witness = _flask_guard_authority(
+            guard,
+            route,
+            tree,
+            receiver,
+            credential_key,
+            aliases,
+            alias_reader,
+            configuration,
+        )
+        if witness is not None:
+            return witness
+    return None
+
+
+def _flask_guard_authority(
+    guard,
+    route,
+    tree,
+    receiver,
+    credential_key,
+    aliases,
+    alias_reader,
+    configuration=None,
+):
+    from .semantic_credential_sensor import (
+        _flask_password_config_comparison,
+        _flask_config_key_declaration_in_tree,
+        _flask_session_grant,
+    )
+
+    comparison = _flask_password_config_comparison(
+        guard.test, receiver, aliases, route, guard, alias_reader
+    )
+    if comparison is None:
+        return None
+    password_key, equality = comparison
+    if (
+        _flask_config_key_declaration_in_tree(
+            tree if configuration is None else configuration, password_key
+        )
+        is None
+    ):
+        return None
+    grant = _flask_session_grant(guard.body, aliases, route, alias_reader)
+    if grant is None or credential_key not in {password_key, "SECRET_KEY"}:
+        return None
+    return {"password_key": password_key, "comparison": equality, "grant": grant}
+
+
 def _flask_credential_authority_for_key(
     finding, context, index, path, declaration, session_secret, key
 ):
@@ -3819,8 +4052,6 @@ def _flask_credential_authority_for_key(
     for app in _flask_configured_apps(path, context, {key, "SECRET_KEY"}):
         app_path, tree = app["path"], app["tree"]
         authority = _flask_session_authority_witness(app_path, tree, context, app, key)
-        if app_path != path:
-            authority = None
         if key == "SECRET_KEY":
             login_authority = _flask_login_session_authority_witness(
                 app_path, tree, context, app
@@ -3867,6 +4098,9 @@ def _flask_login_session_authority_witness(path, tree, context, app):
         _provider_identity_uncertain,
         _flask_path_conditions_clear,
         _flask_route_bound_to_app,
+        _flask_authority_provider_clear,
+        _flask_config_mutated,
+        _flask_configuration_reloaded,
     )
 
     if not _signing_framework_external(context, "flask_login"):
@@ -3927,14 +4161,81 @@ def _flask_login_session_authority_witness(path, tree, context, app):
         return None
     login_users = []
     protected = []
-    for function in (
-        item
-        for item in scope.body
-        if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
-    ):
-        if _flask_route_bound_to_app(function, app["receiver"]):
+    graph = _CredentialHandlerIndex(context)
+    candidates = [
+        (path, tree, function, app["receiver"])
+        for function in scope.body
+        if isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef))
+    ]
+    from .credential_role_constructor_provider import (
+        _captured_terminal_provider_mutation,
+    )
+    from .runtime_audit_integrity import _conditional_module_name
+    from . import review_audits as audit
+
+    manager_closed = not _captured_terminal_provider_mutation(
+        context["index"],
+        audit,
+        _conditional_module_name(context["index"].relative(path)) + "." + manager,
+        local_binding=(path, manager),
+    )
+    manager_closed = manager_closed and not _captured_terminal_provider_mutation(
+        context["index"],
+        audit,
+        _conditional_module_name(context["index"].relative(path))
+        + "."
+        + app["receiver"],
+        local_binding=(path, app["receiver"]),
+        readonly_argument=lambda node, _aliases, parents: (
+            parents.get(id(node)) is initialized[0] and node is initialized[0].args[0]
+        ),
+    )
+    if manager_closed:
+        for handler in graph.handlers:
+            owner, allocation = handler["path"], handler["application"]
+            decorator = handler["decorator"]
+            if (
+                owner == path
+                or allocation["path"] != path
+                or allocation["creation"] is not app["creation"]
+            ):
+                continue
+            if handler["receiver"] is not allocation or not isinstance(
+                decorator.func.value, ast.Name
+            ):
+                continue
+            source = context["index"].snapshots[owner]
+            receiver = decorator.func.value.id
+            if (
+                _flask_authority_provider_clear(owner, source, context)
+                and not _flask_config_mutated(source, receiver, {"SECRET_KEY"})
+                and not _flask_configuration_reloaded(
+                    source,
+                    receiver,
+                    app["configuration_path"],
+                    context,
+                    {"SECRET_KEY"},
+                    owner,
+                )
+            ):
+                candidates.append((owner, source, handler["function"], receiver))
+    for owner, source, function, receiver in candidates:
+        aliases = _flask_module_aliases(owner, source, context)
+        if any(
+            not (
+                isinstance(decorator, ast.Call)
+                and isinstance(decorator.func, ast.Attribute)
+                and decorator.func.attr == "route"
+                and isinstance(decorator.func.value, ast.Name)
+                and decorator.func.value.id == receiver
+            )
+            and _resolved_ast_name(decorator, aliases) != "flask_login.login_required"
+            for decorator in function.decorator_list
+        ):
+            continue
+        if _flask_route_bound_to_app(function, receiver):
             login_users.extend(
-                (function, node)
+                (owner, function, node)
                 for node in ast.walk(function)
                 if isinstance(node, ast.Call)
                 and security_call_name(node, aliases) == "flask_login.login_user"
@@ -3948,7 +4249,7 @@ def _flask_login_session_authority_witness(path, tree, context, app):
             for decorator in function.decorator_list
         ]
         if (
-            _flask_route_bound_to_app(function, app["receiver"])
+            _flask_route_bound_to_app(function, receiver)
             and "flask_login.login_required" in decorators
         ):
             guard_position = decorators.index("flask_login.login_required")
@@ -3957,12 +4258,13 @@ def _flask_login_session_authority_witness(path, tree, context, app):
                 and isinstance(decorator.func, ast.Attribute)
                 and decorator.func.attr == "route"
                 and isinstance(decorator.func.value, ast.Name)
-                and decorator.func.value.id == app["receiver"]
+                and decorator.func.value.id == receiver
                 for decorator in function.decorator_list[:guard_position]
             ):
                 continue
             protected.append(
                 (
+                    owner,
                     function,
                     function.decorator_list[
                         decorators.index("flask_login.login_required")
@@ -3971,18 +4273,18 @@ def _flask_login_session_authority_witness(path, tree, context, app):
             )
     if len(login_users) != 1 or not protected:
         return None
-    login_function, login_call = login_users[0]
+    login_path, login_function, login_call = login_users[0]
     return {
         "consumer_kind": "flask_login_session",
         "nodes": [
             (path, app["creation"]),
             (path, app["load"]),
             (path, initialized[0]),
-            (path, login_function),
-            (path, login_call),
+            (login_path, login_function),
+            (login_path, login_call),
             *(
-                (path, node)
-                for function, decorator in protected
+                (owner, node)
+                for owner, function, decorator in protected
                 for node in (function, decorator)
             ),
         ],
@@ -3998,8 +4300,14 @@ def _flask_credential_authority_witness(
     if session_secret is not declaration:
         nodes.append((path, session_secret))
     if "nodes" in authority:
+        if password_declaration is not None:
+            nodes.append((path, password_declaration))
         nodes.extend(authority["nodes"])
-        role = {"consumer_role": authority["consumer_kind"]}
+        role = (
+            {"password_key": authority["password_key"]}
+            if "password_key" in authority
+            else {"consumer_role": authority["consumer_kind"]}
+        )
     else:
         nodes.extend(
             (path, node)
