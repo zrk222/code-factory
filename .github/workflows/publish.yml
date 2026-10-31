@@ -7,6 +7,11 @@ on:
         description: Draft release tag to validate and publish after review
         required: true
         type: string
+      validated_run_id:
+        description: Optional completed publish run whose exact green validation artifacts should be reused
+        required: false
+        default: ''
+        type: string
       core_0481_cadence_exception:
         description: Explicit owner-approved one-time cooldown exception for v0.48.1 only
         required: false
@@ -43,6 +48,8 @@ jobs:
       attestations: read
     outputs:
       candidate_commit: ${{ steps.candidate.outputs.commit }}
+      verified_reuse_run_id: ${{ steps.reuse.outputs.run_id }}
+      reuse_receipt: ${{ steps.reuse.outputs.receipt }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
@@ -77,11 +84,91 @@ jobs:
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
           python-version: "3.12"
+      - name: Verify exact prior validation producers before reuse
+        id: reuse
+        if: ${{ inputs.validated_run_id != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VALIDATED_RUN_ID: ${{ inputs.validated_run_id }}
+          CANDIDATE_COMMIT: ${{ steps.candidate.outputs.commit }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib, json, os, re, subprocess
+          from datetime import datetime, timezone
+          from pathlib import Path
+          run_id = os.environ["VALIDATED_RUN_ID"]
+          if not re.fullmatch(r"[1-9][0-9]{0,19}", run_id):
+              raise SystemExit("Validation run ID must be a positive numeric ID")
+          repo, commit, tag = (os.environ[key] for key in ("GITHUB_REPOSITORY", "CANDIDATE_COMMIT", "RELEASE_TAG"))
+          base = f"repos/{repo}/actions"
+          run = json.loads(subprocess.check_output(["gh", "api", f"{base}/runs/{run_id}"], text=True))
+          expected = {"id": int(run_id), "head_sha": commit, "head_branch": "main", "event": "workflow_dispatch", "path": ".github/workflows/publish.yml", "status": "completed"}
+          if any(run.get(key) != value for key, value in expected.items()) or any(run.get(key, {}).get("full_name") != repo for key in ("repository", "head_repository")):
+              raise SystemExit("Prior validation run repository/source/workflow identity mismatch")
+          if type(run.get("run_attempt")) is not int or run["run_attempt"] < 1:
+              raise SystemExit("Prior validation run attempt is invalid")
+          collections = {}
+          for kind, query in (("jobs", "filter=latest&per_page=100"), ("artifacts", "per_page=100")):
+              pages = json.loads(subprocess.check_output(["gh", "api", "--paginate", "--slurp", f"{base}/runs/{run_id}/{kind}?{query}"], text=True))
+              if not isinstance(pages, list) or not pages or any(not isinstance(page, dict) or not isinstance(page.get(kind), list) for page in pages):
+                  raise SystemExit("Invalid paginated validation response")
+              rows = [row for page in pages for row in page[kind]]
+              if any(type(page.get("total_count")) is not int or page["total_count"] != len(rows) for page in pages):
+                  raise SystemExit("Unaccounted validation response pagination")
+              collections[kind] = rows
+          producers = {
+              "guard": "require a draft release tag",
+              "python": "validate Python release artifacts",
+              "vscode": "validate VS Code release artifact",
+              "intellij": "validate JetBrains release artifact",
+          }
+          jobs = {}
+          for channel, name in producers.items():
+              selected = [row for row in collections["jobs"] if row.get("name") == name]
+              if len(selected) != 1:
+                  raise SystemExit("Prior validation producer missing or duplicated")
+              job = selected[0]
+              if any(job.get(key) != value for key, value in {"run_id": int(run_id), "run_attempt": run["run_attempt"], "head_sha": commit, "head_branch": "main", "status": "completed", "conclusion": "success"}.items()) or type(job.get("id")) is not int or job["id"] < 1:
+                  raise SystemExit("Prior validation producer did not complete successfully for this source/attempt")
+              jobs[channel] = {key: job[key] for key in ("id", "name", "started_at", "completed_at")}
+          if len({job["id"] for job in jobs.values()}) != len(jobs):
+              raise SystemExit("Prior validation job identities are duplicated")
+          artifacts = []
+          for channel in ("python", "vscode", "intellij"):
+              name = f"release-{channel}-{tag}"
+              selected = [row for row in collections["artifacts"] if row.get("name") == name]
+              if len(selected) != 1:
+                  raise SystemExit("Prior validation artifact missing or duplicated")
+              artifact = selected[0]
+              producer = artifact.get("workflow_run", {})
+              if artifact.get("expired") is not False or type(artifact.get("size_in_bytes")) is not int or not 0 < artifact["size_in_bytes"] <= 512 * 1024 * 1024 or type(artifact.get("id")) is not int or artifact["id"] < 1 or not re.fullmatch(r"sha256:[0-9a-f]{64}", artifact.get("digest", "")):
+                  raise SystemExit("Prior validation artifact is expired, unbounded or missing its digest")
+              if any(producer.get(key) != value for key, value in {"id": int(run_id), "head_sha": commit, "head_branch": "main", "repository_id": run["repository"]["id"], "head_repository_id": run["head_repository"]["id"]}.items()):
+                  raise SystemExit("Prior artifact producer source identity mismatch")
+              started, created, completed, expires = (datetime.fromisoformat(value.replace("Z", "+00:00")) for value in (jobs[channel]["started_at"], artifact["created_at"], jobs[channel]["completed_at"], artifact["expires_at"]))
+              if not started <= created <= completed or expires <= datetime.now(timezone.utc):
+                  raise SystemExit("Prior artifact is stale or outside its successful producer window")
+              artifacts.append({**{key: artifact[key] for key in ("id", "name", "digest", "size_in_bytes", "created_at", "expires_at")}, "channel": channel, "job_id": jobs[channel]["id"]})
+          if len({artifact["id"] for artifact in artifacts}) != 3:
+              raise SystemExit("Prior artifact identities are duplicated")
+          receipt = {"schema": "factory.release-validation-reuse.v1", "repository": repo, "source_commit": commit, "release_tag": tag, "run_id": run_id, "run_attempt": run["run_attempt"], "workflow_path": run["path"], "jobs": jobs, "artifacts": artifacts}
+          receipt["receipt_sha256"] = hashlib.sha256(json.dumps(receipt, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
+              output.write(f"run_id={run_id}\nreceipt={json.dumps(receipt, separators=(',', ':'))}\n")
+          print("Exact successful validation producers and immutable artifacts verified for reuse")
+          PY
       - run: python -m pip install -e .
       - name: Require attested clean-runner evidence for this commit
         env:
           GH_TOKEN: ${{ github.token }}
-        run: python -m factoryline.signed_receipts fetch-ci "${{ steps.candidate.outputs.commit }}" "$RUNNER_TEMP/ci-release-evidence"
+        run: |
+          set -euo pipefail
+          python -m factoryline.signed_receipts fetch-ci "${{ steps.candidate.outputs.commit }}" "$RUNNER_TEMP/ci-release-evidence"
+          if [[ -n "${{ steps.reuse.outputs.run_id }}" ]]; then
+            python -m factoryline.signed_receipts fetch-ci "$GITHUB_SHA" "$RUNNER_TEMP/ci-tooling-evidence"
+          fi
       - name: Enforce cadence using actual GitHub publication timestamps
         env:
           GH_TOKEN: ${{ github.token }}
@@ -123,6 +210,7 @@ jobs:
   validate_python:
     name: validate Python release artifacts
     needs: [guard]
+    if: ${{ needs.guard.outputs.verified_reuse_run_id == '' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
@@ -169,6 +257,7 @@ jobs:
   validate_vscode:
     name: validate VS Code release artifact
     needs: [guard]
+    if: ${{ needs.guard.outputs.verified_reuse_run_id == '' }}
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -206,6 +295,7 @@ jobs:
   validate_intellij:
     name: validate JetBrains release artifact
     needs: [guard]
+    if: ${{ needs.guard.outputs.verified_reuse_run_id == '' }}
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -238,11 +328,13 @@ jobs:
   publish:
     name: publish verified release
     needs: [guard, validate_python, validate_vscode, validate_intellij]
+    if: ${{ !cancelled() && needs.guard.result == 'success' && (needs.guard.outputs.verified_reuse_run_id != '' || (needs.validate_python.result == 'success' && needs.validate_vscode.result == 'success' && needs.validate_intellij.result == 'success')) }}
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
       contents: write
       id-token: write
+      actions: read
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
@@ -253,23 +345,112 @@ jobs:
         with:
           name: release-python-${{ inputs.release_tag }}
           path: release-bundle/python
+          run-id: ${{ needs.guard.outputs.verified_reuse_run_id || github.run_id }}
+          github-token: ${{ github.token }}
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: release-vscode-${{ inputs.release_tag }}
           path: release-bundle/editors
+          run-id: ${{ needs.guard.outputs.verified_reuse_run_id || github.run_id }}
+          github-token: ${{ github.token }}
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: release-intellij-${{ inputs.release_tag }}
           path: release-bundle/editors
+          run-id: ${{ needs.guard.outputs.verified_reuse_run_id || github.run_id }}
+          github-token: ${{ github.token }}
 
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
           python-version: "3.12"
 
       - name: Install Code Factory preflight runtime
-        run: python -m pip install .
+        env:
+          VERIFIED_REUSE_RUN_ID: ${{ needs.guard.outputs.verified_reuse_run_id }}
+          TOOLING_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [[ -n "$VERIFIED_REUSE_RUN_ID" ]]; then
+            [[ "$TOOLING_SHA" =~ ^[0-9a-f]{40}$ ]]
+            git merge-base --is-ancestor "$TOOLING_SHA" origin/main
+            mkdir "$RUNNER_TEMP/release-tooling"
+            git archive "$TOOLING_SHA" | tar -x -C "$RUNNER_TEMP/release-tooling"
+            python -m pip install --force-reinstall "$RUNNER_TEMP/release-tooling"
+          else
+            python -m pip install .
+          fi
+
+      - name: Bind recovered artifact bytes and installed tooling before preflight
+        if: ${{ needs.guard.outputs.verified_reuse_run_id != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REUSE_RECEIPT: ${{ needs.guard.outputs.reuse_receipt }}
+          TOOLING_SHA: ${{ github.sha }}
+          CANDIDATE_COMMIT: ${{ needs.guard.outputs.candidate_commit }}
+        run: |
+          set -euo pipefail
+          python -I - <<'PY'
+          import hashlib, json, os, subprocess, zipfile
+          from pathlib import Path
+          import factoryline.codex_metadata as metadata
+          receipt = json.loads(os.environ["REUSE_RECEIPT"])
+          sealed = receipt.pop("receipt_sha256")
+          if hashlib.sha256(json.dumps(receipt, sort_keys=True, separators=(",", ":")).encode()).hexdigest() != sealed or receipt["source_commit"] != os.environ["CANDIDATE_COMMIT"] or receipt["repository"] != os.environ["GITHUB_REPOSITORY"]:
+              raise SystemExit("Validation reuse receipt binding mismatch")
+          expected_files, expanded_bytes = set(), 0
+          for artifact in receipt["artifacts"]:
+              endpoint = f"repos/{receipt['repository']}/actions/artifacts/{artifact['id']}"
+              live = json.loads(subprocess.check_output(["gh", "api", endpoint], text=True))
+              if live.get("expired") is not False or any(live.get(key) != artifact[key] for key in ("id", "name", "digest", "size_in_bytes", "created_at", "expires_at")):
+                  raise SystemExit("Validated artifact identity changed before download")
+              archive = Path(os.environ["RUNNER_TEMP"]) / f"validated-{artifact['id']}.zip"
+              with archive.open("wb") as output:
+                  subprocess.run(["gh", "api", endpoint + "/zip"], stdout=output, check=True)
+              digest = hashlib.sha256()
+              with archive.open("rb") as stream:
+                  for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                      digest.update(chunk)
+              if "sha256:" + digest.hexdigest() != artifact["digest"] or archive.stat().st_size > 512 * 1024 * 1024:
+                  raise SystemExit("Validated artifact archive digest mismatch")
+              destination = Path("release-bundle/python" if artifact["channel"] == "python" else "release-bundle/editors").resolve()
+              with zipfile.ZipFile(archive) as bundle:
+                  entries = bundle.infolist()
+                  expanded_bytes += sum(entry.file_size for entry in entries)
+                  if len(entries) > 256 or expanded_bytes > 128 * 1024 * 1024:
+                      raise SystemExit("Recovery artifact expanded-content bound exceeded")
+                  for entry in entries:
+                      relative = Path(entry.filename)
+                      target = (destination / relative).resolve()
+                      if relative.is_absolute() or ".." in relative.parts or "\\" in entry.filename or ":" in entry.filename or not target.is_relative_to(destination) or (entry.external_attr >> 16) & 0o170000 == 0o120000:
+                          raise SystemExit("Unsafe recovered artifact member")
+                      if entry.is_dir():
+                          continue
+                      if target in expected_files or not target.is_file() or target.is_symlink():
+                          raise SystemExit("Missing or duplicated recovered artifact member")
+                      expected_files.add(target)
+                      digests = []
+                      for stream in (bundle.open(entry), target.open("rb")):
+                          with stream:
+                              digest = hashlib.sha256()
+                              for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                                  digest.update(chunk)
+                              digests.append(digest.hexdigest())
+                      if digests[0] != digests[1]:
+                          raise SystemExit("Downloaded artifact files differ from validated archive")
+          actual_files = {path.resolve() for directory in ("python", "editors") for path in Path("release-bundle", directory).rglob("*") if path.is_file()}
+          if actual_files != expected_files:
+              raise SystemExit("Unaccounted recovered artifact file")
+          installed = Path(metadata.__file__).resolve()
+          tooling = Path(os.environ["RUNNER_TEMP"], "release-tooling", "factoryline", "codex_metadata.py")
+          tooling_hash = hashlib.sha256(tooling.read_bytes()).hexdigest()
+          if installed.is_relative_to(Path.cwd()) or hashlib.sha256(installed.read_bytes()).hexdigest() != tooling_hash:
+              raise SystemExit("Preflight metadata checker is not the isolated pinned tooling")
+          receipt.update({"receipt_sha256": sealed, "tooling_commit": os.environ["TOOLING_SHA"], "installed_metadata_sha256": tooling_hash, "archive_bytes_and_extracted_files_verified": True})
+          Path("release-bundle/release-recovery.json").write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
+          print("Exact recovered artifact bytes and isolated pinned preflight tooling verified")
+          PY
 
       - name: Prepare source-bound release contract
         env:
@@ -293,6 +474,7 @@ jobs:
           CORE_0481_EXCEPTION: ${{ inputs.core_0481_cadence_exception }}
           CORE_0482_EXCEPTION: ${{ inputs.core_0482_cadence_exception }}
           CORE_0495_EXCEPTION: ${{ inputs.core_0495_cadence_exception }}
+          VERIFIED_REUSE_RUN_ID: ${{ needs.guard.outputs.verified_reuse_run_id }}
         run: |
           set -euo pipefail
           test -n "$RELEASE_CONTRACT_PATH" || {
@@ -338,7 +520,7 @@ jobs:
               exception_args=(--cadence-exception .factory/core-0481-cadence-exception.json)
             fi
           fi
-          python -m factoryline.cli release preflight \
+          preflight_args=( \
             --root . \
             --candidate-tag "$RELEASE_TAG" \
             --contract "$RELEASE_CONTRACT_PATH" \
@@ -347,7 +529,23 @@ jobs:
             --metadata-path context/PROGRESS.md \
             "${exception_args[@]}" \
             --out release-bundle/release-preflight.json \
-            --json
+            --json )
+          if [[ -n "$VERIFIED_REUSE_RUN_ID" ]]; then
+            python -I -m factoryline.cli release preflight "${preflight_args[@]}"
+          else
+            python -m factoryline.cli release preflight "${preflight_args[@]}"
+          fi
+
+      - name: Retain recovered publication provenance
+        if: ${{ needs.guard.outputs.verified_reuse_run_id != '' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: release-recovery-${{ github.run_id }}
+          path: |
+            release-bundle/release-recovery.json
+            release-bundle/release-preflight.json
+          if-no-files-found: error
+          retention-days: 30
 
       - name: Attach distributions to GitHub release
         env:

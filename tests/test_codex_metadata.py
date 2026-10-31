@@ -326,6 +326,81 @@ def test_markdown_claims_without_receipts_are_review_required(tmp_path: Path):
     assert "E_METADATA_SELF_ATTESTED_GATE" in codes
 
 
+@pytest.mark.parametrize(
+    ("line", "expected_codes"),
+    [
+        ("VERIFY h1-phase-telemetry T1 status=FAIL verify_pass=false", set()),
+        (
+            "Neither gate establishes human precision labeling or release approval.",
+            set(),
+        ),
+        ("Neither gate establishes that release approval was granted.", set()),
+        ("No release approval was granted.", set()),
+        ("The release was not approved.", set()),
+        ("The result is not verified yet.", set()),
+        (
+            "Release approved without independent review.",
+            {"E_METADATA_UNBOUND_TERMINAL", "E_METADATA_INTENT_UNBOUND"},
+        ),
+        (
+            "The release is published without evidence.",
+            {
+                "E_METADATA_WEAK_EVIDENCE",
+                "E_METADATA_INTENT_UNBOUND",
+            },
+        ),
+        (
+            "No test failures prevented the release being approved.",
+            {"E_METADATA_UNBOUND_TERMINAL", "E_METADATA_INTENT_UNBOUND"},
+        ),
+        (
+            "No deployment was blocked, but the release was approved.",
+            {"E_METADATA_UNBOUND_TERMINAL", "E_METADATA_INTENT_UNBOUND"},
+        ),
+        (
+            "Neither gate establishes provenance, but the release is approved.",
+            {"E_METADATA_UNBOUND_TERMINAL", "E_METADATA_INTENT_UNBOUND"},
+        ),
+        (
+            "Not reviewed but approved.",
+            {"E_METADATA_UNBOUND_TERMINAL", "E_METADATA_INTENT_UNBOUND"},
+        ),
+        (
+            "Verification passed receipt=" + "a" * 64 + " intent_id=REQ-1",
+            set(),
+        ),
+        (
+            "Release approval granted receipt=" + "a" * 64 + " intent_id=REQ-1",
+            set(),
+        ),
+        (
+            "Release approval granted",
+            {"E_METADATA_UNBOUND_TERMINAL", "E_METADATA_INTENT_UNBOUND"},
+        ),
+        (
+            "Release approved while verification failed.",
+            {
+                "E_METADATA_UNBOUND_TERMINAL",
+                "E_METADATA_INTENT_UNBOUND",
+                "E_METADATA_CONTRADICTORY_STATUS",
+            },
+        ),
+    ],
+)
+def test_text_terminal_claims_require_positive_assertions(
+    tmp_path: Path, line: str, expected_codes: set[str]
+):
+    path = tmp_path / "context" / "claims.txt"
+    path.parent.mkdir()
+    original = line + "\n"
+    path.write_text(original, encoding="utf-8")
+
+    result = audit_metadata(tmp_path, [path])
+
+    assert {item["code"] for item in result["findings"]} == expected_codes
+    assert path.read_text(encoding="utf-8") == original
+
+
 def test_cli_writes_readable_receipt_and_returns_one_for_review(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ):
