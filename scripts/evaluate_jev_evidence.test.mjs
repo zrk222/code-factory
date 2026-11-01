@@ -129,10 +129,11 @@ test('sufficiency-only dispatch preserves unknowns and cannot produce actionabil
     };
     const options = { live: true, apiKey: 'mock', profile: 'security_actionability', sourceRoot: root, fetchImpl: transport };
     const normal = await evaluateCases([item], rubric, options);
-    assert.equal(calls, 0);
-    assert.equal(normal.results[0].admission, 'not_run');
-    const diagnostic = await evaluateCases([item], rubric, { ...options, evidenceSufficiencyOnly: true });
     assert.equal(calls, 1);
+    assert.equal(normal.results[0].admission, 'admitted');
+    assert.equal(normal.results[0].prediction, true);
+    const diagnostic = await evaluateCases([item], rubric, { ...options, evidenceSufficiencyOnly: true });
+    assert.equal(calls, 2);
     assert.equal(diagnostic.results[0].provider_finding_probability, 0.99);
     assert.equal(diagnostic.results[0].evidence_probability, 0.99);
     assert.equal(diagnostic.results[0].prediction, null);
@@ -146,7 +147,7 @@ test('sufficiency-only dispatch preserves unknowns and cannot produce actionabil
     await writeFile(join(root, 'endpoint.py'), '# changed source\n');
     const stale = await evaluateCases([item], rubric, { ...options, evidenceSufficiencyOnly: true });
     assert.equal(stale.results[0].status, 'error');
-    assert.equal(calls, 1);
+    assert.equal(calls, 2);
     await assert.rejects(evaluateCases([item], rubric, { ...options, profile: undefined, evidenceSufficiencyOnly: true }), /invalid_sufficiency_mode/);
     assert.equal(parseArgs(['--cases', 'a', '--rubric', 'b', '--profile', 'security_actionability', '--evidence-sufficiency-only']).evidenceSufficiencyOnly, true);
   } finally { await rm(root, { recursive: true, force: true }); }
@@ -536,7 +537,7 @@ test('security actionability profile dispatches only candidate-bound source cont
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
 
-test('security actionability profile locally abstains on missing or unknown context without transport', async () => {
+test('source-bound semantic unknowns reach review unchanged and may be decided or unresolved', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'cf-jev-security-actionability-unknown-'));
   try {
     const framework = fileURLToPath(new URL('../factoryline/data/judge_framework.json', import.meta.url));
@@ -575,15 +576,23 @@ test('security actionability profile locally abstains on missing or unknown cont
     const report = await runCliRaw(['--cases', casesPath, '--rubric', rubricPath,
       '--profile', 'security_actionability', '--budget-policy', policyPath, '--live'], {
       env: { AI_GATEWAY_API_KEY: 'mock' }, archiveRoot, archiveBoundary: dir,
-      fetchImpl: async () => { calls++; return answer(0.99); },
+      fetchImpl: async (_url, request) => {
+        const supplied = JSON.parse(request.body);
+        assert.deepEqual(supplied.state, cases[calls].state);
+        assert.equal(Object.hasOwn(supplied, 'expected'), false);
+        const outcomes = [[0.99, 0.4], [0.01, 0.99], [0.99, 0.99]];
+        const [finding, sufficient] = outcomes[calls++];
+        return answer(finding, {}, sufficient);
+      },
     });
-    assert.equal(calls, 0);
-    assert.deepEqual(report.results.map((row) => row.status), ['abstain', 'abstain', 'abstain']);
-    assert.deepEqual(report.results.map((row) => row.abstention_reason),
-      ['insufficient_actionability_context', 'insufficient_actionability_context', 'insufficient_actionability_context']);
-    assert.ok(report.results.every((row) => row.prediction === null && row.probability === null
-      && row.evidence_probability === null && row.admission === 'not_run'));
-    assert.equal(report.dispatch_budget.provider_reported_cost_usd, 0);
+    assert.equal(calls, 3);
+    assert.deepEqual(report.results.map((row) => row.status), ['abstain', 'decided', 'decided']);
+    assert.equal(report.results[0].abstention_reason, 'insufficient_evidence');
+    assert.deepEqual(report.results.map((row) => row.prediction), [null, false, true]);
+    assert.ok(report.results.every((row) => row.admission === 'admitted'
+      && row.source_verification === 'VERIFIED_CURRENT'));
+    assert.equal(report.authority.scanner_override, false);
+    assert.ok(Math.abs(report.dispatch_budget.provider_reported_cost_usd - 0.00003) < 1e-12);
     const journalPath = join(archiveRoot, report.tracking.journal_filename);
     const journalBytes = await readFile(journalPath);
     assert.equal((await verifyJournal(journalPath, { expectedJournalSha256:

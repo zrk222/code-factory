@@ -271,10 +271,8 @@ function dispatchOptions(supplied) {
 
 function admissionFor(item, options, ledger) {
   const empty = { reserved_cost_usd: 0, reserved_latency_ms: 0 };
-  if (options.profile === 'security_actionability' && !options.evidenceSufficiencyOnly
-    && !actionabilityContextComplete(item.state.evidence)) {
-    return { ...empty, disposition: 'not_run', actionability_incomplete: true };
-  }
+  // Bound source is an intake requirement; semantic unknowns are for review.
+  // They remain in the request and may still require an unresolved judgment.
   if (!options.live) return { ...empty, disposition: 'not_run' };
   if (ledger.halted) return { ...empty, disposition: 'halted' };
   if (!selectByFraction(options.budgetPolicy, item)) return { ...empty, disposition: 'not_selected' };
@@ -300,9 +298,6 @@ function reconcileDispatch(outcome, options, ledger) {
 async function executeAdmittedCase(item, rubric, options, ledger, admission) {
   if (options.onAdmission) await options.onAdmission(structuredClone({
     id: item.id, case_sha256: sha(encode(item)), ...admission }));
-  if (admission.actionability_incomplete) return { status: 'abstain',
-    abstention_reason: 'insufficient_actionability_context', prediction: null,
-    probability: null, evidence_probability: null, reported_cost_usd: 0, provider_verified: false };
   if (admission.disposition !== 'admitted') return { status: admission.disposition,
     prediction: null, probability: null, evidence_probability: null,
     reported_cost_usd: null, provider_verified: false };
@@ -507,7 +502,7 @@ function selectProfile(document, profile) {
   return { ...document, rubric: document.review_profiles[profile] };
 }
 
-const { EVIDENCE_PROFILES, validateEvidenceReviewCases, validateTestOracleCases, verifySourceBindings, validateNoRawSecrets, validateActionabilityState, actionabilityContextComplete } = createEvidenceValidators({ requireValue, object, sha, TrialError, readBounded });
+const { EVIDENCE_PROFILES, validateEvidenceReviewCases, validateTestOracleCases, verifySourceBindings, validateNoRawSecrets, validateActionabilityState } = createEvidenceValidators({ requireValue, object, sha, TrialError, readBounded });
 
 function unwrapFramework(rubric, profile) {
   if (!object(rubric) || !Object.hasOwn(rubric, 'schema')) return { rubric, framework: null };
