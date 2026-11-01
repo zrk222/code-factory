@@ -1351,7 +1351,7 @@ def _warning_filter_mode(
 def _security_finding(
     code: str, path: str, node: ast.AST, message: str, severity: str, **facts: Any
 ) -> dict[str, Any]:
-    return {
+    finding = {
         "code": code,
         "severity": severity,
         "path": path,
@@ -1360,6 +1360,18 @@ def _security_finding(
         "message": message,
         "facts": facts,
     }
+    end_line = getattr(node, "end_lineno", None)
+    end_column = getattr(node, "end_col_offset", None)
+    if (
+        type(end_line) is int
+        and type(end_column) is int
+        and end_line >= finding["line"]
+        and end_column >= 0
+        and (end_line > finding["line"] or end_column >= finding["column"])
+    ):
+        finding["end_line"] = end_line
+        finding["end_column"] = end_column
+    return finding
 
 
 def _dynamic_execution_finding(

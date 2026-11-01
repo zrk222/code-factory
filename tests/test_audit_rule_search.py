@@ -590,6 +590,146 @@ def test_declaration_neighborhood_overflow_is_explicit_and_bounded(tmp_path):
     assert context["status"] == "INCOMPLETE" and context["edges"] == []
 
 
+def test_security_producer_nested_call_spans_reach_context_and_public_intake(
+    tmp_path,
+):
+    import shutil
+    import subprocess
+
+    from factoryline.credential_role_constructor_provider import SourceSnapshotIndex
+    from factoryline.jev_classifier import build_informed_actionability_case
+    from factoryline.primitive_observation_binding import build_finding_tier_report
+    from factoryline.review_audits import _security_finding
+
+    path = tmp_path / "nested.py"
+    source = 'import sqlite3\nresult = sqlite3.connect("db").execute("SELECT 1")\n'
+    raw = source.encode()
+    source_sha256 = sha256(raw).hexdigest()
+    tree = ast.parse(source)
+    tree._oracle_source_sha256 = source_sha256
+    index = SourceSnapshotIndex(
+        tmp_path,
+        {path: tree},
+        {path: raw},
+        {path: source_sha256},
+    )
+    calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call)]
+    relevant = [
+        node
+        for node in calls
+        if isinstance(node.func, ast.Attribute)
+        and node.func.attr in {"connect", "execute"}
+    ]
+    expected_spans = {
+        (node.lineno, node.col_offset, node.end_lineno, node.end_col_offset)
+        for node in relevant
+    }
+    assert len(expected_spans) == len(relevant) == 2
+    findings = [
+        _security_finding(
+            "SECURITY_TEST_SINK",
+            "nested.py",
+            node,
+            "synthetic nested-call location test",
+            "HIGH",
+        )
+        for node in relevant
+    ]
+    assert len(findings) == 2
+    assert {(f["line"], f["column"]) for f in findings} == {(2, 9)}
+    assert {
+        (f["line"], f["column"], f["end_line"], f["end_column"])
+        for f in findings
+    } == expected_spans
+    for finding in findings:
+        finding["source_sha256"] = source_sha256
+
+    def identity(finding):
+        report = build_finding_tier_report(
+            [finding],
+            [],
+            [],
+            {},
+            coverage_state="INCOMPLETE",
+            partition_state="UNASSESSED",
+        )
+        return report["ledger"][0]["source_identity"]["identity_sha256"]
+
+    new_identities = [identity(finding) for finding in findings]
+    old_findings = []
+    for finding in findings:
+        old = dict(finding)
+        old.pop("end_line")
+        old.pop("end_column")
+        old_findings.append(old)
+    assert len(set(new_identities)) == 2
+    assert identity(old_findings[0]) == identity(old_findings[1])
+    assert set(new_identities).isdisjoint(map(identity, old_findings))
+
+    from factoryline.jev_classifier import JevClassificationError
+
+    for invalid in (dict(old_findings[0]), dict(findings[0])):
+        if "end_line" in invalid:
+            invalid["end_column"] += 1
+        with pytest.raises(JevClassificationError, match="SINK_LOCATION_UNRESOLVED"):
+            build_informed_actionability_case(
+                invalid,
+                index,
+                candidate_commit="a" * 40,
+                requirement="resolve this nested security-call location",
+            )
+
+    items = []
+    for finding in findings:
+        item = build_informed_actionability_case(
+            finding,
+            index,
+            candidate_commit="a" * 40,
+            requirement="resolve this nested security-call location",
+        )
+        ledger = json.loads(
+            next(
+                row["content"]
+                for row in item["state"]["evidence"]["artifacts"]
+                if row["kind"] == "native_sink_evidence"
+            )
+        )
+        assert ledger["native_ledger"]["sink"]["span"] == [
+            finding["line"],
+            finding["column"],
+            finding["end_line"],
+            finding["end_column"],
+        ]
+        items.append(item)
+
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("public JS intake profile requires Node")
+    path.write_bytes(raw)
+    cases = tmp_path / "cases.json"
+    cases.write_text(json.dumps(items), encoding="utf-8")
+    repo = Path(__file__).resolve().parents[1]
+    script = (
+        "import {loadTrial} from "
+        + json.dumps((repo / "scripts/evaluate_jev.mjs").as_uri())
+        + "; await loadTrial(...JSON.parse(process.argv[1]));"
+    )
+    args = [
+        str(cases),
+        str(repo / "factoryline/data/judge_framework.json"),
+        "security_actionability",
+        None,
+        str(tmp_path),
+    ]
+    result = subprocess.run(
+        [node, "--input-type=module", "--eval", script, json.dumps(args)],
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    assert result.returncode == 0, result.stderr
+
+
 def test_retrieval_transport_not_configured_is_explicit_and_does_not_clear_unknowns(
     tmp_path,
 ):
