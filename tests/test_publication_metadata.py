@@ -246,12 +246,10 @@ def test_public_ctas_are_outcome_led_and_preserve_proof_boundaries():
     assert "FactoryLine keeps that decision with you." in intellij_readme
     for content in (vscode_readme, intellij_readme):
         assert "Graph Ops" in content
-    assert "Your change is ready for a closer look." in intellij_plugin
-    assert "FactoryLine keeps that decision with you." in intellij_plugin
-    assert (
-        "FactoryLine AI Proof is free, local IDE Guardian + AI proof for JetBrains."
-        in intellij_plugin
-    )
+    assert "Review AI changes with evidence in view" in intellij_plugin
+    assert "separately configured local FactoryLine runtime" in intellij_plugin
+    assert "You control applying changes, merging, and publishing." in intellij_plugin
+    assert "Checks are bounded and do not certify a repository." in intellij_plugin
     assert 'width="40"' in (
         ROOT
         / "editors"
@@ -274,7 +272,7 @@ def test_public_ctas_are_outcome_led_and_preserve_proof_boundaries():
     ).read_text(encoding="utf-8")
     assert "Star Code Factory" in vscode_readme
     assert "Star Code Factory" in intellij_readme
-    for content in (vscode_readme, intellij_plugin, intellij_readme):
+    for content in (vscode_readme, intellij_readme):
         assert "PRD Grill" in content
         assert "factory prd grill" in content
         assert "Proof Debt" in content

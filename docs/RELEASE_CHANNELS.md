@@ -28,9 +28,17 @@ not turn a source merge into release approval.
 | Hugging Face | Static Code Factory Space | Manually dispatch the `huggingface` environment workflow | Green Space workflow and public Space |
 | Zenodo | Versioned source archive under concept DOI | GitHub release integration | Public version record; concept DOI remains stable |
 | VS Code / Open VSX | `factoryline-vscode-1.3.2.vsix`; provider availability requires channel read-back | Upload VS Code through the Microsoft Marketplace website; use the protected publisher workflow for Open VSX | Installable VSIX and public marketplace version |
-| JetBrains | `factoryline-intellij-1.3.2.zip`; provider availability requires channel read-back | Use the separate protected JetBrains publisher workflow after its live binary-slot and metadata gates permit the update | Compatible ZIP plus an accepted Marketplace upload receipt; public availability still requires moderation |
+| JetBrains | `factoryline-intellij-1.3.3.zip` — CANDIDATE / PENDING upload | Owner-authorized direct upload after required checks and live Marketplace validation; the protected publisher workflow remains available | Compatible ZIP plus an accepted Marketplace upload receipt; public availability still requires moderation |
 | OpenCode | Native `code-factory-opencode` plugin 0.1.0 | Build a self-contained module and install under `.opencode/plugins/`; publish a registry package only after registry authentication and independent receipt | Project plugin loads and CF/ForgeLine lanes run or report exact limits |
 | Product Hunt | Product page, gallery, and YouTube link | Signed-in maker editor | Public page visibly reflects the new copy/media |
+
+### JetBrains 1.3.3 candidate
+
+JetBrains 1.3.3 is prepared for the saved-VFS consistency and background Studio
+startup patch. Upload is PENDING; no provider acceptance, approval or public
+availability is claimed. The plugin uses the separately configured local CLI.
+Core 0.49.5 and editor 1.3.2 records below are historical and remain unchanged;
+this JetBrains-only patch does not bump VS Code, core, Hugging Face or PyPI.
 
 ### Editor marketplace snapshot
 

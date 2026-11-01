@@ -3,69 +3,27 @@
     <name>FactoryLine AI Proof</name>
     <vendor email="rkatz22@gmail.com" url="https://github.com/zrk222/code-factory">FactoryLine</vendor>
     <description><![CDATA[
-<p><strong>Your change is ready for a closer look.</strong> Open the current diff or active file in Proof Review, follow the local findings and evidence, then choose your next repair. Bring the returned Change List back for review before deciding what to apply. FactoryLine keeps that decision with you.</p>
-
-<p>FactoryLine AI Proof is free, local IDE Guardian + AI proof for JetBrains. Guardian Core records a bounded, in-memory IDE-health sample; it does not diagnose a cause or change IDE settings.</p>
-
-<p><strong>Updated in 1.3.2 — </strong>Project-contained Proof Review and Verified Repair Sandbox links return to source using the current IntelliJ navigation API, with workspace boundaries and focus behavior preserved.</p>
-
-<p><strong>Run First Proof</strong> is a setup demonstration that checks the local CLI; it does not assess repository code. To assess a repository, run <code>factory scan --root .</code>. Then use Proof Review to inspect the current diff or active file and see what evidence supports, what remains unproven, and the next review step. Find it at <strong>Tools | FactoryLine | Run First Proof</strong>.</p>
-
-<h3>Review the change in front of you</h3>
-<p>In Proof Review, inspect the current diff or focus on the active file. See structured findings, changed paths, unproven claims, and a fact-based next action. Open changed files safely inside the project, then copy a brief or save a local JSON, Markdown, and Mermaid handoff.</p>
-
-<h3>Keep an AI repair inside scope</h3>
-<p>Choose one native Change List in the Verified Repair Sandbox. FactoryLine records its paths and bytes in a local Scope Passport. Copy the sealed Proof Mission into Junie or another coding agent yourself; bring the returned Change List back for review. Scope checks do not prove a repair is correct: independent verification and the human decision to apply remain separate.</p>
-
-<h3>Tuned for Junie. Not dependent on Junie.</h3>
-<p>FactoryLine offers a local Junie workflow for intent, scope, evidence, challenge, and supervised handoff. It does not start or message Junie, read its chat, or treat an agent's completion claim as approval. First Proof, Proof Review, and Graph Ops can be used without an AI assistant.</p>
-
-<h3>Use FactoryLine when you want to</h3>
-<p>Turn an outcome into a buildable starting point. Review AI or teammate changes with evidence, and inspect the next local review step in Unified Graph Ops. PRD Grill clarifies a brief with <code>factory prd grill PRD.md --root . --mode quick</code>; Plan-to-Proof Review surfaces Proof Debt before a human decides what to accept.</p>
-
-<p>SaaS Reality can display local evidence for OAuth/OIDC identity, tenant authorization, checkout, webhook, entitlement, feature access, and revocation. It does not contact a provider. Optional paid features are not active in this Marketplace build.</p>
-
-<h3>Local evidence. Human release decisions.</h3>
-<p>The IDE asks before running the configured local FactoryLine command. Missing, stale, unavailable, or unverified evidence stays visible as incomplete or unassessed. The plugin does not upload project source or receipts, sign artifacts, or decide whether a release is ready.</p>
-
-<p><a href="https://github.com/zrk222/code-factory">Read the documentation and inspect the source.</a></p>
-        ]]></description>
+<h3>Review AI changes with evidence in view</h3>
+<p>FactoryLine connects code changes, audit findings, tests, and repair candidates to local, source-bound receipts.</p>
+<h4>What's improved in 1.3.3</h4>
+<ul>
+<li>Wait for pending saved-file VFS writes before local commands read disk.</li>
+<li>Start Studio in the background and block launch when preparation fails.</li>
+<li>Preserve the 2025.2 platform baseline and compatibility with newer IDEs.</li>
+</ul>
+<h4>Start in your repository</h4>
+<p>Run <code>factory guide</code>, then <code>factory scan --root .</code>. Use Graph Ops to inspect evidence and choose the next action.</p>
+<p>The plugin uses your separately configured local FactoryLine runtime. Junie is optional. You control applying changes, merging, and publishing. Checks are bounded and do not certify a repository.</p>
+<p><a href="https://github.com/zrk222/code-factory">Documentation</a> | <a href="https://github.com/zrk222/code-factory/issues">Report an issue</a></p>
+    ]]></description>
     <change-notes><![CDATA[
-        <p><strong>1.3.2:</strong> Pair with Code Factory 0.49.5 while preserving local evidence, source navigation and human-owned decisions. Provider availability is tracked separately.</p>
-        <p><strong>1.3.1 patch:</strong> Return from Proof Review and Verified Repair Sandbox to project files on current IntelliJ builds, with the existing workspace boundary checks preserved. Pairs with Code Factory 0.49.0.</p>
-        <p><strong>1.3.0 preview:</strong> Begin with the change in front of you. Review its source and recorded checks, keep an agent handoff inside one selected Change List, and return to the evidence before accepting the repair. Pairs with Code Factory 0.49.0; publication remains a separate step.</p>
-        <ul>
-            <li>Make First Proof the front door: check whether an AI-generated test can actually fail before trusting a green result.</li>
-            <li>Connect approved intent, forbidden behavior, exact diff scope, Oracle Firewall rules, independent challenge evidence, session traces, and receipt digests in Graph Ops.</li>
-            <li>Expose six coordinated audit lanes for stateful behavior, tenant isolation, failure and recovery, API compatibility, migration integrity, and performance or resource regression.</li>
-            <li>Give IDE and A2A agents a supervised, fail-closed playbook; agents cannot silently weaken policy, widen scope, approve, merge, publish, or deploy.</li>
-            <li>Bring cumulative enterprise assurance, evidence memory, provider-neutral SaaS proof, and optional AppForge mobile delivery checks into the same local review surface.</li>
-            <li>Add SaaS Reality: one provider-neutral, hash-verified local status for OAuth/OIDC identity, tenant/role authorization, checkout, webhook, entitlement, access, and revocation. Unknowns block green; the plugin never contacts or mutates a provider.</li>
-            <li>Add declared Change Profiles to Engineering Judgment: selected Change Lists can expose a named new change kind, deterministic Senior Attention route, and review-due or successor drift. FactoryLine never infers source semantics or approves a change.</li>
-            <li>Add Guardian Core as the first tool-window tab: it summarizes a bounded, local, in-memory IDE-health sample window and exposes navigation-only review routes. Guardian does not diagnose a cause, rank plugins, change IDE settings, or apply a repair.</li>
-            <li>Add IDE Health Flight Recorder and Index Continuity Guard: bounded in-memory aggregate runtime samples plus explicit local structural baseline/compare evidence. Both are observation-only; neither changes IDE settings, caches, indexes, plugins, project files, or remote state, and neither claims a causal diagnosis or duration prediction.</li>
-            <li>Add Intent Ledger: make the selected native Change List's behavioral promise, non-goal, and negative case visible before code review; surface scope escape, stale proof, and coverage gaps using existing local evidence. Capture is named, exact-confirmed local metadata only; inspection never edits source, changes VCS state, runs a test, starts an agent, or declares production readiness.</li>
-            <li>Add Intake Grill, Proof-Delta, Gauntlet Survival Cards, and Earned Autonomy: bind intent before a mission, prevent evidence-free retry loops, make declared negative checks visible, and keep agent trust expiry-bound. These remain local supervision artifacts; they do not run an agent, authorize a repair, or certify production readiness.</li>
-            <li>Add refreshable local Assembly activity and a read-only Developer Memory Brief in the shared Studio and Graph Ops view: exact-diff next-proof actions, redacted Continuity facts, and observed local Git contribution context, without execution, repair, approval, identity, billing, or productivity authority.</li>
-            <li>Add Graph Forensics: sealed semantic lineage, first-divergence and causal-path analysis, deterministic stale-read/write, parallel-write, and duplicate-side-effect findings, plus a non-executing recovery preview.</li>
-            <li>Add ProofSearch and the Graph Ops Counterfactual Arena: compare 2 through 12 hash-bound repair candidates, reject hollow or unsafe candidates, show every loss reason, and select one deterministic verified winner without applying it.</li>
-            <li>Add full Graph Ops review controls for copying verification commands, exporting the displayed decision, validating winner guardrails, and visibly retaining apply, merge, publication, deployment, credential, and connector authority.</li>
-            <li>Add JetBrains Proof Review: review the full local diff or active file with structured, attention-first evidence, safe changed-file navigation, and an explicit local JSON/Markdown/Mermaid handoff packet.</li>
-            <li>Add Verified Repair Sandbox: select one native Change List, create a hash-bound Scope Passport, and reject textual candidate patches that cross its paths. Candidate generation, independent verification, and IDE patch application remain explicit supervised steps.</li>
-            <li>Add AI Agent Proof Mission: copy a sealed, vendor-neutral working contract into Junie or another coding agent, then route its returned Change List into local Proof Review. The plugin never starts or controls the agent, reads its chat, uploads source, or treats an agent completion claim as approval.</li>
-            <li>Add a dedicated Junie taxonomy and proof-coupled change acknowledgement: FactoryLine is tuned to work with Junie, but Junie is not required. Orient, bind intent and scope, review evidence, challenge risk, and only then hand over a sealed mission. A Junie handoff can now receive a visible, self-declared FactoryLine credit line that validates named tool vocabulary and hashes cited local evidence while retaining unknowns; it is not agent telemetry, a Junie score, proof of private tool calls, or approval. The project pack now exposes a copy-only manifest and an optional read-only <code>factoryline-proof</code> subagent with an explicit tool allowlist; installation remains conflict-safe and confirmation-gated. The optional enterprise, AppForge, SaaS, and delivery routes remain separate from ordinary code review.</li>
-            <li>Add Workspace Load Advisor + Remote/WSL Preflight: bounded local filesystem measurements, generated/dependency directory signals, path-only context, and optional local JSON/Markdown/Mermaid reports without IDE or remote mutation.</li>
-            <li>Add the Verifier Plane: hash-bound worker and independent-verifier receipts, deterministic no-progress review, and a visible Graph Ops verifier lane.</li>
-            <li>Add a concise use-case guide for MVP creation, evidence review, safe proof reuse, and supervised team automation.</li>
-            <li>Add Unified Graph Ops: a local, read-only visual map with one fact-derived next action.</li>
-            <li>Add PRD Grill: a deterministic, source-bound question frontier before PRD optimization, compilation, or scaffolding.</li>
-            <li>Add optional GitHub Proof Review delivery: a neutral, commit-bound local evidence walkthrough that can coexist with CodeRabbit or another AI reviewer without importing vendor credentials or comments as proof.</li>
-            <li>Add Plan-to-Proof Review: a strict, human-approved agent-plan envelope, exact diff alignment, named deep-review routing, and explicit Proof Debt through the local CLI and PR evidence surface.</li>
-            <li>Clarify the optional Prestige Design Review lane for UI-scoped work and its review-only boundary.</li>
-            <li>Add Run First Proof for a zero-configuration local setup check.</li>
-            <li>Clarify the Marketplace name, preview, getting-started flow, and privacy boundary.</li>
-            <li>Keep the stable plugin ID and verified compatibility across eight JetBrains IDEs.</li>
-        </ul>
+<p><strong>1.3.3:</strong> Keep saved workspace files consistent before local commands read disk.</p>
+<ul>
+<li>Flush pending VFS writes on supporting IDEs; block launch when preparation fails.</li>
+<li>Start Studio in the background, keep callbacks on EDT, and clean up failed startup.</li>
+<li>Preserve the 2025.2 baseline. Unsaved editor buffers remain untouched; the local FactoryLine runtime is configured separately.</li>
+</ul>
+<p><a href="https://github.com/zrk222/code-factory/blob/main/editors/intellij/CHANGELOG.md">Earlier release notes</a></p>
     ]]></change-notes>
 
     <depends>com.intellij.modules.platform</depends>
