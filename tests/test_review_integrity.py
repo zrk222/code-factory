@@ -160,7 +160,9 @@ def _inert_registry_source(
     def indent(source, width):
         return textwrap.indent(textwrap.dedent(source).strip(), " " * width)
 
-    return module_prefix + f"""def test_behavior{parameters}:
+    return (
+        module_prefix
+        + f"""def test_behavior{parameters}:
     checks=[]
 {indent(before, 4)}
     def {register_name}({register_parameter}):
@@ -172,6 +174,7 @@ def _inert_registry_source(
 {indent(after, 4)}
 {indent(dispatch, 4)}
 """
+    )
 
 
 def test_bounded_inert_registry_rejects_effects_and_shadowed_bindings():
@@ -5408,12 +5411,14 @@ class AliasModel(Base):
     assert alias_model["columns"][0]["nullable"] is False
     assert alias_model["unique"] == [["title"]]
     module_alias = iq.database_structure(
-        {"module_alias.py": b"""import sqlalchemy as sa
+        {
+            "module_alias.py": b"""import sqlalchemy as sa
 Base = sa.orm.declarative_base()
 class Group(Base):
     __tablename__ = "groups"
     id = sa.Column(sa.Integer, primary_key=True)
-"""},
+"""
+        },
         "postgres",
     )
     assert next(table for table in module_alias["tables"] if table["name"] == "groups")[
@@ -5434,37 +5439,43 @@ accounts = sa.Table("accounts", metadata,
     )
     assert account["models"][0]["source"]["kind"] == "sqlalchemy_core_table"
     untrusted_metadata = iq.database_structure(
-        {"bad_core.py": b"""import sqlalchemy as sa
+        {
+            "bad_core.py": b"""import sqlalchemy as sa
 metadata = sa.MetaData()
 metadata = object()
 users = sa.Table("users", metadata, sa.Column("id", sa.Integer))
-"""},
+"""
+        },
         "postgres",
     )
     assert any("unproven_core_metadata" in gap for gap in untrusted_metadata["gaps"])
     assert not untrusted_metadata["tables"]
 
     shadowed = iq.database_structure(
-        {"shadow.py": b"""from sqlalchemy import Column, Integer
+        {
+            "shadow.py": b"""from sqlalchemy import Column, Integer
 from sqlalchemy.orm import declarative_base
 Base = declarative_base()
 Column = object
 class User(Base):
     __tablename__ = "users"
     id = Column(Integer, primary_key=True)
-"""},
+"""
+        },
         "postgres",
     )
     assert any("unsupported_orm_column" in gap for gap in shadowed["gaps"])
     rebound_base = iq.database_structure(
-        {"base.py": b"""from sqlalchemy import Column, Integer
+        {
+            "base.py": b"""from sqlalchemy import Column, Integer
 from sqlalchemy.orm import declarative_base
 Base = declarative_base()
 Base = object
 class User(Base):
     __tablename__ = "users"
     id = Column(Integer, primary_key=True)
-"""},
+"""
+        },
         "postgres",
     )
     assert any("unproven_orm_declaration" in gap for gap in rebound_base["gaps"])

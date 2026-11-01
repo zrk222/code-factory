@@ -70,6 +70,16 @@ from .finite_capture import (
     _security_store_structural_targets as _security_store_structural_targets,
 )
 
+from .captured_security_audit import (
+    _NATIVE_INPUT_EPOCH_BINDINGS as _NATIVE_INPUT_EPOCH_BINDINGS,
+    _security_request_binary_decode_kind as _security_request_binary_decode_kind,
+    _security_bind_local_native_input_precondition as _security_bind_local_native_input_precondition,
+    _security_local_request_provider_identity_uncertain as _security_local_request_provider_identity_uncertain,
+    _security_shell_call_shape_for_flow as _security_shell_call_shape_for_flow,
+    _security_local_provider_identity_uncertain as _security_local_provider_identity_uncertain,
+    _native_input_inventory_epoch as _captured_input_inventory_epoch,
+)
+
 _valid_source_span = valid_source_span
 source_signature, bind_source_call = _package_source_binding_helpers()
 
@@ -4018,7 +4028,13 @@ def _security_statement_call_findings(
             and getattr(call, "_security_supported_precondition", None) is None
         ):
             _security_bind_local_native_input_precondition(
-                call, canonical, primitive, scope, requests, aliases
+                call,
+                canonical,
+                primitive,
+                scope,
+                requests,
+                aliases,
+                audit=sys.modules[__name__],
             )
             if (
                 primitive.get("code") == "SECURITY_OS_COMMAND"
@@ -4419,122 +4435,6 @@ def _security_request_args(node, aliases, scope=None, flow_statement=None):
     ) or _security_django_request_parameter(node, aliases, scope, flow_statement)
 
 
-_NATIVE_INPUT_EPOCH_BINDINGS = tuple(
-    (module, names.split())
-    for module, names in {
-        "factoryline.semantic_credential_sensor": """
-        _native_input_provider_inventory http_request_payload
-        _http_request_subscript_payload _http_request_call_payload
-        _http_request_attribute_payload _flask_request_body_kind
-        _credential_get_source_key _http_request_mapping
-        _request_mapping_value_unchanged _request_mapping_aliases
-        _request_mapping_mutation _django_http_body_payload
-        _native_request_data_member _new_security_request_alias_memo
-        _security_scope_request_aliases _security_scope_request_aliases_uncached
-        _security_request_alias_module_bindings
-        _security_store_request_alias_bindings
-        supported_security_precondition tls_finding log_security_precondition
-        bind_request_sink_precondition _security_request_sink_slot
-        """,
-        "factoryline.review_integrity": """
-        bind_security_call_scopes _bind_security_scope_node _bind_security_function
-        _bind_security_class _function_annotations _security_scope_local_names
-        _security_scope_nonlocal_names _security_scope_declared_names
-        _security_module_scope _security_apply_import_bindings
-        _security_scope_request_aliases
-        _security_unsafe_flask_file_save _security_upload_path_expression
-        tls_verification_disabled
-        """,
-        "factoryline.audit_log_flow": """
-        audit_log_source_findings
-        """,
-        "factoryline.finite_capture": """
-        finite_provider_mutation_index _provider_mutation_for_node
-        _provider_mutation_facts _record_provider_paths _record_provider_capture
-        _provider_alias_bindings _provider_paths _provider_call_argument
-        _reflective_provider_write _foreign_provider_inputs
-        _foreign_provider_source_mutations _project_provider_inventory
-        """,
-        "factoryline.credential_role_paths": """
-        matches_regenerated_security_precondition valid_security_precondition
-        security_effect_fact_matches logging_consumer_configuration
-        logging_security_effect_witness logging_security_precondition source_span
-        upload_path_expression bind_request_sink_precondition tls_security_finding
-        upload_name_origin upload_join_effect upload_concat_effect source_domain_guarded
-        _upload_filename_domain_kind _upload_guard_dominates
-        _upload_control_path _upload_definition_reaches _upload_receiver_names
-        _upload_prior_field_write _upload_filename_mutated
-        bind_upload_sink_precondition
-        regenerate_security_source_model
-        _logging_configuration _logging_direct_configuration
-        _logging_declared_configuration _logging_active_settings
-        _logging_node_possible _logging_reference _logging_dict_fields
-        _logging_literal _logging_assignment _logging_receiver
-        _logging_receiver_name _logging_receiver_assignments _logging_call_level
-        _logging_logger_route _logging_logger_entry _logging_root_route
-        _logging_plain_handler_routes _logging_plain_handler_route
-        _logging_plain_formatter _logging_route_facts _logging_config_sections
-        _logging_mutation_present _logging_local_mutation_present
-        _logging_filter_provider_uncertain
-        logging_input_value_trace logging_merge_log_flow
-        """,
-        "factoryline.review_audits": """
-        _name _resolved_ast_name _security_aliases _bound_names _binding_name
-        _iter_ast_nodes
-        """,
-        "factoryline.intent_quality": """
-        _security_scope_request_aliases
-        """,
-        "factoryline": """
-        _source_binding_helpers _bind_source_call _source_call_signature
-        """,
-    }.items()
-)
-
-
-def _native_input_inventory_epoch():
-    from importlib import import_module
-    from . import review_audits, intent_quality, semantic_credential_sensor
-    from . import credential_role_paths
-    from . import audit_log_flow
-
-    functions = [
-        getattr(import_module(module), name)
-        for module, names in _NATIVE_INPUT_EPOCH_BINDINGS
-        for name in names
-    ]
-    identity = (
-        tuple(
-            (fn, getattr(fn, "__code__", None), id(getattr(fn, "__defaults__", None)))
-            for fn in functions
-        ),
-        semantic_credential_sensor.SECURITY_EFFECT_WITNESS_SCHEMA,
-        semantic_credential_sensor.SECURITY_EFFECT_CONTRACTS,
-        semantic_credential_sensor._SECURITY_EFFECT_WITNESS_SCHEMA_BASELINE,
-        semantic_credential_sensor._SECURITY_EFFECT_CONTRACTS_BASELINE,
-        tuple(sorted(credential_role_paths._LOG_LEVEL_VALUES.items())),
-        tuple(sorted(credential_role_paths._LOG_STANDARD_HANDLERS)),
-        tuple(
-            (name, fn, getattr(fn, "__code__", None))
-            for name, fn in vars(audit_log_flow._LogReader).items()
-            if callable(fn)
-        ),
-        audit_log_flow._LOGGING_LEVELS,
-        audit_log_flow.log_evidence,
-        ast.dump(semantic_credential_sensor._FLASK_BODY_SIGNATURE),
-        review_audits._FUNCTION_NODES,
-        intent_quality._SECURITY_REQUEST_ALIAS_MEMO,
-        intent_quality._SECURITY_REQUEST_ALIAS_MAX_ENTRIES,
-        intent_quality._SECURITY_REQUEST_ALIAS_MAX_PAIRS,
-        intent_quality._SECURITY_REQUEST_ALIAS_MAX_BYTES,
-    )
-    cached = getattr(_native_input_inventory_epoch, "_cached_epoch", None)
-    if cached is None or cached[0] != identity:
-        cached = (identity, object())
-        _native_input_inventory_epoch._cached_epoch = cached
-    return cached[1]
-
-
 def _security_flow_source_assignment(
     statement,
     aliases,
@@ -4563,7 +4463,7 @@ def _security_flow_source_assignment(
             value, requests, aliases, _security_scope_request_aliases, scope, statement
         )
     binary_decode = _security_request_binary_decode_kind(
-        value, requests, aliases, scope, statement
+        value, requests, aliases, scope, statement, audit=sys.modules[__name__]
     )
     if value_kind is None:
         value_kind = binary_decode
@@ -4620,223 +4520,6 @@ def _security_flow_source_assignment(
     )
     if isinstance(requests, _SecurityFlowState) and structural is not None:
         _security_store_structural_targets(statement, requests.values, structural)
-
-
-def _security_request_binary_decode_kind(value, requests, aliases, scope, statement):
-    """Carry request text through an exact, source-stable base64-to-bytes transform."""
-    if not isinstance(value, ast.Call) or len(value.args) != 1 or value.keywords:
-        return None
-    if any(isinstance(argument, ast.Starred) for argument in value.args):
-        return None
-    if security_call_name(value, aliases) not in {
-        "base64.b64decode",
-        "base64.urlsafe_b64decode",
-    }:
-        return None
-    from .semantic_credential_sensor import (
-        _provider_identity_uncertain,
-        request_payload_value_kind,
-    )
-
-    module = _security_module_scope(scope)
-    if module is None or _provider_identity_uncertain(
-        module, aliases, roots=(security_call_name(value, aliases),)
-    ):
-        return None
-    source = value.args[0]
-    if request_payload_value_kind(
-        source, requests, aliases, _security_scope_request_aliases, scope, statement
-    ) == "text" and _security_expr_tainted(source, requests, set(), aliases):
-        return "bytes"
-    return None
-
-
-def _security_bind_local_native_input_precondition(
-    call, canonical, primitive, scope, requests, aliases
-):
-    """Bind one sink against its own provider identities when unrelated module code is ambiguous."""
-    from .semantic_credential_sensor import (
-        _native_input_request_is_supported,
-        security_precondition_call_shape,
-        security_precondition_path_possible,
-        supported_security_precondition,
-    )
-    from .finite_capture import security_input_value_flow
-
-    eligible = {
-        "SECURITY_DYNAMIC_EXECUTION",
-        "SECURITY_OS_COMMAND",
-        "SECURITY_SHELL_COMMAND",
-        "SECURITY_UNSAFE_DESERIALIZATION",
-        "SECURITY_UNSAFE_YAML",
-    }
-    if primitive.get("code") not in eligible or not call.args:
-        return
-    module = _security_module_scope(scope)
-    if module is None or not (
-        security_precondition_call_shape(call, canonical)
-        or _security_shell_call_shape_for_flow(call, canonical)
-    ):
-        return
-    if not security_precondition_path_possible(call):
-        return
-    if _security_local_request_provider_identity_uncertain(module, aliases):
-        return
-    provider_roots = (
-        ("subprocess",)
-        if canonical.startswith("subprocess.")
-        else ("os.system",)
-        if canonical == "os.system"
-        else ("_pickle",)
-        if canonical.startswith("_pickle.")
-        else ("pickle",)
-        if canonical.startswith("pickle.")
-        else ("dill",)
-        if canonical.startswith("dill.")
-        else ("yaml",)
-        if canonical.startswith("yaml.")
-        else ("builtins",)
-    )
-    if _security_local_provider_identity_uncertain(module, aliases, provider_roots):
-        return
-    supported = getattr(requests, "supported_view", lambda: requests)()
-    if supported is None or not _native_input_request_is_supported(
-        call, canonical, supported, aliases, scope, sys.modules[__name__]
-    ):
-        return
-    premise = supported_security_precondition(call, "untrusted_request", canonical)
-    if trace := security_input_value_flow(call.args[0], supported, aliases):
-        premise["input_value_flow"] = trace
-    call._security_supported_precondition = premise
-
-
-def _security_local_request_provider_identity_uncertain(module, aliases):
-    """Keep request-provider mutations in every captured module as source blockers."""
-    from .review_audits import _security_aliases
-    from .semantic_credential_sensor import (
-        _native_input_inventory_epoch,
-        _native_input_provider_inventory,
-        _provider_identity_uncertain,
-    )
-
-    source_model = getattr(module, "_security_source_model", None)
-    trees = (
-        tuple(source_model.snapshots.values())
-        if source_model is not None
-        else (module,)
-    )
-    for tree in trees:
-        nodes = list(ast.walk(tree))
-        source_aliases = aliases if tree is module else _security_aliases(nodes)
-        inventory = _native_input_provider_inventory(tree, source_aliases, nodes)
-        parents = {
-            id(child): parent
-            for parent in nodes
-            for child in ast.iter_child_nodes(parent)
-        }
-        if _provider_identity_uncertain(
-            tree,
-            source_aliases,
-            roots=("flask.request",),
-            selected_paths=True,
-            nodes=inventory,
-            parents=parents,
-            inventory_projector=_native_input_provider_inventory,
-            inventory_dependencies=_native_input_inventory_epoch(),
-        ):
-            return True
-    return False
-
-
-def _security_shell_call_shape_for_flow(call, canonical):
-    """Allow inert process options around an explicitly enabled shell sink."""
-    if (
-        canonical
-        not in {
-            "subprocess.run",
-            "subprocess.call",
-            "subprocess.check_call",
-            "subprocess.check_output",
-            "subprocess.Popen",
-        }
-        or len(call.args) != 1
-        or isinstance(call.args[0], ast.Starred)
-    ):
-        return False
-    keywords = {item.arg: item.value for item in call.keywords}
-    if (
-        None in keywords
-        or len(keywords) != len(call.keywords)
-        or "shell" not in keywords
-        or not isinstance(keywords["shell"], ast.Constant)
-        or keywords["shell"].value is not True
-    ):
-        return False
-    inert_options = {
-        "shell",
-        "stdin",
-        "stdout",
-        "stderr",
-        "timeout",
-        "check",
-        "cwd",
-        "env",
-        "text",
-        "encoding",
-        "errors",
-        "universal_newlines",
-        "bufsize",
-        "close_fds",
-        "start_new_session",
-        "creationflags",
-    }
-    return set(keywords).issubset(inert_options)
-
-
-def _security_local_provider_identity_uncertain(module, aliases, roots):
-    """Ignore only read-only subprocess stream constants in otherwise exact provider checks."""
-    from types import SimpleNamespace
-    from .finite_capture import finite_provider_mutation_index
-    from .review_audits import _resolved_ast_name
-
-    nodes = list(ast.walk(module))
-    parents = {
-        id(child): parent for parent in nodes for child in ast.iter_child_nodes(parent)
-    }
-    mutations = finite_provider_mutation_index(
-        nodes,
-        aliases,
-        SimpleNamespace(_resolved_ast_name=_resolved_ast_name),
-        parents,
-    )
-    if "subprocess" in roots:
-        inert = set()
-        for node in nodes:
-            if not (
-                isinstance(node, ast.Attribute)
-                and node.attr in {"STDOUT", "PIPE", "DEVNULL"}
-                and isinstance(node.ctx, ast.Load)
-                and _resolve(node, aliases) == f"subprocess.{node.attr}"
-            ):
-                continue
-            keyword = parents.get(id(node))
-            call = (
-                parents.get(id(keyword)) if isinstance(keyword, ast.keyword) else None
-            )
-            if (
-                isinstance(keyword, ast.keyword)
-                and keyword.value is node
-                and keyword.arg in {"stdin", "stdout", "stderr"}
-                and isinstance(call, ast.Call)
-                and security_call_name(call, aliases).startswith("subprocess.")
-            ):
-                inert.add((f"subprocess.{node.attr}", "*"))
-        mutations = [item for item in mutations if item not in inert]
-    return any(
-        path == root or path.startswith(root + ".")
-        for path, _attribute in mutations
-        for root in roots
-    )
 
 
 def _security_call_unshadowed(node, name):
@@ -5205,3 +4888,7 @@ def _finite_eval_binding(finding):
     from .primitive_observation_binding import finite_eval_binding
 
     return finite_eval_binding(finding, sys.modules[__name__])
+
+
+def _native_input_inventory_epoch():
+    return _captured_input_inventory_epoch(_native_input_inventory_epoch)

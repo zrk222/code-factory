@@ -728,6 +728,49 @@ def _finish_security_scan_seal(audit, core, captured):
     return core
 
 
+def _security_scan_verification_state(audit, core, captured, primitive):
+    """Snapshot the complete source, tenant and implementation identity for resealing."""
+    sources = primitive._trusted_core_complete_sources(core, captured, audit)
+    tenant = primitive._trusted_core_tenant_arguments(core, audit)
+    if sources is None or tenant != ((), {}, False):
+        return None
+    fields = (
+        "tenant_read_contract",
+        "oracle_context",
+        "database_context",
+        "provider_analysis_profile",
+        "selected_defect_policy",
+        "audit_coverage",
+    )
+    functions = (
+        "_regenerate_native_findings",
+        "_trusted_core_native_security_rows",
+        "build_finding_tier_report",
+        "_trusted_core_regenerated_tiers",
+        "_trusted_core_complete_sources",
+        "_trusted_core_tenant_arguments",
+        "_trusted_core_surface_matches",
+        "security_defect_policy_decision",
+    )
+    return (
+        sources,
+        tenant,
+        audit._oracle_context_cache_key(
+            Path("."),
+            core["sources"],
+            {k: core.get(k) for k in fields},
+            captured=True,
+        ),
+        tuple(
+            (fn, getattr(fn, "__code__", None))
+            for fn in (
+                audit._security_scan_tree,
+                *(getattr(primitive, k) for k in functions),
+            )
+        ),
+    )
+
+
 def seal_security_scan(
     audit, core: dict[str, Any], *, producer_source_model=None
 ) -> dict[str, Any]:
@@ -737,6 +780,8 @@ def seal_security_scan(
     captured = _prepare_security_scan_sources(core, prior_tier_report)
     from . import primitive_observation_binding as primitive
 
+    state_builder = _security_scan_verification_state
+    state_code = state_builder.__code__
     native_rows = None
     if core.get("selected_defect_policy") in {
         "trusted-core-v1",
@@ -745,46 +790,10 @@ def seal_security_scan(
         "source-role-v3",
     } and prior_state in {"CLEAN", "FINDINGS", "REVIEW_REQUIRED", "BLOCKED"}:
         try:
-            sources = primitive._trusted_core_complete_sources(core, captured, audit)
-            tenant = primitive._trusted_core_tenant_arguments(core, audit)
-            if sources is not None and tenant == ((), {}, False):
-                fields = (
-                    "tenant_read_contract",
-                    "oracle_context",
-                    "database_context",
-                    "provider_analysis_profile",
-                    "selected_defect_policy",
-                    "audit_coverage",
-                )
-                functions = (
-                    "_regenerate_native_findings",
-                    "_trusted_core_native_security_rows",
-                    "build_finding_tier_report",
-                    "_trusted_core_regenerated_tiers",
-                    "_trusted_core_complete_sources",
-                    "_trusted_core_tenant_arguments",
-                    "_trusted_core_surface_matches",
-                    "security_defect_policy_decision",
-                )
-                verified = (
-                    sources,
-                    tenant,
-                    audit._oracle_context_cache_key(
-                        Path("."),
-                        core["sources"],
-                        {k: core.get(k) for k in fields},
-                        captured=True,
-                    ),
-                    tuple(
-                        (fn, getattr(fn, "__code__", None))
-                        for fn in (
-                            audit._security_scan_tree,
-                            *(getattr(primitive, k) for k in functions),
-                        )
-                    ),
-                )
+            verified = state_builder(audit, core, captured, primitive)
+            if verified is not None:
                 native_rows = primitive._trusted_core_native_security_rows(
-                    sources[0], tenant, audit
+                    verified[0][0], verified[1], audit
                 )
                 if (
                     native_rows is not None
@@ -799,24 +808,12 @@ def seal_security_scan(
         core.pop("_primitive_source_bytes", None)
     if native_rows is not None:
         try:
-            current = (
-                primitive._trusted_core_complete_sources(core, captured, audit),
-                primitive._trusted_core_tenant_arguments(core, audit),
-                audit._oracle_context_cache_key(
-                    Path("."),
-                    core["sources"],
-                    {k: core.get(k) for k in fields},
-                    captured=True,
-                ),
-                tuple(
-                    (fn, getattr(fn, "__code__", None))
-                    for fn in (
-                        audit._security_scan_tree,
-                        *(getattr(primitive, k) for k in functions),
-                    )
-                ),
-            )
-            if current != verified:
+            current = state_builder(audit, core, captured, primitive)
+            if (current, _security_scan_verification_state, state_builder.__code__) != (
+                verified,
+                state_builder,
+                state_code,
+            ):
                 native_rows = None
         except Exception:
             native_rows = None
@@ -936,12 +933,9 @@ def security_scan_report(
         core["oracle_context"]["static_pytest_collection"] = deepcopy(
             collection_identity
         )
-    if (
-        collection_identity is not None
-        and collection_identity.get("collection_state") == "UNKNOWN"
-    ):
-        core["oracle_context"]["pytest_collection"] = deepcopy(collection_identity)
-        core["state"] = "INCOMPLETE"
+        if collection_identity.get("collection_state") == "UNKNOWN":
+            core["oracle_context"]["pytest_collection"] = deepcopy(collection_identity)
+            core["state"] = "INCOMPLETE"
     core["source_manifest_sha256"] = audit.sha256(
         json.dumps(
             {

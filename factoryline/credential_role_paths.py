@@ -1041,9 +1041,9 @@ def upload_path_expression(
             ]
         case ast.BinOp(op=ast.Add() | ast.Div(), left=left, right=right):
             arguments = [left, right]
-        case ast.Call(
-            args=args, keywords=keywords
-        ) if not _security_is_proven_secure_filename(node, aliases):
+        case ast.Call(args=args, keywords=keywords) if (
+            not _security_is_proven_secure_filename(node, aliases)
+        ):
             arguments = [*args, *(item.value for item in keywords)]
             upload_join_effect(
                 node, aliases, requests, scope, flow_statement, effect_evidence, seen
@@ -1265,11 +1265,14 @@ def source_domain_guarded(scope, call, source_names, aliases):
 
 def bind_upload_sink_precondition(finding, call, aliases, requests, module):
     """Attach upload-target evidence only for an unguarded, source-bound save path."""
+
     from .review_integrity import (
         _security_flask_upload_expression,
         _security_upload_path_expression,
     )
+
     from .finite_capture import security_input_value_flow
+
     from .semantic_credential_sensor import (
         _SECURITY_EFFECT_CONTRACTS_BASELINE,
         _provider_identity_uncertain,
@@ -1280,18 +1283,26 @@ def bind_upload_sink_precondition(finding, call, aliases, requests, module):
         module, aliases, roots=("werkzeug", "os.path.join")
     ):
         return
+
     requests = getattr(requests, "supported_view", lambda: requests)()
+
     if requests is None:
         finding["facts"]["unresolved_control_flow"] = "unproven_control_edge"
+
         return
+
     destination = (
         call.args[0]
         if call.args
         else next((item.value for item in call.keywords if item.arg == "dst"), None)
     )
+
     evidence = {"sink_line": call.lineno}
+
     evidence["sink_node"] = call
+
     scope = getattr(call, "_security_lexical_scope", None)
+
     path_source = _security_upload_path_expression(
         destination,
         aliases,
@@ -1300,84 +1311,105 @@ def bind_upload_sink_precondition(finding, call, aliases, requests, module):
         getattr(call, "_security_flow_statement", None),
         evidence,
     )
+
     source_names = evidence.get("source_names", set())
-    source_names.update(
-        name
-        for name in (getattr(destination, "id", None),)
-        if path_source
-        if name is not None
-    )
-    path_source = path_source and not _upload_filename_mutated(
-        scope, call, requests, source_names, evidence.get("source_span")
-    )
+
+    if path_source:
+        source_names.update(
+            (name for name in (getattr(destination, "id", None),) if name is not None)
+        )
+
+        path_source = not _upload_filename_mutated(
+            scope, call, requests, source_names, evidence.get("source_span")
+        )
+
     guarded = source_domain_guarded(scope, call, source_names, aliases)
 
-    direct_target = (
-        path_source
-        and not guarded
-        and "path_composition" not in evidence
-        and isinstance(destination, ast.Attribute)
-        and destination.attr == "filename"
-        and _security_flask_upload_expression(
-            destination.value,
-            aliases,
-            scope,
-            getattr(call, "_security_flow_statement", None),
-        )
-        and "source_span" in evidence
-    )
-    composed_target = (
-        path_source
-        and not guarded
-        and {"source_span", "path_composition", "intended_base_span"}.issubset(evidence)
-    )
-    if direct_target or composed_target:
-        contract = _SECURITY_EFFECT_CONTRACTS_BASELINE["SECURITY_PATH_TRAVERSAL"]
-        if direct_target:
-            from collections.abc import Mapping
+    if not all((path_source, not guarded)):
+        return
 
-            variant = contract.get("effect_variants", {}).get("direct_filename")
-            if not isinstance(variant, Mapping):
-                return
-            effect_kind = variant.get("effect_kind")
-            effect_facts = variant.get("effect_facts")
-            if (
-                not isinstance(effect_kind, str)
-                or not isinstance(effect_facts, Mapping)
-                or effect_facts.get("path_composition") != "direct_filename"
-                or effect_facts.get("intended_base_span") is not None
+    direct_target = "path_composition" not in evidence
+
+    if direct_target:
+        match destination:
+            case ast.Attribute(attr="filename", value=upload) if (
+                _security_flask_upload_expression(
+                    upload,
+                    aliases,
+                    scope,
+                    getattr(call, "_security_flow_statement", None),
+                )
             ):
+                pass
+
+            case _:
                 return
-            witness = {
-                "effect_kind": effect_kind,
-                "source_span": evidence["source_span"],
-                "effect_facts": dict(effect_facts),
-            }
-        else:
-            witness = {
-                "effect_kind": contract["effect_kind"],
-                "source_span": evidence["source_span"],
-                "effect_facts": {
-                    "provider_id": "werkzeug.FileStorage.save",
-                    "path_composition": evidence["path_composition"],
-                    "destination_relation": "escape_capable",
-                    "normalized_counterexample_relation": "outside_intended_base",
-                    "normalization_profile": "python_os_path",
-                    "intended_base_span": evidence["intended_base_span"],
-                },
-            }
-        premise = supported_security_precondition(
-            call, contract["source_role"], contract["consumer_role"], witness
-        )
-        premise["input_slot_span"] = [
-            destination.lineno,
-            destination.col_offset,
-            destination.end_lineno,
-            destination.end_col_offset,
-        ]
-        if trace := security_input_value_flow(destination, requests, aliases):
-            premise["input_value_flow"] = trace
-        finding["facts"]["security_precondition"] = premise
+
+    required_fields = {
+        True: {"source_span"},
+        False: {"source_span", "path_composition", "intended_base_span"},
+    }[direct_target]
+
+    if not required_fields.issubset(evidence):
+        return
+
+    contract = _SECURITY_EFFECT_CONTRACTS_BASELINE["SECURITY_PATH_TRAVERSAL"]
+
+    if direct_target:
+        from collections.abc import Mapping
+
+        variant = contract.get("effect_variants", {}).get("direct_filename")
+
+        match variant:
+            case {
+                "effect_kind": str() as effect_kind,
+                "effect_facts": Mapping() as effect_facts,
+            } if (
+                effect_facts.get("path_composition"),
+                effect_facts.get("intended_base_span"),
+            ) == ("direct_filename", None):
+                pass
+
+            case _:
+                return
+
+        witness = {
+            "effect_kind": effect_kind,
+            "source_span": evidence["source_span"],
+            "effect_facts": dict(effect_facts),
+        }
+
+    else:
+        witness = {
+            "effect_kind": contract["effect_kind"],
+            "source_span": evidence["source_span"],
+            "effect_facts": {
+                "provider_id": "werkzeug.FileStorage.save",
+                "path_composition": evidence["path_composition"],
+                "destination_relation": "escape_capable",
+                "normalized_counterexample_relation": "outside_intended_base",
+                "normalization_profile": "python_os_path",
+                "intended_base_span": evidence["intended_base_span"],
+            },
+        }
+
+    premise = supported_security_precondition(
+        call, contract["source_role"], contract["consumer_role"], witness
+    )
+
+    premise["input_slot_span"] = [
+        destination.lineno,
+        destination.col_offset,
+        destination.end_lineno,
+        destination.end_col_offset,
+    ]
+
+    trace = security_input_value_flow(destination, requests, aliases)
+
+    premise.update({"input_value_flow": trace} if trace else {})
+
+    finding["facts"]["security_precondition"] = premise
+
     return
 
 
@@ -1448,106 +1480,103 @@ def bind_request_sink_precondition(
     )
     from .review_integrity import (
         _security_module_scope,
+        _security_expr_tainted,
     )
     from .finite_capture import security_input_value_flow
 
     module = _security_module_scope(getattr(call, "_security_lexical_scope", None))
-    if (
-        module is None
-        or not security_precondition_path_possible(call)
-    ):
+    if module is None or not security_precondition_path_possible(call):
         return
-    if (
-        finding.get("code") == "SECURITY_PATH_TRAVERSAL"
-        and finding.get("facts", {}).get("call") == "flask.FileStorage.save"
-    ):
-        return bind_upload_sink_precondition(finding, call, aliases, requests, module)
-    if finding.get("code") == "SECURITY_SQL_INJECTION":
-        # Reuse the exact source-to-sink predicate that emitted the raw SQL
-        # finding. The older admission projection separately required a closed
-        # local cursor constructor and lost valid framework/helper-backed
-        # connections even when that predicate had already proven the sink.
-        from .review_integrity import (
-            _security_unsafe_sql,
-            security_call_name,
-        )
-        from .intent_quality import sql_statement_argument
+    match finding.get("code"):
+        case "SECURITY_PATH_TRAVERSAL" if (
+            finding.get("facts", {}).get("call") == "flask.FileStorage.save"
+        ):
+            return bind_upload_sink_precondition(
+                finding, call, aliases, requests, module
+            )
+        case "SECURITY_SQL_INJECTION":
+            # Reuse the exact source-to-sink predicate that emitted the raw SQL
+            # finding. The older admission projection separately required a closed
+            # local cursor constructor and lost valid framework/helper-backed
+            # connections even when that predicate had already proven the sink.
+            from .review_integrity import (
+                _security_unsafe_sql,
+                security_call_name,
+            )
+            from .intent_quality import sql_statement_argument
 
-        canonical = security_call_name(call, aliases)
-        driver = _security_unsafe_sql(
-            call,
-            canonical,
-            set(),
-            requests,
-            aliases,
-            connections,
-            cursors,
-            helpers,
-        )
-        if not driver:
-            return
-        argument = sql_statement_argument(
-            call, driver, aliases, security_call_name
-        )
-        if argument is None:
-            return
-        provider_roots = (driver,)
-    else:
-        selected = _security_request_sink_slot(
-            finding, call, aliases, requests, connections, cursors, helpers
-        )
-        if selected is None:
-            return
-        argument, provider_roots = selected
-    if _provider_identity_uncertain(module, aliases, roots=provider_roots):
+            canonical = security_call_name(call, aliases)
+            driver = _security_unsafe_sql(
+                call,
+                canonical,
+                set(),
+                requests,
+                aliases,
+                connections,
+                cursors,
+                helpers,
+            )
+            if (
+                not driver
+                or (
+                    argument := sql_statement_argument(
+                        call, driver, aliases, security_call_name
+                    )
+                )
+                is None
+            ):
+                return
+            selected = (argument, (driver,))
+        case _:
+            selected = _security_request_sink_slot(
+                finding, call, aliases, requests, connections, cursors, helpers
+            )
+    if selected is None or _provider_identity_uncertain(
+        module, aliases, roots=selected[1]
+    ):
         return
+    argument, provider_roots = selected
     requests = getattr(requests, "supported_view", lambda: requests)()
-    if requests is None:
-        finding["facts"]["unresolved_control_flow"] = "unproven_control_edge"
-        return
+    match requests:
+        case None:
+            finding["facts"]["unresolved_control_flow"] = "unproven_control_edge"
+            return
     trace = security_input_value_flow(argument, requests, aliases)
     match trace:
-        case dict({"value_kind": "text"}):
-            pass
-        case _:
-            return
-    if finding.get("code") == "SECURITY_SSRF":
-        from .review_integrity import _security_expr_tainted
-
-        if (
-            request_url_destination_control(
-                argument, requests, aliases, _security_expr_tainted
+        case dict() if trace.get("value_kind") == "text":
+            match finding.get("code"):
+                case "SECURITY_SSRF" if (
+                    request_url_destination_control(
+                        argument, requests, aliases, _security_expr_tainted
+                    )
+                    != "authority_controlled"
+                ):
+                    match (argument, trace.get("steps")):
+                        case (ast.Name(), list() as steps) if (
+                            operations := [
+                                step.get("operation")
+                                if isinstance(step, dict)
+                                else None
+                                for step in steps
+                            ]
+                        ).count("REQUEST_SOURCE") == 1 and all(
+                            operation in {"REQUEST_SOURCE", "ALIAS_USE"}
+                            for operation in operations
+                        ):
+                            pass
+                        case _:
+                            return
+            premise = supported_security_precondition(
+                call, "untrusted_request", finding["facts"]["call"]
             )
-            != "authority_controlled"
-        ):
-            steps = trace.get("steps")
-            source_alias_trace = (
-                isinstance(argument, ast.Name)
-                and isinstance(steps, list)
-                and sum(
-                    isinstance(step, dict) and step.get("operation") == "REQUEST_SOURCE"
-                    for step in steps
-                )
-                == 1
-                and all(
-                    isinstance(step, dict)
-                    and step.get("operation") in {"REQUEST_SOURCE", "ALIAS_USE"}
-                    for step in steps
-                )
-            )
-            if not source_alias_trace:
-                return
-    premise = supported_security_precondition(
-        call, "untrusted_request", finding["facts"]["call"]
-    )
-    premise["input_slot_span"] = [
-        argument.lineno,
-        argument.col_offset,
-        argument.end_lineno,
-        argument.end_col_offset,
-    ]
-    premise["input_value_flow"] = trace
-    finding["facts"]["security_precondition"] = premise
+            premise["input_slot_span"] = [
+                argument.lineno,
+                argument.col_offset,
+                argument.end_lineno,
+                argument.end_col_offset,
+            ]
+            premise["input_value_flow"] = trace
+            finding["facts"]["security_precondition"] = premise
 
 
 def bind_staged_command_activation_precondition(finding, call, aliases):
@@ -1566,17 +1595,18 @@ def bind_staged_command_activation_precondition(finding, call, aliases):
 
     module, index, source_path = _security_helper_source_context(call, None)
     scope = getattr(call, "_security_lexical_scope", None)
-    if (
-        module is None
-        or index is None
-        or source_path is None
-        or not isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef))
-        or security_call_name(call, aliases) != "os.system"
-        or len(call.args) != 1
-        or call.keywords
-        or not security_precondition_path_possible(call)
-        or not index.validate(source_path)
+    if any(item is None for item in (module, index, source_path)) or not isinstance(
+        scope, (ast.FunctionDef, ast.AsyncFunctionDef)
     ):
+        return
+    match security_call_name(call, aliases):
+        case "os.system":
+            pass
+        case _:
+            return
+    if not all((len(call.args) == 1, not call.keywords)):
+        return
+    if not security_precondition_path_possible(call) or not index.validate(source_path):
         return
     if _staged_provider_identity_uncertain(
         index,
@@ -1590,14 +1620,18 @@ def bind_staged_command_activation_precondition(finding, call, aliases):
     ):
         return
     activation = _staged_command_file_path(call.args[0])
-    if activation is None:
-        return
+    match activation:
+        case None:
+            return
     activation_root, basename = activation
-    if _staged_configuration_root_is_mutated(index, module, activation_root):
-        return
     body = scope.body
     sink_statement = getattr(call, "_security_flow_statement", None)
-    if sink_statement not in body:
+    if any(
+        (
+            _staged_configuration_root_is_mutated(index, module, activation_root),
+            sink_statement not in body,
+        )
+    ):
         return
     sink_index = body.index(sink_statement)
     source_index = index
@@ -1607,114 +1641,97 @@ def bind_staged_command_activation_precondition(finding, call, aliases):
         for parent in ast.walk(model_tree)
         for child in ast.iter_child_nodes(parent)
     }
-    for write_call in ast.walk(scope):
-        if not (
-            isinstance(write_call, ast.Call)
-            and isinstance(write_call.func, ast.Attribute)
-            and write_call.func.attr == "write"
-            and len(write_call.args) == 1
-            and not write_call.keywords
-        ):
-            continue
-        open_call = write_call.func.value
-        if not (
-            isinstance(open_call, ast.Call)
-            and security_call_name(open_call, aliases) == "codecs.open"
-            and len(open_call.args) >= 2
-            and isinstance(open_call.args[1], ast.Constant)
-            and open_call.args[1].value == "w"
-        ):
-            continue
-        staged_root = _crontab_write_root(open_call.args[0], basename)
-        if staged_root is None or ast.dump(staged_root) != ast.dump(activation_root):
-            continue
-        write_statement = getattr(write_call, "_security_flow_statement", None)
-        if write_statement not in body or body.index(write_statement) >= sink_index:
-            continue
-        content_name = _staged_written_name(write_call.args[0])
-        if content_name is None or _staged_file_written_again(
-            scope,
-            write_call,
-            aliases,
-            activation_root,
-            basename,
-            body,
-            sink_index,
-        ):
-            continue
-        for content_statement in body[: body.index(write_statement)]:
-            if not isinstance(content_statement, (ast.Assign, ast.AnnAssign)):
-                continue
-            value = getattr(content_statement, "value", None)
-            targets = (
-                content_statement.targets
-                if isinstance(content_statement, ast.Assign)
-                else [content_statement.target]
-            )
-            names = {item.id for item in targets if isinstance(item, ast.Name)}
-            if content_name not in names or not isinstance(value, ast.AST):
-                continue
-            later_writes = any(
-                isinstance(item, (ast.Assign, ast.AnnAssign, ast.AugAssign, ast.Delete))
-                and bool(_bound_names(item).intersection(names))
-                for later_statement in body[
-                    body.index(content_statement) + 1 : body.index(write_statement)
-                ]
-                for item in ast.walk(later_statement)
-            )
-            if later_writes:
-                continue
-            source = _staged_model_activation_source(
-                value,
-                source_path,
-                model_tree,
-                parent_map,
-                source_index,
-            )
-            if source is None:
-                continue
-            premise = supported_security_precondition(
-                call, "untrusted_input", "staged_command_file_activation"
-            )
-            premise["staged_write_activation"] = {
-                "schema": "factory.security.staged-command-activation.v1",
-                "source_path": source["source_path"],
-                "source_sha256": source["source_sha256"],
-                "field_span": source["field_span"],
-                "field_name": source["field_name"],
-                "query_span": source["query_span"],
-                "content_span": [
-                    content_statement.lineno,
-                    content_statement.col_offset,
-                    content_statement.end_lineno,
-                    content_statement.end_col_offset,
-                ],
-                "write_span": [
-                    write_call.lineno,
-                    write_call.col_offset,
-                    write_call.end_lineno,
-                    write_call.end_col_offset,
-                ],
-                "file_path_span": [
-                    open_call.args[0].lineno,
-                    open_call.args[0].col_offset,
-                    open_call.args[0].end_lineno,
-                    open_call.args[0].end_col_offset,
-                ],
-                "activation_span": [
-                    call.lineno,
-                    call.col_offset,
-                    call.end_lineno,
-                    call.end_col_offset,
-                ],
-                "admin_path": source["admin_path"],
-                "admin_sha256": source["admin_sha256"],
-                "admin_registration_span": source["admin_registration_span"],
-                "activated_file": basename,
+    for write_call, open_call, content_statement, source in (
+        (node, open_call, statement, source)
+        for node in ast.walk(scope)
+        if isinstance(node, ast.Call)
+        if isinstance(node.func, ast.Attribute)
+        if node.func.attr == "write"
+        if len(node.args) == 1
+        if not node.keywords
+        if isinstance((open_call := node.func.value), ast.Call)
+        if security_call_name(open_call, aliases) == "codecs.open"
+        if len(open_call.args) >= 2
+        if isinstance(open_call.args[1], ast.Constant)
+        if open_call.args[1].value == "w"
+        if (staged_root := _crontab_write_root(open_call.args[0], basename)) is not None
+        if ast.dump(staged_root) == ast.dump(activation_root)
+        if (write_statement := getattr(node, "_security_flow_statement", None)) in body
+        if body.index(write_statement) < sink_index
+        if (content_name := _staged_written_name(node.args[0])) is not None
+        if not _staged_file_written_again(
+            scope, node, aliases, activation_root, basename, body, sink_index
+        )
+        for statement in body[: body.index(write_statement)]
+        if isinstance(statement, (ast.Assign, ast.AnnAssign))
+        if content_name
+        in (
+            names := {
+                item.id
+                for item in getattr(
+                    statement, "targets", [getattr(statement, "target", None)]
+                )
+                if isinstance(item, ast.Name)
             }
-            call._security_supported_precondition = premise
-            finding["facts"]["security_precondition"] = premise
-            return
+        )
+        if isinstance((value := getattr(statement, "value", None)), ast.AST)
+        if not any(
+            _bound_names(item).intersection(names)
+            for later_statement in body[
+                body.index(statement) + 1 : body.index(write_statement)
+            ]
+            for item in ast.walk(later_statement)
+            if isinstance(item, (ast.Assign, ast.AnnAssign, ast.AugAssign, ast.Delete))
+        )
+        if (
+            source := _staged_model_activation_source(
+                value, source_path, model_tree, parent_map, source_index
+            )
+        )
+        is not None
+    ):
+        premise = supported_security_precondition(
+            call, "untrusted_input", "staged_command_file_activation"
+        )
+        premise["staged_write_activation"] = {
+            "schema": "factory.security.staged-command-activation.v1",
+            "source_path": source["source_path"],
+            "source_sha256": source["source_sha256"],
+            "field_span": source["field_span"],
+            "field_name": source["field_name"],
+            "query_span": source["query_span"],
+            "content_span": [
+                content_statement.lineno,
+                content_statement.col_offset,
+                content_statement.end_lineno,
+                content_statement.end_col_offset,
+            ],
+            "write_span": [
+                write_call.lineno,
+                write_call.col_offset,
+                write_call.end_lineno,
+                write_call.end_col_offset,
+            ],
+            "file_path_span": [
+                open_call.args[0].lineno,
+                open_call.args[0].col_offset,
+                open_call.args[0].end_lineno,
+                open_call.args[0].end_col_offset,
+            ],
+            "activation_span": [
+                call.lineno,
+                call.col_offset,
+                call.end_lineno,
+                call.end_col_offset,
+            ],
+            "admin_path": source["admin_path"],
+            "admin_sha256": source["admin_sha256"],
+            "admin_registration_span": source["admin_registration_span"],
+            "activated_file": basename,
+        }
+        call._security_supported_precondition = premise
+        finding["facts"]["security_precondition"] = premise
+        return
 
 
 def _staged_provider_identity_uncertain(source_index, roots):
@@ -1737,13 +1754,17 @@ def _staged_written_name(expression):
         return expression.id
     if not isinstance(expression, ast.BinOp) or not isinstance(expression.op, ast.Add):
         return None
-    if isinstance(expression.left, ast.Name) and isinstance(
-        expression.right, ast.Constant
-    ) and isinstance(expression.right.value, str):
+    if (
+        isinstance(expression.left, ast.Name)
+        and isinstance(expression.right, ast.Constant)
+        and isinstance(expression.right.value, str)
+    ):
         return expression.left.id
-    if isinstance(expression.right, ast.Name) and isinstance(
-        expression.left, ast.Constant
-    ) and isinstance(expression.left.value, str):
+    if (
+        isinstance(expression.right, ast.Name)
+        and isinstance(expression.left, ast.Constant)
+        and isinstance(expression.left.value, str)
+    ):
         return expression.right.id
     return None
 
@@ -1768,9 +1789,7 @@ def _staged_file_written_again(
         statement = getattr(candidate, "_security_flow_statement", None)
         if statement not in body or body.index(statement) >= sink_index:
             continue
-        candidate_root = _crontab_write_root(
-            candidate.func.value.args[0], basename
-        )
+        candidate_root = _crontab_write_root(candidate.func.value.args[0], basename)
         if candidate_root is None or ast.dump(candidate_root) != ast.dump(root):
             continue
         if statement is not selected_statement:
@@ -1781,7 +1800,6 @@ def _staged_file_written_again(
 def _staged_configuration_root_is_mutated(source_index, module, expression):
     from .review_audits import _security_aliases
     from .review_integrity import _resolve
-    from .credential_role_constructor_provider import binding_occurrences
 
     aliases = _security_aliases(list(ast.walk(module)))
     if not isinstance(expression, ast.Attribute):
@@ -1797,9 +1815,7 @@ def _staged_configuration_root_is_mutated(source_index, module, expression):
     for tree in source_index.snapshots.values():
         aliases = _security_aliases(list(ast.walk(tree)))
         settings_names = {
-            name
-            for name, target in aliases.items()
-            if target == "django.conf.settings"
+            name for name, target in aliases.items() if target == "django.conf.settings"
         }
         if any(
             not _staged_settings_binding_is_unique(tree, name)
@@ -1816,9 +1832,11 @@ def _staged_configuration_root_is_mutated(source_index, module, expression):
         if any(
             isinstance(node, ast.Call)
             and any(
-                isinstance(argument, ast.Name)
-                and _resolve(argument, aliases) == owner
-                for argument in [*node.args, *(keyword.value for keyword in node.keywords)]
+                isinstance(argument, ast.Name) and _resolve(argument, aliases) == owner
+                for argument in [
+                    *node.args,
+                    *(keyword.value for keyword in node.keywords),
+                ]
             )
             for node in ast.walk(tree)
         ):
@@ -1870,8 +1888,10 @@ def _staged_command_file_path(expression):
     ):
         return None
     command, activated_file = expression.left.value.split("%s", 1)
-    if not command.strip() or not activated_file or any(
-        marker in activated_file for marker in ("%", " ", "\\", "/")
+    if (
+        not command.strip()
+        or not activated_file
+        or any(marker in activated_file for marker in ("%", " ", "\\", "/"))
     ):
         return None
     return expression.right, activated_file
@@ -1901,22 +1921,26 @@ def _staged_model_activation_source(
         source_index.root / model_path
     ):
         return None
-    for comprehension in ast.walk(value):
-        if not isinstance(comprehension, (ast.ListComp, ast.GeneratorExp)):
-            continue
-        for generator in comprehension.generators:
-            if not (
-                isinstance(generator.target, ast.Name)
-                and isinstance(generator.iter, ast.Call)
-                and isinstance(generator.iter.func, ast.Attribute)
-                and generator.iter.func.attr == "all"
-                and not generator.iter.args
-                and not generator.iter.keywords
-                and isinstance(generator.iter.func.value, ast.Attribute)
-                and generator.iter.func.value.attr == "objects"
-                and isinstance(generator.iter.func.value.value, ast.Name)
-            ):
-                continue
+    for comprehension in (
+        node
+        for node in ast.walk(value)
+        if isinstance(node, (ast.ListComp, ast.GeneratorExp))
+    ):
+        for generator in (
+            item
+            for item in comprehension.generators
+            if (
+                isinstance(item.target, ast.Name)
+                and isinstance(item.iter, ast.Call)
+                and isinstance(item.iter.func, ast.Attribute)
+                and item.iter.func.attr == "all"
+                and not item.iter.args
+                and not item.iter.keywords
+                and isinstance(item.iter.func.value, ast.Attribute)
+                and item.iter.func.value.attr == "objects"
+                and isinstance(item.iter.func.value.value, ast.Name)
+            )
+        ):
             model_name = generator.iter.func.value.value.id
             direct_field_reads = [
                 node
@@ -1926,8 +1950,6 @@ def _staged_model_activation_source(
                 and node.value.id == generator.target.id
             ]
             direct_field_names = {node.attr for node in direct_field_reads}
-            if not direct_field_names:
-                continue
             model_class = next(
                 (
                     node
@@ -1937,69 +1959,81 @@ def _staged_model_activation_source(
                 None,
             )
             if (
-                model_class is None
+                not direct_field_names
+                or model_class is None
                 or model_class.decorator_list
                 or model_class.keywords
                 or len(model_class.bases) != 1
                 or not _staged_class_binding_is_final(
                     model_tree, model_name, model_class
                 )
+                or not isinstance(model_base := model_class.bases[0], ast.Name)
+                or _staged_external_symbol(
+                    model_tree, model_base.id, "django.db.models"
+                )
+                != "Model"
             ):
-                continue
-            model_base = model_class.bases[0]
-            if not isinstance(model_base, ast.Name) or _staged_external_symbol(
-                model_tree, model_base.id, "django.db.models"
-            ) != "Model":
                 continue
             field_candidates = []
             for field_name in direct_field_names:
                 field_bindings = binding_occurrences(model_class.body, field_name)
                 for bound in field_bindings:
                     field = parents.get(id(bound))
-                    if _staged_provider_identity_uncertain(
-                        source_index,
-                        (f"{model_name}.{field_name}",),
-                    ):
-                        continue
-                    if not (
-                        isinstance(field, (ast.Assign, ast.AnnAssign))
-                        and isinstance(field.value, ast.Call)
-                        and isinstance(field.value.func, ast.Name)
-                        and _staged_external_symbol(
-                            model_tree, field.value.func.id, "django.db.models"
+                    if (
+                        not _staged_provider_identity_uncertain(
+                            source_index,
+                            (f"{model_name}.{field_name}",),
                         )
-                        in {"CharField", "TextField"}
-                        and not any(
-                            keyword.arg == "editable"
-                            and isinstance(keyword.value, ast.Constant)
-                            and keyword.value.value is False
-                            for keyword in field.value.keywords
+                        and (
+                            isinstance(field, (ast.Assign, ast.AnnAssign))
+                            and isinstance(field.value, ast.Call)
+                            and isinstance(field.value.func, ast.Name)
+                            and _staged_external_symbol(
+                                model_tree, field.value.func.id, "django.db.models"
+                            )
+                            in {"CharField", "TextField"}
+                            and not any(
+                                keyword.arg == "editable"
+                                and isinstance(keyword.value, ast.Constant)
+                                and keyword.value.value is False
+                                for keyword in field.value.keywords
+                            )
+                            and len(field_bindings) == 1
                         )
-                        and len(field_bindings) == 1
-                    ):
-                        continue
-                    if _staged_string_contains_raw_field(
-                        comprehension.elt, generator.target.id, field_name
+                        and _staged_string_contains_raw_field(
+                            comprehension.elt, generator.target.id, field_name
+                        )
                     ):
                         field_candidates.append((field_name, field))
             if not field_candidates:
                 continue
             field_name, field = field_candidates[0]
-            if _staged_model_identity_mutated(
-                source_index, model_name, field_name
+            if (
+                _staged_model_identity_mutated(source_index, model_name, field_name)
+                or (
+                    admin := _staged_admin_registration(
+                        source_index, model_path, model_name
+                    )
+                )
+                is None
             ):
-                continue
-            admin = _staged_admin_registration(
-                source_index, model_path, model_name
-            )
-            if admin is None:
                 continue
             return {
                 "source_path": model_path,
                 "source_sha256": source_index.inventory[source_index.root / model_path],
                 "field_name": field_name,
-                "field_span": [field.lineno, field.col_offset, field.end_lineno, field.end_col_offset],
-                "query_span": [generator.iter.lineno, generator.iter.col_offset, generator.iter.end_lineno, generator.iter.end_col_offset],
+                "field_span": [
+                    field.lineno,
+                    field.col_offset,
+                    field.end_lineno,
+                    field.end_col_offset,
+                ],
+                "query_span": [
+                    generator.iter.lineno,
+                    generator.iter.col_offset,
+                    generator.iter.end_lineno,
+                    generator.iter.end_col_offset,
+                ],
                 "admin_path": admin[0],
                 "admin_sha256": admin[1],
                 "admin_registration_span": admin[2],
@@ -2024,8 +2058,10 @@ def _staged_external_symbol(tree, local_name, module_name):
         (
             local_name if item.name == "*" else item.name
             for item in statement.names
-            if item.name == "*" and local_name in allowed
-            or item.name in allowed and (item.asname or item.name) == local_name
+            if item.name == "*"
+            and local_name in allowed
+            or item.name in allowed
+            and (item.asname or item.name) == local_name
         ),
         None,
     )
@@ -2142,7 +2178,12 @@ def _staged_admin_registration(source_index, model_path, model_name):
                     return (
                         source_index.relative(path),
                         source_index.inventory[path],
-                        [call.lineno, call.col_offset, call.end_lineno, call.end_col_offset],
+                        [
+                            call.lineno,
+                            call.col_offset,
+                            call.end_lineno,
+                            call.end_col_offset,
+                        ],
                     )
     return None
 
@@ -2154,7 +2195,9 @@ def _staged_import_binds_exact_model(
     from .credential_role_constructor_provider import binding_occurrences
 
     admin_module = PurePosixPath(source_index.relative(admin_path)).with_suffix("")
-    target_module = PurePosixPath(model_path).with_suffix("").as_posix().replace("/", ".")
+    target_module = (
+        PurePosixPath(model_path).with_suffix("").as_posix().replace("/", ".")
+    )
     occurrences = binding_occurrences(tree.body, local_name)
     if len(occurrences) != 1 or not isinstance(occurrences[0], ast.ImportFrom):
         return False
@@ -2163,9 +2206,7 @@ def _staged_import_binds_exact_model(
     if statement.level:
         prefix = parent_parts[: max(0, len(parent_parts) - statement.level + 1)]
         imported_module = ".".join(
-            part
-            for part in (*prefix, *((statement.module or "").split(".")))
-            if part
+            part for part in (*prefix, *((statement.module or "").split("."))) if part
         )
     else:
         imported_module = statement.module or ""
@@ -2558,13 +2599,14 @@ def security_effect_fact_matches(
     from pathlib import PurePosixPath
     from .primitive_observation_binding import valid_source_span
 
-    if (
-        allow_missing_activation
-        and key in {"activation_path", "activation_sha256", "activation_span"}
-        and value is None
-        and expected is None
-    ):
-        return True
+    if allow_missing_activation:
+        if all(
+            (
+                key in {"activation_path", "activation_sha256", "activation_span"},
+                value is expected is None,
+            )
+        ):
+            return True
     if expected is not None:
         return value in expected if isinstance(expected, tuple) else value == expected
     if key.endswith("_span"):
@@ -2577,7 +2619,7 @@ def security_effect_fact_matches(
         return re.fullmatch(r"[0-9a-f]{64}", value) is not None
     if key.endswith("_path"):
         path = PurePosixPath(value)
-        return not (path.is_absolute() or ".." in path.parts or "\\" in value)
+        return all((not path.is_absolute(), ".." not in path.parts, "\\" not in value))
     return True
 
 
@@ -2586,10 +2628,13 @@ def valid_security_precondition(premise, finding, *, require_effect_witness=Fals
     from collections.abc import Mapping
     from .primitive_observation_binding import valid_source_span
 
-    if not isinstance(premise, dict) or tuple(
-        map(type, (finding.get("line"), finding.get("column", 0)))
-    ) != (int, int):
-        return False
+    match (premise, finding):
+        case [dict(), _] if tuple(
+            map(type, (finding.get("line"), finding.get("column", 0)))
+        ) == (int, int):
+            pass
+        case _:
+            return False
     from . import semantic_credential_sensor as sensors
 
     match premise:
@@ -2602,130 +2647,107 @@ def valid_security_precondition(premise, finding, *, require_effect_witness=Fals
             "sink_span": list() as sink_span,
             "source_role": source_role,
             "consumer_role": consumer_role,
-        }:
+        } if all(
+            (
+                (
+                    sensors.SECURITY_EFFECT_WITNESS_SCHEMA,
+                    id(sensors.SECURITY_EFFECT_CONTRACTS),
+                )
+                == (
+                    sensors._SECURITY_EFFECT_WITNESS_SCHEMA_BASELINE,
+                    id(sensors._SECURITY_EFFECT_CONTRACTS_BASELINE),
+                ),
+                valid_source_span(sink_span),
+                sink_span[:2] == [finding.get("line"), finding.get("column", 0)],
+            )
+        ):
             pass
         case _:
             return False
-    if (
-        (
-            sensors.SECURITY_EFFECT_WITNESS_SCHEMA,
-            id(sensors.SECURITY_EFFECT_CONTRACTS),
-        )
-        != (
-            sensors._SECURITY_EFFECT_WITNESS_SCHEMA_BASELINE,
-            id(sensors._SECURITY_EFFECT_CONTRACTS_BASELINE),
-        )
-        or not valid_source_span(sink_span)
-        or sink_span[:2] != [finding.get("line"), finding.get("column", 0)]
-    ):
-        return False
     code = finding.get("code")
     finding_facts = finding.get("facts", {})
     finding_facts = finding_facts if isinstance(finding_facts, dict) else {}
     contract = sensors.SECURITY_EFFECT_CONTRACTS.get(code)
-    match code, finding_facts.get("call"):
-        case "SECURITY_PATH_TRAVERSAL", call if call != "flask.FileStorage.save":
-            contract = None
+    call_name = finding_facts.get("call")
+    contract = (contract, None)[
+        code == "SECURITY_PATH_TRAVERSAL" and call_name != "flask.FileStorage.save"
+    ]
     if "effect_witness" not in premise:
+        staged = premise.get("staged_write_activation")
+        staged_rules = {
+            "schema": "factory.security.staged-command-activation.v1",
+            "source_path": None,
+            "source_sha256": None,
+            "field_span": None,
+            "field_name": None,
+            "query_span": None,
+            "content_span": None,
+            "write_span": None,
+            "file_path_span": None,
+            "activation_span": None,
+            "admin_path": None,
+            "admin_sha256": None,
+            "admin_registration_span": None,
+            "activated_file": None,
+        }
         if "staged_write_activation" in premise:
-            staged = premise["staged_write_activation"]
-            import re
-
-            staged_fields = {
-                "schema",
-                "source_path",
-                "source_sha256",
-                "field_span",
-                "field_name",
-                "query_span",
-                "content_span",
-                "write_span",
-                "file_path_span",
-                "activation_span",
-                "admin_path",
-                "admin_sha256",
-                "admin_registration_span",
-                "activated_file",
-            }
-            if (
-                code != "SECURITY_OS_COMMAND"
-                or source_role != "untrusted_input"
-                or consumer_role != "staged_command_file_activation"
-                or not isinstance(staged, dict)
-                or set(staged) != staged_fields
-                or staged.get("schema")
-                != "factory.security.staged-command-activation.v1"
-                or not isinstance(staged.get("field_name"), str)
-                or not staged["field_name"].isidentifier()
-                or not isinstance(staged.get("activated_file"), str)
-                or not staged["activated_file"]
-                or any(
-                    marker in staged["activated_file"]
-                    for marker in ("/", "\\", "%", " ")
-                )
-                or any(
-                    not valid_source_span(staged.get(key))
-                    for key in (
-                        "field_span",
-                        "query_span",
-                        "content_span",
-                        "write_span",
-                        "file_path_span",
-                        "activation_span",
-                        "admin_registration_span",
-                    )
-                )
-                or staged["activation_span"] != sink_span
-                or any(
-                    not isinstance(staged.get(key), str)
-                    or not re.fullmatch(r"[0-9a-f]{64}", staged[key])
-                    for key in ("source_sha256", "admin_sha256")
-                )
-                or any(
-                    not isinstance(staged.get(key), str)
-                    or not staged[key]
-                    or "://" in staged[key]
-                    or "\\" in staged[key]
-                    or staged[key].startswith("/")
-                    or ".." in staged[key].split("/")
-                    for key in ("source_path", "admin_path")
+            match (isinstance(staged, dict), staged):
+                case (
+                    True,
+                    {
+                        "field_name": str() as field_name,
+                        "activated_file": str() as activated_file,
+                    },
+                ) if set(staged) == set(staged_rules) and all(
+                    security_effect_fact_matches(key, staged.get(key), expected)
+                    for key, expected in staged_rules.items()
+                ):
+                    pass
+                case _:
+                    return False
+            if not all(
+                (
+                    (code, source_role, consumer_role)
+                    == (
+                        "SECURITY_OS_COMMAND",
+                        "untrusted_input",
+                        "staged_command_file_activation",
+                    ),
+                    field_name.isidentifier(),
+                    not any(
+                        (marker in activated_file for marker in ("/", "\\", "%", " "))
+                    ),
+                    staged["activation_span"] == sink_span,
+                    all(
+                        (
+                            "://" not in staged[key]
+                            for key in ("source_path", "admin_path")
+                        )
+                    ),
                 )
             ):
                 return False
         legacy_roles = {
             "SECURITY_LOG_INJECTION": ("untrusted_input", "log_message"),
-            "SECURITY_PATH_TRAVERSAL": (
-                "untrusted_request",
-                "flask.FileStorage.save",
-            ),
+            "SECURITY_PATH_TRAVERSAL": ("untrusted_request", "flask.FileStorage.save"),
         }
         role_pair = (source_role, consumer_role)
-        match contract:
-            case None:
-                return all(
-                    [
-                        source_role in {"untrusted_request", "untrusted_input"},
-                        isinstance(consumer_role, str),
-                        bool(consumer_role),
-                    ]
-                )
-            case _:
-                expected_role = (
-                    contract.get("source_role"),
-                    contract.get("consumer_role"),
-                )
-                return all(
-                    [
-                        not require_effect_witness,
-                        role_pair in {legacy_roles.get(code), expected_role},
-                    ]
-                )
-    contract_fields = {
-        "source_role",
-        "consumer_role",
-        "effect_kind",
-        "effect_facts",
-    }
+        if contract is None:
+            return all(
+                [
+                    source_role in {"untrusted_request", "untrusted_input"},
+                    isinstance(consumer_role, str),
+                    bool(consumer_role),
+                ]
+            )
+        expected_role = (contract.get("source_role"), contract.get("consumer_role"))
+        return all(
+            [
+                not require_effect_witness,
+                role_pair in {legacy_roles.get(code), expected_role},
+            ]
+        )
+    contract_fields = {"source_role", "consumer_role", "effect_kind", "effect_facts"}
     match contract:
         case {
             "source_role": contract_source,
@@ -2740,18 +2762,19 @@ def valid_security_precondition(premise, finding, *, require_effect_witness=Fals
         case _:
             return False
     witness = premise.get("effect_witness")
-    if not isinstance(witness, dict):
-        return False
-    match witness:
-        case {
-            "schema": schema,
-            "source_role": witness_source,
-            "consumer_role": witness_consumer,
-            "effect_kind": effect_kind,
-            "source_span": list() as source_span,
-            "sink_span": list() as witness_sink,
-            "effect_facts": dict() as facts,
-        } if set(witness) == {
+    match (isinstance(witness, dict), witness):
+        case (
+            True,
+            {
+                "schema": schema,
+                "source_role": witness_source,
+                "consumer_role": witness_consumer,
+                "effect_kind": effect_kind,
+                "source_span": list() as source_span,
+                "sink_span": list() as witness_sink,
+                "effect_facts": dict() as facts,
+            },
+        ) if set(witness) == {
             "schema",
             "source_role",
             "consumer_role",
@@ -2765,13 +2788,8 @@ def valid_security_precondition(premise, finding, *, require_effect_witness=Fals
             return False
     activation_keys = ("activation_path", "activation_sha256", "activation_span")
     absent_activation = tuple(
-        facts.get(key, _LOG_INVALID) for key in activation_keys
-    ) == (
-        None,
-        None,
-        None,
-    )
-
+        (facts.get(key, _LOG_INVALID) for key in activation_keys)
+    ) == (None, None, None)
     direct_contract = effect_variants.get("direct_filename", {})
     direct_variant = (effect_kind, facts) == (
         direct_contract.get("effect_kind"),
@@ -2798,13 +2816,15 @@ def valid_security_precondition(premise, finding, *, require_effect_witness=Fals
         facts == selected_facts
         if direct_variant
         else all(
-            security_effect_fact_matches(
-                key,
-                facts.get(key),
-                value,
-                allow_missing_activation=absent_activation,
+            (
+                security_effect_fact_matches(
+                    key,
+                    facts.get(key),
+                    value,
+                    allow_missing_activation=absent_activation,
+                )
+                for key, value in selected_facts.items()
             )
-            for key, value in selected_facts.items()
         )
     )
     return all(

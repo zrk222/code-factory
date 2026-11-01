@@ -15766,3 +15766,55 @@ def test_security_configuration_rejects_invalid_metadata_before_scanning(
     monkeypatch.setattr(audit, "_security_source_files", refuse_scan)
     with pytest.raises(audit.ReviewAuditError, match="Tenant configuration metadata"):
         audit.security_scan(tmp_path, tenant_read_configuration=configuration)
+
+
+@pytest.mark.parametrize("mutation", ["rebind", "code"])
+def test_security_seal_rejects_verification_builder_mutation(
+    tmp_path, monkeypatch, mutation
+):
+    import copy
+
+    from factoryline import audit_action_refs as actions
+    from factoryline import primitive_observation_binding as primitive
+    from factoryline import review_audits as audit
+
+    (tmp_path / "app.py").write_text(
+        "from flask import request\neval(request.args['q'])\n"
+    )
+    base = security_scan(tmp_path, cache_enabled=False, defect_policy="trusted-core-v1")
+    core = copy.deepcopy(dict(base))
+    core["_primitive_source_bytes"] = dict(base._captured_sources)
+    builder = actions._security_scan_verification_state
+    native = primitive._trusted_core_native_security_rows
+    policy = primitive._trusted_core_regenerated_tiers
+    observed = []
+    mutations = []
+
+    def forged(*args):
+        return args[1]["_forged_verification"]
+
+    def mutate(*args):
+        rows = native(*args)
+        if mutations:
+            return rows
+        mutations.append(mutation)
+        core["_forged_verification"] = builder(
+            audit, core, core["_primitive_source_bytes"], primitive
+        )
+        if mutation == "rebind":
+            monkeypatch.setattr(actions, "_security_scan_verification_state", forged)
+        else:
+            monkeypatch.setattr(builder, "__code__", forged.__code__)
+        return rows
+
+    def observe(core, captured, rows=None):
+        observed.append(rows)
+        core.pop("_forged_verification", None)
+        return policy(core, captured, rows)
+
+    monkeypatch.setattr(primitive, "_trusted_core_native_security_rows", mutate)
+    monkeypatch.setattr(primitive, "_trusted_core_regenerated_tiers", observe)
+    checked = audit._seal_security_scan(core)
+    assert observed == [None]
+    assert checked["defect_policy_decision"]["state"] == "DEFECTS_PRESENT"
+    assert checked["finding_counts"]["SECURITY_DYNAMIC_EXECUTION"] == 1
