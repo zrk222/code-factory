@@ -323,8 +323,7 @@ def _trusted_core_complete_sources(core, captured_sources, audit):
         if total_bytes > 32 * 1024 * 1024 or hashlib.sha256(raw).hexdigest() != digest:
             return None
         captured[path] = raw
-    captured_python = {row["path"]: captured[row["path"]] for row in sources}
-    return captured_python, _tier_sha256(sources)
+    return captured, _tier_sha256(sources)
 
 
 def _trusted_core_source_binding(row, *, configuration=False):
@@ -455,6 +454,8 @@ def _trusted_core_native_security_rows(captured, tenant, audit):
         return None
     provider_mutation_cache = {}
     for path in captured_paths:
+        if path.suffix != ".py":
+            continue
         tree = source_model.snapshots[path]
         rows = audit._security_scan_tree(
             Path("."),

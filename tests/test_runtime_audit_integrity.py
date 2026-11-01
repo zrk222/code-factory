@@ -6455,6 +6455,51 @@ def test_security_scan_cached_and_uncached_preserve_security_proofs(tmp_path):
     assert cached["finding_tier_report"] == uncached["finding_tier_report"]
 
 
+@pytest.mark.parametrize(
+    "name,raw",
+    [
+        ("pyproject.toml", b"[project]\nname = 'sample'\n"),
+        ("setup.cfg", b"[metadata]\nname = sample\n"),
+    ],
+)
+@pytest.mark.parametrize("fault", [None, "missing", "changed", "extra"])
+def test_trusted_core_regeneration_retains_validated_configuration(
+    tmp_path, name, raw, fault
+):
+    (tmp_path / name).write_bytes(raw)
+    (tmp_path / "app.py").write_bytes(
+        b"from flask import request\neval(request.args['q'])\n"
+    )
+    report = review_audits.security_scan(
+        tmp_path,
+        cache_enabled=False,
+        defect_policy="trusted-core-v1",
+        security_only=True,
+    )
+    captured = dict(report._captured_sources)
+    assert captured[name] == raw
+    if fault == "missing":
+        captured.pop(name)
+    elif fault == "changed":
+        captured[name] += b"# changed\n"
+    elif fault == "extra":
+        captured["unbound.cfg"] = b"[metadata]\n"
+    checked = primitive._trusted_core_complete_sources(report, captured, review_audits)
+    if fault:
+        assert checked is None
+        return
+    assert checked[0] == captured
+    regenerated, _, native_rows = primitive._trusted_core_regenerated_tiers(
+        report, captured
+    )
+    assert regenerated == report["finding_tier_report"]
+    assert {row["path"] for row in native_rows} == {"app.py"}
+    assert (
+        primitive.security_defect_policy_decision(report, captured)["state"]
+        == "DEFECTS_PRESENT"
+    )
+
+
 def _trusted_core_policy316_seal(tmp_path, source):
     path = tmp_path / "app.py"
     path.write_bytes(source)
