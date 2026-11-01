@@ -13,6 +13,7 @@
 </ul>
 <h4>Start in your repository</h4>
 <p>Run <code>factory guide</code>, then <code>factory scan --root .</code>. Use Graph Ops to inspect evidence and choose the next action.</p>
+<p>FactoryLine is free. Optional paid features are not active in this Marketplace build. Use <strong>Tools | FactoryLine | Run First Proof</strong> for a local setup demonstration, not a repository assessment. The plugin does not upload project source or receipts.</p>
 <p>The plugin uses your separately configured local FactoryLine runtime. Junie is optional. You control applying changes, merging, and publishing. Checks are bounded and do not certify a repository.</p>
 <p><a href="https://github.com/zrk222/code-factory">Documentation</a> | <a href="https://github.com/zrk222/code-factory/issues">Report an issue</a></p>
     ]]></description>
