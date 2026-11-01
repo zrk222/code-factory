@@ -235,7 +235,26 @@ def _pytest_collection_source_identity(
             if len(data) > MAX_BYTES:
                 raise OSError("oversized hook source")
             tree = ast.parse(data, filename=relative)
-        except (OSError, UnicodeError, SyntaxError, RuntimeAuditError, RecursionError):
+        except SyntaxError:
+            if allow_unknown:
+                hooks.append(
+                    {
+                        "path": relative,
+                        "sha256": sha256(data).hexdigest(),
+                        "bytes": len(data),
+                        "names": [],
+                        "pytest_plugins": False,
+                        "state": "unparseable_source",
+                    }
+                )
+                continue
+            if is_conftest:
+                raise ReviewAuditError(
+                    f"Cannot determine pytest test collection from {relative}: "
+                    "unreadable or invalid hook source."
+                )
+            continue
+        except (OSError, UnicodeError, RuntimeAuditError, RecursionError):
             if is_conftest or allow_unknown:
                 raise ReviewAuditError(
                     f"Cannot determine pytest test collection from {relative}: "
@@ -282,6 +301,8 @@ def _pytest_collection_source_identity(
             if identity.get("state") == "unmodeled-builtin-collection"
             else "unsupported_collection_configuration"
             if identity.get("state") == "unsupported"
+            else "unparseable_collection_source"
+            if any(hook.get("state") == "unparseable_source" for hook in hooks)
             else "custom_collection_hooks_or_pytest_plugins",
             "python_files": [],
             "python_functions": [],

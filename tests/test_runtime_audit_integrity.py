@@ -259,6 +259,18 @@ def test_collection_unknown_profile_does_not_relax_invalid_inputs(
         (tmp_path / "test_example.py").write_text("def broken(:\n", encoding="utf-8")
     elif kind == "oversized_test_module":
         (tmp_path / "test_example.py").write_bytes(b" " * (review_audits.MAX_BYTES + 1))
+    if kind in {"invalid_hook", "invalid_test_module"}:
+        patterns, identity = _pytest_collection_config(tmp_path, allow_unknown=True)
+        assert patterns == set()
+        assert identity["collection_state"] == "UNKNOWN"
+        assert identity["reason"] == "unparseable_collection_source"
+        assert any(
+            row.get("state") == "unparseable_source"
+            for row in identity["collection_hook_sources"]
+        )
+        with pytest.raises(review_audits.ReviewAuditError):
+            _pytest_collection_config(tmp_path)
+        return
     with pytest.raises(review_audits.ReviewAuditError):
         _pytest_collection_config(tmp_path, allow_unknown=True)
 

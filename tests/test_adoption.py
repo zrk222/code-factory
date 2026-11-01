@@ -1248,6 +1248,38 @@ def test_normal_scan_collection_custom_hook_keeps_security_visible(tmp_path):
     assert report["state"] == "BLOCKED"
 
 
+@pytest.mark.parametrize("name", ["conftest.py", "test_case.py"])
+@pytest.mark.parametrize("security_only", [False, True])
+def test_unparseable_collection_source_retains_security_findings(
+    tmp_path, capsys, name, security_only
+):
+    from hashlib import sha256
+
+    source = b"def broken(:\n"
+    (tmp_path / name).write_bytes(source)
+    (tmp_path / "app.py").write_text("def apply(program):\n    exec(program)\n")
+    args = (
+        ["audit", "security", "--security-only"]
+        if security_only
+        else ["scan", "--static-only"]
+    )
+    assert main([*args, "--root", str(tmp_path), "--json"]) == 2
+    report = json.loads(capsys.readouterr().out)
+    security = report if security_only else report["static_security"]
+    identity = security["oracle_context"]["static_pytest_collection"]
+    assert identity["collection_state"] == "UNKNOWN"
+    assert identity["reason"] == "unparseable_collection_source"
+    assert any(
+        row["path"] == name and row["sha256"] == sha256(source).hexdigest()
+        for row in identity["collection_hook_sources"]
+    )
+    assert any(
+        row["code"] == "SECURITY_DYNAMIC_EXECUTION" for row in security["findings"]
+    )
+    assert security["audit_coverage"]["complete"] is False
+    assert security["state"] != "PASS"
+
+
 def test_normal_scan_collection_domain_error_detail_is_bounded_and_other_errors_private():
     from factoryline.adoption import _analyzer_failure_message
     from factoryline.review_audits import ReviewAuditError
