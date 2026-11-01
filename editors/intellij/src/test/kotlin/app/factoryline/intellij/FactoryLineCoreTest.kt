@@ -1,7 +1,9 @@
 package app.factoryline.intellij
 
 import java.nio.file.Files
+import java.nio.file.Path
 import java.nio.file.attribute.FileTime
+import java.io.IOException
 import com.intellij.openapi.fileEditor.OpenFileDescriptor
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.VirtualFile
@@ -10,12 +12,106 @@ import javax.swing.JLabel
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 class FactoryLineCoreTest {
+    class LegacyVfs
+
+    class DelayedVfs(private val path: Path, private val events: MutableList<String>, private val failure: IOException? = null) {
+        fun flushPendingUpdates() {
+            failure?.let { throw it }
+            events.add("flush")
+            Files.writeString(path, "saved VFS bytes")
+        }
+    }
+
+    class IncompatibleVfs {
+        fun flushPendingUpdates(): String = "asynchronous result"
+    }
+
+    @Test
+    fun pendingVfsBytesReachTheExternalReaderBeforeItRuns() {
+        val path = Files.createTempFile("factoryline-vfs", ".txt")
+        val events = mutableListOf<String>()
+        try {
+            Files.writeString(path, "old disk bytes")
+            val result = FactoryLineRunner.withPreparedExternalRead(262, DelayedVfs(path, events), false, false, false) {
+                events.add("read")
+                Files.readString(path)
+            }
+            assertEquals("saved VFS bytes", result)
+            assertEquals(listOf("flush", "read"), events)
+        } finally {
+            Files.deleteIfExists(path)
+        }
+    }
+
+    @Test
+    fun legacyVfsWithoutAsyncApiKeepsTheExternalReaderAvailable() {
+        for (baseline in listOf(252, 261)) {
+            assertEquals("saved contents", FactoryLineRunner.withPreparedExternalRead(baseline, LegacyVfs(), false, false, false) { "saved contents" })
+        }
+    }
+
+    @Test
+    fun missingModernOrUnknownVfsApiBlocksTheExternalReader() {
+        for (baseline in listOf(0, 251, 262, 263)) {
+            var read = false
+            val error = assertFailsWith<IllegalStateException> {
+                FactoryLineRunner.withPreparedExternalRead(baseline, LegacyVfs(), false, false, false) { read = true }
+            }
+            assertFalse(read)
+            assertTrue(error.message.orEmpty().contains("flushPendingUpdates"))
+        }
+    }
+
+    @Test
+    fun flushingFailurePreservesItsCauseAndBlocksTheExternalReader() {
+        val path = Files.createTempFile("factoryline-vfs-failure", ".txt")
+        val failure = IOException("Unable to persist pending VFS bytes")
+        var read = false
+        try {
+            val error = assertFailsWith<IOException> {
+                FactoryLineRunner.withPreparedExternalRead(262, DelayedVfs(path, mutableListOf(), failure), false, false, false) { read = true }
+            }
+            assertSame(failure, error)
+            assertFalse(read)
+        } finally {
+            Files.deleteIfExists(path)
+        }
+    }
+
+    @Test
+    fun invalidThreadOrLockContextBlocksFlushingAndTheExternalReader() {
+        val path = Files.createTempFile("factoryline-vfs-context", ".txt")
+        try {
+            for ((edt, readAction, writeAction) in listOf(Triple(true, false, false), Triple(false, true, false), Triple(false, false, true))) {
+                val events = mutableListOf<String>()
+                var read = false
+                assertFailsWith<IllegalStateException> {
+                    FactoryLineRunner.withPreparedExternalRead(262, DelayedVfs(path, events), edt, readAction, writeAction) { read = true }
+                }
+                assertFalse(read)
+                assertTrue(events.isEmpty())
+            }
+        } finally {
+            Files.deleteIfExists(path)
+        }
+    }
+
+    @Test
+    fun incompatibleFlushApiBlocksTheExternalReader() {
+        var read = false
+        assertFailsWith<IllegalStateException> {
+            FactoryLineRunner.withPreparedExternalRead(262, IncompatibleVfs(), false, false, false) { read = true }
+        }
+        assertFalse(read)
+    }
+
     private fun pluginDescriptor(): String = requireNotNull(
         FactoryLineCoreTest::class.java.classLoader.getResourceAsStream("META-INF/plugin.xml")
     ) { "The packaged plugin descriptor must be available to plugin tests." }

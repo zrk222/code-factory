@@ -7,6 +7,7 @@ import com.intellij.execution.process.OSProcessHandler
 import com.intellij.execution.process.ProcessEvent
 import com.intellij.execution.process.ProcessListener
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.application.ApplicationInfo
 import com.intellij.openapi.components.PersistentStateComponent
 import com.intellij.openapi.components.service
 import com.intellij.openapi.components.State
@@ -16,10 +17,13 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.SystemInfo
 import com.intellij.openapi.util.Disposer
 import com.intellij.openapi.util.Key
+import com.intellij.openapi.vfs.newvfs.ManagingFS
 import com.intellij.ui.components.JBTextField
 import com.intellij.util.concurrency.AppExecutorUtil
 import com.intellij.util.ui.FormBuilder
 import java.io.IOException
+import java.lang.reflect.InvocationTargetException
+import java.lang.reflect.Modifier
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.FileVisitResult
@@ -899,54 +903,120 @@ object FactoryLineRunner {
         onFailure: (String) -> Unit,
         onStopped: () -> Unit = {},
     ) {
-        val root = project.basePath?.let(Path::of) ?: run {
-            onFailure("The project has no local workspace path.")
-            return
-        }
-        val executable = FactoryLineSettings.instance().executable()
-        val arguments = listOf("studio", "--root", root.toString(), "--port", "0", "--no-browser")
-        val commandLine = GeneralCommandLine(executable)
-            .withParameters(arguments)
-            .withWorkDirectory(root.toFile())
-        try {
-            val handler = OSProcessHandler(commandLine)
-            val output = StringBuilder()
-            val completed = AtomicBoolean(false)
-            val timeout = AppExecutorUtil.getAppScheduledExecutorService().schedule({
-                if (completed.compareAndSet(false, true)) {
-                    handler.destroyProcess()
-                    ApplicationManager.getApplication().invokeLater {
-                        onFailure("Factory Studio did not report a loopback URL within 15 seconds.")
-                    }
+        val application = ApplicationManager.getApplication()
+        val failureReported = AtomicBoolean(false)
+        application.executeOnPooledThread {
+            try {
+                check(!project.isDisposed) { "The project is already closed." }
+                val root = project.basePath?.let(Path::of)
+                    ?: throw IllegalStateException("The project has no local workspace path.")
+                val executable = FactoryLineSettings.instance().executable()
+                val arguments = listOf("studio", "--root", root.toString(), "--port", "0", "--no-browser")
+                val commandLine = GeneralCommandLine(executable)
+                    .withParameters(arguments)
+                    .withWorkDirectory(root.toFile())
+                val handler = withPreparedExternalRead {
+                    check(!project.isDisposed) { "The project closed while preparing saved files." }
+                    OSProcessHandler(commandLine)
                 }
-            }, 15, TimeUnit.SECONDS)
-            handler.addProcessListener(object : ProcessListener {
-                override fun onTextAvailable(event: ProcessEvent, outputType: Key<*>) {
-                    if (output.length < FactoryLineIds.OUTPUT_LIMIT) {
-                        output.append(event.text.take(FactoryLineIds.OUTPUT_LIMIT - output.length))
-                    }
-                    val url = StudioUrl.find(output.toString())
-                    if (url != null && completed.compareAndSet(false, true)) {
-                        timeout.cancel(false)
-                        ApplicationManager.getApplication().invokeLater { onStarted(url) }
-                    }
-                }
-
-                override fun processTerminated(event: ProcessEvent) {
-                    ApplicationManager.getApplication().invokeLater(onStopped)
+                val output = StringBuilder()
+                val completed = AtomicBoolean(false)
+                val timeout = AppExecutorUtil.getAppScheduledExecutorService().schedule({
                     if (completed.compareAndSet(false, true)) {
-                        timeout.cancel(false)
+                        handler.destroyProcess()
                         ApplicationManager.getApplication().invokeLater {
-                            onFailure("Factory Studio exited before reporting a loopback URL (code ${event.exitCode}).")
+                            if (failureReported.compareAndSet(false, true)) {
+                                onFailure("Factory Studio did not report a loopback URL within 15 seconds.")
+                            }
                         }
                     }
+                }, 15, TimeUnit.SECONDS)
+                try {
+                    handler.addProcessListener(object : ProcessListener {
+                        override fun onTextAvailable(event: ProcessEvent, outputType: Key<*>) {
+                            if (output.length < FactoryLineIds.OUTPUT_LIMIT) {
+                                output.append(event.text.take(FactoryLineIds.OUTPUT_LIMIT - output.length))
+                            }
+                            val url = StudioUrl.find(output.toString())
+                            if (url != null && completed.compareAndSet(false, true)) {
+                                timeout.cancel(false)
+                                ApplicationManager.getApplication().invokeLater {
+                                    if (!failureReported.get()) onStarted(url)
+                                }
+                            }
+                        }
+
+                        override fun processTerminated(event: ProcessEvent) {
+                            ApplicationManager.getApplication().invokeLater(onStopped)
+                            if (completed.compareAndSet(false, true)) {
+                                timeout.cancel(false)
+                                ApplicationManager.getApplication().invokeLater {
+                                    if (failureReported.compareAndSet(false, true)) {
+                                        onFailure("Factory Studio exited before reporting a loopback URL (code ${event.exitCode}).")
+                                    }
+                                }
+                            }
+                        }
+                    })
+                    Disposer.register(project) { if (!handler.isProcessTerminated) handler.destroyProcess() }
+                    handler.startNotify()
+                } catch (error: Exception) {
+                    completed.set(true)
+                    timeout.cancel(false)
+                    try {
+                        try {
+                            handler.destroyProcess()
+                        } finally {
+                            // Handler destruction is deferred until startNotify; registration may have failed first.
+                            handler.process.destroyForcibly()
+                        }
+                    } catch (cleanupError: Exception) {
+                        error.addSuppressed(cleanupError)
+                    }
+                    throw error
                 }
-            })
-            Disposer.register(project) { if (!handler.isProcessTerminated) handler.destroyProcess() }
-            handler.startNotify()
-        } catch (error: Exception) {
-            onFailure("Failed to start Factory Studio: ${error.message}")
+            } catch (error: Exception) {
+                if (failureReported.compareAndSet(false, true)) {
+                    application.invokeLater {
+                        onFailure("Failed to start Factory Studio: ${error.message}")
+                    }
+                }
+            }
         }
+    }
+
+    internal fun <T> withPreparedExternalRead(
+        baseline: Int = ApplicationInfo.getInstance().build.baselineVersion,
+        fileSystem: Any = ManagingFS.getInstance(),
+        onDispatchThread: Boolean = ApplicationManager.getApplication().isDispatchThread,
+        underReadAction: Boolean = ApplicationManager.getApplication().isReadAccessAllowed,
+        underWriteAction: Boolean = ApplicationManager.getApplication().isWriteAccessAllowed,
+        read: () -> T,
+    ): T {
+        check(!onDispatchThread && !underReadAction && !underWriteAction) {
+            "Blocked: external reads require a background thread outside read/write actions."
+        }
+        // Keep the 252 SDK: this documented API was introduced after that baseline.
+        val api = if (fileSystem is ManagingFS) ManagingFS::class.java else fileSystem.javaClass
+        val flush = try {
+            api.getMethod("flushPendingUpdates")
+        } catch (missing: NoSuchMethodException) {
+            check(baseline in 252..261) {
+                "Blocked: this IDE must provide ManagingFS.flushPendingUpdates()."
+            }
+            null
+        }
+        if (flush != null) {
+            check(flush.returnType == Void.TYPE && !Modifier.isStatic(flush.modifiers)) {
+                "Blocked: ManagingFS.flushPendingUpdates() has an incompatible signature."
+            }
+            try {
+                flush.invoke(fileSystem)
+            } catch (error: InvocationTargetException) {
+                throw error.targetException
+            }
+        }
+        return read()
     }
 
     private fun rootArguments(project: Project): List<String> {
@@ -965,7 +1035,9 @@ object FactoryLineRunner {
             .withParameters(arguments)
             .withWorkDirectory(root.toFile())
         return try {
-            val output = CapturingProcessHandler(commandLine).runProcess(timeoutMs)
+            val output = withPreparedExternalRead {
+                CapturingProcessHandler(commandLine).runProcess(timeoutMs)
+            }
             val combined = OutputRedactor.redact((output.stdout + output.stderr).take(FactoryLineIds.OUTPUT_LIMIT))
             CommandResult(title, listOf(executable) + arguments, output.exitCode, output.isTimeout, combined)
         } catch (error: Exception) {

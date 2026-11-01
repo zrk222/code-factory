@@ -87,12 +87,10 @@ abstract class MarketplacePreflightTask : DefaultTask() {
             "<depends>com.intellij.modules.vcs</depends>",
             "id=\"app.factoryline.intellij.openGuardian\"",
             "class=\"app.factoryline.intellij.OpenGuardianAction\"",
-            "Your change is ready for a closer look.",
-            "Tuned for Junie. Not dependent on Junie.",
-            "proof-coupled change acknowledgement",
-            "copy-only manifest",
-            "factoryline-proof",
-            "Add Guardian Core as the first tool-window tab",
+            "Review AI changes with evidence in view",
+            "separately configured local FactoryLine runtime",
+            "You control applying changes, merging, and publishing.",
+            "Checks are bounded and do not certify a repository.",
         )
         val missingDescriptorFragments = requiredDescriptorFragments.filterNot(pluginXml::contains)
         check(missingDescriptorFragments.isEmpty()) {
@@ -140,7 +138,7 @@ plugins {
 }
 
 group = "app.factoryline"
-version = "1.3.2"
+version = "1.3.3"
 
 // Keep release task inputs configuration-cache safe. Do not resolve the
 // Project from a task action: Gradle 9.5 treats that as a release-gate error.
