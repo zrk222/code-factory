@@ -1494,39 +1494,6 @@ def bind_request_sink_precondition(
             return bind_upload_sink_precondition(
                 finding, call, aliases, requests, module
             )
-        case "SECURITY_SQL_INJECTION":
-            # Reuse the exact source-to-sink predicate that emitted the raw SQL
-            # finding. The older admission projection separately required a closed
-            # local cursor constructor and lost valid framework/helper-backed
-            # connections even when that predicate had already proven the sink.
-            from .review_integrity import (
-                _security_unsafe_sql,
-                security_call_name,
-            )
-            from .intent_quality import sql_statement_argument
-
-            canonical = security_call_name(call, aliases)
-            driver = _security_unsafe_sql(
-                call,
-                canonical,
-                set(),
-                requests,
-                aliases,
-                connections,
-                cursors,
-                helpers,
-            )
-            if (
-                not driver
-                or (
-                    argument := sql_statement_argument(
-                        call, driver, aliases, security_call_name
-                    )
-                )
-                is None
-            ):
-                return
-            selected = (argument, (driver,))
         case _:
             selected = _security_request_sink_slot(
                 finding, call, aliases, requests, connections, cursors, helpers

@@ -121,11 +121,18 @@ def add_parser(sub: Any) -> None:
     runner_admission.add_argument("--out", required=True)
 
 
-def _read_json(path: str | Path) -> Any:
+def _read_json(path: str | Path, *, object_array: bool = False) -> Any:
     from .enterprise_receipts import EnterpriseReceiptError, _json_loads
 
     try:
-        return _json_loads(Path(path).read_text(encoding="utf-8"))
+        value = _json_loads(Path(path).read_text(encoding="utf-8"))
+        if not isinstance(value, dict) and not (
+            object_array
+            and isinstance(value, list)
+            and all(isinstance(item, dict) for item in value)
+        ):
+            raise ValueError("expected a JSON object or a permitted array of objects")
+        return value
     except (OSError, ValueError, RecursionError) as exc:
         raise EnterpriseReceiptError("E_INVALID_JSON", str(exc)) from exc
 
@@ -189,7 +196,7 @@ def _run_receipt_command(
         return True, _signed_result(a.out, signed)
     if a.enterprise_cmd == "revocations-sign":
         signed = sign_revocations(
-            _read_json(a.entries),
+            _read_json(a.entries, object_array=True),
             private_key_path=Path(a.private_key),
             keyid=a.keyid,
             identity=a.identity,
@@ -230,7 +237,7 @@ def _run_enforcement_seal_command(
         return True, _signed_result(a.out, signed)
     if a.enterprise_cmd == "workload-revocations-seal":
         signed = sign_workload_revocations(
-            _read_json(a.entries),
+            _read_json(a.entries, object_array=True),
             private_key_path=Path(a.private_key),
             keyid=a.keyid,
             identity=a.identity,

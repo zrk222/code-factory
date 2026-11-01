@@ -774,6 +774,11 @@ def _security_bind_local_native_input_precondition(
         return
     if not security_precondition_path_possible(call):
         return
+    supported = getattr(requests, "supported_view", lambda: requests)()
+    if supported is None or not _native_input_request_is_supported(
+        call, canonical, supported, aliases, scope, audit
+    ):
+        return
     if audit._security_local_request_provider_identity_uncertain(module, aliases):
         return
     provider_roots = (
@@ -795,11 +800,6 @@ def _security_bind_local_native_input_precondition(
         module, aliases, provider_roots, audit=audit
     ):
         return
-    supported = getattr(requests, "supported_view", lambda: requests)()
-    if supported is None or not _native_input_request_is_supported(
-        call, canonical, supported, aliases, scope, audit
-    ):
-        return
     premise = supported_security_precondition(call, "untrusted_request", canonical)
     if trace := security_input_value_flow(call.args[0], supported, aliases):
         premise["input_value_flow"] = trace
@@ -815,6 +815,14 @@ def _security_local_request_provider_identity_uncertain(module, aliases):
         _provider_identity_uncertain,
     )
 
+    selected_providers = (
+        "flask.request",
+        *(
+            path
+            for path in aliases.values()
+            if path.split(".")[0] in {"flask", "django"}
+        ),
+    )
     source_model = getattr(module, "_security_source_model", None)
     trees = (
         tuple(source_model.snapshots.values())
@@ -833,7 +841,7 @@ def _security_local_request_provider_identity_uncertain(module, aliases):
         if _provider_identity_uncertain(
             tree,
             source_aliases,
-            roots=("flask.request",),
+            roots=selected_providers,
             selected_paths=True,
             nodes=inventory,
             parents=parents,

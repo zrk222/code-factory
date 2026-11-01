@@ -4839,6 +4839,7 @@ def _fixed_program_builtin_identity(node, module, call_name):
 
 
 def partition_proven_primitive_observations(core, _verifier_native_rows=None):
+    """Partition primitive observations using this module as integrity context."""
     from .primitive_observation_binding import (
         partition_proven_primitive_observations as partition,
     )

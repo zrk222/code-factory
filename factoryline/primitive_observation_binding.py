@@ -1835,6 +1835,7 @@ def apply_pickle_source_role_policy(
     captured,
     *,
     source_model=None,
+    configuration_bytes=None,
     prior_tiers=None,
     prior_source_state=None,
     _verifier_native_rows=None,
@@ -1861,6 +1862,7 @@ def apply_pickle_source_role_policy(
     if roles is not None:
         roles["policy_id"] = policy_id
         roles["test_collection_known"] = not _unknown_collection(core)
+        roles["configuration_bytes"] = dict(configuration_bytes or {})
     active, reviews = _pickle_role_partition(original, roles)
     core["findings"], core["context_reviews"] = active, reviews
     core["finding_counts"] = dict(

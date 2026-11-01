@@ -3054,6 +3054,7 @@ class _OperativeCredentialOrigin:
         return False, None
 
     def jwt_algorithms(self, node, environment, path, function, projection):
+        """Accept nonempty literal JWT algorithm lists limited to supported HMAC algorithms."""
         from .credential_role_identity_effects import _validated_exact_scalar
 
         if not isinstance(node, (ast.List, ast.Tuple)) or not node.elts:
@@ -3362,6 +3363,7 @@ class _OperativeCredentialOrigin:
         return None
 
     def request_inputs(self, path, function, arguments):
+        """Model canonical FastAPI Request parameters as inert HTTP request inputs."""
         return {
             arg.arg: self.value_type(inert_kind="http_request")
             for arg in arguments
@@ -3370,6 +3372,7 @@ class _OperativeCredentialOrigin:
         }
 
     def rejection_value(self, statement, environment, path, function):
+        """Return a denied value for a simple inverted guard that raises."""
         if not (
             isinstance(statement, ast.If)
             and not statement.orelse

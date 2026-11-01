@@ -2841,6 +2841,7 @@ def _signing_resolve_module(context, literal, origin=None):
         # An entry point's captured ancestor roots also support namespace packages.
         # A missing initializer is not evidence for an unrelated repository root.
         index = context["index"]
+        matches = set()
         for root in Path(origin).parents:
             candidates = {
                 candidate
@@ -2862,7 +2863,11 @@ def _signing_resolve_module(context, literal, origin=None):
                 ):
                     return None
                 selected = next(iter(candidates))
-                return selected if index.validate(selected) else None
+                if not index.validate(selected):
+                    return None
+                matches.add(selected)
+        if matches:
+            return next(iter(matches)) if len(matches) == 1 else None
     choices = {
         paths[name]
         for name in ("/".join(parts) + ".py", "/".join(parts) + "/__init__.py")

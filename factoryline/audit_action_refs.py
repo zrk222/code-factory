@@ -638,6 +638,15 @@ def _apply_security_scan_policy(
                 core,
                 captured,
                 source_model=producer_source_model,
+                configuration_bytes={
+                    row["path"]: captured[row["path"]]
+                    for row in core.get("oracle_context", {}).get(
+                        "configuration_sources", []
+                    )
+                    if isinstance(captured, dict)
+                    and isinstance(captured.get(row.get("path")), bytes)
+                    and sha256(captured[row["path"]]).hexdigest() == row.get("sha256")
+                },
                 prior_tiers=prior_tier_report,
                 prior_source_state=prior_state,
                 _verifier_native_rows=_verifier_native_rows,
@@ -730,6 +739,13 @@ def _finish_security_scan_seal(audit, core, captured):
 
 def _security_scan_verification_state(audit, core, captured, primitive):
     """Snapshot the complete source, tenant and implementation identity for resealing."""
+    if core.get("selected_defect_policy") not in {
+        "trusted-core-v1",
+        "source-role-v1",
+        "source-role-v2",
+        "source-role-v3",
+    } or core.get("state") not in {"CLEAN", "FINDINGS", "REVIEW_REQUIRED", "BLOCKED"}:
+        return None
     sources = primitive._trusted_core_complete_sources(core, captured, audit)
     tenant = primitive._trusted_core_tenant_arguments(core, audit)
     if sources is None or tenant != ((), {}, False):
@@ -783,27 +799,23 @@ def seal_security_scan(
     state_builder = _security_scan_verification_state
     state_code = state_builder.__code__
     native_rows = None
-    if core.get("selected_defect_policy") in {
-        "trusted-core-v1",
-        "source-role-v1",
-        "source-role-v2",
-        "source-role-v3",
-    } and prior_state in {"CLEAN", "FINDINGS", "REVIEW_REQUIRED", "BLOCKED"}:
-        try:
-            verified = state_builder(audit, core, captured, primitive)
-            if verified is not None:
-                native_rows = primitive._trusted_core_native_security_rows(
-                    verified[0][0], verified[1], audit
-                )
-                if (
-                    native_rows is not None
-                    and not primitive._trusted_core_surface_matches(core, native_rows)
-                ):
-                    native_rows = None
-        except Exception:
-            native_rows = None
     try:
-        audit.integrity.partition_proven_primitive_observations(core, native_rows)
+        verified = state_builder(audit, core, captured, primitive)
+        if verified is not None:
+            native_rows = primitive._trusted_core_native_security_rows(
+                verified[0][0], verified[1], audit
+            )
+            if native_rows is not None and not primitive._trusted_core_surface_matches(
+                core, native_rows
+            ):
+                native_rows = None
+    except Exception:
+        native_rows = None
+    try:
+        if native_rows is None:
+            audit.integrity.partition_proven_primitive_observations(core)
+        else:
+            audit.integrity.partition_proven_primitive_observations(core, native_rows)
     finally:
         core.pop("_primitive_source_bytes", None)
     if native_rows is not None:
