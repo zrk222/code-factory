@@ -1219,7 +1219,12 @@ def _signing_source_symbol(
 
 def _flask_selected_config(context, expression, path, seen=()):
     """Resolve a finite module/class selection, including an environment default."""
-    if expression is None or len(seen) >= 8 or id(expression) in seen:
+    if (
+        expression is None
+        or len(seen) >= 8
+        or id(expression) in seen
+        or (isinstance(expression, ast.Name) and not context["index"].validate(path))
+    ):
         return None
     seen = (*seen, id(expression))
     default = _flask_config_default(context, expression, path)

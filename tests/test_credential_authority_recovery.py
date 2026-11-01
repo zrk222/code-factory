@@ -948,3 +948,102 @@ def test_finite_import_cache_invalidates_snapshot_inventory_and_helper_epoch(
     )
     final = sensor._signing_source_symbols(context)
     assert final["imports"][Path("reader.py")] is None
+
+
+@pytest.mark.parametrize("selector", ["Choice", "selected", "config_object"])
+@pytest.mark.parametrize("snapshot", ["valid", "missing", "digest", "bytes", "ast"])
+def test_name_configuration_validates_consumer_before_lazy_parents(selector, snapshot):
+    from factoryline import semantic_credential_sensor as sensor
+
+    raw = (
+        "from policy import Policy as Choice\n"
+        "def create(config_object):\n"
+        "    selected = Choice\n"
+        f"    app.config.from_object({selector})\n"
+    ).encode()
+    sources = {
+        "consumer.py": raw,
+        "policy.py": b"class Policy:\n    SECRET_KEY = 'published-material'\n",
+    }
+    context = sensor.signing_configuration_inventory(
+        sources, {name: sha256(value).hexdigest() for name, value in sources.items()}
+    )
+    index, path = context["index"], Path("consumer.py")
+    original_tree = index.snapshots[path]
+    expression = next(
+        node.args[0]
+        for node in ast.walk(index.snapshots[path])
+        if isinstance(node, ast.Call)
+    )
+    assert path not in index.parents
+    if snapshot == "missing":
+        del index.snapshots[path]
+    elif snapshot == "digest":
+        index.inventory[path] = "0" * 64
+    elif snapshot == "bytes":
+        index.source_bytes[path] = b"replacement = True\n"
+    elif snapshot == "ast":
+        replacement = ast.parse("replacement = True\n")
+        replacement._oracle_source_sha256 = index.inventory[path]
+        index.snapshots[path] = replacement
+    selected = sensor._flask_selected_config(context, expression, path)
+    if snapshot == "valid":
+        assert index.validated[path] and path in index.parents
+        assert (selected is not None) == (selector != "config_object")
+        if selected is not None:
+            assert selected[0] == Path("policy.py") and isinstance(
+                selected[1], ast.ClassDef
+            )
+        parents = index.parents[path]
+        assert sensor._flask_selected_config(context, expression, path) == selected
+        assert index.parents[path] is parents
+    else:
+        assert (
+            selected is None and not index.validated[path] and path not in index.parents
+        )
+        index.snapshots[path] = original_tree
+        index.source_bytes[path] = raw
+        index.inventory[path] = sha256(raw).hexdigest()
+        restored = sensor._flask_selected_config(context, expression, path)
+        assert index.validated[path] and (restored is not None) == (
+            selector != "config_object"
+        )
+
+
+@pytest.mark.parametrize("target", ["config", "config.Policy"])
+def test_literal_selected_configuration_keeps_existing_signing_authority(target):
+    from test_semantic_credential_sensor import (
+        _flask_login_config_sources,
+        _captured_secret_tiers,
+    )
+
+    files = _flask_login_config_sources(target=target)
+    if target.endswith("Policy"):
+        files["config.py"] = (
+            "class Policy:\n    SECRET_KEY = 'source-bound-login-signing-key'\n"
+        )
+    assert (
+        _captured_secret_tiers(files, "config.py")["ledger"][0]["tier"]
+        == "SUPPORTED_DEFECT"
+    )
+
+
+def test_literal_module_resolution_does_not_add_consumer_validation(monkeypatch):
+    from factoryline import semantic_credential_sensor as sensor
+
+    sources = {"consumer.py": b"import policy\n", "policy.py": b"VALUE = 1\n"}
+    context = sensor.signing_configuration_inventory(
+        sources, {name: sha256(raw).hexdigest() for name, raw in sources.items()}
+    )
+    index, original, calls = context["index"], context["index"].validate, []
+
+    def validate(path):
+        calls.append(path)
+        return original(path)
+
+    monkeypatch.setattr(index, "validate", validate)
+    literal = ast.Constant(value="policy")
+    first = sensor._flask_selected_config(context, literal, Path("consumer.py"))
+    assert first == (Path("policy.py"), index.snapshots[Path("policy.py")])
+    assert sensor._flask_selected_config(context, literal, Path("consumer.py")) == first
+    assert Path("consumer.py") not in calls
