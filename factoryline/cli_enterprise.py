@@ -40,6 +40,11 @@ def add_parser(sub: Any) -> None:
     verify.add_argument("--policy-bundle")
     verify.add_argument("--revocations")
     verify.add_argument(
+        "--summary",
+        action="store_true",
+        help="print a compact verification verdict and evidence path",
+    )
+    verify.add_argument(
         "--require-revocations",
         action="store_true",
         help="require a signed current revocation snapshot",
@@ -116,8 +121,20 @@ def add_parser(sub: Any) -> None:
     runner_admission.add_argument("--out", required=True)
 
 
-def _read_json(path: str | Path) -> Any:
-    return json.loads(Path(path).read_text(encoding="utf-8"))
+def _read_json(path: str | Path, *, object_array: bool = False) -> Any:
+    from .enterprise_receipts import EnterpriseReceiptError, _json_loads
+
+    try:
+        value = _json_loads(Path(path).read_text(encoding="utf-8"))
+        if not isinstance(value, dict) and not (
+            object_array
+            and isinstance(value, list)
+            and all(isinstance(item, dict) for item in value)
+        ):
+            raise ValueError("expected a JSON object or a permitted array of objects")
+        return value
+    except (OSError, ValueError, RecursionError) as exc:
+        raise EnterpriseReceiptError("E_INVALID_JSON", str(exc)) from exc
 
 
 def _signed_result(out: str | Path, signed: dict[str, Any]) -> dict[str, str]:
@@ -179,7 +196,7 @@ def _run_receipt_command(
         return True, _signed_result(a.out, signed)
     if a.enterprise_cmd == "revocations-sign":
         signed = sign_revocations(
-            _read_json(a.entries),
+            _read_json(a.entries, object_array=True),
             private_key_path=Path(a.private_key),
             keyid=a.keyid,
             identity=a.identity,
@@ -220,7 +237,7 @@ def _run_enforcement_seal_command(
         return True, _signed_result(a.out, signed)
     if a.enterprise_cmd == "workload-revocations-seal":
         signed = sign_workload_revocations(
-            _read_json(a.entries),
+            _read_json(a.entries, object_array=True),
             private_key_path=Path(a.private_key),
             keyid=a.keyid,
             identity=a.identity,
@@ -280,6 +297,7 @@ def run(args: Any) -> int:
     """Execute one enterprise command and render its deterministic receipt."""
     a = args
     if a.cmd == "enterprise":
+        summary = a.enterprise_cmd == "verify" and getattr(a, "summary", False)
         from .enterprise_receipts import (
             EnterpriseReceiptError,
             generate_key_material,
@@ -321,16 +339,34 @@ def run(args: Any) -> int:
             result = _dispatch_enterprise_command(a, engines)
         except (*engine_errors, json.JSONDecodeError, OSError) as exc:
             error = _enterprise_error(exc, engine_errors)
+            result = {
+                "schema": "factory.enterprise.result.v1",
+                "verdict": "ERROR",
+                "error": error,
+            }
+            if summary:
+                result["path"] = str(Path(a.envelope).resolve())
             print(
                 json.dumps(
-                    {
-                        "schema": "factory.enterprise.result.v1",
-                        "verdict": "ERROR",
-                        "error": error,
-                    },
-                    indent=2,
+                    result,
+                    indent=None if summary else 2,
+                    separators=(",", ":") if summary else None,
                 )
             )
             return 1
-        print(json.dumps(result, indent=2, sort_keys=True))
+        if summary:
+            result = {
+                key: result[key]
+                for key in ("schema", "verdict", "verification")
+                if key in result
+            }
+            result["path"] = str(Path(a.envelope).resolve())
+        print(
+            json.dumps(
+                result,
+                indent=None if summary else 2,
+                separators=(",", ":") if summary else None,
+                sort_keys=True,
+            )
+        )
         return 0

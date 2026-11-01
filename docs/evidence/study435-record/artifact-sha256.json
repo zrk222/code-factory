@@ -1,0 +1,71 @@
+{
+  "artifacts": [
+    {
+      "bytes": 26120,
+      "kind": "source-evidence",
+      "path": ".factory/precision435-run/score.json",
+      "sha256": "f2e30f7827217a031dfe0e0e5cead78bb3907604308c56c57ef8520baf54c375"
+    },
+    {
+      "bytes": 27202,
+      "kind": "source-evidence",
+      "path": ".factory/precision435-run/rubric-compliance-score.json",
+      "sha256": "5de7ed1da1ee7e47e488174a5eb4188df2062f48f106897d148bfd87eabd2757"
+    },
+    {
+      "bytes": 5016,
+      "kind": "source-evidence",
+      "path": ".factory/precision435-fresh/preregistration.json",
+      "sha256": "ded8b9ea45dc0994eb07dd61ff261b9c7390d3827b843e079bd8af31f230b7ed"
+    },
+    {
+      "bytes": 400165,
+      "kind": "source-evidence",
+      "path": ".factory/precision435-run/private-packet-map.json",
+      "sha256": "ed61a1e1fdf361b982fcd2acf0453915c85eb17b983619e99540afcd1d7c95f6"
+    },
+    {
+      "bytes": 112223,
+      "kind": "source-evidence",
+      "path": ".factory/precision435-post-freeze-parent-map/final-seal.json",
+      "sha256": "bf90095ec195898df8103dee2405ac74509b469456d3149349b1f98c916b5310"
+    },
+    {
+      "bytes": 6077,
+      "kind": "source-evidence",
+      "path": ".factory/precision435-post-freeze-parent-map/e2e/actual-results.json",
+      "sha256": "b1308309d1d5dbba243b517164867780c5309c33c0ffdd0c94f7ee970b1ce45c"
+    },
+    {
+      "bytes": 865,
+      "kind": "source-evidence",
+      "path": ".factory/precision435-run/recovery/fantaso-finalization.json",
+      "sha256": "28830f958549079efbaad4b93e8a8192b418a09ffc3f1ca3b89565279efd232d"
+    },
+    {
+      "bytes": 3446,
+      "kind": "created-evidence",
+      "path": "docs/evidence/study435-record/README.md",
+      "sha256": "22b9295d6adf5ed5182334ab1a943f60ee4a47b86438ebdae7e81f9b39882f79"
+    },
+    {
+      "bytes": 1962,
+      "kind": "created-evidence",
+      "path": "docs/evidence/study435-record/original-blind-score.json.gz",
+      "sha256": "dbba65301e668b586f14e942fef1f4c4d989d6b783c57da40f213a70f778d8f1"
+    },
+    {
+      "bytes": 2190,
+      "kind": "created-evidence",
+      "path": "docs/evidence/study435-record/post-study-rubric-score.json.gz",
+      "sha256": "0ae4b1c2dcf02eb12c4f9e5c640b8d1d6ee939cbc6f2be9073e1be9fa9dafe6b"
+    },
+    {
+      "bytes": 29193,
+      "kind": "created-evidence",
+      "path": "docs/evidence/study435-record/sampling-provenance-error-ledger.json",
+      "sha256": "cd28a228b3cf0d5a776f4975e408161b80ed1686bfb681abdb315a5f959e7199"
+    }
+  ],
+  "schema": "factory.study435.artifact-sha256.v1"
+}

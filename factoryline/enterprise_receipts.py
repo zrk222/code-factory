@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import base64
+import binascii
 import hashlib
 import json
 from pathlib import Path
@@ -85,11 +86,43 @@ def _b64d(value: str, field: str) -> bytes:
     if not isinstance(value, str) or not value:
         raise EnterpriseReceiptError("E_INVALID_ENVELOPE", f"{field} is required")
     try:
-        return base64.urlsafe_b64decode(
-            (value + "=" * (-len(value) % 4)).encode("ascii")
-        )
-    except (ValueError, UnicodeEncodeError) as exc:
+        encoded = value.encode("ascii")
+        if ("-" in value or "_" in value) and ("+" in value or "/" in value):
+            raise ValueError("mixed Base64 alphabets")
+        padding = len(encoded) - len(encoded.rstrip(b"="))
+        body = encoded[:-padding] if padding else encoded
+        if b"=" in body or padding > 2 or len(body) % 4 == 1:
+            raise ValueError("invalid Base64 padding")
+        required_padding = -len(body) % 4
+        if padding and padding != required_padding:
+            raise ValueError("invalid Base64 padding")
+        padded = body + b"=" * required_padding
+        decoded = base64.b64decode(padded, altchars=b"-_", validate=True)
+        # Reject non-zero unused pad bits while accepting the canonical standard
+        # and URL-safe forms, with or without padding.
+        if value not in {
+            base64.b64encode(decoded).decode("ascii"),
+            base64.b64encode(decoded).decode("ascii").rstrip("="),
+            base64.urlsafe_b64encode(decoded).decode("ascii"),
+            base64.urlsafe_b64encode(decoded).decode("ascii").rstrip("="),
+        }:
+            raise ValueError("non-canonical Base64 encoding")
+        return decoded
+    except (binascii.Error, ValueError, UnicodeEncodeError) as exc:
         raise EnterpriseReceiptError("E_INVALID_ENVELOPE", f"invalid {field}") from exc
+
+
+def _unique_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    value: dict[str, Any] = {}
+    for key, item in pairs:
+        if key in value:
+            raise ValueError("duplicate JSON object member")
+        value[key] = item
+    return value
+
+
+def _json_loads(value: str | bytes) -> Any:
+    return json.loads(value, object_pairs_hook=_unique_json_object)
 
 
 def _sha256(value: bytes) -> str:
@@ -108,8 +141,8 @@ def dsse_pae(payload_type: str, payload: bytes) -> bytes:
 
 def _read_json(path: Path) -> dict:
     try:
-        value = json.loads(Path(path).read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+        value = _json_loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError, RecursionError) as exc:
         raise EnterpriseReceiptError("E_INVALID_JSON", str(exc)) from exc
     if not isinstance(value, dict):
         raise EnterpriseReceiptError(
@@ -423,8 +456,8 @@ def _verify_signature(
 
 def _decode_envelope_payload(payload_bytes: bytes) -> dict:
     try:
-        payload = json.loads(payload_bytes.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        payload = _json_loads(payload_bytes.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError, RecursionError) as exc:
         raise EnterpriseReceiptError("E_INVALID_PAYLOAD", str(exc)) from exc
     if not isinstance(payload, dict):
         raise EnterpriseReceiptError(
@@ -492,6 +525,8 @@ def _revoked(
             entry.get("keyid") != keyid and entry.get("identity") != identity
         ):
             continue
+        if "revoked_at" not in entry:
+            return True
         revoked_at = entry.get("revoked_at")
         if isinstance(revoked_at, str) and _timestamp(revoked_at) <= receipt_ts:
             return True

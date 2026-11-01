@@ -622,7 +622,6 @@ def _run_bounded_security(args: Any) -> int:
     """Run the existing bounded scan after shared option/profile dispatch."""
     from .review_audits import (
         ReviewAuditError,
-        _seal_security_scan,
         load_tenant_read_contract,
         security_scan,
     )
@@ -655,6 +654,7 @@ def _run_bounded_security(args: Any) -> int:
             oracle_trust_root=getattr(args, "oracle_trust_root", None),
             oracle_trust_sha256=getattr(args, "oracle_trust_sha256", None),
             oracle_environment_sha256=getattr(args, "oracle_environment_sha256", None),
+            tenant_read_configuration=contract_evidence,
             **({"security_only": True} if security_only else {}),
             **(
                 {"defect_policy": args.defect_policy}
@@ -662,16 +662,6 @@ def _run_bounded_security(args: Any) -> int:
                 else {}
             ),
         )
-        result["tenant_read_contract"]["configuration"] = contract_evidence
-        if contract_evidence["state"] == "missing":
-            if result["state"] == "CLEAN":
-                result["state"] = "INCOMPLETE"
-            result["action_summary"] += (
-                " Tenant isolation remains unassessed for custom reads; add "
-                "`.factory/tenant-read-contract.json` with every tenant-scoped "
-                "read and its binding, or explicitly declare an empty read set."
-            )
-        result = _seal_security_scan(result)
         from .mission_control_status import (
             prepare_security_scan_receipt_report,
             write_security_scan_receipt,

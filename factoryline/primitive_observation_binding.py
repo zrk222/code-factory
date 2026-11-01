@@ -185,7 +185,11 @@ def _trusted_core_policy_result(evidence_payload=None, counts=None):
 
 
 def security_defect_policy_decision(
-    core, captured_sources, prior_tiers=None, prior_source_state=None
+    core,
+    captured_sources,
+    prior_tiers=None,
+    prior_source_state=None,
+    _verifier_native_rows=None,
 ):
     """Regenerate trusted-core admission from the complete captured native scan."""
     policy_id = validate_security_defect_policy(core.get("selected_defect_policy"))
@@ -199,7 +203,7 @@ def security_defect_policy_decision(
         ):
             return decision
         regenerated, sources_sha256, source_findings = _trusted_core_regenerated_tiers(
-            core, captured_sources
+            core, captured_sources, _verifier_native_rows
         )
         if regenerated is None:
             return decision
@@ -226,7 +230,6 @@ def security_defect_policy_decision(
         return _trusted_core_policy_result(evidence_payload, (supported, unresolved))
     except Exception:
         return decision
-    return decision
 
 
 def _security_tier_reports_match(actual, expected_rows, prior_tiers):
@@ -240,7 +243,7 @@ def _security_tier_reports_match(actual, expected_rows, prior_tiers):
     return True
 
 
-def _trusted_core_regenerated_tiers(core, captured_sources):
+def _trusted_core_regenerated_tiers(core, captured_sources, _verifier_native_rows=None):
     from . import review_audits as audit
 
     sources = _trusted_core_complete_sources(core, captured_sources, audit)
@@ -250,7 +253,9 @@ def _trusted_core_regenerated_tiers(core, captured_sources):
     tenant = _trusted_core_tenant_arguments(core, audit)
     if tenant is None:
         return None, None, None
-    native_rows = _trusted_core_native_security_rows(captured, tenant, audit)
+    native_rows = _verifier_native_rows
+    if native_rows is None or tenant != ((), {}, False):
+        native_rows = _trusted_core_native_security_rows(captured, tenant, audit)
     if native_rows is None or not _trusted_core_surface_matches(core, native_rows):
         return None, None, None
     regenerated = build_finding_tier_report(
@@ -493,25 +498,15 @@ def _trusted_core_surface_matches(core, native_rows):
         and isinstance(row.get("code"), str)
         and row["code"].startswith("SECURITY_")
     ]
-    surface_ids = sorted(
-        (
-            row.get("path"),
-            row.get("line"),
-            row.get("column", 0),
-            row.get("code"),
-            row.get("severity"),
+    surface_ids, native_ids = (
+        sorted(
+            tuple(
+                row.get(key, 0) if key == "column" else row.get(key)
+                for key in ("path", "line", "column", "code", "severity")
+            )
+            for row in rows
         )
-        for row in surface
-    )
-    native_ids = sorted(
-        (
-            row.get("path"),
-            row.get("line"),
-            row.get("column", 0),
-            row.get("code"),
-            row.get("severity"),
-        )
-        for row in native_rows
+        for rows in (surface, native_rows)
     )
     return surface_ids == native_ids
 
@@ -760,66 +755,43 @@ def _pickle_byte_origins_for_source(path, captured):
         return {}
 
 
-def _finding_signing_evidence(
+def _finding_credential_evidence(
     finding, native_rows, bound, captured, bindings, coverage, partition, cache
 ):
+    facts = finding.get("facts")
+    named = isinstance(facts, dict) and isinstance(facts.get("name"), str)
+    critical = finding.get("severity") == "CRITICAL"
     if not (
         bound
         and finding.get("code") == "SECURITY_HARDCODED_SECRET"
-        and isinstance(finding.get("facts"), dict)
-        and finding["facts"].get("name") == "SECRET_KEY"
+        and (named or critical)
         and (coverage is True or coverage == "COMPLETE")
         and partition == "VALIDATED"
         and _matches_regenerated_finding(finding, native_rows)
     ):
-        return None
+        return None, None
     from . import semantic_credential_sensor as sensor
 
     if "inventory" not in cache:
         cache["inventory"] = sensor.signing_configuration_inventory(captured, bindings)
-    return sensor.signing_configuration_evidence(finding, cache["inventory"])
+    inventory = cache["inventory"]
+    signing = (
+        sensor.signing_configuration_evidence(finding, inventory)
+        if named and facts["name"] == "SECRET_KEY"
+        else None
+    )
+    credential = (
+        sensor.private_key_authentication_evidence(finding, inventory)
+        if critical
+        else None
+    )
+    if credential is None and named:
+        from .credential_endpoint_admission import operative_signing_default_evidence
 
-
-def _finding_private_key_authentication_evidence(
-    finding, native_rows, bound, captured, bindings, coverage, partition, cache
-):
-    if not (
-        bound
-        and finding.get("code") == "SECURITY_HARDCODED_SECRET"
-        and finding.get("severity") == "CRITICAL"
-        and (coverage is True or coverage == "COMPLETE")
-        and partition == "VALIDATED"
-        and _matches_regenerated_finding(finding, native_rows)
-    ):
-        return None
-    from . import semantic_credential_sensor as sensor
-
-    if "inventory" not in cache:
-        cache["inventory"] = sensor.signing_configuration_inventory(captured, bindings)
-    return sensor.private_key_authentication_evidence(finding, cache["inventory"])
-
-
-def _finding_flask_session_authority_evidence(
-    finding, native_rows, bound, captured, bindings, coverage, partition, cache
-):
-    if not (
-        bound
-        and finding.get("code") == "SECURITY_HARDCODED_SECRET"
-        and isinstance(finding.get("facts"), dict)
-        and isinstance(finding["facts"].get("name"), str)
-        and (coverage is True or coverage == "COMPLETE")
-        and partition == "VALIDATED"
-        and _matches_regenerated_finding(finding, native_rows)
-    ):
-        return None
-    from . import semantic_credential_sensor as sensor
-    from .credential_endpoint_admission import operative_signing_default_evidence
-
-    if "inventory" not in cache:
-        cache["inventory"] = sensor.signing_configuration_inventory(captured, bindings)
-    return sensor.flask_credential_authority_evidence(
-        finding, cache["inventory"]
-    ) or operative_signing_default_evidence(finding, cache["inventory"])
+        credential = sensor.flask_credential_authority_evidence(
+            finding, inventory
+        ) or operative_signing_default_evidence(finding, inventory)
+    return signing, credential
 
 
 def _decide_finding_tier(
@@ -1866,6 +1838,7 @@ def apply_pickle_source_role_policy(
     configuration_bytes=None,
     prior_tiers=None,
     prior_source_state=None,
+    _verifier_native_rows=None,
 ):
     """Rebuild context reviews from the native raw ledger on every seal."""
     policy_id = core.get("selected_defect_policy")
@@ -1876,6 +1849,7 @@ def apply_pickle_source_role_policy(
         captured,
         prior_tiers=prior_tiers,
         prior_source_state=prior_source_state,
+        _verifier_native_rows=_verifier_native_rows,
     )
     original = [*core.get("findings", []), *core.get("context_reviews", [])]
     core["context_reviews"] = []
@@ -1888,6 +1862,7 @@ def apply_pickle_source_role_policy(
     if roles is not None:
         roles["policy_id"] = policy_id
         roles["test_collection_known"] = not _unknown_collection(core)
+        roles["configuration_bytes"] = dict(configuration_bytes or {})
     active, reviews = _pickle_role_partition(original, roles)
     core["findings"], core["context_reviews"] = active, reviews
     core["finding_counts"] = dict(
@@ -2083,10 +2058,10 @@ def _pickle_source_role_witness(finding, inventory):
                     )
                 )
                 if finding.get("code") == "SECURITY_DYNAMIC_EXECUTION"
-                and _pickle_role_native_match(finding, inventory)
                 and not _valid_security_precondition(
                     finding.get("facts", {}).get("security_precondition"), finding
                 )
+                and _pickle_role_native_match(finding, inventory)
                 else None
             )
             if inventory.get("policy_id") in {"source-role-v2", "source-role-v3"}
@@ -3342,16 +3317,18 @@ def _conditional_binding_contract(profile, finding):
     return view["contract"]
 
 
-def partition_proven_primitive_observations(core, audit):
+def partition_proven_primitive_observations(core, audit, _verifier_native_rows=None):
     """Keep proved fixed programs visible without describing them as defects."""
     token = _ROLE_REBUILD_CONTEXT.set({})
     try:
-        return _partition_proven_primitive_observations(core, audit)
+        return _partition_proven_primitive_observations(
+            core, audit, _verifier_native_rows
+        )
     finally:
         _ROLE_REBUILD_CONTEXT.reset(token)
 
 
-def _partition_proven_primitive_observations(core, audit):
+def _partition_proven_primitive_observations(core, audit, _verifier_native_rows=None):
     """Use one independent source rebuild per byte inventory within this seal."""
     from .audit_action_refs import _security_scan_action_summary, _security_scan_state
 
@@ -3436,6 +3413,7 @@ def _partition_proven_primitive_observations(core, audit):
         partition_state="VALIDATED"
         if coverage.get("complete") is True
         else "INCOMPLETE",
+        _verifier_native_rows=_verifier_native_rows,
     )
     if _unknown_collection(core):
         core["state"] = "INCOMPLETE"
@@ -4859,7 +4837,7 @@ def primitive_binding_helpers():
         _raw_diagnostic_summary,
         _finding_source_binding,
         _finding_tier_ledger_row,
-        _finding_flask_session_authority_evidence,
+        _finding_credential_evidence,
         _decide_finding_tier,
         _pickle_role_partition,
         _pickle_source_role_decision,
@@ -5058,7 +5036,7 @@ def _finding_tier_ledger_row(
     native_rows = _finding_native_rows(
         finding, captured, bound_source, regenerated, source_bytes, bindings
     )
-    signing_evidence = _finding_signing_evidence(
+    signing_evidence, credential_evidence = _finding_credential_evidence(
         finding,
         native_rows,
         bound_source,
@@ -5068,27 +5046,6 @@ def _finding_tier_ledger_row(
         partition_state,
         signing_cache,
     )
-    credential_evidence = _finding_private_key_authentication_evidence(
-        finding,
-        native_rows,
-        bound_source,
-        source_bytes,
-        bindings,
-        coverage_state,
-        partition_state,
-        signing_cache,
-    )
-    if credential_evidence is None:
-        credential_evidence = _finding_flask_session_authority_evidence(
-            finding,
-            native_rows,
-            bound_source,
-            source_bytes,
-            bindings,
-            coverage_state,
-            partition_state,
-            signing_cache,
-        )
     tier, evidence, evidence_details = _decide_finding_tier(
         finding,
         bound_source,

@@ -345,9 +345,17 @@ def captured_import_module(source, path, name):
     tree = source.snapshots.get(path)
     if not isinstance(tree, ast.Module) or not source.validate(path):
         return False, None
-    statements = [
-        node for node in ast.walk(tree) if _captured_import_statement(node, name)
-    ]
+    parents = getattr(source, "parents", {}).get(path)
+    nodes = (
+        ast.walk(tree)
+        if parents is None
+        else {
+            parent
+            for parent in parents.values()
+            if isinstance(parent, (ast.Import, ast.ImportFrom))
+        }
+    )
+    statements = [node for node in nodes if _captured_import_statement(node, name)]
     if not statements:
         return False, None
     inventory = captured_import_inventory(source)

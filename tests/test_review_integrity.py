@@ -1262,8 +1262,7 @@ def test_request_alias_memo_matches_uncached_full_findings(monkeypatch):
     from factoryline import review_integrity
     from factoryline.review_audits import _security_aliases
 
-    source = textwrap.dedent(
-        """
+    source = textwrap.dedent("""
         from flask import request
         import sqlite3
         import logging
@@ -1276,8 +1275,7 @@ def test_request_alias_memo_matches_uncached_full_findings(monkeypatch):
             logger.info('query=%s', value)
             cursor.execute('SELECT * FROM item WHERE name=' + value)
             logger.info('query=%s', value)
-        """
-    )
+        """)
     base_apply = review_integrity._security_apply_import_bindings
     memo_factory = intent_quality_module._new_security_request_alias_memo
 
@@ -7138,9 +7136,9 @@ def test_precision257_security_scan_report_and_seal_keep_integrity_fields():
         contracts=SimpleNamespace(
             import_context_metadata=lambda *args: {"edges": len(args[1])}
         ),
-        _security_scan_action_summary=lambda state: "Review required"
-        if state == "INCOMPLETE"
-        else "Clean",
+        _security_scan_action_summary=lambda state: (
+            "Review required" if state == "INCOMPLETE" else "Clean"
+        ),
         _security_scan_report_candidate_payload=lambda core: {
             k: v
             for k, v in core.items()
@@ -7255,6 +7253,53 @@ def test_precision257_intent_quality_url_and_path_helpers_distinguish_safe_and_u
         )
         is False
     )
+
+
+def test_request_url_destination_control_distinguishes_authority_suffix_and_unknown():
+    import ast
+
+    from factoryline.credential_role_paths import request_url_destination_control
+    from factoryline.review_integrity import bind_security_call_scopes
+
+    source = (
+        "from flask import request\n"
+        "import requests\n"
+        "def fetch(host):\n"
+        "    username = request.args['username']\n"
+        "    requests.get('https://api.example.test/users/' + username)\n"
+        "    requests.get('https://' + host)\n"
+        "    requests.get(build_url(username))\n"
+    )
+    tree = ast.parse(source)
+    bind_security_call_scopes(tree)
+    calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "get"
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "requests"
+    ]
+    assert len(calls) == 3
+
+    def is_tainted(node, _requests, _parameters, _aliases):
+        if isinstance(node, ast.Name):
+            return node.id in {"host", "username"}
+        if isinstance(node, ast.Subscript):
+            return isinstance(node.value, ast.Attribute) and node.value.attr == "args"
+        if isinstance(node, (ast.BinOp, ast.Call)):
+            return any(
+                is_tainted(child, None, None, None)
+                for child in ast.iter_child_nodes(node)
+            )
+        return False
+
+    statuses = [
+        request_url_destination_control(call.args[0], {"host"}, {}, is_tainted)
+        for call in calls
+    ]
+    assert statuses == ["suffix_only", "authority_controlled", "unknown"]
 
 
 def test_precision257_intent_quality_guard_and_sanitizer_bindings():

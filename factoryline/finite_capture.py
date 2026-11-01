@@ -11,9 +11,8 @@ import re
 from collections import defaultdict
 from dataclasses import dataclass as dataclass
 from .import_context import _shell_import_aliases as _shell_import_aliases
-from .semantic_credential_sensor import (
-    _SecurityFlowValue as _SecurityFlowValue,
-    _captured_path_expression as _captured_path_expression,
+from .captured_security_audit import (
+    _native_span as _fixed_program_span,
     _captured_sink_arguments as _captured_sink_arguments,
     _captured_sink_callee_binding as _captured_sink_callee_binding,
     _captured_sink_enclosing_callable as _captured_sink_enclosing_callable,
@@ -31,6 +30,11 @@ from .semantic_credential_sensor import (
     _captured_sink_value as _captured_sink_value,
     _captured_sink_values as _captured_sink_values,
     _captured_sink_reflective_barrier as _captured_sink_reflective_barrier,
+)
+
+from .semantic_credential_sensor import (
+    _SecurityFlowValue as _SecurityFlowValue,
+    _captured_path_expression as _captured_path_expression,
     _captured_method_path_call as _captured_method_path_call,
     _captured_standard_path_call as _captured_standard_path_call,
     _legacy_security_value as _legacy_security_value,
@@ -4779,21 +4783,6 @@ def _reflective_provider_write(call, aliases, audit, bindings, facts):
     facts.update((path, name) for path in paths)
     if uncertain:
         facts.update((path, "*") for path in paths)
-
-
-def _fixed_program_span(node):
-    span = [
-        getattr(node, key, None)
-        for key in ("lineno", "col_offset", "end_lineno", "end_col_offset")
-    ]
-    if (
-        any(type(value) is not int for value in span)
-        or span[0] < 1
-        or min(span[1], span[3]) < 0
-        or tuple(span[:2]) > tuple(span[2:])
-    ):
-        return None
-    return span
 
 
 def _fixed_eval_name_hazard(item, selected_func, sensitive_names):

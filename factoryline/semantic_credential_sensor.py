@@ -13,6 +13,10 @@ import re
 from urllib.parse import urlsplit
 from .credential_endpoint_admission import (
     HTTP_CLIENT_METHODS as _HTTP_CALLS,
+    _flask_session_authority_witness as _flask_session_authority_witness,
+    _flask_route_bound_to_app as _flask_route_bound_to_app,
+    _flask_route_authority as _flask_route_authority,
+    _flask_guard_authority as _flask_guard_authority,
     SECURITY_EFFECT_CONTRACTS as SECURITY_EFFECT_CONTRACTS,
     SECURITY_EFFECT_WITNESS_SCHEMA as SECURITY_EFFECT_WITNESS_SCHEMA,
 )
@@ -574,14 +578,22 @@ def _flask_credential_authority_inputs(finding, context):
     declaration = _flask_credential_declaration(finding, tree, key)
     if declaration is None or _flask_imported_key_written(path, context, key):
         return None
-    session_secret = _flask_config_key_declaration(index, path, "SECRET_KEY")
-    if session_secret is None or not _literal_credential(session_secret.value):
+    session_secret = (
+        declaration
+        if key == "SECRET_KEY"
+        else _flask_config_key_declaration(index, path, "SECRET_KEY")
+    )
+    if session_secret is None or not _literal_credential(
+        session_secret.value, auth_slot=True
+    ):
         return None
     return index, path, declaration, session_secret, key
 
 
 def _flask_credential_declaration(finding, tree, key):
-    declaration = _flask_config_key_declaration_in_tree(tree, key)
+    declaration = _flask_config_key_declaration_in_tree(
+        tree, key, location=(finding.get("line"), finding.get("column", 0))
+    )
     if declaration is None or _signing_rejection_or_reflection(tree):
         return None
     return (
@@ -602,7 +614,21 @@ def _flask_config_key_declaration(index, path, key):
     return _flask_config_key_declaration_in_tree(tree, key)
 
 
-def _flask_config_key_declaration_in_tree(tree, key):
+def _flask_config_key_declaration_in_tree(tree, key, *, location=None):
+    scopes = [tree, *(node for node in tree.body if isinstance(node, ast.ClassDef))]
+    declarations = [
+        declaration
+        for scope in scopes
+        for declaration in [_flask_scope_key_declaration(scope, key)]
+        if declaration is not None
+        and (
+            location is None or (declaration.lineno, declaration.col_offset) == location
+        )
+    ]
+    return declarations[0] if len(declarations) == 1 else None
+
+
+def _flask_scope_key_declaration(tree, key):
     declarations = [
         node
         for node in tree.body
@@ -646,7 +672,7 @@ def _flask_imported_key_written(target, context, key):
     )
 
 
-def _flask_configured_apps(target, context, protected_keys):
+def _flask_configured_apps(target, context, protected_keys, *, declaration=None):
     if not _signing_framework_external(context, "flask"):
         return []
     configured = []
@@ -677,6 +703,10 @@ def _flask_configured_apps(target, context, protected_keys):
                         or _flask_configuration_reloaded(
                             scope, receiver, target, context, protected_keys, path
                         )
+                        or declaration is not None
+                        and not _flask_selected_declaration(
+                            context, call.args[0], path, declaration
+                        )
                     ):
                         continue
                     configured.append(
@@ -687,6 +717,7 @@ def _flask_configured_apps(target, context, protected_keys):
                             "receiver": receiver,
                             "creation": creation,
                             "load": call,
+                            "configuration_path": target,
                         }
                     )
     return configured
@@ -876,6 +907,10 @@ def _flask_explicit_module_exports(tree, names, declarations):
 
 
 def _flask_module_exports_dynamic(tree):
+    from .credential_role_constructor_provider import binding_occurrences
+
+    if any(binding_occurrences(tree.body, name) for name in ("__getattr__", "__dir__")):
+        return True
     dynamic = {"eval", "exec", "globals", "locals", "vars", "setattr", "__import__"}
     for statement in tree.body:
         if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -897,6 +932,7 @@ def _flask_module_exports_dynamic(tree):
                 and node.func.attr == "import_module"
             )
             for root in nodes
+            if isinstance(root, ast.AST)
             for node in ast.walk(root)
         ):
             return True
@@ -904,6 +940,17 @@ def _flask_module_exports_dynamic(tree):
 
 
 def _flask_config_module_matches(context, expression, target, consumer_path, seen=()):
+    selected = _flask_selected_config(context, expression, consumer_path)
+    if selected is not None:
+        return selected[0] == target
+    return _flask_forwarded_config_matches(
+        context, expression, target, consumer_path, seen
+    )
+
+
+def _flask_forwarded_config_matches(
+    context, expression, target, consumer_path, seen=()
+):
     if isinstance(expression, ast.Name) and expression.id == "__name__":
         return consumer_path == target
     resolved = _signing_resolve_module(context, expression)
@@ -963,6 +1010,386 @@ def _flask_config_module_matches(context, expression, target, consumer_path, see
     return found
 
 
+def _signing_source_symbols(context):
+    """Reuse finite exports for captured wildcard imports without guessing providers."""
+    from .credential_role_identity_effects import source_symbol_index
+    from .mock_fixture_provenance import _django_imports
+    from .credential_role_constructor_provider import (
+        _helper_identity,
+        _same_helper_epoch,
+    )
+
+    index = context["index"]
+    generation = _signing_import_generation(context)
+    helpers = tuple(_helper_identity(value) for value in _signing_import_helpers(index))
+    cached = getattr(index, "_signing_import_cache", None)
+    if (
+        cached is not None
+        and cached["generation"] == generation
+        and _same_helper_epoch(cached["helpers"], helpers)
+    ):
+        return cached["symbols"]
+    if cached is not None:
+        # The source-symbol wrapper also caches ordinary imports/module paths.
+        # Rebuild both positive and refused derivations on any epoch change.
+        index.__dict__.pop("_identity_symbol_index", None)
+    symbols = (
+        source_symbol_index(index)
+        if all(index.validate(p) for p in index.snapshots)
+        else None
+    )
+    if symbols is not None:
+        for path in index.snapshots:
+            if _django_imports(symbols, path) is None:
+                symbols["imports"][path] = _signing_module_imports(context, path)
+    index._signing_import_cache = {
+        "generation": generation,
+        "helpers": helpers,
+        "symbols": symbols,
+        "snapshot_refs": tuple(index.snapshots.values()),
+        "source_refs": tuple(index.source_bytes.values()),
+    }
+    return symbols
+
+
+def _signing_import_generation(context):
+    index = context["index"]
+    return (
+        index.root,
+        tuple(
+            sorted(
+                (
+                    str(p),
+                    id(t),
+                    id(index.source_bytes.get(p)),
+                    index.inventory.get(p),
+                    getattr(t, "_oracle_source_sha256", None),
+                )
+                for p, t in index.snapshots.items()
+            )
+        ),
+        tuple(sorted((name, str(path)) for name, path in context["paths"].items())),
+        tuple(sorted((str(path), digest) for path, digest in index.inventory.items())),
+        tuple(sorted(str(path) for path in index.source_bytes)),
+    )
+
+
+def _signing_import_helpers(index):
+    from .credential_role_identity_effects import source_symbol_index
+    from .credential_role_constructor_provider import binding_occurrences
+    from .mock_fixture_provenance import (
+        _django_imports,
+        _django_import_rows,
+        _django_import_targets,
+        _django_name,
+    )
+    from .review_audits import _bound_names, _name
+
+    return (
+        source_symbol_index,
+        index.validate,
+        index.module_paths,
+        index.relative,
+        _django_imports,
+        _django_import_rows,
+        _django_import_targets,
+        _django_name,
+        binding_occurrences,
+        _bound_names,
+        _name,
+        _signing_import_generation,
+        _signing_import_helpers,
+        _signing_module_imports,
+        _signing_resolve_module,
+        _flask_static_module_exports,
+        _flask_static_module_bindings,
+        _flask_assigns_module_name,
+        _flask_expand_star_exports,
+        _flask_explicit_module_exports,
+        _flask_module_exports_dynamic,
+    )
+
+
+def _signing_module_imports(context, path):
+    from .mock_fixture_provenance import _django_import_rows, _django_name
+    from .credential_role_constructor_provider import binding_occurrences
+
+    tree = context["index"].snapshots[path]
+    if not context["index"].validate(path):
+        return None
+    if not any(
+        isinstance(node, ast.ImportFrom) and any(a.name == "*" for a in node.names)
+        for node in tree.body
+    ):
+        return None
+    imports = {}
+    package = _django_name({"source": context["index"]}, path).rpartition(".")[0]
+    for statement in tree.body:
+        rows = _django_import_rows(statement, package)
+        if rows is None:
+            module = _signing_resolve_module(
+                context, ast.Constant(value=statement.module), path
+            )
+            exports = (
+                _flask_static_module_exports(context, module, set())
+                if module is not None
+                else None
+            )
+            if exports is None:
+                return None
+            rows = [(name, statement.module + "." + name) for name in exports]
+        imports.update(rows)
+    stars = {
+        id(node)
+        for node in tree.body
+        if isinstance(node, ast.ImportFrom) and any(a.name == "*" for a in node.names)
+    }
+    if any(
+        len(
+            rows := [
+                row
+                for row in binding_occurrences(tree.body, name)
+                if id(row) not in stars
+            ]
+        )
+        > 1
+        or rows
+        and not isinstance(rows[0], (ast.Import, ast.ImportFrom))
+        for name in imports
+    ):
+        return None
+    return imports
+
+
+def _signing_binding_occurrences(context, path, scope, name):
+    from .credential_role_constructor_provider import binding_occurrences
+
+    rows = binding_occurrences(scope.body, name)
+    symbols = _signing_source_symbols(context)
+    if symbols is None or symbols["imports"].get(path) is None:
+        return rows
+    return [
+        row
+        for row in rows
+        if not (
+            isinstance(row, ast.ImportFrom) and any(a.name == "*" for a in row.names)
+        )
+    ]
+
+
+def _signing_source_symbol(
+    context, path, expression, function=None, *, provider_chain=None
+):
+    from .mock_fixture_provenance import _app_source_symbol, _django_expr, _django_name
+
+    symbols = _signing_source_symbols(context)
+    if symbols is None:
+        return None
+    selected = _app_source_symbol(
+        symbols, path, expression, function, provider_chain=provider_chain
+    )
+    if selected is not None:
+        return selected
+    canonical = _django_expr(symbols, path, expression, function)
+    if canonical is None and isinstance(expression, ast.Name) and function is None:
+        canonical = _django_name(symbols, path) + "." + expression.id
+    seen = set()
+    while canonical and canonical not in seen and len(seen) < 12:
+        seen.add(canonical)
+        module, _, member = canonical.rpartition(".")
+        owner = _signing_resolve_module(context, ast.Constant(value=module), path)
+        if owner is None:
+            return None
+        if provider_chain is not None:
+            provider_chain.append((canonical, owner, member))
+        rows = _signing_binding_occurrences(
+            context, owner, context["index"].snapshots[owner], member
+        )
+        if len(rows) != 1:
+            return None
+        node = rows[0]
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            canonical = _django_expr(symbols, owner, ast.Name(id=member))
+            continue
+        if isinstance(node, ast.Name):
+            node = context["index"].parents[owner].get(id(node))
+        return owner, node
+    return None
+
+
+def _flask_selected_config(context, expression, path, seen=()):
+    """Resolve a finite module/class selection, including an environment default."""
+    if (
+        expression is None
+        or len(seen) >= 8
+        or id(expression) in seen
+        or (isinstance(expression, ast.Name) and not context["index"].validate(path))
+    ):
+        return None
+    seen = (*seen, id(expression))
+    default = _flask_config_default(context, expression, path)
+    if default is not None:
+        return _flask_selected_config(context, default, path, seen)
+    if isinstance(expression, ast.Constant) and isinstance(expression.value, str):
+        module = _signing_resolve_module(context, expression, path)
+        if module is not None:
+            return module, context["index"].snapshots[module]
+        module_name, _, member = expression.value.rpartition(".")
+        module = _signing_resolve_module(context, ast.Constant(value=module_name), path)
+        if module is None:
+            return None
+        expression, path = ast.Name(id=member), module
+
+    symbols = _signing_source_symbols(context)
+    selected = _signing_source_symbol(context, path, expression) if symbols else None
+    if selected is None:
+        return None
+    owner, node = selected
+    if isinstance(node, ast.Assign):
+        return _flask_selected_config(context, node.value, owner, seen)
+    return (owner, node) if isinstance(node, ast.ClassDef) else None
+
+
+def _flask_config_default(context, expression, path):
+    from .review_audits import _resolved_ast_name
+    from .credential_role_identity_effects import _enclosing_function
+    from .mock_fixture_provenance import _app_local_assignment
+
+    if isinstance(expression, ast.Name):
+        scope = _enclosing_function(expression, context["index"].parents[path])
+        binding = _app_local_assignment(scope, expression.id) if scope else None
+        return binding.value if isinstance(binding, ast.Assign) else None
+    if not isinstance(expression, ast.Call):
+        return None
+    if (
+        _resolved_ast_name(expression.func, context["aliases"][path])
+        not in {"os.getenv", "os.environ.get"}
+        or len(expression.args) != 2
+        or expression.keywords
+        or not isinstance(expression.args[0], ast.Constant)
+        or not isinstance(expression.args[0].value, str)
+        or _provider_identity_uncertain(
+            context["index"].snapshots[path], context["aliases"][path], roots=("os",)
+        )
+    ):
+        return None
+    return expression.args[1]
+
+
+def _flask_effective_config_key(context, path, scope, key, seen=()):
+    from .credential_role_constructor_provider import binding_occurrences
+
+    if id(scope) in seen or len(seen) >= 8:
+        return None
+    if isinstance(scope, ast.ClassDef) and not _flask_config_class_closed(
+        context, path, scope, key
+    ):
+        return None
+    declaration = _flask_scope_key_declaration(scope, key)
+    if declaration is not None:
+        return declaration
+    if binding_occurrences(scope.body, key):
+        return None
+    if (
+        not isinstance(scope, ast.ClassDef)
+        or scope.decorator_list
+        or len(scope.bases) != 1
+    ):
+        return None
+    selected = _flask_selected_config(context, scope.bases[0], path)
+    if selected is None:
+        return None
+    return _flask_effective_config_key(context, *selected, key, (*seen, id(scope)))
+
+
+def _flask_config_class_closed(context, path, scope, key, seen=()):
+    from .mock_fixture_provenance import _django_name
+    from .credential_endpoint_admission import _CredentialHandlerIndex
+
+    if (
+        id(scope) in seen
+        or len(seen) >= 8
+        or scope.decorator_list
+        or scope.keywords
+        or len(scope.bases) > 1
+    ):
+        return False
+    if (
+        scope.bases
+        and isinstance(scope.bases[0], ast.Name)
+        and scope.bases[0].id == "object"
+        and not _security_builtin_identity_closed(
+            context["index"].snapshots[path], context["aliases"][path], {"object"}
+        )
+    ):
+        return False
+    if scope.bases and not (
+        isinstance(scope.bases[0], ast.Name) and scope.bases[0].id == "object"
+    ):
+        selected = _flask_selected_config(context, scope.bases[0], path)
+        if selected is None or not _flask_config_class_closed(
+            context, *selected, key, (*seen, id(scope))
+        ):
+            return False
+    symbols = _signing_source_symbols(context)
+    canonical = _django_name(symbols, path) + "." + scope.name
+    graph = _CredentialHandlerIndex(context)
+    for owner, tree in context["index"].snapshots.items():
+        aliases = dict(context["aliases"][owner])
+        if owner == path:
+            aliases[scope.name] = canonical
+        if _provider_identity_uncertain(
+            tree,
+            aliases,
+            roots=(canonical + "." + key,),
+            selected_paths=True,
+            argument_predicate=lambda node,
+            _aliases,
+            parents: not _flask_config_reader_argument(node, parents, graph, owner),
+        ):
+            return False
+    return True
+
+
+def _flask_config_reader_argument(node, parents, graph, path):
+    call = parents.get(id(node))
+    if (
+        not isinstance(call, ast.Call)
+        or len(call.args) != 1
+        or call.args[0] is not node
+        or call.keywords
+    ):
+        return False
+    function = call.func
+    if not (
+        isinstance(function, ast.Attribute)
+        and function.attr == "from_object"
+        and isinstance(function.value, ast.Attribute)
+        and function.value.attr == "config"
+    ):
+        return False
+    receiver = graph.binding(path, function.value.value)
+    return (
+        receiver is not None
+        and receiver["framework"] == "flask"
+        and receiver["kind"] == "application"
+    )
+
+
+def _flask_selected_declaration(context, expression, path, declaration):
+    selected = _flask_selected_config(context, expression, path)
+    if selected is None:
+        # The existing call-argument resolver already proved module forwarding.
+        # Class fields still require an exact effective-class selection.
+        return any(
+            declaration in tree.body for tree in context["index"].snapshots.values()
+        )
+    return (
+        selected is not None
+        and _flask_effective_config_key(context, *selected, "SECRET_KEY") is declaration
+    )
+
+
 def _flask_module_aliases(path, tree, context):
     aliases = dict(context["aliases"].get(path, {}))
     if _signing_framework_external(context, "flask") and any(
@@ -992,72 +1419,6 @@ def _name_writes(scope, name):
         and isinstance(node.ctx, (ast.Store, ast.Del))
         for node in ast.walk(scope)
     )
-
-
-def _flask_session_authority_witness(path, tree, context, app, credential_key):
-    from .review_integrity import _security_scope_request_aliases
-
-    aliases = context["aliases"][path]
-    receiver = app["receiver"]
-    login_wrapper = _flask_login_wrapper(tree, aliases)
-    protected = _flask_protected_route(tree, receiver, aliases)
-    if login_wrapper is None or protected is None:
-        return None
-    for route in tree.body:
-        if not isinstance(route, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue
-        if not _flask_route_bound_to_app(route, receiver):
-            continue
-        witness = _flask_route_authority(
-            route,
-            tree,
-            receiver,
-            credential_key,
-            aliases,
-            _security_scope_request_aliases,
-        )
-        if witness is not None:
-            return {
-                **witness,
-                "login_wrapper": login_wrapper["guard"],
-                "protected_route": protected,
-            }
-    return None
-
-
-def _flask_route_authority(
-    route, tree, receiver, credential_key, aliases, alias_reader
-):
-    if not isinstance(route, (ast.FunctionDef, ast.AsyncFunctionDef)):
-        return None
-    for guard in ast.walk(route):
-        if not isinstance(guard, ast.If) or not _flask_path_conditions_clear(
-            tree, guard
-        ):
-            continue
-        witness = _flask_guard_authority(
-            guard, route, tree, receiver, credential_key, aliases, alias_reader
-        )
-        if witness is not None:
-            return witness
-    return None
-
-
-def _flask_guard_authority(
-    guard, route, tree, receiver, credential_key, aliases, alias_reader
-):
-    comparison = _flask_password_config_comparison(
-        guard.test, receiver, aliases, route, guard, alias_reader
-    )
-    if comparison is None:
-        return None
-    password_key, equality = comparison
-    if _flask_config_key_declaration_in_tree(tree, password_key) is None:
-        return None
-    grant = _flask_session_grant(guard.body, aliases, route, alias_reader)
-    if grant is None or credential_key not in {password_key, "SECRET_KEY"}:
-        return None
-    return {"password_key": password_key, "comparison": equality, "grant": grant}
 
 
 def _flask_password_config_comparison(
@@ -1377,17 +1738,6 @@ def _flask_protected_route(tree, receiver, aliases):
     return None
 
 
-def _flask_route_bound_to_app(function, receiver):
-    return any(
-        isinstance(value, ast.Attribute)
-        and value.attr == "route"
-        and isinstance(value.value, ast.Name)
-        and value.value.id == receiver
-        for decorator in function.decorator_list
-        for value in [decorator.func if isinstance(decorator, ast.Call) else decorator]
-    )
-
-
 def _flask_resolves_to(node, expected, aliases, scope, statement, alias_reader):
     from .review_audits import _name
 
@@ -1433,6 +1783,184 @@ def _signing_configuration_consumer_witness(index, path, context):
         ),
         None,
     )
+
+
+def _signing_optional_configuration_defaults(context, path, observation):
+    """Project the feasible absent-file profile without rewriting captured ASTs."""
+    tree = context["index"].snapshots[path]
+    if not _signing_loader_prefixes_closed(context, observation):
+        return tree, []
+    body, guards = [], []
+    for statement in tree.body:
+        absent = _signing_optional_configuration_absent(context, path, statement, body)
+        if absent is None:
+            body.append(statement)
+        else:
+            body.extend(statement.orelse)
+            guards.extend(absent)
+    return ast.Module(body=body, type_ignores=[]), guards
+
+
+def _signing_optional_configuration_absent(context, path, statement, prefix):
+    from . import review_audits as audit
+    from .review_integrity import _security_apply_import_bindings
+
+    if not isinstance(statement, ast.If) or not isinstance(statement.test, ast.Call):
+        return None
+    call = statement.test
+    aliases = _security_apply_import_bindings(prefix, {}, None, audit)
+    if (
+        audit._name(call.func).split(".")[0] not in aliases
+        or audit._resolved_ast_name(call.func, aliases) != "os.path.isfile"
+        or len(call.args) != 1
+        or call.keywords
+        or _signing_resolve_module(context, ast.Constant(value="os"), path) is not None
+    ):
+        return None
+    before = ast.Module(body=prefix, type_ignores=[])
+    if (
+        not _signing_prefix_effects_closed(context, path, before, aliases)
+        or not _security_builtin_identity_closed(before, aliases, {"__file__"})
+        or not all(
+            _signing_provider_clear(
+                before if owner == path else tree,
+                aliases if owner == path else context["aliases"][owner],
+                "django",
+                roots=("os.path",),
+            )
+            for owner, tree in context["index"].snapshots.items()
+        )
+    ):
+        return None
+    dependencies = []
+    selected = _signing_static_path(call.args[0], before, aliases, path, dependencies)
+    from pathlib import PurePosixPath
+    import posixpath
+
+    if selected is not None and any(separator in selected for separator in ("\\", ":")):
+        return None
+    selected = (
+        PurePosixPath(posixpath.normpath(selected)) if selected is not None else None
+    )
+    root = PurePosixPath("/__capture__")
+    if selected is None or not selected.is_relative_to(root):
+        return None
+    relative = selected.relative_to(root).as_posix()
+    if relative in context["captured"]:
+        return None
+    return [*dependencies, statement.test]
+
+
+def _signing_loader_prefixes_closed(context, observation):
+    index, selected = context["index"], {}
+    for transfer in observation["transfers"]:
+        path = Path(transfer["path"])
+        if path not in index.snapshots or transfer["sha256"] != index.inventory[path]:
+            return False
+        calls = [
+            node
+            for node in ast.walk(index.snapshots[path])
+            if isinstance(node, ast.Call)
+            and [node.lineno, node.col_offset, node.end_lineno, node.end_col_offset]
+            == transfer["span"]
+        ]
+        if len(calls) != 1:
+            return False
+        selected.setdefault(path, []).extend(calls)
+    return bool(selected) and all(
+        _signing_prefix_effects_closed(
+            context, path, index.snapshots[path], context["aliases"][path], calls
+        )
+        for path, calls in selected.items()
+    )
+
+
+def _signing_prefix_effects_closed(context, path, tree, aliases, selectors=()):
+    """Do not infer file absence across writes or opaque initialization effects."""
+    cutoff = max((node.end_lineno for node in selectors), default=float("inf"))
+    for node in ast.walk(tree):
+        if getattr(node, "end_lineno", 0) > cutoff:
+            continue
+        if isinstance(
+            node, (ast.Import, ast.ImportFrom)
+        ) and not _signing_path_import_closed(context, path, node):
+            return False
+        if isinstance(node, ast.Call) and node not in selectors:
+            if _signing_static_path_call(node, tree, aliases, path, [], ()) is None:
+                return False
+    return True
+
+
+def _signing_path_import_closed(context, path, node):
+    if isinstance(node, ast.ImportFrom) and node.level:
+        return False
+    modules = (
+        [item.name for item in node.names]
+        if isinstance(node, ast.Import)
+        else [node.module or ""]
+    )
+    return all(
+        module.split(".")[0] in {"os", "sys", "django"}
+        and _signing_resolve_module(
+            context, ast.Constant(value=module.split(".")[0]), path
+        )
+        is None
+        for module in modules
+    )
+
+
+def _signing_static_path(node, tree, aliases, path, dependencies, seen=()):
+    from .mock_fixture_provenance import _django_assignment
+
+    if id(node) in seen or len(seen) >= 8:
+        return None
+    seen = (*seen, id(node))
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    if isinstance(node, ast.Name):
+        if node.id == "__file__":
+            return "/__capture__/" + path.as_posix()
+        rows = _django_assignment(tree, node.id)
+        if len(rows) == 1 and rows[0][0].end_lineno < node.lineno:
+            dependencies.append(rows[0][0])
+            return _signing_static_path(
+                rows[0][1], tree, aliases, path, dependencies, seen
+            )
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        left = _signing_static_path(node.left, tree, aliases, path, dependencies, seen)
+        right = _signing_static_path(
+            node.right, tree, aliases, path, dependencies, seen
+        )
+        return left + right if left is not None and right is not None else None
+    return _signing_static_path_call(node, tree, aliases, path, dependencies, seen)
+
+
+def _signing_static_path_call(node, tree, aliases, path, dependencies, seen):
+    from .review_audits import _resolved_ast_name, _name
+    import posixpath
+
+    if (
+        not isinstance(node, ast.Call)
+        or node.keywords
+        or _name(node.func).split(".")[0] not in aliases
+    ):
+        return None
+    name = _resolved_ast_name(node.func, aliases)
+    if name not in {"os.path.dirname", "os.path.abspath", "os.path.join"}:
+        return None
+    values = [
+        _signing_static_path(arg, tree, aliases, path, dependencies, seen)
+        for arg in node.args
+    ]
+    if not values or any(value is None for value in values):
+        return None
+    if name == "os.path.join":
+        return posixpath.join(*values)
+    if len(values) != 1:
+        return None
+    if name == "os.path.dirname":
+        return posixpath.dirname(values[0])
+    return posixpath.normpath(values[0]) if values[0].startswith("/") else None
 
 
 def private_key_authentication_evidence(finding, context):
@@ -2189,6 +2717,52 @@ def _signing_provider_clear(tree, aliases, framework, *, roots=None):
                 for root in roots
             )
         }
+    if framework == "django":
+        # Reading a selected literal string cannot mutate its owning settings
+        # namespace; keep stores, namespace escapes and container reads indexed.
+        reads.update(
+            id(node)
+            for node in nodes
+            if isinstance(node, ast.Attribute)
+            and isinstance(node.ctx, ast.Load)
+            and _resolved_ast_name(node, aliases) == "django.conf.settings.SECRET_KEY"
+        )
+        # Mapping keys outside the selected loader key cannot replace that key.
+        # Keep namespace aliases, unknown keys and reflective writes in the index.
+        reads.update(
+            id(node)
+            for node in nodes
+            if isinstance(node, ast.Subscript)
+            and isinstance(node.ctx, (ast.Store, ast.Del))
+            and _resolved_ast_name(node.value, aliases) == "os.environ"
+            and isinstance(node.slice, ast.Constant)
+            and isinstance(node.slice.value, str)
+            and node.slice.value != "DJANGO_SETTINGS_MODULE"
+        )
+        if any(
+            isinstance(node, ast.Call)
+            and (name := _resolved_ast_name(node.func, aliases)).startswith(
+                "os.environ."
+            )
+            and name not in {"os.environ.get", "os.environ.setdefault"}
+            for node in nodes
+        ):
+            return False
+        if _security_builtin_identity_closed(tree, aliases, {"len"}):
+            reads.update(
+                id(call.args[0])
+                for call in nodes
+                if isinstance(call, ast.Call)
+                and _resolved_ast_name(call.func, aliases) in {"len", "builtins.len"}
+                and len(call.args) == 1
+                and not call.keywords
+                and _resolved_ast_name(call.args[0], aliases)
+                in {
+                    "django.conf.settings.INSTALLED_APPS",
+                    "django.conf.settings.MIDDLEWARE",
+                    "django.conf.settings.MIDDLEWARE_CLASSES",
+                }
+            )
     return not _provider_identity_uncertain(
         tree,
         aliases,
@@ -2256,13 +2830,44 @@ def _signing_rejection_or_reflection(tree):
     )
 
 
-def _signing_resolve_module(context, literal):
+def _signing_resolve_module(context, literal, origin=None):
     if not isinstance(literal, ast.Constant) or not isinstance(literal.value, str):
         return None
     parts = literal.value.split(".")
     if not parts or not all(part.isidentifier() for part in parts):
         return None
     paths = context["paths"]
+    if origin is not None:
+        # An entry point's captured ancestor roots also support namespace packages.
+        # A missing initializer is not evidence for an unrelated repository root.
+        index = context["index"]
+        matches = set()
+        for root in Path(origin).parents:
+            candidates = {
+                candidate
+                for candidate in (
+                    root.joinpath(*parts).with_suffix(".py"),
+                    root.joinpath(*parts) / "__init__.py",
+                )
+                if candidate in index.snapshots
+            }
+            if candidates:
+                if len(candidates) != 1 or any(
+                    root.joinpath(*parts[:end]).with_suffix(".py") in index.snapshots
+                    or (
+                        (initializer := root.joinpath(*parts[:end]) / "__init__.py")
+                        in index.snapshots
+                        and not index.validate(initializer)
+                    )
+                    for end in range(1, len(parts))
+                ):
+                    return None
+                selected = next(iter(candidates))
+                if not index.validate(selected):
+                    return None
+                matches.add(selected)
+        if matches:
+            return next(iter(matches)) if len(matches) == 1 else None
     choices = {
         paths[name]
         for name in ("/".join(parts) + ".py", "/".join(parts) + "/__init__.py")
@@ -2290,13 +2895,9 @@ def _django_signing_consumer(target, path, tree, context):
     from .review_integrity import _security_apply_import_bindings
     from .review_audits import _resolved_ast_name
 
-    if not _signing_framework_external(
-        context, "django"
-    ) or not _security_builtin_identity_closed(
+    if not _security_builtin_identity_closed(
         tree, aliases := context["aliases"][path], {"__name__"}
-    ):
-        return None
-    if any(
+    ) or any(
         isinstance(node, ast.Subscript)
         and isinstance(node.ctx, (ast.Store, ast.Del))
         and _resolved_ast_name(node.value, aliases) == "os.environ"
@@ -2318,11 +2919,10 @@ def _django_signing_consumer(target, path, tree, context):
         )
     ]
     for statement in statements:
-        if not isinstance(statement, (ast.Expr, ast.Assign)):
-            continue
-        call = statement.value
-        if not isinstance(call, ast.Call) or not security_precondition_path_possible(
-            call
+        if not (
+            isinstance(statement, (ast.Expr, ast.Assign))
+            and isinstance(call := statement.value, ast.Call)
+            and security_precondition_path_possible(call)
         ):
             continue
         name = _resolved_ast_name(
@@ -2337,11 +2937,13 @@ def _django_signing_consumer(target, path, tree, context):
                 isinstance(call.args[0], ast.Constant)
                 and call.args[0].value == "DJANGO_SETTINGS_MODULE"
             ):
-                selected = (
-                    call
-                    if _signing_resolve_module(context, call.args[1]) == target
-                    else None
-                )
+                resolved = _signing_resolve_module(context, call.args[1], path)
+                selected = None
+                if resolved == target:
+                    parts = call.args[1].value.split(".")
+                    execution_root = resolved.parents[len(parts) - 1]
+                    if _signing_framework_external(context, "django", execution_root):
+                        selected = call
         elif name in {
             "django.core.wsgi.get_wsgi_application",
             "django.core.asgi.get_asgi_application",
@@ -2366,9 +2968,11 @@ def _django_signing_consumer(target, path, tree, context):
     return None
 
 
-def _signing_framework_external(context, framework):
+def _signing_framework_external(context, framework, execution_root=None):
+    root = Path(".") if execution_root is None else Path(execution_root)
     return not any(
-        name == framework + ".py" or name.startswith(framework + "/")
+        Path(name) == root / (framework + ".py")
+        or Path(name).is_relative_to(root / framework)
         for name in context["paths"]
     )
 
@@ -2491,11 +3095,15 @@ def _signing_helper_receiver(helper, call, receiver):
     parameters = [
         inspect.Parameter(
             arg.arg,
-            inspect.Parameter.POSITIONAL_ONLY
-            if arg in args.posonlyargs
-            else inspect.Parameter.KEYWORD_ONLY
-            if arg in args.kwonlyargs
-            else inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            (
+                inspect.Parameter.POSITIONAL_ONLY
+                if arg in args.posonlyargs
+                else (
+                    inspect.Parameter.KEYWORD_ONLY
+                    if arg in args.kwonlyargs
+                    else inspect.Parameter.POSITIONAL_OR_KEYWORD
+                )
+            ),
             default=defaults.get(arg.arg, inspect.Parameter.empty),
         )
         for arg in [*positional, *args.kwonlyargs]
@@ -3531,10 +4139,12 @@ def _native_request_data_member(node, aliases):
                         _request_mapping_mutation(
                             item,
                             references,
-                            item.slice.value
-                            if isinstance(item, ast.Subscript)
-                            and isinstance(item.slice, ast.Constant)
-                            else None,
+                            (
+                                item.slice.value
+                                if isinstance(item, ast.Subscript)
+                                and isinstance(item.slice, ast.Constant)
+                                else None
+                            ),
                         )
                         or (
                             isinstance(item, (ast.Return, ast.Yield))
@@ -4548,691 +5158,6 @@ def _security_sql_receiver_closed(call):
     return True
 
 
-def _native_span(node):
-    span = [
-        getattr(node, key, None)
-        for key in ("lineno", "col_offset", "end_lineno", "end_col_offset")
-    ]
-    if (
-        any(type(value) is not int for value in span)
-        or span[0] < 1
-        or min(span[1], span[3]) < 0
-        or tuple(span[:2]) > tuple(span[2:])
-    ):
-        return None
-    return span
-
-
-def _captured_sink_failure(schema, code, reason, base=None):
-    return {
-        **(base or {"schema": schema, "status": "INCOMPLETE"}),
-        "code": code,
-        "truncation": [reason],
-    }
-
-
-def _captured_sink_source(
-    path_arg, expected, index, raw, tree, max_sources, max_states, max_output, schema
-):
-    import io
-    import tokenize
-
-    limits = (max_sources, max_states, max_output)
-    if any(type(value) is not int or value < 1 for value in limits) or max_output < 256:
-        return {
-            "error": _captured_sink_failure(
-                schema, "SINK_BUDGET_INVALID", "invalid_limit"
-            )
-        }
-    limits = tuple(
-        min(value, ceiling) for value, ceiling in zip(limits, (64, 512, 64000))
-    )
-    path = path_arg.as_posix() if hasattr(path_arg, "as_posix") else path_arg
-    tree_supplied = tree is not None
-    indexed = index is not None
-    if indexed:
-        capture = _captured_sink_index(index, path_arg, raw, path, schema)
-        if "error" in capture:
-            return capture
-        raw, tree, parents = capture["raw"], capture["tree"], capture["parents"]
-    else:
-        parents = None
-    if not isinstance(path, str) or not path:
-        return {
-            "error": _captured_sink_failure(
-                schema, "SINK_SOURCE_STALE", "invalid_source_path"
-            )
-        }
-    if not isinstance(raw, bytes) or len(raw) > 1_000_000:
-        return {
-            "error": _captured_sink_failure(
-                schema, "SINK_BUDGET_EXHAUSTED", "max_source_bytes"
-            )
-        }
-    digest = hashlib.sha256(raw).hexdigest()
-    if not isinstance(expected, str) or expected != digest:
-        return {
-            "error": _captured_sink_failure(
-                schema, "SINK_SOURCE_STALE", "source_hash_mismatch"
-            )
-        }
-    if not indexed:
-        capture = _captured_sink_raw_tree(path, raw, tree, schema)
-        if "error" in capture:
-            return capture
-        tree, parents = capture["tree"], capture["parents"]
-    try:
-        encoding, _ = tokenize.detect_encoding(io.BytesIO(raw).readline)
-        text = raw.decode(encoding)
-    except (SyntaxError, UnicodeError, LookupError):
-        return {
-            "error": _captured_sink_failure(
-                schema, "SINK_SOURCE_STALE", "source_encoding_invalid"
-            )
-        }
-    base = {
-        "schema": schema,
-        "status": "INCOMPLETE",
-        "source": {"path": path[:1024], "sha256": digest, "bytes": len(raw)},
-        "source_count": 1,
-    }
-    return {
-        "tree": tree,
-        "parents": parents,
-        "text": text,
-        "base": base,
-        "digest": digest,
-        "limits": limits,
-        "indexed": indexed,
-        "tree_supplied": tree_supplied,
-    }
-
-
-def _captured_sink_index(index, path_arg, raw, path, schema):
-    inventory = getattr(index, "source_bytes", {})
-    if not isinstance(path, str) or path_arg not in getattr(index, "snapshots", {}):
-        return {
-            "error": _captured_sink_failure(
-                schema, "SINK_SOURCE_STALE", "source_not_indexed"
-            )
-        }
-    if (
-        sum(len(value) for value in inventory.values() if isinstance(value, bytes))
-        > 32_000_000
-    ):
-        return {
-            "error": _captured_sink_failure(
-                schema, "SINK_BUDGET_EXHAUSTED", "max_inventory_bytes"
-            )
-        }
-    captured = inventory.get(path_arg)
-    if raw is not None and raw != captured:
-        return {
-            "error": _captured_sink_failure(
-                schema, "SINK_SOURCE_STALE", "source_bytes_changed"
-            )
-        }
-    if not isinstance(captured, bytes) or len(captured) > 1_000_000:
-        return {
-            "error": _captured_sink_failure(
-                schema, "SINK_BUDGET_EXHAUSTED", "max_source_bytes"
-            )
-        }
-    validation_inputs = getattr(index, "_validation_inputs", None)
-    if not isinstance(validation_inputs, dict):
-        return {
-            "error": _captured_sink_failure(
-                schema, "SINK_SOURCE_STALE", "source_validation_cache_unavailable"
-            )
-        }
-    validation_inputs.pop(path_arg, None)
-    if not index.validate(path_arg):
-        return {
-            "error": _captured_sink_failure(
-                schema, "SINK_SOURCE_STALE", "source_snapshot_invalid"
-            )
-        }
-    return {
-        "raw": captured,
-        "tree": index.snapshots[path_arg],
-        "parents": index.parents[path_arg],
-    }
-
-
-def _captured_sink_raw_tree(path, raw, tree, schema):
-    try:
-        parsed = ast.parse(raw, filename=path)
-        if tree is not None and ast.dump(parsed, include_attributes=True) != ast.dump(
-            tree, include_attributes=True
-        ):
-            return {
-                "error": _captured_sink_failure(
-                    schema, "SINK_SOURCE_STALE", "ast_source_mismatch"
-                )
-            }
-        tree = tree or parsed
-    except (SyntaxError, ValueError, TypeError, MemoryError, RecursionError):
-        return {
-            "error": _captured_sink_failure(
-                schema, "SINK_SOURCE_STALE", "source_parse_failed"
-            )
-        }
-    return {"tree": tree, "parents": {}}
-
-
-def _captured_sink_location(node, ctx):
-    base, tree, parents = ctx["base"], ctx["tree"], ctx["parents"]
-    schema = base["schema"]
-    span = _native_span(node) if isinstance(node, ast.AST) else None
-    if span is None:
-        return {
-            "error": _captured_sink_failure(
-                schema, "SINK_LOCATION_UNRESOLVED", "invalid_sink_span", base
-            )
-        }
-    if ctx["indexed"] and isinstance(node, ast.Call) and id(node) in parents:
-        return {"node": node, "parents": parents, "source_ast_nodes_examined": 0}
-    if ctx["indexed"]:
-        return {
-            "error": _captured_sink_failure(
-                schema, "SINK_LOCATION_UNRESOLVED", "sink_not_in_captured_tree", base
-            )
-        }
-    matches = []
-    for count, item in enumerate(ast.walk(tree), 1):
-        if count > 200_000:
-            return {
-                "error": _captured_sink_failure(
-                    schema, "SINK_BUDGET_EXHAUSTED", "max_source_ast_nodes", base
-                )
-            }
-        parents.update({id(child): item for child in ast.iter_child_nodes(item)})
-        if (
-            isinstance(item, ast.Call)
-            and _native_span(item) == span
-            and ast.dump(item, include_attributes=True)
-            == ast.dump(node, include_attributes=True)
-        ):
-            matches.append(item)
-    if ctx["tree_supplied"] and id(node) not in parents:
-        return {
-            "error": _captured_sink_failure(
-                schema, "SINK_LOCATION_UNRESOLVED", "sink_not_in_supplied_tree", base
-            )
-        }
-    if len(matches) == 1:
-        return {
-            "node": matches[0],
-            "parents": parents,
-            "source_ast_nodes_examined": count,
-        }
-    return {
-        "error": _captured_sink_failure(
-            schema, "SINK_LOCATION_UNRESOLVED", "sink_span_not_unique", base
-        )
-    }
-
-
-def _captured_sink_fact(item, path, digest, status="OBSERVED"):
-    span = _native_span(item)
-    return (
-        {"status": status, "source": {"path": path, "sha256": digest, "span": span}}
-        if span is not None
-        else {"status": "UNKNOWN", "reason": "span_unavailable"}
-    )
-
-
-def _captured_sink_excerpt(item, text, truncation):
-    excerpt = ast.get_source_segment(text, item)
-    if not isinstance(excerpt, str):
-        return ""
-    if len(excerpt) > 512:
-        if "excerpt_truncated" not in truncation:
-            truncation.append("excerpt_truncated")
-        return excerpt[:512] + "[truncated]"
-    return excerpt
-
-
-def _captured_sink_scope(node, parents, fact, budget, base):
-    scope = node
-    while id(scope) in parents:
-        scope = parents[id(scope)]
-        if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
-            break
-    else:
-        scope = None
-    row, body, statement = (
-        {"status": "UNKNOWN", "reason": "no_enclosing_callable"},
-        None,
-        None,
-    )
-    if scope is not None:
-        statement = node
-        while id(statement) in parents and parents[id(statement)] is not scope:
-            statement = parents[id(statement)]
-        if (
-            isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef))
-            and statement in scope.body
-        ):
-            body = scope.body
-            row = {
-                "status": "OBSERVED",
-                "name": scope.name,
-                "kind": type(scope).__name__,
-                **fact(scope),
-            }
-        else:
-            row = {
-                "status": "UNKNOWN",
-                "reason": "sink_outside_callable_body",
-                **fact(scope),
-            }
-    nodes, stack = [], [scope] if body is not None else []
-    while stack:
-        item = stack.pop()
-        nodes.append(item)
-        if len(nodes) > budget:
-            return {
-                "error": _captured_sink_failure(
-                    base["schema"], "SINK_BUDGET_EXHAUSTED", "max_states", base
-                )
-            }
-        if item is not scope and isinstance(
-            item, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
-        ):
-            continue
-        stack.extend(ast.iter_child_nodes(item))
-    return {
-        "scope": scope,
-        "body": body,
-        "statement": statement,
-        "nodes": nodes,
-        "row": row,
-    }
-
-
-def _captured_sink_arguments(node, fact, excerpt):
-    arguments, names = [], set()
-    for index, value in enumerate(node.args):
-        arguments.append(
-            {
-                "position": index,
-                "kind": "starred" if isinstance(value, ast.Starred) else "positional",
-                "expression": excerpt(value),
-                "span": _native_span(value),
-                **fact(value),
-            }
-        )
-        names.update(
-            item.id
-            for item in ast.walk(value)
-            if isinstance(item, ast.Name) and isinstance(item.ctx, ast.Load)
-        )
-    for keyword in node.keywords:
-        value = keyword.value
-        arguments.append(
-            {
-                "keyword": keyword.arg,
-                "kind": "expanded_keyword" if keyword.arg is None else "keyword",
-                "expression": excerpt(value),
-                "span": _native_span(value),
-                **fact(value),
-            }
-        )
-        names.update(
-            item.id
-            for item in ast.walk(value)
-            if isinstance(item, ast.Name) and isinstance(item.ctx, ast.Load)
-        )
-    callees = [
-        item
-        for item in ast.walk(node.func)
-        if isinstance(item, ast.Name) and isinstance(item.ctx, ast.Load)
-    ]
-    names.update(item.id for item in callees)
-    return arguments, names, callees
-
-
-def _captured_sink_imports(tree, scope, nodes, parents, fact, budget, base):
-    from .credential_role_constructor_provider import binding_occurrences
-
-    modules = [
-        item for item in tree.body if isinstance(item, (ast.Import, ast.ImportFrom))
-    ]
-    if len(nodes) + len(modules) > budget:
-        return {
-            "error": _captured_sink_failure(
-                base["schema"], "SINK_BUDGET_EXHAUSTED", "max_states", base
-            )
-        }
-    rows, params = [], _captured_sink_parameter_names(scope)
-    for item in modules + [
-        row for row in nodes if isinstance(row, (ast.Import, ast.ImportFrom))
-    ]:
-        owner = _captured_sink_enclosing_callable(item, parents)
-        if owner not in (None, scope):
-            continue
-        container = owner.body if owner is not None else tree.body
-        for alias in item.names:
-            name = alias.asname or (
-                alias.name.split(".")[0] if isinstance(item, ast.Import) else alias.name
-            )
-            wildcard = isinstance(item, ast.ImportFrom) and alias.name == "*"
-            stable = (
-                not wildcard
-                and binding_occurrences(container, name) == [item]
-                and name not in params
-            )
-            status = "OBSERVED" if stable else "UNKNOWN"
-            rows.append(
-                {
-                    "name": name,
-                    "module": item.module
-                    if isinstance(item, ast.ImportFrom)
-                    else alias.name,
-                    "kind": type(item).__name__,
-                    "status": status,
-                    "reason": None if stable else "binding_replaced_or_ambiguous",
-                    "span": _native_span(item),
-                    **fact(item, status),
-                }
-            )
-    return {
-        "rows": rows,
-        "module_imports": modules,
-        "states_used": sum(len(item.names) for item in modules),
-        "binding_occurrences": binding_occurrences,
-    }
-
-
-def _captured_sink_values(
-    node, names, scope, body, statement, nodes, parents, tree, fact, excerpt
-):
-    from .credential_role_constructor_provider import binding_occurrences
-
-    if body is None:
-        return [
-            {
-                "name": name,
-                "status": "UNKNOWN",
-                "reason": "no_supported_callable_scope",
-                "origin": "UNRESOLVED",
-                "definitions": [],
-                "replacements": [],
-            }
-            for name in sorted(names)
-        ]
-    params = _captured_sink_parameter_names(scope)
-    reflective = _captured_sink_reflective_barrier(node, scope, nodes, parents)
-    pending, visited, result = sorted(names), set(), []
-    while pending:
-        name = pending.pop(0)
-        if name in visited:
-            continue
-        visited.add(name)
-        evidence = _captured_sink_value(
-            name,
-            scope,
-            body,
-            statement,
-            parents,
-            tree,
-            params,
-            fact,
-            excerpt,
-            binding_occurrences,
-        )
-        value, assignment = evidence["value"], evidence["assignment"]
-        if assignment is not None:
-            pending.extend(
-                row.id
-                for row in ast.walk(assignment.value)
-                if isinstance(row, ast.Name)
-                and isinstance(row.ctx, ast.Load)
-                and row.id not in visited
-                and row.id not in pending
-            )
-        if reflective:
-            value.update(
-                status="UNKNOWN",
-                reason="reflective_binding_possible",
-                origin="UNRESOLVED",
-            )
-            value["replacements"].append(
-                {"kind": "REFLECTIVE_WRITE_POSSIBLE", **fact(node, "UNKNOWN")}
-            )
-        result.append(value)
-    return result
-
-
-def _captured_sink_reflective_barrier(node, scope, nodes, parents):
-    """Return whether a reflective call can precede or feed this selected sink."""
-    reflective_names = {
-        "exec",
-        "eval",
-        "globals",
-        "locals",
-        "vars",
-        "setattr",
-        "delattr",
-    }
-    selected_span = _native_span(node)
-    selected_start = tuple(selected_span[:2]) if selected_span else None
-    selected_subtree = {id(item) for item in ast.walk(node)}
-    for item in nodes:
-        if (
-            not isinstance(item, ast.Call)
-            or not isinstance(item.func, ast.Name)
-            or item.func.id not in reflective_names
-            or item is node
-        ):
-            continue
-        if id(item) in selected_subtree:
-            return True
-        if _captured_sink_enclosing_callable(item, parents) is not scope:
-            continue
-        span = _native_span(item)
-        if selected_start is None or span is None:
-            return True
-        if tuple(span[:2]) <= selected_start:
-            return True
-    return False
-
-
-def _captured_sink_value(
-    name,
-    scope,
-    body,
-    statement,
-    parents,
-    tree,
-    params,
-    fact,
-    excerpt,
-    binding_occurrences,
-):
-    bindings = binding_occurrences(body, name)
-    rows = []
-    for binding in bindings:
-        statement_node = (
-            parents.get(id(binding)) if isinstance(binding, ast.Name) else binding
-        )
-        if statement_node is None:
-            statement_node = binding
-        rows.append(
-            {
-                "kind": type(binding).__name__,
-                "binding_span": _native_span(binding),
-                "expression": excerpt(statement_node),
-                **fact(statement_node, "UNKNOWN"),
-            }
-        )
-    assignment = None
-    if (
-        len(bindings) == 1
-        and isinstance(bindings[0], ast.Name)
-        and isinstance(bindings[0].ctx, ast.Store)
-    ):
-        candidate = parents.get(id(bindings[0]))
-        targets = (
-            candidate.targets
-            if isinstance(candidate, ast.Assign)
-            else [candidate.target]
-            if isinstance(candidate, ast.AnnAssign)
-            else []
-        )
-        if (
-            candidate in body
-            and body.index(candidate) < body.index(statement)
-            and getattr(candidate, "value", None) is not None
-            and len(targets) == 1
-            and targets[0] is bindings[0]
-        ):
-            assignment = candidate
-    if assignment is not None:
-        value = {
-            "name": name,
-            "status": "INFERRED",
-            "reason": None,
-            "origin": "LOCAL_DEFINITION",
-            "definitions": [
-                {
-                    "expression": excerpt(assignment.value),
-                    "span": _native_span(assignment),
-                    **fact(assignment),
-                }
-            ],
-            "replacements": [],
-        }
-        value["definitions"][0]["target_source"] = fact(
-            assignment.targets[0]
-            if isinstance(assignment, ast.Assign)
-            else assignment.target
-        )
-    elif not bindings and name in params:
-        args = (
-            *scope.args.posonlyargs,
-            *scope.args.args,
-            *scope.args.kwonlyargs,
-            *([scope.args.vararg] if scope.args.vararg else []),
-            *([scope.args.kwarg] if scope.args.kwarg else []),
-        )
-        arg = next(row for row in args if row.arg == name)
-        value = {
-            "name": name,
-            "status": "INFERRED",
-            "reason": None,
-            "origin": "CALLABLE_PARAMETER",
-            "definitions": [
-                {"kind": "PARAMETER", "span": _native_span(arg), **fact(arg)}
-            ],
-            "replacements": [],
-        }
-    elif not bindings and any(
-        row in tree.body for row in binding_occurrences(tree.body, name)
-    ):
-        module_bindings = binding_occurrences(tree.body, name)
-        if len(module_bindings) == 1 and isinstance(
-            module_bindings[0], (ast.Import, ast.ImportFrom)
-        ):
-            value = {
-                "name": name,
-                "status": "INFERRED",
-                "reason": None,
-                "origin": "LEXICAL_IMPORT",
-                "definitions": [
-                    {
-                        "kind": type(module_bindings[0]).__name__,
-                        "span": _native_span(module_bindings[0]),
-                        **fact(module_bindings[0]),
-                    }
-                ],
-                "replacements": [],
-            }
-        else:
-            value = {
-                "name": name,
-                "status": "UNKNOWN",
-                "reason": "module_binding_ambiguous",
-                "origin": "UNRESOLVED",
-                "definitions": [],
-                "replacements": rows,
-            }
-    else:
-        value = {
-            "name": name,
-            "status": "UNKNOWN",
-            "reason": "binding_replaced_or_not_straight_line"
-            if bindings
-            else "no_source_definition_or_parameter",
-            "origin": "UNRESOLVED",
-            "definitions": [],
-            "replacements": rows,
-        }
-    return {"value": value, "assignment": assignment}
-
-
-def _captured_sink_guards(node, scope, parents, fact, excerpt):
-    guards, current = [], node
-    control = (
-        ast.If,
-        ast.For,
-        ast.AsyncFor,
-        ast.While,
-        ast.Try,
-        getattr(ast, "TryStar", ast.Try),
-        ast.With,
-        ast.AsyncWith,
-        ast.Match,
-        ast.Assert,
-    )
-    while id(current) in parents and parents[id(current)] is not scope:
-        current = parents[id(current)]
-        if isinstance(current, control):
-            test = getattr(current, "test", None) or getattr(current, "subject", None)
-            guards.append(
-                {
-                    "kind": type(current).__name__,
-                    "expression": excerpt(test) if test is not None else "",
-                    "semantics": "UNKNOWN",
-                    "span": _native_span(current),
-                    **fact(current),
-                }
-            )
-    return guards
-
-
-def _captured_sink_callee_binding(names, scope, body, tree, module_imports, fact):
-    from .credential_role_constructor_provider import binding_occurrences
-
-    name = names[0].id if names else None
-    row = {"status": "UNKNOWN", "reason": "unresolved_callee_binding", "name": name}
-    if name is None or body is None:
-        return row
-    if any(
-        isinstance(item, ast.ImportFrom)
-        and any(alias.name == "*" for alias in item.names)
-        for item in module_imports
-    ):
-        row["reason"] = "wildcard_import_may_bind_name"
-    elif not binding_occurrences(
-        body, name
-    ) and name not in _captured_sink_parameter_names(scope):
-        bindings = binding_occurrences(tree.body, name)
-        if (
-            len(bindings) == 1
-            and bindings[0] in tree.body
-            and isinstance(bindings[0], (ast.Import, ast.ImportFrom))
-        ):
-            row = {
-                "status": "INFERRED",
-                "reason": None,
-                "name": name,
-                "declaration": fact(bindings[0]),
-            }
-    return row
-
-
 @dataclass(frozen=True)
 class _SecurityFlowValue:
     """Scanner-owned scalar shape and source trace, never an executed value."""
@@ -5720,24 +5645,6 @@ def _security_helper_source_context(call, function):
     module = flow._security_module_scope(getattr(call, "_security_lexical_scope", None))
     index = getattr(module, "_security_source_model", None)
     return module, index, _security_source_path(index, module)
-
-
-def _captured_sink_enclosing_callable(node, parents):
-    current = node
-    while id(current) in parents:
-        current = parents[id(current)]
-        if isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
-            return current
-    return None
-
-
-def _captured_sink_parameter_names(scope):
-    if not isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
-        return set()
-    args = scope.args
-    parameters = [*args.posonlyargs, *args.args, *args.kwonlyargs]
-    parameters.extend(item for item in (args.vararg, args.kwarg) if item is not None)
-    return {item.arg for item in parameters}
 
 
 def _finite_source_span(node):
