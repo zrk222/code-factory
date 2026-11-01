@@ -483,14 +483,17 @@ def _configuration_files277(runner):
         "service/__init__.py": "",
         "service/settings.py": 'SECRET_KEY = "published-weak-value"\n',
         "service/start.py": runner,
+        "service/urls.py": 'from django.contrib import admin\nfrom django.urls import path\nurlpatterns = [path("admin/", admin.site.urls)]\n',
     }
 
 
 _DJANGO_SESSION_SETTINGS = (
     'SECRET_KEY = "published-session-signing-material"\n'
-    'INSTALLED_APPS = ["django.contrib.auth", "django.contrib.sessions"]\n'
+    'INSTALLED_APPS = ["django.contrib.auth", "django.contrib.sessions", "django.contrib.messages"]\n'
     'MIDDLEWARE = ["django.contrib.sessions.middleware.SessionMiddleware", '
-    '"django.contrib.auth.middleware.AuthenticationMiddleware"]\n'
+    '"django.contrib.auth.middleware.AuthenticationMiddleware", '
+    '"django.contrib.messages.middleware.MessageMiddleware"]\n'
+    'ROOT_URLCONF = "service.urls"\n'
 )
 _DJANGO_SESSION_START = (
     "import os\nfrom django.core.wsgi import get_wsgi_application\n"
@@ -519,16 +522,17 @@ def test_operative_signing_default_evidence_requires_framework_session_authority
     files["service/settings.py"] = settings
     row = _configuration_tiers277(files)["ledger"][0]
     assert row["tier"] == "SUPPORTED_DEFECT"
-    assert row["evidence"] == "source_bound_framework_session_default"
+    assert row["evidence"] == "source_bound_selected_framework_feedback_default"
     proof = row["credential_authority_observation"]
     assert proof["framework"] == "django"
-    assert proof["consumer_role"] == "configured_authentication_session_signing"
+    assert proof["consumer_role"] == "signed_feedback_integrity"
     assert proof["deployment"] == "UNASSESSED"
     assert proof["runtime_execution"] == "not_performed"
-    assert len(proof["transfers"]) == 5
+    assert len(proof["transfers"]) >= 7
     assert {p["path"] for p in proof["transfers"]} == {
         "service/settings.py",
         "service/start.py",
+        "service/urls.py",
     }
     for span in proof["transfers"]:
         assert span["sha256"] == sha256(files[span["path"]].encode()).hexdigest()
@@ -624,10 +628,65 @@ def test_framework_session_authority_rejects_stale_inventory_and_wrong_startup()
         ]
         == 0
     )
+    assert (
+        _configuration_tiers277(files, omit=("service/urls.py",))["tier_counts"][
+            "SUPPORTED_DEFECT"
+        ]
+        == 0
+    )
     files["service/start.py"] = _DJANGO_SESSION_START.replace(
         "service.settings", "other.settings"
     )
     assert _configuration_tiers277(files)["tier_counts"]["SUPPORTED_DEFECT"] == 0
+
+
+@pytest.mark.parametrize(
+    "forgery", ["old_configuration_tuple", "effect_string", "hash_bound_effect"]
+)
+def test_selected_consumer_authority_requires_regenerated_receipt(forgery):
+    import copy
+    from hashlib import sha256
+    from factoryline.primitive_observation_binding import _decide_finding_tier
+    from factoryline.semantic_credential_sensor import signing_configuration_inventory
+
+    files = _configuration_files277(_DJANGO_SESSION_START)
+    files["service/settings.py"] = _DJANGO_SESSION_SETTINGS
+    row = _configuration_tiers277(files)["ledger"][0]
+    proof = copy.deepcopy(row["credential_authority_observation"])
+    sources = {path: source.encode() for path, source in files.items()}
+    bindings = {path: sha256(source).hexdigest() for path, source in sources.items()}
+    context = signing_configuration_inventory(sources, bindings)
+    if forgery == "old_configuration_tuple":
+        proof.update(
+            schema="factory.security.framework-session-authority.v1",
+            proof_scope="source_bound_standalone_framework_session_default",
+            consumer_role="configured_authentication_session_signing",
+        )
+    elif forgery == "effect_string":
+        proof["selected_consumer"] = "django.admin.feedback.v1"
+    else:
+        proof["selected_consumer"]["model"] = (
+            "django.authenticated-operation.feedback.v1"
+        )
+    tier, _, _ = _decide_finding_tier(
+        row["raw_finding"],
+        True,
+        [],
+        [],
+        proof,
+        source_bindings=bindings,
+        credential_context=context,
+    )
+    assert tier == "NEEDS_CONTEXT"
+    tier, _, _ = _decide_finding_tier(
+        row["raw_finding"],
+        True,
+        [],
+        [],
+        row["credential_authority_observation"],
+        source_bindings=bindings,
+    )
+    assert tier == "NEEDS_CONTEXT"
 
 
 @pytest.mark.parametrize("mutated", [False, True])
@@ -1596,6 +1655,8 @@ def test_nested_selected_startup_resolves_namespace_packages_at_its_import_root(
     files = {
         base + "/service/settings.py": _DJANGO_SESSION_SETTINGS,
         base + "/service/start.py": _DJANGO_SESSION_START,
+        base
+        + "/service/urls.py": 'from django.contrib import admin\nfrom django.urls import path\nurlpatterns = [path("admin/", admin.site.urls)]\n',
     }
     if obstruction == "shadow":
         files[base + "/django/__init__.py"] = ""

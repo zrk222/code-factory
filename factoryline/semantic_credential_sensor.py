@@ -1827,6 +1827,8 @@ def _signing_optional_configuration_absent(context, path, statement, prefix):
                 aliases if owner == path else context["aliases"][owner],
                 "django",
                 roots=("os.path",),
+                context=context,
+                settings_path=path,
             )
             for owner, tree in context["index"].snapshots.items()
         )
@@ -2671,14 +2673,30 @@ def _signing_source_span(index, path, node):
     }
 
 
-def _signing_provider_clear(tree, aliases, framework, *, roots=None):
+def _signing_provider_clear(
+    tree, aliases, framework, *, roots=None, context=None, settings_path=None
+):
     from .review_audits import _resolved_ast_name
 
     nodes = list(ast.walk(tree))
+    approved = set()
+    if framework == "django" and context is not None and settings_path is not None:
+        from .credential_endpoint_admission import _django_setting_import_closure
+
+        if any(
+            isinstance(n, (ast.Name, ast.Attribute))
+            and _resolved_ast_name(n, aliases).startswith("importlib.")
+            for n in nodes
+        ):
+            closure = _django_setting_import_closure(context, settings_path)
+            approved = (
+                closure["reads"].get(id(tree), set()) if closure is not None else set()
+            )
     if any(
         isinstance(node, (ast.Name, ast.Attribute))
         and _resolved_ast_name(node, aliases).startswith(("sys.modules", "importlib."))
         for node in nodes
+        if id(node) not in approved
     ):
         return False
     roots = roots or (
@@ -2694,6 +2712,35 @@ def _signing_provider_clear(tree, aliases, framework, *, roots=None):
     parents = {
         id(child): node for node in nodes for child in ast.iter_child_nodes(node)
     }
+    if framework == "django":
+        if any(
+            isinstance(node, ast.Call)
+            and (name := _resolved_ast_name(node.func, aliases)).startswith(
+                "os.environ."
+            )
+            and name not in {"os.environ.get", "os.environ.setdefault"}
+            for node in nodes
+        ):
+            return False
+    reads = (
+        _signing_provider_reads(tree, aliases, framework, roots, nodes, context=context)
+        | approved
+    )
+    return not _provider_identity_uncertain(
+        tree,
+        aliases,
+        roots=roots,
+        nodes=[node for node in nodes if id(node) not in reads],
+        parents=parents,
+        selected_paths=True,
+    )
+
+
+def _signing_provider_reads(
+    tree, aliases, framework, roots, nodes, *, context=None, proofs=None
+):
+    from .review_audits import _resolved_ast_name
+
     reads = set()
     if framework == "django" and _security_builtin_identity_closed(
         tree, aliases, {"getattr", "hasattr"}
@@ -2739,15 +2786,6 @@ def _signing_provider_clear(tree, aliases, framework, *, roots=None):
             and isinstance(node.slice.value, str)
             and node.slice.value != "DJANGO_SETTINGS_MODULE"
         )
-        if any(
-            isinstance(node, ast.Call)
-            and (name := _resolved_ast_name(node.func, aliases)).startswith(
-                "os.environ."
-            )
-            and name not in {"os.environ.get", "os.environ.setdefault"}
-            for node in nodes
-        ):
-            return False
         if _security_builtin_identity_closed(tree, aliases, {"len"}):
             reads.update(
                 id(call.args[0])
@@ -2763,14 +2801,25 @@ def _signing_provider_clear(tree, aliases, framework, *, roots=None):
                     "django.conf.settings.MIDDLEWARE_CLASSES",
                 }
             )
-    return not _provider_identity_uncertain(
-        tree,
-        aliases,
-        roots=roots,
-        nodes=[node for node in nodes if id(node) not in reads],
-        parents=parents,
-        selected_paths=True,
-    )
+    if framework == "django" and context is not None:
+        from .import_context import finite_key_reflection_reads
+
+        index = context["index"]
+        path = next(
+            (p for p, source in index.snapshots.items() if source is tree), None
+        )
+        reads.update(
+            finite_key_reflection_reads(
+                tree,
+                aliases,
+                roots,
+                _security_builtin_identity_closed,
+                index=index,
+                path=path,
+                evidence=proofs,
+            )
+        )
+    return reads
 
 
 def _signing_bound_providers_clear(context, declaration_path, consumer_path, framework):
@@ -2785,7 +2834,11 @@ def _signing_bound_providers_clear(context, declaration_path, consumer_path, fra
         index.validate(path)
         and not _signing_rejection_or_reflection(index.snapshots[path])
         and _signing_provider_clear(
-            index.snapshots[path], context["aliases"][path], framework
+            index.snapshots[path],
+            context["aliases"][path],
+            framework,
+            context=context,
+            settings_path=declaration_path,
         )
         for path in paths
     ) and all(
@@ -2806,6 +2859,8 @@ def _signing_bound_providers_clear(context, declaration_path, consumer_path, fra
                 "django.contrib.sessions.middleware.SessionMiddleware",
                 "django.contrib.auth.middleware.AuthenticationMiddleware",
             ),
+            context=context,
+            settings_path=declaration_path,
         )
         for path, tree in index.snapshots.items()
     )

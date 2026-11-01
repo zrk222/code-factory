@@ -467,11 +467,20 @@ def validation_helpers():
                 CapturedOriginProjection,
             )
             for value in vars(owner).values()
+            for value in (getattr(value, "__func__", value),)
             if callable(value)
         )
         + _callable_values(
             (
                 "operative_signing_default_evidence",
+                "_django_default_authority",
+                "_django_selected_consumers_closed",
+                "_django_setting_import_closure",
+                "_django_setting_import_aliases",
+                "_django_setting_import_sites",
+                "_django_setting_import_operand",
+                "_django_importer_external",
+                "_django_import_namespace_unknown",
                 "_flask_credential_authority_for_key",
                 "_flask_login_session_authority_witness",
                 "_flask_credential_authority_witness",
@@ -2299,7 +2308,11 @@ def _django_default_authority(finding, context, declaration, observation):
         context, path, observation
     )
     required = {
-        "INSTALLED_APPS": {"django.contrib.auth", "django.contrib.sessions"},
+        "INSTALLED_APPS": {
+            "django.contrib.auth",
+            "django.contrib.sessions",
+            "django.contrib.messages",
+        },
         (
             "MIDDLEWARE"
             if binding_occurrences(settings.body, "MIDDLEWARE")
@@ -2307,6 +2320,7 @@ def _django_default_authority(finding, context, declaration, observation):
         ): {
             "django.contrib.sessions.middleware.SessionMiddleware",
             "django.contrib.auth.middleware.AuthenticationMiddleware",
+            "django.contrib.messages.middleware.MessageMiddleware",
         },
     }
     consumers = []
@@ -2322,6 +2336,11 @@ def _django_default_authority(finding, context, declaration, observation):
             {item.value for item in values if isinstance(item.value, str)}
         ):
             return None
+        if (
+            name != "INSTALLED_APPS"
+            and not _CredentialHandlerIndex.django_middleware_order(values)
+        ):
+            return None
         consumers.append(
             {
                 "path": path.as_posix(),
@@ -2329,6 +2348,12 @@ def _django_default_authority(finding, context, declaration, observation):
                 "span": _span(statement),
             }
         )
+    selected = _CredentialHandlerIndex(context, framework="django").django_feedback(
+        path, settings
+    )
+    if selected is None:
+        return None
+    consumers.extend([selected["root"], *selected["evidence"]])
     selected_modules = {
         node.args[1].value
         for transfer in observation["transfers"]
@@ -2341,15 +2366,29 @@ def _django_default_authority(finding, context, declaration, observation):
         and isinstance(node.args[1], ast.Constant)
         and isinstance(node.args[1].value, str)
     }
-    if not _django_selected_consumers_closed(context, path, required, selected_modules):
+    if not _django_selected_consumers_closed(
+        context,
+        path,
+        {
+            *required,
+            *_CredentialHandlerIndex._django_feedback_settings(),
+            "ROOT_URLCONF",
+            "SECRET_KEY",
+            "SECRET_KEY_FALLBACKS",
+            "MESSAGE_LEVEL",
+            "AUTHENTICATION_BACKENDS",
+        },
+        selected_modules,
+    ):
         return None
     return {
-        "schema": "factory.security.framework-session-authority.v1",
-        "proof_scope": "source_bound_standalone_framework_session_default",
+        "schema": "factory.security.selected-framework-consumer-authority.v1",
+        "proof_scope": "source_bound_selected_framework_feedback_default",
         "framework": "django",
         "credential_key": "SECRET_KEY",
         "source_role": "published_literal_default",
-        "consumer_role": "configured_authentication_session_signing",
+        "consumer_role": "signed_feedback_integrity",
+        "selected_consumer": selected,
         "transfers": [
             observation["declaration"],
             *consumers,
@@ -2383,6 +2422,262 @@ def _django_default_authority(finding, context, declaration, observation):
     }
 
 
+def _django_setting_import_closure(context, settings_path):
+    """Derive closed setting-selected framework imports from current captured ASTs."""
+    from .semantic_credential_sensor import (
+        _signing_provider_reads,
+        _provider_identity_uncertain,
+    )
+    from .semantic_credential_sensor import _signing_framework_external
+    from .mock_fixture_provenance import _django_assignment, _django_name
+    from .credential_role_constructor_provider import binding_occurrences
+
+    index = context["index"]
+    if (
+        settings_path not in index.snapshots
+        or not all(index.validate(p) for p in index.snapshots)
+        or not _signing_framework_external(context, "django")
+    ):
+        return None
+    tree = index.snapshots[settings_path]
+    rows = _django_assignment(tree, "SESSION_ENGINE")
+    if rows:
+        if len(rows) != 1 or not isinstance(rows[0][1], ast.Constant):
+            return None
+        engine = rows[0][1].value
+    else:
+        if binding_occurrences(tree.body, "SESSION_ENGINE"):
+            return None
+        engine = "django.contrib.sessions.backends.db"
+    if (
+        not isinstance(engine, str)
+        or engine
+        not in _CredentialHandlerIndex._django_feedback_settings()["SESSION_ENGINE"]
+    ):
+        return None
+    if sum(
+        isinstance(n, ast.Name)
+        and n.id == "SESSION_ENGINE"
+        and isinstance(n.ctx, (ast.Store, ast.Del))
+        for n in ast.walk(tree)
+    ) != bool(rows):
+        return None
+    from .import_context import close_selected_import_sources
+
+    sites = close_selected_import_sources(
+        context,
+        settings_path,
+        _django_setting_import_sites(context, settings_path, engine, bool(rows)),
+        {"django", "rest_framework"},
+    )
+    if sites is None:
+        return None
+    symbols = {
+        _django_name({"source": index}, p) + "." + site["target"]
+        for p, found in sites.items()
+        for site in found
+    }
+    roots = (
+        "importlib",
+        "sys.modules",
+        "sys.path",
+        "sys.__dict__",
+        "builtins",
+        "django.conf.settings.SESSION_ENGINE",
+        engine,
+        *symbols,
+    )
+    proofs = []
+    for path, source in index.snapshots.items():
+        aliases = _django_setting_import_aliases(context, settings_path, path)
+        aliases.update(
+            {site["target"]: engine + ".SessionStore" for site in sites.get(path, ())}
+        )
+        nodes = list(ast.walk(source))
+        approved = {
+            identifier for site in sites.get(path, ()) for identifier in site["reads"]
+        }
+        reads = _signing_provider_reads(
+            source, aliases, "django", roots, nodes, context=context, proofs=proofs
+        )
+        if _django_import_namespace_unknown(
+            nodes, aliases, approved
+        ) or _provider_identity_uncertain(
+            source,
+            aliases,
+            roots=roots,
+            nodes=[n for n in nodes if id(n) not in approved | reads],
+            selected_paths=True,
+        ):
+            return None
+    return {
+        "reads": {
+            id(index.snapshots[p]): {i for site in found for i in site["reads"]}
+            for p, found in sites.items()
+        },
+        "finite_settings": proofs,
+        "evidence": [
+            {
+                "module": engine,
+                "member": "SessionStore",
+                "configuration": {
+                    "path": settings_path.as_posix(),
+                    "sha256": index.inventory[settings_path],
+                },
+                "selection": "captured_literal"
+                if rows
+                else "registered_django_default",
+                "source": site["source"],
+            }
+            for found in sites.values()
+            for site in found
+        ],
+    }
+
+
+def _django_setting_import_aliases(context, settings_path, path):
+    from .semantic_credential_sensor import _signing_resolve_module
+
+    aliases = dict(context["aliases"][path])
+    for alias, canonical in tuple(aliases.items()):
+        module, _, member = canonical.rpartition(".")
+        if (
+            _signing_resolve_module(context, ast.Constant(value=canonical), path)
+            == settings_path
+        ):
+            aliases[alias] = "django.conf.settings"
+        elif (
+            member == "SESSION_ENGINE"
+            and _signing_resolve_module(context, ast.Constant(value=module), path)
+            == settings_path
+        ):
+            aliases[alias] = "django.conf.settings.SESSION_ENGINE"
+    if path == settings_path:
+        aliases["SESSION_ENGINE"] = "django.conf.settings.SESSION_ENGINE"
+    return aliases
+
+
+def _django_setting_import_sites(context, settings_path, engine, explicit):
+    from .semantic_credential_sensor import _signing_resolve_module
+    from .credential_role_constructor_provider import binding_occurrences
+    from . import review_audits as audit
+
+    index, sites = context["index"], {}
+    if _signing_resolve_module(context, ast.Constant(value="importlib")) is not None:
+        return None
+    for path, tree in index.snapshots.items():
+        aliases = _django_setting_import_aliases(context, settings_path, path)
+        for statement in tree.body:
+            match statement:
+                case ast.Assign(
+                    targets=[ast.Name(id=target)],
+                    value=ast.Attribute(
+                        value=ast.Call(args=[argument], keywords=[]) as call,
+                        attr="SessionStore",
+                    ),
+                ):
+                    pass
+                case _:
+                    continue
+            if (
+                audit._resolved_ast_name(call.func, aliases)
+                != "importlib.import_module"
+            ):
+                continue
+            if not _django_setting_import_operand(
+                argument, aliases, context["aliases"][path], engine, explicit
+            ):
+                continue
+            if not _django_importer_external(context, path, tree, call):
+                return None
+            if len(binding_occurrences(tree.body, target)) != 1:
+                return None
+            sites.setdefault(path, []).append(
+                {
+                    "target": target,
+                    "reads": {
+                        id(n) for node in (call.func, argument) for n in ast.walk(node)
+                    },
+                    "source": {
+                        "path": path.as_posix(),
+                        "sha256": index.inventory[path],
+                        "span": _span(statement),
+                    },
+                }
+            )
+    return sites
+
+
+def _django_importer_external(context, path, tree, call):
+    from .import_context import import_source_choices, captured_import_inventory
+    from .credential_role_constructor_provider import binding_occurrences
+    from .semantic_credential_sensor import _signing_framework_external
+
+    head = call.func
+    while isinstance(head, ast.Attribute):
+        head = head.value
+    if not isinstance(head, ast.Name):
+        return False
+    rows = binding_occurrences(tree.body, head.id)
+    if len(rows) != 1 or not isinstance(rows[0], (ast.Import, ast.ImportFrom)):
+        return False
+    index = context["index"]
+    choices = import_source_choices(
+        index.root,
+        path,
+        rows[0],
+        "importlib",
+        None,
+        captured_inventory=captured_import_inventory(index),
+    )
+    return (
+        _signing_framework_external(context, "importlib")
+        and not any(candidate in index.snapshots for candidate, _ in choices)
+        and not any(
+            isinstance(n, ast.Name)
+            and n.id == head.id
+            and isinstance(n.ctx, (ast.Store, ast.Del))
+            for n in ast.walk(tree)
+        )
+    )
+
+
+def _django_setting_import_operand(argument, aliases, original, engine, explicit):
+    from .review_audits import _resolved_ast_name
+
+    literal = isinstance(argument, ast.Constant) and argument.value == engine
+    selected = (
+        _resolved_ast_name(argument, aliases) == "django.conf.settings.SESSION_ENGINE"
+    )
+    return (selected or literal) and (
+        explicit
+        or literal
+        or _resolved_ast_name(argument, original)
+        == "django.conf.settings.SESSION_ENGINE"
+    )
+
+
+def _django_import_namespace_unknown(nodes, aliases, approved):
+    from .review_audits import _resolved_ast_name
+
+    return any(
+        isinstance(n, (ast.Name, ast.Attribute))
+        and _resolved_ast_name(n, aliases).startswith(
+            ("sys.modules", "sys.__dict__", "importlib.")
+        )
+        and id(n) not in approved
+        or isinstance(n, ast.Attribute)
+        and _resolved_ast_name(n.value, aliases) == "django.conf.settings"
+        and n.attr.startswith("_")
+        or isinstance(n, ast.Call)
+        and _resolved_ast_name(n.func, aliases).startswith("sys.path.")
+        or isinstance(n, ast.Call)
+        and isinstance(n.func, ast.Attribute)
+        and _resolved_ast_name(n.func.value, aliases) == "django.conf.settings"
+        for n in nodes
+    )
+
+
 def _django_selected_consumers_closed(context, path, required, selected_modules):
     from .semantic_credential_sensor import (
         _signing_provider_clear,
@@ -2394,6 +2689,23 @@ def _django_selected_consumers_closed(context, path, required, selected_modules)
 
     index = context["index"]
     roots = tuple("django.conf.settings." + name for name in required)
+    configuration = {*required, "DEBUG", "STATIC_URL", "MEDIA_URL"}
+    providers = (
+        "django.urls",
+        "django.conf.urls",
+        "django.contrib.messages",
+        "django.contrib.sessions.backends",
+        "django.contrib.sessions.serializers",
+        "django.contrib.auth.backends",
+        "django.contrib.auth.decorators.login_required",
+        "django.core.signing",
+        "django.db.models.Model",
+        "django.forms.ModelForm",
+        "django.forms.models.ModelForm",
+        "django.utils.decorators.method_decorator",
+        "rest_framework.views.APIView",
+        "rest_framework.generics",
+    )
     for source_path, tree in index.snapshots.items():
         aliases = dict(context["aliases"][source_path])
         for alias, canonical in tuple(aliases.items()):
@@ -2405,7 +2717,7 @@ def _django_selected_consumers_closed(context, path, required, selected_modules)
                 == path
             ):
                 aliases[alias] = "django.conf.settings"
-            elif member in required and (
+            elif member in configuration and (
                 module == "django.conf.settings"
                 or module.lstrip(".") in selected_modules
                 or _signing_resolve_module(
@@ -2415,11 +2727,141 @@ def _django_selected_consumers_closed(context, path, required, selected_modules)
             ):
                 aliases[alias] = "django.conf.settings." + member
         if source_path == path:
-            aliases.update({name: "django.conf.settings." + name for name in required})
+            aliases.update(
+                {name: "django.conf.settings." + name for name in configuration}
+            )
         nodes = list(ast.walk(tree))
+        from .semantic_credential_sensor import _provider_identity_uncertain
+        from .semantic_credential_sensor import _security_builtin_identity_closed
+
+        reflection_closed = _security_builtin_identity_closed(
+            tree, aliases, {"getattr", "hasattr"}
+        )
+
+        approved = {
+            id(child)
+            for node in nodes
+            if isinstance(node, ast.Call)
+            and len(node.args) == 2
+            and audit._resolved_ast_name(node.func, aliases)
+            in {"django.urls.path", "django.urls.re_path", "django.conf.urls.url"}
+            and audit._resolved_ast_name(node.args[1], aliases)
+            == "django.contrib.admin.site.urls"
+            for child in ast.walk(node.args[1])
+        }
+        approved.update(
+            id(child)
+            for node in nodes
+            if isinstance(node, ast.Call)
+            and node.args
+            and audit._resolved_ast_name(node.func, aliases)
+            in {
+                "django.urls.include",
+                "django.conf.urls.include",
+                "django.urls.conf.include",
+            }
+            and audit._resolved_ast_name(node.args[0], aliases)
+            == "django.contrib.admin.site.urls"
+            for child in ast.walk(node.args[0])
+        )
+        approved.update(
+            id(node.args[0])
+            for node in nodes
+            if isinstance(node, ast.Call)
+            and reflection_closed
+            and (name := audit._resolved_ast_name(node.func, aliases))
+            in {"getattr", "hasattr", "builtins.getattr", "builtins.hasattr"}
+            and not node.keywords
+            and len(node.args) in range(2, 4 if name.endswith("getattr") else 3)
+            and audit._resolved_ast_name(node.args[0], aliases)
+            == "django.conf.settings"
+            and isinstance(node.args[1], ast.Constant)
+            and isinstance(node.args[1].value, str)
+            and not node.args[1].value.startswith("_")
+        )
+        approved.update(
+            id(child)
+            for node in nodes
+            if isinstance(node, ast.Call)
+            and len(node.args) >= 2
+            and audit._resolved_ast_name(node.func, aliases)
+            in {"django.urls.path", "django.urls.re_path", "django.conf.urls.url"}
+            and audit._resolved_ast_name(node.args[1], aliases)
+            in {
+                "django.contrib.auth.views." + name
+                for name in (
+                    "login",
+                    "logout",
+                    "password_reset",
+                    "password_reset_done",
+                    "password_reset_confirm",
+                    "password_reset_complete",
+                    "password_change",
+                    "password_change_done",
+                )
+            }
+            for child in ast.walk(node.args[1])
+        )
+        approved.update(
+            id(child)
+            for node in nodes
+            if isinstance(node, ast.Call)
+            and node.args
+            and audit._resolved_ast_name(node.func, aliases)
+            in {
+                "django.conf.urls.static.static",
+                "django.contrib.staticfiles.urls.static",
+            }
+            and audit._resolved_ast_name(node.args[0], aliases)
+            in {"django.conf.settings.STATIC_URL", "django.conf.settings.MEDIA_URL"}
+            for child in ast.walk(node.args[0])
+        )
+        approved.update(
+            id(child)
+            for node in nodes
+            if isinstance(node, ast.Call)
+            and len(node.args) == 1
+            and audit._resolved_ast_name(node.func, aliases)
+            == "django.utils.decorators.method_decorator"
+            and audit._resolved_ast_name(node.args[0], aliases)
+            in {
+                "django.views.decorators.csrf.csrf_exempt",
+                "django.views.decorators.http.require_POST",
+            }
+            for child in ast.walk(node.args[0])
+        )
+        guard_roots = (
+            "django.contrib.admin",
+            "django.views",
+            "django.contrib.auth.views",
+            "django.contrib.auth.urls",
+            "django.conf.settings.DEBUG",
+            "django.conf.settings.STATIC_URL",
+            "django.conf.settings.MEDIA_URL",
+        )
+        from .semantic_credential_sensor import _signing_provider_reads
+
+        approved.update(
+            _signing_provider_reads(
+                tree, aliases, "django", guard_roots, nodes, context=context
+            )
+        )
+        if _provider_identity_uncertain(
+            tree,
+            aliases,
+            roots=guard_roots,
+            nodes=[node for node in nodes if id(node) not in approved],
+            selected_paths=True,
+        ):
+            return False
         bindings = _provider_alias_bindings(nodes)
         if _signing_provider_clear(
-            tree, aliases, "django", roots=roots
+            tree,
+            aliases,
+            "django",
+            roots=(*roots, *providers),
+            context=context,
+            settings_path=path,
         ) is False or any(
             isinstance(node, ast.Call)
             and any(
@@ -3657,17 +4099,43 @@ class _CredentialHandlerIndex:
         {"route", "get", "post", "put", "patch", "delete", "options", "head"}
     )
 
-    def __init__(self, context):
+    @staticmethod
+    def _django_feedback_settings():
+        return {
+            "MESSAGE_STORAGE": {
+                "django.contrib.messages.storage.fallback.FallbackStorage",
+                "django.contrib.messages.storage.cookie.CookieStorage",
+            },
+            "SIGNING_BACKEND": {"django.core.signing.TimestampSigner"},
+            "SESSION_ENGINE": {
+                "django.contrib.sessions.backends." + name
+                for name in ("db", "cache", "cached_db", "file", "signed_cookies")
+            },
+            "SESSION_SERIALIZER": {
+                "django.contrib.sessions.serializers.JSONSerializer"
+            },
+            "MESSAGE_LEVEL": {10, 20},
+            "SECRET_KEY_FALLBACKS": {()},
+        }
+
+    def __init__(self, context, *, framework=None):
         from .semantic_credential_sensor import (
             _provider_identity_uncertain,
             _signing_framework_external,
             _signing_source_symbols,
         )
 
-        self.context, self.index = context, context["index"]
+        self.context, self.index, self.framework = context, context["index"], framework
         self.symbols = _signing_source_symbols(context)
         self.allocations, self.edges, self.handlers = {}, [], []
         if self.symbols is None:
+            return
+        if framework == "django":
+            self.symbols = (
+                self.symbols
+                if all(self.index.validate(p) for p in self.index.snapshots)
+                else None
+            )
             return
         for path, tree in self.index.snapshots.items():
             if not self.index.validate(path):
@@ -3730,9 +4198,926 @@ class _CredentialHandlerIndex:
 
         from .mock_fixture_provenance import _django_expr
 
-        return _app_expression_name(
-            self.symbols, path, expression, function
-        ) or _django_expr(self.symbols, path, expression, function)
+        return (
+            _app_expression_name(self.symbols, path, expression, function)
+            or _django_expr(self.symbols, path, expression, function)
+            or (
+                self._django_reimport_identity(path, expression)
+                if self.framework == "django" and function is None
+                else None
+            )
+        )
+
+    def _django_reimport_identity(self, path, expression):
+        from .mock_fixture_provenance import _django_import_rows, _django_name
+        from .credential_role_constructor_provider import binding_occurrences
+        from .review_audits import _resolved_ast_name
+
+        canonical = _resolved_ast_name(expression, self.context["aliases"][path])
+        head = expression
+        while isinstance(head, ast.Attribute):
+            head = head.value
+        if not isinstance(head, ast.Name):
+            return None
+        provider = self.context["aliases"][path].get(head.id)
+        rows = binding_occurrences(self.index.snapshots[path].body, head.id)
+        package = _django_name(self.symbols, path).rpartition(".")[0]
+        return (
+            canonical
+            if provider
+            and rows
+            and all(
+                (head.id, provider) in (_django_import_rows(row, package) or [])
+                for row in rows
+            )
+            else None
+        )
+
+    def django_feedback(self, path, settings):
+        """Evaluate the selected URL sequence, retaining only closed feedback effects."""
+        from .mock_fixture_provenance import _django_assignment
+        from .semantic_credential_sensor import _signing_resolve_module
+
+        self.django_settings, self.django_settings_path = settings, path
+        configuration = self._django_feedback_configuration(path, settings)
+        if configuration is None:
+            return None
+        match _django_assignment(settings, "ROOT_URLCONF"):
+            case [(root, ast.Constant(value=str()) as value)]:
+                target = _signing_resolve_module(self.context, value, path)
+            case _:
+                return None
+        routes = self._django_routes(target, (), "")
+        if routes is None:
+            return None
+        imports = _django_setting_import_closure(self.context, path) or {
+            "evidence": [],
+            "finite_settings": [],
+        }
+        provider_refs = [row["source"] for row in imports["evidence"]]
+        provider_refs.extend(
+            {"path": row["path"], "sha256": row["sha256"], "span": row[field]}
+            for row in imports["finite_settings"]
+            for field in ("span", "declaration_span")
+        )
+        earlier = []
+        for route, model, references, prefix in routes:
+            shadowed = any(
+                route == old or broad and route.startswith(old)
+                for old, broad in earlier
+            )
+            if model and not shadowed:
+                return {
+                    "model": model,
+                    "route": route,
+                    "root": self._django_reference(path, root),
+                    "configuration_imports": imports["evidence"],
+                    "configuration_import_closure": self.context.get(
+                        "selected_import_closures", {}
+                    ).get(self.django_settings_path.as_posix(), {}),
+                    "finite_configuration_fields": imports["finite_settings"],
+                    "evidence": [
+                        *configuration,
+                        *provider_refs,
+                        *(ref for _, _, refs, _ in routes for ref in refs),
+                    ],
+                }
+            earlier.append((route.split("<", 1)[0], prefix or "<" in route))
+        return None
+
+    @staticmethod
+    def django_middleware_order(values):
+        positions = {item.value: n for n, item in enumerate(values)}
+        if any(
+            sum(item.value == name for item in values) != 1
+            for name in (
+                "django.contrib.sessions.middleware.SessionMiddleware",
+                "django.contrib.auth.middleware.AuthenticationMiddleware",
+                "django.contrib.messages.middleware.MessageMiddleware",
+            )
+        ):
+            return False
+        session = positions["django.contrib.sessions.middleware.SessionMiddleware"]
+        return (
+            session
+            < positions["django.contrib.auth.middleware.AuthenticationMiddleware"]
+            and session
+            < positions["django.contrib.messages.middleware.MessageMiddleware"]
+        )
+
+    def _django_feedback_configuration(self, path, settings):
+        from .mock_fixture_provenance import _django_assignment
+        from .credential_role_constructor_provider import binding_occurrences
+
+        if self.symbols is None:
+            return None
+        references = []
+        for name, allowed in self._django_feedback_settings().items():
+            rows = _django_assignment(settings, name)
+            if not rows:
+                if binding_occurrences(settings.body, name):
+                    return None
+                continue
+            if len(rows) != 1:
+                return None
+            try:
+                value = ast.literal_eval(rows[0][1])
+                value = tuple(value) if isinstance(value, list) else value
+                valid = value in allowed
+            except (ValueError, TypeError):
+                valid = False
+            if not valid:
+                return None
+            references.append(self._django_reference(path, rows[0][0]))
+        return references
+
+    def _django_reference(self, path, node):
+        return {
+            "path": path.as_posix(),
+            "sha256": self.index.inventory[path],
+            "span": _span(node),
+        }
+
+    def _django_sequence(self, path):
+        """Interpret ordered container state; every selected-container use is closed."""
+        from .semantic_credential_sensor import _signing_provider_clear
+        from .mock_fixture_provenance import _django_name
+
+        tree, values, accepted = self.index.snapshots[path], {}, set()
+        if not self._django_sequence_statements(path, tree.body, values, accepted):
+            return None
+        names = {name for name, value in values.items() if value is not None} | {
+            "urlpatterns"
+        }
+        if any(
+            isinstance(n, ast.Name) and n.id in names and id(n) not in accepted
+            for n in ast.walk(tree)
+        ):
+            return None
+        root = _django_name(self.symbols, path) + ".urlpatterns"
+        if not all(
+            _signing_provider_clear(
+                owner,
+                self.context["aliases"][p],
+                "django",
+                roots=(root,),
+                context=self.context,
+                settings_path=self.django_settings_path,
+            )
+            for p, owner in self.index.snapshots.items()
+            if p != path
+        ):
+            return None
+        return values.get("urlpatterns")
+
+    def _django_sequence_statements(self, path, statements, values, accepted):
+        for statement in statements:
+            match statement:
+                case ast.Assign(targets=[ast.Name() as target], value=value):
+                    fragment = (
+                        None
+                        if isinstance(value, ast.Name)
+                        else self._django_sequence_value(path, value, values, accepted)
+                    )
+                    values[target.id] = fragment
+                    if fragment is not None:
+                        accepted.add(id(target))
+                case ast.AugAssign(
+                    target=ast.Name() as target, op=ast.Add(), value=value
+                ):
+                    fragment = self._django_sequence_value(
+                        path, value, values, accepted
+                    )
+                    if values.get(target.id) is None or fragment is None:
+                        return False
+                    values[target.id] = [*values[target.id], *fragment]
+                    accepted.add(id(target))
+                case ast.Expr(
+                    value=ast.Call(
+                        func=ast.Attribute(
+                            value=ast.Name(id="urlpatterns") as target, attr="clear"
+                        ),
+                        args=[],
+                        keywords=[],
+                    )
+                ):
+                    values[target.id] = []
+                    accepted.add(id(target))
+                case ast.If():
+                    if not self._django_sequence_branch(
+                        path, statement, values, accepted
+                    ):
+                        return False
+        return True
+
+    def _django_sequence_branch(self, path, statement, values, accepted):
+        if isinstance(statement.test, ast.Constant) and isinstance(
+            statement.test.value, bool
+        ):
+            selected = statement.test.value
+        elif self.canonical(path, statement.test) == "django.conf.settings.DEBUG":
+            selected = self._django_setting("DEBUG", False)
+        else:
+            return not any(
+                isinstance(n, ast.Name) and n.id == "urlpatterns"
+                for n in ast.walk(statement)
+            )
+        if not isinstance(selected, bool):
+            return False
+        active, inactive = (
+            (statement.body, statement.orelse)
+            if selected
+            else (statement.orelse, statement.body)
+        )
+        accepted.update(
+            id(n)
+            for item in inactive
+            for n in ast.walk(item)
+            if isinstance(n, ast.Name)
+        )
+        return self._django_sequence_statements(path, active, values, accepted)
+
+    def _django_sequence_value(self, path, value, values, accepted):
+        if isinstance(value, (ast.List, ast.Tuple)):
+            return [(node, "") for node in value.elts]
+        if isinstance(value, ast.Name) and value.id != "urlpatterns":
+            accepted.add(id(value))
+            return values.get(value.id)
+        if isinstance(value, ast.BinOp) and isinstance(value.op, ast.Add):
+            left = self._django_sequence_value(path, value.left, values, accepted)
+            right = self._django_sequence_value(path, value.right, values, accepted)
+            return [*left, *right] if left is not None and right is not None else None
+        if not isinstance(value, ast.Call):
+            return None
+        provider = self.canonical(path, value.func)
+        if (
+            provider == "django.conf.urls.patterns"
+            and value.args
+            and not value.keywords
+        ):
+            first = value.args[0]
+            return (
+                [(node, first.value) for node in value.args[1:]]
+                if isinstance(first, ast.Constant) and isinstance(first.value, str)
+                else None
+            )
+        return self._django_static_routes(path, value, provider)
+
+    def _django_setting(self, name, default=None):
+        from .mock_fixture_provenance import _django_assignment
+        from .credential_role_constructor_provider import binding_occurrences
+
+        rows = _django_assignment(self.django_settings, name)
+        if not rows:
+            return (
+                None
+                if binding_occurrences(self.django_settings.body, name)
+                else default
+            )
+        if not all(isinstance(value, ast.Constant) for _, value in rows):
+            return None
+        return rows[-1][1].value
+
+    def _django_static_routes(self, path, call, provider):
+        providers = {
+            "django.conf.urls.static.static",
+            "django.contrib.staticfiles.urls.static",
+            "django.contrib.staticfiles.urls.staticfiles_urlpatterns",
+        }
+        if provider not in providers or not isinstance(
+            self._django_setting("DEBUG", False), bool
+        ):
+            return None
+        if not self._django_setting("DEBUG", False):
+            return []
+        if provider.endswith(".staticfiles_urlpatterns"):
+            name = "STATIC_URL" if not call.args and not call.keywords else None
+        else:
+            name = self._django_static_argument(path, call)
+        prefix = self._django_setting(name) if name else None
+        if not isinstance(prefix, str) or not prefix:
+            return None
+        if urlsplit(prefix).netloc:
+            return []
+        reference = self._django_reference(path, call)
+        return [({"prefix": prefix.lstrip("/"), "evidence": [reference]}, "")]
+
+    def _django_static_argument(self, path, call):
+        if len(call.args) != 1 or any(
+            k.arg != "document_root"
+            or not isinstance(k.value, (ast.Attribute, ast.Constant))
+            for k in call.keywords
+        ):
+            return None
+        canonical = self.canonical(path, call.args[0])
+        return (
+            canonical.rpartition(".")[2]
+            if canonical
+            in {"django.conf.settings.STATIC_URL", "django.conf.settings.MEDIA_URL"}
+            else None
+        )
+
+    def _django_routes(self, path, stack, prefix):
+        if path is None or path in stack or not self.index.validate(path):
+            return None
+        sequence = self._django_sequence(path)
+        if sequence is None:
+            return None
+        result = []
+        for node, callback_prefix in sequence:
+            if isinstance(node, dict):
+                rows = [(prefix + node["prefix"], None, node["evidence"], True)]
+            else:
+                rows = self._django_route(
+                    path, node, (*stack, path), prefix, callback_prefix
+                )
+            if rows is None:
+                return None
+            result.extend(rows)
+        return result
+
+    def _django_route(self, path, node, stack, prefix, callback_prefix=""):
+        if (
+            not isinstance(node, ast.Call)
+            or len(node.args) not in {2, 3}
+            or any(k.arg not in {"name"} for k in node.keywords)
+        ):
+            return None
+        provider = self.canonical(path, node.func)
+        if provider not in {
+            "django.urls.path",
+            "django.urls.re_path",
+            "django.conf.urls.url",
+        }:
+            return None
+        if not isinstance(node.args[0], ast.Constant) or not isinstance(
+            node.args[0].value, str
+        ):
+            return None
+        pattern = (
+            self._django_pattern(provider, node.args[0].value)
+            if len(node.args) == 2 or self._django_static_keywords(node.args[2])
+            else None
+        )
+        if pattern is None:
+            return None
+        route, prefix_match, exact = pattern
+        route = prefix + route
+        target, reference = node.args[1], self._django_reference(path, node)
+        if isinstance(target, ast.Call) and self.canonical(path, target.func) in {
+            "django.urls.include",
+            "django.conf.urls.include",
+            "django.urls.conf.include",
+        }:
+            return self._django_include(path, node, stack, route, reference, exact)
+        if self.canonical(path, target) == "django.contrib.admin.site.urls":
+            if node.args[0].value.endswith("$") or not exact:
+                return None
+            return [(route, "django.admin.feedback.v1", [reference], True)]
+        if (
+            callback_prefix
+            and isinstance(target, ast.Constant)
+            and isinstance(target.value, str)
+        ):
+            target = ast.Constant(value=callback_prefix + "." + target.value)
+        if self._django_target(path, target) is None:
+            return None
+        effect = self._django_operation_feedback(path, target) if exact else None
+        return [
+            (
+                route,
+                "django.authenticated-operation.feedback.v1" if effect else None,
+                [reference, *(effect or [])],
+                prefix_match,
+            )
+        ]
+
+    def _django_include(self, path, node, stack, route, reference, exact=True):
+        from .semantic_credential_sensor import _signing_resolve_module
+
+        target = node.args[1]
+        if (
+            not target.args
+            or len(target.args) > 2
+            or target.keywords
+            or node.args[0].value.endswith("$")
+        ):
+            return None
+        literal = target.args[0]
+        if self.canonical(path, literal) == "django.contrib.admin.site.urls":
+            return (
+                [(route, "django.admin.feedback.v1", [reference], True)]
+                if exact
+                else None
+            )
+        if (
+            isinstance(literal, ast.Constant)
+            and literal.value == "django.contrib.auth.urls"
+        ):
+            return [(route, None, [reference], True)]
+        if not isinstance(literal, ast.Constant):
+            literal = ast.Constant(value=self.canonical(path, literal))
+        child = _signing_resolve_module(self.context, literal, path)
+        rows = self._django_routes(child, stack, route)
+        return (
+            [
+                (r, m if exact else None, [reference, *refs], broad)
+                for r, m, refs, broad in rows
+            ]
+            if rows is not None
+            else None
+        )
+
+    def _django_pattern(self, provider, source):
+        if provider == "django.urls.path":
+            return source, False, "<" not in source
+        try:
+            re.compile(source)
+        except re.error:
+            return None
+        literal = source.removeprefix("^").removesuffix("$")
+        if literal and not source.startswith("^"):
+            return "", True, False
+        exact = re.fullmatch(r"[\w/:-]*", literal) is not None
+        if exact:
+            return literal, not source.endswith("$"), True
+        # Only our fixed linear matcher reads the pattern text. The captured
+        # regex is never executed, and an opaque prefix cannot produce an effect.
+        head = re.match(r"\^([\w/:-]*)", source)
+        prefix = head.group(1) if head and "|" not in source else ""
+        if head and source[head.end() : head.end() + 1] in {"?", "*", "{"}:
+            prefix = prefix[:-1]
+        return prefix, True, False
+
+    @staticmethod
+    def _django_static_keywords(node):
+        return isinstance(node, ast.Dict) and all(
+            isinstance(key, ast.Constant)
+            and isinstance(key.value, str)
+            and isinstance(value, ast.Constant)
+            for key, value in zip(node.keys, node.values)
+        )
+
+    def _django_feedback_handler(self, path, target):
+        from .credential_role_constructor_provider import binding_occurrences
+
+        selected = self._django_target(path, target)
+        if selected is None or not isinstance(selected[1], ast.FunctionDef):
+            return None
+        owner, function = selected
+        if len(function.decorator_list) != 1 or not function.args.args:
+            return None
+        decorator = function.decorator_list[0]
+        guard = decorator.func if isinstance(decorator, ast.Call) else decorator
+        if (
+            self.canonical(owner, guard)
+            != "django.contrib.auth.decorators.login_required"
+        ):
+            return None
+        if isinstance(decorator, ast.Call) and (
+            decorator.args
+            or any(
+                k.arg != "login_url" or not isinstance(k.value, ast.Constant)
+                for k in decorator.keywords
+            )
+        ):
+            return None
+        request = function.args.args[0].arg
+        if binding_occurrences(function.body, request):
+            return None
+        return owner, function, decorator, request
+
+    def _django_target(self, path, target):
+        """Resolve callback identity; never execute an unknown handler factory."""
+        from .semantic_credential_sensor import (
+            _signing_source_symbol,
+            _signing_resolve_module,
+        )
+        from .credential_role_constructor_provider import binding_occurrences
+
+        if isinstance(target, ast.Lambda):
+            return path, target
+        if isinstance(target, ast.Call):
+            return self._django_cbv(path, target)
+        if self.canonical(path, target) in {
+            "django.contrib.auth.views." + name
+            for name in (
+                "login",
+                "logout",
+                "password_reset",
+                "password_reset_done",
+                "password_reset_confirm",
+                "password_reset_complete",
+                "password_change",
+                "password_change_done",
+            )
+        }:
+            return path, target
+        if not (isinstance(target, ast.Constant) and isinstance(target.value, str)):
+            selected = _signing_source_symbol(self.context, path, target)
+            if selected is None:
+                from .mock_fixture_provenance import _django_source_function
+
+                selected = _django_source_function(
+                    self.symbols, path, target
+                ) or self._django_declared_target(path, target)
+            return (
+                selected
+                if selected
+                and isinstance(selected[1], (ast.FunctionDef, ast.AsyncFunctionDef))
+                else None
+            )
+        module, _, name = target.value.rpartition(".")
+        if target.value in {
+            "django.contrib.auth.views." + value for value in ("login", "logout")
+        }:
+            return path, target
+        owner = _signing_resolve_module(self.context, ast.Constant(value=module), path)
+        if owner is None:
+            return None
+        rows = binding_occurrences(self.index.snapshots[owner].body, name)
+        if len(rows) == 1 and isinstance(rows[0], ast.FunctionDef):
+            return owner, rows[0]
+        return None
+
+    def _django_cbv(self, path, call):
+        from .semantic_credential_sensor import _signing_source_symbol
+
+        if (
+            not isinstance(call.func, ast.Attribute)
+            or call.func.attr != "as_view"
+            or call.args
+        ):
+            return None
+        if any(
+            k.arg not in {"template_name", "next_page", "success_url", "login_url"}
+            or not isinstance(k.value, ast.Constant)
+            or not isinstance(k.value.value, str)
+            for k in call.keywords
+        ):
+            return None
+        provider = call.func.value
+        canonical = self.canonical(path, provider)
+        if self._django_view_provider(canonical):
+            return path, provider
+        selected = _signing_source_symbol(
+            self.context, path, provider
+        ) or self._django_declared_target(path, provider)
+        return selected if selected and self._django_view_class(*selected, ()) else None
+
+    def _django_view_provider(self, canonical):
+        from .semantic_credential_sensor import _signing_framework_external
+
+        if not isinstance(canonical, str):
+            return False
+        generic = {
+            "View",
+            "TemplateView",
+            "RedirectView",
+            "ListView",
+            "DetailView",
+            "FormView",
+            "CreateView",
+            "UpdateView",
+            "DeleteView",
+        }
+        providers = {
+            "django.views": {"View"},
+            "django.views.generic": generic,
+            "django.views.generic.base": {"View", "TemplateView", "RedirectView"},
+            "django.views.generic.list": {"ListView"},
+            "django.views.generic.detail": {"DetailView"},
+            "django.views.generic.edit": {
+                "FormView",
+                "CreateView",
+                "UpdateView",
+                "DeleteView",
+            },
+            "django.contrib.auth.views": {
+                "LoginView",
+                "LogoutView",
+                "PasswordResetView",
+                "PasswordResetDoneView",
+                "PasswordResetConfirmView",
+                "PasswordResetCompleteView",
+                "PasswordChangeView",
+                "PasswordChangeDoneView",
+            },
+            "rest_framework.views": {"APIView"},
+            "rest_framework.generics": {
+                "GenericAPIView",
+                "CreateAPIView",
+                "ListAPIView",
+                "RetrieveAPIView",
+                "DestroyAPIView",
+                "UpdateAPIView",
+                "ListCreateAPIView",
+                "RetrieveUpdateAPIView",
+                "RetrieveDestroyAPIView",
+                "RetrieveUpdateDestroyAPIView",
+            },
+        }
+        module, _, name = canonical.rpartition(".")
+        return name in providers.get(module, ()) and _signing_framework_external(
+            self.context, canonical.split(".")[0]
+        )
+
+    def _django_view_class(self, path, cls, seen):
+        from .semantic_credential_sensor import (
+            _signing_source_symbol,
+            _signing_provider_clear,
+        )
+        from .credential_role_constructor_provider import binding_occurrences
+        from .mock_fixture_provenance import _django_name
+
+        if (
+            not isinstance(cls, ast.ClassDef)
+            or (path, cls.name) in seen
+            or cls.keywords
+        ):
+            return False
+        if not all(
+            self._django_view_decorator(path, decorator)
+            for decorator in cls.decorator_list
+        ):
+            return False
+        if any(
+            binding_occurrences(cls.body, name)
+            for name in (
+                "as_view",
+                "__new__",
+                "__init_subclass__",
+                "__getattribute__",
+                "__getattr__",
+            )
+        ):
+            return False
+        canonical = _django_name(self.symbols, path) + "." + cls.name
+        if not all(
+            _signing_provider_clear(
+                tree,
+                self.context["aliases"][p],
+                "django",
+                roots=(canonical,),
+                context=self.context,
+                settings_path=self.django_settings_path,
+            )
+            for p, tree in self.index.snapshots.items()
+        ):
+            return False
+        from .review_integrity import _security_apply_import_bindings
+        from . import review_audits as audit
+
+        imports = _security_apply_import_bindings(
+            self.index.snapshots[path].body, {}, cls, audit
+        )
+        bases = [
+            audit._resolved_ast_name(base, imports) or self.canonical(path, base)
+            for base in cls.bases
+        ]
+        candidates = [base for base in bases if self._django_view_provider(base)]
+        local = [
+            _signing_source_symbol(self.context, path, base)
+            for base, name in zip(cls.bases, bases)
+            if not self._django_view_provider(name)
+            and not (name or "").startswith("django.contrib.auth.mixins.")
+        ]
+        inherited = [
+            self._django_view_class(*selected, (*seen, (path, cls.name)))
+            if selected
+            else False
+            for selected in local
+        ]
+        return bool(candidates or any(inherited)) and all(inherited)
+
+    def _django_declared_target(self, path, target):
+        from .semantic_credential_sensor import _signing_resolve_module
+        from .credential_role_constructor_provider import binding_occurrences
+
+        canonical = self.canonical(path, target)
+        module, _, name = (canonical or "").rpartition(".")
+        owner = _signing_resolve_module(self.context, ast.Constant(value=module), path)
+        if owner is None:
+            return None
+        tree = self.index.snapshots[owner]
+        rows = binding_occurrences(tree.body, name)
+        selected = max(rows, key=lambda node: node.lineno) if rows else None
+        return (
+            (owner, selected)
+            if selected in tree.body
+            and isinstance(
+                selected, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+            )
+            and self._django_callable_closed(owner, selected)
+            else None
+        )
+
+    def _django_callable_closed(self, owner, declaration):
+        from .semantic_credential_sensor import _provider_identity_uncertain
+        from .mock_fixture_provenance import _django_name
+        from . import review_audits as audit
+
+        canonical = _django_name(self.symbols, owner) + "." + declaration.name
+        for path, tree in self.index.snapshots.items():
+            aliases = dict(self.context["aliases"][path])
+            excluded = set()
+            if path == owner:
+                aliases[declaration.name] = canonical
+                excluded.update(
+                    id(n)
+                    for base in getattr(declaration, "bases", ())
+                    for n in ast.walk(base)
+                )
+            nodes = list(ast.walk(tree))
+            excluded.update(
+                id(child)
+                for node in nodes
+                if isinstance(node, ast.Call)
+                and len(node.args) >= 2
+                and audit._resolved_ast_name(node.func, aliases)
+                in {"django.urls.path", "django.urls.re_path", "django.conf.urls.url"}
+                and audit._resolved_ast_name(node.args[1], aliases) == canonical
+                for child in ast.walk(node.args[1])
+            )
+            if _provider_identity_uncertain(
+                tree,
+                aliases,
+                roots=(canonical,),
+                nodes=[node for node in nodes if id(node) not in excluded],
+                selected_paths=True,
+            ):
+                return False
+        return True
+
+    def _django_view_decorator(self, path, decorator):
+        if not isinstance(decorator, ast.Call) or len(decorator.args) != 1:
+            return False
+        if (
+            self.canonical(path, decorator.func)
+            != "django.utils.decorators.method_decorator"
+        ):
+            return False
+        return (
+            self.canonical(path, decorator.args[0])
+            in {
+                "django.views.decorators.csrf.csrf_exempt",
+                "django.views.decorators.http.require_POST",
+            }
+            and len(decorator.keywords) == 1
+            and decorator.keywords[0].arg == "name"
+            and isinstance(decorator.keywords[0].value, ast.Constant)
+            and decorator.keywords[0].value.value == "dispatch"
+        )
+
+    def _django_operation_feedback(self, path, target):
+        selected = self._django_feedback_handler(path, target)
+        if selected is None:
+            return None
+        owner, function, decorator, request = selected
+        for statement in ast.walk(function):
+            from .credential_role_identity_effects import _enclosing_function
+
+            if (
+                _enclosing_function(statement, self.index.parents[owner])
+                is not function
+            ):
+                continue
+            if not isinstance(statement, ast.Expr) or not isinstance(
+                statement.value, ast.Call
+            ):
+                continue
+            call = statement.value
+            if not self._django_feedback_call(owner, function, call, request):
+                continue
+            parent = self.index.parents[owner].get(id(statement))
+            body = getattr(parent, "body", [])
+            preceding = body[: body.index(statement)] if statement in body else []
+            for item in preceding:
+                operation = self._django_operation(owner, function, item)
+                if operation:
+                    return [
+                        self._django_reference(owner, decorator),
+                        self._django_reference(owner, function),
+                        self._django_reference(owner, call),
+                        *operation,
+                    ]
+        return None
+
+    def _django_feedback_call(self, path, function, call, request):
+        from .semantic_credential_sensor import (
+            _security_control_branch_possible,
+            _security_no_prior_terminator,
+        )
+
+        provider = self.canonical(path, call.func, function)
+        if provider not in {
+            "django.contrib.messages." + name
+            for name in ("success", "info", "warning", "error")
+        }:
+            return False
+        if (
+            len(call.args) != 2
+            or call.keywords
+            or not isinstance(call.args[0], ast.Name)
+            or call.args[0].id != request
+        ):
+            return False
+        if (
+            not isinstance(call.args[1], ast.Constant)
+            or not isinstance(call.args[1].value, str)
+            or not call.args[1].value
+        ):
+            return False
+        child = call
+        while (parent := self.index.parents[path].get(id(child))) is not None:
+            if not _security_control_branch_possible(
+                parent, child
+            ) or not _security_no_prior_terminator(parent, child):
+                return False
+            child = parent
+        return True
+
+    def _django_operation(self, path, function, statement):
+        """Recognize framework Model/ModelForm save/delete, not arbitrary method names."""
+        from .semantic_credential_sensor import _signing_source_symbol
+        from .credential_role_constructor_provider import binding_occurrences
+        from .semantic_credential_sensor import _signing_provider_clear
+        from .mock_fixture_provenance import _django_name
+
+        if not isinstance(statement, ast.Expr) or not isinstance(
+            statement.value, ast.Call
+        ):
+            return False
+        call = statement.value
+        if (
+            not isinstance(call.func, ast.Attribute)
+            or call.func.attr not in {"save", "delete"}
+            or not isinstance(call.func.value, ast.Name)
+        ):
+            return False
+        bindings = [
+            self.index.parents[path].get(id(node))
+            if isinstance(node, ast.Name)
+            else node
+            for node in binding_occurrences(function.body, call.func.value.id)
+        ]
+        if not bindings or any(
+            not isinstance(node, ast.Assign) or not isinstance(node.value, ast.Call)
+            for node in bindings
+        ):
+            return False
+        constructors = [node.value for node in bindings]
+        from .credential_role_constructor_provider import binding_dominates
+
+        if not any(
+            binding_dominates(node, call, self.index.parents[path], function)
+            for node in bindings
+        ):
+            return False
+        references = []
+        for constructor in constructors:
+            provider = constructor.func
+            if (
+                isinstance(provider, ast.Attribute)
+                and provider.attr == "get"
+                and isinstance(provider.value, ast.Attribute)
+                and provider.value.attr == "objects"
+            ):
+                provider = provider.value.value
+            selected = _signing_source_symbol(self.context, path, provider, function)
+            if selected is None or not isinstance(selected[1], ast.ClassDef):
+                return False
+            owner, cls = selected
+            bases = {self.canonical(owner, base) for base in cls.bases}
+            canonical = _django_name(self.symbols, owner) + "." + cls.name
+            if not (
+                bases
+                & {
+                    "django.db.models.Model",
+                    "django.forms.ModelForm",
+                    "django.forms.models.ModelForm",
+                }
+            ) or binding_occurrences(cls.body, call.func.attr):
+                return False
+            if not all(
+                _signing_provider_clear(
+                    tree,
+                    self.context["aliases"][p],
+                    "django",
+                    roots=(canonical,),
+                    context=self.context,
+                    settings_path=self.django_settings_path,
+                )
+                for p, tree in self.index.snapshots.items()
+            ):
+                return False
+            references.extend(
+                [
+                    self._django_reference(owner, cls),
+                    self._django_reference(path, constructor),
+                ]
+            )
+        return [self._django_reference(path, call), *references]
 
     def binding(self, path, expression, function=None):
         """Resolve the captured declaration that dominates a selected credential use."""

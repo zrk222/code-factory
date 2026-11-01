@@ -18,7 +18,7 @@ _FINDING_TIER_POLICY = {
     "supported_evidence": [
         "source_bound_native_security_precondition",
         "source_bound_flask_session_authority",
-        "source_bound_framework_session_default",
+        "source_bound_selected_framework_feedback_default",
         "source_bound_private_key_http_authentication_flow",
     ],
     "primitive_evidence": "current_native_source_bound_primitive_partition",
@@ -26,7 +26,7 @@ _FINDING_TIER_POLICY = {
     "pickle_byte_origin": "source_edge_observation_only; reconstruction_effects_remain_unassessed",
     "known_format_patterns": "factory.context_efficiency._SECRET_BYTES",
     "known_format_policy": "material_observation_only; authority_and_validity_not_established",
-    "configuration_load_policy": "observation_only_unless_source_bound_framework_session_default_is_regenerated",
+    "configuration_load_policy": "observation_only_unless_source_bound_selected_framework_feedback_default_is_regenerated",
     "credential_witness_policy": "recognized_scope_and_current_source_bound_spans_required",
     "claims": "no_precision_or_held_out_measurement",
     "admission_requirements": [
@@ -802,6 +802,7 @@ def _decide_finding_tier(
     credential_evidence=None,
     *,
     source_bindings=None,
+    credential_context=None,
 ):
     evidence = credential_evidence
     if (
@@ -858,6 +859,26 @@ def _decide_finding_tier(
             )
         ):
             return "SUPPORTED_DEFECT", "source_bound_flask_session_authority", None
+        if (
+            evidence.get("schema")
+            == "factory.security.selected-framework-consumer-authority.v1"
+            and evidence.get("proof_scope")
+            == "source_bound_selected_framework_feedback_default"
+            and key_matches
+            and credential_context is not None
+        ):
+            from .credential_endpoint_admission import (
+                operative_signing_default_evidence,
+            )
+
+            if evidence == operative_signing_default_evidence(
+                finding, credential_context
+            ):
+                return (
+                    "SUPPORTED_DEFECT",
+                    "source_bound_selected_framework_feedback_default",
+                    None,
+                )
         recognized = {
             (
                 "captured_same_module_static_wiring",
@@ -865,12 +886,6 @@ def _decide_finding_tier(
                 "embedded_private_key",
                 "django_password_verifier",
             ): "source_bound_private_key_http_authentication_flow",
-            (
-                "source_bound_standalone_framework_session_default",
-                "factory.security.framework-session-authority.v1",
-                "published_literal_default",
-                "configured_authentication_session_signing",
-            ): "source_bound_framework_session_default",
         }
         fields = "proof_scope", "schema", "source_role", "consumer_role"
         signature = tuple(map(evidence.get, fields))
@@ -5053,6 +5068,7 @@ def _finding_tier_ledger_row(
         primitive_rows,
         credential_evidence,
         source_bindings=bindings,
+        credential_context=signing_cache.get("inventory"),
     )
     identity = _tier_sha256(
         {
@@ -5111,6 +5127,16 @@ def _finding_tier_ledger_row(
         row["static_consumer_observation"] = signing_evidence
     if credential_evidence is not None:
         row["credential_authority_observation"] = credential_evidence
+    closure = (
+        (signing_cache.get("inventory") or {})
+        .get("selected_import_closures", {})
+        .get(path, {})
+    )
+    if closure.get("unresolved"):
+        row["unresolved_provider_imports"] = copy.deepcopy(closure["unresolved"])
+        row.setdefault("missing_premises", []).append(
+            "source_bound_eager_provider_import_closure"
+        )
     if evidence_details is not None:
         witness = evidence_details.get("source_bound_security_precondition")
         if isinstance(witness, dict) and bound_source:

@@ -946,6 +946,8 @@ _NATIVE_INPUT_EPOCH_BINDINGS = tuple(
     (module, names.split())
     for module, names in {
         "factoryline.semantic_credential_sensor": """
+        _signing_provider_clear _signing_provider_reads _signing_bound_providers_clear
+        _security_builtin_identity_closed _provider_identity_uncertain _provider_path_conflicts
         _native_input_provider_inventory http_request_payload
         _http_request_subscript_payload _http_request_call_payload
         _http_request_attribute_payload _flask_request_body_kind
@@ -961,6 +963,21 @@ _NATIVE_INPUT_EPOCH_BINDINGS = tuple(
         """,
         "factoryline.captured_security_audit": """
         _security_request_binary_decode_kind _security_bind_local_native_input_precondition _security_local_request_provider_identity_uncertain _security_shell_call_shape_for_flow _security_local_provider_identity_uncertain _native_input_inventory_epoch
+        """,
+        "factoryline.import_context": """
+        finite_key_reflection_reads _finite_loop_reflection_reads _finite_dictionary_key_domain _finite_dictionary_key_use_closed _finite_key_reflection_call _finite_table_peers_closed import_resolution_helpers close_selected_import_sources eager_import_closure _eager_import_model_roots _eager_import_edges _eager_import_target
+        """,
+        "factoryline.credential_endpoint_admission": """
+        _django_setting_import_closure _django_setting_import_aliases _django_setting_import_sites _django_setting_import_operand _django_import_namespace_unknown _django_importer_external
+        """,
+        "factoryline.credential_role_constructor_provider": """
+        binding_occurrences _binds
+        """,
+        "factoryline.credential_role_identity_effects": """
+        source_symbol_index
+        """,
+        "factoryline.mock_fixture_provenance": """
+        _django_import_rows _django_name _django_assignment
         """,
         "factoryline.review_integrity": """
         _security_request_binary_decode_kind _security_bind_local_native_input_precondition _security_local_request_provider_identity_uncertain _security_shell_call_shape_for_flow _security_local_provider_identity_uncertain
@@ -1032,6 +1049,8 @@ def _native_input_inventory_epoch(_cache_owner):
         )._NATIVE_INPUT_EPOCH_BINDINGS
         for name in names
     ]
+    helpers = import_module("factoryline.import_context").import_resolution_helpers()
+    functions.extend(helpers if isinstance(helpers, tuple) else ())
     identity = (
         tuple(
             (
@@ -1044,6 +1063,7 @@ def _native_input_inventory_epoch(_cache_owner):
             )
         ),
         semantic_credential_sensor.SECURITY_EFFECT_WITNESS_SCHEMA,
+        import_module("factoryline.import_context")._eager_import_model_roots(),
         semantic_credential_sensor.SECURITY_EFFECT_CONTRACTS,
         semantic_credential_sensor._SECURITY_EFFECT_WITNESS_SCHEMA_BASELINE,
         semantic_credential_sensor._SECURITY_EFFECT_CONTRACTS_BASELINE,

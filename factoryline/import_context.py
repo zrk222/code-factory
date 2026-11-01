@@ -478,6 +478,8 @@ def unique_import_source(matches, *, strict):
 
 def import_resolution_helpers():
     """Expose current resolver bindings/code to the existing native cache epoch."""
+    from .credential_role_constructor_provider import SourceSnapshotIndex
+
     return (
         application_configuration_names,
         application_profile_configuration,
@@ -507,8 +509,361 @@ def import_resolution_helpers():
         live_import_path,
         captured_relative_import,
         unique_import_source,
+        finite_key_reflection_reads,
+        _finite_loop_reflection_reads,
+        _finite_dictionary_key_domain,
+        _finite_dictionary_key_use_closed,
+        _finite_key_reflection_call,
+        _finite_table_peers_closed,
+        close_selected_import_sources,
+        eager_import_closure,
+        _eager_import_model_roots,
+        _eager_import_edges,
+        _eager_import_target,
         import_resolution_helpers,
+        *(
+            getattr(value, "__func__", value)
+            for value in vars(SourceSnapshotIndex).values()
+            if callable(value)
+        ),
     )
+
+
+def finite_key_reflection_reads(
+    tree, aliases, roots, builtin_guard, *, index=None, path=None, evidence=None
+):
+    """Project only proved disjoint finite reflected fields; retain value effects."""
+    if (
+        index is None
+        or not index.validate(path)
+        or index.snapshots[path] is not tree
+        or not builtin_guard(tree, aliases, {"list", "getattr", "hasattr", "setattr"})
+    ):
+        return set()
+    parents = {
+        id(child): node
+        for node in ast.walk(tree)
+        for child in ast.iter_child_nodes(node)
+    }
+    reads = set()
+    for loop in (node for node in tree.body if isinstance(node, ast.For)):
+        domain = _finite_dictionary_key_domain(tree, loop, parents, aliases)
+        if domain is None:
+            continue
+        key, fields, declaration = domain
+        if not _finite_table_peers_closed(index, path, declaration.targets[0].id):
+            continue
+        reads.update(
+            _finite_loop_reflection_reads(
+                loop, parents, aliases, roots, domain, index, path, evidence
+            )
+        )
+    return reads
+
+
+def _finite_loop_reflection_reads(
+    loop, parents, aliases, roots, domain, index, path, evidence
+):
+    from .review_audits import _resolved_ast_name
+    from .semantic_credential_sensor import _provider_path_conflicts
+
+    key, fields, declaration = domain
+    reads = set()
+    for node in ast.walk(loop):
+        if not _finite_key_reflection_call(node, loop, parents, aliases, key):
+            continue
+        receiver = _resolved_ast_name(node.args[0], aliases)
+        if not receiver or any(
+            _provider_path_conflicts(receiver + "." + field, "*", root)
+            for field in fields
+            for root in roots
+        ):
+            continue
+        reads.add(id(node))
+        reads.update(id(child) for child in ast.walk(node.args[0]))
+        if evidence is not None:
+            evidence.append(
+                {
+                    "path": path.as_posix(),
+                    "sha256": index.inventory[path],
+                    "span": [
+                        node.lineno,
+                        node.col_offset,
+                        node.end_lineno,
+                        node.end_col_offset,
+                    ],
+                    "declaration_span": [
+                        declaration.lineno,
+                        declaration.col_offset,
+                        declaration.end_lineno,
+                        declaration.end_col_offset,
+                    ],
+                    "fields": sorted(fields),
+                }
+            )
+    return reads
+
+
+def _finite_dictionary_key_domain(tree, loop, parents, aliases):
+    from .credential_role_constructor_provider import binding_occurrences
+    from .review_audits import _resolved_ast_name
+
+    if (
+        not isinstance(loop.target, ast.Tuple)
+        or len(loop.target.elts) != 2
+        or not all(isinstance(n, ast.Name) for n in loop.target.elts)
+    ):
+        return None
+    iterator = loop.iter
+    if (
+        not isinstance(iterator, ast.Call)
+        or _resolved_ast_name(iterator.func, aliases) not in {"list", "builtins.list"}
+        or len(iterator.args) != 1
+        or iterator.keywords
+    ):
+        return None
+    items = iterator.args[0]
+    if (
+        not isinstance(items, ast.Call)
+        or items.args
+        or items.keywords
+        or not isinstance(items.func, ast.Attribute)
+        or items.func.attr != "items"
+        or not isinstance(items.func.value, ast.Name)
+    ):
+        return None
+    name, key = items.func.value.id, loop.target.elts[0].id
+    rows = binding_occurrences(tree.body, name)
+    declaration = parents.get(id(rows[0])) if len(rows) == 1 else None
+    if (
+        not isinstance(declaration, ast.Assign)
+        or len(declaration.targets) != 1
+        or declaration not in tree.body
+        or tree.body.index(loop) != tree.body.index(declaration) + 1
+        or not isinstance(declaration.value, ast.Dict)
+    ):
+        return None
+    fields = declaration.value.keys
+    if not fields or not all(
+        isinstance(field, ast.Constant)
+        and isinstance(field.value, str)
+        and not field.value.startswith("_")
+        for field in fields
+    ):
+        return None
+    if binding_occurrences(loop.body, key) or not _finite_dictionary_key_use_closed(
+        tree, name, rows[0], items.func.value
+    ):
+        return None
+    return key, frozenset(field.value for field in fields), declaration
+
+
+def _finite_dictionary_key_use_closed(tree, name, declaration, receiver):
+    """A unique literal table may have only the certified iterator receiver use."""
+    return all(
+        node is declaration or node is receiver
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Name) and node.id == name
+    )
+
+
+def _finite_table_peers_closed(index, owner, name):
+    from .mock_fixture_provenance import _django_name, _django_import_rows
+    from .credential_role_identity_effects import source_symbol_index
+    from .finite_capture import _provider_paths, _provider_alias_bindings
+    from .semantic_credential_sensor import _provider_identity_uncertain
+    from . import review_audits as audit
+
+    symbols = source_symbol_index(index)
+    canonical = _django_name(symbols, owner) + "." + name
+    for path, tree in index.snapshots.items():
+        if not index.validate(path):
+            return False
+        nodes, aliases = list(ast.walk(tree)), {}
+        package = _django_name(symbols, path).rpartition(".")[0]
+        for node in nodes:
+            rows = _django_import_rows(node, package)
+            if rows is not None:
+                aliases.update(rows)
+            elif isinstance(node, ast.ImportFrom):
+                selected = resolve_import_source(
+                    index.root,
+                    path,
+                    node,
+                    node.module or "",
+                    captured_import_inventory(index),
+                    captured=True,
+                )
+                if selected == owner:
+                    return False
+        if _provider_identity_uncertain(
+            tree, aliases, roots=("builtins",), selected_paths=True
+        ):
+            return False
+        if path != owner:
+            bindings = _provider_alias_bindings(nodes)
+            if (
+                canonical in aliases.values()
+                or _provider_identity_uncertain(
+                    tree, aliases, roots=(canonical,), selected_paths=True
+                )
+                or any(
+                    canonical in _provider_paths(node, aliases, audit, bindings)[0]
+                    for node in nodes
+                    if isinstance(node, (ast.Name, ast.Attribute))
+                )
+            ):
+                return False
+    return True
+
+
+def _finite_key_reflection_call(node, loop, parents, aliases, key):
+    from .review_audits import _resolved_ast_name
+
+    if not isinstance(node, ast.Call) or node.keywords:
+        return False
+    name = _resolved_ast_name(node.func, aliases).removeprefix("builtins.")
+    if name not in {"getattr", "hasattr", "setattr"} or len(node.args) not in (
+        {3} if name == "setattr" else {2, 3} if name == "getattr" else {2}
+    ):
+        return False
+    if not isinstance(node.args[1], ast.Name) or node.args[1].id != key:
+        return False
+    current = node
+    while (parent := parents.get(id(current))) is not loop:
+        if parent is None or isinstance(
+            parent,
+            (
+                ast.FunctionDef,
+                ast.AsyncFunctionDef,
+                ast.ClassDef,
+                ast.For,
+                ast.While,
+                ast.Lambda,
+            ),
+        ):
+            return False
+        current = parent
+    return True
+
+
+def close_selected_import_sources(context, selection, sites, modeled_roots):
+    if not sites:
+        return sites
+    proof = eager_import_closure(context["index"], sites, modeled_roots)
+    context.setdefault("selected_import_closures", {})[selection.as_posix()] = proof
+    return sites if proof["closed"] else None
+
+
+def eager_import_closure(index, entries, modeled_roots):
+    """Close captured import effects; external nonmodels remain explicit premises."""
+    inventory = captured_import_inventory(index)
+    pending, seen, unresolved, modeled = list(entries), set(), [], []
+    standard = _eager_import_model_roots()
+    while pending:
+        path = pending.pop()
+        if path in seen:
+            continue
+        if not index.validate(path):
+            unresolved.append(
+                {"path": path.as_posix(), "reason": "stale_import_source"}
+            )
+            continue
+        seen.add(path)
+        pending.extend(
+            parent / "__init__.py"
+            for parent in path.parents
+            if parent / "__init__.py" in index.snapshots
+        )
+        for node in ast.walk(index.snapshots[path]):
+            for module, imported in _eager_import_edges(node):
+                result = _eager_import_target(
+                    index,
+                    inventory,
+                    path,
+                    node,
+                    module,
+                    imported,
+                    standard,
+                    modeled_roots,
+                )
+                event = {
+                    "path": path.as_posix(),
+                    "sha256": index.inventory[path],
+                    "span": [
+                        node.lineno,
+                        node.col_offset,
+                        node.end_lineno,
+                        node.end_col_offset,
+                    ],
+                    "module": "." * getattr(node, "level", 0) + module,
+                }
+                if result.get("source") is not None:
+                    pending.append(result["source"])
+                elif result.get("model") is not None:
+                    modeled.append({**event, "model": result["model"]})
+                else:
+                    unresolved.append({**event, "reason": result["reason"]})
+    return {
+        "closed": not unresolved,
+        "unresolved": unresolved,
+        "modeled": modeled,
+        "sources": [
+            {"path": p.as_posix(), "sha256": index.inventory[p]} for p in sorted(seen)
+        ],
+    }
+
+
+def _eager_import_model_roots():
+    import sys
+
+    return frozenset(sys.stdlib_module_names) | frozenset(sys.builtin_module_names)
+
+
+def _eager_import_edges(node):
+    if isinstance(node, ast.Import):
+        return [(alias.name, None) for alias in node.names]
+    if isinstance(node, ast.ImportFrom):
+        return [
+            (node.module or "", alias.name if alias.name != "*" else None)
+            for alias in node.names
+        ]
+    return []
+
+
+def _eager_import_target(
+    index, inventory, path, node, module, imported, standard, models
+):
+    target = resolve_import_source(
+        index.root, path, node, module, inventory, imported=imported, captured=True
+    )
+    if target is not None:
+        return {"source": target}
+    choices = import_source_choices(
+        index.root, path, node, module, imported, captured_inventory=inventory
+    )
+    if any(candidate in index.snapshots for candidate, _ in choices):
+        return {"reason": "ambiguous_eager_import_source"}
+    if getattr(node, "level", 0):
+        return {"reason": "uncaptured_relative_import_effects"}
+    prefixes = [
+        module.split(".")[:length] for length in range(1, len(module.split(".")))
+    ]
+    if any(
+        base.joinpath(*parts).with_suffix(".py") in index.snapshots
+        or base.joinpath(*parts, "__init__.py") in index.snapshots
+        for base in import_source_bases(
+            index.root, path, node, captured_inventory=inventory
+        )
+        for parts in prefixes
+    ):
+        return {"reason": "captured_eager_import_parent_shadow"}
+    root = module.partition(".")[0]
+    if root in models:
+        return {"model": "existing_framework_api_model"}
+    if root in (standard or ()):
+        return {"model": "python_standard_library_model"}
+    return {"reason": "unmodeled_eager_import_effects"}
 
 
 def native_import_profile(file_count):
