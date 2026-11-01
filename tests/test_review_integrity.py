@@ -1258,6 +1258,89 @@ def test_request_alias_nested_scan_restores_outer_memo(monkeypatch):
     assert intent_quality_module._SECURITY_REQUEST_ALIAS_MEMO.get() is None
 
 
+@pytest.mark.parametrize(
+    "body",
+    [
+        "class Holder:\n    import httpx as client\n    value = client.get('url')\n",
+        "value = lambda client: client.get('url')\n",
+        "class Holder:\n    values = [client.get(item) for item in items]\n",
+    ],
+    ids=["class", "lambda", "comprehension"],
+)
+def test_request_alias_memo_other_scopes_match_compatibility(body):
+    tree, _ = _request_alias_test_context(
+        "import requests as client\n"
+        + body
+        + "import urllib as client\ndef run():\n    pass\n"
+    )
+    call = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "get"
+    )
+    scope = call._security_lexical_scope
+    statement = call._security_flow_statement
+    assert review_integrity._security_module_scope(scope) is tree
+    assert not isinstance(scope, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef))
+    aliases = {"client": "seed"}
+    expected = intent_quality_module._security_scope_request_aliases_uncached(
+        scope, aliases, statement
+    )
+    token = intent_quality_module._SECURITY_REQUEST_ALIAS_MEMO.set(
+        intent_quality_module._new_security_request_alias_memo(tree)
+    )
+    try:
+        resolved = review_integrity._security_scope_request_aliases(
+            scope, aliases, statement
+        )
+        assert resolved == expected
+        resolved["client"] = "forged"
+        assert (
+            review_integrity._security_scope_request_aliases(scope, aliases, statement)
+            == expected
+        )
+    finally:
+        intent_quality_module._SECURITY_REQUEST_ALIAS_MEMO.reset(token)
+
+
+def test_request_alias_memo_other_scope_flows_share_one_module_walk(monkeypatch):
+    tree, _ = _request_alias_test_context(
+        "import requests as client\nclass Holder:\n"
+        + "".join(f"    value_{index} = client.get('url')\n" for index in range(24))
+        + "def run():\n    pass\n"
+    )
+    calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+    ]
+    assert len({id(call._security_flow_statement) for call in calls}) == 24
+    original = review_integrity._security_apply_import_bindings
+    module_walks = []
+
+    def count_applications(body, resolved, stop, audit):
+        if body is tree.body:
+            module_walks.append(stop)
+        return original(body, resolved, stop, audit)
+
+    monkeypatch.setattr(
+        review_integrity, "_security_apply_import_bindings", count_applications
+    )
+    token = intent_quality_module._SECURITY_REQUEST_ALIAS_MEMO.set(
+        intent_quality_module._new_security_request_alias_memo(tree)
+    )
+    try:
+        for call in calls:
+            assert review_integrity._security_scope_request_aliases(
+                call._security_lexical_scope, {}, call._security_flow_statement
+            ) == {"client": "requests"}
+        assert module_walks == [None]
+    finally:
+        intent_quality_module._SECURITY_REQUEST_ALIAS_MEMO.reset(token)
+
+
 def test_request_alias_memo_matches_uncached_full_findings(monkeypatch):
     from factoryline import review_integrity
     from factoryline.review_audits import _security_aliases

@@ -4505,9 +4505,7 @@ def _security_scope_request_aliases(scope, aliases, flow_statement=None):
             scope.body, resolved, flow_statement, audit
         )
     else:
-        resolved = _security_scope_request_aliases_uncached(
-            scope, aliases, flow_statement
-        )
+        resolved = _security_request_alias_module_bindings(module, alias_items, None)
     _security_store_request_alias_bindings(memo, key, alias_items, resolved)
     return dict(resolved)
 
