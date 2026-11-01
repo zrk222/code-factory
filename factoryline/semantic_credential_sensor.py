@@ -2922,7 +2922,13 @@ def _signing_resolve_module(context, literal, origin=None):
                     return None
                 matches.add(selected)
         if matches:
-            return next(iter(matches)) if len(matches) == 1 else None
+            from .import_context import captured_script_module
+
+            return (
+                next(iter(matches))
+                if len(matches) == 1
+                else captured_script_module(context, parts, origin)
+            )
     choices = {
         paths[name]
         for name in ("/".join(parts) + ".py", "/".join(parts) + "/__init__.py")

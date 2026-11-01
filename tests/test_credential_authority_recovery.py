@@ -96,6 +96,329 @@ def _recovery_sources(settings=SETTINGS, startup=START, extra=None):
     }
 
 
+def _nested_project_sources():
+    files = _recovery_sources()
+    files.pop("start.py")
+    files.update({"service/asgi.py": START, "service/__init__.py": ""})
+    for path, source in list(files.items()):
+        files["service/" + path] = source
+    script = (
+        "import os\nimport sys\n"
+        "def main():\n"
+        '    os.environ.setdefault("DJANGO_SETTINGS_MODULE", "service.settings")\n'
+        "    from django.core.management import execute_from_command_line\n"
+        "    execute_from_command_line(sys.argv)\n"
+        'if __name__ == "__main__":\n    main()\n'
+    )
+    files["manage.py"] = script
+    files["service/manage.py"] = script
+    return files
+
+
+@pytest.mark.parametrize(
+    "target", ["service/settings.py", "service/service/settings.py"]
+)
+def test_explicit_script_launch_disambiguates_nested_project_roots(target):
+    row = _recovery_row(_nested_project_sources(), path=target)
+    assert row["tier"] == "SUPPORTED_DEFECT"
+    assert (
+        row["credential_authority_observation"]["consumer_role"]
+        == "signed_feedback_integrity"
+    )
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "missing_launch",
+        "main_rebound",
+        "os_rebound",
+        "sys_path",
+        "sys_modules",
+        "env_before",
+        "env_after",
+        "env_delete",
+        "env_update",
+        "env_pop",
+        "env_clear",
+        "env_alias",
+        "env_reassign",
+        "other_module",
+        "sibling_module",
+        "guarded_launch",
+        "unknown_call",
+        "sys_rebound",
+        "argv_rebound",
+        "arg_default",
+        "kw_default",
+        "extra_import",
+        "second_default",
+        "captured_import",
+        "os_shadow",
+        "package_initializer",
+        "module_definition_effect",
+        "prior_raise",
+        "recursive_entry",
+        "dormant_function",
+        "dormant_class",
+        "dormant_lambda",
+        "dormant_comprehension",
+        "computed_default",
+        "unknown_default",
+        "catch_and_continue",
+        "late_module_import",
+        "late_local_import",
+        "unrelated_env",
+        "entry_provider_shadow",
+    ],
+)
+def test_nested_root_requires_closed_explicit_script_selection(mutation):
+    files = _nested_project_sources()
+    path = "service/manage.py"
+    if mutation == "missing_launch":
+        files.pop(path)
+    elif mutation == "main_rebound":
+        files[path] = files[path].replace(
+            "if __name__", "main = replacement\nif __name__"
+        )
+    elif mutation == "os_rebound":
+        files[path] = files[path].replace(
+            "def main():", "os = replacement\ndef main():"
+        )
+    elif mutation == "sys_rebound":
+        files[path] = files[path].replace(
+            "def main():", "sys = replacement\ndef main():"
+        )
+    elif mutation == "argv_rebound":
+        files[path] = files[path].replace(
+            "def main():", "sys.argv = replacement\ndef main():"
+        )
+    elif mutation == "arg_default":
+        files[path] = files[path].replace(
+            "def main():",
+            'def main(flag=os.environ.setdefault("DJANGO_SETTINGS_MODULE", "service.other")):',
+        )
+    elif mutation == "kw_default":
+        files[path] = files[path].replace(
+            "def main():",
+            'def main(*, flag=os.environ.setdefault("DJANGO_SETTINGS_MODULE", "service.other")):',
+        )
+    elif mutation == "extra_import":
+        files[path] = files[path].replace(
+            "def main():", "import unknown_eager_effect\ndef main():"
+        )
+    elif mutation == "captured_import":
+        files[path] = files[path].replace("def main():", "import poison\ndef main():")
+        files["poison.py"] = (
+            'import os\nos.environ["DJANGO_SETTINGS_MODULE"] = "other.settings"\n'
+        )
+    elif mutation == "os_shadow":
+        files["service/os.py"] = "environ = other_environment\n"
+    elif mutation == "package_initializer":
+        files["service/service/__init__.py"] = (
+            'import os\nos.environ["DJANGO_SETTINGS_MODULE"] = "service.other"\n'
+        )
+    elif mutation == "module_definition_effect":
+        files[path] = files[path].replace(
+            "def main():",
+            'def unused(flag=os.environ.setdefault("DJANGO_SETTINGS_MODULE", "service.other")):\n    pass\ndef main():',
+        )
+    elif mutation == "prior_raise":
+        files[path] = files[path].replace(
+            "    os.environ.setdefault",
+            '    raise ImportError("blocked startup")\n    os.environ.setdefault',
+        )
+    elif mutation == "recursive_entry":
+        files[path] = files[path].replace(
+            "    os.environ.setdefault", "    main()\n    os.environ.setdefault"
+        )
+    elif mutation.startswith("dormant_"):
+        prefix, suffix = {
+            "dormant_function": ("    def dormant():\n", ""),
+            "dormant_class": ("    class Dormant:\n", ""),
+            "dormant_lambda": ("    dormant = lambda: (\n", "    )\n"),
+            "dormant_comprehension": ("    dormant = [\n", "    for item in []]\n"),
+        }[mutation]
+        statements = (
+            'os.environ.setdefault("DJANGO_SETTINGS_MODULE", "service.settings")',
+            "execute_from_command_line(sys.argv)",
+        )
+        separator = (
+            ",\n" if mutation in {"dormant_lambda", "dormant_comprehension"} else "\n"
+        )
+        content = separator.join("        " + item for item in statements) + "\n"
+        files[path] = (
+            "import os\nimport sys\nfrom django.core.management import execute_from_command_line\n"
+            "def main():\n"
+            + prefix
+            + content
+            + suffix
+            + 'if __name__ == "__main__":\n    main()\n'
+        )
+        if mutation == "dormant_comprehension":
+            files[path] = (
+                files[path]
+                .replace("    dormant = [\n", "    dormant = [(\n")
+                .replace("    for item", "    ) for item")
+            )
+    elif mutation in {"computed_default", "unknown_default"}:
+        key = (
+            '"DJANGO_" + "SETTINGS_MODULE"'
+            if mutation == "computed_default"
+            else "unknown_key"
+        )
+        files[path] = files[path].replace(
+            "    os.environ.setdefault",
+            f'    os.environ.setdefault({key}, "service.other")\n    os.environ.setdefault',
+        )
+    elif mutation == "catch_and_continue":
+        files[path] = files[path].replace(
+            "    from django.core.management import execute_from_command_line",
+            "    try:\n        from django.core.management import execute_from_command_line\n    except ImportError:\n        pass",
+        )
+    elif mutation == "late_module_import":
+        files[path] = files[path].replace("import os\n", "") + "import os\n"
+    elif mutation == "entry_provider_shadow":
+        files[path] = files[path].replace("main()", "os()")
+    elif mutation == "late_local_import":
+        files[path] = (
+            files[path]
+            .replace("import os\n", "")
+            .replace(
+                "    from django.core.management",
+                "    import os\n    from django.core.management",
+            )
+        )
+    elif mutation == "second_default":
+        files[path] = files[path].replace(
+            "    execute_from_command_line(sys.argv)",
+            '    os.environ.setdefault("DJANGO_SETTINGS_MODULE", "service.other")\n    execute_from_command_line(sys.argv)',
+        )
+    elif mutation == "sys_path":
+        files[path] = files[path].replace(
+            "def main():", 'sys.path.insert(0, "other")\ndef main():'
+        )
+    elif mutation == "sys_modules":
+        files[path] = files[path].replace(
+            "def main():", 'sys.modules["service"] = other\ndef main():'
+        )
+    elif mutation == "other_module":
+        files[path] = files[path].replace('"service.settings"', '"other.settings"')
+    elif mutation == "sibling_module":
+        files["service/service/other.py"] = files["service/service/settings.py"]
+        files[path] = files[path].replace('"service.settings"', '"service.other"')
+    elif mutation == "guarded_launch":
+        files[path] = files[path].replace(
+            "    main()\n", "    if enabled:\n        main()\n"
+        )
+    elif mutation == "unknown_call":
+        files[path] = files[path].replace(
+            "def main():", "mutate_environment()\ndef main():"
+        )
+    else:
+        statement = {
+            "env_before": 'os.environ["DJANGO_SETTINGS_MODULE"] = "other.settings"',
+            "env_after": 'os.environ["DJANGO_SETTINGS_MODULE"] = "other.settings"',
+            "env_delete": 'del os.environ["DJANGO_SETTINGS_MODULE"]',
+            "env_update": 'os.environ.update({"DJANGO_SETTINGS_MODULE": "other.settings"})',
+            "env_pop": 'os.environ.pop("DJANGO_SETTINGS_MODULE", None)',
+            "env_clear": "os.environ.clear()",
+            "env_alias": 'env = os.environ\n    env["DJANGO_SETTINGS_MODULE"] = "other.settings"',
+            "env_reassign": "os.environ = other_environment",
+            "unrelated_env": 'os.environ["FEATURE_FLAG"] = "enabled"',
+        }[mutation]
+        insertion = "    " + statement + "\n"
+        if mutation == "env_before":
+            files[path] = files[path].replace(
+                "    os.environ.setdefault", insertion + "    os.environ.setdefault"
+            )
+        else:
+            files[path] = files[path].replace(
+                "    execute_from_command_line(sys.argv)",
+                insertion + "    execute_from_command_line(sys.argv)",
+            )
+    for source in files.values():
+        ast.parse(source)
+    assert (
+        _recovery_row(files, path="service/service/settings.py")["tier"]
+        == "NEEDS_CONTEXT"
+    )
+
+
+@pytest.mark.parametrize("startup", ["direct_import", "module_import", "import_try"])
+def test_canonical_startup_and_docstring_packages_select_script_module(startup):
+    files = _nested_project_sources()
+    files["service/__init__.py"] = '"Package documentation only"\n'
+    files["service/service/__init__.py"] = '"Nested package documentation only"\n'
+    script = files["service/manage.py"]
+    provider = "from django.core.management import execute_from_command_line"
+    if startup == "module_import":
+        script = script.replace("    " + provider + "\n", "")
+        script = script.replace("def main():", provider + "\ndef main():")
+    elif startup == "import_try":
+        script = script.replace(
+            "    " + provider,
+            "    try:\n        "
+            + provider
+            + '\n    except ImportError as exc:\n        raise ImportError("Missing Django") from exc',
+        )
+    files["service/manage.py"] = script
+    assert (
+        _recovery_row(files, path="service/service/settings.py")["tier"]
+        == "SUPPORTED_DEFECT"
+    )
+
+
+def test_nested_script_root_public_cli_and_source_bound_reseal(tmp_path, capsys):
+    from factoryline.cli import main
+
+    files = _nested_project_sources()
+    for name, source in files.items():
+        target = tmp_path / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(source.encode())
+    assert (
+        main(
+            [
+                "audit",
+                "security",
+                "--root",
+                str(tmp_path),
+                "--security-only",
+                "--defect-policy",
+                "source-role-v3",
+                "--json",
+            ]
+        )
+        == 1
+    )
+    report = json.loads(capsys.readouterr().out)
+    assert report["audit_coverage"]["complete"]
+    assert report["finding_tier_report"]["tier_counts"]["SUPPORTED_DEFECT"] == 2
+    assert len(report["agent_actions"]) == 2
+    assert all(
+        (tmp_path / name).read_bytes() == source.encode()
+        for name, source in files.items()
+    )
+    rebuilt = copy.deepcopy(report)
+    rebuilt["_primitive_source_bytes"] = {
+        name: source.encode() for name, source in files.items()
+    }
+    assert (
+        audit._seal_security_scan(rebuilt)["finding_tier_report"]
+        == report["finding_tier_report"]
+    )
+    rebuilt = copy.deepcopy(report)
+    rebuilt["_primitive_source_bytes"] = {
+        name: source.encode() for name, source in files.items()
+    }
+    rebuilt["_primitive_source_bytes"]["service/manage.py"] = (
+        b"different_selected_source\n"
+    )
+    changed = audit._seal_security_scan(rebuilt)
+    assert changed["defect_policy_decision"]["state"] == "BLOCKED"
+
+
 @pytest.mark.parametrize(
     "dependency,expected",
     [
@@ -321,11 +644,9 @@ def test_native_selected_setting_import_requires_closed_finite_source(change, ex
         ]
 
 
-def _recovery_row(files, name="SECRET_KEY"):
+def _recovery_row(files, name="SECRET_KEY", path="service/settings.py"):
     sources = {path: source.encode() for path, source in files.items()}
-    findings = audit._security_scan_tree(
-        Path("."), Path("service/settings.py"), ast.parse(files["service/settings.py"])
-    )
+    findings = audit._security_scan_tree(Path("."), Path(path), ast.parse(files[path]))
     finding = next(item for item in findings if item["facts"].get("name") == name)
     report = build_finding_tier_report(
         [finding],

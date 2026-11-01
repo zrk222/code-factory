@@ -2304,6 +2304,7 @@ def _django_default_authority(finding, context, declaration, observation):
     from .semantic_credential_sensor import _signing_optional_configuration_defaults
 
     index, path = context["index"], Path(finding["path"])
+    context = {**context, "selected_settings_path": path}
     settings, default_guards = _signing_optional_configuration_defaults(
         context, path, observation
     )
