@@ -300,6 +300,296 @@ def test_retrieval_transport_assignment_secret_retains_source_and_missing_closur
         )
 
 
+def _declaration_fixture(tmp_path, sources, selected="sink.py"):
+    sources = {"sink.py": "import pickle\nx = pickle.loads(b'')\n", **sources}
+    index, finding = _informed_fixture(tmp_path, sources)
+    path = tmp_path / selected
+    declaration = next(
+        n
+        for n in ast.walk(index.snapshots[path])
+        if isinstance(n, (ast.Assign, ast.AnnAssign))
+    )
+    finding.update(
+        code="SECURITY_HARDCODED_SECRET",
+        path=selected,
+        source_sha256=index.inventory[path],
+        line=declaration.lineno,
+        column=declaration.col_offset,
+        end_line=declaration.end_lineno,
+        end_column=declaration.end_col_offset,
+    )
+    return index, finding
+
+
+def _declaration_context(index, finding):
+    from factoryline.audit_rule_search import build_retrieval_context
+
+    return build_retrieval_context(finding, index, "consequential security use", None)
+
+
+def test_declaration_neighborhood_retains_whole_small_module_and_distant_consumer(
+    tmp_path,
+):
+    source = (
+        "credential = 'fixture'\n"
+        + "# context\n" * 40
+        + "def consumer():\n    return credential\n"
+    )
+    index, finding = _declaration_fixture(
+        tmp_path, {"sink.py": source + "import pickle\nx = pickle.loads(b'')\n"}
+    )
+    context = _declaration_context(index, finding)
+    assert any(source in row["content"] for row in context["excerpts"])
+    assert context["edges"] == []
+    assert context["authority"]["status"] == "UNKNOWN"
+    assert context["unknowns"][0]["reason"] == "assignment_consumer_closure_unresolved"
+    assert context["retrieval"]["status"] == "NOT_RUN"
+    assert context["retrieval"]["delivered_hints"] == 0
+    assert context["structural_context"]["validated_trace_edges"] == 0
+
+
+def test_declaration_neighborhood_retains_class_and_local_base_not_unrelated_names(
+    tmp_path,
+):
+    source = (
+        "from framework import TestCase\n"
+        "class Base(TestCase):\n    def create(self):\n        return 'fixture'\n"
+        "class Holder(Base):\n    credential = 'fixture'\n"
+        "    def consume(self):\n        return self.credential\n"
+    )
+    index, finding = _declaration_fixture(
+        tmp_path,
+        {"owner.py": source, "other.py": "credential = 'unrelated'\n"},
+        "owner.py",
+    )
+    context = _declaration_context(index, finding)
+    text = "\n".join(row["content"] for row in context["excerpts"])
+    assert "class Holder(Base):" in text and "return self.credential" in text
+    assert "class Base(TestCase):" in text and "from framework import TestCase" in text
+    assert "other.py" not in {row["path"] for row in context["excerpts"]}
+
+
+@pytest.mark.parametrize(
+    "consumer,delivered",
+    [
+        ("from sink import credential as key\ndef consume():\n    return key\n", True),
+        ("import sink as config\ndef consume():\n    return config.credential\n", True),
+        (
+            "from sink import credential as key\ndef consume(key):\n    return key\n",
+            False,
+        ),
+        (
+            "from sink import credential as key\nkey = 'other'\ndef consume():\n    return key\n",
+            False,
+        ),
+        (
+            "from other import credential\ndef consume():\n    return credential\n",
+            False,
+        ),
+    ],
+)
+def test_declaration_neighborhood_only_exact_unshadowed_import_references(
+    tmp_path, consumer, delivered
+):
+    index, finding = _declaration_fixture(
+        tmp_path,
+        {
+            "sink.py": "credential = 'fixture'\nimport pickle\nx = pickle.loads(b'')\n",
+            "consumer.py": consumer,
+            "other.py": "credential = 'different'\n",
+        },
+    )
+    context = _declaration_context(index, finding)
+    assert any(row["path"] == "consumer.py" for row in context["excerpts"]) is delivered
+    assert context["edges"] == []
+
+
+def test_declaration_neighborhood_literal_module_context_is_advisory_and_bidirectional(
+    tmp_path,
+):
+    index, finding = _declaration_fixture(
+        tmp_path,
+        {
+            "sink.py": "credential = 'fixture'\nroute = 'routes'\nimport pickle\nx = pickle.loads(b'')\n",
+            "loader.py": "module = 'sink'\n",
+            "routes.py": "routes = ['protected']\n",
+        },
+    )
+    context = _declaration_context(index, finding)
+    assert {"loader.py", "routes.py"} <= {row["path"] for row in context["excerpts"]}
+    assert context["edges"] == [] and context["authority"]["status"] == "UNKNOWN"
+
+
+def test_declaration_neighborhood_ambiguous_sibling_module_alias_stays_unbound(
+    tmp_path,
+):
+    index, finding = _declaration_fixture(
+        tmp_path,
+        {
+            "before/pkg/__init__.py": "",
+            "after/pkg/__init__.py": "",
+            "before/pkg/settings.py": "credential = 'first'\n",
+            "after/pkg/settings.py": "credential = 'second'\n",
+            "loader.py": "module = 'pkg.settings'\n",
+            "consumer.py": "from pkg.settings import credential\ndef consume():\n    return credential\n",
+        },
+        "before/pkg/settings.py",
+    )
+    context = _declaration_context(index, finding)
+    assert not {"loader.py", "consumer.py", "after/pkg/settings.py"} & {
+        row["path"] for row in context["excerpts"]
+    }
+    assert context["unknowns"]
+
+
+def test_declaration_neighborhood_empty_package_passes_public_js_intake(tmp_path):
+    import shutil
+    import subprocess
+    from factoryline.jev_classifier import build_informed_actionability_case
+
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("public JS intake profile requires Node")
+    sources = {
+        "sink.py": "credential = 'fixture'\napp = 'pkg'\nimport pickle\nx = pickle.loads(b'')\n",
+        "pkg/__init__.py": "",
+    }
+    index, finding = _declaration_fixture(tmp_path, sources)
+    for path, data in index.source_bytes.items():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+    item = build_informed_actionability_case(
+        finding,
+        index,
+        candidate_commit="a" * 40,
+        requirement="actual bound declaration",
+        retriever=None,
+    )
+    evidence = item["state"]["evidence"]
+    assert any(row["path"] == "pkg/__init__.py" for row in evidence["dependencies"])
+    assert not any(row["path"] == "pkg/__init__.py" for row in evidence["artifacts"])
+    cases = tmp_path / "cases.json"
+    cases.write_text(json.dumps([item]), encoding="utf-8")
+    repo = Path(__file__).resolve().parents[1]
+    script = (
+        "import {loadTrial} from "
+        + json.dumps((repo / "scripts/evaluate_jev.mjs").as_uri())
+        + "; await loadTrial(...JSON.parse(process.argv[1]));"
+    )
+    args = [
+        str(cases),
+        str(repo / "factoryline/data/judge_framework.json"),
+        "security_actionability",
+        None,
+        str(tmp_path),
+    ]
+    result = subprocess.run(
+        [node, "--input-type=module", "--eval", script, json.dumps(args)],
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_declaration_neighborhood_package_module_collision_is_not_selected(tmp_path):
+    from factoryline.audit_rule_search import _declaration_module_aliases
+
+    index, finding = _declaration_fixture(
+        tmp_path,
+        {
+            "pkg.py": "credential = 'first'\n",
+            "pkg/__init__.py": "credential = 'second'\n",
+            "loader.py": "module = 'pkg'\n",
+        },
+        "pkg.py",
+    )
+    assert _declaration_module_aliases(index)["pkg"] is None
+    context = _declaration_context(index, finding)
+    assert "loader.py" not in {row["path"] for row in context["excerpts"]}
+
+
+def test_declaration_neighborhood_combines_with_hybrid_under_final_transport_caps(
+    tmp_path, monkeypatch
+):
+    from factoryline.audit_rule_search import HybridSourceRetriever
+    from factoryline.jev_classifier import build_informed_actionability_case
+
+    sources = {f"hint{i}.py": ("# " + "x" * 440 + "\n") * 16 for i in range(8)}
+    sources["sink.py"] = (
+        "credential = 'fixture'\n"
+        + "# context\n" * 600
+        + "import pickle\nx = pickle.loads(b'')\n"
+    )
+    index, finding = _declaration_fixture(tmp_path, sources)
+    retriever = HybridSourceRetriever(index, _hybrid_encoder, model_id="test-combined")
+    hits = [row for row in retriever.documents if row["path"].startswith("hint")]
+    monkeypatch.setattr(retriever, "search", lambda query: hits)
+    item = build_informed_actionability_case(
+        finding,
+        index,
+        candidate_commit="a" * 40,
+        requirement="exact credential use",
+        retriever=retriever,
+    )
+    artifacts = item["state"]["evidence"]["artifacts"]
+    ledger = json.loads(
+        next(
+            row["content"] for row in artifacts if row["kind"] == "native_sink_evidence"
+        )
+    )
+    assert len(json.dumps(item, ensure_ascii=False).encode()) <= 64000
+    assert len(artifacts) <= 32
+    assert "combined_context_transport_budget" in ledger["truncation"]
+    assert 0 < ledger["retrieval"]["delivered_hints"] < 8
+    assert ledger["structural_context"]["delivered_excerpts"] == 1
+    assert any(
+        row.get("path") == "sink.py" and row["content"].startswith("credential =")
+        for row in artifacts
+    )
+    for hint in ledger["retrieval"]["hint_manifest"]:
+        assert any(
+            row.get("source_binding")
+            == {k: hint[k] for k in ("path", "sha256", "start_line", "end_line")}
+            for row in artifacts
+        )
+
+
+@pytest.mark.parametrize("mutation", ["bytes", "ast"])
+def test_declaration_neighborhood_rejects_stale_inspected_source(tmp_path, mutation):
+    index, finding = _declaration_fixture(
+        tmp_path,
+        {
+            "sink.py": "credential = 'fixture'\nimport pickle\nx = pickle.loads(b'')\n",
+            "loader.py": "module = 'sink'\n",
+        },
+    )
+    path = tmp_path / "loader.py"
+    if mutation == "bytes":
+        index.source_bytes[path] += b"# changed\n"
+    else:
+        index.snapshots[path].body.clear()
+    with pytest.raises(JevClassificationError, match="STALE"):
+        _declaration_context(index, finding)
+
+
+def test_declaration_neighborhood_overflow_is_explicit_and_bounded(tmp_path):
+    sources = {f"loader{i:02}.py": "module = 'sink'\n" for i in range(70)}
+    sources["sink.py"] = (
+        "credential = 'fixture'\n"
+        + "# distant\n" * 1000
+        + "import pickle\nx = pickle.loads(b'')\n"
+    )
+    index, finding = _declaration_fixture(tmp_path, sources)
+    context = _declaration_context(index, finding)
+    assert "declaration_neighborhood_budget" in context["truncation"]
+    assert "declaration_source_search_budget" in context["truncation"]
+    assert context["structural_context"]["delivered_excerpts"] <= 8
+    assert len(context["dependency_sources"]) <= 64
+    assert len(json.dumps(context).encode()) < 64000
+    assert context["status"] == "INCOMPLETE" and context["edges"] == []
+
+
 def test_retrieval_transport_not_configured_is_explicit_and_does_not_clear_unknowns(
     tmp_path,
 ):

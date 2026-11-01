@@ -90,6 +90,7 @@ def build_retrieval_context(finding, index, requirement, retriever):
         context["dependency_sources"] = [
             {"path": finding["path"], "sha256": index.inventory[path]}
         ]
+        _declaration_neighborhood(context, index, path, node)
     if context["status"] not in {"CAPTURED", "INCOMPLETE"}:
         raise JevClassificationError(context["status"])
     path = index.root / finding["path"]
@@ -152,7 +153,255 @@ def build_retrieval_context(finding, index, requirement, retriever):
             "consumption": "UNASSESSED",
         }
     )
+    if "structural_context" in context:
+        _declaration_transport_budget(context, finding, index, requirement)
     return context
+
+
+def _declaration_transport_budget(context, finding, index, requirement):
+    """Use the existing final projector to fit combined optional source context."""
+    from .context_efficiency import (
+        _informed_actionability_artifacts,
+        _informed_actionability_item,
+    )
+    from .jev_classifier import JevClassificationError, _digest
+
+    # Real candidate revisions are fixed-width hex; only their value differs.
+    revision = "0" * 40
+    candidate = dict(
+        commit=revision,
+        path=finding["path"],
+        sha256=index.inventory[index.root / finding["path"]],
+    )
+    while True:
+        try:
+            _informed_actionability_item(
+                finding,
+                requirement,
+                candidate,
+                _informed_actionability_artifacts(context, revision, candidate),
+                context,
+                revision,
+                _digest,
+                JevClassificationError,
+            )
+            return
+        except JevClassificationError as error:
+            if str(error) != "SINK_BUDGET_EXHAUSTED" or len(context["excerpts"]) <= 1:
+                raise
+        removed = context["excerpts"].pop()
+        context["status"] = "INCOMPLETE"
+        if "combined_context_transport_budget" not in context["truncation"]:
+            context["truncation"].append("combined_context_transport_budget")
+        record = context["retrieval"]
+        record["hint_manifest"] = [
+            hint
+            for hint in record["hint_manifest"]
+            if any(
+                all(
+                    hint[key] == row[key]
+                    for key in ("path", "sha256", "start_line", "end_line")
+                )
+                for row in context["excerpts"]
+                if row["kind"] == "retrieval_hint"
+            )
+        ]
+        record["delivered_hints"] = len(record["hint_manifest"])
+        if removed["kind"] == "structural_hint":
+            context["structural_context"]["delivered_excerpts"] -= 1
+
+
+def _declaration_scope(index, path, node):
+    """Locate lexical context without treating enclosure as an execution edge."""
+    while node is not None:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            return node
+        node = index.parents[path].get(id(node))
+    return index.snapshots[path]
+
+
+def _declaration_excerpt(context, index, path, node, capture):
+    from .context_efficiency import _informed_admit, _informed_excerpt
+
+    if not _informed_admit(index, path, capture):
+        return
+    if isinstance(node, ast.Module):
+        content = index.source_bytes[path].decode("utf-8")
+        row = dict(
+            path=index.relative(path),
+            sha256=index.inventory[path],
+            start_line=1,
+            end_line=len(content.splitlines()),
+            content=content,
+            kind="structural_hint",
+        )
+    else:
+        row = _informed_excerpt(index, path, node, "structural_hint")
+    if not row["content"]:
+        return
+    identity = row["path"], row["start_line"], row["end_line"]
+    if identity in capture["seen"]:
+        return
+    size = len(row["content"].encode("utf-8"))
+    if size > 8192 or capture["bytes"] + size > 16384 or len(capture["seen"]) >= 8:
+        context["truncation"].append("declaration_neighborhood_budget")
+        return
+    capture["seen"].add(identity)
+    capture["bytes"] += size
+    context["excerpts"].append(row)
+
+
+def _declaration_reference(index, current, expression, selected, declaration, capture):
+    """Require an exact stable captured import, never a same-spelled global."""
+    from .context_efficiency import (
+        _informed_import,
+        _informed_owner,
+        _informed_unshadowed,
+    )
+    from .credential_role_constructor_provider import binding_occurrences
+    from .import_context import captured_import_inventory
+
+    root = expression.value if isinstance(expression, ast.Attribute) else expression
+    if not isinstance(root, ast.Name) or not isinstance(root.ctx, ast.Load):
+        return False
+    tree = index.snapshots[current]
+    owner = _informed_owner(index, current, expression)
+    if not _informed_unshadowed(index, current, owner, tree, root.id):
+        return False
+    bindings = binding_occurrences(tree.body, root.id)
+    if len(bindings) != 1 or not isinstance(bindings[0], (ast.Import, ast.ImportFrom)):
+        return False
+    target = _informed_import(
+        index,
+        current,
+        bindings[0],
+        root.id,
+        expression,
+        captured_import_inventory(index),
+        capture,
+    )
+    return (
+        target is not None
+        and target[0] == selected
+        and target[1] in ast.walk(declaration)
+    )
+
+
+def _declaration_seed(index, path, scope, aliases):
+    """Retain direct class bases and literal captured-module context as hints."""
+    from .credential_role_constructor_provider import binding_occurrences
+
+    pending, seen = [scope], set()
+    while pending and len(seen) < 8:
+        for base in getattr(pending.pop(), "bases", ()):
+            bindings = binding_occurrences(
+                index.snapshots[path].body, getattr(base, "id", "")
+            )
+            if len(bindings) != 1 or bindings[0] in seen:
+                continue
+            seen.add(bindings[0])
+            if isinstance(bindings[0], (ast.ClassDef, ast.Import, ast.ImportFrom)):
+                yield path, bindings[0]
+                pending.append(bindings[0])
+    for node in ast.walk(scope):
+        target = (
+            aliases.get(node.value)
+            if isinstance(node, ast.Constant) and isinstance(node.value, str)
+            else None
+        )
+        if target is not None and target != path:
+            yield target, index.snapshots[target]
+
+
+def _declaration_module_aliases(index):
+    """Normalize captured module spellings without choosing colliding packages."""
+    choices = {}
+    for name, target in (index.module_paths() or {}).items():
+        module = name.removesuffix("/__init__.py").removesuffix(".py")
+        if name.endswith(".py") and all(
+            part.isidentifier() for part in module.split("/")
+        ):
+            choices.setdefault(module.replace("/", "."), set()).add(target)
+    return {
+        name: next(iter(paths)) if len(paths) == 1 else None
+        for name, paths in choices.items()
+    }
+
+
+def _declaration_candidates(context, index, path, declaration, scope, capture):
+    """One bounded source frontier: lexical bases, module literals and exact imports."""
+    aliases = _declaration_module_aliases(index)
+    names = {
+        n.id
+        for n in ast.walk(declaration)
+        if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store)
+    }
+    yield from _declaration_seed(index, path, scope, aliases)
+    for current in sorted(index.snapshots):
+        if current == path:
+            continue
+        if capture["inspected"] >= 64:
+            context["truncation"].append("declaration_source_search_budget")
+            return
+        capture["inspected"] += 1
+        if not index.validate(current):
+            capture["stale"] = True
+            return
+        for node in ast.walk(index.snapshots[current]):
+            literal = (
+                isinstance(node, ast.Constant)
+                and isinstance(node.value, str)
+                and aliases.get(node.value) == path
+            )
+            reference = (
+                isinstance(node, ast.Name)
+                and isinstance(node.ctx, ast.Load)
+                or isinstance(node, ast.Attribute)
+                and node.attr in names
+            )
+            if not literal and not reference:
+                continue
+            capture["states"] += 1
+            if capture["states"] > 512:
+                context["truncation"].append("declaration_reference_search_budget")
+                return
+            if literal or _declaration_reference(
+                index, current, node, path, declaration, capture
+            ):
+                yield current, _declaration_scope(index, current, node)
+
+
+def _declaration_neighborhood(context, index, path, declaration):
+    from .context_efficiency import _informed_sink_dependency_sources
+    from .jev_classifier import JevClassificationError
+
+    capture = dict(
+        dependencies={path: index.inventory[path]},
+        max_sources=64,
+        truncation=context["truncation"],
+        stale=False,
+        seen=set(),
+        bytes=0,
+        inspected=0,
+        states=0,
+    )
+    scope = _declaration_scope(index, path, declaration)
+    _declaration_excerpt(context, index, path, scope, capture)
+    for selected, node in _declaration_candidates(
+        context, index, path, declaration, scope, capture
+    ):
+        _declaration_excerpt(context, index, selected, node, capture)
+    if _informed_sink_dependency_sources(context, index, capture):
+        raise JevClassificationError("SINK_SOURCE_STALE")
+    context["structural_context"] = dict(
+        status="DELIVERED_UNVALIDATED",
+        authority="none",
+        validated_trace_edges=0,
+        coverage="BOUNDED_DECLARATION_NEIGHBORHOOD_NOT_EXHAUSTIVE",
+        delivered_excerpts=len(capture["seen"]),
+        inspected_sources=capture["inspected"],
+    )
+    context["truncation"] = list(dict.fromkeys(context["truncation"]))
 
 
 def _hybrid_vectors(rows, count, width=None):
