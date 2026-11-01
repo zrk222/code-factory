@@ -457,9 +457,12 @@ def catalog_callable_helpers():
 def validation_helpers():
     """Return the original HTTPX, JSON assertion, and router validation callables."""
     from .credential_role_method_use_getter_audit import CapturedOriginProjection
+    from .context_efficiency import _informed_unshadowed
+    from .mock_fixture_provenance import _jwt_module_has_dynamic_execution
 
     return (
-        tuple(
+        (_informed_unshadowed, _jwt_module_has_dynamic_execution)
+        + tuple(
             value
             for owner in (
                 _OperativeCredentialOrigin,
@@ -2686,9 +2689,23 @@ def _django_selected_consumers_closed(context, path, required, selected_modules)
         _provider_path_conflicts,
     )
     from .finite_capture import _provider_paths, _provider_alias_bindings
+    from .credential_role_identity_effects import identity_value
+    from .credential_role_constructor_provider import binding_occurrences
+    from .context_efficiency import _informed_unshadowed
+    from .mock_fixture_provenance import (
+        _django_assignment,
+        _jwt_module_has_dynamic_execution,
+    )
     from . import review_audits as audit
 
     index = context["index"]
+    declarations = _django_assignment(index.snapshots[path], "SECRET_KEY")
+    literal = declarations[0][1] if len(declarations) == 1 else None
+    scalar = (
+        identity_value(literal, {}, strict_calls=True)
+        if isinstance(literal, ast.Constant) and type(literal.value) in {str, bytes}
+        else None
+    )
     roots = tuple("django.conf.settings." + name for name in required)
     configuration = {*required, "DEBUG", "STATIC_URL", "MEDIA_URL"}
     providers = (
@@ -2732,6 +2749,7 @@ def _django_selected_consumers_closed(context, path, required, selected_modules)
                 {name: "django.conf.settings." + name for name in configuration}
             )
         nodes = list(ast.walk(tree))
+        scalar_namespace_closed = None
         from .semantic_credential_sensor import _provider_identity_uncertain
         from .semantic_credential_sensor import _security_builtin_identity_closed
 
@@ -2865,6 +2883,51 @@ def _django_selected_consumers_closed(context, path, required, selected_modules)
             settings_path=path,
         ) is False or any(
             isinstance(node, ast.Call)
+            and not (
+                scalar is not None
+                and isinstance(node.func, ast.Attribute)
+                and isinstance(receiver := node.func.value, ast.Attribute)
+                and isinstance(receiver.value, ast.Name)
+                and isinstance(receiver.ctx, ast.Load)
+                and audit._resolved_ast_name(receiver, aliases)
+                == "django.conf.settings.SECRET_KEY"
+                and len(imports := binding_occurrences(tree.body, receiver.value.id))
+                == 1
+                and isinstance(imports[0], (ast.Import, ast.ImportFrom))
+                and _informed_unshadowed(
+                    index, source_path, node, tree, receiver.value.id
+                )
+                and not any(
+                    binding_occurrences([part.target], receiver.value.id)
+                    for part in nodes
+                    if isinstance(part, ast.comprehension)
+                )
+                and (
+                    scalar_namespace_closed
+                    if scalar_namespace_closed is not None
+                    else (
+                        scalar_namespace_closed := (
+                            reflection_closed
+                            and not _jwt_module_has_dynamic_execution(tree)
+                            and not _django_import_namespace_unknown(
+                                nodes, aliases, approved
+                            )
+                        )
+                    )
+                )
+                and not (
+                    value := identity_value(
+                        node,
+                        {("expression", id(receiver)): scalar},
+                        strict_calls=True,
+                    )
+                ).unknown
+                and not value.content_unknown
+                and value.inert_kind == "scalar"
+                and value.scalar_kind in {"text", "bytes"}
+                and not value.class_roots
+                and not value.items
+            )
             and any(
                 _provider_path_conflicts(provider, "*", root)
                 for provider in _provider_paths(node.func, aliases, audit, bindings)[0]

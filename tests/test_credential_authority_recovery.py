@@ -662,13 +662,25 @@ def _recovery_row(files, name="SECRET_KEY", path="service/settings.py"):
     return report["ledger"][0]
 
 
-@pytest.mark.parametrize("helper", ["finite_keys", "import_operand"])
+@pytest.mark.parametrize(
+    "helper", ["finite_keys", "import_operand", "scalar_owner", "scalar_capability"]
+)
 def test_primed_native_provider_proof_rejects_changed_shared_helper(
     tmp_path, monkeypatch, helper
 ):
-    from factoryline import import_context, credential_endpoint_admission
+    from factoryline import (
+        import_context,
+        credential_endpoint_admission,
+        context_efficiency,
+        mock_fixture_provenance,
+    )
 
-    for name, source in _provider_configuration_sources().items():
+    files = _provider_configuration_sources()
+    if helper in {"scalar_owner", "scalar_capability"}:
+        files["consumer.py"] = (
+            "from django.conf import settings\nvalue = settings.SECRET_KEY.encode()\n"
+        )
+    for name, source in files.items():
         target = tmp_path / name
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(source, encoding="utf-8")
@@ -683,11 +695,21 @@ def test_primed_native_provider_proof_rejects_changed_shared_helper(
         monkeypatch.setattr(
             import_context, "finite_key_reflection_reads", lambda *args, **kwargs: set()
         )
-    else:
+    elif helper == "import_operand":
         monkeypatch.setattr(
             credential_endpoint_admission,
             "_django_setting_import_operand",
             lambda *args: False,
+        )
+    elif helper == "scalar_owner":
+        monkeypatch.setattr(
+            context_efficiency, "_informed_unshadowed", lambda *args: False
+        )
+    else:
+        monkeypatch.setattr(
+            mock_fixture_provenance,
+            "_jwt_module_has_dynamic_execution",
+            lambda *args: True,
         )
     after = audit.security_scan(tmp_path, **options)
     assert after["finding_tier_report"]["ledger"][0]["tier"] == "NEEDS_CONTEXT"
@@ -1301,6 +1323,147 @@ def test_literal_key_hash_read_preserves_selected_signing_authority():
         )
     )
     assert row["tier"] == "SUPPORTED_DEFECT"
+
+
+@pytest.mark.parametrize(
+    "alias,prelude",
+    [
+        ("settings", ""),
+        ("runtime_settings", ""),
+        ("settings", "import operator\nunrelated = operator.add(1, 2)\n"),
+    ],
+)
+def test_selected_literal_scalar_encoding_preserves_native_authority(alias, prelude):
+    row = _recovery_row(
+        _recovery_sources(
+            extra={
+                "consumer.py": f"from django.conf import settings as {alias}\n"
+                + prelude
+                + f"def derive():\n    return {alias}.SECRET_KEY.encode()\n"
+            }
+        )
+    )
+    assert row["tier"] == "SUPPORTED_DEFECT"
+    assert row["raw_finding"]["facts"] == {"name": "SECRET_KEY"}
+    assert (
+        row["credential_authority_observation"]["runtime_execution"] == "not_performed"
+    )
+
+
+def test_scalar_module_capability_scan_is_lazy_and_once_per_consumer(monkeypatch):
+    import sys
+    from collections import Counter
+
+    from factoryline import mock_fixture_provenance as fixture
+
+    consumer = (
+        "from django.conf import settings\n"
+        + "\n".join(f"ordinary_{i} = len('value')" for i in range(40))
+        + "\nfirst = settings.SECRET_KEY.encode()\n"
+        "second = settings.SECRET_KEY.encode()\n"
+    )
+    unrelated = "\n".join(f"ordinary_{i} = len('value')" for i in range(40)) + "\n"
+    original = fixture._jwt_module_has_dynamic_execution
+    observed = []
+
+    def observe(module):
+        frame = sys._getframe(1)
+        while (
+            frame is not None
+            and frame.f_code.co_name != "_django_selected_consumers_closed"
+        ):
+            frame = frame.f_back
+        if frame is not None:
+            observed.append((frame, module))
+        return original(module)
+
+    monkeypatch.setattr(fixture, "_jwt_module_has_dynamic_execution", observe)
+    row = _recovery_row(
+        _recovery_sources(extra={"consumer.py": consumer, "unrelated.py": unrelated})
+    )
+    assert row["tier"] == "SUPPORTED_DEFECT"
+    expected = ast.dump(ast.parse(consumer))
+    assert observed and all(ast.dump(module) == expected for _, module in observed)
+    per_invocation = Counter((id(frame), id(module)) for frame, module in observed)
+    assert all(count == 1 for count in per_invocation.values()), per_invocation
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        'value = settings.SECRET_KEY.encode("utf8")',
+        'value = settings.SECRET_KEY.encode(encoding="utf8")',
+        "value = settings.SECRET_KEY.encode(*())",
+        "value = settings.SECRET_KEY.encode(**{})",
+        "value = settings.SECRET_KEY.lower()",
+        "value = settings.SECRET_KEY.decode()",
+        "value = settings.SECRET_KEY.__class__().encode()",
+        "def derive(settings):\n    return settings.SECRET_KEY.encode()",
+        "def derive():\n    settings = replacement\n    return settings.SECRET_KEY.encode()",
+        "settings = replacement\nvalue = settings.SECRET_KEY.encode()",
+        "escape([settings])\nvalue = settings.SECRET_KEY.encode()",
+        "settings.__dict__['SECRET_KEY'] = replacement\nvalue = settings.SECRET_KEY.encode()",
+        "setattr(settings, 'SECRET_KEY', replacement)\nvalue = settings.SECRET_KEY.encode()",
+        "value = replace(settings).SECRET_KEY.encode()",
+        "value = [settings.SECRET_KEY.encode() for settings in replacements]",
+        "class Receiver:\n    settings = replacement\n    value = settings.SECRET_KEY.encode()",
+        "def outer(settings):\n    def inner():\n        return settings.SECRET_KEY.encode()\n    return inner()",
+        "namespace = settings.__dict__\nvalue = settings.SECRET_KEY.encode()",
+        "value = vars(settings)\nencoded = settings.SECRET_KEY.encode()",
+        "settings.SECRET_KEY = replacement\nvalue = settings.SECRET_KEY.encode()",
+        "globals()['settings'] = replacement\nvalue = settings.SECRET_KEY.encode()",
+        "from builtins import globals as namespace\nnamespace()['settings'] = replacement\n"
+        "value = settings.SECRET_KEY.encode()",
+        "def helper():\n    pass\nhelper.__globals__['settings'] = replacement\n"
+        "value = settings.SECRET_KEY.encode()",
+        "from builtins import getattr as lookup\ndef helper():\n    pass\n"
+        "lookup(helper, '__globals__').update({'settings': replacement})\n"
+        "value = settings.SECRET_KEY.encode()",
+        "import sys\nsys._getframe().f_globals['settings'] = replacement\n"
+        "value = settings.SECRET_KEY.encode()",
+        "from operator import attrgetter as lookup\ndef helper():\n    pass\n"
+        "namespace = lookup('__globals__')(helper)\nnamespace['settings'] = replacement\n"
+        "value = settings.SECRET_KEY.encode()",
+        "import operator as capability\ndef helper():\n    pass\n"
+        "capability.methodcaller('__getattribute__', '__globals__')(helper)['settings'] = replacement\n"
+        "value = settings.SECRET_KEY.encode()",
+    ],
+)
+def test_selected_scalar_encoding_keeps_unknown_effects_and_receivers_unadmitted(
+    source,
+):
+    row = _recovery_row(
+        _recovery_sources(
+            extra={"consumer.py": "from django.conf import settings\n" + source + "\n"}
+        )
+    )
+    assert row["tier"] == "NEEDS_CONTEXT"
+    assert "credential_authority_observation" not in row
+
+
+@pytest.mark.parametrize(
+    "replacement",
+    [
+        'SECRET_KEY = "second-literal"',
+        "SECRET_KEY = replacement",
+        "class Custom(str):\n    def encode(self):\n        mutate()\n"
+        "SECRET_KEY = Custom(SECRET_KEY)",
+    ],
+)
+def test_selected_scalar_encoding_requires_one_unchanged_literal_declaration(
+    replacement,
+):
+    row = _recovery_row(
+        _recovery_sources(
+            SETTINGS + replacement + "\n",
+            extra={
+                "consumer.py": "from django.conf import settings\n"
+                "value = settings.SECRET_KEY.encode()\n"
+            },
+        )
+    )
+    assert row["tier"] == "NEEDS_CONTEXT"
+    assert "credential_authority_observation" not in row
 
 
 @pytest.mark.parametrize(
