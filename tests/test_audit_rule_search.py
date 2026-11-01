@@ -638,8 +638,7 @@ def test_security_producer_nested_call_spans_reach_context_and_public_intake(
     assert len(findings) == 2
     assert {(f["line"], f["column"]) for f in findings} == {(2, 9)}
     assert {
-        (f["line"], f["column"], f["end_line"], f["end_column"])
-        for f in findings
+        (f["line"], f["column"], f["end_line"], f["end_column"]) for f in findings
     } == expected_spans
     for finding in findings:
         finding["source_sha256"] = source_sha256
@@ -1695,6 +1694,7 @@ def test_jev_evidence_review_is_bound_advisory_and_fails_closed():
             "context_sha256": value["context_sha256"],
             "claims": [
                 {
+                    "contextual_evidence": [],
                     "claim_id": "claim-1",
                     "label": "SUPPORTED",
                     "supporting_evidence_ids": ["evidence-1"],
@@ -1703,6 +1703,7 @@ def test_jev_evidence_review_is_bound_advisory_and_fails_closed():
                     "verification_action": None,
                 },
                 {
+                    "contextual_evidence": [],
                     "claim_id": "claim-2",
                     "label": "CONTRADICTED",
                     "supporting_evidence_ids": [],
@@ -1711,6 +1712,7 @@ def test_jev_evidence_review_is_bound_advisory_and_fails_closed():
                     "verification_action": None,
                 },
                 {
+                    "contextual_evidence": [],
                     "claim_id": "claim-3",
                     "label": "INSUFFICIENT_EVIDENCE",
                     "supporting_evidence_ids": [],
@@ -1771,6 +1773,7 @@ def test_jev_evidence_review_rejects_invented_references_stale_packet_and_transp
         "context_sha256": request["context_sha256"],
         "claims": [
             {
+                "contextual_evidence": [],
                 "claim_id": "claim-1",
                 "label": "SUPPORTED",
                 "supporting_evidence_ids": ["invented"],
@@ -1780,6 +1783,7 @@ def test_jev_evidence_review_rejects_invented_references_stale_packet_and_transp
             },
             *[
                 {
+                    "contextual_evidence": [],
                     "claim_id": claim,
                     "label": "INSUFFICIENT_EVIDENCE",
                     "supporting_evidence_ids": [],
@@ -1826,6 +1830,7 @@ def test_trace_span_review_reuses_closed_evidence_contract_and_keeps_failures_im
         "context_sha256": review["review_request"]["context_sha256"],
         "claims": [
             {
+                "contextual_evidence": [],
                 "claim_id": claim["id"],
                 "label": "SUPPORTED",
                 "supporting_evidence_ids": claim["supporting_evidence_ids"],
@@ -1860,6 +1865,7 @@ def test_trace_span_review_reuses_closed_evidence_contract_and_keeps_failures_im
         "context_sha256": failed_review["review_request"]["context_sha256"],
         "claims": [
             {
+                "contextual_evidence": [],
                 "claim_id": c["id"],
                 "label": "CONTRADICTED"
                 if c["status"] == "contradicted"
@@ -1911,6 +1917,7 @@ def test_span_review_batches_cover_all_spans_and_reject_partial_or_reordered_res
                     "context_sha256": review_request["context_sha256"],
                     "claims": [
                         {
+                            "contextual_evidence": [],
                             "claim_id": claim["id"],
                             "label": "INSUFFICIENT_EVIDENCE",
                             "supporting_evidence_ids": [],
@@ -2383,6 +2390,7 @@ def test_forgeline_review_reuses_shared_validator_and_keeps_failure_advisory(pro
             "context_sha256": request["context_sha256"],
             "claims": [
                 {
+                    "contextual_evidence": [],
                     "claim_id": claim["id"],
                     "label": "SUPPORTED",
                     "supporting_evidence_ids": refs,
@@ -2470,6 +2478,7 @@ def test_forgeline_review_rejects_incomplete_or_unsupported_model_assessment(
             "context_sha256": request["context_sha256"],
             "claims": [
                 {
+                    "contextual_evidence": [],
                     "claim_id": claim["id"],
                     "label": "SUPPORTED"
                     if bad_response == "unknown_ref"
@@ -2516,6 +2525,8 @@ def _atomic_review_response(request):
                 else None,
             }
         )
+        if request["review_protocol"] == "contextual-evidence.v2":
+            rows[-1]["contextual_evidence"] = []
     return {"context_sha256": request["context_sha256"], "claims": rows}
 
 
@@ -2673,6 +2684,295 @@ def test_atomic_review_request_isolated_from_caller_packet():
     request["packet"]["unknowns"].clear()
     request["packet"]["claims"][0]["supporting_evidence_ids"].clear()
     assert json.dumps(packet, sort_keys=True) == original
+
+
+def _contextual_review_packet():
+    packet = _review_packet()
+    packet["claims"] = packet["claims"][:1]
+    packet["claims"][0].update(
+        status="unresolved", supporting_evidence_ids=["evidence-1", "evidence-2"]
+    )
+    packet["evidence"] = [
+        {
+            "id": ident,
+            "kind": "source_excerpt",
+            "epistemic_status": "observed",
+            "provenance": {
+                "path": path,
+                "content": content,
+                "sha256": sha256(content.encode()).hexdigest(),
+                "candidate_sha256": "a" * 64,
+                "source_binding": {
+                    "path": path,
+                    "sha256": sha256(content.encode()).hexdigest(),
+                    "start_line": 1,
+                    "end_line": 1,
+                },
+            },
+        }
+        for ident, path, content in (
+            ("evidence-1", "consumer.py", "consume_configured_value()\n"),
+            ("evidence-2", "README.md", "Demonstration configuration.\n"),
+            ("unlinked", "other.py", "unrelated = True\n"),
+        )
+    ]
+    packet["packet_sha256"] = _digest(
+        {key: value for key, value in packet.items() if key != "packet_sha256"}
+    )
+    return packet
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "duplicate",
+        "unlinked",
+        "inferred_context",
+        "inferred_support",
+        "missing_binding",
+        "non_source",
+        "empty_rationale",
+        "long_rationale",
+        "unknown_support",
+        "not_claim_support",
+        "not_actual_support",
+        "self_support",
+        "support_overlap",
+        "actual_contradiction",
+        "declared_contradiction",
+        "missing_field",
+        "not_list",
+    ],
+)
+def test_contextual_evidence_rejects_unbound_or_contradictory_resolution(mutation):
+    from factoryline.jev_classifier import (
+        build_evidence_review_input,
+        normalize_evidence_review,
+    )
+
+    packet = _contextual_review_packet()
+    context = {
+        "evidence_id": "evidence-2",
+        "rationale": "The cited observation does not negate the separately cited consumer.",
+        "supporting_evidence_ids": ["evidence-1"],
+    }
+    if mutation in {
+        "inferred_context",
+        "inferred_support",
+        "missing_binding",
+        "non_source",
+    }:
+        evidence = packet["evidence"][0 if mutation == "inferred_support" else 1]
+        if mutation.startswith("inferred"):
+            evidence["epistemic_status"] = "inferred"
+        elif mutation == "missing_binding":
+            evidence["provenance"].pop("source_binding")
+        else:
+            evidence["kind"] = "runtime"
+    if mutation == "declared_contradiction":
+        packet["claims"][0]["supporting_evidence_ids"] = ["evidence-1"]
+        packet["claims"][0]["contradicting_evidence_ids"] = ["evidence-2"]
+    if mutation == "not_actual_support":
+        packet["claims"][0]["supporting_evidence_ids"].append("unlinked")
+    packet["packet_sha256"] = _digest(
+        {key: value for key, value in packet.items() if key != "packet_sha256"}
+    )
+    request = build_evidence_review_input(packet, candidate_sha256="a" * 64)
+    response = _atomic_review_response(request)
+    row = response["claims"][0]
+    row.update(
+        label="SUPPORTED",
+        supporting_evidence_ids=["evidence-1"],
+        verification_action=None,
+    )
+    if mutation == "unlinked":
+        context["evidence_id"] = "unlinked"
+    if mutation == "empty_rationale":
+        context["rationale"] = " "
+    if mutation == "long_rationale":
+        context["rationale"] = "x" * 501
+    if mutation == "unknown_support":
+        context["supporting_evidence_ids"] = ["invented"]
+    if mutation in {"not_claim_support", "not_actual_support"}:
+        context["supporting_evidence_ids"] = ["unlinked"]
+    if mutation == "self_support":
+        context["supporting_evidence_ids"] = ["evidence-2"]
+    if mutation == "support_overlap":
+        row["supporting_evidence_ids"].append("evidence-2")
+    if mutation == "actual_contradiction":
+        row["contradicting_evidence_ids"] = ["evidence-2"]
+    if mutation == "missing_field":
+        context.pop("rationale")
+    row["contextual_evidence"] = (
+        {}
+        if mutation == "not_list"
+        else [context, context]
+        if mutation == "duplicate"
+        else [context]
+    )
+    with pytest.raises(JevClassificationError):
+        normalize_evidence_review(response, request=request)
+
+
+def test_contextual_evidence_legacy_protocol_and_context_identity():
+    from factoryline.jev_classifier import (
+        build_evidence_review_input,
+        normalize_evidence_review,
+    )
+
+    packet = _contextual_review_packet()
+    legacy = build_evidence_review_input(
+        packet, candidate_sha256="a" * 64, review_protocol="counterevidence-complete.v1"
+    )
+    current = build_evidence_review_input(packet, candidate_sha256="a" * 64)
+    assert legacy["review_protocol"] == "counterevidence-complete.v1"
+    assert current["review_protocol"] != legacy["review_protocol"]
+    assert current["context_sha256"] != legacy["context_sha256"]
+    response = _atomic_review_response(legacy)
+    normalize_evidence_review(response, request=legacy)
+    with pytest.raises(JevClassificationError, match="context"):
+        normalize_evidence_review(response, request=current)
+    response["claims"][0]["contextual_evidence"] = []
+    with pytest.raises(JevClassificationError):
+        normalize_evidence_review(response, request=legacy)
+    response = _atomic_review_response(current)
+    response["claims"][0].pop("contextual_evidence")
+    with pytest.raises(JevClassificationError):
+        normalize_evidence_review(response, request=current)
+
+
+def test_contextual_evidence_public_source_intake_to_pending_review(tmp_path):
+    import shutil
+    import subprocess
+    from factoryline.jev_classifier import (
+        build_evidence_review_input,
+        build_informed_actionability_case,
+        review_evidence,
+    )
+
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("public JS intake profile requires Node")
+    index, finding = _informed_fixture(
+        tmp_path, {"sink.py": "import pickle\nx = pickle.loads(b'')\n"}
+    )
+    for path, data in index.source_bytes.items():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+    case = build_informed_actionability_case(
+        finding,
+        index,
+        candidate_commit="a" * 40,
+        requirement="Synthetic source review contract",
+    )
+    data = "Demonstration configuration.\n"
+    (tmp_path / "README.md").write_bytes(data.encode())
+    candidate = case["state"]["candidate"]
+    context = dict(
+        kind="source_excerpt",
+        path="README.md",
+        content=data,
+        sha256=sha256(data.encode()).hexdigest(),
+        candidate_commit=candidate["commit"],
+        candidate_sha256=candidate["sha256"],
+        source_binding=dict(
+            path="README.md",
+            sha256=sha256(data.encode()).hexdigest(),
+            start_line=1,
+            end_line=1,
+        ),
+    )
+    case["state"]["evidence"]["artifacts"].append(context)
+    cases = tmp_path / "cases.json"
+    cases.write_text(json.dumps([case]), encoding="utf-8")
+    repo = Path(__file__).resolve().parents[1]
+    script = (
+        "import {loadTrial} from "
+        + json.dumps((repo / "scripts/evaluate_jev.mjs").as_uri())
+        + "; await loadTrial(...JSON.parse(process.argv[1]));"
+    )
+    result = subprocess.run(
+        [
+            node,
+            "--input-type=module",
+            "--eval",
+            script,
+            json.dumps(
+                [
+                    str(cases),
+                    str(repo / "factoryline/data/judge_framework.json"),
+                    "security_actionability",
+                    None,
+                    str(tmp_path),
+                ]
+            ),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    assert result.returncode == 0, result.stderr
+    packet = _contextual_review_packet()
+    packet["candidate_sha256"] = candidate["sha256"]
+    packet["unknowns"] = []
+    artifacts = [
+        row
+        for row in case["state"]["evidence"]["artifacts"]
+        if row["kind"] == "source_excerpt"
+    ]
+    packet["evidence"] = [
+        dict(
+            id=ident,
+            kind="source_excerpt",
+            epistemic_status="observed",
+            provenance=artifact,
+        )
+        for ident, artifact in zip(
+            ["evidence-1", "evidence-2"], [artifacts[0], context]
+        )
+    ]
+    packet["packet_sha256"] = _digest(
+        {k: v for k, v in packet.items() if k != "packet_sha256"}
+    )
+    original = json.dumps(packet, sort_keys=True)
+    request = build_evidence_review_input(packet, candidate_sha256=candidate["sha256"])
+    response = _atomic_review_response(request)
+    contextual = [
+        dict(
+            evidence_id="evidence-2",
+            rationale="Scope context retained for independent review; distinct bound source supports the assessed claim.",
+            supporting_evidence_ids=["evidence-1"],
+        )
+    ]
+    response["claims"][0].update(
+        label="SUPPORTED",
+        supporting_evidence_ids=["evidence-1"],
+        verification_action=None,
+        contextual_evidence=contextual,
+    )
+    seen = []
+
+    def transport(value):
+        wire = json.loads(json.dumps(value))
+        seen.append(wire)
+        assert wire == request and wire["review_protocol"] == "contextual-evidence.v2"
+        return json.loads(json.dumps(response))
+
+    normalized = review_evidence(
+        packet, candidate_sha256=candidate["sha256"], transport=transport
+    )
+    assert seen == [request]
+    assert normalized["claims"][0]["contextual_evidence"] == contextual
+    assert normalized["status"] == "ADVISORY" and normalized["authority"] == "none"
+    assert normalized["release_decision"] is False
+    assert normalized["verification_state"] == "INCOMPLETE"
+    assert any(
+        row.get("contextual_evidence") == contextual
+        and row["status"] == "CONTEXT_REQUIRES_REVIEW"
+        for row in normalized["verification_batch"]
+    )
+    assert json.dumps(packet, sort_keys=True) == original
+    assert (tmp_path / "README.md").read_text(encoding="utf-8") == data
 
 
 def _digest(value: object) -> str:
