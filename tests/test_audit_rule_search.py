@@ -394,6 +394,9 @@ def test_declaration_neighborhood_only_exact_unshadowed_import_references(
     index, finding = _declaration_fixture(
         tmp_path,
         {
+            "aaa_noise.py": "import os\ndef unused(value):\n    return (\n"
+            + "        value, os,\n" * 600
+            + "    )\n",
             "sink.py": "credential = 'fixture'\nimport pickle\nx = pickle.loads(b'')\n",
             "consumer.py": consumer,
             "other.py": "credential = 'different'\n",
@@ -401,6 +404,28 @@ def test_declaration_neighborhood_only_exact_unshadowed_import_references(
     )
     context = _declaration_context(index, finding)
     assert any(row["path"] == "consumer.py" for row in context["excerpts"]) is delivered
+    assert "declaration_reference_search_budget" not in context["truncation"]
+    assert context["edges"] == []
+
+
+def test_declaration_reference_dedup_preserves_distinct_scopes(tmp_path):
+    index, finding = _declaration_fixture(
+        tmp_path,
+        {
+            "sink.py": "credential = 'fixture'\nimport pickle\nx = pickle.loads(b'')\n",
+            "consumer.py": (
+                "from sink import credential as key\n"
+                "class First:\n    value = key\n"
+                "class Second:\n    value = key\n"
+                "def consume():\n    shadow = lambda key: key\n"
+                "    return (((((key,),),),),)\n"
+            ),
+        },
+    )
+    context = _declaration_context(index, finding)
+    text = "\n".join(row["content"] for row in context["excerpts"])
+    assert "class First:" in text and "class Second:" in text
+    assert "def consume():" in text
     assert context["edges"] == []
 
 

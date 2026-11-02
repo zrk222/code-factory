@@ -216,10 +216,12 @@ def _declaration_transport_budget(context, finding, index, requirement):
             context["structural_context"]["delivered_excerpts"] -= 1
 
 
-def _declaration_scope(index, path, node):
+def _declaration_scope(
+    index, path, node, kinds=(ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+):
     """Locate lexical context without treating enclosure as an execution edge."""
     while node is not None:
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        if isinstance(node, kinds):
             return node
         node = index.parents[path].get(id(node))
     return index.snapshots[path]
@@ -352,6 +354,13 @@ def _declaration_candidates(context, index, path, declaration, scope, capture):
         if not index.validate(current):
             capture["stale"] = True
             return
+        imported_names = {
+            alias.asname or alias.name.split(".")[0]
+            for statement in ast.walk(index.snapshots[current])
+            if isinstance(statement, (ast.Import, ast.ImportFrom))
+            for alias in statement.names
+        }
+        checked = set()
         for node in ast.walk(index.snapshots[current]):
             literal = (
                 isinstance(node, ast.Constant)
@@ -361,11 +370,34 @@ def _declaration_candidates(context, index, path, declaration, scope, capture):
             reference = (
                 isinstance(node, ast.Name)
                 and isinstance(node.ctx, ast.Load)
+                and node.id in imported_names
                 or isinstance(node, ast.Attribute)
                 and node.attr in names
             )
             if not literal and not reference:
                 continue
+            selected_scope = _declaration_scope(index, current, node)
+            root = node.value if isinstance(node, ast.Attribute) else node
+            identity = (
+                id(selected_scope),
+                None
+                if literal
+                else (
+                    id(
+                        _declaration_scope(
+                            index,
+                            current,
+                            node,
+                            (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda),
+                        )
+                    ),
+                    getattr(root, "id", None),
+                    getattr(node, "attr", None),
+                ),
+            )
+            if identity in checked:
+                continue
+            checked.add(identity)
             capture["states"] += 1
             if capture["states"] > 512:
                 context["truncation"].append("declaration_reference_search_budget")
@@ -373,7 +405,7 @@ def _declaration_candidates(context, index, path, declaration, scope, capture):
             if literal or _declaration_reference(
                 index, current, node, path, declaration, capture
             ):
-                yield current, _declaration_scope(index, current, node)
+                yield current, selected_scope
 
 
 def _declaration_neighborhood(context, index, path, declaration):
