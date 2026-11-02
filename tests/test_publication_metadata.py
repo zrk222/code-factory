@@ -246,12 +246,10 @@ def test_public_ctas_are_outcome_led_and_preserve_proof_boundaries():
     assert "FactoryLine keeps that decision with you." in intellij_readme
     for content in (vscode_readme, intellij_readme):
         assert "Graph Ops" in content
-    assert "Your change is ready for a closer look." in intellij_plugin
-    assert "FactoryLine keeps that decision with you." in intellij_plugin
-    assert (
-        "FactoryLine AI Proof is free, local IDE Guardian + AI proof for JetBrains."
-        in intellij_plugin
-    )
+    assert "Review AI changes with evidence in view" in intellij_plugin
+    assert "separately configured local FactoryLine runtime" in intellij_plugin
+    assert "You control applying changes, merging, and publishing." in intellij_plugin
+    assert "Checks are bounded and do not certify a repository." in intellij_plugin
     assert 'width="40"' in (
         ROOT
         / "editors"
@@ -274,7 +272,7 @@ def test_public_ctas_are_outcome_led_and_preserve_proof_boundaries():
     ).read_text(encoding="utf-8")
     assert "Star Code Factory" in vscode_readme
     assert "Star Code Factory" in intellij_readme
-    for content in (vscode_readme, intellij_plugin, intellij_readme):
+    for content in (vscode_readme, intellij_readme):
         assert "PRD Grill" in content
         assert "factory prd grill" in content
         assert "Proof Debt" in content
@@ -687,19 +685,26 @@ def test_jetbrains_listing_is_outcome_led_and_first_proof_is_discoverable():
 
     assert "<id>app.factoryline</id>" in plugin_xml
     assert "<name>FactoryLine AI Proof</name>" in plugin_xml
-    assert "Your change is ready for a closer look." in plugin_xml
-    assert "Bring the returned Change List back for review" in plugin_xml
-    assert (
-        "FactoryLine AI Proof is free, local IDE Guardian + AI proof for JetBrains."
-        in plugin_xml
+    description = re.search(
+        r"<description><!\[CDATA\[(.*?)\]\]></description>", plugin_xml, re.S
     )
+    assert description is not None
+    description = description.group(1)
+    assert "Review AI changes with evidence in view" in description
+    assert "FactoryLine is free." in description
     assert latest_changelog_version == plugin_version
-    assert f"Updated in {plugin_version} —" in plugin_xml
-    assert (
-        "OAuth/OIDC identity, tenant authorization, checkout, webhook, entitlement, feature access, and revocation"
-        in plugin_xml
-    )
-    assert "Tools | FactoryLine | Run First Proof" in plugin_xml
+    assert f"What's improved in {plugin_version}" in description
+    assert f"<strong>{plugin_version}:</strong>" in plugin_xml
+    assert "Tools | FactoryLine | Run First Proof" in description
+    assert "local setup demonstration, not a repository assessment" in description
+    assert "does not upload project source or receipts" in description
+    assert "separately configured local FactoryLine runtime" in description
+    assert "Junie is optional." in description
+    assert "You control applying changes, merging, and publishing." in description
+    assert "Checks are bounded and do not certify a repository." in description
+    assert 'href="https://github.com/zrk222/code-factory"' in description
+    assert 'href="https://github.com/zrk222/code-factory/issues"' in description
+    assert "Graph Ops to inspect evidence and choose the next action" in description
     assert 'id="app.factoryline.intellij.firstProof"' in plugin_xml
     assert "Run First Proof" in plugin_xml
     assert 'id="app.factoryline.intellij.openGraphOps"' in plugin_xml
@@ -708,9 +713,6 @@ def test_jetbrains_listing_is_outcome_led_and_first_proof_is_discoverable():
     assert "Open Guardian Core" in plugin_xml
     assert 'id="app.factoryline.intellij.openAppForge"' in plugin_xml
     assert "Open AppForge Mission Control" in plugin_xml
-    assert "Use FactoryLine when you want to" in plugin_xml
-    assert "Turn an outcome into a buildable starting point" in plugin_xml
-    assert "Review AI or teammate changes with evidence" in plugin_xml
     assert "Use real plugin UI, not concept art." in screenshot_brief
     assert "1280x800" in screenshot_brief
 

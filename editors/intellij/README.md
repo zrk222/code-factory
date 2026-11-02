@@ -27,6 +27,16 @@ Use FactoryLine when you want to turn an outcome into a buildable starting point
 
 The adapter invokes the configured local `factory` executable after workspace confirmation. It does not upload project source or receipts, sign artifacts, or approve, publish, or deploy a release. Use your coding agent and analyzer as usual; FactoryLine displays the local evidence returned by its supported review commands.
 
+## Saved workspace contents
+
+Local commands and Studio read files from disk. Before starting them, FactoryLine
+waits for pending VFS writes on IDEs that support asynchronous persistence (2026.2+),
+on a background thread outside read/write actions. Preparation failures block the
+launch and appear in the existing result or failure message. The 2025.2 baseline
+remains supported. Unsaved editor buffers are not saved or modified; save edits
+before a command if they should be included. This preparation does not freeze the
+workspace against subsequent edits. See the [JetBrains VFS persistence guidance](https://plugins.jetbrains.com/docs/intellij/virtual-file.html).
+
 ## Install
 
 1. Install the Code Factory CLI in the Python environment your JetBrains IDE uses.

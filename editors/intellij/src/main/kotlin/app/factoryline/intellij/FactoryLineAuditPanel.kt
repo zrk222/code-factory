@@ -68,8 +68,10 @@ class FactoryLineAuditPanel(private val project: Project) : JPanel(BorderLayout(
                     val executable = if (lane.executable == "factory") FactoryLineSettings.instance().executable() else forgeExecutable.toString()
                     val args = lane.args + listOf("--root", root.toString()) + if (lane.executable == "factory") listOf("--json") else emptyList()
                     val result = try {
-                        val process = CapturingProcessHandler(GeneralCommandLine(executable).withParameters(args).withWorkDirectory(root.toFile()))
-                            .runProcess(120_000)
+                        val process = FactoryLineRunner.withPreparedExternalRead {
+                            CapturingProcessHandler(GeneralCommandLine(executable).withParameters(args).withWorkDirectory(root.toFile()))
+                                .runProcess(120_000)
+                        }
                         val report = runCatching { JsonParser.parseString(process.stdout.trim()).asJsonObject }.getOrNull()
                         val fields = listOf("state", "verdict", "status", "grade", "passed").mapNotNull { key ->
                             report?.get(key)?.let { "$key=${it.toString().take(80)}" }

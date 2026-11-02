@@ -1,5 +1,14 @@
 # FactoryLine for IntelliJ Changelog
 
+## 1.3.3 - 2026-11-01 (candidate; upload pending)
+
+- Flush pending saved-file VFS writes before local commands; block launch when
+  preparation fails on modern IDEs.
+- Start Studio in the background, keep callbacks on EDT, and clean up failed
+  startup without duplicate failure notifications.
+- Retain the 2025.2 baseline and leave unsaved editor buffers untouched; the
+  local FactoryLine runtime remains separately configured.
+
 ## 1.3.2 - 2026-10-31
 
 - Align release metadata with Code Factory core 0.49.5 while preserving local
