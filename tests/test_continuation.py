@@ -1083,3 +1083,100 @@ def test_fix_workflow_does_not_count_runner_stops_as_reproduced_failures(
     assert intervention["original"]["expected_outcome_observed"] is False
     assert intervention["what_broke"] == "NOT_CONFIRMED"
     assert intervention["negative_control_counts"]["expected_failures_preserved"] == 1
+
+
+@pytest.mark.parametrize(
+    "cursor",
+    [
+        {},
+        {"checkpoint_parent_revision": 0},
+        {"checkpoint_parent_revision": 2},
+        {"checkpoint_parent_revision": True},
+        {"checkpoint_parent_revision": None},
+    ],
+)
+def test_checkpoint_rejects_stale_parent_without_writing(tmp_path, monkeypatch, cursor):
+    import factoryline.assembly as assembly
+
+    path, calls = _pause_custom_contract(tmp_path, monkeypatch)
+    snapshot, digest = assembly._read_release_contract(tmp_path, "feature", path)
+    directory = tmp_path / "receipts"
+    before = {p.name: p.read_bytes() for p in directory.iterdir()}
+    with pytest.raises(ValueError, match="checkpoint changed during assembly"):
+        assembly._write_release_checkpoint(
+            tmp_path,
+            "feature",
+            "stale",
+            path,
+            snapshot,
+            digest,
+            {"paused_at": "author_spec", **cursor},
+            dry_run=False,
+        )
+    assert {p.name: p.read_bytes() for p in directory.iterdir()} == before
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize(
+    "field", ["policy_digest", "oracle_contract_sha256", "required_stages"]
+)
+def test_checkpoint_rejects_paused_policy_rebinding(tmp_path, monkeypatch, field):
+    import factoryline.assembly as assembly
+
+    path, _ = _pause_custom_contract(tmp_path, monkeypatch)
+    snapshot, digest = assembly._read_release_contract(tmp_path, "feature", path)
+    changed = dict(snapshot)
+    changed[field] = ["forgeline:ship"] if field == "required_stages" else "0" * 64
+    before = assembly._release_checkpoint_records(tmp_path, "feature")
+    with pytest.raises(ValueError, match="checkpoint policy has changed"):
+        assembly._write_release_checkpoint(
+            tmp_path,
+            "feature",
+            "rebound",
+            path,
+            changed,
+            digest,
+            {"paused_at": "author_spec", "checkpoint_parent_revision": 1},
+            dry_run=False,
+        )
+    assert assembly._release_checkpoint_records(tmp_path, "feature") == before
+
+
+def test_checkpoint_atomic_retry_and_legacy_history(tmp_path, monkeypatch):
+    import factoryline.assembly as assembly
+    import factoryline.contract as contract
+
+    path, _ = _pause_custom_contract(tmp_path, monkeypatch)
+    snapshot, digest = assembly._read_release_contract(tmp_path, "feature", path)
+    directory = tmp_path / "receipts"
+    before = {p.name: p.read_bytes() for p in directory.iterdir()}
+    report = {"paused_at": "author_spec", "checkpoint_parent_revision": 1}
+    replace = contract.os.replace
+
+    def fail_replace(*args):
+        raise OSError("injected checkpoint commit failure")
+
+    monkeypatch.setattr(contract.os, "replace", fail_replace)
+    with pytest.raises(OSError, match="injected checkpoint"):
+        assembly._write_release_checkpoint(
+            tmp_path, "feature", "retry", path, snapshot, digest, report, dry_run=False
+        )
+    assert {p.name: p.read_bytes() for p in directory.iterdir()} == before
+    monkeypatch.setattr(contract.os, "replace", replace)
+    assembly._write_release_checkpoint(
+        tmp_path, "feature", "retry", path, snapshot, digest, report, dry_run=False
+    )
+    records = assembly._release_checkpoint_records(tmp_path, "feature")
+    latest = max(records, key=lambda row: row["revision"])
+    assert (latest["revision"], latest["parent_revision"]) == (2, 1)
+    assembly._validate_release_checkpoint_history(
+        [
+            {key: value for key, value in row.items() if key != "parent_revision"}
+            for row in records
+        ]
+    )
+    with pytest.raises(ValueError, match="checkpoint changed during assembly"):
+        assembly._write_release_checkpoint(
+            tmp_path, "feature", "retry", path, snapshot, digest, report, dry_run=False
+        )
+    assert assembly._release_checkpoint_records(tmp_path, "feature") == records

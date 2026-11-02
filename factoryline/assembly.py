@@ -474,6 +474,23 @@ def _validate_release_checkpoint_history(records: list[dict[str, Any]]) -> None:
         raise ValueError("continuation release checkpoint history is ambiguous")
     if revisions and sorted(revisions) != list(range(1, len(revisions) + 1)):
         raise ValueError("continuation release checkpoint history is incomplete")
+    for record in records:
+        parent = record.get("parent_revision", record["revision"] - 1)
+        if type(parent) is not int or parent != record["revision"] - 1:
+            raise ValueError("continuation release checkpoint parent is stale")
+    fields = (
+        "policy_path",
+        "policy_sha256",
+        "policy_digest",
+        "oracle_contract_sha256",
+        "required_stages",
+    )
+    ordered = sorted(records, key=lambda record: record["revision"])
+    for previous, current in zip(ordered, ordered[1:]):
+        if previous.get("state") == "waiting_for_human" and tuple(
+            previous.get(key) for key in fields
+        ) != tuple(current.get(key) for key in fields):
+            raise ValueError("paused continuation checkpoint policy has changed")
 
 
 def _release_checkpoint_records(root: Path, feature: str) -> list[dict[str, Any]]:
@@ -582,10 +599,14 @@ def _write_release_checkpoint(
     if not report.get("paused_at") and not report.get("halted_at") and not records:
         return
     latest_revision = max((record["revision"] for record in records), default=0)
+    parent = report.get("checkpoint_parent_revision")
+    if type(parent) is not int or parent != latest_revision:
+        raise ValueError("continuation checkpoint changed during assembly")
     reference = _release_contract_path_ref(root, policy_path)
     checkpoint = {
         "schema": _RELEASE_CHECKPOINT_SCHEMA,
         "revision": latest_revision + 1,
+        "parent_revision": parent,
         "state": "waiting_for_human"
         if report.get("paused_at") or report.get("halted_at")
         else "terminal",
@@ -596,6 +617,7 @@ def _write_release_checkpoint(
         "oracle_contract_sha256": snapshot["oracle_contract_sha256"],
         "required_stages": list(snapshot["required_stages"]),
     }
+    _validate_release_checkpoint_history([*records, checkpoint])
     Receipt(
         module="factoryline",
         stage=_RELEASE_CHECKPOINT_STAGE,
@@ -1434,6 +1456,7 @@ def _assemble_unlocked(
     release_contract_path: Path | None = None,
     release_contract_snapshot: dict[str, Any] | None = None,
     release_contract_sha256: str | None = None,
+    _checkpoint_parent_revision: int | None = None,
 ) -> dict:
     """Run the assembly line for a feature. Returns a per-stage report.
     Missing modules are skipped with a clear note (Lego stud left open)."""
@@ -1458,6 +1481,8 @@ def _assemble_unlocked(
         "stages": [],
         "dry_run": dry_run,
     }
+    if _checkpoint_parent_revision is not None:
+        report["checkpoint_parent_revision"] = _checkpoint_parent_revision
     release_binding = _release_contract_binding(
         root, feature, selected_contract_path, policy_snapshot
     )
@@ -1531,6 +1556,7 @@ def _assemble_locked_state(
         release_contract_path=resolved_path,
         release_contract_snapshot=snapshot,
         release_contract_sha256=digest,
+        _checkpoint_parent_revision=len(records),
     )
     if release_contract_path is not None:
         report["release_contract_path"] = str(Path(release_contract_path))
