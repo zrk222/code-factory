@@ -27,6 +27,18 @@ _AUTH_TEMPLATE = re.compile(r"(?:^\$\{[^}]+\}$|^<[^>]+>$|^your[-_]$|\{[^{}]+\})"
 
 _SECURITY_EFFECT_WITNESS_SCHEMA_BASELINE = SECURITY_EFFECT_WITNESS_SCHEMA
 _SECURITY_EFFECT_CONTRACTS_BASELINE = SECURITY_EFFECT_CONTRACTS
+_DJANGO_LOADER_ROOTS = tuple(
+    "django.core.wsgi.get_wsgi_application django.core.asgi.get_asgi_application django.core.management.execute_from_command_line os.environ".split()
+)
+_DJANGO_AUTHORITY_ROOTS = (
+    *_DJANGO_LOADER_ROOTS,
+    *(
+        f"django.conf.settings.{name}"
+        for name in ("MIDDLEWARE", "MIDDLEWARE_CLASSES", "INSTALLED_APPS", "SECRET_KEY")
+    ),
+    "django.contrib.sessions.middleware.SessionMiddleware",
+    "django.contrib.auth.middleware.AuthenticationMiddleware",
+)
 
 
 def _security_statement_operand_flow(statement, scope, flow):
@@ -528,6 +540,7 @@ def _signing_inventory_snapshots(source_bytes, bindings, bind_security_call_scop
             return None
         tree._oracle_source_sha256 = digest
         bind_security_call_scopes(tree)
+        tree._oracle_structure_sha256 = sha256(ast.dump(tree).encode()).hexdigest()
         snapshots[path], captured[path], inventory[path] = tree, raw, digest
     return snapshots, captured, inventory
 
@@ -1767,22 +1780,23 @@ def _flask_path_conditions_clear(scope, node):
 
 
 def _signing_configuration_consumer_witness(index, path, context):
-    return next(
-        (
-            witness
-            for consumer_path, tree in index.snapshots.items()
-            if not _signing_rejection_or_reflection(tree)
-            for witness in (
-                _django_signing_consumer(path, consumer_path, tree, context)
-                or _flask_signing_consumer(path, consumer_path, tree, context),
+    for consumer_path, tree in index.snapshots.items():
+        if _signing_rejection_or_reflection(tree):
+            continue
+        witness = _django_signing_consumer(path, consumer_path, tree, context)
+        witness = witness or _flask_signing_consumer(path, consumer_path, tree, context)
+        if witness is not None:
+            sources = _signing_bound_providers_clear(
+                context, path, consumer_path, witness["framework"], witness
             )
-            if witness is not None
-            and _signing_bound_providers_clear(
-                context, path, consumer_path, witness["framework"]
-            )
-        ),
-        None,
-    )
+            if sources is not None:
+                return {
+                    **witness,
+                    "supporting_sources": sources["sources"],
+                    "unresolved_imports": sources["unresolved"],
+                    "supporting_projection_guards": sources["projection_guards"],
+                }
+    return None
 
 
 def _signing_optional_configuration_defaults(context, path, observation):
@@ -2657,6 +2671,9 @@ def _signing_configuration_witness(index, path, declaration, witness):
         "consumer_role": witness["framework"] + ".SECRET_KEY",
         "declaration": _signing_source_span(index, path, declaration),
         "transfers": witness["transfers"],
+        "supporting_sources": witness["supporting_sources"],
+        "supporting_unresolved_imports": witness["unresolved_imports"],
+        "supporting_projection_guards": witness["supporting_projection_guards"],
         "proof_scope": "captured_default_configuration_load",
         "deployment": "UNASSESSED",
         "runtime_execution": "not_performed",
@@ -2697,14 +2714,7 @@ def _signing_provider_clear(
     ):
         return False
     roots = roots or (
-        (
-            "django.core.wsgi.get_wsgi_application",
-            "django.core.asgi.get_asgi_application",
-            "django.core.management.execute_from_command_line",
-            "os.environ",
-        )
-        if framework == "django"
-        else ("flask.Flask",)
+        _DJANGO_LOADER_ROOTS if framework == "django" else ("flask.Flask",)
     )
     parents = {
         id(child): node for node in nodes for child in ast.iter_child_nodes(node)
@@ -2819,7 +2829,11 @@ def _signing_provider_reads(
     return reads
 
 
-def _signing_bound_providers_clear(context, declaration_path, consumer_path, framework):
+def _signing_bound_providers_clear(
+    context, declaration_path, consumer_path, framework, observation=None
+):
+    from .import_context import eager_import_closure
+
     index = context["index"]
     paths = {declaration_path, consumer_path} | {
         parent / "__init__.py"
@@ -2827,40 +2841,65 @@ def _signing_bound_providers_clear(context, declaration_path, consumer_path, fra
         for parent in selected.parents
         if parent / "__init__.py" in index.snapshots
     }
-    return all(
+    closure_index, guards = index, []
+    if framework == "django" and observation is not None:
+        projected, guards = _signing_optional_configuration_defaults(
+            context, declaration_path, observation
+        )
+        if guards:
+            from types import SimpleNamespace
+
+            closure_index = SimpleNamespace(
+                root=index.root,
+                snapshots={**index.snapshots, declaration_path: projected},
+                inventory=index.inventory,
+                validate=index.validate,
+            )
+    closure = eager_import_closure(
+        closure_index, (declaration_path, consumer_path), {framework}
+    )
+    closure["projection_guards"] = [
+        _signing_source_span(index, declaration_path, node) for node in guards
+    ]
+    context.setdefault("selected_import_closures", {})[
+        index.relative(declaration_path)
+    ] = closure
+    if not closure["closed"]:
+        return None
+    paths.update(Path(row["path"]) for row in closure["sources"])
+    for source_path, aliases in context["aliases"].items():
+        if any(
+            _signing_resolve_module(context, ast.Constant(value=canonical), source_path)
+            == declaration_path
+            for canonical in aliases.values()
+        ):
+            paths.add(source_path)
+    if not all(
         index.validate(path)
-        and not _signing_rejection_or_reflection(index.snapshots[path])
+        and getattr(index.snapshots[path], "_oracle_structure_sha256", None)
+        == sha256(ast.dump(index.snapshots[path]).encode()).hexdigest()
+        and not _signing_rejection_or_reflection(closure_index.snapshots[path])
         and _signing_provider_clear(
-            index.snapshots[path],
+            closure_index.snapshots[path],
             context["aliases"][path],
             framework,
+            roots=_DJANGO_AUTHORITY_ROOTS
+            if framework == "django"
+            else ("flask.Flask",),
             context=context,
             settings_path=declaration_path,
         )
         for path in paths
-    ) and all(
-        _signing_provider_clear(
-            tree,
-            context["aliases"][path],
-            framework,
-            roots=(
-                *(
-                    f"django.conf.settings.{name}"
-                    for name in (
-                        "MIDDLEWARE",
-                        "MIDDLEWARE_CLASSES",
-                        "INSTALLED_APPS",
-                        "SECRET_KEY",
-                    )
-                ),
-                "django.contrib.sessions.middleware.SessionMiddleware",
-                "django.contrib.auth.middleware.AuthenticationMiddleware",
-            ),
-            context=context,
-            settings_path=declaration_path,
-        )
-        for path, tree in index.snapshots.items()
-    )
+    ):
+        return None
+    return {
+        "sources": [
+            {"path": index.relative(path), "sha256": index.inventory[path]}
+            for path in sorted(paths)
+        ],
+        "unresolved": closure["unresolved"],
+        "projection_guards": closure["projection_guards"],
+    }
 
 
 def _signing_rejection_or_reflection(tree):

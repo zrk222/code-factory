@@ -27,15 +27,24 @@ from factoryline.primitive_observation_binding import build_finding_tier_report
         "signer",
     ],
 )
-def test_selected_feedback_counterexamples_preserve_raw_without_admission(change):
+def test_selected_feedback_counterexamples_respect_selected_source_scope(change):
     files = _recovery_sources(
         SETTINGS + 'ROOT_URLCONF = "service.urls"\n',
         extra={"service/urls.py": FEEDBACK_URLS},
     )
     _apply_source_mutations(files, FEEDBACK_COUNTEREXAMPLE_EDITS[change])
     row = _recovery_row(files)
-    assert row["tier"] == "NEEDS_CONTEXT"
-    assert "credential_authority_observation" not in row
+    if change == "provider":
+        # This sibling is not imported by Python or selected by Django settings.
+        assert row["tier"] == "SUPPORTED_DEFECT"
+        proof = row["credential_authority_observation"]
+        assert (
+            proof["proof_scope"] == "source_bound_selected_framework_feedback_default"
+        )
+        assert "mutation.py" not in {p["path"] for p in proof["supporting_sources"]}
+    else:
+        assert row["tier"] == "NEEDS_CONTEXT"
+        assert "credential_authority_observation" not in row
     assert row["raw_finding"]["facts"]["name"] == "SECRET_KEY"
     assert row["raw_finding"]["code"] == "SECURITY_HARDCODED_SECRET"
 
@@ -949,7 +958,7 @@ def _recovery_row(files, name="SECRET_KEY", path="service/settings.py"):
 @pytest.mark.parametrize(
     "helper", ["finite_keys", "import_operand", "scalar_owner", "scalar_capability"]
 )
-def test_primed_native_provider_proof_rejects_changed_shared_helper(
+def test_primed_native_provider_proof_rechecks_selected_helper_dependencies(
     tmp_path, monkeypatch, helper
 ):
     from factoryline import (
@@ -996,7 +1005,17 @@ def test_primed_native_provider_proof_rejects_changed_shared_helper(
             lambda *args: True,
         )
     after = audit.security_scan(tmp_path, **options)
-    assert after["finding_tier_report"]["ledger"][0]["tier"] == "NEEDS_CONTEXT"
+    row = after["finding_tier_report"]["ledger"][0]
+    if helper in {"scalar_owner", "scalar_capability"}:
+        # The unselected consumer does not participate in the framework witness.
+        assert row["tier"] == "SUPPORTED_DEFECT"
+        proof = row["credential_authority_observation"]
+        assert (
+            proof["proof_scope"] == "source_bound_selected_framework_feedback_default"
+        )
+        assert "consumer.py" not in {p["path"] for p in proof["supporting_sources"]}
+    else:
+        assert row["tier"] == "NEEDS_CONTEXT"
     assert before["findings"] == after["findings"]
 
 
@@ -1191,7 +1210,7 @@ def test_impossible_regex_cannot_create_selected_feedback_consumer():
         ("nonexistent_builtin", "NEEDS_CONTEXT"),
     ],
 )
-def test_framework_cbv_callback_requires_closed_as_view_provider(change, expected):
+def test_framework_cbv_callback_binds_selected_as_view_provider(change, expected):
     cls = "from django.views.generic import TemplateView\nclass Home(TemplateView):\n    pass\n"
     if change == "override":
         cls = cls.replace("    pass", "    def as_view(cls):\n        return unknown()")
@@ -1209,7 +1228,15 @@ def test_framework_cbv_callback_requires_closed_as_view_provider(change, expecte
         files["mutation.py"] = (
             "from django.views.generic import TemplateView\nTemplateView.as_view = unknown\n"
         )
-    assert _recovery_row(files)["tier"] == expected
+    row = _recovery_row(files)
+    assert row["tier"] == ("SUPPORTED_DEFECT" if change == "provider" else expected)
+    if change == "provider":
+        proof = row["credential_authority_observation"]
+        assert (
+            proof["proof_scope"] == "source_bound_selected_framework_feedback_default"
+        )
+        assert "mutation.py" not in {p["path"] for p in proof["supporting_sources"]}
+        assert row["raw_finding"]["code"] == "SECURITY_HARDCODED_SECRET"
 
 
 @pytest.mark.parametrize(
@@ -1290,7 +1317,7 @@ def test_cached_native_feedback_admission_rechecks_current_helper_contract(
         "effect_provider_replaced",
     ],
 )
-def test_authenticated_operation_feedback_requires_selected_closed_effect(change):
+def test_authenticated_operation_feedback_binds_selected_effect_source(change):
     files = _recovery_sources(
         extra={
             "service/urls.py": 'from django.urls import path\nfrom .views import change\nurlpatterns = [path("change/", change)]\n',
@@ -1321,11 +1348,16 @@ def test_authenticated_operation_feedback_requires_selected_closed_effect(change
         )
     row = _recovery_row(files)
     assert row["tier"] == (
-        "SUPPORTED_DEFECT" if change == "selected" else "NEEDS_CONTEXT"
+        "SUPPORTED_DEFECT"
+        if change in {"selected", "effect_provider_replaced"}
+        else "NEEDS_CONTEXT"
     )
     assert row["raw_finding"]["facts"] == {"name": "SECRET_KEY"}
-    if change == "selected":
+    if change in {"selected", "effect_provider_replaced"}:
         proof = row["credential_authority_observation"]
+        assert (
+            proof["proof_scope"] == "source_bound_selected_framework_feedback_default"
+        )
         assert (
             proof["selected_consumer"]["model"]
             == "django.authenticated-operation.feedback.v1"
@@ -1335,6 +1367,7 @@ def test_authenticated_operation_feedback_requires_selected_closed_effect(change
             "service/views.py",
             "service/urls.py",
         }
+        assert "mutation.py" not in {p["path"] for p in proof["supporting_sources"]}
 
 
 @pytest.mark.parametrize("material", ["your_key", "YOUR SECRET KEY", "change-this-key"])
@@ -1406,7 +1439,7 @@ def test_selected_main_management_startup_preserves_legacy_session_authority(
         'def inspect(getattr):\n    return getattr(settings, "FEATURE_FLAG", False)',
     ],
 )
-def test_selected_container_or_unknown_reflection_still_vetoes_authority(mutation):
+def test_unselected_reflection_module_does_not_negate_framework_feedback(mutation):
     row = _recovery_row(
         _recovery_sources(
             extra={
@@ -1414,8 +1447,12 @@ def test_selected_container_or_unknown_reflection_still_vetoes_authority(mutatio
             }
         )
     )
-    assert row["tier"] == "NEEDS_CONTEXT"
-    assert "credential_authority_observation" not in row
+    # No startup, app, middleware, URL or backend selection executes reader.py.
+    assert row["tier"] == "SUPPORTED_DEFECT"
+    proof = row["credential_authority_observation"]
+    assert proof["proof_scope"] == "source_bound_selected_framework_feedback_default"
+    assert "reader.py" not in {p["path"] for p in proof["supporting_sources"]}
+    assert row["raw_finding"]["code"] == "SECURITY_HARDCODED_SECRET"
 
 
 @pytest.mark.parametrize(
@@ -1485,7 +1522,7 @@ def test_packaging_does_not_negate_captured_settings_loader(metadata):
         },
     ],
 )
-def test_selected_consumer_container_length_is_readonly(extra):
+def test_selected_container_reads_and_unselected_mutations_preserve_feedback(extra):
     assert (
         _recovery_row(
             _recovery_sources(SETTINGS + "count = len(MIDDLEWARE)\n", extra=extra)
@@ -1503,9 +1540,14 @@ def test_selected_consumer_container_length_is_readonly(extra):
             + change
             + "\n"
         }
+        row = _recovery_row(_recovery_sources(extra=changed))
+        assert row["tier"] == "SUPPORTED_DEFECT"
+        proof = row["credential_authority_observation"]
         assert (
-            _recovery_row(_recovery_sources(extra=changed))["tier"] == "NEEDS_CONTEXT"
+            proof["proof_scope"] == "source_bound_selected_framework_feedback_default"
         )
+        assert "reader.py" not in {p["path"] for p in proof["supporting_sources"]}
+        assert row["raw_finding"]["code"] == "SECURITY_HARDCODED_SECRET"
 
 
 @pytest.mark.parametrize(
@@ -1634,10 +1676,8 @@ def test_selected_literal_scalar_encoding_preserves_native_authority(alias, prel
     )
 
 
-def test_scalar_module_capability_scan_is_lazy_and_once_per_consumer(monkeypatch):
+def test_unselected_scalar_module_does_not_trigger_capability_scan(monkeypatch):
     import sys
-    from collections import Counter
-
     from factoryline import mock_fixture_provenance as fixture
 
     consumer = (
@@ -1666,10 +1706,13 @@ def test_scalar_module_capability_scan_is_lazy_and_once_per_consumer(monkeypatch
         _recovery_sources(extra={"consumer.py": consumer, "unrelated.py": unrelated})
     )
     assert row["tier"] == "SUPPORTED_DEFECT"
-    expected = ast.dump(ast.parse(consumer))
-    assert observed and all(ast.dump(module) == expected for _, module in observed)
-    per_invocation = Counter((id(frame), id(module)) for frame, module in observed)
-    assert all(count == 1 for count in per_invocation.values()), per_invocation
+    proof = row["credential_authority_observation"]
+    assert proof["proof_scope"] == "source_bound_selected_framework_feedback_default"
+    assert {p["path"] for p in proof["supporting_sources"]}.isdisjoint(
+        {"consumer.py", "unrelated.py"}
+    )
+    assert observed == []
+    assert row["raw_finding"]["code"] == "SECURITY_HARDCODED_SECRET"
 
 
 @pytest.mark.parametrize(
@@ -1713,7 +1756,7 @@ def test_scalar_module_capability_scan_is_lazy_and_once_per_consumer(monkeypatch
         "value = settings.SECRET_KEY.encode()",
     ],
 )
-def test_selected_scalar_encoding_keeps_unknown_effects_and_receivers_unadmitted(
+def test_unselected_scalar_receivers_do_not_replace_framework_feedback_proof(
     source,
 ):
     row = _recovery_row(
@@ -1721,8 +1764,13 @@ def test_selected_scalar_encoding_keeps_unknown_effects_and_receivers_unadmitted
             extra={"consumer.py": "from django.conf import settings\n" + source + "\n"}
         )
     )
-    assert row["tier"] == "NEEDS_CONTEXT"
-    assert "credential_authority_observation" not in row
+    # This proves framework feedback, not the sibling's scalar receiver/calls.
+    assert row["tier"] == "SUPPORTED_DEFECT"
+    proof = row["credential_authority_observation"]
+    assert proof["proof_scope"] == "source_bound_selected_framework_feedback_default"
+    assert proof["consumer_role"] == "signed_feedback_integrity"
+    assert "consumer.py" not in {p["path"] for p in proof["supporting_sources"]}
+    assert row["raw_finding"]["code"] == "SECURITY_HARDCODED_SECRET"
 
 
 @pytest.mark.parametrize(
@@ -2477,3 +2525,221 @@ def test_literal_module_resolution_does_not_add_consumer_validation(monkeypatch)
     assert first == (Path("policy.py"), index.snapshots[Path("policy.py")])
     assert sensor._flask_selected_config(context, literal, Path("consumer.py")) == first
     assert Path("consumer.py") not in calls
+
+
+@pytest.mark.parametrize(
+    "mutation", ["urlpatterns.clear()", "alias = urlpatterns\nalias.clear()"]
+)
+def test_selected_admin_route_rejects_later_container_mutation(mutation):
+    files = _recovery_sources()
+    files["service/urls.py"] += mutation + "\n"
+    row = _recovery_row(files)
+    assert row["tier"] == "NEEDS_CONTEXT"
+    assert "credential_authority_observation" not in row
+    assert row["raw_finding"]["code"] == "SECURITY_HARDCODED_SECRET"
+
+
+@pytest.mark.parametrize("container", ["list", "concat"])
+@pytest.mark.parametrize("suffix", ["path()", "missing_value", "disturb()"])
+def test_selected_admin_route_requires_complete_eager_construction(container, suffix):
+    files = _recovery_sources()
+    first = 'path("admin/", admin.site.urls)'
+    expression = (
+        f"[{first}, {suffix}]" if container == "list" else f"[{first}] + [{suffix}]"
+    )
+    files["service/urls.py"] = (
+        "from django.contrib import admin\nfrom django.urls import path\n"
+        'def disturb():\n    raise RuntimeError("URL construction failed")\n'
+        f"urlpatterns = {expression}\n"
+    )
+    row = _recovery_row(files)
+    assert row["tier"] == "NEEDS_CONTEXT"
+    assert "credential_authority_observation" not in row
+
+
+@pytest.mark.parametrize("container", ["list", "concat"])
+def test_selected_admin_route_allows_closed_unrelated_later_handler(container):
+    files = _recovery_sources()
+    first = 'path("admin/", admin.site.urls)'
+    later = 'path("plain/", plain)'
+    expression = (
+        f"[{first}, {later}]" if container == "list" else f"[{first}] + [{later}]"
+    )
+    files["service/urls.py"] = (
+        "from django.contrib import admin\nfrom django.urls import path\n"
+        "def plain(request):\n    return None\n"
+        f"urlpatterns = {expression}\n"
+    )
+    assert _recovery_row(files)["tier"] == "SUPPORTED_DEFECT"
+
+
+@pytest.mark.parametrize(
+    "replacement",
+    [
+        "import django.core.wsgi as loader\nloader.get_wsgi_application = lambda: None",
+        "from django.core import wsgi as loader\nloader.get_wsgi_application = lambda: None",
+        "get_wsgi_application = lambda: None",
+        'from django.conf import settings\nsettings.SECRET_KEY = "replacement-key"',
+        'import service.settings as cfg\ncfg.SECRET_KEY = "replacement-key"',
+        "import django.contrib.sessions.middleware as layers\nlayers.SessionMiddleware = lambda: None",
+    ],
+)
+def test_selected_startup_rejects_loader_and_configuration_replacement(replacement):
+    from factoryline import semantic_credential_sensor as sensor
+
+    files = _recovery_sources(
+        startup=START.replace("application =", replacement + "\napplication =")
+    )
+    sources = {name: source.encode() for name, source in files.items()}
+    context = sensor.signing_configuration_inventory(
+        sources, {name: sha256(raw).hexdigest() for name, raw in sources.items()}
+    )
+    finding = _recovery_row(files)["raw_finding"]
+    assert sensor.signing_configuration_evidence(finding, context) is None
+
+
+@pytest.mark.parametrize("snapshot", ["valid", "missing", "bytes", "digest", "ast"])
+def test_selected_signing_closure_transports_hashes_and_rejects_stale_dependency(
+    snapshot,
+):
+    from factoryline import semantic_credential_sensor as sensor
+
+    files = _recovery_sources(
+        startup="import helper\n" + START, extra={"helper.py": 'LABEL = "support"\n'}
+    )
+    sources = {name: source.encode() for name, source in files.items()}
+    context = sensor.signing_configuration_inventory(
+        sources, {name: sha256(raw).hexdigest() for name, raw in sources.items()}
+    )
+    finding = _recovery_row(files)["raw_finding"]
+    evidence = sensor.signing_configuration_evidence(finding, context)
+    assert evidence is not None
+    assert {row["path"]: row["sha256"] for row in evidence["supporting_sources"]}[
+        "helper.py"
+    ] == sha256(sources["helper.py"]).hexdigest()
+    index, path = context["index"], Path("helper.py")
+    if snapshot == "missing":
+        del index.snapshots[path]
+    elif snapshot == "bytes":
+        index.source_bytes[path] = b'LABEL = "changed"\n'
+    elif snapshot == "digest":
+        index.inventory[path] = "0" * 64
+    elif snapshot == "ast":
+        index.snapshots[path].body.append(ast.parse("replacement = True").body[0])
+    regenerated = sensor.signing_configuration_evidence(finding, context)
+    assert (regenerated is not None) == (snapshot == "valid")
+    if regenerated is not None:
+        assert regenerated == evidence
+
+
+@pytest.mark.parametrize("container", ["list", "concat"])
+@pytest.mark.parametrize("effect", ["harmless", "key_replacement"])
+@pytest.mark.parametrize("suffix_routes", ["empty", "nonempty"])
+def test_selected_admin_suffix_include_closes_eager_import_effects(
+    container, effect, suffix_routes
+):
+    files = _recovery_sources()
+    first = 'path("admin/", admin.site.urls)'
+    later = 'path("tail/", include("service.tail"))'
+    expression = (
+        f"[{first}, {later}]" if container == "list" else f"[{first}] + [{later}]"
+    )
+    files["service/urls.py"] = (
+        "from django.contrib import admin\nfrom django.urls import path, include\n"
+        f"urlpatterns = {expression}\n"
+    )
+    files["service/tail.py"] = "import mutator\n" + (
+        "urlpatterns = []\n"
+        if suffix_routes == "empty"
+        else "from django.urls import path\n"
+        "def plain(request):\n    return None\n"
+        'urlpatterns = [path("plain/", plain)]\n'
+    )
+    files["mutator.py"] = (
+        'from django.conf import settings\nsettings.SECRET_KEY = "replacement-key"\n'
+        if effect == "key_replacement"
+        else 'LABEL = "harmless"\n'
+    )
+    row = _recovery_row(files)
+    assert row["raw_finding"]["code"] == "SECURITY_HARDCODED_SECRET"
+    if effect == "key_replacement":
+        assert row["tier"] == "NEEDS_CONTEXT"
+        assert "credential_authority_observation" not in row
+    else:
+        assert row["tier"] == "SUPPORTED_DEFECT"
+        proof = row["credential_authority_observation"]
+        assert proof["selected_consumer"]["model"] == "django.admin.feedback.v1"
+        assert {
+            item["path"]: item["sha256"] for item in proof["supporting_sources"]
+        } == {
+            name: sha256(source.encode()).hexdigest() for name, source in files.items()
+        }
+
+
+@pytest.mark.parametrize(
+    "reachable", [False, True], ids=["unimported", "startup_import"]
+)
+@pytest.mark.parametrize(
+    "hazard",
+    ["admin_provider", "cbv_provider", "feedback_provider", "middleware", "secret_key"],
+)
+def test_framework_feedback_authority_binds_hazard_execution_scope(hazard, reachable):
+    files = _recovery_sources()
+    mutations = {
+        "admin_provider": "from django.contrib import admin\nadmin.site.urls = replacement\n",
+        "cbv_provider": "from django.views.generic import TemplateView\nTemplateView.as_view = unknown\n",
+        "feedback_provider": "from django.contrib import messages\nmessages.success = replacement\n",
+        "middleware": "from django.conf import settings\nsettings.MIDDLEWARE.clear()\n",
+        "secret_key": 'from django.conf import settings\nsettings.SECRET_KEY = "replacement-key"\n',
+    }
+    files["mutation.py"] = mutations[hazard]
+    if hazard == "cbv_provider":
+        files["service/views.py"] = (
+            "from django.views.generic import TemplateView\n"
+            "class Home(TemplateView):\n    pass\n"
+        )
+        files["service/urls.py"] = (
+            "from django.contrib import admin\nfrom django.urls import path\n"
+            "from .views import Home\n"
+            'urlpatterns = [path("", Home.as_view()), path("admin/", admin.site.urls)]\n'
+        )
+    elif hazard == "feedback_provider":
+        files["service/urls.py"] = (
+            "from django.urls import path\nfrom .views import change\n"
+            'urlpatterns = [path("change/", change)]\n'
+        )
+        files["service/forms.py"] = (
+            "from django import forms\nclass ChangeForm(forms.ModelForm):\n    pass\n"
+        )
+        files["service/views.py"] = (
+            "from django.contrib.auth.decorators import login_required\n"
+            "from django.contrib import messages\nfrom .forms import ChangeForm\n"
+            "@login_required\ndef change(request):\n"
+            "    form = ChangeForm(request.POST)\n    form.save()\n"
+            '    messages.success(request, "Record saved")\n'
+        )
+    if reachable:
+        files["start.py"] = START.replace(
+            "application =", "import mutation\napplication ="
+        )
+    row = _recovery_row(files)
+    assert row["raw_finding"]["code"] == "SECURITY_HARDCODED_SECRET"
+    assert row["raw_finding"]["facts"] == {"name": "SECRET_KEY"}
+    if reachable:
+        assert row["tier"] == "NEEDS_CONTEXT"
+        assert "credential_authority_observation" not in row
+    else:
+        assert row["tier"] == "SUPPORTED_DEFECT"
+        proof = row["credential_authority_observation"]
+        assert (
+            proof["proof_scope"] == "source_bound_selected_framework_feedback_default"
+        )
+        assert proof["consumer_role"] == "signed_feedback_integrity"
+        assert proof["selected_consumer"]["model"] == (
+            "django.authenticated-operation.feedback.v1"
+            if hazard == "feedback_provider"
+            else "django.admin.feedback.v1"
+        )
+        assert "mutation.py" not in {p["path"] for p in proof["supporting_sources"]}
+        assert proof["runtime_execution"] == "not_performed"
+        assert proof["deployment"] == "UNASSESSED"
