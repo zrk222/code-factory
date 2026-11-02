@@ -115,6 +115,80 @@ def _nested_project_sources():
     return files
 
 
+def test_captured_script_module_direct_selection_and_sys_path_rejection():
+    from factoryline import semantic_credential_sensor as sensor
+    from factoryline.import_context import captured_script_module
+
+    files = _nested_project_sources()
+    raw = {name: source.encode() for name, source in files.items()}
+    context = sensor.signing_configuration_inventory(
+        raw, {name: sha256(value).hexdigest() for name, value in raw.items()}
+    )
+    assert context is not None
+    parts, origin = ["service", "settings"], Path("service/service/settings.py")
+    assert captured_script_module(context, parts, origin) == origin
+
+    files["service/manage.py"] = files["service/manage.py"].replace(
+        "def main():", 'sys.path.insert(0, "other")\ndef main():'
+    )
+    raw = {name: source.encode() for name, source in files.items()}
+    context = sensor.signing_configuration_inventory(
+        raw, {name: sha256(value).hexdigest() for name, value in raw.items()}
+    )
+    assert context is not None
+    assert captured_script_module(context, parts, origin) is None
+
+
+def test_eager_import_closure_directly_reports_sources_and_unresolved_imports():
+    from factoryline import semantic_credential_sensor as sensor
+    from factoryline.import_context import eager_import_closure
+
+    sources = {
+        "consumer.py": b"from provider import VALUE\n",
+        "provider.py": b"VALUE = 1\n",
+    }
+    context = sensor.signing_configuration_inventory(
+        sources, {name: sha256(value).hexdigest() for name, value in sources.items()}
+    )
+    proof = eager_import_closure(context["index"], (Path("consumer.py"),), set())
+    assert proof["closed"]
+    assert {row["path"] for row in proof["sources"]} == {"consumer.py", "provider.py"}
+    assert proof["unresolved"] == []
+
+    sources["consumer.py"] = b"from missing_provider import VALUE\n"
+    context = sensor.signing_configuration_inventory(
+        sources, {name: sha256(value).hexdigest() for name, value in sources.items()}
+    )
+    blocked = eager_import_closure(context["index"], (Path("consumer.py"),), set())
+    assert not blocked["closed"]
+    assert blocked["unresolved"][0]["reason"] == "unmodeled_eager_import_effects"
+
+
+def test_close_selected_import_sources_records_closed_and_open_contracts():
+    from factoryline import semantic_credential_sensor as sensor
+    from factoryline.import_context import close_selected_import_sources
+
+    sources = {
+        "consumer.py": b"from provider import VALUE\n",
+        "provider.py": b"VALUE = 1\n",
+    }
+    context = sensor.signing_configuration_inventory(
+        sources, {name: sha256(value).hexdigest() for name, value in sources.items()}
+    )
+    selection, sites = Path("consumer.py"), (Path("consumer.py"),)
+    assert close_selected_import_sources(context, selection, sites, set()) is sites
+    assert context["selected_import_closures"][selection.as_posix()]["closed"]
+
+    sources["consumer.py"] = b"from missing_provider import VALUE\n"
+    context = sensor.signing_configuration_inventory(
+        sources, {name: sha256(value).hexdigest() for name, value in sources.items()}
+    )
+    assert close_selected_import_sources(context, selection, sites, set()) is None
+    blocked = context["selected_import_closures"][selection.as_posix()]
+    assert not blocked["closed"]
+    assert blocked["unresolved"][0]["reason"] == "unmodeled_eager_import_effects"
+
+
 @pytest.mark.parametrize(
     "target", ["service/settings.py", "service/service/settings.py"]
 )

@@ -284,6 +284,169 @@ def _captured_regular_package_root(root, path, inventory):
     return package_root
 
 
+def _script_statements(statements):
+    """Ignore standalone string expressions when matching a startup script."""
+    return [
+        node
+        for node in statements
+        if not (
+            isinstance(node, ast.Expr)
+            and isinstance(node.value, ast.Constant)
+            and isinstance(node.value.value, str)
+        )
+    ]
+
+
+def _script_import_layout(program, plain_imports, provider_import):
+    imported = tuple(sorted(ast.dump(node) for node in program))
+    plain = tuple(sorted(plain_imports))
+    with_provider = tuple(sorted((*plain_imports, provider_import)))
+    if imported not in (plain, with_provider):
+        return None
+    return imported == with_provider
+
+
+def _script_main_guard_matches(function, guard, empty_args):
+    signature = (
+        function.name,
+        ast.dump(function.args),
+        bool(function.decorator_list),
+        function.returns is None,
+        bool(getattr(function, "type_params", ())),
+    )
+    return signature == ("main", empty_args, False, True, False) and ast.dump(
+        guard
+    ) == ast.dump(
+        ast.parse(f'if __name__ == "__main__":\n    {function.name}()').body[0]
+    )
+
+
+def _script_entry_setting(body):
+    try:
+        setting = body[0].value.args[1].value
+    except (AttributeError, IndexError):
+        return None
+    return setting if isinstance(setting, str) else None
+
+
+def _script_body_matches(body, module_provider, setting, provider):
+    messages = [
+        node.value
+        for node in ast.walk(body[1])
+        if isinstance(node, ast.Constant) and isinstance(node.value, str)
+    ]
+    statements = [f'os.environ.setdefault("DJANGO_SETTINGS_MODULE", {setting!r})']
+    if not module_provider:
+        statements.append(
+            f"try:\n    {provider}\nexcept ImportError as exc:\n    raise ImportError({messages[0]!r}) from exc"
+            if isinstance(body[1], ast.Try) and len(messages) == 1
+            else provider
+        )
+    statements.append("execute_from_command_line(sys.argv)")
+    expected = ast.parse("\n".join(statements)).body
+    return [ast.dump(node) for node in body] == [ast.dump(node) for node in expected]
+
+
+def _management_script_contract(
+    tree, plain_imports, provider_import, empty_args, provider
+):
+    program = _script_statements(tree.body)
+    if len(program) not in (4, 5):
+        return None
+    function, guard = program[-2:]
+    if not isinstance(function, ast.FunctionDef):
+        return None
+    module_provider = _script_import_layout(
+        program[:-2], plain_imports, provider_import
+    )
+    if module_provider is None:
+        return None
+    if not _script_main_guard_matches(function, guard, empty_args):
+        return None
+    body = _script_statements(function.body)
+    if len(body) != (2 if module_provider else 3):
+        return None
+    setting = _script_entry_setting(body)
+    if setting is None:
+        return None
+    return (
+        (setting, body, module_provider)
+        if _script_body_matches(body, module_provider, setting, provider)
+        else None
+    )
+
+
+def _script_import_resolution_closed(context, resolved_ast_name):
+    index = context["index"]
+    return not any(
+        isinstance(node, (ast.Name, ast.Attribute))
+        and resolved_ast_name(node, context["aliases"][owner]).startswith(
+            ("sys.path", "sys.modules", "importlib.")
+        )
+        for owner, source in index.snapshots.items()
+        for node in ast.walk(source)
+    )
+
+
+def _captured_script_imports_safe(
+    context, path, tree, builtin_identity_closed, signing_provider_clear
+):
+    index = context["index"]
+    closure = eager_import_closure(index, (path,), {"django"})
+    script_sources = {path, *(parent / "__init__.py" for parent in path.parents)}
+    aliases = context["aliases"][path]
+    return (
+        index.validate(path)
+        and builtin_identity_closed(tree, aliases, {"__name__", "ImportError"})
+        and signing_provider_clear(tree, aliases, "django", context=context)
+        and closure["closed"]
+        and all(Path(row["path"]) in script_sources for row in closure["sources"])
+    )
+
+
+def _script_initializers(index, sources):
+    return {
+        parent / "__init__.py"
+        for source in sources
+        for parent in source.parents
+        if parent / "__init__.py" in index.snapshots
+    }
+
+
+def _captured_initializer_is_safe(index, path):
+    return index.validate(path) and all(
+        isinstance(node, ast.Expr)
+        and isinstance(node.value, ast.Constant)
+        and isinstance(node.value.value, str)
+        for node in index.snapshots[path].body
+    )
+
+
+def _captured_script_target(context, path, parts, origin, setting):
+    index = context["index"]
+    prefix = setting.split(".")
+    settings = path.parent.joinpath(*prefix).with_suffix(".py")
+    candidate = path.parent.joinpath(*parts).with_suffix(".py")
+    selected_settings = context.get("selected_settings_path")
+    if not (
+        settings in index.snapshots
+        and candidate in index.snapshots
+        and (
+            settings == selected_settings
+            if selected_settings is not None
+            else parts == prefix
+        )
+        and Path(origin).parent == settings.parent
+    ):
+        return None
+    if not all(index.validate(item) for item in (settings, candidate)):
+        return None
+    initializers = _script_initializers(index, (path, settings, candidate))
+    if not all(_captured_initializer_is_safe(index, item) for item in initializers):
+        return None
+    return candidate
+
+
 def captured_script_module(context, parts, origin):
     """Resolve ambiguity only for a closed, ordered default management startup."""
     from .review_audits import _resolved_ast_name
@@ -292,15 +455,8 @@ def captured_script_module(context, parts, origin):
         _signing_provider_clear,
     )
 
-    index, selected = context["index"], set()
-    if any(
-        isinstance(node, (ast.Name, ast.Attribute))
-        and _resolved_ast_name(node, context["aliases"][owner]).startswith(
-            ("sys.path", "sys.modules", "importlib.")
-        )
-        for owner, source in index.snapshots.items()
-        for node in ast.walk(source)
-    ):
+    index = context["index"]
+    if not _script_import_resolution_closed(context, _resolved_ast_name):
         return None
     plain_imports = [
         ast.dump(ast.parse(text).body[0]) for text in ("import os", "import sys")
@@ -308,117 +464,25 @@ def captured_script_module(context, parts, origin):
     provider = "from django.core.management import execute_from_command_line"
     provider_import = ast.dump(ast.parse(provider).body[0])
     empty_args = ast.dump(ast.parse("def main(): pass").body[0].args)
+    selected = set()
     for path, tree in index.snapshots.items():
-        program = [
-            node
-            for node in tree.body
-            if not (
-                isinstance(node, ast.Expr)
-                and isinstance(node.value, ast.Constant)
-                and isinstance(node.value.value, str)
-            )
-        ]
-        if len(program) not in (4, 5) or not isinstance(program[-2], ast.FunctionDef):
+        contract = _management_script_contract(
+            tree, plain_imports, provider_import, empty_args, provider
+        )
+        if contract is None:
             continue
-        function, guard = program[-2:]
-        imported = sorted(ast.dump(node) for node in program[:-2])
-        module_provider = imported == sorted([*plain_imports, provider_import])
-        body = [
-            node
-            for node in function.body
-            if not (
-                isinstance(node, ast.Expr)
-                and isinstance(node.value, ast.Constant)
-                and isinstance(node.value.value, str)
-            )
-        ]
-        if (
-            function.name != "main"
-            or imported != sorted(plain_imports)
-            and not module_provider
-            or ast.dump(guard)
-            != ast.dump(
-                ast.parse(f'if __name__ == "__main__":\n    {function.name}()').body[0]
-            )
-            or ast.dump(function.args) != empty_args
-            or function.decorator_list
-            or function.returns is not None
-            or getattr(function, "type_params", ())
-            or len(body) != (2 if module_provider else 3)
-            or not isinstance(body[0], ast.Expr)
-            or not isinstance(body[0].value, ast.Call)
-            or len(body[0].value.args) != 2
-            or not isinstance(body[0].value.args[1], ast.Constant)
-            or not isinstance(body[0].value.args[1].value, str)
+        setting, _body, _module_provider = contract
+        if not _captured_script_imports_safe(
+            context,
+            path,
+            tree,
+            _security_builtin_identity_closed,
+            _signing_provider_clear,
         ):
             continue
-        setting = body[0].value.args[1].value
-        statements = [f'os.environ.setdefault("DJANGO_SETTINGS_MODULE", {setting!r})']
-        if not module_provider:
-            messages = [
-                node.value
-                for node in ast.walk(body[1])
-                if isinstance(node, ast.Constant) and isinstance(node.value, str)
-            ]
-            statements.append(
-                f"try:\n    {provider}\nexcept ImportError as exc:\n    raise ImportError({messages[0]!r}) from exc"
-                if isinstance(body[1], ast.Try) and len(messages) == 1
-                else provider
-            )
-        statements.append("execute_from_command_line(sys.argv)")
-        expected = ast.parse("\n".join(statements)).body
-        aliases = context["aliases"][path]
-        closure = eager_import_closure(index, (path,), {"django"})
-        script_sources = {path, *(parent / "__init__.py" for parent in path.parents)}
-        if (
-            [ast.dump(node) for node in body] != [ast.dump(node) for node in expected]
-            or not index.validate(path)
-            or not _security_builtin_identity_closed(
-                tree, aliases, {"__name__", "ImportError"}
-            )
-            or not _signing_provider_clear(tree, aliases, "django", context=context)
-            or not closure["closed"]
-            or any(
-                Path(row["path"]) not in script_sources for row in closure["sources"]
-            )
-        ):
-            continue
-        prefix = setting.split(".")
-        settings = path.parent.joinpath(*prefix).with_suffix(".py")
-        candidate = path.parent.joinpath(*parts).with_suffix(".py")
-        selected_settings = context.get("selected_settings_path")
-        initializers = {
-            parent / "__init__.py"
-            for source in (path, settings, candidate)
-            for parent in source.parents
-            if parent / "__init__.py" in index.snapshots
-        }
-        if (
-            settings not in index.snapshots
-            or candidate not in index.snapshots
-            or (
-                settings != selected_settings
-                if selected_settings is not None
-                else parts != prefix
-            )
-            or Path(origin).parent != settings.parent
-            or not all(index.validate(item) for item in (settings, candidate))
-            or any(
-                not index.validate(item)
-                or any(
-                    not (
-                        isinstance(node, ast.Expr)
-                        and isinstance(node.value, ast.Constant)
-                        and isinstance(node.value.value, str)
-                    )
-                    for node in index.snapshots[item].body
-                )
-                for item in initializers
-            )
-        ):
-            continue
-        # This proves a default script path; ambient overrides remain outside it.
-        selected.add(candidate)
+        candidate = _captured_script_target(context, path, parts, origin, setting)
+        if candidate is not None:
+            selected.add(candidate)
     return next(iter(selected)) if len(selected) == 1 else None
 
 
@@ -624,6 +688,18 @@ def import_resolution_helpers():
         captured_import_module,
         _captured_import_statement,
         captured_import_inventory,
+        captured_script_module,
+        _script_statements,
+        _script_import_layout,
+        _script_main_guard_matches,
+        _script_entry_setting,
+        _script_body_matches,
+        _management_script_contract,
+        _script_import_resolution_closed,
+        _captured_script_imports_safe,
+        _script_initializers,
+        _captured_initializer_is_safe,
+        _captured_script_target,
         _full_repository_workspace_cached_source_entry,
         _full_repository_workspace_cache_load_source,
         _workspace_security_configuration,
@@ -886,6 +962,7 @@ def _finite_key_reflection_call(node, loop, parents, aliases, key):
 
 
 def close_selected_import_sources(context, selection, sites, modeled_roots):
+    """Record a captured import closure and retain sources only when it is complete."""
     if not sites:
         return sites
     proof = eager_import_closure(context["index"], sites, modeled_roots)

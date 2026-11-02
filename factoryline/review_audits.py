@@ -3772,7 +3772,13 @@ def _oracle_context_cache_key(
     from .credential_role_identity_effects import security_value_helper_epoch
 
     helpers += security_value_helper_epoch()
+    from . import credential_endpoint_admission
+
     identity = {
+        "credential_bindings": [
+            (name, id(value), id(getattr(value, "__code__", None)))
+            for name, value in sorted(vars(credential_endpoint_admission).items())
+        ],
         "schema": integrity.credential_context_cache_schema(),
         "root": root.as_posix() if captured else root.resolve().as_posix(),
         "sources": manifest,

@@ -344,7 +344,7 @@ def endpoint_admission_helpers():
     from .credential_role_method_use_getter_audit import RecordProjectionIndex
 
     return (
-        *catalog_callable_helpers(),
+        *catalog_callable_helpers(complete=True),
         *helpers,
         *(
             method
@@ -354,9 +354,19 @@ def endpoint_admission_helpers():
     )
 
 
-def catalog_callable_helpers():
-    """Track every named namespace slot, including replaced helper bindings."""
-    return tuple(value for name, value in sorted(globals().items()))
+def catalog_callable_helpers(*, complete=False):
+    """Return catalog callables, optionally covering every module callable."""
+    names = (
+        globals()
+        if complete
+        else (
+            "urlsplit _unique_object _public_https endpoint_metadata "
+            "matches_endpoint_declaration _catalog_digest _entry _reviewed_entry "
+            "_declaration _read _catalog_bytes catalog_content_digest "
+            "endpoint_publications endpoint_publication"
+        ).split()
+    )
+    return tuple(globals()[name] for name in sorted(names) if callable(globals()[name]))
 
 
 def validation_helpers():
@@ -378,7 +388,7 @@ def validation_helpers():
             for value in (getattr(value, "__func__", value),)
             if callable(value)
         )
-        + catalog_callable_helpers()
+        + catalog_callable_helpers(complete=True)
     )
 
 
@@ -4229,6 +4239,7 @@ class _CredentialHandlerIndex:
 
     @staticmethod
     def django_middleware_order(values):
+        """Require unique session, authentication and message middleware in order."""
         positions = {item.value: n for n, item in enumerate(values)}
         if any(
             sum(item.value == name for item in values) != 1

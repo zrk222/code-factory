@@ -49,48 +49,9 @@ def build_retrieval_context(finding, index, requirement, retriever):
 
     context = build_informed_sink_context(finding, index)
     if context["status"] == "SINK_LOCATION_UNRESOLVED":
-        path = index.root / finding["path"]
-        matches = [
-            node
-            for node in ast.walk(index.snapshots[path])
-            if isinstance(node, (ast.Assign, ast.AnnAssign))
-            if node.lineno == finding.get("line")
-            if node.col_offset == finding.get("column")
-            if all(
-                finding.get(key, getattr(node, attr)) == getattr(node, attr)
-                for key, attr in [
-                    ("end_line", "end_lineno"),
-                    ("end_column", "end_col_offset"),
-                ]
-            )
-        ]
-        if (
-            not str(finding.get("code", "")).startswith("SECURITY_")
-            or len(matches) != 1
-        ):
-            raise JevClassificationError(context["status"])
-        node = matches[0]
-        context = _informed_failure(
-            "INCOMPLETE", "assignment_consumer_closure_unresolved"
+        context = _unresolved_declaration_context(
+            finding, index, context, JevClassificationError, _informed_failure
         )
-        context["excerpts"] = [
-            {
-                "path": finding["path"],
-                "sha256": index.inventory[path],
-                "start_line": node.lineno,
-                "end_line": node.end_lineno,
-                "kind": "declaration",
-                "content": "".join(
-                    index.source_bytes[path]
-                    .decode("utf-8")
-                    .splitlines(keepends=True)[node.lineno - 1 : node.end_lineno]
-                ),
-            }
-        ]
-        context["dependency_sources"] = [
-            {"path": finding["path"], "sha256": index.inventory[path]}
-        ]
-        _declaration_neighborhood(context, index, path, node)
     if context["status"] not in {"CAPTURED", "INCOMPLETE"}:
         raise JevClassificationError(context["status"])
     path = index.root / finding["path"]
@@ -155,6 +116,50 @@ def build_retrieval_context(finding, index, requirement, retriever):
     )
     if "structural_context" in context:
         _declaration_transport_budget(context, finding, index, requirement)
+    return context
+
+
+def _unresolved_declaration_context(
+    finding, index, context, classification_error, informed_failure
+):
+    """Build conservative context from one exact security assignment span."""
+    path = index.root / finding["path"]
+    matches = [
+        node
+        for node in ast.walk(index.snapshots[path])
+        if isinstance(node, (ast.Assign, ast.AnnAssign))
+        if node.lineno == finding.get("line")
+        if node.col_offset == finding.get("column")
+        if all(
+            finding.get(key, getattr(node, attr)) == getattr(node, attr)
+            for key, attr in (
+                ("end_line", "end_lineno"),
+                ("end_column", "end_col_offset"),
+            )
+        )
+    ]
+    if len(matches) != 1 or not str(finding.get("code", "")).startswith("SECURITY_"):
+        raise classification_error(context["status"])
+    node = matches[0]
+    context = informed_failure("INCOMPLETE", "assignment_consumer_closure_unresolved")
+    context["excerpts"] = [
+        {
+            "path": finding["path"],
+            "sha256": index.inventory[path],
+            "start_line": node.lineno,
+            "end_line": node.end_lineno,
+            "kind": "declaration",
+            "content": "".join(
+                index.source_bytes[path]
+                .decode("utf-8")
+                .splitlines(keepends=True)[node.lineno - 1 : node.end_lineno]
+            ),
+        }
+    ]
+    context["dependency_sources"] = [
+        {"path": finding["path"], "sha256": index.inventory[path]}
+    ]
+    _declaration_neighborhood(context, index, path, node)
     return context
 
 

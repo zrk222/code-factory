@@ -5421,15 +5421,15 @@ def test_shared_django_route_witness_selection(
         )
 
 
-def test_helper_epoch_replacements_include_noncallable_bindings(monkeypatch):
+def test_helper_epoch_replacements_include_noncallable_bindings(monkeypatch, tmp_path):
     from factoryline import credential_endpoint_admission as admission
-    from factoryline.credential_role_constructor_provider import (
-        _helper_identity,
-        _same_helper_epoch,
-    )
+    from factoryline import review_audits as audit
 
     for replacement in (lambda: True, lambda: False, len, str, None):
-        before = tuple(map(_helper_identity, admission.validation_helpers()))
+        before = audit._oracle_context_cache_key(tmp_path, [], {})
+        assert audit._oracle_context_cache_key(tmp_path, [], {}) == before
         monkeypatch.setattr(admission, "_django_default_authority", replacement)
-        after = tuple(map(_helper_identity, admission.validation_helpers()))
-        assert not _same_helper_epoch(before, after)
+        assert audit._oracle_context_cache_key(tmp_path, [], {}) != before
+        helpers = admission.validation_helpers()
+        assert all(callable(item) and hasattr(item, "__name__") for item in helpers)
+        assert len(set(helpers)) > 0

@@ -1839,6 +1839,8 @@ def test_structural_oracle_finding_preserves_unverified_typecheck_state():
         "path": "tests/test_api.py",
         "line": 1,
         "column": 0,
+        "end_line": node.end_lineno,
+        "end_column": node.end_col_offset,
         "message": "Source-bound API construction passed; no type-checker receipt was verified.",
         "facts": {
             "symbol": "test_constructs",
