@@ -5,7 +5,11 @@ import { isAbsolute, relative, resolve, sep } from 'node:path';
 const encode = value => JSON.stringify(value);
 const HASH = /^[a-f0-9]{64}$/i;
 const REVISION = /^[a-f0-9]{40}$/i;
-const SAFE_RELPATH = /^(?!\/)(?!.*(?:^|\/)\.\.(?:\/|$))[\w./@+-]{1,512}$/;
+// Lexical intake only; captured sources still require physical containment and exact hashes.
+const SAFE_RELPATH = { test: value => typeof value === 'string' && value.length > 0
+  && value.length <= 512 && Buffer.byteLength(value, 'utf8') <= 512
+  && !/[\\:\p{Cc}\p{Cs}]/u.test(value)
+  && value.split('/').every(part => part !== '' && part !== '.' && part !== '..' && !/[. ]$/.test(part)) };
 const SECRET_KEY = /(?:secret|token|password|credential|private[_-]?key|authorization|api[_-]?key|raw[_-]?value)/i;
 const SECRET_VALUE = /(?:-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----|\b(?:sk-[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9]{20,}|AKIA[A-Z0-9]{16})\b)/;
 const ACTIONABILITY_SLOTS = {
@@ -17,7 +21,7 @@ const ACTIONABILITY_SLOTS = {
 export function createEvidenceValidators({ requireValue, object, sha, TrialError, readBounded }) {
   const dependencies = { requireValue, object, sha, TrialError, readBounded };
   const EVIDENCE_PROFILES = new Set(['static', 'secrets', 'configuration', 'dependencies', 'runtime', 'fuzz', 'security_actionability']);
-  return { EVIDENCE_PROFILES, validateEvidenceReviewCases: validateEvidenceReviewCases.bind(null, dependencies), validateTestOracleCases: validateTestOracleCases.bind(null, dependencies), verifySourceBindings: verifySourceBindings.bind(null, dependencies), validateNoRawSecrets: validateNoRawSecrets.bind(null, dependencies), validateActionabilityState: validateActionabilityState.bind(null, dependencies), actionabilityContextComplete: actionabilityContextComplete.bind(null, dependencies) };
+  return { EVIDENCE_PROFILES, validateEvidenceReviewCases: validateEvidenceReviewCases.bind(null, dependencies), validateTestOracleCases: validateTestOracleCases.bind(null, dependencies), verifySourceBindings: verifySourceBindings.bind(null, dependencies), validateNoRawSecrets: validateNoRawSecrets.bind(null, dependencies), validateActionabilityState: validateActionabilityState.bind(null, dependencies) };
 }
 
 function validateBoundArtifact(dependencies, artifact, candidate) {
@@ -109,14 +113,6 @@ function validateNoRawSecrets(dependencies, value, key = '') {
   }
 }
 
-function actionabilityContextComplete(dependencies, evidence) {
-  const { object } = dependencies;
-  const context = evidence.actionability;
-  return object(context) && Object.entries(ACTIONABILITY_SLOTS).every(([name, status]) =>
-    context[name]?.status === status && context[name].artifacts.some(ref => sourceSpanBound(dependencies, ref, evidence.artifacts)))
-    && (!context.unknowns || context.unknowns.length === 0);
-}
-
 function sourceSpanBound(dependencies, ref, artifacts) {
   const matches = artifacts.filter(artifact => artifact.path === ref.path && artifact.sha256 === ref.sha256);
   const lines = matches.length === 1 ? matches[0].content.replace(/\r?\n$/, '').split(/\r?\n/) : [];
@@ -145,7 +141,7 @@ function validateActionabilityState(dependencies, state) {
   'invalid_source_dependencies');
   validateOutboundStrings(dependencies, state);
   validateRetrievalTransport(dependencies, state);
-  if (context === undefined) return; // Missing semantic context abstains locally.
+  if (context === undefined) return; // Missing semantics remain a review question.
   requireValue(object(context) && Object.keys(context).every(key => Object.hasOwn(ACTIONABILITY_SLOTS, key) || key === 'unknowns')
     && (context.unknowns === undefined || (Array.isArray(context.unknowns) && context.unknowns.length <= 32
       && context.unknowns.every(value => typeof value === 'string' && value.length > 0 && value.length <= 1024))),

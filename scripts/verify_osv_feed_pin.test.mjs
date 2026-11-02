@@ -2,8 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-const sha256 = '95b325be6311d4d9ee90adf4207e73194e92480c2a72a71bbc3ac39fc74e0be5';
-const generation = '1792839797362039';
+const sha256 = '185c442aaa1441952582615f5543fad026b6ec13df4b03ed0d18ac3389001abc';
+const generation = '1793594892933509';
 
 test('OSV PyPI feed pin binds the immutable GCS generation and checksum everywhere', () => {
   const dockerfile = readFileSync('deploy/deep-adapters/Dockerfile', 'utf8');

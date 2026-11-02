@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { mkdtemp, readFile, writeFile, rm, symlink, mkdir, chmod, stat, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import test from 'node:test';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -46,13 +46,15 @@ test('evidence validator services stay captured when the caller mutates its depe
   assert.equal(second.EVIDENCE_PROFILES.has('local-only'), false);
 });
 
-async function informedFixture(root) {
+async function informedFixture(root, sourcePath = 'endpoint.py', helperPath = 'helper.py') {
   const hash = value => createHash('sha256').update(value).digest('hex');
   const content = '# unrelated header\r\ndef load(payload):\r\n    return pickle.loads(payload)\r\n';
   const helper = 'def caller(body):\n    return load(body)\n';
-  await writeFile(join(root, 'endpoint.py'), content);
-  await writeFile(join(root, 'helper.py'), helper);
-  const candidate = { commit: 'a'.repeat(40), path: 'endpoint.py', sha256: hash(content) };
+  await mkdir(dirname(join(root, sourcePath)), { recursive: true });
+  await mkdir(dirname(join(root, helperPath)), { recursive: true });
+  await writeFile(join(root, sourcePath), content);
+  await writeFile(join(root, helperPath), helper);
+  const candidate = { commit: 'a'.repeat(40), path: sourcePath, sha256: hash(content) };
   const excerpt = content.slice(content.indexOf('def load'));
   const artifact = { kind: 'source_excerpt', path: candidate.path, content: excerpt, sha256: hash(excerpt),
     candidate_commit: candidate.commit, candidate_sha256: candidate.sha256,
@@ -63,8 +65,107 @@ async function informedFixture(root) {
     .map(([key, status]) => [key, { status, artifacts: [ref] }]));
   return { id: 'informed', state: { requirement: 'Is the source-supported deserialization an actionable defect?', candidate,
     evidence: { location: { path: candidate.path, start_line: 3, end_line: 3 }, artifacts: [artifact], actionability,
-      dependencies: [{ path: 'helper.py', sha256: hash(helper) }] } } };
+      dependencies: [{ path: helperPath, sha256: hash(helper) }] } } };
 }
+
+for (const [name, sourcePath, helperPath] of [
+  ['braces', '{{project}}/endpoint.py', '{{project}}/helper.py'],
+  ['spaces', 'my project/end point.py', 'my project/help er.py'],
+  ['Unicode', 'caf\u00e9/\u5165\u53e3.py', 'caf\u00e9/\u52a9\u624b.py'],
+]) test(`portable source paths load captured ${name} names in every intake role`, async () => {
+  const root = await mkdtemp(join(tmpdir(), 'jev-path-'));
+  try {
+    const item = await informedFixture(root, sourcePath, helperPath);
+    const source = item.state.evidence.artifacts[0];
+    const hash = value => createHash('sha256').update(value).digest('hex');
+    item.state.evidence.dependencies.push({ path: sourcePath, sha256: source.source_binding.sha256 });
+    const retrieval = { schema: 'factory.retrieval-transport.v1', status: 'DELIVERED_UNVALIDATED', authority: 'none',
+      classification_effect: 'NONE', consumption: 'UNASSESSED', validated_trace_edges: 0,
+      coverage: 'RANKED_SUBSET_NOT_EXHAUSTIVE', finding_sha256: 'b'.repeat(64), source_manifest_sha256: 'c'.repeat(64),
+      query_sha256: hash(item.state.requirement), delivered_hints: 1,
+      hint_manifest: [{ ...source.source_binding, content_sha256: source.sha256 }] };
+    const content = JSON.stringify({ schema: 'factory.informed-sink-context.v1', status: 'CAPTURED', truncation: [], retrieval });
+    item.state.evidence.artifacts.push({ kind: 'native_sink_evidence', path: 'evidence/review context.json', content,
+      sha256: hash(content), candidate_commit: item.state.candidate.commit, candidate_sha256: item.state.candidate.sha256 });
+    const input = join(root, 'cases.json');
+    const framework = fileURLToPath(new URL('../factoryline/data/judge_framework.json', import.meta.url));
+    await writeFile(input, JSON.stringify([item]));
+    assert.deepEqual((await loadTrial(input, framework, 'security_actionability', undefined, root)).cases, [item]);
+    const invalid = structuredClone(item);
+    const ledger = JSON.parse(invalid.state.evidence.artifacts.at(-1).content);
+    ledger.retrieval.hint_manifest[0].path = null;
+    invalid.state.evidence.artifacts.at(-1).content = JSON.stringify(ledger);
+    invalid.state.evidence.artifacts.at(-1).sha256 = hash(invalid.state.evidence.artifacts.at(-1).content);
+    await writeFile(input, JSON.stringify([invalid]));
+    await assert.rejects(loadTrial(input, framework, 'security_actionability', undefined, root), /retrieval_hint_not_delivered/);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('portable source paths reject unsafe lexical forms and nonstrings at each intake gate', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'jev-path-invalid-'));
+  try {
+    const item = await informedFixture(root);
+    const framework = fileURLToPath(new URL('../factoryline/data/judge_framework.json', import.meta.url));
+    const input = join(root, 'cases.json');
+    const setters = [
+      (state, path) => { state.candidate.path = path; },
+      (state, path) => { state.evidence.artifacts[0].path = path; },
+      (state, path) => { state.evidence.artifacts[0].source_binding.path = path; },
+      (state, path) => { state.evidence.dependencies[0].path = path; },
+      (state, path) => { state.evidence.location.path = path; },
+    ];
+    for (const path of [null, 1, {}, '', '/absolute.py', 'C:/drive.py', '//server/share.py', '\\server\\share.py',
+      'dir\\file.py', 'file.py:stream', 'bad\u0000.py', 'bad\u0085.py', 'dir//file.py', './file.py', 'dir/../file.py', 'dir/.',
+      'dir /file.py', 'dir./file.py', 'file.py ', 'file.py.']) {
+      const copy = structuredClone(item); setters[0](copy.state, path);
+      await writeFile(input, JSON.stringify([copy]));
+      await assert.rejects(loadTrial(input, framework, 'security_actionability', undefined, root), /invalid_review_candidate_binding/);
+    }
+    for (const set of setters.slice(1)) {
+      const copy = structuredClone(item); set(copy.state, null);
+      await writeFile(input, JSON.stringify([copy]));
+      await assert.rejects(loadTrial(input, framework, 'security_actionability', undefined, root), /invalid_|missing_static_source/);
+    }
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('portable source paths keep the 512 UTF-8 byte limit', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'jev-path-bound-'));
+  try {
+    const path = `${'a'.repeat(200)}/${'b'.repeat(200)}/${'c'.repeat(107)}.py`;
+    assert.equal(Buffer.byteLength(path), 512);
+    const item = await informedFixture(root, path);
+    const input = join(root, 'cases.json');
+    const framework = fileURLToPath(new URL('../factoryline/data/judge_framework.json', import.meta.url));
+    await writeFile(input, JSON.stringify([item]));
+    await loadTrial(input, framework, 'security_actionability', undefined, root);
+    item.state.candidate.path = `${'\u00e9'.repeat(255)}.py`;
+    assert.equal(Buffer.byteLength(item.state.candidate.path), 513);
+    await writeFile(input, JSON.stringify([item]));
+    await assert.rejects(loadTrial(input, framework, 'security_actionability', undefined, root), /invalid_review_candidate_binding/);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test('portable source path admission still rejects stale bytes and symlink escapes', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'jev-path-physical-'));
+  const outside = await mkdtemp(join(tmpdir(), 'jev-path-outside-'));
+  try {
+    const item = await informedFixture(root, '{{project}}/end point.py', 'caf\u00e9/helper.py');
+    const input = join(root, 'cases.json');
+    const framework = fileURLToPath(new URL('../factoryline/data/judge_framework.json', import.meta.url));
+    await writeFile(input, JSON.stringify([item]));
+    await writeFile(join(root, item.state.candidate.path), '# stale bytes\n');
+    await assert.rejects(loadTrial(input, framework, 'security_actionability', undefined, root), /source_binding_stale/);
+    await informedFixture(root, item.state.candidate.path, 'caf\u00e9/helper.py');
+    await rm(join(root, 'caf\u00e9'), { recursive: true });
+    await writeFile(join(outside, 'helper.py'), 'def caller(body):\n    return load(body)\n');
+    await symlink(outside, join(root, 'caf\u00e9'), 'junction');
+    await assert.rejects(loadTrial(input, framework, 'security_actionability', undefined, root), /source_path_invalid/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+    await rm(outside, { recursive: true, force: true });
+  }
+});
 
 test('retrieval transport rejects missing receipts and dropped or altered source hints', async () => {
   const root = await mkdtemp(join(tmpdir(), 'jev-retrieval-'));
@@ -129,10 +230,11 @@ test('sufficiency-only dispatch preserves unknowns and cannot produce actionabil
     };
     const options = { live: true, apiKey: 'mock', profile: 'security_actionability', sourceRoot: root, fetchImpl: transport };
     const normal = await evaluateCases([item], rubric, options);
-    assert.equal(calls, 0);
-    assert.equal(normal.results[0].admission, 'not_run');
-    const diagnostic = await evaluateCases([item], rubric, { ...options, evidenceSufficiencyOnly: true });
     assert.equal(calls, 1);
+    assert.equal(normal.results[0].admission, 'admitted');
+    assert.equal(normal.results[0].prediction, true);
+    const diagnostic = await evaluateCases([item], rubric, { ...options, evidenceSufficiencyOnly: true });
+    assert.equal(calls, 2);
     assert.equal(diagnostic.results[0].provider_finding_probability, 0.99);
     assert.equal(diagnostic.results[0].evidence_probability, 0.99);
     assert.equal(diagnostic.results[0].prediction, null);
@@ -146,7 +248,7 @@ test('sufficiency-only dispatch preserves unknowns and cannot produce actionabil
     await writeFile(join(root, 'endpoint.py'), '# changed source\n');
     const stale = await evaluateCases([item], rubric, { ...options, evidenceSufficiencyOnly: true });
     assert.equal(stale.results[0].status, 'error');
-    assert.equal(calls, 1);
+    assert.equal(calls, 2);
     await assert.rejects(evaluateCases([item], rubric, { ...options, profile: undefined, evidenceSufficiencyOnly: true }), /invalid_sufficiency_mode/);
     assert.equal(parseArgs(['--cases', 'a', '--rubric', 'b', '--profile', 'security_actionability', '--evidence-sufficiency-only']).evidenceSufficiencyOnly, true);
   } finally { await rm(root, { recursive: true, force: true }); }
@@ -536,7 +638,7 @@ test('security actionability profile dispatches only candidate-bound source cont
   } finally { await rm(dir, { recursive: true, force: true }); }
 });
 
-test('security actionability profile locally abstains on missing or unknown context without transport', async () => {
+test('source-bound semantic unknowns reach review unchanged and may be decided or unresolved', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'cf-jev-security-actionability-unknown-'));
   try {
     const framework = fileURLToPath(new URL('../factoryline/data/judge_framework.json', import.meta.url));
@@ -575,15 +677,23 @@ test('security actionability profile locally abstains on missing or unknown cont
     const report = await runCliRaw(['--cases', casesPath, '--rubric', rubricPath,
       '--profile', 'security_actionability', '--budget-policy', policyPath, '--live'], {
       env: { AI_GATEWAY_API_KEY: 'mock' }, archiveRoot, archiveBoundary: dir,
-      fetchImpl: async () => { calls++; return answer(0.99); },
+      fetchImpl: async (_url, request) => {
+        const supplied = JSON.parse(request.body);
+        assert.deepEqual(supplied.state, cases[calls].state);
+        assert.equal(Object.hasOwn(supplied, 'expected'), false);
+        const outcomes = [[0.99, 0.4], [0.01, 0.99], [0.99, 0.99]];
+        const [finding, sufficient] = outcomes[calls++];
+        return answer(finding, {}, sufficient);
+      },
     });
-    assert.equal(calls, 0);
-    assert.deepEqual(report.results.map((row) => row.status), ['abstain', 'abstain', 'abstain']);
-    assert.deepEqual(report.results.map((row) => row.abstention_reason),
-      ['insufficient_actionability_context', 'insufficient_actionability_context', 'insufficient_actionability_context']);
-    assert.ok(report.results.every((row) => row.prediction === null && row.probability === null
-      && row.evidence_probability === null && row.admission === 'not_run'));
-    assert.equal(report.dispatch_budget.provider_reported_cost_usd, 0);
+    assert.equal(calls, 3);
+    assert.deepEqual(report.results.map((row) => row.status), ['abstain', 'decided', 'decided']);
+    assert.equal(report.results[0].abstention_reason, 'insufficient_evidence');
+    assert.deepEqual(report.results.map((row) => row.prediction), [null, false, true]);
+    assert.ok(report.results.every((row) => row.admission === 'admitted'
+      && row.source_verification === 'VERIFIED_CURRENT'));
+    assert.equal(report.authority.scanner_override, false);
+    assert.ok(Math.abs(report.dispatch_budget.provider_reported_cost_usd - 0.00003) < 1e-12);
     const journalPath = join(archiveRoot, report.tracking.journal_filename);
     const journalBytes = await readFile(journalPath);
     assert.equal((await verifyJournal(journalPath, { expectedJournalSha256:

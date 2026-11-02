@@ -4997,6 +4997,13 @@ def oracle_bound_row(audit, workspace: Path, row: dict, sources: dict) -> None:
         )
 
 
+def _seal_runtime_reconciliation(audit, core, reconciled):
+    rows = [item["static_finding"] for item in reconciled]
+    if rows:
+        return audit._seal_security_scan(core, _verified_runtime_rows=rows)
+    return audit._seal_security_scan(core)
+
+
 def reconcile_runtime_oracles(
     audit, workspace: Path, core: dict, evidence: tuple
 ) -> dict:
@@ -5062,13 +5069,19 @@ def reconcile_runtime_oracles(
         ) from error
     rows = {(row["path"], row["line"], row["symbol"]): row for row in verified["tests"]}
     retained, reconciled = [], []
+    from .audit_action_refs import _security_scan_sync_runtime_coverage_ledger
 
     for finding in core["findings"]:
         key = (finding["path"], finding["line"], finding["facts"].get("symbol"))
         row = rows.get(key)
         arguments = (workspace, finding, row, verified.get("schema", ""))
         config_manifest = manifests.get(id(row), []) if row is not None else []
-        if audit.integrity.runtime_finding_coverage(*arguments, config_manifest):
+        before_coverage = copy.deepcopy(finding)
+        coverage_eligible = audit.integrity.runtime_finding_coverage(
+            *arguments, config_manifest
+        )
+        _security_scan_sync_runtime_coverage_ledger(core, before_coverage, finding)
+        if coverage_eligible:
             reconciled.append({"static_finding": finding, "runtime_evidence": row})
         else:
             retained.append(finding)
@@ -5088,7 +5101,7 @@ def reconcile_runtime_oracles(
         core["sources"], retained, coverage=core.get("audit_coverage")
     )
     core["action_summary"] = audit._security_scan_action_summary(core["state"])
-    return audit._seal_security_scan(core)
+    return _seal_runtime_reconciliation(audit, core, reconciled)
 
 
 def _full_repository_workspace_context_state(

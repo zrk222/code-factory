@@ -3,10 +3,12 @@
 import ast
 from copy import deepcopy
 import hashlib
+import json
 from types import SimpleNamespace
 
 import pytest
 
+from factoryline import audit_action_refs
 from factoryline import credential_endpoint_admission as admission
 from factoryline.credential_endpoint_admission import endpoint_binding
 
@@ -142,6 +144,7 @@ def test_real_scanner_partition_uses_current_coordinator(
         path.write_bytes(raw)
     for _ in range(2):
         result = security_scan(root, cache_enabled=cache_enabled)
+        assert result["finding_conservation"]["state"] == "PASS"
         assert not [
             f for f in result["findings"] if f["code"] == "SECURITY_HARDCODED_SECRET"
         ]
@@ -153,6 +156,700 @@ def test_real_scanner_partition_uses_current_coordinator(
         assert len(observations) == 1
         assert observations[0]["severity"] == "CRITICAL"
         assert observations[0]["facts"]["credential_safety"] == "UNASSESSED"
+
+
+def _seal_core():
+    first = {
+        "code": "SECURITY_HARDCODED_SECRET",
+        "path": "client.py",
+        "line": 2,
+        "column": 4,
+        "severity": "CRITICAL",
+    }
+    second = {
+        "code": "SECURITY_SQL_INJECTION",
+        "path": "client.py",
+        "line": 8,
+        "column": 0,
+        "severity": "HIGH",
+    }
+    return {
+        "state": "FINDINGS",
+        "action_summary": "Two source findings require review.",
+        "findings": [first],
+        "context_reviews": [second],
+        "primitive_observations": [],
+        "finding_tier_report": {
+            "ledger": [
+                {"raw_finding": first, "tier": "NEEDS_CONTEXT"},
+                {"raw_finding": second, "tier": "NEEDS_CONTEXT"},
+            ]
+        },
+        "_primitive_source_bytes": {"client.py": b"private captured source"},
+    }
+
+
+def _seal_audit(partition):
+    action_calls = []
+
+    def remediation(candidate, finding, **kwargs):
+        action_calls.append(finding)
+        return audit_action_refs.audit_remediation_packet(
+            candidate,
+            finding,
+            kwargs.get("source_bound_security_precondition"),
+        )
+
+    audit = SimpleNamespace(
+        integrity=SimpleNamespace(partition_proven_primitive_observations=partition),
+        _security_scan_report_candidate_payload=(
+            audit_action_refs._security_scan_report_candidate_payload
+        ),
+        audit_remediation_packet=remediation,
+    )
+    return audit, action_calls
+
+
+@pytest.mark.parametrize("failure_point", ["prepare", "partition", "policy"])
+def test_security_scan_seal_failure_is_transactional_and_retryable(
+    monkeypatch, failure_point
+):
+    core = _seal_core()
+    before = deepcopy(core)
+    audit, _ = _seal_audit(lambda *_: None)
+
+    def fail_prepare(working, prior):
+        original_prepare(working, prior)
+        working["partial_prepare"] = True
+        raise RuntimeError("injected preparation failure")
+
+    def fail_partition(working, *_):
+        working["findings"].append({"code": "SECURITY_PARTIAL"})
+        raise RuntimeError("injected partition failure")
+
+    def fail_policy(_audit, working, *_):
+        working["finding_tier_report"]["ledger"].append({"partial": True})
+        raise RuntimeError("injected policy failure")
+
+    original_prepare = audit_action_refs._prepare_security_scan_sources
+    with monkeypatch.context() as patcher:
+        patcher.setattr(
+            audit_action_refs, "_security_scan_verification_state", lambda *_: None
+        )
+        patcher.setattr(
+            audit_action_refs, "_apply_security_scan_configuration", lambda *_: None
+        )
+        if failure_point == "prepare":
+            patcher.setattr(
+                audit_action_refs, "_prepare_security_scan_sources", fail_prepare
+            )
+        elif failure_point == "partition":
+            audit.integrity.partition_proven_primitive_observations = fail_partition
+        else:
+            patcher.setattr(
+                audit_action_refs, "_apply_security_scan_policy", fail_policy
+            )
+        with pytest.raises(RuntimeError, match="injected"):
+            audit_action_refs.seal_security_scan(audit, core)
+
+    assert core == before
+
+    monkeypatch.setattr(
+        audit_action_refs, "_security_scan_verification_state", lambda *_: None
+    )
+    monkeypatch.setattr(
+        audit_action_refs, "_apply_security_scan_policy", lambda *_: None
+    )
+    monkeypatch.setattr(
+        audit_action_refs, "_apply_security_scan_configuration", lambda *_: None
+    )
+    audit.integrity.partition_proven_primitive_observations = lambda *_: None
+    first = audit_action_refs.seal_security_scan(audit, core)
+    first_actions = deepcopy(first["agent_actions"])
+    second = audit_action_refs.seal_security_scan(audit, first)
+    assert [row["code"] for row in second["findings"]] == [
+        "SECURITY_HARDCODED_SECRET",
+        "SECURITY_SQL_INJECTION",
+    ]
+    assert second["agent_actions"] == first_actions
+    assert len(second["agent_actions"]) == 2
+    assert second["finding_conservation"]["state"] == "PASS"
+
+
+def test_security_scan_known_native_surface_mismatch_cannot_fallback_to_handoff(
+    monkeypatch,
+):
+    from factoryline import primitive_observation_binding as primitive
+
+    core = _seal_core()
+    core["selected_defect_policy"] = "trusted-core-v1"
+    first = deepcopy(core["findings"][0])
+    second = deepcopy(core["context_reviews"][0])
+    forged = {
+        "code": "SECURITY_FORGED",
+        "path": "client.py",
+        "line": 12,
+        "column": 0,
+        "severity": "HIGH",
+    }
+    core["context_reviews"].append(forged)
+    core["finding_tier_report"]["ledger"].append(
+        {"raw_finding": deepcopy(forged), "tier": "NEEDS_CONTEXT"}
+    )
+    core["defect_policy_decision"] = {
+        "state": "CLEAN",
+        "exit_code": 0,
+        "passed": True,
+        "clean": True,
+    }
+    audit, action_calls = _seal_audit(lambda *_: None)
+    monkeypatch.setattr(
+        audit_action_refs,
+        "_security_scan_verification_state",
+        lambda *_: ((None,), (), None, ()),
+    )
+    monkeypatch.setattr(
+        primitive,
+        "_trusted_core_native_security_rows",
+        lambda *_: [first, second],
+    )
+    monkeypatch.setattr(
+        audit_action_refs, "_apply_security_scan_policy", lambda *_: None
+    )
+    monkeypatch.setattr(
+        audit_action_refs, "_apply_security_scan_configuration", lambda *_: None
+    )
+
+    result = audit_action_refs.seal_security_scan(audit, core)
+
+    assert result["state"] == "BLOCKED"
+    assert result["finding_conservation"]["state"] == "FAILED"
+    assert result["finding_conservation"]["native_rows"] == "MISMATCH"
+    assert result["finding_conservation"]["native_surface_mismatch"] is True
+    assert result["finding_conservation"]["baseline_raw_diagnostics"] == [
+        first,
+        second,
+        forged,
+    ]
+    assert result["agent_actions"] == []
+    assert action_calls == []
+    assert result["defect_policy_decision"]["exit_code"] == 2
+    assert result["defect_policy_decision"]["passed"] is False
+    assert result["defect_policy_decision"]["clean"] is False
+
+
+def test_security_scan_native_reverification_change_cannot_fallback_to_handoff(
+    monkeypatch,
+):
+    from factoryline import primitive_observation_binding as primitive
+
+    core = _seal_core()
+    core["selected_defect_policy"] = "trusted-core-v1"
+    native_rows = [deepcopy(core["findings"][0]), deepcopy(core["context_reviews"][0])]
+    audit, action_calls = _seal_audit(lambda *_: None)
+    calls = 0
+
+    def verification_state(*_):
+        nonlocal calls
+        calls += 1
+        generation = "verified" if calls == 1 else "changed"
+        return ((generation,), (), None, ())
+
+    monkeypatch.setattr(
+        audit_action_refs, "_security_scan_verification_state", verification_state
+    )
+    monkeypatch.setattr(
+        primitive,
+        "_trusted_core_native_security_rows",
+        lambda *_: native_rows,
+    )
+    monkeypatch.setattr(
+        audit_action_refs, "_apply_security_scan_policy", lambda *_: None
+    )
+    monkeypatch.setattr(
+        audit_action_refs, "_apply_security_scan_configuration", lambda *_: None
+    )
+
+    result = audit_action_refs.seal_security_scan(audit, core)
+
+    assert result["state"] == "BLOCKED"
+    assert result["finding_conservation"]["state"] == "FAILED"
+    assert result["finding_conservation"]["native_rows"] == "INVALIDATED"
+    assert result["finding_conservation"]["native_verification_state_changed"] is True
+    assert result["finding_conservation"]["expected_security_rows"] == 2
+    assert result["agent_actions"] == []
+    assert action_calls == []
+
+
+def test_security_scan_conserves_exact_rejected_proof_transform(monkeypatch):
+    from factoryline import primitive_observation_binding as primitive
+
+    core = _seal_core()
+    finding = core["findings"][0]
+    finding["facts"] = {
+        "name": "TEST_SECRET",
+        "disposition": "PROVEN_LOCAL_CRYPTO_TEST_PRIMITIVE",
+    }
+    core["finding_tier_report"]["ledger"][0]["raw_finding"] = deepcopy(finding)
+    audit, _ = _seal_audit(lambda *_: None)
+
+    def reject_proof(_audit, working, *_):
+        working["findings"][0] = primitive.rejected_primitive_proof(
+            working["findings"][0]
+        )
+
+    monkeypatch.setattr(
+        audit_action_refs, "_security_scan_verification_state", lambda *_: None
+    )
+    monkeypatch.setattr(
+        audit_action_refs, "_apply_security_scan_policy", lambda *_: None
+    )
+    monkeypatch.setattr(
+        audit_action_refs, "_apply_security_scan_configuration", reject_proof
+    )
+
+    result = audit_action_refs.seal_security_scan(audit, core)
+
+    assert result["finding_conservation"]["state"] == "PASS"
+    assert result["finding_conservation"]["physical_matches_expected"] is True
+    assert result["finding_conservation"]["ledger_matches_expected"] is True
+    assert (
+        result["findings"][0]["facts"]["proof_rejection"] == "SOURCE_BINDING_MISMATCH"
+    )
+
+
+def test_security_scan_does_not_spend_one_raw_row_twice(monkeypatch):
+    from factoryline import primitive_observation_binding as primitive
+
+    core = _seal_core()
+    first = core["findings"][0]
+    first["facts"] = {"disposition": "PROVEN_LOCAL_CRYPTO_TEST_PRIMITIVE"}
+    core["finding_tier_report"]["ledger"][0]["raw_finding"] = deepcopy(first)
+    original = deepcopy(first)
+    audit, action_calls = _seal_audit(lambda *_: None)
+
+    def duplicate_one_row(_audit, working, *_):
+        rejected = primitive.rejected_primitive_proof(original)
+        working["findings"] = [deepcopy(original), rejected]
+
+    monkeypatch.setattr(
+        audit_action_refs, "_security_scan_verification_state", lambda *_: None
+    )
+    monkeypatch.setattr(
+        audit_action_refs, "_apply_security_scan_policy", lambda *_: None
+    )
+    monkeypatch.setattr(
+        audit_action_refs,
+        "_apply_security_scan_configuration",
+        duplicate_one_row,
+    )
+
+    result = audit_action_refs.seal_security_scan(audit, core)
+
+    assert result["state"] == "BLOCKED"
+    assert result["finding_conservation"]["state"] == "FAILED"
+    assert result["finding_conservation"]["physical_matches_expected"] is False
+    assert result["finding_conservation"]["ledger_matches_expected"] is True
+    assert result["agent_actions"] == []
+    assert action_calls == []
+
+
+@pytest.mark.parametrize("field", ["message", "end_column", "facts"])
+def test_security_scan_conservation_rejects_raw_payload_mutation(monkeypatch, field):
+    core = _seal_core()
+    finding = core["findings"][0]
+    finding.update(
+        message="original diagnostic",
+        end_line=2,
+        end_column=14,
+        facts={"name": "ORIGINAL_SECRET", "literal": "retained"},
+    )
+    core["finding_tier_report"]["ledger"][0]["raw_finding"] = deepcopy(finding)
+    audit, action_calls = _seal_audit(lambda *_: None)
+
+    def mutate_payload(_audit, working, *_):
+        if field == "facts":
+            working["findings"][0]["facts"]["name"] = "CHANGED_SECRET"
+        else:
+            working["findings"][0][field] = "changed diagnostic"
+
+    monkeypatch.setattr(
+        audit_action_refs, "_security_scan_verification_state", lambda *_: None
+    )
+    monkeypatch.setattr(
+        audit_action_refs, "_apply_security_scan_policy", lambda *_: None
+    )
+    monkeypatch.setattr(
+        audit_action_refs, "_apply_security_scan_configuration", mutate_payload
+    )
+
+    result = audit_action_refs.seal_security_scan(audit, core)
+
+    assert result["state"] == "BLOCKED"
+    assert result["finding_conservation"]["state"] == "FAILED"
+    assert result["finding_conservation"]["ledger_matches_expected"] is True
+    assert result["agent_actions"] == []
+    assert action_calls == []
+
+
+def test_security_scan_conservation_covers_nonsecurity_families(monkeypatch):
+    core = _seal_core()
+    diagnostic = {
+        "code": "QUALITY_UNKNOWN_TEST_ORACLE",
+        "path": "tests/test_client.py",
+        "line": 4,
+        "column": 0,
+        "severity": "MEDIUM",
+        "message": "Oracle state is unknown.",
+    }
+    core["findings"].append(diagnostic)
+    core["finding_tier_report"]["ledger"].append(
+        {"raw_finding": deepcopy(diagnostic), "tier": "NEEDS_CONTEXT"}
+    )
+    audit, action_calls = _seal_audit(lambda *_: None)
+
+    def drop_quality(_audit, working, *_):
+        working["findings"].pop()
+
+    monkeypatch.setattr(
+        audit_action_refs, "_security_scan_verification_state", lambda *_: None
+    )
+    monkeypatch.setattr(
+        audit_action_refs, "_apply_security_scan_policy", lambda *_: None
+    )
+    monkeypatch.setattr(
+        audit_action_refs, "_apply_security_scan_configuration", drop_quality
+    )
+
+    result = audit_action_refs.seal_security_scan(audit, core)
+
+    assert result["state"] == "BLOCKED"
+    assert result["finding_conservation"]["state"] == "FAILED"
+    assert result["finding_conservation"]["baseline_raw_diagnostics"][-1] == diagnostic
+    assert result["agent_actions"] == []
+    assert action_calls == []
+
+
+@pytest.mark.parametrize(
+    ("surface", "mutation"),
+    [
+        ("physical", "drop"),
+        ("physical", "duplicate"),
+        ("ledger", "drop"),
+        ("ledger", "duplicate"),
+    ],
+)
+def test_security_scan_postpolicy_conservation_blocks_and_preserves_diagnostics(
+    monkeypatch, surface, mutation
+):
+    from factoryline import primitive_observation_binding as primitive
+
+    core = _seal_core()
+    core["selected_defect_policy"] = "trusted-core-v1"
+    first, second = deepcopy(core["findings"][0]), deepcopy(core["context_reviews"][0])
+    native_rows = [first, second]
+    core["defect_policy_decision"] = {
+        "state": "CLEAN",
+        "exit_code": 0,
+        "passed": True,
+        "clean": True,
+    }
+    audit, action_calls = _seal_audit(lambda *_: None)
+    verified_state = ((None,), (), None, ())
+    monkeypatch.setattr(
+        audit_action_refs,
+        "_security_scan_verification_state",
+        lambda *_: verified_state,
+    )
+    monkeypatch.setattr(
+        primitive,
+        "_trusted_core_native_security_rows",
+        lambda *_: native_rows,
+    )
+
+    def corrupt_policy(_audit, working, *_):
+        working["defect_policy_decision"].update(
+            state="CLEAN", exit_code=0, passed=True, clean=True
+        )
+        if surface == "physical":
+            if mutation == "drop":
+                working["findings"].pop()
+            else:
+                working["findings"].append(deepcopy(first))
+        elif mutation == "drop":
+            working["finding_tier_report"]["ledger"].pop()
+        else:
+            working["finding_tier_report"]["ledger"].append(
+                {"raw_finding": deepcopy(first), "tier": "SUPPORTED_DEFECT"}
+            )
+
+    monkeypatch.setattr(
+        audit_action_refs, "_apply_security_scan_policy", corrupt_policy
+    )
+    result = audit_action_refs.seal_security_scan(audit, core)
+
+    assert result["state"] == "BLOCKED"
+    assert result["finding_conservation"]["state"] == "FAILED"
+    assert result["finding_conservation"]["native_rows"] == "VERIFIED"
+    assert result["finding_conservation"]["baseline_raw_diagnostics"] == [
+        first,
+        second,
+    ]
+    assert result["agent_actions"] == []
+    assert action_calls == []
+    assert result["defect_policy_decision"]["state"] == "BLOCKED"
+    assert result["defect_policy_decision"]["exit_code"] == 2
+    assert result["defect_policy_decision"]["passed"] is False
+    assert result["defect_policy_decision"]["clean"] is False
+    assert "no repair actions were emitted" in result["action_summary"]
+
+
+def test_security_scan_keeps_raw_duplicate_but_emits_one_handoff_action():
+    core = _seal_core()
+    first = deepcopy(core["findings"][0])
+    core["findings"] = [first, deepcopy(first)]
+    core["context_reviews"] = []
+    core["finding_tier_report"]["ledger"] = [
+        {"raw_finding": deepcopy(first), "tier": "NEEDS_CONTEXT"},
+        {"raw_finding": deepcopy(first), "tier": "NEEDS_CONTEXT"},
+    ]
+    audit, action_calls = _seal_audit(lambda *_: None)
+
+    result = audit_action_refs.seal_security_scan(audit, core)
+
+    assert len(result["findings"]) == 2
+    assert len(result["finding_tier_report"]["ledger"]) == 2
+    assert result["finding_conservation"]["state"] == "PASS"
+    assert len(result["agent_actions"]) == 1
+    assert len(action_calls) == 1
+
+
+@pytest.mark.parametrize(
+    "corruption",
+    [
+        "none",
+        "missing",
+        "wrong_candidate",
+        "wrong_finding",
+        "duplicate",
+        "mutate_input",
+    ],
+)
+def test_security_scan_rejects_unbound_remediation_packets(monkeypatch, corruption):
+    core = _seal_core()
+    expected_findings = deepcopy(core["findings"] + core["context_reviews"])
+    audit, _ = _seal_audit(lambda *_: None)
+    builder = audit.audit_remediation_packet
+    packets = []
+    calls = 0
+
+    def corrupt_builder(candidate, finding, **kwargs):
+        nonlocal calls
+        calls += 1
+        if corruption == "none":
+            return None
+        if corruption == "missing" and calls == 2:
+            return None
+        if corruption == "duplicate" and packets:
+            return deepcopy(packets[0])
+        if corruption == "mutate_input":
+            finding["message"] = "builder mutation must not escape"
+        packet = builder(candidate, finding, **kwargs)
+        if corruption == "wrong_candidate":
+            packet["candidate_sha256"] = "f" * 64
+        elif corruption == "wrong_finding":
+            packet["finding_context"]["message"] = "different finding"
+        packets.append(deepcopy(packet))
+        return packet
+
+    audit.audit_remediation_packet = corrupt_builder
+    monkeypatch.setattr(
+        audit_action_refs, "_security_scan_verification_state", lambda *_: None
+    )
+    monkeypatch.setattr(
+        audit_action_refs, "_apply_security_scan_policy", lambda *_: None
+    )
+    monkeypatch.setattr(
+        audit_action_refs, "_apply_security_scan_configuration", lambda *_: None
+    )
+
+    result = audit_action_refs.seal_security_scan(audit, core)
+
+    assert result["state"] == "BLOCKED"
+    assert result["finding_conservation"]["state"] == "FAILED"
+    assert result["finding_conservation"]["failure_code"] == (
+        "SECURITY_ACTION_HANDOFF_INVALID"
+    )
+    assert (
+        result["finding_conservation"]["baseline_raw_diagnostics"] == expected_findings
+    )
+    assert result["agent_actions"] == []
+    assert [row["code"] for row in result["findings"]] == [
+        row["code"] for row in expected_findings
+    ]
+
+
+def test_security_scan_duplicate_supported_ledger_row_blocks_without_filtering(
+    monkeypatch,
+):
+    core = _seal_core()
+    core["selected_defect_policy"] = "trusted-core-v1"
+    core["defect_policy_decision"] = {
+        "state": "CLEAN",
+        "exit_code": 0,
+        "passed": True,
+        "clean": True,
+    }
+    first = deepcopy(core["findings"][0])
+    core["findings"].append(deepcopy(first))
+    core["finding_tier_report"]["ledger"][0]["tier"] = "SUPPORTED_DEFECT"
+    core["finding_tier_report"]["ledger"].append(
+        {"raw_finding": deepcopy(first), "tier": "SUPPORTED_DEFECT"}
+    )
+    audit, action_calls = _seal_audit(lambda *_: None)
+    monkeypatch.setattr(
+        audit_action_refs, "_security_scan_verification_state", lambda *_: None
+    )
+    monkeypatch.setattr(
+        audit_action_refs, "_apply_security_scan_policy", lambda *_: None
+    )
+    monkeypatch.setattr(
+        audit_action_refs, "_apply_security_scan_configuration", lambda *_: None
+    )
+
+    result = audit_action_refs.seal_security_scan(audit, core)
+
+    assert result["finding_conservation"]["state"] == "FAILED"
+    assert result["finding_conservation"]["handoff_failure"] == (
+        "AMBIGUOUS_SUPPORTED_LEDGER_ROW"
+    )
+    assert result["state"] == "BLOCKED"
+    assert result["defect_policy_decision"]["exit_code"] == 2
+    assert result["defect_policy_decision"]["clean"] is False
+    assert len(result["findings"]) == 3
+    assert result["agent_actions"] == []
+    assert action_calls == []
+
+
+def test_seal_action_builder_cannot_mutate_source_witness():
+    finding = {
+        "code": "SECURITY_HARDCODED_SECRET",
+        "path": "client.py",
+        "line": 3,
+        "column": 4,
+        "severity": "CRITICAL",
+    }
+    candidate = "a" * 64
+    source_sha256 = "b" * 64
+    precondition = {
+        "schema": "factory.security.precondition.v1",
+        "state": "observed",
+    }
+    identity_sha256 = hashlib.sha256(
+        audit_action_refs._canonical(
+            {
+                "path": "client.py",
+                "source_sha256": source_sha256,
+                "code": finding["code"],
+                "line": finding["line"],
+                "column": finding["column"],
+                "original_severity": finding["severity"],
+                "raw_finding": finding,
+            }
+        )
+    ).hexdigest()
+    witness = {
+        "source_path": "client.py",
+        "source_sha256": source_sha256,
+        "finding_identity_sha256": identity_sha256,
+        "precondition_sha256": hashlib.sha256(
+            audit_action_refs._canonical(precondition)
+        ).hexdigest(),
+        "precondition": deepcopy(precondition),
+    }
+    original_witness = deepcopy(witness)
+    builder = audit_action_refs.audit_remediation_packet
+
+    def mutate_witness(candidate_sha256, raw_finding, **kwargs):
+        packet = builder(candidate_sha256, raw_finding, **kwargs)
+        kwargs["source_bound_security_precondition"]["precondition"]["state"] = (
+            "mutated"
+        )
+        return packet
+
+    audit = SimpleNamespace(audit_remediation_packet=mutate_witness)
+    actions, failure = audit_action_refs._security_scan_seal_actions(
+        audit,
+        candidate,
+        [finding],
+        {audit_action_refs._canonical(finding): witness},
+        False,
+    )
+
+    assert failure is None
+    assert witness == original_witness
+    assert actions[0]["security_precondition_evidence"]["precondition"] == precondition
+
+
+def test_security_scan_failure_keeps_original_private_capture_and_endpoint_marker(
+    tmp_path, monkeypatch
+):
+    node, finding, _, _, integrity = _case(tmp_path, monkeypatch)
+    admission.annotate_endpoint_findings("client.py", node, [finding], integrity)
+    facts = finding["facts"]
+    attestation = facts._attestation
+    core = _seal_core()
+    core["findings"][0]["facts"] = facts
+    report = audit_action_refs._SourceBoundSecurityReport(core)
+    captured = (("client.py", b"private captured source"),)
+    report._captured_sources = captured
+    audit, _ = _seal_audit(lambda *_: None)
+
+    def fail_policy(_audit, working, *_):
+        working["action_summary"] = "partial policy mutation"
+        raise RuntimeError("injected policy failure")
+
+    with monkeypatch.context() as patcher:
+        patcher.setattr(
+            audit_action_refs, "_security_scan_verification_state", lambda *_: None
+        )
+        patcher.setattr(
+            audit_action_refs, "_apply_security_scan_configuration", lambda *_: None
+        )
+        patcher.setattr(audit_action_refs, "_apply_security_scan_policy", fail_policy)
+        with pytest.raises(RuntimeError, match="injected policy failure"):
+            audit_action_refs.seal_security_scan(audit, report)
+
+    assert report._captured_sources is captured
+    assert report["findings"][0]["facts"] is facts
+    assert facts._attestation == attestation
+
+
+def test_transactional_scanner_keeps_endpoint_proof_source_bound_not_serialized(
+    tmp_path, monkeypatch
+):
+    from factoryline.credential_endpoint_admission import endpoint_binding
+    from factoryline.review_audits import security_scan
+
+    _, _, _, tree, _ = _case(tmp_path, monkeypatch)
+    root, sources = tree._security_source_context
+    for path, raw in sources.items():
+        path.write_bytes(raw)
+    result = security_scan(root, defect_policy="trusted-core-v1")
+    observation = next(
+        row
+        for row in result["primitive_observations"]
+        if row["code"] == "SECURITY_HARDCODED_SECRET"
+    )
+    bindings = {row["path"]: row["sha256"] for row in result["sources"]}
+    captured = dict(result._captured_sources)
+
+    assert result["finding_conservation"]["state"] == "PASS"
+    assert endpoint_binding(
+        observation, result["sources"], bindings, source_bytes=captured
+    )
+    serialized = json.loads(json.dumps(observation))
+    assert not endpoint_binding(serialized, result["sources"], bindings)
 
 
 def test_precision257_endpoint_helper_inventory_and_catalog_digest_are_content_bound(

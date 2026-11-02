@@ -227,40 +227,61 @@ def test_collection_unknown_profile_does_not_relax_invalid_inputs(
     (tmp_path / "conftest.py").write_text(
         "def pytest_collection_modifyitems(items): pass\n", encoding="utf-8"
     )
-    if kind == "invalid_config":
-        (tmp_path / "pytest.ini").write_text("[pytest\n", encoding="utf-8")
-    elif kind == "oversized_config":
-        (tmp_path / "pytest.ini").write_bytes(b" " * (review_audits.MAX_BYTES + 1))
-    elif kind in {"unreadable_config", "unreadable_hook"}:
+    cases = {
+        "invalid_config": ("pytest.ini", "text", "[pytest\n", None),
+        "oversized_config": ("pytest.ini", "oversized", None, None),
+        "unreadable_config": ("pytest.ini", "unreadable", "local_file", None),
+        "unsupported_config": (
+            "pytest.ini",
+            "text",
+            "[pytest]\naddopts = -p plugin\n",
+            "unsupported_collection_configuration",
+        ),
+        "invalid_hook": (
+            "conftest.py",
+            "text",
+            "def broken(:\n",
+            "unparseable_collection_source",
+        ),
+        "oversized_hook": ("conftest.py", "oversized", None, None),
+        "unreadable_hook": (
+            "conftest.py",
+            "unreadable",
+            "_security_source_bytes",
+            None,
+        ),
+        "invalid_test_module": (
+            "test_example.py",
+            "text",
+            "def broken(:\n",
+            "unparseable_collection_source",
+        ),
+        "oversized_test_module": ("test_example.py", "oversized", None, None),
+    }
+    path, operation, value, unknown_reason = cases[kind]
+    target = tmp_path / path
+    if operation == "text":
+        target.write_text(value, encoding="utf-8")
+    elif operation == "oversized":
+        target.write_bytes(b" " * (review_audits.MAX_BYTES + 1))
+    else:
 
         def unreadable(*args):
             raise RuntimeAuditError("E_SOURCE_UNREADABLE", "unreadable")
 
-        target = {
-            "unreadable_config": "local_file",
-            "unreadable_hook": "_security_source_bytes",
-        }[kind]
-        monkeypatch.setattr(review_audits, target, unreadable)
-    elif kind == "unsupported_config":
-        (tmp_path / "pytest.ini").write_text(
-            "[pytest]\naddopts = -p plugin\n", encoding="utf-8"
-        )
+        monkeypatch.setattr(review_audits, value, unreadable)
+    if unknown_reason:
         patterns, identity = _pytest_collection_config(tmp_path, allow_unknown=True)
         assert patterns == set()
         assert identity["collection_state"] == "UNKNOWN"
-        with pytest.raises(review_audits.ReviewAuditError):
-            _pytest_collection_config(tmp_path)
-        return
-    elif kind == "invalid_hook":
-        (tmp_path / "conftest.py").write_text("def broken(:\n", encoding="utf-8")
-    elif kind == "oversized_hook":
-        (tmp_path / "conftest.py").write_bytes(b" " * (review_audits.MAX_BYTES + 1))
-    elif kind == "invalid_test_module":
-        (tmp_path / "test_example.py").write_text("def broken(:\n", encoding="utf-8")
-    elif kind == "oversized_test_module":
-        (tmp_path / "test_example.py").write_bytes(b" " * (review_audits.MAX_BYTES + 1))
+        assert identity["reason"] == unknown_reason
+        if unknown_reason == "unparseable_collection_source":
+            assert any(
+                row.get("state") == "unparseable_source"
+                for row in identity["collection_hook_sources"]
+            )
     with pytest.raises(review_audits.ReviewAuditError):
-        _pytest_collection_config(tmp_path, allow_unknown=True)
+        _pytest_collection_config(tmp_path, allow_unknown=not unknown_reason)
 
 
 @pytest.mark.parametrize(
@@ -6443,6 +6464,51 @@ def test_security_scan_cached_and_uncached_preserve_security_proofs(tmp_path):
     assert cached["finding_tier_report"] == uncached["finding_tier_report"]
 
 
+@pytest.mark.parametrize(
+    "name,raw",
+    [
+        ("pyproject.toml", b"[project]\nname = 'sample'\n"),
+        ("setup.cfg", b"[metadata]\nname = sample\n"),
+    ],
+)
+@pytest.mark.parametrize("fault", [None, "missing", "changed", "extra"])
+def test_trusted_core_regeneration_retains_validated_configuration(
+    tmp_path, name, raw, fault
+):
+    (tmp_path / name).write_bytes(raw)
+    (tmp_path / "app.py").write_bytes(
+        b"from flask import request\neval(request.args['q'])\n"
+    )
+    report = review_audits.security_scan(
+        tmp_path,
+        cache_enabled=False,
+        defect_policy="trusted-core-v1",
+        security_only=True,
+    )
+    captured = dict(report._captured_sources)
+    assert captured[name] == raw
+    if fault == "missing":
+        captured.pop(name)
+    elif fault == "changed":
+        captured[name] += b"# changed\n"
+    elif fault == "extra":
+        captured["unbound.cfg"] = b"[metadata]\n"
+    checked = primitive._trusted_core_complete_sources(report, captured, review_audits)
+    if fault:
+        assert checked is None
+        return
+    assert checked[0] == captured
+    regenerated, _, native_rows = primitive._trusted_core_regenerated_tiers(
+        report, captured
+    )
+    assert regenerated == report["finding_tier_report"]
+    assert {row["path"] for row in native_rows} == {"app.py"}
+    assert (
+        primitive.security_defect_policy_decision(report, captured)["state"]
+        == "DEFECTS_PRESENT"
+    )
+
+
 def _trusted_core_policy316_seal(tmp_path, source):
     path = tmp_path / "app.py"
     path.write_bytes(source)
@@ -6496,8 +6562,88 @@ def test_complete_native_rows_are_shared_only_within_each_fresh_seal(
     counts.update(partial=0, complete=0)
     core = copy.deepcopy(dict(base))
     core["_primitive_source_bytes"] = dict(base._captured_sources)
-    assert dict(review_audits._seal_security_scan(core)) == dict(base)
+    checked = dict(review_audits._seal_security_scan(core))
+    assert checked["state"] == base["state"]
+    assert checked["findings"] == base["findings"]
+    assert checked["finding_counts"] == base["finding_counts"]
+    assert checked["defect_policy_decision"] == base["defect_policy_decision"]
+    assert checked["agent_actions"] == base["agent_actions"]
+    assert checked["finding_conservation"]["state"] == "PASS"
+    assert checked["finding_conservation"]["native_rows"] == "UNAVAILABLE"
+    assert checked["finding_conservation"]["expected_security_rows"] is None
     assert counts == {"partial": 1, "complete": 1}
+
+
+@pytest.mark.parametrize("tamper", ["message", "end_span", "facts", "duplicate_ledger"])
+def test_runtime_coverage_sync_requires_unique_annotation_only_preimage(tamper):
+    from factoryline import audit_action_refs as actions
+
+    original = {
+        "path": "test_app.py",
+        "line": 3,
+        "column": 1,
+        "end_line": 4,
+        "end_column": 2,
+        "code": "QUALITY_UNKNOWN_TEST_ORACLE",
+        "severity": "LOW",
+        "message": "Static finding",
+        "facts": {"symbol": "test_validate"},
+    }
+    annotated = copy.deepcopy(original)
+    annotated["facts"]["runtime_case_coverage"] = {"eligible": False}
+    if tamper == "message":
+        annotated["message"] = "Changed message"
+    elif tamper == "end_span":
+        annotated["end_column"] += 1
+    elif tamper == "facts":
+        annotated["facts"]["symbol"] = "changed"
+    ledger = [{"raw_finding": copy.deepcopy(original)}]
+    if tamper == "duplicate_ledger":
+        ledger.append(copy.deepcopy(ledger[0]))
+    core = {"findings": [annotated], "finding_tier_report": {"ledger": ledger}}
+
+    actions._security_scan_sync_runtime_coverage_ledger(core, original, annotated)
+
+    assert all(row["raw_finding"] == original for row in ledger)
+    result = actions._security_scan_conservation(
+        core,
+        [copy.deepcopy(row["raw_finding"]) for row in ledger],
+        [annotated],
+        None,
+        primitive,
+    )
+    assert result["state"] == "FAILED"
+    assert result["physical_matches_expected"] is False
+
+
+def test_serialized_runtime_archive_cannot_replace_diagnostic_rows(tmp_path):
+    (tmp_path / "app.py").write_text(
+        "from flask import request\ndef endpoint():\n    return eval(request.args['q'])\n"
+    )
+    base = review_audits.security_scan(
+        tmp_path, cache_enabled=False, defect_policy="trusted-core-v1"
+    )
+    original = copy.deepcopy(base["findings"][0])
+    core = copy.deepcopy(dict(base))
+    core["_primitive_source_bytes"] = dict(base._captured_sources)
+    core["findings"] = []
+    core["finding_counts"] = {}
+    core["runtime_oracles"] = {
+        "state": "VERIFIED",
+        "reconciled_count": 1,
+        "reconciled": [
+            {"static_finding": original, "runtime_evidence": {"forged": True}}
+        ],
+    }
+
+    checked = review_audits._seal_security_scan(core)
+
+    assert checked["finding_conservation"]["state"] == "FAILED"
+    assert checked["finding_conservation"]["physical_matches_expected"] is False
+    assert checked["finding_conservation"]["ledger_matches_expected"] is True
+    assert checked["state"] == "BLOCKED"
+    assert checked["defect_policy_decision"]["exit_code"] == 2
+    assert checked["agent_actions"] == []
 
 
 @pytest.mark.parametrize("fault", ["none", "missing", "duplicate", "extra", "column"])

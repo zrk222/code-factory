@@ -300,6 +300,416 @@ def test_retrieval_transport_assignment_secret_retains_source_and_missing_closur
         )
 
 
+def _declaration_fixture(tmp_path, sources, selected="sink.py"):
+    sources = {"sink.py": "import pickle\nx = pickle.loads(b'')\n", **sources}
+    index, finding = _informed_fixture(tmp_path, sources)
+    path = tmp_path / selected
+    declaration = next(
+        n
+        for n in ast.walk(index.snapshots[path])
+        if isinstance(n, (ast.Assign, ast.AnnAssign))
+    )
+    finding.update(
+        code="SECURITY_HARDCODED_SECRET",
+        path=selected,
+        source_sha256=index.inventory[path],
+        line=declaration.lineno,
+        column=declaration.col_offset,
+        end_line=declaration.end_lineno,
+        end_column=declaration.end_col_offset,
+    )
+    return index, finding
+
+
+def _declaration_context(index, finding):
+    from factoryline.audit_rule_search import build_retrieval_context
+
+    return build_retrieval_context(finding, index, "consequential security use", None)
+
+
+def test_declaration_neighborhood_retains_whole_small_module_and_distant_consumer(
+    tmp_path,
+):
+    source = (
+        "credential = 'fixture'\n"
+        + "# context\n" * 40
+        + "def consumer():\n    return credential\n"
+    )
+    index, finding = _declaration_fixture(
+        tmp_path, {"sink.py": source + "import pickle\nx = pickle.loads(b'')\n"}
+    )
+    context = _declaration_context(index, finding)
+    assert any(source in row["content"] for row in context["excerpts"])
+    assert context["edges"] == []
+    assert context["authority"]["status"] == "UNKNOWN"
+    assert context["unknowns"][0]["reason"] == "assignment_consumer_closure_unresolved"
+    assert context["retrieval"]["status"] == "NOT_RUN"
+    assert context["retrieval"]["delivered_hints"] == 0
+    assert context["structural_context"]["validated_trace_edges"] == 0
+
+
+def test_declaration_neighborhood_retains_class_and_local_base_not_unrelated_names(
+    tmp_path,
+):
+    source = (
+        "from framework import TestCase\n"
+        "class Base(TestCase):\n    def create(self):\n        return 'fixture'\n"
+        "class Holder(Base):\n    credential = 'fixture'\n"
+        "    def consume(self):\n        return self.credential\n"
+    )
+    index, finding = _declaration_fixture(
+        tmp_path,
+        {"owner.py": source, "other.py": "credential = 'unrelated'\n"},
+        "owner.py",
+    )
+    context = _declaration_context(index, finding)
+    text = "\n".join(row["content"] for row in context["excerpts"])
+    assert "class Holder(Base):" in text and "return self.credential" in text
+    assert "class Base(TestCase):" in text and "from framework import TestCase" in text
+    assert "other.py" not in {row["path"] for row in context["excerpts"]}
+
+
+@pytest.mark.parametrize(
+    "consumer,delivered",
+    [
+        ("from sink import credential as key\ndef consume():\n    return key\n", True),
+        ("import sink as config\ndef consume():\n    return config.credential\n", True),
+        (
+            "from sink import credential as key\ndef consume(key):\n    return key\n",
+            False,
+        ),
+        (
+            "from sink import credential as key\nkey = 'other'\ndef consume():\n    return key\n",
+            False,
+        ),
+        (
+            "from other import credential\ndef consume():\n    return credential\n",
+            False,
+        ),
+    ],
+)
+def test_declaration_neighborhood_only_exact_unshadowed_import_references(
+    tmp_path, consumer, delivered
+):
+    index, finding = _declaration_fixture(
+        tmp_path,
+        {
+            "sink.py": "credential = 'fixture'\nimport pickle\nx = pickle.loads(b'')\n",
+            "consumer.py": consumer,
+            "other.py": "credential = 'different'\n",
+        },
+    )
+    context = _declaration_context(index, finding)
+    assert any(row["path"] == "consumer.py" for row in context["excerpts"]) is delivered
+    assert context["edges"] == []
+
+
+def test_declaration_neighborhood_literal_module_context_is_advisory_and_bidirectional(
+    tmp_path,
+):
+    index, finding = _declaration_fixture(
+        tmp_path,
+        {
+            "sink.py": "credential = 'fixture'\nroute = 'routes'\nimport pickle\nx = pickle.loads(b'')\n",
+            "loader.py": "module = 'sink'\n",
+            "routes.py": "routes = ['protected']\n",
+        },
+    )
+    context = _declaration_context(index, finding)
+    assert {"loader.py", "routes.py"} <= {row["path"] for row in context["excerpts"]}
+    assert context["edges"] == [] and context["authority"]["status"] == "UNKNOWN"
+
+
+def test_declaration_neighborhood_ambiguous_sibling_module_alias_stays_unbound(
+    tmp_path,
+):
+    index, finding = _declaration_fixture(
+        tmp_path,
+        {
+            "before/pkg/__init__.py": "",
+            "after/pkg/__init__.py": "",
+            "before/pkg/settings.py": "credential = 'first'\n",
+            "after/pkg/settings.py": "credential = 'second'\n",
+            "loader.py": "module = 'pkg.settings'\n",
+            "consumer.py": "from pkg.settings import credential\ndef consume():\n    return credential\n",
+        },
+        "before/pkg/settings.py",
+    )
+    context = _declaration_context(index, finding)
+    assert not {"loader.py", "consumer.py", "after/pkg/settings.py"} & {
+        row["path"] for row in context["excerpts"]
+    }
+    assert context["unknowns"]
+
+
+def test_declaration_neighborhood_empty_package_passes_public_js_intake(
+    tmp_path, node_trial_session
+):
+    from factoryline.jev_classifier import build_informed_actionability_case
+
+    sources = {
+        "sink.py": "credential = 'fixture'\napp = 'pkg'\nimport pickle\nx = pickle.loads(b'')\n",
+        "pkg/__init__.py": "",
+    }
+    index, finding = _declaration_fixture(tmp_path, sources)
+    for path, data in index.source_bytes.items():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+    item = build_informed_actionability_case(
+        finding,
+        index,
+        candidate_commit="a" * 40,
+        requirement="actual bound declaration",
+        retriever=None,
+    )
+    evidence = item["state"]["evidence"]
+    assert any(row["path"] == "pkg/__init__.py" for row in evidence["dependencies"])
+    assert not any(row["path"] == "pkg/__init__.py" for row in evidence["artifacts"])
+    cases = tmp_path / "cases.json"
+    cases.write_text(json.dumps([item]), encoding="utf-8")
+    repo = Path(__file__).resolve().parents[1]
+    args = [
+        str(cases),
+        str(repo / "factoryline/data/judge_framework.json"),
+        "security_actionability",
+        None,
+        str(tmp_path),
+    ]
+    result = node_trial_session.run(args)
+    assert result.returncode == 0, result.stderr
+    worker_pid = node_trial_session.pid
+    package_init = tmp_path / "pkg/__init__.py"
+    package_init.write_text("# changed after intake\n", encoding="utf-8")
+    stale = node_trial_session.run(args)
+    assert stale.returncode == 1
+    assert "source_binding_stale" in stale.stderr
+    package_init.write_bytes(sources["pkg/__init__.py"].encode())
+    restored = node_trial_session.run(args)
+    assert restored.returncode == 0, restored.stderr
+    assert node_trial_session.pid == worker_pid
+
+
+def test_declaration_neighborhood_package_module_collision_is_not_selected(tmp_path):
+    from factoryline.audit_rule_search import _declaration_module_aliases
+
+    index, finding = _declaration_fixture(
+        tmp_path,
+        {
+            "pkg.py": "credential = 'first'\n",
+            "pkg/__init__.py": "credential = 'second'\n",
+            "loader.py": "module = 'pkg'\n",
+        },
+        "pkg.py",
+    )
+    assert _declaration_module_aliases(index)["pkg"] is None
+    context = _declaration_context(index, finding)
+    assert "loader.py" not in {row["path"] for row in context["excerpts"]}
+
+
+def test_declaration_neighborhood_combines_with_hybrid_under_final_transport_caps(
+    tmp_path, monkeypatch
+):
+    from factoryline.audit_rule_search import HybridSourceRetriever
+    from factoryline.jev_classifier import build_informed_actionability_case
+
+    sources = {f"hint{i}.py": ("# " + "x" * 440 + "\n") * 16 for i in range(8)}
+    sources["sink.py"] = (
+        "credential = 'fixture'\n"
+        + "# context\n" * 600
+        + "import pickle\nx = pickle.loads(b'')\n"
+    )
+    index, finding = _declaration_fixture(tmp_path, sources)
+    retriever = HybridSourceRetriever(index, _hybrid_encoder, model_id="test-combined")
+    hits = [row for row in retriever.documents if row["path"].startswith("hint")]
+    monkeypatch.setattr(retriever, "search", lambda query: hits)
+    item = build_informed_actionability_case(
+        finding,
+        index,
+        candidate_commit="a" * 40,
+        requirement="exact credential use",
+        retriever=retriever,
+    )
+    artifacts = item["state"]["evidence"]["artifacts"]
+    ledger = json.loads(
+        next(
+            row["content"] for row in artifacts if row["kind"] == "native_sink_evidence"
+        )
+    )
+    assert len(json.dumps(item, ensure_ascii=False).encode()) <= 64000
+    assert len(artifacts) <= 32
+    assert "combined_context_transport_budget" in ledger["truncation"]
+    assert 0 < ledger["retrieval"]["delivered_hints"] < 8
+    assert ledger["structural_context"]["delivered_excerpts"] == 1
+    assert any(
+        row.get("path") == "sink.py" and row["content"].startswith("credential =")
+        for row in artifacts
+    )
+    for hint in ledger["retrieval"]["hint_manifest"]:
+        assert any(
+            row.get("source_binding")
+            == {k: hint[k] for k in ("path", "sha256", "start_line", "end_line")}
+            for row in artifacts
+        )
+
+
+@pytest.mark.parametrize("mutation", ["bytes", "ast"])
+def test_declaration_neighborhood_rejects_stale_inspected_source(tmp_path, mutation):
+    index, finding = _declaration_fixture(
+        tmp_path,
+        {
+            "sink.py": "credential = 'fixture'\nimport pickle\nx = pickle.loads(b'')\n",
+            "loader.py": "module = 'sink'\n",
+        },
+    )
+    path = tmp_path / "loader.py"
+    if mutation == "bytes":
+        index.source_bytes[path] += b"# changed\n"
+    else:
+        index.snapshots[path].body.clear()
+    with pytest.raises(JevClassificationError, match="STALE"):
+        _declaration_context(index, finding)
+
+
+def test_declaration_neighborhood_overflow_is_explicit_and_bounded(tmp_path):
+    sources = {f"loader{i:02}.py": "module = 'sink'\n" for i in range(70)}
+    sources["sink.py"] = (
+        "credential = 'fixture'\n"
+        + "# distant\n" * 1000
+        + "import pickle\nx = pickle.loads(b'')\n"
+    )
+    index, finding = _declaration_fixture(tmp_path, sources)
+    context = _declaration_context(index, finding)
+    assert "declaration_neighborhood_budget" in context["truncation"]
+    assert "declaration_source_search_budget" in context["truncation"]
+    assert context["structural_context"]["delivered_excerpts"] <= 8
+    assert len(context["dependency_sources"]) <= 64
+    assert len(json.dumps(context).encode()) < 64000
+    assert context["status"] == "INCOMPLETE" and context["edges"] == []
+
+
+def test_security_producer_nested_call_spans_reach_context_and_public_intake(
+    tmp_path, node_trial_session
+):
+    from factoryline.credential_role_constructor_provider import SourceSnapshotIndex
+    from factoryline.jev_classifier import build_informed_actionability_case
+    from factoryline.primitive_observation_binding import build_finding_tier_report
+    from factoryline.review_audits import _security_finding
+
+    path = tmp_path / "nested.py"
+    source = 'import sqlite3\nresult = sqlite3.connect("db").execute("SELECT 1")\n'
+    raw = source.encode()
+    source_sha256 = sha256(raw).hexdigest()
+    tree = ast.parse(source)
+    tree._oracle_source_sha256 = source_sha256
+    index = SourceSnapshotIndex(
+        tmp_path,
+        {path: tree},
+        {path: raw},
+        {path: source_sha256},
+    )
+    calls = [node for node in ast.walk(tree) if isinstance(node, ast.Call)]
+    relevant = [
+        node
+        for node in calls
+        if isinstance(node.func, ast.Attribute)
+        and node.func.attr in {"connect", "execute"}
+    ]
+    expected_spans = {
+        (node.lineno, node.col_offset, node.end_lineno, node.end_col_offset)
+        for node in relevant
+    }
+    assert len(expected_spans) == len(relevant) == 2
+    findings = [
+        _security_finding(
+            "SECURITY_TEST_SINK",
+            "nested.py",
+            node,
+            "synthetic nested-call location test",
+            "HIGH",
+        )
+        for node in relevant
+    ]
+    assert len(findings) == 2
+    assert {(f["line"], f["column"]) for f in findings} == {(2, 9)}
+    assert {
+        (f["line"], f["column"], f["end_line"], f["end_column"]) for f in findings
+    } == expected_spans
+    for finding in findings:
+        finding["source_sha256"] = source_sha256
+
+    def identity(finding):
+        report = build_finding_tier_report(
+            [finding],
+            [],
+            [],
+            {},
+            coverage_state="INCOMPLETE",
+            partition_state="UNASSESSED",
+        )
+        return report["ledger"][0]["source_identity"]["identity_sha256"]
+
+    new_identities = [identity(finding) for finding in findings]
+    old_findings = []
+    for finding in findings:
+        old = dict(finding)
+        old.pop("end_line")
+        old.pop("end_column")
+        old_findings.append(old)
+    assert len(set(new_identities)) == 2
+    assert identity(old_findings[0]) == identity(old_findings[1])
+    assert set(new_identities).isdisjoint(map(identity, old_findings))
+
+    from factoryline.jev_classifier import JevClassificationError
+
+    for invalid in (dict(old_findings[0]), dict(findings[0])):
+        if "end_line" in invalid:
+            invalid["end_column"] += 1
+        with pytest.raises(JevClassificationError, match="SINK_LOCATION_UNRESOLVED"):
+            build_informed_actionability_case(
+                invalid,
+                index,
+                candidate_commit="a" * 40,
+                requirement="resolve this nested security-call location",
+            )
+
+    items = []
+    for finding in findings:
+        item = build_informed_actionability_case(
+            finding,
+            index,
+            candidate_commit="a" * 40,
+            requirement="resolve this nested security-call location",
+        )
+        ledger = json.loads(
+            next(
+                row["content"]
+                for row in item["state"]["evidence"]["artifacts"]
+                if row["kind"] == "native_sink_evidence"
+            )
+        )
+        assert ledger["native_ledger"]["sink"]["span"] == [
+            finding["line"],
+            finding["column"],
+            finding["end_line"],
+            finding["end_column"],
+        ]
+        items.append(item)
+
+    path.write_bytes(raw)
+    cases = tmp_path / "cases.json"
+    cases.write_text(json.dumps(items), encoding="utf-8")
+    repo = Path(__file__).resolve().parents[1]
+    args = [
+        str(cases),
+        str(repo / "factoryline/data/judge_framework.json"),
+        "security_actionability",
+        None,
+        str(tmp_path),
+    ]
+    result = node_trial_session.run(args)
+    assert result.returncode == 0, result.stderr
+
+
 def test_retrieval_transport_not_configured_is_explicit_and_does_not_clear_unknowns(
     tmp_path,
 ):
@@ -1265,6 +1675,7 @@ def test_jev_evidence_review_is_bound_advisory_and_fails_closed():
             "context_sha256": value["context_sha256"],
             "claims": [
                 {
+                    "contextual_evidence": [],
                     "claim_id": "claim-1",
                     "label": "SUPPORTED",
                     "supporting_evidence_ids": ["evidence-1"],
@@ -1273,6 +1684,7 @@ def test_jev_evidence_review_is_bound_advisory_and_fails_closed():
                     "verification_action": None,
                 },
                 {
+                    "contextual_evidence": [],
                     "claim_id": "claim-2",
                     "label": "CONTRADICTED",
                     "supporting_evidence_ids": [],
@@ -1281,6 +1693,7 @@ def test_jev_evidence_review_is_bound_advisory_and_fails_closed():
                     "verification_action": None,
                 },
                 {
+                    "contextual_evidence": [],
                     "claim_id": "claim-3",
                     "label": "INSUFFICIENT_EVIDENCE",
                     "supporting_evidence_ids": [],
@@ -1341,6 +1754,7 @@ def test_jev_evidence_review_rejects_invented_references_stale_packet_and_transp
         "context_sha256": request["context_sha256"],
         "claims": [
             {
+                "contextual_evidence": [],
                 "claim_id": "claim-1",
                 "label": "SUPPORTED",
                 "supporting_evidence_ids": ["invented"],
@@ -1350,6 +1764,7 @@ def test_jev_evidence_review_rejects_invented_references_stale_packet_and_transp
             },
             *[
                 {
+                    "contextual_evidence": [],
                     "claim_id": claim,
                     "label": "INSUFFICIENT_EVIDENCE",
                     "supporting_evidence_ids": [],
@@ -1396,6 +1811,7 @@ def test_trace_span_review_reuses_closed_evidence_contract_and_keeps_failures_im
         "context_sha256": review["review_request"]["context_sha256"],
         "claims": [
             {
+                "contextual_evidence": [],
                 "claim_id": claim["id"],
                 "label": "SUPPORTED",
                 "supporting_evidence_ids": claim["supporting_evidence_ids"],
@@ -1430,6 +1846,7 @@ def test_trace_span_review_reuses_closed_evidence_contract_and_keeps_failures_im
         "context_sha256": failed_review["review_request"]["context_sha256"],
         "claims": [
             {
+                "contextual_evidence": [],
                 "claim_id": c["id"],
                 "label": "CONTRADICTED"
                 if c["status"] == "contradicted"
@@ -1481,6 +1898,7 @@ def test_span_review_batches_cover_all_spans_and_reject_partial_or_reordered_res
                     "context_sha256": review_request["context_sha256"],
                     "claims": [
                         {
+                            "contextual_evidence": [],
                             "claim_id": claim["id"],
                             "label": "INSUFFICIENT_EVIDENCE",
                             "supporting_evidence_ids": [],
@@ -1953,6 +2371,7 @@ def test_forgeline_review_reuses_shared_validator_and_keeps_failure_advisory(pro
             "context_sha256": request["context_sha256"],
             "claims": [
                 {
+                    "contextual_evidence": [],
                     "claim_id": claim["id"],
                     "label": "SUPPORTED",
                     "supporting_evidence_ids": refs,
@@ -2040,6 +2459,7 @@ def test_forgeline_review_rejects_incomplete_or_unsupported_model_assessment(
             "context_sha256": request["context_sha256"],
             "claims": [
                 {
+                    "contextual_evidence": [],
                     "claim_id": claim["id"],
                     "label": "SUPPORTED"
                     if bad_response == "unknown_ref"
@@ -2086,6 +2506,8 @@ def _atomic_review_response(request):
                 else None,
             }
         )
+        if request["review_protocol"] == "contextual-evidence.v2":
+            rows[-1]["contextual_evidence"] = []
     return {"context_sha256": request["context_sha256"], "claims": rows}
 
 
@@ -2243,6 +2665,288 @@ def test_atomic_review_request_isolated_from_caller_packet():
     request["packet"]["unknowns"].clear()
     request["packet"]["claims"][0]["supporting_evidence_ids"].clear()
     assert json.dumps(packet, sort_keys=True) == original
+
+
+def _contextual_review_packet():
+    packet = _review_packet()
+    packet["claims"] = packet["claims"][:1]
+    packet["claims"][0].update(
+        status="unresolved", supporting_evidence_ids=["evidence-1", "evidence-2"]
+    )
+    packet["evidence"] = [
+        {
+            "id": ident,
+            "kind": "source_excerpt",
+            "epistemic_status": "observed",
+            "provenance": {
+                "path": path,
+                "content": content,
+                "sha256": sha256(content.encode()).hexdigest(),
+                "candidate_sha256": "a" * 64,
+                "source_binding": {
+                    "path": path,
+                    "sha256": sha256(content.encode()).hexdigest(),
+                    "start_line": 1,
+                    "end_line": 1,
+                },
+            },
+        }
+        for ident, path, content in (
+            ("evidence-1", "consumer.py", "consume_configured_value()\n"),
+            ("evidence-2", "README.md", "Demonstration configuration.\n"),
+            ("unlinked", "other.py", "unrelated = True\n"),
+        )
+    ]
+    packet["packet_sha256"] = _digest(
+        {key: value for key, value in packet.items() if key != "packet_sha256"}
+    )
+    return packet
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "duplicate",
+        "unlinked",
+        "inferred_context",
+        "inferred_support",
+        "missing_binding",
+        "non_source",
+        "empty_rationale",
+        "long_rationale",
+        "unknown_support",
+        "not_claim_support",
+        "not_actual_support",
+        "self_support",
+        "support_overlap",
+        "actual_contradiction",
+        "declared_contradiction",
+        "missing_field",
+        "not_list",
+    ],
+)
+def test_contextual_evidence_rejects_unbound_or_contradictory_resolution(mutation):
+    from factoryline.jev_classifier import (
+        build_evidence_review_input,
+        normalize_evidence_review,
+    )
+
+    packet = _contextual_review_packet()
+    context = {
+        "evidence_id": "evidence-2",
+        "rationale": "The cited observation does not negate the separately cited consumer.",
+        "supporting_evidence_ids": ["evidence-1"],
+    }
+    _apply_nested_fixture_mutations(
+        packet, CONTEXTUAL_PACKET_MUTATIONS.get(mutation, ())
+    )
+    packet["packet_sha256"] = _digest(
+        {key: value for key, value in packet.items() if key != "packet_sha256"}
+    )
+    request = build_evidence_review_input(packet, candidate_sha256="a" * 64)
+    response = _atomic_review_response(request)
+    row = response["claims"][0]
+    row.update(
+        label="SUPPORTED",
+        supporting_evidence_ids=["evidence-1"],
+        verification_action=None,
+    )
+    _apply_nested_fixture_mutations(
+        context, CONTEXTUAL_EVIDENCE_MUTATIONS.get(mutation, ())
+    )
+    _apply_nested_fixture_mutations(row, CONTEXTUAL_CLAIM_MUTATIONS.get(mutation, ()))
+    evidence_count = CONTEXTUAL_EVIDENCE_COUNTS.get(mutation, 1)
+    row["contextual_evidence"] = (
+        {} if evidence_count is None else [context] * evidence_count
+    )
+    with pytest.raises(JevClassificationError):
+        normalize_evidence_review(response, request=request)
+
+
+def _apply_nested_fixture_mutations(target, mutations):
+    """Apply compact set, append, and remove edits to a JSON-like fixture."""
+    for operation, path, *values in mutations:
+        parent = target
+        for part in path[:-1]:
+            parent = parent[part]
+        key = path[-1]
+        if operation == "set":
+            parent[key] = values[0]
+        elif operation == "append":
+            parent[key].append(values[0])
+        else:
+            parent.pop(key)
+
+
+CONTEXTUAL_PACKET_MUTATIONS = {
+    "inferred_context": (("set", ("evidence", 1, "epistemic_status"), "inferred"),),
+    "inferred_support": (("set", ("evidence", 0, "epistemic_status"), "inferred"),),
+    "missing_binding": (("remove", ("evidence", 1, "provenance", "source_binding")),),
+    "non_source": (("set", ("evidence", 1, "kind"), "runtime"),),
+    "declared_contradiction": (
+        ("set", ("claims", 0, "supporting_evidence_ids"), ["evidence-1"]),
+        ("set", ("claims", 0, "contradicting_evidence_ids"), ["evidence-2"]),
+    ),
+    "not_actual_support": (
+        ("append", ("claims", 0, "supporting_evidence_ids"), "unlinked"),
+    ),
+}
+CONTEXTUAL_EVIDENCE_MUTATIONS = {
+    "unlinked": (("set", ("evidence_id",), "unlinked"),),
+    "empty_rationale": (("set", ("rationale",), " "),),
+    "long_rationale": (("set", ("rationale",), "x" * 501),),
+    "unknown_support": (("set", ("supporting_evidence_ids",), ["invented"]),),
+    "not_claim_support": (("set", ("supporting_evidence_ids",), ["unlinked"]),),
+    "not_actual_support": (("set", ("supporting_evidence_ids",), ["unlinked"]),),
+    "self_support": (("set", ("supporting_evidence_ids",), ["evidence-2"]),),
+    "missing_field": (("remove", ("rationale",)),),
+}
+CONTEXTUAL_CLAIM_MUTATIONS = {
+    "support_overlap": (("append", ("supporting_evidence_ids",), "evidence-2"),),
+    "actual_contradiction": (("set", ("contradicting_evidence_ids",), ["evidence-2"]),),
+}
+CONTEXTUAL_EVIDENCE_COUNTS = {"not_list": None, "duplicate": 2}
+
+
+def test_contextual_evidence_legacy_protocol_and_context_identity():
+    from factoryline.jev_classifier import (
+        build_evidence_review_input,
+        normalize_evidence_review,
+    )
+
+    packet = _contextual_review_packet()
+    legacy = build_evidence_review_input(
+        packet, candidate_sha256="a" * 64, review_protocol="counterevidence-complete.v1"
+    )
+    current = build_evidence_review_input(packet, candidate_sha256="a" * 64)
+    assert legacy["review_protocol"] == "counterevidence-complete.v1"
+    assert current["review_protocol"] != legacy["review_protocol"]
+    assert current["context_sha256"] != legacy["context_sha256"]
+    response = _atomic_review_response(legacy)
+    normalize_evidence_review(response, request=legacy)
+    with pytest.raises(JevClassificationError, match="context"):
+        normalize_evidence_review(response, request=current)
+    response["claims"][0]["contextual_evidence"] = []
+    with pytest.raises(JevClassificationError):
+        normalize_evidence_review(response, request=legacy)
+    response = _atomic_review_response(current)
+    response["claims"][0].pop("contextual_evidence")
+    with pytest.raises(JevClassificationError):
+        normalize_evidence_review(response, request=current)
+
+
+def test_contextual_evidence_public_source_intake_to_pending_review(
+    tmp_path, node_trial_session
+):
+    from factoryline.jev_classifier import (
+        build_evidence_review_input,
+        build_informed_actionability_case,
+        review_evidence,
+    )
+
+    index, finding = _informed_fixture(
+        tmp_path, {"sink.py": "import pickle\nx = pickle.loads(b'')\n"}
+    )
+    for path, data in index.source_bytes.items():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+    case = build_informed_actionability_case(
+        finding,
+        index,
+        candidate_commit="a" * 40,
+        requirement="Synthetic source review contract",
+    )
+    data = "Demonstration configuration.\n"
+    (tmp_path / "README.md").write_bytes(data.encode())
+    candidate = case["state"]["candidate"]
+    context = dict(
+        kind="source_excerpt",
+        path="README.md",
+        content=data,
+        sha256=sha256(data.encode()).hexdigest(),
+        candidate_commit=candidate["commit"],
+        candidate_sha256=candidate["sha256"],
+        source_binding=dict(
+            path="README.md",
+            sha256=sha256(data.encode()).hexdigest(),
+            start_line=1,
+            end_line=1,
+        ),
+    )
+    case["state"]["evidence"]["artifacts"].append(context)
+    cases = tmp_path / "cases.json"
+    cases.write_text(json.dumps([case]), encoding="utf-8")
+    repo = Path(__file__).resolve().parents[1]
+    args = [
+        str(cases),
+        str(repo / "factoryline/data/judge_framework.json"),
+        "security_actionability",
+        None,
+        str(tmp_path),
+    ]
+    result = node_trial_session.run(args)
+    assert result.returncode == 0, result.stderr
+    packet = _contextual_review_packet()
+    packet["candidate_sha256"] = candidate["sha256"]
+    packet["unknowns"] = []
+    artifacts = [
+        row
+        for row in case["state"]["evidence"]["artifacts"]
+        if row["kind"] == "source_excerpt"
+    ]
+    packet["evidence"] = [
+        dict(
+            id=ident,
+            kind="source_excerpt",
+            epistemic_status="observed",
+            provenance=artifact,
+        )
+        for ident, artifact in zip(
+            ["evidence-1", "evidence-2"], [artifacts[0], context]
+        )
+    ]
+    packet["packet_sha256"] = _digest(
+        {k: v for k, v in packet.items() if k != "packet_sha256"}
+    )
+    original = json.dumps(packet, sort_keys=True)
+    request = build_evidence_review_input(packet, candidate_sha256=candidate["sha256"])
+    response = _atomic_review_response(request)
+    contextual = [
+        dict(
+            evidence_id="evidence-2",
+            rationale="Scope context retained for independent review; distinct bound source supports the assessed claim.",
+            supporting_evidence_ids=["evidence-1"],
+        )
+    ]
+    response["claims"][0].update(
+        label="SUPPORTED",
+        supporting_evidence_ids=["evidence-1"],
+        verification_action=None,
+        contextual_evidence=contextual,
+    )
+    seen = []
+
+    def transport(value):
+        wire = json.loads(json.dumps(value))
+        seen.append(wire)
+        assert wire == request and wire["review_protocol"] == "contextual-evidence.v2"
+        return json.loads(json.dumps(response))
+
+    normalized = review_evidence(
+        packet, candidate_sha256=candidate["sha256"], transport=transport
+    )
+    assert seen == [request]
+    assert normalized["claims"][0]["contextual_evidence"] == contextual
+    assert normalized["status"] == "ADVISORY" and normalized["authority"] == "none"
+    assert normalized["release_decision"] is False
+    assert normalized["verification_state"] == "INCOMPLETE"
+    assert any(
+        row.get("contextual_evidence") == contextual
+        and row["status"] == "CONTEXT_REQUIRES_REVIEW"
+        for row in normalized["verification_batch"]
+    )
+    assert json.dumps(packet, sort_keys=True) == original
+    assert (tmp_path / "README.md").read_text(encoding="utf-8") == data
 
 
 def _digest(value: object) -> str:

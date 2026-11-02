@@ -11,11 +11,41 @@ import pytest
 from factoryline import review_audits as audit
 from factoryline.primitive_observation_binding import build_finding_tier_report
 
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        "bare",
+        "overwrite",
+        "clear",
+        "shadow",
+        "escape",
+        "missing_include",
+        "recursive_include",
+        "provider",
+        "storage",
+        "signer",
+    ],
+)
+def test_selected_feedback_counterexamples_preserve_raw_without_admission(change):
+    files = _recovery_sources(
+        SETTINGS + 'ROOT_URLCONF = "service.urls"\n',
+        extra={"service/urls.py": FEEDBACK_URLS},
+    )
+    _apply_source_mutations(files, FEEDBACK_COUNTEREXAMPLE_EDITS[change])
+    row = _recovery_row(files)
+    assert row["tier"] == "NEEDS_CONTEXT"
+    assert "credential_authority_observation" not in row
+    assert row["raw_finding"]["facts"]["name"] == "SECRET_KEY"
+    assert row["raw_finding"]["code"] == "SECURITY_HARDCODED_SECRET"
+
+
 SETTINGS = (
     'SECRET_KEY = "published-signing-material"\n'
-    'INSTALLED_APPS = ["django.contrib.auth", "django.contrib.sessions"]\n'
+    'INSTALLED_APPS = ["django.contrib.auth", "django.contrib.sessions", "django.contrib.messages"]\n'
     'MIDDLEWARE = ["django.contrib.sessions.middleware.SessionMiddleware", '
-    '"django.contrib.auth.middleware.AuthenticationMiddleware"]\n'
+    '"django.contrib.auth.middleware.AuthenticationMiddleware", '
+    '"django.contrib.messages.middleware.MessageMiddleware"]\n'
 )
 START = (
     "import os\nfrom django.core.wsgi import get_wsgi_application\n"
@@ -27,17 +57,880 @@ START = (
 def _recovery_sources(settings=SETTINGS, startup=START, extra=None):
     return {
         "service/__init__.py": "",
-        "service/settings.py": settings,
+        "service/settings.py": settings
+        + ('ROOT_URLCONF = "service.urls"\n' if "ROOT_URLCONF" not in settings else ""),
+        "service/urls.py": 'from django.contrib import admin\nfrom django.urls import path\nurlpatterns = [path("admin/", admin.site.urls)]\n',
         "start.py": startup,
         **(extra or {}),
     }
 
 
-def _recovery_row(files, name="SECRET_KEY"):
-    sources = {path: source.encode() for path, source in files.items()}
-    findings = audit._security_scan_tree(
-        Path("."), Path("service/settings.py"), ast.parse(files["service/settings.py"])
+FEEDBACK_URLS = (
+    "from django.contrib import admin\n"
+    "from django.urls import path, include\n"
+    'urlpatterns = [path("admin/", admin.site.urls)]\n'
+)
+
+
+def _apply_source_mutations(files, mutations):
+    """Apply compact replace, append, set, copy, and remove fixture edits."""
+    for operation, path, *values in mutations:
+        if operation == "replace":
+            files[path] = files[path].replace(*values)
+        elif operation == "append":
+            files[path] += values[0]
+        elif operation == "set":
+            files[path] = values[0]
+        elif operation == "copy":
+            files[path] = files[values[0]]
+        else:
+            files.pop(path)
+
+
+FEEDBACK_COUNTEREXAMPLE_EDITS = {
+    "bare": (
+        ("set", "service/settings.py", SETTINGS),
+        ("remove", "service/urls.py"),
+    ),
+    "overwrite": (("append", "service/urls.py", "urlpatterns = []\n"),),
+    "clear": (("append", "service/urls.py", "urlpatterns.clear()\n"),),
+    "shadow": (
+        ("replace", "service/urls.py", "[path(", '[path("admin/", replacement), path('),
+    ),
+    "escape": (("append", "service/urls.py", "escape(urlpatterns)\n"),),
+    "missing_include": (
+        ("replace", "service/urls.py", "admin.site.urls", 'include("missing.urls")'),
+    ),
+    "recursive_include": (
+        ("replace", "service/urls.py", "admin.site.urls", 'include("service.urls")'),
+    ),
+    "provider": (
+        (
+            "set",
+            "mutation.py",
+            "from django.contrib import admin\nadmin.site.urls = replacement\n",
+        ),
+    ),
+    "storage": (
+        ("append", "service/settings.py", 'MESSAGE_STORAGE = "custom.Storage"\n'),
+    ),
+    "signer": (
+        ("append", "service/settings.py", 'SIGNING_BACKEND = "custom.Signer"\n'),
+    ),
+}
+
+
+def _nested_project_sources():
+    files = _recovery_sources()
+    files.pop("start.py")
+    files.update({"service/asgi.py": START, "service/__init__.py": ""})
+    for path, source in list(files.items()):
+        files["service/" + path] = source
+    script = (
+        "import os\nimport sys\n"
+        "def main():\n"
+        '    os.environ.setdefault("DJANGO_SETTINGS_MODULE", "service.settings")\n'
+        "    from django.core.management import execute_from_command_line\n"
+        "    execute_from_command_line(sys.argv)\n"
+        'if __name__ == "__main__":\n    main()\n'
     )
+    files["manage.py"] = script
+    files["service/manage.py"] = script
+    return files
+
+
+def test_captured_script_module_direct_selection_and_sys_path_rejection():
+    from factoryline import semantic_credential_sensor as sensor
+    from factoryline.import_context import captured_script_module
+
+    files = _nested_project_sources()
+    raw = {name: source.encode() for name, source in files.items()}
+    context = sensor.signing_configuration_inventory(
+        raw, {name: sha256(value).hexdigest() for name, value in raw.items()}
+    )
+    assert context is not None
+    parts, origin = ["service", "settings"], Path("service/service/settings.py")
+    assert captured_script_module(context, parts, origin) == origin
+
+    files["service/manage.py"] = files["service/manage.py"].replace(
+        "def main():", 'sys.path.insert(0, "other")\ndef main():'
+    )
+    raw = {name: source.encode() for name, source in files.items()}
+    context = sensor.signing_configuration_inventory(
+        raw, {name: sha256(value).hexdigest() for name, value in raw.items()}
+    )
+    assert context is not None
+    assert captured_script_module(context, parts, origin) is None
+
+
+def test_eager_import_closure_directly_reports_sources_and_unresolved_imports():
+    from factoryline import semantic_credential_sensor as sensor
+    from factoryline.import_context import eager_import_closure
+
+    sources = {
+        "consumer.py": b"from provider import VALUE\n",
+        "provider.py": b"VALUE = 1\n",
+    }
+    context = sensor.signing_configuration_inventory(
+        sources, {name: sha256(value).hexdigest() for name, value in sources.items()}
+    )
+    proof = eager_import_closure(context["index"], (Path("consumer.py"),), set())
+    assert proof["closed"]
+    assert {row["path"] for row in proof["sources"]} == {"consumer.py", "provider.py"}
+    assert proof["unresolved"] == []
+
+    sources["consumer.py"] = b"from missing_provider import VALUE\n"
+    context = sensor.signing_configuration_inventory(
+        sources, {name: sha256(value).hexdigest() for name, value in sources.items()}
+    )
+    blocked = eager_import_closure(context["index"], (Path("consumer.py"),), set())
+    assert not blocked["closed"]
+    assert blocked["unresolved"][0]["reason"] == "unmodeled_eager_import_effects"
+
+
+def test_close_selected_import_sources_records_closed_and_open_contracts():
+    from factoryline import semantic_credential_sensor as sensor
+    from factoryline.import_context import close_selected_import_sources
+
+    sources = {
+        "consumer.py": b"from provider import VALUE\n",
+        "provider.py": b"VALUE = 1\n",
+    }
+    context = sensor.signing_configuration_inventory(
+        sources, {name: sha256(value).hexdigest() for name, value in sources.items()}
+    )
+    selection, sites = Path("consumer.py"), (Path("consumer.py"),)
+    assert close_selected_import_sources(context, selection, sites, set()) is sites
+    assert context["selected_import_closures"][selection.as_posix()]["closed"]
+
+    sources["consumer.py"] = b"from missing_provider import VALUE\n"
+    context = sensor.signing_configuration_inventory(
+        sources, {name: sha256(value).hexdigest() for name, value in sources.items()}
+    )
+    assert close_selected_import_sources(context, selection, sites, set()) is None
+    blocked = context["selected_import_closures"][selection.as_posix()]
+    assert not blocked["closed"]
+    assert blocked["unresolved"][0]["reason"] == "unmodeled_eager_import_effects"
+
+
+@pytest.mark.parametrize(
+    "target", ["service/settings.py", "service/service/settings.py"]
+)
+def test_explicit_script_launch_disambiguates_nested_project_roots(target):
+    row = _recovery_row(_nested_project_sources(), path=target)
+    assert row["tier"] == "SUPPORTED_DEFECT"
+    assert (
+        row["credential_authority_observation"]["consumer_role"]
+        == "signed_feedback_integrity"
+    )
+
+
+NESTED_MANAGE = "service/manage.py"
+DORMANT_MANAGE_LAYOUTS = {
+    "dormant_function": ("    def dormant():\n", "", "\n"),
+    "dormant_class": ("    class Dormant:\n", "", "\n"),
+    "dormant_lambda": ("    dormant = lambda: (\n", "    )\n", ",\n"),
+    "dormant_comprehension": (
+        "    dormant = [(\n",
+        "    ) for item in []]\n",
+        ",\n",
+    ),
+}
+
+
+def _dormant_nested_manage_source(mutation):
+    prefix, suffix, separator = DORMANT_MANAGE_LAYOUTS[mutation]
+    statements = (
+        'os.environ.setdefault("DJANGO_SETTINGS_MODULE", "service.settings")',
+        "execute_from_command_line(sys.argv)",
+    )
+    body = separator.join("        " + statement for statement in statements) + "\n"
+    return (
+        "import os\nimport sys\nfrom django.core.management import execute_from_command_line\n"
+        "def main():\n"
+        + prefix
+        + body
+        + suffix
+        + 'if __name__ == "__main__":\n    main()\n'
+    )
+
+
+NESTED_ROOT_EDITS = {
+    "missing_launch": (("remove", NESTED_MANAGE),),
+    "main_rebound": (
+        ("replace", NESTED_MANAGE, "if __name__", "main = replacement\nif __name__"),
+    ),
+    "os_rebound": (
+        ("replace", NESTED_MANAGE, "def main():", "os = replacement\ndef main():"),
+    ),
+    "sys_path": (
+        (
+            "replace",
+            NESTED_MANAGE,
+            "def main():",
+            'sys.path.insert(0, "other")\ndef main():',
+        ),
+    ),
+    "sys_modules": (
+        (
+            "replace",
+            NESTED_MANAGE,
+            "def main():",
+            'sys.modules["service"] = other\ndef main():',
+        ),
+    ),
+    "env_before": (
+        (
+            "replace",
+            NESTED_MANAGE,
+            "    os.environ.setdefault",
+            '    os.environ["DJANGO_SETTINGS_MODULE"] = "other.settings"\n    os.environ.setdefault',
+        ),
+    ),
+    "env_after": (
+        (
+            "replace",
+            NESTED_MANAGE,
+            "    execute_from_command_line(sys.argv)",
+            '    os.environ["DJANGO_SETTINGS_MODULE"] = "other.settings"\n    execute_from_command_line(sys.argv)',
+        ),
+    ),
+    "env_delete": (
+        (
+            "replace",
+            NESTED_MANAGE,
+            "    execute_from_command_line(sys.argv)",
+            '    del os.environ["DJANGO_SETTINGS_MODULE"]\n    execute_from_command_line(sys.argv)',
+        ),
+    ),
+    "env_update": (
+        (
+            "replace",
+            NESTED_MANAGE,
+            "    execute_from_command_line(sys.argv)",
+            '    os.environ.update({"DJANGO_SETTINGS_MODULE": "other.settings"})\n    execute_from_command_line(sys.argv)',
+        ),
+    ),
+    "env_pop": (
+        (
+            "replace",
+            NESTED_MANAGE,
+            "    execute_from_command_line(sys.argv)",
+            '    os.environ.pop("DJANGO_SETTINGS_MODULE", None)\n    execute_from_command_line(sys.argv)',
+        ),
+    ),
+    "env_clear": (
+        (
+            "replace",
+            NESTED_MANAGE,
+            "    execute_from_command_line(sys.argv)",
+            "    os.environ.clear()\n    execute_from_command_line(sys.argv)",
+        ),
+    ),
+    "env_alias": (
+        (
+            "replace",
+            NESTED_MANAGE,
+            "    execute_from_command_line(sys.argv)",
+            '    env = os.environ\n    env["DJANGO_SETTINGS_MODULE"] = "other.settings"\n    execute_from_command_line(sys.argv)',
+        ),
+    ),
+    "env_reassign": (
+        (
+            "replace",
+            NESTED_MANAGE,
+            "    execute_from_command_line(sys.argv)",
+            "    os.environ = other_environment\n    execute_from_command_line(sys.argv)",
+        ),
+    ),
+    "other_module": (
+        ("replace", NESTED_MANAGE, '"service.settings"', '"other.settings"'),
+    ),
+    "sibling_module": (
+        ("copy", "service/service/other.py", "service/service/settings.py"),
+        ("replace", NESTED_MANAGE, '"service.settings"', '"service.other"'),
+    ),
+    "guarded_launch": (
+        ("replace", NESTED_MANAGE, "    main()\n", "    if enabled:\n        main()\n"),
+    ),
+    "unknown_call": (
+        ("replace", NESTED_MANAGE, "def main():", "mutate_environment()\ndef main():"),
+    ),
+    "sys_rebound": (
+        ("replace", NESTED_MANAGE, "def main():", "sys = replacement\ndef main():"),
+    ),
+    "argv_rebound": (
+        (
+            "replace",
+            NESTED_MANAGE,
+            "def main():",
+            "sys.argv = replacement\ndef main():",
+        ),
+    ),
+    "arg_default": (
+        (
+            "replace",
+            NESTED_MANAGE,
+            "def main():",
+            'def main(flag=os.environ.setdefault("DJANGO_SETTINGS_MODULE", "service.other")):',
+        ),
+    ),
+    "kw_default": (
+        (
+            "replace",
+            NESTED_MANAGE,
+            "def main():",
+            'def main(*, flag=os.environ.setdefault("DJANGO_SETTINGS_MODULE", "service.other")):',
+        ),
+    ),
+    "extra_import": (
+        (
+            "replace",
+            NESTED_MANAGE,
+            "def main():",
+            "import unknown_eager_effect\ndef main():",
+        ),
+    ),
+    "second_default": (
+        (
+            "replace",
+            NESTED_MANAGE,
+            "    execute_from_command_line(sys.argv)",
+            '    os.environ.setdefault("DJANGO_SETTINGS_MODULE", "service.other")\n    execute_from_command_line(sys.argv)',
+        ),
+    ),
+    "captured_import": (
+        ("replace", NESTED_MANAGE, "def main():", "import poison\ndef main():"),
+        (
+            "set",
+            "poison.py",
+            'import os\nos.environ["DJANGO_SETTINGS_MODULE"] = "other.settings"\n',
+        ),
+    ),
+    "os_shadow": (("set", "service/os.py", "environ = other_environment\n"),),
+    "package_initializer": (
+        (
+            "set",
+            "service/service/__init__.py",
+            'import os\nos.environ["DJANGO_SETTINGS_MODULE"] = "service.other"\n',
+        ),
+    ),
+    "module_definition_effect": (
+        (
+            "replace",
+            NESTED_MANAGE,
+            "def main():",
+            'def unused(flag=os.environ.setdefault("DJANGO_SETTINGS_MODULE", "service.other")):\n    pass\ndef main():',
+        ),
+    ),
+    "prior_raise": (
+        (
+            "replace",
+            NESTED_MANAGE,
+            "    os.environ.setdefault",
+            '    raise ImportError("blocked startup")\n    os.environ.setdefault',
+        ),
+    ),
+    "recursive_entry": (
+        (
+            "replace",
+            NESTED_MANAGE,
+            "    os.environ.setdefault",
+            "    main()\n    os.environ.setdefault",
+        ),
+    ),
+    "dormant_function": (
+        ("set", NESTED_MANAGE, _dormant_nested_manage_source("dormant_function")),
+    ),
+    "dormant_class": (
+        ("set", NESTED_MANAGE, _dormant_nested_manage_source("dormant_class")),
+    ),
+    "dormant_lambda": (
+        ("set", NESTED_MANAGE, _dormant_nested_manage_source("dormant_lambda")),
+    ),
+    "dormant_comprehension": (
+        ("set", NESTED_MANAGE, _dormant_nested_manage_source("dormant_comprehension")),
+    ),
+    "computed_default": (
+        (
+            "replace",
+            NESTED_MANAGE,
+            "    os.environ.setdefault",
+            '    os.environ.setdefault("DJANGO_" + "SETTINGS_MODULE", "service.other")\n    os.environ.setdefault',
+        ),
+    ),
+    "unknown_default": (
+        (
+            "replace",
+            NESTED_MANAGE,
+            "    os.environ.setdefault",
+            '    os.environ.setdefault(unknown_key, "service.other")\n    os.environ.setdefault',
+        ),
+    ),
+    "catch_and_continue": (
+        (
+            "replace",
+            NESTED_MANAGE,
+            "    from django.core.management import execute_from_command_line",
+            "    try:\n        from django.core.management import execute_from_command_line\n    except ImportError:\n        pass",
+        ),
+    ),
+    "late_module_import": (
+        ("replace", NESTED_MANAGE, "import os\n", ""),
+        ("append", NESTED_MANAGE, "import os\n"),
+    ),
+    "late_local_import": (
+        ("replace", NESTED_MANAGE, "import os\n", ""),
+        (
+            "replace",
+            NESTED_MANAGE,
+            "    from django.core.management",
+            "    import os\n    from django.core.management",
+        ),
+    ),
+    "unrelated_env": (
+        (
+            "replace",
+            NESTED_MANAGE,
+            "    execute_from_command_line(sys.argv)",
+            '    os.environ["FEATURE_FLAG"] = "enabled"\n    execute_from_command_line(sys.argv)',
+        ),
+    ),
+    "entry_provider_shadow": (("replace", NESTED_MANAGE, "main()", "os()"),),
+}
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "missing_launch",
+        "main_rebound",
+        "os_rebound",
+        "sys_path",
+        "sys_modules",
+        "env_before",
+        "env_after",
+        "env_delete",
+        "env_update",
+        "env_pop",
+        "env_clear",
+        "env_alias",
+        "env_reassign",
+        "other_module",
+        "sibling_module",
+        "guarded_launch",
+        "unknown_call",
+        "sys_rebound",
+        "argv_rebound",
+        "arg_default",
+        "kw_default",
+        "extra_import",
+        "second_default",
+        "captured_import",
+        "os_shadow",
+        "package_initializer",
+        "module_definition_effect",
+        "prior_raise",
+        "recursive_entry",
+        "dormant_function",
+        "dormant_class",
+        "dormant_lambda",
+        "dormant_comprehension",
+        "computed_default",
+        "unknown_default",
+        "catch_and_continue",
+        "late_module_import",
+        "late_local_import",
+        "unrelated_env",
+        "entry_provider_shadow",
+    ],
+)
+def test_nested_root_requires_closed_explicit_script_selection(mutation):
+    files = _nested_project_sources()
+    _apply_source_mutations(files, NESTED_ROOT_EDITS[mutation])
+    for source in files.values():
+        ast.parse(source)
+    assert (
+        _recovery_row(files, path="service/service/settings.py")["tier"]
+        == "NEEDS_CONTEXT"
+    )
+
+
+@pytest.mark.parametrize("startup", ["direct_import", "module_import", "import_try"])
+def test_canonical_startup_and_docstring_packages_select_script_module(startup):
+    files = _nested_project_sources()
+    files["service/__init__.py"] = '"Package documentation only"\n'
+    files["service/service/__init__.py"] = '"Nested package documentation only"\n'
+    script = files["service/manage.py"]
+    provider = "from django.core.management import execute_from_command_line"
+    if startup == "module_import":
+        script = script.replace("    " + provider + "\n", "")
+        script = script.replace("def main():", provider + "\ndef main():")
+    elif startup == "import_try":
+        script = script.replace(
+            "    " + provider,
+            "    try:\n        "
+            + provider
+            + '\n    except ImportError as exc:\n        raise ImportError("Missing Django") from exc',
+        )
+    files["service/manage.py"] = script
+    assert (
+        _recovery_row(files, path="service/service/settings.py")["tier"]
+        == "SUPPORTED_DEFECT"
+    )
+
+
+def test_nested_script_root_public_cli_and_source_bound_reseal(tmp_path, capsys):
+    from factoryline.cli import main
+
+    files = _nested_project_sources()
+    for name, source in files.items():
+        target = tmp_path / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(source.encode())
+    assert (
+        main(
+            [
+                "audit",
+                "security",
+                "--root",
+                str(tmp_path),
+                "--security-only",
+                "--defect-policy",
+                "source-role-v3",
+                "--json",
+            ]
+        )
+        == 1
+    )
+    report = json.loads(capsys.readouterr().out)
+    assert report["audit_coverage"]["complete"]
+    assert report["finding_tier_report"]["tier_counts"]["SUPPORTED_DEFECT"] == 2
+    assert len(report["agent_actions"]) == 2
+    assert all(
+        (tmp_path / name).read_bytes() == source.encode()
+        for name, source in files.items()
+    )
+    rebuilt = copy.deepcopy(report)
+    rebuilt["_primitive_source_bytes"] = {
+        name: source.encode() for name, source in files.items()
+    }
+    assert (
+        audit._seal_security_scan(rebuilt)["finding_tier_report"]
+        == report["finding_tier_report"]
+    )
+    rebuilt = copy.deepcopy(report)
+    rebuilt["_primitive_source_bytes"] = {
+        name: source.encode() for name, source in files.items()
+    }
+    rebuilt["_primitive_source_bytes"]["service/manage.py"] = (
+        b"different_selected_source\n"
+    )
+    changed = audit._seal_security_scan(rebuilt)
+    assert changed["defect_policy_decision"]["state"] == "BLOCKED"
+
+
+@pytest.mark.parametrize(
+    "dependency,expected",
+    [
+        ("missing", "NEEDS_CONTEXT"),
+        ("closed", "SUPPORTED_DEFECT"),
+        ("mutating", "NEEDS_CONTEXT"),
+        ("transitive_missing", "NEEDS_CONTEXT"),
+        ("standard_parent_shadow", "NEEDS_CONTEXT"),
+    ],
+)
+def test_selected_provider_import_requires_eager_dependency_closure(
+    dependency, expected
+):
+    files = _provider_configuration_sources()
+    files["widget/views.py"] = (
+        "from extension_transport import VALUE\n" + files["widget/views.py"]
+    )
+    if dependency == "closed":
+        files["extension_transport.py"] = "VALUE = 1\n"
+    elif dependency == "mutating":
+        files["extension_transport.py"] = (
+            "from django.conf import settings\nsettings.SECRET_KEY = 'replacement'\nVALUE = 1\n"
+        )
+    elif dependency == "transitive_missing":
+        files["extension_transport.py"] = "from absent_transport import VALUE\n"
+    elif dependency == "standard_parent_shadow":
+        files["extension_transport.py"] = "import unittest.mock\nVALUE = 1\n"
+        files["unittest/__init__.py"] = "pass\n"
+    row = _recovery_row(files)
+    assert row["tier"] == expected
+    assert row["raw_finding"]["facts"] == {"name": "SECRET_KEY"}
+    if dependency == "missing":
+        evidence = row["unresolved_provider_imports"]
+        assert any(
+            item["module"] == "extension_transport"
+            and item["reason"] == "unmodeled_eager_import_effects"
+            and item["path"] == "widget/views.py"
+            and item["sha256"] == sha256(files["widget/views.py"].encode()).hexdigest()
+            for item in evidence
+        )
+        assert "source_bound_eager_provider_import_closure" in row["missing_premises"]
+
+
+def _provider_configuration_sources():
+    return _recovery_sources(
+        extra={
+            "widget/__init__.py": 'from django.conf import settings\n_DEFAULTS = {"EXTENSION_FLAG": True, "EXTENSION_LABEL": "x"}\nfor key, value in list(_DEFAULTS.items()):\n    try:\n        getattr(settings, key)\n    except AttributeError:\n        setattr(settings, key, value)\n',
+            "widget/views.py": "from importlib import import_module\nfrom django.conf import settings\nfrom django.views import View\nSessionStore = import_module(settings.SESSION_ENGINE).SessionStore\nclass Callback(View):\n    pass\n",
+            "service/urls.py": 'from django.contrib import admin\nfrom django.urls import path\nfrom widget.views import Callback\nurlpatterns = [path("admin/", admin.site.urls), path("extension/", Callback.as_view())]\n',
+        }
+    )
+
+
+NATIVE_SELECTED_SETTING_EDITS = {
+    "secret_key": (("replace", "widget/__init__.py", "EXTENSION_FLAG", "SECRET_KEY"),),
+    "wrapped": (("replace", "widget/__init__.py", "EXTENSION_FLAG", "_wrapped"),),
+    "dunder": (("replace", "widget/__init__.py", "EXTENSION_FLAG", "__dict__"),),
+    "explicit": (
+        (
+            "append",
+            "service/settings.py",
+            'SESSION_ENGINE = "django.contrib.sessions.backends.db"\n',
+        ),
+    ),
+    "importer_alias": (
+        (
+            "replace",
+            "widget/views.py",
+            "import import_module",
+            "import import_module as load",
+        ),
+        ("replace", "widget/views.py", "= import_module(", "= load("),
+    ),
+    "dict_alias": (
+        ("replace", "widget/__init__.py", "for key,", "copy = _DEFAULTS\nfor key,"),
+    ),
+    "dict_update": (
+        (
+            "replace",
+            "widget/__init__.py",
+            "for key,",
+            '_DEFAULTS.update({"SECRET_KEY": "replacement"})\nfor key,',
+        ),
+    ),
+    "dict_escape": (
+        ("replace", "widget/__init__.py", "for key,", "escape(_DEFAULTS)\nfor key,"),
+    ),
+    "foreign_dict": (
+        (
+            "set",
+            "mutation.py",
+            'from widget import _DEFAULTS\n_DEFAULTS["SECRET_KEY"] = "replacement"\n',
+        ),
+    ),
+    "mutated_builtin": (
+        ("set", "mutation.py", "import builtins\nbuiltins.setattr = replacement\n"),
+    ),
+    "mutated_importer": (
+        (
+            "set",
+            "mutation.py",
+            "import importlib\nimportlib.import_module = replacement\n",
+        ),
+    ),
+    "importer_rebound": (
+        (
+            "replace",
+            "widget/views.py",
+            "SessionStore =",
+            "import_module = replacement\nSessionStore =",
+        ),
+    ),
+    "backend_override": (
+        (
+            "set",
+            "mutation.py",
+            'from django.conf import settings\nsettings.SESSION_ENGINE = "unknown.backend"\n',
+        ),
+    ),
+    "dynamic_module": (
+        ("replace", "widget/views.py", "settings.SESSION_ENGINE", "choose_module()"),
+    ),
+    "reflected_module": (
+        (
+            "replace",
+            "widget/views.py",
+            "settings.SESSION_ENGINE",
+            'getattr(settings, "SESSION_ENGINE")',
+        ),
+    ),
+    "backend_member": (
+        (
+            "set",
+            "mutation.py",
+            "import django.contrib.sessions.backends.db as backend\nbackend.SessionStore = replacement\n",
+        ),
+    ),
+    "importlib_file": (
+        ("set", "importlib.py", "def import_module(name):\n    return unknown\n"),
+    ),
+    "importlib_package": (
+        (
+            "set",
+            "importlib/__init__.py",
+            "def import_module(name):\n    return unknown\n",
+        ),
+    ),
+    "importer_escape": (
+        ("set", "mutation.py", "import importlib\nescape(importlib)\n"),
+    ),
+    "literal_selected": (
+        (
+            "replace",
+            "widget/views.py",
+            "settings.SESSION_ENGINE",
+            '"django.contrib.sessions.backends.db"',
+        ),
+    ),
+    "plain_explicit": (
+        (
+            "replace",
+            "widget/views.py",
+            "from django.conf import settings",
+            "import service.settings as settings",
+        ),
+        (
+            "append",
+            "service/settings.py",
+            'SESSION_ENGINE = "django.contrib.sessions.backends.db"\n',
+        ),
+    ),
+    "missing_plain_setting": (
+        (
+            "replace",
+            "widget/views.py",
+            "from django.conf import settings",
+            "import service.settings as settings",
+        ),
+    ),
+    "key_rebound": (
+        (
+            "replace",
+            "widget/__init__.py",
+            "        getattr",
+            '        key = "SECRET_KEY"\n        getattr',
+        ),
+    ),
+    "dict_chained_alias": (
+        ("replace", "widget/__init__.py", "_DEFAULTS =", "copy = _DEFAULTS ="),
+    ),
+    "relative_foreign_dict": (
+        (
+            "set",
+            "widget/peer.py",
+            'from . import _DEFAULTS\n_DEFAULTS["SECRET_KEY"] = "replacement"\n',
+        ),
+    ),
+    "dict_module_escape": (("set", "mutation.py", "import widget\nescape(widget)\n"),),
+    "dict_peer_alias_only": (
+        ("set", "mutation.py", "from widget import _DEFAULTS as copied\n"),
+    ),
+    "backend_dynamic_setting": (
+        ("append", "service/settings.py", "SESSION_ENGINE = choose_backend()\n"),
+    ),
+    "backend_global_rebind": (
+        (
+            "append",
+            "service/settings.py",
+            'def change_engine():\n    global SESSION_ENGINE\n    SESSION_ENGINE = "unknown.backend"\n',
+        ),
+    ),
+    "loader_namespace_escape": (
+        ("set", "mutation.py", "import sys\nescape(sys.modules)\n"),
+    ),
+    "wrong_module_literal": (
+        (
+            "replace",
+            "widget/views.py",
+            "settings.SESSION_ENGINE",
+            '"unexpected.plugin"',
+        ),
+    ),
+    "wrong_terminal_member": (
+        ("replace", "widget/views.py", ").SessionStore", ").Unknown"),
+    ),
+    "backend_store_alias_mutation": (
+        (
+            "set",
+            "mutation.py",
+            "from widget.views import SessionStore as Store\nStore.attribute = replacement\n",
+        ),
+    ),
+    "importlib_ambiguous": (
+        ("set", "importlib.py", "pass\n"),
+        ("set", "importlib/__init__.py", "pass\n"),
+    ),
+}
+
+
+@pytest.mark.parametrize(
+    "change,expected",
+    [
+        ("default", "SUPPORTED_DEFECT"),
+        ("explicit", "SUPPORTED_DEFECT"),
+        ("importer_alias", "SUPPORTED_DEFECT"),
+        ("secret_key", "NEEDS_CONTEXT"),
+        ("wrapped", "NEEDS_CONTEXT"),
+        ("dunder", "NEEDS_CONTEXT"),
+        ("dict_alias", "NEEDS_CONTEXT"),
+        ("dict_update", "NEEDS_CONTEXT"),
+        ("dict_escape", "NEEDS_CONTEXT"),
+        ("foreign_dict", "NEEDS_CONTEXT"),
+        ("mutated_builtin", "NEEDS_CONTEXT"),
+        ("mutated_importer", "NEEDS_CONTEXT"),
+        ("importer_rebound", "NEEDS_CONTEXT"),
+        ("backend_override", "NEEDS_CONTEXT"),
+        ("dynamic_module", "NEEDS_CONTEXT"),
+        ("reflected_module", "NEEDS_CONTEXT"),
+        ("backend_member", "NEEDS_CONTEXT"),
+        ("importlib_file", "NEEDS_CONTEXT"),
+        ("importlib_package", "NEEDS_CONTEXT"),
+        ("importer_escape", "NEEDS_CONTEXT"),
+        ("literal_selected", "SUPPORTED_DEFECT"),
+        ("plain_explicit", "SUPPORTED_DEFECT"),
+        ("missing_plain_setting", "NEEDS_CONTEXT"),
+        ("key_rebound", "NEEDS_CONTEXT"),
+        ("dict_chained_alias", "NEEDS_CONTEXT"),
+        ("relative_foreign_dict", "NEEDS_CONTEXT"),
+        ("dict_module_escape", "NEEDS_CONTEXT"),
+        ("dict_peer_alias_only", "NEEDS_CONTEXT"),
+        ("backend_dynamic_setting", "NEEDS_CONTEXT"),
+        ("backend_global_rebind", "NEEDS_CONTEXT"),
+        ("loader_namespace_escape", "NEEDS_CONTEXT"),
+        ("wrong_module_literal", "NEEDS_CONTEXT"),
+        ("wrong_terminal_member", "NEEDS_CONTEXT"),
+        ("backend_store_alias_mutation", "NEEDS_CONTEXT"),
+        ("importlib_ambiguous", "NEEDS_CONTEXT"),
+    ],
+)
+def test_native_selected_setting_import_requires_closed_finite_source(change, expected):
+    files = _provider_configuration_sources()
+    _apply_source_mutations(files, NATIVE_SELECTED_SETTING_EDITS.get(change, ()))
+    row = _recovery_row(files)
+    assert row["tier"] == expected
+    assert row["raw_finding"]["facts"] == {"name": "SECRET_KEY"}
+    if expected == "SUPPORTED_DEFECT":
+        proof = row["credential_authority_observation"]["selected_consumer"]
+        assert (
+            proof["configuration_imports"][0]["module"]
+            == "django.contrib.sessions.backends.db"
+        )
+        assert proof["configuration_imports"][0]["source"]["path"] == "widget/views.py"
+        assert proof["finite_configuration_fields"][0]["fields"] == [
+            "EXTENSION_FLAG",
+            "EXTENSION_LABEL",
+        ]
+
+
+def _recovery_row(files, name="SECRET_KEY", path="service/settings.py"):
+    sources = {path: source.encode() for path, source in files.items()}
+    findings = audit._security_scan_tree(Path("."), Path(path), ast.parse(files[path]))
     finding = next(item for item in findings if item["facts"].get("name") == name)
     report = build_finding_tier_report(
         [finding],
@@ -53,13 +946,405 @@ def _recovery_row(files, name="SECRET_KEY"):
     return report["ledger"][0]
 
 
+@pytest.mark.parametrize(
+    "helper", ["finite_keys", "import_operand", "scalar_owner", "scalar_capability"]
+)
+def test_primed_native_provider_proof_rejects_changed_shared_helper(
+    tmp_path, monkeypatch, helper
+):
+    from factoryline import (
+        import_context,
+        credential_endpoint_admission,
+        context_efficiency,
+        mock_fixture_provenance,
+    )
+
+    files = _provider_configuration_sources()
+    if helper in {"scalar_owner", "scalar_capability"}:
+        files["consumer.py"] = (
+            "from django.conf import settings\nvalue = settings.SECRET_KEY.encode()\n"
+        )
+    for name, source in files.items():
+        target = tmp_path / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(source, encoding="utf-8")
+    options = {
+        "security_only": True,
+        "defect_policy": "source-role-v3",
+        "cache_enabled": True,
+    }
+    before = audit.security_scan(tmp_path, **options)
+    assert before["finding_tier_report"]["ledger"][0]["tier"] == "SUPPORTED_DEFECT"
+    if helper == "finite_keys":
+        monkeypatch.setattr(
+            import_context, "finite_key_reflection_reads", lambda *args, **kwargs: set()
+        )
+    elif helper == "import_operand":
+        monkeypatch.setattr(
+            credential_endpoint_admission,
+            "_django_setting_import_operand",
+            lambda *args: False,
+        )
+    elif helper == "scalar_owner":
+        monkeypatch.setattr(
+            context_efficiency, "_informed_unshadowed", lambda *args: False
+        )
+    else:
+        monkeypatch.setattr(
+            mock_fixture_provenance,
+            "_jwt_module_has_dynamic_execution",
+            lambda *args: True,
+        )
+    after = audit.security_scan(tmp_path, **options)
+    assert after["finding_tier_report"]["ledger"][0]["tier"] == "NEEDS_CONTEXT"
+    assert before["findings"] == after["findings"]
+
+
+@pytest.mark.parametrize(
+    "route_style", ["alias", "legacy", "nested", "overwrite_selected"]
+)
+def test_selected_feedback_routes_bind_effective_consumers(route_style):
+    files = _recovery_sources()
+    if route_style == "alias":
+        files["service/urls.py"] = (
+            'from django.contrib import admin as staff\nfrom django.urls import path as route\nurlpatterns = [route("staff/", staff.site.urls)]\n'
+        )
+    elif route_style == "legacy":
+        files["service/urls.py"] = (
+            'from django.contrib import admin\nfrom django.conf.urls import url\nurlpatterns = [url(r"^admin/", admin.site.urls)]\n'
+        )
+    elif route_style == "nested":
+        files["service/urls.py"] = (
+            'from django.urls import include, path\nurlpatterns = [path("staff/", include("service.staff"))]\n'
+        )
+        files["service/staff.py"] = (
+            'from django.contrib import admin\nfrom django.urls import path\nurlpatterns = [path("admin/", admin.site.urls)]\n'
+        )
+    else:
+        files["service/urls.py"] = files["service/urls.py"].replace(
+            "urlpatterns =", "urlpatterns = []\nurlpatterns ="
+        )
+    row = _recovery_row(files)
+    assert row["tier"] == "SUPPORTED_DEFECT"
+    assert (
+        row["credential_authority_observation"]["selected_consumer"]["model"]
+        == "django.admin.feedback.v1"
+    )
+    assert row["raw_finding"]["facts"] == {"name": "SECRET_KEY"}
+
+
+@pytest.mark.parametrize(
+    "target", ["factory()", "mutate(admin.site)", "unknown", "missing"]
+)
+def test_unknown_handler_or_factory_cannot_be_innocuous_admin_sibling(target):
+    files = _recovery_sources()
+    files["service/urls.py"] = (
+        "from django.contrib import admin\nfrom django.urls import path\nfrom .missing import missing\n"
+        f'urlpatterns = [path("other/", {target}), path("admin/", admin.site.urls)]\n'
+    )
+    assert _recovery_row(files)["tier"] == "NEEDS_CONTEXT"
+
+
+@pytest.mark.parametrize(
+    "pattern,expected", [("^", "NEEDS_CONTEXT"), ("^$", "SUPPORTED_DEFECT")]
+)
+def test_legacy_regex_prefix_and_terminal_route_precedence(pattern, expected):
+    files = _recovery_sources(
+        extra={
+            "service/views.py": "def home(request):\n    return None\n",
+            "service/urls.py": "from django.contrib import admin\nfrom django.conf.urls import url\nfrom .views import home\n"
+            f'urlpatterns = [url({pattern!r}, home), url(r"^admin/", admin.site.urls)]\n',
+        }
+    )
+    assert _recovery_row(files)["tier"] == expected
+
+
+@pytest.mark.parametrize(
+    "configuration",
+    [
+        'SESSION_ENGINE = "custom.sessions"',
+        'SESSION_SERIALIZER = "custom.Serializer"',
+        'SECRET_KEY_FALLBACKS = ["different-key"]',
+        "MESSAGE_LEVEL = 50",
+        'ROOT_URLCONF = "missing.urls"',
+    ],
+)
+def test_selected_feedback_requires_closed_key_storage_and_backend(configuration):
+    row = _recovery_row(
+        _recovery_sources(
+            SETTINGS + 'ROOT_URLCONF = "service.urls"\n' + configuration + "\n"
+        )
+    )
+    assert row["tier"] == "NEEDS_CONTEXT"
+    assert row["raw_finding"]["facts"] == {"name": "SECRET_KEY"}
+
+
+@pytest.mark.parametrize(
+    "sequence,expected",
+    [
+        (
+            'urlpatterns = []\nurlpatterns += [path("admin/", admin.site.urls)]',
+            "SUPPORTED_DEFECT",
+        ),
+        (
+            'more = [path("admin/", admin.site.urls)]\nurlpatterns = []\nurlpatterns += more',
+            "SUPPORTED_DEFECT",
+        ),
+        (
+            'urlpatterns = patterns("", url(r"^admin/", include(admin.site.urls)))',
+            "SUPPORTED_DEFECT",
+        ),
+        (
+            'urlpatterns = [path("admin/", admin.site.urls)]\nif False:\n    urlpatterns.clear()',
+            "SUPPORTED_DEFECT",
+        ),
+        (
+            'urlpatterns = []\nif unknown:\n    urlpatterns += [path("admin/", admin.site.urls)]',
+            "NEEDS_CONTEXT",
+        ),
+        (
+            'more = [path("admin/", admin.site.urls)]\nurlpatterns = []\nmore.clear()\nurlpatterns += more',
+            "NEEDS_CONTEXT",
+        ),
+        (
+            'more = [path("admin/", admin.site.urls)]\nurlpatterns = more',
+            "NEEDS_CONTEXT",
+        ),
+    ],
+)
+def test_effective_feedback_sequence_composition_and_unknown_mutation(
+    sequence, expected
+):
+    files = _recovery_sources(
+        extra={
+            "service/urls.py": "from django.contrib import admin\nfrom django.urls import path, include\nfrom django.conf.urls import patterns, url\n"
+            + sequence
+            + "\n"
+        }
+    )
+    row = _recovery_row(files)
+    assert row["tier"] == expected
+    assert row["raw_finding"]["facts"] == {"name": "SECRET_KEY"}
+
+
+@pytest.mark.parametrize(
+    "prefix,before,expected",
+    [
+        ("/assets/", True, "SUPPORTED_DEFECT"),
+        ("/", True, "NEEDS_CONTEXT"),
+        ("/", False, "SUPPORTED_DEFECT"),
+    ],
+)
+def test_registered_static_routes_preserve_real_order_and_prefix(
+    prefix, before, expected
+):
+    files = _recovery_sources(
+        SETTINGS + f'DEBUG = True\nSTATIC_URL = {prefix!r}\nSTATIC_ROOT = "files"\n'
+    )
+    start = (
+        "from django.conf import settings\nfrom django.conf.urls.static import static\n"
+    )
+    addition = "static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)"
+    admin = '[path("admin/", admin.site.urls)]'
+    files["service/urls.py"] = (
+        start
+        + "from django.contrib import admin\nfrom django.urls import path\nurlpatterns = "
+        + (addition + " + " + admin if before else admin + " + " + addition)
+        + "\n"
+    )
+    assert _recovery_row(files)["tier"] == expected
+    files["mutation.py"] = 'from service import settings\nsettings.STATIC_URL = "/"\n'
+    assert _recovery_row(files)["tier"] == "NEEDS_CONTEXT"
+
+
+@pytest.mark.parametrize(
+    "pattern,expected",
+    [(r"^p/(?P<pk>[0-9]+)/$", "SUPPORTED_DEFECT"), (r"^p/|admin/", "NEEDS_CONTEXT")],
+)
+def test_compiled_regex_sibling_prefix_is_conservative(pattern, expected):
+    files = _recovery_sources(
+        extra={
+            "service/views.py": "def home(request):\n    return None\n",
+            "service/urls.py": "from django.contrib import admin\nfrom django.conf.urls import url\nfrom .views import home\n"
+            + f'urlpatterns = [url({pattern!r}, home), url(r"^admin/", admin.site.urls)]\n',
+        }
+    )
+    assert _recovery_row(files)["tier"] == expected
+
+
+def test_impossible_regex_cannot_create_selected_feedback_consumer():
+    files = _recovery_sources(
+        extra={
+            "service/urls.py": 'from django.contrib import admin\nfrom django.conf.urls import url\nurlpatterns = [url(r"^admin(?!)", admin.site.urls)]\n'
+        }
+    )
+    assert _recovery_row(files)["tier"] == "NEEDS_CONTEXT"
+
+
+@pytest.mark.parametrize(
+    "change,expected",
+    [
+        ("closed", "SUPPORTED_DEFECT"),
+        ("override", "NEEDS_CONTEXT"),
+        ("unknown_base", "NEEDS_CONTEXT"),
+        ("provider", "NEEDS_CONTEXT"),
+        ("nonexistent_builtin", "NEEDS_CONTEXT"),
+    ],
+)
+def test_framework_cbv_callback_requires_closed_as_view_provider(change, expected):
+    cls = "from django.views.generic import TemplateView\nclass Home(TemplateView):\n    pass\n"
+    if change == "override":
+        cls = cls.replace("    pass", "    def as_view(cls):\n        return unknown()")
+    elif change == "unknown_base":
+        cls = cls.replace("class Home(TemplateView)", "class Home(UnknownBase)")
+    elif change == "nonexistent_builtin":
+        cls = cls.replace("TemplateView", "ImaginaryView")
+    files = _recovery_sources(
+        extra={
+            "service/views.py": cls,
+            "service/urls.py": 'from django.contrib import admin\nfrom django.urls import path\nfrom .views import Home\nurlpatterns = [path("", Home.as_view()), path("admin/", admin.site.urls)]\n',
+        }
+    )
+    if change == "provider":
+        files["mutation.py"] = (
+            "from django.views.generic import TemplateView\nTemplateView.as_view = unknown\n"
+        )
+    assert _recovery_row(files)["tier"] == expected
+
+
+@pytest.mark.parametrize(
+    "change,expected",
+    [
+        ("wildcard_before", "SUPPORTED_DEFECT"),
+        ("wildcard_after", "NEEDS_CONTEXT"),
+        ("foreign_replacement", "NEEDS_CONTEXT"),
+    ],
+)
+def test_callback_declaration_epoch_and_provider_remain_closed(change, expected):
+    function = "def home(request):\n    return None\n"
+    source = (
+        ("from decimal import *\n" + function)
+        if change != "wildcard_after"
+        else (function + "from decimal import *\n")
+    )
+    files = _recovery_sources(
+        extra={
+            "service/views.py": source,
+            "service/urls.py": 'from django.contrib import admin\nfrom django.urls import path\nfrom .views import home\nurlpatterns = [path("other/", home), path("admin/", admin.site.urls)]\n',
+        }
+    )
+    if change == "foreign_replacement":
+        files["mutation.py"] = "from service import views\nviews.home = unknown\n"
+    assert _recovery_row(files)["tier"] == expected
+
+
+def test_feedback_signer_does_not_depend_on_authentication_backend_value():
+    row = _recovery_row(
+        _recovery_sources(SETTINGS + 'AUTHENTICATION_BACKENDS = ["custom.Backend"]\n')
+    )
+    assert row["tier"] == "SUPPORTED_DEFECT"
+    assert (
+        row["credential_authority_observation"]["consumer_role"]
+        == "signed_feedback_integrity"
+    )
+
+
+@pytest.mark.parametrize("mutation", ["authority", "settings_model"])
+def test_cached_native_feedback_admission_rechecks_current_helper_contract(
+    tmp_path, monkeypatch, mutation
+):
+    from factoryline import credential_endpoint_admission as admission
+
+    for name, source in _recovery_sources().items():
+        target = tmp_path / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(source, encoding="utf-8")
+    options = {
+        "security_only": True,
+        "defect_policy": "source-role-v3",
+        "cache_enabled": True,
+    }
+    before = audit.security_scan(tmp_path, **options)
+    assert before["finding_tier_report"]["ledger"][0]["tier"] == "SUPPORTED_DEFECT"
+    if mutation == "authority":
+        monkeypatch.setattr(admission, "_django_default_authority", lambda *args: None)
+    else:
+        monkeypatch.setattr(
+            admission._CredentialHandlerIndex,
+            "_django_feedback_settings",
+            staticmethod(lambda: {"SECRET_KEY": set()}),
+        )
+    after = audit.security_scan(tmp_path, **options)
+    assert after["finding_tier_report"]["ledger"][0]["tier"] == "NEEDS_CONTEXT"
+    assert before["findings"] == after["findings"]
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        "selected",
+        "unguarded",
+        "no_operation",
+        "wrong_order",
+        "receiver_replaced",
+        "effect_provider_replaced",
+    ],
+)
+def test_authenticated_operation_feedback_requires_selected_closed_effect(change):
+    files = _recovery_sources(
+        extra={
+            "service/urls.py": 'from django.urls import path\nfrom .views import change\nurlpatterns = [path("change/", change)]\n',
+            "service/forms.py": "from django import forms\nclass ChangeForm(forms.ModelForm):\n    pass\n",
+            "service/views.py": 'from django.contrib.auth.decorators import login_required\nfrom django.contrib import messages\nfrom .forms import ChangeForm\n@login_required\ndef change(request):\n    form = ChangeForm(request.POST)\n    form.save()\n    messages.success(request, "Record saved")\n',
+        }
+    )
+    if change == "unguarded":
+        files["service/views.py"] = files["service/views.py"].replace(
+            "@login_required\n", ""
+        )
+    elif change == "no_operation":
+        files["service/views.py"] = files["service/views.py"].replace(
+            "    form.save()\n", ""
+        )
+    elif change == "wrong_order":
+        files["service/views.py"] = files["service/views.py"].replace(
+            '    form.save()\n    messages.success(request, "Record saved")',
+            '    messages.success(request, "Record saved")\n    form.save()',
+        )
+    elif change == "receiver_replaced":
+        files["service/views.py"] = files["service/views.py"].replace(
+            "    form.save()", "    form = replacement\n    form.save()"
+        )
+    elif change == "effect_provider_replaced":
+        files["mutation.py"] = (
+            "from django.contrib import messages\nmessages.success = replacement\n"
+        )
+    row = _recovery_row(files)
+    assert row["tier"] == (
+        "SUPPORTED_DEFECT" if change == "selected" else "NEEDS_CONTEXT"
+    )
+    assert row["raw_finding"]["facts"] == {"name": "SECRET_KEY"}
+    if change == "selected":
+        proof = row["credential_authority_observation"]
+        assert (
+            proof["selected_consumer"]["model"]
+            == "django.authenticated-operation.feedback.v1"
+        )
+        assert {r["path"] for r in proof["transfers"]} >= {
+            "service/forms.py",
+            "service/views.py",
+            "service/urls.py",
+        }
+
+
 @pytest.mark.parametrize("material", ["your_key", "YOUR SECRET KEY", "change-this-key"])
 def test_local_signing_default_spelling_does_not_negate_selected_authority(material):
     files = _recovery_sources(SETTINGS.replace("published-signing-material", material))
     row = _recovery_row(files)
     assert row["tier"] == "SUPPORTED_DEFECT"
     proof = row["credential_authority_observation"]
-    assert proof["consumer_role"] == "configured_authentication_session_signing"
+    assert proof["consumer_role"] == "signed_feedback_integrity"
+    assert proof["selected_consumer"]["model"] == "django.admin.feedback.v1"
     assert proof["runtime_execution"] == "not_performed"
     assert proof["deployment"] == "UNASSESSED"
     for transfer in proof["transfers"]:
@@ -103,7 +1388,7 @@ def test_selected_main_management_startup_preserves_legacy_session_authority(
     )
     assert row["tier"] == "SUPPORTED_DEFECT"
     proof = row["credential_authority_observation"]
-    assert len(proof["transfers"]) == 5
+    assert len(proof["transfers"]) >= 7
     assert any(item["path"] == "start.py" for item in proof["transfers"])
 
 
@@ -322,6 +1607,147 @@ def test_literal_key_hash_read_preserves_selected_signing_authority():
         )
     )
     assert row["tier"] == "SUPPORTED_DEFECT"
+
+
+@pytest.mark.parametrize(
+    "alias,prelude",
+    [
+        ("settings", ""),
+        ("runtime_settings", ""),
+        ("settings", "import operator\nunrelated = operator.add(1, 2)\n"),
+    ],
+)
+def test_selected_literal_scalar_encoding_preserves_native_authority(alias, prelude):
+    row = _recovery_row(
+        _recovery_sources(
+            extra={
+                "consumer.py": f"from django.conf import settings as {alias}\n"
+                + prelude
+                + f"def derive():\n    return {alias}.SECRET_KEY.encode()\n"
+            }
+        )
+    )
+    assert row["tier"] == "SUPPORTED_DEFECT"
+    assert row["raw_finding"]["facts"] == {"name": "SECRET_KEY"}
+    assert (
+        row["credential_authority_observation"]["runtime_execution"] == "not_performed"
+    )
+
+
+def test_scalar_module_capability_scan_is_lazy_and_once_per_consumer(monkeypatch):
+    import sys
+    from collections import Counter
+
+    from factoryline import mock_fixture_provenance as fixture
+
+    consumer = (
+        "from django.conf import settings\n"
+        + "\n".join(f"ordinary_{i} = len('value')" for i in range(40))
+        + "\nfirst = settings.SECRET_KEY.encode()\n"
+        "second = settings.SECRET_KEY.encode()\n"
+    )
+    unrelated = "\n".join(f"ordinary_{i} = len('value')" for i in range(40)) + "\n"
+    original = fixture._jwt_module_has_dynamic_execution
+    observed = []
+
+    def observe(module):
+        frame = sys._getframe(1)
+        while (
+            frame is not None
+            and frame.f_code.co_name != "_django_selected_consumers_closed"
+        ):
+            frame = frame.f_back
+        if frame is not None:
+            observed.append((frame, module))
+        return original(module)
+
+    monkeypatch.setattr(fixture, "_jwt_module_has_dynamic_execution", observe)
+    row = _recovery_row(
+        _recovery_sources(extra={"consumer.py": consumer, "unrelated.py": unrelated})
+    )
+    assert row["tier"] == "SUPPORTED_DEFECT"
+    expected = ast.dump(ast.parse(consumer))
+    assert observed and all(ast.dump(module) == expected for _, module in observed)
+    per_invocation = Counter((id(frame), id(module)) for frame, module in observed)
+    assert all(count == 1 for count in per_invocation.values()), per_invocation
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        'value = settings.SECRET_KEY.encode("utf8")',
+        'value = settings.SECRET_KEY.encode(encoding="utf8")',
+        "value = settings.SECRET_KEY.encode(*())",
+        "value = settings.SECRET_KEY.encode(**{})",
+        "value = settings.SECRET_KEY.lower()",
+        "value = settings.SECRET_KEY.decode()",
+        "value = settings.SECRET_KEY.__class__().encode()",
+        "def derive(settings):\n    return settings.SECRET_KEY.encode()",
+        "def derive():\n    settings = replacement\n    return settings.SECRET_KEY.encode()",
+        "settings = replacement\nvalue = settings.SECRET_KEY.encode()",
+        "escape([settings])\nvalue = settings.SECRET_KEY.encode()",
+        "settings.__dict__['SECRET_KEY'] = replacement\nvalue = settings.SECRET_KEY.encode()",
+        "setattr(settings, 'SECRET_KEY', replacement)\nvalue = settings.SECRET_KEY.encode()",
+        "value = replace(settings).SECRET_KEY.encode()",
+        "value = [settings.SECRET_KEY.encode() for settings in replacements]",
+        "class Receiver:\n    settings = replacement\n    value = settings.SECRET_KEY.encode()",
+        "def outer(settings):\n    def inner():\n        return settings.SECRET_KEY.encode()\n    return inner()",
+        "namespace = settings.__dict__\nvalue = settings.SECRET_KEY.encode()",
+        "value = vars(settings)\nencoded = settings.SECRET_KEY.encode()",
+        "settings.SECRET_KEY = replacement\nvalue = settings.SECRET_KEY.encode()",
+        "globals()['settings'] = replacement\nvalue = settings.SECRET_KEY.encode()",
+        "from builtins import globals as namespace\nnamespace()['settings'] = replacement\n"
+        "value = settings.SECRET_KEY.encode()",
+        "def helper():\n    pass\nhelper.__globals__['settings'] = replacement\n"
+        "value = settings.SECRET_KEY.encode()",
+        "from builtins import getattr as lookup\ndef helper():\n    pass\n"
+        "lookup(helper, '__globals__').update({'settings': replacement})\n"
+        "value = settings.SECRET_KEY.encode()",
+        "import sys\nsys._getframe().f_globals['settings'] = replacement\n"
+        "value = settings.SECRET_KEY.encode()",
+        "from operator import attrgetter as lookup\ndef helper():\n    pass\n"
+        "namespace = lookup('__globals__')(helper)\nnamespace['settings'] = replacement\n"
+        "value = settings.SECRET_KEY.encode()",
+        "import operator as capability\ndef helper():\n    pass\n"
+        "capability.methodcaller('__getattribute__', '__globals__')(helper)['settings'] = replacement\n"
+        "value = settings.SECRET_KEY.encode()",
+    ],
+)
+def test_selected_scalar_encoding_keeps_unknown_effects_and_receivers_unadmitted(
+    source,
+):
+    row = _recovery_row(
+        _recovery_sources(
+            extra={"consumer.py": "from django.conf import settings\n" + source + "\n"}
+        )
+    )
+    assert row["tier"] == "NEEDS_CONTEXT"
+    assert "credential_authority_observation" not in row
+
+
+@pytest.mark.parametrize(
+    "replacement",
+    [
+        'SECRET_KEY = "second-literal"',
+        "SECRET_KEY = replacement",
+        "class Custom(str):\n    def encode(self):\n        mutate()\n"
+        "SECRET_KEY = Custom(SECRET_KEY)",
+    ],
+)
+def test_selected_scalar_encoding_requires_one_unchanged_literal_declaration(
+    replacement,
+):
+    row = _recovery_row(
+        _recovery_sources(
+            SETTINGS + replacement + "\n",
+            extra={
+                "consumer.py": "from django.conf import settings\n"
+                "value = settings.SECRET_KEY.encode()\n"
+            },
+        )
+    )
+    assert row["tier"] == "NEEDS_CONTEXT"
+    assert "credential_authority_observation" not in row
 
 
 @pytest.mark.parametrize(
@@ -803,7 +2229,9 @@ def test_package_exclusion_and_unrelated_test_do_not_isolate_active_runtime():
     "extra_target",
     ["live", "unknown_target", "include(dynamic_urls)", "'missing.views.login'"],
 )
-def test_fixture_route_cannot_hide_an_additional_selected_runtime_target(extra_target):
+def test_authentication_route_without_signed_feedback_has_no_selected_authority(
+    extra_target,
+):
     files = _recovery_sources(
         SETTINGS + 'ROOT_URLCONF = "service.urls"\n',
         extra={
@@ -826,7 +2254,9 @@ def test_fixture_route_cannot_hide_an_additional_selected_runtime_target(extra_t
             "    login(request, user)\n",
         },
     )
-    assert _recovery_row(files)["tier"] == "SUPPORTED_DEFECT"
+    row = _recovery_row(files)
+    assert row["tier"] == "NEEDS_CONTEXT"
+    assert row["raw_finding"]["facts"]["name"] == "SECRET_KEY"
 
 
 @pytest.mark.parametrize(

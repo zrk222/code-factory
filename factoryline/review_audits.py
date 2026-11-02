@@ -1351,7 +1351,7 @@ def _warning_filter_mode(
 def _security_finding(
     code: str, path: str, node: ast.AST, message: str, severity: str, **facts: Any
 ) -> dict[str, Any]:
-    return {
+    finding = {
         "code": code,
         "severity": severity,
         "path": path,
@@ -1360,6 +1360,18 @@ def _security_finding(
         "message": message,
         "facts": facts,
     }
+    end_line = getattr(node, "end_lineno", None)
+    end_column = getattr(node, "end_col_offset", None)
+    if (
+        type(end_line) is int
+        and type(end_column) is int
+        and end_line >= finding["line"]
+        and end_column >= 0
+        and (end_line > finding["line"] or end_column >= finding["column"])
+    ):
+        finding["end_line"] = end_line
+        finding["end_column"] = end_column
+    return finding
 
 
 def _dynamic_execution_finding(
@@ -3760,7 +3772,13 @@ def _oracle_context_cache_key(
     from .credential_role_identity_effects import security_value_helper_epoch
 
     helpers += security_value_helper_epoch()
+    from . import credential_endpoint_admission
+
     identity = {
+        "credential_bindings": [
+            (name, id(value), id(getattr(value, "__code__", None)))
+            for name, value in sorted(vars(credential_endpoint_admission).items())
+        ],
         "schema": integrity.credential_context_cache_schema(),
         "root": root.as_posix() if captured else root.resolve().as_posix(),
         "sources": manifest,
@@ -5766,14 +5784,20 @@ def _scan_security_sources(
 
 
 def _seal_security_scan(
-    core: dict[str, Any], *, producer_source_model=None
+    core: dict[str, Any],
+    *,
+    producer_source_model=None,
+    _verified_runtime_rows=None,
 ) -> dict[str, Any]:
     import sys
 
     from .audit_action_refs import seal_security_scan
 
     return seal_security_scan(
-        sys.modules[__name__], core, producer_source_model=producer_source_model
+        sys.modules[__name__],
+        core,
+        producer_source_model=producer_source_model,
+        _verified_runtime_rows=_verified_runtime_rows,
     )
 
 

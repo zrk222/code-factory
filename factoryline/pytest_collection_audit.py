@@ -235,8 +235,27 @@ def _pytest_collection_source_identity(
             if len(data) > MAX_BYTES:
                 raise OSError("oversized hook source")
             tree = ast.parse(data, filename=relative)
-        except (OSError, UnicodeError, SyntaxError, RuntimeAuditError, RecursionError):
-            if is_conftest or allow_unknown:
+        except (
+            SyntaxError,
+            OSError,
+            UnicodeError,
+            RuntimeAuditError,
+            RecursionError,
+        ) as exc:
+            syntax_error = isinstance(exc, SyntaxError)
+            if syntax_error and allow_unknown:
+                hooks.append(
+                    {
+                        "path": relative,
+                        "sha256": sha256(data).hexdigest(),
+                        "bytes": len(data),
+                        "names": [],
+                        "pytest_plugins": False,
+                        "state": "unparseable_source",
+                    }
+                )
+                continue
+            if is_conftest or (allow_unknown and not syntax_error):
                 raise ReviewAuditError(
                     f"Cannot determine pytest test collection from {relative}: "
                     "unreadable or invalid hook source."
@@ -246,8 +265,8 @@ def _pytest_collection_source_identity(
         plugin_assignment = (is_conftest or is_test_module) and any(
             _pytest_plugin_declaration_active(node) for node in tree.body
         )
-        if found or plugin_assignment:
-            hooks.append(
+        hooks.extend(
+            [
                 {
                     "path": relative,
                     "sha256": sha256(data).hexdigest(),
@@ -255,41 +274,58 @@ def _pytest_collection_source_identity(
                     "names": sorted(set(found)),
                     "pytest_plugins": plugin_assignment,
                 }
-            )
-        if is_conftest:
-            sources.append(
+            ]
+            if found or plugin_assignment
+            else []
+        )
+        sources.extend(
+            [
                 {
                     "path": relative,
                     "sha256": sha256(data).hexdigest(),
                     "bytes": len(data),
                 }
-            )
+            ]
+            if is_conftest
+            else []
+        )
     if hooks and not allow_unknown:
         raise ReviewAuditError(
             "Cannot determine pytest test collection: custom collection hooks "
             "or pytest plugins are unsupported."
         )
     unmodeled = identity.get("state") in {"unmodeled-builtin-collection", "unsupported"}
-    if hooks or unmodeled:
-        return {
-            **identity,
-            "state": "unsupported",
-            "collection_state": "UNKNOWN",
-            "mode": "static_without_collection"
-            if _ADVISORY_COLLECTION.get()
-            else "security_only",
-            "reason": "unmodeled_builtin_collection_options"
-            if identity.get("state") == "unmodeled-builtin-collection"
-            else "unsupported_collection_configuration"
-            if identity.get("state") == "unsupported"
-            else "custom_collection_hooks_or_pytest_plugins",
-            "python_files": [],
-            "python_functions": [],
-            "python_classes": [],
-            "conftest_sources": sources,
-            "collection_hook_sources": hooks,
-        }
-    return {**identity, "conftest_sources": sources}
+    unknown = bool(hooks or unmodeled)
+    reason = {
+        "unmodeled-builtin-collection": "unmodeled_builtin_collection_options",
+        "unsupported": "unsupported_collection_configuration",
+    }.get(
+        identity.get("state"),
+        "unparseable_collection_source"
+        if any(hook.get("state") == "unparseable_source" for hook in hooks)
+        else "custom_collection_hooks_or_pytest_plugins",
+    )
+    return {
+        **identity,
+        **(
+            {
+                "state": "unsupported",
+                "collection_state": "UNKNOWN",
+                "mode": {
+                    True: "static_without_collection",
+                    False: "security_only",
+                }[bool(_ADVISORY_COLLECTION.get())],
+                "reason": reason,
+                "python_files": [],
+                "python_functions": [],
+                "python_classes": [],
+                "collection_hook_sources": hooks,
+            }
+            if unknown
+            else {}
+        ),
+        "conftest_sources": sources,
+    }
 
 
 def _pytest_collection_hook_names(tree, is_conftest, is_test_module):

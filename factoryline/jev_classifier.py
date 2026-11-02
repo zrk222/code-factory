@@ -31,7 +31,8 @@ _MAX_PACKET_BYTES = 256_000
 _MAX_CLAIMS = 128
 _MAX_EVIDENCE = 512
 _REVIEW_LABELS = {"SUPPORTED", "CONTRADICTED", "INSUFFICIENT_EVIDENCE"}
-_REVIEW_PROTOCOL = "counterevidence-complete.v1"
+_REVIEW_PROTOCOL = "contextual-evidence.v2"
+_LEGACY_REVIEW_PROTOCOL = "counterevidence-complete.v1"
 _NO_AUTHORITY = {"authority": "none"}
 _NO_RELEASE_DECISION = {**_NO_AUTHORITY, "release_decision": False}
 _NO_RELEASE_DECISION_CAMEL = {**_NO_AUTHORITY, "releaseDecision": False}
@@ -76,6 +77,7 @@ def build_evidence_review_input(
     *,
     candidate_sha256: str,
     retained_inputs: list[str] | None = None,
+    review_protocol: str = _REVIEW_PROTOCOL,
 ) -> dict[str, Any]:
     """Build a bounded, hash-bound request from a validated CF evidence packet."""
     try:
@@ -84,19 +86,19 @@ def build_evidence_review_input(
         validated = validate_review_evidence(packet)
     except (ImportError, ValueError, TypeError, KeyError) as exc:
         raise JevClassificationError("review evidence packet is invalid") from exc
-    if (
-        not _is_sha256(candidate_sha256)
-        or validated.get("candidate_sha256") != candidate_sha256
-    ):
-        raise JevClassificationError("review packet candidate hash does not match")
-    return _build_review_request(validated, candidate_sha256, retained_inputs)
+    return _build_review_request(
+        validated, candidate_sha256, retained_inputs, review_protocol
+    )
 
 
 def _build_review_request(
     validated: Mapping[str, Any],
     candidate_sha256: str,
     retained_inputs: list[str] | None,
+    review_protocol: str = _REVIEW_PROTOCOL,
 ) -> dict[str, Any]:
+    if review_protocol not in {_REVIEW_PROTOCOL, _LEGACY_REVIEW_PROTOCOL}:
+        raise JevClassificationError("unsupported evidence review protocol")
     if (
         not _is_sha256(candidate_sha256)
         or validated.get("candidate_sha256") != candidate_sha256
@@ -109,34 +111,29 @@ def _build_review_request(
         raise JevClassificationError("review evidence packet exceeds size bound")
     validated = deepcopy(validated)
     _validate_packet_bindings(validated, candidate_sha256)
-    evidence = validated.get("evidence")
-    claims = validated.get("claims")
-    unknowns = validated.get("unknowns")
-    if (
-        not isinstance(evidence, list)
-        or len(evidence) > _MAX_EVIDENCE
-        or not isinstance(claims, list)
-        or len(claims) > _MAX_CLAIMS
-        or not isinstance(unknowns, list)
-        or len(unknowns) > _MAX_CLAIMS
+    bounds = {"evidence": _MAX_EVIDENCE, "claims": _MAX_CLAIMS, "unknowns": _MAX_CLAIMS}
+    if any(
+        not isinstance(value := validated.get(key), list) or len(value) > limit
+        for key, limit in bounds.items()
     ):
         raise JevClassificationError("review evidence packet exceeds item bounds")
+    evidence, claims = validated["evidence"], validated["claims"]
     if retained_inputs not in (None, ["complete_packet"]):
         raise JevClassificationError(
             "review requires the complete retained evidence packet"
         )
     retained_inputs = ["complete_packet"]
     context = {
-        "review_protocol": _REVIEW_PROTOCOL,
+        "review_protocol": review_protocol,
         "candidate_sha256": candidate_sha256,
         "receipt_sha256": validated["receipt_sha256"],
         "packet_sha256": validated["packet_sha256"],
         "claim_ids": [item["id"] for item in claims],
         "evidence_ids": [item["id"] for item in evidence],
     }
-    return {
+    request = {
         "schema": "factory.jev-evidence-review-input.v1",
-        "review_protocol": _REVIEW_PROTOCOL,
+        "review_protocol": review_protocol,
         "packet": validated,
         "retained_inputs": retained_inputs,
         "context_sha256": _digest(context),
@@ -170,6 +167,19 @@ def _build_review_request(
         **_NO_AUTHORITY,
         "claim_boundary": "Evidence review is advisory; deterministic CF verdicts and human authority remain unchanged.",
     }
+    if review_protocol == _REVIEW_PROTOCOL:
+        request["rubric"] += (
+            " Distinguish actual claim contradictions from considered context. "
+            "Every assessment must include contextual_evidence, using [] if none. "
+            "Its entries contain evidence_id, rationale, "
+            "and supporting_evidence_ids: cite a linked observed source excerpt, "
+            "explain why it does not defeat this claim, and cite distinct observed "
+            "source excerpts from this assessment's support for that explanation. "
+            "Never reclassify a packet-declared contradiction as context. "
+            "Actual or unresolved contradictions still block SUPPORTED. "
+            "Context dispositions remain pending independent verification."
+        )
+    return request
 
 
 def _validate_packet_bindings(packet: Mapping[str, Any], candidate_sha256: str) -> None:
@@ -196,7 +206,10 @@ def normalize_evidence_review(
     except (ValueError, TypeError, KeyError) as exc:
         raise JevClassificationError("review request packet is invalid") from exc
     expected = _build_review_request(
-        validated, request.get("candidate_sha256"), ["complete_packet"]
+        validated,
+        request.get("candidate_sha256"),
+        ["complete_packet"],
+        request.get("review_protocol"),
     )
     if expected != dict(request):
         raise JevClassificationError("review request fields or context were altered")
@@ -209,9 +222,6 @@ def normalize_evidence_review(
         request["allowed_claim_ids"]
     ):
         raise JevClassificationError("review must assess every packet claim")
-    expected_ids = set(request["allowed_claim_ids"])
-    if {item.get("id") for item in validated["claims"]} != expected_ids:
-        raise JevClassificationError("packet claims do not match request")
     normalized = _normalize_claim_assessments(results, validated, request)
     normalized.sort(key=lambda item: item["claim_id"])
     retained = json.dumps(request, sort_keys=True, separators=(",", ":"))
@@ -256,11 +266,11 @@ def _span_review_material(
     return evaluation, bound
 
 
-def _semantic_text(value, name, limit=8192):
+def _semantic_text(value, name, limit=8192, *, characters=False):
     if (
         not isinstance(value, str)
         or not value.strip()
-        or len(value.encode("utf-8")) > limit
+        or len(value if characters else value.encode("utf-8")) > limit
     ):
         raise JevClassificationError(
             f"semantic {name} is missing or exceeds its byte bound"
@@ -598,18 +608,6 @@ def build_span_review_batches(root, binding_request):
     return {**core, "batch_set_sha256": _digest(core)}
 
 
-def _normalize_batch_responses(reviews, batches):
-    return [
-        _normalize_context_review(
-            response,
-            batch["context_sha256"],
-            batch["review_request"],
-            "batch response order or context differs",
-        )
-        for response, batch in zip(reviews, batches)
-    ]
-
-
 def _normalize_context_review(response, context_sha256, request, error):
     if (
         not _has_exact_fields(response, {"context_sha256", "review"})
@@ -633,7 +631,15 @@ def normalize_span_review_batches(raw, *, root, binding_request, request):
         or len(reviews) != len(expected["batches"])
     ):
         raise JevClassificationError("batch response coverage or identity differs")
-    normalized = _normalize_batch_responses(reviews, expected["batches"])
+    normalized = [
+        _normalize_context_review(
+            response,
+            batch["context_sha256"],
+            batch["review_request"],
+            "batch response order or context differs",
+        )
+        for response, batch in zip(reviews, expected["batches"])
+    ]
     core = {
         "schema": "factory.span-semantic-review-batch-result.v1",
         "batch_set_sha256": expected["batch_set_sha256"],
@@ -790,16 +796,20 @@ def _normalize_claim_assessments(
     allowed_evidence = set(request["allowed_evidence_ids"])
     claims_by_id = {claim["id"]: claim for claim in validated["claims"]}
     evidence_by_id = {entry["id"]: entry for entry in validated["evidence"]}
-    normalized, seen = [], set()
+    normalized = {}
     for item in results:
         value = _normalize_one_claim(
-            item, allowed_claims, allowed_evidence, claims_by_id, evidence_by_id
+            item,
+            allowed_claims,
+            allowed_evidence,
+            claims_by_id,
+            evidence_by_id,
+            request["review_protocol"],
         )
-        if value["claim_id"] in seen:
+        if value["claim_id"] in normalized:
             raise JevClassificationError("review contains a duplicate claim")
-        seen.add(value["claim_id"])
-        normalized.append(value)
-    return normalized
+        normalized[value["claim_id"]] = value
+    return list(normalized.values())
 
 
 def _verification_followup(packet, assessments):
@@ -809,21 +819,25 @@ def _verification_followup(packet, assessments):
         {
             "id": "review:" + claim["id"],
             "claim_id": claim["id"],
-            "status": item.get("label", "UNASSESSED"),
-            "supporting_evidence_ids": sorted(
-                set(claim["supporting_evidence_ids"])
-                | set(item.get("supporting_evidence_ids", []))
-            ),
-            "contradicting_evidence_ids": sorted(
-                set(claim["contradicting_evidence_ids"])
-                | set(item.get("contradicting_evidence_ids", []))
-            ),
+            "status": "CONTEXT_REQUIRES_REVIEW"
+            if item.get("contextual_evidence")
+            else item.get("label", "UNASSESSED"),
+            **{
+                key: sorted(set(claim[key]) | set(item.get(key, [])))
+                for key in ("supporting_evidence_ids", "contradicting_evidence_ids")
+            },
             "verification_action": item.get("verification_action")
             or "Independently verify this claim against the bound source and counterevidence.",
+            **(
+                {"contextual_evidence": deepcopy(item["contextual_evidence"])}
+                if item.get("contextual_evidence")
+                else {}
+            ),
         }
         for claim in packet["claims"]
         if (item := by_id.get(claim["id"], {})).get("label", "UNASSESSED")
         != "SUPPORTED"
+        or item.get("contextual_evidence")
     ]
     incomplete = (
         bool(packet["unknowns"])
@@ -869,15 +883,50 @@ def _evidence_review_base(request, packet, claims, boundary):
     }
 
 
-def _validate_supported_assessment(label, support, contradict, claim, evidence_by_id):
-    if label != "SUPPORTED":
-        return
-    if contradict or claim["contradicting_evidence_ids"]:
-        raise JevClassificationError("supported claim cannot discard counterevidence")
-    if not support or any(
-        evidence_by_id[ref]["epistemic_status"] != "observed" for ref in support
-    ):
-        raise JevClassificationError("supported claim lacks linked observed evidence")
+def _context_source(entry):
+    """Check attribution only; source custody and semantic truth need their own checks."""
+    provenance = entry.get("provenance", {})
+    binding = provenance.get("source_binding", {})
+    content = provenance.get("content")
+    return (
+        entry.get("kind") == "source_excerpt"
+        and entry.get("epistemic_status") == "observed"
+        and isinstance(binding, Mapping)
+        and _is_sha256(binding.get("sha256"))
+        and isinstance(content, str)
+        and provenance.get("sha256") == sha256(content.encode("utf-8")).hexdigest()
+    )
+
+
+def _normalize_contextual_evidence(rows, claim, evidence, support, contradict):
+    if not isinstance(rows, list) or len(rows) > _MAX_CLAIMS:
+        raise JevClassificationError("contextual evidence must be a bounded list")
+    seen = set()
+    forbidden = support | contradict | set(claim["contradicting_evidence_ids"])
+    for row in rows:
+        _require_fields(
+            row,
+            {"evidence_id", "rationale", "supporting_evidence_ids"},
+            "invalid contextual evidence fields",
+        )
+        ref, rationale = row["evidence_id"], row["rationale"]
+        if (
+            not isinstance(ref, str)
+            or ref not in claim["supporting_evidence_ids"]
+            or ref in forbidden | seen
+            or not _context_source(evidence[ref])
+        ):
+            raise JevClassificationError(
+                "contextual evidence is unbound or conflicting"
+            )
+        _semantic_text(rationale, "contextual rationale", 500, characters=True)
+        refs = row["supporting_evidence_ids"]
+        _validate_assessment_refs(refs, [], support, set(evidence))
+        if not refs or not all(_context_source(evidence[ref]) for ref in refs):
+            raise JevClassificationError(
+                "contextual rationale requires observed source support"
+            )
+        seen.add(ref)
 
 
 def _normalize_one_claim(
@@ -886,21 +935,21 @@ def _normalize_one_claim(
     allowed_evidence: set[str],
     claims_by_id: Mapping[str, Any],
     evidence_by_id: Mapping[str, Any],
+    review_protocol: str,
 ) -> dict[str, Any]:
     if not isinstance(item, Mapping):
         raise JevClassificationError("review claim assessment must be an object")
-    _require_fields(
-        item,
-        {
-            "claim_id",
-            "label",
-            "supporting_evidence_ids",
-            "contradicting_evidence_ids",
-            "rationale",
-            "verification_action",
-        },
-        "review claim contains unsupported fields",
-    )
+    fields = {
+        "claim_id",
+        "label",
+        "supporting_evidence_ids",
+        "contradicting_evidence_ids",
+        "rationale",
+        "verification_action",
+    }
+    if review_protocol == _REVIEW_PROTOCOL:
+        fields.add("contextual_evidence")
+    _require_fields(item, fields, "review claim contains unsupported fields")
     claim_id, label = item.get("claim_id"), item.get("label")
     support, contradict = (
         item.get("supporting_evidence_ids"),
@@ -913,37 +962,37 @@ def _normalize_one_claim(
         + claims_by_id[claim_id]["contradicting_evidence_ids"]
     )
     _validate_assessment_refs(support, contradict, linked, allowed_evidence)
-    _validate_supported_assessment(
-        label, support, contradict, claims_by_id[claim_id], evidence_by_id
+    if label == "SUPPORTED":
+        if contradict or claims_by_id[claim_id]["contradicting_evidence_ids"]:
+            raise JevClassificationError(
+                "supported claim cannot discard counterevidence"
+            )
+        if not support or any(
+            evidence_by_id[ref]["epistemic_status"] != "observed" for ref in support
+        ):
+            raise JevClassificationError(
+                "supported claim lacks linked observed evidence"
+            )
+    _normalize_contextual_evidence(
+        item.get("contextual_evidence", []),
+        claims_by_id[claim_id],
+        evidence_by_id,
+        set(support),
+        set(contradict),
     )
     if label == "CONTRADICTED" and not contradict:
         raise JevClassificationError(
             "contradicted claims require contradicting evidence"
         )
-    rationale, verification = item.get("rationale"), item.get("verification_action")
-    if not isinstance(rationale, str) or not rationale.strip() or len(rationale) > 500:
-        raise JevClassificationError("claim assessment requires a bounded rationale")
+    _semantic_text(item["rationale"], "claim rationale", 500, characters=True)
+    verification = item["verification_action"]
     if label == "INSUFFICIENT_EVIDENCE":
-        if (
-            not isinstance(verification, str)
-            or not verification.strip()
-            or len(verification) > 500
-        ):
-            raise JevClassificationError(
-                "insufficient evidence requires a verification action"
-            )
+        _semantic_text(verification, "verification action", 500, characters=True)
     elif verification is not None:
         raise JevClassificationError(
             "verification action is only valid for insufficient evidence"
         )
-    return {
-        "claim_id": claim_id,
-        "label": label,
-        "supporting_evidence_ids": support,
-        "contradicting_evidence_ids": contradict,
-        "rationale": rationale,
-        "verification_action": verification,
-    }
+    return deepcopy(dict(item))
 
 
 def review_deep_audit_result(
@@ -1051,22 +1100,20 @@ def review_evidence(
         [],
         "Unavailable or invalid model review requires human review; deterministic CF verdicts are unchanged.",
     )
-    if transport is None:
-        return {
-            **base,
-            "status": "FALLBACK",
-            "label": "HUMAN_REVIEW",
-            "fallback_reason": "JEV_UNAVAILABLE",
-        }
-    try:
-        return normalize_evidence_review(transport(deepcopy(request)), request=request)
-    except _TRANSPORT_ERRORS as exc:
-        return {
-            **base,
-            "status": "FALLBACK",
-            "label": "HUMAN_REVIEW",
-            "fallback_reason": type(exc).__name__,
-        }
+    reason = "JEV_UNAVAILABLE"
+    if transport is not None:
+        try:
+            return normalize_evidence_review(
+                transport(deepcopy(request)), request=request
+            )
+        except _TRANSPORT_ERRORS as exc:
+            reason = type(exc).__name__
+    return {
+        **base,
+        "status": "FALLBACK",
+        "label": "HUMAN_REVIEW",
+        "fallback_reason": reason,
+    }
 
 
 def build_jev_input(search_payload: Mapping[str, Any]) -> dict[str, Any]:

@@ -2522,8 +2522,13 @@ def _jwt_module_has_dynamic_execution(module):
         "locals",
         "__import__",
         "__builtins__",
+        "attrgetter",
+        "methodcaller",
     }
-    canonical = {f"builtins.{name}" for name in names}
+    canonical = {f"builtins.{name}" for name in names} | {
+        "operator.attrgetter",
+        "operator.methodcaller",
+    }
     namespaces = {"builtins", "sys", "inspect", "importlib"}
     frames = {
         "f_locals",
