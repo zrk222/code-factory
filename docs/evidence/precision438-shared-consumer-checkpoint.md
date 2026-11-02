@@ -1,11 +1,11 @@
 # Precision checkpoint: 66.67% known-TP retention
 
-Current repair replay: **8/12 known TPs retained (66.67%)**, up from 7/12 (58.33%). No prior TP admissions were lost; no reference FP or UNCLEAR cases were admitted. Four known TPs remain missed.
+The exposed regression cohort retains **8/12 known TPs (66.67%)**, up from 7/12, with **zero FP or UNCLEAR admissions and no prior TP loss**. Four known TPs remain missed. References contain 12 TP, 15 FP and 13 UNCLEAR labels from two independent AI reviewers, without outside human adjudication.
 
-All 40 selected cases across 32 repositories completed in **57.516 seconds, zero timeouts**. All 63 underlying raw diagnostics were retained. N438-021 is the new TP admission; the final public CLI also produced one supported defect and one repair action with 13/13 Python files audited in 3.876 seconds.
+Final public CLI validation covers all 40 selected cases across 32 repositories in **404.702 seconds, zero timeouts**. All 63 raw diagnostics survive; all 8 admitted security findings reach candidate-bound repair packets. Eleven separate non-security quality advisory packets remain visible and receive no security TP credit.
 
-This is an **exposed development replay against sealed labels**, not a fresh held-out precision estimate. Precision among admitted replay cases is 8/8; retention uses all 12 known reference TPs. References contain 12 TP, 15 FP and 13 UNCLEAR labels from two independent AI reviewers, without outside human adjudication.
+Shared checkpoint fixes enforce parent revisions, paused-policy identity, transactional resealing, full diagnostic multiplicity and exact packet/witness binding. The checkpoint/handoff suite passed 84 tests; after the final native-partition extraction, all 41 sealing tests passed again. Repository-wide Forge quality passes Grade A; strict architecture and independent ECC review pass. No production module, dependency or detector family was added.
 
-The untouched frozen run at `110b87cb2e9f50ac24d233a9c6720e69180720b0` admitted 7 TP and 0 FP. Its 27 decided references fall below the registered minimum of 40. Original labels and study seals remain unchanged.
+This is an **exposed development replay against sealed labels**, not fresh held-out precision. The untouched frozen run at `110b87cb2e9f50ac24d233a9c6720e69180720b0` admitted 7 TP and 0 FP; its 27 decided references fall below the registered minimum 40. Original labels and study seals remain unchanged.
 
-Local evidence: `.factory/precision438-preflight/continuation-110b/shared-repair-exposed40-delta.json` (SHA256 `46323aaa` prefix); independent ECC review: `shared-repair-final-ecc-review.json`. Exact full artifact hashes are recorded in the scoped workflow audit.
+Exact local receipts: `.factory/checkpoint-integration/public-cli-exposed40-delta.json`, `ecc-review.json`, and the scoped workflow audit.

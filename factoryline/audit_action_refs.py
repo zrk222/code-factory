@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 import re
 import json
+from collections import Counter
 from copy import deepcopy
 from hashlib import sha256
 from typing import Any
@@ -655,7 +656,60 @@ def _apply_security_scan_policy(
         core.pop("defect_policy_decision", None)
 
 
-def _finish_security_scan_seal(audit, core, captured):
+def _security_scan_seal_findings(findings, selected, supported, failed):
+    if failed:
+        return findings
+    return [
+        item
+        for item in findings
+        if not selected
+        or not item.get("code", "").startswith("SECURITY_")
+        or _canonical(item) in supported
+    ]
+
+
+def _security_scan_seal_actions(audit, candidate, findings, witnesses, failed):
+    if failed:
+        return [], None
+    actions = []
+    seen = set()
+    packet_ids = set()
+    for item in findings:
+        identity = _canonical(item)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        snapshot = json.loads(identity)
+        witness_ref = witnesses.get(identity)
+        try:
+            expected = audit_remediation_packet(
+                candidate, deepcopy(snapshot), deepcopy(witness_ref)
+            )
+            packet = audit.audit_remediation_packet(
+                candidate,
+                deepcopy(snapshot),
+                **(
+                    {"source_bound_security_precondition": deepcopy(witness_ref)}
+                    if witness_ref is not None
+                    else {}
+                ),
+            )
+            matches = isinstance(packet, dict) and _canonical(packet) == _canonical(
+                expected
+            )
+        except Exception:
+            matches = False
+            packet = None
+        if not matches or packet["id"] in packet_ids:
+            return [], "MALFORMED_OR_DUPLICATE_PACKET"
+        packet_ids.add(packet["id"])
+        actions.append(packet)
+    if len(actions) != len(seen) or len(packet_ids) != len(actions):
+        return [], "MISSING_OR_DUPLICATE_PACKET"
+    return actions, None
+
+
+def _finish_security_scan_seal(audit, core, captured, baseline, input_physical):
     """Bind candidate actions and report digest after all source policy checks."""
     candidate = sha256(
         json.dumps(
@@ -665,6 +719,7 @@ def _finish_security_scan_seal(audit, core, captured):
         ).encode("utf-8")
     ).hexdigest()
     core["candidate_sha256"] = candidate
+    conservation_failed = core.get("finding_conservation", {}).get("state") == "FAILED"
     findings = core["findings"]
     effect_witnesses = {}
     selected = core.get("selected_defect_policy") not in {None, "legacy-v1"}
@@ -676,6 +731,23 @@ def _finish_security_scan_seal(audit, core, captured):
             continue
         key = _canonical(raw_finding)
         supported_rows[key] = row if key not in supported_rows else None
+    ambiguous_supported = (
+        selected and not blocked and any(row is None for row in supported_rows.values())
+    )
+    if ambiguous_supported and not conservation_failed:
+        core["finding_conservation"].update(
+            state="FAILED",
+            failure_code="SECURITY_ACTION_HANDOFF_INVALID",
+            handoff_state="FAILED",
+            handoff_failure="AMBIGUOUS_SUPPORTED_LEDGER_ROW",
+        )
+        _security_scan_block_conservation_failure(
+            core,
+            baseline,
+            input_physical,
+            failure_code="SECURITY_ACTION_HANDOFF_INVALID",
+        )
+        conservation_failed = True
     supported = {
         key
         for key, row in supported_rows.items()
@@ -705,24 +777,26 @@ def _finish_security_scan_seal(audit, core, captured):
             and sha256(captured[source_path]).hexdigest() == source_sha256
         ):
             effect_witnesses[key] = witness_ref
-    findings = [
-        item
-        for item in findings
-        if not selected
-        or not item.get("code", "").startswith("SECURITY_")
-        or _canonical(item) in supported
-    ]
-    actions = []
-    for item in findings:
-        witness_ref = effect_witnesses.get(_canonical(item))
-        if witness_ref is None:
-            actions.append(audit.audit_remediation_packet(candidate, item))
-        else:
-            actions.append(
-                audit.audit_remediation_packet(
-                    candidate, item, source_bound_security_precondition=witness_ref
-                )
-            )
+    findings = _security_scan_seal_findings(
+        findings, selected, supported, conservation_failed
+    )
+    actions, handoff_failure = _security_scan_seal_actions(
+        audit, candidate, findings, effect_witnesses, conservation_failed
+    )
+    if handoff_failure is not None:
+        core["finding_conservation"].update(
+            state="FAILED",
+            failure_code="SECURITY_ACTION_HANDOFF_INVALID",
+            handoff_state="FAILED",
+            handoff_failure=handoff_failure,
+        )
+        _security_scan_block_conservation_failure(
+            core,
+            baseline,
+            input_physical,
+            failure_code="SECURITY_ACTION_HANDOFF_INVALID",
+        )
+        actions = []
     core["agent_actions"] = actions
     core.pop("audit_sha256", None)
     core["audit_sha256"] = sha256(
@@ -787,35 +861,238 @@ def _security_scan_verification_state(audit, core, captured, primitive):
     )
 
 
-def seal_security_scan(
-    audit, core: dict[str, Any], *, producer_source_model=None
-) -> dict[str, Any]:
-    """Revalidate local captures on every seal; never serialize their source bytes."""
-    prior_state, prior_summary = core.get("state"), core.get("action_summary")
-    prior_tier_report = core.get("finding_tier_report")
-    captured = _prepare_security_scan_sources(core, prior_tier_report)
-    from . import primitive_observation_binding as primitive
+def _security_scan_transaction_copy(core):
+    """Copy mutable checkpoint state while retaining only private source capture."""
+    captured = (
+        getattr(core, "_captured_sources", None)
+        if type(core) is _SourceBoundSecurityReport
+        else None
+    )
+    working = deepcopy(core)
+    if type(working) is _SourceBoundSecurityReport and captured is not None:
+        working._captured_sources = captured
+    return working
 
+
+def _security_scan_diagnostic_rows(core):
+    return [
+        row
+        for rows in (
+            core.get("findings", []),
+            core.get("context_reviews", []),
+            core.get("primitive_observations", []),
+        )
+        if isinstance(rows, list)
+        for row in rows
+        if isinstance(row, dict)
+    ]
+
+
+def _security_scan_identity_counts(
+    rows, *, owners=None, allow_rejected=False, primitive=None
+):
+    try:
+        if owners is not None:
+            return Counter(owners.get(_canonical(row)) for row in rows)
+        counts = Counter(_canonical(row) for row in rows)
+        ambiguous = False
+        if allow_rejected:
+            row_owners = {_canonical(row): _canonical(row) for row in rows}
+            rejected_dispositions = primitive.fixed_program_proof_dispositions() | {
+                "PROVEN_PUBLIC_SYMBOLIC_IDENTIFIER",
+                "PROVEN_FINITE_TEMPLATE_INPUT",
+                "ENDPOINT_DECLARATION_ROLE_PROVEN",
+                "TEST_OWNED_LOCAL_FIXTURE",
+                "TEST_OWNED_APPLICATION_CREDENTIAL",
+                "SOURCE_PRESENTATION_METADATA",
+                "PROVEN_LOCAL_CRYPTO_TEST_PRIMITIVE",
+                "PROVEN_CLOSED_OPERATION_COMMAND_SYNTAX",
+                "PROVEN_CLOSED_LITERAL_PICKLE_BYTES",
+                "PROVEN_LOCAL_CONTROL_LABEL",
+                "CONDITIONAL_PROVIDER_CONTRACT",
+            }
+            for row in rows:
+                identity = _canonical(row)
+                facts = row.get("facts", {})
+                if (
+                    not isinstance(facts, dict)
+                    or facts.get("disposition") not in rejected_dispositions
+                ):
+                    continue
+                rejected_identity = _canonical(primitive.rejected_primitive_proof(row))
+                if rejected_identity == identity:
+                    continue
+                owner = row_owners.get(rejected_identity)
+                if owner is not None and owner != identity:
+                    ambiguous = True
+                row_owners[rejected_identity] = identity
+            return row_owners, ambiguous
+        return counts
+    except (TypeError, ValueError):
+        return (None, True) if allow_rejected else None
+
+
+def _security_scan_conservation(
+    core,
+    baseline,
+    input_physical,
+    native_expected_rows,
+    primitive,
+    native_surface_mismatch=False,
+    native_verification_invalidated=False,
+):
+    ledger = core.get("finding_tier_report", {}).get("ledger", [])
+    ledger_valid = isinstance(ledger, list) and all(
+        isinstance(row, dict) and isinstance(row.get("raw_finding"), dict)
+        for row in ledger
+    )
+    ledger_rows = (
+        [
+            row["raw_finding"]
+            for row in ledger
+            if isinstance(row, dict) and isinstance(row.get("raw_finding"), dict)
+        ]
+        if isinstance(ledger, list)
+        else []
+    )
+    physical_rows = _security_scan_diagnostic_rows(core)
+    baseline_counts = _security_scan_identity_counts(baseline)
+    physical_owners, ambiguous_physical = _security_scan_identity_counts(
+        baseline, allow_rejected=True, primitive=primitive
+    )
+    input_physical_counts = _security_scan_identity_counts(
+        input_physical, owners=physical_owners
+    )
+    physical_counts = _security_scan_identity_counts(
+        physical_rows, owners=physical_owners
+    )
+    ledger_counts = _security_scan_identity_counts(ledger_rows)
+    counts_valid = all(
+        counts is not None
+        for counts in (
+            baseline_counts,
+            physical_owners,
+            input_physical_counts,
+            physical_counts,
+            ledger_counts,
+        )
+    )
+    physical_matches = (
+        counts_valid
+        and not ambiguous_physical
+        and input_physical_counts == baseline_counts
+        and physical_counts == baseline_counts
+    )
+    ledger_matches = counts_valid and ledger_valid and ledger_counts == baseline_counts
+    native_matches = (
+        native_expected_rows is None
+        and not native_surface_mismatch
+        and not native_verification_invalidated
+    )
+    if native_expected_rows is not None and not (
+        native_surface_mismatch or native_verification_invalidated
+    ):
+        try:
+            native_matches = primitive._trusted_core_surface_matches(
+                core, native_expected_rows
+            ) and primitive._trusted_core_surface_matches(
+                {"findings": ledger_rows}, native_expected_rows
+            )
+        except Exception:
+            native_matches = False
+        if not native_matches and physical_matches and not native_surface_mismatch:
+            native_matches = primitive._trusted_core_surface_matches(
+                {"findings": baseline}, native_expected_rows
+            )
+    return {
+        "state": (
+            "PASS"
+            if physical_matches
+            and ledger_matches
+            and native_matches
+            and not native_surface_mismatch
+            and not native_verification_invalidated
+            else "FAILED"
+        ),
+        "scope": "diagnostic_identity_multiplicity",
+        "native_rows": (
+            "MISMATCH"
+            if native_surface_mismatch
+            else "INVALIDATED"
+            if native_verification_invalidated
+            else "VERIFIED"
+            if native_expected_rows is not None
+            else "UNAVAILABLE"
+        ),
+        "native_surface_mismatch": native_surface_mismatch,
+        "native_verification_state_changed": native_verification_invalidated,
+        "native_matches": native_matches,
+        "physical_matches_expected": physical_matches,
+        "ledger_matches_expected": ledger_matches,
+        "expected_raw_rows": len(baseline),
+        "input_physical_raw_rows": len(input_physical),
+        "physical_raw_rows": len(physical_rows),
+        "ledger_raw_rows": len(ledger_rows),
+        "expected_security_rows": (
+            len(native_expected_rows) if native_expected_rows is not None else None
+        ),
+    }
+
+
+def _security_scan_block_conservation_failure(
+    core,
+    baseline,
+    input_physical,
+    failure_code="SECURITY_FINDING_CONSERVATION_FAILED",
+):
+    """Keep forensic rows and suppress every action after a surface mismatch."""
+    conservation = core["finding_conservation"]
+    conservation["failure_code"] = failure_code
+    conservation["baseline_raw_diagnostics"] = baseline
+    conservation["input_physical_raw_diagnostics"] = input_physical
+    core["state"] = "BLOCKED"
+    message = (
+        "Security finding conservation failed after policy; raw diagnostics were "
+        "retained and no repair actions were emitted."
+    )
+    core["action_summary"] = f"{core.get('action_summary', '')} {message}".strip()
+    decision = core.get("defect_policy_decision")
+    if isinstance(decision, dict):
+        conservation["prior_policy_state"] = decision.get("state")
+        decision.update(
+            state="BLOCKED",
+            exit_code=2,
+            passed=False,
+            clean=False,
+            release_approved=False,
+            failure_code=conservation["failure_code"],
+            action_summary=message,
+        )
+
+
+def _security_scan_partition_native_rows(audit, core, captured, primitive):
+    """Partition from fresh native rows and retain invalidation evidence."""
     state_builder = _security_scan_verification_state
     state_code = state_builder.__code__
     native_rows = None
+    native_expected_rows = None
+    native_surface_mismatch = False
+    native_verification_invalidated = False
     try:
         verified = state_builder(audit, core, captured, primitive)
         if verified is not None:
             native_rows = primitive._trusted_core_native_security_rows(
                 verified[0][0], verified[1], audit
             )
-            if native_rows is not None and not primitive._trusted_core_surface_matches(
-                core, native_rows
-            ):
-                native_rows = None
+            if native_rows is not None:
+                native_expected_rows = deepcopy(native_rows)
+                if not primitive._trusted_core_surface_matches(core, native_rows):
+                    native_surface_mismatch = True
+                    native_rows = None
     except Exception:
         native_rows = None
     try:
-        if native_rows is None:
-            audit.integrity.partition_proven_primitive_observations(core)
-        else:
-            audit.integrity.partition_proven_primitive_observations(core, native_rows)
+        audit.integrity.partition_proven_primitive_observations(core, native_rows)
     finally:
         core.pop("_primitive_source_bytes", None)
     if native_rows is not None:
@@ -826,9 +1103,49 @@ def seal_security_scan(
                 state_builder,
                 state_code,
             ):
+                native_verification_invalidated = True
                 native_rows = None
         except Exception:
+            native_verification_invalidated = True
             native_rows = None
+    return (
+        native_rows,
+        native_expected_rows,
+        native_surface_mismatch,
+        native_verification_invalidated,
+    )
+
+
+def seal_security_scan(
+    audit, core: dict[str, Any], *, producer_source_model=None
+) -> dict[str, Any]:
+    """Revalidate local captures on every seal; never serialize their source bytes."""
+    caller_core = core
+    working_core = _security_scan_transaction_copy(caller_core)
+    input_physical = deepcopy(_security_scan_diagnostic_rows(working_core))
+    input_ledger = working_core.get("finding_tier_report", {}).get("ledger", [])
+    baseline = deepcopy(
+        [row["raw_finding"] for row in input_ledger]
+        if isinstance(input_ledger, list)
+        and (bool(input_ledger) or not input_physical)
+        and all(
+            isinstance(row, dict) and isinstance(row.get("raw_finding"), dict)
+            for row in input_ledger
+        )
+        else input_physical
+    )
+    core = working_core
+    prior_state, prior_summary = core.get("state"), core.get("action_summary")
+    prior_tier_report = core.get("finding_tier_report")
+    captured = _prepare_security_scan_sources(core, prior_tier_report)
+    from . import primitive_observation_binding as primitive
+
+    (
+        native_rows,
+        native_expected_rows,
+        native_surface_mismatch,
+        native_verification_invalidated,
+    ) = _security_scan_partition_native_rows(audit, core, captured, primitive)
     _preserve_security_scan_incomplete_state(audit, core, prior_state, prior_summary)
     _apply_security_scan_policy(
         audit,
@@ -840,7 +1157,26 @@ def seal_security_scan(
         native_rows,
     )
     _apply_security_scan_configuration(audit, core, captured)
-    return _finish_security_scan_seal(audit, core, captured)
+    conservation = _security_scan_conservation(
+        core,
+        baseline,
+        input_physical,
+        native_expected_rows,
+        primitive,
+        native_surface_mismatch,
+        native_verification_invalidated,
+    )
+    core["finding_conservation"] = conservation
+    if conservation["state"] == "FAILED":
+        _security_scan_block_conservation_failure(core, baseline, input_physical)
+    result = _finish_security_scan_seal(audit, core, captured, baseline, input_physical)
+    caller_core.clear()
+    caller_core.update(result)
+    if type(caller_core) is _SourceBoundSecurityReport:
+        caller_core._captured_sources = getattr(
+            result, "_captured_sources", getattr(caller_core, "_captured_sources", None)
+        )
+    return result
 
 
 def _apply_security_scan_configuration(audit, core, captured):
