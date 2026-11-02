@@ -442,14 +442,11 @@ def test_declaration_neighborhood_ambiguous_sibling_module_alias_stays_unbound(
     assert context["unknowns"]
 
 
-def test_declaration_neighborhood_empty_package_passes_public_js_intake(tmp_path):
-    import shutil
-    import subprocess
+def test_declaration_neighborhood_empty_package_passes_public_js_intake(
+    tmp_path, node_trial_session
+):
     from factoryline.jev_classifier import build_informed_actionability_case
 
-    node = shutil.which("node")
-    if node is None:
-        pytest.skip("public JS intake profile requires Node")
     sources = {
         "sink.py": "credential = 'fixture'\napp = 'pkg'\nimport pickle\nx = pickle.loads(b'')\n",
         "pkg/__init__.py": "",
@@ -471,11 +468,6 @@ def test_declaration_neighborhood_empty_package_passes_public_js_intake(tmp_path
     cases = tmp_path / "cases.json"
     cases.write_text(json.dumps([item]), encoding="utf-8")
     repo = Path(__file__).resolve().parents[1]
-    script = (
-        "import {loadTrial} from "
-        + json.dumps((repo / "scripts/evaluate_jev.mjs").as_uri())
-        + "; await loadTrial(...JSON.parse(process.argv[1]));"
-    )
     args = [
         str(cases),
         str(repo / "factoryline/data/judge_framework.json"),
@@ -483,13 +475,18 @@ def test_declaration_neighborhood_empty_package_passes_public_js_intake(tmp_path
         None,
         str(tmp_path),
     ]
-    result = subprocess.run(
-        [node, "--input-type=module", "--eval", script, json.dumps(args)],
-        capture_output=True,
-        text=True,
-        timeout=20,
-    )
+    result = node_trial_session.run(args)
     assert result.returncode == 0, result.stderr
+    worker_pid = node_trial_session.pid
+    package_init = tmp_path / "pkg/__init__.py"
+    package_init.write_text("# changed after intake\n", encoding="utf-8")
+    stale = node_trial_session.run(args)
+    assert stale.returncode == 1
+    assert "source_binding_stale" in stale.stderr
+    package_init.write_bytes(sources["pkg/__init__.py"].encode())
+    restored = node_trial_session.run(args)
+    assert restored.returncode == 0, restored.stderr
+    assert node_trial_session.pid == worker_pid
 
 
 def test_declaration_neighborhood_package_module_collision_is_not_selected(tmp_path):
@@ -591,11 +588,8 @@ def test_declaration_neighborhood_overflow_is_explicit_and_bounded(tmp_path):
 
 
 def test_security_producer_nested_call_spans_reach_context_and_public_intake(
-    tmp_path,
+    tmp_path, node_trial_session
 ):
-    import shutil
-    import subprocess
-
     from factoryline.credential_role_constructor_provider import SourceSnapshotIndex
     from factoryline.jev_classifier import build_informed_actionability_case
     from factoryline.primitive_observation_binding import build_finding_tier_report
@@ -701,18 +695,10 @@ def test_security_producer_nested_call_spans_reach_context_and_public_intake(
         ]
         items.append(item)
 
-    node = shutil.which("node")
-    if node is None:
-        pytest.skip("public JS intake profile requires Node")
     path.write_bytes(raw)
     cases = tmp_path / "cases.json"
     cases.write_text(json.dumps(items), encoding="utf-8")
     repo = Path(__file__).resolve().parents[1]
-    script = (
-        "import {loadTrial} from "
-        + json.dumps((repo / "scripts/evaluate_jev.mjs").as_uri())
-        + "; await loadTrial(...JSON.parse(process.argv[1]));"
-    )
     args = [
         str(cases),
         str(repo / "factoryline/data/judge_framework.json"),
@@ -720,12 +706,7 @@ def test_security_producer_nested_call_spans_reach_context_and_public_intake(
         None,
         str(tmp_path),
     ]
-    result = subprocess.run(
-        [node, "--input-type=module", "--eval", script, json.dumps(args)],
-        capture_output=True,
-        text=True,
-        timeout=20,
-    )
+    result = node_trial_session.run(args)
     assert result.returncode == 0, result.stderr
 
 
@@ -2854,18 +2835,15 @@ def test_contextual_evidence_legacy_protocol_and_context_identity():
         normalize_evidence_review(response, request=current)
 
 
-def test_contextual_evidence_public_source_intake_to_pending_review(tmp_path):
-    import shutil
-    import subprocess
+def test_contextual_evidence_public_source_intake_to_pending_review(
+    tmp_path, node_trial_session
+):
     from factoryline.jev_classifier import (
         build_evidence_review_input,
         build_informed_actionability_case,
         review_evidence,
     )
 
-    node = shutil.which("node")
-    if node is None:
-        pytest.skip("public JS intake profile requires Node")
     index, finding = _informed_fixture(
         tmp_path, {"sink.py": "import pickle\nx = pickle.loads(b'')\n"}
     )
@@ -2899,31 +2877,14 @@ def test_contextual_evidence_public_source_intake_to_pending_review(tmp_path):
     cases = tmp_path / "cases.json"
     cases.write_text(json.dumps([case]), encoding="utf-8")
     repo = Path(__file__).resolve().parents[1]
-    script = (
-        "import {loadTrial} from "
-        + json.dumps((repo / "scripts/evaluate_jev.mjs").as_uri())
-        + "; await loadTrial(...JSON.parse(process.argv[1]));"
-    )
-    result = subprocess.run(
-        [
-            node,
-            "--input-type=module",
-            "--eval",
-            script,
-            json.dumps(
-                [
-                    str(cases),
-                    str(repo / "factoryline/data/judge_framework.json"),
-                    "security_actionability",
-                    None,
-                    str(tmp_path),
-                ]
-            ),
-        ],
-        capture_output=True,
-        text=True,
-        timeout=20,
-    )
+    args = [
+        str(cases),
+        str(repo / "factoryline/data/judge_framework.json"),
+        "security_actionability",
+        None,
+        str(tmp_path),
+    ]
+    result = node_trial_session.run(args)
     assert result.returncode == 0, result.stderr
     packet = _contextual_review_packet()
     packet["candidate_sha256"] = candidate["sha256"]
