@@ -862,7 +862,7 @@ def _security_scan_verification_state(audit, core, captured, primitive):
 
 
 def _security_scan_transaction_copy(core):
-    """Copy mutable checkpoint state while retaining only private source capture."""
+    """Copy mutable checkpoint state while retaining private source capture."""
     captured = (
         getattr(core, "_captured_sources", None)
         if type(core) is _SourceBoundSecurityReport
@@ -874,18 +874,77 @@ def _security_scan_transaction_copy(core):
     return working
 
 
-def _security_scan_diagnostic_rows(core):
+def _security_scan_diagnostic_rows(core, verified_runtime_rows=()):
     return [
         row
-        for rows in (
+        for values in (
             core.get("findings", []),
             core.get("context_reviews", []),
             core.get("primitive_observations", []),
+            verified_runtime_rows,
         )
-        if isinstance(rows, list)
-        for row in rows
+        if isinstance(values, (list, tuple))
+        for row in values
         if isinstance(row, dict)
     ]
+
+
+def _security_scan_verified_runtime_rows(core, rows, ledger):
+    """Accept only current source-bound QUALITY rows with unique raw ledger owners."""
+    if type(core) is not _SourceBoundSecurityReport or not getattr(
+        core, "_captured_sources", None
+    ):
+        return []
+    try:
+        available = Counter(
+            _canonical(row["raw_finding"])
+            for row in ledger
+            if isinstance(row, dict) and isinstance(row.get("raw_finding"), dict)
+        )
+        trusted = []
+        for row in rows:
+            if (
+                not isinstance(row, dict)
+                or not isinstance(row.get("code"), str)
+                or not row["code"].startswith("QUALITY_")
+            ):
+                return []
+            identity = _canonical(row)
+            if available[identity] != 1:
+                return []
+            available[identity] -= 1
+            trusted.append(deepcopy(row))
+    except (TypeError, ValueError, OverflowError, RecursionError, UnicodeError):
+        return []
+    return trusted
+
+
+def _security_scan_sync_runtime_coverage_ledger(core, before, after):
+    """Carry only a new validated coverage field into one exact raw ledger row."""
+    annotated = deepcopy(after)
+    facts = annotated.get("facts")
+    coverage = facts.get("runtime_case_coverage") if isinstance(facts, dict) else None
+    if not isinstance(coverage, dict) or type(coverage.get("eligible")) is not bool:
+        return
+    annotated["facts"].pop("runtime_case_coverage")
+    if annotated != before:
+        return
+    ledger = core.get("finding_tier_report", {}).get("ledger", [])
+    if not isinstance(ledger, list):
+        return
+    try:
+        identity = _canonical(before)
+        matches = [
+            row
+            for row in ledger
+            if isinstance(row, dict)
+            and isinstance(row.get("raw_finding"), dict)
+            and _canonical(row["raw_finding"]) == identity
+        ]
+    except (TypeError, ValueError, OverflowError, RecursionError, UnicodeError):
+        return
+    if len(matches) == 1:
+        matches[0]["raw_finding"] = deepcopy(after)
 
 
 def _security_scan_identity_counts(
@@ -940,6 +999,7 @@ def _security_scan_conservation(
     primitive,
     native_surface_mismatch=False,
     native_verification_invalidated=False,
+    verified_runtime_rows=(),
 ):
     ledger = core.get("finding_tier_report", {}).get("ledger", [])
     ledger_valid = isinstance(ledger, list) and all(
@@ -955,7 +1015,7 @@ def _security_scan_conservation(
         if isinstance(ledger, list)
         else []
     )
-    physical_rows = _security_scan_diagnostic_rows(core)
+    physical_rows = _security_scan_diagnostic_rows(core, verified_runtime_rows)
     baseline_counts = _security_scan_identity_counts(baseline)
     physical_owners, ambiguous_physical = _security_scan_identity_counts(
         baseline, allow_rejected=True, primitive=primitive
@@ -1117,13 +1177,22 @@ def _security_scan_partition_native_rows(audit, core, captured, primitive):
 
 
 def seal_security_scan(
-    audit, core: dict[str, Any], *, producer_source_model=None
+    audit,
+    core: dict[str, Any],
+    *,
+    producer_source_model=None,
+    _verified_runtime_rows=None,
 ) -> dict[str, Any]:
     """Revalidate local captures on every seal; never serialize their source bytes."""
     caller_core = core
     working_core = _security_scan_transaction_copy(caller_core)
-    input_physical = deepcopy(_security_scan_diagnostic_rows(working_core))
     input_ledger = working_core.get("finding_tier_report", {}).get("ledger", [])
+    verified_runtime_rows = _security_scan_verified_runtime_rows(
+        working_core, _verified_runtime_rows, input_ledger
+    )
+    input_physical = deepcopy(
+        _security_scan_diagnostic_rows(working_core, verified_runtime_rows)
+    )
     baseline = deepcopy(
         [row["raw_finding"] for row in input_ledger]
         if isinstance(input_ledger, list)
@@ -1165,6 +1234,7 @@ def seal_security_scan(
         primitive,
         native_surface_mismatch,
         native_verification_invalidated,
+        verified_runtime_rows,
     )
     core["finding_conservation"] = conservation
     if conservation["state"] == "FAILED":
@@ -1482,15 +1552,16 @@ def _finish_native_security_scan(
             result = audit._seal_security_scan(
                 result, producer_source_model=producer_source_model
             )
-    if runtime_requested:
-        result = audit._reconcile_runtime_oracles(workspace, result, evidence)
     if tenant_read_configuration is not None and (
         profile["conditional"] or runtime_requested
     ):
         result["tenant_read_contract"]["configuration"] = deepcopy(
             tenant_read_configuration
         )
-        result = audit._seal_security_scan(result)
+        if not runtime_requested:
+            result = audit._seal_security_scan(result)
+    if runtime_requested:
+        result = audit._reconcile_runtime_oracles(workspace, result, evidence)
     return result
 
 

@@ -10183,6 +10183,18 @@ def test_scan_applies_v3_callback_coverage_without_clearing_partial_cases(
     assert ("QUALITY_UNKNOWN_TEST_ORACLE" in result["finding_counts"]) is not complete
     assert "QUALITY_HOLLOW_TEST" not in result["finding_counts"]
     if complete:
+        conservation = result["finding_conservation"]
+        assert conservation["state"] == "PASS"
+        assert conservation["physical_matches_expected"] is True
+        assert conservation["ledger_matches_expected"] is True
+        assert conservation["expected_raw_rows"] == 1
+        assert conservation["input_physical_raw_rows"] == 1
+        assert conservation["physical_raw_rows"] == 1
+        assert conservation["ledger_raw_rows"] == 1
+        assert conservation["native_rows"] == "UNAVAILABLE"
+        assert conservation["native_matches"] is True
+        assert conservation["expected_security_rows"] is None
+        assert result["state"] != "BLOCKED"
         original = result["runtime_oracles"]["reconciled"][0]["static_finding"]
         assert original["code"] == "QUALITY_UNKNOWN_TEST_ORACLE"
     else:
@@ -15818,5 +15830,13 @@ def test_security_seal_rejects_verification_builder_mutation(
     monkeypatch.setattr(primitive, "_trusted_core_regenerated_tiers", observe)
     checked = audit._seal_security_scan(core)
     assert observed == [None]
-    assert checked["defect_policy_decision"]["state"] == "DEFECTS_PRESENT"
+    assert checked["state"] == "BLOCKED"
+    decision = checked["defect_policy_decision"]
+    assert decision["state"] == "BLOCKED"
+    assert decision["exit_code"] == 2
+    assert decision["passed"] is False
+    assert decision["clean"] is False
+    assert checked["finding_conservation"]["state"] == "FAILED"
+    assert checked["finding_conservation"]["native_rows"] == "INVALIDATED"
+    assert checked["agent_actions"] == []
     assert checked["finding_counts"]["SECURITY_DYNAMIC_EXECUTION"] == 1

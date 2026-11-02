@@ -3185,8 +3185,12 @@ def test_effect_witness_hydrates_legacy_rows_and_reaches_security_handoff(tmp_pa
     hydrated_core["findings"] = legacy_with_old_precondition
     hydrated_core["finding_tier_report"] = hydrated
     hydrated_core["defect_policy_decision"] = {"state": "READY"}
+    input_physical = copy.deepcopy(
+        audit_action_refs._security_scan_diagnostic_rows(hydrated_core)
+    )
+    baseline = copy.deepcopy([row["raw_finding"] for row in hydrated["ledger"]])
     sealed_hydrated = audit_action_refs._finish_security_scan_seal(
-        audit, hydrated_core, captured
+        audit, hydrated_core, captured, baseline, input_physical
     )
     for ledger_row in hydrated["ledger"]:
         expected_witness = ledger_row["source_bound_security_precondition"]
@@ -3211,6 +3215,8 @@ def test_effect_witness_hydrates_legacy_rows_and_reaches_security_handoff(tmp_pa
             == expected_witness["precondition_sha256"]
         )
         assert packet_evidence["precondition"] == expected_witness["precondition"]
+        assert packet_evidence["trust"] == "UNTRUSTED_DATA"
+        assert packet_evidence["authority"] == "NONE"
 
 
 def test_effect_witness_rejects_forged_stale_and_unscoped_claims(tmp_path):

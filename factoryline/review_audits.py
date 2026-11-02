@@ -5784,14 +5784,20 @@ def _scan_security_sources(
 
 
 def _seal_security_scan(
-    core: dict[str, Any], *, producer_source_model=None
+    core: dict[str, Any],
+    *,
+    producer_source_model=None,
+    _verified_runtime_rows=None,
 ) -> dict[str, Any]:
     import sys
 
     from .audit_action_refs import seal_security_scan
 
     return seal_security_scan(
-        sys.modules[__name__], core, producer_source_model=producer_source_model
+        sys.modules[__name__],
+        core,
+        producer_source_model=producer_source_model,
+        _verified_runtime_rows=_verified_runtime_rows,
     )
 
 

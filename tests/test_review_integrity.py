@@ -7202,8 +7202,9 @@ def test_precision257_security_scan_report_and_seal_keep_integrity_fields():
 
     class Integrity:
         @staticmethod
-        def partition_proven_primitive_observations(core):
-            core["state"] = "CLEAN"
+        def partition_proven_primitive_observations(core, _verifier_native_rows=None):
+            # The fixture has no primitive observations to partition.
+            assert not core.get("primitive_observations")
 
     audit = SimpleNamespace(
         MAX_SECURITY_SOURCE_FILES=10,
@@ -7245,22 +7246,26 @@ def test_precision257_security_scan_report_and_seal_keep_integrity_fields():
         [],
         [],
     )
-    assert report["state"] == "INCOMPLETE" and report["files_scanned"] == 0
+    assert report["state"] == "BLOCKED" and report["files_scanned"] == 0
+    assert report["finding_conservation"]["state"] == "FAILED"
+    assert report["finding_conservation"]["ledger_matches_expected"] is False
+    assert report["finding_conservation"]["baseline_raw_diagnostics"] == [
+        {"code": "TEST"}
+    ]
+    assert report["findings"] == [{"code": "TEST"}]
     assert report["authority"] == {
         "execution": False,
         "approval": False,
         "publication": False,
         "deployment": False,
     }
-    assert report["agent_actions"] == [
-        {"digest": report["candidate_sha256"], "finding": "TEST"}
-    ]
+    assert report["agent_actions"] == []
     assert len(report["candidate_sha256"]) == len(report["audit_sha256"]) == 64
     assert "_primitive_source_bytes" not in report
     core = {
         "state": "INCOMPLETE",
         "action_summary": "Keep incomplete",
-        "findings": [{"code": "TEST"}],
+        "findings": [],
     }
     sealed = seal_security_scan(audit, core)
     assert (

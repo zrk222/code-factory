@@ -6553,8 +6553,88 @@ def test_complete_native_rows_are_shared_only_within_each_fresh_seal(
     counts.update(partial=0, complete=0)
     core = copy.deepcopy(dict(base))
     core["_primitive_source_bytes"] = dict(base._captured_sources)
-    assert dict(review_audits._seal_security_scan(core)) == dict(base)
+    checked = dict(review_audits._seal_security_scan(core))
+    assert checked["state"] == base["state"]
+    assert checked["findings"] == base["findings"]
+    assert checked["finding_counts"] == base["finding_counts"]
+    assert checked["defect_policy_decision"] == base["defect_policy_decision"]
+    assert checked["agent_actions"] == base["agent_actions"]
+    assert checked["finding_conservation"]["state"] == "PASS"
+    assert checked["finding_conservation"]["native_rows"] == "UNAVAILABLE"
+    assert checked["finding_conservation"]["expected_security_rows"] is None
     assert counts == {"partial": 1, "complete": 1}
+
+
+@pytest.mark.parametrize("tamper", ["message", "end_span", "facts", "duplicate_ledger"])
+def test_runtime_coverage_sync_requires_unique_annotation_only_preimage(tamper):
+    from factoryline import audit_action_refs as actions
+
+    original = {
+        "path": "test_app.py",
+        "line": 3,
+        "column": 1,
+        "end_line": 4,
+        "end_column": 2,
+        "code": "QUALITY_UNKNOWN_TEST_ORACLE",
+        "severity": "LOW",
+        "message": "Static finding",
+        "facts": {"symbol": "test_validate"},
+    }
+    annotated = copy.deepcopy(original)
+    annotated["facts"]["runtime_case_coverage"] = {"eligible": False}
+    if tamper == "message":
+        annotated["message"] = "Changed message"
+    elif tamper == "end_span":
+        annotated["end_column"] += 1
+    elif tamper == "facts":
+        annotated["facts"]["symbol"] = "changed"
+    ledger = [{"raw_finding": copy.deepcopy(original)}]
+    if tamper == "duplicate_ledger":
+        ledger.append(copy.deepcopy(ledger[0]))
+    core = {"findings": [annotated], "finding_tier_report": {"ledger": ledger}}
+
+    actions._security_scan_sync_runtime_coverage_ledger(core, original, annotated)
+
+    assert all(row["raw_finding"] == original for row in ledger)
+    result = actions._security_scan_conservation(
+        core,
+        [copy.deepcopy(row["raw_finding"]) for row in ledger],
+        [annotated],
+        None,
+        primitive,
+    )
+    assert result["state"] == "FAILED"
+    assert result["physical_matches_expected"] is False
+
+
+def test_serialized_runtime_archive_cannot_replace_diagnostic_rows(tmp_path):
+    (tmp_path / "app.py").write_text(
+        "from flask import request\ndef endpoint():\n    return eval(request.args['q'])\n"
+    )
+    base = review_audits.security_scan(
+        tmp_path, cache_enabled=False, defect_policy="trusted-core-v1"
+    )
+    original = copy.deepcopy(base["findings"][0])
+    core = copy.deepcopy(dict(base))
+    core["_primitive_source_bytes"] = dict(base._captured_sources)
+    core["findings"] = []
+    core["finding_counts"] = {}
+    core["runtime_oracles"] = {
+        "state": "VERIFIED",
+        "reconciled_count": 1,
+        "reconciled": [
+            {"static_finding": original, "runtime_evidence": {"forged": True}}
+        ],
+    }
+
+    checked = review_audits._seal_security_scan(core)
+
+    assert checked["finding_conservation"]["state"] == "FAILED"
+    assert checked["finding_conservation"]["physical_matches_expected"] is False
+    assert checked["finding_conservation"]["ledger_matches_expected"] is True
+    assert checked["state"] == "BLOCKED"
+    assert checked["defect_policy_decision"]["exit_code"] == 2
+    assert checked["agent_actions"] == []
 
 
 @pytest.mark.parametrize("fault", ["none", "missing", "duplicate", "extra", "column"])
