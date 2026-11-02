@@ -2756,24 +2756,9 @@ def test_contextual_evidence_rejects_unbound_or_contradictory_resolution(mutatio
         "rationale": "The cited observation does not negate the separately cited consumer.",
         "supporting_evidence_ids": ["evidence-1"],
     }
-    if mutation in {
-        "inferred_context",
-        "inferred_support",
-        "missing_binding",
-        "non_source",
-    }:
-        evidence = packet["evidence"][0 if mutation == "inferred_support" else 1]
-        if mutation.startswith("inferred"):
-            evidence["epistemic_status"] = "inferred"
-        elif mutation == "missing_binding":
-            evidence["provenance"].pop("source_binding")
-        else:
-            evidence["kind"] = "runtime"
-    if mutation == "declared_contradiction":
-        packet["claims"][0]["supporting_evidence_ids"] = ["evidence-1"]
-        packet["claims"][0]["contradicting_evidence_ids"] = ["evidence-2"]
-    if mutation == "not_actual_support":
-        packet["claims"][0]["supporting_evidence_ids"].append("unlinked")
+    _apply_nested_fixture_mutations(
+        packet, CONTEXTUAL_PACKET_MUTATIONS.get(mutation, ())
+    )
     packet["packet_sha256"] = _digest(
         {key: value for key, value in packet.items() if key != "packet_sha256"}
     )
@@ -2785,33 +2770,61 @@ def test_contextual_evidence_rejects_unbound_or_contradictory_resolution(mutatio
         supporting_evidence_ids=["evidence-1"],
         verification_action=None,
     )
-    if mutation == "unlinked":
-        context["evidence_id"] = "unlinked"
-    if mutation == "empty_rationale":
-        context["rationale"] = " "
-    if mutation == "long_rationale":
-        context["rationale"] = "x" * 501
-    if mutation == "unknown_support":
-        context["supporting_evidence_ids"] = ["invented"]
-    if mutation in {"not_claim_support", "not_actual_support"}:
-        context["supporting_evidence_ids"] = ["unlinked"]
-    if mutation == "self_support":
-        context["supporting_evidence_ids"] = ["evidence-2"]
-    if mutation == "support_overlap":
-        row["supporting_evidence_ids"].append("evidence-2")
-    if mutation == "actual_contradiction":
-        row["contradicting_evidence_ids"] = ["evidence-2"]
-    if mutation == "missing_field":
-        context.pop("rationale")
+    _apply_nested_fixture_mutations(
+        context, CONTEXTUAL_EVIDENCE_MUTATIONS.get(mutation, ())
+    )
+    _apply_nested_fixture_mutations(row, CONTEXTUAL_CLAIM_MUTATIONS.get(mutation, ()))
+    evidence_count = CONTEXTUAL_EVIDENCE_COUNTS.get(mutation, 1)
     row["contextual_evidence"] = (
-        {}
-        if mutation == "not_list"
-        else [context, context]
-        if mutation == "duplicate"
-        else [context]
+        {} if evidence_count is None else [context] * evidence_count
     )
     with pytest.raises(JevClassificationError):
         normalize_evidence_review(response, request=request)
+
+
+def _apply_nested_fixture_mutations(target, mutations):
+    """Apply compact set, append, and remove edits to a JSON-like fixture."""
+    for operation, path, *values in mutations:
+        parent = target
+        for part in path[:-1]:
+            parent = parent[part]
+        key = path[-1]
+        if operation == "set":
+            parent[key] = values[0]
+        elif operation == "append":
+            parent[key].append(values[0])
+        else:
+            parent.pop(key)
+
+
+CONTEXTUAL_PACKET_MUTATIONS = {
+    "inferred_context": (("set", ("evidence", 1, "epistemic_status"), "inferred"),),
+    "inferred_support": (("set", ("evidence", 0, "epistemic_status"), "inferred"),),
+    "missing_binding": (("remove", ("evidence", 1, "provenance", "source_binding")),),
+    "non_source": (("set", ("evidence", 1, "kind"), "runtime"),),
+    "declared_contradiction": (
+        ("set", ("claims", 0, "supporting_evidence_ids"), ["evidence-1"]),
+        ("set", ("claims", 0, "contradicting_evidence_ids"), ["evidence-2"]),
+    ),
+    "not_actual_support": (
+        ("append", ("claims", 0, "supporting_evidence_ids"), "unlinked"),
+    ),
+}
+CONTEXTUAL_EVIDENCE_MUTATIONS = {
+    "unlinked": (("set", ("evidence_id",), "unlinked"),),
+    "empty_rationale": (("set", ("rationale",), " "),),
+    "long_rationale": (("set", ("rationale",), "x" * 501),),
+    "unknown_support": (("set", ("supporting_evidence_ids",), ["invented"]),),
+    "not_claim_support": (("set", ("supporting_evidence_ids",), ["unlinked"]),),
+    "not_actual_support": (("set", ("supporting_evidence_ids",), ["unlinked"]),),
+    "self_support": (("set", ("supporting_evidence_ids",), ["evidence-2"]),),
+    "missing_field": (("remove", ("rationale",)),),
+}
+CONTEXTUAL_CLAIM_MUTATIONS = {
+    "support_overlap": (("append", ("supporting_evidence_ids",), "evidence-2"),),
+    "actual_contradiction": (("set", ("contradicting_evidence_ids",), ["evidence-2"]),),
+}
+CONTEXTUAL_EVIDENCE_COUNTS = {"not_list": None, "duplicate": 2}
 
 
 def test_contextual_evidence_legacy_protocol_and_context_identity():

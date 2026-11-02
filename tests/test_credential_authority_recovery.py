@@ -28,42 +28,11 @@ from factoryline.primitive_observation_binding import build_finding_tier_report
     ],
 )
 def test_selected_feedback_counterexamples_preserve_raw_without_admission(change):
-    settings = SETTINGS + 'ROOT_URLCONF = "service.urls"\n'
-    urls = 'from django.contrib import admin\nfrom django.urls import path, include\nurlpatterns = [path("admin/", admin.site.urls)]\n'
-    extra = {"service/urls.py": urls}
-    if change == "bare":
-        settings = SETTINGS
-        extra = {}
-    elif change == "overwrite":
-        extra["service/urls.py"] += "urlpatterns = []\n"
-    elif change == "clear":
-        extra["service/urls.py"] += "urlpatterns.clear()\n"
-    elif change == "shadow":
-        extra["service/urls.py"] = urls.replace(
-            "[path(", '[path("admin/", replacement), path('
-        )
-    elif change == "escape":
-        extra["service/urls.py"] += "escape(urlpatterns)\n"
-    elif change == "missing_include":
-        extra["service/urls.py"] = urls.replace(
-            "admin.site.urls", 'include("missing.urls")'
-        )
-    elif change == "recursive_include":
-        extra["service/urls.py"] = urls.replace(
-            "admin.site.urls", 'include("service.urls")'
-        )
-    elif change == "provider":
-        extra["mutation.py"] = (
-            "from django.contrib import admin\nadmin.site.urls = replacement\n"
-        )
-    elif change == "storage":
-        settings += 'MESSAGE_STORAGE = "custom.Storage"\n'
-    elif change == "signer":
-        settings += 'SIGNING_BACKEND = "custom.Signer"\n'
-    files = _recovery_sources(settings, extra=extra)
-    if change == "bare":
-        files["service/settings.py"] = SETTINGS
-        files.pop("service/urls.py")
+    files = _recovery_sources(
+        SETTINGS + 'ROOT_URLCONF = "service.urls"\n',
+        extra={"service/urls.py": FEEDBACK_URLS},
+    )
+    _apply_source_mutations(files, FEEDBACK_COUNTEREXAMPLE_EDITS[change])
     row = _recovery_row(files)
     assert row["tier"] == "NEEDS_CONTEXT"
     assert "credential_authority_observation" not in row
@@ -94,6 +63,61 @@ def _recovery_sources(settings=SETTINGS, startup=START, extra=None):
         "start.py": startup,
         **(extra or {}),
     }
+
+
+FEEDBACK_URLS = (
+    "from django.contrib import admin\n"
+    "from django.urls import path, include\n"
+    'urlpatterns = [path("admin/", admin.site.urls)]\n'
+)
+
+
+def _apply_source_mutations(files, mutations):
+    """Apply compact replace, append, set, copy, and remove fixture edits."""
+    for operation, path, *values in mutations:
+        if operation == "replace":
+            files[path] = files[path].replace(*values)
+        elif operation == "append":
+            files[path] += values[0]
+        elif operation == "set":
+            files[path] = values[0]
+        elif operation == "copy":
+            files[path] = files[values[0]]
+        else:
+            files.pop(path)
+
+
+FEEDBACK_COUNTEREXAMPLE_EDITS = {
+    "bare": (
+        ("set", "service/settings.py", SETTINGS),
+        ("remove", "service/urls.py"),
+    ),
+    "overwrite": (("append", "service/urls.py", "urlpatterns = []\n"),),
+    "clear": (("append", "service/urls.py", "urlpatterns.clear()\n"),),
+    "shadow": (
+        ("replace", "service/urls.py", "[path(", '[path("admin/", replacement), path('),
+    ),
+    "escape": (("append", "service/urls.py", "escape(urlpatterns)\n"),),
+    "missing_include": (
+        ("replace", "service/urls.py", "admin.site.urls", 'include("missing.urls")'),
+    ),
+    "recursive_include": (
+        ("replace", "service/urls.py", "admin.site.urls", 'include("service.urls")'),
+    ),
+    "provider": (
+        (
+            "set",
+            "mutation.py",
+            "from django.contrib import admin\nadmin.site.urls = replacement\n",
+        ),
+    ),
+    "storage": (
+        ("append", "service/settings.py", 'MESSAGE_STORAGE = "custom.Storage"\n'),
+    ),
+    "signer": (
+        ("append", "service/settings.py", 'SIGNING_BACKEND = "custom.Signer"\n'),
+    ),
+}
 
 
 def _nested_project_sources():
@@ -201,6 +225,281 @@ def test_explicit_script_launch_disambiguates_nested_project_roots(target):
     )
 
 
+NESTED_MANAGE = "service/manage.py"
+DORMANT_MANAGE_LAYOUTS = {
+    "dormant_function": ("    def dormant():\n", "", "\n"),
+    "dormant_class": ("    class Dormant:\n", "", "\n"),
+    "dormant_lambda": ("    dormant = lambda: (\n", "    )\n", ",\n"),
+    "dormant_comprehension": (
+        "    dormant = [(\n",
+        "    ) for item in []]\n",
+        ",\n",
+    ),
+}
+
+
+def _dormant_nested_manage_source(mutation):
+    prefix, suffix, separator = DORMANT_MANAGE_LAYOUTS[mutation]
+    statements = (
+        'os.environ.setdefault("DJANGO_SETTINGS_MODULE", "service.settings")',
+        "execute_from_command_line(sys.argv)",
+    )
+    body = separator.join("        " + statement for statement in statements) + "\n"
+    return (
+        "import os\nimport sys\nfrom django.core.management import execute_from_command_line\n"
+        "def main():\n"
+        + prefix
+        + body
+        + suffix
+        + 'if __name__ == "__main__":\n    main()\n'
+    )
+
+
+NESTED_ROOT_EDITS = {
+    "missing_launch": (("remove", NESTED_MANAGE),),
+    "main_rebound": (
+        ("replace", NESTED_MANAGE, "if __name__", "main = replacement\nif __name__"),
+    ),
+    "os_rebound": (
+        ("replace", NESTED_MANAGE, "def main():", "os = replacement\ndef main():"),
+    ),
+    "sys_path": (
+        (
+            "replace",
+            NESTED_MANAGE,
+            "def main():",
+            'sys.path.insert(0, "other")\ndef main():',
+        ),
+    ),
+    "sys_modules": (
+        (
+            "replace",
+            NESTED_MANAGE,
+            "def main():",
+            'sys.modules["service"] = other\ndef main():',
+        ),
+    ),
+    "env_before": (
+        (
+            "replace",
+            NESTED_MANAGE,
+            "    os.environ.setdefault",
+            '    os.environ["DJANGO_SETTINGS_MODULE"] = "other.settings"\n    os.environ.setdefault',
+        ),
+    ),
+    "env_after": (
+        (
+            "replace",
+            NESTED_MANAGE,
+            "    execute_from_command_line(sys.argv)",
+            '    os.environ["DJANGO_SETTINGS_MODULE"] = "other.settings"\n    execute_from_command_line(sys.argv)',
+        ),
+    ),
+    "env_delete": (
+        (
+            "replace",
+            NESTED_MANAGE,
+            "    execute_from_command_line(sys.argv)",
+            '    del os.environ["DJANGO_SETTINGS_MODULE"]\n    execute_from_command_line(sys.argv)',
+        ),
+    ),
+    "env_update": (
+        (
+            "replace",
+            NESTED_MANAGE,
+            "    execute_from_command_line(sys.argv)",
+            '    os.environ.update({"DJANGO_SETTINGS_MODULE": "other.settings"})\n    execute_from_command_line(sys.argv)',
+        ),
+    ),
+    "env_pop": (
+        (
+            "replace",
+            NESTED_MANAGE,
+            "    execute_from_command_line(sys.argv)",
+            '    os.environ.pop("DJANGO_SETTINGS_MODULE", None)\n    execute_from_command_line(sys.argv)',
+        ),
+    ),
+    "env_clear": (
+        (
+            "replace",
+            NESTED_MANAGE,
+            "    execute_from_command_line(sys.argv)",
+            "    os.environ.clear()\n    execute_from_command_line(sys.argv)",
+        ),
+    ),
+    "env_alias": (
+        (
+            "replace",
+            NESTED_MANAGE,
+            "    execute_from_command_line(sys.argv)",
+            '    env = os.environ\n    env["DJANGO_SETTINGS_MODULE"] = "other.settings"\n    execute_from_command_line(sys.argv)',
+        ),
+    ),
+    "env_reassign": (
+        (
+            "replace",
+            NESTED_MANAGE,
+            "    execute_from_command_line(sys.argv)",
+            "    os.environ = other_environment\n    execute_from_command_line(sys.argv)",
+        ),
+    ),
+    "other_module": (
+        ("replace", NESTED_MANAGE, '"service.settings"', '"other.settings"'),
+    ),
+    "sibling_module": (
+        ("copy", "service/service/other.py", "service/service/settings.py"),
+        ("replace", NESTED_MANAGE, '"service.settings"', '"service.other"'),
+    ),
+    "guarded_launch": (
+        ("replace", NESTED_MANAGE, "    main()\n", "    if enabled:\n        main()\n"),
+    ),
+    "unknown_call": (
+        ("replace", NESTED_MANAGE, "def main():", "mutate_environment()\ndef main():"),
+    ),
+    "sys_rebound": (
+        ("replace", NESTED_MANAGE, "def main():", "sys = replacement\ndef main():"),
+    ),
+    "argv_rebound": (
+        (
+            "replace",
+            NESTED_MANAGE,
+            "def main():",
+            "sys.argv = replacement\ndef main():",
+        ),
+    ),
+    "arg_default": (
+        (
+            "replace",
+            NESTED_MANAGE,
+            "def main():",
+            'def main(flag=os.environ.setdefault("DJANGO_SETTINGS_MODULE", "service.other")):',
+        ),
+    ),
+    "kw_default": (
+        (
+            "replace",
+            NESTED_MANAGE,
+            "def main():",
+            'def main(*, flag=os.environ.setdefault("DJANGO_SETTINGS_MODULE", "service.other")):',
+        ),
+    ),
+    "extra_import": (
+        (
+            "replace",
+            NESTED_MANAGE,
+            "def main():",
+            "import unknown_eager_effect\ndef main():",
+        ),
+    ),
+    "second_default": (
+        (
+            "replace",
+            NESTED_MANAGE,
+            "    execute_from_command_line(sys.argv)",
+            '    os.environ.setdefault("DJANGO_SETTINGS_MODULE", "service.other")\n    execute_from_command_line(sys.argv)',
+        ),
+    ),
+    "captured_import": (
+        ("replace", NESTED_MANAGE, "def main():", "import poison\ndef main():"),
+        (
+            "set",
+            "poison.py",
+            'import os\nos.environ["DJANGO_SETTINGS_MODULE"] = "other.settings"\n',
+        ),
+    ),
+    "os_shadow": (("set", "service/os.py", "environ = other_environment\n"),),
+    "package_initializer": (
+        (
+            "set",
+            "service/service/__init__.py",
+            'import os\nos.environ["DJANGO_SETTINGS_MODULE"] = "service.other"\n',
+        ),
+    ),
+    "module_definition_effect": (
+        (
+            "replace",
+            NESTED_MANAGE,
+            "def main():",
+            'def unused(flag=os.environ.setdefault("DJANGO_SETTINGS_MODULE", "service.other")):\n    pass\ndef main():',
+        ),
+    ),
+    "prior_raise": (
+        (
+            "replace",
+            NESTED_MANAGE,
+            "    os.environ.setdefault",
+            '    raise ImportError("blocked startup")\n    os.environ.setdefault',
+        ),
+    ),
+    "recursive_entry": (
+        (
+            "replace",
+            NESTED_MANAGE,
+            "    os.environ.setdefault",
+            "    main()\n    os.environ.setdefault",
+        ),
+    ),
+    "dormant_function": (
+        ("set", NESTED_MANAGE, _dormant_nested_manage_source("dormant_function")),
+    ),
+    "dormant_class": (
+        ("set", NESTED_MANAGE, _dormant_nested_manage_source("dormant_class")),
+    ),
+    "dormant_lambda": (
+        ("set", NESTED_MANAGE, _dormant_nested_manage_source("dormant_lambda")),
+    ),
+    "dormant_comprehension": (
+        ("set", NESTED_MANAGE, _dormant_nested_manage_source("dormant_comprehension")),
+    ),
+    "computed_default": (
+        (
+            "replace",
+            NESTED_MANAGE,
+            "    os.environ.setdefault",
+            '    os.environ.setdefault("DJANGO_" + "SETTINGS_MODULE", "service.other")\n    os.environ.setdefault',
+        ),
+    ),
+    "unknown_default": (
+        (
+            "replace",
+            NESTED_MANAGE,
+            "    os.environ.setdefault",
+            '    os.environ.setdefault(unknown_key, "service.other")\n    os.environ.setdefault',
+        ),
+    ),
+    "catch_and_continue": (
+        (
+            "replace",
+            NESTED_MANAGE,
+            "    from django.core.management import execute_from_command_line",
+            "    try:\n        from django.core.management import execute_from_command_line\n    except ImportError:\n        pass",
+        ),
+    ),
+    "late_module_import": (
+        ("replace", NESTED_MANAGE, "import os\n", ""),
+        ("append", NESTED_MANAGE, "import os\n"),
+    ),
+    "late_local_import": (
+        ("replace", NESTED_MANAGE, "import os\n", ""),
+        (
+            "replace",
+            NESTED_MANAGE,
+            "    from django.core.management",
+            "    import os\n    from django.core.management",
+        ),
+    ),
+    "unrelated_env": (
+        (
+            "replace",
+            NESTED_MANAGE,
+            "    execute_from_command_line(sys.argv)",
+            '    os.environ["FEATURE_FLAG"] = "enabled"\n    execute_from_command_line(sys.argv)',
+        ),
+    ),
+    "entry_provider_shadow": (("replace", NESTED_MANAGE, "main()", "os()"),),
+}
+
+
 @pytest.mark.parametrize(
     "mutation",
     [
@@ -248,169 +547,7 @@ def test_explicit_script_launch_disambiguates_nested_project_roots(target):
 )
 def test_nested_root_requires_closed_explicit_script_selection(mutation):
     files = _nested_project_sources()
-    path = "service/manage.py"
-    if mutation == "missing_launch":
-        files.pop(path)
-    elif mutation == "main_rebound":
-        files[path] = files[path].replace(
-            "if __name__", "main = replacement\nif __name__"
-        )
-    elif mutation == "os_rebound":
-        files[path] = files[path].replace(
-            "def main():", "os = replacement\ndef main():"
-        )
-    elif mutation == "sys_rebound":
-        files[path] = files[path].replace(
-            "def main():", "sys = replacement\ndef main():"
-        )
-    elif mutation == "argv_rebound":
-        files[path] = files[path].replace(
-            "def main():", "sys.argv = replacement\ndef main():"
-        )
-    elif mutation == "arg_default":
-        files[path] = files[path].replace(
-            "def main():",
-            'def main(flag=os.environ.setdefault("DJANGO_SETTINGS_MODULE", "service.other")):',
-        )
-    elif mutation == "kw_default":
-        files[path] = files[path].replace(
-            "def main():",
-            'def main(*, flag=os.environ.setdefault("DJANGO_SETTINGS_MODULE", "service.other")):',
-        )
-    elif mutation == "extra_import":
-        files[path] = files[path].replace(
-            "def main():", "import unknown_eager_effect\ndef main():"
-        )
-    elif mutation == "captured_import":
-        files[path] = files[path].replace("def main():", "import poison\ndef main():")
-        files["poison.py"] = (
-            'import os\nos.environ["DJANGO_SETTINGS_MODULE"] = "other.settings"\n'
-        )
-    elif mutation == "os_shadow":
-        files["service/os.py"] = "environ = other_environment\n"
-    elif mutation == "package_initializer":
-        files["service/service/__init__.py"] = (
-            'import os\nos.environ["DJANGO_SETTINGS_MODULE"] = "service.other"\n'
-        )
-    elif mutation == "module_definition_effect":
-        files[path] = files[path].replace(
-            "def main():",
-            'def unused(flag=os.environ.setdefault("DJANGO_SETTINGS_MODULE", "service.other")):\n    pass\ndef main():',
-        )
-    elif mutation == "prior_raise":
-        files[path] = files[path].replace(
-            "    os.environ.setdefault",
-            '    raise ImportError("blocked startup")\n    os.environ.setdefault',
-        )
-    elif mutation == "recursive_entry":
-        files[path] = files[path].replace(
-            "    os.environ.setdefault", "    main()\n    os.environ.setdefault"
-        )
-    elif mutation.startswith("dormant_"):
-        prefix, suffix = {
-            "dormant_function": ("    def dormant():\n", ""),
-            "dormant_class": ("    class Dormant:\n", ""),
-            "dormant_lambda": ("    dormant = lambda: (\n", "    )\n"),
-            "dormant_comprehension": ("    dormant = [\n", "    for item in []]\n"),
-        }[mutation]
-        statements = (
-            'os.environ.setdefault("DJANGO_SETTINGS_MODULE", "service.settings")',
-            "execute_from_command_line(sys.argv)",
-        )
-        separator = (
-            ",\n" if mutation in {"dormant_lambda", "dormant_comprehension"} else "\n"
-        )
-        content = separator.join("        " + item for item in statements) + "\n"
-        files[path] = (
-            "import os\nimport sys\nfrom django.core.management import execute_from_command_line\n"
-            "def main():\n"
-            + prefix
-            + content
-            + suffix
-            + 'if __name__ == "__main__":\n    main()\n'
-        )
-        if mutation == "dormant_comprehension":
-            files[path] = (
-                files[path]
-                .replace("    dormant = [\n", "    dormant = [(\n")
-                .replace("    for item", "    ) for item")
-            )
-    elif mutation in {"computed_default", "unknown_default"}:
-        key = (
-            '"DJANGO_" + "SETTINGS_MODULE"'
-            if mutation == "computed_default"
-            else "unknown_key"
-        )
-        files[path] = files[path].replace(
-            "    os.environ.setdefault",
-            f'    os.environ.setdefault({key}, "service.other")\n    os.environ.setdefault',
-        )
-    elif mutation == "catch_and_continue":
-        files[path] = files[path].replace(
-            "    from django.core.management import execute_from_command_line",
-            "    try:\n        from django.core.management import execute_from_command_line\n    except ImportError:\n        pass",
-        )
-    elif mutation == "late_module_import":
-        files[path] = files[path].replace("import os\n", "") + "import os\n"
-    elif mutation == "entry_provider_shadow":
-        files[path] = files[path].replace("main()", "os()")
-    elif mutation == "late_local_import":
-        files[path] = (
-            files[path]
-            .replace("import os\n", "")
-            .replace(
-                "    from django.core.management",
-                "    import os\n    from django.core.management",
-            )
-        )
-    elif mutation == "second_default":
-        files[path] = files[path].replace(
-            "    execute_from_command_line(sys.argv)",
-            '    os.environ.setdefault("DJANGO_SETTINGS_MODULE", "service.other")\n    execute_from_command_line(sys.argv)',
-        )
-    elif mutation == "sys_path":
-        files[path] = files[path].replace(
-            "def main():", 'sys.path.insert(0, "other")\ndef main():'
-        )
-    elif mutation == "sys_modules":
-        files[path] = files[path].replace(
-            "def main():", 'sys.modules["service"] = other\ndef main():'
-        )
-    elif mutation == "other_module":
-        files[path] = files[path].replace('"service.settings"', '"other.settings"')
-    elif mutation == "sibling_module":
-        files["service/service/other.py"] = files["service/service/settings.py"]
-        files[path] = files[path].replace('"service.settings"', '"service.other"')
-    elif mutation == "guarded_launch":
-        files[path] = files[path].replace(
-            "    main()\n", "    if enabled:\n        main()\n"
-        )
-    elif mutation == "unknown_call":
-        files[path] = files[path].replace(
-            "def main():", "mutate_environment()\ndef main():"
-        )
-    else:
-        statement = {
-            "env_before": 'os.environ["DJANGO_SETTINGS_MODULE"] = "other.settings"',
-            "env_after": 'os.environ["DJANGO_SETTINGS_MODULE"] = "other.settings"',
-            "env_delete": 'del os.environ["DJANGO_SETTINGS_MODULE"]',
-            "env_update": 'os.environ.update({"DJANGO_SETTINGS_MODULE": "other.settings"})',
-            "env_pop": 'os.environ.pop("DJANGO_SETTINGS_MODULE", None)',
-            "env_clear": "os.environ.clear()",
-            "env_alias": 'env = os.environ\n    env["DJANGO_SETTINGS_MODULE"] = "other.settings"',
-            "env_reassign": "os.environ = other_environment",
-            "unrelated_env": 'os.environ["FEATURE_FLAG"] = "enabled"',
-        }[mutation]
-        insertion = "    " + statement + "\n"
-        if mutation == "env_before":
-            files[path] = files[path].replace(
-                "    os.environ.setdefault", insertion + "    os.environ.setdefault"
-            )
-        else:
-            files[path] = files[path].replace(
-                "    execute_from_command_line(sys.argv)",
-                insertion + "    execute_from_command_line(sys.argv)",
-            )
+    _apply_source_mutations(files, NESTED_ROOT_EDITS[mutation])
     for source in files.values():
         ast.parse(source)
     assert (
@@ -546,6 +683,192 @@ def _provider_configuration_sources():
     )
 
 
+NATIVE_SELECTED_SETTING_EDITS = {
+    "secret_key": (("replace", "widget/__init__.py", "EXTENSION_FLAG", "SECRET_KEY"),),
+    "wrapped": (("replace", "widget/__init__.py", "EXTENSION_FLAG", "_wrapped"),),
+    "dunder": (("replace", "widget/__init__.py", "EXTENSION_FLAG", "__dict__"),),
+    "explicit": (
+        (
+            "append",
+            "service/settings.py",
+            'SESSION_ENGINE = "django.contrib.sessions.backends.db"\n',
+        ),
+    ),
+    "importer_alias": (
+        (
+            "replace",
+            "widget/views.py",
+            "import import_module",
+            "import import_module as load",
+        ),
+        ("replace", "widget/views.py", "= import_module(", "= load("),
+    ),
+    "dict_alias": (
+        ("replace", "widget/__init__.py", "for key,", "copy = _DEFAULTS\nfor key,"),
+    ),
+    "dict_update": (
+        (
+            "replace",
+            "widget/__init__.py",
+            "for key,",
+            '_DEFAULTS.update({"SECRET_KEY": "replacement"})\nfor key,',
+        ),
+    ),
+    "dict_escape": (
+        ("replace", "widget/__init__.py", "for key,", "escape(_DEFAULTS)\nfor key,"),
+    ),
+    "foreign_dict": (
+        (
+            "set",
+            "mutation.py",
+            'from widget import _DEFAULTS\n_DEFAULTS["SECRET_KEY"] = "replacement"\n',
+        ),
+    ),
+    "mutated_builtin": (
+        ("set", "mutation.py", "import builtins\nbuiltins.setattr = replacement\n"),
+    ),
+    "mutated_importer": (
+        (
+            "set",
+            "mutation.py",
+            "import importlib\nimportlib.import_module = replacement\n",
+        ),
+    ),
+    "importer_rebound": (
+        (
+            "replace",
+            "widget/views.py",
+            "SessionStore =",
+            "import_module = replacement\nSessionStore =",
+        ),
+    ),
+    "backend_override": (
+        (
+            "set",
+            "mutation.py",
+            'from django.conf import settings\nsettings.SESSION_ENGINE = "unknown.backend"\n',
+        ),
+    ),
+    "dynamic_module": (
+        ("replace", "widget/views.py", "settings.SESSION_ENGINE", "choose_module()"),
+    ),
+    "reflected_module": (
+        (
+            "replace",
+            "widget/views.py",
+            "settings.SESSION_ENGINE",
+            'getattr(settings, "SESSION_ENGINE")',
+        ),
+    ),
+    "backend_member": (
+        (
+            "set",
+            "mutation.py",
+            "import django.contrib.sessions.backends.db as backend\nbackend.SessionStore = replacement\n",
+        ),
+    ),
+    "importlib_file": (
+        ("set", "importlib.py", "def import_module(name):\n    return unknown\n"),
+    ),
+    "importlib_package": (
+        (
+            "set",
+            "importlib/__init__.py",
+            "def import_module(name):\n    return unknown\n",
+        ),
+    ),
+    "importer_escape": (
+        ("set", "mutation.py", "import importlib\nescape(importlib)\n"),
+    ),
+    "literal_selected": (
+        (
+            "replace",
+            "widget/views.py",
+            "settings.SESSION_ENGINE",
+            '"django.contrib.sessions.backends.db"',
+        ),
+    ),
+    "plain_explicit": (
+        (
+            "replace",
+            "widget/views.py",
+            "from django.conf import settings",
+            "import service.settings as settings",
+        ),
+        (
+            "append",
+            "service/settings.py",
+            'SESSION_ENGINE = "django.contrib.sessions.backends.db"\n',
+        ),
+    ),
+    "missing_plain_setting": (
+        (
+            "replace",
+            "widget/views.py",
+            "from django.conf import settings",
+            "import service.settings as settings",
+        ),
+    ),
+    "key_rebound": (
+        (
+            "replace",
+            "widget/__init__.py",
+            "        getattr",
+            '        key = "SECRET_KEY"\n        getattr',
+        ),
+    ),
+    "dict_chained_alias": (
+        ("replace", "widget/__init__.py", "_DEFAULTS =", "copy = _DEFAULTS ="),
+    ),
+    "relative_foreign_dict": (
+        (
+            "set",
+            "widget/peer.py",
+            'from . import _DEFAULTS\n_DEFAULTS["SECRET_KEY"] = "replacement"\n',
+        ),
+    ),
+    "dict_module_escape": (("set", "mutation.py", "import widget\nescape(widget)\n"),),
+    "dict_peer_alias_only": (
+        ("set", "mutation.py", "from widget import _DEFAULTS as copied\n"),
+    ),
+    "backend_dynamic_setting": (
+        ("append", "service/settings.py", "SESSION_ENGINE = choose_backend()\n"),
+    ),
+    "backend_global_rebind": (
+        (
+            "append",
+            "service/settings.py",
+            'def change_engine():\n    global SESSION_ENGINE\n    SESSION_ENGINE = "unknown.backend"\n',
+        ),
+    ),
+    "loader_namespace_escape": (
+        ("set", "mutation.py", "import sys\nescape(sys.modules)\n"),
+    ),
+    "wrong_module_literal": (
+        (
+            "replace",
+            "widget/views.py",
+            "settings.SESSION_ENGINE",
+            '"unexpected.plugin"',
+        ),
+    ),
+    "wrong_terminal_member": (
+        ("replace", "widget/views.py", ").SessionStore", ").Unknown"),
+    ),
+    "backend_store_alias_mutation": (
+        (
+            "set",
+            "mutation.py",
+            "from widget.views import SessionStore as Store\nStore.attribute = replacement\n",
+        ),
+    ),
+    "importlib_ambiguous": (
+        ("set", "importlib.py", "pass\n"),
+        ("set", "importlib/__init__.py", "pass\n"),
+    ),
+}
+
+
 @pytest.mark.parametrize(
     "change,expected",
     [
@@ -588,120 +911,7 @@ def _provider_configuration_sources():
 )
 def test_native_selected_setting_import_requires_closed_finite_source(change, expected):
     files = _provider_configuration_sources()
-    key = {"secret_key": "SECRET_KEY", "wrapped": "_wrapped", "dunder": "__dict__"}.get(
-        change
-    )
-    if key:
-        files["widget/__init__.py"] = files["widget/__init__.py"].replace(
-            "EXTENSION_FLAG", key
-        )
-    elif change == "explicit":
-        files["service/settings.py"] += (
-            'SESSION_ENGINE = "django.contrib.sessions.backends.db"\n'
-        )
-    elif change == "importer_alias":
-        files["widget/views.py"] = (
-            files["widget/views.py"]
-            .replace("import import_module", "import import_module as load")
-            .replace("= import_module(", "= load(")
-        )
-    elif change in {"dict_alias", "dict_update", "dict_escape"}:
-        statement = {
-            "dict_alias": "copy = _DEFAULTS",
-            "dict_update": '_DEFAULTS.update({"SECRET_KEY": "replacement"})',
-            "dict_escape": "escape(_DEFAULTS)",
-        }[change]
-        files["widget/__init__.py"] = files["widget/__init__.py"].replace(
-            "for key,", statement + "\nfor key,"
-        )
-    elif change == "foreign_dict":
-        files["mutation.py"] = (
-            'from widget import _DEFAULTS\n_DEFAULTS["SECRET_KEY"] = "replacement"\n'
-        )
-    elif change == "mutated_builtin":
-        files["mutation.py"] = "import builtins\nbuiltins.setattr = replacement\n"
-    elif change == "mutated_importer":
-        files["mutation.py"] = (
-            "import importlib\nimportlib.import_module = replacement\n"
-        )
-    elif change == "importer_rebound":
-        files["widget/views.py"] = files["widget/views.py"].replace(
-            "SessionStore =", "import_module = replacement\nSessionStore ="
-        )
-    elif change == "backend_override":
-        files["mutation.py"] = (
-            'from django.conf import settings\nsettings.SESSION_ENGINE = "unknown.backend"\n'
-        )
-    elif change == "dynamic_module":
-        files["widget/views.py"] = files["widget/views.py"].replace(
-            "settings.SESSION_ENGINE", "choose_module()"
-        )
-    elif change == "reflected_module":
-        files["widget/views.py"] = files["widget/views.py"].replace(
-            "settings.SESSION_ENGINE", 'getattr(settings, "SESSION_ENGINE")'
-        )
-    elif change == "backend_member":
-        files["mutation.py"] = (
-            "import django.contrib.sessions.backends.db as backend\nbackend.SessionStore = replacement\n"
-        )
-    elif change == "importlib_file":
-        files["importlib.py"] = "def import_module(name):\n    return unknown\n"
-    elif change == "importlib_package":
-        files["importlib/__init__.py"] = (
-            "def import_module(name):\n    return unknown\n"
-        )
-    elif change == "importer_escape":
-        files["mutation.py"] = "import importlib\nescape(importlib)\n"
-    elif change == "literal_selected":
-        files["widget/views.py"] = files["widget/views.py"].replace(
-            "settings.SESSION_ENGINE", '"django.contrib.sessions.backends.db"'
-        )
-    elif change in {"plain_explicit", "missing_plain_setting"}:
-        files["widget/views.py"] = files["widget/views.py"].replace(
-            "from django.conf import settings", "import service.settings as settings"
-        )
-        if change == "plain_explicit":
-            files["service/settings.py"] += (
-                'SESSION_ENGINE = "django.contrib.sessions.backends.db"\n'
-            )
-    elif change == "key_rebound":
-        files["widget/__init__.py"] = files["widget/__init__.py"].replace(
-            "        getattr", '        key = "SECRET_KEY"\n        getattr'
-        )
-    elif change == "dict_chained_alias":
-        files["widget/__init__.py"] = files["widget/__init__.py"].replace(
-            "_DEFAULTS =", "copy = _DEFAULTS ="
-        )
-    elif change == "relative_foreign_dict":
-        files["widget/peer.py"] = (
-            'from . import _DEFAULTS\n_DEFAULTS["SECRET_KEY"] = "replacement"\n'
-        )
-    elif change == "dict_module_escape":
-        files["mutation.py"] = "import widget\nescape(widget)\n"
-    elif change == "dict_peer_alias_only":
-        files["mutation.py"] = "from widget import _DEFAULTS as copied\n"
-    elif change == "backend_dynamic_setting":
-        files["service/settings.py"] += "SESSION_ENGINE = choose_backend()\n"
-    elif change == "backend_global_rebind":
-        files["service/settings.py"] += (
-            'def change_engine():\n    global SESSION_ENGINE\n    SESSION_ENGINE = "unknown.backend"\n'
-        )
-    elif change == "loader_namespace_escape":
-        files["mutation.py"] = "import sys\nescape(sys.modules)\n"
-    elif change == "wrong_module_literal":
-        files["widget/views.py"] = files["widget/views.py"].replace(
-            "settings.SESSION_ENGINE", '"unexpected.plugin"'
-        )
-    elif change == "wrong_terminal_member":
-        files["widget/views.py"] = files["widget/views.py"].replace(
-            ").SessionStore", ").Unknown"
-        )
-    elif change == "backend_store_alias_mutation":
-        files["mutation.py"] = (
-            "from widget.views import SessionStore as Store\nStore.attribute = replacement\n"
-        )
-    elif change == "importlib_ambiguous":
-        files.update({"importlib.py": "pass\n", "importlib/__init__.py": "pass\n"})
+    _apply_source_mutations(files, NATIVE_SELECTED_SETTING_EDITS.get(change, ()))
     row = _recovery_row(files)
     assert row["tier"] == expected
     assert row["raw_finding"]["facts"] == {"name": "SECRET_KEY"}
