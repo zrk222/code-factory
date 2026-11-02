@@ -43,6 +43,7 @@ def _canonical(node, aliases, expression=None):
 
 def _relative_binding(node, head):
     from .review_integrity import _security_module_scope, _security_scope_body
+    from .review_audits import _bound_names
 
     scope = getattr(node, "_security_lexical_scope", None)
     module = _security_module_scope(scope)
@@ -53,9 +54,9 @@ def _relative_binding(node, head):
                 node, "_security_flow_statement", None
             ):
                 break
-            if isinstance(statement, (ast.Import, ast.ImportFrom)) and head in _targets(
-                statement
-            ):
+            if isinstance(
+                statement, (ast.Import, ast.ImportFrom)
+            ) and head in _bound_names(statement):
                 relative = bool(getattr(statement, "level", 0))
         if relative is not None:
             return relative
@@ -66,12 +67,6 @@ def _expanded(node):
     return any(isinstance(arg, ast.Starred) for arg in node.args) or any(
         kw.arg is None for kw in node.keywords
     )
-
-
-def _targets(node):
-    from .review_audits import _bound_names
-
-    return _bound_names(node)
 
 
 def _keyword(call, name, position=None):
@@ -144,6 +139,8 @@ def _record(code, node, message, **facts):
 
 
 def _jinja_assignment(node, environments, aliases):
+    from .review_audits import _bound_names
+
     if not isinstance(node, (ast.Assign, ast.AnnAssign)):
         return
     targets = node.targets if isinstance(node, ast.Assign) else [node.target]
@@ -155,7 +152,7 @@ def _jinja_assignment(node, environments, aliases):
                     False: "explicit_false",
                     True: "explicit_true",
                 }.get(_literal_bool(value), "dynamic")
-    for target in _targets(node):
+    for target in _bound_names(node):
         environments.pop(target, None)
     if (
         isinstance(value, ast.Call)

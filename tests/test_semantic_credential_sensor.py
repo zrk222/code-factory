@@ -5162,3 +5162,274 @@ def test_nested_application_root_preserves_registered_dependency_ownership(mutat
         "ledger"
     ][0]
     assert row["tier"] == ("SUPPORTED_DEFECT" if mutation is None else "NEEDS_CONTEXT")
+
+
+@pytest.mark.parametrize(
+    "root_routes, child_routes, extra, supported",
+    [
+        pytest.param(
+            "path('admin/', admin.site.urls)",
+            None,
+            "unused = 1 / 0\n",
+            False,
+            id="construction-assignment-division",
+        ),
+        pytest.param(
+            "path('admin/', admin.site.urls)",
+            None,
+            "unused = absent[0]\n",
+            False,
+            id="construction-assignment-subscript",
+        ),
+        pytest.param(
+            "path('admin/', admin.site.urls)",
+            None,
+            "def eager(value=1 / 0):\n    return value\n",
+            False,
+            id="construction-default-division",
+        ),
+        pytest.param(
+            "path('admin/', admin.site.urls)",
+            None,
+            "def eager(value: explode()):\n    return value\n",
+            False,
+            id="construction-argument-annotation",
+        ),
+        pytest.param(
+            "path('admin/', admin.site.urls)",
+            None,
+            "def eager(*values: explode()):\n    return values\n",
+            False,
+            id="construction-vararg-annotation",
+        ),
+        pytest.param(
+            "path('admin/', admin.site.urls)",
+            None,
+            "def eager(**values: explode()):\n    return values\n",
+            False,
+            id="construction-kwarg-annotation",
+        ),
+        pytest.param(
+            "path('admin/', admin.site.urls), path('<bogus:x>/', plain)",
+            None,
+            "",
+            False,
+            id="construction-unknown-converter-suffix",
+        ),
+        pytest.param(
+            "path('admin/', admin.site.urls), path('child/', include(child, 'namespace'))",
+            "path('other/', plain)",
+            "",
+            False,
+            id="construction-unproved-include-namespace",
+        ),
+        pytest.param(
+            "re_path('admin/', admin.site.urls)",
+            None,
+            "",
+            True,
+            id="unanchored-literal",
+        ),
+        pytest.param(
+            "path('admin/', admin.site.urls)",
+            None,
+            "explode()\n",
+            False,
+            id="construction-call-before",
+        ),
+        pytest.param(
+            "path('admin/', admin.site.urls)",
+            None,
+            "raise RuntimeError\n",
+            False,
+            id="construction-raise-before",
+        ),
+        pytest.param(
+            "path('admin/', admin.site.urls)",
+            None,
+            "def eager(value=explode()):\n    return value\n",
+            False,
+            id="construction-default-call",
+        ),
+        pytest.param(
+            "path('admin/', admin.site.urls)",
+            None,
+            "@explode()\ndef eager():\n    return None\n",
+            False,
+            id="construction-decorator-call",
+        ),
+        pytest.param(
+            "path('admin/', admin.site.urls)",
+            None,
+            "class Eager:\n    explode()\n",
+            False,
+            id="construction-class-body",
+        ),
+        pytest.param(
+            "re_path('^', include(child))",
+            "re_path('admin/', admin.site.urls)",
+            "",
+            True,
+            id="module-alias-include",
+        ),
+        pytest.param(
+            "re_path('min/', plain), re_path('admin/', admin.site.urls)",
+            None,
+            "",
+            False,
+            id="substring-shadow",
+        ),
+        pytest.param(
+            "re_path('^min/', plain), re_path('admin/', admin.site.urls)",
+            None,
+            "",
+            True,
+            id="anchored-disjoint",
+        ),
+        pytest.param(
+            "re_path('^admin/$', plain), re_path('admin/', admin.site.urls)",
+            None,
+            "",
+            False,
+            id="exact-index-shadow",
+        ),
+        pytest.param(
+            "re_path('a$', include(child)), path('aa', admin.site.urls)",
+            "path('', plain)",
+            "",
+            False,
+            id="include-end-anchor-suffix",
+        ),
+        pytest.param(
+            "path('staff/', include(child))",
+            "re_path('admin/', admin.site.urls)",
+            "",
+            True,
+            id="nested-residual",
+        ),
+        pytest.param(
+            "path('admin/', include(child)), path('admin/', admin.site.urls)",
+            "path('other/', plain)",
+            "",
+            True,
+            id="child-miss-parent-fallback",
+        ),
+        pytest.param(
+            "path('admin/', include(child)), path('admin/', admin.site.urls)",
+            "path('', plain)",
+            "",
+            False,
+            id="child-selected-shadow",
+        ),
+        pytest.param(
+            "re_path('^.*', plain), path('admin/', admin.site.urls)",
+            None,
+            "",
+            False,
+            id="unknown-prefix-barrier",
+        ),
+        pytest.param(
+            "path('admin/', admin.site.urls), unknown()",
+            None,
+            "",
+            False,
+            id="unknown-construction-suffix",
+        ),
+        pytest.param(
+            "unknown(), path('admin/', admin.site.urls)",
+            None,
+            "",
+            False,
+            id="unknown-construction-prefix",
+        ),
+        pytest.param(
+            "path('admin/', admin.site.urls), path('tail/', unknown())",
+            None,
+            "",
+            False,
+            id="unknown-callback-suffix",
+        ),
+        pytest.param(
+            "re_path(r'^staff\\.zone/', include(child))",
+            "path('admin/', admin.site.urls)",
+            "",
+            True,
+            id="escaped-literal-parent",
+        ),
+        pytest.param(
+            "re_path('^', include(child))",
+            "path('admin/', admin.site.urls)",
+            "child.urlpatterns.clear()\n",
+            False,
+            id="module-mutation",
+        ),
+        pytest.param(
+            "re_path('^', include(child))",
+            "path('admin/', admin.site.urls)",
+            "include = replacement\n",
+            False,
+            id="shadowed-include",
+        ),
+        pytest.param(
+            "re_path('^', include(child))",
+            "path('admin/', admin.site.urls)",
+            "saved = include(child)\n",
+            False,
+            id="include-tuple-escape",
+        ),
+        pytest.param(
+            "re_path('^', include(child))",
+            "path('admin/', admin.site.urls)\ndef __getattr__(name):\n    return replacement\n",
+            "",
+            False,
+            id="dynamic-child-namespace",
+        ),
+    ],
+)
+def test_shared_django_route_witness_selection(
+    root_routes, child_routes, extra, supported
+):
+    files = _configuration_files277(_DJANGO_SESSION_START)
+    files["service/settings.py"] = _DJANGO_SESSION_SETTINGS
+    imports = "from django.contrib import admin\nfrom django.urls import path, re_path, include\n"
+    plain = "def plain(request):\n    return None\n"
+    files["service/urls.py"] = (
+        imports
+        + ("import service.child as child\n" if child_routes is not None else "")
+        + plain
+        + extra
+        + "urlpatterns = ["
+        + root_routes
+        + "]\n"
+    )
+    if child_routes is not None:
+        files["service/child.py"] = (
+            imports
+            + plain
+            + "urlpatterns = ["
+            + child_routes.split("\ndef ", 1)[0]
+            + "]\n"
+        )
+        if "\ndef " in child_routes:
+            files["service/child.py"] += "def " + child_routes.split("\ndef ", 1)[1]
+    row = _configuration_tiers277(files)["ledger"][0]
+    assert (row["tier"] == "SUPPORTED_DEFECT") is supported
+    if supported:
+        assert (
+            row["credential_authority_observation"]["selected_consumer"]["model"]
+            == "django.admin.feedback.v1"
+        )
+
+
+def test_helper_epoch_replacements_include_noncallable_bindings(monkeypatch):
+    from factoryline import credential_endpoint_admission as admission
+    from factoryline.credential_role_constructor_provider import (
+        _helper_identity,
+        _same_helper_epoch,
+    )
+
+    for replacement in (lambda: True, lambda: False, len, str, None):
+        before = tuple(map(_helper_identity, admission.validation_helpers()))
+        monkeypatch.setattr(admission, "_django_default_authority", replacement)
+        after = tuple(map(_helper_identity, admission.validation_helpers()))
+        assert not _same_helper_epoch(before, after)

@@ -2674,12 +2674,12 @@ def _signing_source_span(index, path, node):
 
 
 def _signing_provider_clear(
-    tree, aliases, framework, *, roots=None, context=None, settings_path=None
+    tree, aliases, framework, *, roots=None, context=None, settings_path=None, reads=()
 ):
     from .review_audits import _resolved_ast_name
 
     nodes = list(ast.walk(tree))
-    approved = set()
+    approved = set(reads)
     if framework == "django" and context is not None and settings_path is not None:
         from .credential_endpoint_admission import _django_setting_import_closure
 
@@ -2689,14 +2689,11 @@ def _signing_provider_clear(
             for n in nodes
         ):
             closure = _django_setting_import_closure(context, settings_path)
-            approved = (
-                closure["reads"].get(id(tree), set()) if closure is not None else set()
-            )
+            approved.update(closure["reads"].get(id(tree), ()) if closure else ())
     if any(
-        isinstance(node, (ast.Name, ast.Attribute))
-        and _resolved_ast_name(node, aliases).startswith(("sys.modules", "importlib."))
+        _resolved_ast_name(node, aliases).startswith(("sys.modules", "importlib."))
         for node in nodes
-        if id(node) not in approved
+        if isinstance(node, (ast.Name, ast.Attribute)) and id(node) not in approved
     ):
         return False
     roots = roots or (
@@ -2722,10 +2719,10 @@ def _signing_provider_clear(
             for node in nodes
         ):
             return False
-    reads = (
-        _signing_provider_reads(tree, aliases, framework, roots, nodes, context=context)
-        | approved
+    reads = _signing_provider_reads(
+        tree, aliases, framework, roots, nodes, context=context
     )
+    reads.update(approved)
     return not _provider_identity_uncertain(
         tree,
         aliases,

@@ -325,74 +325,6 @@ def endpoint_admission_helpers():
     """Include derivation semantics in the native scanner context fingerprint."""
     from importlib import import_module
 
-    owner_names = (
-        "OrderedDict",
-        "deepcopy",
-        "_digest",
-        "_source_bindings",
-        "_captured_endpoint_binding",
-        "_endpoint_captured_inventory",
-        "_endpoint_captured_source_row",
-        "_endpoint_captured_source_binding",
-        "_endpoint_captured_claim",
-        "_endpoint_annotation_source",
-        "_derive",
-        "_workspace_roles",
-        "_admissible",
-        "_attach",
-        "annotate_endpoint_findings",
-        "factory_fixture_consumer_status",
-        "_factory_fixture_uses",
-        "_factory_fixture_consumer_result",
-        "_single_factory_fixture_call",
-        "endpoint_admission_helpers",
-        "_endpoint_claim_profile_matches",
-        "_endpoint_attestation_matches",
-        "_reviewed_capture_matches",
-        "_reviewed_publication_matches",
-        "mint_endpoint_facts",
-        "catalog_content_digest",
-        "endpoint_publication",
-    )
-    excerpt_names = (
-        "urlsplit",
-        "_public_https",
-        "digest",
-        "_sha",
-        "_excerpt_https",
-        "_excerpt_valid",
-        "reviewed_excerpt_fact",
-        "_reviewed_capture_matches",
-        "_reviewed_publication_matches",
-    )
-    protocol_names = (
-        "_public_https",
-        "_unique_object",
-        "_invalid_constant",
-        "_protocol_https",
-        "_document",
-        "_flow_rows",
-        "_openapi_security_schemes",
-        "_openapi_scheme_rows",
-        "_openapi_token_url_rows",
-        "_openapi_declaration_records",
-        "_valid_flow",
-        "openapi_endpoint_declarations",
-        "matches_openapi_endpoint",
-    )
-    session_names = (
-        "_span",
-        "_hop",
-        "_body",
-        "_construction",
-        "_request_attribute",
-        "_timeout_forwarder",
-        "_forwarder_provider_uncertain",
-        "_factory_owner_valid",
-        "session_factory_witness",
-        "_session_factory_receiver",
-        "_session_factory_witness_rows",
-    )
     role_names = (
         "credential_role_constructor_provider",
         "credential_role_method_use_getter_audit",
@@ -412,13 +344,7 @@ def endpoint_admission_helpers():
     from .credential_role_method_use_getter_audit import RecordProjectionIndex
 
     return (
-        *_callable_values(owner_names),
         *catalog_callable_helpers(),
-        *_callable_values(excerpt_names),
-        *_callable_values(protocol_names),
-        *_callable_values(session_names),
-        _callable_values,
-        catalog_callable_helpers,
         *helpers,
         *(
             method
@@ -428,30 +354,9 @@ def endpoint_admission_helpers():
     )
 
 
-def _callable_values(names):
-    return tuple(value for name in names if callable(value := globals().get(name)))
-
-
 def catalog_callable_helpers():
-    """Return the exact callable inventory formerly owned by the publication catalog."""
-    return _callable_values(
-        (
-            "urlsplit",
-            "_unique_object",
-            "_public_https",
-            "endpoint_metadata",
-            "matches_endpoint_declaration",
-            "_catalog_digest",
-            "_entry",
-            "_reviewed_entry",
-            "_declaration",
-            "_read",
-            "_catalog_bytes",
-            "catalog_content_digest",
-            "endpoint_publications",
-            "endpoint_publication",
-        )
-    )
+    """Track every named namespace slot, including replaced helper bindings."""
+    return tuple(value for name, value in sorted(globals().items()))
 
 
 def validation_helpers():
@@ -473,57 +378,7 @@ def validation_helpers():
             for value in (getattr(value, "__func__", value),)
             if callable(value)
         )
-        + _callable_values(
-            (
-                "operative_signing_default_evidence",
-                "_django_default_authority",
-                "_django_selected_consumers_closed",
-                "_django_setting_import_closure",
-                "_django_setting_import_aliases",
-                "_django_setting_import_sites",
-                "_django_setting_import_operand",
-                "_django_importer_external",
-                "_django_import_namespace_unknown",
-                "_flask_credential_authority_for_key",
-                "_flask_login_session_authority_witness",
-                "_flask_credential_authority_witness",
-                "_request_client_origin",
-                "_direct_httpx_fixture",
-                "_closed_fixture_decorator",
-                "_client_uses_closed",
-                "_cookie_write",
-                "_tuple_httpx_fixture",
-                "_fixture_app_uses_only_client",
-                "tuple_httpx_fixture",
-                "request_client_origin",
-                "factory_fixture_consumer_status",
-                "_factory_fixture_uses",
-                "_factory_fixture_consumer_result",
-                "_single_factory_fixture_call",
-                "public_json_assertion",
-                "_json_assertion_operands",
-                "_json_detail_name",
-                "_json_cast_response",
-                "_json_response_name",
-                "_json_response_request",
-                "_assertion_values",
-                "_public_expected_value",
-                "_public_enum_member",
-                "router_factory_call_published",
-                "_router_factory_call_published",
-                "_fixture_returns_factory",
-                "_factory_fixture_consumers",
-                "_fixture_app_consumers_closed",
-                "_fixture_app_consumers_closed_uncached",
-                "_app_route_lookups_closed",
-                "_include_router_options",
-                "_route_lookup_only",
-                "_local_name_uses",
-                "_memo",
-                "_app_fixture_consumer_status",
-            )
-        )
-        + (validation_helpers,)
+        + catalog_callable_helpers()
     )
 
 
@@ -2757,32 +2612,40 @@ def _django_selected_consumers_closed(context, path, required, selected_modules)
             tree, aliases, {"getattr", "hasattr"}
         )
 
+        slots = (
+            (
+                _DJANGO_ROUTE_PROVIDERS,
+                1,
+                {"django.contrib.admin.site.urls", *_DJANGO_AUTH_VIEWS},
+            ),
+            (_DJANGO_INCLUDE_PROVIDERS, 0, {"django.contrib.admin.site.urls"}),
+            (
+                {
+                    "django.conf.urls.static.static",
+                    "django.contrib.staticfiles.urls.static",
+                },
+                0,
+                {"django.conf.settings.STATIC_URL", "django.conf.settings.MEDIA_URL"},
+            ),
+            (
+                {"django.utils.decorators.method_decorator"},
+                0,
+                {
+                    "django.views.decorators.csrf.csrf_exempt",
+                    "django.views.decorators.http.require_POST",
+                },
+            ),
+        )
         approved = {
             id(child)
             for node in nodes
             if isinstance(node, ast.Call)
-            and len(node.args) == 2
-            and audit._resolved_ast_name(node.func, aliases)
-            in {"django.urls.path", "django.urls.re_path", "django.conf.urls.url"}
-            and audit._resolved_ast_name(node.args[1], aliases)
-            == "django.contrib.admin.site.urls"
-            for child in ast.walk(node.args[1])
+            for providers, position, arguments in slots
+            if audit._resolved_ast_name(node.func, aliases) in providers
+            and len(node.args) > position
+            and audit._resolved_ast_name(node.args[position], aliases) in arguments
+            for child in ast.walk(node.args[position])
         }
-        approved.update(
-            id(child)
-            for node in nodes
-            if isinstance(node, ast.Call)
-            and node.args
-            and audit._resolved_ast_name(node.func, aliases)
-            in {
-                "django.urls.include",
-                "django.conf.urls.include",
-                "django.urls.conf.include",
-            }
-            and audit._resolved_ast_name(node.args[0], aliases)
-            == "django.contrib.admin.site.urls"
-            for child in ast.walk(node.args[0])
-        )
         approved.update(
             id(node.args[0])
             for node in nodes
@@ -2797,57 +2660,6 @@ def _django_selected_consumers_closed(context, path, required, selected_modules)
             and isinstance(node.args[1], ast.Constant)
             and isinstance(node.args[1].value, str)
             and not node.args[1].value.startswith("_")
-        )
-        approved.update(
-            id(child)
-            for node in nodes
-            if isinstance(node, ast.Call)
-            and len(node.args) >= 2
-            and audit._resolved_ast_name(node.func, aliases)
-            in {"django.urls.path", "django.urls.re_path", "django.conf.urls.url"}
-            and audit._resolved_ast_name(node.args[1], aliases)
-            in {
-                "django.contrib.auth.views." + name
-                for name in (
-                    "login",
-                    "logout",
-                    "password_reset",
-                    "password_reset_done",
-                    "password_reset_confirm",
-                    "password_reset_complete",
-                    "password_change",
-                    "password_change_done",
-                )
-            }
-            for child in ast.walk(node.args[1])
-        )
-        approved.update(
-            id(child)
-            for node in nodes
-            if isinstance(node, ast.Call)
-            and node.args
-            and audit._resolved_ast_name(node.func, aliases)
-            in {
-                "django.conf.urls.static.static",
-                "django.contrib.staticfiles.urls.static",
-            }
-            and audit._resolved_ast_name(node.args[0], aliases)
-            in {"django.conf.settings.STATIC_URL", "django.conf.settings.MEDIA_URL"}
-            for child in ast.walk(node.args[0])
-        )
-        approved.update(
-            id(child)
-            for node in nodes
-            if isinstance(node, ast.Call)
-            and len(node.args) == 1
-            and audit._resolved_ast_name(node.func, aliases)
-            == "django.utils.decorators.method_decorator"
-            and audit._resolved_ast_name(node.args[0], aliases)
-            in {
-                "django.views.decorators.csrf.csrf_exempt",
-                "django.views.decorators.http.require_POST",
-            }
-            for child in ast.walk(node.args[0])
         )
         guard_roots = (
             "django.contrib.admin",
@@ -4150,6 +3962,77 @@ class _OperativeCredentialOrigin:
         }
 
 
+_DJANGO_ROUTE_PROVIDERS = frozenset(
+    {"django.urls.path", "django.urls.re_path", "django.conf.urls.url"}
+)
+_DJANGO_INCLUDE_PROVIDERS = frozenset(
+    {"django.urls.include", "django.conf.urls.include", "django.urls.conf.include"}
+)
+_DJANGO_AUTH_VIEWS = frozenset(
+    "django.contrib.auth.views." + name
+    for name in "login logout password_reset password_reset_done password_reset_confirm password_reset_complete password_change password_change_done".split()
+)
+
+
+def _django_route_pattern(source, provider, endpoint):
+    """Validate Django converters and retain bounded literal route geometry."""
+    if provider == "django.urls.path":
+        converters = re.findall(r"<(?:(\w+):)?([^>]+)>", source)
+        if not all(
+            converter in {"", "int", "path", "slug", "str", "uuid"}
+            and name.isidentifier()
+            for converter, name in converters
+        ):
+            return None
+        return source.split("<", 1)[0], True, endpoint, "<" not in source
+    try:
+        re.compile(source)
+    except re.error:
+        return None
+    start, end = source.startswith("^"), source.endswith("$")
+    body = source[int(start) : len(source) - int(end)]
+    tokens = re.findall(r"\\[^\w]|[\w/:-]", body)
+    if "".join(tokens) == body:
+        return "".join(t[-1] for t in tokens), start or endpoint and end, end, True
+    head = re.match(r"\^([\w/:-]*)", source)
+    literal = head.group(1) if head and "|" not in source else ""
+    if head and source[head.end() : head.end() + 1] in {"?", "*", "{"}:
+        literal = literal[:-1]
+    return literal, True, False, False
+
+
+def _django_route_witness(routes):
+    """Select a route only after every earlier resolver proves a miss."""
+    for chain, effect, references in routes:
+        if not effect or not all(part[3] for part in chain):
+            continue
+        request = "".join(part[0] for part in chain)
+        for earlier, selected, references in routes:
+            remaining, matched = request, True
+            for literal, start, end, known in earlier:
+                position = (
+                    len(remaining) - len(literal)
+                    if end and not start
+                    else (0 if start else remaining.find(literal))
+                )
+                if position < 0 or not remaining.startswith(literal, position):
+                    matched = False
+                    break
+                if not known:
+                    matched = None
+                    break
+                consumed = position + len(literal)
+                if end and consumed != len(remaining):
+                    matched = False
+                    break
+                remaining = remaining[consumed:]
+            if matched is not False:
+                if matched and selected == effect:
+                    return request, selected, references
+                break
+    return None
+
+
 class _CredentialHandlerIndex:
     """Bind route and router declarations to captured application allocations."""
 
@@ -4311,7 +4194,7 @@ class _CredentialHandlerIndex:
                 target = _signing_resolve_module(self.context, value, path)
             case _:
                 return None
-        routes = self._django_routes(target, (), "")
+        routes = self._django_routes(target, (), ())
         if routes is None:
             return None
         imports = _django_setting_import_closure(self.context, path) or {
@@ -4324,29 +4207,24 @@ class _CredentialHandlerIndex:
             for row in imports["finite_settings"]
             for field in ("span", "declaration_span")
         )
-        earlier = []
-        for route, model, references, prefix in routes:
-            shadowed = any(
-                route == old or broad and route.startswith(old)
-                for old, broad in earlier
-            )
-            if model and not shadowed:
-                return {
-                    "model": model,
-                    "route": route,
-                    "root": self._django_reference(path, root),
-                    "configuration_imports": imports["evidence"],
-                    "configuration_import_closure": self.context.get(
-                        "selected_import_closures", {}
-                    ).get(self.django_settings_path.as_posix(), {}),
-                    "finite_configuration_fields": imports["finite_settings"],
-                    "evidence": [
-                        *configuration,
-                        *provider_refs,
-                        *(ref for _, _, refs, _ in routes for ref in refs),
-                    ],
-                }
-            earlier.append((route.split("<", 1)[0], prefix or "<" in route))
+        witness = _django_route_witness(routes)
+        if witness:
+            route, model, references = witness
+            return {
+                "model": model,
+                "route": route,
+                "root": self._django_reference(path, root),
+                "configuration_imports": imports["evidence"],
+                "configuration_import_closure": self.context.get(
+                    "selected_import_closures", {}
+                ).get(self.django_settings_path.as_posix(), {}),
+                "finite_configuration_fields": imports["finite_settings"],
+                "evidence": [
+                    *configuration,
+                    *provider_refs,
+                    *(ref for _, _, refs in routes for ref in refs),
+                ],
+            }
         return None
 
     @staticmethod
@@ -4408,6 +4286,10 @@ class _CredentialHandlerIndex:
         from .mock_fixture_provenance import _django_name
 
         tree, values, accepted = self.index.snapshots[path], {}, set()
+        from .credential_role_constructor_provider import binding_occurrences
+
+        if binding_occurrences(tree.body, "__getattr__"):
+            return None
         if not self._django_sequence_statements(path, tree.body, values, accepted):
             return None
         names = {name for name, value in values.items() if value is not None} | {
@@ -4427,6 +4309,11 @@ class _CredentialHandlerIndex:
                 roots=(root,),
                 context=self.context,
                 settings_path=self.django_settings_path,
+                reads={
+                    id(n)
+                    for n in ast.walk(owner)
+                    if self._django_include_read(p, n, path)
+                },
             )
             for p, owner in self.index.snapshots.items()
             if p != path
@@ -4443,6 +4330,11 @@ class _CredentialHandlerIndex:
                         if isinstance(value, ast.Name)
                         else self._django_sequence_value(path, value, values, accepted)
                     )
+                    if fragment is None:
+                        try:
+                            ast.literal_eval(value)
+                        except (ValueError, TypeError):
+                            return False
                     values[target.id] = fragment
                     if fragment is not None:
                         accepted.add(id(target))
@@ -4467,7 +4359,7 @@ class _CredentialHandlerIndex:
                 ):
                     values[target.id] = []
                     accepted.add(id(target))
-                case ast.If():
+                case _:
                     if not self._django_sequence_branch(
                         path, statement, values, accepted
                     ):
@@ -4475,6 +4367,37 @@ class _CredentialHandlerIndex:
         return True
 
     def _django_sequence_branch(self, path, statement, values, accepted):
+        if isinstance(statement, (ast.Import, ast.ImportFrom, ast.Pass)):
+            return True
+        if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            arguments = statement.args
+            parameters = [
+                *arguments.posonlyargs,
+                *arguments.args,
+                *arguments.kwonlyargs,
+                arguments.vararg,
+                arguments.kwarg,
+            ]
+            headers = [
+                *arguments.defaults,
+                *arguments.kw_defaults,
+                statement.returns,
+                *(p.annotation for p in parameters if p),
+            ]
+            try:
+                for header in filter(None, headers):
+                    ast.literal_eval(header)
+            except (ValueError, TypeError):
+                return False
+            return (
+                not statement.decorator_list
+                or self._django_feedback_handler(path, ast.Name(id=statement.name))
+                is not None
+            )
+        if not isinstance(statement, ast.If):
+            return isinstance(statement, ast.Expr) and isinstance(
+                statement.value, ast.Constant
+            )
         if isinstance(statement.test, ast.Constant) and isinstance(
             statement.test.value, bool
         ):
@@ -4482,10 +4405,7 @@ class _CredentialHandlerIndex:
         elif self.canonical(path, statement.test) == "django.conf.settings.DEBUG":
             selected = self._django_setting("DEBUG", False)
         else:
-            return not any(
-                isinstance(n, ast.Name) and n.id == "urlpatterns"
-                for n in ast.walk(statement)
-            )
+            return False
         if not isinstance(selected, bool):
             return False
         active, inactive = (
@@ -4543,43 +4463,83 @@ class _CredentialHandlerIndex:
         return rows[-1][1].value
 
     def _django_static_routes(self, path, call, provider):
-        providers = {
+        if provider not in {
             "django.conf.urls.static.static",
             "django.contrib.staticfiles.urls.static",
             "django.contrib.staticfiles.urls.staticfiles_urlpatterns",
-        }
-        if provider not in providers or not isinstance(
-            self._django_setting("DEBUG", False), bool
-        ):
+        }:
             return None
-        if not self._django_setting("DEBUG", False):
+        debug = self._django_setting("DEBUG", False)
+        if not isinstance(debug, bool):
+            return None
+        if not debug:
             return []
-        if provider.endswith(".staticfiles_urlpatterns"):
-            name = "STATIC_URL" if not call.args and not call.keywords else None
-        else:
-            name = self._django_static_argument(path, call)
-        prefix = self._django_setting(name) if name else None
+        match call:
+            case ast.Call(args=[], keywords=[]) if provider.endswith(
+                ".staticfiles_urlpatterns"
+            ):
+                name = "STATIC_URL"
+            case ast.Call(args=[argument], keywords=keywords) if not provider.endswith(
+                ".staticfiles_urlpatterns"
+            ):
+                canonical = self.canonical(path, argument)
+                if canonical not in {
+                    "django.conf.settings.STATIC_URL",
+                    "django.conf.settings.MEDIA_URL",
+                } or any(
+                    k.arg != "document_root"
+                    or not isinstance(k.value, (ast.Attribute, ast.Constant))
+                    for k in keywords
+                ):
+                    return None
+                name = canonical.rpartition(".")[2]
+            case _:
+                return None
+        prefix = self._django_setting(name)
         if not isinstance(prefix, str) or not prefix:
             return None
         if urlsplit(prefix).netloc:
             return []
-        reference = self._django_reference(path, call)
-        return [({"prefix": prefix.lstrip("/"), "evidence": [reference]}, "")]
+        return [
+            (
+                {
+                    "prefix": prefix.lstrip("/"),
+                    "evidence": [self._django_reference(path, call)],
+                },
+                "",
+            )
+        ]
 
-    def _django_static_argument(self, path, call):
-        if len(call.args) != 1 or any(
-            k.arg != "document_root"
-            or not isinstance(k.value, (ast.Attribute, ast.Constant))
-            for k in call.keywords
-        ):
-            return None
-        canonical = self.canonical(path, call.args[0])
-        return (
-            canonical.rpartition(".")[2]
-            if canonical
-            in {"django.conf.settings.STATIC_URL", "django.conf.settings.MEDIA_URL"}
-            else None
-        )
+    def _django_include_read(self, path, node, child):
+        from .semantic_credential_sensor import _signing_resolve_module
+
+        call = self.index.parents[path].get(id(node))
+        route = self.index.parents[path].get(id(call))
+        match (node, call, route):
+            case (
+                ast.Name(ctx=ast.Load()) | ast.Attribute(ctx=ast.Load()),
+                ast.Call(args=[argument], keywords=[]),
+                ast.Call(args=[ast.Constant(value=str()), target]),
+            ):
+                return (
+                    argument is node
+                    and target is call
+                    and self.canonical(path, call.func) in _DJANGO_INCLUDE_PROVIDERS
+                    and self.canonical(path, route.func) in _DJANGO_ROUTE_PROVIDERS
+                    and all(
+                        k.arg == "name"
+                        and isinstance(k.value, ast.Constant)
+                        and isinstance(k.value.value, str)
+                        for k in route.keywords
+                    )
+                    and _signing_resolve_module(
+                        self.context,
+                        ast.Constant(value=self.canonical(path, node)),
+                        path,
+                    )
+                    == child
+                )
+        return False
 
     def _django_routes(self, path, stack, prefix):
         if path is None or path in stack or not self.index.validate(path):
@@ -4589,137 +4549,113 @@ class _CredentialHandlerIndex:
             return None
         result = []
         for node, callback_prefix in sequence:
-            if isinstance(node, dict):
-                rows = [(prefix + node["prefix"], None, node["evidence"], True)]
-            else:
-                rows = self._django_route(
+            rows = (
+                [
+                    (
+                        (*prefix, (node["prefix"], True, False, False)),
+                        None,
+                        node["evidence"],
+                    )
+                ]
+                if isinstance(node, dict)
+                else self._django_route(
                     path, node, (*stack, path), prefix, callback_prefix
                 )
+            )
             if rows is None:
                 return None
             result.extend(rows)
         return result
 
     def _django_route(self, path, node, stack, prefix, callback_prefix=""):
-        if (
-            not isinstance(node, ast.Call)
-            or len(node.args) not in {2, 3}
-            or any(k.arg not in {"name"} for k in node.keywords)
-        ):
-            return None
-        provider = self.canonical(path, node.func)
-        if provider not in {
-            "django.urls.path",
-            "django.urls.re_path",
-            "django.conf.urls.url",
-        }:
-            return None
-        if not isinstance(node.args[0], ast.Constant) or not isinstance(
-            node.args[0].value, str
-        ):
-            return None
-        pattern = (
-            self._django_pattern(provider, node.args[0].value)
-            if len(node.args) == 2 or self._django_static_keywords(node.args[2])
-            else None
-        )
-        if pattern is None:
-            return None
-        route, prefix_match, exact = pattern
-        route = prefix + route
-        target, reference = node.args[1], self._django_reference(path, node)
-        if isinstance(target, ast.Call) and self.canonical(path, target.func) in {
-            "django.urls.include",
-            "django.conf.urls.include",
-            "django.urls.conf.include",
-        }:
-            return self._django_include(path, node, stack, route, reference, exact)
-        if self.canonical(path, target) == "django.contrib.admin.site.urls":
-            if node.args[0].value.endswith("$") or not exact:
-                return None
-            return [(route, "django.admin.feedback.v1", [reference], True)]
-        if (
-            callback_prefix
-            and isinstance(target, ast.Constant)
-            and isinstance(target.value, str)
-        ):
-            target = ast.Constant(value=callback_prefix + "." + target.value)
-        if self._django_target(path, target) is None:
-            return None
-        effect = self._django_operation_feedback(path, target) if exact else None
-        return [
-            (
-                route,
-                "django.authenticated-operation.feedback.v1" if effect else None,
-                [reference, *(effect or [])],
-                prefix_match,
-            )
-        ]
-
-    def _django_include(self, path, node, stack, route, reference, exact=True):
         from .semantic_credential_sensor import _signing_resolve_module
 
-        target = node.args[1]
-        if (
-            not target.args
-            or len(target.args) > 2
-            or target.keywords
-            or node.args[0].value.endswith("$")
-        ):
+        if not isinstance(node, ast.Call) or len(node.args) not in {2, 3}:
             return None
-        literal = target.args[0]
-        if self.canonical(path, literal) == "django.contrib.admin.site.urls":
+        provider = self.canonical(path, node.func)
+        if provider not in _DJANGO_ROUTE_PROVIDERS:
+            return None
+        target, reference = node.args[1], self._django_reference(path, node)
+        include = (
+            isinstance(target, ast.Call)
+            and self.canonical(path, target.func) in _DJANGO_INCLUDE_PROVIDERS
+        )
+        try:
+            source = ast.literal_eval(node.args[0])
+            keywords = {k.arg: ast.literal_eval(k.value) for k in node.keywords}
+            defaults = ast.literal_eval(node.args[2]) if len(node.args) == 3 else {}
+            valid = all(
+                (
+                    isinstance(source, str),
+                    set(keywords) <= {"name"},
+                    all(isinstance(v, str) for v in keywords.values()),
+                    isinstance(defaults, dict),
+                )
+            )
+            if include:
+                valid = valid and len(target.args) == 1 and not target.keywords
+                target = target.args[0]
+            if not valid or not all(isinstance(k, str) for k in defaults):
+                return None
+        except (ValueError, TypeError, IndexError):
+            return None
+        canonical = self.canonical(path, target)
+        admin = canonical == "django.contrib.admin.site.urls"
+        pattern = _django_route_pattern(source, provider, not (include or admin))
+        if pattern is None:
+            return None
+        chain = (*prefix, pattern)
+        if admin:
+            return [
+                (
+                    (*chain, ("", True, True, True)),
+                    "django.admin.feedback.v1",
+                    [reference],
+                ),
+                ((*chain, ("", True, False, False)), None, [reference]),
+            ]
+        if include:
+            literal = (
+                target
+                if isinstance(target, ast.Constant)
+                else ast.Constant(value=canonical)
+            )
+            if (
+                isinstance(literal, ast.Constant)
+                and literal.value == "django.contrib.auth.urls"
+            ):
+                return [(chain, None, [reference])]
+            rows = self._django_routes(
+                _signing_resolve_module(self.context, literal, path), stack, chain
+            )
             return (
-                [(route, "django.admin.feedback.v1", [reference], True)]
-                if exact
+                [(r, m, [reference, *refs]) for r, m, refs in rows]
+                if rows is not None
                 else None
             )
-        if (
-            isinstance(literal, ast.Constant)
-            and literal.value == "django.contrib.auth.urls"
-        ):
-            return [(route, None, [reference], True)]
-        if not isinstance(literal, ast.Constant):
-            literal = ast.Constant(value=self.canonical(path, literal))
-        child = _signing_resolve_module(self.context, literal, path)
-        rows = self._django_routes(child, stack, route)
-        return (
-            [
-                (r, m if exact else None, [reference, *refs], broad)
-                for r, m, refs, broad in rows
-            ]
-            if rows is not None
+        target = (
+            ast.Constant(value=callback_prefix + "." + target.value)
+            if callback_prefix
+            and isinstance(target, ast.Constant)
+            and isinstance(target.value, str)
+            else target
+        )
+        valid = self._django_target(path, target) is not None
+        effect = (
+            self._django_operation_feedback(path, target)
+            if pattern[3] and valid
             else None
         )
-
-    def _django_pattern(self, provider, source):
-        if provider == "django.urls.path":
-            return source, False, "<" not in source
-        try:
-            re.compile(source)
-        except re.error:
-            return None
-        literal = source.removeprefix("^").removesuffix("$")
-        if literal and not source.startswith("^"):
-            return "", True, False
-        exact = re.fullmatch(r"[\w/:-]*", literal) is not None
-        if exact:
-            return literal, not source.endswith("$"), True
-        # Only our fixed linear matcher reads the pattern text. The captured
-        # regex is never executed, and an opaque prefix cannot produce an effect.
-        head = re.match(r"\^([\w/:-]*)", source)
-        prefix = head.group(1) if head and "|" not in source else ""
-        if head and source[head.end() : head.end() + 1] in {"?", "*", "{"}:
-            prefix = prefix[:-1]
-        return prefix, True, False
-
-    @staticmethod
-    def _django_static_keywords(node):
-        return isinstance(node, ast.Dict) and all(
-            isinstance(key, ast.Constant)
-            and isinstance(key.value, str)
-            and isinstance(value, ast.Constant)
-            for key, value in zip(node.keys, node.values)
+        return (
+            [
+                (
+                    chain,
+                    "django.authenticated-operation.feedback.v1" if effect else None,
+                    [reference, *(effect or [])],
+                )
+            ]
+            if valid
+            else None
         )
 
     def _django_feedback_handler(self, path, target):
@@ -4763,19 +4699,7 @@ class _CredentialHandlerIndex:
             return path, target
         if isinstance(target, ast.Call):
             return self._django_cbv(path, target)
-        if self.canonical(path, target) in {
-            "django.contrib.auth.views." + name
-            for name in (
-                "login",
-                "logout",
-                "password_reset",
-                "password_reset_done",
-                "password_reset_confirm",
-                "password_reset_complete",
-                "password_change",
-                "password_change_done",
-            )
-        }:
+        if self.canonical(path, target) in _DJANGO_AUTH_VIEWS:
             return path, target
         if not (isinstance(target, ast.Constant) and isinstance(target.value, str)):
             selected = _signing_source_symbol(self.context, path, target)
@@ -4999,7 +4923,7 @@ class _CredentialHandlerIndex:
                 if isinstance(node, ast.Call)
                 and len(node.args) >= 2
                 and audit._resolved_ast_name(node.func, aliases)
-                in {"django.urls.path", "django.urls.re_path", "django.conf.urls.url"}
+                in _DJANGO_ROUTE_PROVIDERS
                 and audit._resolved_ast_name(node.args[1], aliases) == canonical
                 for child in ast.walk(node.args[1])
             )
