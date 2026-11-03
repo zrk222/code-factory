@@ -1,0 +1,71 @@
+{
+  "schema": "factory.exposed-authority-regression-summary.v1",
+  "cohort": "N443-38",
+  "measurement": "posthoc source-role repair replay",
+  "fresh_holdout": false,
+  "original_score_record": "docs/evidence/study443-38-score.json",
+  "engine_sha256": "2b559b9f8c751ec23da55a89459861f1c308488f5916b73271b4faa745f061a8",
+  "selected": 38,
+  "complete": true,
+  "known_tp_actions_retained": 30,
+  "tp_action_losses": 0,
+  "fp_actions_before": 6,
+  "fp_actions_after": 5,
+  "fp_to_needs_context": [
+    "N443-38-035"
+  ],
+  "remaining_fp_actions": [
+    "N443-38-003",
+    "N443-38-005",
+    "N443-38-020",
+    "N443-38-022",
+    "N443-38-034"
+  ],
+  "original_unclear_still_actionable": [
+    "N443-38-017",
+    "N443-38-024"
+  ],
+  "raw_diagnostic_identities_retained": 38,
+  "python_files_audited": 1120,
+  "parse_or_read_failures": 0,
+  "authority_tests_passed": 378,
+  "python310_controls_passed": 37,
+  "ecc_open_findings": 0,
+  "workflow_checks_passed": 10,
+  "raw_record": {
+    "path": "docs/evidence/study443-38-authority-replay.json.gz",
+    "sha256": "4b4875a64e5b9b212fef1abf6a6aee0bb4d906286d264dc6a27b36f6970f8351",
+    "bytes": 60188
+  },
+  "source_files": [
+    {
+      "path": "factoryline/credential_endpoint_admission.py",
+      "git_blob": "a1e597100dd8c70910b7d8c1b6a113dbe8d57bba"
+    },
+    {
+      "path": "factoryline/credential_identity_audit.py",
+      "git_blob": "e70734c32bb133be8780c719c408b71b8992af0d"
+    },
+    {
+      "path": "factoryline/credential_role_identity_effects.py",
+      "git_blob": "8b9179c507deaa0a2b3fbe31105c09d62f77dba8"
+    },
+    {
+      "path": "factoryline/primitive_observation_binding.py",
+      "git_blob": "ade33ff21ed470a64b756c3f0bc7f5618df9be0b"
+    },
+    {
+      "path": "tests/test_credential_authority_recovery.py",
+      "git_blob": "f0970469bbf1db27e5ba4427c0f32c0ed75b626f"
+    }
+  ],
+  "claim": "Exposed control retention and reduced false actions. Original held-out labels stay 30 TP, 6 FP and 2 UNCLEAR. Fresh N444 is outstanding.",
+  "original_blind_score_sha256": "1219d8a1430fca52db7ce8b74bb02381032eb3b13767783c26d5ac7c0344efab",
+  "pinned_forge_quality": {
+    "version": "0.10.8",
+    "grade": "A",
+    "composite": 99.1,
+    "max_complexity": 10,
+    "attribution_rate": 0.998914223669924
+  }
+}

@@ -1,6 +1,8 @@
 """Captured application credential evidence and source-bound audit helpers."""
 
 import ast
+import hashlib
+from pathlib import Path
 
 from . import credential_role_identity_effects as _legacy
 
@@ -34,6 +36,416 @@ def application_test_scope_role_evidence(index, path, assignment, secret):
     from .credential_role_method_use_getter_audit import _source_test_scope_evidence
 
     return _source_test_scope_evidence(index, path, assignment, secret)
+
+
+def django_test_domain_evidence(context, path, observation, selected):
+    """Join a configured test owner to transactional consumers, never to a path hint."""
+    from . import mock_fixture_provenance as fixture
+
+    if selected.get(
+        "model"
+    ) != "django.admin.feedback.v1" or "pyproject.toml" not in context.get(
+        "captured", {}
+    ):
+        return None
+    source = context["index"]
+    index = fixture.application_test_index(
+        source.root,
+        source.snapshots,
+        source.source_bytes,
+        source.inventory,
+        context.get("captured", {}),
+        source_index=None,
+    )
+    if index is None:
+        return None
+    profile = _django_test_domain_profile(index, path)
+    if profile is None:
+        return None
+    roots, apps, project, patterns = profile
+    if not _legacy._django_test_provider_stable(index, "django.test.TestCase"):
+        return None
+    if not _django_test_domain_routes(index, path):
+        return None
+    bootstrap = _django_test_domain_wsgi(index, path, roots)
+    if not _django_test_domain_counteredges(
+        index, path, roots, project, None, bootstrap, patterns
+    ):
+        return None
+    consumer = _legacy._django_test_domain_consumer(index, roots, apps, patterns)
+    if consumer is None:
+        return None
+    if not _django_test_domain_counteredges(
+        index, path, roots, project, consumer, bootstrap, patterns
+    ):
+        return None
+    raw = index["configuration_bytes"]["pyproject.toml"]
+    lines = raw.decode("utf8").splitlines()
+    configuration = {
+        "path": "pyproject.toml",
+        "sha256": hashlib.sha256(raw).hexdigest(),
+        "span": [1, 0, len(lines), len(lines[-1].encode("utf8"))],
+    }
+    return {
+        "schema": "factory.security.configured-test-domain.v1",
+        "role": "CONFIGURED_TRANSACTIONAL_TEST_SIGNER",
+        "application_authority": "UNKNOWN",
+        "isolation_assurance": "UNASSESSED",
+        "profile_roots": [p.as_posix() for p in roots],
+        "consumer": consumer,
+        "bootstrap": bootstrap,
+        "selected_loader_edges": observation["transfers"],
+        "configuration_source": configuration,
+        "supporting_sources": {
+            row["path"]: row["sha256"]
+            for row in filter(
+                None,
+                (
+                    configuration,
+                    consumer["source"],
+                    consumer["model_source"],
+                    bootstrap,
+                ),
+            )
+        },
+        "scope": "captured_test_profile_and_consumers_only",
+        "source_inventory_sha256": hashlib.sha256(
+            "\n".join(
+                f"{source.relative(p)}\0{digest}"
+                for p, digest in sorted(source.inventory.items())
+            ).encode()
+        ).hexdigest(),
+    }
+
+
+def _django_test_project_settings(index):
+    from .pytest_collection_audit import (
+        _pytest_collection_settings,
+        _pytest_config_data,
+        _pytest_config_uses_custom_collection,
+    )
+    from .review_audits import _TEST_FILE_PATTERNS
+
+    captured = index["configuration_bytes"]
+    if any(
+        name in captured
+        for name in (
+            "pytest.toml",
+            ".pytest.toml",
+            "pytest.ini",
+            ".pytest.ini",
+            "tox.ini",
+            "setup.cfg",
+        )
+    ):
+        return None
+    raw = captured.get("pyproject.toml")
+    project = _legacy._fixture_project(index)
+    if not isinstance(raw, bytes) or not project:
+        return None
+    _files, identity = _pytest_config_data(
+        raw, "pyproject.toml", "pyproject", set(_TEST_FILE_PATTERNS)
+    )
+    options = _legacy._fixture_pytest_options(index)
+    if (
+        identity.get("state") != "read"
+        or not options
+        or _pytest_config_uses_custom_collection(options)
+    ):
+        return None
+    patterns = _pytest_collection_settings(identity)
+    return project, options, patterns
+
+
+def _django_test_domain_profile(index, path):
+    from . import mock_fixture_provenance as fixture
+
+    parsed = _django_test_project_settings(index)
+    if parsed is None:
+        return None
+    project, options, patterns = parsed
+    if options.get("django_find_project") is not False:
+        return None
+    if not fixture._django_runner_plugins_safe(project, {}):
+        return None
+    if not _django_test_profile_dependency(project):
+        return None
+    selected = options.get("DJANGO_SETTINGS_MODULE")
+    if not isinstance(selected, str) or fixture._django_mod(index, selected)[0] != path:
+        return None
+    names = options.get("testpaths", ["."])
+    if (
+        not isinstance(names, list)
+        or not names
+        or not all(isinstance(p, str) for p in names)
+    ):
+        return None
+    roots = [Path(p) for p in names]
+    if any(p.is_absolute() or ".." in p.parts for p in roots):
+        return None
+    roots = [index["source"].root / p for p in roots]
+    if not any(path.is_relative_to(root) for root in roots):
+        return None
+    apps = _django_test_apps(index, path, roots)
+    return (roots, apps, project, patterns) if apps else None
+
+
+def _django_test_apps(index, path, roots):
+    from . import mock_fixture_provenance as fixture
+
+    apps = {}
+    for name in (
+        _legacy._fixture_literal_setting(index["modules"][path], "INSTALLED_APPS") or []
+    ):
+        if not isinstance(name, str):
+            return {}
+        model, tree = fixture._django_mod(index, name + ".models")
+        if (
+            tree is None
+            and fixture._django_mod(index, name.rpartition(".")[0])[1] is not None
+        ):
+            return {}
+        if tree is not None and any(model.is_relative_to(root) for root in roots):
+            apps[name.rsplit(".", 1)[-1]] = model
+    return apps
+
+
+def _django_test_profile_dependency(project):
+    import re
+
+    metadata = project.get("project", {})
+    if not isinstance(metadata, dict):
+        return False
+    groups = [metadata.get("dependencies", [])]
+    for collection in (
+        metadata.get("optional-dependencies", {}),
+        project.get("dependency-groups", {}),
+    ):
+        if not isinstance(collection, dict):
+            return False
+        groups.extend(collection.values())
+    return any(
+        isinstance(group, list)
+        and any(
+            isinstance(item, str)
+            and re.split(r"[<>=!~\[]", item.lower(), maxsplit=1)[0].strip()
+            == "pytest-django"
+            for item in group
+        )
+        for group in groups
+    )
+
+
+def _django_test_domain_routes(index, path):
+    from . import mock_fixture_provenance as fixture
+
+    name = _legacy._fixture_literal_setting(index["modules"][path], "ROOT_URLCONF")
+    if not isinstance(name, str):
+        return False
+    owner, tree = fixture._django_mod(index, name)
+    if tree is None or not owner.is_relative_to(path.parent):
+        return False
+    rows = fixture._django_assignment(tree, "urlpatterns")
+    if len(rows) != 1 or not isinstance(rows[0][1], (ast.List, ast.Tuple)):
+        return False
+    return bool(rows[0][1].elts) and all(
+        isinstance(call, ast.Call)
+        and len(call.args) >= 2
+        and fixture._django_expr(index, owner, call.args[1])
+        == "django.contrib.admin.site.urls"
+        for call in rows[0][1].elts
+    )
+
+
+def _django_test_domain_wsgi(index, settings_path, roots):
+    from . import mock_fixture_provenance as fixture
+
+    application = _legacy._fixture_literal_setting(
+        index["modules"][settings_path], "WSGI_APPLICATION"
+    )
+    if not isinstance(application, str) or not application.endswith(".application"):
+        return None
+    path, tree = fixture._django_mod(index, application.removesuffix(".application"))
+    setting = fixture._django_name(index, settings_path)
+    if (
+        tree is None
+        or not any(path.is_relative_to(root) for root in roots)
+        or not _django_test_bootstrap(
+            index, path, "django.core.wsgi.get_wsgi_application", setting
+        )
+    ):
+        return None
+    imports = fixture._django_imports(index, path)
+    if imports is None or set(imports.values()) != {
+        "os",
+        "django.core.wsgi.get_wsgi_application",
+    }:
+        return None
+    return {
+        "path": index["source"].relative(path),
+        "sha256": index["source"].inventory[path],
+        "selected_settings": setting,
+    }
+
+
+def _django_test_domain_counteredges(
+    index, path, roots, project, consumer, bootstrap, patterns
+):
+    from . import mock_fixture_provenance as fixture
+
+    declarations = project.get("project", {})
+    if (
+        not isinstance(declarations, dict)
+        or declarations.get("scripts")
+        or declarations.get("entry-points")
+    ):
+        return False
+    settings = fixture._django_name(index, path)
+    root = index["source"].root
+    consumer_path = root / consumer["source"]["path"] if consumer else None
+    models = {
+        fixture._django_name(index, model)
+        for model in _django_test_apps(index, path, [root]).values()
+    }
+    for other, tree in index["modules"].items():
+        if not index["source"].validate(other):
+            return False
+        if bootstrap and index["source"].relative(other) == bootstrap["path"]:
+            continue
+        imports = fixture._django_imports(index, other)
+        if imports is None or any(
+            target == settings or target.startswith(settings + ".")
+            for target in imports.values()
+        ):
+            return False
+        if any(
+            isinstance(n, ast.Attribute)
+            and n.attr == "SECRET_KEY"
+            and fixture._django_expr(index, other, n)
+            == "django.conf.settings.SECRET_KEY"
+            for n in ast.walk(tree)
+        ):
+            return False
+        selects = any(
+            isinstance(n, ast.Constant) and n.value == settings for n in ast.walk(tree)
+        )
+        if selects:
+            return False
+        consumes_model = any(
+            target == model or target.startswith(model + ".")
+            for target in imports.values()
+            for model in models
+        )
+        if _django_test_dynamic_model_edge(index, other, models):
+            return False
+        if (
+            consumer
+            and (other == consumer_path or consumes_model)
+            and _django_test_unowned_effect(index, other, consumer, roots, patterns)
+        ):
+            return False
+    return True
+
+
+def _django_test_dynamic_model_edge(index, path, models):
+    from . import mock_fixture_provenance as fixture
+
+    labels = {module.split(".")[-2] for module in models}
+    for call in (
+        n for n in ast.walk(index["modules"][path]) if isinstance(n, ast.Call)
+    ):
+        function = _legacy._enclosing_function(call, index["source"].parents[path])
+        name = fixture._django_expr(index, path, call.func, function)
+        if name not in {"django.apps.apps.get_model", "importlib.import_module"}:
+            continue
+        if (
+            not call.args
+            or not isinstance(call.args[0], ast.Constant)
+            or not isinstance(call.args[0].value, str)
+        ):
+            return True
+        target = call.args[0].value
+        if name == "django.apps.apps.get_model":
+            if target.partition(".")[0] in labels:
+                return True
+        elif any(
+            target == module
+            or module.startswith(target + ".")
+            or target.startswith(module + ".")
+            for module in models
+        ):
+            return True
+    return False
+
+
+def _django_test_unowned_effect(index, path, consumer, roots, patterns):
+    from . import mock_fixture_provenance as fixture
+
+    source = index["source"]
+    allowed = (
+        consumer["function_span"]
+        if source.relative(path) == consumer["source"]["path"]
+        else None
+    )
+    collected = None
+    for call in (
+        n for n in ast.walk(index["modules"][path]) if isinstance(n, ast.Call)
+    ):
+        function = _legacy._enclosing_function(call, source.parents[path])
+        effect = (
+            isinstance(call.func, ast.Attribute)
+            and call.func.attr in {"create", "bulk_create", "save"}
+            or fixture._django_expr(index, path, call.func, function)
+            == "django.core.management.call_command"
+        )
+        if not effect:
+            continue
+        if function is None:
+            return True
+        span = [
+            function.lineno,
+            function.col_offset,
+            function.end_lineno,
+            function.end_col_offset,
+        ]
+        if _legacy._has_nested_scope(call, function, source.parents[path]):
+            return True
+        if span == allowed:
+            continue
+        if collected is None:
+            maps = _legacy._fixture_class_maps(index)
+            collected = (
+                {
+                    test
+                    for test, _ in _legacy._django_test_collected_methods(
+                        index, path, roots, patterns, maps
+                    )
+                }
+                if maps
+                else set()
+            )
+        if function not in collected:
+            return True
+    return False
+
+
+def _django_test_bootstrap(index, path, operation, setting):
+    from . import mock_fixture_provenance as fixture
+
+    calls = [n for n in ast.walk(index["modules"][path]) if isinstance(n, ast.Call)]
+    names = [fixture._django_expr(index, path, n.func) for n in calls]
+    return (
+        names.count(operation) == 1
+        and all(name in {operation, "os.environ.setdefault"} for name in names)
+        and _legacy._django_test_provider_stable(index, operation)
+        and any(
+            name == "os.environ.setdefault"
+            and len(n.args) == 2
+            and all(isinstance(a, ast.Constant) for a in n.args)
+            and [a.value for a in n.args] == ["DJANGO_SETTINGS_MODULE", setting]
+            for n, name in zip(calls, names)
+        )
+    )
 
 
 class _TestScopeContractEpoch:
