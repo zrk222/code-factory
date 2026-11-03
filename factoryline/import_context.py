@@ -4115,9 +4115,11 @@ def _db_python_export_scoped_node_unsafe(node, aliases, modules, name, parents, 
 
 def _db_python_export_visible_names(node, names, parents, scopes):
     """Resolve function locals without applying them to defaults or decorators."""
+    if not names:
+        return set()
     visible, unresolved = set(names), set(names)
     child = node
-    while (parent := parents.get(child)) is not None:
+    while unresolved and (parent := parents.get(child)) is not None:
         if isinstance(parent, ast.ClassDef):
             # Class namespaces and their global directives are not function locals.
             break
