@@ -298,16 +298,10 @@ def _trusted_core_complete_sources(core, captured_sources, audit):
     configurations = core.get("oracle_context", {}).get("configuration_sources", [])
     if not isinstance(configurations, list):
         return None
-    bindings = {}
-    for row, configuration in [
-        *((row, False) for row in sources),
-        *((row, True) for row in configurations),
-    ]:
-        validated = _trusted_core_source_binding(row, configuration=configuration)
-        if validated is None or validated[0] in bindings:
-            return None
-        path, digest = validated
-        bindings[path] = digest
+    checked = _trusted_core_configured_bindings(core, sources, configurations)
+    if checked is None:
+        return None
+    bindings, database_rows = checked
     if set(captured_sources) != set(bindings):
         return None
     if len(sources) > audit.MAX_SECURITY_SOURCE_FILES:
@@ -323,10 +317,22 @@ def _trusted_core_complete_sources(core, captured_sources, audit):
         if total_bytes > 32 * 1024 * 1024 or hashlib.sha256(raw).hexdigest() != digest:
             return None
         captured[path] = raw
+    if database_rows and not _trusted_database_configuration(
+        database_rows[0], captured
+    ):
+        return None
     return captured, _tier_sha256(sources)
 
 
-def _trusted_core_source_binding(row, *, configuration=False):
+def _trusted_core_configured_bindings(core, sources, configurations):
+    from .review_integrity import _trusted_core_configured_bindings as bind
+
+    return bind(core, sources, configurations, _trusted_core_source_binding)
+
+
+def _trusted_core_source_binding(
+    row, *, configuration=False, database_configuration=False
+):
     from .import_context import application_configuration_names
 
     if not isinstance(row, dict):
@@ -341,7 +347,11 @@ def _trusted_core_source_binding(row, *, configuration=False):
         or ".." in relative.parts
         or relative.as_posix() != path
         or (
-            path not in application_configuration_names()
+            (
+                path != "factory.database.json"
+                if database_configuration
+                else path not in application_configuration_names()
+            )
             if configuration
             else relative.suffix != ".py"
         )
@@ -350,6 +360,12 @@ def _trusted_core_source_binding(row, *, configuration=False):
     ):
         return None
     return path, digest
+
+
+def _trusted_database_configuration(binding, captured):
+    from .review_integrity import _trusted_database_configuration as validate
+
+    return validate(binding, captured)
 
 
 def _trusted_core_database_context_valid(value):

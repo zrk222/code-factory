@@ -4893,3 +4893,59 @@ def _finite_eval_binding(finding):
 
 def _native_input_inventory_epoch():
     return _captured_input_inventory_epoch(_native_input_inventory_epoch)
+
+
+def _trusted_core_configured_bindings(core, sources, configurations, source_binding):
+    """Bind database configuration separately from application selectors."""
+    database_rows = [
+        row
+        for row in configurations
+        if isinstance(row, dict) and row.get("path") == "factory.database.json"
+    ]
+    database = core.get("database_context")
+    database_bindings = (
+        database.get("configuration_sources", []) if isinstance(database, dict) else []
+    )
+    if not isinstance(database_bindings, list) or database_rows != [
+        row
+        for row in database_bindings
+        if isinstance(row, dict) and row.get("path") == "factory.database.json"
+    ]:
+        return None
+    bindings = {}
+    for row, configuration in [
+        *((row, False) for row in sources),
+        *((row, True) for row in configurations),
+    ]:
+        validated = source_binding(
+            row,
+            configuration=configuration,
+            database_configuration=configuration and row in database_rows,
+        )
+        if validated is None or validated[0] in bindings:
+            return None
+        path, digest = validated
+        bindings[path] = digest
+    return bindings, database_rows
+
+
+def _trusted_database_configuration(binding, captured):
+    """Reuse producer validation over already captured, immutable bytes."""
+    from .context_efficiency import _database_configuration
+
+    class CapturedRoot:
+        def __truediv__(self, _name):
+            return self
+
+        def exists(self):
+            return True
+
+        def is_symlink(self):
+            return False
+
+    raw = captured["factory.database.json"]
+    gaps = []
+    _, parsed_binding = _database_configuration(
+        CapturedRoot(), lambda _root, _name: raw, gaps
+    )
+    return not gaps and parsed_binding == binding
